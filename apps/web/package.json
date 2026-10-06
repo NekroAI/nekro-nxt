@@ -11,8 +11,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@glinui/tokens": "0.1.1",
     "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-client-modules": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-cordis-client-runner": "0.1.7-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4",
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
@@ -39,12 +43,7 @@
     "recharts": "^3.10.1",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "zustand": "5.0.15",
-    "@deepseek-ai/dsh-client-modules": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-client-ui-renderer": "0.1.7-rc.2",
-    "@deepseek-ai/schemastery": "3.18.4",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.7-rc.2",
-    "@deepseek-ai/dsh-cordis-client-runner": "0.1.7-rc.2"
+    "zustand": "5.0.15"
   },
   "devDependencies": {
     "@nekro-nxt/extension-runtime": "workspace:*",

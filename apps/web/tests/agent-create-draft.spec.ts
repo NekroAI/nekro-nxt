@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { agentModelKey, createAgentDraft } from '../src/pages/agent-create-draft.js'
+import { agentModelKey, createAgentDraft } from '../src/app/agents/agent-create-draft.js'
 
 describe('createAgentDraft', () => {
   it('returns the same defaults for every create entry and selects the first available model', () => {

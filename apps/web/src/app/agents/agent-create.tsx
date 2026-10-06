@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 
 import { promptDocumentFromText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
-import { agentModelKey, createAgentDraft } from '../../pages/agent-create-draft.js'
+import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
 import { useProductStore } from '../../product-runtime.js'
 import { Banner, Button, Field, Input, Select, toast } from '../../ui-kit/next/index.js'
 import { useProductApi } from '../model/store.js'

@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowRight, ChevronDown, Eye, PanelRight, Plug } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { workspaceApi } from '../../host-api-client.js'
-import { useStickToBottom } from '../../pages/channel-scroll.js'
+import { useStickToBottom } from './channel-scroll.js'
 import {
   connectionDisplayName,
   useProductStore,

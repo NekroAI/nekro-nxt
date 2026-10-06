@@ -308,34 +308,3 @@
   animation-duration: 1ms !important;
   transition-duration: 1ms !important;
 }
-
-:global(:root[data-glin-experiment]) .catalog {
-  height: 100%;
-  min-height: 0;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 0;
-  overflow: hidden;
-}
-
-:global(:root[data-glin-experiment]) .pluginList {
-  border-right: 1px solid var(--nxt-border-subtle);
-  padding: 0 14px 24px 0;
-  scrollbar-gutter: stable;
-}
-
-:global(:root[data-glin-experiment]) .detail {
-  overflow-x: hidden;
-  overflow-y: auto;
-  border: 1px solid var(--nxt-border-subtle);
-  border-radius: var(--nxt-radius-panel);
-  padding: var(--nxt-space-5) var(--nxt-space-4) 36px var(--nxt-space-5);
-  background: color-mix(in srgb, var(--nxt-bg-surface) 88%, transparent);
-  box-shadow: none;
-  scrollbar-gutter: stable;
-}
-
-:global(:root[data-glin-experiment]) .detailHeader {
-  position: static;
-  padding: 0 0 var(--nxt-space-4);
-  background: transparent;
-}

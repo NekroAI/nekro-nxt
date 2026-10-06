@@ -55,17 +55,16 @@ for (const file of await collectMarkdown(repositoryRoot)) {
   })
 }
 
+// Every interface component under apps/web/src/app is user-visible.
+const appSources = (await readdir(path.join(repositoryRoot, 'apps/web/src/app'), { recursive: true }))
+  .filter((name) => /\.tsx?$/u.test(name) && !name.endsWith('.d.css.ts'))
+  .map((name) => path.posix.join('apps/web/src/app', name.split(path.sep).join('/')))
 const userVisibleSources = [
   'apps/web/index.html',
   'apps/web/public/site.webmanifest',
-  'apps/web/src/app.tsx',
   'apps/web/src/http-host.ts',
   'apps/web/src/product-store.ts',
-  'apps/web/src/pages/channel-page.tsx',
-  'apps/web/src/pages/channel-trajectory.tsx',
-  'apps/web/src/pages/connections-page.tsx',
-  'apps/web/src/pages/extensions-runtime-pages.tsx',
-  'apps/web/src/shell/object-pane.tsx',
+  ...appSources,
   'apps/desktop/src/main.ts',
   'apps/desktop/src/instance-manager.ts',
   'scripts/rolling-preview-release.mjs',

@@ -1,6 +1,6 @@
 import { Download, File } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Dialog, Enter, Spinner } from '../ui-kit/index.js'
+import { Dialog, Enter, Spinner } from '../../ui-kit/index.js'
 import styles from './resource-preview.module.css'
 
 export type ResourceKind = 'image' | 'audio' | 'video' | 'pdf' | 'text' | 'file'

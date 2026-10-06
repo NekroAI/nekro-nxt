@@ -1,14 +1,20 @@
 import { useGo } from '../model/nav.js'
+import { CompatibilityNotices } from '../system/compatibility.js'
 import { PanelSlot } from '../../extension-ui/index.js'
 import { Boxes, Cable, FolderCog, Globe, MessagesSquare, PencilLine, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
-import { promptDocumentPlainText, type AgentRevisionHistory, type PromptDocumentV1 } from '@nekro-nxt/contracts'
-import { workspaceApi } from '../../host-api-client.js'
+import {
+  HostApiContracts,
+  promptDocumentPlainText,
+  type AgentRevisionHistory,
+  type PromptDocumentV1,
+} from '@nekro-nxt/contracts'
+import { callHostApi, workspaceApi } from '../../host-api-client.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
-import { agentModelKey } from '../../pages/agent-create-draft.js'
+import { agentModelKey } from './agent-create-draft.js'
 import {
   connectionDisplayName,
   useProductStore,
@@ -25,6 +31,7 @@ import {
   Field,
   Input,
   Panel,
+  SecretInput,
   Section,
   Segmented,
   Select,
@@ -237,6 +244,45 @@ function SkillRow({
   )
 }
 
+/** Web search runs through an external model service; its credential can be saved right where the skill is. */
+function WebSearchCredential() {
+  const api = useProductApi()
+  const availability = useProductStore((state) => state.capabilityAvailability.webSearch)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    setBusy(true)
+    try {
+      await callHostApi(
+        HostApiContracts.dshCredentialSet,
+        { ref: availability.credentialReference },
+        { value: value.trim() },
+      )
+      setValue('')
+      await api.getState().refreshHost()
+      toast('搜索凭据已保存')
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <SecretInput
+        configured={availability.credentialConfigured}
+        value={value}
+        placeholder="DeepSeek API 密钥"
+        aria-label="DeepSeek API 密钥"
+        onChange={(event) => setValue(event.target.value)}
+      />
+      <Button size="small" busy={busy} disabled={!value.trim()} onClick={() => void save()}>
+        保存
+      </Button>
+    </>
+  )
+}
+
 const CHANGED_FIELD_LABEL: Record<AgentRevisionHistory['revisions'][number]['changedFields'][number], string> = {
   name: '名称',
   persona: '设定',
@@ -390,7 +436,11 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
       <SkillRow
         icon={<Globe />}
         title="网页搜索"
-        description={availability.webSearch.available ? '查询公开网页，结果来自外部服务' : '先在设置里保存搜索服务凭据'}
+        description={
+          availability.webSearch.available
+            ? '查询公开网页，结果来自外部服务'
+            : '需要 DeepSeek API 密钥，每次搜索另计模型费用'
+        }
         badge={
           agent.capabilities.webSearch && !availability.webSearch.available ? (
             <Chip tone="warn">待配置</Chip>
@@ -404,7 +454,9 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
             onCheckedChange={(checked) => void set({ webSearch: checked })}
           />
         }
-      />
+      >
+        {availability.webSearch.available ? null : <WebSearchCredential />}
+      </SkillRow>
       <SkillRow
         icon={<Sparkles />}
         title="动态创造"
@@ -511,6 +563,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
         </div>
       </header>
       <div className={[styles.body, styles.enter].join(' ')} key={agent.id}>
+        <CompatibilityNotices agentId={agent.id} providerId={agent.modelRef?.provider} />
         {noModel ? (
           <Banner
             tone="bad"

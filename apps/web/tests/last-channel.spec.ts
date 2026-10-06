@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { isWorkPath, readLastChannelId, workHomePath, writeLastChannelId } from '../src/shell/last-channel.js'
+import { isWorkPath, readLastChannelId, workHomePath, writeLastChannelId } from '../src/app/model/last-channel.js'
 
 const memory = new Map<string, string>()
 

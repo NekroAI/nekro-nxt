@@ -1,4 +1,5 @@
 import { useGo } from '../model/nav.js'
+import { CompatibilityNotices } from '../system/compatibility.js'
 import { Bot, CheckCircle2, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -314,6 +315,7 @@ export default function LiveSpace() {
   return (
     <div className={styles.live}>
       <div className={[styles.inner, styles.enter].join(' ')}>
+        <CompatibilityNotices showContextReset />
         <section style={cssVars({ '--i': 0 })}>
           <div className={styles.head}>
             <h1>现场</h1>

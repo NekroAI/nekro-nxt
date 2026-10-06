@@ -1,0 +1,23 @@
+.stack {
+  display: grid;
+  gap: 8px;
+}
+
+.shellNotice {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  left: 50%;
+  width: min(640px, calc(100% - 32px));
+  box-shadow: var(--sh-3);
+  border-radius: 12px;
+  transform: translateX(-50%);
+  animation: drop 360ms var(--ease) both;
+}
+
+@keyframes drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+}

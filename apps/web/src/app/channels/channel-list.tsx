@@ -33,7 +33,7 @@ import {
   CHANNEL_SORT_PREFIX,
   UNBOUND_DROP_ID,
   type WorkTreeDragLists,
-} from '../../shell/work-tree-order.js'
+} from '../model/work-tree-order.js'
 import {
   connectionDisplayName,
   useProductStore,

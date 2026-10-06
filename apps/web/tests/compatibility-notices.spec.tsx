@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { HostUpgradeSummary, RuntimeCompatibilityDiagnostic } from '@nekro-nxt/contracts'
-import { retryUpgradeDiagnostic, selectUpgradeDiagnostics } from '../src/components/upgrade-notice.js'
+import { retryUpgradeDiagnostic, selectUpgradeDiagnostics } from '../src/app/system/compatibility.js'
 
 const diagnostic = (
   kind: RuntimeCompatibilityDiagnostic['objectKind'],

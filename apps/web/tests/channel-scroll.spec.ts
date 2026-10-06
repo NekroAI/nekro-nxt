@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isNearBottom } from '../src/pages/channel-scroll.js'
+import { isNearBottom } from '../src/app/channels/channel-scroll.js'
 
 describe('isNearBottom', () => {
   it('treats the last 80 pixels as the follow zone', () => {

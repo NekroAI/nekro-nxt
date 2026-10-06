@@ -183,3 +183,144 @@ a.nestedCard:active {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Message body parts (moved from the retired page stylesheet). */
+.messageBody {
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--fg);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.markdownPart {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.markdownPart > :first-child {
+  margin-top: 0;
+}
+
+.markdownPart > :last-child {
+  margin-bottom: 0;
+}
+
+.markdownPart p,
+.markdownPart ul,
+.markdownPart ol,
+.markdownPart blockquote,
+.markdownPart table,
+.markdownPart pre {
+  margin: 0 0 8px;
+}
+
+.markdownPart ul,
+.markdownPart ol {
+  padding-left: 20px;
+}
+
+.markdownPart blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--line-3);
+  color: var(--fg-2);
+}
+
+.markdownPart pre,
+.markdownPart table {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdownPart pre {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  white-space: pre;
+}
+
+.markdownPart code {
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.markdownPart p,
+.markdownPart li,
+.markdownPart a,
+.markdownPart code:not(pre code) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdownPart code:not(pre code) {
+  white-space: break-spaces;
+}
+
+.markdownPart pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.markdownPart table {
+  display: block;
+  border-collapse: collapse;
+}
+
+.markdownPart th,
+.markdownPart td {
+  padding: 5px 8px;
+  border: 1px solid var(--line-2);
+  text-align: left;
+}
+
+.messageMention,
+.messageQuote,
+.messageUnsupported {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 4px 2px 0;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-xs);
+}
+
+.messageQuote,
+.messageUnsupported {
+  background: var(--surface-2);
+  color: var(--fg-2);
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  text-decoration: none;
+}
+
+.messageImage {
+  display: block;
+  max-width: min(100%, 420px);
+  max-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  object-fit: contain;
+}

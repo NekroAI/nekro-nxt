@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectResourceKind } from '../src/pages/resource-preview.js'
+import { detectResourceKind } from '../src/app/channels/resource-preview.js'
 
 describe('detectResourceKind', () => {
   it('classifies common previewable files', () => {

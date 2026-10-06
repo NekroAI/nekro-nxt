@@ -4,12 +4,11 @@ import { useState } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
-import type { ChannelSummary, ConversationMessage, ConversationPart } from '../product-runtime.js'
-import { Button } from '../ui-kit/index.js'
+import type { ChannelSummary, ConversationMessage, ConversationPart } from '../../product-runtime.js'
+import { Button } from '../../ui-kit/index.js'
 import contentStyles from './message-content.module.css'
-import styles from './product-pages.module.css'
 import { detectResourceKind, ResourcePreviewDialog, type PreviewResource } from './resource-preview.js'
-import { MessageRendererSlot } from '../extension-ui/index.js'
+import { MessageRendererSlot } from '../../extension-ui/index.js'
 
 export type MessageSide = 'left' | 'right' | 'system'
 
@@ -63,12 +62,12 @@ function SafeMarkdown({ text, inline = false }: { readonly text: string; readonl
       {text}
     </ReactMarkdown>
   )
-  if (!inline) return <div className={styles.markdownPart}>{markdown}</div>
+  if (!inline) return <div className={contentStyles.markdownPart}>{markdown}</div>
   return <span className={contentStyles.inlineMarkdown}>{markdown}</span>
 }
 
 function MentionChip({ displayName }: { readonly displayName: string }) {
-  return <span className={styles.messageMention}>@{displayName}</span>
+  return <span className={contentStyles.messageMention}>@{displayName}</span>
 }
 
 function HostRichCard({
@@ -108,7 +107,7 @@ function HostRichCard({
                     <p className={contentStyles.richTitle}>{item.card.title ?? item.card.summary}</p>
                     {item.card.previewUrl ? (
                       <img
-                        className={styles.messageImage}
+                        className={contentStyles.messageImage}
                         src={item.card.previewUrl}
                         alt={item.card.title ?? item.card.summary}
                         loading="lazy"
@@ -139,14 +138,19 @@ function HostRichCard({
               className={contentStyles.previewTrigger}
               onClick={() => onPreview({ name: item.imageName ?? '图片', url: item.imageUrl!, kind: 'image' })}
             >
-              <img className={styles.messageImage} src={item.imageUrl} alt={item.imageName ?? '图片'} loading="lazy" />
+              <img
+                className={contentStyles.messageImage}
+                src={item.imageUrl}
+                alt={item.imageName ?? '图片'}
+                loading="lazy"
+              />
             </Button>
           ) : null}
         </div>
       ))}
       {previewLines ? <pre className={contentStyles.forwardPreview}>{previewLines}</pre> : null}
       {part.previewUrl ? (
-        <img className={styles.messageImage} src={part.previewUrl} alt={heading} loading="lazy" />
+        <img className={contentStyles.messageImage} src={part.previewUrl} alt={heading} loading="lazy" />
       ) : null}
     </>
   )
@@ -205,13 +209,13 @@ function StructuredPart({
         className={contentStyles.previewTrigger}
         onClick={() => onPreview({ name: part.alt, url: part.url, kind: 'image' })}
       >
-        <img className={styles.messageImage} src={part.url} alt={part.alt} loading="lazy" />
+        <img className={contentStyles.messageImage} src={part.url} alt={part.alt} loading="lazy" />
       </Button>
     )
   }
   if (part.type === 'audio') {
     return (
-      <div className={styles.attachment}>
+      <div className={contentStyles.attachment}>
         <Headphones size={15} aria-hidden="true" />
         <audio controls preload="none" src={part.url}>
           你的浏览器不支持音频播放。
@@ -233,12 +237,12 @@ function StructuredPart({
   }
   if (part.type === 'quote') {
     return (
-      <span className={styles.messageQuote}>
+      <span className={contentStyles.messageQuote}>
         <Quote size={14} aria-hidden="true" /> 引用消息
       </span>
     )
   }
-  return <span className={styles.messageUnsupported}>{part.label}</span>
+  return <span className={contentStyles.messageUnsupported}>{part.label}</span>
 }
 
 type InlinePart = Extract<ConversationPart, { readonly type: 'text' | 'mention' }>
@@ -307,7 +311,7 @@ export function MessageContent({
     )
   }
   return (
-    <div className={styles.messageBody} data-message-bubble>
+    <div className={contentStyles.messageBody} data-message-bubble>
       {groupMessageRuns(message.parts).map((run, runIndex) => {
         if (run.kind === 'block') {
           return (

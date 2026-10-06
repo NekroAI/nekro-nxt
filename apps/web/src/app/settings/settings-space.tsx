@@ -1,4 +1,5 @@
 import { Bell, Blocks, Cpu, Info, Palette, Plug } from 'lucide-react'
+import { CompatibilityNotices } from '../system/compatibility.js'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { DshExtensionSettings } from '../../dsh-extension-settings.js'
@@ -67,6 +68,7 @@ export default function SettingsSpace() {
       <div className={styles.page} key={section}>
         <div className={styles.body}>
           <h1 className={styles.title}>{current?.label}</h1>
+          <CompatibilityNotices showContextReset />
           {section === 'models' ? <LlmProviderSettings /> : null}
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'dsh' ? <DshExtensionSettings /> : null}

@@ -8,7 +8,7 @@ import {
   orderByIds,
   pickWorkTreeCollision,
   resolveWorkTreeDragEnd,
-} from '../src/shell/work-tree-order.js'
+} from '../src/app/model/work-tree-order.js'
 
 describe('orderByIds', () => {
   it('applies preferred ids then appends newcomers', () => {

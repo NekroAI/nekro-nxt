@@ -1,7 +1,7 @@
 import { Check, CircleAlert, Square, X } from 'lucide-react'
 import { ToolView } from '../../extension-ui/index.js'
 import { Fragment, memo, useEffect, useState } from 'react'
-import { MessageContent, resolveMessageSide } from '../../pages/message-content.js'
+import { MessageContent, resolveMessageSide } from './message-content.js'
 import type { AgentSummary, ChannelSummary, ConversationMessage } from '../../product-runtime.js'
 import { AgentAvatar, Button, Chip, Spinner, cssVars } from '../../ui-kit/next/index.js'
 import { MemberAvatar } from '../../ui-kit/next/avatar.js'

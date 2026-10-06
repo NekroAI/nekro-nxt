@@ -1,4 +1,5 @@
 import { useGo } from '../model/nav.js'
+import { CompatibilityNotices } from '../system/compatibility.js'
 import { Download, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -79,6 +80,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
       </header>
 
       <div className={styles.body}>
+        <CompatibilityNotices extensionId={extension.id} />
         {unsupported > 0 ? (
           <Banner tone="warn">
             {unsupported === extension.revisions.length

@@ -1,4 +1,5 @@
 import { useGo } from '../model/nav.js'
+import { ReleaseBanner } from '../system/compatibility.js'
 import { Activity, Bell, Cable, MessagesSquare, Search, Server, Settings, Sparkles, Wrench } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
@@ -197,6 +198,7 @@ export function AppShell() {
       <TopBar onSearch={() => setPaletteOpen(true)} />
       <Rail />
       <main className={styles.main}>
+        <ReleaseBanner />
         <div key={space} className={[styles.canvas, styles.canvasEnter].join(' ')}>
           <Outlet />
         </div>

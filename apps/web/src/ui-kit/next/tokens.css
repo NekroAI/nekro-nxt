@@ -155,3 +155,45 @@ html[data-ui='next'][data-nxt-motion='off'] *::after {
   animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
 }
+
+/*
+ * Older components (model and DSH plugin settings, prompt editor, extension ui-kit@1) still read the semantic
+ * `--nxt-*` names. They resolve to this palette so every surface shares one look; subtree themes re-resolve them.
+ */
+html[data-ui='next'],
+html[data-ui='next'] [data-nxt-theme] {
+  --nxt-bg-canvas: var(--bg);
+  --nxt-bg-sidebar: var(--side);
+  --nxt-bg-surface: var(--surface);
+  --nxt-bg-elevated: var(--surface);
+  --nxt-bg-subtle: var(--surface-2);
+  --nxt-bg-hover: var(--hover);
+  --nxt-bg-pressed: var(--inset);
+  --nxt-border-subtle: var(--line);
+  --nxt-border-default: var(--line-2);
+  --nxt-border-strong: var(--line-3);
+  --nxt-text-primary: var(--fg);
+  --nxt-text-secondary: var(--fg-2);
+  --nxt-text-muted: var(--muted);
+  --nxt-text-disabled: var(--faint);
+  --nxt-accent: var(--accent);
+  --nxt-accent-hover: var(--accent-2);
+  --nxt-accent-pressed: var(--accent-2);
+  --nxt-accent-soft: var(--accent-soft);
+  --nxt-accent-foreground: var(--on-accent);
+  --nxt-info: var(--accent);
+  --nxt-success: var(--ok);
+  --nxt-success-soft: var(--ok-soft);
+  --nxt-warning: var(--warn);
+  --nxt-warning-soft: var(--warn-soft);
+  --nxt-danger: var(--bad);
+  --nxt-danger-soft: var(--bad-soft);
+  --nxt-focus-ring: var(--focus);
+  --nxt-brand-brass: var(--brass);
+  --nxt-shadow-control: var(--sh-1);
+  --nxt-shadow-popover: var(--sh-2);
+  --nxt-shadow-float: var(--sh-2);
+  --nxt-shadow-dialog: var(--sh-3);
+  --nxt-font-sans: var(--font-sans);
+  --nxt-font-mono: var(--font-mono);
+}
