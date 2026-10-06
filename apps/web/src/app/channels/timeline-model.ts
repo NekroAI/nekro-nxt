@@ -1,11 +1,20 @@
 import type { ChannelRuntimeView, ConversationMessage } from '../../product-runtime.js'
 
 export type RuntimeTurn = ChannelRuntimeView['turns'][number]
-type TimedTurn = RuntimeTurn & { readonly startedAt?: number; readonly endedAt?: number; readonly triggerEventId?: string }
+type TimedTurn = RuntimeTurn & {
+  readonly startedAt?: number
+  readonly endedAt?: number
+  readonly triggerEventId?: string
+}
 
 export type TimelineItem =
   | { readonly kind: 'day'; readonly key: string; readonly label: string }
-  | { readonly kind: 'message'; readonly key: string; readonly message: ConversationMessage; readonly continued: boolean }
+  | {
+      readonly kind: 'message'
+      readonly key: string
+      readonly message: ConversationMessage
+      readonly continued: boolean
+    }
   | { readonly kind: 'turn'; readonly key: string; readonly turn: RuntimeTurn; readonly latest: boolean }
 
 const GROUP_WINDOW_MS = 5 * 60_000
@@ -21,7 +30,9 @@ export function dayLabel(time: number, now = Date.now()): string {
   if (key === dayKey(now - 86_400_000)) return '昨天'
   const date = new Date(time)
   const sameYear = date.getFullYear() === new Date(now).getFullYear()
-  return sameYear ? `${date.getMonth() + 1} 月 ${date.getDate()} 日` : `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`
+  return sameYear
+    ? `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+    : `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`
 }
 
 /** Short relative time for lists: 刚刚 / N 分钟前 / HH:mm / 昨天 / M月D日. */
@@ -31,7 +42,8 @@ export function relativeTime(time: number | undefined, now = Date.now()): string
   if (delta < 60_000) return '刚刚'
   if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`
   const date = new Date(time)
-  if (dayKey(time) === dayKey(now)) return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  if (dayKey(time) === dayKey(now))
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
   if (dayKey(time) === dayKey(now - 86_400_000)) return '昨天'
   return `${date.getMonth() + 1}月${date.getDate()}日`
 }
@@ -134,7 +146,9 @@ export function presentToolInput(preview: string | undefined, writesToChannel: b
   if (!preview) return undefined
   const trimmed = preview.trim()
   if (writesToChannel) {
-    const texts = [...trimmed.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"?/g)].map((match) => unescapeJsonString(match[1] ?? ''))
+    const texts = [...trimmed.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"?/g)].map((match) =>
+      unescapeJsonString(match[1] ?? ''),
+    )
     if (texts.length) return { message: texts.join('') }
   }
   if (trimmed.startsWith('{')) {

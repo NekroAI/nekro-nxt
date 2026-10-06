@@ -34,7 +34,13 @@ export default function AgentsSpace() {
         <div className={styles.listBody}>
           <SelectionList selectedKey={agent?.id} accent={agent ? agentAccent(agent) : undefined}>
             {agents.map((item) => (
-              <Link key={item.id} to={`/agents/${item.id}`} className={styles.row} data-selected={item.id === agent?.id} aria-current={item.id === agent?.id ? 'page' : undefined}>
+              <Link
+                key={item.id}
+                to={`/agents/${item.id}`}
+                className={styles.row}
+                data-selected={item.id === agent?.id}
+                aria-current={item.id === agent?.id ? 'page' : undefined}
+              >
                 <AgentAvatar name={item.name} hue={agentHue(item)} size="md" live={isAgentWorking(item)} />
                 <span className={styles.rowName}>{item.name}</span>
                 <span className={styles.rowState}>{agentPhase[item.state].label}</span>

@@ -30,15 +30,32 @@ function CompactBindings() {
         {channels.map((channel) => {
           const connection = connections.find((item) => item.id === channel.connectionId)
           return (
-            <div key={channel.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 130px', gap: 10, alignItems: 'center', padding: '10px 14px', borderTop: '1px solid var(--line)' }}>
+            <div
+              key={channel.id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) 130px',
+                gap: 10,
+                alignItems: 'center',
+                padding: '10px 14px',
+                borderTop: '1px solid var(--line)',
+              }}
+            >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channel.name}</div>
-                <div style={{ color: 'var(--muted)', fontSize: 12 }}>{connection ? connectionDisplayName(connection) : channel.connectionName}</div>
+                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {channel.name}
+                </div>
+                <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+                  {connection ? connectionDisplayName(connection) : channel.connectionName}
+                </div>
               </div>
               <Select
                 aria-label={`${channel.name} 的响应智能体`}
                 value={channel.agentId}
-                options={[{ value: '', label: '未接线' }, ...agents.map((agent) => ({ value: agent.id, label: agent.name }))]}
+                options={[
+                  { value: '', label: '未接线' },
+                  ...agents.map((agent) => ({ value: agent.id, label: agent.name })),
+                ]}
                 onChange={(event) => {
                   const agentId = event.target.value
                   if (!agentId) setIntent({ kind: 'unbind', channelId: channel.id })
@@ -61,13 +78,14 @@ export default function WiringSpace() {
   const parsed = parseSelection(rest)
   const fallback = connections.find((connection) => connection.userManaged) ?? connections[0]
   const selected: Selection | undefined = parsed ?? (fallback ? { kind: 'connection', id: fallback.id } : undefined)
-  const selectedName =
-    selected?.kind === 'connection'
-      ? connections.find((item) => item.id === selected.id)
-      : undefined
+  const selectedName = selected?.kind === 'connection' ? connections.find((item) => item.id === selected.id) : undefined
   useCrumb(
     '接线',
-    selectedName ? connectionDisplayName(selectedName) : selected?.kind === 'channel' ? channels.find((item) => item.id === selected.id)?.name : undefined,
+    selectedName
+      ? connectionDisplayName(selectedName)
+      : selected?.kind === 'channel'
+        ? channels.find((item) => item.id === selected.id)?.name
+        : undefined,
   )
   return (
     <div className={styles.space}>

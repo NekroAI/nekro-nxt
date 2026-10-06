@@ -83,7 +83,15 @@ export function EmptyState({
 }
 
 /** Height-animated reveal that keeps the content mounted (no layout jump, no remount). */
-export function Disclosure({ open, children, id }: { readonly open: boolean; readonly children: ReactNode; readonly id?: string }) {
+export function Disclosure({
+  open,
+  children,
+  id,
+}: {
+  readonly open: boolean
+  readonly children: ReactNode
+  readonly id?: string
+}) {
   const inner = useRef<HTMLDivElement>(null)
   useEffect(() => {
     inner.current?.toggleAttribute('inert', !open)
@@ -97,12 +105,35 @@ export function Disclosure({ open, children, id }: { readonly open: boolean; rea
   )
 }
 
-export function Skeleton({ width, height = 14, radius }: { readonly width?: number | string; readonly height?: number; readonly radius?: number }) {
-  return <span className={styles.skeleton} style={{ display: 'block', width: width ?? '100%', height, borderRadius: radius }} aria-hidden="true" />
+export function Skeleton({
+  width,
+  height = 14,
+  radius,
+}: {
+  readonly width?: number | string
+  readonly height?: number
+  readonly radius?: number
+}) {
+  return (
+    <span
+      className={styles.skeleton}
+      style={{ display: 'block', width: width ?? '100%', height, borderRadius: radius }}
+      aria-hidden="true"
+    />
+  )
 }
 
 /** Lifecycle progress: done steps fill green, the current step is outlined in the accent color. */
-export function Stepper({ steps, current }: { readonly steps: readonly string[]; readonly current: number }) {
+/** Linear progress; `failed` marks the current step as the one that stopped the flow. */
+export function Stepper({
+  steps,
+  current,
+  failed = false,
+}: {
+  readonly steps: readonly string[]
+  readonly current: number
+  readonly failed?: boolean
+}) {
   const count = steps.length
   const fill = count <= 1 ? 0 : Math.min(1, current / (count - 1))
   return (
@@ -116,10 +147,14 @@ export function Stepper({ steps, current }: { readonly steps: readonly string[];
         return (
           <li
             key={step}
-            className={[styles.step, done ? styles.stepDone : '', now ? styles.stepNow : ''].join(' ')}
+            className={[
+              styles.step,
+              done ? styles.stepDone : '',
+              now ? (failed ? styles.stepFailed : styles.stepNow) : '',
+            ].join(' ')}
             aria-current={now ? 'step' : undefined}
           >
-            <span className={styles.stepKey}>{done ? '✓' : index + 1}</span>
+            <span className={styles.stepKey}>{done ? '✓' : now && failed ? '!' : index + 1}</span>
             {step}
           </li>
         )
@@ -135,7 +170,13 @@ export interface TimelineEntry {
   readonly meta?: ReactNode
 }
 
-export function Timeline({ entries, accent }: { readonly entries: readonly TimelineEntry[]; readonly accent?: string }) {
+export function Timeline({
+  entries,
+  accent,
+}: {
+  readonly entries: readonly TimelineEntry[]
+  readonly accent?: string
+}) {
   return (
     <ol className={styles.timeline} style={accent ? ({ '--timeline-accent': accent } as CSSProperties) : undefined}>
       {entries.map((entry, index) => (
@@ -245,11 +286,23 @@ export function Sparkline({
   const width = 300
   if (values.length < 2) return null
   const max = Math.max(...values, 1) * 1.2
-  const line = smoothPath(values.map((value, index) => [(index / (values.length - 1)) * width, height - (value / max) * (height - 4)]))
+  const line = smoothPath(
+    values.map((value, index) => [(index / (values.length - 1)) * width, height - (value / max) * (height - 4)]),
+  )
   return (
-    <svg className={className} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true" style={{ display: 'block', width: '100%', height }}>
+    <svg
+      className={className}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+      style={{ display: 'block', width: '100%', height }}
+    >
       <path d={`${line} L${width},${height} L0,${height} Z`} style={{ fill }} />
-      <path d={line} style={{ fill: 'none', stroke: color, strokeWidth: 1.5, opacity: 0.8 }} vectorEffect="non-scaling-stroke" />
+      <path
+        d={line}
+        style={{ fill: 'none', stroke: color, strokeWidth: 1.5, opacity: 0.8 }}
+        vectorEffect="non-scaling-stroke"
+      />
     </svg>
   )
 }

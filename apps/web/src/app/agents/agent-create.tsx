@@ -13,9 +13,15 @@ export function AgentCreate() {
   const navigate = useNavigate()
   const models = useProductStore((state) => state.models)
   const availability = useProductStore((state) => state.capabilityAvailability)
-  const initial = useMemo(() => createAgentDraft(models, availability.webSearch.available), [models, availability.webSearch.available])
+  const initial = useMemo(
+    () => createAgentDraft(models, availability.webSearch.available),
+    [models, availability.webSearch.available],
+  )
   const [name, setName] = useState('')
-  const [persona, setPersona] = useState<{ readonly document: PromptDocumentV1; readonly text: string }>(() => ({ document: promptDocumentFromText(''), text: '' }))
+  const [persona, setPersona] = useState<{ readonly document: PromptDocumentV1; readonly text: string }>(() => ({
+    document: promptDocumentFromText(''),
+    text: '',
+  }))
   const [modelKey, setModelKey] = useState(initial.selectedModelKey)
   const [creating, setCreating] = useState(false)
   const model = models.find((item) => agentModelKey(item) === (modelKey || initial.selectedModelKey))
@@ -51,12 +57,25 @@ export function AgentCreate() {
         <h1>新建智能体</h1>
       </div>
       {models.length === 0 ? (
-        <Banner tone="warn" action={<Button size="small" onClick={() => navigate('/settings/models')}>添加模型</Button>}>
+        <Banner
+          tone="warn"
+          action={
+            <Button size="small" onClick={() => navigate('/settings/models')}>
+              添加模型
+            </Button>
+          }
+        >
           还没有可用模型
         </Banner>
       ) : null}
       <Field label="名称">
-        <Input value={name} onChange={(event) => setName(event.target.value)} maxLength={40} placeholder="比如：小奈" autoFocus />
+        <Input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          maxLength={40}
+          placeholder="比如：小奈"
+          autoFocus
+        />
       </Field>
       <PromptReferenceEditor
         value={persona.document}

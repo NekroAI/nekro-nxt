@@ -19,7 +19,13 @@ interface Command {
   readonly run: () => void
 }
 
-export function CommandPalette({ open, onOpenChange }: { readonly open: boolean; readonly onOpenChange: (open: boolean) => void }) {
+export function CommandPalette({
+  open,
+  onOpenChange,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+}) {
   const navigate = useNavigate()
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
@@ -40,7 +46,14 @@ export function CommandPalette({ open, onOpenChange }: { readonly open: boolean;
         keywords: label,
         run: go(path),
       })),
-      { id: 'go:settings', group: '前往', label: '设置', icon: <Settings />, keywords: '设置 settings', run: go('/settings') },
+      {
+        id: 'go:settings',
+        group: '前往',
+        label: '设置',
+        icon: <Settings />,
+        keywords: '设置 settings',
+        run: go('/settings'),
+      },
       ...channels.map((channel) => {
         const connection = connectionName.get(channel.connectionId)
         const source = connection ? connection.alias || connection.name : channel.connectionName
@@ -63,7 +76,14 @@ export function CommandPalette({ open, onOpenChange }: { readonly open: boolean;
         keywords: agent.name,
         run: go(`/agents/${agent.id}`),
       })),
-      { id: 'action:new-agent', group: '操作', label: '新建智能体', icon: <Plus />, keywords: '新建 创建 智能体', run: go('/agents/new') },
+      {
+        id: 'action:new-agent',
+        group: '操作',
+        label: '新建智能体',
+        icon: <Plus />,
+        keywords: '新建 创建 智能体',
+        run: go('/agents/new'),
+      },
       {
         id: 'action:theme',
         group: '操作',
@@ -77,7 +97,11 @@ export function CommandPalette({ open, onOpenChange }: { readonly open: boolean;
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    return needle ? commands.filter((command) => `${command.label} ${command.keywords} ${command.group}`.toLowerCase().includes(needle)) : commands
+    return needle
+      ? commands.filter((command) =>
+          `${command.label} ${command.keywords} ${command.group}`.toLowerCase().includes(needle),
+        )
+      : commands
   }, [commands, query])
 
   useEffect(() => {
@@ -116,7 +140,10 @@ export function CommandPalette({ open, onOpenChange }: { readonly open: boolean;
             }
           }}
         >
-          <RadixDialog.Title className="sr-only" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>
+          <RadixDialog.Title
+            className="sr-only"
+            style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}
+          >
             搜索
           </RadixDialog.Title>
           <div className={styles.input}>

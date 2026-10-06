@@ -684,7 +684,12 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--turn-accent) 22%, transparent) 50%, transparent 70%);
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--turn-accent) 22%, transparent) 50%,
+    transparent 70%
+  );
   background-size: 220% 100%;
   animation: shimmer 1.6s linear infinite;
 }

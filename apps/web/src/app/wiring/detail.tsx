@@ -45,7 +45,12 @@ function MemberList({ connectionId }: { readonly connectionId: string }) {
   return (
     <section>
       <h3 className={styles.detailTitle}>成员 {result ? result.total : ''}</h3>
-      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="查找成员" aria-label="查找成员" />
+      <Input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="查找成员"
+        aria-label="查找成员"
+      />
       <div className={styles.members}>
         {result?.items.map((user) => (
           <div key={user.identityId} className={styles.member}>
@@ -80,7 +85,12 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
     () =>
       (descriptor?.activities ?? []).filter((activity) => {
         const capability = connection.activityCapabilities[activity.key]
-        return activity.scope === 'channel' && activity.triggerable && capability?.state !== 'disabled' && capability?.state !== 'unsupported'
+        return (
+          activity.scope === 'channel' &&
+          activity.triggerable &&
+          capability?.state !== 'disabled' &&
+          capability?.state !== 'unsupported'
+        )
       }),
     [descriptor, connection.activityCapabilities],
   )
@@ -97,7 +107,9 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
     }
   }
   const setActivity = async (key: string, enabled: boolean) => {
-    const next = enabled ? [...new Set([...connection.activityTriggerDefaults, key])] : connection.activityTriggerDefaults.filter((item) => item !== key)
+    const next = enabled
+      ? [...new Set([...connection.activityTriggerDefaults, key])]
+      : connection.activityTriggerDefaults.filter((item) => item !== key)
     try {
       await api.getState().updateConnectionActivityTriggerDefaults(connection.id, next)
     } catch (error) {
@@ -133,8 +145,17 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
       {connection.userManaged && descriptor?.aliasEditable !== false ? (
         <Field label="名称">
           <div className={styles.inline}>
-            <Input value={alias} onChange={(event) => setAlias(event.target.value)} placeholder={connection.adapter} maxLength={80} />
-            <Button onClick={() => void saveAlias()} busy={savingAlias} disabled={alias.trim() === (connection.alias ?? '')}>
+            <Input
+              value={alias}
+              onChange={(event) => setAlias(event.target.value)}
+              placeholder={connection.adapter}
+              maxLength={80}
+            />
+            <Button
+              onClick={() => void saveAlias()}
+              busy={savingAlias}
+              disabled={alias.trim() === (connection.alias ?? '')}
+            >
               保存
             </Button>
           </div>
@@ -148,7 +169,11 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
             const agent = agents.find((item) => item.id === channel.agentId)
             return (
               <div key={channel.id}>
-                {agent ? <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" /> : <MemberAvatar name="?" size="xs" />}
+                {agent ? (
+                  <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
+                ) : (
+                  <MemberAvatar name="?" size="xs" />
+                )}
                 {channel.name}
                 <span className={styles.end}>{agent?.name ?? '未接线'}</span>
               </div>
@@ -188,7 +213,12 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
             ) : null}
             {descriptor.diagnostics.send && connection.knownChannels.length ? (
               <>
-                <Select value={testChannel} onChange={(event) => setTestChannel(event.target.value)} options={connection.knownChannels.map((channel) => ({ value: channel.id, label: channel.name }))} aria-label="测试频道" />
+                <Select
+                  value={testChannel}
+                  onChange={(event) => setTestChannel(event.target.value)}
+                  options={connection.knownChannels.map((channel) => ({ value: channel.id, label: channel.name }))}
+                  aria-label="测试频道"
+                />
                 <div className={styles.inline}>
                   <span className={styles.testResult}>{connection.sendTest || '发送'}</span>
                   <Button size="small" busy={testing === 'send'} onClick={() => void runTest('send')}>
@@ -237,8 +267,12 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
 function ChannelDetail({ channelId }: { readonly channelId: string }) {
   const navigate = useNavigate()
   const channel = useProductStore((state) => state.channels.find((item) => item.id === channelId))
-  const agent = useProductStore((state) => (channel ? state.agents.find((item) => item.id === channel.agentId) : undefined))
-  const connection = useProductStore((state) => (channel ? state.connections.find((item) => item.id === channel.connectionId) : undefined))
+  const agent = useProductStore((state) =>
+    channel ? state.agents.find((item) => item.id === channel.agentId) : undefined,
+  )
+  const connection = useProductStore((state) =>
+    channel ? state.connections.find((item) => item.id === channel.connectionId) : undefined,
+  )
   const [intent, setIntent] = useState<BindIntent | null>(null)
   if (!channel) return null
   const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
@@ -246,7 +280,13 @@ function ChannelDetail({ channelId }: { readonly channelId: string }) {
     <>
       <div className={styles.detailHead}>
         <h2>{channel.name}</h2>
-        <div className={styles.detailSub}>{connection ? (connection.alias ? `${connection.alias} · ${connection.adapter}` : connection.adapter) : channel.connectionName}</div>
+        <div className={styles.detailSub}>
+          {connection
+            ? connection.alias
+              ? `${connection.alias} · ${connection.adapter}`
+              : connection.adapter
+            : channel.connectionName}
+        </div>
       </div>
       <div className={styles.facts}>
         <div>
@@ -266,12 +306,22 @@ function ChannelDetail({ channelId }: { readonly channelId: string }) {
           打开频道
         </Button>
         {agent ? (
-          <Button size="small" variant="ghost" icon={<Unplug />} onClick={() => setIntent({ kind: 'unbind', channelId: channel.id })}>
+          <Button
+            size="small"
+            variant="ghost"
+            icon={<Unplug />}
+            onClick={() => setIntent({ kind: 'unbind', channelId: channel.id })}
+          >
             断开
           </Button>
         ) : null}
         {connection?.userManaged ? (
-          <Button size="small" variant="ghost" icon={<UsersRound />} onClick={() => navigate(`/wiring/connections/${connection.id}`)}>
+          <Button
+            size="small"
+            variant="ghost"
+            icon={<UsersRound />}
+            onClick={() => navigate(`/wiring/connections/${connection.id}`)}
+          >
             账号与成员
           </Button>
         ) : null}
@@ -281,7 +331,11 @@ function ChannelDetail({ channelId }: { readonly channelId: string }) {
   )
 }
 
-export function WiringDetail({ selected }: { readonly selected: { readonly kind: 'connection' | 'channel' | 'agent'; readonly id: string } | undefined }) {
+export function WiringDetail({
+  selected,
+}: {
+  readonly selected: { readonly kind: 'connection' | 'channel' | 'agent'; readonly id: string } | undefined
+}) {
   const connection = useProductStore((state) =>
     selected?.kind === 'connection' ? state.connections.find((item) => item.id === selected.id) : undefined,
   )

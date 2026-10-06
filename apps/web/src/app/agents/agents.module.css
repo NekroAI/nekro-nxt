@@ -102,7 +102,11 @@
   width: 620px;
   height: 460px;
   border-radius: 50%;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--agent-accent, var(--accent)) 24%, transparent), transparent);
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--agent-accent, var(--accent)) 24%, transparent),
+    transparent
+  );
   pointer-events: none;
 }
 
@@ -205,7 +209,9 @@
   top: 4px;
   left: 12px;
   color: color-mix(in srgb, var(--agent-accent, var(--accent)) 50%, transparent);
-  font: 700 40px/1 Georgia, serif;
+  font:
+    700 40px/1 Georgia,
+    serif;
 }
 
 .editor {

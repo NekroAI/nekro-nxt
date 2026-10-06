@@ -11,7 +11,12 @@ import {
   type CollisionDetection,
   type DragEndEvent,
 } from '@dnd-kit/core'
-import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -88,13 +93,17 @@ function RowContent({
         {mode === 'recent' && agent ? <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" /> : null}
         <span>{channel.name}</span>
         {mode === 'recent' ? <span className={styles.rowSource}>{source}</span> : null}
-        {working && agent ? <i className={styles.runDot} style={{ '--run-color': agentAccent(agent) } as CSSProperties} /> : null}
+        {working && agent ? (
+          <i className={styles.runDot} style={{ '--run-color': agentAccent(agent) } as CSSProperties} />
+        ) : null}
       </span>
       <span className={styles.rowTime}>{relativeTime(activity.at)}</span>
       <span className={styles.rowSub}>
         {mode === 'recent' && activity.preview ? `${activity.preview.author}：${activity.preview.text}` : sourceFull}
       </span>
-      {channel.unread > 0 ? <span className={styles.rowBadge}>{channel.unread > 99 ? '99+' : channel.unread}</span> : null}
+      {channel.unread > 0 ? (
+        <span className={styles.rowBadge}>{channel.unread > 99 ? '99+' : channel.unread}</span>
+      ) : null}
     </>
   )
 }
@@ -112,7 +121,9 @@ function SortableRow({
   readonly selected: boolean
   readonly suppressClick: (event: MouseEvent) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: channelSortId(channel.id) })
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: channelSortId(channel.id),
+  })
   return (
     <Link
       ref={setNodeRef}
@@ -147,7 +158,13 @@ function AgentGroup({
     <div
       ref={setNodeRef}
       className={[styles.group, highlight ? styles.groupDrop : ''].join(' ')}
-      style={{ transform: CSS.Translate.toString(transform), transition, '--group-accent': agentAccent(agent) } as CSSProperties}
+      style={
+        {
+          transform: CSS.Translate.toString(transform),
+          transition,
+          '--group-accent': agentAccent(agent),
+        } as CSSProperties
+      }
     >
       <button
         type="button"
@@ -166,7 +183,15 @@ function AgentGroup({
   )
 }
 
-function UnboundGroup({ children, count, highlight }: { readonly children: ReactNode; readonly count: number; readonly highlight: boolean }) {
+function UnboundGroup({
+  children,
+  count,
+  highlight,
+}: {
+  readonly children: ReactNode
+  readonly count: number
+  readonly highlight: boolean
+}) {
   const { setNodeRef } = useDroppable({ id: UNBOUND_DROP_ID })
   return (
     <div ref={setNodeRef} className={[styles.group, highlight ? styles.groupDrop : ''].join(' ')}>
@@ -209,7 +234,9 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
     for (const group of tree.agents) for (const channel of group.channels) channelAgentId[channel.id] = group.agent.id
     return {
       agentIds: tree.agents.map((group) => group.agent.id),
-      channelIdsByAgent: Object.fromEntries(tree.agents.map((group) => [group.agent.id, group.channels.map((channel) => channel.id)])),
+      channelIdsByAgent: Object.fromEntries(
+        tree.agents.map((group) => [group.agent.id, group.channels.map((channel) => channel.id)]),
+      ),
       unboundChannelIds: tree.unbound.map((channel) => channel.id),
       channelAgentId,
     }
@@ -226,7 +253,11 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
   const collision: CollisionDetection = (args) => {
     const hits = pointerWithin(args).map((hit) => String(hit.id))
     if (hits.length) {
-      const picked = pickWorkTreeCollision({ activeId: String(args.active.id), pointerHits: hits, channelOwnerById: lists.channelAgentId })
+      const picked = pickWorkTreeCollision({
+        activeId: String(args.active.id),
+        pointerHits: hits,
+        channelOwnerById: lists.channelAgentId,
+      })
       if (picked) return [{ id: picked }]
     }
     return closestCenter(args)
@@ -236,7 +267,11 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
     setActiveId('')
     setOverId('')
     window.setTimeout(() => (dragged.current = false), 80)
-    const resolution = resolveWorkTreeDragEnd({ activeId: String(event.active.id), overId: event.over ? String(event.over.id) : '', lists })
+    const resolution = resolveWorkTreeDragEnd({
+      activeId: String(event.active.id),
+      overId: event.over ? String(event.over.id) : '',
+      lists,
+    })
     if (resolution.kind === 'bind' || resolution.kind === 'replace') {
       setIntent({ kind: resolution.kind, channelId: resolution.channelId, agentId: resolution.agentId })
       return
@@ -265,7 +300,9 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
   const sourceAgent = activeChannelId ? (lists.channelAgentId[activeChannelId] ?? '') : ''
   const highlightAgent = activeChannel && overAgent && overAgent !== sourceAgent ? overAgent : ''
   const highlightUnbound = Boolean(activeChannel && sourceAgent && overId === UNBOUND_DROP_ID)
-  const selectedAgent = selectedId ? agentById.get(channels.find((channel) => channel.id === selectedId)?.agentId ?? '') : undefined
+  const selectedAgent = selectedId
+    ? agentById.get(channels.find((channel) => channel.id === selectedId)?.agentId ?? '')
+    : undefined
 
   return (
     <aside className={styles.list} aria-label="频道">
@@ -284,7 +321,10 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
         ]}
       />
       <div className={styles.listBody}>
-        <SelectionList selectedKey={`${mode}:${selectedId ?? ''}`} accent={selectedAgent ? agentAccent(selectedAgent) : undefined}>
+        <SelectionList
+          selectedKey={`${mode}:${selectedId ?? ''}`}
+          accent={selectedAgent ? agentAccent(selectedAgent) : undefined}
+        >
           {mode === 'recent' ? (
             recent.map((channel) => (
               <Link
@@ -294,7 +334,12 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
                 data-selected={channel.id === selectedId}
                 aria-current={channel.id === selectedId ? 'page' : undefined}
               >
-                <RowContent channel={channel} agent={agentById.get(channel.agentId)} connection={connectionById.get(channel.connectionId)} mode="recent" />
+                <RowContent
+                  channel={channel}
+                  agent={agentById.get(channel.agentId)}
+                  connection={connectionById.get(channel.connectionId)}
+                  mode="recent"
+                />
               </Link>
             ))
           ) : (
@@ -312,13 +357,18 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
               }}
               onDragEnd={onDragEnd}
               accessibility={{
-                screenReaderInstructions: { draggable: '按空格开始拖动，用方向键移动，再按空格放下，按 Esc 取消。跨智能体放下会先确认。' },
+                screenReaderInstructions: {
+                  draggable: '按空格开始拖动，用方向键移动，再按空格放下，按 Esc 取消。跨智能体放下会先确认。',
+                },
               }}
             >
               <SortableContext items={lists.agentIds.map(agentSortId)} strategy={verticalListSortingStrategy}>
                 {tree.agents.map((group) => (
                   <AgentGroup key={group.agent.id} agent={group.agent} highlight={highlightAgent === group.agent.id}>
-                    <SortableContext items={group.channels.map((channel) => channelSortId(channel.id))} strategy={verticalListSortingStrategy}>
+                    <SortableContext
+                      items={group.channels.map((channel) => channelSortId(channel.id))}
+                      strategy={verticalListSortingStrategy}
+                    >
                       {group.channels.map((channel) => (
                         <SortableRow
                           key={channel.id}
@@ -334,7 +384,10 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
                 ))}
               </SortableContext>
               <UnboundGroup count={tree.unbound.length} highlight={highlightUnbound}>
-                <SortableContext items={tree.unbound.map((channel) => channelSortId(channel.id))} strategy={verticalListSortingStrategy}>
+                <SortableContext
+                  items={tree.unbound.map((channel) => channelSortId(channel.id))}
+                  strategy={verticalListSortingStrategy}
+                >
                   {tree.unbound.map((channel) => (
                     <SortableRow
                       key={channel.id}
@@ -348,7 +401,11 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
                 </SortableContext>
               </UnboundGroup>
               <DragOverlay dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}>
-                {activeChannel ? <div className={styles.dragOverlay}>{activeChannel.name}</div> : activeAgent ? <div className={styles.dragOverlay}>{activeAgent.name}</div> : null}
+                {activeChannel ? (
+                  <div className={styles.dragOverlay}>{activeChannel.name}</div>
+                ) : activeAgent ? (
+                  <div className={styles.dragOverlay}>{activeAgent.name}</div>
+                ) : null}
               </DragOverlay>
             </DndContext>
           )}

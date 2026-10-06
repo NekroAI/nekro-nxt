@@ -24,9 +24,15 @@ export default function ChannelsSpace() {
   const navigate = useNavigate()
   const hostStatus = useProductStore((state) => state.host.status)
   const channels = useProductStore((state) => state.channels)
-  const channel = useProductStore((state) => (channelId ? state.channels.find((item) => item.id === channelId) : undefined))
-  const agent = useProductStore((state) => (channel ? state.agents.find((item) => item.id === channel.agentId) : undefined))
-  const connection = useProductStore((state) => (channel ? state.connections.find((item) => item.id === channel.connectionId) : undefined))
+  const channel = useProductStore((state) =>
+    channelId ? state.channels.find((item) => item.id === channelId) : undefined,
+  )
+  const agent = useProductStore((state) =>
+    channel ? state.agents.find((item) => item.id === channel.agentId) : undefined,
+  )
+  const connection = useProductStore((state) =>
+    channel ? state.connections.find((item) => item.id === channel.connectionId) : undefined,
+  )
   const [inspectorOpen, setInspectorOpen] = useState(readInspector)
   useCrumb('频道', channel?.name)
 
@@ -63,7 +69,9 @@ export default function ChannelsSpace() {
             inspectorOpen={inspectorOpen}
             onToggleInspector={toggleInspector}
           />
-          {inspectorOpen ? <ChannelInspector key={channel.id} channel={channel} agent={agent} connection={connection} /> : null}
+          {inspectorOpen ? (
+            <ChannelInspector key={channel.id} channel={channel} agent={agent} connection={connection} />
+          ) : null}
         </>
       ) : (
         <div className={styles.emptyCanvas}>

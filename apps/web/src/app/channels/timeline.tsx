@@ -6,7 +6,14 @@ import { AgentAvatar, Button, Chip, Spinner } from '../../ui-kit/next/index.js'
 import { MemberAvatar } from '../../ui-kit/next/avatar.js'
 import { agentAccent, agentHue } from '../model/identity.js'
 import styles from './channels.module.css'
-import { formatDuration, formatTokens, isTurnRunning, isUnconfirmed, presentToolInput, type RuntimeTurn } from './timeline-model.js'
+import {
+  formatDuration,
+  formatTokens,
+  isTurnRunning,
+  isUnconfirmed,
+  presentToolInput,
+  type RuntimeTurn,
+} from './timeline-model.js'
 
 type RuntimeStep = RuntimeTurn['steps'][number]
 type RuntimeTool = RuntimeStep['tools'][number]
@@ -26,7 +33,11 @@ export const MessageRow = memo(function MessageRow({
   readonly fresh: boolean
   readonly onResolve?: ((messageId: string, action: 'retry' | 'confirm-delivered') => void) | undefined
 }) {
-  const side = resolveMessageSide({ channelKind, role: message.role, ...(message.origin ? { origin: message.origin } : {}) })
+  const side = resolveMessageSide({
+    channelKind,
+    role: message.role,
+    ...(message.origin ? { origin: message.origin } : {}),
+  })
   if (side === 'system') {
     return (
       <div className={styles.systemLine}>
@@ -49,7 +60,11 @@ export const MessageRow = memo(function MessageRow({
       style={accent ? ({ '--bubble-accent': accent } as CSSProperties) : undefined}
       data-message-id={message.id}
     >
-      {fromAgent && agent ? <AgentAvatar name={agent.name} hue={agentHue(agent)} /> : <MemberAvatar name={message.author} />}
+      {fromAgent && agent ? (
+        <AgentAvatar name={agent.name} hue={agentHue(agent)} />
+      ) : (
+        <MemberAvatar name={message.author} />
+      )}
       {continued ? null : (
         <div className={styles.meta}>
           <b>{message.author}</b>
@@ -115,7 +130,9 @@ function ToolChip({ tool }: { readonly tool: RuntimeTool }) {
       {state.icon}
       <b>{tool.displayName}</b>
       {chipArg ? <span className={styles.stepArg}>{chipArg}</span> : null}
-      {tool.durationMs !== undefined ? <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span> : null}
+      {tool.durationMs !== undefined ? (
+        <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span>
+      ) : null}
     </span>
   )
 }
@@ -127,7 +144,9 @@ function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index:
       <div className={styles.cardHead}>
         <span className={styles.cardIndex}>{index + 1}</span>
         <b>{tool.displayName}</b>
-        {tool.durationMs !== undefined ? <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span> : null}
+        {tool.durationMs !== undefined ? (
+          <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span>
+        ) : null}
         <span className={styles.cardState}>
           {tool.state === 'running' ? (
             <Chip tone="accent" dot>
@@ -172,7 +191,13 @@ function ToolCard({ tool, index }: { readonly tool: RuntimeTool; readonly index:
         {tool.wroteToChannel ? (
           <>
             <dt>频道</dt>
-            <dd>{tool.deliveryState === 'sent' ? '已发出消息' : tool.deliveryState === 'unknown' ? '发出结果未确认' : '写入频道'}</dd>
+            <dd>
+              {tool.deliveryState === 'sent'
+                ? '已发出消息'
+                : tool.deliveryState === 'unknown'
+                  ? '发出结果未确认'
+                  : '写入频道'}
+            </dd>
           </>
         ) : null}
       </dl>
@@ -200,7 +225,9 @@ const turnSummary = (turn: RuntimeTurn): string => {
   if (turn.state === 'error') return turn.error?.message ? `出错：${turn.error.message}` : '出错'
   if (turn.state === 'interrupted') return '被中断'
   if (turn.state === 'max-tokens') return '输出达到上限'
-  const sent = turn.steps.flatMap((step) => step.tools).filter((tool) => tool.wroteToChannel && tool.deliveryState === 'sent').length
+  const sent = turn.steps
+    .flatMap((step) => step.tools)
+    .filter((tool) => tool.wroteToChannel && tool.deliveryState === 'sent').length
   if (sent) return `回复了 ${sent} 条`
   if (turn.state === 'unreplied' || turn.responseState === 'finished') return '没有回复'
   return ''
@@ -225,7 +252,10 @@ export function TurnRow({
   const tools = turn.steps.flatMap((step) => step.tools)
   const summary = running ? '' : turnSummary(turn)
   const usage = turn.steps.reduce(
-    (sum, step) => ({ input: sum.input + (step.usage?.inputTokens ?? 0), output: sum.output + (step.usage?.outputTokens ?? 0) }),
+    (sum, step) => ({
+      input: sum.input + (step.usage?.inputTokens ?? 0),
+      output: sum.output + (step.usage?.outputTokens ?? 0),
+    }),
     { input: 0, output: 0 },
   )
   const firstToken = turn.steps.find((step) => step.firstTokenMs !== undefined)?.firstTokenMs
@@ -242,12 +272,17 @@ export function TurnRow({
             {startedAt ? <Elapsed since={startedAt} /> : '进行中'}
           </Chip>
         ) : (
-          <span>
-            {[summary, formatDuration(turn.durationMs)].filter(Boolean).join(' · ')}
-          </span>
+          <span>{[summary, formatDuration(turn.durationMs)].filter(Boolean).join(' · ')}</span>
         )}
         {running && onStop ? (
-          <Button size="small" variant="danger" className={styles.turnStop} icon={<Square />} onClick={onStop} title="停止当前任务">
+          <Button
+            size="small"
+            variant="danger"
+            className={styles.turnStop}
+            icon={<Square />}
+            onClick={onStop}
+            title="停止当前任务"
+          >
             停止
           </Button>
         ) : null}

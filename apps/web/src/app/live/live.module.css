@@ -399,7 +399,11 @@
   position: absolute;
   inset: 0 0 auto;
   height: 96px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--card-accent, var(--accent)) 11%, transparent), transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--card-accent, var(--accent)) 11%, transparent),
+    transparent
+  );
   pointer-events: none;
 }
 

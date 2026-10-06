@@ -1,7 +1,13 @@
 import { Cable, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { connectionDisplayName, useProductStore, type AgentSummary, type ChannelSummary, type ConnectionSummary } from '../../product-runtime.js'
+import {
+  connectionDisplayName,
+  useProductStore,
+  type AgentSummary,
+  type ChannelSummary,
+  type ConnectionSummary,
+} from '../../product-runtime.js'
 import { AgentAvatar, Button, ConfirmDialog, Field, Gauge, Select, StatusDot, toast } from '../../ui-kit/next/index.js'
 import { agentHue, connectionTone, isAgentWorking, triggerLabel } from '../model/identity.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
@@ -30,7 +36,13 @@ export function ChannelInspector({
   const binding = channel.bindings[0]
   const occupancy = runtime?.occupancy
   const breakdown = occupancy?.breakdown
-  const other = occupancy && breakdown ? Math.max(0, occupancy.projectedTokens - breakdown.systemTokens - breakdown.toolsTokens - breakdown.messageTokens) : 0
+  const other =
+    occupancy && breakdown
+      ? Math.max(
+          0,
+          occupancy.projectedTokens - breakdown.systemTokens - breakdown.toolsTokens - breakdown.messageTokens,
+        )
+      : 0
 
   const changeTrigger = async (triggerPolicy: TriggerPolicy) => {
     if (!agent) return
@@ -66,7 +78,8 @@ export function ChannelInspector({
               options={agents.map((item) => ({ value: item.id, label: item.name }))}
               onChange={(event) => {
                 const next = event.target.value
-                if (next && next !== agent?.id) setIntent({ kind: agent ? 'replace' : 'bind', channelId: channel.id, agentId: next })
+                if (next && next !== agent?.id)
+                  setIntent({ kind: agent ? 'replace' : 'bind', channelId: channel.id, agentId: next })
               }}
             />
           </Field>
@@ -74,7 +87,10 @@ export function ChannelInspector({
             <Field label="触发">
               <Select
                 value={binding.triggerPolicy}
-                options={(['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map((value) => ({ value, label: triggerLabel[value] ?? value }))}
+                options={(['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map((value) => ({
+                  value,
+                  label: triggerLabel[value] ?? value,
+                }))}
                 onChange={(event) => void changeTrigger(event.target.value as TriggerPolicy)}
               />
             </Field>
@@ -158,7 +174,9 @@ export function ChannelInspector({
           toast(reset === 'clear' ? '已清空上下文' : '已压缩上下文')
         }}
       >
-        <p>{reset === 'clear' ? '当前任务会停止，从空白开始。聊天记录保留。' : '当前任务会停止，对话整理成摘要后继续。'}</p>
+        <p>
+          {reset === 'clear' ? '当前任务会停止，从空白开始。聊天记录保留。' : '当前任务会停止，对话整理成摘要后继续。'}
+        </p>
       </ConfirmDialog>
       <ConfirmDialog
         open={removing}

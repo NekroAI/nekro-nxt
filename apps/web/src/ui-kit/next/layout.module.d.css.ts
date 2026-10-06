@@ -21,6 +21,7 @@ declare const styles: {
   readonly small: string
   readonly step: string
   readonly stepDone: string
+  readonly stepFailed: string
   readonly stepFill: string
   readonly stepKey: string
   readonly stepNow: string

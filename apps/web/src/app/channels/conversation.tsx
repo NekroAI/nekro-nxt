@@ -10,7 +10,16 @@ import {
   type ConnectionSummary,
   type ConversationMessage,
 } from '../../product-runtime.js'
-import { AgentAvatar, Button, Chip, ConfirmDialog, Disclosure, MemberAvatar, StatusDot, toast } from '../../ui-kit/next/index.js'
+import {
+  AgentAvatar,
+  Button,
+  Chip,
+  ConfirmDialog,
+  Disclosure,
+  MemberAvatar,
+  StatusDot,
+  toast,
+} from '../../ui-kit/next/index.js'
 import { agentHue, agentPhase, connectionTone, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
@@ -27,7 +36,15 @@ const readXray = (): boolean => {
   }
 }
 
-function Composer({ channel, agent, connection }: { readonly channel: ChannelSummary; readonly agent: AgentSummary | undefined; readonly connection: ConnectionSummary | undefined }) {
+function Composer({
+  channel,
+  agent,
+  connection,
+}: {
+  readonly channel: ChannelSummary
+  readonly agent: AgentSummary | undefined
+  readonly connection: ConnectionSummary | undefined
+}) {
   const api = useProductApi()
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -103,7 +120,12 @@ function Composer({ channel, agent, connection }: { readonly channel: ChannelSum
           />
         </>
       )}
-      <button type="submit" className={styles.send} disabled={Boolean(blocked) || !draft.trim() || sending} aria-label="发送">
+      <button
+        type="submit"
+        className={styles.send}
+        disabled={Boolean(blocked) || !draft.trim() || sending}
+        aria-label="发送"
+      >
         <ArrowRight aria-hidden="true" />
       </button>
     </form>
@@ -152,7 +174,13 @@ function Queue({ channelId, count }: { readonly channelId: string; readonly coun
         <div className={styles.queueList}>
           {events.map((event) => (
             <div key={event.eventId}>
-              <span className={styles.time}>{new Date(event.receivedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+              <span className={styles.time}>
+                {new Date(event.receivedAt).toLocaleTimeString('zh-CN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: false,
+                })}
+              </span>
               <span>
                 <b>{event.author}</b>：{event.preview}
               </span>
@@ -189,8 +217,14 @@ export function Conversation({
   const knownChannel = useRef('')
 
   useEffect(() => {
-    void api.getState().loadChannelMessages(channel.id).catch(() => undefined)
-    void api.getState().loadChannelRuntime(channel.id).catch(() => undefined)
+    void api
+      .getState()
+      .loadChannelMessages(channel.id)
+      .catch(() => undefined)
+    void api
+      .getState()
+      .loadChannelRuntime(channel.id)
+      .catch(() => undefined)
   }, [channel.id])
 
   // Messages already present when a channel opens are history; only later arrivals animate in.
@@ -198,7 +232,10 @@ export function Conversation({
     knownChannel.current = channel.id
     known.current = new Set(messages.map((message) => message.id))
   }
-  const fresh = useMemo(() => new Set(messages.filter((message) => !known.current.has(message.id)).map((message) => message.id)), [messages])
+  const fresh = useMemo(
+    () => new Set(messages.filter((message) => !known.current.has(message.id)).map((message) => message.id)),
+    [messages],
+  )
   useEffect(() => {
     for (const message of messages) known.current.add(message.id)
   }, [messages])
@@ -211,7 +248,9 @@ export function Conversation({
   useEffect(() => {
     if (!latest || latest.occurredAt === undefined || channel.unread === 0) return
     const timer = window.setTimeout(() => {
-      void workspaceApi.markChannelRead(channel.id, { occurredAt: latest.occurredAt ?? 0, sourceId: latest.id }).catch(() => undefined)
+      void workspaceApi
+        .markChannelRead(channel.id, { occurredAt: latest.occurredAt ?? 0, sourceId: latest.id })
+        .catch(() => undefined)
     }, 400)
     return () => window.clearTimeout(timer)
   }, [channel.id, channel.unread, latest])
@@ -220,7 +259,10 @@ export function Conversation({
     try {
       await workspaceApi.resolveOutbound(messageId, action)
       toast(action === 'retry' ? '已重新发送' : '已标记为送达')
-      void api.getState().loadChannelMessages(channel.id, 'latest').catch(() => undefined)
+      void api
+        .getState()
+        .loadChannelMessages(channel.id, 'latest')
+        .catch(() => undefined)
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
     }
@@ -242,7 +284,10 @@ export function Conversation({
   const loadOlder = () => {
     if (!history?.loaded || history.loading || history.loadingMore || history.hasMore === false) return
     scroll.markPrepend()
-    void api.getState().loadChannelMessages(channel.id, 'older').catch(() => undefined)
+    void api
+      .getState()
+      .loadChannelMessages(channel.id, 'older')
+      .catch(() => undefined)
   }
 
   return (
@@ -261,7 +306,13 @@ export function Conversation({
           </h1>
           <div className={styles.subline}>
             {connection ? <StatusDot tone={connectionTone(connection.state)} /> : null}
-            <span>{connection ? (connection.alias ? `${connection.alias} · ${connection.adapter}` : connection.adapter) : channel.connectionName}</span>
+            <span>
+              {connection
+                ? connection.alias
+                  ? `${connection.alias} · ${connection.adapter}`
+                  : connection.adapter
+                : channel.connectionName}
+            </span>
             {agent ? (
               <span className={styles.responder}>
                 <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
@@ -271,7 +322,13 @@ export function Conversation({
             ) : null}
           </div>
         </div>
-        <button type="button" className={styles.toggle} aria-pressed={xray} onClick={() => setXray(!xray)} title="显示思考过程与工具细节">
+        <button
+          type="button"
+          className={styles.toggle}
+          aria-pressed={xray}
+          onClick={() => setXray(!xray)}
+          title="显示思考过程与工具细节"
+        >
           <Eye aria-hidden="true" />
           <span className={styles.toggleLabel}>透视</span>
           <span className={styles.knob} aria-hidden="true" />
@@ -289,7 +346,13 @@ export function Conversation({
       <div ref={scroll.ref} className={styles.conv} onScroll={scroll.onScroll}>
         <div className={[styles.convInner, styles.swap].join(' ')} key={channel.id}>
           {history?.hasMore ? (
-            <Button size="small" variant="ghost" className={styles.older} onClick={loadOlder} busy={history.loadingMore}>
+            <Button
+              size="small"
+              variant="ghost"
+              className={styles.older}
+              onClick={loadOlder}
+              busy={history.loadingMore}
+            >
               加载更早的消息
             </Button>
           ) : null}
@@ -340,7 +403,10 @@ export function Conversation({
         onConfirm={async () => {
           const result = await workspaceApi.stopChannelTask(channel.id, runtime?.episodeId)
           toast(result.result === 'stopped' ? '已停止' : '当前没有进行中的任务')
-          void api.getState().loadChannelRuntime(channel.id).catch(() => undefined)
+          void api
+            .getState()
+            .loadChannelRuntime(channel.id)
+            .catch(() => undefined)
         }}
       >
         <p>已完成的步骤不会撤回，排队的消息会保留。</p>

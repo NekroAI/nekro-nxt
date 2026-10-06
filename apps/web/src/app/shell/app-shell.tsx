@@ -21,7 +21,12 @@ export const SPACES = [
 const spaceOf = (pathname: string): string => `/${pathname.split('/')[1] ?? ''}`
 
 const hostTone: Record<string, Tone> = { ready: 'ok', initializing: 'warn', stale: 'warn', error: 'bad' }
-const hostLabel: Record<string, string> = { ready: '运行正常', initializing: '正在连接', stale: '连接不稳定', error: '无法连接' }
+const hostLabel: Record<string, string> = {
+  ready: '运行正常',
+  initializing: '正在连接',
+  stale: '连接不稳定',
+  error: '无法连接',
+}
 
 function Rail() {
   const location = useLocation()
@@ -105,7 +110,11 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
         <span>搜索</span>
         <Kbd>⌘K</Kbd>
       </button>
-      <Link to="/live" className={styles.bell} aria-label={attention.length ? `${attention.length} 项需要关注` : '没有需要关注的事项'}>
+      <Link
+        to="/live"
+        className={styles.bell}
+        aria-label={attention.length ? `${attention.length} 项需要关注` : '没有需要关注的事项'}
+      >
         <Bell aria-hidden="true" strokeWidth={1.7} />
         {attention.length ? <span className={styles.bellCount}>{attention.length}</span> : null}
       </Link>
@@ -153,7 +162,12 @@ function StatusBar() {
       })}
       {working.length ? <span className={styles.statusSep} /> : null}
       {working.map((agent) => (
-        <button key={agent.id} type="button" className={styles.statusItem} onClick={() => navigate(`/agents/${agent.id}`)}>
+        <button
+          key={agent.id}
+          type="button"
+          className={styles.statusItem}
+          onClick={() => navigate(`/agents/${agent.id}`)}
+        >
           <i className={styles.runDot} style={{ '--run-color': agentAccent(agent) } as CSSProperties} />
           {agent.name}
         </button>

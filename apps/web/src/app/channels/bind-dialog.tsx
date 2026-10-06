@@ -31,7 +31,8 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
     setTrigger(current?.triggerPolicy ?? (channel?.kind === 'internal' ? 'always' : 'mentioned-or-replied'))
   }, [intent, current?.triggerPolicy, channel?.kind])
 
-  if (!intent || !channel) return <ConfirmDialog open={false} onOpenChange={onClose} title="" confirmLabel="" onConfirm={() => undefined} />
+  if (!intent || !channel)
+    return <ConfirmDialog open={false} onOpenChange={onClose} title="" confirmLabel="" onConfirm={() => undefined} />
 
   if (intent.kind === 'unbind') {
     return (
@@ -63,7 +64,10 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
         toast(`「${channel.name}」已交给${nextAgent.name}`)
       }}
     >
-      <div className={styles.wirePreview} style={nextAgent ? ({ '--wire-accent': agentAccent(nextAgent) } as CSSProperties) : undefined}>
+      <div
+        className={styles.wirePreview}
+        style={nextAgent ? ({ '--wire-accent': agentAccent(nextAgent) } as CSSProperties) : undefined}
+      >
         <b>{channel.name}</b>
         <span className="muted" style={{ color: 'var(--muted)', fontSize: 12 }}>
           {connection ? connectionDisplayName(connection) : channel.connectionName}
@@ -74,7 +78,11 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
         <b>{nextAgent?.name}</b>
       </div>
       <Field label="触发">
-        <Select value={trigger} options={triggerOptions} onChange={(event) => setTrigger(event.target.value as TriggerPolicy)} />
+        <Select
+          value={trigger}
+          options={triggerOptions}
+          onChange={(event) => setTrigger(event.target.value as TriggerPolicy)}
+        />
       </Field>
     </ConfirmDialog>
   )

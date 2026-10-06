@@ -210,6 +210,17 @@
   color: var(--accent);
 }
 
+.stepFailed {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.stepFailed .stepKey {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
 @keyframes pop {
   40% {
     transform: scale(1.3);

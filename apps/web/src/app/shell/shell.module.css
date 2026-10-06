@@ -180,7 +180,9 @@ button.instance {
   z-index: 0;
   border-radius: 12px;
   background: var(--surface);
-  box-shadow: var(--sh-2), inset 0 0 0 1px var(--line);
+  box-shadow:
+    var(--sh-2),
+    inset 0 0 0 1px var(--line);
   pointer-events: none;
 }
 

@@ -1,7 +1,21 @@
 import { Unplug } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { Link } from 'react-router-dom'
-import { connectionDisplayName, useProductStore, type AgentSummary, type ChannelSummary } from '../../product-runtime.js'
+import {
+  connectionDisplayName,
+  useProductStore,
+  type AgentSummary,
+  type ChannelSummary,
+} from '../../product-runtime.js'
 import { AgentAvatar, StatusDot } from '../../ui-kit/next/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { agentAccent, agentHue, connectionTone, isAgentWorking, triggerLabel } from '../model/identity.js'
@@ -24,9 +38,14 @@ const curve = (x1: number, y1: number, x2: number, y2: number): string => {
   return `M${x1.toFixed(1)},${y1.toFixed(1)} C${(x1 + dx).toFixed(1)},${y1.toFixed(1)} ${(x2 - dx).toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}`
 }
 
-const working = (channel: ChannelSummary) => channel.runtimePhase === 'thinking' || channel.runtimePhase === 'using-tool'
+const working = (channel: ChannelSummary) =>
+  channel.runtimePhase === 'thinking' || channel.runtimePhase === 'using-tool'
 
-export function PatchBay({ selected }: { readonly selected: { readonly kind: 'connection' | 'channel' | 'agent'; readonly id: string } | undefined }) {
+export function PatchBay({
+  selected,
+}: {
+  readonly selected: { readonly kind: 'connection' | 'channel' | 'agent'; readonly id: string } | undefined
+}) {
   const connections = useProductStore((state) => state.connections)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
@@ -34,15 +53,27 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
   const [wires, setWires] = useState<readonly WireGeometry[]>([])
   const [intent, setIntent] = useState<BindIntent | null>(null)
   const [menu, setMenu] = useState<{ readonly channelId: string; readonly x: number; readonly y: number } | null>(null)
-  const [drag, setDrag] = useState<{ readonly channelId: string; readonly x0: number; readonly y0: number; readonly x: number; readonly y: number } | null>(null)
+  const [drag, setDrag] = useState<{
+    readonly channelId: string
+    readonly x0: number
+    readonly y0: number
+    readonly x: number
+    readonly y: number
+  } | null>(null)
   const [dropAgent, setDropAgent] = useState('')
-  const [picker, setPicker] = useState<{ readonly channelId: string; readonly x: number; readonly y: number } | null>(null)
+  const [picker, setPicker] = useState<{ readonly channelId: string; readonly x: number; readonly y: number } | null>(
+    null,
+  )
   const suppressClick = useRef(false)
   const seenBindings = useRef<Map<string, string> | null>(null)
 
   const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents])
   const groups = useMemo(
-    () => connections.map((connection) => ({ connection, channels: channels.filter((channel) => channel.connectionId === connection.id) })),
+    () =>
+      connections.map((connection) => ({
+        connection,
+        channels: channels.filter((channel) => channel.connectionId === connection.id),
+      })),
     [connections, channels],
   )
 
@@ -61,7 +92,17 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
     for (const channel of channels) {
       const from = point(`[data-node="connection:${channel.connectionId}"]`, 'right')
       const to = point(`[data-node="channel:${channel.id}"]`, 'left')
-      if (from && to) next.push({ key: `c:${channel.id}`, d: curve(from.x, from.y, to.x, to.y), kind: 'connection', channelId: channel.id, live: false, draw: previous === null, x1: from.x, x2: to.x })
+      if (from && to)
+        next.push({
+          key: `c:${channel.id}`,
+          d: curve(from.x, from.y, to.x, to.y),
+          kind: 'connection',
+          channelId: channel.id,
+          live: false,
+          draw: previous === null,
+          x1: from.x,
+          x2: to.x,
+        })
       const agent = channel.agentId ? agentById.get(channel.agentId) : undefined
       if (!agent) continue
       const a = point(`[data-node="channel:${channel.id}"]`, 'right')
@@ -140,7 +181,8 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
       const hit = document.elementFromPoint(up.clientX, up.clientY)?.closest<HTMLElement>('[data-agent-node]')
       const agentId = hit?.dataset['agentNode']
       const channel = channels.find((item) => item.id === channelId)
-      if (agentId && channel && channel.agentId !== agentId) setIntent({ kind: channel.agentId ? 'replace' : 'bind', channelId, agentId })
+      if (agentId && channel && channel.agentId !== agentId)
+        setIntent({ kind: channel.agentId ? 'replace' : 'bind', channelId, agentId })
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -159,7 +201,15 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
             {wires
               .filter((wire) => wire.agent)
               .map((wire) => (
-                <linearGradient key={wire.key} id={`wire-${wire.channelId}`} gradientUnits="userSpaceOnUse" x1={wire.x1} y1="0" x2={wire.x2} y2="0">
+                <linearGradient
+                  key={wire.key}
+                  id={`wire-${wire.channelId}`}
+                  gradientUnits="userSpaceOnUse"
+                  x1={wire.x1}
+                  y1="0"
+                  x2={wire.x2}
+                  y2="0"
+                >
                   <stop offset="0" style={{ stopColor: `hsl(${agentHue(wire.agent!)} 74% 77%)` }} />
                   <stop offset="1" style={{ stopColor: agentAccent(wire.agent!) }} />
                 </linearGradient>
@@ -167,18 +217,29 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
           </defs>
           {wires.map((wire) =>
             wire.kind === 'connection' ? (
-              <path key={wire.key} className={[styles.wireConn, wire.draw ? styles.wireDraw : ''].join(' ')} pathLength={1} d={wire.d} />
+              <path
+                key={wire.key}
+                className={[styles.wireConn, wire.draw ? styles.wireDraw : ''].join(' ')}
+                pathLength={1}
+                d={wire.d}
+              />
             ) : (
               <g key={wire.key}>
                 <path className={styles.wireGlow} style={{ stroke: agentAccent(wire.agent!) }} d={wire.d} />
-                <path className={[styles.wireBind, wire.draw ? styles.wireDraw : ''].join(' ')} pathLength={1} style={{ stroke: `url(#wire-${wire.channelId})` }} d={wire.d} />
+                <path
+                  className={[styles.wireBind, wire.draw ? styles.wireDraw : ''].join(' ')}
+                  pathLength={1}
+                  style={{ stroke: `url(#wire-${wire.channelId})` }}
+                  d={wire.d}
+                />
                 {wire.live ? <path className={styles.wireLive} d={wire.d} /> : null}
                 <path
                   className={styles.wireHit}
                   d={wire.d}
                   onClick={(event) => {
                     const box = patch.current?.getBoundingClientRect()
-                    if (box) setMenu({ channelId: wire.channelId, x: event.clientX - box.left, y: event.clientY - box.top })
+                    if (box)
+                      setMenu({ channelId: wire.channelId, x: event.clientX - box.left, y: event.clientY - box.top })
                   }}
                 />
               </g>
@@ -198,7 +259,10 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
               aria-current={current('connection', connection.id)}
             >
               <span className={styles.nodeName}>
-                <StatusDot tone={connectionTone(connection.state)} pulse={connectionTone(connection.state) === 'warn'} />
+                <StatusDot
+                  tone={connectionTone(connection.state)}
+                  pulse={connectionTone(connection.state) === 'warn'}
+                />
                 <span>{connectionDisplayName(connection)}</span>
               </span>
               <span className={styles.nodeSub}>{connection.userManaged ? connection.adapter : '内置'}</span>
@@ -232,7 +296,12 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
                     </Link>
                     <button
                       type="button"
-                      className={[styles.port, styles.portRight, styles.portOut, agent ? styles.portFilled : styles.portOpen].join(' ')}
+                      className={[
+                        styles.port,
+                        styles.portRight,
+                        styles.portOut,
+                        agent ? styles.portFilled : styles.portOpen,
+                      ].join(' ')}
                       style={accent}
                       aria-label={`把「${channel.name}」接到智能体`}
                       aria-haspopup="menu"
@@ -242,7 +311,12 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
                         if (suppressClick.current) return
                         const box = patch.current?.getBoundingClientRect()
                         const rect = event.currentTarget.getBoundingClientRect()
-                        if (box) setPicker({ channelId: channel.id, x: rect.left + rect.width / 2 - box.left, y: rect.bottom - box.top })
+                        if (box)
+                          setPicker({
+                            channelId: channel.id,
+                            x: rect.left + rect.width / 2 - box.left,
+                            y: rect.bottom - box.top,
+                          })
                       }}
                     />
                   </div>
@@ -276,7 +350,13 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
         </div>
 
         {picker && pickerChannel ? (
-          <div className={styles.wireMenu} style={{ left: picker.x, top: picker.y }} data-wire-menu role="menu" aria-label={`为「${pickerChannel.name}」选择智能体`}>
+          <div
+            className={styles.wireMenu}
+            style={{ left: picker.x, top: picker.y }}
+            data-wire-menu
+            role="menu"
+            aria-label={`为「${pickerChannel.name}」选择智能体`}
+          >
             {agents
               .filter((item) => item.id !== pickerChannel.agentId)
               .map((item, index) => (
@@ -287,7 +367,11 @@ export function PatchBay({ selected }: { readonly selected: { readonly kind: 'co
                   autoFocus={index === 0}
                   onClick={() => {
                     setPicker(null)
-                    setIntent({ kind: pickerChannel.agentId ? 'replace' : 'bind', channelId: pickerChannel.id, agentId: item.id })
+                    setIntent({
+                      kind: pickerChannel.agentId ? 'replace' : 'bind',
+                      channelId: pickerChannel.id,
+                      agentId: item.id,
+                    })
                   }}
                 >
                   <AgentAvatar name={item.name} hue={agentHue(item)} size="xs" />

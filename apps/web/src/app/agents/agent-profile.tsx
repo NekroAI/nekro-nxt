@@ -52,7 +52,10 @@ const draftOf = (agent: AgentSummary): Draft => ({
   modelKey: agent.modelRef ? agentModelKey({ provider: agent.modelRef.provider, id: agent.modelRef.model }) : '',
   visionKey:
     agent.imagePolicy.textModel.mode === 'auxiliary'
-      ? agentModelKey({ provider: agent.imagePolicy.textModel.model.provider, id: agent.imagePolicy.textModel.model.model })
+      ? agentModelKey({
+          provider: agent.imagePolicy.textModel.model.provider,
+          id: agent.imagePolicy.textModel.model.model,
+        })
       : '',
 })
 
@@ -79,7 +82,10 @@ function Editor({ agent, onDone }: { readonly agent: AgentSummary; readonly onDo
     draft.modelKey !== original.modelKey ? `模型：${model ? modelLabel(model) : '未选择'}` : '',
     draft.visionKey !== original.visionKey ? `看图：${vision ? modelLabel(vision) : '不使用'}` : '',
   ].filter(Boolean)
-  const dirty = changes.length > 0 || personaChanges.length > 0 || JSON.stringify(draft.persona) !== JSON.stringify(original.persona)
+  const dirty =
+    changes.length > 0 ||
+    personaChanges.length > 0 ||
+    JSON.stringify(draft.persona) !== JSON.stringify(original.persona)
   const visionOptions = models.filter((item) => supportsImages(item))
 
   const publish = async () => {
@@ -94,7 +100,12 @@ function Editor({ agent, onDone }: { readonly agent: AgentSummary; readonly onDo
           ? { ...agent.imagePolicy, textModel: { mode: 'disabled' } }
           : {
               ...agent.imagePolicy,
-              textModel: { mode: 'auxiliary', model: { provider: vision.provider, model: vision.id }, maxTokens: agent.imagePolicy.textModel.mode === 'auxiliary' ? agent.imagePolicy.textModel.maxTokens : 1024 },
+              textModel: {
+                mode: 'auxiliary',
+                model: { provider: vision.provider, model: vision.id },
+                maxTokens:
+                  agent.imagePolicy.textModel.mode === 'auxiliary' ? agent.imagePolicy.textModel.maxTokens : 1024,
+              },
             }
       await api.getState().reviseAgent({
         agentId: agent.id,
@@ -103,7 +114,9 @@ function Editor({ agent, onDone }: { readonly agent: AgentSummary; readonly onDo
         persona: draft.personaText,
         personaDocument: draft.persona,
         model,
-        ...(agent.modelRef?.reasoningEffort && agentModelKey(model) === original.modelKey ? { reasoningEffort: agent.modelRef.reasoningEffort } : {}),
+        ...(agent.modelRef?.reasoningEffort && agentModelKey(model) === original.modelKey
+          ? { reasoningEffort: agent.modelRef.reasoningEffort }
+          : {}),
         imagePolicy,
         dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
       })
@@ -119,7 +132,11 @@ function Editor({ agent, onDone }: { readonly agent: AgentSummary; readonly onDo
   return (
     <div className={styles.editor}>
       <Field label="名称">
-        <Input value={draft.name} maxLength={40} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+        <Input
+          value={draft.name}
+          maxLength={40}
+          onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+        />
       </Field>
       <PromptReferenceEditor
         value={draft.persona}
@@ -141,7 +158,10 @@ function Editor({ agent, onDone }: { readonly agent: AgentSummary; readonly onDo
           <Field label="看图">
             <Select
               value={draft.visionKey}
-              options={[{ value: '', label: '不使用' }, ...visionOptions.map((item) => ({ value: agentModelKey(item), label: modelLabel(item) }))]}
+              options={[
+                { value: '', label: '不使用' },
+                ...visionOptions.map((item) => ({ value: agentModelKey(item), label: modelLabel(item) })),
+              ]}
               onChange={(event) => setDraft({ ...draft, visionKey: event.target.value })}
             />
           </Field>
@@ -167,7 +187,12 @@ function Editor({ agent, onDone }: { readonly agent: AgentSummary; readonly onDo
         <Button variant="ghost" onClick={onDone} disabled={saving}>
           取消
         </Button>
-        <Button variant="primary" onClick={() => void publish()} busy={saving} disabled={!dirty || !draft.name.trim() || !model}>
+        <Button
+          variant="primary"
+          onClick={() => void publish()}
+          busy={saving}
+          disabled={!dirty || !draft.name.trim() || !model}
+        >
           发布新版本
         </Button>
       </div>
@@ -175,7 +200,14 @@ function Editor({ agent, onDone }: { readonly agent: AgentSummary; readonly onDo
   )
 }
 
-function SkillRow({ icon, title, description, badge, control, children }: {
+function SkillRow({
+  icon,
+  title,
+  description,
+  badge,
+  control,
+  children,
+}: {
   readonly icon: ReactNode
   readonly title: string
   readonly description: string
@@ -231,7 +263,11 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
       <SkillRow
         icon={<FolderCog />}
         title="系统访问"
-        description={preset === 'custom' ? '自定义组合' : (AGENT_ACCESS_LEVELS.find((item) => item.level === preset)?.description ?? '')}
+        description={
+          preset === 'custom'
+            ? '自定义组合'
+            : (AGENT_ACCESS_LEVELS.find((item) => item.level === preset)?.description ?? '')
+        }
       >
         <Segmented
           label="系统访问"
@@ -252,13 +288,23 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
         icon={<Workflow />}
         title="子智能体"
         description="把任务分给后台助手并行处理"
-        control={<Switch label="子智能体" checked={agent.capabilities.subagents} onCheckedChange={(checked) => void set({ subagents: checked })} />}
+        control={
+          <Switch
+            label="子智能体"
+            checked={agent.capabilities.subagents}
+            onCheckedChange={(checked) => void set({ subagents: checked })}
+          />
+        }
       />
       <SkillRow
         icon={<Globe />}
         title="网页搜索"
         description={availability.webSearch.available ? '查询公开网页，结果来自外部服务' : '先在设置里保存搜索服务凭据'}
-        badge={agent.capabilities.webSearch && !availability.webSearch.available ? <Chip tone="warn">待配置</Chip> : undefined}
+        badge={
+          agent.capabilities.webSearch && !availability.webSearch.available ? (
+            <Chip tone="warn">待配置</Chip>
+          ) : undefined
+        }
         control={
           <Switch
             label="网页搜索"
@@ -272,7 +318,13 @@ function Skills({ agent }: { readonly agent: AgentSummary }) {
         icon={<Sparkles />}
         title="动态创造"
         description="在频道里按需求制作新工具和界面"
-        control={<Switch label="动态创造" checked={agent.capabilities.dynamicCreation} onCheckedChange={(checked) => void set({ dynamicCreation: checked })} />}
+        control={
+          <Switch
+            label="动态创造"
+            checked={agent.capabilities.dynamicCreation}
+            onCheckedChange={(checked) => void set({ dynamicCreation: checked })}
+          />
+        }
       />
       {agentExtensions.length ? <h3 className={styles.subTitle}>扩展</h3> : null}
       {agentExtensions.map((extension) => {
@@ -322,11 +374,16 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
 
   const phase = agentPhase[agent.state]
   const owned = channels.filter((channel) => channel.agentId === agent.id)
-  const model = agent.modelRef ? models.find((item) => item.provider === agent.modelRef?.provider && item.id === agent.modelRef?.model) : undefined
+  const model = agent.modelRef
+    ? models.find((item) => item.provider === agent.modelRef?.provider && item.id === agent.modelRef?.model)
+    : undefined
   const noModel = !agent.modelRef || models.length === 0
   const noVision = !noModel && agent.imageDiagnostics.route.mode === 'unavailable'
 
-  const changeTrigger = async (channelId: string, triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only') => {
+  const changeTrigger = async (
+    channelId: string,
+    triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only',
+  ) => {
     try {
       await api.getState().createBinding({ agentId: agent.id, channelId, triggerPolicy })
     } catch (error) {
@@ -363,11 +420,25 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
       </header>
       <div className={[styles.body, styles.enter].join(' ')} key={agent.id}>
         {noModel ? (
-          <Banner tone="bad" action={<Button size="small" onClick={() => setEditing(true)}>选择模型</Button>}>
+          <Banner
+            tone="bad"
+            action={
+              <Button size="small" onClick={() => setEditing(true)}>
+                选择模型
+              </Button>
+            }
+          >
             没有可用模型，{agent.name}现在无法回复
           </Banner>
         ) : noVision ? (
-          <Banner tone="info" action={<Button size="small" onClick={() => setEditing(true)}>添加看图模型</Button>}>
+          <Banner
+            tone="info"
+            action={
+              <Button size="small" onClick={() => setEditing(true)}>
+                添加看图模型
+              </Button>
+            }
+          >
             主模型看不懂图片，群里的图片会被跳过
           </Banner>
         ) : null}
@@ -382,7 +453,14 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           )}
         </Section>
 
-        <Section title="频道" actions={<Button size="small" icon={<Cable />} onClick={() => navigate('/wiring')}>接线</Button>}>
+        <Section
+          title="频道"
+          actions={
+            <Button size="small" icon={<Cable />} onClick={() => navigate('/wiring')}>
+              接线
+            </Button>
+          }
+        >
           <Panel className={styles.table}>
             {owned.length === 0 ? (
               <div className={styles.tableRow}>
@@ -396,19 +474,30 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
                   <div key={channel.id} className={styles.tableRow}>
                     <div style={{ minWidth: 0 }}>
                       <div className={styles.cellTitle}>{channel.name}</div>
-                      <div className={styles.cellSub}>{connection ? connectionDisplayName(connection) : channel.connectionName}</div>
+                      <div className={styles.cellSub}>
+                        {connection ? connectionDisplayName(connection) : channel.connectionName}
+                      </div>
                     </div>
                     {binding ? (
                       <Select
                         aria-label={`${channel.name} 的触发方式`}
                         value={binding.triggerPolicy}
-                        options={(['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map((value) => ({ value, label: triggerLabel[value] ?? value }))}
-                        onChange={(event) => void changeTrigger(channel.id, event.target.value as typeof binding.triggerPolicy)}
+                        options={(['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map(
+                          (value) => ({ value, label: triggerLabel[value] ?? value }),
+                        )}
+                        onChange={(event) =>
+                          void changeTrigger(channel.id, event.target.value as typeof binding.triggerPolicy)
+                        }
                       />
                     ) : (
                       <span />
                     )}
-                    <Button size="small" variant="ghost" icon={<MessagesSquare />} onClick={() => navigate(`/channels/${channel.id}`)}>
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      icon={<MessagesSquare />}
+                      onClick={() => navigate(`/channels/${channel.id}`)}
+                    >
                       打开
                     </Button>
                   </div>

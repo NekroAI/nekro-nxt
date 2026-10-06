@@ -17,7 +17,11 @@ export interface AttentionItem {
   readonly outboundId?: string
 }
 
-const severity: Record<HostAttentionItem['severity'], AttentionSeverity> = { critical: 'bad', warning: 'warn', info: 'info' }
+const severity: Record<HostAttentionItem['severity'], AttentionSeverity> = {
+  critical: 'bad',
+  warning: 'warn',
+  info: 'info',
+}
 
 function hrefOf(item: HostAttentionItem): string {
   const { related } = item
