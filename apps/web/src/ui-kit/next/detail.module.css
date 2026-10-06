@@ -1,0 +1,335 @@
+/* —— 对象头部 —— */
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.headerCompact {
+  gap: var(--s-3);
+}
+
+.visual {
+  flex: none;
+}
+
+.identity {
+  display: grid;
+  flex: 1;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font: var(--t-page);
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.headerCompact .title {
+  font: var(--t-section);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-3);
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+/* —— 详情栏 —— */
+.pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 55%, var(--bg));
+}
+
+.paneHead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-4) var(--s-4) var(--s-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.paneHeadMain {
+  flex: 1;
+  min-width: 0;
+}
+
+.paneBody {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: var(--s-5);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--s-4);
+}
+
+.paneFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+/* —— 属性分组 —— */
+.group {
+  display: grid;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.groupHead {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-3);
+}
+
+.groupTitles {
+  display: grid;
+  flex: 1;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.groupTitle {
+  margin: 0;
+  font: var(--t-section);
+}
+
+.pane .groupTitle {
+  color: var(--muted);
+  font: var(--t-label);
+}
+
+.groupDescription {
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.groupActions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.groupBody {
+  display: grid;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+/* —— 属性行 —— */
+.list {
+  display: grid;
+  min-width: 0;
+}
+
+.framed {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-2) var(--s-5);
+  min-height: var(--row);
+  padding: var(--s-3) var(--s-4);
+}
+
+.list > .row + .row {
+  border-top: 1px solid var(--line);
+}
+
+.list:not(.framed) > .row {
+  padding-inline: 0;
+}
+
+.stacked {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.rowText {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.rowLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  font: var(--t-title);
+}
+
+.rowDescription {
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.rowControl {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.stacked .rowControl {
+  justify-content: stretch;
+}
+
+.stacked .rowControl > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* —— 诊断 —— */
+.diagnostics {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.diagnosticsToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--s-1);
+  min-height: var(--control-sm);
+  padding: 0 var(--s-2) 0 var(--s-1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--muted);
+  font: var(--t-label);
+  cursor: pointer;
+}
+
+.diagnosticsToggle:hover {
+  background: var(--hover);
+  color: var(--fg-2);
+}
+
+.chevron {
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.chevron[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.diagnosticsBody {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--inset);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: minmax(80px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--control);
+}
+
+.kvLabel {
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.kvValue {
+  overflow: hidden;
+  font: var(--t-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 就地编辑 —— */
+.inlineView {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: 100%;
+  min-height: var(--control);
+  padding: 0 var(--s-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--fg);
+  font: var(--t-body);
+  text-align: left;
+  cursor: text;
+}
+
+.inlineView:hover {
+  border-color: var(--line-2);
+  background: var(--surface);
+}
+
+.inlineValue,
+.inlinePlaceholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inlinePlaceholder {
+  color: var(--faint);
+}
+
+.inlinePencil {
+  flex: none;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity var(--dur-1);
+}
+
+.inlineView:hover .inlinePencil,
+.inlineView:focus-visible .inlinePencil {
+  opacity: 1;
+}
+
+.inlineForm {
+  display: flex;
+  min-width: 0;
+}
+
+.inlineForm > * {
+  flex: 1;
+}

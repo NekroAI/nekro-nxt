@@ -1,0 +1,220 @@
+/* —— 数据表 —— */
+.tableWrap {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  container-type: inline-size;
+}
+
+.table {
+  display: grid;
+  max-height: inherit;
+  overflow: auto;
+}
+
+.head,
+.row {
+  display: grid;
+  grid-template-columns: var(--table-columns);
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0 var(--s-4);
+}
+
+.head {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  min-height: var(--control-lg);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--muted);
+  font: var(--t-label);
+}
+
+.row {
+  min-height: var(--row);
+  border-top: 1px solid var(--line);
+  transition: background var(--dur-1);
+}
+
+.head + .row,
+.empty + .row {
+  border-top: 0;
+}
+
+.row[data-interactive] {
+  cursor: pointer;
+}
+
+.row[data-interactive]:hover {
+  background: var(--hover);
+}
+
+.row[data-selected='true'] {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.headCell,
+.cell {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: var(--s-2) 0;
+}
+
+.cell {
+  font: var(--t-body);
+}
+
+[data-align='end'] {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+[data-align='center'] {
+  justify-content: center;
+}
+
+.empty {
+  padding: var(--s-7) var(--s-4);
+  color: var(--muted);
+  font: var(--t-note);
+  text-align: center;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-4);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+/* Narrow containers drop low-priority columns instead of clipping them. */
+@container (max-width: 720px) {
+  [data-priority='3'] {
+    display: none;
+  }
+}
+
+@container (max-width: 520px) {
+  [data-priority='2'] {
+    display: none;
+  }
+}
+
+/* —— 搜索 —— */
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  height: var(--control);
+  padding: 0 var(--s-1) 0 var(--s-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  background: var(--surface);
+  transition: border-color var(--dur-1);
+}
+
+.search:focus-within {
+  border-color: var(--accent-line);
+}
+
+.searchIcon {
+  flex: none;
+  color: var(--muted);
+}
+
+.searchInput {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: var(--t-body);
+}
+
+.searchInput::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* —— 工具条 —— */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+
+.toolbarStart {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.toolbarEnd {
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* —— 保存栏 —— */
+.saveBar {
+  position: sticky;
+  z-index: 5;
+  bottom: var(--s-4);
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--sh-3);
+  backdrop-filter: blur(14px);
+  animation: saveIn var(--dur-2) var(--ease) both;
+}
+
+@keyframes saveIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.saveText {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.saveText b {
+  font: var(--t-title);
+}
+
+.saveDetail,
+.saveError {
+  overflow: hidden;
+  font: var(--t-note);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saveDetail {
+  color: var(--muted);
+}
+
+.saveError {
+  color: var(--bad);
+}

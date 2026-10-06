@@ -1,0 +1,171 @@
+.scroll {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* —— 阅读型 —— */
+.reader {
+  display: grid;
+  gap: var(--s-6);
+  width: 100%;
+  max-width: var(--reader-width);
+  margin: 0 auto;
+  padding: var(--s-7) var(--s-7) var(--s-8);
+}
+
+.pageHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.pageTitle {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: var(--t-page);
+  letter-spacing: -0.01em;
+}
+
+.pageActions {
+  display: flex;
+  gap: var(--s-2);
+}
+
+/* —— 看板型 —— */
+.board {
+  display: grid;
+  gap: var(--s-7);
+  width: 100%;
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--s-7) var(--s-7) var(--s-8);
+}
+
+/* —— 工作台型 —— */
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.workbench[data-list] {
+  grid-template-columns: var(--pane-list) minmax(0, 1fr);
+}
+
+.workbench[data-detail] {
+  grid-template-columns: minmax(0, 1fr) var(--pane-detail);
+}
+
+.workbench[data-list][data-detail] {
+  grid-template-columns: var(--pane-list) minmax(0, 1fr) var(--pane-detail);
+}
+
+.main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.mainScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.mainInner {
+  display: grid;
+  align-content: start;
+  gap: var(--s-6);
+  width: 100%;
+  padding: var(--s-6) var(--s-7) var(--s-8);
+}
+
+.readable {
+  max-width: calc(var(--reader-width) + 2 * var(--s-7));
+}
+
+/* 列表栏 */
+.list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--side) 60%, var(--bg));
+}
+
+.listHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 52px;
+  padding: var(--s-3) var(--s-3) var(--s-2) var(--s-4);
+}
+
+.listTitle {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font: var(--t-section);
+}
+
+.listActions {
+  display: flex;
+  gap: var(--s-1);
+}
+
+.listToolbar {
+  display: grid;
+  gap: var(--s-2);
+  padding: 0 var(--s-3) var(--s-2);
+}
+
+.listBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--s-2) var(--s-4);
+}
+
+@media (max-width: 1279px) {
+  .workbench {
+    --pane-list: 240px;
+    --pane-detail: 320px;
+  }
+
+  .mainInner {
+    padding: var(--s-5) var(--s-6) var(--s-7);
+  }
+}
+
+@media (max-width: 1099px) {
+  .workbench[data-list],
+  .workbench[data-detail],
+  .workbench[data-list][data-detail] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workbench[data-list] > .list {
+    display: none;
+  }
+
+  /* Narrow windows: the detail floats over the main area instead of squeezing it. */
+  .workbench > [data-detail-pane] {
+    position: fixed;
+    z-index: 30;
+    top: 46px;
+    right: 0;
+    bottom: 26px;
+    width: min(var(--pane-detail), 92vw);
+    box-shadow: var(--sh-3);
+  }
+
+  .reader,
+  .board {
+    padding: var(--s-5) var(--s-4) var(--s-7);
+  }
+}
