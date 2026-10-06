@@ -24,13 +24,13 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
   const prependRef = useRef<{ key: string; height: number; top: number } | null>(null)
   /** Last scrollTop this hook wrote; the scroll event it causes is not a user decision to leave the bottom. */
   const writtenTopRef = useRef<number | null>(null)
-  /** scrollTop at the last scroll event; a resize can fire a scroll event without the user moving anything. */
-  const lastTopRef = useRef(0)
+  /** Geometry at the last scroll event; a resize can fire a scroll event without the user scrolling. */
+  const lastRef = useRef({ top: 0, client: 0, height: 0 })
   const [away, setAway] = useState(false)
   const write = (element: HTMLDivElement, top: number): void => {
     element.scrollTop = top
     writtenTopRef.current = element.scrollTop
-    lastTopRef.current = element.scrollTop
+    lastRef.current = { top: element.scrollTop, client: element.clientHeight, height: element.scrollHeight }
   }
 
   const commitPosition = useCallback(
@@ -71,11 +71,15 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
     // Content can grow (images, history) between our write and its scroll event; keep following in that case.
     const written = writtenTopRef.current
     writtenTopRef.current = null
-    // The viewport shrinking (a growing Composer) fires a scroll event without moving scrollTop; that is a layout
-    // change, not the user leaving the bottom.
-    const unmoved = Math.abs(element.scrollTop - lastTopRef.current) < 1
-    lastTopRef.current = element.scrollTop
-    if (followRef.current && (unmoved || (written !== null && Math.abs(element.scrollTop - written) < 1))) {
+    // The viewport or content changing size (a growing Composer, a loaded image) fires scroll events that the
+    // browser may also nudge by a few pixels; those are layout changes, not the user leaving the bottom.
+    const last = lastRef.current
+    const layout =
+      Math.abs(element.scrollTop - last.top) < 1 ||
+      element.clientHeight !== last.client ||
+      element.scrollHeight !== last.height
+    lastRef.current = { top: element.scrollTop, client: element.clientHeight, height: element.scrollHeight }
+    if (followRef.current && (layout || (written !== null && Math.abs(element.scrollTop - written) < 1))) {
       const bottom = Math.max(0, element.scrollHeight - element.clientHeight)
       if (Math.abs(element.scrollTop - bottom) > 0.5) write(element, bottom)
       return
