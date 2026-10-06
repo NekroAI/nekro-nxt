@@ -81,6 +81,26 @@ export const activationManifest = (runtime: NekroRuntime, revisionId: ExtensionR
   return revision === undefined ? undefined : runtime.extensionService.revisionManifest(revision)
 }
 
+/**
+ * The DSH runner spreads its failure object into the diagnostic, so it can carry extra keys (e.g. `ok`) depending on
+ * the failing path; the snapshot contract is strict, so project only the documented fields.
+ */
+const dynamicRunError = (error: {
+  readonly phase: 'approval' | 'host-load' | 'host-apply' | 'client-load' | 'client-apply' | 'client-render'
+  readonly message: string
+  readonly stack?: string | undefined
+  readonly pluginId: string
+  readonly packageId: string
+  readonly pluginRunId: string
+}) => ({
+  phase: error.phase,
+  message: error.message,
+  ...(error.stack === undefined ? {} : { stack: error.stack }),
+  pluginId: error.pluginId,
+  packageId: error.packageId,
+  pluginRunId: error.pluginRunId,
+})
+
 export const projectExtensions = (runtime: NekroRuntime) => {
   const activationsByExtension = groupBy(runtime.repository.listActivations(), (item) => item.extensionId)
   const revisionsByExtension = groupBy(runtime.repository.listExtensionRevisions(), (item) => item.extensionId)
@@ -246,7 +266,7 @@ export const projectDynamicInventory = (runtime: NekroRuntime, agentId: AgentId)
                   : { requiresApproval: row.latestRun.requiresApproval }),
                 host: row.latestRun.host,
                 client: row.latestRun.client,
-                ...(row.latestRun.error === undefined ? {} : { error: row.latestRun.error }),
+                ...(row.latestRun.error === undefined ? {} : { error: dynamicRunError(row.latestRun.error) }),
               },
             }),
         packages: row.packages,
