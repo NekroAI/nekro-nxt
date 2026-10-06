@@ -9,6 +9,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { type DynamicAuthoringAttempt, type DynamicAuthoringTask } from '@nekro-nxt/extension-runtime'
 import type { NekroRuntime } from './bootstrap.js'
+import type { WorkspaceProjections } from './workspace-projections.js'
 import {
   emptyChannelRuntimeProjection,
   projectChannelRuntime,
@@ -281,16 +282,20 @@ export class HostQueries {
   readonly #runtime: NekroRuntime
   readonly #cursor: () => HostApiResponse<'snapshot'>['cursor']
   readonly #metadata: HostApiResponse<'snapshot'>['productMetadata']
+  readonly #projections: WorkspaceProjections
   constructor(
     runtime: NekroRuntime,
     cursor: () => HostApiResponse<'snapshot'>['cursor'],
     metadata: HostApiResponse<'snapshot'>['productMetadata'],
+    projections: WorkspaceProjections,
   ) {
     this.#runtime = runtime
     this.#cursor = cursor
     this.#metadata = metadata
+    this.#projections = projections
   }
-  async snapshot(): Promise<HostApiResponse<'snapshot'>> {
+  /** Domain facts plus the viewer's own read positions; `viewerKey` never changes shared state. */
+  async snapshot(viewerKey: string): Promise<HostApiResponse<'snapshot'>> {
     const runtime = this.#runtime,
       productMetadata = this.#metadata
 
@@ -360,8 +365,13 @@ export class HostQueries {
         runtimePhase,
         createdAt: commit.revision.createdAt,
         channels: ownedChannels,
+        appearance: commit.definition.appearance ?? {},
       }
     })
+    const activityByChannel = this.#projections.channelActivity(
+      viewerKey,
+      channels.map(({ id }) => id),
+    )
     const channelProjection = channels.map((channel) => {
       const bindings = bindingsByChannel.get(channel.id) ?? []
       const boundAgentId = bindings[0]?.agentId
@@ -373,6 +383,7 @@ export class HostQueries {
         ...(channel.displayName === undefined ? {} : { displayName: channel.displayName }),
         ...(boundAgentId === undefined ? {} : { boundAgentId }),
         runtimePhase: runtimeByChannel.get(channel.id)?.phase ?? 'idle',
+        activity: activityByChannel.get(channel.id) ?? { unreadCount: 0, unreadCapped: false },
         bindings: bindings.map((binding) => ({
           channelId: binding.channelId,
           agentId: binding.agentId,

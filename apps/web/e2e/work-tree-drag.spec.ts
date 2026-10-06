@@ -108,6 +108,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
           unrestrictedFileAccess: false,
         },
         channels: [mapleChannelId, mapleSpareChannelId],
+        appearance: {},
       },
       {
         id: clerkId,
@@ -144,6 +145,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
           unrestrictedFileAccess: false,
         },
         channels: [clerkChannelId],
+        appearance: {},
       },
     ],
     channels: [
@@ -155,6 +157,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         displayName: '规划员的内置频道',
         boundAgentId: mapleId,
         runtimePhase: 'idle',
+        activity: { unreadCount: 0, unreadCapped: false },
         bindings: [
           {
             channelId: mapleChannelId,
@@ -174,6 +177,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         displayName: '规划员的备用地',
         boundAgentId: mapleId,
         runtimePhase: 'idle',
+        activity: { unreadCount: 0, unreadCapped: false },
         bindings: [
           {
             channelId: mapleSpareChannelId,
@@ -193,6 +197,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
         displayName: '资料员的内置频道',
         boundAgentId: clerkId,
         runtimePhase: 'idle',
+        activity: { unreadCount: 0, unreadCapped: false },
         bindings: [
           {
             channelId: clerkChannelId,
@@ -249,6 +254,7 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
           kind: 'internal',
           displayName: input.displayName,
           runtimePhase: 'idle',
+          activity: { unreadCount: 0, unreadCapped: false },
           bindings: [],
         },
       ],

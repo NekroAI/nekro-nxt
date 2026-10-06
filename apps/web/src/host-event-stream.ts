@@ -12,6 +12,7 @@ export const HOST_EVENT_STREAM_EVENTS = [
   'dsh-settings-changed',
   'dsh-credentials-changed',
   'binding-change',
+  'attention-changed',
 ] as const
 
 export type HostEventStreamEvent = 'open' | 'error' | (typeof HOST_EVENT_STREAM_EVENTS)[number]

@@ -18,6 +18,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import type {
+  AgentAppearance,
   AgentDefinitionRecord,
   AgentRevisionRecord,
   AppendChannelEventCommit,
@@ -82,6 +83,16 @@ class MemoryRepository implements CoreRepository {
     }
   }
 
+  updateAgentAppearance(id: AgentId, appearance: AgentAppearance): void {
+    const current = this.agents.get(id)
+    if (!current) throw new Error(`Unknown agent: ${id}`)
+    const definition = { ...current.definition }
+    delete definition.appearance
+    this.agents.set(id, {
+      ...current,
+      definition: Object.keys(appearance).length === 0 ? definition : { ...definition, appearance },
+    })
+  }
   getAgent(id: AgentId) {
     return this.agents.get(id)
   }

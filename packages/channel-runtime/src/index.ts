@@ -284,6 +284,17 @@ export interface AgentSessionDriver {
     readonly generatedAt: number
   }): Promise<{ readonly summary: string; readonly provider: string; readonly model: string }>
   cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void>
+  /** Aborts the live turn but keeps the Session and its admitted-but-unconsumed input. */
+  interruptTurn(
+    dshSessionId: string,
+    reason: string,
+  ): Promise<{ readonly interrupted: boolean; readonly retainedPending: number }>
+  /** Channel admissions accepted by the Session inbox that the model has not consumed yet. */
+  listPendingAdmissions(dshSessionId: string): readonly {
+    readonly admissionId: AdmissionId
+    readonly target: 'next-step' | 'next-turn'
+    readonly channelEventIds: readonly ChannelEventId[]
+  }[]
   admit(input: {
     readonly dshSessionId: string
     readonly admissionId: AdmissionId
@@ -412,6 +423,13 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
   previous.model.model === target.model.model &&
   previous.model.reasoningEffort === target.model.reasoningEffort &&
   canonicalJson({ ...previous.capabilities }) === canonicalJson({ ...target.capabilities })
+
+export class ChannelStopConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ChannelStopConflictError'
+  }
+}
 
 /** Single-lane M1 Runtime. M2 extends the same persisted states with injection and recovery. */
 export class ChannelRuntime {
@@ -933,6 +951,92 @@ export class ChannelRuntime {
         this.#timestamp(),
       )
     })
+  }
+
+  /**
+   * Stops the bound Agent's current turn in this Channel without resetting its context. Admitted input stays
+   * queued for the next turn. An idle Channel reports `idle` instead of failing.
+   */
+  async stopCurrentTurn(
+    channelId: ChannelId,
+    expectedEpisodeId?: EpisodeId,
+  ): Promise<{
+    readonly result: 'stopped' | 'idle'
+    readonly episodeId?: EpisodeId
+    readonly retainedPending: number
+  }> {
+    const binding = this.#coreRepository.getBinding(channelId)
+    if (!binding) return { result: 'idle', retainedPending: 0 }
+    return this.#withLane(channelId, binding.agentId, async () => {
+      const episode = this.#runtimeRepository.getActiveEpisode(channelId, binding.agentId)
+      if (expectedEpisodeId !== undefined && episode?.id !== expectedEpisodeId) {
+        throw new ChannelStopConflictError('频道上下文已发生变化，请刷新后重试。')
+      }
+      if (!episode || episode.status !== 'active' || episode.dshSessionId === undefined) {
+        return { result: 'idle' as const, retainedPending: 0 }
+      }
+      if (this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'idle') {
+        return {
+          result: 'idle' as const,
+          episodeId: episode.id,
+          retainedPending: this.#sessionDriver.listPendingAdmissions(episode.dshSessionId).length,
+        }
+      }
+      this.#feedback.markEndReason(episode.id, 'cancelled')
+      const outcome = await this.#sessionDriver.interruptTurn(episode.dshSessionId, 'stopped-by-administrator')
+      return {
+        result: outcome.interrupted ? ('stopped' as const) : ('idle' as const),
+        episodeId: episode.id,
+        retainedPending: outcome.retainedPending,
+      }
+    })
+  }
+
+  /** Fails before any state change when the Outbound cannot be dispatched again now. */
+  assertOutboundDispatchable(id: OutboundIntentId): void {
+    const snapshot = this.#runtimeRepository.getOutbound(id)
+    const episode = this.#runtimeRepository.getEpisode(snapshot.intent.episodeId)
+    if (!episode) throw new Error('这条消息所属的会话已不存在。')
+    const channel = this.#coreRepository.getChannel(episode.channelId)
+    if (!channel) throw new Error('这条消息所属的频道已不存在。')
+    if (!this.#resolveAdapter(channel.connectionId)) throw new Error('平台连接当前未运行，暂时无法重新发送。')
+  }
+
+  /** Dispatches an Outbound that an administrator returned to `planned`; idempotent through the delivery states. */
+  async redispatchOutbound(id: OutboundIntentId): Promise<OutboundSnapshot> {
+    return (await this.#delivery.dispatchOutbound(id, new AbortController().signal)).snapshot
+  }
+
+  /** Re-announces an Outbound so clients refresh its projection after an administrator resolution. */
+  publishOutboundFact(id: OutboundIntentId): void {
+    const episode = this.#runtimeRepository.getEpisode(this.#runtimeRepository.getOutbound(id).intent.episodeId)
+    if (episode) this.#publishFact({ channelId: episode.channelId, kind: 'outbound', sourceId: id })
+  }
+
+  /** Admitted input waiting in the bound Agent's live Session, in DSH consumption order. */
+  listPendingContext(channelId: ChannelId): {
+    readonly episodeId?: EpisodeId
+    readonly items: readonly {
+      readonly admissionId: AdmissionId
+      readonly target: 'next-step' | 'next-turn'
+      readonly events: readonly ChannelEventRecord[]
+    }[]
+  } {
+    const binding = this.#coreRepository.getBinding(channelId)
+    const episode =
+      binding === undefined ? undefined : this.#runtimeRepository.getActiveEpisode(channelId, binding.agentId)
+    if (!episode || episode.status !== 'active' || episode.dshSessionId === undefined) return { items: [] }
+    return {
+      episodeId: episode.id,
+      items: this.#sessionDriver.listPendingAdmissions(episode.dshSessionId).map((item) => ({
+        admissionId: item.admissionId,
+        target: item.target,
+        events: item.channelEventIds.flatMap((eventId) => {
+          const event = this.#coreRepository.getChannelEvent(eventId)
+          return event === undefined || event.channelId !== channelId ? [] : [event]
+        }),
+      })),
+    }
   }
 
   async rolloverEpisode(episodeId: EpisodeId): Promise<EpisodeRecord> {

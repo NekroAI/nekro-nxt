@@ -21,6 +21,7 @@ import { createServer, type Server as HttpsServer } from 'node:https'
 import type { Duplex } from 'node:stream'
 import path from 'node:path'
 import { generate } from 'selfsigned'
+import { VIEWER_HEADER } from './viewer.js'
 import { monotonicFactory } from 'ulid'
 
 const SESSION_COOKIE = 'nxt_session'
@@ -267,7 +268,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     )
   }
 
-  const proxy = (request: IncomingMessage, response: ServerResponse): void => {
+  const proxy = (request: IncomingMessage, response: ServerResponse, viewer: string | undefined): void => {
     if (stopping) {
       writeProblem(response, 503, 'server_stopping', '服务实例正在关闭。')
       return
@@ -278,7 +279,13 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         port: options.internalPort,
         method: request.method,
         path: request.url,
-        headers: { ...request.headers, host: `127.0.0.1:${options.internalPort}`, 'x-forwarded-proto': 'https' },
+        headers: {
+          ...Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== VIEWER_HEADER)),
+          host: `127.0.0.1:${options.internalPort}`,
+          'x-forwarded-proto': 'https',
+          // The edge is the only place that knows the paired device; clients cannot claim another viewer.
+          ...(viewer === undefined ? {} : { [VIEWER_HEADER]: viewer }),
+        },
       },
       (upstreamResponse) => {
         response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
@@ -446,7 +453,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         writeJson(response, revoked ? 200 : 404, { revoked })
         return
       }
-      proxy(request, response)
+      proxy(request, response, authenticated === undefined ? undefined : `device:${authenticated.session.deviceId}`)
     })().catch((error: unknown) => {
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : undefined)

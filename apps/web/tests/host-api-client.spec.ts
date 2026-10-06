@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HostApiContracts } from '@nekro-nxt/contracts'
-import { callHostApi, HostRequestError } from '../src/host-api-client.js'
+import { callHostApi, HostRequestError, workspaceApi } from '../src/host-api-client.js'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -73,5 +73,35 @@ describe('shared Host API transport', () => {
     await vi.advanceTimersByTimeAsync(25)
     expect(await result).toBeInstanceOf(HostRequestError)
     expect(await result).toMatchObject({ kind: 'timeout', commitState: 'not-applicable' })
+  })
+})
+
+describe('workspace read models', () => {
+  it('builds activity and pending requests from the shared contracts', async () => {
+    const fetch = vi.fn((input: string) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve(
+            input.startsWith('/api/activity')
+              ? { from: 0, to: 600_000, bucketMs: 300_000, channels: [] }
+              : { channelId: 'chn_FIXTURE', items: [] },
+          ),
+      }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    await expect(workspaceApi.getChannelActivity({ window: '2h', bucket: '5m' })).resolves.toMatchObject({
+      bucketMs: 300_000,
+    })
+    await expect(workspaceApi.getChannelPending('chn_FIXTURE')).resolves.toEqual({
+      channelId: 'chn_FIXTURE',
+      items: [],
+    })
+    expect(fetch.mock.calls.map(([path]) => path)).toEqual([
+      '/api/activity?window=2h&bucket=5m',
+      '/api/channels/chn_FIXTURE/pending',
+    ])
+    expect(workspaceApi.agentAvatarUrl('agt_FIXTURE')).toBe('/api/agents/agt_FIXTURE/avatar')
   })
 })
