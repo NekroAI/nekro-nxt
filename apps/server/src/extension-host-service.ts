@@ -409,7 +409,7 @@ export const createNxtHostService = (
         if (nextRunAt === undefined) throw new NxtCapabilityError('这个计划不会再触发。')
         return backends.jobs.schedule(
           binding,
-          { label, schedule, payload: jsonValue(input.payload ?? null), nextRunAt },
+          { label, schedule, payload: jsonValue(input.payload ?? {}), nextRunAt },
           jobs.runtime.maxActive,
         )
       },

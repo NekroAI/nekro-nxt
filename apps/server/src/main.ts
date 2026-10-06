@@ -527,7 +527,7 @@ const createRuntimeThroughUpgradeCoordinator = async (
         phase: 'activating',
         run: async () => {
           if (!runtime) throw new Error('Host Runtime has not recovered.')
-          await runtime.channels.openAdmission()
+          await runtime.openAdmission()
         },
       },
     ],

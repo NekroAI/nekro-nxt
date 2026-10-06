@@ -179,11 +179,14 @@ import {
 import {
   createNxtDynamicFacade,
   createNxtHostService,
+  nextJobRun,
+  parseJobSchedule,
+  type NxtJobSchedule,
   dshPromptRegistry,
   NXT_HOST_SERVICE_NAME,
   type NxtServiceBackends,
 } from './extension-host-service.js'
-import type { NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
+import type { NxtJobRecord, NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
 import { PersistentExtensionMounts, type PersistentInboundHandler } from './persistent-extension-mounts.js'
 import {
   collectVisibleImageDigests,
@@ -375,6 +378,14 @@ export interface DshHostRuntimeOptions {
       readonly displayName: string
       readonly capabilities: ExtensionCapabilities | undefined
     }
+    /** Built-in reminders of an agent in one channel; they are jobs without an extension. */
+    readonly reminders?: ReminderPort
+    /** Runs when an Activation mounts into a Session, i.e. into one bound channel (declared jobs live per channel). */
+    readonly onSessionMount?: (input: {
+      readonly agentId: AgentId
+      readonly revision: Revision
+      readonly channelId: ChannelId
+    }) => void
   }
 }
 
@@ -1200,6 +1211,95 @@ export const finishChannelTurnTool = () =>
       return Promise.resolve(FinishChannelTurnResultSchema.parse({ status: 'finished', ...parsed }))
     },
   })
+
+export interface ReminderPort {
+  create(input: {
+    readonly agentId: AgentId
+    readonly channelId: ChannelId
+    readonly label: string
+    readonly schedule: NxtJobSchedule
+    readonly nextRunAt: number
+    readonly note?: string
+  }): NxtJobRecord
+  list(agentId: AgentId, channelId: ChannelId): readonly NxtJobRecord[]
+  cancel(agentId: AgentId, jobId: string): boolean
+}
+
+const REMINDER_LIMIT_PER_CHANNEL = 20
+
+/** Product reminders: the agent schedules a wake-up for itself; when it fires the agent decides whether to speak. */
+const reminderTools = (agentId: AgentId, channelId: ChannelId, reminders: ReminderPort) => [
+  defineTool({
+    name: 'reminder_create',
+    description:
+      '为当前频道创建提醒：到时间后你会收到“定时任务到期”事件，再决定是否用 send_channel_message 发言。一次性提醒用 at（毫秒时间戳），周期提醒用 cron（五段表达式，如 0 8 * * *）与 timezone。',
+    parameters: {
+      label: { type: 'string', required: true, description: '提醒内容，到期时会原样交给你。' },
+      at: { type: 'integer', description: '一次性提醒的毫秒时间戳。' },
+      cron: { type: 'string', description: '周期提醒的五段 cron 表达式。' },
+      timezone: { type: 'string', description: 'cron 使用的 IANA 时区，默认宿主时区。' },
+      note: { type: 'string', description: '可选补充信息。' },
+    },
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: `已创建提醒：${JSON.stringify(value)}` }],
+    },
+    execute(args) {
+      const label = args.label.trim()
+      if (label === '' || label.length > 200) throw new Error('提醒内容需要 1–200 个字符。')
+      if (reminders.list(agentId, channelId).length >= REMINDER_LIMIT_PER_CHANNEL) {
+        throw new Error(`当前频道最多保留 ${REMINDER_LIMIT_PER_CHANNEL} 个提醒，请先取消不需要的提醒。`)
+      }
+      const now = Date.now()
+      const schedule = parseJobSchedule(
+        {
+          ...(args.at === undefined ? {} : { at: args.at }),
+          ...(args.cron === undefined ? {} : { cron: args.cron }),
+          ...(args.timezone === undefined ? {} : { timezone: args.timezone }),
+        },
+        now,
+      )
+      const nextRunAt = nextJobRun(schedule, now)
+      if (nextRunAt === undefined) throw new Error('这个提醒不会再触发。')
+      return Promise.resolve(
+        parseJsonValue(
+          JSON.parse(
+            JSON.stringify(
+              reminders.create({
+                agentId,
+                channelId,
+                label,
+                schedule,
+                nextRunAt,
+                ...(args.note === undefined ? {} : { note: args.note }),
+              }),
+            ),
+          ),
+        ),
+      )
+    },
+  }),
+  defineTool({
+    name: 'reminder_list',
+    description: '列出当前频道里你创建的提醒及下次触发时间。',
+    parameters: {},
+    output: {
+      schema: { type: 'json' },
+      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+    },
+    execute: () => Promise.resolve(parseJsonValue(JSON.parse(JSON.stringify(reminders.list(agentId, channelId))))),
+  }),
+  defineTool({
+    name: 'reminder_cancel',
+    description: '按 jobId 取消当前频道的一个提醒。',
+    parameters: { jobId: { type: 'string', required: true, description: 'reminder_list 返回的 jobId。' } },
+    output: {
+      schema: { type: 'boolean' },
+      render: (_args, value) => [{ type: 'text', text: value ? '已取消提醒。' : '没有找到这个提醒。' }],
+    },
+    execute: (args) => Promise.resolve(reminders.cancel(agentId, args.jobId)),
+  }),
+]
 
 const channelContextTool = (
   episodeId: EpisodeId,
@@ -2164,13 +2264,15 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         : {
             nxt: ({ agentId, revision, config, sessionId, context: fiberContext }) => {
               const described = extensionHost.describeRevision(revision)
+              const channelId = this.#sessions.require(sessionId).channelId
+              extensionHost.onSessionMount?.({ agentId, revision, channelId })
               return createNxtHostService(
                 {
                   mode: 'activation',
                   agentId,
                   ownerKey: revision.extensionId,
                   displayName: described.displayName,
-                  channelId: this.#sessions.require(sessionId).channelId,
+                  channelId,
                   capabilities: () => described.capabilities,
                   config: () => config,
                 },
@@ -2626,6 +2728,11 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
       agentContext.tools.register(finishChannelTurnTool())
+      const reminders = this.#extensionHost?.reminders
+      if (reminders !== undefined) {
+        for (const tool of reminderTools(revision.agentId, input.channelId, reminders))
+          agentContext.tools.register(tool)
+      }
       if (this.#communication.supportsRetraction?.(input.channelId) === true && this.#communication.retractMessage) {
         agentContext.tools.register(retractChannelMessageTool(input.episodeId, this.#communication))
       }

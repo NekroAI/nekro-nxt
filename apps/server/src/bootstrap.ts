@@ -1,5 +1,5 @@
 import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
-import type { DshSessionStorageRetirementReport } from '@nekro-nxt/storage-sqlite'
+import type { DshSessionStorageRetirementReport, InboundHookDecisionRecord } from '@nekro-nxt/storage-sqlite'
 import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
@@ -11,7 +11,7 @@ import {
   type AdapterTransportService,
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
-import { ChannelRuntime } from '@nekro-nxt/channel-runtime'
+import { ChannelRuntime, type InboundHookDecision } from '@nekro-nxt/channel-runtime'
 import {
   AgentIdSchema,
   ConnectionIdSchema,
@@ -60,7 +60,8 @@ import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
 import { createExtensionEgress } from './extension-egress.js'
-import { ExtensionInboundHookGate, memoryInboundHookDecisionStore } from './extension-inbound-hooks.js'
+import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
+import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
 import {
   createNxtProductBackends,
   memoryNxtJobs,
@@ -70,7 +71,12 @@ import {
   type NxtProductFacts,
 } from './extension-host-backends.js'
 import { createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
-import { ChannelExtensionActivationHost, createChannelAsset, DshHostRuntime } from './index.js'
+import {
+  ChannelExtensionActivationHost,
+  createChannelAsset,
+  DshHostRuntime,
+  type DshHostRuntimeOptions,
+} from './index.js'
 import { NotificationService } from './notifications.js'
 export type { ConnectionTestResult } from './connection-application.js'
 /**
@@ -130,6 +136,13 @@ export const agentWorkspacePath = (root: string, agentId: AgentId): string => {
   return path.join(root, agentId)
 }
 
+/** Stored hook decision in the Channel Runtime shape. */
+const inboundDecision = (record: InboundHookDecisionRecord): InboundHookDecision => ({
+  trigger: record.trigger,
+  hidden: record.hidden,
+  ...(record.annotation === null ? {} : { annotation: record.annotation }),
+})
+
 export class NekroRuntime {
   upgradeBackupId: string | undefined
   readonly repository: SqliteCoreRepository
@@ -155,6 +168,7 @@ export class NekroRuntime {
   readonly #now: () => number
   readonly connections: ConnectionApplicationService
   readonly adapters: AdapterRegistry
+  readonly #jobScheduler: ExtensionJobScheduler
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -192,6 +206,7 @@ export class NekroRuntime {
     readonly sessionStorageRetirement?: DshSessionStorageRetirementReport
     readonly now: () => number
     readonly adapters: AdapterRegistry
+    readonly jobScheduler: ExtensionJobScheduler
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -217,6 +232,7 @@ export class NekroRuntime {
     this.sessionStorageRetirement = input.sessionStorageRetirement
     this.#now = input.now
     this.adapters = input.adapters
+    this.#jobScheduler = input.jobScheduler
     this.connections = new ConnectionApplicationService(
       this,
       input.now,
@@ -354,12 +370,12 @@ export class NekroRuntime {
           maxOutputTokens,
         })
       }
-      const extensionHost = {
+      const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
         activationBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
           complete: nxtComplete,
           storage: sqliteNxtStorage(repository, now),
-          jobs: memoryNxtJobs(),
+          jobs: sqliteNxtJobs(repository, { now, nextId: nextUlid }),
         }),
         dynamicBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
@@ -371,6 +387,72 @@ export class NekroRuntime {
           displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
           capabilities: repository.getExtensionRevisionVerification(revision.id)?.permissions?.capabilities,
         }),
+        reminders: {
+          create: ({ agentId, channelId, label, schedule, nextRunAt, note }) => {
+            const row = {
+              id: `job_${nextUlid()}`,
+              agentId,
+              extensionId: null,
+              channelId,
+              source: 'reminder' as const,
+              declaredKey: null,
+              label,
+              scheduleKind: schedule.kind,
+              runAt: schedule.kind === 'once' ? schedule.at : null,
+              cron: schedule.kind === 'cron' ? schedule.cron : null,
+              timezone: schedule.kind === 'cron' ? schedule.timezone : null,
+              payloadJson: note === undefined ? {} : { note },
+              nextRunAt,
+              lastFiredAt: null,
+              paused: false,
+              createdAt: now(),
+            }
+            repository.createExtensionJob(row)
+            return {
+              jobId: row.id,
+              label,
+              nextRunAt,
+              ...(row.cron === null ? {} : { cron: row.cron }),
+              ...(row.runAt === null ? {} : { at: row.runAt }),
+            }
+          },
+          list: (agentId, channelId) =>
+            repository
+              .listExtensionJobs({ agentId, extensionId: null, channelId })
+              .filter((row) => row.source === 'reminder' && row.nextRunAt !== null)
+              .map((row) => ({
+                jobId: row.id,
+                label: row.label,
+                ...(row.nextRunAt === null ? {} : { nextRunAt: row.nextRunAt }),
+                ...(row.cron === null ? {} : { cron: row.cron }),
+                ...(row.runAt === null ? {} : { at: row.runAt }),
+              })),
+          cancel: (agentId, jobId) => {
+            const row = repository.getExtensionJob(jobId)
+            if (row === undefined || row.source !== 'reminder' || row.agentId !== agentId) return false
+            return repository.deleteExtensionJob(jobId)
+          },
+        },
+        onSessionMount: ({
+          agentId,
+          revision,
+          channelId,
+        }: {
+          agentId: AgentId
+          revision: Revision
+          channelId: ChannelId
+        }) => {
+          const declared =
+            repository.getExtensionRevisionVerification(revision.id)?.permissions?.capabilities?.jobs?.declared ?? []
+          syncDeclaredJobs(repository, {
+            agentId,
+            extensionId: revision.extensionId,
+            channelId,
+            declared,
+            now: now(),
+            nextId: nextUlid,
+          })
+        },
       }
 
       const host = await DshHostRuntime.create({
@@ -464,7 +546,25 @@ export class NekroRuntime {
             receivedAt: event.receivedAt,
           }
         },
-        store: memoryInboundHookDecisionStore(),
+        store: {
+          get: (eventId, agentId) => {
+            const stored = repository.getInboundHookDecision(eventId, agentId)
+            return stored === undefined ? undefined : inboundDecision(stored)
+          },
+          save: ({ eventId, agentId, decision, decidedBy, diagnostics, decidedAt }) =>
+            inboundDecision(
+              repository.saveInboundHookDecision({
+                channelEventId: eventId,
+                agentId,
+                trigger: decision.trigger,
+                hidden: decision.hidden,
+                annotation: decision.annotation ?? null,
+                decidedBy: decidedBy.map((extensionId) => ExtensionIdSchema.parse(extensionId)),
+                diagnostics: diagnostics.length === 0 ? null : diagnostics.map((item) => ({ ...item })),
+                decidedAt,
+              }),
+            ),
+        },
         now,
       })
       const channels = new ChannelRuntime(core, repository, repository, host, {
@@ -550,7 +650,26 @@ export class NekroRuntime {
           })
       })
 
+      const jobScheduler = new ExtensionJobScheduler({
+        due: (at, limit) =>
+          repository.listDueExtensionJobs(at, limit).flatMap((row) => {
+            const job = scheduledJob(row)
+            return job === undefined ? [] : [job]
+          }),
+        advance: ({ id, expectedNextRunAt, firedAt, nextRunAt }) =>
+          repository.recordExtensionJobFired({ id, expectedNextRunAt, firedAt, nextRunAt: nextRunAt ?? null }),
+        // A disabled extension's jobs keep their rows but stay silent until it is enabled again.
+        active: (job) =>
+          job.extensionId === null || repository.getActivation(job.agentId, job.extensionId) !== undefined,
+        extensionName: (extensionId) => repository.getExtension(extensionId)?.displayName,
+        fire: (job) => channels.fireExtensionJob(job),
+        now,
+        diagnostic: (job, message) => {
+          console.warn(`[nekro-nxt] 定时任务 ${job.id}（${job.label}）：${message}`)
+        },
+      })
       const runtime = new NekroRuntime({
+        jobScheduler,
         compatibility,
         database,
         repository,
@@ -769,7 +888,13 @@ export class NekroRuntime {
     await this.channels.recoverProcessingFeedback()
     await this.channels.recover()
     await this.activation.restore()
-    if (options.openAdmission !== false) await this.channels.openAdmission()
+    if (options.openAdmission !== false) await this.openAdmission()
+  }
+
+  /** Opens Channel Admission and then starts scheduled jobs, so missed occurrences fire once, late. */
+  async openAdmission(): Promise<void> {
+    await this.channels.openAdmission()
+    this.#jobScheduler.start()
   }
 
   async retryCompatibility(input: Parameters<typeof HostApiContracts.retryRuntimeCompatibility.parseRequest>[0]) {
@@ -990,6 +1115,7 @@ export class NekroRuntime {
 
   async #dispose(): Promise<void> {
     this.#disposed = true
+    await this.#jobScheduler.dispose()
     await this.authoring.dispose()
     await this.extensionService.dispose()
     const failures: unknown[] = []
