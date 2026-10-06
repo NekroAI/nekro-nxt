@@ -2,7 +2,9 @@ import { useGo } from '../model/nav.js'
 import { Boxes, Cable, FolderCog, Globe, MessagesSquare, PencilLine, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
-import { promptDocumentPlainText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
+import { promptDocumentPlainText, type AgentRevisionHistory, type PromptDocumentV1 } from '@nekro-nxt/contracts'
+import { workspaceApi } from '../../host-api-client.js'
+import { relativeTime } from '../channels/timeline-model.js'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { agentModelKey } from '../../pages/agent-create-draft.js'
@@ -230,6 +232,83 @@ function SkillRow({
       {control}
       {children ? <div className={styles.accessRow}>{children}</div> : null}
     </div>
+  )
+}
+
+const CHANGED_FIELD_LABEL: Record<AgentRevisionHistory['revisions'][number]['changedFields'][number], string> = {
+  name: '名称',
+  persona: '设定',
+  model: '模型',
+  capabilities: '技能',
+  imagePolicy: '图片理解',
+  approvalPolicy: '运行确认',
+}
+
+const VISIBLE_VERSIONS = 5
+
+/** Immutable revision history, newest first; any earlier revision can become current again. */
+function Versions({ agent }: { readonly agent: AgentSummary }) {
+  const api = useProductApi()
+  const [history, setHistory] = useState<AgentRevisionHistory>()
+  const [expanded, setExpanded] = useState(false)
+  const [restoring, setRestoring] = useState<AgentRevisionHistory['revisions'][number]>()
+  useEffect(() => {
+    let live = true
+    workspaceApi
+      .listAgentRevisions(agent.id)
+      .then((next) => live && setHistory(next))
+      .catch(() => live && setHistory(undefined))
+    return () => {
+      live = false
+    }
+  }, [agent.id, agent.currentRevisionId])
+
+  if (!history) return <Panel className={styles.versionsEmpty}>正在读取版本…</Panel>
+  const rows = expanded ? history.revisions : history.revisions.slice(0, VISIBLE_VERSIONS)
+  return (
+    <>
+      <Panel className={styles.table}>
+        {rows.map((revision) => (
+          <div key={revision.id} className={styles.versionRow} data-current={revision.current}>
+            <b className={styles.versionKey}>r{revision.revision}</b>
+            <span className={styles.versionChanges}>
+              {revision.changedFields.length > 0 ? (
+                revision.changedFields.map((field) => <Chip key={field}>{CHANGED_FIELD_LABEL[field]}</Chip>)
+              ) : (
+                <span className={styles.cellSub}>{revision.revision === 1 ? '创建' : '无变化'}</span>
+              )}
+            </span>
+            <span className={styles.cellSub}>{relativeTime(revision.createdAt)}</span>
+            {revision.current ? (
+              <Chip tone="accent">当前</Chip>
+            ) : (
+              <Button size="small" variant="ghost" onClick={() => setRestoring(revision)}>
+                恢复
+              </Button>
+            )}
+          </div>
+        ))}
+      </Panel>
+      {history.revisions.length > VISIBLE_VERSIONS ? (
+        <Button size="small" variant="ghost" onClick={() => setExpanded(!expanded)}>
+          {expanded ? '收起' : `显示全部 ${history.revisions.length} 个版本`}
+        </Button>
+      ) : null}
+      <ConfirmDialog
+        open={restoring !== undefined}
+        onOpenChange={(open) => !open && setRestoring(undefined)}
+        title={`恢复到 r${restoring?.revision ?? ''}？`}
+        confirmLabel="恢复"
+        onConfirm={async () => {
+          if (!restoring) return
+          await workspaceApi.restoreAgentRevision(agent.id, restoring.id, history.currentRevisionId)
+          await api.getState().refreshHost()
+          toast(`${agent.name}已恢复到 r${restoring.revision}`)
+        }}
+      >
+        正在进行的工作结束后，各频道开始使用这个版本。当前版本仍保留在历史中。
+      </ConfirmDialog>
+    </>
   )
 }
 
@@ -513,6 +592,10 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
 
         <Section title="技能">
           <Skills agent={agent} />
+        </Section>
+
+        <Section title="版本">
+          <Versions agent={agent} />
         </Section>
 
         <div className={styles.danger}>

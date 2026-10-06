@@ -41,6 +41,10 @@ declare const styles: {
   readonly table: string
   readonly tableRow: string
   readonly tagline: string
+  readonly versionChanges: string
+  readonly versionKey: string
+  readonly versionRow: string
+  readonly versionsEmpty: string
 }
 
 export default styles

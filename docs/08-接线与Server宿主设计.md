@@ -32,6 +32,7 @@
 | 处理投递 | `POST /api/outbound/:outboundId/resolve` | `retry` 重新投递失败或未知的物理投递，`confirm-delivered` 记录管理员确认已送达；见 [03 §5 投递处理](03-消息内容与投递协议.md#投递处理) |
 | 频道活跃度 | `GET /api/activity?window=2h&bucket=5m` | 活动频道按对齐时间桶统计入站与出站；窗口不超过 24 小时、间隔不小于 1 分钟、不超过 288 桶 |
 | 智能体外观 | `PATCH /api/agents/:agentId/appearance`、`GET/POST /api/agents/:agentId/avatar` | 色相与可选头像 Asset；不属于版本化配置，修改不产生新 Revision；头像 2 MiB 以内的 PNG/JPEG/WebP/GIF |
+| 版本历史 | `GET /api/agents/:agentId/revisions`、`POST /api/agents/:agentId/revisions/:revisionId/restore` | 全部 Revision 新到旧，`changedFields` 对比编号相邻的上一版（名称、设定、模型、技能、图片理解、运行确认）；恢复携带 `expectedCurrentRevisionId`，重新启用原有不可变 Revision 而不复制，会话在安全点切换 |
 | 上下文操作 | `POST /api/channels/:channelId/context-reset` | 携带 `expectedEpisodeId`；`clear` 中止后无交接清空，`compact` 中止后生成 Handoff 并建立新 Episode |
 | 频道资源 | `GET /api/channels/:channelId/assets/:assetId` | 校验频道访问权后同源读取 |
 | 频道本地名称 | `POST /api/channels/:channelId/display-name` | 只改展示名 |

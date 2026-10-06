@@ -1642,6 +1642,38 @@ const defineContract = <
 })
 
 const agentParam = z.object({ agentId: AgentIdSchema }).strict()
+const agentRevisionParam = z.object({ agentId: AgentIdSchema, revisionId: AgentRevisionIdSchema }).strict()
+
+export const AgentRevisionChangedFieldSchema = z.enum([
+  'name',
+  'persona',
+  'model',
+  'capabilities',
+  'imagePolicy',
+  'approvalPolicy',
+])
+
+export const AgentRevisionHistorySchema = z
+  .object({
+    agentId: AgentIdSchema,
+    currentRevisionId: AgentRevisionIdSchema,
+    /** Newest first. `changedFields` compares each Revision with the one numbered just before it. */
+    revisions: z.array(
+      z
+        .object({
+          id: AgentRevisionIdSchema,
+          revision: z.number().int().positive(),
+          createdAt: z.number().int().nonnegative(),
+          displayName: z.string(),
+          model: z.object({ provider: z.string(), model: z.string() }).strict(),
+          changedFields: z.array(AgentRevisionChangedFieldSchema),
+          current: z.boolean(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+export type AgentRevisionHistory = z.output<typeof AgentRevisionHistorySchema>
 const channelParam = z.object({ channelId: ChannelIdSchema }).strict()
 const connectionParam = z.object({ connectionId: ConnectionIdSchema }).strict()
 const agentExtensionParam = z.object({ agentId: AgentIdSchema, extensionId: ExtensionIdSchema }).strict()
@@ -2913,6 +2945,23 @@ export const HostApiContracts = {
     params: ActivityQuerySchema,
     request: NoRequestBodySchema,
     response: ChannelActivitySeriesSchema,
+    error: HostApiErrorSchema,
+  }),
+  listAgentRevisions: defineContract({
+    method: 'GET',
+    path: '/api/agents/:agentId/revisions',
+    params: agentParam,
+    request: NoRequestBodySchema,
+    response: AgentRevisionHistorySchema,
+    error: HostApiErrorSchema,
+  }),
+  restoreAgentRevision: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/agents/:agentId/revisions/:revisionId/restore',
+    params: agentRevisionParam,
+    request: z.object({ expectedCurrentRevisionId: AgentRevisionIdSchema }).strict(),
+    response: z.object({ currentRevisionId: AgentRevisionIdSchema }).strict(),
     error: HostApiErrorSchema,
   }),
   updateAgentAppearance: defineContract({

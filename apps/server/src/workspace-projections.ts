@@ -1,11 +1,14 @@
 import {
   activityDurationMs,
   AgentIdSchema,
+  AgentRevisionIdSchema,
   CHANNEL_UNREAD_COUNT_CAP,
   ChannelIdSchema,
   HostApiContracts,
   OutboundIntentIdSchema,
   type AgentId,
+  type AgentRevisionHistory,
+  type AgentRevisionId,
   type AttentionItem,
   type ChannelActivitySeries,
   type ChannelActivitySummary,
@@ -278,6 +281,41 @@ export class WorkspaceProjections {
     }
   }
 
+  // ---------------------------------------------------------------- agent revision history
+
+  revisionHistory(agentId: AgentId): AgentRevisionHistory {
+    const agent = this.#runtime.repository.getAgent(agentId)
+    if (agent === undefined) throw new NotFoundError('智能体不存在或已被删除。')
+    const currentRevisionId = agent.definition.currentRevisionId
+    return {
+      agentId,
+      currentRevisionId,
+      revisions: this.#runtime.core
+        .listAgentRevisionHistory(agentId)
+        .map(({ revision, changedFields }) => ({
+          id: revision.id,
+          revision: revision.revision,
+          createdAt: revision.createdAt,
+          displayName: revision.displayName,
+          model: { provider: revision.model.provider, model: revision.model.model },
+          changedFields: [...changedFields],
+          current: revision.id === currentRevisionId,
+        }))
+        .reverse(),
+    }
+  }
+
+  restoreRevision(agentId: AgentId, revisionId: AgentRevisionId, expectedCurrentRevisionId: AgentRevisionId) {
+    const agent = this.#runtime.repository.getAgent(agentId)
+    if (agent === undefined) throw new NotFoundError('智能体不存在或已被删除。')
+    if (agent.definition.currentRevisionId !== expectedCurrentRevisionId) {
+      throw new RevisionConflictError('智能体配置已在其他位置更新，请刷新后重试。')
+    }
+    const target = this.#runtime.repository.getAgentRevision(revisionId)
+    if (target === undefined || target.agentId !== agentId) throw new NotFoundError('这个版本不存在。')
+    return this.#runtime.core.restoreAgentRevision(agentId, revisionId, expectedCurrentRevisionId).revision.id
+  }
+
   // ---------------------------------------------------------------- agent appearance
 
   updateAppearance(
@@ -539,6 +577,30 @@ export class WorkspaceProjections {
     }
   }
 
+  /** `/api/agents/:agentId/revisions[/:revisionId/restore]` delegated from the Agent route family. */
+  async handleAgentRevisionRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+    agentId: AgentId,
+    restoreRevisionId: string | undefined,
+  ): Promise<void> {
+    try {
+      if (restoreRevisionId === undefined) {
+        if (!requireMethod(req, res, 'GET')) return
+        writeContractJson(res, 200, HostApiContracts.listAgentRevisions, this.revisionHistory(agentId))
+        return
+      }
+      if (!requireMethod(req, res, 'POST')) return
+      const revisionId = AgentRevisionIdSchema.parse(restoreRevisionId)
+      const body = HostApiContracts.restoreAgentRevision.parseRequest(await readJsonBody(req))
+      writeContractJson(res, 200, HostApiContracts.restoreAgentRevision, {
+        currentRevisionId: this.restoreRevision(agentId, revisionId, body.expectedCurrentRevisionId),
+      })
+    } catch (error) {
+      writeProjectionError(res, error)
+    }
+  }
+
   /** `/api/agents/:agentId/(appearance|avatar)` delegated from the Agent route family. */
   async handleAgentRoute(
     req: IncomingMessage,
@@ -659,6 +721,7 @@ const severityRank = (severity: AttentionItem['severity']): number =>
   severity === 'critical' ? 0 : severity === 'warning' ? 1 : 2
 
 class NotFoundError extends Error {}
+class RevisionConflictError extends Error {}
 class BadRequestError extends Error {}
 
 const requireMethod = (req: IncomingMessage, res: ServerResponse, method: string): boolean => {
@@ -671,6 +734,7 @@ const writeProjectionError = (res: ServerResponse, error: unknown): void => {
   const message = error instanceof Error ? error.message : String(error)
   if (error instanceof NotFoundError) writeError(res, 404, 'not-found', message)
   else if (error instanceof ChannelStopConflictError) writeError(res, 409, 'episode-conflict', message)
+  else if (error instanceof RevisionConflictError) writeError(res, 409, 'revision-conflict', message)
   else if (error instanceof OutboundResolutionError) {
     writeError(res, error.code === 'not-found' ? 404 : 409, `outbound-${error.code}`, message)
   } else writeError(res, 400, 'invalid-request', message)

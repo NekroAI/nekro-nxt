@@ -432,3 +432,42 @@
     display: none;
   }
 }
+
+.versionRow {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto 64px;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.versionRow:first-child {
+  border-top: 0;
+}
+
+.versionRow > :last-child {
+  justify-self: end;
+}
+
+.versionKey {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.versionRow[data-current='true'] .versionKey {
+  color: var(--accent);
+}
+
+.versionChanges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.versionsEmpty {
+  padding: 14px 16px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}

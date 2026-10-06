@@ -213,6 +213,15 @@ export const workspaceApi = {
       undefined,
       options,
     ),
+  listAgentRevisions: (agentId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.listAgentRevisions, { agentId }, undefined, options),
+  restoreAgentRevision: (
+    agentId: string,
+    revisionId: string,
+    expectedCurrentRevisionId: string,
+    options?: HostRequestOptions,
+  ) =>
+    callHostApi(HostApiContracts.restoreAgentRevision, { agentId, revisionId }, { expectedCurrentRevisionId }, options),
   updateAgentAppearance: (
     agentId: string,
     patch: { readonly hue?: number | null; readonly avatarAssetId?: null },

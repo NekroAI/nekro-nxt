@@ -623,6 +623,33 @@ const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevision
   dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
 })
 
+/** Revision fields an administrator can tell apart in history; `approvalPolicy` is the dynamic client approval policy. */
+export type AgentRevisionChangedField = 'name' | 'persona' | 'model' | 'capabilities' | 'imagePolicy' | 'approvalPolicy'
+
+const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, string])[] = [
+  ['name', 'displayName'],
+  ['persona', 'personaDocument'],
+  ['model', 'model'],
+  ['capabilities', 'capabilities'],
+  ['imagePolicy', 'imagePolicy'],
+  ['approvalPolicy', 'dynamicClientApprovalPolicy'],
+]
+
+const payloadField = (payload: JsonValue, key: string): JsonValue =>
+  payload !== null && typeof payload === 'object' && !Array.isArray(payload) ? (payload[key] ?? null) : null
+
+/** Fields that differ between two Revisions, compared on the same normalized payload as the digest. */
+export const diffAgentRevisions = (
+  previous: AgentRevisionRecord,
+  current: AgentRevisionRecord,
+): readonly AgentRevisionChangedField[] => {
+  const before = normalizedRevisionPayload(revisionContent(previous))
+  const after = normalizedRevisionPayload(revisionContent(current))
+  return AGENT_REVISION_FIELDS.filter(
+    ([, key]) => canonicalJson(payloadField(before, key)) !== canonicalJson(payloadField(after, key)),
+  ).map(([field]) => field)
+}
+
 const equivalentRevisionContent = (
   left: NormalizedAgentRevisionContent,
   right: NormalizedAgentRevisionContent,
@@ -742,6 +769,31 @@ export class CoreService {
     const definition = { ...current.definition, currentRevisionId: revision.id }
     this.#repository.appendAgentRevision(definition, revision, expectedCurrentRevisionId)
     return { definition, revision }
+  }
+
+  /** Every Revision of an agent, oldest first, with the fields each one changed from its predecessor. */
+  listAgentRevisionHistory(agentId: AgentId): readonly {
+    readonly revision: AgentRevisionRecord
+    readonly changedFields: readonly AgentRevisionChangedField[]
+  }[] {
+    if (!this.#repository.getAgent(agentId)) throw new Error(`Unknown agent: ${agentId}`)
+    const revisions = [...this.#repository.listAgentRevisions(agentId)].sort(
+      (left, right) => left.revision - right.revision,
+    )
+    return revisions.map((revision, index) => {
+      const previous = revisions[index - 1]
+      return { revision, changedFields: previous === undefined ? [] : diffAgentRevisions(previous, revision) }
+    })
+  }
+
+  /**
+   * Makes an earlier Revision current again. The existing immutable Revision is re-activated, never copied;
+   * running Sessions roll over at their next safe point exactly as for any other revision change.
+   */
+  restoreAgentRevision(agentId: AgentId, revisionId: AgentRevisionId, expectedCurrentRevisionId: AgentRevisionId) {
+    const target = this.#repository.getAgentRevision(revisionId)
+    if (!target || target.agentId !== agentId) throw new Error(`Unknown agent revision: ${revisionId}`)
+    return this.reviseAgent(agentId, expectedCurrentRevisionId, revisionContent(target))
   }
 
   /**

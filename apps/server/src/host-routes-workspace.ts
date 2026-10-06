@@ -265,6 +265,24 @@ export function registerWorkspaceRoutes({
         await handleExtensionActivationRoute(req, res)
         return
       }
+      const revisionsMatch = /^\/api\/agents\/([^/]+)\/revisions(?:\/([^/]+)\/restore)?$/u.exec(url.pathname)
+      if (revisionsMatch) {
+        let agentId: AgentId
+        try {
+          agentId = AgentIdSchema.parse(decodeURIComponent(revisionsMatch[1] ?? ''))
+        } catch {
+          writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+          return
+        }
+        const restoreId = revisionsMatch[2]
+        await projections.handleAgentRevisionRoute(
+          req,
+          res,
+          agentId,
+          restoreId === undefined ? undefined : decodeURIComponent(restoreId),
+        )
+        return
+      }
       const presentationMatch = /^\/api\/agents\/([^/]+)\/(appearance|avatar)$/u.exec(url.pathname)
       if (presentationMatch) {
         let agentId: AgentId

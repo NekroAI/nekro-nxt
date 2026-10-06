@@ -423,4 +423,45 @@ describe('workspace projections', () => {
     const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${f.origin}/api/snapshot`)).json())
     expect(snapshot.agents[0]).toMatchObject({ appearance: { hue: 268 }, currentRevisionId: f.seeded.revision.id })
   })
+
+  it('lists revision history with changed fields and restores an earlier revision without copying it', async () => {
+    const f = await fixture()
+    const agentId = f.seeded.definition.id
+    const first = f.seeded.revision
+    const renamed = f.runtime.core.reviseAgent(agentId, first.id, {
+      displayName: '改名后的智能体',
+      persona: first.persona,
+      personaDocument: first.personaDocument,
+      model: first.model,
+      capabilities: first.capabilities,
+      imagePolicy: first.imagePolicy,
+      dynamicClientApprovalPolicy: first.dynamicClientApprovalPolicy,
+    }).revision
+    const history = async () =>
+      HostApiContracts.listAgentRevisions.parseResponse(
+        await (await fetch(`${f.origin}/api/agents/${agentId}/revisions`)).json(),
+      )
+    const before = await history()
+    expect(before.currentRevisionId).toBe(renamed.id)
+    expect(before.revisions.map(({ id, changedFields, current }) => ({ id, changedFields, current }))).toEqual([
+      { id: renamed.id, changedFields: ['name'], current: true },
+      { id: first.id, changedFields: [], current: false },
+    ])
+
+    const stale = await f.post(`/api/agents/${agentId}/revisions/${first.id}/restore`, {
+      expectedCurrentRevisionId: first.id,
+    })
+    expect(stale.status).toBe(409)
+
+    const restored = await f.post(`/api/agents/${agentId}/revisions/${first.id}/restore`, {
+      expectedCurrentRevisionId: renamed.id,
+    })
+    expect(restored.status, await restored.clone().text()).toBe(200)
+    expect(HostApiContracts.restoreAgentRevision.parseResponse(await restored.json())).toEqual({
+      currentRevisionId: first.id,
+    })
+    const after = await history()
+    expect(after.revisions).toHaveLength(2)
+    expect(after.revisions.find(({ current }) => current)?.id).toBe(first.id)
+  })
 })
