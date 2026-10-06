@@ -1140,6 +1140,38 @@ export const outboundResolutions = sqliteTable(
   ],
 )
 
+export const extensionStorageEntries = sqliteTable(
+  'extension_storage_entries',
+  {
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .notNull()
+      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+    owner: text().notNull(),
+    agentId: text('agent_id').$type<AgentId>(),
+    partition: text().notNull(),
+    key: text().notNull(),
+    valueJson: jsonText<JsonValue>('value_json').notNull(),
+    byteSize: integer('byte_size').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.extensionId, table.owner, table.partition, table.key] }),
+    index('extension_storage_entries_extension_idx').on(table.extensionId),
+    foreignKey({
+      name: 'extension_storage_entries_agent_fk',
+      columns: [table.agentId],
+      foreignColumns: [agentDefinitions.id],
+    }).onDelete('cascade'),
+    check(
+      'extension_storage_entries_owner_agent_ck',
+      sql`(${table.owner} = 'shared' AND ${table.agentId} IS NULL) OR (${table.owner} != 'shared' AND ${table.agentId} = ${table.owner})`,
+    ),
+    check('extension_storage_entries_byte_size_ck', sql`${table.byteSize} >= 0`),
+    check('extension_storage_entries_updated_at_ck', sql`${table.updatedAt} >= 0`),
+  ],
+)
+
 export const coreSchema = {
   agentDefinitions,
   agentRevisions,
@@ -1187,4 +1219,5 @@ export const coreSchema = {
   channelReadCursors,
   attentionDismissals,
   outboundResolutions,
+  extensionStorageEntries,
 } as const

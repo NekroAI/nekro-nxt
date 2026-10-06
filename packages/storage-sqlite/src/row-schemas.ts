@@ -75,6 +75,7 @@ import {
   extensionRevisions,
   extensionRevisionVerifications,
   extensionClientDiagnostics,
+  extensionStorageEntries,
   hostSecurityMetadata,
   hostExtensionInstallations,
   hostUiDiagnostics,
@@ -315,6 +316,14 @@ export const OutboundResolutionRowSchema = createSelectSchema(outboundResolution
   viewerKey: z.string().min(1).max(200),
 })
 
+export const ExtensionStorageEntryRowSchema = createSelectSchema(extensionStorageEntries, {
+  extensionId: ExtensionIdSchema,
+  agentId: AgentIdSchema.nullable(),
+  valueJson: JsonValueSchema,
+  byteSize: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
+})
+
 export const CoreRowSchemas = {
   outboundResolutions: OutboundResolutionRowSchema,
   dshSessionResets: DshSessionResetRowSchema,
@@ -353,6 +362,7 @@ export const CoreRowSchemas = {
   hostUiDiagnostics: HostUiDiagnosticRowSchema,
   agentActivations: AgentActivationRowSchema,
   extensionClientDiagnostics: ExtensionClientDiagnosticRowSchema,
+  extensionStorageEntries: ExtensionStorageEntryRowSchema,
   dshPluginPackages: DshPluginPackageRowSchema,
   dshPluginEntries: DshPluginEntryRowSchema,
   dshPluginActivations: DshPluginActivationRowSchema,

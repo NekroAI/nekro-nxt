@@ -30,6 +30,8 @@ Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历�
 
 `0026_ui_projections` 只新增五张表，不重建或回填既有表：`agent_appearances` 保存智能体色相（0–359）与可选头像 Asset，独立于不可变 Revision，随智能体级联删除、头像 Asset 删除时置空；`read_viewers` 与 `channel_read_cursors` 按观察者保存每个频道单调推进的 `(read_at, read_source_id)` 阅读位置；`attention_dismissals` 按关注指纹保存忽略时间，写入时清理超过保留期的旧记录；`outbound_resolutions` 记录管理员对失败或未知出站的 `retry` / `confirm-delivered` 处理，包括处理前的意图状态和物理投递快照。`ProjectionRepository`（`core.projections`）提供未读计数（只读上限加一行）、按时间桶的活跃度聚合、未结出站列表和事务内的投递处理；`resolveOutbound` 的重试以意图当前状态做 CAS，冲突或不可处理时抛出 `OutboundResolutionError`。
 
+`0028_extension_storage` 新增 `extension_storage_entries`，保存扩展私有 JSON 键值数据，主键为 `(extension_id, owner, partition, key)`。`owner` 是智能体 ID 或 `shared`，`agent_id` 外键与之一致（共享条目为空），`partition` 为空、频道 ID 或 `频道ID:成员ID`。删除本地扩展级联删除全部条目，删除智能体只级联删除该智能体的条目，共享条目保留。单值上限 256 KiB；写入在 immediate transaction 内按扩展汇总字节数并与调用方给出的配额比较，替换同一键时扣除旧值，超出时抛出 `ExtensionStorageQuotaError`。前缀查询用 `instr` 做字面匹配，`%`、`_` 不是通配符。
+
 `prepareDshSessionStorage({ databasePath, sessionRoot?, sessionCompatibilityId?, now?, onProgress? })` 需要 Host 已独占数据根并完成完整备份。它只接受 DSH application ID `1146308688` 下的 schema 15/17，使用 SQLite backup API 生成并校验独立快照，发布归档与重置标记后才逐个移走旧文件。新根默认为旧库同级的 `dsh/sessions`，以 `dsh/session-storage.json` 持久化 `jsonl-v4` 身份；未知数据库、未来身份或没有身份的非空 JSONL 根拒绝启动。归档、重置标记与源文件保留校验信息；中断后检查归档和剩余源文件，不能因重试覆盖损坏归档或新写入。`onProgress` 报告四个已完成阶段，可由宿主推进 journal 或由测试注入中断。
 
 准备结果返回 `sessionRoot`、`sessionCompatibilityId` 与 `new/compatible/archived` 状态。仅 `archived` 返回稳定 `migrationId`，其依据是源存储身份和目标兼容格式，与产品 commit 无关。调用方提交 Core 重置事务后，再调用 `completeDshSessionStoragePreparation(databasePath, migrationId)` 清除待重置标记；重复完成安全，身份不匹配拒绝。未来升级必须为新兼容格式登记明确迁移，不按产品版本变化自动清空会话。

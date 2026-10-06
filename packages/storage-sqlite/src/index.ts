@@ -15,6 +15,7 @@ import { createExtensionsRepository } from './repositories/extensions.js'
 import { createAssetsRepository } from './repositories/assets.js'
 import { createDshPluginRepository, type DshPluginRepository } from './repositories/dsh-plugins.js'
 import { createAuthoringRepository } from './repositories/authoring.js'
+import { createExtensionStorageRepository, type ExtensionStorageRepository } from './repositories/extension-storage.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 
 export * from './backup.js'
@@ -25,6 +26,8 @@ export * from './schema.js'
 export * from './row-schemas.js'
 export type { DshSessionStorageRetirementInput, DshSessionStorageRetirementReport } from './repositories/runtime.js'
 export type { DshPluginRepository } from './repositories/dsh-plugins.js'
+export type { ExtensionStorageRepository } from './repositories/extension-storage.js'
+export { ExtensionStorageQuotaError } from './repositories/extension-storage.js'
 export { OutboundResolutionError } from './repositories/projections.js'
 export type {
   ChannelReadPosition,
@@ -72,6 +75,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #assets
   readonly #dshPlugins
   readonly #authoring
+  readonly #extensionStorage
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
 
@@ -88,6 +92,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#assets = createAssetsRepository(database.db)
     this.#dshPlugins = createDshPluginRepository(database.db)
     this.#authoring = createAuthoringRepository(database.db)
+    this.#extensionStorage = createExtensionStorageRepository(database.db)
     this.projections = createProjectionRepository(database.db)
   }
 
@@ -492,4 +497,17 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#assets.getAssetById(...args)
   readonly canAccessAsset = (...args: Parameters<ReturnType<typeof createAssetsRepository>['canAccessAsset']>) =>
     this.#assets.canAccessAsset(...args)
+
+  readonly getExtensionStorageEntry = (...args: Parameters<ExtensionStorageRepository['getExtensionStorageEntry']>) =>
+    this.#extensionStorage.getExtensionStorageEntry(...args)
+  readonly setExtensionStorageEntry = (...args: Parameters<ExtensionStorageRepository['setExtensionStorageEntry']>) =>
+    this.#extensionStorage.setExtensionStorageEntry(...args)
+  readonly deleteExtensionStorageEntry = (
+    ...args: Parameters<ExtensionStorageRepository['deleteExtensionStorageEntry']>
+  ) => this.#extensionStorage.deleteExtensionStorageEntry(...args)
+  readonly listExtensionStorageEntries = (
+    ...args: Parameters<ExtensionStorageRepository['listExtensionStorageEntries']>
+  ) => this.#extensionStorage.listExtensionStorageEntries(...args)
+  readonly extensionStorageUsage = (...args: Parameters<ExtensionStorageRepository['extensionStorageUsage']>) =>
+    this.#extensionStorage.extensionStorageUsage(...args)
 }

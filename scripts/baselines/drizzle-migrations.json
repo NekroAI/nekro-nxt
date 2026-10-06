@@ -30,6 +30,7 @@
     "0025_dsh_session_reset_receipts.sql": "9da39abe0e1ad1f56aacc7603a2fdc4226d62b58b0378a97b3b083ef7ca4b095",
     "0026_ui_projections.sql": "30b4d246cf464310dd267cb55bb8b89494b21daf661ce2c6ddcc8671ba5cb7c1",
     "0027_host_installation_config.sql": "694c82074507dcbcb71ef29ba691bec2ef8274b05fcf26bd3e4c83609e5fea69",
+    "0028_extension_storage.sql": "45e143b7f1f6de831971dbb47fcfdb7254be9c1c9ba12d71a655d218fb615dbb",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -58,6 +59,7 @@
     "meta/0025_snapshot.json": "938e06c78fb1e20d1758c64118a5d531f2a6bba5c76d62a6fe928ef555887bfa",
     "meta/0026_snapshot.json": "e5206cf28d92234a851152ff048784cad457709ebe7f360852e290a8efb87907",
     "meta/0027_snapshot.json": "556a6eeeae935922d6e133ca7f923c75a6fef073f4e8311d5dd4385f98e8c29f",
-    "meta/_journal.json": "7108c7c86b18cd2c143cf78296a78031cb593527d3a8dd31e600344e652c5383"
+    "meta/0028_snapshot.json": "feb71703af6a6af53955bfdef9724bf8483e0e99cda9a7ead6e860c01b349e0a",
+    "meta/_journal.json": "4b2611e449b9b77e8d535d43a741b9af07465bf69ef7912d293b301ada5ee149"
   }
 }
