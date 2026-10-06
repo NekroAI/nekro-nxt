@@ -3,7 +3,6 @@ declare const styles: {
   readonly as: string
   readonly blocked: string
   readonly bubble: string
-  readonly buttons: string
   readonly card: string
   readonly cardHead: string
   readonly cardIndex: string
@@ -19,8 +18,9 @@ declare const styles: {
   readonly dragOverlay: string
   readonly emptyCanvas: string
   readonly emptyTimeline: string
-  readonly facts: string
-  readonly fields: string
+  readonly expand: string
+  readonly filter: string
+  readonly filterRow: string
   readonly fresh: string
   readonly group: string
   readonly groupDrop: string
@@ -29,27 +29,24 @@ declare const styles: {
   readonly head: string
   readonly iconToggle: string
   readonly input: string
-  readonly inspector: string
-  readonly inspectorTitle: string
   readonly jump: string
   readonly knob: string
   readonly kv: string
-  readonly list: string
-  readonly listBody: string
   readonly listCount: string
-  readonly listHead: string
-  readonly listTitle: string
   readonly meta: string
   readonly mine: string
   readonly msg: string
   readonly msgCont: string
+  readonly noMatch: string
   readonly notice: string
   readonly older: string
+  readonly paneActions: string
+  readonly paneHeader: string
+  readonly paneMeta: string
   readonly queue: string
   readonly queueBar: string
   readonly queueList: string
   readonly queueOpen: string
-  readonly renameRow: string
   readonly responder: string
   readonly row: string
   readonly rowBadge: string
@@ -60,7 +57,7 @@ declare const styles: {
   readonly rowTime: string
   readonly runDot: string
   readonly send: string
-  readonly space: string
+  readonly source: string
   readonly stack: string
   readonly step: string
   readonly stepArg: string
@@ -92,6 +89,7 @@ declare const styles: {
   readonly who: string
   readonly whoMeta: string
   readonly whoName: string
+  readonly whoText: string
   readonly wireLine: string
   readonly wirePreview: string
   readonly xray: string

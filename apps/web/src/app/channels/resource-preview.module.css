@@ -38,7 +38,7 @@
   overflow: auto;
   border: 1px solid var(--nxt-border-subtle);
   border-radius: var(--nxt-radius-md);
-  padding: 12px 14px;
+  padding: var(--s-3) var(--s-4);
   background: var(--nxt-bg-subtle);
   color: var(--nxt-text-primary);
   font-family: var(--nxt-font-mono);
@@ -51,7 +51,7 @@
 .status {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
   margin: 0;
   color: var(--nxt-text-secondary);
   font-size: 13px;
@@ -61,7 +61,7 @@
 .download {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s-2);
   color: var(--nxt-text-primary);
   font-size: 13px;
   font-weight: 620;

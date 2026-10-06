@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowRight, ChevronDown, Eye, PanelRight, Plug } from 'lucide-react'
+import { ArrowDown, ArrowRight, ChevronDown, Eye, MessageSquareDashed, PanelRight, Plug } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { EMPTY_CHANNEL_DRAFT } from '../../channel-drafts.js'
 import { workspaceApi } from '../../host-api-client.js'
@@ -19,13 +19,15 @@ import {
   Chip,
   ConfirmDialog,
   Disclosure,
+  EmptyState,
   MemberAvatar,
   StatusDot,
   toast,
   Pressable,
   Textarea,
 } from '../../ui-kit/next/index.js'
-import { agentHue, agentPhase, connectionTone, triggerLabel } from '../model/identity.js'
+import { connectionStatus } from '../model/connection-status.js'
+import { agentHue, agentPhase, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
 import { MessageRow, TurnRow } from './timeline.js'
@@ -62,8 +64,8 @@ function Composer({
   const external = channel.kind !== 'internal'
   const blocked = !agent
     ? '还没有智能体响应这个频道'
-    : connection && connectionTone(connection.state) === 'bad'
-      ? `${connectionDisplayName(connection)} 当前${connection.state}`
+    : connection && connectionStatus(connection).health === 'attention'
+      ? `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`
       : external && connection && !connection.proactiveSend
         ? `${connectionDisplayName(connection)} 不支持主动发送`
         : ''
@@ -316,7 +318,7 @@ export function Conversation({
             )}
           </h1>
           <div className={styles.subline}>
-            {connection ? <StatusDot tone={connectionTone(connection.state)} /> : null}
+            {connection ? <StatusDot tone={connectionStatus(connection).tone} /> : null}
             <span>
               {connection
                 ? connection.alias
@@ -367,7 +369,17 @@ export function Conversation({
               加载更早的消息
             </Button>
           ) : null}
-          {history?.loaded && items.length === 0 ? <p className={styles.emptyTimeline}>还没有消息</p> : null}
+          {history?.loaded && items.length === 0 ? (
+            <div className={styles.emptyTimeline}>
+              <EmptyState icon={<MessageSquareDashed />} title="还没有消息">
+                {!agent
+                  ? '接上智能体后，它会在这里回复。'
+                  : channel.kind === 'internal'
+                    ? `在下方给${agent.name}发第一条消息。`
+                    : '群里有新消息时会出现在这里。'}
+              </EmptyState>
+            </div>
+          ) : null}
           {items.map((item) =>
             item.kind === 'day' ? (
               <div key={item.key} className={styles.day}>

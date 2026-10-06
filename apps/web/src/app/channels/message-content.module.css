@@ -3,7 +3,7 @@
 }
 
 .contentRun + .contentRun {
-  margin-top: 8px;
+  margin-top: var(--s-2);
 }
 
 .inlineRun {
@@ -36,19 +36,19 @@
 
 .systemEventResource {
   display: inline-flex;
-  margin-left: 6px;
+  margin-left: var(--s-2);
   vertical-align: middle;
 }
 
 .richCard {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: var(--s-1);
   max-width: min(100%, 360px);
   margin: 0;
   border: 1px solid var(--nxt-border-subtle);
   border-radius: var(--nxt-radius-md);
-  padding: 10px 12px;
+  padding: var(--s-2) var(--s-3);
   background: var(--nxt-bg-subtle);
   color: inherit;
   text-decoration: none;
@@ -103,7 +103,7 @@ a.nestedCard:active {
   justify-items: start;
   justify-content: start;
   align-items: start;
-  gap: 6px;
+  gap: var(--s-2);
   width: fit-content;
   max-width: min(560px, 100%);
   margin: 0;
@@ -124,11 +124,11 @@ a.nestedCard:active {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 8px;
+  gap: var(--s-2);
   margin: 0;
   border: 1px solid var(--nxt-border-subtle);
   border-radius: var(--nxt-radius-md);
-  padding: 8px 10px;
+  padding: var(--s-2) var(--s-2);
   min-height: 0;
   background: var(--nxt-bg-subtle);
   color: var(--nxt-text-secondary);
@@ -140,9 +140,9 @@ a.nestedCard:active {
 
 .forwardItem {
   display: grid;
-  gap: 4px;
-  margin-top: 8px;
-  padding-top: 8px;
+  gap: var(--s-1);
+  margin-top: var(--s-2);
+  padding-top: var(--s-2);
   border-top: 1px solid var(--nxt-border-subtle);
 }
 
@@ -157,10 +157,10 @@ a.nestedCard:active {
 .nestedCard {
   display: grid;
   min-width: 0;
-  gap: 4px;
+  gap: var(--s-1);
   border: 1px solid var(--nxt-border-subtle);
   border-radius: var(--nxt-radius-sm);
-  padding: 8px 10px;
+  padding: var(--s-2) var(--s-2);
   background: var(--nxt-bg-canvas);
   color: inherit;
   text-decoration: none;
@@ -172,10 +172,10 @@ a.nestedCard:active {
 
 .forwardPreview {
   max-height: 220px;
-  margin: 4px 0 0;
+  margin: var(--s-1) 0 0;
   overflow: auto;
   border-left: 2px solid var(--nxt-border-strong);
-  padding: 4px 0 4px 10px;
+  padding: var(--s-1) 0 var(--s-1) var(--s-2);
   color: var(--nxt-text-secondary);
   font-family: inherit;
   font-size: 13px;
@@ -214,16 +214,16 @@ a.nestedCard:active {
 .markdownPart blockquote,
 .markdownPart table,
 .markdownPart pre {
-  margin: 0 0 8px;
+  margin: 0 0 var(--s-2);
 }
 
 .markdownPart ul,
 .markdownPart ol {
-  padding-left: 20px;
+  padding-left: var(--s-5);
 }
 
 .markdownPart blockquote {
-  padding-left: 10px;
+  padding-left: var(--s-2);
   border-left: 2px solid var(--line-3);
   color: var(--fg-2);
 }
@@ -237,7 +237,7 @@ a.nestedCard:active {
 }
 
 .markdownPart pre {
-  padding: 10px 12px;
+  padding: var(--s-2) var(--s-3);
   border: 1px solid var(--line);
   border-radius: var(--r-1);
   background: var(--surface-2);
@@ -245,7 +245,7 @@ a.nestedCard:active {
 }
 
 .markdownPart code {
-  padding: 1px 4px;
+  padding: calc(var(--s-1) / 4) var(--s-1);
   border-radius: 5px;
   background: var(--surface-2);
   font-family: var(--font-mono);
@@ -276,7 +276,7 @@ a.nestedCard:active {
 
 .markdownPart th,
 .markdownPart td {
-  padding: 5px 8px;
+  padding: var(--s-1) var(--s-2);
   border: 1px solid var(--line-2);
   text-align: left;
 }
@@ -286,9 +286,9 @@ a.nestedCard:active {
 .messageUnsupported {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  margin: 2px 4px 2px 0;
-  padding: 1px 6px;
+  gap: var(--s-1);
+  margin: calc(var(--s-1) / 2) var(--s-1) calc(var(--s-1) / 2) 0;
+  padding: calc(var(--s-1) / 4) var(--s-2);
   border-radius: 6px;
   background: var(--accent-soft);
   color: var(--accent);
@@ -304,9 +304,9 @@ a.nestedCard:active {
 .attachment {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-2);
   margin: 0;
-  padding: 8px 10px;
+  padding: var(--s-2) var(--s-2);
   border: 1px solid var(--line);
   border-radius: var(--r-1);
   background: var(--surface-2);

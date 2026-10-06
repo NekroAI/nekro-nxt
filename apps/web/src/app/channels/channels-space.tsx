@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Navigate, useParams } from 'react-router-dom'
 import { readLastChannelId, writeLastChannelId } from '../model/last-channel.js'
 import { useProductStore } from '../../product-runtime.js'
-import { Button, EmptyState } from '../../ui-kit/next/index.js'
+import { Button, EmptyState, WorkbenchPage } from '../../ui-kit/next/index.js'
 import { useCrumb } from '../shell/crumb.js'
 import { ChannelList } from './channel-list.js'
 import styles from './channels.module.css'
@@ -14,7 +14,9 @@ import { ChannelInspector } from './inspector.js'
 const INSPECTOR_KEY = 'nekro-nxt.channel-inspector'
 const readInspector = (): boolean => {
   try {
-    return window.localStorage.getItem(INSPECTOR_KEY) !== 'false'
+    const stored = window.localStorage.getItem(INSPECTOR_KEY)
+    // Without a saved choice the inspector starts open only where it fits beside the conversation.
+    return stored === null ? window.innerWidth >= 1100 : stored !== 'false'
   } catch {
     return true
   }
@@ -58,39 +60,50 @@ export default function ChannelsSpace() {
     })
   }
 
+  const empty = (
+    <div className={styles.emptyCanvas}>
+      <EmptyState
+        icon={<MessagesSquare />}
+        title={hostStatus === 'initializing' ? '正在读取频道' : channelId ? '频道已不存在' : '还没有频道'}
+        action={
+          hostStatus === 'initializing' ? undefined : (
+            <Button variant="primary" onClick={() => navigate(channelId ? '/channels' : '/agents/new')}>
+              {channelId ? '回到频道' : '新建智能体'}
+            </Button>
+          )
+        }
+      >
+        {channelId || hostStatus === 'initializing' ? undefined : '新建智能体会同时创建一个可以直接对话的频道。'}
+      </EmptyState>
+    </div>
+  )
+
   return (
-    <div className={styles.space}>
-      <ChannelList selectedId={channel?.id} />
-      {channel ? (
-        <>
-          <Conversation
+    <WorkbenchPage
+      list={<ChannelList selectedId={channel?.id} />}
+      detail={
+        channel && inspectorOpen ? (
+          <ChannelInspector
+            key={channel.id}
             channel={channel}
             agent={agent}
             connection={connection}
-            inspectorOpen={inspectorOpen}
-            onToggleInspector={toggleInspector}
+            onClose={toggleInspector}
           />
-          {inspectorOpen ? (
-            <ChannelInspector key={channel.id} channel={channel} agent={agent} connection={connection} />
-          ) : null}
-        </>
+        ) : undefined
+      }
+    >
+      {channel ? (
+        <Conversation
+          channel={channel}
+          agent={agent}
+          connection={connection}
+          inspectorOpen={inspectorOpen}
+          onToggleInspector={toggleInspector}
+        />
       ) : (
-        <div className={styles.emptyCanvas}>
-          <EmptyState
-            icon={<MessagesSquare />}
-            title={hostStatus === 'initializing' ? '正在读取频道' : channelId ? '频道已不存在' : '还没有频道'}
-            action={
-              hostStatus === 'initializing' ? undefined : (
-                <Button variant="primary" onClick={() => navigate(channelId ? '/channels' : '/agents/new')}>
-                  {channelId ? '回到频道' : '新建智能体'}
-                </Button>
-              )
-            }
-          >
-            {channelId || hostStatus === 'initializing' ? undefined : '新建智能体会同时创建一个可以直接对话的频道。'}
-          </EmptyState>
-        </div>
+        empty
       )}
-    </div>
+    </WorkbenchPage>
   )
 }

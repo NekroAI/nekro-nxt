@@ -1,7 +1,7 @@
 import { useGo } from '../model/nav.js'
 import { PanelSlot } from '../../extension-ui/index.js'
-import { Cable, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Cable, ChevronRight, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 
 import {
   connectionDisplayName,
@@ -13,37 +13,46 @@ import {
 import {
   AgentAvatar,
   Button,
+  Chip,
   ConfirmDialog,
+  DetailPane,
+  Diagnostics,
   Disclosure,
-  Field,
   Gauge,
-  Input,
+  InlineEdit,
+  PropertyGroup,
+  PropertyList,
+  PropertyRow,
+  Pressable,
   Select,
   StatusDot,
-  SwitchRow,
+  Switch,
   toast,
 } from '../../ui-kit/next/index.js'
-import {
-  agentHue,
-  connectionTone,
-  isAgentWorking,
-  triggerLabel,
-  isTriggerPolicy,
-  type TriggerPolicy,
-} from '../model/identity.js'
+import { agentHue, isAgentWorking, triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
+import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
 
+const TRIGGERS = ['mentioned-or-replied', 'always', 'command', 'observe-only'] as const
+
+const kindLabel: Record<ChannelSummary['kind'], string> = { internal: '内置频道', group: '群聊', direct: '私聊' }
+
+const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+
+/** The channel's detail pane: who answers it and how, its context, where it comes from (Decision 2026-10-06 §8). */
 export function ChannelInspector({
   channel,
   agent,
   connection,
+  onClose,
 }: {
   readonly channel: ChannelSummary
   readonly agent: AgentSummary | undefined
   readonly connection: ConnectionSummary | undefined
+  readonly onClose: () => void
 }) {
   const navigate = useGo()
   const api = useProductApi()
@@ -52,6 +61,7 @@ export function ChannelInspector({
   const [intent, setIntent] = useState<BindIntent | null>(null)
   const [reset, setReset] = useState<'compact' | 'clear' | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [eventsOpen, setEventsOpen] = useState(false)
   const binding = channel.bindings[0]
   const occupancy = runtime?.occupancy
   const breakdown = occupancy?.breakdown
@@ -83,9 +93,7 @@ export function ChannelInspector({
     descriptor?.features.processingFeedback?.channelKinds.includes(channel.kind) === true &&
     feedbackCapability?.state !== 'disabled' &&
     feedbackCapability?.state !== 'unsupported'
-  const [name, setName] = useState(channel.name)
-  const [eventsOpen, setEventsOpen] = useState(false)
-  useEffect(() => setName(channel.name), [channel.id, channel.name])
+  const overrides = binding ? Object.keys(binding.activityTriggerOverrides).length : 0
 
   const updateBinding = async (
     patch: Partial<Pick<NonNullable<typeof binding>, 'processingFeedback' | 'activityTriggerOverrides'>>,
@@ -100,36 +108,49 @@ export function ChannelInspector({
         activityTriggerOverrides: patch.activityTriggerOverrides ?? binding.activityTriggerOverrides,
       })
     } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+      failure(error)
     }
   }
-  const rename = async () => {
-    try {
-      await api.getState().renameChannel(channel.id, name.trim())
-      toast('频道名称已保存')
-    } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-    }
-  }
-
   const changeTrigger = async (triggerPolicy: TriggerPolicy) => {
     if (!agent) return
     try {
       await api.getState().createBinding({ agentId: agent.id, channelId: channel.id, triggerPolicy })
       toast(`触发改为“${triggerLabel[triggerPolicy]}”`)
     } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+      failure(error)
     }
   }
 
   return (
-    <aside className={styles.inspector} aria-label="频道信息">
-      <section>
-        <h3 className={styles.inspectorTitle}>响应</h3>
+    <DetailPane
+      label="频道信息"
+      onClose={onClose}
+      header={
+        <div className={styles.paneHeader}>
+          <InlineEdit
+            label="频道名称"
+            value={channel.name}
+            onSave={async (next) => {
+              if (!next) return
+              try {
+                await api.getState().renameChannel(channel.id, next)
+                toast('频道名称已保存')
+              } catch (error) {
+                failure(error)
+              }
+            }}
+          />
+          <span className={styles.paneMeta}>
+            {kindLabel[channel.kind]} · {connection ? connectionDisplayName(connection) : channel.connectionName}
+          </span>
+        </div>
+      }
+    >
+      <PropertyGroup title="响应">
         {agent ? (
           <div className={styles.who}>
             <AgentAvatar name={agent.name} hue={agentHue(agent)} live={isAgentWorking(agent)} />
-            <div>
+            <div className={styles.whoText}>
               <div className={styles.whoName}>{agent.name}</div>
               <div className={styles.whoMeta}>{agent.model}</div>
             </div>
@@ -138,9 +159,10 @@ export function ChannelInspector({
             </Button>
           </div>
         ) : null}
-        <div className={styles.fields}>
-          <Field label="智能体">
+        <PropertyList framed={false}>
+          <PropertyRow label="智能体">
             <Select
+              aria-label="响应的智能体"
               value={agent?.id ?? ''}
               {...(agent ? {} : { placeholder: '选择智能体' })}
               options={agents.map((item) => ({ value: item.id, label: item.name }))}
@@ -150,62 +172,66 @@ export function ChannelInspector({
                   setIntent({ kind: agent ? 'replace' : 'bind', channelId: channel.id, agentId: next })
               }}
             />
-          </Field>
+          </PropertyRow>
           {agent && binding ? (
-            <Field label="触发">
+            <PropertyRow label="触发">
               <Select
+                aria-label="触发方式"
                 value={binding.triggerPolicy}
-                options={(['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map((value) => ({
-                  value,
-                  label: triggerLabel[value] ?? value,
-                }))}
+                options={TRIGGERS.map((value) => ({ value, label: triggerLabel[value] ?? value }))}
                 onChange={(event) => isTriggerPolicy(event.target.value) && void changeTrigger(event.target.value)}
               />
-            </Field>
+            </PropertyRow>
           ) : null}
-        </div>
+        </PropertyList>
         {agent ? (
-          <div className={styles.buttons}>
+          <div className={styles.paneActions}>
             <Button size="small" variant="ghost" onClick={() => setIntent({ kind: 'unbind', channelId: channel.id })}>
               断开
             </Button>
           </div>
         ) : null}
-      </section>
+      </PropertyGroup>
 
       {agent && binding && (showFeedback || activities.length > 0) ? (
-        <section>
-          <h3 className={styles.inspectorTitle}>频道事件</h3>
-          {showFeedback ? (
-            <SwitchRow
-              title="处理中反馈"
-              description={feedbackCapability?.reason ?? '处理期间给触发消息加临时回应，结束后移除'}
-              checked={binding.processingFeedback === 'auto'}
-              onCheckedChange={(checked) => void updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
-            />
-          ) : null}
-          {activities.length > 0 ? (
-            <Button
-              size="small"
-              variant="ghost"
-              aria-expanded={eventsOpen}
-              aria-controls="channel-activity-overrides"
-              onClick={() => setEventsOpen(!eventsOpen)}
-            >
-              {Object.keys(binding.activityTriggerOverrides).length > 0
-                ? `特殊事件 · ${Object.keys(binding.activityTriggerOverrides).length} 项单独设置`
-                : '特殊事件 · 跟随账号'}
-            </Button>
-          ) : null}
+        <PropertyGroup title="频道事件">
+          <PropertyList framed={false}>
+            {showFeedback ? (
+              <PropertyRow
+                label="处理中反馈"
+                description={feedbackCapability?.reason ?? '处理期间给触发消息加临时回应，结束后移除'}
+              >
+                <Switch
+                  label="处理中反馈"
+                  checked={binding.processingFeedback === 'auto'}
+                  onCheckedChange={(checked) => void updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
+                />
+              </PropertyRow>
+            ) : null}
+            {activities.length > 0 ? (
+              <PropertyRow label="特殊事件" description={overrides > 0 ? `${overrides} 项单独设置` : '跟随账号'}>
+                <Pressable
+                  className={styles.expand}
+                  aria-expanded={eventsOpen}
+                  aria-controls="channel-activity-overrides"
+                  aria-label={eventsOpen ? '收起特殊事件' : '展开特殊事件'}
+                  onClick={() => setEventsOpen(!eventsOpen)}
+                >
+                  <ChevronRight size={16} data-open={eventsOpen} />
+                </Pressable>
+              </PropertyRow>
+            ) : null}
+          </PropertyList>
           {activities.length > 0 ? (
             <Disclosure open={eventsOpen} id="channel-activity-overrides">
-              <div className={styles.fields}>
+              <PropertyList>
                 {activities.map((activity) => {
                   const override = binding.activityTriggerOverrides[activity.key]
                   const inherited = connection?.activityTriggerDefaults.includes(activity.key) === true
                   return (
-                    <Field key={activity.key} label={activity.displayName}>
+                    <PropertyRow key={activity.key} label={activity.displayName} layout="stacked">
                       <Select
+                        aria-label={activity.displayName}
                         value={override === undefined ? 'inherit' : override ? 'on' : 'off'}
                         disabled={binding.triggerPolicy === 'observe-only'}
                         options={[
@@ -220,18 +246,17 @@ export function ChannelInspector({
                           void updateBinding({ activityTriggerOverrides: next })
                         }}
                       />
-                    </Field>
+                    </PropertyRow>
                   )
                 })}
-              </div>
+              </PropertyList>
             </Disclosure>
           ) : null}
-        </section>
+        </PropertyGroup>
       ) : null}
 
       {agent && (occupancy || runtime?.episodeId) ? (
-        <section>
-          <h3 className={styles.inspectorTitle}>上下文</h3>
+        <PropertyGroup title="上下文">
           {occupancy ? (
             <Gauge
               total={occupancy.projectedTokens}
@@ -250,7 +275,7 @@ export function ChannelInspector({
             />
           ) : null}
           {runtime?.episodeId ? (
-            <div className={styles.buttons}>
+            <div className={styles.paneActions}>
               <Button size="small" onClick={() => setReset('compact')}>
                 压缩
               </Button>
@@ -259,50 +284,56 @@ export function ChannelInspector({
               </Button>
             </div>
           ) : null}
-        </section>
+        </PropertyGroup>
       ) : null}
 
       <PanelSlot anchor={{ kind: 'channel', id: channel.id }} density="compact" />
       {agent ? <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="compact" /> : null}
 
-      <section>
-        <h3 className={styles.inspectorTitle}>来源</h3>
-        <form
-          className={styles.renameRow}
-          onSubmit={(event) => {
-            event.preventDefault()
-            void rename()
-          }}
-        >
-          <Input aria-label="频道名称" value={name} maxLength={120} onChange={(event) => setName(event.target.value)} />
-          {name.trim() && name.trim() !== channel.name ? (
-            <Button size="small" type="submit">
-              保存
-            </Button>
-          ) : null}
-        </form>
-        <div className={styles.facts}>
-          {connection ? (
-            <div>
-              <StatusDot tone={connectionTone(connection.state)} />
-              <b style={{ fontWeight: 600 }}>{connectionDisplayName(connection)}</b>
-              {connection.alias ? <span style={{ color: 'var(--muted)' }}>{connection.adapter}</span> : null}
-            </div>
-          ) : (
-            <div>{channel.connectionName}</div>
-          )}
-        </div>
-        <div className={styles.buttons}>
-          {connection?.userManaged ? (
-            <Button size="small" icon={<Cable />} onClick={() => navigate(`/wiring/connections/${connection.id}`)}>
+      <PropertyGroup
+        title="来源"
+        actions={
+          connection?.userManaged ? (
+            <Button
+              size="small"
+              variant="ghost"
+              icon={<Cable />}
+              onClick={() => navigate(`/wiring/connections/${connection.id}`)}
+            >
               接线
             </Button>
-          ) : null}
-          <Button size="small" variant="danger" icon={<Trash2 />} onClick={() => setRemoving(true)}>
-            {channel.kind === 'internal' ? '删除频道' : '移除频道'}
-          </Button>
+          ) : undefined
+        }
+      >
+        <div className={styles.source}>
+          {connection ? (
+            <>
+              <StatusDot tone={connectionStatus(connection).tone} />
+              <b>{connectionDisplayName(connection)}</b>
+              {connection.alias ? <span className={styles.paneMeta}>{connection.adapter}</span> : null}
+              {connectionStatus(connection).health === 'ok' ? null : (
+                <Chip tone={connectionStatus(connection).tone}>{connectionStatus(connection).label}</Chip>
+              )}
+            </>
+          ) : (
+            <span>{channel.connectionName}</span>
+          )}
         </div>
-      </section>
+      </PropertyGroup>
+
+      <Diagnostics
+        items={[
+          { label: '频道 ID', value: channel.id },
+          { label: '连接 ID', value: channel.connectionId },
+          ...(runtime?.episodeId ? [{ label: '会话 ID', value: runtime.episodeId }] : []),
+        ]}
+      />
+
+      <div className={styles.paneActions}>
+        <Button size="small" variant="danger" icon={<Trash2 />} onClick={() => setRemoving(true)}>
+          {channel.kind === 'internal' ? '删除频道' : '移除频道'}
+        </Button>
+      </div>
 
       <BindDialog intent={intent} onClose={() => setIntent(null)} />
       <ConfirmDialog
@@ -335,6 +366,6 @@ export function ChannelInspector({
       >
         <p>{channel.kind === 'internal' ? '聊天记录保留在审计中。' : '聊天记录保留，群里有新消息时会重新出现。'}</p>
       </ConfirmDialog>
-    </aside>
+    </DetailPane>
   )
 }

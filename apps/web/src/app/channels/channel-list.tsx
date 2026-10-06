@@ -50,13 +50,17 @@ import {
   Field,
   IconButton,
   Input,
+  ListPane,
   MemberAvatar,
+  SearchField,
   Segmented,
+  Select,
   SelectionList,
   toast,
   cssVars,
   Pressable,
 } from '../../ui-kit/next/index.js'
+import { useAttention } from '../model/attention.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
@@ -291,6 +295,9 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
   const [activeId, setActiveId] = useState('')
   const [overId, setOverId] = useState('')
   const [intent, setIntent] = useState<BindIntent | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState('all')
+  const attention = useAttention()
   const dragged = useRef(false)
 
   const setMode = (next: ListMode) => {
@@ -321,6 +328,27 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
     const time = (channel: ChannelActivity) => channel.lastActivityAt ?? 0
     return [...channels].sort((left, right) => time(right) - time(left))
   }, [channels])
+  const needsAttention = useMemo(
+    () =>
+      new Set(
+        attention.flatMap((item) => {
+          const match = /^\/channels\/([^/?#]+)/u.exec(item.href)
+          return match?.[1] ? [decodeURIComponent(match[1])] : []
+        }),
+      ),
+    [attention],
+  )
+  const matches = (channel: ChannelSummary): boolean => {
+    if (filter === 'unread' && channel.unread === 0) return false
+    if (filter === 'attention' && !needsAttention.has(channel.id)) return false
+    if (filter.startsWith('connection:') && channel.connectionId !== filter.slice('connection:'.length)) return false
+    const needle = query.trim().toLowerCase()
+    if (!needle) return true
+    const connection = connectionById.get(channel.connectionId)
+    const source = connection ? connectionDisplayName(connection) : channel.connectionName
+    const agentName = agentById.get(channel.agentId)?.name ?? ''
+    return `${channel.name} ${source} ${agentName}`.toLowerCase().includes(needle)
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -404,132 +432,162 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
     ? agentById.get(channels.find((channel) => channel.id === selectedId)?.agentId ?? '')
     : undefined
 
+  // Search and filters show a flat result list; ordering and drag only apply to the full tree.
+  const filtering = query.trim() !== '' || filter !== 'all'
+  const listMode: ListMode = filtering ? 'recent' : mode
+  const shown = filtering ? recent.filter(matches) : recent
+
   return (
-    <aside className={styles.list} aria-label="频道">
-      <div className={styles.listHead}>
-        <h2 className={styles.listTitle}>频道</h2>
-        <span className={styles.listCount}>{channels.length}</span>
-        <CreateInternalChannel />
-      </div>
-      <Segmented
-        className={styles.viewSwitch}
-        label="排列方式"
-        value={mode}
-        onChange={setMode}
-        options={[
-          { value: 'agent', label: '按智能体' },
-          { value: 'recent', label: '最近活动' },
-        ]}
-      />
-      <div className={styles.listBody}>
-        <SelectionList
-          selectedKey={`${mode}:${selectedId ?? ''}`}
-          accent={selectedAgent ? agentAccent(selectedAgent) : undefined}
-        >
-          {mode === 'recent' ? (
-            recent.map((channel) => (
-              <Link
-                key={channel.id}
-                to={`/channels/${channel.id}`}
-                className={styles.row}
-                data-selected={channel.id === selectedId}
-                aria-current={channel.id === selectedId ? 'page' : undefined}
-              >
-                <RowContent
-                  channel={channel}
-                  agent={agentById.get(channel.agentId)}
-                  connection={connectionById.get(channel.connectionId)}
-                  mode="recent"
-                />
-              </Link>
-            ))
-          ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={collision}
-              onDragStart={(event) => {
-                dragged.current = true
-                setActiveId(String(event.active.id))
-              }}
-              onDragOver={(event) => setOverId(event.over ? String(event.over.id) : '')}
-              onDragCancel={() => {
-                setActiveId('')
-                setOverId('')
-                swallowNextClick()
-              }}
-              onDragEnd={onDragEnd}
-              accessibility={{
-                screenReaderInstructions: {
-                  draggable: '按空格开始拖动，用方向键移动，再按空格放下，按 Esc 取消。跨智能体放下会先确认。',
-                },
-                announcements: {
-                  onDragStart: ({ active }) => `已拿起${dragLabel(String(active.id))}`,
-                  onDragOver: ({ active, over }) =>
-                    over
-                      ? `${dragLabel(String(active.id))}移到${dragLabel(String(over.id))}`
-                      : `${dragLabel(String(active.id))}不在可放下的位置`,
-                  onDragEnd: ({ active, over }) =>
-                    over
-                      ? `${dragLabel(String(active.id))}放在${dragLabel(String(over.id))}`
-                      : `${dragLabel(String(active.id))}已放回原处`,
-                  onDragCancel: ({ active }) => `已取消拖动${dragLabel(String(active.id))}`,
-                },
-              }}
+    <ListPane
+      title="频道"
+      label="频道"
+      actions={
+        <>
+          <span className={styles.listCount}>{channels.length}</span>
+          <CreateInternalChannel />
+        </>
+      }
+      toolbar={
+        <>
+          <SearchField label="搜索频道" placeholder="搜索频道或来源" value={query} onChange={setQuery} />
+          <div className={styles.filterRow}>
+            <Segmented
+              className={styles.viewSwitch}
+              label="排列方式"
+              value={mode}
+              onChange={setMode}
+              options={[
+                { value: 'agent', label: '按智能体' },
+                { value: 'recent', label: '最近活动' },
+              ]}
+            />
+            <Select
+              aria-label="筛选频道"
+              className={styles.filter}
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              options={[
+                { value: 'all', label: '全部' },
+                { value: 'unread', label: '未读' },
+                { value: 'attention', label: '需要处理' },
+                ...connections.map((connection) => ({
+                  value: `connection:${connection.id}`,
+                  label: connectionDisplayName(connection),
+                })),
+              ]}
+            />
+          </div>
+        </>
+      }
+    >
+      <SelectionList
+        selectedKey={`${listMode}:${selectedId ?? ''}`}
+        accent={selectedAgent ? agentAccent(selectedAgent) : undefined}
+      >
+        {filtering && shown.length === 0 ? <p className={styles.noMatch}>没有符合条件的频道</p> : null}
+        {listMode === 'recent' ? (
+          shown.map((channel) => (
+            <Link
+              key={channel.id}
+              to={`/channels/${channel.id}`}
+              className={styles.row}
+              data-selected={channel.id === selectedId}
+              aria-current={channel.id === selectedId ? 'page' : undefined}
             >
-              <SortableContext items={lists.agentIds.map(agentSortId)} strategy={verticalListSortingStrategy}>
-                {tree.agents.map((group) => (
-                  <AgentGroup key={group.agent.id} agent={group.agent} highlight={highlightAgent === group.agent.id}>
-                    <SortableContext
-                      items={group.channels.map((channel) => channelSortId(channel.id))}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {group.channels.map((channel) => (
-                        <SortableRow
-                          key={channel.id}
-                          channel={channel}
-                          agent={group.agent}
-                          connection={connectionById.get(channel.connectionId)}
-                          selected={channel.id === selectedId}
-                          suppressClick={suppressClick}
-                        />
-                      ))}
-                    </SortableContext>
-                  </AgentGroup>
+              <RowContent
+                channel={channel}
+                agent={agentById.get(channel.agentId)}
+                connection={connectionById.get(channel.connectionId)}
+                mode="recent"
+              />
+            </Link>
+          ))
+        ) : (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={collision}
+            onDragStart={(event) => {
+              dragged.current = true
+              setActiveId(String(event.active.id))
+            }}
+            onDragOver={(event) => setOverId(event.over ? String(event.over.id) : '')}
+            onDragCancel={() => {
+              setActiveId('')
+              setOverId('')
+              swallowNextClick()
+            }}
+            onDragEnd={onDragEnd}
+            accessibility={{
+              screenReaderInstructions: {
+                draggable: '按空格开始拖动，用方向键移动，再按空格放下，按 Esc 取消。跨智能体放下会先确认。',
+              },
+              announcements: {
+                onDragStart: ({ active }) => `已拿起${dragLabel(String(active.id))}`,
+                onDragOver: ({ active, over }) =>
+                  over
+                    ? `${dragLabel(String(active.id))}移到${dragLabel(String(over.id))}`
+                    : `${dragLabel(String(active.id))}不在可放下的位置`,
+                onDragEnd: ({ active, over }) =>
+                  over
+                    ? `${dragLabel(String(active.id))}放在${dragLabel(String(over.id))}`
+                    : `${dragLabel(String(active.id))}已放回原处`,
+                onDragCancel: ({ active }) => `已取消拖动${dragLabel(String(active.id))}`,
+              },
+            }}
+          >
+            <SortableContext items={lists.agentIds.map(agentSortId)} strategy={verticalListSortingStrategy}>
+              {tree.agents.map((group) => (
+                <AgentGroup key={group.agent.id} agent={group.agent} highlight={highlightAgent === group.agent.id}>
+                  <SortableContext
+                    items={group.channels.map((channel) => channelSortId(channel.id))}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {group.channels.map((channel) => (
+                      <SortableRow
+                        key={channel.id}
+                        channel={channel}
+                        agent={group.agent}
+                        connection={connectionById.get(channel.connectionId)}
+                        selected={channel.id === selectedId}
+                        suppressClick={suppressClick}
+                      />
+                    ))}
+                  </SortableContext>
+                </AgentGroup>
+              ))}
+            </SortableContext>
+            <UnboundGroup count={tree.unbound.length} highlight={highlightUnbound}>
+              <SortableContext
+                items={tree.unbound.map((channel) => channelSortId(channel.id))}
+                strategy={verticalListSortingStrategy}
+              >
+                {tree.unbound.map((channel) => (
+                  <SortableRow
+                    key={channel.id}
+                    channel={channel}
+                    agent={undefined}
+                    connection={connectionById.get(channel.connectionId)}
+                    selected={channel.id === selectedId}
+                    suppressClick={suppressClick}
+                  />
                 ))}
               </SortableContext>
-              <UnboundGroup count={tree.unbound.length} highlight={highlightUnbound}>
-                <SortableContext
-                  items={tree.unbound.map((channel) => channelSortId(channel.id))}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {tree.unbound.map((channel) => (
-                    <SortableRow
-                      key={channel.id}
-                      channel={channel}
-                      agent={undefined}
-                      connection={connectionById.get(channel.connectionId)}
-                      selected={channel.id === selectedId}
-                      suppressClick={suppressClick}
-                    />
-                  ))}
-                </SortableContext>
-              </UnboundGroup>
-              <DragOverlay
-                // Only a picture of the dragged row: during its drop animation it must not catch the next press.
-                style={{ pointerEvents: 'none' }}
-                dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}
-              >
-                {activeChannel ? (
-                  <div className={styles.dragOverlay}>{activeChannel.name}</div>
-                ) : activeAgent ? (
-                  <div className={styles.dragOverlay}>{activeAgent.name}</div>
-                ) : null}
-              </DragOverlay>
-            </DndContext>
-          )}
-        </SelectionList>
-      </div>
+            </UnboundGroup>
+            <DragOverlay
+              // Only a picture of the dragged row: during its drop animation it must not catch the next press.
+              style={{ pointerEvents: 'none' }}
+              dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}
+            >
+              {activeChannel ? (
+                <div className={styles.dragOverlay}>{activeChannel.name}</div>
+              ) : activeAgent ? (
+                <div className={styles.dragOverlay}>{activeAgent.name}</div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        )}
+      </SelectionList>
       <BindDialog intent={intent} onClose={() => setIntent(null)} />
-    </aside>
+    </ListPane>
   )
 }
