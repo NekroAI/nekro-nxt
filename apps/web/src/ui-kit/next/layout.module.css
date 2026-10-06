@@ -193,9 +193,9 @@
 }
 
 .stepDone .stepKey {
-  border-color: var(--ok);
-  background: var(--ok);
-  color: #ffffff;
+  border-color: var(--ok-fill);
+  background: var(--ok-fill);
+  color: var(--on-ok-fill);
   animation: pop 500ms var(--ease);
 }
 

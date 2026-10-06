@@ -42,17 +42,15 @@
 }
 
 .primary {
-  border-color: var(--accent-2);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 86%, white), var(--accent));
-  color: var(--on-accent);
-  box-shadow:
-    0 1px 2px rgb(20 36 61 / 0.2),
-    inset 0 1px 0 rgb(255 255 255 / 0.18);
+  border-color: transparent;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
+  box-shadow: var(--sh-1);
 }
 
 .primary:hover:not(:disabled) {
-  border-color: var(--accent-2);
-  background: var(--accent-2);
+  border-color: transparent;
+  background: var(--accent-fill-hover);
 }
 
 .danger {
@@ -65,14 +63,14 @@
 }
 
 .dangerSolid {
-  border-color: var(--bad);
-  background: var(--bad);
-  color: #ffffff;
+  border-color: transparent;
+  background: var(--bad-fill);
+  color: var(--on-bad-fill);
 }
 
 .dangerSolid:hover:not(:disabled) {
-  border-color: var(--bad);
-  background: color-mix(in srgb, var(--bad) 88%, black);
+  border-color: transparent;
+  background: var(--bad-fill-hover);
 }
 
 .ghost {

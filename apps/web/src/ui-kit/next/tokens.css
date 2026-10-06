@@ -21,6 +21,26 @@ html[data-ui='next'] [data-nxt-theme='light'] {
   --accent-soft: rgb(63 91 143 / 0.1);
   --accent-line: rgb(63 91 143 / 0.35);
   --on-accent: #ffffff;
+  /* Fills carry text on top; --accent itself is for text, icons and thin lines. */
+  --accent-fill: #3f5b8f;
+  --accent-fill-hover: #2f4a7a;
+  --on-accent-fill: #ffffff;
+  --bad-fill: #b03a30;
+  --bad-fill-hover: #962f26;
+  --on-bad-fill: #ffffff;
+  --knob: #ffffff;
+  --knob-shadow: 0 1px 3px rgb(0 0 0 / 0.25);
+  --scrim: rgb(8 15 27 / 0.42);
+  --ok-fill: #217a4f;
+  --on-ok-fill: #ffffff;
+  --sh-inset: inset 0 1px 2px rgb(0 0 0 / 0.04);
+  --sheen: rgb(255 255 255 / 0.9);
+  --on-toast-action: rgb(255 255 255 / 0.14);
+  /* Risk ladder: none → limited → high → full. */
+  --risk-0: #6b7689;
+  --risk-1: #3f6fb0;
+  --risk-2: #a8721a;
+  --risk-3: #b03a30;
   --brass: #b4884a;
   --focus: #0b73b4;
   --ok: #217a4f;
@@ -76,6 +96,24 @@ html[data-ui='next'] [data-nxt-theme='dark'] {
   --accent-soft: rgb(163 186 226 / 0.12);
   --accent-line: rgb(163 186 226 / 0.4);
   --on-accent: #0b1524;
+  --accent-fill: #4a6aa8;
+  --accent-fill-hover: #5a7bbb;
+  --on-accent-fill: #f4f7fc;
+  --bad-fill: #b9483d;
+  --bad-fill-hover: #c85a4f;
+  --on-bad-fill: #fff6f5;
+  --knob: #eef2f8;
+  --knob-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  --scrim: rgb(0 0 0 / 0.55);
+  --ok-fill: #2f8a5c;
+  --on-ok-fill: #f2fbf6;
+  --sh-inset: inset 0 1px 2px rgb(0 0 0 / 0.25);
+  --sheen: rgb(255 255 255 / 0.35);
+  --on-toast-action: rgb(255 255 255 / 0.12);
+  --risk-0: #8e9bb0;
+  --risk-1: #7fa6e0;
+  --risk-2: #e9bd68;
+  --risk-3: #f08f83;
   --brass: #d8af73;
   --focus: #6bc3f4;
   --ok: #6dcf98;
@@ -90,6 +128,57 @@ html[data-ui='next'] [data-nxt-theme='dark'] {
   --sh-2: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 22px -8px rgb(0 0 0 / 0.5);
   --sh-3: 0 28px 70px -20px rgb(0 0 0 / 0.7), 0 4px 16px rgb(0 0 0 / 0.35);
   --hl: inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/*
+ * Scales shared by both themes (Decision 2026-10-06 §3). Components use these instead of raw numbers.
+ * Density switches control and row sizes only; spacing stays the same.
+ */
+html[data-ui='next'] {
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 48px;
+  --s-9: 64px;
+  --control-sm: 28px;
+  --control: 32px;
+  --control-lg: 40px;
+  --row-compact: 32px;
+  --row: 40px;
+  --row-tall: 56px;
+  --icon-sm: 14px;
+  --icon: 16px;
+  --icon-lg: 20px;
+  --target: 32px;
+  --pane-list: 272px;
+  --pane-detail: 360px;
+  --reader-width: 840px;
+  --t-page: 650 var(--fs-2xl) / 1.25 var(--font-sans);
+  --t-section: 650 var(--fs-lg) / 1.4 var(--font-sans);
+  --t-title: 600 var(--fs-md) / 1.45 var(--font-sans);
+  --t-body: 400 var(--fs-md) / 1.6 var(--font-sans);
+  --t-note: 400 var(--fs-sm) / 1.5 var(--font-sans);
+  --t-label: 500 var(--fs-sm) / 1.4 var(--font-sans);
+  --t-caption: 400 var(--fs-xs) / 1.4 var(--font-sans);
+  --t-mono: 400 var(--fs-sm) / 1.5 var(--font-mono);
+  /* Identity fills (avatars, wires) are mid-tone in both themes, so white marks read on them. */
+  --on-identity: #ffffff;
+  /* QR codes must stay dark-on-white to scan, whatever the theme. */
+  --qr-bg: #ffffff;
+  --identity-sheen: inset 0 1px 0 rgb(255 255 255 / 0.3), inset 0 -2px 4px rgb(0 0 0 / 0.08);
+  --identity-sheen-lg: inset 0 2px 0 rgb(255 255 255 / 0.35);
+  --identity-text-shadow: 0 1px 1px rgb(0 0 0 / 0.18);
+}
+
+html[data-ui='next'][data-density='compact'] {
+  --control: 28px;
+  --control-lg: 36px;
+  --row: 32px;
+  --row-tall: 48px;
 }
 
 html[data-ui='next'],

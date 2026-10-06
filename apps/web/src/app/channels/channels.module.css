@@ -172,8 +172,8 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
   font-size: 11px;
   font-weight: 600;
   line-height: 18px;
@@ -340,7 +340,7 @@
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--knob);
   transition: transform var(--dur-2) var(--ease);
 }
 
@@ -996,9 +996,9 @@
   place-items: center;
   border: 0;
   border-radius: 11px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 85%, white), var(--accent));
-  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--accent) 70%, transparent);
-  color: var(--on-accent);
+  background: var(--accent-fill);
+  box-shadow: var(--sh-1);
+  color: var(--on-accent-fill);
   cursor: pointer;
   transition:
     transform var(--dur-2) var(--ease),
@@ -1116,7 +1116,7 @@
   position: absolute;
   inset: 0;
   width: 40%;
-  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.9), transparent);
+  background: linear-gradient(90deg, transparent, var(--sheen), transparent);
   animation: zip 1.4s var(--ease) infinite;
 }
 

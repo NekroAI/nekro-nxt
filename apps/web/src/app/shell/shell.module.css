@@ -151,9 +151,9 @@ button.instance {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: var(--bad);
+  background: var(--bad-fill);
   box-shadow: 0 0 0 2px var(--side);
-  color: #ffffff;
+  color: var(--on-bad-fill);
   font-size: 10px;
   font-weight: 600;
   line-height: 16px;

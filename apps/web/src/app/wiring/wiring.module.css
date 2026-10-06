@@ -248,7 +248,7 @@
 }
 
 .wireLive {
-  stroke: #ffffff;
+  stroke: var(--on-identity);
   stroke-dasharray: 1.5 9;
   stroke-linecap: round;
   stroke-width: 2.4;
@@ -601,7 +601,7 @@
   height: 220px;
   padding: 10px;
   border-radius: 14px;
-  background: #ffffff;
+  background: var(--qr-bg);
   transition: opacity var(--dur-2);
 }
 

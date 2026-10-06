@@ -2,7 +2,7 @@
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgb(8 15 27 / 0.42);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
 }
 
@@ -245,12 +245,13 @@
   flex: none;
   place-items: center;
   border-radius: 50%;
-  background: var(--ok);
-  color: #ffffff;
+  background: var(--ok-fill);
+  color: var(--on-ok-fill);
 }
 
 .toastIcon.bad {
-  background: var(--bad);
+  background: var(--bad-fill);
+  color: var(--on-bad-fill);
 }
 
 .toastIcon svg {
@@ -290,7 +291,7 @@
   padding: 2px 8px;
   border: 0;
   border-radius: 6px;
-  background: rgb(255 255 255 / 0.14);
+  background: var(--on-toast-action);
   color: inherit;
   font-size: var(--fs-xs);
   font-weight: 600;

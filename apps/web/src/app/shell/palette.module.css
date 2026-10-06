@@ -2,7 +2,7 @@
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgb(8 15 27 / 0.42);
+  background: var(--scrim);
   backdrop-filter: blur(3px);
 }
 
@@ -110,8 +110,8 @@
 }
 
 .item[aria-selected='true'] .icon {
-  background: var(--accent);
-  color: var(--on-accent);
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
 }
 
 .label {
