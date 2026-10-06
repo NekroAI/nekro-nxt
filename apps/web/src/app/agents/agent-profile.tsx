@@ -522,7 +522,14 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
     ? models.find((item) => item.provider === agent.modelRef?.provider && item.id === agent.modelRef?.model)
     : undefined
   const noModel = !agent.modelRef || models.length === 0
-  const noVision = !noModel && agent.imageDiagnostics.route.mode === 'unavailable'
+  // The saved model can disappear from its provider's list (retired upstream); the agent may still try to run it.
+  const missingModel =
+    !noModel &&
+    agent.modelRef !== undefined &&
+    !models.some((model) => model.provider === agent.modelRef?.provider && model.id === agent.modelRef.model)
+      ? agent.modelRef.model
+      : undefined
+  const noVision = !noModel && !missingModel && agent.imageDiagnostics.route.mode === 'unavailable'
 
   const changeTrigger = async (
     channelId: string,
@@ -574,6 +581,17 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
             }
           >
             没有可用模型，{agent.name}现在无法回复
+          </Banner>
+        ) : missingModel ? (
+          <Banner
+            tone="warn"
+            action={
+              <Button size="small" onClick={() => setEditing(true)}>
+                更换模型
+              </Button>
+            }
+          >
+            默认模型 {missingModel} 已不在供应商的模型列表中，可能已停用；看图能力也无法确认
           </Banner>
         ) : noVision ? (
           <Banner
