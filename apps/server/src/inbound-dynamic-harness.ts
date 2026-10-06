@@ -7,8 +7,11 @@ export const INBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_inbound_probe_v1'
  * lets the verifier call the handler with a synthetic message. The saved Revision keeps the original source.
  */
 export const wrapInboundDynamicHostSource = (source: string): string => `
-const __nxtInbound = { handler: undefined, nxt: undefined }
+const __nxtInbound = { handler: undefined, nxt: undefined, factoryOpen: true }
 harness.onInbound = (handler) => {
+  if (!__nxtInbound.factoryOpen) {
+    throw new Error('harness.onInbound 必须在 factory 阶段（Host 源码顶层、return 之前）注册，不能在 apply 或工具里注册。')
+  }
   if (typeof handler !== 'function') throw new TypeError('harness.onInbound 需要一个处理函数。')
   if (__nxtInbound.handler !== undefined) throw new Error('一个扩展只能注册一个入站处理函数。')
   __nxtInbound.handler = handler
@@ -31,6 +34,7 @@ harness.handle('${INBOUND_DYNAMIC_PROBE_METHOD}', async (message) => {
 const __nxtPlugin = (() => {
 ${source}
 })()
+__nxtInbound.factoryOpen = false
 const __nxtApply = typeof __nxtPlugin === 'function' ? __nxtPlugin : __nxtPlugin.apply
 return {
   ...(typeof __nxtPlugin === 'function' ? {} : __nxtPlugin),
