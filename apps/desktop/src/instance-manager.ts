@@ -50,7 +50,7 @@ import {
   type TrustedFallbackAction,
 } from './trusted-fallback.js'
 import { isAllowedExternalUrl, type ProductRelease } from './distribution.js'
-import { desktopTitleBarCss, desktopWindowChrome } from './window-chrome.js'
+import { desktopTitleBarCss, desktopWindowChrome, titleBarOverlayFor } from './window-chrome.js'
 import { detachAndCloseView } from './view-lifecycle.js'
 import type { LocalHostStatus } from './local-host-state.js'
 import { SerialProfileMonitor, type ProfileMonitorTarget } from './serial-profile-monitor.js'
@@ -237,7 +237,7 @@ export class DesktopInstanceManager {
       minHeight: 680,
       show: false,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#0F1A2C' : '#F5F2EE',
-      ...desktopWindowChrome(process.platform),
+      ...desktopWindowChrome(process.platform, nativeTheme.shouldUseDarkColors ? 'dark' : 'light'),
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
     })
     return initializeDesktopManager(
@@ -463,6 +463,15 @@ export class DesktopInstanceManager {
       this.#ipcRegistrations.registerHandle('nxt:shell:close-switcher', (event) => {
         this.#assertProductSender(event.sender.id)
         this.closeOverlay(false, true, false)
+      })
+      // The product reports theme changes so the system caption buttons stay legible on its top bar.
+      this.#ipcRegistrations.registerListener('nxt:shell:theme', (event, theme: unknown) => {
+        if (event.sender.id !== this.#productView?.webContents.id) return
+        if (theme !== 'light' && theme !== 'dark') return
+        this.#surfaceTheme = theme
+        if (process.platform !== 'darwin' && !this.#window.isDestroyed()) {
+          this.#window.setTitleBarOverlay(titleBarOverlayFor(theme))
+        }
       })
       this.#ipcRegistrations.registerListener('nxt:shell:content-pointer', (event) => {
         if (event.sender.id === this.#productView?.webContents.id) this.closeOverlay(false, true, false)

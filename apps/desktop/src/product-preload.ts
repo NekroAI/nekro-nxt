@@ -8,6 +8,15 @@ declare const Element: {
   new (): ProductElement
 }
 
+declare const document: {
+  readonly documentElement: { readonly dataset: Record<string, string | undefined> }
+  addEventListener(type: 'DOMContentLoaded', listener: () => void): void
+}
+
+declare const MutationObserver: new (callback: () => void) => {
+  observe(target: unknown, options: { readonly attributes: boolean; readonly attributeFilter: readonly string[] }): void
+}
+
 declare const window: {
   addEventListener(
     type: 'pointerdown',
@@ -25,6 +34,21 @@ window.addEventListener(
   },
   { capture: true },
 )
+
+// Report the product theme (and every later change) so the main process can recolour the caption buttons.
+document.addEventListener('DOMContentLoaded', () => {
+  const root = document.documentElement
+  let reported: string | undefined
+  const report = (): void => {
+    const theme = root.dataset['theme']
+    if ((theme === 'light' || theme === 'dark') && theme !== reported) {
+      reported = theme
+      ipcRenderer.send('nxt:shell:theme', theme)
+    }
+  }
+  report()
+  new MutationObserver(report).observe(root, { attributes: true, attributeFilter: ['data-theme'] })
+})
 
 contextBridge.exposeInMainWorld('nekroDesktopShell', {
   getCurrentInstancePresentation: () => ipcRenderer.invoke('nxt:shell:current'),

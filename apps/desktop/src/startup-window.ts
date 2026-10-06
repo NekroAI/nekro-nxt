@@ -23,7 +23,7 @@ export class HostStartupWindow {
       show: false,
       backgroundColor: nativeTheme.shouldUseDarkColors ? '#0f1a2c' : '#f5f2ee',
       title: 'NekroNXT',
-      ...desktopWindowChrome(process.platform),
+      ...desktopWindowChrome(process.platform, nativeTheme.shouldUseDarkColors ? 'dark' : 'light'),
       webPreferences: {
         preload: fileURLToPath(new URL('./startup-preload.cjs', import.meta.url)),
         contextIsolation: true,

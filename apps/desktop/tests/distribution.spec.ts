@@ -18,6 +18,7 @@ import {
   WINDOW_CONTROLS_OVERLAY_CLEARANCE,
   desktopTitleBarCss,
   desktopWindowChrome,
+  titleBarOverlayFor,
 } from '../src/window-chrome.ts'
 
 const readPngMetrics = (file: string): { width: number; height: number; pixelsPerMeter?: [number, number] } => {
@@ -52,12 +53,15 @@ describe('Desktop product distribution', () => {
       autoHideMenuBar: true,
       frame: false,
       titleBarStyle: 'hidden',
-      titleBarOverlay: { height: TITLE_BAR_HEIGHT, color: '#00000000', symbolColor: '#FFFDF9' },
+      titleBarOverlay: { height: TITLE_BAR_HEIGHT, color: '#00000000', symbolColor: '#14243D' },
     })
     expect(desktopWindowChrome('linux')).toEqual(desktopWindowChrome('win32'))
-    expect(desktopTitleBarCss('darwin')).toContain(`--nxt-window-controls-left:${MACOS_TRAFFIC_LIGHT_CLEARANCE}px`)
-    expect(desktopTitleBarCss('win32')).toContain(`--nxt-window-controls-right:${WINDOW_CONTROLS_OVERLAY_CLEARANCE}px`)
+    expect(desktopTitleBarCss('darwin')).toContain(`--window-controls-left:${MACOS_TRAFFIC_LIGHT_CLEARANCE}px`)
+    expect(desktopTitleBarCss('win32')).toContain(`--window-controls-right:${WINDOW_CONTROLS_OVERLAY_CLEARANCE}px`)
     expect(desktopTitleBarCss('darwin')).toContain('!important')
+    // Caption buttons follow the product theme so they stay legible on its top bar.
+    expect(desktopWindowChrome('win32', 'dark').titleBarOverlay).toEqual(titleBarOverlayFor('dark'))
+    expect(titleBarOverlayFor('dark').symbolColor).not.toBe(titleBarOverlayFor('light').symbolColor)
   })
 
   it('uses a memory-safe NSIS per-user installation path lookup', () => {
