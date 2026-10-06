@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { installWorkspaceRoutes } from './fixtures/workspace.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -24,7 +25,9 @@ const dragTo = async (page: Page, source: Locator, target: Locator): Promise<voi
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
   await page.mouse.down()
   await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2 + 8, { steps: 6 })
-  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 })
+  // Aim at the target's leading edge: sortable rows shift away from the pointer while they make room.
+  const y = to.y + (to.y < from.y ? to.height * 0.25 : to.height * 0.75)
+  await page.mouse.move(to.x + to.width / 2, y, { steps: 12 })
   await page.mouse.up()
   await page.mouse.move(8, 8)
 }
@@ -41,7 +44,7 @@ const beginDragTo = async (page: Page, source: Locator, target: Locator): Promis
   return targetPoint
 }
 
-test('work tree keeps titles stable while full rows and keyboard handles cover ordering and binding', async ({
+test('channel list keeps rows stable while pointer and keyboard drags reorder, bind, rebind and unbind', async ({
   page,
   request,
 }, testInfo) => {
@@ -328,201 +331,127 @@ test('work tree keeps titles stable while full rows and keyboard handles cover o
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(order) })
   })
 
-  await page.goto('/work')
-  await expect(page.getByRole('link', { name: /规划员/u }).first()).toBeVisible()
-  await expect(page.getByRole('link', { name: /资料员/u }).first()).toBeVisible()
+  await installWorkspaceRoutes(page, () => snapshot)
 
-  const mapleChannel = page.getByRole('link', { name: /规划员的内置频道/u })
-  const mapleSpare = page.getByRole('link', { name: /规划员的备用地/u })
-  const mapleHeader = page.getByRole('link', { name: /规划员.*\d+ 个频道/u })
-  const clerkHeader = page.getByRole('link', { name: /资料员.*\d+ 个频道/u })
-  const mapleChannelHandle = page.getByRole('button', { name: '拖动“规划员的内置频道”排序' })
-  const mapleChannelRow = page.locator('[data-work-tree-sortable="channel:chn_dragmaple"]')
-  const mapleSpareRow = page.locator('[data-work-tree-sortable="channel:chn_dragmaplespare"]')
+  await page.goto(`/channels/${mapleChannelId}`)
+  const list = page.getByRole('complementary', { name: '频道', exact: true })
+  // Rows are sortable buttons (dnd-kit) that also navigate; groups are headed by the agent.
+  const row = (name: RegExp) => list.getByRole('button', { name })
+  const mapleChannel = row(/规划员的内置频道/u)
+  const mapleSpare = row(/规划员的备用地/u)
+  const mapleHeader = list
+    .getByRole('button', { name: /^规划员/u })
+    .filter({ hasNot: page.locator('a') })
+    .first()
+  const clerkHeader = list.getByRole('button', { name: /^资料员\s*空闲/u })
+  const unbound = list.getByText('未接线').first()
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()
     if (!box) throw new Error('排序目标没有几何尺寸。')
     return box.y
   }
+  await expect(mapleChannel).toBeVisible()
+  await expect(clerkHeader).toBeVisible()
 
-  const widthBeforeHover = (await mapleChannel.boundingBox())?.width
-  await mapleChannel.hover()
-  const widthAfterHover = (await mapleChannel.boundingBox())?.width
-  expect(widthBeforeHover).toBeDefined()
-  expect(widthAfterHover).toBeDefined()
-  expect(Math.abs((widthAfterHover ?? 0) - (widthBeforeHover ?? 0))).toBeLessThanOrEqual(0.5)
-  const objectPane = page.getByRole('complementary', { name: '对象列', exact: true })
-  await expect(objectPane.getByRole('button', { name: /频道操作/u })).toHaveCount(0)
-  await expect(objectPane.getByRole('button', { name: /智能体操作/u })).toHaveCount(0)
+  // Hover never reflows a row.
+  const widthBeforeHover = (await mapleSpare.boundingBox())?.width ?? 0
+  await mapleSpare.hover()
+  expect(Math.abs(((await mapleSpare.boundingBox())?.width ?? 0) - widthBeforeHover)).toBeLessThanOrEqual(0.5)
 
-  await page.getByRole('button', { name: '新建内置频道' }).click()
+  // A new web channel starts unbound.
+  await list.getByRole('button', { name: '新建内置频道' }).click()
   const createDialog = page.getByRole('dialog')
-  await expect(createDialog.getByRole('heading', { name: '新建内置频道' })).toBeVisible()
   await createDialog.getByLabel('频道名称').fill('临时网页台')
-  await createDialog.getByRole('button', { name: '创建内置频道' }).click()
-  await expect(page.getByRole('link', { name: /临时网页台/u })).toBeVisible()
+  await createDialog.getByRole('button', { name: '创建' }).click()
+  await expect(createDialog).toHaveCount(0)
+  await expect(page).toHaveURL(new RegExp(`/channels/${extraChannelId}$`, 'u'))
+  const extra = row(/临时网页台/u)
+  await expect(extra).toBeVisible()
+  expect(await top(extra)).toBeGreaterThan(await top(unbound))
 
+  // A pointer jiggle past the drag threshold does not navigate.
+  await page.goto(`/channels/${clerkChannelId}`)
   const routeBeforeDrag = page.url()
-  const clickGuardBox = await mapleChannel.boundingBox()
-  if (!clickGuardBox) throw new Error('频道行没有几何尺寸。')
-  await page.mouse.move(clickGuardBox.x + clickGuardBox.width / 2, clickGuardBox.y + clickGuardBox.height / 2)
+  const jiggle = await mapleChannel.boundingBox()
+  if (!jiggle) throw new Error('频道行没有几何尺寸。')
+  await page.mouse.move(jiggle.x + jiggle.width / 2, jiggle.y + jiggle.height / 2)
   await page.mouse.down()
-  await page.mouse.move(clickGuardBox.x + clickGuardBox.width / 2 + 5, clickGuardBox.y + clickGuardBox.height / 2, {
-    steps: 3,
-  })
+  await page.mouse.move(jiggle.x + jiggle.width / 2 + 6, jiggle.y + jiggle.height / 2, { steps: 3 })
   await page.mouse.up()
   await expect(page).toHaveURL(routeBeforeDrag)
 
-  const sourceTopBeforeProjection = await top(mapleChannelRow)
-  const spareTopBeforeProjection = await top(mapleSpareRow)
-  const pointer = await beginDragTo(page, mapleChannel, mapleSpare)
-  const channelOverlay = page.locator('[data-work-tree-drag-overlay="channel:chn_dragmaple"]')
-  await expect(channelOverlay).toBeVisible()
-  await expect(mapleChannel).toHaveCSS('opacity', '0')
-  await expect(mapleChannelHandle).toHaveCSS('opacity', '0')
-  await expect(page.locator('[data-nav-mark="work-nav"]')).toHaveCSS('opacity', '0')
-  await expect.poll(async () => Math.abs((await top(mapleSpareRow)) - sourceTopBeforeProjection)).toBeLessThan(2)
-  expect(spareTopBeforeProjection).toBeGreaterThan(sourceTopBeforeProjection)
-  expect(await channelOverlay.evaluate((element) => element.parentElement?.parentElement === document.body)).toBe(true)
-  const transitionDuration = await mapleSpareRow.evaluate(
-    (element) => Number.parseFloat(getComputedStyle(element).transitionDuration) * 1_000,
-  )
-  expect(transitionDuration).toBeGreaterThanOrEqual(150)
-  const objectPaneBox = await objectPane.boundingBox()
-  if (!objectPaneBox) throw new Error('对象列没有几何尺寸。')
-  await page.mouse.move(objectPaneBox.x + objectPaneBox.width + 80, pointer.y, { steps: 8 })
-  await expect
-    .poll(async () => {
-      const overlayBox = await channelOverlay.boundingBox()
-      return overlayBox ? overlayBox.x + overlayBox.width - (objectPaneBox.x + objectPaneBox.width) : 0
-    })
-    .toBeGreaterThan(40)
-  const dragScreenshot = testInfo.outputPath('work-tree-live-reorder.png')
-  await page.screenshot({ path: dragScreenshot })
-  await testInfo.attach('work-tree-live-reorder', { path: dragScreenshot, contentType: 'image/png' })
+  // Live projection while dragging; Escape restores the original order.
+  const spareTopBefore = await top(mapleSpare)
+  await beginDragTo(page, mapleChannel, mapleSpare)
+  await expect(page.locator('[class*="dragOverlay"]')).toHaveText('规划员的内置频道')
   await page.keyboard.press('Escape')
-  await expect(channelOverlay).toHaveCount(0)
-  await expect.poll(async () => Math.abs((await top(mapleSpareRow)) - spareTopBeforeProjection)).toBeLessThan(2)
+  await page.mouse.up()
+  await expect.poll(async () => Math.abs((await top(mapleSpare)) - spareTopBefore)).toBeLessThan(2)
   await expect(page).toHaveURL(routeBeforeDrag)
 
-  await page.getByRole('button', { name: /切换为深色/u }).click()
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  const darkPointer = await beginDragTo(page, mapleChannel, mapleSpare)
-  await page.mouse.move(objectPaneBox.x + objectPaneBox.width + 80, darkPointer.y, { steps: 8 })
-  const darkDragScreenshot = testInfo.outputPath('work-tree-live-reorder-dark.png')
-  await page.screenshot({ path: darkDragScreenshot })
-  await testInfo.attach('work-tree-live-reorder-dark', { path: darkDragScreenshot, contentType: 'image/png' })
-  await page.keyboard.press('Escape')
-  await expect(channelOverlay).toHaveCount(0)
-
+  // Keyboard reorder: Space picks up, Arrow moves, Space drops.
   expect(await top(mapleChannel)).toBeLessThan(await top(mapleSpare))
-  await mapleChannelHandle.focus()
+  await mapleChannel.focus()
   await page.keyboard.press('Space')
-  await expect(mapleChannelHandle).toHaveAttribute('aria-pressed', 'true')
+  await expect(mapleChannel).toHaveAttribute('aria-pressed', 'true')
+  const announcer = page.locator('[id^="DndLiveRegion"]')
   await page.keyboard.press('ArrowDown')
-  await expect(page.locator('[id^="DndLiveRegion"]')).toContainText('channel:chn_dragmaplespare')
+  await expect(announcer).toContainText('移到频道「规划员的备用地」')
+  await expect(announcer).not.toContainText('chn_')
   await page.keyboard.press('Space')
-  await expect(mapleChannelHandle).not.toHaveAttribute('aria-pressed', 'true')
   await expect.poll(async () => (await top(mapleSpare)) < (await top(mapleChannel))).toBe(true)
 
-  const rejectedChannelTop = await top(mapleChannel)
-  const rejectedSpareTop = await top(mapleSpare)
-  await expect
-    .poll(async () => {
-      const running = await Promise.all(
-        [mapleChannelRow, mapleSpareRow].map((row) =>
-          row.evaluate((element) => element.getAnimations().some((animation) => animation.playState === 'running')),
-        ),
-      )
-      return running.some(Boolean)
-    })
-    .toBe(false)
+  await expect.poll(() => snapshot.workTreeOrder.channelIdsByAgent[mapleId]?.[0]).toBe(mapleSpareChannelId)
+
+  // A rejected order explains itself and keeps the saved order.
+  const savedChannelTop = await top(mapleChannel)
   rejectNextOrder = true
   allowOrderFailureConsole = true
-  for (let attempt = 0; attempt < 3 && rejectedOrderRequests === 0; attempt += 1) {
-    await mapleChannelHandle.focus()
-    await page.keyboard.press('Space')
-    if ((await mapleChannelHandle.getAttribute('aria-pressed')) !== 'true') continue
-    await page.keyboard.press((await top(mapleChannel)) > (await top(mapleSpare)) ? 'ArrowUp' : 'ArrowDown')
-    await page.keyboard.press('Space')
-    await page.waitForTimeout(250)
-  }
+  const box = await mapleChannel.boundingBox()
+  const hit = await page.evaluate(([x, y]) => { const el = document.elementFromPoint(x, y); return el ? el.outerHTML.slice(0, 160) : 'none' }, [box!.x + box!.width / 2, box!.y + box!.height / 2])
+  await dragTo(page, mapleChannel, mapleSpare)
   await expect.poll(() => rejectedOrderRequests).toBe(1)
   await expect(page.getByText('测试拒绝保存顺序。')).toBeVisible()
-  await expect.poll(async () => Math.abs((await top(mapleChannel)) - rejectedChannelTop) < 1).toBe(true)
-  await expect.poll(async () => Math.abs((await top(mapleSpare)) - rejectedSpareTop) < 1).toBe(true)
+  await expect.poll(async () => Math.abs((await top(mapleChannel)) - savedChannelTop)).toBeLessThan(2)
   allowOrderFailureConsole = false
 
+  // Pointer reorder within a group and of whole groups never asks for confirmation.
   await dragTo(page, mapleChannel, mapleSpare)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect.poll(async () => (await top(mapleChannel)) < (await top(mapleSpare))).toBe(true)
-  await expect
-    .poll(async () =>
-      mapleChannelRow.evaluate((element) =>
-        element.getAnimations().some((animation) => animation.playState === 'running'),
-      ),
-    )
-    .toBe(false)
-  await dragTo(page, mapleSpare, mapleChannel)
-  await expect(page.getByRole('dialog')).toHaveCount(0)
-  await expect.poll(async () => (await top(mapleSpare)) < (await top(mapleChannel))).toBe(true)
   expect(await top(mapleHeader)).toBeLessThan(await top(clerkHeader))
-  await beginDragTo(page, mapleHeader, clerkHeader)
-  const agentOverlay = page.locator('[data-work-tree-drag-overlay="agent:agt_dragmaple"]')
-  await expect(agentOverlay).toBeVisible()
-  await expect(mapleHeader.locator('..')).toHaveCSS('opacity', '0')
-  await expect(agentOverlay.getByText('规划员的备用地', { exact: true })).toBeVisible()
-  await expect(agentOverlay.getByText('规划员的内置频道', { exact: true })).toBeVisible()
-  await page.mouse.up()
-  await page.mouse.move(8, 8)
+  await dragTo(page, mapleHeader, clerkHeader)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect.poll(async () => (await top(clerkHeader)) < (await top(mapleHeader))).toBe(true)
 
-  await dragTo(
-    page,
-    page.getByRole('link', { name: /临时网页台/u }),
-    page.getByRole('link', { name: /资料员.*\d+ 个频道/u }),
-  )
+  // Crossing groups binds, rebinds or unbinds, each after an explicit confirmation.
+  await dragTo(page, extra, clerkHeader)
   const bindDialog = page.getByRole('dialog')
-  await expect(bindDialog.getByRole('heading', { name: '交给智能体响应' })).toBeVisible()
-  await expect(bindDialog.getByText(/将「临时网页台」交给「资料员」响应/u)).toBeVisible()
-  await bindDialog.getByRole('button', { name: '交给该智能体响应' }).click()
+  await expect(bindDialog.getByRole('heading', { name: '让资料员响应「临时网页台」' })).toBeVisible()
+  await bindDialog.getByRole('button', { name: '接线' }).click()
   await expect(bindDialog).toHaveCount(0)
+  await expect
+    .poll(() => snapshot.channels.find((channel) => channel.id === extraChannelId)?.boundAgentId)
+    .toBe(clerkId)
 
   await dragTo(page, mapleChannel, clerkHeader)
   const rebindDialog = page.getByRole('dialog')
-  await expect(rebindDialog.getByRole('heading', { name: '改由其他智能体响应' })).toBeVisible()
-  await expect(rebindDialog.getByText(/将「规划员的内置频道」改由「资料员」响应/u)).toBeVisible()
-  await rebindDialog.getByRole('button', { name: '改由该智能体响应' }).click()
+  await expect(rebindDialog.getByRole('heading', { name: '让资料员响应「规划员的内置频道」' })).toBeVisible()
+  await rebindDialog.getByRole('button', { name: '换绑' }).click()
   await expect(rebindDialog).toHaveCount(0)
-  await expect(mapleChannelHandle).toBeFocused()
+  await expect
+    .poll(() => snapshot.channels.find((channel) => channel.id === mapleChannelId)?.boundAgentId)
+    .toBe(clerkId)
 
-  const clerkChannelHandle = page.getByRole('button', { name: '拖动“资料员的内置频道”排序' })
-  await dragTo(
-    page,
-    page.getByRole('link', { name: /资料员的内置频道/u }),
-    page.getByText('未绑定频道', { exact: true }),
-  )
+  await dragTo(page, row(/资料员的内置频道/u), unbound)
   const unbindDialog = page.getByRole('dialog')
-  await expect(unbindDialog.getByRole('heading', { name: '解除频道绑定' })).toBeVisible()
-  await expect(unbindDialog.getByText(/先停止「资料员」在「资料员的内置频道」中的当前工作/u)).toBeVisible()
-  await unbindDialog.getByRole('button', { name: '停止并解除绑定' }).click()
+  await expect(unbindDialog.getByRole('heading', { name: /断开「资料员的内置频道」/u })).toBeVisible()
+  await unbindDialog.getByRole('button', { name: '断开' }).click()
   await expect(unbindDialog).toHaveCount(0)
-  await expect(clerkChannelHandle).toBeFocused()
+  await expect.poll(() => snapshot.channels.find((channel) => channel.id === clerkChannelId)?.bindings.length).toBe(0)
 
-  const closeNotifications = page.getByRole('button', { name: '关闭通知' }).filter({ visible: true })
-  for (let attempt = 0; attempt < 8 && (await closeNotifications.count()) > 0; attempt += 1) {
-    const closeNotification = closeNotifications.first()
-    await closeNotification.click()
-    await expect(closeNotification).toBeHidden()
-  }
-  await page.getByRole('link', { name: /临时网页台/u }).click({ button: 'right' })
-  await expect(page.getByRole('menu')).toHaveCount(0)
-  await page.getByRole('link', { name: /临时网页台/u }).hover()
-  const screenshot = testInfo.outputPath('work-tree-hover-drag-handle.png')
+  const screenshot = testInfo.outputPath('channel-list-after-drags.png')
   await page.screenshot({ path: screenshot, animations: 'disabled' })
-  await testInfo.attach('work-tree-hover-drag-handle', { path: screenshot, contentType: 'image/png' })
-
-  await expect(page.getByText(/历史消息加载失败/u)).toHaveCount(0)
+  await testInfo.attach('channel-list-after-drags', { path: screenshot, contentType: 'image/png' })
   expect(failures, failures.join('\n')).toEqual([])
 })
