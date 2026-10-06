@@ -85,7 +85,6 @@ declare const styles: {
   readonly unsent: string
   readonly unsentBar: string
   readonly usage: string
-  readonly viewSwitch: string
   readonly who: string
   readonly whoMeta: string
   readonly whoName: string

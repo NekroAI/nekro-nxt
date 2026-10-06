@@ -449,18 +449,8 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
       }
       toolbar={
         <>
-          <SearchField label="搜索频道" placeholder="搜索频道或来源" value={query} onChange={setQuery} />
           <div className={styles.filterRow}>
-            <Segmented
-              className={styles.viewSwitch}
-              label="排列方式"
-              value={mode}
-              onChange={setMode}
-              options={[
-                { value: 'agent', label: '按智能体' },
-                { value: 'recent', label: '最近活动' },
-              ]}
-            />
+            <SearchField label="搜索频道" placeholder="搜索频道" value={query} onChange={setQuery} />
             <Select
               aria-label="筛选频道"
               className={styles.filter}
@@ -477,6 +467,15 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
               ]}
             />
           </div>
+          <Segmented
+            label="排列方式"
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'agent', label: '按智能体' },
+              { value: 'recent', label: '最近活动' },
+            ]}
+          />
         </>
       }
     >

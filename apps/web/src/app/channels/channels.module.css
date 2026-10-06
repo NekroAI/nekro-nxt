@@ -1082,12 +1082,8 @@
   gap: var(--s-2);
 }
 
-.viewSwitch {
-  min-width: 0;
-}
-
 .filter {
-  width: 112px;
+  width: 96px;
 }
 
 .noMatch {

@@ -141,12 +141,23 @@ export function ChannelInspector({
             }}
           />
           <span className={styles.paneMeta}>
-            {kindLabel[channel.kind]} · {connection ? connectionDisplayName(connection) : channel.connectionName}
+            {channel.kind === 'internal'
+              ? kindLabel.internal
+              : `${kindLabel[channel.kind]} · ${connection ? connectionDisplayName(connection) : channel.connectionName}`}
           </span>
         </div>
       }
     >
-      <PropertyGroup title="响应">
+      <PropertyGroup
+        title="响应"
+        actions={
+          agent ? (
+            <Button size="small" variant="ghost" onClick={() => setIntent({ kind: 'unbind', channelId: channel.id })}>
+              断开
+            </Button>
+          ) : undefined
+        }
+      >
         {agent ? (
           <div className={styles.who}>
             <AgentAvatar name={agent.name} hue={agentHue(agent)} live={isAgentWorking(agent)} />
@@ -184,13 +195,6 @@ export function ChannelInspector({
             </PropertyRow>
           ) : null}
         </PropertyList>
-        {agent ? (
-          <div className={styles.paneActions}>
-            <Button size="small" variant="ghost" onClick={() => setIntent({ kind: 'unbind', channelId: channel.id })}>
-              断开
-            </Button>
-          </div>
-        ) : null}
       </PropertyGroup>
 
       {agent && binding && (showFeedback || activities.length > 0) ? (
