@@ -1,10 +1,13 @@
 import { ArrowDown, ArrowRight, ChevronDown, Eye, PanelRight, Plug } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { EMPTY_CHANNEL_DRAFT } from '../../channel-drafts.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { useStickToBottom } from './channel-scroll.js'
 import {
   connectionDisplayName,
+  useProductRuntime,
   useProductStore,
+  useUiStateStore,
   type AgentSummary,
   type ChannelSummary,
   type ConnectionSummary,
@@ -48,8 +51,12 @@ function Composer({
   readonly connection: ConnectionSummary | undefined
 }) {
   const api = useProductApi()
-  const [draft, setDraft] = useState('')
-  const [sending, setSending] = useState(false)
+  const ui = useProductRuntime().uiStore
+  // Drafts live in the shared UI store: one per channel, kept across channel switches and restored after a reload.
+  const state = useUiStateStore((current) => current.channelDrafts[channel.id] ?? EMPTY_CHANNEL_DRAFT)
+  const draft = state.text
+  const sending = state.pending !== undefined
+  const setDraft = (text: string) => ui.getState().setChannelDraft(channel.id, text)
   const composing = useRef(false)
   const input = useRef<HTMLTextAreaElement>(null)
   const external = channel.kind !== 'internal'
@@ -61,7 +68,6 @@ function Composer({
         ? `${connectionDisplayName(connection)} 不支持主动发送`
         : ''
 
-  useEffect(() => setDraft(''), [channel.id])
   useLayoutEffect(() => {
     const element = input.current
     if (!element) return
@@ -70,16 +76,18 @@ function Composer({
   }, [draft])
 
   const send = async () => {
-    const body = draft.trim()
-    if (!body || sending || blocked) return
-    setSending(true)
+    if (blocked) return
+    // The token pins this send to its channel: switching channels mid-send neither loses nor moves the draft.
+    const token = ui.getState().beginChannelSend(channel.id)
+    if (!token) return
+    let success = false
     try {
-      await api.getState().sendMessage(channel.id, body)
-      setDraft('')
+      await api.getState().sendMessage(channel.id, token.text)
+      success = true
     } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+      toast(`${error instanceof Error ? error.message : String(error)}，草稿已保留`, { tone: 'bad' })
     } finally {
-      setSending(false)
+      ui.getState().finishChannelSend(channel.id, token.revision, token.request, success)
       input.current?.focus()
     }
   }

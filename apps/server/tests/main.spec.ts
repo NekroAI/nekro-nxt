@@ -158,7 +158,14 @@ describe('Server executable defaults', () => {
     const handle = await startNekroServer({ dataRoot, distIndex })
     const origin = `http://127.0.0.1:${handle.port}`
     try {
-      for (const pathname of ['/work', '/settings?tab=appearance', '/extensions/ext_test']) {
+      for (const pathname of [
+        '/live',
+        '/channels/chn_test',
+        '/workshop/tasks/aut_test',
+        '/wiring/new',
+        '/settings/about',
+        '/work',
+      ]) {
         const response = await fetch(`${origin}${pathname}`)
         expect(response.status).toBe(200)
         expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8')

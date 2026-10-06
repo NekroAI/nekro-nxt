@@ -33,8 +33,11 @@ interface ProfileEnvelopeV1 {
 }
 
 const LOCAL_PROFILE_ID = 'local'
-const DEFAULT_ROUTE = '/work'
-const ALLOWED_ROUTE = /^\/(?:work|connections|users|extensions|settings)(?:\/[^?#]*)?(?:\?[^#]*)?(?:#.*)?$/u
+/** The root lets every server version choose its own home space. */
+const DEFAULT_ROUTE = '/'
+/** Current client spaces plus the retired ones a remote instance on an older server may still use. */
+const ALLOWED_ROUTE =
+  /^\/(?:(?:live|channels|agents|workshop|wiring|settings|apps|work|connections|users|extensions)(?:\/[^?#]*)?)?(?:\?[^#]*)?(?:#.*)?$/u
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 

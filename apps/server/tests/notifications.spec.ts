@@ -72,7 +72,7 @@ describe('NotificationService', () => {
       expect.objectContaining({
         id: 'dynamic-approval:approval_synthetic',
         title: '扩展预览等待确认',
-        route: '/work/creator',
+        route: '/workshop',
       }),
     ])
     const request = fetch.mock.calls[0]?.[1]

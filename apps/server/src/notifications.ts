@@ -219,7 +219,7 @@ export class NotificationService {
         title,
         body: [...body].slice(0, 240).join(''),
         occurredAt: this.#now(),
-        route: '/work/creator',
+        route: '/workshop',
       })
       sent = true
     }

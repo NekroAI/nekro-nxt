@@ -1251,7 +1251,7 @@ export class DesktopInstanceManager {
       notice.on('click', () => {
         this.#window.show()
         this.#window.focus()
-        this.#runBackgroundAction('通知路由打开', this.#openProfileRoute(profile.id, item.route ?? '/work'))
+        this.#runBackgroundAction('通知路由打开', this.#openProfileRoute(profile.id, item.route ?? '/'))
       })
       notice.show()
     }

@@ -98,6 +98,8 @@ export function CompatibilityNotices(props: CompatibilityFilter & { readonly sho
   const { store } = useProductRuntime()
   const go = useGo()
   const [pending, setPending] = useState('')
+  // The last failed re-check per object stays beside it until the next attempt.
+  const [failures, setFailures] = useState<Readonly<Record<string, string>>>({})
   if (!summary) return null
   const diagnostics = selectUpgradeDiagnostics(summary, props)
   const showReset = summary.resetContexts && props.showContextReset === true
@@ -106,6 +108,7 @@ export function CompatibilityNotices(props: CompatibilityFilter & { readonly sho
   const retry = async (diagnostic: RuntimeCompatibilityDiagnostic) => {
     const key = `${diagnostic.objectKind}:${diagnostic.objectId}`
     setPending(key)
+    setFailures((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== key)))
     try {
       const remaining = (await retryUpgradeDiagnostic(diagnostic, () => store.getState().refreshHost())).find(
         (item) =>
@@ -113,17 +116,18 @@ export function CompatibilityNotices(props: CompatibilityFilter & { readonly sho
           item.objectId === diagnostic.objectId &&
           item.status === 'isolated',
       )
-      if (remaining) toast(remaining.reason ?? '仍未通过兼容性检查', { tone: 'bad' })
+      if (remaining) setFailures((current) => ({ ...current, [key]: remaining.reason ?? '仍未通过兼容性检查。' }))
       else toast('已恢复运行')
     } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+      const message = error instanceof Error ? error.message : String(error)
+      setFailures((current) => ({ ...current, [key]: message }))
     } finally {
       setPending('')
     }
   }
 
   return (
-    <div className={styles.stack}>
+    <div className={styles.stack} data-compatibility-notices="">
       {showReset ? (
         <Banner tone="info">
           引擎已升级到 {summary.runtimeVersion}。旧上下文已归档，聊天记录保留；下一条消息开始新的上下文。
@@ -160,6 +164,11 @@ export function CompatibilityNotices(props: CompatibilityFilter & { readonly sho
           >
             <b>{name?.trim() || kindLabel[diagnostic.objectKind]}已暂停</b>{' '}
             {diagnostic.reason ?? '当前版本尚未通过兼容性检查，配置已保留。'}
+            {failures[key] ? (
+              <span className={styles.failure} data-retry-error="">
+                {failures[key]}
+              </span>
+            ) : null}
           </Banner>
         )
       })}
@@ -184,7 +193,7 @@ export function ReleaseBanner() {
     window.location.reload()
   }
   return (
-    <div className={styles.shellNotice}>
+    <div className={styles.shellNotice} data-release-mismatch="">
       <Banner
         tone="warn"
         action={

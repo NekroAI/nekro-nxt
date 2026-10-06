@@ -94,15 +94,23 @@ export { configureDshLlmProviders } from './dsh-host-profile.js'
 export const defaultWebDistIndex = (): string => fileURLToPath(new URL('../../web/dist/index.html', import.meta.url))
 export const defaultDataRoot = (): string => fileURLToPath(new URL('../../../data', import.meta.url))
 
-/** Product-owned client routes. DSH's rc.2 static fallback intentionally returns 404 for unknown paths. */
+/**
+ * Product-owned client routes. DSH's rc.2 static fallback intentionally returns 404 for unknown paths. The retired
+ * client prefixes still serve the index so a saved Desktop route or an old bookmark opens the app (which then
+ * lands on its home) instead of a blank 404.
+ */
 export const NEKRO_SPA_ROUTE_PREFIXES = [
-  '/work',
-  '/apps',
-  '/agents',
+  '/live',
   '/channels',
+  '/agents',
+  '/workshop',
+  '/wiring',
+  '/settings',
+  '/apps',
+  // Retired client prefixes.
+  '/work',
   '/creator',
   '/runtime',
-  '/settings',
   '/connections',
   '/users',
   '/extensions',

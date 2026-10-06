@@ -121,7 +121,9 @@ export const ClientNotificationSchema = z
     occurredAt: z.number().int().nonnegative(),
     route: z
       .string()
-      .regex(/^\/(?:work|connections|users|extensions|settings)(?:\/[^?#]*)?$/u)
+      .regex(
+        /^\/(?:(?:live|channels|agents|workshop|wiring|settings|apps|work|connections|users|extensions)(?:\/[^?#]*)?)?$/u,
+      )
       .optional(),
   })
   .strict()
