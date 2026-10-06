@@ -335,7 +335,8 @@
   min-height: 0;
   overflow: auto;
   overflow-anchor: none;
-  padding: var(--s-4) 0 var(--s-2);
+  /* The last message clears the fade above the composer when the list sits at the bottom. */
+  padding: var(--s-4) 0 var(--s-6);
 }
 
 .convInner {
@@ -807,14 +808,18 @@
   display: grid;
   gap: var(--s-2);
   padding: 0 var(--s-6) var(--s-4);
+  background: var(--bg);
 }
 
+/* A short fade lets the timeline run softly into the composer instead of ending on a hard edge. */
 .dock::before {
   content: '';
   position: absolute;
-  inset: -30px 0 0;
-  z-index: -1;
-  background: linear-gradient(180deg, transparent, var(--bg) 42%);
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: var(--s-6);
+  background: linear-gradient(180deg, transparent, var(--bg));
   pointer-events: none;
 }
 
@@ -824,10 +829,25 @@
   margin: 0 auto;
 }
 
-.jump {
-  justify-self: center;
+/* Floats over the timeline above the composer, so it never pushes the composer down or covers text in a band. */
+.dock > .jump {
+  position: absolute;
+  z-index: 1;
+  bottom: calc(100% + var(--s-2));
+  left: 50%;
   width: auto;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
+  box-shadow: var(--sh-2);
+  transform: translateX(-50%);
+  animation: jumpIn var(--dur-2) var(--ease) both;
+}
+
+@keyframes jumpIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
 }
 
 .queue {
