@@ -1,4 +1,4 @@
-import { Unplug } from 'lucide-react'
+import { ChevronRight, Unplug } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -8,26 +8,39 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Link } from 'react-router-dom'
 import {
   connectionDisplayName,
   useProductStore,
   type AgentSummary,
   type ChannelSummary,
+  type ConnectionSummary,
 } from '../../product-runtime.js'
 import { AgentAvatar, StatusDot, cssVars, Pressable } from '../../ui-kit/next/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
-import { agentAccent, agentHue, connectionTone, isAgentWorking, triggerLabel } from '../model/identity.js'
+import { connectionStatus } from '../model/connection-status.js'
+import { agentAccent, agentHue, isAgentWorking, triggerLabel } from '../model/identity.js'
+import { useGo } from '../model/nav.js'
 import styles from './wiring.module.css'
 
+export type WiringSelection = { readonly kind: 'connection' | 'channel' | 'agent'; readonly id: string }
+
+export interface WiringFilter {
+  readonly query: string
+  readonly freeOnly: boolean
+}
+
+/** Groups fold by default once the board holds more channels than fit comfortably on one screen. */
+export const FOLD_THRESHOLD = 12
+
 /** DOM key used to measure a node when drawing wires. */
-const nodeKey = (kind: 'connection' | 'channel' | 'agent', id: string): string => `${kind}:${id}`
+const nodeKey = (kind: 'connection' | 'channel' | 'agent' | 'group', id: string): string => `${kind}:${id}`
 
 interface WireGeometry {
   readonly key: string
   readonly d: string
-  readonly kind: 'connection' | 'binding'
-  readonly channelId: string
+  readonly kind: 'connection' | 'binding' | 'summary'
+  readonly id: string
+  readonly channelId?: string
   readonly agent?: AgentSummary
   readonly live: boolean
   readonly draw: boolean
@@ -43,11 +56,51 @@ const curve = (x1: number, y1: number, x2: number, y2: number): string => {
 const working = (channel: ChannelSummary) =>
   channel.runtimePhase === 'thinking' || channel.runtimePhase === 'using-tool'
 
+const scrollParent = (element: HTMLElement): HTMLElement | Window => {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const { overflowY } = getComputedStyle(node)
+    if (overflowY === 'auto' || overflowY === 'scroll') return node
+  }
+  return window
+}
+
+interface ChannelGroup {
+  readonly connection: ConnectionSummary
+  readonly channels: readonly ChannelSummary[]
+  readonly total: number
+  readonly free: number
+}
+
+/** Channels per account after the search and “unwired only” filters. */
+export function groupChannels(
+  connections: readonly ConnectionSummary[],
+  channels: readonly ChannelSummary[],
+  agentName: (id: string) => string | undefined,
+  filter: WiringFilter,
+): readonly ChannelGroup[] {
+  const needle = filter.query.trim().toLowerCase()
+  return connections.map((connection) => {
+    const own = channels.filter((channel) => channel.connectionId === connection.id)
+    const visible = own.filter((channel) => {
+      if (filter.freeOnly && channel.agentId) return false
+      if (!needle) return true
+      return [channel.name, connectionDisplayName(connection), connection.adapter, agentName(channel.agentId) ?? '']
+        .join(' ')
+        .toLowerCase()
+        .includes(needle)
+    })
+    return { connection, channels: visible, total: own.length, free: own.filter((channel) => !channel.agentId).length }
+  })
+}
+
 export function PatchBay({
   selected,
+  filter,
 }: {
-  readonly selected: { readonly kind: 'connection' | 'channel' | 'agent'; readonly id: string } | undefined
+  readonly selected: WiringSelection | undefined
+  readonly filter: WiringFilter
 }) {
+  const go = useGo()
   const connections = useProductStore((state) => state.connections)
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
@@ -66,18 +119,36 @@ export function PatchBay({
   const [picker, setPicker] = useState<{ readonly channelId: string; readonly x: number; readonly y: number } | null>(
     null,
   )
+  /** Explicit open/closed choices; groups without one follow the default rule. */
+  const [folds, setFolds] = useState<ReadonlyMap<string, boolean>>(new Map())
   const suppressClick = useRef(false)
   const seenBindings = useRef<Map<string, string> | null>(null)
 
   const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents])
+  const filtering = filter.query.trim() !== '' || filter.freeOnly
   const groups = useMemo(
-    () =>
-      connections.map((connection) => ({
-        connection,
-        channels: channels.filter((channel) => channel.connectionId === connection.id),
-      })),
-    [connections, channels],
+    () => groupChannels(connections, channels, (id) => agentById.get(id)?.name, filter),
+    [connections, channels, agentById, filter],
   )
+  const selectedChannel =
+    selected?.kind === 'channel' ? channels.find((channel) => channel.id === selected.id) : undefined
+  const focusConnection =
+    selected?.kind === 'connection' ? selected.id : selectedChannel ? selectedChannel.connectionId : undefined
+  const crowded = channels.length > FOLD_THRESHOLD
+  const isOpen = useCallback(
+    (group: ChannelGroup) => {
+      if (filtering) return group.channels.length > 0
+      const explicit = folds.get(group.connection.id)
+      if (explicit !== undefined) return explicit
+      if (!crowded) return true
+      if (group.connection.id === focusConnection) return true
+      return selected?.kind === 'agent' && group.channels.some((channel) => channel.agentId === selected.id)
+    },
+    [filtering, folds, crowded, focusConnection, selected],
+  )
+  const visibleGroups = filtering ? groups.filter((group) => group.channels.length > 0) : groups
+  const openKey = visibleGroups.map((group) => `${group.connection.id}:${isOpen(group) ? 1 : 0}`).join('|')
+  const shownKey = visibleGroups.flatMap((group) => (isOpen(group) ? group.channels.map((c) => c.id) : [])).join('|')
 
   const measure = useCallback(() => {
     const root = patch.current
@@ -91,40 +162,79 @@ export function PatchBay({
     }
     const previous = seenBindings.current
     const next: WireGeometry[] = []
-    for (const channel of channels) {
-      const from = point(`[data-node="${nodeKey('connection', channel.connectionId)}"]`, 'right')
-      const to = point(`[data-node="${nodeKey('channel', channel.id)}"]`, 'left')
-      if (from && to)
+    for (const group of visibleGroups) {
+      const from = point(`[data-node="${nodeKey('connection', group.connection.id)}"]`, 'right')
+      if (!isOpen(group)) {
+        const header = point(`[data-node="${nodeKey('group', group.connection.id)}"]`, 'left')
+        if (from && header)
+          next.push({
+            key: `g:${group.connection.id}`,
+            d: curve(from.x, from.y, header.x, header.y),
+            kind: 'connection',
+            id: group.connection.id,
+            live: false,
+            draw: false,
+            x1: from.x,
+            x2: header.x,
+          })
+        // A folded group still shows which agents answer it: one quiet wire per agent.
+        const out = point(`[data-node="${nodeKey('group', group.connection.id)}"]`, 'right')
+        const answering = [...new Set(group.channels.map((channel) => channel.agentId).filter(Boolean))]
+        for (const agentId of answering) {
+          const agent = agentById.get(agentId)
+          const to = agent ? point(`[data-node="${nodeKey('agent', agent.id)}"]`, 'left') : undefined
+          if (!agent || !out || !to) continue
+          next.push({
+            key: `s:${group.connection.id}:${agent.id}`,
+            d: curve(out.x, out.y, to.x, to.y),
+            kind: 'summary',
+            id: group.connection.id,
+            agent,
+            live: false,
+            draw: false,
+            x1: out.x,
+            x2: to.x,
+          })
+        }
+        continue
+      }
+      for (const channel of group.channels) {
+        const to = point(`[data-node="${nodeKey('channel', channel.id)}"]`, 'left')
+        if (from && to)
+          next.push({
+            key: `c:${channel.id}`,
+            d: curve(from.x, from.y, to.x, to.y),
+            kind: 'connection',
+            id: channel.id,
+            channelId: channel.id,
+            live: false,
+            draw: previous === null,
+            x1: from.x,
+            x2: to.x,
+          })
+        const agent = channel.agentId ? agentById.get(channel.agentId) : undefined
+        if (!agent) continue
+        const a = point(`[data-node="${nodeKey('channel', channel.id)}"]`, 'right')
+        const b = point(`[data-node="${nodeKey('agent', agent.id)}"]`, 'left')
+        if (!a || !b) continue
         next.push({
-          key: `c:${channel.id}`,
-          d: curve(from.x, from.y, to.x, to.y),
-          kind: 'connection',
+          key: `b:${channel.id}`,
+          d: curve(a.x, a.y, b.x, b.y),
+          kind: 'binding',
+          id: channel.id,
           channelId: channel.id,
-          live: false,
-          draw: previous === null,
-          x1: from.x,
-          x2: to.x,
+          agent,
+          live: working(channel),
+          draw: previous === null || previous.get(channel.id) !== agent.id,
+          x1: a.x,
+          x2: b.x,
         })
-      const agent = channel.agentId ? agentById.get(channel.agentId) : undefined
-      if (!agent) continue
-      const a = point(`[data-node="${nodeKey('channel', channel.id)}"]`, 'right')
-      const b = point(`[data-node="${nodeKey('agent', agent.id)}"]`, 'left')
-      if (!a || !b) continue
-      next.push({
-        key: `b:${channel.id}`,
-        d: curve(a.x, a.y, b.x, b.y),
-        kind: 'binding',
-        channelId: channel.id,
-        agent,
-        live: working(channel),
-        draw: previous === null || previous.get(channel.id) !== agent.id,
-        x1: a.x,
-        x2: b.x,
-      })
+      }
     }
     seenBindings.current = new Map(channels.map((channel) => [channel.id, channel.agentId]))
     setWires(next)
-  }, [channels, agentById])
+    // openKey/shownKey capture which nodes exist; visibleGroups and isOpen derive from them.
+  }, [channels, agentById, openKey, shownKey])
 
   useLayoutEffect(() => {
     measure()
@@ -132,7 +242,19 @@ export function PatchBay({
     if (!root) return
     const observer = new ResizeObserver(() => measure())
     observer.observe(root)
-    return () => observer.disconnect()
+    // Pinned columns move relative to the board while it scrolls, so the wires follow every scroll frame.
+    const scroller = scrollParent(root)
+    let frame = 0
+    const onScroll = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(measure)
+    }
+    scroller.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      observer.disconnect()
+      scroller.removeEventListener('scroll', onScroll)
+      cancelAnimationFrame(frame)
+    }
   }, [measure])
 
   useEffect(() => {
@@ -168,7 +290,14 @@ export function PatchBay({
       if (!moved && Math.hypot(move.clientX - startX, move.clientY - startY) < 4) return
       if (!moved) document.body.style.userSelect = 'none'
       moved = true
-      setDrag({ channelId, x0, y0, x: move.clientX - box.left, y: move.clientY - box.top })
+      const current = root.getBoundingClientRect()
+      setDrag({
+        channelId,
+        x0: x0 + box.left - current.left,
+        y0: y0 + box.top - current.top,
+        x: move.clientX - current.left,
+        y: move.clientY - current.top,
+      })
       const hit = document.elementFromPoint(move.clientX, move.clientY)?.closest<HTMLElement>('[data-agent-node]')
       setDropAgent(hit?.dataset['agentNode'] ?? '')
     }
@@ -194,7 +323,13 @@ export function PatchBay({
   const pickerChannel = picker ? channels.find((channel) => channel.id === picker.channelId) : undefined
   const menuChannel = menu ? channels.find((channel) => channel.id === menu.channelId) : undefined
   const menuAgent = menuChannel ? agentById.get(menuChannel.agentId) : undefined
-  const current = (kind: string, id: string) => (selected?.kind === kind && selected.id === id ? 'page' : undefined)
+  const isSelected = (kind: WiringSelection['kind'], id: string) => selected?.kind === kind && selected.id === id
+  const select = (kind: WiringSelection['kind'], id: string) => {
+    if (suppressClick.current) return
+    go(`/wiring/${kind === 'connection' ? 'connections' : kind === 'channel' ? 'channels' : 'agents'}/${id}`)
+  }
+  const toggle = (group: ChannelGroup) =>
+    setFolds((current) => new Map(current).set(group.connection.id, !isOpen(group)))
 
   return (
     <>
@@ -202,11 +337,11 @@ export function PatchBay({
         <svg className={styles.wires} aria-hidden="true">
           <defs>
             {wires
-              .filter((wire) => wire.agent)
+              .filter((wire) => wire.kind === 'binding' && wire.agent)
               .map((wire) => (
                 <linearGradient
                   key={wire.key}
-                  id={`wire-${wire.channelId}`}
+                  id={`wire-${wire.id}`}
                   gradientUnits="userSpaceOnUse"
                   x1={wire.x1}
                   y1="0"
@@ -226,13 +361,20 @@ export function PatchBay({
                 pathLength={1}
                 d={wire.d}
               />
+            ) : wire.kind === 'summary' ? (
+              <path
+                key={wire.key}
+                className={styles.wireSummary}
+                style={{ stroke: agentAccent(wire.agent!) }}
+                d={wire.d}
+              />
             ) : (
               <g key={wire.key}>
                 <path className={styles.wireGlow} style={{ stroke: agentAccent(wire.agent!) }} d={wire.d} />
                 <path
                   className={[styles.wireBind, wire.draw ? styles.wireDraw : ''].join(' ')}
                   pathLength={1}
-                  style={{ stroke: `url(#wire-${wire.channelId})` }}
+                  style={{ stroke: `url(#wire-${wire.id})` }}
                   d={wire.d}
                 />
                 {wire.live ? <path className={styles.wireLive} d={wire.d} /> : null}
@@ -241,7 +383,7 @@ export function PatchBay({
                   d={wire.d}
                   onClick={(event) => {
                     const box = patch.current?.getBoundingClientRect()
-                    if (box)
+                    if (box && wire.channelId)
                       setMenu({ channelId: wire.channelId, x: event.clientX - box.left, y: event.clientY - box.top })
                   }}
                 />
@@ -252,104 +394,140 @@ export function PatchBay({
         </svg>
 
         <div className={styles.column}>
-          <h2 className={styles.columnTitle}>平台账号</h2>
-          {connections.map((connection) => (
-            <Link
-              key={connection.id}
-              to={`/wiring/connections/${connection.id}`}
-              className={styles.node}
-              data-node={nodeKey('connection', connection.id)}
-              aria-current={current('connection', connection.id)}
-            >
-              <span className={styles.nodeName}>
-                <StatusDot
-                  tone={connectionTone(connection.state)}
-                  pulse={connectionTone(connection.state) === 'warn'}
-                />
-                <span>{connectionDisplayName(connection)}</span>
-              </span>
-              <span className={styles.nodeSub}>{connection.userManaged ? connection.adapter : '内置'}</span>
-              <span className={[styles.port, styles.portRight].join(' ')} />
-            </Link>
-          ))}
+          <div className={styles.pinned}>
+            <h2 className={styles.columnTitle}>平台账号</h2>
+            {connections.map((connection) => {
+              const status = connectionStatus(connection)
+              return (
+                <Pressable
+                  key={connection.id}
+                  className={styles.node}
+                  data-node={nodeKey('connection', connection.id)}
+                  data-selected={isSelected('connection', connection.id)}
+                  aria-current={isSelected('connection', connection.id) ? 'true' : undefined}
+                  onClick={() => select('connection', connection.id)}
+                >
+                  <span className={styles.nodeName}>
+                    <StatusDot tone={status.tone} pulse={status.health === 'connecting'} label={status.label} />
+                    <span>{connectionDisplayName(connection)}</span>
+                  </span>
+                  <span className={styles.nodeSub}>
+                    {!connection.userManaged ? '内置' : connection.alias ? connection.adapter : '平台账号'}
+                  </span>
+                  <span className={[styles.port, styles.portRight].join(' ')} />
+                </Pressable>
+              )
+            })}
+          </div>
         </div>
 
         <div className={styles.column}>
           <h2 className={styles.columnTitle}>频道</h2>
-          {groups.map(({ connection, channels: list }) => (
-            <div key={connection.id} className={styles.group}>
-              {list.map((channel) => {
-                const agent = agentById.get(channel.agentId)
-                const accent = agent ? cssVars({ '--node-accent': agentAccent(agent) }) : undefined
-                const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
-                return (
-                  <div key={channel.id} style={{ position: 'relative' }}>
-                    <Link
-                      to={`/wiring/channels/${channel.id}`}
-                      className={[styles.node, styles.channelNode, agent ? '' : styles.free].join(' ')}
-                      data-node={nodeKey('channel', channel.id)}
-                      aria-current={current('channel', channel.id)}
-                      style={accent}
-                    >
-                      <span className={[styles.port, styles.portLeft].join(' ')} />
-                      <span className={styles.nodeName}>
-                        <span>{channel.name}</span>
-                      </span>
-                      <span className={styles.nodeSub}>{agent ? trigger : '未接线'}</span>
-                    </Link>
-                    <Pressable
-                      type="button"
-                      className={[
-                        styles.port,
-                        styles.portRight,
-                        styles.portOut,
-                        agent ? styles.portFilled : styles.portOpen,
-                      ].join(' ')}
-                      style={accent}
-                      aria-label={`把「${channel.name}」接到智能体`}
-                      aria-haspopup="menu"
-                      title="拖到智能体，或点击选择"
-                      onPointerDown={(event) => startDrag(event, channel.id)}
-                      onClick={(event) => {
-                        if (suppressClick.current) return
-                        const box = patch.current?.getBoundingClientRect()
-                        const rect = event.currentTarget.getBoundingClientRect()
-                        if (box)
-                          setPicker({
-                            channelId: channel.id,
-                            x: rect.left + rect.width / 2 - box.left,
-                            y: rect.bottom - box.top,
-                          })
-                      }}
-                    />
-                  </div>
-                )
-              })}
-            </div>
-          ))}
+          {visibleGroups.map((group) => {
+            const open = isOpen(group)
+            return (
+              <div key={group.connection.id} className={styles.group}>
+                <Pressable
+                  className={styles.groupHead}
+                  data-node={nodeKey('group', group.connection.id)}
+                  aria-expanded={open}
+                  disabled={filtering}
+                  onClick={() => toggle(group)}
+                >
+                  <span className={[styles.port, styles.portLeft, styles.portSmall].join(' ')} />
+                  <ChevronRight size={14} className={styles.groupChevron} data-open={open} aria-hidden="true" />
+                  <span className={styles.groupName}>{connectionDisplayName(group.connection)}</span>
+                  <span className={styles.groupCount}>
+                    {filtering
+                      ? `${group.channels.length} / ${group.total}`
+                      : group.free === 0
+                        ? group.total
+                        : group.free === group.total
+                          ? `${group.free} 未接线`
+                          : `${group.total} · ${group.free} 未接线`}
+                  </span>
+                  {open ? null : <span className={[styles.port, styles.portRight, styles.portSmall].join(' ')} />}
+                </Pressable>
+                {open
+                  ? group.channels.map((channel) => {
+                      const agent = agentById.get(channel.agentId)
+                      const accent = agent ? cssVars({ '--node-accent': agentAccent(agent) }) : undefined
+                      const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
+                      return (
+                        <div key={channel.id} className={styles.channelSlot}>
+                          <Pressable
+                            className={[styles.node, styles.channelNode, agent ? '' : styles.free].join(' ')}
+                            data-node={nodeKey('channel', channel.id)}
+                            data-selected={isSelected('channel', channel.id)}
+                            aria-current={isSelected('channel', channel.id) ? 'true' : undefined}
+                            style={accent}
+                            onClick={() => select('channel', channel.id)}
+                          >
+                            <span className={[styles.port, styles.portLeft].join(' ')} />
+                            <span className={styles.nodeName}>
+                              <span>{channel.name}</span>
+                            </span>
+                            <span className={styles.nodeSub}>{agent ? trigger : '未接线'}</span>
+                          </Pressable>
+                          <Pressable
+                            className={[
+                              styles.port,
+                              styles.portRight,
+                              styles.portOut,
+                              agent ? styles.portFilled : styles.portOpen,
+                            ].join(' ')}
+                            style={accent}
+                            aria-label={`把「${channel.name}」接到智能体`}
+                            aria-haspopup="menu"
+                            title="拖到智能体，或点击选择"
+                            onPointerDown={(event) => startDrag(event, channel.id)}
+                            onClick={(event) => {
+                              if (suppressClick.current) return
+                              const box = patch.current?.getBoundingClientRect()
+                              const rect = event.currentTarget.getBoundingClientRect()
+                              if (box)
+                                setPicker({
+                                  channelId: channel.id,
+                                  x: rect.left + rect.width / 2 - box.left,
+                                  y: rect.bottom - box.top,
+                                })
+                            }}
+                          />
+                        </div>
+                      )
+                    })
+                  : null}
+              </div>
+            )
+          })}
+          {filtering && visibleGroups.length === 0 ? <p className={styles.noMatch}>没有符合条件的频道</p> : null}
         </div>
 
         <div className={styles.column}>
-          <h2 className={styles.columnTitle}>智能体</h2>
-          {agents.map((agent) => (
-            <Link
-              key={agent.id}
-              to={`/agents/${agent.id}`}
-              className={[styles.node, styles.agentNode, dropAgent === agent.id ? styles.target : ''].join(' ')}
-              data-node={nodeKey('agent', agent.id)}
-              data-agent-node={agent.id}
-              style={cssVars({ '--node-accent': agentAccent(agent) })}
-            >
-              <span className={[styles.port, styles.portLeft, styles.portFilled].join(' ')} />
-              <AgentAvatar name={agent.name} hue={agentHue(agent)} live={isAgentWorking(agent)} />
-              <span className={styles.agentText}>
-                <span className={styles.nodeName}>
-                  <span>{agent.name}</span>
+          <div className={styles.pinned}>
+            <h2 className={styles.columnTitle}>智能体</h2>
+            {agents.map((agent) => (
+              <Pressable
+                key={agent.id}
+                className={[styles.node, styles.agentNode, dropAgent === agent.id ? styles.target : ''].join(' ')}
+                data-node={nodeKey('agent', agent.id)}
+                data-agent-node={agent.id}
+                data-selected={isSelected('agent', agent.id)}
+                aria-current={isSelected('agent', agent.id) ? 'true' : undefined}
+                style={cssVars({ '--node-accent': agentAccent(agent) })}
+                onClick={() => select('agent', agent.id)}
+              >
+                <span className={[styles.port, styles.portLeft, styles.portFilled].join(' ')} />
+                <AgentAvatar name={agent.name} hue={agentHue(agent)} live={isAgentWorking(agent)} />
+                <span className={styles.agentText}>
+                  <span className={styles.nodeName}>
+                    <span>{agent.name}</span>
+                  </span>
+                  <span className={styles.nodeSub}>{agent.channels.length} 个频道</span>
                 </span>
-                <span className={styles.nodeSub}>{agent.channels.length} 个频道</span>
-              </span>
-            </Link>
-          ))}
+              </Pressable>
+            ))}
+          </div>
         </div>
 
         {picker && pickerChannel ? (
@@ -365,7 +543,6 @@ export function PatchBay({
               .map((item, index) => (
                 <Pressable
                   key={item.id}
-                  type="button"
                   role="menuitem"
                   autoFocus={index === 0}
                   onClick={() => {
@@ -385,7 +562,6 @@ export function PatchBay({
               <>
                 <hr />
                 <Pressable
-                  type="button"
                   role="menuitem"
                   className={styles.danger}
                   onClick={() => {
@@ -407,7 +583,6 @@ export function PatchBay({
               .map((item) => (
                 <Pressable
                   key={item.id}
-                  type="button"
                   role="menuitem"
                   onClick={() => {
                     setMenu(null)
@@ -420,7 +595,6 @@ export function PatchBay({
               ))}
             <hr />
             <Pressable
-              type="button"
               role="menuitem"
               className={styles.danger}
               onClick={() => {

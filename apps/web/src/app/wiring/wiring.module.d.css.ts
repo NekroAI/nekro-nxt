@@ -1,53 +1,59 @@
 declare const styles: {
+  readonly actions: string
   readonly agentNode: string
   readonly agentText: string
-  readonly archived: string
-  readonly archivedRow: string
   readonly board: string
-  readonly buttons: string
   readonly channelNode: string
+  readonly channelSlot: string
   readonly column: string
   readonly columnTitle: string
   readonly compact: string
-  readonly create: string
-  readonly createHead: string
+  readonly compactRow: string
+  readonly compactText: string
+  readonly configForm: string
   readonly danger: string
-  readonly detail: string
-  readonly detailActions: string
-  readonly detailHead: string
-  readonly detailSub: string
-  readonly detailTitle: string
   readonly dragging: string
-  readonly end: string
-  readonly error: string
-  readonly facts: string
-  readonly form: string
   readonly formActions: string
   readonly free: string
   readonly group: string
-  readonly inline: string
+  readonly groupChevron: string
+  readonly groupCount: string
+  readonly groupHead: string
+  readonly groupName: string
+  readonly head: string
+  readonly listAgent: string
+  readonly listIcon: string
+  readonly listMeta: string
+  readonly listName: string
+  readonly listRow: string
   readonly member: string
-  readonly memberPaging: string
-  readonly members: string
+  readonly memberMeta: string
+  readonly memberName: string
+  readonly noMatch: string
   readonly node: string
   readonly nodeName: string
   readonly nodeSub: string
+  readonly objectIcon: string
+  readonly paging: string
   readonly patch: string
+  readonly pinned: string
   readonly platform: string
-  readonly platforms: string
+  readonly platformText: string
   readonly port: string
   readonly portFilled: string
   readonly portLeft: string
   readonly portOpen: string
   readonly portOut: string
   readonly portRight: string
+  readonly portSmall: string
   readonly qr: string
-  readonly space: string
-  readonly switches: string
+  readonly quiet: string
+  readonly search: string
+  readonly stateValue: string
   readonly target: string
-  readonly testResult: string
+  readonly testSend: string
   readonly title: string
-  readonly titleRow: string
+  readonly value: string
   readonly wireBind: string
   readonly wireConn: string
   readonly wireDraw: string
@@ -55,6 +61,7 @@ declare const styles: {
   readonly wireHit: string
   readonly wireLive: string
   readonly wireMenu: string
+  readonly wireSummary: string
   readonly wireTemp: string
   readonly wires: string
 }

@@ -1,4 +1,4 @@
-import { ArrowLeft, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ChevronRight, RotateCcw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
@@ -13,7 +13,18 @@ import {
 } from '../../extension-ui/index.js'
 import { useProductStore } from '../../product-runtime.js'
 import { createQrCodeSvgDataUrl } from '../../qr-code.js'
-import { Banner, Button, Field, Input, Panel, Pressable, Section, Spinner, toast } from '../../ui-kit/next/index.js'
+import {
+  Banner,
+  Button,
+  Input,
+  Pressable,
+  PropertyGroup,
+  PropertyList,
+  PropertyRow,
+  ReaderPage,
+  Spinner,
+  toast,
+} from '../../ui-kit/next/index.js'
 import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
 import styles from './wiring.module.css'
@@ -44,10 +55,17 @@ export function ConnectionCreate() {
     setParams(next, { replace: true })
   }
 
+  const title = reauth
+    ? `重新登录${adapter?.displayName ?? ''}`
+    : adapter
+      ? `添加${adapter.displayName}账号`
+      : '添加平台账号'
+
   return (
-    <div className={styles.create}>
-      <div className={styles.createHead}>
-        {reauth ? null : (
+    <ReaderPage
+      title={title}
+      actions={
+        reauth ? undefined : (
           <Button
             variant="ghost"
             size="small"
@@ -56,35 +74,33 @@ export function ConnectionCreate() {
           >
             {adapter ? '换一个平台' : '返回接线'}
           </Button>
-        )}
-        <h2>
-          {reauth
-            ? `重新登录${adapter?.displayName ?? ''}`
-            : adapter
-              ? `添加${adapter.displayName}账号`
-              : '添加平台账号'}
-        </h2>
-      </div>
-
+        )
+      }
+    >
       {!adapter ? (
         <>
-          <div className={styles.platforms}>
-            {creatable.map((item) => (
-              <Pressable key={item.key} className={styles.platform} onClick={() => choose(item.key)}>
-                <b>{item.displayName}</b>
-                <span>{item.description}</span>
-              </Pressable>
-            ))}
-          </div>
+          <PropertyGroup title="选择平台">
+            <PropertyList>
+              {creatable.map((item) => (
+                <Pressable key={item.key} className={styles.platform} onClick={() => choose(item.key)}>
+                  <span className={styles.platformText}>
+                    <b>{item.displayName}</b>
+                    <span>{item.description}</span>
+                  </span>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </Pressable>
+              ))}
+            </PropertyList>
+          </PropertyGroup>
           {archived.length > 0 ? (
-            <Section title="恢复已移除的账号" small>
-              <Panel className={styles.archived}>
+            <PropertyGroup title="恢复已移除的账号" description="频道和消息仍保留，恢复后继续使用">
+              <PropertyList>
                 {archived.map((connection) => (
-                  <div key={connection.id} className={styles.archivedRow}>
-                    <span>
-                      <b>{connection.alias?.trim() || connection.adapter}</b>
-                      <small>保留了 {connection.channelCount} 个频道</small>
-                    </span>
+                  <PropertyRow
+                    key={connection.id}
+                    label={connection.alias?.trim() || connection.adapter}
+                    description={`保留了 ${connection.channelCount} 个频道`}
+                  >
                     <Button
                       size="small"
                       icon={<RotateCcw size={14} />}
@@ -103,10 +119,10 @@ export function ConnectionCreate() {
                     >
                       恢复
                     </Button>
-                  </div>
+                  </PropertyRow>
                 ))}
-              </Panel>
-            </Section>
+              </PropertyList>
+            </PropertyGroup>
           ) : null}
         </>
       ) : adapter.creation?.mode === 'qr-login' ? (
@@ -114,7 +130,35 @@ export function ConnectionCreate() {
       ) : (
         <SchemaForm key={adapter.key} adapter={adapter} />
       )}
-    </div>
+    </ReaderPage>
+  )
+}
+
+/** The optional account name shared by both creation modes. */
+function AliasRow({
+  adapter,
+  value,
+  onChange,
+}: {
+  readonly adapter: Descriptor
+  readonly value: string
+  readonly onChange: (value: string) => void
+}) {
+  return (
+    <PropertyRow
+      label="名称"
+      description="可选，用来区分同一平台的多个账号"
+      layout="stacked"
+      htmlFor="connection-alias"
+    >
+      <Input
+        id="connection-alias"
+        value={value}
+        maxLength={80}
+        placeholder={adapter.displayName}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </PropertyRow>
   )
 }
 
@@ -150,24 +194,25 @@ function SchemaForm({ adapter }: { readonly adapter: Descriptor }) {
   }
 
   return (
-    <Panel className={styles.form}>
-      <Field label="名称" hint="可选，用来区分同一平台的多个账号">
-        <Input
-          value={alias}
-          maxLength={80}
-          placeholder={adapter.displayName}
-          onChange={(event) => setAlias(event.target.value)}
-        />
-      </Field>
-      <PanelSlot anchor={{ kind: 'connection', id: adapter.key }} density="full" role="setup" />
-      <ConfigForm
-        schema={adapter.configSchema}
-        value={values}
-        onChange={setValues}
-        secrets={{ value: secrets, onChange: setSecrets }}
-        showIssues={submitted}
-        disabled={busy}
-      />
+    <>
+      <PropertyGroup title="账号">
+        <PropertyList>
+          <AliasRow adapter={adapter} value={alias} onChange={setAlias} />
+        </PropertyList>
+      </PropertyGroup>
+      <PropertyGroup title="连接信息">
+        <PanelSlot anchor={{ kind: 'connection', id: adapter.key }} density="full" role="setup" />
+        <div className={styles.configForm}>
+          <ConfigForm
+            schema={adapter.configSchema}
+            value={values}
+            onChange={setValues}
+            secrets={{ value: secrets, onChange: setSecrets }}
+            showIssues={submitted}
+            disabled={busy}
+          />
+        </div>
+      </PropertyGroup>
       {error ? <Banner tone="bad">{error}</Banner> : null}
       <div className={styles.formActions}>
         <Button onClick={() => go('/wiring')} disabled={busy}>
@@ -177,7 +222,7 @@ function SchemaForm({ adapter }: { readonly adapter: Descriptor }) {
           添加账号
         </Button>
       </div>
-    </Panel>
+    </>
   )
 }
 
@@ -248,16 +293,13 @@ function QrLogin({ adapter, reauth }: { readonly adapter: Descriptor; readonly r
   const failed = login?.status === 'failed' || login?.status === 'expired' || login?.status === 'cancelled'
 
   return (
-    <Panel className={styles.form}>
+    <>
       {!login && !reauth ? (
-        <Field label="名称" hint="可选，用来区分同一平台的多个账号">
-          <Input
-            value={alias}
-            maxLength={80}
-            placeholder={adapter.displayName}
-            onChange={(event) => setAlias(event.target.value)}
-          />
-        </Field>
+        <PropertyGroup title="账号">
+          <PropertyList>
+            <AliasRow adapter={adapter} value={alias} onChange={setAlias} />
+          </PropertyList>
+        </PropertyGroup>
       ) : null}
       {login && qr ? (
         <div className={styles.qr} data-dim={!active}>
@@ -281,6 +323,6 @@ function QrLogin({ adapter, reauth }: { readonly adapter: Descriptor; readonly r
           </Button>
         ) : null}
       </div>
-    </Panel>
+    </>
   )
 }
