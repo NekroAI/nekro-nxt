@@ -235,7 +235,19 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
       {connection.userManaged ? <MemberList connectionId={connection.id} /> : null}
 
       {connection.userManaged ? (
-        <section>
+        <section className={styles.detailActions}>
+          {descriptor?.creation?.mode === 'qr-login' ? (
+            <Button
+              size="small"
+              onClick={() =>
+                navigate(
+                  `/wiring/new?adapter=${encodeURIComponent(descriptor.key)}&reauth=${encodeURIComponent(connection.id)}`,
+                )
+              }
+            >
+              重新扫码登录
+            </Button>
+          ) : null}
           <Button variant="danger" size="small" icon={<Trash2 />} onClick={() => setDeleting(true)}>
             删除连接
           </Button>

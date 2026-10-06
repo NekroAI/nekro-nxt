@@ -1,22 +1,44 @@
-import { applyThemeChoice, THEME_STORAGE_KEY, type ThemeChoice } from '../../theme-preference.js'
+import { useCallback, useEffect } from 'react'
+import { applyThemeChoice } from '../../theme-preference.js'
+import { useProductRuntime, useUiStateStore } from '../../product-runtime.js'
 
-const prefersReducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
+const motionOff = (): boolean =>
+  document.documentElement.dataset['nxtMotion'] === 'off' ||
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-/** Applies a theme with a short color cross-fade (skipped under reduced motion). */
-export function setTheme(theme: ThemeChoice): void {
-  const root = document.documentElement
-  if (!prefersReducedMotion()) {
-    root.classList.add('theming')
-    window.setTimeout(() => root.classList.remove('theming'), 420)
-  }
-  applyThemeChoice(root, theme)
-  try {
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
-  } catch {
-    // Storage can be unavailable; the applied theme still holds for this session.
-  }
+/**
+ * Applies the theme and motion preferences from the UI store to the document. Theme changes cross-fade colors
+ * briefly unless motion is reduced.
+ */
+export function useAppearanceEffects(): void {
+  const theme = useUiStateStore((state) => state.theme)
+  const reducedMotion = useUiStateStore((state) => state.reducedMotion)
+  useEffect(() => {
+    const root = document.documentElement
+    root.dataset['reducedMotion'] = String(reducedMotion)
+    root.dataset['nxtMotion'] = reducedMotion ? 'off' : 'on'
+  }, [reducedMotion])
+  useEffect(() => {
+    const root = document.documentElement
+    if (root.dataset['theme'] === theme) return
+    let timer: number | undefined
+    if (!motionOff()) {
+      root.classList.add('theming')
+      timer = window.setTimeout(() => root.classList.remove('theming'), 420)
+    }
+    applyThemeChoice(root, theme)
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      root.classList.remove('theming')
+    }
+  }, [theme])
 }
 
-export function toggleTheme(): void {
-  setTheme(document.documentElement.dataset['theme'] === 'dark' ? 'light' : 'dark')
+/** Command for the palette: flips between light and dark. */
+export function useToggleTheme(): () => void {
+  const ui = useProductRuntime().uiStore
+  return useCallback(() => {
+    const state = ui.getState()
+    state.setTheme(state.theme === 'dark' ? 'light' : 'dark')
+  }, [ui])
 }

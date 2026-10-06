@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
-import { Panel, Select } from '../../ui-kit/next/index.js'
+import { Plus } from 'lucide-react'
+import { Button, Panel, Select } from '../../ui-kit/next/index.js'
+import { useGo } from '../model/nav.js'
+import { ConnectionCreate } from './connection-create.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { useCrumb } from '../shell/crumb.js'
 import { WiringDetail } from './detail.js'
@@ -75,22 +78,40 @@ export default function WiringSpace() {
   const { '*': rest = '' } = useParams()
   const connections = useProductStore((state) => state.connections)
   const channels = useProductStore((state) => state.channels)
+  const go = useGo()
+  const creating = rest === 'new' || rest.startsWith('new/')
   const parsed = parseSelection(rest)
   const fallback = connections.find((connection) => connection.userManaged) ?? connections[0]
   const selected: Selection | undefined = parsed ?? (fallback ? { kind: 'connection', id: fallback.id } : undefined)
   const selectedName = selected?.kind === 'connection' ? connections.find((item) => item.id === selected.id) : undefined
   useCrumb(
     '接线',
-    selectedName
-      ? connectionDisplayName(selectedName)
-      : selected?.kind === 'channel'
-        ? channels.find((item) => item.id === selected.id)?.name
-        : undefined,
+    creating
+      ? '添加账号'
+      : selectedName
+        ? connectionDisplayName(selectedName)
+        : selected?.kind === 'channel'
+          ? channels.find((item) => item.id === selected.id)?.name
+          : undefined,
   )
+  if (creating) {
+    return (
+      <div className={styles.space} data-single="true">
+        <div className={styles.board}>
+          <ConnectionCreate />
+        </div>
+      </div>
+    )
+  }
   return (
     <div className={styles.space}>
       <div className={styles.board}>
-        <h1 className={styles.title}>接线</h1>
+        <div className={styles.titleRow}>
+          <h1 className={styles.title}>接线</h1>
+          <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>
+            添加账号
+          </Button>
+        </div>
         <PatchBay selected={selected} />
         <CompactBindings />
       </div>

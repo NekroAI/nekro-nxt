@@ -14,8 +14,20 @@
   background-size: 22px 22px;
 }
 
+.space[data-single='true'] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
 .title {
-  margin: 0 0 24px;
+  margin: 0;
   font-size: var(--fs-2xl);
   font-weight: 650;
   letter-spacing: -0.01em;
@@ -460,4 +472,135 @@
   .compact {
     display: block;
   }
+}
+
+/* —— 添加账号 —— */
+.create {
+  display: grid;
+  gap: 22px;
+  max-width: 720px;
+  margin: 0 auto;
+  animation: rise 360ms var(--ease) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.createHead {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.createHead h2 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  font-weight: 650;
+}
+
+.platforms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.platform {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform var(--dur-2) var(--ease),
+    box-shadow var(--dur-2) var(--ease),
+    border-color var(--dur-1);
+}
+
+.platform:hover {
+  border-color: var(--line-2);
+  box-shadow: var(--sh-2);
+  transform: translateY(-2px);
+}
+
+.platform span {
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+
+.archived {
+  overflow: hidden;
+}
+
+.archivedRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.archivedRow:first-child {
+  border-top: 0;
+}
+
+.archivedRow > span {
+  display: grid;
+}
+
+.archivedRow small {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.qr {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+.qr img {
+  width: 220px;
+  height: 220px;
+  padding: 10px;
+  border-radius: 14px;
+  background: #ffffff;
+  transition: opacity var(--dur-2);
+}
+
+.qr[data-dim='true'] img {
+  opacity: 0.3;
+}
+
+.detailActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }

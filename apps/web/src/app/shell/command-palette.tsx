@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useProductStore } from '../../product-runtime.js'
 import { Kbd, Pressable, Input, Overlay } from '../../ui-kit/next/index.js'
 import { agentPhase } from '../model/identity.js'
-import { toggleTheme } from '../model/theme.js'
+import { useToggleTheme } from '../model/theme.js'
 import { SPACES } from './app-shell.js'
 import styles from './palette.module.css'
 
@@ -34,6 +34,7 @@ export function CommandPalette({
   const [index, setIndex] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
 
+  const toggleTheme = useToggleTheme()
   const commands = useMemo<readonly Command[]>(() => {
     const go = (path: string) => () => navigate(path)
     const connectionName = new Map(connections.map((connection) => [connection.id, connection]))
@@ -93,7 +94,7 @@ export function CommandPalette({
         run: toggleTheme,
       },
     ]
-  }, [agents, channels, connections, navigate])
+  }, [agents, channels, connections, navigate, toggleTheme])
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase()

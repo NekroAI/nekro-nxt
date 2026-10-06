@@ -7,6 +7,7 @@ import { PersistentExtensionClientProvider } from '../persistent-extension-clien
 import { Skeleton, Toaster, TooltipProvider } from '../ui-kit/next/index.js'
 import { AppShell } from './shell/app-shell.js'
 import { CrumbProvider } from './shell/crumb.js'
+import { useAppearanceEffects } from './model/theme.js'
 
 const LiveSpace = lazy(() => import('./live/live-space.js'))
 const ChannelsSpace = lazy(() => import('./channels/channels-space.js'))
@@ -32,6 +33,7 @@ const space = (node: ReactNode) => <Suspense fallback={<Loading />}>{node}</Susp
  * candidates can be verified in the browser and installed pages keep their state across spaces.
  */
 export function NextApp() {
+  useAppearanceEffects()
   return (
     <DynamicClientProvider>
       <AdapterHostClientProvider>
