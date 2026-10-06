@@ -100,12 +100,22 @@
 
 /* Narrow containers drop low-priority columns instead of clipping them. */
 @container (max-width: 720px) {
+  .head,
+  .row {
+    grid-template-columns: var(--table-columns-md);
+  }
+
   [data-priority='3'] {
     display: none;
   }
 }
 
 @container (max-width: 520px) {
+  .head,
+  .row {
+    grid-template-columns: var(--table-columns-sm);
+  }
+
   [data-priority='2'] {
     display: none;
   }

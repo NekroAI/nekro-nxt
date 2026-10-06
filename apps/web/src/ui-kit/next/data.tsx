@@ -38,7 +38,12 @@ export function DataTable<Row>({
   readonly empty?: ReactNode
   readonly footer?: ReactNode
 }) {
-  const template = columns.map((column) => column.width ?? 'minmax(0, 1fr)').join(' ')
+  // One template per container width: hidden low-priority columns must drop their tracks too.
+  const templateFor = (maxPriority: number) =>
+    columns
+      .filter((column) => (column.priority ?? 1) <= maxPriority)
+      .map((column) => column.width ?? 'minmax(0, 1fr)')
+      .join(' ')
   const onKey = (event: KeyboardEvent<HTMLDivElement>, row: Row) => {
     if (!onSelect) return
     if (event.key === 'Enter' || event.key === ' ') {
@@ -48,7 +53,16 @@ export function DataTable<Row>({
   }
   return (
     <div className={styles.tableWrap}>
-      <div className={styles.table} role="table" aria-label={label} style={cssVars({ '--table-columns': template })}>
+      <div
+        className={styles.table}
+        role="table"
+        aria-label={label}
+        style={cssVars({
+          '--table-columns': templateFor(3),
+          '--table-columns-md': templateFor(2),
+          '--table-columns-sm': templateFor(1),
+        })}
+      >
         <div className={styles.head} role="row">
           {columns.map((column) => (
             <div
