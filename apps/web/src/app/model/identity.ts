@@ -13,6 +13,31 @@ export const agentHue = (agent: Pick<AgentSummary, 'id' | 'appearance'>): number
 /** CSS color for the agent's identity accent (lines, bars, wires). */
 export const agentAccent = (agent: Parameters<typeof agentHue>[0]): string => `hsl(${agentHue(agent)} 58% 58%)`
 
+/** A channel's own identity hue, stable from its id. */
+export const channelHue = (channelId: string): number => hueOf(channelId)
+
+/**
+ * Hues for channels drawn together (charts, legends): each starts from its stable hue and steps around the wheel
+ * until it is at least 36° from those already placed, so neighbouring series never share a colour.
+ */
+export const distinctChannelHues = (channelIds: readonly string[]): ReadonlyMap<string, number> => {
+  const placed: number[] = []
+  const result = new Map<string, number>()
+  for (const id of [...channelIds].sort()) {
+    let hue = channelHue(id)
+    for (
+      let attempt = 0;
+      attempt < 8 && placed.some((other) => Math.min(Math.abs(other - hue), 360 - Math.abs(other - hue)) < 36);
+      attempt += 1
+    ) {
+      hue = (hue + 47) % 360
+    }
+    placed.push(hue)
+    result.set(id, hue)
+  }
+  return result
+}
+
 export const isAgentWorking = (agent: Pick<AgentSummary, 'state'> | undefined): boolean =>
   agent !== undefined && (agent.state === 'thinking' || agent.state === 'using-tool')
 

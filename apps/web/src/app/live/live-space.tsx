@@ -9,11 +9,11 @@ import {
   connectionDisplayName,
   useProductRuntime,
   useProductStore,
-  type AgentSummary,
   type ChannelSummary,
 } from '../../product-runtime.js'
 import {
   AgentAvatar,
+  BoardPage,
   Button,
   Chip,
   IconButton,
@@ -22,10 +22,11 @@ import {
   Sparkline,
   smoothPath,
   cssVars,
+  Pressable,
 } from '../../ui-kit/next/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { attentionSource, useAttention, type AttentionItem } from '../model/attention.js'
-import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
+import { agentHue, agentPhase, channelHue, distinctChannelHues, isAgentWorking } from '../model/identity.js'
 import { useCrumb } from '../shell/crumb.js'
 import styles from './live.module.css'
 
@@ -68,16 +69,15 @@ function Tide({
   series,
   windowIndex,
   channels,
-  agents,
 }: {
   readonly series: ChannelActivitySeries
   readonly windowIndex: number
   readonly channels: readonly ChannelSummary[]
-  readonly agents: readonly AgentSummary[]
 }) {
   const [hover, setHover] = useState<number | null>(null)
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set())
   const plot = useRef<HTMLDivElement>(null)
-  const top = useMemo(
+  const ranked = useMemo(
     () =>
       [...series.channels]
         .filter((item) => item.total > 0)
@@ -85,17 +85,25 @@ function Tide({
         .slice(0, 5),
     [series],
   )
+  const hues = useMemo(() => distinctChannelHues(ranked.map((item) => item.channelId)), [ranked])
+  const top = ranked.filter((item) => !hidden.has(item.channelId))
+  const toggle = (channelId: string) =>
+    setHidden((current) => {
+      const next = new Set(current)
+      if (next.has(channelId)) next.delete(channelId)
+      else if (ranked.length - next.size > 1) next.add(channelId)
+      return next
+    })
   const width = 1000
   const height = 116
   const buckets = Math.max(2, ...top.map((item) => item.counts.length))
   const max = Math.max(1, ...top.flatMap((item) => item.counts)) * 1.15
   const x = (index: number) => (index / (buckets - 1)) * width
   const y = (value: number) => height - (value / max) * height
+  // Each channel keeps its own identity colour, kept apart from the others in this chart.
   const color = (channelId: string) => {
-    const agent = agents.find((item) => item.id === channels.find((channel) => channel.id === channelId)?.agentId)
-    return agent
-      ? { line: agentAccent(agent), fill: `hsl(${agentHue(agent)} 74% 77%)` }
-      : { line: 'var(--faint)', fill: 'var(--line-3)' }
+    const hue = hues.get(channelId) ?? 220
+    return { line: `hsl(${hue} 58% 56%)`, fill: `hsl(${hue} 74% 77%)` }
   }
   const lastY = top.length ? y(Math.max(...top.map((item) => item.counts.at(-1) ?? 0))) : height
   const option = WINDOWS[windowIndex] ?? WINDOWS[0]
@@ -104,7 +112,7 @@ function Tide({
   return (
     <>
       <Panel className={styles.tide}>
-        {top.length === 0 ? (
+        {ranked.length === 0 ? (
           <>
             <div className={styles.flat} />
             <div className={styles.tideEmpty}>近一天没有新消息</div>
@@ -206,20 +214,26 @@ function Tide({
           ))}
         </div>
       </Panel>
-      {top.length ? (
-        <div className={styles.legend}>
-          {top.map((item) => {
+      {ranked.length ? (
+        <div className={styles.legend} role="group" aria-label="显示的频道">
+          {ranked.map((item) => {
             const channel = channels.find((candidate) => candidate.id === item.channelId)
+            const shown = !hidden.has(item.channelId)
             return (
-              <span key={item.channelId}>
+              <Pressable
+                key={item.channelId}
+                className={styles.legendItem}
+                aria-pressed={shown}
+                onClick={() => toggle(item.channelId)}
+              >
                 <i
                   style={{
                     background: `linear-gradient(90deg, ${color(item.channelId).line}, ${color(item.channelId).fill})`,
                   }}
                 />
                 {channel?.name ?? '频道'}
-                {channel ? ` · ${channel.connectionName}` : ''}
-              </span>
+                {channel ? <small>{channel.connectionName}</small> : null}
+              </Pressable>
             )
           })}
         </div>
@@ -273,6 +287,8 @@ function groupAttention(items: readonly AttentionItem[]): readonly AttentionItem
   return result
 }
 
+const SEVERITY_RANK: Record<AttentionItem['severity'], number> = { bad: 0, warn: 1, info: 2 }
+
 const attentionIcon = (item: AttentionItem) => {
   if (item.kind === 'connection-unhealthy') return <Plug />
   if (item.kind === 'authoring-approval') return <Wrench />
@@ -288,7 +304,10 @@ export default function LiveSpace() {
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)
   const rawAttention = useAttention()
-  const attention = useMemo(() => groupAttention(rawAttention), [rawAttention])
+  const attention = useMemo(
+    () => [...groupAttention(rawAttention)].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
+    [rawAttention],
+  )
   const activity = useActivitySeries()
   const working = agents.filter(isAgentWorking)
   const totals = new Map<string, ChannelActivitySeries['channels'][number]>(
@@ -312,40 +331,47 @@ export default function LiveSpace() {
     .sort((left, right) => (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0))
     .slice(0, 12)
 
+  const firstWorking = working[0]
   return (
-    <div className={styles.live}>
+    <BoardPage>
       <div className={[styles.inner, styles.enter].join(' ')}>
         <CompatibilityNotices showContextReset />
         <section style={cssVars({ '--i': 0 })}>
           <div className={styles.head}>
             <h1>现场</h1>
             <div className={styles.stats}>
-              <div className={styles.stat}>
+              <Pressable
+                className={styles.stat}
+                onClick={() =>
+                  navigate(working.length === 1 && firstWorking ? `/agents/${firstWorking.id}` : '/agents')
+                }
+              >
                 <b>{working.length}</b>
                 <span>正在工作</span>
-              </div>
-              <div
+              </Pressable>
+              <Pressable
                 className={[styles.stat, attention.some((item) => item.severity === 'bad') ? styles.hot : ''].join(' ')}
+                onClick={() => document.getElementById('live-attention')?.scrollIntoView({ behavior: 'smooth' })}
               >
                 <b>{rawAttention.length}</b>
                 <span>需要关注</span>
-              </div>
-              <div className={styles.stat}>
+              </Pressable>
+              <Pressable className={styles.stat} onClick={() => navigate('/channels')}>
                 <b>{totalMessages}</b>
                 <span>{option.label}消息</span>
-              </div>
+              </Pressable>
             </div>
           </div>
-          <div style={{ marginTop: 14 }}>
+          <div className={styles.tideWrap}>
             {activity ? (
-              <Tide series={activity.series} windowIndex={activity.index} channels={channels} agents={agents} />
+              <Tide series={activity.series} windowIndex={activity.index} channels={channels} />
             ) : (
               <Panel className={styles.tide}>{null}</Panel>
             )}
           </div>
         </section>
 
-        <section style={cssVars({ '--i': 1 })}>
+        <section style={cssVars({ '--i': 1 })} id="live-attention">
           <h2 className={styles.sectionTitle}>需要关注</h2>
           <Panel className={styles.attention}>
             {attention.length === 0 ? (
@@ -402,10 +428,10 @@ export default function LiveSpace() {
                     key={channel.id}
                     to={`/channels/${channel.id}`}
                     className={styles.card}
-                    style={agent ? cssVars({ '--card-accent': agentAccent(agent) }) : undefined}
+                    style={cssVars({ '--card-accent': `hsl(${channelHue(channel.id)} 58% 56%)` })}
                   >
                     <div className={styles.cardHead}>
-                      <div style={{ minWidth: 0 }}>
+                      <div className={styles.cardIdentity}>
                         <div className={styles.cardTitle}>{channel.name}</div>
                         <div className={styles.cardSource}>
                           {connection
@@ -431,19 +457,20 @@ export default function LiveSpace() {
                         <b>{channel.lastMessage.author}</b>：{channel.lastMessage.text}
                       </div>
                     ) : null}
-                    <div className={styles.chips}>
-                      {channel.unread ? <Chip tone="accent">{`${channel.unread} 条未读`}</Chip> : null}
-                    </div>
-                    {series && agent ? (
+                    {channel.unread ? (
+                      <div className={styles.chips}>
+                        <Chip tone="accent">{`${channel.unread} 条未读`}</Chip>
+                      </div>
+                    ) : null}
+                    {series && series.total > 0 ? (
                       <Sparkline
                         className={styles.spark}
+                        height={22}
                         values={series.counts}
-                        color={agentAccent(agent)}
-                        fill={`hsl(${agentHue(agent)} 70% 60% / 0.12)`}
+                        color={`hsl(${channelHue(channel.id)} 58% 56%)`}
+                        fill={`hsl(${channelHue(channel.id)} 70% 60% / 0.12)`}
                       />
-                    ) : (
-                      <div style={{ height: 16 }} />
-                    )}
+                    ) : null}
                   </Link>
                 )
               })}
@@ -473,6 +500,6 @@ export default function LiveSpace() {
           </section>
         ) : null}
       </div>
-    </div>
+    </BoardPage>
   )
 }

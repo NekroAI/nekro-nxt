@@ -9,6 +9,7 @@ declare const styles: {
   readonly calm: string
   readonly card: string
   readonly cardHead: string
+  readonly cardIdentity: string
   readonly cardSource: string
   readonly cardTime: string
   readonly cardTitle: string
@@ -23,7 +24,7 @@ declare const styles: {
   readonly info: string
   readonly inner: string
   readonly legend: string
-  readonly live: string
+  readonly legendItem: string
   readonly nowDot: string
   readonly nowLine: string
   readonly plot: string
@@ -36,6 +37,7 @@ declare const styles: {
   readonly stroke: string
   readonly tide: string
   readonly tideEmpty: string
+  readonly tideWrap: string
   readonly tip: string
   readonly warn: string
   readonly what: string
