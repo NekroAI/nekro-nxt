@@ -548,7 +548,8 @@ export function ModelProviderDetail({
           onRemoved={(next) => {
             store.getState().replaceLlmProviders(next)
             setRemoving(false)
-            onSelect(next.providers.find((provider) => provider.configured)?.provider ?? '')
+            // Back to the overview: the removed provider is gone and nothing else was asked for.
+            onSelect('')
             toast('供应商配置已移除，API 密钥已保留。', { group: 'llm-provider-remove' })
             void store
               .getState()

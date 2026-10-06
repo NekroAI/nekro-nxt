@@ -1,6 +1,6 @@
 import { useGo } from '../model/nav.js'
 import { PanelSlot } from '../../extension-ui/index.js'
-import { Cable, ChevronRight, Trash2 } from 'lucide-react'
+import { ArrowUpRight, Cable, ChevronRight, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 import {
@@ -11,14 +11,13 @@ import {
   type ConnectionSummary,
 } from '../../product-runtime.js'
 import {
-  AgentAvatar,
   Button,
-  Chip,
   ConfirmDialog,
   DetailPane,
   Diagnostics,
   Disclosure,
   Gauge,
+  IconButton,
   InlineEdit,
   PropertyGroup,
   PropertyList,
@@ -29,7 +28,7 @@ import {
   Switch,
   toast,
 } from '../../ui-kit/index.js'
-import { agentHue, isAgentWorking, triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
+import { triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
@@ -37,6 +36,14 @@ import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
 
 const TRIGGERS = ['mentioned-or-replied', 'always', 'command', 'observe-only'] as const
+
+/** What each trigger policy means in practice (packages/channel-runtime shouldTrigger). */
+const triggerHint: Record<TriggerPolicy, string> = {
+  always: '频道里的每条消息都会交给它处理',
+  'mentioned-or-replied': '有人 @它或回复它的消息时',
+  command: '收到平台识别的命令时',
+  'observe-only': '只记录消息，不回复',
+}
 
 const kindLabel: Record<ChannelSummary['kind'], string> = { internal: '内置频道', group: '群聊', direct: '私聊' }
 
@@ -125,6 +132,11 @@ export function ChannelInspector({
     <DetailPane
       label="频道信息"
       onClose={onClose}
+      footer={
+        <Button size="small" variant="danger" icon={<Trash2 />} onClick={() => setRemoving(true)}>
+          {channel.kind === 'internal' ? '删除频道' : '移除频道'}
+        </Button>
+      }
       header={
         <div className={styles.paneHeader}>
           <InlineEdit
@@ -148,44 +160,37 @@ export function ChannelInspector({
         </div>
       }
     >
-      <PropertyGroup
-        title="响应"
-        actions={
-          agent ? (
-            <Button size="small" variant="ghost" onClick={() => setIntent({ kind: 'unbind', channelId: channel.id })}>
-              断开
-            </Button>
-          ) : undefined
-        }
-      >
-        {agent ? (
-          <div className={styles.who}>
-            <AgentAvatar name={agent.name} hue={agentHue(agent)} live={isAgentWorking(agent)} />
-            <div className={styles.whoText}>
-              <div className={styles.whoName}>{agent.name}</div>
-              <div className={styles.whoMeta}>{agent.model}</div>
-            </div>
-            <Button size="small" variant="ghost" onClick={() => navigate(`/agents/${agent.id}`)}>
-              打开
-            </Button>
-          </div>
-        ) : null}
-        <PropertyList framed={false}>
-          <PropertyRow label="智能体">
-            <Select
-              aria-label="响应的智能体"
-              value={agent?.id ?? ''}
-              {...(agent ? {} : { placeholder: '选择智能体' })}
-              options={agents.map((item) => ({ value: item.id, label: item.name }))}
-              onValueChange={(value) => {
-                const next = value
-                if (next && next !== agent?.id)
-                  setIntent({ kind: agent ? 'replace' : 'bind', channelId: channel.id, agentId: next })
-              }}
-            />
+      <PropertyGroup title="谁来回复" description={agent ? undefined : '还没有智能体回复这个频道'}>
+        <PropertyList>
+          <PropertyRow label="智能体" description={agent?.model}>
+            <span className={styles.rowControl}>
+              <Select
+                aria-label="响应的智能体"
+                value={agent?.id ?? ''}
+                {...(agent ? {} : { placeholder: '选择智能体' })}
+                options={[
+                  ...agents.map((item) => ({ value: item.id, label: item.name })),
+                  ...(agent ? [{ value: '', label: '不回复' }] : []),
+                ]}
+                onValueChange={(value) => {
+                  if (!value) setIntent({ kind: 'unbind', channelId: channel.id })
+                  else if (value !== agent?.id)
+                    setIntent({ kind: agent ? 'replace' : 'bind', channelId: channel.id, agentId: value })
+                }}
+              />
+              {agent ? (
+                <IconButton
+                  label={`打开${agent.name}的资料`}
+                  size="small"
+                  onClick={() => navigate(`/agents/${agent.id}`)}
+                >
+                  <ArrowUpRight size={15} />
+                </IconButton>
+              ) : null}
+            </span>
           </PropertyRow>
           {agent && binding ? (
-            <PropertyRow label="触发">
+            <PropertyRow label="何时回复" description={triggerHint[binding.triggerPolicy]}>
               <Select
                 aria-label="触发方式"
                 value={binding.triggerPolicy}
@@ -194,99 +199,98 @@ export function ChannelInspector({
               />
             </PropertyRow>
           ) : null}
+          {agent && binding && showFeedback ? (
+            <PropertyRow
+              label="处理中反馈"
+              description={feedbackCapability?.reason ?? '处理期间给触发消息加临时回应，结束后移除'}
+            >
+              <Switch
+                label="处理中反馈"
+                checked={binding.processingFeedback === 'auto'}
+                onCheckedChange={(checked) => void updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
+              />
+            </PropertyRow>
+          ) : null}
+          {agent && binding && activities.length > 0 ? (
+            <PropertyRow label="特殊事件" description={overrides > 0 ? `${overrides} 项单独设置` : '跟随账号'}>
+              <Pressable
+                className={styles.expand}
+                aria-expanded={eventsOpen}
+                aria-controls="channel-activity-overrides"
+                aria-label={eventsOpen ? '收起特殊事件' : '展开特殊事件'}
+                onClick={() => setEventsOpen(!eventsOpen)}
+              >
+                <ChevronRight size={16} data-open={eventsOpen} />
+              </Pressable>
+            </PropertyRow>
+          ) : null}
         </PropertyList>
+        {agent && binding && activities.length > 0 ? (
+          <Disclosure open={eventsOpen} id="channel-activity-overrides">
+            <PropertyList>
+              {activities.map((activity) => {
+                const override = binding.activityTriggerOverrides[activity.key]
+                const inherited = connection?.activityTriggerDefaults.includes(activity.key) === true
+                return (
+                  <PropertyRow key={activity.key} label={activity.displayName} layout="stacked">
+                    <Select
+                      aria-label={activity.displayName}
+                      value={override === undefined ? 'inherit' : override ? 'on' : 'off'}
+                      disabled={binding.triggerPolicy === 'observe-only'}
+                      options={[
+                        { value: 'inherit', label: `跟随账号（${inherited ? '触发' : '不触发'}）` },
+                        { value: 'on', label: '触发' },
+                        { value: 'off', label: '不触发' },
+                      ]}
+                      onValueChange={(value) => {
+                        const next = { ...binding.activityTriggerOverrides }
+                        if (value === 'inherit') delete next[activity.key]
+                        else next[activity.key] = value === 'on'
+                        void updateBinding({ activityTriggerOverrides: next })
+                      }}
+                    />
+                  </PropertyRow>
+                )
+              })}
+            </PropertyList>
+          </Disclosure>
+        ) : null}
       </PropertyGroup>
 
-      {agent && binding && (showFeedback || activities.length > 0) ? (
-        <PropertyGroup title="频道事件">
-          <PropertyList framed={false}>
-            {showFeedback ? (
-              <PropertyRow
-                label="处理中反馈"
-                description={feedbackCapability?.reason ?? '处理期间给触发消息加临时回应，结束后移除'}
-              >
-                <Switch
-                  label="处理中反馈"
-                  checked={binding.processingFeedback === 'auto'}
-                  onCheckedChange={(checked) => void updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
-                />
-              </PropertyRow>
-            ) : null}
-            {activities.length > 0 ? (
-              <PropertyRow label="特殊事件" description={overrides > 0 ? `${overrides} 项单独设置` : '跟随账号'}>
-                <Pressable
-                  className={styles.expand}
-                  aria-expanded={eventsOpen}
-                  aria-controls="channel-activity-overrides"
-                  aria-label={eventsOpen ? '收起特殊事件' : '展开特殊事件'}
-                  onClick={() => setEventsOpen(!eventsOpen)}
-                >
-                  <ChevronRight size={16} data-open={eventsOpen} />
-                </Pressable>
-              </PropertyRow>
-            ) : null}
-          </PropertyList>
-          {activities.length > 0 ? (
-            <Disclosure open={eventsOpen} id="channel-activity-overrides">
-              <PropertyList>
-                {activities.map((activity) => {
-                  const override = binding.activityTriggerOverrides[activity.key]
-                  const inherited = connection?.activityTriggerDefaults.includes(activity.key) === true
-                  return (
-                    <PropertyRow key={activity.key} label={activity.displayName} layout="stacked">
-                      <Select
-                        aria-label={activity.displayName}
-                        value={override === undefined ? 'inherit' : override ? 'on' : 'off'}
-                        disabled={binding.triggerPolicy === 'observe-only'}
-                        options={[
-                          { value: 'inherit', label: `跟随账号（${inherited ? '触发' : '不触发'}）` },
-                          { value: 'on', label: '触发' },
-                          { value: 'off', label: '不触发' },
-                        ]}
-                        onValueChange={(value) => {
-                          const next = { ...binding.activityTriggerOverrides }
-                          if (value === 'inherit') delete next[activity.key]
-                          else next[activity.key] = value === 'on'
-                          void updateBinding({ activityTriggerOverrides: next })
-                        }}
-                      />
-                    </PropertyRow>
-                  )
-                })}
-              </PropertyList>
-            </Disclosure>
-          ) : null}
-        </PropertyGroup>
-      ) : null}
-
       {agent && (occupancy || runtime?.episodeId) ? (
-        <PropertyGroup title="上下文">
+        <PropertyGroup title="上下文" description={`${agent.name}在这个频道里当前记住的内容`}>
           {occupancy ? (
-            <Gauge
-              total={occupancy.projectedTokens}
-              capacity={occupancy.contextWindow}
-              format={formatTokens}
-              segments={
-                breakdown
-                  ? [
-                      { label: '系统', value: breakdown.systemTokens, color: 'var(--accent)' },
-                      { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
-                      { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
-                      { label: '其他', value: other, color: 'var(--faint)' },
-                    ].filter((segment) => segment.value > 0)
-                  : [{ label: '已用', value: occupancy.projectedTokens, color: 'var(--accent)' }]
-              }
-            />
+            <div className={styles.contextCard}>
+              <Gauge
+                total={occupancy.projectedTokens}
+                capacity={occupancy.contextWindow}
+                format={formatTokens}
+                segments={
+                  breakdown
+                    ? [
+                        { label: '系统', value: breakdown.systemTokens, color: 'var(--accent)' },
+                        { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
+                        { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
+                        { label: '其他', value: other, color: 'var(--faint)' },
+                      ].filter((segment) => segment.value > 0)
+                    : [{ label: '已用', value: occupancy.projectedTokens, color: 'var(--accent)' }]
+                }
+              />
+            </div>
           ) : null}
           {runtime?.episodeId ? (
-            <div className={styles.paneActions}>
-              <Button size="small" onClick={() => setReset('compact')}>
-                压缩
-              </Button>
-              <Button size="small" onClick={() => setReset('clear')}>
-                清空
-              </Button>
-            </div>
+            <PropertyList>
+              <PropertyRow label="压缩" description="把较早的对话整理成摘要，腾出空间">
+                <Button size="small" onClick={() => setReset('compact')}>
+                  压缩
+                </Button>
+              </PropertyRow>
+              <PropertyRow label="清空" description="从空白开始，聊天记录保留">
+                <Button size="small" variant="danger" onClick={() => setReset('clear')}>
+                  清空
+                </Button>
+              </PropertyRow>
+            </PropertyList>
           ) : null}
         </PropertyGroup>
       ) : null}
@@ -294,35 +298,38 @@ export function ChannelInspector({
       <PanelSlot anchor={{ kind: 'channel', id: channel.id }} density="compact" />
       {agent ? <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="compact" /> : null}
 
-      <PropertyGroup
-        title="来源"
-        actions={
-          connection?.userManaged ? (
-            <Button
-              size="small"
-              variant="ghost"
-              icon={<Cable />}
-              onClick={() => navigate(`/wiring/connections/${connection.id}`)}
+      <PropertyGroup title="来源">
+        <PropertyList>
+          {connection && channel.kind !== 'internal' ? (
+            <PropertyRow
+              label={
+                <span className={styles.sourceName}>
+                  <StatusDot tone={connectionStatus(connection).tone} />
+                  {connectionDisplayName(connection)}
+                </span>
+              }
+              description={
+                connectionStatus(connection).health === 'ok'
+                  ? connection.alias
+                    ? connection.adapter
+                    : '平台账号'
+                  : connectionStatus(connection).label
+              }
             >
-              接线
-            </Button>
-          ) : undefined
-        }
-      >
-        <div className={styles.source}>
-          {connection ? (
-            <>
-              <StatusDot tone={connectionStatus(connection).tone} />
-              <b>{connectionDisplayName(connection)}</b>
-              {connection.alias ? <span className={styles.paneMeta}>{connection.adapter}</span> : null}
-              {connectionStatus(connection).health === 'ok' ? null : (
-                <Chip tone={connectionStatus(connection).tone}>{connectionStatus(connection).label}</Chip>
-              )}
-            </>
+              {connection.userManaged ? (
+                <IconButton
+                  label="在接线中打开这个账号"
+                  size="small"
+                  onClick={() => navigate(`/wiring/connections/${connection.id}`)}
+                >
+                  <Cable size={15} />
+                </IconButton>
+              ) : null}
+            </PropertyRow>
           ) : (
-            <span>{channel.connectionName}</span>
+            <PropertyRow label="内置频道" description="智能体自带的频道，不来自外部平台" />
           )}
-        </div>
+        </PropertyList>
       </PropertyGroup>
 
       <Diagnostics
@@ -332,12 +339,6 @@ export function ChannelInspector({
           ...(runtime?.episodeId ? [{ label: '会话 ID', value: runtime.episodeId }] : []),
         ]}
       />
-
-      <div className={styles.paneActions}>
-        <Button size="small" variant="danger" icon={<Trash2 />} onClick={() => setRemoving(true)}>
-          {channel.kind === 'internal' ? '删除频道' : '移除频道'}
-        </Button>
-      </div>
 
       <BindDialog intent={intent} onClose={() => setIntent(null)} />
       <ConfirmDialog

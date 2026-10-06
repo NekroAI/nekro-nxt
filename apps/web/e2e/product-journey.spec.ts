@@ -289,8 +289,8 @@ test('settings exposes the provider editor and survives real navigation', async 
 
   await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
   await page
-    .getByRole('complementary', { name: '设置' })
-    .getByRole('link', { name: /DeepSeek/u })
+    .getByRole('table', { name: '模型供应商' })
+    .getByRole('row', { name: /DeepSeek/u })
     .click()
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('API 密钥')).toHaveAttribute('autocomplete', 'off')
@@ -395,6 +395,10 @@ test('DSH extension settings use the NekroNXT configuration surface without load
   await expect(page.locator('body')).not.toContainText('未完整验证')
   await expect(page.locator('body')).not.toContainText('未评估归属')
   await expect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
+  await page
+    .getByRole('table', { name: 'DSH 插件' })
+    .getByRole('row', { name: /DeepSeek 网页搜索/u })
+    .click()
   // Technical identity stays in the collapsed diagnostics.
   await expect(page.getByText('web-search-deepseek', { exact: true })).toBeHidden()
   await page.getByRole('button', { name: '诊断信息' }).first().click()
@@ -411,8 +415,8 @@ test('settings saves a built-in provider credential without exposing it again', 
   await page.goto('/settings/models')
 
   await page
-    .getByRole('complementary', { name: '设置' })
-    .getByRole('link', { name: /DeepSeek/u })
+    .getByRole('table', { name: '模型供应商' })
+    .getByRole('row', { name: /DeepSeek/u })
     .click()
   const apiKey = page.getByLabel('API 密钥')
   await apiKey.fill('playwright-write-only-test-key')
@@ -420,11 +424,8 @@ test('settings saves a built-in provider credential without exposing it again', 
   await expect(page.getByText('供应商配置已保存。API 密钥只写入本机凭据存储。', { exact: true })).toBeVisible()
   await expect(apiKey).toHaveValue('')
 
+  // The address keeps the open provider, so a reload returns to the same page.
   await page.reload()
-  await page
-    .getByRole('complementary', { name: '设置' })
-    .getByRole('link', { name: /DeepSeek/u })
-    .click()
   await expect(page.getByText('API 密钥已保存', { exact: true })).toBeVisible()
   await expect(page.getByLabel('API 密钥')).toHaveValue('')
   expect(failures, failures.join('\n')).toEqual([])

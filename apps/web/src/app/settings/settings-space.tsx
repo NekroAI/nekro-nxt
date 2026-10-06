@@ -1,6 +1,6 @@
-import { Bell, Blocks, Cpu, Info, Palette, Plug, Plus, Upload } from 'lucide-react'
+import { Bell, Blocks, ChevronLeft, ChevronRight, Cpu, Info, Palette, Plug, Plus, Upload } from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
-import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   DSH_GROUP_LABEL,
@@ -41,7 +41,6 @@ import {
   Select,
   SelectionList,
   Skeleton,
-  StatusDot,
   Switch,
   toast,
   WorkbenchPage,
@@ -81,15 +80,14 @@ export default function SettingsSpace() {
   const llm = useLlmProviders()
   const dsh = useDshCatalog(section === 'dsh')
   const providers = llm.settings?.providers ?? []
-  const configured = listedProviders(providers)
   const requestedProvider = params.get('provider') ?? ''
+  // Only what the address names is open; without it the section shows its overview instead of jumping to an item.
   const providerId =
     requestedProvider === CUSTOM_PROVIDER || providers.some((provider) => provider.provider === requestedProvider)
       ? requestedProvider
-      : (configured[0]?.provider ?? '')
+      : ''
   const requestedEntry = params.get('entry') ?? ''
-  const dshEntry =
-    dsh.entries.find((entry) => entry.id === requestedEntry) ?? dsh.entries.find((entry) => entry.id === dsh.fallbackId)
+  const dshEntry = dsh.entries.find((entry) => entry.id === requestedEntry)
   useEffect(() => {
     if (section === 'models' && !llm.settings && !llm.loading) void llm.load()
   }, [section])
@@ -97,95 +95,23 @@ export default function SettingsSpace() {
 
   const selectProvider = (provider: string) =>
     void navigate(provider ? `/settings/models?provider=${encodeURIComponent(provider)}` : '/settings/models')
-  const selectedKey =
-    section === 'models' && providerId
-      ? `provider:${providerId}`
-      : section === 'dsh' && dshEntry
-        ? `entry:${dshEntry.id}`
-        : section
-
-  const pendingProvider =
-    providerId && !configured.some((provider) => provider.provider === providerId)
-      ? {
-          key: providerId,
-          label:
-            providerId === CUSTOM_PROVIDER
-              ? '新的自定义供应商'
-              : providerDisplayName(
-                  providerId,
-                  providers.find((provider) => provider.provider === providerId)?.displayName,
-                ),
-        }
-      : undefined
 
   return (
     <WorkbenchPage
       list={
         <ListPane title="设置" label="设置">
-          <SelectionList selectedKey={selectedKey}>
+          <SelectionList selectedKey={section}>
             {SECTIONS.map((item) => (
-              <Fragment key={item.key}>
-                <Link
-                  to={`/settings/${item.key}`}
-                  className={styles.row}
-                  data-selected={selectedKey === item.key}
-                  aria-current={item.key === section ? 'page' : undefined}
-                >
-                  {item.icon}
-                  {item.label}
-                </Link>
-                {item.key === 'models' && section === 'models' ? (
-                  <div className={styles.children} role="group" aria-label="模型供应商">
-                    {configured.map((provider) => {
-                      const status = providerStatus(provider)
-                      return (
-                        <Link
-                          key={provider.provider}
-                          to={`/settings/models?provider=${encodeURIComponent(provider.provider)}`}
-                          className={styles.childRow}
-                          data-selected={selectedKey === `provider:${provider.provider}`}
-                        >
-                          <StatusDot tone={status.tone} />
-                          <span className={styles.childName}>
-                            {providerDisplayName(provider.provider, provider.displayName)}
-                          </span>
-                          <span className={styles.childMeta}>
-                            {providerKind(provider)} · {provider.models.length} 个模型
-                          </span>
-                          <span className={styles.srOnly}>{status.label}</span>
-                        </Link>
-                      )
-                    })}
-                    {pendingProvider ? (
-                      <Link
-                        to={`/settings/models?provider=${encodeURIComponent(pendingProvider.key)}`}
-                        className={styles.childRow}
-                        data-selected={selectedKey === `provider:${pendingProvider.key}`}
-                      >
-                        <StatusDot tone="neutral" />
-                        <span className={styles.childName}>{pendingProvider.label}</span>
-                        <span className={styles.childMeta}>尚未保存</span>
-                      </Link>
-                    ) : null}
-                  </div>
-                ) : null}
-                {item.key === 'dsh' && section === 'dsh' && dsh.entries.length > 0 ? (
-                  <div className={styles.children} role="group" aria-label="DSH 插件">
-                    {DSH_GROUPS.map((group) => {
-                      const members = dsh.entries.filter((entry) => entry.group === group)
-                      if (members.length === 0) return null
-                      return (
-                        <Fragment key={group}>
-                          <span className={styles.childGroup}>{DSH_GROUP_LABEL[group]}</span>
-                          {members.map((entry) => (
-                            <DshEntryRow key={entry.id} entry={entry} selected={selectedKey === `entry:${entry.id}`} />
-                          ))}
-                        </Fragment>
-                      )
-                    })}
-                  </div>
-                ) : null}
-              </Fragment>
+              <Link
+                key={item.key}
+                to={`/settings/${item.key}`}
+                className={styles.row}
+                data-selected={section === item.key}
+                aria-current={item.key === section ? 'page' : undefined}
+              >
+                {item.icon}
+                {item.label}
+              </Link>
             ))}
           </SelectionList>
         </ListPane>
@@ -194,14 +120,7 @@ export default function SettingsSpace() {
       <MainContent
         width={section === 'notifications' || section === 'appearance' || section === 'about' ? 'readable' : 'full'}
       >
-        <NarrowNav
-          section={section}
-          providers={configured}
-          pendingProvider={pendingProvider}
-          providerId={providerId}
-          entries={dsh.entries}
-          entryId={dshEntry?.id ?? ''}
-        />
+        <NarrowNav section={section} />
         {section === 'models' ? (
           <ModelsSection
             providers={providers}
@@ -214,6 +133,7 @@ export default function SettingsSpace() {
         {section === 'dsh' ? (
           <DshSection
             entry={dshEntry}
+            entries={dsh.entries}
             loading={dsh.loading}
             error={dsh.error}
             onRefresh={dsh.refresh}
@@ -229,40 +149,8 @@ export default function SettingsSpace() {
   )
 }
 
-function DshEntryRow({ entry, selected }: { readonly entry: DshSettingsCatalogEntry; readonly selected: boolean }) {
-  const status = dshEntryStatus(entry)
-  return (
-    <Link
-      to={`/settings/dsh?entry=${encodeURIComponent(entry.id)}`}
-      className={styles.childRow}
-      data-selected={selected}
-    >
-      <StatusDot tone={status.tone} />
-      <span className={styles.childName}>{entry.label}</span>
-      <span className={styles.childMeta}>
-        {entry.plugin?.loadError ? '加载失败' : entry.namespaces.length > 0 ? '可配置' : '无配置项'}
-      </span>
-      <span className={styles.srOnly}>{status.label}</span>
-    </Link>
-  )
-}
-
-/** Below 1100px the settings list collapses; these selectors keep every section and object reachable. */
-function NarrowNav({
-  section,
-  providers,
-  pendingProvider,
-  providerId,
-  entries,
-  entryId,
-}: {
-  readonly section: SectionKey
-  readonly providers: readonly ProviderView[]
-  readonly pendingProvider: { readonly key: string; readonly label: string } | undefined
-  readonly providerId: string
-  readonly entries: readonly DshSettingsCatalogEntry[]
-  readonly entryId: string
-}) {
+/** Below 1100px the settings list collapses; this selector keeps every section reachable. */
+function NarrowNav({ section }: { readonly section: SectionKey }) {
   const navigate = useNavigate()
   return (
     <div className={styles.narrowNav}>
@@ -272,42 +160,38 @@ function NarrowNav({
         options={SECTIONS.map((item) => ({ value: item.key, label: item.label }))}
         onValueChange={(value) => void navigate(`/settings/${value}`)}
       />
-      {section === 'models' && (providers.length > 0 || pendingProvider) ? (
-        <Select
-          aria-label="模型供应商"
-          value={providerId}
-          options={[
-            ...providers.map((provider) => ({
-              value: provider.provider,
-              label: providerDisplayName(provider.provider, provider.displayName),
-            })),
-            ...(pendingProvider ? [{ value: pendingProvider.key, label: pendingProvider.label }] : []),
-          ]}
-          onValueChange={(value) => void navigate(`/settings/models?provider=${encodeURIComponent(value)}`)}
-        />
-      ) : null}
-      {section === 'dsh' && entries.length > 0 ? (
-        <Select
-          aria-label="DSH 插件"
-          value={entryId}
-          options={entries.map((entry) => ({
-            value: entry.id,
-            label: `${entry.label}（${DSH_GROUP_LABEL[entry.group]}）`,
-          }))}
-          onValueChange={(value) => void navigate(`/settings/dsh?entry=${encodeURIComponent(value)}`)}
-        />
-      ) : null}
     </div>
   )
 }
 
-function SectionHead({ title, actions }: { readonly title: string; readonly actions?: ReactNode }) {
+function SectionHead({
+  title,
+  actions,
+  back,
+}: {
+  readonly title: string
+  readonly actions?: ReactNode
+  /** On an item's page the item's own header is the page title; this only offers the way back to the overview. */
+  readonly back?: { readonly label: string; readonly onBack: () => void }
+}) {
   return (
     <>
-      <header className={styles.head}>
-        <h1 className={styles.title}>{title}</h1>
-        {actions ? <div className={styles.headActions}>{actions}</div> : null}
-      </header>
+      {back ? (
+        <Button
+          size="small"
+          variant="ghost"
+          icon={<ChevronLeft size={15} />}
+          className={styles.back}
+          onClick={back.onBack}
+        >
+          {back.label}
+        </Button>
+      ) : (
+        <header className={styles.head}>
+          <h1 className={styles.title}>{title}</h1>
+          {actions ? <div className={styles.headActions}>{actions}</div> : null}
+        </header>
+      )}
       <CompatibilityNotices showContextReset />
     </>
   )
@@ -327,12 +211,54 @@ function ModelsSection({
   readonly onSelect: (provider: string) => void
 }) {
   const [adding, setAdding] = useState(false)
+  const configured = listedProviders(providers)
+  const columns: readonly Column<ProviderView>[] = [
+    {
+      key: 'name',
+      header: '供应商',
+      width: 'minmax(200px, 2fr)',
+      render: (provider) => (
+        <span className={styles.adapterName}>
+          <b>{providerDisplayName(provider.provider, provider.displayName)}</b>
+          <span className={styles.muted}>{providerKind(provider)}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: '状态',
+      width: 'minmax(96px, 0.8fr)',
+      render: (provider) => {
+        const status = providerStatus(provider)
+        return (
+          <Chip tone={status.tone} dot>
+            {status.label}
+          </Chip>
+        )
+      },
+    },
+    {
+      key: 'models',
+      header: '模型',
+      width: 'minmax(80px, 0.6fr)',
+      priority: 2,
+      render: (provider) => <span className={styles.muted}>{provider.models.length} 个</span>,
+    },
+    {
+      key: 'open',
+      header: <span className={styles.srOnly}>打开</span>,
+      width: '40px',
+      align: 'end',
+      render: () => <ChevronRight size={16} className={styles.rowChevron} aria-hidden="true" />,
+    },
+  ]
   return (
     <>
       <SectionHead
         title="模型"
+        {...(providerId ? { back: { label: '全部供应商', onBack: () => onSelect('') } } : {})}
         actions={
-          ready ? (
+          ready && !providerId ? (
             <Button size="small" icon={<Plus size={14} aria-hidden="true" />} onClick={() => setAdding(true)}>
               添加供应商
             </Button>
@@ -343,6 +269,14 @@ function ModelsSection({
         <ProviderCatalogState onRetry={onRetry} />
       ) : providerId ? (
         <ModelProviderDetail key={providerId} providerId={providerId} onSelect={onSelect} />
+      ) : configured.length > 0 ? (
+        <DataTable
+          label="模型供应商"
+          columns={columns}
+          rows={configured}
+          rowKey={(provider) => provider.provider}
+          onSelect={(provider) => onSelect(provider.provider)}
+        />
       ) : (
         <EmptyState
           icon={<Cpu size={22} />}
@@ -363,30 +297,87 @@ function ModelsSection({
 
 function DshSection({
   entry,
+  entries,
   loading,
   error,
   onRefresh,
   onSelect,
 }: {
   readonly entry: DshSettingsCatalogEntry | undefined
+  readonly entries: readonly DshSettingsCatalogEntry[]
   readonly loading: boolean
   readonly error: string
   readonly onRefresh: () => Promise<void>
   readonly onSelect: (id: string) => void
 }) {
   const [installing, setInstalling] = useState(false)
+  const ordered = DSH_GROUPS.flatMap((group) => entries.filter((item) => item.group === group))
+  const columns: readonly Column<DshSettingsCatalogEntry>[] = [
+    {
+      key: 'name',
+      header: '插件',
+      width: 'minmax(200px, 2fr)',
+      render: (item) => (
+        <span className={styles.adapterName}>
+          <b>{item.label}</b>
+          <span className={styles.muted}>{item.namespaces.length > 0 ? '可配置' : '无配置项'}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'source',
+      header: '来源',
+      width: 'minmax(96px, 0.8fr)',
+      priority: 2,
+      render: (item) => <span className={styles.muted}>{DSH_GROUP_LABEL[item.group]}</span>,
+    },
+    {
+      key: 'status',
+      header: '状态',
+      width: 'minmax(96px, 0.8fr)',
+      // Only a real state earns a label; the neutral fallback is the source, already in its own column.
+      render: (item) => {
+        const status = dshEntryStatus(item)
+        return status.tone === 'neutral' ? (
+          <span className={styles.muted}>—</span>
+        ) : (
+          <Chip tone={status.tone} dot>
+            {status.label}
+          </Chip>
+        )
+      },
+    },
+    {
+      key: 'open',
+      header: <span className={styles.srOnly}>打开</span>,
+      width: '40px',
+      align: 'end',
+      render: () => <ChevronRight size={16} className={styles.rowChevron} aria-hidden="true" />,
+    },
+  ]
   return (
     <>
       <SectionHead
         title="DSH 插件"
+        {...(entry ? { back: { label: '全部插件', onBack: () => onSelect('') } } : {})}
         actions={
-          <Button size="small" icon={<Upload size={14} aria-hidden="true" />} onClick={() => setInstalling(true)}>
-            安装插件
-          </Button>
+          entry ? undefined : (
+            <Button size="small" icon={<Upload size={14} aria-hidden="true" />} onClick={() => setInstalling(true)}>
+              安装插件
+            </Button>
+          )
         }
       />
       {entry ? (
         <DshPluginDetail key={entry.id} entry={entry} onRefresh={onRefresh} onRemoved={() => onSelect('')} />
+      ) : ordered.length > 0 ? (
+        <DataTable
+          label="DSH 插件"
+          columns={columns}
+          rows={ordered}
+          rowKey={(item) => item.id}
+          onSelect={(item) => onSelect(item.id)}
+        />
       ) : (
         <DshCatalogState loading={loading} error={error} onRetry={() => void onRefresh()} />
       )}

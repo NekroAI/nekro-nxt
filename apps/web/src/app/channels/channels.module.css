@@ -1017,24 +1017,6 @@
 }
 
 /* —— 检查器 —— */
-.who {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-}
-
-.whoName {
-  font-weight: 650;
-}
-
-.whoMeta {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
-
-.who > :last-child {
-  margin-left: auto;
-}
 
 .wirePreview {
   display: flex;
@@ -1146,17 +1128,6 @@
   font: var(--t-note);
 }
 
-.whoText {
-  display: grid;
-  min-width: 0;
-}
-
-.paneActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-}
-
 .expand {
   display: grid;
   width: var(--control);
@@ -1183,10 +1154,24 @@
   transform: rotate(90deg);
 }
 
-.source {
+/* —— 频道检查器 —— */
+.rowControl {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.contextCard {
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+
+.sourceName {
+  display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  font: var(--t-body);
+  min-width: 0;
 }

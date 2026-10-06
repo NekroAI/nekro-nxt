@@ -1041,8 +1041,9 @@ test('model settings keep unconfigured providers behind the add flow', async ({ 
     }),
   )
   await page.goto('/settings/models')
-  await expect(page.getByRole('link', { name: /DeepSeek/u })).toBeVisible()
-  await expect(page.getByRole('link', { name: /未配置供应商/u })).toHaveCount(0)
+  const overview = page.getByRole('table', { name: '模型供应商' })
+  await expect(overview.getByRole('row', { name: /DeepSeek/u })).toBeVisible()
+  await expect(overview).not.toContainText('未配置供应商')
   await page.getByRole('button', { name: '添加供应商' }).first().click()
   await expect(page.getByRole('dialog')).toContainText('未配置供应商')
   expect(failures, failures.join('\n')).toEqual([])
@@ -1087,6 +1088,7 @@ test('model settings edit a fixed catalog with vision models and restore its def
 
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto('/settings/models')
+  await page.getByRole('table', { name: '模型供应商' }).getByRole('row').nth(1).click()
   const table = page.getByRole('table', { name: '模型列表' })
   await expect(table.getByRole('row')).toHaveCount(3)
   await expect(page.getByRole('switch', { name: 'synthetic-flash支持图片输入' })).toBeChecked()

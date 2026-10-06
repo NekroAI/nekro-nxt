@@ -21,6 +21,7 @@ declare const styles: {
   readonly groupHead: string
   readonly groupName: string
   readonly head: string
+  readonly headSpacer: string
   readonly listAgent: string
   readonly listIcon: string
   readonly listMeta: string

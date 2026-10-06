@@ -107,6 +107,7 @@
 }
 
 .icon {
+  flex: none;
   width: var(--control);
   padding: 0;
 }

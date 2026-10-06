@@ -67,8 +67,9 @@ for (const theme of ['light', 'dark'] as const) {
     await saveProvider(request, provider, true)
     await page.addInitScript((value) => localStorage.setItem('nekro-nxt.theme', value), theme)
     await page.goto('/settings')
-    await page.getByRole('link', { name: providerName }).click()
-    await expect(page.getByRole('link', { name: providerName })).toContainText('自定义接入')
+    const row = page.getByRole('table', { name: '模型供应商' }).getByRole('row', { name: providerName })
+    await expect(row).toContainText('自定义接入')
+    await row.click()
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '检查供应商移除影响' })
     await expect(dialog.getByText('synthetic-chat', { exact: true })).toBeVisible()
@@ -82,11 +83,11 @@ for (const theme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
     await dialog.getByRole('button', { name: '确认删除供应商' }).click()
     await expect(dialog).toBeHidden()
-    await expect(page.getByRole('link', { name: providerName })).toHaveCount(0)
+    await expect(page.getByRole('row', { name: providerName })).toHaveCount(0)
     expect((await settings(request)).providers.some((entry) => entry.provider === provider)).toBe(false)
     await page.reload()
     await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
-    await expect(page.getByRole('link', { name: providerName })).toHaveCount(0)
+    await expect(page.getByRole('row', { name: providerName })).toHaveCount(0)
     expect(failures).toEqual([])
   })
 }
@@ -109,7 +110,9 @@ test('built-in removal blocks references, requires a fresh preview after conflic
   try {
     await page.addInitScript(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
     await page.goto('/settings')
-    const providerButton = page.getByRole('link', { name: /DeepSeek 通用接入/u })
+    const providerButton = page
+      .getByRole('table', { name: '模型供应商' })
+      .getByRole('row', { name: /DeepSeek 通用接入/u })
     await providerButton.click()
     await page.screenshot({ animations: 'disabled', path: '.local/provider-settings-heading.png' })
     await page.getByRole('button', { name: '移除配置', exact: true }).click()
@@ -149,7 +152,10 @@ test('built-in removal blocks references, requires a fresh preview after conflic
       configured: false,
       active: false,
     })
-    await page.getByRole('link', { name: /DeepSeek 内置固定接入/u }).click()
+    await page
+      .getByRole('table', { name: '模型供应商' })
+      .getByRole('row', { name: /DeepSeek 内置固定接入/u })
+      .click()
     await page.getByRole('button', { name: '移除配置', exact: true }).click()
     await expect(dialog).toContainText('宿主固定装载')
     await expect(dialog.getByRole('button', { name: '确认移除配置' })).toBeDisabled()
@@ -199,7 +205,7 @@ for (const failReconciliation of [false, true]) {
       await route.continue()
     })
     await page.goto('/settings')
-    await page.getByRole('link', { name: providerName }).click()
+    await page.getByRole('table', { name: '模型供应商' }).getByRole('row', { name: providerName }).click()
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '检查供应商移除影响' })
     await dialog.getByRole('button', { name: '确认删除供应商' }).click()
@@ -209,7 +215,7 @@ for (const failReconciliation of [false, true]) {
       await dialog.getByRole('button', { name: '重新检查影响' }).click()
     }
     await expect(dialog).toBeHidden()
-    await expect(page.getByRole('link', { name: providerName })).toHaveCount(0)
+    await expect(page.getByRole('row', { name: providerName })).toHaveCount(0)
     expect((await settings(request)).providers.some((entry) => entry.provider === provider)).toBe(false)
     expect(deletes).toBe(1)
   })

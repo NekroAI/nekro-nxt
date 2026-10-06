@@ -1,9 +1,18 @@
 /* —— 页头与工具条 —— */
+/* Title, search, scope and the add action share one row; the canvas gets the height back. */
 .head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: var(--s-3);
+}
+
+.head .title {
+  margin-right: var(--s-2);
+}
+
+.headSpacer {
+  flex: 1;
 }
 
 .title {
@@ -13,8 +22,8 @@
 }
 
 .search {
-  flex: 1;
-  max-width: 360px;
+  flex: 1 1 220px;
+  max-width: 340px;
 }
 
 /* —— 接线板 —— */

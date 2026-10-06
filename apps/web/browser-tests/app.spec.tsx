@@ -1741,6 +1741,8 @@ test.describe('NekroNxt browser projections', () => {
       await playwrightExpect(page.locator('body')).not.toContainText('未完整验证')
       await page.getByText('@example/dsh-broken-extension', { exact: true }).click()
       await playwrightExpect(page.getByText('缺少运行所需的测试服务。', { exact: true })).toBeVisible()
+      // An item page leads back to the plugin overview.
+      await page.getByRole('button', { name: '全部插件' }).click()
       await page.getByText('DeepSeek 网页搜索', { exact: true }).first().click()
       await playwrightExpect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
       await page.getByLabel('每次请求最多搜索次数').fill('4')
@@ -1900,6 +1902,7 @@ test.describe('NekroNxt browser projections', () => {
       await page.goto(`${baseUrl}/settings/dsh`)
       await playwrightExpect(page.getByText('runtime-extra', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.getByText('其他扩展', { exact: true }).first()).toBeVisible()
+      await page.getByText('runtime-extra', { exact: true }).first().click()
       await playwrightExpect(page.getByText(/由运行环境注册/)).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('未评估归属')
       await playwrightExpect(page.getByText('保存后需要重启')).toBeVisible()
@@ -1972,7 +1975,13 @@ test.describe('NekroNxt browser projections', () => {
         colorScheme: 'dark',
         reducedMotion: 'reduce',
       },
-      { width: 1440, height: 900, route: '/settings/models', name: 'settings-1440', marker: 'API 密钥已保存' },
+      {
+        width: 1440,
+        height: 900,
+        route: '/settings/models?provider=openai',
+        name: 'settings-1440',
+        marker: 'API 密钥已保存',
+      },
       { width: 1440, height: 900, route: '/live', name: 'live-1440', marker: '概览' },
       {
         width: 1100,

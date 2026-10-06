@@ -76,7 +76,6 @@ const desktopStatusLabel: Record<DesktopInstanceStatus, string> = {
 function TopBar({ onSearch }: { readonly onSearch: () => void }) {
   const crumb = useCurrentCrumb()
   const location = useLocation()
-  const space = spaceOf(location.pathname)
   const attention = useAttention()
   const [bellOpen, setBellOpen] = useState(false)
   const desktop = useDesktopInstance()
@@ -129,25 +128,17 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
           {instance}
         </Link>
       )}
-      {/* The rail already names the space; the path only appears below it, with the space as the way back. */}
-      <nav className={styles.crumb} aria-label="位置">
+      {/* Where you are, as text: the rail is the way between spaces, so the path does not navigate. */}
+      <div className={styles.crumb} role="group" aria-label="位置">
         {crumb.length > 1
           ? crumb.map((part, index) => (
               <span key={`${index}:${part}`} className={styles.crumbPart}>
                 {index > 0 ? <span className={styles.crumbSep}>/</span> : null}
-                {index === 0 ? (
-                  <Link to={space} className={styles.crumbLink}>
-                    {part}
-                  </Link>
-                ) : index === crumb.length - 1 ? (
-                  <b aria-current="page">{part}</b>
-                ) : (
-                  <span>{part}</span>
-                )}
+                {index === crumb.length - 1 ? <b aria-current="page">{part}</b> : <span>{part}</span>}
               </span>
             ))
           : null}
-      </nav>
+      </div>
       <Pressable type="button" className={styles.search} onClick={onSearch} aria-label="搜索">
         <Search aria-hidden="true" />
         <span>搜索</span>

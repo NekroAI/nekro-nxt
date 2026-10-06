@@ -89,16 +89,19 @@ test.describe('settings space', () => {
     return { page, errors }
   }
 
-  test('lists configured providers under 模型 and edits the selected one in the main area', async () => {
+  test('lists sections one level deep, overviews providers and opens one in the main area', async () => {
     const { page, errors } = await open('/settings/models')
     try {
       const list = page.getByRole('complementary', { name: '设置' })
-      await expect(list.getByRole('link', { name: /示例供应商甲 通用接入 · 2 个模型/u })).toBeVisible()
+      // The section list never nests items: every entry opens its section the same way.
+      await expect(list.getByRole('link')).toHaveCount(6)
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
-      await expect(page.getByRole('heading', { name: '示例供应商甲', level: 2 })).toBeVisible()
-      await list.getByRole('link', { name: /示例供应商乙/u }).click()
+      const overview = page.getByRole('table', { name: '模型供应商' })
+      await expect(overview).toContainText('示例供应商甲')
+      await expect(page).not.toHaveURL(/provider=/u)
+      await overview.getByText('示例供应商乙', { exact: true }).click()
       await expect(page).toHaveURL(/provider=example-b/u)
-      await expect(page.getByRole('heading', { name: '示例供应商乙', level: 2 })).toBeVisible()
+      await expect(page.getByRole('heading', { name: '示例供应商乙' })).toBeVisible()
       // Technical identity stays out of the visible copy.
       await expect(page.getByText('llm-pi-ai', { exact: true })).toBeHidden()
       await page.getByRole('button', { name: '诊断信息' }).click()
@@ -117,9 +120,8 @@ test.describe('settings space', () => {
     const { page, errors } = await open('/settings/models', { width: 1000 })
     try {
       await expect(page.getByRole('complementary', { name: '设置' })).toBeHidden()
-      await page.getByRole('combobox', { name: '模型供应商' }).click()
-      await page.getByRole('option', { name: /示例供应商乙/u }).click()
-      await expect(page.getByRole('heading', { name: '示例供应商乙', level: 2 })).toBeVisible()
+      await page.getByRole('table', { name: '模型供应商' }).getByText('示例供应商乙', { exact: true }).click()
+      await expect(page.getByRole('heading', { name: '示例供应商乙' })).toBeVisible()
       // The model table drops its secondary column instead of clipping the id.
       const table = page.getByRole('table', { name: '模型列表' })
       await expect(table.getByText('模型 ID', { exact: true })).toBeVisible()

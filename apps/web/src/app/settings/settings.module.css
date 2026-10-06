@@ -15,66 +15,17 @@
     color var(--dur-1);
 }
 
-.row:hover,
-.childRow:hover {
+.row:hover {
   background: var(--hover);
   color: var(--fg);
 }
 
-.row[data-selected='true'],
-.childRow[data-selected='true'] {
+.row[data-selected='true'] {
   color: var(--fg);
 }
 
-.row[data-selected='true']:hover,
-.childRow[data-selected='true']:hover {
+.row[data-selected='true']:hover {
   background: transparent;
-}
-
-/* Objects of the current section, indented under it. */
-.children {
-  display: grid;
-  gap: var(--s-1);
-  margin: var(--s-1) 0 var(--s-2) var(--s-6);
-  padding-left: var(--s-2);
-  border-left: 1px solid var(--line);
-}
-
-.childGroup {
-  padding: var(--s-2) var(--s-3) var(--s-1);
-  color: var(--faint);
-  font: var(--t-caption);
-}
-
-.childRow {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 0 var(--s-2);
-  padding: var(--s-2) var(--s-3);
-  border-radius: var(--r-2);
-  color: var(--fg-2);
-  text-decoration: none;
-  transition:
-    background var(--dur-1),
-    color var(--dur-1);
-}
-
-.childName {
-  overflow: hidden;
-  font: var(--t-label);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.childMeta {
-  grid-column: 2;
-  overflow: hidden;
-  color: var(--muted);
-  font: var(--t-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Below 1100px the list pane collapses; these selectors take its place. */
@@ -219,4 +170,14 @@
   content: '';
   position: absolute;
   inset: min(0px, calc((100% - var(--target)) / 2)) 0;
+}
+
+/* An item page offers the way back to its section overview above the item's own header. */
+.back {
+  justify-self: start;
+  margin-left: calc(var(--s-2) * -1);
+}
+
+.rowChevron {
+  color: var(--faint);
 }

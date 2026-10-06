@@ -282,7 +282,11 @@ html[data-ui='next'] ::selection {
   color: inherit;
 }
 
-html[data-ui='next'] :where(:focus-visible) {
+/*
+ * Zero specificity, like the control reset: a component that draws its own focus (a field frame's ring, a menu row's
+ * highlight) must win, otherwise borderless inputs inside a framed field get a second, square outline.
+ */
+:where(html[data-ui='next']) :where(:focus-visible) {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

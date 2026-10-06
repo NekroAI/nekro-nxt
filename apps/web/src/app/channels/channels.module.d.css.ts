@@ -10,6 +10,7 @@ declare const styles: {
   readonly chan: string
   readonly chevron: string
   readonly composer: string
+  readonly contextCard: string
   readonly conv: string
   readonly convInner: string
   readonly day: string
@@ -40,7 +41,6 @@ declare const styles: {
   readonly noMatch: string
   readonly notice: string
   readonly older: string
-  readonly paneActions: string
   readonly paneHeader: string
   readonly paneMeta: string
   readonly queue: string
@@ -50,6 +50,7 @@ declare const styles: {
   readonly responder: string
   readonly row: string
   readonly rowBadge: string
+  readonly rowControl: string
   readonly rowDragging: string
   readonly rowName: string
   readonly rowSource: string
@@ -57,7 +58,7 @@ declare const styles: {
   readonly rowTime: string
   readonly runDot: string
   readonly send: string
-  readonly source: string
+  readonly sourceName: string
   readonly stack: string
   readonly step: string
   readonly stepArg: string
@@ -85,10 +86,6 @@ declare const styles: {
   readonly unsent: string
   readonly unsentBar: string
   readonly usage: string
-  readonly who: string
-  readonly whoMeta: string
-  readonly whoName: string
-  readonly whoText: string
   readonly wireLine: string
   readonly wirePreview: string
   readonly xray: string

@@ -109,22 +109,6 @@ a.instance {
   display: contents;
 }
 
-.crumbLink {
-  display: inline-flex;
-  align-items: center;
-  min-width: var(--target);
-  min-height: var(--target);
-  justify-content: center;
-  color: var(--muted);
-  text-decoration: none;
-}
-
-.crumbLink:hover {
-  color: var(--fg);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 .search {
   display: flex;
   align-items: center;

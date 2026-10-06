@@ -2,16 +2,7 @@ import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
-import {
-  Button,
-  MainContent,
-  PropertyList,
-  SearchField,
-  Segmented,
-  Select,
-  Toolbar,
-  WorkbenchPage,
-} from '../../ui-kit/index.js'
+import { Button, MainContent, PropertyList, SearchField, Segmented, Select, WorkbenchPage } from '../../ui-kit/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
@@ -103,11 +94,6 @@ export default function WiringSpace() {
       <MainContent fill>
         <header className={styles.head}>
           <h1 className={styles.title}>接线</h1>
-          <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>
-            添加账号
-          </Button>
-        </header>
-        <Toolbar>
           <div className={styles.search}>
             <SearchField value={query} onChange={setQuery} placeholder="搜索频道、账号或智能体" label="搜索频道" />
           </div>
@@ -120,7 +106,11 @@ export default function WiringSpace() {
               { value: 'free', label: '只看未接线' },
             ]}
           />
-        </Toolbar>
+          <span className={styles.headSpacer} />
+          <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>
+            添加账号
+          </Button>
+        </header>
         <div className={styles.board}>
           <PatchBay selected={selected} filter={filter} />
           <CompactBindings />

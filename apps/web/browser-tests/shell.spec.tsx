@@ -152,12 +152,14 @@ test.describe('shell, channels and live', () => {
     }
   })
 
-  test('the top bar shows a path only below the space, with the space as the way back', async () => {
+  test('the top bar shows where you are as text, and the rail is the way between spaces', async () => {
     const { page } = await open(`/channels/${targetChannelId}`)
     try {
-      const path = page.getByRole('navigation', { name: '位置' })
-      await expect(path.getByRole('link', { name: '频道' })).toBeVisible()
+      const path = page.getByRole('group', { name: '位置' })
+      await expect(path).toContainText('频道')
       await expect(path).toContainText('资料员的内置频道')
+      // The path does not navigate: going back to a space root would reset its selection.
+      await expect(path.getByRole('link')).toHaveCount(0)
       await page.getByRole('link', { name: '概览' }).first().click()
       await expect(page).toHaveURL(/\/live$/u)
       await expect(path).toHaveText('')
@@ -185,12 +187,14 @@ test.describe('shell, channels and live', () => {
     }
   })
 
-  test('the channel detail groups response, source and diagnostics, and an empty channel explains itself', async () => {
+  test('the channel detail groups who replies, source and diagnostics, and an empty channel explains itself', async () => {
     const { page, errors } = await open(`/channels/${externalChannelId}`)
     try {
       const detail = page.getByRole('complementary', { name: '频道信息' })
-      await expect(detail.getByRole('region', { name: '响应' })).toBeVisible()
+      await expect(detail.getByRole('region', { name: '谁来回复' })).toBeVisible()
       await expect(detail.getByRole('region', { name: '来源' })).toBeVisible()
+      // Removal sits in the pane footer, apart from the settings above it.
+      await expect(detail.getByRole('button', { name: '移除频道' })).toBeVisible()
       await expect(detail.getByRole('button', { name: '修改频道名称' })).toBeVisible()
       await expect(detail.getByRole('button', { name: '诊断信息' })).toHaveAttribute('aria-expanded', 'false')
       await expect(page.getByRole('log', { name: '消息记录' }).getByText('还没有消息')).toBeVisible()

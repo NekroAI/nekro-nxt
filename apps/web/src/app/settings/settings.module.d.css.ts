@@ -1,12 +1,8 @@
 declare const styles: {
   readonly adapterName: string
+  readonly back: string
   readonly barkFields: string
   readonly brand: string
-  readonly childGroup: string
-  readonly childMeta: string
-  readonly childName: string
-  readonly childRow: string
-  readonly children: string
   readonly head: string
   readonly headActions: string
   readonly link: string
@@ -15,6 +11,7 @@ declare const styles: {
   readonly narrowNav: string
   readonly notice: string
   readonly row: string
+  readonly rowChevron: string
   readonly rowControls: string
   readonly source: string
   readonly srOnly: string
