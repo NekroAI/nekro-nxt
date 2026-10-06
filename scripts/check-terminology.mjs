@@ -47,6 +47,19 @@ const forbiddenTerms = [
   ['QQ', /QQ/u],
 ]
 const technicalIdName = /(?:^id$|Id$|ID$|Key$|Ns$)/u
+/**
+ * Information layering (Decision 2026-10-06 §6): internal version numbers, error codes and configuration keys
+ * belong in the diagnostics layer. Reported by default; `--strict` turns them into failures.
+ */
+/** @type {ReadonlyArray<readonly [string, RegExp]>} */
+const informationRules = [
+  ['info:version-number', /(?<![\w-])r\d+\b/u],
+  // Error codes are lowercase words joined by hyphens; model ids such as deepseek-v4-flash carry digits and stay visible.
+  ['info:error-code', /(?<![\w./-])[a-z]+(?:-[a-z]+){2,}(?![\w./-])/u],
+  ['info:config-key', /\b(?:apiKey|apiKeyEnv|baseURL|baseUrl|settingsNs|settingsPath|credentialRef)\b/u],
+]
+/** A label that is immediately followed by an interpolated number, such as `r{revision}` or `` `r${n}` ``. */
+const versionPrefix = /(?:^|[^A-Za-z])r$/u
 
 const normalizeVisibleText = (text) => text.replace(/\s+/gu, ' ').trim()
 
@@ -100,9 +113,18 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
     return false
   }
 
+  const addInformationFinding = (node, rule, text, message) => {
+    const position = file.getLineAndCharacterOfPosition(node.getStart(file))
+    findings.push({ file: relativePath, line: position.line + 1, rule, text: normalizeVisibleText(text), message })
+  }
+
   const addTextFinding = (node, text, context) => {
     if (isTechnicalDiagnostic(node)) return
     const normalizedText = normalizeVisibleText(text)
+    for (const [rule, pattern] of informationRules) {
+      if (pattern.test(normalizedText))
+        addInformationFinding(node, rule, normalizedText, `用户可见${context}包含应放入诊断层的技术信息。`)
+    }
     if (includeTerms) {
       for (const [term, pattern] of forbiddenTerms) {
         pattern.lastIndex = 0
@@ -126,6 +148,8 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
       return
     }
     if (ts.isTemplateExpression(node)) {
+      if (versionPrefix.test(node.head.text))
+        addInformationFinding(node, 'info:version-number', node.getText(file), `用户可见${context}拼接了版本序号。`)
       addTextFinding(node.head, node.head.text, context)
       for (const span of node.templateSpans) {
         inspectTextExpression(span.expression, context)
@@ -210,7 +234,18 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
   collectDisplayedReferences(file)
 
   const visit = (node) => {
-    if (ts.isJsxText(node) && node.text.trim()) addTextFinding(node, node.text, ' JSX 文本')
+    if (ts.isJsxText(node) && node.text.trim()) {
+      addTextFinding(node, node.text, ' JSX 文本')
+      const siblings = ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent) ? node.parent.children : []
+      const next = siblings[siblings.indexOf(node) + 1]
+      if (next && ts.isJsxExpression(next) && versionPrefix.test(node.text.trimEnd()) && !isTechnicalDiagnostic(node))
+        addInformationFinding(
+          node,
+          'info:version-number',
+          `${node.text.trim()}${next.getText(file)}`,
+          '用户可见 JSX 拼接了版本序号。',
+        )
+    }
 
     if (
       ts.isJsxAttribute(node) &&
@@ -271,7 +306,12 @@ function inspectSource(relativePath, source, { includeTerms = true } = {}) {
   )
 }
 
-const knownRules = new Set([...forbiddenTerms.map(([term]) => `term:${term}`), 'technical-id-fallback'])
+const knownRules = new Set([
+  ...forbiddenTerms.map(([term]) => `term:${term}`),
+  'technical-id-fallback',
+  ...informationRules.map(([rule]) => rule),
+])
+const isInformationRule = (rule) => rule.startsWith('info:')
 
 const exceptionKey = ({ file, rule, text }) => `${file}\0${rule}\0${text}`
 
@@ -455,6 +495,29 @@ export function Fixture({ model }) {
     '自然中文在 JSX、属性、展示变量、集合和配置文案中均不逐词阻断。',
   )
   assert.match(formatStaleExceptions(configured), /未命中的陈旧例外/u)
+  assert.deepEqual(
+    inspectSource(
+      `${productRoot}/information.tsx`,
+      `
+      export const view = (revision, code) => <section>
+        <b>r{revision.revision}</b>
+        <span title={\`r\${revision.revision} · 最新\`} />
+        <p>引用未解析：platform-reference-unresolved</p>
+        <Field label="apiKey" />
+        <p>模型 deepseek-v4-flash 可用</p>
+        <p>需要从已有源码重建</p>
+        <code>apiKeyEnv</code>
+      </section>
+    `,
+    ).map(({ line, rule }) => [line, rule]),
+    [
+      [3, 'info:version-number'],
+      [4, 'info:version-number'],
+      [5, 'info:error-code'],
+      [6, 'info:config-key'],
+    ],
+    '版本序号、错误码与配置键名属于诊断层；模型 ID 与 code 元素内的技术值不报告。',
+  )
   if (log) {
     console.log(
       'Terminology self-test passed (natural Chinese, internal terms, technical IDs, Adapter display names and exact/stale exceptions are covered).',
@@ -484,15 +547,33 @@ if (process.argv.includes('--self-test')) {
     process.exit(1)
   }
   const checked = applyExceptions(findings, exceptions)
-  if (checked.findings.length > 0) {
-    console.error(formatFindings(checked.findings))
+  const strict = process.argv.includes('--strict')
+  const blocking = checked.findings.filter(({ rule }) => !isInformationRule(rule))
+  const information = checked.findings.filter(({ rule }) => isInformationRule(rule))
+  if (blocking.length > 0) {
+    console.error(formatFindings(blocking))
     process.exitCode = 1
+  }
+  if (information.length > 0) {
+    if (strict) {
+      console.error(formatFindings(information))
+      process.exitCode = 1
+    } else {
+      const counts = informationRules
+        .map(([rule]) => `${rule.slice(5)} ${information.filter((finding) => finding.rule === rule).length}`)
+        .join(', ')
+      if (process.argv.includes('--list'))
+        console.log(information.map(({ file, line, rule, text }) => `${file}:${line} [${rule}] ${text}`).join('\n'))
+      console.log(
+        `Information layering: ${information.length} findings (${counts}). Report mode; run with --strict to enforce, --list for details.`,
+      )
+    }
   }
   if (checked.staleExceptions.length > 0) {
     console.error(formatStaleExceptions(checked.staleExceptions))
     process.exitCode = 1
   }
-  if (checked.findings.length === 0 && checked.staleExceptions.length === 0) {
+  if (blocking.length === 0 && checked.staleExceptions.length === 0) {
     console.log(`User-facing terminology check passed (${sourceFiles.length} UI and contribution source files).`)
   }
 }
