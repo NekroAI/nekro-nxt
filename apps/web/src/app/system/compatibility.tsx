@@ -176,7 +176,43 @@ export function CompatibilityNotices(props: CompatibilityFilter & { readonly sho
   )
 }
 
-/** The Host was upgraded under this page: writes are blocked until the page reloads with the new client. */
+/** The Host stopped answering: the page keeps the last synchronized data and offers a reconnect. */
+function HostConnectionBanner() {
+  const { store } = useProductRuntime()
+  const status = useProductStore((state) => state.host.status)
+  const [pending, setPending] = useState(false)
+  if (status !== 'stale' && status !== 'error') return null
+  const reconnect = async () => {
+    setPending(true)
+    try {
+      await store.getState().refreshHost()
+    } catch (error) {
+      toast(`重新连接失败：${error instanceof Error ? error.message : String(error)}`, { tone: 'bad' })
+    } finally {
+      setPending(false)
+    }
+  }
+  return (
+    <div className={styles.shellNotice} data-host-connection={status}>
+      <Banner
+        tone={status === 'stale' ? 'warn' : 'bad'}
+        action={
+          <Button size="small" busy={pending} onClick={() => void reconnect()}>
+            重新连接
+          </Button>
+        }
+      >
+        <b>{status === 'stale' ? '连接不稳定' : '无法连接'}</b>{' '}
+        {status === 'stale' ? '当前显示最近一次同步的数据。' : '当前内容可能为空或不是最新状态。'}
+      </Banner>
+    </div>
+  )
+}
+
+/**
+ * The shell's notice slot. A Host upgraded under this page comes first (writes are blocked until the page reloads
+ * with the new client); otherwise a lost Host connection is shown.
+ */
 export function ReleaseBanner() {
   const state = useSyncExternalStore(
     hostReleaseGuard.subscribe,
@@ -185,7 +221,7 @@ export function ReleaseBanner() {
   )
   const { uiStore } = useProductRuntime()
   const [confirm, setConfirm] = useState(false)
-  if (!state.mismatch) return null
+  if (!state.mismatch) return <HostConnectionBanner />
   const reload = () => {
     if (!saveChannelDraftRecovery(uiStore.getState().channelDrafts)) {
       throw new Error('浏览器无法暂存频道草稿，请先复制内容再刷新。')

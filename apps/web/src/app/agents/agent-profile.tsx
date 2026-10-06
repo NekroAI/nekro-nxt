@@ -1,7 +1,8 @@
 import { useGo } from '../model/nav.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { PanelSlot } from '../../extension-ui/index.js'
-import { Boxes, Cable, FolderCog, Globe, MessagesSquare, PencilLine, Sparkles, Trash2, Workflow } from 'lucide-react'
+import { Boxes, FolderCog, Globe, MessagesSquare, PencilLine, Plus, Sparkles, Trash2, Workflow } from 'lucide-react'
+import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import {
@@ -30,6 +31,7 @@ import {
   ConfirmDialog,
   Field,
   Input,
+  Menu,
   Panel,
   SecretInput,
   Section,
@@ -518,6 +520,10 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
 
   const phase = agentPhase[agent.state]
   const owned = channels.filter((channel) => channel.agentId === agent.id)
+  // Channels this agent could answer; taking one over from another agent goes through the same confirmation.
+  const available = channels.filter((channel) => channel.agentId !== agent.id)
+  const agents = useProductStore((state) => state.agents)
+  const [bindIntent, setBindIntent] = useState<BindIntent | null>(null)
   const model = agent.modelRef
     ? models.find((item) => item.provider === agent.modelRef?.provider && item.id === agent.modelRef?.model)
     : undefined
@@ -619,9 +625,29 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
         <Section
           title="频道"
           actions={
-            <Button size="small" icon={<Cable />} onClick={() => navigate('/wiring')}>
-              接线
-            </Button>
+            <Menu
+              label="添加频道"
+              trigger={
+                <Button size="small" icon={<Plus />} disabled={available.length === 0}>
+                  添加频道
+                </Button>
+              }
+              items={available.map((channel) => {
+                const connection = connections.find((item) => item.id === channel.connectionId)
+                const source = connection ? connectionDisplayName(connection) : channel.connectionName
+                const current = agents.find((item) => item.id === channel.agentId)
+                return {
+                  key: channel.id,
+                  label: `${channel.name} · ${source}${current ? `（${current.name}）` : ''}`,
+                  onSelect: () =>
+                    setBindIntent({
+                      kind: channel.agentId ? 'replace' : 'bind',
+                      channelId: channel.id,
+                      agentId: agent.id,
+                    }),
+                }
+              })}
+            />
           }
         >
           <Panel className={styles.table}>
@@ -687,6 +713,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
         </div>
       </div>
 
+      <BindDialog intent={bindIntent} onClose={() => setBindIntent(null)} />
       <ConfirmDialog
         open={deleting}
         onOpenChange={(open) => {

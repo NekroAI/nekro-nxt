@@ -511,7 +511,7 @@ export interface ProductState {
     readonly configuration: Readonly<Record<string, JsonValue>>
     readonly credentials: Readonly<Record<string, string>>
     readonly alias?: string
-  }): Promise<void>
+  }): Promise<{ readonly connectionId: string }>
   startConnectionLogin(input: {
     readonly adapterKey: string
     readonly alias?: string

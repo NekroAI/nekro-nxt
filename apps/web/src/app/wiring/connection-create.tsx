@@ -121,14 +121,12 @@ export function ConnectionCreate() {
 function SchemaForm({ adapter }: { readonly adapter: Descriptor }) {
   const api = useProductApi()
   const go = useGo()
-  const connections = useProductStore((state) => state.connections)
   const [alias, setAlias] = useState('')
   const [values, setValues] = useState<ConfigValue>(() => configDefaults(adapter.configSchema))
   const [secrets, setSecrets] = useState<Readonly<Record<string, string>>>({})
   const [submitted, setSubmitted] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const before = useRef(new Set(connections.map((item) => item.id)))
 
   const create = async () => {
     setSubmitted(true)
@@ -139,12 +137,11 @@ function SchemaForm({ adapter }: { readonly adapter: Descriptor }) {
     setBusy(true)
     setError('')
     try {
-      await api
+      const { connectionId } = await api
         .getState()
         .createConnection({ adapterKey: adapter.key, alias, configuration: values, credentials: secrets })
       toast('账号已添加')
-      const created = api.getState().connections.find((item) => !before.current.has(item.id))
-      go(created ? `/wiring/connections/${created.id}` : '/wiring')
+      go(`/wiring/connections/${connectionId}`)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {

@@ -367,6 +367,7 @@ export function Conversation({
               加载更早的消息
             </Button>
           ) : null}
+          {history?.loaded && items.length === 0 ? <p className={styles.emptyTimeline}>还没有消息</p> : null}
           {items.map((item) =>
             item.kind === 'day' ? (
               <div key={item.key} className={styles.day}>

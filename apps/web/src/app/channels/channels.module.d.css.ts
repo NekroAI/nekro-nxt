@@ -18,6 +18,7 @@ declare const styles: {
   readonly dock: string
   readonly dragOverlay: string
   readonly emptyCanvas: string
+  readonly emptyTimeline: string
   readonly facts: string
   readonly fields: string
   readonly fresh: string

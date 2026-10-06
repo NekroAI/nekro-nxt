@@ -15,6 +15,7 @@ import {
   SecretInput,
   Segmented,
   SelectionList,
+  Skeleton,
   SwitchRow,
   toast,
 } from '../../ui-kit/next/index.js'
@@ -131,6 +132,7 @@ function Adapters() {
 function Notifications() {
   const api = useProductApi()
   const settings = useProductStore((state) => state.notificationSettings)
+  const hostStatus = useProductStore((state) => state.host.status)
   const [system, setSystem] = useState(settings.system.enabled)
   const [bark, setBark] = useState(settings.bark.enabled)
   const [serverUrl, setServerUrl] = useState(settings.bark.serverUrl)
@@ -147,8 +149,10 @@ function Notifications() {
     setClearKey(false)
     setApproval(settings.events['dynamic-client-approval-requested'] ?? true)
   }
-  // Saved settings changed (here or elsewhere): show them.
-  useEffect(reset, [settings])
+  // Saved settings changed (here or elsewhere): show them. Keyed by content, so a refresh that returns the same
+  // saved values never discards what the user is editing.
+  const savedKey = JSON.stringify(settings)
+  useEffect(reset, [savedKey])
 
   const configured = settings.bark.deviceKeyConfigured && !clearKey
   const barkTestable = !clearKey && (configured || deviceKey.trim() !== '')
@@ -170,6 +174,16 @@ function Notifications() {
     } finally {
       setBusy('')
     }
+  }
+
+  // Until the first snapshot the store holds placeholder defaults; never present them as the saved settings.
+  if (hostStatus === 'initializing') {
+    return (
+      <Panel className={styles.group}>
+        <Skeleton height={44} />
+        <Skeleton height={44} />
+      </Panel>
+    )
   }
 
   return (

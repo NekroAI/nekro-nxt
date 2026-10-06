@@ -389,6 +389,14 @@
   margin: 4px 0 10px;
 }
 
+.emptyTimeline {
+  margin: auto 0;
+  padding: 48px 0;
+  color: var(--faint);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+
 .day {
   display: flex;
   align-items: center;

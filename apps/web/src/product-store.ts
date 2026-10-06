@@ -117,6 +117,9 @@ export function createProductStore(
     },
     updateNotificationSettings: async (input) => {
       const result = await requireHost().actions['notifications.update'](input)
+      // The response is the saved view with its new revision; apply it now so a follow-up save does not reuse the
+      // previous revision while the snapshot refresh is still in flight.
+      useProductStore.setState({ notificationSettings: result })
       return result
     },
     testBarkNotification: async (input) => {
@@ -143,14 +146,18 @@ export function createProductStore(
         deleteAutoCreatedBuiltInChannels,
         deleteWorkspace,
       })
+      // Leave the deleted agent out right away, so navigation that follows never lands on it before the next
+      // snapshot confirms the deletion.
+      useProductStore.setState((state) => ({ agents: state.agents.filter((agent) => agent.id !== agentId) }))
     },
     createConnection: async ({ adapterKey, alias, configuration, credentials }) => {
-      await requireHost().actions['connections.create']({
+      const result = await requireHost().actions['connections.create']({
         adapterKey: requireValue(adapterKey, '请选择连接平台。'),
         ...(alias === undefined ? {} : { alias: alias.trim() }),
         configuration,
         credentials,
       })
+      return { connectionId: HostApiContracts.createConnection.parseResponse(result).connectionId }
     },
     startConnectionLogin: async ({ adapterKey, alias, connectionId }) => {
       const result = await requireHost().actions['connections.login.start']({
@@ -225,6 +232,9 @@ export function createProductStore(
         channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
         expectedBoundAgentId,
       })
+      // Leave the removed channel out right away, so navigation that follows never lands on it before the next
+      // snapshot confirms the removal.
+      useProductStore.setState((state) => ({ channels: state.channels.filter((channel) => channel.id !== channelId) }))
     },
     resetChannelContext: async (channelId, episodeId, mode) => {
       await requireHost().actions['channels.resetContext']({
