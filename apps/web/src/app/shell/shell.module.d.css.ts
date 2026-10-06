@@ -2,6 +2,9 @@ declare const styles: {
   readonly app: string
   readonly bell: string
   readonly bellCount: string
+  readonly bellHead: string
+  readonly bellMore: string
+  readonly bellPanel: string
   readonly brand: string
   readonly canvas: string
   readonly canvasEnter: string

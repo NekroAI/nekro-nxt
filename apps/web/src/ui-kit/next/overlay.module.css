@@ -137,6 +137,25 @@
   transform-origin: var(--radix-dropdown-menu-content-transform-origin);
 }
 
+.popover {
+  z-index: 60;
+  display: grid;
+  text-align: left;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(560px, var(--radix-popover-content-available-height));
+  overflow: auto;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+
+.popover:focus-visible {
+  outline: none;
+}
+
+.popover[data-state='open'],
 .menu[data-state='open'] {
   animation: popIn 220ms var(--ease) both;
 }

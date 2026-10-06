@@ -204,7 +204,7 @@ const installProductRoutes = async (page: Page, snapshot: () => Snapshot = () =>
 }
 
 const SPACES = [
-  { path: '/live', heading: '现场' },
+  { path: '/live', heading: '概览' },
   { path: `/channels/${targetChannelId}`, heading: '资料员的内置频道' },
   { path: `/agents/${targetAgentId}`, heading: '资料员' },
   { path: '/workshop', heading: null },
@@ -416,7 +416,7 @@ test('representative product surfaces match committed visual baselines', async (
       maxDiffPixelRatio: 0.01,
     })
   }
-  await shoot('live', '/live', 'light', () => expect(page.getByRole('heading', { name: '现场' })).toBeVisible())
+  await shoot('live', '/live', 'light', () => expect(page.getByRole('heading', { name: '概览' })).toBeVisible())
   await shoot('channel-conversation', `/channels/${targetChannelId}`, 'light', async () => {
     await expect(page.getByText('这是本次交付的资源。')).toBeVisible()
     await expect(page.getByRole('img', { name: '界面预览图' })).toBeVisible()
@@ -614,7 +614,7 @@ test('an initial Host failure is explicit and recovers without reloading the pag
   available = true
   await banner.getByRole('button', { name: '重新连接' }).click()
   await expect(banner).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: '现场', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '概览', level: 1 })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.dataset['hostRecovery'])).toBe('same-document')
 })
 

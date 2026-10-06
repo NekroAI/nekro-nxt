@@ -1,0 +1,126 @@
+.list {
+  display: grid;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 3px 34px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-2) var(--s-3) 0;
+  border-top: 1px solid var(--line);
+  transition: background var(--dur-1);
+}
+
+.row:first-child {
+  border-top: 0;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.bar {
+  align-self: stretch;
+  margin: calc(-1 * var(--s-3)) 0;
+}
+
+.bad .bar {
+  background: var(--bad);
+}
+
+.warn .bar {
+  background: var(--warn);
+}
+
+.info .bar {
+  background: var(--accent);
+}
+
+.icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: var(--r-1);
+}
+
+.icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.bad .icon {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.warn .icon {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.info .icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.text {
+  min-width: 0;
+}
+
+.what {
+  font: var(--t-title);
+}
+
+.why {
+  color: var(--fg-2);
+  font: var(--t-note);
+}
+
+/* Popover: narrower rows, the title and reason wrap instead of pushing the action out. */
+.compact .row {
+  grid-template-columns: 3px 28px minmax(0, 1fr) auto auto;
+  gap: var(--s-3);
+}
+
+.compact .icon {
+  width: 28px;
+  height: 28px;
+}
+
+.compact .icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.compact .why {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.calm {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  color: var(--ok);
+  font: var(--t-note);
+}
+
+.calm svg {
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 760px) {
+  .row {
+    grid-template-columns: 3px 34px minmax(0, 1fr) auto;
+  }
+
+  .row > :last-child {
+    display: none;
+  }
+}

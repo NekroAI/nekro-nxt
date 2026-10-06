@@ -70,225 +70,12 @@
   color: var(--bad);
 }
 
-.tide {
-  position: relative;
-  height: 168px;
-  padding: var(--s-4) var(--s-4) var(--s-7);
-  overflow: hidden;
-}
-
-.plot {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.plot svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.area {
-  opacity: 0.32;
-}
-
-.enter .area {
-  animation: fadeIn 1.1s ease 0.6s both;
-}
-
-.stroke {
-  fill: none;
-  stroke-width: 1.8;
-}
-
-.enter .stroke {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: draw 1.6s var(--ease) forwards;
-}
-
-@keyframes draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-}
-
-.grid line {
-  stroke: var(--line);
-  stroke-dasharray: 2 5;
-}
-
-.nowLine {
-  stroke: var(--brass);
-  stroke-dasharray: 3 3;
-  stroke-width: 1.2;
-}
-
-.hoverLine {
-  stroke: var(--line-3);
-}
-
-.nowDot {
-  position: absolute;
-  right: -4px;
-  width: 9px;
-  height: 9px;
-  margin-top: calc(-1 * var(--s-1));
-  border-radius: 50%;
-  background: var(--brass);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 25%, transparent);
-}
-
-.nowDot::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1.5px solid var(--brass);
-  border-radius: 50%;
-  animation: ping 2.2s var(--ease) infinite;
-}
-
-@keyframes ping {
-  0% {
-    transform: scale(1);
-    opacity: 0.7;
-  }
-
-  80%,
-  100% {
-    transform: scale(2.8);
-    opacity: 0;
-  }
-}
-
-.axis {
-  position: absolute;
-  right: 16px;
-  bottom: 7px;
-  left: 16px;
-  display: flex;
-  justify-content: space-between;
-  color: var(--faint);
-  font: 10px var(--font-mono);
-  letter-spacing: 0.08em;
-}
-
-.axis span:last-child {
-  color: var(--fg-2);
-  font-weight: 600;
-}
-
-.tip {
-  position: absolute;
-  top: 10px;
-  display: grid;
-  gap: var(--s-1);
-  min-width: 170px;
-  padding: var(--s-2) var(--s-2);
-  border: 1px solid var(--line-2);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: var(--sh-2);
-  font-size: var(--fs-xs);
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-
-.tip > span {
-  color: var(--muted);
-  font-family: var(--font-mono);
-}
-
-.tip div {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
-.tip i {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-}
-
-.tip b {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-.tideEmpty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  font-size: var(--fs-sm);
-}
-
-.flat {
-  position: absolute;
-  right: 16px;
-  bottom: 44px;
-  left: 16px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--line-3), var(--brass));
+.placeholder {
+  height: 214px;
 }
 
 .tideWrap {
   margin-top: var(--s-3);
-}
-
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-1) var(--s-2);
-  margin-top: var(--s-2);
-  color: var(--fg-2);
-  font-size: var(--fs-xs);
-}
-
-.legendItem {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-2);
-  min-height: var(--control-sm);
-  padding: 0 var(--s-2);
-  border: 0;
-  border-radius: var(--r-1);
-  background: transparent;
-  color: var(--fg-2);
-  font: var(--t-caption);
-  cursor: pointer;
-  transition:
-    background var(--dur-1),
-    opacity var(--dur-1);
-}
-
-.legendItem:hover {
-  background: var(--hover);
-}
-
-.legendItem[aria-pressed='false'] {
-  opacity: 0.45;
-}
-
-.legendItem small {
-  color: var(--muted);
-}
-
-.legend i {
-  width: 16px;
-  height: 3px;
-  border-radius: 2px;
 }
 
 .sectionTitle {
@@ -301,92 +88,6 @@
   overflow: hidden;
 }
 
-.attentionRow {
-  display: grid;
-  grid-template-columns: 3px 34px minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--s-4);
-  padding: var(--s-3) var(--s-2) var(--s-3) 0;
-  border-top: 1px solid var(--line);
-  transition: background var(--dur-1);
-}
-
-.attentionRow:first-child {
-  border-top: 0;
-}
-
-.attentionRow:hover {
-  background: var(--hover);
-}
-
-.bar {
-  align-self: stretch;
-  margin: calc(-1 * var(--s-3)) 0;
-}
-
-.bad .bar {
-  background: var(--bad);
-}
-
-.warn .bar {
-  background: var(--warn);
-}
-
-.info .bar {
-  background: var(--accent);
-}
-
-.icon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 10px;
-}
-
-.icon svg {
-  width: 17px;
-  height: 17px;
-}
-
-.bad .icon {
-  background: var(--bad-soft);
-  color: var(--bad);
-}
-
-.warn .icon {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-.info .icon {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.what {
-  font-weight: 600;
-}
-
-.why {
-  color: var(--fg-2);
-  font-size: var(--fs-sm);
-}
-
-.calm {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-4);
-  color: var(--ok);
-  font-size: var(--fs-sm);
-}
-
-.calm svg {
-  width: 16px;
-  height: 16px;
-}
-
 .board {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
@@ -395,8 +96,8 @@
 
 .card {
   position: relative;
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: var(--s-2);
   overflow: hidden;
   padding: var(--s-3) var(--s-4);
@@ -493,8 +194,41 @@
   min-height: 22px;
 }
 
+/* Pinned to the card bottom so cards of one row line their charts up whatever the content above. */
 .spark {
-  margin: 0 calc(-1 * var(--s-4)) calc(-1 * var(--s-3));
+  flex: none;
+  margin: auto calc(-1 * var(--s-4)) calc(-1 * var(--s-3));
+}
+
+/* A new message just arrived in this channel. */
+.card[data-fresh] {
+  border-color: color-mix(in srgb, var(--card-accent, var(--accent)) 55%, var(--line));
+  animation: fresh 1.6s var(--ease);
+}
+
+@keyframes fresh {
+  0% {
+    box-shadow:
+      0 0 0 0 color-mix(in srgb, var(--card-accent, var(--accent)) 45%, transparent),
+      var(--sh-1);
+  }
+
+  100% {
+    box-shadow:
+      0 0 0 10px transparent,
+      var(--sh-1);
+  }
+}
+
+.preview {
+  animation: previewIn var(--dur-3) var(--ease);
+}
+
+@keyframes previewIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 .quiet {
@@ -539,19 +273,7 @@
     gap: var(--s-4);
   }
 
-  .tide {
-    height: 130px;
-  }
-
   .board {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .attentionRow {
-    grid-template-columns: 3px 34px minmax(0, 1fr) auto;
-  }
-
-  .attentionRow > :last-child {
-    display: none;
   }
 }

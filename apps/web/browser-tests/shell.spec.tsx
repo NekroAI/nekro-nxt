@@ -158,7 +158,7 @@ test.describe('shell, channels and live', () => {
       const path = page.getByRole('navigation', { name: '位置' })
       await expect(path.getByRole('link', { name: '频道' })).toBeVisible()
       await expect(path).toContainText('资料员的内置频道')
-      await page.getByRole('link', { name: '现场' }).first().click()
+      await page.getByRole('link', { name: '概览' }).first().click()
       await expect(page).toHaveURL(/\/live$/u)
       await expect(path).toHaveText('')
     } finally {
@@ -176,7 +176,8 @@ test.describe('shell, channels and live', () => {
       await list.getByRole('searchbox', { name: '搜索频道' }).fill('不存在的频道')
       await expect(list.getByText('没有符合条件的频道')).toBeVisible()
       await list.getByRole('searchbox', { name: '搜索频道' }).press('Escape')
-      await list.getByRole('combobox', { name: '筛选频道' }).selectOption(`connection:${externalConnectionId}`)
+      await list.getByRole('combobox', { name: '筛选频道' }).click()
+      await page.getByRole('option', { name: '示例群聊平台', exact: true }).click()
       await expect(list.getByRole('link', { name: /产品讨论群/u })).toBeVisible()
       await expect(list.getByRole('link', { name: /资料员的内置频道/u })).toHaveCount(0)
     } finally {
@@ -211,12 +212,27 @@ test.describe('shell, channels and live', () => {
       await expect(first).toHaveAttribute('aria-pressed', 'true')
       const colors = await legend
         .locator('i')
-        .evaluateAll((items) => items.map((item) => getComputedStyle(item).backgroundImage))
+        .evaluateAll((items) => items.map((item) => getComputedStyle(item).backgroundColor))
       expect(new Set(colors).size).toBe(colors.length)
       await first.click()
       await expect(first).toHaveAttribute('aria-pressed', 'false')
       const titles = page.locator('#live-attention').getByText(/一处故障|一条提醒/u)
       await expect(titles.first()).toHaveText('一处故障')
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('the bell opens the attention list on every page, including the overview', async () => {
+    const { page } = await open('/live', { attention: [attentionItem('att-bad', 'critical', '一处故障')] })
+    try {
+      await page.getByRole('button', { name: '1 项需要关注' }).click()
+      const panel = page.getByRole('dialog', { name: '需要关注' })
+      await expect(panel.getByText('一处故障')).toBeVisible()
+      // Already on the overview: no link back to it.
+      await expect(panel.getByRole('link', { name: '打开概览' })).toHaveCount(0)
+      await page.keyboard.press('Escape')
+      await expect(panel).toHaveCount(0)
     } finally {
       await page.close()
     }

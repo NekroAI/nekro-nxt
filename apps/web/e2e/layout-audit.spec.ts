@@ -21,7 +21,7 @@ const strict = Boolean(process.env['NEKRO_LAYOUT_AUDIT_STRICT'])
 const reportDirectory = path.resolve(process.cwd(), '.local/layout-audit')
 
 const PAGES = [
-  { name: '现场', path: '/live' },
+  { name: '概览', path: '/live' },
   { name: '频道（长名称）', path: `/channels/${largeChannelIds[1]}` },
   { name: '频道（内置）', path: `/channels/${largeChannelIds[0]}` },
   { name: '智能体（长设定）', path: `/agents/${largeAgentIds[0]}` },

@@ -1,5 +1,6 @@
 import * as RadixDialog from '@radix-ui/react-dialog'
 import * as RadixMenu from '@radix-ui/react-dropdown-menu'
+import * as RadixPopover from '@radix-ui/react-popover'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
 import { Check, TriangleAlert, X } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
@@ -255,6 +256,42 @@ export function Menu({
         </RadixMenu.Content>
       </RadixMenu.Portal>
     </RadixMenu.Root>
+  )
+}
+
+/** Anchored panel for a short list the user acts on without leaving the page (e.g. the attention bell). */
+export function Popover({
+  trigger,
+  label,
+  open,
+  onOpenChange,
+  align = 'end',
+  className,
+  children,
+}: {
+  readonly trigger: ReactNode
+  readonly label: string
+  readonly open?: boolean
+  readonly onOpenChange?: (open: boolean) => void
+  readonly align?: 'start' | 'center' | 'end'
+  readonly className?: string
+  readonly children: ReactNode
+}) {
+  return (
+    <RadixPopover.Root {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange } : {})}>
+      <RadixPopover.Trigger asChild>{trigger}</RadixPopover.Trigger>
+      <RadixPopover.Portal>
+        <RadixPopover.Content
+          className={[styles.popover, className].filter(Boolean).join(' ')}
+          align={align}
+          sideOffset={6}
+          collisionPadding={12}
+          aria-label={label}
+        >
+          {children}
+        </RadixPopover.Content>
+      </RadixPopover.Portal>
+    </RadixPopover.Root>
   )
 }
 

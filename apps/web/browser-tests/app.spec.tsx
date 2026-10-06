@@ -1973,7 +1973,7 @@ test.describe('NekroNxt browser projections', () => {
         reducedMotion: 'reduce',
       },
       { width: 1440, height: 900, route: '/settings/models', name: 'settings-1440', marker: 'API 密钥已保存' },
-      { width: 1440, height: 900, route: '/live', name: 'live-1440', marker: '现场' },
+      { width: 1440, height: 900, route: '/live', name: 'live-1440', marker: '概览' },
       {
         width: 1100,
         height: 720,

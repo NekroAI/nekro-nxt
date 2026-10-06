@@ -29,6 +29,7 @@ export {
   Sheet,
   Overlay,
   Menu,
+  Popover,
   Tooltip,
   TooltipProvider,
   Toaster,

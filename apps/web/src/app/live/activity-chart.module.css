@@ -1,0 +1,226 @@
+.chart {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 168px auto;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-4) var(--s-4) var(--s-3);
+}
+
+.scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 2ch;
+  margin: -0.6em 0;
+  color: var(--muted);
+  font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.plot {
+  position: relative;
+  min-width: 0;
+}
+
+.grid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.grid i {
+  border-top: 1px dashed var(--line);
+}
+
+.grid i:last-child {
+  border-top: 1px solid var(--line-2);
+}
+
+.bars {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--buckets), minmax(0, 1fr));
+}
+
+.column {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 max(1px, 12%);
+}
+
+.column[data-hover] {
+  background: var(--hover);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 1px;
+  width: 100%;
+  max-width: 28px;
+  height: var(--h);
+  overflow: hidden;
+  border-radius: 3px 3px 0 0;
+  transform-origin: bottom;
+  transition: height var(--dur-3) var(--ease);
+  animation: grow 640ms var(--ease) both;
+  animation-delay: calc(var(--i) * 14ms);
+}
+
+.stack span {
+  flex-basis: 0;
+  min-height: 2px;
+}
+
+@keyframes grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+/* The newest bucket is still filling; a brass dot under it matches the “现在” label. */
+.column[data-now]::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brass);
+  transform: translateX(-50%);
+}
+
+.axis {
+  position: relative;
+  grid-column: 2;
+  height: 1.5em;
+  color: var(--muted);
+  font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.axis span {
+  position: absolute;
+  left: calc(var(--at) * 100%);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.axis .now {
+  color: var(--brass);
+  font-weight: 600;
+  transform: translateX(-70%);
+}
+
+.tip {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  display: grid;
+  gap: var(--s-1);
+  min-width: 180px;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  background: var(--surface);
+  box-shadow: var(--sh-2);
+  font: var(--t-caption);
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.tip > span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.tip div {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.tip i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.tip b {
+  margin-left: auto;
+  padding-left: var(--s-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.tipTotal {
+  padding-top: var(--s-1);
+  border-top: 1px solid var(--line);
+  color: var(--fg-2);
+}
+
+.empty {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control-sm);
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--fg-2);
+  font: var(--t-caption);
+  cursor: pointer;
+  transition:
+    background var(--dur-1),
+    opacity var(--dur-1);
+}
+
+.legendItem:hover {
+  background: var(--hover);
+}
+
+.legendItem[aria-pressed='false'] {
+  opacity: 0.45;
+}
+
+.legendItem small {
+  color: var(--muted);
+}
+
+.legendItem i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+@media (max-width: 760px) {
+  .chart {
+    grid-template-rows: 120px auto;
+  }
+}

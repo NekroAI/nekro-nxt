@@ -8,6 +8,7 @@ declare const styles: {
   readonly menuItem: string
   readonly menuLabel: string
   readonly menuSeparator: string
+  readonly popover: string
   readonly scrim: string
   readonly sheet: string
   readonly sheetBody: string

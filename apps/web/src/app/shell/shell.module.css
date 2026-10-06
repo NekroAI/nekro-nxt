@@ -119,11 +119,11 @@ button.instance {
   align-items: center;
   gap: var(--s-2);
   min-width: 240px;
-  padding: var(--s-2) var(--s-2) var(--s-2) var(--s-3);
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  min-height: var(--control);
+  padding: 0 var(--s-2) 0 var(--s-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
   background: var(--surface);
-  box-shadow: var(--sh-1);
   color: var(--muted);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -133,8 +133,7 @@ button.instance {
 }
 
 .search:hover {
-  border-color: var(--line-2);
-  box-shadow: var(--sh-2);
+  border-color: var(--line-3);
 }
 
 .search svg {
@@ -167,6 +166,45 @@ button.instance {
 .bell svg {
   width: 18px;
   height: 18px;
+}
+
+.bell[data-state='open'] {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.bellPanel {
+  padding-bottom: var(--s-1);
+}
+
+.bellHead {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-height: var(--control-lg);
+  padding: var(--s-1) var(--s-3) var(--s-1) var(--s-4);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font: var(--t-title);
+}
+
+.bellMore {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--target);
+  padding: 0 var(--s-2);
+  border-radius: var(--r-1);
+  color: var(--accent);
+  font: var(--t-note);
+  text-decoration: none;
+}
+
+.bellMore:hover {
+  background: var(--hover);
 }
 
 .bellCount {

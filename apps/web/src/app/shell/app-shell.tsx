@@ -5,7 +5,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
 import { useProductStore } from '../../product-runtime.js'
-import { Kbd, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/next/index.js'
+import { Kbd, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/next/index.js'
+import { AttentionList } from '../attention/attention-list.js'
 import { useAttention } from '../model/attention.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentAccent, connectionLabel, isAgentWorking } from '../model/identity.js'
@@ -14,7 +15,7 @@ import { useCurrentCrumb } from './crumb.js'
 import styles from './shell.module.css'
 
 export const SPACES = [
-  { path: '/live', label: '现场', icon: Activity },
+  { path: '/live', label: '概览', icon: Activity },
   { path: '/channels', label: '频道', icon: MessagesSquare },
   { path: '/agents', label: '智能体', icon: Sparkles },
   { path: '/workshop', label: '工坊', icon: Wrench },
@@ -74,8 +75,10 @@ const desktopStatusLabel: Record<DesktopInstanceStatus, string> = {
 
 function TopBar({ onSearch }: { readonly onSearch: () => void }) {
   const crumb = useCurrentCrumb()
-  const space = spaceOf(useLocation().pathname)
+  const location = useLocation()
+  const space = spaceOf(location.pathname)
   const attention = useAttention()
+  const [bellOpen, setBellOpen] = useState(false)
   const desktop = useDesktopInstance()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const hostStatus = useProductStore((state) => state.host.status)
@@ -145,14 +148,32 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
         <span>搜索</span>
         <Kbd>⌘K</Kbd>
       </Pressable>
-      <Link
-        to="/live"
-        className={styles.bell}
-        aria-label={attention.length ? `${attention.length} 项需要关注` : '没有需要关注的事项'}
+      <Popover
+        label="需要关注"
+        open={bellOpen}
+        onOpenChange={setBellOpen}
+        className={styles.bellPanel}
+        trigger={
+          <Pressable
+            type="button"
+            className={styles.bell}
+            aria-label={attention.length ? `${attention.length} 项需要关注` : '没有需要关注的事项'}
+          >
+            <Bell aria-hidden="true" strokeWidth={1.7} />
+            {attention.length ? <span className={styles.bellCount}>{attention.length}</span> : null}
+          </Pressable>
+        }
       >
-        <Bell aria-hidden="true" strokeWidth={1.7} />
-        {attention.length ? <span className={styles.bellCount}>{attention.length}</span> : null}
-      </Link>
+        <div className={styles.bellHead}>
+          <b>需要关注</b>
+          {location.pathname !== '/live' ? (
+            <Link to="/live" className={styles.bellMore} onClick={() => setBellOpen(false)}>
+              打开概览
+            </Link>
+          ) : null}
+        </div>
+        <AttentionList compact onAction={() => setBellOpen(false)} />
+      </Popover>
     </header>
   )
 }
