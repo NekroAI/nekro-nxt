@@ -37,7 +37,6 @@ declare const styles: {
   readonly mcpTestHead: string
   readonly mcpTools: string
   readonly metaLink: string
-  readonly objectGlyph: string
   readonly permissions: string
   readonly phase: string
   readonly phaseDot: string

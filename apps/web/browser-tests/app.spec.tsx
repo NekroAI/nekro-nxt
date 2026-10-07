@@ -1175,6 +1175,7 @@ test.describe('NekroNxt browser projections', () => {
       displayName: '社区天气',
       summary: '查询城市天气预报。',
       tags: ['天气'],
+      iconUrl: null,
       official: true,
       publisher: { handle: 'nekro-nxt', displayName: 'NekroNXT 官方', avatarUrl: null },
       latest: {
@@ -1204,6 +1205,13 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(page.locator('body')).toContainText('风险未知')
         await playwrightExpect(page.locator('body')).toContainText('NekroNXT 官方')
         await playwrightExpect(page.locator('body')).toContainText('访问指定网站')
+        // 作者的介绍按 Markdown 渲染并排在审查之前；审查默认只有一行，点开才显示全部发现。
+        await playwrightExpect(page.locator('strong', { hasText: '示例市' })).toBeVisible()
+        await playwrightExpect(page.locator('body')).not.toContainText('<script>')
+        const finding = page.getByText('自动检查：示例提醒')
+        await playwrightExpect(finding).toBeHidden()
+        await page.getByRole('button', { name: '审查详情' }).click()
+        await playwrightExpect(finding).toBeVisible()
         await page.getByRole('button', { name: '安装' }).click()
         const dialog = page.getByRole('dialog', { name: '导入「社区天气」' })
         await playwrightExpect(dialog).toBeVisible()
@@ -1231,7 +1239,19 @@ test.describe('NekroNxt browser projections', () => {
           request.fulfill({ json: { items: [summary], nextCursor: null } }),
         )
         await page.route('**/api/community/extensions/ext_communityweather', (request) =>
-          request.fulfill({ json: { ...summary, description: '', sourceUrl: null, review: null } }),
+          request.fulfill({
+            json: {
+              ...summary,
+              description: '## 用法\n\n问 **示例市** 的天气。<script>alert(1)</script>',
+              sourceUrl: 'https://example.com/community-weather',
+              review: {
+                status: 'pending',
+                grade: null,
+                summary: null,
+                highlights: [{ severity: 'warning', title: '自动检查：示例提醒' }],
+              },
+            },
+          }),
         )
         await page.route('**/api/community/releases/*/import', async (request) => {
           importRequests.push(request.request().url().split('/').at(-2) ?? '')

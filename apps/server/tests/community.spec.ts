@@ -155,7 +155,14 @@ const createCommunity = () => {
       })
     }
     if (url.pathname === '/api/v1/extensions')
-      return Response.json({ items: [summary('ext_01DEMO')], nextCursor: null })
+      return Response.json({
+        items: [
+          summary('ext_01DEMO'),
+          { ...summary('ext_01ICON'), iconUrl: `${COMMUNITY}/api/v1/extensions/ext_01ICON/icon?v=abcdef012345` },
+          { ...summary('ext_01BADICON'), iconUrl: 'javascript:alert(1)' },
+        ],
+        nextCursor: null,
+      })
     if (url.pathname === '/api/v1/extensions/ext_01DEMO') {
       return Response.json({
         ...summary('ext_01DEMO'),
@@ -477,6 +484,12 @@ describe('CommunityService catalog', () => {
       publisher: { handle: 'demo-author', displayName: '示例作者', avatarUrl: null },
     })
     expect(list.items[0]).not.toHaveProperty('futureField')
+    // 旧版社区没有图标字段；只接受 http(s) 图标地址。
+    expect(list.items.map((item) => item.iconUrl)).toEqual([
+      null,
+      `${COMMUNITY}/api/v1/extensions/ext_01ICON/icon?v=abcdef012345`,
+      null,
+    ])
     expect(list.items[0]?.latest).not.toHaveProperty('packageSha256')
     expect(community.requests.at(-1)?.url.searchParams.get('q')).toBe('天气')
     const detail = await service.getExtension('ext_01DEMO')
@@ -485,6 +498,35 @@ describe('CommunityService catalog', () => {
       status: 404,
       message: '扩展不存在或尚未公开。',
     })
+  })
+
+  it('submits only the listing fields the author provided with a release', async () => {
+    const { service, community, signIn } = await createFixture()
+    await signIn()
+    await service.publish({ filename: 'weather.nxt-extension', body: new Uint8Array([1]), notes: '修复' })
+    const lastForm = (): FormData => {
+      const body = community.requests.at(-1)?.body
+      if (!(body instanceof FormData)) throw new Error('发布请求应是 multipart 表单。')
+      return body
+    }
+    expect([...lastForm().keys()].sort()).toEqual(['notes', 'package'])
+    await service.publish({
+      filename: 'weather.nxt-extension',
+      body: new Uint8Array([1]),
+      notes: '',
+      listing: {
+        summary: '查询城市天气。',
+        description: '## 用法\n\n问「示例市天气」。',
+        tags: ['天气', '提醒'],
+        sourceUrl: 'https://example.com/weather',
+      },
+    })
+    const form = lastForm()
+    expect(form.get('summary')).toBe('查询城市天气。')
+    expect(form.get('description')).toBe('## 用法\n\n问「示例市天气」。')
+    const tags = form.get('tags')
+    expect(typeof tags === 'string' ? JSON.parse(tags) : tags).toEqual(['天气', '提醒'])
+    expect(form.get('sourceUrl')).toBe('https://example.com/weather')
   })
 
   it('downloads a release only when it matches the recorded digest', async () => {

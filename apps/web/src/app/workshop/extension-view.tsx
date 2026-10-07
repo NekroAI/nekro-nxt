@@ -20,6 +20,7 @@ import {
   DataTable,
   Diagnostics,
   Disclosure,
+  ExtensionIcon,
   MainContent,
   Menu,
   ObjectHeader,
@@ -93,11 +94,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   return (
     <MainContent>
       <ObjectHeader
-        visual={
-          <span className={styles.objectGlyph} data-scope={extension.scope}>
-            {[...extension.name][0] ?? '扩'}
-          </span>
-        }
+        visual={<ExtensionIcon id={extension.id} name={extension.name} iconUrl={extension.iconUrl} size="lg" />}
         title={extension.name}
         status={
           <Chip tone={usage.tone} dot>

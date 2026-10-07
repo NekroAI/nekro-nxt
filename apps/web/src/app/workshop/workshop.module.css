@@ -74,39 +74,16 @@
   grid-row: 1 / span 2;
 }
 
-.rowGlyph,
-.objectGlyph {
+.rowGlyph {
   display: grid;
   place-items: center;
   border-radius: var(--r-1);
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 650;
-}
-
-.rowGlyph {
   width: var(--control-sm);
   height: var(--control-sm);
   font-size: var(--fs-xs);
-}
-
-.objectGlyph {
-  width: 52px;
-  height: 52px;
-  border-radius: var(--r-3);
-  font-size: var(--fs-xl);
-}
-
-.rowGlyph[data-scope='host-adapter'],
-.objectGlyph[data-scope='host-adapter'] {
-  background: color-mix(in srgb, var(--brass) 18%, transparent);
-  color: var(--brass);
-}
-
-.rowGlyph[data-scope='host-ui'],
-.objectGlyph[data-scope='host-ui'] {
-  background: var(--ok-soft);
-  color: var(--ok);
 }
 
 .rowName {

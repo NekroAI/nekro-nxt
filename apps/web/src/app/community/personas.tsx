@@ -15,6 +15,7 @@ import {
   InfoTip,
   MainContent,
   ObjectHeader,
+  ObjectTile,
   Pressable,
   PropertyGroup,
   SearchField,
@@ -30,25 +31,21 @@ import styles from './personas.module.css'
 const MAX_TAGS = 12
 
 /** 人设头像：社区头像经本机代理读取；没有头像时显示名称首字。 */
+const PERSONA_AVATAR_PX = { sm: 36, md: 44, lg: 64 } as const
+
+/** 人设头像：与扩展图标同一套方形图块，无头像时用首字与由人设 ID 决定的配色。 */
 export function PersonaAvatar({
+  id,
   name,
   url,
   size = 'md',
 }: {
+  readonly id: string
   readonly name: string
   readonly url: string | null
   readonly size?: 'sm' | 'md' | 'lg'
 }) {
-  const [failed, setFailed] = useState(false)
-  return (
-    <span className={styles.avatar} data-size={size} aria-hidden="true">
-      {url && !failed ? (
-        <img src={url} alt="" loading="lazy" onError={() => setFailed(true)} />
-      ) : (
-        ([...name][0] ?? '人')
-      )}
-    </span>
-  )
+  return <ObjectTile seed={id} name={name} imageUrl={url} pixels={PERSONA_AVATAR_PX[size]} fit="cover" />
 }
 
 const markdownComponents: Components = {
@@ -205,7 +202,7 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
               style={{ ['--i' as string]: Math.min(index, 12) }}
             >
               <span className={styles.cardHead}>
-                <PersonaAvatar name={item.name} url={item.avatarUrl} />
+                <PersonaAvatar id={item.id} name={item.name} url={item.avatarUrl} />
                 <span className={styles.cardTitle}>
                   <b>{item.name}</b>
                   <span className={styles.faint}>
@@ -273,7 +270,9 @@ export function PersonaDetail({
   const header = detail ? (
     <ObjectHeader
       size={mode === 'pane' ? 'compact' : 'default'}
-      visual={<PersonaAvatar name={detail.name} url={detail.avatarUrl} size={mode === 'pane' ? 'md' : 'lg'} />}
+      visual={
+        <PersonaAvatar id={detail.id} name={detail.name} url={detail.avatarUrl} size={mode === 'pane' ? 'md' : 'lg'} />
+      }
       title={detail.name}
       status={detail.official ? <Chip tone="accent">官方</Chip> : undefined}
       meta={

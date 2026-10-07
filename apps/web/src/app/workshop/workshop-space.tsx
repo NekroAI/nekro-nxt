@@ -9,6 +9,7 @@ import {
   AgentAvatar,
   Button,
   EmptyState,
+  ExtensionIcon,
   FileChooser,
   IconButton,
   ListPane,
@@ -207,9 +208,7 @@ export default function WorkshopSpace() {
                       data-selected={key === selected}
                       aria-current={key === selected ? 'page' : undefined}
                     >
-                      <span className={styles.rowGlyph} data-scope={item.scope}>
-                        {[...item.name][0] ?? '扩'}
-                      </span>
+                      <ExtensionIcon id={item.id} name={item.name} iconUrl={item.iconUrl} size="md" />
                       <span className={styles.rowName}>{item.name}</span>
                       <span className={styles.rowState}>
                         <StatusDot tone={usage.tone} />

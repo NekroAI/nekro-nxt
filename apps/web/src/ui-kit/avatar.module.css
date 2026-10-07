@@ -102,3 +102,45 @@
     transform: rotate(360deg);
   }
 }
+
+/* 扩展图标：圆角方块，与智能体的圆形头像区分。无图时用由扩展 ID 推出的色相渐变。 */
+.extensionIcon {
+  --h: 230;
+  --size: 34px;
+  --g1: hsl(var(--h) 52% 54%);
+  --g2: hsl(calc(var(--h) + 28) 68% 72%);
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: var(--size);
+  height: var(--size);
+  overflow: hidden;
+  border-radius: calc(var(--size) * 0.28);
+  background: linear-gradient(140deg, var(--g2), var(--g1) 72%);
+  box-shadow: var(--identity-sheen);
+  color: var(--on-identity);
+  font-size: calc(var(--size) * 0.42);
+  font-weight: 650;
+  line-height: 1;
+  text-shadow: var(--identity-text-shadow);
+  user-select: none;
+}
+
+.extensionIcon[data-image] {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.extensionIcon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.extensionIcon[data-image='cover'] {
+  box-shadow: none;
+}
+
+.extensionIcon[data-image='cover'] img {
+  object-fit: cover;
+}

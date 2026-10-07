@@ -114,6 +114,75 @@ describe('dynamic authoring closed loop', () => {
     expect(() => candidate({})).toThrow('必须配套 Client 源码')
   })
 
+  it('accepts an extension icon without Client source and checks its digest and pixels', () => {
+    const png = new Uint8Array(40)
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52])
+    new DataView(png.buffer).setUint32(16, 128)
+    new DataView(png.buffer).setUint32(20, 128)
+    const content = Buffer.from(png).toString('base64')
+    const candidate = (sha256: string, resource = content) =>
+      preflightNekroNxtAuthoringDefinition({
+        plugin: { kind: 'new', idPrefix: 'icon' },
+        name: '带图标的工具',
+        purpose: '图标随扩展保存。',
+        scope: 'agent',
+        code: { host: toolHost('icon_probe', "return 'ok'") },
+        resources: { 'assets/icon.png': resource },
+        icon: { path: 'assets/icon.png', sha256 },
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+    const digest = createHash('sha256').update(png).digest('hex')
+    expect(() => candidate(digest)).not.toThrow()
+    expect(() => candidate('0'.repeat(64))).toThrow('扩展图标摘要不匹配')
+    expect(() => candidate(digest, `${content}\n`)).toThrow('base64')
+    const tiny = new Uint8Array(png)
+    new DataView(tiny.buffer).setUint32(16, 16)
+    new DataView(tiny.buffer).setUint32(20, 16)
+    expect(() =>
+      candidate(createHash('sha256').update(tiny).digest('hex'), Buffer.from(tiny).toString('base64')),
+    ).toThrow('64–512')
+  })
+
+  it('saves the extension icon a dynamic definition declares into the Revision', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>'
+    try {
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'icon' },
+        name: '图标探针',
+        purpose: '验证扩展图标随保存进入 Revision。',
+        scope: 'agent',
+        code: { host: toolHost('icon_probe', "return 'ok'") },
+        resources: { 'assets/icon.svg': svg },
+        icon: { path: 'assets/icon.svg', sha256: createHash('sha256').update(svg).digest('hex') },
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      const saved = await runtime.authoring.save({
+        taskId: task.id,
+        attemptId: attempt.id,
+        displayName: '图标探针',
+        slug: 'icon-probe',
+        description: '带图标的扩展。',
+      })
+      const manifest = runtime.extensionService.revisionManifest(saved.revision)
+      expect(manifest?.icon).toEqual({
+        path: 'assets/icon.svg',
+        sha256: createHash('sha256').update(svg).digest('hex'),
+      })
+      const directory = runtime.extensionService.revisionSourceDirectory(saved.revision)
+      expect(await readFile(path.join(directory, 'assets/icon.svg'), 'utf8')).toBe(svg)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('stops a run that fails verification and records the failure on its attempt', async () => {
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
     try {

@@ -51,7 +51,10 @@ import type { AgentRevisionRecord } from '@nekro-nxt/core'
 import { canonicalJson } from '@nekro-nxt/core'
 import {
   assertClientCssScope,
+  resourceDigest,
   scopeHostUiCss,
+  validateExtensionIcon,
+  type ExtensionIcon,
   validateHostUiCss,
   validateHostUiSvg,
   type DynamicAuthoringService,
@@ -101,6 +104,7 @@ export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDe
   readonly scope: DynamicAuthoringSnapshot['scope']
   readonly resources: Readonly<Record<string, string>>
   readonly clientCss?: { readonly path: string; readonly sha256: string }
+  readonly icon?: ExtensionIcon
   readonly permissions: HostUiPermissionDeclaration
   readonly contributions: readonly JsonValue[]
   readonly config?: DynamicAuthoringSnapshot['config']
@@ -189,8 +193,9 @@ export const preflightNekroNxtAuthoringDefinition = (
   if (input.scope === 'host-adapter' && input.code.host === undefined) {
     throw new Error('动态 Adapter 预检失败：host-adapter 候选必须包含 Host 源码。')
   }
+  const clientResources = resourceEntries.filter(([resourcePath]) => resourcePath !== input.icon?.path)
   if (
-    (pages.length > 0 || resourceEntries.length > 0 || input.clientCss !== undefined) &&
+    (pages.length > 0 || clientResources.length > 0 || input.clientCss !== undefined) &&
     input.code.client === undefined
   ) {
     throw new Error('动态页面预检失败：页面声明和 Client 资源必须配套 Client 源码。')
@@ -215,9 +220,22 @@ export const preflightNekroNxtAuthoringDefinition = (
     validateHostUiSvg(source)
     referencedResources.add(page.icon.path)
   }
+  if (input.icon) {
+    const source = input.resources[input.icon.path]
+    if (source === undefined) throw new Error(`动态扩展预检失败：缺少扩展图标资源 ${input.icon.path}。`)
+    let actualDigest: string
+    try {
+      actualDigest = resourceDigest(input.icon.path, source)
+    } catch {
+      throw new Error(`动态扩展预检失败：扩展图标 ${input.icon.path} 不是规范的 base64。`)
+    }
+    if (actualDigest !== input.icon.sha256) throw new Error(`动态扩展预检失败：扩展图标摘要不匹配 ${input.icon.path}。`)
+    validateExtensionIcon(input.icon.path, source)
+    referencedResources.add(input.icon.path)
+  }
   for (const [resourcePath] of resourceEntries) {
     if (!referencedResources.has(resourcePath)) {
-      throw new Error(`动态页面预检失败：资源没有被 CSS 或页面图标声明引用：${resourcePath}。`)
+      throw new Error(`动态页面预检失败：资源没有被 CSS、页面图标或扩展图标声明引用：${resourcePath}。`)
     }
   }
   return input
@@ -365,6 +383,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       code: parsed.code,
       resources: parsed.resources,
       ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
+      ...(parsed.icon === undefined ? {} : { icon: parsed.icon }),
       permissions: parsed.permissions,
       contributions: parsed.contributions,
       ...(parsed.config === undefined ? {} : { config: parsed.config }),
@@ -386,6 +405,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       code: snapshot.code,
       resources: snapshot.resources,
       ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
+      ...(snapshot.icon === undefined ? {} : { icon: snapshot.icon }),
       permissions: snapshot.permissions,
       contributions: snapshot.contributions,
       ...(snapshot.config === undefined ? {} : { config: snapshot.config }),

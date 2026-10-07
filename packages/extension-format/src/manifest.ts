@@ -20,6 +20,8 @@ import {
   type ExtensionUiContributions,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
+import { extensionIconSchema } from './icon.js'
+
 export const extensionEntrypointsSchema = z.union([
   z.object({ host: z.literal('source/host.ts'), client: z.literal('source/client.ts') }).strict(),
   z.object({ host: z.literal('source/host.ts') }).strict(),
@@ -89,6 +91,8 @@ const scopeShared = {
   schemaVersion: z.literal(6),
   requires: ExtensionRequiresSchema.optional(),
   clientCss: clientCssSchema.optional(),
+  /** 扩展自身的图标，用于工坊、社区和智能体能力列表；不影响运行行为。 */
+  icon: extensionIconSchema.optional(),
   permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
   config: ExtensionConfigDeclarationSchema.optional(),
 }

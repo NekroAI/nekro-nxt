@@ -1,6 +1,7 @@
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, parseJsonValue } from '@nekro-nxt/contracts'
 import { strFromU8, unzipSync } from 'fflate'
 import { z } from 'zod'
+import { resourceContent } from './icon.js'
 import { materializeImportedRevision, sha256Hex, type MaterializedExtensionRevision } from './revision.js'
 
 /**
@@ -171,7 +172,10 @@ export const parseExtensionImport = (data: Uint8Array): ParsedExtensionImport =>
     resources: Object.fromEntries(
       Object.entries(files)
         .filter(([filePath]) => filePath.startsWith('revision/assets/'))
-        .map(([filePath, content]) => [filePath.slice('revision/'.length), strFromU8(content)]),
+        .map(([filePath, content]) => {
+          const resourcePath = filePath.slice('revision/'.length)
+          return [resourcePath, resourceContent(resourcePath, content)]
+        }),
     ),
   }
 }

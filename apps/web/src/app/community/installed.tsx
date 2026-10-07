@@ -8,7 +8,18 @@ import { PackageCheck, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { callHostApi } from '../../host-api-client.js'
-import { Banner, Button, Chip, EmptyState, MainContent, ObjectHeader, Skeleton, toast } from '../../ui-kit/index.js'
+import { useProductStore } from '../../product-runtime.js'
+import {
+  Banner,
+  Button,
+  Chip,
+  EmptyState,
+  ExtensionIcon,
+  MainContent,
+  ObjectHeader,
+  Skeleton,
+  toast,
+} from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { useGo } from '../model/nav.js'
 import { errorMessage } from './community-model.js'
@@ -26,6 +37,8 @@ export function InstalledView({
   readonly onChecked: () => void
 }) {
   const navigate = useGo()
+  const extensions = useProductStore((state) => state.extensions)
+  const localIcons = new Map(extensions.map((extension) => [extension.id, extension.iconUrl]))
   const [installed, setInstalled] = useState<Installed>()
   const [error, setError] = useState<string>()
   const [checking, setChecking] = useState(false)
@@ -114,7 +127,12 @@ export function InstalledView({
             const label = item.latest ? communityReviewLabel(item.latest.reviewStatus) : undefined
             return (
               <article key={item.extensionId} className={styles.item} style={{ ['--i' as string]: index }}>
-                <span className={styles.objectGlyph}>{[...item.displayName][0] ?? '扩'}</span>
+                <ExtensionIcon
+                  id={item.extensionId}
+                  name={item.displayName}
+                  iconUrl={localIcons.get(item.extensionId)}
+                  size="lg"
+                />
                 <div className={styles.itemBody}>
                   <div className={styles.itemTitle}>
                     {item.displayName}

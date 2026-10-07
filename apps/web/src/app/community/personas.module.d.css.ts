@@ -1,5 +1,4 @@
 declare const styles: {
-  readonly avatar: string
   readonly avatarPreview: string
   readonly backLink: string
   readonly card: string

@@ -139,6 +139,8 @@ import {
   type LocalExtension,
   type MountedExtension,
   type Revision,
+  EXTENSION_ICON_PATHS,
+  resourceDigest,
   toolVerificationInputSchema,
   verificationInputSchema,
 } from '@nekro-nxt/extension-runtime'
@@ -739,6 +741,7 @@ const DynamicAuthoringFacadeInputSchema = z
       .string()
       .regex(/^assets\/[a-z0-9][a-z0-9/_-]*\.module\.css$/u)
       .optional(),
+    iconPath: z.enum(EXTENSION_ICON_PATHS).optional(),
     pages: z.array(HostPageContributionSchema).max(8).default([]),
     permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
     config: ExtensionConfigDeclarationSchema.optional(),
@@ -768,6 +771,18 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
             .update(resources[parsed.clientCssPath] ?? '')
             .digest('hex'),
         }
+  const iconSource = parsed.iconPath === undefined ? undefined : resources[parsed.iconPath]
+  if (parsed.iconPath !== undefined && iconSource === undefined) {
+    throw new Error(`动态扩展预检失败：iconPath 指向的资源不存在 ${parsed.iconPath}。`)
+  }
+  let icon: { readonly path: (typeof EXTENSION_ICON_PATHS)[number]; readonly sha256: string } | undefined
+  if (parsed.iconPath !== undefined && iconSource !== undefined) {
+    try {
+      icon = { path: parsed.iconPath, sha256: resourceDigest(parsed.iconPath, iconSource) }
+    } catch {
+      throw new Error(`动态扩展预检失败：扩展图标 ${parsed.iconPath} 不是规范的 base64。`)
+    }
+  }
   const code = {
     ...(parsed.code.host === undefined ? {} : { host: parsed.code.host }),
     ...(parsed.code.client === undefined ? {} : { client: parsed.code.client }),
@@ -780,6 +795,7 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
     code,
     resources,
     ...(clientCss === undefined ? {} : { clientCss }),
+    ...(icon === undefined ? {} : { icon }),
     permissions: parsed.permissions,
     contributions: parsed.pages.map((page) => JsonValueSchema.parse(page)),
     ...(parsed.config === undefined ? {} : { config: parsed.config }),
@@ -841,11 +857,21 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
           type: 'object',
           additionalProperties: false,
           properties: {
-            path: { type: 'string', required: true, description: 'assets/ 下的 CSS Module 或 SVG 相对路径。' },
-            content: { type: 'string', required: true, description: 'UTF-8 资源源码。' },
+            path: {
+              type: 'string',
+              required: true,
+              description: 'assets/ 下的 CSS Module、SVG，或扩展图标 assets/icon.{svg,png,webp} 的相对路径。',
+            },
+            content: { type: 'string', required: true, description: 'UTF-8 资源源码；PNG / WebP 图标填标准 base64。' },
           },
         },
-        description: '页面资源；每个资源必须被 clientCssPath 或页面 SVG 图标精确引用。',
+        description: '资源；每个资源必须被 clientCssPath、页面 SVG 图标或 iconPath 精确引用。',
+      },
+      iconPath: {
+        type: 'string',
+        enum: ['assets/icon.svg', 'assets/icon.png', 'assets/icon.webp'],
+        description:
+          '可选扩展图标，指向 resources 中的一项；在工坊、社区和智能体能力列表中显示。优先用 SVG；PNG / WebP 须为 64–512 像素正方形且不超过 128 KiB。',
       },
       clientCssPath: {
         type: 'string',

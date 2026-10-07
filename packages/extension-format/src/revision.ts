@@ -20,6 +20,7 @@ import {
   toolContributionSchema,
   type ExtensionManifest,
 } from './manifest.js'
+import { extensionIconSchema, resourceDigest, validateExtensionIcon } from './icon.js'
 import { validateHostUiCss, validateHostUiSvg } from './ui-assets.js'
 
 /** 十六进制 SHA-256；同步实现，Node、浏览器与 Cloudflare Workers 结果一致。 */
@@ -69,6 +70,7 @@ const payloadDigestInputSchema = z
         permissions: HostUiPermissionDeclarationSchema,
         config: ExtensionConfigDeclarationSchema.optional(),
         clientCss: clientCssSchema.optional(),
+        icon: extensionIconSchema.optional(),
       })
       .strict(),
     sources: revisionSourcesSchema,
@@ -108,11 +110,64 @@ export const revisionDigests = (
     permissions: manifest.permissions,
     ...(manifest.config === undefined ? {} : { config: manifest.config }),
     ...(manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
+    ...(manifest.icon ? { icon: manifest.icon } : {}),
   }
   const payloadDigestInput = canonicalJson(
     JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources, resources })),
   )
   return { contentDigest: sha256Hex(digestInput), payloadDigest: sha256Hex(payloadDigestInput) }
+}
+
+export type RevisionResourceKind = 'css' | 'svg' | 'icon'
+
+/** Manifest 声明的全部资源：Client CSS、页面 SVG 图标与扩展图标，键是资源路径。 */
+export const expectedRevisionResources = (manifest: {
+  readonly clientCss?: { readonly path: string; readonly sha256: string } | undefined
+  readonly icon?: { readonly path: string; readonly sha256: string } | undefined
+  readonly contributions: readonly unknown[]
+}): Map<string, { readonly digest: string; readonly kind: RevisionResourceKind }> => {
+  const expected = new Map<string, { readonly digest: string; readonly kind: RevisionResourceKind }>()
+  if (manifest.clientCss) expected.set(manifest.clientCss.path, { digest: manifest.clientCss.sha256, kind: 'css' })
+  for (const contribution of manifest.contributions) {
+    const page = HostPageContributionSchema.safeParse(contribution)
+    if (page.success && page.data.icon.kind === 'svg') {
+      expected.set(page.data.icon.path, { digest: page.data.icon.sha256, kind: 'svg' })
+    }
+  }
+  if (manifest.icon) {
+    const shared = expected.get(manifest.icon.path)
+    if (shared !== undefined && shared.digest !== manifest.icon.sha256) {
+      throw new Error(`扩展图标与其他资源共用路径但摘要不同：${manifest.icon.path}`)
+    }
+    expected.set(manifest.icon.path, { digest: manifest.icon.sha256, kind: 'icon' })
+  }
+  return expected
+}
+
+/** 校验资源恰好是 Manifest 声明的那些、摘要一致且内容合规；`label` 只决定错误文案的主语。 */
+export const validateRevisionResources = (
+  manifest: Parameters<typeof expectedRevisionResources>[0],
+  resources: Readonly<Record<string, string>>,
+  label: '导入扩展' | '动态扩展',
+): void => {
+  const expected = expectedRevisionResources(manifest)
+  const subject = label === '导入扩展' ? '导入扩展的' : '动态扩展'
+  if (expected.size !== Object.keys(resources).length) throw new Error(`${subject}资源文件与 Manifest 声明不一致。`)
+  for (const [resourcePath, { digest, kind }] of expected) {
+    const source = resources[resourcePath]
+    if (source === undefined) throw new Error(`${label}缺少资源：${resourcePath}`)
+    let actual: string
+    try {
+      actual = resourceDigest(resourcePath, source)
+    } catch {
+      throw new Error(`${label}资源编码无效：${resourcePath}`)
+    }
+    if (actual !== digest) throw new Error(`${label}资源摘要不一致：${resourcePath}`)
+    if (kind === 'icon') validateExtensionIcon(resourcePath, source)
+    else if (kind === 'css' && resourcePath.endsWith('.module.css')) validateHostUiCss(source)
+    else if (kind === 'svg' && resourcePath.endsWith('.svg')) validateHostUiSvg(source)
+    else throw new Error(`${label}包含不支持的资源：${resourcePath}`)
+  }
 }
 
 export interface MaterializedExtensionRevision {
@@ -142,21 +197,6 @@ export function materializeImportedRevision(input: {
   ) {
     throw new Error('导入扩展的 Manifest entrypoints 与源码文件不一致。')
   }
-  const expectedResources = new Map<string, string>()
-  if (manifest.clientCss) expectedResources.set(manifest.clientCss.path, manifest.clientCss.sha256)
-  for (const page of manifest.contributions) {
-    if (page.kind === 'host-page' && page.icon.kind === 'svg') expectedResources.set(page.icon.path, page.icon.sha256)
-  }
-  if (expectedResources.size !== Object.keys(resources).length) {
-    throw new Error('导入扩展的资源文件与 Manifest 声明不一致。')
-  }
-  for (const [resourcePath, expectedDigest] of expectedResources) {
-    const source = resources[resourcePath]
-    if (source === undefined) throw new Error(`导入扩展缺少资源：${resourcePath}`)
-    if (sha256Hex(source) !== expectedDigest) throw new Error(`导入扩展资源摘要不一致：${resourcePath}`)
-    if (resourcePath.endsWith('.module.css')) validateHostUiCss(source)
-    else if (resourcePath.endsWith('.svg')) validateHostUiSvg(source)
-    else throw new Error(`导入扩展包含不支持的资源：${resourcePath}`)
-  }
+  validateRevisionResources(manifest, resources, '导入扩展')
   return { manifest, sources, resources, ...revisionDigests({ manifest, sources, resources }), scope: manifest.scope }
 }

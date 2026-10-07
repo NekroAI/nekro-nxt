@@ -48,6 +48,35 @@ describe('materializeDynamicPackage', () => {
     expect(ok.scope).toBe('host-ui')
   })
 
+  it('carries an extension icon into the Manifest and validates it like an import', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>'
+    const icon = { path: 'assets/icon.svg' as const, sha256: createHash('sha256').update(svg).digest('hex') }
+    const saved = materialize({
+      hostCode: 'return {}',
+      contributions: [tool],
+      icon,
+      resources: { 'assets/icon.svg': svg },
+    })
+    expect(saved.manifest.icon).toEqual(icon)
+    const imported = materializeImportedRevision({
+      manifest: saved.manifest,
+      sources: saved.sources,
+      resources: { 'assets/icon.svg': svg },
+    })
+    expect(imported.contentDigest).toBe(saved.contentDigest)
+    expect(() => materialize({ hostCode: 'return {}', contributions: [tool], icon })).toThrow(
+      '资源文件与 Manifest 声明不一致',
+    )
+    expect(() =>
+      materialize({
+        hostCode: 'return {}',
+        contributions: [tool],
+        icon,
+        resources: { 'assets/icon.svg': '<svg viewBox="0 0 24 24"><script/></svg>' },
+      }),
+    ).toThrow('动态扩展资源摘要不一致')
+  })
+
   it('produces digests that an import of the same content reproduces', () => {
     const saved = materialize({ hostCode: 'return {}', contributions: [tool] })
     const imported = materializeImportedRevision({ manifest: saved.manifest, sources: saved.sources })

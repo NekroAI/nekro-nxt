@@ -267,10 +267,13 @@ export interface LocalExtensionSummary {
   readonly description: string
   readonly revision: number
   readonly scope: 'agent' | 'host-adapter' | 'host-ui'
+  /** 扩展包自带的图标：取正在使用的保存记录，没有时取最新一条带图标的记录。 */
+  readonly iconUrl?: string
   readonly revisions: readonly {
     readonly id: string
     readonly revision: number
     readonly format?: 'current' | 'unavailable'
+    readonly iconUrl?: string
     readonly createdAt: number
     /** 从社区安装的保存记录的来源。 */
     readonly source?: CommunitySource

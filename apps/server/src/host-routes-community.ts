@@ -236,7 +236,12 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           res,
           200,
           HostApiContracts.publishToCommunity,
-          await community.publish({ filename: exported.filename, body: exported.body, notes: input.notes }),
+          await community.publish({
+            filename: exported.filename,
+            body: exported.body,
+            notes: input.notes,
+            listing: input.listing,
+          }),
         )
       } catch (error) {
         communityFailure(res, error, 'community-publish-failed')

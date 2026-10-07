@@ -1,3 +1,4 @@
+import type { ExtensionIcon } from '@nekro-nxt/extension-format'
 import {
   AuthoringAttemptIdSchema,
   AuthoringTaskIdSchema,
@@ -186,6 +187,8 @@ export interface DynamicAuthoringSnapshot {
   readonly code: { readonly host?: string; readonly client?: string }
   readonly resources: Readonly<Record<string, string>>
   readonly clientCss?: { readonly path: string; readonly sha256: string }
+  /** Extension icon carried into the saved Manifest; the resource lives in `resources`. */
+  readonly icon?: ExtensionIcon
   readonly permissions: HostUiPermissionDeclaration
   readonly contributions: readonly JsonValue[]
   /** Optional serialized Schemastery configuration surface carried into the saved Manifest. */

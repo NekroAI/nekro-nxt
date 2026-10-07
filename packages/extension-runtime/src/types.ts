@@ -1,4 +1,4 @@
-import type { ExtensionManifestContribution } from '@nekro-nxt/extension-format'
+import type { ExtensionIcon, ExtensionManifestContribution } from '@nekro-nxt/extension-format'
 import type {
   AgentId,
   ExtensionConfigDeclaration,
@@ -56,6 +56,8 @@ export interface DynamicPackageSnapshot {
   readonly config?: ExtensionConfigDeclaration
   readonly resources?: Readonly<Record<string, string>>
   readonly clientCss?: { readonly path: string; readonly sha256: string }
+  /** Extension icon; its resource text is base64 for PNG / WebP and source for SVG. */
+  readonly icon?: ExtensionIcon
 }
 
 export type ExtensionContribution = ExtensionManifestContribution

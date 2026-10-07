@@ -50,7 +50,8 @@ const inlineMarkdownComponents: Components = {
   p: ({ children }) => <span>{children}</span>,
 }
 
-function SafeMarkdown({ text, inline = false }: { readonly text: string; readonly inline?: boolean }) {
+/** 安全渲染 Markdown：不渲染 HTML，只保留 http(s) 与 mailto 链接，链接在新窗口打开。 */
+export function SafeMarkdown({ text, inline = false }: { readonly text: string; readonly inline?: boolean }) {
   const markdown = (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}

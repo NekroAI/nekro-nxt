@@ -1,4 +1,4 @@
-import { Boxes, ExternalLink, Maximize2, MessagesSquare, Minimize2, Plus, Unplug } from 'lucide-react'
+import { ExternalLink, Maximize2, MessagesSquare, Minimize2, Plus, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
@@ -12,6 +12,7 @@ import {
   Chip,
   ConfirmDialog,
   DataTable,
+  ExtensionIcon,
   IconButton,
   Menu,
   Overlay,
@@ -494,7 +495,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
               key={extension.id}
               label={
                 <span className={styles.extensionLabel}>
-                  <Boxes size={15} aria-hidden="true" />
+                  <ExtensionIcon id={extension.id} name={extension.name} iconUrl={extension.iconUrl} size="sm" />
                   {extension.name}
                 </span>
               }

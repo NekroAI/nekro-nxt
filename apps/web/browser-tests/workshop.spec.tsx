@@ -3,6 +3,7 @@ import { chromium, expect, test, type Browser, type Page } from '@playwright/tes
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { crc32, deflateSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
@@ -13,6 +14,30 @@ import {
   targetChannelId,
   targetEpisodeId,
 } from '../e2e/fixtures/product-quality.js'
+
+/** A real, solid-coloured square PNG so the browser decodes it like a package icon. */
+const solidPng = (size: number): Uint8Array => {
+  const chunk = (type: string, data: Uint8Array) => {
+    const body = Buffer.concat([Buffer.from(type, 'latin1'), data])
+    const out = Buffer.alloc(body.length + 8)
+    out.writeUInt32BE(data.length, 0)
+    body.copy(out, 4)
+    out.writeUInt32BE(crc32(body), body.length + 4)
+    return out
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(size, 0)
+  header.writeUInt32BE(size, 4)
+  header.set([8, 2, 0, 0, 0], 8)
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: size }, () => [63, 91, 143]).flat())])
+  const pixels = deflateSync(Buffer.concat(Array.from({ length: size }, () => row)))
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', pixels),
+    chunk('IEND', new Uint8Array()),
+  ])
+}
 
 /** Workshop journeys against a stubbed Host: every `/api` call is answered here, never by a real service. */
 test.describe('workshop', () => {
@@ -297,6 +322,34 @@ test.describe('workshop', () => {
       await expect(overview).toContainText('远程 https://docs.example.com/mcp')
       await expect(overview).not.toContainText('还没有经过验证')
       await expect(page.getByRole('region', { name: '使用' })).toContainText('缺少凭据：Authorization')
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('shows the package icon of an extension in the list, its detail and the agent capabilities', async () => {
+    const iconPath = `/api/extensions/${summaryExtensionId}/revisions/xrv_summary/icon/${'c'.repeat(64)}.png`
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id !== summaryExtensionId
+          ? extension
+          : { ...extension, revisions: extension.revisions.map((revision) => ({ ...revision, iconUrl: iconPath })) },
+      ),
+    }
+    const page = await openWorkshop(snapshot)
+    const iconRequests: string[] = []
+    await page.route(`**${iconPath}`, (route) => {
+      iconRequests.push(route.request().url())
+      return route.fulfill({ contentType: 'image/png', body: Buffer.from(solidPng(64)) })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      const icons = page.locator(`img[src="${iconPath}"]`)
+      await expect(icons).toHaveCount(2)
+      await expect.poll(() => icons.first().evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(64)
+      expect(iconRequests.length).toBeGreaterThan(0)
+      await page.screenshot({ path: '.local/browser-test-results/workshop-extension-icon.png' })
     } finally {
       await page.close()
     }

@@ -99,16 +99,6 @@
   font-weight: 650;
 }
 
-.objectGlyph[data-scope='host-adapter'] {
-  background: color-mix(in srgb, var(--brass) 18%, transparent);
-  color: var(--brass);
-}
-
-.objectGlyph[data-scope='host-ui'] {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
 .lead {
   max-width: 72ch;
   margin: 0;
@@ -335,10 +325,15 @@
 
 .communityCardHead {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--s-2);
+  align-items: center;
+  gap: var(--s-3);
   min-width: 0;
+}
+
+.communityCardTitle {
+  display: grid;
+  min-width: 0;
+  font: var(--t-note);
 }
 
 .communityCardHead b {
@@ -399,4 +394,55 @@
   color: var(--fg-2);
   font: var(--t-body);
   white-space: pre-wrap;
+}
+
+/* 作者填写的标签与源码入口，紧跟一句话简介。 */
+.listingMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* 审查的轻量呈现：一行状态与摘要，展开后显示全部发现。 */
+.reviewLine {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+}
+
+.reviewLineHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.reviewLineSummary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-2);
+  font: var(--t-note);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 作者介绍里的标题不压过页面的分组标题。 */
+.authorMarkdown {
+  max-width: 72ch;
+  color: var(--fg-2);
+  font: var(--t-body);
+}
+
+.authorMarkdown h1,
+.authorMarkdown h2,
+.authorMarkdown h3,
+.authorMarkdown h4 {
+  margin: var(--s-3) 0 var(--s-1);
+  color: var(--fg);
+  font: var(--t-title);
 }

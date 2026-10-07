@@ -182,6 +182,19 @@ const eventCursor = (event: unknown): SyncCursor | undefined => {
 
 const nonEmptyLabel = (value: string | undefined, fallback: string): string => value?.trim() || fallback
 
+/** 扩展图标跟随正在使用的保存记录（安装或最近一次启用），否则取最新一条带图标的记录。 */
+export const extensionIconUrl = (extension: {
+  readonly installation?: { readonly extensionRevisionId: string } | undefined
+  readonly activations: readonly { readonly extensionRevisionId: string; readonly activatedAt: number }[]
+  readonly revisions: readonly { readonly id: string; readonly iconUrl?: string | undefined }[]
+}): string | undefined => {
+  const inUse =
+    extension.installation?.extensionRevisionId ??
+    extension.activations.toSorted((left, right) => right.activatedAt - left.activatedAt)[0]?.extensionRevisionId
+  const current = extension.revisions.find((revision) => revision.id === inUse)
+  return current?.iconUrl ?? extension.revisions.findLast((revision) => revision.iconUrl !== undefined)?.iconUrl
+}
+
 const safeExternalTargetUrl = (value: unknown): string | undefined => {
   if (typeof value !== 'string' || value.length > 2048) return undefined
   try {
@@ -519,6 +532,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
   })
   const extensionsLocal = json.extensions.map((extension) => {
     const latestRevision = extension.revisions.at(-1)
+    const iconUrl = extensionIconUrl(extension)
     return {
       id: extension.id,
       slug: extension.slug,
@@ -526,10 +540,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       description: extension.description,
       revision: latestRevision?.revisionNumber ?? 0,
       scope: extension.scope,
+      ...(iconUrl === undefined ? {} : { iconUrl }),
       revisions: extension.revisions.map((revision) => ({
         id: revision.id,
         revision: revision.revisionNumber,
         format: revision.format ?? 'current',
+        ...(revision.iconUrl === undefined ? {} : { iconUrl: revision.iconUrl }),
         createdAt: revision.createdAt,
         ...(revision.source === undefined ? {} : { source: revision.source }),
         scope: revision.scope,
