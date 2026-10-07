@@ -561,8 +561,10 @@ export class HostQueries {
       },
       workTreeOrder: runtime.repository.getWorkTreeOrder(),
       dynamic: [...agentIds].flatMap((agentId) => projectDynamicInventory(runtime, agentId)),
+      // A deleted agent's creation tasks stay as history but leave the Workshop with the agent.
       authoringTasks: runtime.repository
         .listAuthoringTasks()
+        .filter((task) => agentIds.has(task.agentId))
         .map((task) => projectAuthoringTask(runtime, task, attemptsByTask.get(task.id) ?? [])),
       scheduledTasks: runtime.scheduledTasks.list(),
     })

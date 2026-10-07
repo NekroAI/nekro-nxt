@@ -536,6 +536,23 @@ return { inject: ['nxt'], apply() {} }`
       ).rejects.toThrow('test credential missing')
       await runtime.authoringTestSecrets.clear(task.id)
       expect((await runtime.authoringTestSecrets.describe(task.id)).configured).toEqual([])
+
+      // Deleting the agent removes its test credentials and takes its tasks out of the Workshop; the history stays.
+      await runtime.authoringTestSecrets.set(task.id, { apiKey: 'fixture-test-key' })
+      await runtime.deleteAgent(entity.agentId, { deleteAutoCreatedBuiltInChannels: true })
+      expect((await runtime.authoringTestSecrets.describe(task.id)).configured).toEqual([])
+      expect(runtime.repository.getAuthoringTask(task.id)).toBeDefined()
+      const webContext = new Context()
+      try {
+        await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+        const api = createNekroHostApi(webContext.webServer, runtime)
+        const snapshot = HostApiContracts.snapshot.parseResponse(
+          await (await fetch(`http://127.0.0.1:${api.port}/api/snapshot`)).json(),
+        )
+        expect(snapshot.authoringTasks.map(({ id }) => id)).not.toContain(task.id)
+      } finally {
+        await webContext.fiber.dispose()
+      }
     } finally {
       await runtime.dispose()
     }

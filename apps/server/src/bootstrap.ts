@@ -985,6 +985,8 @@ export class NekroRuntime {
     this.core.deleteAgent(agentId)
     this.#agents.delete(agentId)
     await this.#deleteCredentials(secretReferences)
+    // Its creation tasks can never run again; their test credentials go, the task history stays.
+    for (const task of this.repository.listAuthoringTasks(agentId)) await this.authoringTestSecrets.clear(task.id)
     // Lanes are stopped and bindings gone, so nothing writes into the workspace any more.
     if (options.deleteWorkspace)
       await rm(agentWorkspacePath(this.workspaceRoot, agentId), { recursive: true, force: true })
