@@ -1,6 +1,13 @@
-import { ExtensionIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+import {
+  CommunitySourceSchema,
+  ExtensionIdSchema,
+  HostApiContracts,
+  type CommunitySource,
+  type ExtensionId,
+} from '@nekro-nxt/contracts'
 import type { ServerResponse } from 'node:http'
-import { COMMUNITY_CALLBACK_PATH, CommunityError } from './community.js'
+import type { NekroRuntime } from './bootstrap.js'
+import { COMMUNITY_CALLBACK_PATH, CommunityError, UPDATE_CHECK_INTERVAL_MS } from './community.js'
 import {
   createExtensionRevisionExport,
   readJsonBody,
@@ -65,6 +72,94 @@ const communityFailure = (res: ServerResponse, error: unknown, fallbackCode: str
  */
 export function registerCommunityRoutes({ runtime, registerRoute, extensionImports }: HostRouteContext): () => void {
   const community = runtime.community
+  const checkInstalled = () => community.installed(installedSources(runtime))
+  // 每天检查一次已安装扩展的更新；失败静默，下次打开社区时会再检查。
+  const timer = setInterval(() => {
+    void checkInstalled().catch(() => undefined)
+  }, UPDATE_CHECK_INTERVAL_MS)
+  timer.unref()
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/community/endpoint',
+    handler: async (req, res) => {
+      try {
+        if (req.method === 'GET') {
+          writeContractJson(res, 200, HostApiContracts.getCommunityEndpoint, community.endpoint())
+          return
+        }
+        if (req.method === 'PUT') {
+          const input = HostApiContracts.updateCommunityEndpoint.parseRequest(await readJsonBody(req))
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.updateCommunityEndpoint,
+            community.setEndpoint(input.url, input.acknowledgeInsecure),
+          )
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', '只支持 GET 与 PUT。')
+      } catch (error) {
+        communityFailure(res, error, 'community-endpoint-invalid')
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/community/endpoint/test',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const input = HostApiContracts.testCommunityEndpoint.parseRequest(await readJsonBody(req))
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.testCommunityEndpoint,
+          await community.testEndpoint(input.url, input.acknowledgeInsecure),
+        )
+      } catch (error) {
+        communityFailure(res, error, 'community-endpoint-invalid')
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/community/installed',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        return
+      }
+      try {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const cached = url.searchParams.get('refresh') === '1' ? undefined : community.cachedInstalled()
+        writeContractJson(res, 200, HostApiContracts.listCommunityInstalled, cached ?? (await checkInstalled()))
+      } catch (error) {
+        communityFailure(res, error, 'community-request-failed')
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/community/mine',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        return
+      }
+      try {
+        writeContractJson(res, 200, HostApiContracts.listCommunityMine, { items: await community.mine() })
+      } catch (error) {
+        communityFailure(res, error, 'community-request-failed')
+      }
+    },
+  })
 
   registerRoute({
     kind: 'exact',
@@ -91,12 +186,12 @@ export function registerCommunityRoutes({ runtime, registerRoute, extensionImpor
   registerRoute({
     kind: 'exact',
     path: '/api/community/status',
-    handler: (req, res) => {
+    handler: async (req, res) => {
       if (req.method !== 'GET') {
         writeError(res, 405, 'method-not-allowed', '只支持 GET。')
         return
       }
-      writeContractJson(res, 200, HostApiContracts.getCommunityStatus, community.status())
+      writeContractJson(res, 200, HostApiContracts.getCommunityStatus, await community.status())
     },
   })
 
@@ -175,6 +270,36 @@ export function registerCommunityRoutes({ runtime, registerRoute, extensionImpor
           writeContractJson(res, 200, HostApiContracts.getCommunityExtension, await community.getExtension(extensionId))
           return
         }
+        const reviewMatch = /^\/api\/community\/releases\/([^/]+)\/review$/u.exec(url.pathname)
+        if (reviewMatch) {
+          const releaseId = HostApiContracts.getCommunityReleaseReview.parseParams({
+            releaseId: decodeURIComponent(reviewMatch[1] ?? ''),
+          }).releaseId
+          if (req.method === 'GET') {
+            writeContractJson(res, 200, HostApiContracts.getCommunityReleaseReview, await community.review(releaseId))
+            return
+          }
+          if (req.method === 'POST') {
+            await community.requestReview(releaseId)
+            writeContractJson(res, 200, HostApiContracts.requestCommunityReview, { ok: true })
+            return
+          }
+          writeError(res, 405, 'method-not-allowed', '只支持 GET 与 POST。')
+          return
+        }
+        const withdrawMatch = /^\/api\/community\/releases\/([^/]+)\/withdraw$/u.exec(url.pathname)
+        if (withdrawMatch) {
+          if (req.method !== 'POST') {
+            writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+            return
+          }
+          const releaseId = HostApiContracts.withdrawCommunityRelease.parseParams({
+            releaseId: decodeURIComponent(withdrawMatch[1] ?? ''),
+          }).releaseId
+          await community.withdraw(releaseId)
+          writeContractJson(res, 200, HostApiContracts.withdrawCommunityRelease, { ok: true })
+          return
+        }
         const importMatch = /^\/api\/community\/releases\/([^/]+)\/import$/u.exec(url.pathname)
         if (importMatch) {
           if (req.method !== 'POST') {
@@ -185,7 +310,14 @@ export function registerCommunityRoutes({ runtime, registerRoute, extensionImpor
             releaseId: decodeURIComponent(importMatch[1] ?? ''),
           })
           const bytes = await community.downloadRelease(params.releaseId)
-          writeContractJson(res, 200, HostApiContracts.importCommunityRelease, extensionImports.inspect(runtime, bytes))
+          const inspection = extensionImports.inspect(runtime, bytes)
+          extensionImports.attachSource(inspection.token, {
+            kind: 'community',
+            communityUrl: community.communityUrl,
+            releaseId: params.releaseId,
+            publisherHandle: await community.publisherOf(inspection.extensionId),
+          })
+          writeContractJson(res, 200, HostApiContracts.importCommunityRelease, inspection)
           return
         }
         writeError(res, 404, 'not-found', '接口不存在。')
@@ -195,5 +327,36 @@ export function registerCommunityRoutes({ runtime, registerRoute, extensionImpor
     },
   })
 
-  return () => undefined
+  return () => clearInterval(timer)
+}
+
+/** 每个扩展最近一次从社区导入的保存记录及其来源。 */
+const installedSources = (
+  runtime: NekroRuntime,
+): { extensionId: ExtensionId; displayName: string; revisionId: string; source: CommunitySource }[] => {
+  const latest = new Map<string, ReturnType<NekroRuntime['repository']['listExtensionRevisionSources']>[number]>()
+  for (const record of runtime.repository.listExtensionRevisionSources()) {
+    const current = latest.get(record.extensionId)
+    if (!current || record.installedAt > current.installedAt) latest.set(record.extensionId, record)
+  }
+  return [...latest.values()].flatMap((record) => {
+    const extension = runtime.repository.getExtension(record.extensionId)
+    const source = CommunitySourceSchema.safeParse({
+      kind: record.kind,
+      communityUrl: record.communityUrl,
+      releaseId: record.releaseId,
+      publisherHandle: record.publisherHandle,
+      installedAt: record.installedAt,
+    })
+    return extension && source.success
+      ? [
+          {
+            extensionId: record.extensionId,
+            displayName: extension.displayName,
+            revisionId: record.revisionId,
+            source: source.data,
+          },
+        ]
+      : []
+  })
 }

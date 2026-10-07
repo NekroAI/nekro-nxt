@@ -1,109 +1,176 @@
-import { useState } from 'react'
-import { Banner, Button, ConfirmDialog, PropertyGroup, PropertyList, PropertyRow, toast } from '../../ui-kit/index.js'
-import { relativeTime } from '../channels/timeline-model.js'
-import { openExternal, useCommunityStatus } from '../community/community-model.js'
+import { HostApiContracts, type CommunityEndpoint } from '@nekro-nxt/contracts'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { callHostApi } from '../../host-api-client.js'
+import {
+  Banner,
+  Button,
+  Field,
+  Input,
+  PropertyGroup,
+  PropertyList,
+  PropertyRow,
+  Switch,
+  toast,
+} from '../../ui-kit/index.js'
+import { ENVIRONMENT_LABEL, errorMessage } from '../community/community-model.js'
 import styles from './settings.module.css'
 
-const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+const SOURCE_LABEL: Readonly<Record<CommunityEndpoint['source'], string>> = {
+  setting: '在这里设置',
+  environment: '来自环境变量 NEKRO_COMMUNITY_URL',
+  default: '默认的正式社区',
+}
 
-/** 本实例登录的社区账号：用于发布扩展。浏览与安装社区扩展不需要登录。 */
+/** 局域网 HTTP 需要确认风险；本机与 HTTPS 不需要。与 Host 的判断一致，只用于提前显示确认开关。 */
+const looksInsecure = (value: string): boolean => {
+  try {
+    const url = new URL(value.trim())
+    return url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+/** 社区地址：组织成员可以连接测试站或本机社区开发服务调试。账号登录在「社区 → 账号」。 */
 export function CommunitySection() {
-  const community = useCommunityStatus()
-  const [confirmSignOut, setConfirmSignOut] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const status = community.status
-  const account = status?.account ?? null
+  const [endpoint, setEndpoint] = useState<CommunityEndpoint>()
+  const [draft, setDraft] = useState('')
+  const [acknowledge, setAcknowledge] = useState(false)
+  const [busy, setBusy] = useState<'' | 'save' | 'test' | 'reset'>('')
+  const [result, setResult] = useState<{ ok: boolean; message: string }>()
+  const [error, setError] = useState<string>()
 
-  const signIn = async () => {
-    setBusy(true)
+  useEffect(() => {
+    callHostApi(HostApiContracts.getCommunityEndpoint, {}, undefined)
+      .then((value) => {
+        setEndpoint(value)
+        setDraft(value.url)
+      })
+      .catch((caught: unknown) => setError(errorMessage(caught)))
+  }, [])
+
+  const insecure = looksInsecure(draft)
+  const run = async (kind: Exclude<typeof busy, ''>, action: () => Promise<void>) => {
+    setBusy(kind)
     try {
-      await community.signIn()
-    } catch (error) {
-      failure(error)
+      await action()
+    } catch (caught) {
+      toast(errorMessage(caught), { tone: 'bad' })
     } finally {
-      setBusy(false)
+      setBusy('')
     }
   }
 
-  if (!status) {
-    return community.error ? (
-      <Banner tone="bad">{community.error}</Banner>
-    ) : (
-      <p className={styles.notice}>正在读取社区账号…</p>
-    )
-  }
+  if (error) return <Banner tone="bad">{error}</Banner>
+  if (!endpoint) return <p className={styles.notice}>正在读取社区设置…</p>
 
   return (
     <>
       <PropertyGroup
-        title={account ? '已登录' : '未登录'}
-        description={
-          account
-            ? '这个实例可以用你的社区账号发布扩展、查看审查结果。'
-            : '登录后可以把扩展发布到社区并查看审查结果。浏览和安装社区扩展不需要登录。'
-        }
+        title="社区地址"
+        description="NekroNXT 从这里浏览、安装与发布扩展。组织成员调试时可以改为测试站或本机社区开发服务；每个地址分别保存登录。"
       >
         <PropertyList>
-          {account ? (
-            <>
-              <PropertyRow label="账号">
-                <span>
-                  {account.displayName}（@{account.handle}）
-                </span>
-              </PropertyRow>
-              {status.signedInAt !== null ? (
-                <PropertyRow label="登录时间">
-                  <span className={styles.faint}>{relativeTime(status.signedInAt)}</span>
-                </PropertyRow>
-              ) : null}
-            </>
-          ) : null}
-          <PropertyRow label="社区地址">
-            <span className={styles.faint}>{status.communityUrl}</span>
+          <PropertyRow label="当前地址">
+            <span className={styles.faint}>{endpoint.url}</span>
+          </PropertyRow>
+          <PropertyRow label="来源">
+            <span className={styles.faint}>{SOURCE_LABEL[endpoint.source]}</span>
           </PropertyRow>
         </PropertyList>
       </PropertyGroup>
-      {community.waiting && !account ? (
-        <Banner tone="info">已在浏览器中打开社区授权页。在那里同意授权后，这里会自动更新。</Banner>
+      <Field label="新地址" hint={`默认 ${endpoint.defaultUrl}。只填协议、主机与端口。`}>
+        <Input
+          value={draft}
+          spellCheck={false}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            setResult(undefined)
+          }}
+          placeholder={endpoint.defaultUrl}
+        />
+      </Field>
+      {insecure ? (
+        <Banner tone="warn">
+          这是未加密的 HTTP 地址，只允许局域网地址。扩展包会以明文在网络中传输，只在你信任的网络中使用。
+          <div className={styles.actions}>
+            <Switch checked={acknowledge} onCheckedChange={setAcknowledge} label="我了解风险" />
+            <span>我了解风险</span>
+          </div>
+        </Banner>
       ) : null}
+      {result ? <Banner tone={result.ok ? 'ok' : 'bad'}>{result.message}</Banner> : null}
       <div className={styles.actions}>
-        {account ? (
-          <>
-            <Button onClick={() => openExternal(`${status.communityUrl}/me`)}>在社区查看我的扩展</Button>
-            <Button variant="ghost" onClick={() => setConfirmSignOut(true)}>
-              退出登录
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button variant="primary" busy={busy} onClick={() => void signIn()}>
-              {community.waiting ? '重新打开授权页' : '登录社区'}
-            </Button>
-            {community.waiting ? (
-              <Button variant="ghost" onClick={community.cancelWaiting}>
-                取消
-              </Button>
-            ) : null}
-          </>
-        )}
-      </div>
-      <ConfirmDialog
-        open={confirmSignOut}
-        onOpenChange={setConfirmSignOut}
-        title="退出社区登录？"
-        confirmLabel="退出登录"
-        onConfirm={async () => {
-          setConfirmSignOut(false)
-          try {
-            await community.signOut()
-            toast('已退出社区登录')
-          } catch (error) {
-            failure(error)
+        <Button
+          busy={busy === 'test'}
+          disabled={!draft.trim() || (insecure && !acknowledge)}
+          onClick={() =>
+            void run('test', async () => {
+              const tested = await callHostApi(
+                HostApiContracts.testCommunityEndpoint,
+                {},
+                { url: draft.trim(), acknowledgeInsecure: acknowledge },
+              )
+              setResult({
+                ok: tested.ok,
+                message: tested.environment
+                  ? `${tested.message}（${ENVIRONMENT_LABEL[tested.environment]}）`
+                  : tested.message,
+              })
+            })
           }
-        }}
-      >
-        <p>这个实例会删除保存的社区凭据，并在社区撤销授权。已经安装的社区扩展不受影响。</p>
-      </ConfirmDialog>
+        >
+          测试连接
+        </Button>
+        <Button
+          variant="primary"
+          busy={busy === 'save'}
+          disabled={!draft.trim() || draft.trim() === endpoint.url || (insecure && !acknowledge)}
+          onClick={() =>
+            void run('save', async () => {
+              const saved = await callHostApi(
+                HostApiContracts.updateCommunityEndpoint,
+                {},
+                { url: draft.trim(), acknowledgeInsecure: acknowledge },
+              )
+              setEndpoint(saved)
+              setDraft(saved.url)
+              toast('已切换社区地址')
+            })
+          }
+        >
+          保存
+        </Button>
+        {endpoint.source === 'setting' ? (
+          <Button
+            variant="ghost"
+            busy={busy === 'reset'}
+            onClick={() =>
+              void run('reset', async () => {
+                const saved = await callHostApi(
+                  HostApiContracts.updateCommunityEndpoint,
+                  {},
+                  { url: null, acknowledgeInsecure: false },
+                )
+                setEndpoint(saved)
+                setDraft(saved.url)
+                setResult(undefined)
+                toast('已恢复默认地址')
+              })
+            }
+          >
+            恢复默认
+          </Button>
+        ) : null}
+      </div>
+      <p className={styles.notice}>
+        社区账号的登录与退出在{' '}
+        <Link to="/community/account" className={styles.link}>
+          社区 → 账号
+        </Link>
+        。
+      </p>
     </>
   )
 }

@@ -1192,9 +1192,10 @@ test.describe('NekroNxt browser projections', () => {
     }
     const importRequests: string[] = []
     await withProductPage(
-      '/workshop/community',
+      '/community',
       async (page) => {
         await page.getByRole('link', { name: /社区天气/u }).click()
+        await playwrightExpect(page.getByText('测试站')).toBeVisible()
         await playwrightExpect(page.getByRole('heading', { name: '社区天气' })).toBeVisible()
         await playwrightExpect(page.locator('body')).toContainText('风险未知')
         await playwrightExpect(page.locator('body')).toContainText('访问指定网站')
@@ -1206,6 +1207,17 @@ test.describe('NekroNxt browser projections', () => {
       },
       browserSnapshot,
       async (page) => {
+        await page.route('**/api/community/status', (request) =>
+          request.fulfill({
+            json: {
+              communityUrl: 'https://community.example.test',
+              environment: 'staging',
+              account: null,
+              signedInAt: null,
+              updatesAvailable: 0,
+            },
+          }),
+        )
         await page.route('**/api/community/extensions?**', (request) =>
           request.fulfill({ json: { items: [summary], nextCursor: null } }),
         )

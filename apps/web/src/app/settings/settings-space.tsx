@@ -73,7 +73,7 @@ const SECTIONS = [
   { key: 'adapters', label: '平台适配器', icon: <Plug size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
-  { key: 'community', label: '社区账号', icon: <Store size={16} /> },
+  { key: 'community', label: '社区', icon: <Store size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
   { key: 'about', label: '关于', icon: <Info size={16} /> },
 ] as const
@@ -178,7 +178,7 @@ export default function SettingsSpace() {
         ) : null}
         {section === 'community' ? (
           <>
-            <SectionHead title="社区账号" />
+            <SectionHead title="社区" />
             <CommunitySection />
           </>
         ) : null}

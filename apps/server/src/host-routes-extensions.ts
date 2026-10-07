@@ -580,6 +580,15 @@ export function registerExtensionsRoutes({
             dshVersion: DEEPSEEK_HARNESS_VERSION,
             ...(input.localSlug === undefined ? {} : { localSlug: input.localSlug }),
           })
+          const source = extensionImports.source(params.token)
+          if (source) {
+            runtime.repository.recordExtensionRevisionSource({
+              revisionId: result.revision.id,
+              extensionId: result.extension.id,
+              ...source,
+              installedAt: Date.now(),
+            })
+          }
           extensionImports.delete(params.token)
           broadcastExtensionsChanged()
           writeContractJson(res, 200, HostApiContracts.commitExtensionImport, {

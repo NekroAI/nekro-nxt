@@ -1,0 +1,369 @@
+/* 社区空间：左侧分组列表（发现、已安装、我的发布、账号），右侧主区。 */
+.list {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.row {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0 var(--s-3);
+  min-height: var(--row-tall);
+  padding: var(--s-2) var(--s-3) var(--s-2) var(--s-4);
+  border-radius: var(--r-2);
+  color: var(--fg);
+  text-decoration: none;
+  transition: background var(--dur-1);
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row[data-selected='true']:hover {
+  background: transparent;
+}
+
+.row > :first-child {
+  grid-row: 1 / span 2;
+}
+
+.rowGlyph {
+  display: grid;
+  place-items: center;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  border-radius: var(--r-1);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.rowName {
+  overflow: hidden;
+  font: var(--t-title);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowState {
+  display: flex;
+  grid-row: 1;
+  grid-column: 3;
+}
+
+.rowSub {
+  grid-column: 2 / span 2;
+  overflow: hidden;
+  color: var(--muted);
+  font: var(--t-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  min-width: 18px;
+  padding: 0 var(--s-1);
+  border-radius: 999px;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
+  font: var(--t-caption);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.account {
+  margin-top: auto;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.avatar {
+  width: var(--control-sm);
+  height: var(--control-sm);
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.objectGlyph {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-3);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-xl);
+  font-weight: 650;
+}
+
+.objectGlyph[data-scope='host-adapter'] {
+  background: color-mix(in srgb, var(--brass) 18%, transparent);
+  color: var(--brass);
+}
+
+.objectGlyph[data-scope='host-ui'] {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.lead {
+  max-width: 72ch;
+  margin: 0;
+  color: var(--fg-2);
+  font: var(--t-body);
+}
+
+.faint {
+  color: var(--muted);
+}
+
+.textLink {
+  color: var(--accent);
+  font: var(--t-note);
+  text-decoration: none;
+}
+
+.textLink:hover {
+  text-decoration: underline;
+}
+
+.stack {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.cardList {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  animation: rise var(--dur-2) var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+.itemBody {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.itemTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font: var(--t-title);
+}
+
+.itemMeta {
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.itemActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+.releases {
+  display: grid;
+  gap: var(--s-1);
+  margin: var(--s-2) 0 0;
+  padding: var(--s-2) 0 0;
+  border-top: 1px dashed var(--line);
+  list-style: none;
+}
+
+.release {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font: var(--t-note);
+}
+
+.dimensions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--s-2);
+}
+
+.dimension {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+
+.dimensionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: var(--t-label);
+}
+
+.finding {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--line);
+  font: var(--t-body);
+}
+
+.finding:last-child {
+  border-bottom: 0;
+}
+
+.suggestion {
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--inset);
+  font: var(--t-note);
+}
+
+.location {
+  color: var(--muted);
+  font: var(--t-caption);
+  font-family: var(--font-mono);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* Community catalog: search above a card grid; a card opens the extension's community detail. */
+.communityTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.communityTools > :first-child {
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+
+.communityGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s-3);
+}
+
+.communityCard {
+  display: grid;
+  align-content: start;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+  color: var(--fg);
+  font: var(--t-body);
+  text-decoration: none;
+  transition:
+    box-shadow var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+
+.communityCard:hover {
+  border-color: var(--line-2);
+  box-shadow: var(--sh-2);
+}
+
+.communityCardHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.communityCardHead b {
+  overflow: hidden;
+  font: var(--t-title);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.communitySummary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--fg-2);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.communityCardFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font: var(--t-note);
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--s-1);
+  color: var(--fg-2);
+  font: var(--t-note);
+  text-decoration: none;
+}
+
+.backLink:hover {
+  color: var(--fg);
+}
+
+.communityReview {
+  display: grid;
+  gap: var(--s-2);
+  font: var(--t-body);
+}
+
+.communityReview p {
+  margin: 0;
+}
+
+.communityHighlight {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.communityDescription {
+  margin: 0;
+  color: var(--fg-2);
+  font: var(--t-body);
+  white-space: pre-wrap;
+}

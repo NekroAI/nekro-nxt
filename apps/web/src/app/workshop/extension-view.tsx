@@ -107,7 +107,13 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         meta={
           <>
             <span>{scopeLabel[extension.scope]}</span>
-            <span>{extension.createdByAgent ? `由${extension.createdByAgent}创造` : '本地导入'}</span>
+            {current?.source ? (
+              <Link to={`/community/extensions/${extension.id}`} className={styles.metaLink}>
+                来自社区 @{current.source.publisherHandle}
+              </Link>
+            ) : (
+              <span>{extension.createdByAgent ? `由${extension.createdByAgent}创造` : '本地导入'}</span>
+            )}
             {latest ? <span>{relativeTime(latest.createdAt)}保存</span> : null}
           </>
         }

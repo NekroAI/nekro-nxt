@@ -1,9 +1,11 @@
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import {
+  CommunitySourceSchema,
   HostApiContracts,
   configFields,
   type AgentId,
+  type CommunitySource,
   type ChannelId,
   type ChannelRuntimeProjection,
   type ExtensionRevisionId,
@@ -141,6 +143,7 @@ export const projectExtensions = (runtime: NekroRuntime) => {
           ui: extensionUiContributions(manifest),
           ...(manifest?.config === undefined ? {} : { configSchema: manifest.config.schema }),
           createdAt: revision.createdAt,
+          ...communitySource(runtime, revision.id),
           scope: extension.scope,
           contributions:
             verification === undefined
@@ -569,4 +572,18 @@ export class HostQueries {
       scheduledTasks: runtime.scheduledTasks.list(),
     })
   }
+}
+
+/** 从社区安装的保存记录带上来源，扩展详情据此显示「来自社区 @作者」。 */
+const communitySource = (runtime: NekroRuntime, revisionId: ExtensionRevisionId): { source?: CommunitySource } => {
+  const record = runtime.repository.getExtensionRevisionSource(revisionId)
+  if (!record) return {}
+  const parsed = CommunitySourceSchema.safeParse({
+    kind: record.kind,
+    communityUrl: record.communityUrl,
+    releaseId: record.releaseId,
+    publisherHandle: record.publisherHandle,
+    installedAt: record.installedAt,
+  })
+  return parsed.success ? { source: parsed.data } : {}
 }

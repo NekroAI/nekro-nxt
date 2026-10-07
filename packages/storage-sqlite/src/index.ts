@@ -18,6 +18,8 @@ import { createAuthoringRepository } from './repositories/authoring.js'
 import { createExtensionStorageRepository, type ExtensionStorageRepository } from './repositories/extension-storage.js'
 import { createExtensionJobsRepository, type ExtensionJobsRepository } from './repositories/extension-jobs.js'
 import { createInboundHooksRepository, type InboundHooksRepository } from './repositories/inbound-hooks.js'
+import { createExtensionSourcesRepository } from './repositories/extension-sources.js'
+export type { ExtensionRevisionSourceRecord } from './repositories/extension-sources.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 
 export * from './backup.js'
@@ -82,6 +84,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #extensionStorage
   readonly #extensionJobs
   readonly #inboundHooks
+  readonly #extensionSources
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
 
@@ -101,6 +104,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensionStorage = createExtensionStorageRepository(database.db)
     this.#extensionJobs = createExtensionJobsRepository(database.db)
     this.#inboundHooks = createInboundHooksRepository(database.db)
+    this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.projections = createProjectionRepository(database.db)
   }
 
@@ -544,6 +548,13 @@ export class SqliteCoreRepository implements CurrentRepository {
   ) => this.#extensionJobs.deleteFinishedExtensionJobs(...args)
   readonly listAllExtensionJobs = () => this.#extensionJobs.listAllExtensionJobs()
 
+  readonly getExtensionRevisionSource = (
+    ...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['getExtensionRevisionSource']>
+  ) => this.#extensionSources.getExtensionRevisionSource(...args)
+  readonly recordExtensionRevisionSource = (
+    ...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['recordExtensionRevisionSource']>
+  ) => this.#extensionSources.recordExtensionRevisionSource(...args)
+  readonly listExtensionRevisionSources = () => this.#extensionSources.listExtensionRevisionSources()
   readonly getInboundHookDecision = (...args: Parameters<InboundHooksRepository['getInboundHookDecision']>) =>
     this.#inboundHooks.getInboundHookDecision(...args)
   readonly saveInboundHookDecision = (...args: Parameters<InboundHooksRepository['saveInboundHookDecision']>) =>

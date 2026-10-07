@@ -1,6 +1,7 @@
 import type { HostQueryState } from './owned-host-query.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type {
+  CommunitySource,
   ChannelRuntimePhase,
   HostApiParams,
   HostApiRequest,
@@ -271,6 +272,8 @@ export interface LocalExtensionSummary {
     readonly revision: number
     readonly format?: 'current' | 'unavailable'
     readonly createdAt: number
+    /** 从社区安装的保存记录的来源。 */
+    readonly source?: CommunitySource
     readonly scope: 'agent' | 'host-adapter' | 'host-ui'
     readonly contributions: readonly string[]
     readonly clientBuilt: boolean

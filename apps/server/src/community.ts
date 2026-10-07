@@ -2,12 +2,22 @@ import {
   CommunityAccountSchema,
   CommunityExtensionDetailSchema,
   CommunityExtensionSummarySchema,
+  CommunityMyExtensionSchema,
+  CommunityPermissionItemSchema,
+  CommunityReleaseSchema,
+  CommunityReviewReportSchema,
   CommunityReviewStatusSchema,
   parseJsonValue,
   type CommunityAccount,
+  type CommunityEndpoint,
   type CommunityExtensionDetail,
   type CommunityExtensionSummary,
+  type CommunityInstalledItem,
+  type CommunityMyExtension,
+  type CommunityReviewReport,
+  type CommunitySource,
   type CommunityStatus,
+  type ExtensionId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
@@ -19,7 +29,13 @@ import type { LocalCredentialStore } from './credentials.js'
 export const DEFAULT_COMMUNITY_URL = 'https://nxt.nekro.ai'
 export const COMMUNITY_CALLBACK_PATH = '/community/callback'
 
-const ACCOUNT_SETTING_KEY = 'community.account'
+const ENDPOINT_SETTING_KEY = 'community.endpoint'
+const ACCOUNTS_SETTING_KEY = 'community.accounts'
+/** 早期版本只保存一个社区的登录；读取时迁移到按地址保存的结构。 */
+const LEGACY_ACCOUNT_SETTING_KEY = 'community.account'
+const META_TTL_MS = 5 * 60_000
+const META_TIMEOUT_MS = 5_000
+export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60_000
 const LOGIN_TTL_MS = 10 * 60_000
 const MAX_PENDING_LOGINS = 16
 const REQUEST_TIMEOUT_MS = 30_000
@@ -37,16 +53,23 @@ interface CommunitySettingsRepository {
   ): SystemSettingRecord
 }
 
-const StoredAccountSchema = z
-  .object({
-    version: z.literal(1),
-    communityUrl: z.string().url(),
-    account: CommunityAccountSchema,
-    refreshTokenRef: z.string().min(1),
-    signedInAt: z.number().int(),
-  })
+const AccountEntrySchema = z
+  .object({ account: CommunityAccountSchema, refreshTokenRef: z.string().min(1), signedInAt: z.number().int() })
   .strict()
-type StoredAccount = z.output<typeof StoredAccountSchema>
+type AccountEntry = z.output<typeof AccountEntrySchema>
+
+const StoredAccountsSchema = z
+  .object({ version: z.literal(2), accounts: z.record(z.string(), AccountEntrySchema) })
+  .strict()
+
+const LegacyAccountSchema = AccountEntrySchema.extend({ version: z.literal(1), communityUrl: z.string() }).strict()
+
+const StoredEndpointSchema = z.object({ version: z.literal(1), url: z.string(), allowInsecure: z.boolean() }).strict()
+
+const MetaSchema = z
+  .object({ name: z.string(), environment: z.enum(['production', 'staging', 'development']), version: z.string() })
+  .passthrough()
+type CommunityMeta = z.output<typeof MetaSchema>
 
 const TokenResponseSchema = z.object({
   access_token: z.string().min(1),
@@ -79,18 +102,53 @@ export class CommunityError extends Error {
 
 const base64Url = (bytes: Buffer): string => bytes.toString('base64url')
 
-export const normalizeCommunityUrl = (raw: string | undefined): string => {
-  const value = raw?.trim() || DEFAULT_COMMUNITY_URL
-  const url = new URL(value)
-  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
-    throw new TypeError('社区地址必须使用 HTTPS（本机开发地址除外）。')
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/** 局域网地址：私有 IPv4 段、`.local`/`.lan` 主机名与不带点的主机名。 */
+const isPrivateNetworkHost = (hostname: string): boolean => {
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/u.exec(hostname)
+  if (ipv4) {
+    const [first, second] = [Number(ipv4[1]), Number(ipv4[2])]
+    return first === 10 || (first === 172 && second >= 16 && second <= 31) || (first === 192 && second === 168)
+  }
+  return !hostname.includes('.') || hostname.endsWith('.local') || hostname.endsWith('.lan')
+}
+
+/**
+ * 校验社区地址并返回其来源（origin）。HTTPS 与本机 HTTP 直接接受；局域网 HTTP 供团队调试，需要确认风险，
+ * 因为扩展包会经未加密的网络下载；其他 HTTP 地址一律拒绝。
+ */
+export const inspectCommunityUrl = (
+  raw: string,
+  options: { readonly allowInsecure?: boolean } = {},
+): { readonly origin: string; readonly insecure: boolean } => {
+  let url: URL
+  try {
+    url = new URL(raw.trim())
+  } catch {
+    throw new CommunityError(400, '社区地址无效，请填写完整地址，例如 https://nxt.nekro.ai。', 'community-url-invalid')
   }
   if (url.username || url.password || url.search || url.hash || (url.pathname !== '/' && url.pathname !== '')) {
-    throw new TypeError('社区地址只能包含协议、主机与端口。')
+    throw new CommunityError(400, '社区地址只能包含协议、主机与端口。', 'community-url-invalid')
   }
-  return url.origin
+  if (url.protocol === 'https:') return { origin: url.origin, insecure: false }
+  if (url.protocol !== 'http:') throw new CommunityError(400, '社区地址只支持 HTTPS 或 HTTP。', 'community-url-invalid')
+  if (LOOPBACK_HOSTS.has(url.hostname)) return { origin: url.origin, insecure: false }
+  if (!isPrivateNetworkHost(url.hostname)) {
+    throw new CommunityError(400, '公网社区地址必须使用 HTTPS。', 'community-url-invalid')
+  }
+  if (!options.allowInsecure) {
+    throw new CommunityError(
+      400,
+      '这是未加密的局域网地址，扩展包会以明文下载。确认风险后才能使用。',
+      'community-url-insecure',
+    )
+  }
+  return { origin: url.origin, insecure: true }
 }
+
+export const normalizeCommunityUrl = (raw: string | undefined): string =>
+  inspectCommunityUrl(raw?.trim() || DEFAULT_COMMUNITY_URL, { allowInsecure: true }).origin
 
 /** 授权完成后回到浏览器正在访问本实例的地址；只接受 http(s) 来源，不含路径。 */
 export const normalizeReturnOrigin = (raw: string): string => {
@@ -114,14 +172,16 @@ interface PendingLogin {
  * 刷新令牌保存在本机凭据存储，账号资料与凭据引用保存在系统设置；访问令牌只在内存中。
  */
 export class CommunityService {
-  readonly communityUrl: string
+  readonly #environmentUrl: string | null
   readonly #repository: CommunitySettingsRepository
   readonly #credentials: LocalCredentialStore
   readonly #fetch: FetchLike
   readonly #now: () => number
   readonly #instanceName: string
   readonly #pending = new Map<string, PendingLogin>()
-  #access: { readonly token: string; readonly expiresAt: number } | undefined
+  #access: { readonly url: string; readonly token: string; readonly expiresAt: number } | undefined
+  readonly #meta = new Map<string, { readonly value: CommunityMeta | null; readonly expiresAt: number }>()
+  #installed: { readonly url: string; readonly checkedAt: number; readonly items: CommunityInstalledItem[] } | undefined
   #refreshing: Promise<string> | undefined
 
   constructor(
@@ -136,26 +196,136 @@ export class CommunityService {
   ) {
     this.#repository = repository
     this.#credentials = credentials
-    this.communityUrl = normalizeCommunityUrl(options.communityUrl)
+    // 环境变量由部署者设置，局域网 HTTP 视为已确认；格式错误时启动即失败。
+    this.#environmentUrl = options.communityUrl?.trim() ? normalizeCommunityUrl(options.communityUrl) : null
     this.#instanceName = options.instanceName ?? 'NekroNXT'
     this.#fetch = options.fetch ?? fetch
     this.#now = options.now ?? Date.now
   }
 
-  #stored(): { readonly value: StoredAccount; readonly revision: number } | undefined {
-    const record = this.#repository.getSystemSetting(ACCOUNT_SETTING_KEY)
-    const parsed = StoredAccountSchema.safeParse(record?.value)
-    // 登录属于某一个社区；切换社区地址后旧登录不再使用。
-    if (!record || !parsed.success || parsed.data.communityUrl !== this.communityUrl) return undefined
-    return { value: parsed.data, revision: record.revision }
+  #storedEndpoint(): z.output<typeof StoredEndpointSchema> | undefined {
+    const parsed = StoredEndpointSchema.safeParse(this.#repository.getSystemSetting(ENDPOINT_SETTING_KEY)?.value)
+    return parsed.success ? parsed.data : undefined
   }
 
-  status(): CommunityStatus {
-    const stored = this.#stored()
+  /** 当前社区地址：界面设置 > 环境变量 `NEKRO_COMMUNITY_URL` > 正式社区。 */
+  get communityUrl(): string {
+    return this.#storedEndpoint()?.url ?? this.#environmentUrl ?? DEFAULT_COMMUNITY_URL
+  }
+
+  endpoint(): CommunityEndpoint {
+    const stored = this.#storedEndpoint()
+    const url = this.communityUrl
     return {
-      communityUrl: this.communityUrl,
-      account: stored?.value.account ?? null,
-      signedInAt: stored?.value.signedInAt ?? null,
+      url,
+      source: stored ? 'setting' : this.#environmentUrl ? 'environment' : 'default',
+      defaultUrl: DEFAULT_COMMUNITY_URL,
+      environmentUrl: this.#environmentUrl,
+      insecure: inspectCommunityUrl(url, { allowInsecure: true }).insecure,
+    }
+  }
+
+  /** 修改社区地址。登录按地址分别保存，切换后再切回无需重新登录。 */
+  setEndpoint(url: string | null, acknowledgeInsecure: boolean): CommunityEndpoint {
+    const record = this.#repository.getSystemSetting(ENDPOINT_SETTING_KEY)
+    if (url === null) {
+      if (record) this.#repository.putSystemSetting(ENDPOINT_SETTING_KEY, null, record.revision, this.#now())
+    } else {
+      const { origin, insecure } = inspectCommunityUrl(url, { allowInsecure: acknowledgeInsecure })
+      this.#repository.putSystemSetting(
+        ENDPOINT_SETTING_KEY,
+        parseJsonValue({ version: 1, url: origin, allowInsecure: insecure }),
+        record?.revision,
+        this.#now(),
+      )
+    }
+    this.#pending.clear()
+    this.#installed = undefined
+    return this.endpoint()
+  }
+
+  async testEndpoint(
+    url: string,
+    acknowledgeInsecure: boolean,
+  ): Promise<{ ok: boolean; message: string; name?: string; environment?: CommunityMeta['environment'] }> {
+    const { origin } = inspectCommunityUrl(url, { allowInsecure: acknowledgeInsecure })
+    const meta = await this.#fetchMeta(origin)
+    if (!meta) return { ok: false, message: '无法连接这个地址，或它不是 NekroNXT 社区。' }
+    return { ok: true, message: `已连接「${meta.name}」。`, name: meta.name, environment: meta.environment }
+  }
+
+  async #fetchMeta(origin: string): Promise<CommunityMeta | null> {
+    try {
+      const response = await this.#fetch(new URL('/api/v1/meta', origin), {
+        headers: { accept: 'application/json' },
+        redirect: 'error',
+        signal: AbortSignal.timeout(META_TIMEOUT_MS),
+      })
+      if (!response.ok) return null
+      const parsed = MetaSchema.safeParse(await response.json())
+      return parsed.success ? parsed.data : null
+    } catch {
+      return null
+    }
+  }
+
+  /** 社区自我描述，按地址缓存 5 分钟；连接失败也缓存，避免每次读取状态都等待超时。 */
+  async meta(): Promise<CommunityMeta | null> {
+    const url = this.communityUrl
+    const cached = this.#meta.get(url)
+    if (cached && cached.expiresAt > this.#now()) return cached.value
+    const value = await this.#fetchMeta(url)
+    this.#meta.set(url, { value, expiresAt: this.#now() + META_TTL_MS })
+    return value
+  }
+
+  #accounts(): { readonly accounts: Record<string, AccountEntry>; readonly revision: number | undefined } {
+    const record = this.#repository.getSystemSetting(ACCOUNTS_SETTING_KEY)
+    const parsed = StoredAccountsSchema.safeParse(record?.value)
+    if (parsed.success) return { accounts: parsed.data.accounts, revision: record?.revision }
+    const legacyRecord = this.#repository.getSystemSetting(LEGACY_ACCOUNT_SETTING_KEY)
+    const legacy = LegacyAccountSchema.safeParse(legacyRecord?.value)
+    if (!legacy.success || !legacyRecord) return { accounts: {}, revision: record?.revision }
+    const { communityUrl, account, refreshTokenRef, signedInAt } = legacy.data
+    const accounts = { [communityUrl]: { account, refreshTokenRef, signedInAt } }
+    const written = this.#repository.putSystemSetting(
+      ACCOUNTS_SETTING_KEY,
+      parseJsonValue({ version: 2, accounts }),
+      record?.revision,
+      this.#now(),
+    )
+    this.#repository.putSystemSetting(LEGACY_ACCOUNT_SETTING_KEY, null, legacyRecord.revision, this.#now())
+    return { accounts, revision: written.revision }
+  }
+
+  #stored(url = this.communityUrl): AccountEntry | undefined {
+    return this.#accounts().accounts[url]
+  }
+
+  #writeAccount(url: string, entry: AccountEntry | null): void {
+    const { accounts, revision } = this.#accounts()
+    const next = { ...accounts }
+    if (entry === null) delete next[url]
+    else next[url] = entry
+    this.#repository.putSystemSetting(
+      ACCOUNTS_SETTING_KEY,
+      parseJsonValue({ version: 2, accounts: next }),
+      revision,
+      this.#now(),
+    )
+  }
+
+  async status(): Promise<CommunityStatus> {
+    const url = this.communityUrl
+    const stored = this.#stored(url)
+    const meta = await this.meta()
+    const installed = this.#installed?.url === url ? this.#installed.items : []
+    return {
+      communityUrl: url,
+      environment: meta?.environment ?? null,
+      account: stored?.account ?? null,
+      signedInAt: stored?.signedInAt ?? null,
+      updatesAvailable: installed.filter((item) => item.updateAvailable).length,
     }
   }
 
@@ -204,27 +374,17 @@ export class CommunityService {
       displayName: tokens.user.displayName,
       avatarUrl: tokens.user.avatarUrl,
     })
-    const previous = this.#stored()
+    const url = this.communityUrl
+    const previous = this.#stored(url)
     const reference = await this.#credentials.save(tokens.refresh_token)
     try {
-      this.#repository.putSystemSetting(
-        ACCOUNT_SETTING_KEY,
-        parseJsonValue({
-          version: 1,
-          communityUrl: this.communityUrl,
-          account,
-          refreshTokenRef: reference,
-          signedInAt: this.#now(),
-        } satisfies StoredAccount),
-        this.#repository.getSystemSetting(ACCOUNT_SETTING_KEY)?.revision,
-        this.#now(),
-      )
+      this.#writeAccount(url, { account, refreshTokenRef: reference, signedInAt: this.#now() })
     } catch (error) {
       await this.#credentials.delete(reference)
       throw error
     }
-    if (previous) await this.#credentials.delete(previous.value.refreshTokenRef)
-    this.#access = { token: tokens.access_token, expiresAt: this.#now() + tokens.expires_in * 1000 }
+    if (previous) await this.#credentials.delete(previous.refreshTokenRef)
+    this.#access = { url, token: tokens.access_token, expiresAt: this.#now() + tokens.expires_in * 1000 }
     return account
   }
 
@@ -234,7 +394,7 @@ export class CommunityService {
     this.#access = undefined
     if (stored) {
       try {
-        const refreshToken = await this.#credentials.resolve(stored.value.refreshTokenRef)
+        const refreshToken = await this.#credentials.resolve(stored.refreshTokenRef)
         await this.#fetch(new URL('/oauth/revoke', this.communityUrl), {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -244,14 +404,14 @@ export class CommunityService {
       } catch {
         // 撤销是尽力而为；本机凭据仍会删除。
       }
-      await this.#forget(stored)
+      await this.#forget(this.communityUrl, stored)
     }
     return this.status()
   }
 
-  async #forget(stored: { readonly value: StoredAccount; readonly revision: number }): Promise<void> {
-    this.#repository.putSystemSetting(ACCOUNT_SETTING_KEY, null, stored.revision, this.#now())
-    await this.#credentials.delete(stored.value.refreshTokenRef)
+  async #forget(url: string, stored: AccountEntry): Promise<void> {
+    this.#writeAccount(url, null)
+    await this.#credentials.delete(stored.refreshTokenRef)
     this.#access = undefined
   }
 
@@ -274,7 +434,9 @@ export class CommunityService {
 
   /** 有效的访问令牌；过期前一分钟用刷新令牌轮换，并发请求共享同一次刷新。 */
   async #accessToken(): Promise<string> {
-    if (this.#access && this.#access.expiresAt - 60_000 > this.#now()) return this.#access.token
+    if (this.#access && this.#access.url === this.communityUrl && this.#access.expiresAt - 60_000 > this.#now()) {
+      return this.#access.token
+    }
     this.#refreshing ??= this.#refresh().finally(() => {
       this.#refreshing = undefined
     })
@@ -282,41 +444,37 @@ export class CommunityService {
   }
 
   async #refresh(): Promise<string> {
-    const stored = this.#stored()
-    if (!stored) throw new CommunityError(401, '请先在「设置 → 社区账号」登录社区。', 'community-signed-out')
-    const refreshToken = await this.#credentials.resolve(stored.value.refreshTokenRef)
+    const url = this.communityUrl
+    const stored = this.#stored(url)
+    if (!stored) throw new CommunityError(401, '请先在「社区 → 账号」登录社区。', 'community-signed-out')
+    const refreshToken = await this.#credentials.resolve(stored.refreshTokenRef)
     let tokens: z.output<typeof TokenResponseSchema>
     try {
       tokens = await this.#tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken })
     } catch (error) {
       if (error instanceof CommunityError && error.code === 'community-auth-invalid') {
-        await this.#forget(stored)
+        await this.#forget(url, stored)
         throw new CommunityError(401, '社区登录已失效，请重新登录。', 'community-signed-out')
       }
       throw error
     }
     const reference = await this.#credentials.save(tokens.refresh_token)
     try {
-      this.#repository.putSystemSetting(
-        ACCOUNT_SETTING_KEY,
-        parseJsonValue({
-          ...stored.value,
-          account: CommunityAccountSchema.parse({
-            handle: tokens.user.handle,
-            displayName: tokens.user.displayName,
-            avatarUrl: tokens.user.avatarUrl,
-          }),
-          refreshTokenRef: reference,
-        } satisfies StoredAccount),
-        stored.revision,
-        this.#now(),
-      )
+      this.#writeAccount(url, {
+        account: CommunityAccountSchema.parse({
+          handle: tokens.user.handle,
+          displayName: tokens.user.displayName,
+          avatarUrl: tokens.user.avatarUrl,
+        }),
+        refreshTokenRef: reference,
+        signedInAt: stored.signedInAt,
+      })
     } catch (error) {
       await this.#credentials.delete(reference)
       throw error
     }
-    await this.#credentials.delete(stored.value.refreshTokenRef)
-    this.#access = { token: tokens.access_token, expiresAt: this.#now() + tokens.expires_in * 1000 }
+    await this.#credentials.delete(stored.refreshTokenRef)
+    this.#access = { url, token: tokens.access_token, expiresAt: this.#now() + tokens.expires_in * 1000 }
     return tokens.access_token
   }
 
@@ -461,6 +619,149 @@ export class CommunityService {
       findings: body.findings.map((finding) => ({ severity: finding.severity, title: finding.title })),
     }
   }
+
+  /**
+   * 已安装扩展的更新检查。每个扩展取最近一次从社区导入的来源；来源与当前社区地址不同的只列出，不检查。
+   * 结果缓存到下次检查，供状态中的可更新数量使用。
+   */
+  async installed(
+    sources: readonly {
+      readonly extensionId: ExtensionId
+      readonly displayName: string
+      readonly revisionId: string
+      readonly source: CommunitySource
+    }[],
+  ): Promise<{ readonly checkedAt: number; readonly items: CommunityInstalledItem[] }> {
+    const url = this.communityUrl
+    const checkable = sources.filter((entry) => entry.source.communityUrl === url)
+    const remote = new Map<string, Record<string, unknown>>()
+    if (checkable.length > 0) {
+      const body = z.object({ items: z.array(z.record(z.string(), z.unknown())) }).parse(
+        await this.#api('/api/v1/updates', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            items: checkable.map((entry) => ({ extensionId: entry.extensionId, releaseId: entry.source.releaseId })),
+          }),
+        }),
+      )
+      for (const item of body.items) remote.set(`${String(item['extensionId'])}:${String(item['releaseId'])}`, item)
+    }
+    const items = sources.map((entry): CommunityInstalledItem => {
+      const sameCommunity = entry.source.communityUrl === url
+      const found = sameCommunity ? remote.get(`${entry.extensionId}:${entry.source.releaseId}`) : undefined
+      const latest = found?.['latest'] ? CommunityReleaseSchema.parse(normalizeRelease(found['latest'])) : null
+      return {
+        extensionId: entry.extensionId,
+        displayName: entry.displayName,
+        revisionId: entry.revisionId,
+        source: entry.source,
+        sameCommunity,
+        found: found?.['found'] === true,
+        delisted: found?.['delisted'] === true,
+        delistedReason: typeof found?.['delistedReason'] === 'string' ? found['delistedReason'] : null,
+        releaseWithdrawn: found?.['releaseWithdrawn'] === true,
+        latest,
+        updateAvailable: latest !== null && latest.id !== entry.source.releaseId,
+        addedPermissions: (Array.isArray(found?.['addedPermissions']) ? found['addedPermissions'] : []).map((item) =>
+          CommunityPermissionItemSchema.parse(normalizePermission(item)),
+        ),
+      }
+    })
+    const checkedAt = this.#now()
+    this.#installed = { url, checkedAt, items }
+    return { checkedAt, items }
+  }
+
+  cachedInstalled(): { readonly checkedAt: number; readonly items: CommunityInstalledItem[] } | undefined {
+    return this.#installed?.url === this.communityUrl ? this.#installed : undefined
+  }
+
+  async publisherOf(extensionId: string): Promise<string> {
+    return (await this.getExtension(extensionId)).publisher.handle
+  }
+
+  async mine(): Promise<CommunityMyExtension[]> {
+    const body = z.object({ items: z.array(z.unknown()) }).parse(await this.#api('/api/v1/me/extensions', {}, true))
+    return body.items.map((raw) => {
+      const record = asRecord(raw)
+      return CommunityMyExtensionSchema.parse({
+        ...normalizeSummary(raw, this.#extensionPage.bind(this)),
+        releases: (Array.isArray(record['releases']) ? record['releases'] : []).map((release) => ({
+          ...normalizeRelease(release),
+          withdrawn: asRecord(release)['withdrawn'] === true,
+        })),
+        delisted: record['delisted'] === true,
+        delistedReason: typeof record['delistedReason'] === 'string' ? record['delistedReason'] : null,
+      })
+    })
+  }
+
+  async review(releaseId: string): Promise<CommunityReviewReport> {
+    const raw = asRecord(await this.#api(`/api/v1/releases/${encodeURIComponent(releaseId)}/review`, {}, true))
+    const ai = raw['ai'] === null || raw['ai'] === undefined ? null : asRecord(raw['ai'])
+    return CommunityReviewReportSchema.parse({
+      releaseId: raw['releaseId'],
+      status: raw['status'],
+      grade: raw['grade'] ?? null,
+      deterministic: (Array.isArray(raw['deterministic']) ? raw['deterministic'] : []).map((item) => {
+        const finding = asRecord(item)
+        return {
+          severity: finding['severity'],
+          title: finding['title'],
+          detail: finding['detail'],
+          ...(typeof finding['file'] === 'string' ? { file: finding['file'] } : {}),
+          ...(typeof finding['line'] === 'number' ? { line: finding['line'] } : {}),
+        }
+      }),
+      ai:
+        ai === null
+          ? null
+          : {
+              summary: ai['summary'],
+              verdict: ai['verdict'],
+              grade: ai['grade'],
+              dimensions: (Array.isArray(ai['dimensions']) ? ai['dimensions'] : []).map((item) => {
+                const dimension = asRecord(item)
+                return { key: dimension['key'], grade: dimension['grade'], notes: dimension['notes'] }
+              }),
+              findings: (Array.isArray(ai['findings']) ? ai['findings'] : []).map((item) => {
+                const finding = asRecord(item)
+                return {
+                  dimension: finding['dimension'],
+                  severity: finding['severity'],
+                  title: finding['title'],
+                  detail: finding['detail'],
+                  ...(typeof finding['file'] === 'string' ? { file: finding['file'] } : {}),
+                  ...(typeof finding['line'] === 'number' ? { line: finding['line'] } : {}),
+                  ...(typeof finding['suggestion'] === 'string' ? { suggestion: finding['suggestion'] } : {}),
+                }
+              }),
+              ...(typeof ai['exploitability'] === 'string' ? { exploitability: ai['exploitability'] } : {}),
+            },
+      model: raw['model'] ?? null,
+      error: raw['error'] ?? null,
+      decisions: (Array.isArray(raw['decisions']) ? raw['decisions'] : []).map((item) => {
+        const decision = asRecord(item)
+        return {
+          decision: decision['decision'],
+          note: decision['note'],
+          by: decision['by'],
+          createdAt: decision['createdAt'],
+        }
+      }),
+      finishedAt: raw['finishedAt'] ?? null,
+      reportUrl: new URL(`/me/releases/${encodeURIComponent(releaseId)}`, this.communityUrl).toString(),
+    })
+  }
+
+  async requestReview(releaseId: string): Promise<void> {
+    await this.#api(`/api/v1/releases/${encodeURIComponent(releaseId)}/review`, { method: 'POST' }, true)
+  }
+
+  async withdraw(releaseId: string): Promise<void> {
+    await this.#api(`/api/v1/releases/${encodeURIComponent(releaseId)}/withdraw`, { method: 'POST' }, true)
+  }
 }
 
 const RecordSchema = z.record(z.string(), z.unknown())
@@ -468,6 +769,30 @@ const RecordSchema = z.record(z.string(), z.unknown())
 const asRecord = (value: unknown): Record<string, unknown> => {
   const parsed = RecordSchema.safeParse(value)
   return parsed.success && !Array.isArray(value) ? parsed.data : {}
+}
+
+const normalizePermission = (raw: unknown): Record<string, unknown> => {
+  const permission = asRecord(raw)
+  return {
+    key: permission['key'],
+    level: permission['level'],
+    label: permission['label'],
+    ...(typeof permission['detail'] === 'string' ? { detail: permission['detail'] } : {}),
+  }
+}
+
+const normalizeRelease = (raw: unknown): Record<string, unknown> => {
+  const release = asRecord(raw)
+  return {
+    id: release['id'],
+    reviewStatus: release['reviewStatus'],
+    grade: release['grade'] ?? null,
+    permissions: (Array.isArray(release['permissions']) ? release['permissions'] : []).map(normalizePermission),
+    packageSize: release['packageSize'],
+    requiresSdk: release['requiresSdk'] ?? null,
+    notes: release['notes'] ?? '',
+    createdAt: release['createdAt'],
+  }
 }
 
 /** 只取 NXT 需要的字段；社区新增字段不透传。 */
@@ -486,27 +811,7 @@ const normalizeSummary = (raw: unknown, pageUrl: (id: string) => string): Record
       displayName: publisher['displayName'],
       avatarUrl: publisher['avatarUrl'] ?? null,
     },
-    latest:
-      latest === null
-        ? null
-        : {
-            id: latest['id'],
-            reviewStatus: latest['reviewStatus'],
-            grade: latest['grade'] ?? null,
-            permissions: (Array.isArray(latest['permissions']) ? latest['permissions'] : []).map((item) => {
-              const permission = asRecord(item)
-              return {
-                key: permission['key'],
-                level: permission['level'],
-                label: permission['label'],
-                ...(typeof permission['detail'] === 'string' ? { detail: permission['detail'] } : {}),
-              }
-            }),
-            packageSize: latest['packageSize'],
-            requiresSdk: latest['requiresSdk'] ?? null,
-            notes: latest['notes'] ?? '',
-            createdAt: latest['createdAt'],
-          },
+    latest: latest === null ? null : normalizeRelease(latest),
     downloads: record['downloads'],
     updatedAt: record['updatedAt'],
     pageUrl: typeof record['id'] === 'string' ? pageUrl(record['id']) : '',

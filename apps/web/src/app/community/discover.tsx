@@ -26,9 +26,9 @@ import {
   toast,
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
-import { openExternal } from '../community/community-model.js'
-import { scopeLabel } from './workshop-model.js'
-import styles from './workshop.module.css'
+import { openExternal } from './community-model.js'
+import { scopeLabel } from '../workshop/workshop-model.js'
+import styles from './community.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
 type Scope = '' | 'agent' | 'host-ui' | 'host-adapter'
@@ -51,7 +51,7 @@ const ReviewChip = ({ status }: { readonly status: CommunityExtensionSummary['la
   return <Chip tone={label.tone}>{label.label}</Chip>
 }
 
-/** 社区扩展目录。安装先下载并校验，再走与本地文件相同的导入确认；导入后不会自动启用。 */
+/** 社区「发现」：扩展目录与详情。安装先下载并校验，再走与本地文件相同的导入确认；导入后不会自动启用。 */
 export function CommunityView({
   extensionId,
   onInspected,
@@ -124,8 +124,8 @@ function CommunityCatalog() {
             <Store size={18} />
           </span>
         }
-        title="社区扩展"
-        meta={<span>扩展由社区作者提供，每次发布都会经过自动审查</span>}
+        title="发现"
+        meta={<span>扩展由社区作者提供，每次发布都会经过自动审查；安装后不会自动启用</span>}
       />
       <div className={styles.communityTools}>
         <SearchField value={query} onChange={setQuery} label="搜索社区扩展" placeholder="搜索名称、介绍或标签" />
@@ -142,7 +142,7 @@ function CommunityCatalog() {
       ) : (
         <div className={styles.communityGrid}>
           {items.map((item) => (
-            <Link key={item.id} to={`/workshop/community/${item.id}`} className={styles.communityCard}>
+            <Link key={item.id} to={`/community/extensions/${item.id}`} className={styles.communityCard}>
               <span className={styles.communityCardHead}>
                 <b>{item.displayName}</b>
                 <span className={styles.faint}>{scopeLabel[item.scope]}</span>
@@ -197,9 +197,9 @@ function CommunityDetail({
   }, [extensionId])
 
   const back = (
-    <Link to="/workshop/community" className={styles.backLink}>
+    <Link to="/community" className={styles.backLink}>
       <ArrowLeft size={14} />
-      社区扩展
+      发现
     </Link>
   )
   if (error) {

@@ -40,12 +40,14 @@ const live = preloadable(() => import('./live/live-space.js'))
 const channels = preloadable(() => import('./channels/channels-space.js'))
 const agents = preloadable(() => import('./agents/agents-space.js'))
 const workshop = preloadable(() => import('./workshop/workshop-space.js'))
+const community = preloadable(() => import('./community/community-space.js'))
 const wiring = preloadable(() => import('./wiring/wiring-space.js'))
 const settings = preloadable(() => import('./settings/settings-space.js'))
 const LiveSpace = live.Space
 const ChannelsSpace = channels.Space
 const AgentsSpace = agents.Space
 const WorkshopSpace = workshop.Space
+const CommunitySpace = community.Space
 const WiringSpace = wiring.Space
 const SettingsSpace = settings.Space
 
@@ -53,7 +55,7 @@ const SettingsSpace = settings.Space
 function usePrefetchSpaces(): void {
   useEffect(() => {
     const load = () => {
-      for (const space of [live, channels, agents, workshop, wiring, settings])
+      for (const space of [live, channels, agents, workshop, community, wiring, settings])
         void space.preload().catch(() => undefined)
     }
     if ('requestIdleCallback' in window) {
@@ -76,7 +78,7 @@ function Loading() {
 }
 
 const retrySpaces = () => {
-  for (const item of [live, channels, agents, workshop, wiring, settings]) item.reset()
+  for (const item of [live, channels, agents, workshop, community, wiring, settings]) item.reset()
 }
 
 const space = (node: ReactNode) => (
@@ -108,6 +110,7 @@ export function NextApp() {
                   <Route path="channels/:channelId?" element={space(<ChannelsSpace />)} />
                   <Route path="agents/:agentId?" element={space(<AgentsSpace />)} />
                   <Route path="workshop/*" element={space(<WorkshopSpace />)} />
+                  <Route path="community/*" element={space(<CommunitySpace />)} />
                   <Route path="wiring/*" element={space(<WiringSpace />)} />
                   <Route path="settings/:section?" element={space(<SettingsSpace />)} />
                   <Route path="apps/:pageInstanceId/*" element={<ExtensionPage />} />

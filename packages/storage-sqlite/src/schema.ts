@@ -755,6 +755,24 @@ export const extensionRevisionVerifications = sqliteTable('extension_revision_ve
   evidence: jsonText<ExtensionRevisionVerification>('evidence').notNull(),
 })
 
+/** Where an imported Revision came from. Only community installs record a source; local saves and file imports do not. */
+export const extensionRevisionSources = sqliteTable(
+  'extension_revision_sources',
+  {
+    revisionId: text('revision_id')
+      .$type<ExtensionRevisionId>()
+      .primaryKey()
+      .references(() => extensionRevisions.id, { onDelete: 'cascade' }),
+    extensionId: text('extension_id').$type<ExtensionId>().notNull(),
+    kind: text('kind', { enum: ['community'] }).notNull(),
+    communityUrl: text('community_url').notNull(),
+    releaseId: text('release_id').notNull(),
+    publisherHandle: text('publisher_handle').notNull(),
+    installedAt: integer('installed_at').notNull(),
+  },
+  (table) => [index('extension_revision_sources_extension_idx').on(table.extensionId)],
+)
+
 export const hostExtensionInstallations = sqliteTable(
   'host_extension_installations',
   {
@@ -1276,6 +1294,7 @@ export const coreSchema = {
   localExtensions,
   extensionRevisions,
   extensionRevisionVerifications,
+  extensionRevisionSources,
   hostExtensionInstallations,
   hostUiPageEntries,
   hostUiPagePreferences,

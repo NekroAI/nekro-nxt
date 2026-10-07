@@ -36,6 +36,11 @@ import {
   CommunityReleaseIdSchema,
   CommunityReviewStatusSchema,
   CommunityStatusSchema,
+  CommunitySourceSchema,
+  CommunityEndpointSchema,
+  CommunityInstalledSchema,
+  CommunityMyExtensionSchema,
+  CommunityReviewReportSchema,
 } from './community.js'
 import {
   DshNxtHostUiSchema,
@@ -1169,6 +1174,8 @@ export const HostSnapshotSchema = z
                 ui: ExtensionUiContributionsSchema.default(EMPTY_EXTENSION_UI_CONTRIBUTIONS),
                 configSchema: ConfigSchemaDocumentSchema.optional(),
                 createdAt: z.number().int().safe().nonnegative(),
+                /** 从社区安装的保存记录的来源；本机保存与文件导入没有来源。 */
+                source: CommunitySourceSchema.optional(),
                 scope: z.enum(['agent', 'host-adapter', 'host-ui']),
                 contributions: z.array(z.string()),
                 verification: z
@@ -2539,6 +2546,84 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
   }),
   /** 下载社区发布并按包摘要校验，结果与本地文件导入的检查相同，再经 `commitExtensionImport` 确认。 */
+  getCommunityEndpoint: defineContract({
+    method: 'GET',
+    path: '/api/community/endpoint',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityEndpointSchema,
+    error: HostApiErrorSchema,
+  }),
+  /** 修改社区地址；`url: null` 恢复为环境变量或默认地址。非加密的局域网地址需要确认风险。 */
+  updateCommunityEndpoint: defineContract({
+    method: 'PUT',
+    path: '/api/community/endpoint',
+    params: EmptyParamsSchema,
+    request: z.object({ url: z.string().max(300).nullable(), acknowledgeInsecure: z.boolean() }).strict(),
+    response: CommunityEndpointSchema,
+    error: HostApiErrorSchema,
+  }),
+  testCommunityEndpoint: defineContract({
+    timeoutMs: 30_000,
+    method: 'POST',
+    path: '/api/community/endpoint/test',
+    params: EmptyParamsSchema,
+    request: z.object({ url: z.string().max(300), acknowledgeInsecure: z.boolean() }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        message: z.string(),
+        name: z.string().optional(),
+        environment: z.enum(['production', 'staging', 'development']).optional(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  listCommunityInstalled: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/installed',
+    params: z.object({ refresh: z.enum(['1']).optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityInstalledSchema,
+    error: HostApiErrorSchema,
+  }),
+  listCommunityMine: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/mine',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ items: z.array(CommunityMyExtensionSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getCommunityReleaseReview: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/releases/:releaseId/review',
+    params: z.object({ releaseId: CommunityReleaseIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityReviewReportSchema,
+    error: HostApiErrorSchema,
+  }),
+  requestCommunityReview: defineContract({
+    timeoutMs: 30_000,
+    method: 'POST',
+    path: '/api/community/releases/:releaseId/review',
+    params: z.object({ releaseId: CommunityReleaseIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  withdrawCommunityRelease: defineContract({
+    timeoutMs: 30_000,
+    method: 'POST',
+    path: '/api/community/releases/:releaseId/withdraw',
+    params: z.object({ releaseId: CommunityReleaseIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
   importCommunityRelease: defineContract({
     timeoutMs: 120_000,
     method: 'POST',

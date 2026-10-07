@@ -526,6 +526,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         revision: revision.revisionNumber,
         format: revision.format ?? 'current',
         createdAt: revision.createdAt,
+        ...(revision.source === undefined ? {} : { source: revision.source }),
         scope: revision.scope,
         contributions: revision.contributions,
         clientBuilt: revision.verification?.clientBuilt ?? false,

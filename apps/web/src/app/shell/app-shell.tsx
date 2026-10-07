@@ -10,6 +10,7 @@ import {
   Server,
   Settings,
   Sparkles,
+  Store,
   Wrench,
 } from 'lucide-react'
 import { browserInstanceName, isUnencryptedRemoteConnection } from '../../management-access.js'
@@ -31,6 +32,7 @@ export const SPACES = [
   { path: '/channels', label: '频道', icon: MessagesSquare },
   { path: '/agents', label: '智能体', icon: Sparkles },
   { path: '/workshop', label: '工坊', icon: Wrench },
+  { path: '/community', label: '社区', icon: Store },
   { path: '/wiring', label: '接线', icon: Cable },
 ] as const
 

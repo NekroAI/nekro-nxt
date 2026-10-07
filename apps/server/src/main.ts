@@ -111,6 +111,7 @@ export const NEKRO_SPA_ROUTE_PREFIXES = [
   '/channels',
   '/agents',
   '/workshop',
+  '/community',
   '/wiring',
   '/settings',
   '/apps',

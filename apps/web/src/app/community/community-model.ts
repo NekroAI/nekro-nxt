@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { HostApiContracts, type CommunityStatus } from '@nekro-nxt/contracts'
+import { HostApiContracts, type CommunityEnvironment, type CommunityStatus } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 
 const LOGIN_WAIT_MS = 10 * 60_000
@@ -70,3 +70,13 @@ export const useCommunityStatus = (enabled = true) => {
 export const openExternal = (url: string): void => {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
+
+export const ENVIRONMENT_LABEL: Readonly<Record<CommunityEnvironment, string>> = {
+  production: '正式社区',
+  staging: '测试站',
+  development: '开发站',
+}
+
+export type CommunityState = ReturnType<typeof useCommunityStatus>
+
+export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))

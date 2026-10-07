@@ -1,25 +1,16 @@
 import { useGo } from '../model/nav.js'
-import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, Store, Upload, Wrench } from 'lucide-react'
+import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, Upload, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
-import {
-  communityReviewLabel,
-  HostApiContracts,
-  type CommunityExtensionDetail,
-  type HostApiResponse,
-} from '@nekro-nxt/contracts'
+import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
-import { useHostActions, useProductRuntime, useProductStore } from '../../product-runtime.js'
+import { useProductRuntime, useProductStore } from '../../product-runtime.js'
 import {
   AgentAvatar,
   Button,
-  Chip,
-  Dialog,
   EmptyState,
-  Field,
   FileChooser,
   IconButton,
-  Input,
   ListPane,
   MainContent,
   Pressable,
@@ -32,17 +23,15 @@ import {
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
 import { useCrumb } from '../shell/crumb.js'
-import { CommunityView } from './community-view.js'
+import { ImportDialog } from './import-dialog.js'
 import { ExtensionView } from './extension-view.js'
 import { McpServerDialog } from './mcp-dialog.js'
 import { TaskView } from './task-view.js'
 import {
   EXTENSION_GROUPS,
-  SLUG_PATTERN,
   TASK_GROUP_LABEL,
   extensionUsage,
   isTaskOpen,
-  scopeLabel,
   sortTasks,
   taskGroup,
   taskStatus,
@@ -52,13 +41,10 @@ import styles from './workshop.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
 
-type Route =
-  | { readonly kind: 'task' | 'extension'; readonly id: string }
-  | { readonly kind: 'community'; readonly id: string | undefined }
+type Route = { readonly kind: 'task' | 'extension'; readonly id: string }
 
 const parse = (path: string): Route | undefined => {
-  const community = /^\/workshop\/community(?:\/([^/]+))?\/?$/u.exec(path)
-  if (community) return { kind: 'community', id: community[1] ? decodeURIComponent(community[1]) : undefined }
+  // 社区扩展已移到一级「社区」入口；旧地址跳转过去。
   const match = /^\/workshop\/(tasks|extensions)\/([^/]+)/u.exec(path)
   return match
     ? { kind: match[1] === 'tasks' ? 'task' : 'extension', id: decodeURIComponent(match[2] ?? '') }
@@ -96,25 +82,15 @@ export default function WorkshopSpace() {
   const [dragging, setDragging] = useState(false)
   const [dropped, setDropped] = useState<File>()
   const [addingMcp, setAddingMcp] = useState(false)
-  const [communityImport, setCommunityImport] = useState<{
-    readonly inspection: Inspection
-    readonly detail: CommunityExtensionDetail
-  }>()
   const importer = useRef<HTMLInputElement>(null)
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
-  const community = route?.kind === 'community'
-  useCrumb('工坊', task?.title ?? extension?.name ?? (community ? '社区扩展' : undefined))
+  useCrumb('工坊', task?.title ?? extension?.name)
 
-  if (route && !community && !task && !extension && hostStatus === 'ready') return <Navigate to="/workshop" replace />
+  if (pathname.startsWith('/workshop/community')) return <Navigate to="/community" replace />
+  if (route && !task && !extension && hostStatus === 'ready') return <Navigate to="/workshop" replace />
 
-  const selected = community
-    ? 'community'
-    : task
-      ? `task:${task.id}`
-      : extension
-        ? `extension:${extension.id}`
-        : undefined
+  const selected = task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined
   const agentOf = (id: string) => agents.find((item) => item.id === id)
   const needle = query.trim().toLowerCase()
   const visibleTasks = tasks.filter((item) => matches(needle, item.title, agentOf(item.agentId)?.name))
@@ -163,18 +139,6 @@ export default function WorkshopSpace() {
         }}
       >
         <SelectionList selectedKey={selected}>
-          <Link
-            to="/workshop/community"
-            className={styles.row}
-            data-selected={selected === 'community'}
-            aria-current={selected === 'community' ? 'page' : undefined}
-          >
-            <span className={styles.rowGlyph}>
-              <Store size={14} />
-            </span>
-            <span className={styles.rowName}>社区扩展</span>
-            <span className={styles.rowSub}>浏览与安装其他人分享的扩展</span>
-          </Link>
           <h3 className={styles.group}>创造任务</h3>
           {tasks.length === 0 ? <p className={styles.groupEmpty}>还没有创造任务</p> : null}
           {taskGroups.map(({ group, items }) => (
@@ -276,21 +240,7 @@ export default function WorkshopSpace() {
         onOpenChange={setAddingMcp}
         onCreated={(id) => navigate(`/workshop/extensions/${id}`)}
       />
-      <ImportDialog
-        inspection={communityImport?.inspection}
-        note={communityImport ? <CommunityImportNote detail={communityImport.detail} /> : null}
-        onClose={() => setCommunityImport(undefined)}
-        onImported={(id) => {
-          setCommunityImport(undefined)
-          navigate(`/workshop/extensions/${id}`)
-        }}
-      />
-      {route?.kind === 'community' ? (
-        <CommunityView
-          extensionId={route.id}
-          onInspected={(inspection, detail) => setCommunityImport({ inspection, detail })}
-        />
-      ) : task ? (
+      {task ? (
         <TaskView key={task.id} task={task} />
       ) : extension ? (
         <ExtensionView key={extension.id} extension={extension} />
@@ -450,96 +400,5 @@ function ImportFlow({
         }}
       />
     </>
-  )
-}
-
-/** 社区来源的导入额外说明审查结论：安装者在确认前再看一次。 */
-function CommunityImportNote({ detail }: { readonly detail: CommunityExtensionDetail }) {
-  const label = detail.latest ? communityReviewLabel(detail.latest.reviewStatus) : undefined
-  return (
-    <p>
-      来自社区 @{detail.publisher.handle}
-      {label ? (
-        <>
-          {' · '}
-          <Chip tone={label.tone}>{label.label}</Chip>
-        </>
-      ) : null}
-    </p>
-  )
-}
-
-/** The confirmation step shared by file and community imports; the package was already checked by the Host. */
-function ImportDialog({
-  inspection,
-  note,
-  onClose,
-  onImported,
-}: {
-  readonly inspection: Inspection | undefined
-  readonly note: ReactNode
-  readonly onClose: () => void
-  readonly onImported: (extensionId: string) => void
-}) {
-  const hostActions = useHostActions()
-  const [slug, setSlug] = useState('')
-  const [busy, setBusy] = useState(false)
-  useEffect(() => {
-    if (inspection) setSlug(inspection.slugConflict ? `${inspection.slug}-2` : inspection.slug)
-  }, [inspection?.token])
-
-  const commit = async () => {
-    if (!inspection) return
-    setBusy(true)
-    try {
-      const result = await hostActions['extensions.commitImport']({
-        token: inspection.token,
-        ...(inspection.slugConflict ? { localSlug: slug } : {}),
-      })
-      toast(result.idempotent ? '本机已有相同的保存记录' : '已导入，尚未启用')
-      onImported(result.extensionId)
-    } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Dialog
-      open={inspection !== undefined}
-      onOpenChange={(open) => !open && !busy && onClose()}
-      title={`导入「${inspection?.displayName ?? ''}」`}
-      actions={
-        <>
-          <Button onClick={onClose} disabled={busy}>
-            取消
-          </Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            disabled={inspection?.slugConflict === true && !SLUG_PATTERN.test(slug)}
-            onClick={() => void commit()}
-          >
-            {inspection?.idempotent ? '确认' : '导入'}
-          </Button>
-        </>
-      }
-    >
-      {inspection ? (
-        <>
-          <div>
-            <Chip>{scopeLabel[inspection.scope]}</Chip>
-          </div>
-          {note}
-          <p>{inspection.idempotent ? '本机已有完全相同的保存记录。' : '导入后不会自动启用。'}</p>
-          {inspection.slugConflict ? (
-            <Field label="标识" hint="原标识已被占用">
-              <Input value={slug} spellCheck={false} onChange={(event) => setSlug(event.target.value.trim())} />
-            </Field>
-          ) : null}
-        </>
-      ) : null}
-    </Dialog>
   )
 }

@@ -169,7 +169,7 @@ const appendTextEvent = (
 
 describe('Core SQLite baseline', () => {
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(49)
+    expect(Object.keys(coreSchema)).toHaveLength(50)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -2293,6 +2293,49 @@ describe('Extension and backup', () => {
       expect(repository.listDshPluginActivations(entryId)).toEqual([])
       expect(repository.getHostUiPermissionGrant(ownerKey)).toBeUndefined()
       expect(repository.listHostUiPageEntries()).toEqual([])
+    } finally {
+      database.close()
+    }
+  })
+
+  it('records community sources per Revision and drops them with the extension', async () => {
+    const { database, repository } = await createFixture()
+    try {
+      const extensionId = ExtensionIdSchema.parse('ext_SOURCED')
+      const revisionId = ExtensionRevisionIdSchema.parse('xrv_SOURCED')
+      repository.saveExtensionRevision({
+        extension: {
+          id: extensionId,
+          scope: 'agent',
+          slug: 'sourced',
+          displayName: '社区扩展',
+          description: '',
+          createdAt: 1,
+        },
+        revision: {
+          id: revisionId,
+          extensionId,
+          revisionNumber: 1,
+          contentDigest: 'e'.repeat(64),
+          payloadDigest: 'f'.repeat(64),
+          createdAt: 1,
+        },
+      })
+      const source = {
+        revisionId,
+        extensionId,
+        kind: 'community' as const,
+        communityUrl: 'https://community.example.test',
+        releaseId: 'rel_01fixture',
+        publisherHandle: 'demo-author',
+        installedAt: 10,
+      }
+      repository.recordExtensionRevisionSource(source)
+      repository.recordExtensionRevisionSource({ ...source, releaseId: 'rel_01later', installedAt: 20 })
+      expect(repository.getExtensionRevisionSource(revisionId)).toEqual(source)
+      expect(repository.listExtensionRevisionSources()).toEqual([source])
+      repository.deleteExtension(extensionId)
+      expect(repository.listExtensionRevisionSources()).toEqual([])
     } finally {
       database.close()
     }

@@ -3,7 +3,8 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { JsonValue } from '@nekro-nxt/contracts'
+import { z } from 'zod'
+import { ExtensionIdSchema, type JsonValue } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import {
   CommunityError,
@@ -97,6 +98,62 @@ const createCommunity = () => {
       return Response.json(tokens())
     }
     if (url.pathname === '/oauth/revoke') return new Response(null, { status: 200 })
+    if (url.pathname === '/api/v1/meta') {
+      return Response.json({ name: '示例社区', environment: 'staging', version: 'v-fixture', apiVersion: 1 })
+    }
+    if (url.pathname === '/api/v1/updates') {
+      const request = z
+        .object({ items: z.array(z.object({ extensionId: z.string(), releaseId: z.string() })) })
+        .parse(JSON.parse(typeof body === 'string' ? body : '{}'))
+      return Response.json({
+        items: request.items.map((item) => ({
+          ...item,
+          found: true,
+          delisted: false,
+          delistedReason: null,
+          releaseWithdrawn: item.releaseId === 'rel_01withdrawn',
+          latest: { ...summary(item.extensionId).latest, id: 'rel_01newer', futureField: 1 },
+          addedPermissions: [{ key: 'history', level: 'high', label: '读取当前频道的聊天记录' }],
+        })),
+      })
+    }
+    if (url.pathname === '/api/v1/me/extensions') {
+      return Response.json({
+        items: [
+          {
+            ...summary('ext_01DEMO'),
+            description: '',
+            sourceUrl: null,
+            review: null,
+            releases: [{ ...summary('ext_01DEMO').latest, withdrawn: true }],
+            delisted: false,
+            delistedReason: null,
+          },
+        ],
+      })
+    }
+    if (url.pathname === '/api/v1/releases/rel_01demo/review') {
+      return Response.json({
+        releaseId: 'rel_01demo',
+        status: 'passed_with_notes',
+        grade: 'A',
+        deterministic: [{ id: 'x', severity: 'warning', title: '网络访问不受限', detail: '说明' }],
+        ai: {
+          summary: '良好。',
+          verdict: 'pass_with_notes',
+          grade: 'A',
+          dimensions: [{ key: 'security', grade: 'A', notes: '良好' }],
+          findings: [
+            { dimension: 'usability', severity: 'suggestion', title: '补充说明', detail: '细节', suggestion: '建议' },
+          ],
+        },
+        model: '示例模型',
+        error: null,
+        decisions: [],
+        startedAt: 1,
+        finishedAt: 2,
+      })
+    }
     if (url.pathname === '/api/v1/extensions')
       return Response.json({ items: [summary('ext_01DEMO')], nextCursor: null })
     if (url.pathname === '/api/v1/extensions/ext_01DEMO') {
@@ -159,12 +216,14 @@ const createCommunity = () => {
 const createFixture = async (communityUrl = COMMUNITY) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-community-'))
   temporaryRoots.push(root)
-  let record: SystemSettingRecord | undefined
+  const records = new Map<string, SystemSettingRecord>()
   const repository = {
-    getSystemSetting: () => record,
+    getSystemSetting: (key: string) => records.get(key),
     putSystemSetting: (key: string, value: JsonValue, expectedRevision: number | undefined, updatedAt: number) => {
-      if (record?.revision !== expectedRevision) throw new Error('System setting revision conflict.')
-      record = { key, value, revision: (record?.revision ?? 0) + 1, updatedAt }
+      const current = records.get(key)
+      if (current?.revision !== expectedRevision) throw new Error('System setting revision conflict.')
+      const record = { key, value, revision: (current?.revision ?? 0) + 1, updatedAt }
+      records.set(key, record)
       return record
     },
   }
@@ -208,15 +267,21 @@ describe('community URLs', () => {
 describe('CommunityService sign-in', () => {
   it('signs in with PKCE, keeps the refresh token in the credential store and the account in settings', async () => {
     const { service, repository, signIn, credentialFiles } = await createFixture()
-    expect(service.status()).toEqual({ communityUrl: COMMUNITY, account: null, signedInAt: null })
+    expect(await service.status()).toEqual({
+      communityUrl: COMMUNITY,
+      environment: 'staging',
+      account: null,
+      signedInAt: null,
+      updatesAvailable: 0,
+    })
     const authorize = new URL(service.startLogin(INSTANCE))
     expect(authorize.origin + authorize.pathname).toBe(`${COMMUNITY}/oauth/authorize`)
     expect(authorize.searchParams.get('code_challenge_method')).toBe('S256')
     expect(authorize.searchParams.get('redirect_uri')).toBe(`${INSTANCE}/community/callback`)
     const account = await signIn()
     expect(account).toEqual({ handle: 'demo-author', displayName: '示例作者', avatarUrl: null })
-    expect(service.status().account?.handle).toBe('demo-author')
-    expect(JSON.stringify(repository.getSystemSetting())).not.toContain('nxtc_rt_')
+    expect((await service.status()).account?.handle).toBe('demo-author')
+    expect(JSON.stringify(repository.getSystemSetting('community.accounts'))).not.toContain('nxtc_rt_')
     expect(await credentialFiles()).toHaveLength(1)
   })
 
@@ -264,7 +329,7 @@ describe('CommunityService sign-in', () => {
     ).rejects.toMatchObject({
       code: 'community-signed-out',
     })
-    expect(service.status().account).toBeNull()
+    expect((await service.status()).account).toBeNull()
     expect(await credentialFiles()).toHaveLength(0)
   })
 
@@ -278,7 +343,7 @@ describe('CommunityService sign-in', () => {
     ).rejects.toMatchObject({
       code: 'community-request-failed',
     })
-    expect(service.status().account?.handle).toBe('demo-author')
+    expect((await service.status()).account?.handle).toBe('demo-author')
   })
 
   it('logs out, revokes at the community and forgets a sign-in made against another community URL', async () => {
@@ -294,7 +359,109 @@ describe('CommunityService sign-in', () => {
 
     await signIn()
     const other = new CommunityService(repository, credentials, { communityUrl: 'https://other.example.test' })
-    expect(other.status().account).toBeNull()
+    expect((await other.status()).account).toBeNull()
+  })
+})
+
+describe('CommunityService endpoint', () => {
+  it('prefers the configured address over the environment and default, and keeps logins per address', async () => {
+    const { service, signIn } = await createFixture()
+    expect(service.endpoint()).toMatchObject({ url: COMMUNITY, source: 'environment', insecure: false })
+    await signIn()
+    expect(() => service.setEndpoint('http://community-dev.lan:5180', false)).toThrow('确认风险')
+    expect(() => service.setEndpoint('http://community.example.org', true)).toThrow('HTTPS')
+    expect(service.setEndpoint('http://community-dev.lan:5180', true)).toMatchObject({
+      url: 'http://community-dev.lan:5180',
+      source: 'setting',
+      insecure: true,
+    })
+    expect((await service.status()).account).toBeNull()
+    // 私有 IPv4 段同样按局域网处理（地址由片段拼接，避免在仓库中出现字面 IP）。
+    const privateIp = ['10', '0', '0', '8'].join('.')
+    expect(() => service.setEndpoint(`http://${privateIp}:5180`, false)).toThrow('确认风险')
+    expect(service.setEndpoint(null, false)).toMatchObject({ url: COMMUNITY, source: 'environment' })
+    expect((await service.status()).account?.handle).toBe('demo-author')
+  })
+
+  it('tests a candidate address without changing the configuration', async () => {
+    const { service } = await createFixture()
+    expect(await service.testEndpoint(COMMUNITY, false)).toMatchObject({ ok: true, environment: 'staging' })
+    expect(await service.testEndpoint('https://unknown.example.test', false)).toMatchObject({ ok: false })
+    expect(service.endpoint().source).toBe('environment')
+  })
+
+  it('migrates a sign-in stored by earlier versions', async () => {
+    const { service, repository, credentials } = await createFixture()
+    const reference = await credentials.save('nxtc_rt_legacy')
+    repository.putSystemSetting(
+      'community.account',
+      {
+        version: 1,
+        communityUrl: COMMUNITY,
+        account: { handle: 'legacy-author', displayName: '旧账号', avatarUrl: null },
+        refreshTokenRef: reference,
+        signedInAt: 1,
+      },
+      undefined,
+      1,
+    )
+    expect((await service.status()).account?.handle).toBe('legacy-author')
+  })
+})
+
+describe('CommunityService installed extensions and authoring', () => {
+  const source = (releaseId: string, communityUrl = COMMUNITY) => ({
+    kind: 'community' as const,
+    communityUrl,
+    releaseId,
+    publisherHandle: 'demo-author',
+    installedAt: 1,
+  })
+
+  it('checks updates only for extensions from the current community and caches the count', async () => {
+    const { service } = await createFixture()
+    const result = await service.installed([
+      {
+        extensionId: ExtensionIdSchema.parse('ext_01DEMO'),
+        displayName: '天气小助手',
+        revisionId: 'xrv_a',
+        source: source('rel_01demo'),
+      },
+      {
+        extensionId: ExtensionIdSchema.parse('ext_01OTHER'),
+        displayName: '旧社区扩展',
+        revisionId: 'xrv_b',
+        source: source('rel_01x', 'https://old.example.test'),
+      },
+      {
+        extensionId: ExtensionIdSchema.parse('ext_01GONE'),
+        displayName: '已撤回',
+        revisionId: 'xrv_c',
+        source: source('rel_01withdrawn'),
+      },
+    ])
+    expect(result.items[0]).toMatchObject({ sameCommunity: true, updateAvailable: true, latest: { id: 'rel_01newer' } })
+    expect(result.items[0]?.latest).not.toHaveProperty('futureField')
+    expect(result.items[0]?.addedPermissions.map((item) => item.key)).toEqual(['history'])
+    expect(result.items[1]).toMatchObject({ sameCommunity: false, found: false, updateAvailable: false })
+    expect(result.items[2]).toMatchObject({ releaseWithdrawn: true })
+    expect((await service.status()).updatesAvailable).toBe(2)
+    expect(service.cachedInstalled()?.items).toHaveLength(3)
+  })
+
+  it('lists my extensions and reads review reports when signed in', async () => {
+    const { service, signIn } = await createFixture()
+    await expect(service.mine()).rejects.toMatchObject({ code: 'community-signed-out' })
+    await signIn()
+    const mine = await service.mine()
+    expect(mine[0]?.releases[0]).toMatchObject({ id: 'rel_01demo', withdrawn: true })
+    const report = await service.review('rel_01demo')
+    expect(report).toMatchObject({
+      status: 'passed_with_notes',
+      reportUrl: `${COMMUNITY}/me/releases/rel_01demo`,
+      ai: { findings: [{ suggestion: '建议' }] },
+    })
+    expect(report.deterministic[0]).not.toHaveProperty('id')
   })
 })
 
