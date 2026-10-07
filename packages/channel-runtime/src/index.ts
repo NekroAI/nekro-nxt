@@ -645,6 +645,8 @@ export class ChannelRuntime {
         this.#isActivityTriggerEnabledByDefault,
       ),
     })
+    // The message was published on commit, before the decision; publish it again so clients show the outcome.
+    this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: event.id })
   }
 
   #hookDecision(binding: BindingRecord, event: ChannelEventRecord): InboundHookDecision | undefined {

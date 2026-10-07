@@ -522,17 +522,53 @@ const scheduledTaskFact = (
   }
 }
 
+/** The responding agent's stored hook decision, only when it changed something or reported a problem. */
+const inboundHookFact = (
+  runtime: NekroRuntime,
+  entry: Extract<ChannelHistoryEntry, { source: 'channel-event' }>,
+): HostSnapshotMessage['inboundHook'] => {
+  const agentId = runtime.repository.getBinding(entry.channelId)?.agentId
+  if (agentId === undefined) return undefined
+  const decision = runtime.repository.getInboundHookDecision(entry.sourceId, agentId)
+  if (decision === undefined) return undefined
+  const name = (extensionId: string) =>
+    runtime.repository.getExtension(ExtensionIdSchema.parse(extensionId))?.displayName ?? '已删除的扩展'
+  const problems = Array.isArray(decision.diagnostics)
+    ? decision.diagnostics.flatMap((item) =>
+        item !== null &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        typeof item['extensionId'] === 'string' &&
+        typeof item['message'] === 'string'
+          ? [`${name(item['extensionId'])}：${item['message']}`]
+          : [],
+      )
+    : []
+  if (decision.trigger === 'default' && !decision.hidden && decision.annotation === null && problems.length === 0) {
+    return undefined
+  }
+  return {
+    trigger: decision.trigger,
+    hidden: decision.hidden,
+    ...(decision.annotation === null ? {} : { annotation: decision.annotation }),
+    extensions: decision.decidedBy.map(name),
+    ...(problems.length === 0 ? {} : { problems }),
+  }
+}
+
 export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistoryEntry): HostSnapshotMessage => {
   const parts = decorateMessageParts(runtime, entry.parts)
   if (entry.source === 'channel-event') {
     const sender =
       entry.senderMemberId === undefined ? undefined : runtime.repository.getChannelMember(entry.senderMemberId)
     const scheduledTask = scheduledTaskFact(entry.facts)
+    const inboundHook = scheduledTask === undefined ? inboundHookFact(runtime, entry) : undefined
     return {
       id: entry.sourceId,
       channelId: entry.channelId,
       role: entry.activityKey === undefined && scheduledTask === undefined ? 'member' : 'system',
       ...(scheduledTask === undefined ? {} : { scheduledTask }),
+      ...(inboundHook === undefined ? {} : { inboundHook }),
       parts,
       ...(entry.senderMemberId === undefined
         ? {}

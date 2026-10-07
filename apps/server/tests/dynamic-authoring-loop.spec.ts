@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
+import { projectHistoryEntry } from '../src/host-route-support.js'
 import { createNekroHostApi } from '../src/host-api.js'
 import { preflightNekroNxtAuthoringDefinition } from '../src/dynamic-authoring-runtime.js'
 
@@ -449,6 +450,19 @@ return { inject: ['nxt'], apply() {} }`
       const ad = pending.find((event) => event.parts[0]?.type === 'text' && event.parts[0].text.startsWith('广告'))
       expect(ad).toBeDefined()
       expect(runtime.repository.getChannelEvent(ad!.id)).toBeDefined()
+      // The timeline shows the decision on the message itself.
+      await vi.waitFor(() =>
+        expect(
+          projectHistoryEntry(runtime, {
+            source: 'channel-event',
+            sourceId: ad!.id,
+            logicalMessageId: ad!.logicalMessageId,
+            channelId: entity.channelId,
+            occurredAt: ad!.receivedAt,
+            parts: ad!.parts,
+          }).inboundHook,
+        ).toEqual({ trigger: 'default', hidden: true, extensions: ['广告过滤'] }),
+      )
     } finally {
       await runtime.dispose()
     }

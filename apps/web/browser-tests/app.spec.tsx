@@ -1304,6 +1304,48 @@ test.describe('NekroNxt browser projections', () => {
     })
   })
 
+  test('marks member messages an extension hid from the agent or failed to handle', async () => {
+    const snapshot = {
+      ...browserSnapshot,
+      messages: [
+        ...browserSnapshot.messages,
+        {
+          id: ChannelEventIdSchema.parse('evt_hidden'),
+          channelId: browserChannelId,
+          role: 'member' as const,
+          parts: [{ type: 'text' as const, text: '示例广告：加微信领福利' }],
+          occurredAt: 1_725_000_000_600,
+          inboundHook: { trigger: 'suppress' as const, hidden: true, extensions: ['广告过滤'] },
+        },
+        {
+          id: ChannelEventIdSchema.parse('evt_hookfail'),
+          channelId: browserChannelId,
+          role: 'member' as const,
+          parts: [{ type: 'text' as const, text: '普通的示例消息' }],
+          occurredAt: 1_725_000_000_700,
+          inboundHook: {
+            trigger: 'default' as const,
+            hidden: false,
+            extensions: [],
+            problems: ['好感度：处理超时'],
+          },
+        },
+      ],
+    }
+    await withProductPage(
+      `/channels/${browserChannelId}`,
+      async (page) => {
+        const hidden = page.locator('[data-message-id="evt_hidden"]')
+        await playwrightExpect(hidden).toContainText('对智能体隐藏 · 广告过滤')
+        const failed = page.locator('[data-message-id="evt_hookfail"]')
+        await playwrightExpect(failed).toContainText('扩展处理出错')
+        await playwrightExpect(failed.getByText('扩展处理出错')).toHaveAttribute('title', '好感度：处理超时')
+        await page.screenshot({ path: '.local/browser-test-results/channel-inbound-hooks.png' })
+      },
+      snapshot,
+    )
+  })
+
   test('shows scheduled tasks on the agent page and in the channel inspector and acts on them', async () => {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
     const now = Date.now()

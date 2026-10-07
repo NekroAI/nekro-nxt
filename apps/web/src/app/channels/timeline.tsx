@@ -1,4 +1,4 @@
-import { AlarmClock, Check, ChevronRight, CircleAlert, Square, X } from 'lucide-react'
+import { AlarmClock, BellOff, BellRing, Check, ChevronRight, CircleAlert, EyeOff, Info, Square, X } from 'lucide-react'
 import { ToolView } from '../../extension-ui/index.js'
 import { memo, useEffect, useState } from 'react'
 import { MessageContent, resolveMessageSide } from './message-content.js'
@@ -67,6 +67,7 @@ export const MessageRow = memo(function MessageRow({
         side === 'right' ? styles.mine : '',
         continued ? styles.msgCont : '',
         unconfirmed ? styles.unsent : '',
+        message.inboundHook?.hidden === true ? styles.hiddenFromAgent : '',
         fresh ? styles.fresh : '',
       ].join(' ')}
       style={accent ? cssVars({ '--bubble-accent': accent }) : undefined}
@@ -92,6 +93,7 @@ export const MessageRow = memo(function MessageRow({
       <div className={styles.bubble}>
         <MessageContent message={message} />
       </div>
+      {message.inboundHook ? <HookNote hook={message.inboundHook} /> : null}
       {unconfirmed ? (
         <div className={styles.unsentBar} role="status">
           <CircleAlert aria-hidden="true" />
@@ -117,6 +119,39 @@ export const MessageRow = memo(function MessageRow({
     </div>
   )
 })
+
+const HOOK_OUTCOME = {
+  hidden: { icon: <EyeOff aria-hidden="true" />, label: '对智能体隐藏' },
+  suppress: { icon: <BellOff aria-hidden="true" />, label: '未唤醒智能体' },
+  force: { icon: <BellRing aria-hidden="true" />, label: '已唤醒智能体' },
+  annotated: { icon: <Info aria-hidden="true" />, label: '附加了说明' },
+  failed: { icon: <CircleAlert aria-hidden="true" />, label: '扩展处理出错' },
+} as const
+
+/** Which extension handled a member message before the agent saw it, and how. */
+function HookNote({ hook }: { readonly hook: NonNullable<ConversationMessage['inboundHook']> }) {
+  const outcome = hook.hidden
+    ? HOOK_OUTCOME.hidden
+    : hook.trigger === 'suppress'
+      ? HOOK_OUTCOME.suppress
+      : hook.trigger === 'force'
+        ? HOOK_OUTCOME.force
+        : hook.annotation !== undefined
+          ? HOOK_OUTCOME.annotated
+          : HOOK_OUTCOME.failed
+  const details = [hook.annotation, ...(hook.problems ?? [])].filter((item) => item !== undefined)
+  return (
+    <div
+      className={styles.hookNote}
+      data-problem={hook.problems !== undefined || undefined}
+      title={details.length > 0 ? details.join('\n') : undefined}
+    >
+      {outcome.icon}
+      {outcome.label}
+      {hook.extensions.length > 0 ? ` · ${hook.extensions.join('、')}` : ''}
+    </div>
+  )
+}
 
 function Elapsed({ since }: { readonly since: number }) {
   const [now, setNow] = useState(() => Date.now())

@@ -28,6 +28,8 @@ declare const styles: {
   readonly groupHead: string
   readonly groupMeta: string
   readonly head: string
+  readonly hiddenFromAgent: string
+  readonly hookNote: string
   readonly iconToggle: string
   readonly input: string
   readonly jump: string

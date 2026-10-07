@@ -345,6 +345,7 @@ const projectConversationMessage = (
     ...(message.deliveryResolution === undefined ? {} : { deliveryResolution: message.deliveryResolution.action }),
     ...(message.origin === 'admin-console' ? { origin: 'admin-console' as const } : {}),
     ...(message.scheduledTask === undefined ? {} : { scheduledTask: { ...message.scheduledTask } }),
+    ...(message.inboundHook === undefined ? {} : { inboundHook: message.inboundHook }),
   }
 }
 

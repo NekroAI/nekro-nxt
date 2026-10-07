@@ -779,6 +779,35 @@ button.step:hover {
   font-size: var(--fs-xs);
 }
 
+/* 入站钩子的处理结果：成员消息下的一行小字 */
+.hookNote {
+  grid-column: 2;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.hookNote > svg {
+  width: 13px;
+  height: 13px;
+}
+
+.mine .hookNote {
+  grid-column: 1;
+  justify-self: end;
+}
+
+.hookNote[data-problem] {
+  color: var(--warn);
+}
+
+.hiddenFromAgent .bubble {
+  opacity: 0.6;
+}
+
 .xray {
   display: grid;
   gap: var(--s-2);
