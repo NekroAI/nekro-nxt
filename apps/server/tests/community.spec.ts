@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { ExtensionIdSchema, type JsonValue } from '@nekro-nxt/contracts'
+import { ExtensionIdSchema, HostApiContracts, type JsonValue } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import {
   CommunityError,
@@ -447,6 +447,8 @@ describe('CommunityService installed extensions and authoring', () => {
     expect(result.items[2]).toMatchObject({ releaseWithdrawn: true })
     expect((await service.status()).updatesAvailable).toBe(2)
     expect(service.cachedInstalled()?.items).toHaveLength(3)
+    // 缓存直接作为 listCommunityInstalled 的响应返回，必须通过严格的响应校验。
+    expect(() => HostApiContracts.listCommunityInstalled.response.parse(service.cachedInstalled())).not.toThrow()
   })
 
   it('lists my extensions and reads review reports when signed in', async () => {

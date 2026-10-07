@@ -61,9 +61,10 @@ export function MineView({ community }: { readonly community: CommunityState }) 
   if (community.status && !account) {
     return (
       <MainContent>
-        <EmptyState icon={<Send size={22} />} title="登录社区后查看你的发布">
-          登录后可以把扩展发布到社区，并在这里查看每次发布的审查结果与建议。
-          <div className={styles.inline}>
+        <EmptyState
+          icon={<Send size={22} />}
+          title="登录社区后查看你的发布"
+          action={
             <Button
               size="small"
               variant="primary"
@@ -71,7 +72,9 @@ export function MineView({ community }: { readonly community: CommunityState }) 
             >
               登录社区
             </Button>
-          </div>
+          }
+        >
+          登录后可以把扩展发布到社区，并在这里查看每次发布的审查结果与建议。
         </EmptyState>
       </MainContent>
     )

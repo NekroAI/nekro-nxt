@@ -92,13 +92,16 @@ export function InstalledView({
       {installed === undefined && !error ? (
         <Skeleton height={120} />
       ) : installed && installed.items.length === 0 ? (
-        <EmptyState icon={<PackageCheck size={22} />} title="还没有从社区安装扩展">
-          在「发现」中挑选扩展，安装后会出现在这里，有新发布时会提醒你。
-          <div className={styles.inline}>
+        <EmptyState
+          icon={<PackageCheck size={22} />}
+          title="还没有从社区安装扩展"
+          action={
             <Button size="small" onClick={() => navigate('/community')}>
               去发现
             </Button>
-          </div>
+          }
+        >
+          在「发现」中挑选扩展，安装后会出现在这里，有新发布时会提醒你。
         </EmptyState>
       ) : (
         <div className={styles.cardList}>

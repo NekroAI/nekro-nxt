@@ -674,7 +674,9 @@ export class CommunityService {
   }
 
   cachedInstalled(): { readonly checkedAt: number; readonly items: CommunityInstalledItem[] } | undefined {
-    return this.#installed?.url === this.communityUrl ? this.#installed : undefined
+    const cached = this.#installed
+    // 缓存里的社区地址只用于判断是否仍属当前社区，不随响应返回。
+    return cached?.url === this.communityUrl ? { checkedAt: cached.checkedAt, items: cached.items } : undefined
   }
 
   async publisherOf(extensionId: string): Promise<string> {
