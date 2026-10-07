@@ -30,6 +30,9 @@ beforeEach(async () => {
       if (url === '/json') {
         response.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'session=fixture' })
         response.end('{"ok":true}')
+      } else if (url === '/xhtml') {
+        response.writeHead(200, { 'content-type': 'application/xhtml+xml; charset=utf-8' })
+        response.end('<html xmlns="http://www.w3.org/1999/xhtml"><body>页面</body></html>')
       } else if (url === '/binary') {
         response.writeHead(200, { 'content-type': 'image/png' })
         response.end(Buffer.from([0, 255, 1, 254]))
@@ -102,6 +105,9 @@ describe('extension egress', () => {
     const json = await egress.fetch(`http://data.example.com:${port}/json`)
     expect(json).toMatchObject({ status: 200, text: '{"ok":true}', contentType: 'application/json' })
     expect(json.headers['set-cookie']).toBeUndefined()
+    const xhtml = await egress.fetch(`http://data.example.com:${port}/xhtml`)
+    expect(xhtml.text).toContain('页面')
+    expect(xhtml.base64).toBeUndefined()
     const binary = await egress.fetch(`http://data.example.com:${port}/binary`)
     expect(binary.text).toBeUndefined()
     expect(Buffer.from(binary.base64 ?? '', 'base64')).toEqual(Buffer.from([0, 255, 1, 254]))

@@ -389,11 +389,13 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
         }
 
         const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
+        const mediaType = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
+        // 结构化文本（XHTML、RSS/Atom、各种 +json）也按文本返回，扩展不必自己解码 base64。
         const isTextContent =
-          contentType.includes('text/') ||
-          contentType.includes('application/json') ||
-          contentType.includes('application/xml') ||
-          contentType.includes('application/javascript')
+          mediaType.startsWith('text/') ||
+          ['application/json', 'application/xml', 'application/javascript'].includes(mediaType) ||
+          mediaType.endsWith('+xml') ||
+          mediaType.endsWith('+json')
 
         const resultData: {
           url: string

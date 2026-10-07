@@ -108,7 +108,7 @@ export interface NxtFetchResponse {
   /** Lower-case header names; `set-cookie` is removed. */
   readonly headers: Readonly<Record<string, string>>
   readonly contentType: string
-  /** Present for textual responses (text, JSON, XML, JavaScript). */
+  /** Present for textual responses: `text/*`, JSON, XML, JavaScript and `+xml` / `+json` types such as XHTML or Atom. */
   readonly text?: string
   /** Present for every other response. */
   readonly base64?: string
