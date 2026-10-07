@@ -33,6 +33,8 @@ jobs:
           pnpm exec tsc -b packages/extension-format
           pnpm --filter @nekro-nxt/contracts --filter @nekro-nxt/extension-format run build
           pnpm exec vitest run packages/contracts packages/extension-format
+          # SDK 的发布物内联未公开的 adapter-sdk 与 dsh-compat，只依赖 contracts。
+          node scripts/prepare-extension-sdk-publish.mjs
       # 暂存发布需要 npm 11.15 及以上。
       - run: npm install -g npm@12
       - name: Stage unpublished versions
@@ -40,18 +42,23 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          # 依赖顺序：extension-format 依赖 contracts。
-          for dir in packages/contracts packages/extension-format; do
+          # 依赖顺序：extension-format 与 extension-sdk 依赖 contracts。
+          for dir in packages/contracts packages/extension-format packages/extension-sdk/publish; do
             name=$(node -p "require('./$dir/package.json').name")
             version=$(node -p "require('./$dir/package.json').version")
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "$name@$version 已发布，跳过。"
               continue
             fi
-            # pnpm pack 把 workspace: 依赖改写为真实版本号，再从解包目录暂存。
-            out=$(mktemp -d)
-            (cd "$dir" && pnpm pack --pack-destination "$out" >/dev/null)
-            tar -xzf "$out"/*.tgz -C "$out"
-            (cd "$out/package" && npm stage publish)
+            if [ "$dir" = packages/extension-sdk/publish ]; then
+              # 发布目录由准备脚本生成，依赖已是真实版本号。
+              (cd "$dir" && npm stage publish)
+            else
+              # pnpm pack 把 workspace: 依赖改写为真实版本号，再从解包目录暂存。
+              out=$(mktemp -d)
+              (cd "$dir" && pnpm pack --pack-destination "$out" >/dev/null)
+              tar -xzf "$out"/*.tgz -C "$out"
+              (cd "$out/package" && npm stage publish)
+            fi
             echo "$name@$version 已暂存，等待维护者确认。"
           done

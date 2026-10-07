@@ -32,3 +32,4 @@ docs-private/
 credentials*.json
 secrets/
 test-results/
+packages/extension-sdk/publish/
