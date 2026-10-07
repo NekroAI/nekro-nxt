@@ -2676,6 +2676,60 @@ describe('ChannelRuntime M1 lane', () => {
     ).rejects.toThrow('活动频道会话')
   })
 
+  it('reports failed, uncertain and valued platform actions and replays a repeated request', async () => {
+    type PlatformOutcome = ReturnType<NonNullable<AdapterConnectionInteractions['invokePlatformAction']>>
+    const outcomes: (() => PlatformOutcome)[] = [
+      () => Promise.resolve({ status: 'succeeded', result: { liked: 1 } }),
+      () => Promise.resolve({ status: 'failed', message: '对方已不在群里' }),
+      () => Promise.resolve({ status: 'unknown', message: '平台没有回应' }),
+      () => Promise.reject(new Error('连接已断开')),
+    ]
+    let calls = 0
+    const context = await setup(true, undefined, undefined, {
+      invokePlatformAction: () => outcomes[calls++]!(),
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'platform-outcomes'))
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+    const invoke = (clientRequestId: string) =>
+      context.runtime.invokeChannelPlatformAction({
+        episodeId: episode.id,
+        action: 'like_member',
+        args: {},
+        clientRequestId,
+      })
+
+    expect(await invoke('valued')).toMatchObject({ status: 'succeeded', value: { liked: 1 } })
+    expect(await invoke('failed')).toMatchObject({ status: 'failed', message: '对方已不在群里' })
+    expect(await invoke('unknown')).toMatchObject({ status: 'unknown', message: '平台没有回应' })
+    expect(await invoke('thrown')).toMatchObject({ status: 'failed', message: '连接已断开' })
+    // The same client request returns the recorded outcome instead of acting twice.
+    expect(await invoke('valued')).toMatchObject({ status: 'succeeded' })
+    expect(calls).toBe(4)
+
+    for (let index = 0; index < 6; index += 1) outcomes.push(() => Promise.resolve({ status: 'succeeded' }))
+    for (let index = 0; index < 6; index += 1) await invoke(`burst-${index}`)
+    await expect(invoke('over-limit')).rejects.toThrow('每分钟最多 10 次')
+  })
+
+  it('passes raw API calls through, replays repeats and limits bursts', async () => {
+    let calls = 0
+    const context = await setup(true, undefined, undefined, {
+      invokeRawApi: () => {
+        calls += 1
+        return Promise.resolve({ status: 'succeeded', result: { ok: true } })
+      },
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'raw-api-ok'))
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+    const invoke = (clientRequestId: string) =>
+      context.runtime.invokeChannelRawApi({ episodeId: episode.id, api: 'get_info', params: {}, clientRequestId })
+    expect(await invoke('first')).toMatchObject({ status: 'succeeded', value: { ok: true } })
+    expect(await invoke('first')).toMatchObject({ status: 'succeeded' })
+    expect(calls).toBe(1)
+    for (let index = 0; index < 19; index += 1) await invoke(`burst-${index}`)
+    await expect(invoke('over-limit')).rejects.toThrow('每分钟最多 20 次')
+  })
+
   it('invokes raw API with unsupported adapter', async () => {
     const context = await setup(true)
     await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'raw-api'))
@@ -2743,6 +2797,37 @@ describe('ChannelRuntime extension inbound hooks and scheduled jobs', () => {
     expect(calls).toEqual([`${hidden.channelEventId}:true`, expect.stringMatching(/:true$/u)])
   })
 
+  it('forces a reply to a message the binding would ignore, except on observe-only bindings', async () => {
+    const { gate } = hookGate((value) => ({ trigger: value === '叫醒' ? 'force' : 'default', hidden: false }))
+    const harness = await setup(true, undefined, undefined, undefined, { inboundHooks: gate })
+    harness.core.clearBinding(harness.channel.id)
+    harness.core.createBinding({
+      channelId: harness.channel.id,
+      agentId: harness.agent.definition.id,
+      triggerPolicy: 'mentioned-or-replied',
+    })
+    await harness.runtime.acceptChannelInbound(
+      text(inbound(harness.connection.id, harness.channel.id, 'plain', 102), '普通消息'),
+    )
+    expect(harness.admissionCalls).toHaveLength(0)
+    await harness.runtime.acceptChannelInbound(
+      text(inbound(harness.connection.id, harness.channel.id, 'wake', 103), '叫醒'),
+    )
+    expect(harness.admissionCalls).toHaveLength(1)
+    expect(harness.admissionCalls[0]?.replyRequired).toBe(true)
+
+    harness.core.clearBinding(harness.channel.id)
+    harness.core.createBinding({
+      channelId: harness.channel.id,
+      agentId: harness.agent.definition.id,
+      triggerPolicy: 'observe-only',
+    })
+    await harness.runtime.acceptChannelInbound(
+      text(inbound(harness.connection.id, harness.channel.id, 'observe', 104), '叫醒'),
+    )
+    expect(harness.admissionCalls).toHaveLength(1)
+  })
+
   it('suppresses triggers and carries annotations to the agent', async () => {
     const { gate } = hookGate((value) =>
       value === '安静'
@@ -2786,5 +2871,42 @@ describe('ChannelRuntime extension inbound hooks and scheduled jobs', () => {
     expect(
       await harness.runtime.fireExtensionJob({ ...job, agentId: AgentIdSchema.parse('agt_OTHER') }),
     ).toBeUndefined()
+  })
+
+  it('writes what each kind of due job carries for the agent to read', async () => {
+    const harness = await setup()
+    const fire = async (input: { payload: JsonValue; extensionName?: string; note?: string }, scheduledAt: number) => {
+      const committed = await harness.runtime.fireExtensionJob({
+        channelId: harness.channel.id,
+        agentId: harness.agent.definition.id,
+        jobId: 'job_FIXTURE',
+        label: '示例任务',
+        scheduledAt,
+        firedAt: scheduledAt,
+        ...input,
+      })
+      const event = harness.coreRepository.getChannelEvent(committed!.channelEventId)!
+      const part = event.parts[0]
+      return { text: part?.type === 'text' ? part.text : '', facts: event.facts?.['extensionJob'] }
+    }
+    // A chat-created task: its note is shown as a supplement and kept as a fact.
+    expect(await fire({ payload: { note: '由示例成员发起' } }, 1_000)).toMatchObject({
+      text: '示例任务\n补充：由示例成员发起',
+      facts: { note: '由示例成员发起' },
+    })
+    // An extension job: the handler's note first, then its payload for the agent.
+    expect(
+      await fire({ payload: { feed: 'a' }, extensionName: '示例扩展', note: '新内容：2 篇' }, 2_000),
+    ).toMatchObject({
+      text: '示例任务\n新内容：2 篇\n{"feed":"a"}',
+      facts: { note: '新内容：2 篇', extensionName: '示例扩展' },
+    })
+    // An extension payload that only looks like a chat note stays JSON.
+    expect((await fire({ payload: { note: 'x' }, extensionName: '示例扩展' }, 3_000)).text).toBe(
+      '示例任务\n{"note":"x"}',
+    )
+    expect((await fire({ payload: null, extensionName: '示例扩展' }, 4_000)).text).toBe('示例任务')
+    expect((await fire({ payload: {} }, 5_000)).text).toBe('示例任务')
+    expect((await fire({ payload: ['a'] }, 6_000)).text).toBe('示例任务\n["a"]')
   })
 })

@@ -73,6 +73,7 @@ const parseChannelInteractionResult = (candidate: JsonValue | undefined): Channe
     status,
     message: candidate['message'],
     ...(outcomes === undefined ? {} : { outcomes }),
+    ...(candidate['value'] === undefined ? {} : { value: candidate['value'] }),
   }
 }
 
@@ -380,7 +381,8 @@ export class ChannelInteractions {
     this.#interactionIntents.set(intent.id, {
       ...intent,
       state: status,
-      ...(resultValue === undefined ? {} : { result: resultValue }),
+      // The whole result, so a repeated client request replays it instead of reporting it as uncertain.
+      result: parseJsonValue(result),
       updatedAt: this.#timestamp(),
     })
     await this.#persistInteractionIntents(channel.connectionId)
@@ -450,7 +452,8 @@ export class ChannelInteractions {
     this.#interactionIntents.set(intent.id, {
       ...intent,
       state: status,
-      ...(resultValue === undefined ? {} : { result: resultValue }),
+      // The whole result, so a repeated client request replays it instead of reporting it as uncertain.
+      result: parseJsonValue(result),
       updatedAt: this.#timestamp(),
     })
     await this.#persistInteractionIntents(channel.connectionId)
