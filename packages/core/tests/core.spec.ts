@@ -541,9 +541,29 @@ describe('CoreService', () => {
 
   it('accepts only the current strict capability object', () => {
     const current = { ...deniedCapabilities, subagents: true, webSearch: true }
-    expect(parseStoredAgentCapabilityGrants(current)).toEqual(current)
+    // Revisions stored before `scheduledTasks` existed read it as on.
+    expect(parseStoredAgentCapabilityGrants(current)).toEqual({ ...current, scheduledTasks: true })
     expect(() => parseStoredAgentCapabilityGrants({ version: 2, grants: current })).toThrow()
     expect(() => parseStoredAgentCapabilityGrants({ ...current, fullFileAccess: false })).toThrow()
+  })
+
+  it('keeps the digest of Revisions without scheduledTasks and treats turning it off as new content', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const content = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const first = core.createAgent({ ...content, capabilities: deniedCapabilities })
+    const explicit = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: { ...deniedCapabilities, scheduledTasks: true },
+    })
+    expect(explicit.revision.id).toBe(first.revision.id)
+    const off = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: { ...deniedCapabilities, scheduledTasks: false },
+    })
+    expect(off.revision.id).not.toBe(first.revision.id)
+    expect(off.revision.contentDigest).not.toBe(first.revision.contentDigest)
   })
 
   it('reuses a semantically equivalent historical Revision even when it has a legacy digest', () => {
@@ -1126,7 +1146,11 @@ describe('CoreService', () => {
 
   it('covers canonical JSON arrays and validates clock and capability boundaries', () => {
     expect(canonicalJson({ z: [true, null, 2], a: 'x' })).toBe('{"a":"x","z":[true,null,2]}')
-    expect(parseAgentCapabilityGrants({ subagents: true })).toEqual({ ...deniedCapabilities, subagents: true })
+    expect(parseAgentCapabilityGrants({ subagents: true })).toEqual({
+      ...deniedCapabilities,
+      subagents: true,
+      scheduledTasks: true,
+    })
 
     const repository = new MemoryRepository()
     const invalidClock = new CoreService(repository, { now: () => -1, nextUlid: () => 'ID' })

@@ -347,6 +347,8 @@ export const AgentCapabilityGrantsSchema = z
     dynamicCreation: z.boolean().default(false),
     developmentShell: z.boolean().default(false),
     unrestrictedFileAccess: z.boolean().default(false),
+    /** Chat-created scheduled tasks; on unless the user turns it off (absent in Revisions before the field). */
+    scheduledTasks: z.boolean().default(true),
   })
   .strict()
   .default({
@@ -356,6 +358,7 @@ export const AgentCapabilityGrantsSchema = z
     dynamicCreation: false,
     developmentShell: false,
     unrestrictedFileAccess: false,
+    scheduledTasks: true,
   })
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
@@ -579,6 +582,8 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     dynamicCreation: content.capabilities.dynamicCreation,
     developmentShell: content.capabilities.developmentShell,
     unrestrictedFileAccess: content.capabilities.unrestrictedFileAccess,
+    // The default leaves the digest of every earlier Revision unchanged; only turning it off is content.
+    ...(content.capabilities.scheduledTasks ? {} : { scheduledTasks: false }),
   },
   imagePolicy: {
     history: {

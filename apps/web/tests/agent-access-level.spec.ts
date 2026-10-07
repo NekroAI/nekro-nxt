@@ -14,6 +14,7 @@ const capabilities = (
   subagents: false,
   webSearch: false,
   dynamicCreation: false,
+  scheduledTasks: true,
   ...access,
 })
 

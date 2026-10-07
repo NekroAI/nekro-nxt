@@ -67,6 +67,7 @@ import { AuthoringTestSecrets } from './authoring-test-secrets.js'
 import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
+import { ScheduledTasks } from './scheduled-tasks.js'
 import {
   createNxtProductBackends,
   memoryNxtJobs,
@@ -176,6 +177,7 @@ export class NekroRuntime {
   readonly connections: ConnectionApplicationService
   readonly adapters: AdapterRegistry
   readonly #jobScheduler: ExtensionJobScheduler
+  readonly scheduledTasks: ScheduledTasks
   readonly authoringTestSecrets: AuthoringTestSecrets
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
@@ -215,6 +217,7 @@ export class NekroRuntime {
     readonly now: () => number
     readonly adapters: AdapterRegistry
     readonly jobScheduler: ExtensionJobScheduler
+    readonly scheduledTasks: ScheduledTasks
     readonly authoringTestSecrets: AuthoringTestSecrets
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
@@ -242,6 +245,7 @@ export class NekroRuntime {
     this.#now = input.now
     this.adapters = input.adapters
     this.#jobScheduler = input.jobScheduler
+    this.scheduledTasks = input.scheduledTasks
     this.authoringTestSecrets = input.authoringTestSecrets
     this.connections = new ConnectionApplicationService(
       this,
@@ -428,6 +432,18 @@ export class NekroRuntime {
         message: result.message,
         ...(result.value === undefined ? {} : { value: result.value }),
       })
+      const scheduledTasks = new ScheduledTasks({
+        repository,
+        extensionActive: (agentId, extensionId) => repository.getActivation(agentId, extensionId) !== undefined,
+        extensionName: (extensionId) => repository.getExtension(extensionId)?.displayName,
+        agentLive: (agentId) => repository.getAgent(agentId) !== undefined,
+        fire: (job) =>
+          settled.current === undefined
+            ? Promise.reject(new Error('Channel Runtime is not ready.'))
+            : settled.current.fireExtensionJob(job),
+        now,
+        nextId: nextUlid,
+      })
       const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
         activationBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
@@ -476,52 +492,7 @@ export class NekroRuntime {
           capabilities: repository.getExtensionRevisionVerification(revision.id)?.permissions?.capabilities,
         }),
         dynamicConfig: (agentId, episodeId) => authoringTestSecrets.configForEpisode(agentId, episodeId),
-        reminders: {
-          create: ({ agentId, channelId, label, schedule, nextRunAt, note }) => {
-            const row = {
-              id: `job_${nextUlid()}`,
-              agentId,
-              extensionId: null,
-              channelId,
-              source: 'reminder' as const,
-              declaredKey: null,
-              label,
-              scheduleKind: schedule.kind,
-              runAt: schedule.kind === 'once' ? schedule.at : null,
-              cron: schedule.kind === 'cron' ? schedule.cron : null,
-              timezone: schedule.kind === 'cron' ? schedule.timezone : null,
-              payloadJson: note === undefined ? {} : { note },
-              nextRunAt,
-              lastFiredAt: null,
-              paused: false,
-              createdAt: now(),
-            }
-            repository.createExtensionJob(row)
-            return {
-              jobId: row.id,
-              label,
-              nextRunAt,
-              ...(row.cron === null ? {} : { cron: row.cron }),
-              ...(row.runAt === null ? {} : { at: row.runAt }),
-            }
-          },
-          list: (agentId, channelId) =>
-            repository
-              .listExtensionJobs({ agentId, extensionId: null, channelId })
-              .filter((row) => row.source === 'reminder' && row.nextRunAt !== null)
-              .map((row) => ({
-                jobId: row.id,
-                label: row.label,
-                ...(row.nextRunAt === null ? {} : { nextRunAt: row.nextRunAt }),
-                ...(row.cron === null ? {} : { cron: row.cron }),
-                ...(row.runAt === null ? {} : { at: row.runAt }),
-              })),
-          cancel: (agentId, jobId) => {
-            const row = repository.getExtensionJob(jobId)
-            if (row === undefined || row.source !== 'reminder' || row.agentId !== agentId) return false
-            return repository.deleteExtensionJob(jobId)
-          },
-        },
+        scheduledTasks,
         onSessionMount: ({
           agentId,
           revision,
@@ -756,9 +727,14 @@ export class NekroRuntime {
         diagnostic: (job, message) => {
           console.warn(`[nekro-nxt] 定时任务 ${job.id}（${job.label}）：${message}`)
         },
+        afterSweep: (advanced) => {
+          scheduledTasks.prune()
+          if (advanced > 0) scheduledTasks.changed()
+        },
       })
       const runtime = new NekroRuntime({
         jobScheduler,
+        scheduledTasks,
         authoringTestSecrets,
         compatibility,
         database,

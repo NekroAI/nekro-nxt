@@ -1304,6 +1304,94 @@ test.describe('NekroNxt browser projections', () => {
     })
   })
 
+  test('shows scheduled tasks on the agent page and in the channel inspector and acts on them', async () => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    const now = Date.now()
+    const task = (id: string, overrides: Record<string, unknown>) => ({
+      id,
+      agentId: browserAgentId,
+      channelId: browserChannelId,
+      source: 'chat',
+      label: '示例任务',
+      schedule: { kind: 'cron', cron: '0 8 * * 1-5', timezone: zone },
+      state: 'scheduled',
+      nextRunAt: now + 2 * 60 * 60 * 1000,
+      createdAt: now - 1000,
+      ...overrides,
+    })
+    const snapshot = {
+      ...browserSnapshot,
+      scheduledTasks: [
+        task('job_morning', { label: '工作日早报' }),
+        task('job_digest', {
+          source: 'declared',
+          extensionId: browserExtensionId,
+          extensionName: '文档复核',
+          label: '每晚汇总',
+          schedule: { kind: 'cron', cron: '30 21 * * *', timezone: zone },
+          state: 'paused',
+          nextRunAt: now + 10 * 60 * 60 * 1000,
+        }),
+        task('job_water', {
+          label: '提醒喝水',
+          schedule: { kind: 'once', at: now - 60 * 60 * 1000 },
+          state: 'finished',
+          nextRunAt: undefined,
+          lastFiredAt: now - 60 * 60 * 1000,
+        }),
+      ],
+    }
+    const calls: string[] = []
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const section = page.locator('#profile-schedules')
+        await section.scrollIntoViewIfNeeded()
+        const table = section.getByRole('table', { name: '资料员的定时任务' })
+        await playwrightExpect(table).toContainText('工作日早报')
+        await playwrightExpect(table).toContainText('工作日 08:00')
+        await playwrightExpect(table).toContainText('文档复核固定计划')
+        await playwrightExpect(table).toContainText('已暂停')
+        await playwrightExpect(table).toContainText('已触发')
+        // Declared plans cannot be deleted; finished tasks can only be cleared.
+        await playwrightExpect(page.getByRole('button', { name: '删除「每晚汇总」' })).toHaveCount(0)
+        await playwrightExpect(page.getByRole('button', { name: '暂停「提醒喝水」' })).toHaveCount(0)
+        await page.screenshot({ path: '.local/browser-test-results/agent-scheduled-tasks.png', fullPage: true })
+
+        await page.getByRole('button', { name: '暂停「工作日早报」' }).click()
+        await page.getByRole('button', { name: '恢复「每晚汇总」' }).click()
+        await page.getByRole('button', { name: '删除「提醒喝水」' }).click()
+        await page.getByRole('dialog', { name: '删除「提醒喝水」？' }).getByRole('button', { name: '删除' }).click()
+        await playwrightExpect
+          .poll(() => [...calls].sort())
+          .toEqual(['DELETE job_water', 'POST job_digest/resume', 'POST job_morning/pause'])
+
+        await page.goto(`${baseUrl}/channels/${browserChannelId}`)
+        const inspector = page.getByRole('complementary', { name: '频道信息' })
+        await playwrightExpect(inspector).toContainText('定时任务')
+        await playwrightExpect(inspector).toContainText('工作日早报')
+        await playwrightExpect(inspector).not.toContainText('提醒喝水')
+        await inspector.getByRole('button', { name: '立即执行「工作日早报」' }).click()
+        await playwrightExpect.poll(() => calls).toContain('POST job_morning/run')
+        await page.screenshot({ path: '.local/browser-test-results/channel-scheduled-tasks.png' })
+      },
+      snapshot,
+      async (page) => {
+        await page.route('**/api/scheduled-tasks/**', async (request) => {
+          const url = new URL(request.request().url())
+          const [, , , taskId, action] = url.pathname.split('/')
+          calls.push(`${request.request().method()} ${taskId}${action ? `/${action}` : ''}`)
+          const current = snapshot.scheduledTasks.find((item) => item.id === taskId)
+          await request.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify(action === undefined ? { deleted: true } : current),
+          })
+        })
+      },
+    )
+  })
+
   test('asks before granting a higher system-access level and sends the matching capabilities', async () => {
     const capabilityRequests: unknown[] = []
     await withProductPage(

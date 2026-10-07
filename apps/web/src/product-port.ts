@@ -36,6 +36,7 @@ export interface ProductSnapshot {
   /** Running dynamic Packages by intelligent-agent (from the creator runtime). */
   readonly dynamic: readonly DynamicPackageSummary[]
   readonly authoringTasks?: ProductState['authoringTasks']
+  readonly scheduledTasks?: ProductState['scheduledTasks']
   readonly notificationSettings: ProductState['notificationSettings']
   readonly diagnosticNote: string
   readonly workTreeOrder: {

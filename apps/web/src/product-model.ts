@@ -85,6 +85,7 @@ export interface AgentSummary {
     readonly dynamicCreation: boolean
     readonly developmentShell: boolean
     readonly unrestrictedFileAccess: boolean
+    readonly scheduledTasks: boolean
   }
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
@@ -474,6 +475,7 @@ export interface ProductState {
   readonly approvals: readonly DynamicApproval[]
   readonly dynamic: readonly DynamicPackageSummary[]
   readonly authoringTasks: HostApiResponse<'snapshot'>['authoringTasks']
+  readonly scheduledTasks: HostApiResponse<'snapshot'>['scheduledTasks']
   readonly notificationSettings: HostApiResponse<'snapshot'>['notificationSettings']
   readonly diagnosticNote: string
   refreshHost(): Promise<void>
@@ -558,6 +560,7 @@ export interface ProductState {
   stopAuthoringTask(taskId: string, expectedRevision: number): Promise<void>
   restoreAuthoringAttempt(taskId: string, attemptId: string, expectedRevision: number): Promise<void>
   deleteAuthoringTask(taskId: string): Promise<void>
+  scheduledTaskAction(taskId: string, action: 'pause' | 'resume' | 'run' | 'delete'): Promise<void>
   saveDynamicExtension(input: {
     readonly taskId?: string
     readonly attemptId?: string

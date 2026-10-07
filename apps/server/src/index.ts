@@ -118,6 +118,7 @@ import {
   type DshSettingsPathOperation,
   type EpisodeId,
   type JsonValue,
+  type ScheduledTask,
   type LogicalMessageId,
   type PromptDocumentV1,
   type PromptSegment,
@@ -179,14 +180,12 @@ import {
 import {
   createNxtDynamicFacade,
   createNxtHostService,
-  nextJobRun,
-  parseJobSchedule,
-  type NxtJobSchedule,
   dshPromptRegistry,
   NXT_HOST_SERVICE_NAME,
   type NxtServiceBackends,
 } from './extension-host-service.js'
-import type { NxtJobRecord, NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
+import type { NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
+import { formatTaskTime, hostTimezone, parseTaskSchedule, type ScheduledTasks } from './scheduled-tasks.js'
 import { PersistentExtensionMounts, type PersistentInboundHandler } from './persistent-extension-mounts.js'
 import {
   collectVisibleImageDigests,
@@ -380,8 +379,8 @@ export interface DshHostRuntimeOptions {
     }
     /** Config a dynamic candidate sees: secret references of the task's test credentials. */
     readonly dynamicConfig?: (agentId: AgentId, episodeId: EpisodeId) => JsonValue
-    /** Built-in reminders of an agent in one channel; they are jobs without an extension. */
-    readonly reminders?: ReminderPort
+    /** Scheduled tasks agents manage from chat; tools are offered when the agent's `scheduledTasks` is on. */
+    readonly scheduledTasks?: ScheduledTaskPort
     /** Runs when an Activation mounts into a Session, i.e. into one bound channel (declared jobs live per channel). */
     readonly onSessionMount?: (input: {
       readonly agentId: AgentId
@@ -1214,94 +1213,171 @@ export const finishChannelTurnTool = () =>
     },
   })
 
-export interface ReminderPort {
-  create(input: {
-    readonly agentId: AgentId
-    readonly channelId: ChannelId
-    readonly label: string
-    readonly schedule: NxtJobSchedule
-    readonly nextRunAt: number
-    readonly note?: string
-  }): NxtJobRecord
-  list(agentId: AgentId, channelId: ChannelId): readonly NxtJobRecord[]
-  cancel(agentId: AgentId, jobId: string): boolean
+/** Scheduled-task operations the agent's tools use; the server's `ScheduledTasks` implements them. */
+export type ScheduledTaskPort = Pick<
+  ScheduledTasks,
+  'create' | 'list' | 'update' | 'pause' | 'resume' | 'delete' | 'run'
+>
+
+const taskJson = (value: unknown): JsonValue => parseJsonValue(JSON.parse(JSON.stringify(value)))
+
+/** What the agent reads back: times in the task's zone so it can repeat them to members without conversion. */
+const describeTask = (task: ScheduledTask) => {
+  const timezone = task.schedule.kind === 'cron' ? task.schedule.timezone : hostTimezone()
+  return {
+    taskId: task.id,
+    label: task.label,
+    ...(task.note === undefined ? {} : { note: task.note }),
+    source: task.source === 'chat' ? '对话' : `扩展 ${task.extensionName ?? task.extensionId ?? ''}`.trim(),
+    schedule:
+      task.schedule.kind === 'cron'
+        ? `cron ${task.schedule.cron}（${task.schedule.timezone}）`
+        : `一次性 ${formatTaskTime(task.schedule.at, timezone)}（${timezone}）`,
+    state: { scheduled: '等待触发', paused: '已暂停', finished: '已完成', inactive: '扩展已停用' }[task.state],
+    ...(task.nextRunAt === undefined ? {} : { nextRun: formatTaskTime(task.nextRunAt, timezone) }),
+    ...(task.lastFiredAt === undefined ? {} : { lastRun: formatTaskTime(task.lastFiredAt, timezone) }),
+  }
 }
 
-const REMINDER_LIMIT_PER_CHANNEL = 20
+const scheduleParameters = {
+  at: {
+    type: 'string',
+    description: '一次性任务的触发时间，如 2026-10-08 08:00（按 timezone 解释）或带偏移的 ISO 时间。',
+  },
+  delayMinutes: { type: 'number', description: '一次性任务：从现在起多少分钟后触发。' },
+  cron: { type: 'string', description: '周期任务的五段 cron 表达式，如 0 8 * * 1-5（工作日 8 点）。' },
+  timezone: { type: 'string', description: 'IANA 时区，如 Asia/Shanghai；默认宿主时区。' },
+} as const
 
-/** Product reminders: the agent schedules a wake-up for itself; when it fires the agent decides whether to speak. */
-const reminderTools = (agentId: AgentId, channelId: ChannelId, reminders: ReminderPort) => [
-  defineTool({
-    name: 'reminder_create',
-    description:
-      '为当前频道创建提醒：到时间后你会收到“定时任务到期”事件，再决定是否用 send_channel_message 发言。一次性提醒用 at（毫秒时间戳），周期提醒用 cron（五段表达式，如 0 8 * * *）与 timezone。',
-    parameters: {
-      label: { type: 'string', required: true, description: '提醒内容，到期时会原样交给你。' },
-      at: { type: 'integer', description: '一次性提醒的毫秒时间戳。' },
-      cron: { type: 'string', description: '周期提醒的五段 cron 表达式。' },
-      timezone: { type: 'string', description: 'cron 使用的 IANA 时区，默认宿主时区。' },
-      note: { type: 'string', description: '可选补充信息。' },
+const taskIdParameter = {
+  taskId: { type: 'string', required: true, description: 'schedule_list 返回的 taskId。' },
+} as const
+
+const scheduleOf = (args: { at?: string; delayMinutes?: number; cron?: string; timezone?: string }) =>
+  parseTaskSchedule(
+    {
+      ...(args.at === undefined ? {} : { at: args.at }),
+      ...(args.delayMinutes === undefined ? {} : { delayMinutes: args.delayMinutes }),
+      ...(args.cron === undefined ? {} : { cron: args.cron }),
+      ...(args.timezone === undefined ? {} : { timezone: args.timezone }),
     },
-    output: {
-      schema: { type: 'json' },
-      render: (_args, value) => [{ type: 'text', text: `已创建提醒：${JSON.stringify(value)}` }],
-    },
-    execute(args) {
-      const label = args.label.trim()
-      if (label === '' || label.length > 200) throw new Error('提醒内容需要 1–200 个字符。')
-      if (reminders.list(agentId, channelId).length >= REMINDER_LIMIT_PER_CHANNEL) {
-        throw new Error(`当前频道最多保留 ${REMINDER_LIMIT_PER_CHANNEL} 个提醒，请先取消不需要的提醒。`)
-      }
-      const now = Date.now()
-      const schedule = parseJobSchedule(
-        {
-          ...(args.at === undefined ? {} : { at: args.at }),
-          ...(args.cron === undefined ? {} : { cron: args.cron }),
-          ...(args.timezone === undefined ? {} : { timezone: args.timezone }),
-        },
-        now,
-      )
-      const nextRunAt = nextJobRun(schedule, now)
-      if (nextRunAt === undefined) throw new Error('这个提醒不会再触发。')
-      return Promise.resolve(
-        parseJsonValue(
-          JSON.parse(
-            JSON.stringify(
-              reminders.create({
+    Date.now(),
+  )
+
+const taskOutput = (verb: string) =>
+  ({
+    schema: { type: 'json' },
+    render: (_args: unknown, value: JsonValue) => [
+      { type: 'text' as const, text: `${verb}：${JSON.stringify(value)}` },
+    ],
+  }) as const
+
+/**
+ * Scheduled tasks of the current channel. When one is due the agent receives a 「定时任务到期」 control event and decides
+ * whether to speak; nothing is sent to members by the task itself.
+ */
+const scheduledTaskTools = (agentId: AgentId, channelId: ChannelId, tasks: ScheduledTaskPort) => {
+  const actor = { kind: 'agent', agentId, channelId } as const
+  return [
+    defineTool({
+      name: 'schedule_create',
+      description:
+        '为当前频道创建定时任务（提醒、定时播报、周期检查等）。到期时你会收到「定时任务到期」事件，再决定是否用 send_channel_message 发言或调用其他工具。一次性任务用 at 或 delayMinutes，周期任务用 cron；三者只给一个。创建前先向成员复述时间与内容，创建后告知下次触发时间。不确定当前时间时先调用 schedule_list 查看。',
+      parameters: {
+        label: { type: 'string', required: true, description: '任务内容，到期时原样交给你，写清要做什么、对谁。' },
+        ...scheduleParameters,
+        note: { type: 'string', description: '可选补充信息，如发起人或额外要求。' },
+      },
+      output: taskOutput('已创建定时任务'),
+      execute: (args) =>
+        Promise.resolve(
+          taskJson(
+            describeTask(
+              tasks.create({
                 agentId,
                 channelId,
-                label,
-                schedule,
-                nextRunAt,
+                label: args.label,
                 ...(args.note === undefined ? {} : { note: args.note }),
+                schedule: scheduleOf(args),
               }),
             ),
           ),
         ),
-      )
-    },
-  }),
-  defineTool({
-    name: 'reminder_list',
-    description: '列出当前频道里你创建的提醒及下次触发时间。',
-    parameters: {},
-    output: {
-      schema: { type: 'json' },
-      render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
-    },
-    execute: () => Promise.resolve(parseJsonValue(JSON.parse(JSON.stringify(reminders.list(agentId, channelId))))),
-  }),
-  defineTool({
-    name: 'reminder_cancel',
-    description: '按 jobId 取消当前频道的一个提醒。',
-    parameters: { jobId: { type: 'string', required: true, description: 'reminder_list 返回的 jobId。' } },
-    output: {
-      schema: { type: 'boolean' },
-      render: (_args, value) => [{ type: 'text', text: value ? '已取消提醒。' : '没有找到这个提醒。' }],
-    },
-    execute: (args) => Promise.resolve(reminders.cancel(agentId, args.jobId)),
-  }),
-]
+    }),
+    defineTool({
+      name: 'schedule_list',
+      description: '列出当前频道的全部定时任务（包括扩展的任务）及下次触发时间，并返回当前时间。',
+      parameters: {},
+      output: taskOutput('当前频道定时任务'),
+      execute: () => {
+        const timezone = hostTimezone()
+        return Promise.resolve(
+          taskJson({
+            now: `${formatTaskTime(Date.now(), timezone)}（${timezone}）`,
+            tasks: tasks.list({ agentId, channelId }).map(describeTask),
+          }),
+        )
+      },
+    }),
+    defineTool({
+      name: 'schedule_update',
+      description:
+        '修改当前频道里由对话创建的定时任务的内容或时间。改时间时同 schedule_create 只给 at、delayMinutes、cron 之一，任务从现在起按新计划触发。',
+      parameters: {
+        ...taskIdParameter,
+        label: { type: 'string', description: '新的任务内容。' },
+        note: { type: 'string', description: '新的补充信息；空字符串清除。' },
+        ...scheduleParameters,
+      },
+      output: taskOutput('已修改定时任务'),
+      execute: (args) => {
+        const reschedule = args.at !== undefined || args.delayMinutes !== undefined || args.cron !== undefined
+        return Promise.resolve(
+          taskJson(
+            describeTask(
+              tasks.update(actor, args.taskId, {
+                ...(args.label === undefined ? {} : { label: args.label }),
+                ...(args.note === undefined ? {} : { note: args.note }),
+                ...(reschedule ? { schedule: scheduleOf(args) } : {}),
+              }),
+            ),
+          ),
+        )
+      },
+    }),
+    defineTool({
+      name: 'schedule_pause',
+      description: '暂停当前频道的一个定时任务，恢复前不会触发。',
+      parameters: taskIdParameter,
+      output: taskOutput('已暂停'),
+      execute: (args) => Promise.resolve(taskJson(describeTask(tasks.pause(actor, args.taskId)))),
+    }),
+    defineTool({
+      name: 'schedule_resume',
+      description: '恢复已暂停的定时任务；周期任务从下一次时间开始，已过时间的一次性任务会马上触发一次。',
+      parameters: taskIdParameter,
+      output: taskOutput('已恢复'),
+      execute: (args) => Promise.resolve(taskJson(describeTask(tasks.resume(actor, args.taskId)))),
+    }),
+    defineTool({
+      name: 'schedule_delete',
+      description: '删除当前频道的一个定时任务。扩展固定计划的任务不能删除，只能暂停。',
+      parameters: taskIdParameter,
+      output: { schema: { type: 'boolean' }, render: () => [{ type: 'text', text: '已删除定时任务。' }] },
+      execute: (args) => {
+        tasks.delete(actor, args.taskId)
+        return Promise.resolve(true)
+      },
+    }),
+    defineTool({
+      name: 'schedule_run_now',
+      description: '立即触发一次由对话创建的定时任务，用于试运行；不改变原计划。',
+      parameters: taskIdParameter,
+      output: taskOutput('已触发'),
+      execute: async (args) => taskJson(describeTask(await tasks.run(actor, args.taskId))),
+    }),
+  ]
+}
 
 const channelContextTool = (
   episodeId: EpisodeId,
@@ -2730,9 +2806,9 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
       agentContext.tools.register(finishChannelTurnTool())
-      const reminders = this.#extensionHost?.reminders
-      if (reminders !== undefined) {
-        for (const tool of reminderTools(revision.agentId, input.channelId, reminders))
+      const scheduledTasks = this.#extensionHost?.scheduledTasks
+      if (scheduledTasks !== undefined && revision.capabilities.scheduledTasks) {
+        for (const tool of scheduledTaskTools(revision.agentId, input.channelId, scheduledTasks))
           agentContext.tools.register(tool)
       }
       if (this.#communication.supportsRetraction?.(input.channelId) === true && this.#communication.retractMessage) {

@@ -371,7 +371,7 @@ export function CapabilitiesSection({
       apply,
     )
   }
-  const setCapability = (key: 'subagents' | 'webSearch' | 'dynamicCreation', enabled: boolean) =>
+  const setCapability = (key: 'subagents' | 'webSearch' | 'dynamicCreation' | 'scheduledTasks', enabled: boolean) =>
     update((current) => ({ ...current, capabilities: { ...current.capabilities, [key]: enabled } }))
 
   return (
@@ -431,6 +431,13 @@ export function CapabilitiesSection({
             label="动态创造"
             checked={caps.dynamicCreation}
             onCheckedChange={(checked) => setCapability('dynamicCreation', checked)}
+          />
+        </PropertyRow>
+        <PropertyRow label="定时任务" description="频道成员可以请它设置提醒和周期任务">
+          <Switch
+            label="定时任务"
+            checked={caps.scheduledTasks}
+            onCheckedChange={(checked) => setCapability('scheduledTasks', checked)}
           />
         </PropertyRow>
       </PropertyList>

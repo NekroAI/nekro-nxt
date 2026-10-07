@@ -236,6 +236,8 @@ const AgentCapabilitiesSchema = z
     dynamicCreation: z.boolean(),
     developmentShell: z.boolean(),
     unrestrictedFileAccess: z.boolean(),
+    /** Absent in older clients means on. */
+    scheduledTasks: z.boolean().default(true),
   })
   .strict()
 
@@ -330,7 +332,9 @@ const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   validatePersonaDocumentProjection(value, context)
 })
 
+// The default that fills `scheduledTasks` for older clients must not turn it on in a partial update.
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
+  .extend({ scheduledTasks: z.boolean().optional() })
   .strict()
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), '至少提供一个能力。')
 
@@ -896,6 +900,36 @@ export const ChannelActivitySeriesSchema = z
 
 export type ChannelActivitySeries = z.output<typeof ChannelActivitySeriesSchema>
 
+export const ScheduledTaskIdSchema = z.string().regex(/^job_[0-9A-Za-z]+$/u)
+
+/**
+ * One scheduled task of an agent in one channel. `chat` tasks come from the agent's scheduling tools; `declared` and
+ * `runtime` tasks belong to an extension (Manifest plan or `ctx.nxt.jobs`).
+ */
+export const ScheduledTaskSchema = z
+  .object({
+    id: ScheduledTaskIdSchema,
+    agentId: AgentIdSchema,
+    channelId: ChannelIdSchema,
+    source: z.enum(['chat', 'declared', 'runtime']),
+    extensionId: ExtensionIdSchema.optional(),
+    extensionName: z.string().optional(),
+    label: z.string(),
+    note: z.string().optional(),
+    schedule: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('once'), at: z.number().int().safe() }).strict(),
+      z.object({ kind: z.literal('cron'), cron: z.string(), timezone: z.string() }).strict(),
+    ]),
+    /** `inactive`: the owning extension is disabled for this agent, so the task stays silent. */
+    state: z.enum(['scheduled', 'paused', 'finished', 'inactive']),
+    nextRunAt: z.number().int().safe().optional(),
+    lastFiredAt: z.number().int().safe().optional(),
+    createdAt: z.number().int().safe(),
+  })
+  .strict()
+
+export type ScheduledTask = z.output<typeof ScheduledTaskSchema>
+
 export const HostSnapshotSchema = z
   .object({
     upgrade: HostUpgradeSummarySchema.optional(),
@@ -1264,6 +1298,7 @@ export const HostSnapshotSchema = z
         .strict(),
     ),
     authoringTasks: z.array(AuthoringTaskSummarySchema).default([]),
+    scheduledTasks: z.array(ScheduledTaskSchema).default([]),
   })
   .strict()
 
@@ -1690,6 +1725,7 @@ const dshSettingsParam = z.object({ namespace: NonEmptyStringSchema }).strict()
 const dshCredentialParam = z.object({ ref: DshCredentialRefSchema }).strict()
 const llmProviderParam = z.object({ provider: NonEmptyStringSchema }).strict()
 const authoringTaskParam = z.object({ taskId: AuthoringTaskIdSchema }).strict()
+const scheduledTaskParam = z.object({ taskId: ScheduledTaskIdSchema }).strict()
 const authoringAttemptParam = z.object({ taskId: AuthoringTaskIdSchema, attemptId: AuthoringAttemptIdSchema }).strict()
 
 const DshPluginInstallInspectionSchema = z
@@ -1827,6 +1863,42 @@ export const HostApiContracts = {
     method: 'DELETE',
     path: '/api/authoring/tasks/:taskId',
     params: authoringTaskParam,
+    request: NoRequestBodySchema,
+    response: z.object({ deleted: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  pauseScheduledTask: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/scheduled-tasks/:taskId/pause',
+    params: scheduledTaskParam,
+    request: NoRequestBodySchema,
+    response: ScheduledTaskSchema,
+    error: HostApiErrorSchema,
+  }),
+  resumeScheduledTask: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/scheduled-tasks/:taskId/resume',
+    params: scheduledTaskParam,
+    request: NoRequestBodySchema,
+    response: ScheduledTaskSchema,
+    error: HostApiErrorSchema,
+  }),
+  runScheduledTask: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/scheduled-tasks/:taskId/run',
+    params: scheduledTaskParam,
+    request: NoRequestBodySchema,
+    response: ScheduledTaskSchema,
+    error: HostApiErrorSchema,
+  }),
+  deleteScheduledTask: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/scheduled-tasks/:taskId',
+    params: scheduledTaskParam,
     request: NoRequestBodySchema,
     response: z.object({ deleted: z.literal(true) }).strict(),
     error: HostApiErrorSchema,

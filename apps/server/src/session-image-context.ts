@@ -1,3 +1,4 @@
+import { formatTaskTime, hostTimezone } from './scheduled-tasks.js'
 import { sessionEvents } from './session-event-history.js'
 import type { DshHostRuntimeOptions } from './index.js'
 import type { Context } from '@deepseek-ai/cordis'
@@ -215,13 +216,16 @@ export const historyEntrySenderDescription = (
 const extensionJobHeader = (event: ChannelEventRecord): string | undefined => {
   const job = event.facts?.['extensionJob']
   if (job === null || typeof job !== 'object' || Array.isArray(job)) return undefined
-  const source = typeof job['extensionName'] === 'string' ? `扩展「${job['extensionName']}」` : '内置提醒'
-  const scheduledAt = typeof job['scheduledAt'] === 'number' ? new Date(job['scheduledAt']).toISOString() : '未知'
+  const source = typeof job['extensionName'] === 'string' ? `扩展「${job['extensionName']}」` : '对话创建的定时任务'
+  const task = typeof job['jobId'] === 'string' ? `，taskId ${job['jobId']}` : ''
+  const timezone = hostTimezone()
+  const scheduledAt =
+    typeof job['scheduledAt'] === 'number' ? `${formatTaskTime(job['scheduledAt'], timezone)}（${timezone}）` : '未知'
   const delay =
     typeof job['delayMinutes'] === 'number' && job['delayMinutes'] > 0
       ? `；宿主离线导致延迟约 ${job['delayMinutes']} 分钟`
       : ''
-  return `定时任务到期（来源：${source}；计划时间 ${scheduledAt}${delay}）。这不是成员发言；是否需要在频道发言由你判断，需要时使用 send_channel_message：`
+  return `定时任务到期（来源：${source}${task}；计划时间 ${scheduledAt}${delay}）。这不是成员发言；是否需要在频道发言由你判断，需要时使用 send_channel_message：`
 }
 
 export const DirectImageInspectionValueSchema = z

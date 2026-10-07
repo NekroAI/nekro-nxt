@@ -37,12 +37,14 @@ export interface ExtensionJobSchedulerOptions {
     readonly firedAt: number
     readonly nextRunAt: number | undefined
   }) => boolean
-  /** Whether the job's extension is still enabled for its agent; built-in reminders are always active. */
+  /** Whether the job's extension is still enabled for its agent; chat-created tasks are always active. */
   readonly active: (row: ScheduledJobRow) => boolean
   readonly extensionName: (extensionId: ExtensionId) => string | undefined
   readonly fire: ChannelRuntime['fireExtensionJob']
   readonly now: () => number
   readonly diagnostic?: (row: ScheduledJobRow, message: string) => void
+  /** After each sweep, with how many jobs it advanced. */
+  readonly afterSweep?: (advanced: number) => void
   readonly tickMs?: number
 }
 
@@ -85,6 +87,7 @@ export class ExtensionJobScheduler {
 
   async #sweep(): Promise<void> {
     const now = this.#options.now()
+    let advanced = 0
     for (const row of this.#options.due(now, 50)) {
       if (this.#disposed) return
       const next = row.schedule.kind === 'cron' ? nextJobRun(row.schedule, now) : undefined
@@ -107,8 +110,10 @@ export class ExtensionJobScheduler {
       } catch (error) {
         this.#options.diagnostic?.(row, error instanceof Error ? error.message : String(error))
       }
-      this.#options.advance({ id: row.id, expectedNextRunAt: row.nextRunAt, firedAt: now, nextRunAt: next })
+      if (this.#options.advance({ id: row.id, expectedNextRunAt: row.nextRunAt, firedAt: now, nextRunAt: next }))
+        advanced += 1
     }
+    this.#options.afterSweep?.(advanced)
   }
 }
 

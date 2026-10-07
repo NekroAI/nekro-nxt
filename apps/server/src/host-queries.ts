@@ -556,6 +556,7 @@ export class HostQueries {
       authoringTasks: runtime.repository
         .listAuthoringTasks()
         .map((task) => projectAuthoringTask(runtime, task, attemptsByTask.get(task.id) ?? [])),
+      scheduledTasks: runtime.scheduledTasks.list(),
     })
   }
 }

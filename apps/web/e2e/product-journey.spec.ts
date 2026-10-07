@@ -836,6 +836,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
         dynamicCreation: false,
         developmentShell: false,
         unrestrictedFileAccess: false,
+        scheduledTasks: true,
       },
       channels: [plan.channelId],
       appearance: {},

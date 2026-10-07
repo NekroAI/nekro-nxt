@@ -41,14 +41,16 @@ const CAPABILITY_KEYS = [
   'dynamicCreation',
   'developmentShell',
   'unrestrictedFileAccess',
+  'scheduledTasks',
 ] as const satisfies readonly (keyof Capabilities)[]
-const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation'] as const
+const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation', 'scheduledTasks'] as const
 const ACCESS_KEYS = ['fileTools', 'developmentShell', 'unrestrictedFileAccess'] as const
 
 const CAPABILITY_LABEL: Record<(typeof OTHER_CAPABILITIES)[number], string> = {
   subagents: '子智能体',
   webSearch: '网页搜索',
   dynamicCreation: '动态创造',
+  scheduledTasks: '定时任务',
 }
 
 const sameDocument = (left: PromptDocumentV1, right: PromptDocumentV1) => JSON.stringify(left) === JSON.stringify(right)

@@ -41,6 +41,7 @@ import {
   PersonaSection,
   type DraftUpdate,
 } from './agent-sections.js'
+import { ScheduledTasksSection } from './scheduled-tasks-section.js'
 import styles from './agents.module.css'
 
 const SECTIONS = [
@@ -48,6 +49,7 @@ const SECTIONS = [
   { id: 'profile-channels', label: '频道' },
   { id: 'profile-capabilities', label: '能力' },
   { id: 'profile-extensions', label: '扩展' },
+  { id: 'profile-schedules', label: '定时任务' },
   { id: 'profile-persona', label: '设定' },
 ] as const
 
@@ -292,6 +294,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
         <ChannelsSection agent={agent} onBind={setBindIntent} />
         <CapabilitiesSection agent={agent} draft={draft} update={update} />
         <ExtensionsSection agent={agent} />
+        <ScheduledTasksSection agent={agent} />
         <PersonaSection
           agent={agent}
           draft={draft}

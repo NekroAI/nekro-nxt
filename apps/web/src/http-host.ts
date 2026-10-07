@@ -153,6 +153,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   approvals: [],
   dynamic: [],
   authoringTasks: [],
+  scheduledTasks: [],
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
@@ -745,6 +746,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       },
     })),
     authoringTasks: json.authoringTasks,
+    scheduledTasks: json.scheduledTasks,
     notificationSettings: json.notificationSettings,
     diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
@@ -1037,6 +1039,13 @@ export class HttpProductHost implements ProductHostPort {
     'authoring.restore': async ({ taskId, attemptId, ...body }) =>
       this.#mutate(HostApiContracts.restoreAuthoringAttempt, { taskId, attemptId }, body),
     'authoring.delete': async ({ taskId }) => this.#mutate(HostApiContracts.deleteAuthoringTask, { taskId }, undefined),
+    'scheduledTasks.pause': async ({ taskId }) =>
+      this.#mutate(HostApiContracts.pauseScheduledTask, { taskId }, undefined),
+    'scheduledTasks.resume': async ({ taskId }) =>
+      this.#mutate(HostApiContracts.resumeScheduledTask, { taskId }, undefined),
+    'scheduledTasks.run': async ({ taskId }) => this.#mutate(HostApiContracts.runScheduledTask, { taskId }, undefined),
+    'scheduledTasks.delete': async ({ taskId }) =>
+      this.#mutate(HostApiContracts.deleteScheduledTask, { taskId }, undefined),
     'extensions.activate': async ({ agentId, extensionId, ...body }) =>
       this.#mutate(HostApiContracts.activateExtension, { agentId, extensionId }, body),
     'extensions.uninstall': async ({ extensionId }) =>

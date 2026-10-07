@@ -2,7 +2,7 @@
 
 状态：implemented
 
-智能体能力是六项独立授权：`subagents`、`fileTools`、`webSearch`、`dynamicCreation`、`developmentShell`、`unrestrictedFileAccess`。`capabilities_json` 只接受这一严格对象，读写共用 `AgentCapabilityGrantsSchema`，未知字段拒绝。
+智能体能力是七项独立授权：`subagents`、`fileTools`、`webSearch`、`dynamicCreation`、`developmentShell`、`unrestrictedFileAccess`、`scheduledTasks`。`capabilities_json` 只接受这一严格对象，读写共用 `AgentCapabilityGrantsSchema`，未知字段拒绝。`scheduledTasks` 缺省为开启，缺少它的已有 Revision 按开启读取，摘要只在它关闭时纳入，因此已有 Revision 的摘要不变（见[定时任务](2026-10-07-定时任务.md)）。
 
 - `content_digest` 对规范化 Revision 内容计算 SHA-256；语义未变不生成新 Revision，切回已有内容复用历史 Revision；
 - `fileTools` 控制文件工具，`developmentShell` 控制 Bash；两者都关则不创建工作区，任一开启则使用 `workspaces/<agentId>/`；

@@ -335,13 +335,13 @@ export interface InboundHookGate {
   stored(eventId: ChannelEventId, agentId: AgentId): InboundHookDecision | undefined
 }
 
-/** A scheduled job of an extension or the built-in reminder that has come due in one bound channel. */
+/** A scheduled job of an extension or a chat-created task that has come due in one bound channel. */
 export interface ExtensionJobFiring {
   readonly channelId: ChannelId
   readonly agentId: AgentId
   readonly jobId: string
   readonly label: string
-  /** Extension display name, or absent for the built-in reminder. */
+  /** Extension display name, or absent for a chat-created task. */
   readonly extensionName?: string
   readonly payload: JsonValue
   readonly scheduledAt: number

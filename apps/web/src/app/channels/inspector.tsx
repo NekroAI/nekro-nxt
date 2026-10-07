@@ -34,8 +34,11 @@ import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
+import { describeSchedule, sortTasks } from '../agents/scheduled-task-model.js'
+import { nextRunText, TaskActions, useScheduledTaskActions } from '../agents/scheduled-tasks-section.js'
 
 const TRIGGERS = ['mentioned-or-replied', 'always', 'command', 'observe-only'] as const
+const INSPECTOR_TASKS = 3
 
 /** What each trigger policy means in practice (packages/channel-runtime shouldTrigger). */
 const triggerHint: Record<TriggerPolicy, string> = {
@@ -69,6 +72,11 @@ export function ChannelInspector({
   const [reset, setReset] = useState<'compact' | 'clear' | null>(null)
   const [removing, setRemoving] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
+  const allTasks = useProductStore((state) => state.scheduledTasks)
+  const tasks = sortTasks(
+    allTasks.filter((task) => task.channelId === channel.id && task.agentId === agent?.id && task.state !== 'finished'),
+  )
+  const taskActions = useScheduledTaskActions()
   const binding = channel.bindings[0]
   const occupancy = runtime?.occupancy
   const breakdown = occupancy?.breakdown
@@ -292,6 +300,34 @@ export function ChannelInspector({
               </PropertyRow>
             </PropertyList>
           ) : null}
+        </PropertyGroup>
+      ) : null}
+
+      {agent && tasks.length > 0 ? (
+        <PropertyGroup
+          title="定时任务"
+          actions={
+            tasks.length > INSPECTOR_TASKS ? (
+              <Button size="small" variant="ghost" onClick={() => navigate(`/agents/${agent.id}`)}>
+                全部 {tasks.length} 个
+              </Button>
+            ) : undefined
+          }
+        >
+          <PropertyList>
+            {tasks.slice(0, INSPECTOR_TASKS).map((task) => (
+              <PropertyRow
+                key={task.id}
+                label={task.label}
+                description={`${describeSchedule(task)} · ${nextRunText(task)}`}
+              >
+                <span className={styles.rowActions}>
+                  <TaskActions task={task} act={taskActions.act} />
+                </span>
+              </PropertyRow>
+            ))}
+          </PropertyList>
+          {taskActions.dialog}
         </PropertyGroup>
       ) : null}
 

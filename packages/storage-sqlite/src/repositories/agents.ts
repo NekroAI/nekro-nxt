@@ -16,6 +16,7 @@ import {
   agentDefinitions,
   agentRevisions,
   channelBindings,
+  extensionJobs,
   channels,
   workTreeOrder,
 } from '../schema.js'
@@ -175,6 +176,8 @@ export function createAgentsRepository(database: DrizzleCoreDatabase): AgentRepo
             .all()
             .map(({ channelId }) => channelId)
           tx.delete(channelBindings).where(eq(channelBindings.agentId, id)).run()
+          // A deleted agent's scheduled tasks have nobody left to wake; the row cascade never runs for a tombstone.
+          tx.delete(extensionJobs).where(eq(extensionJobs.agentId, id)).run()
           const changed = tx
             .update(agentDefinitions)
             .set({ deletedAt })

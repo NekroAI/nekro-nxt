@@ -68,6 +68,7 @@ export function createProductStore(
     approvals: [],
     dynamic: [],
     authoringTasks: [],
+    scheduledTasks: [],
     notificationSettings: {
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
@@ -457,6 +458,11 @@ export function createProductStore(
     deleteAuthoringTask: async (taskId) => {
       await requireHost().actions['authoring.delete']({
         taskId: requireValue(taskId, '缺少创造任务标识，请刷新页面后重试。'),
+      })
+    },
+    scheduledTaskAction: async (taskId, action) => {
+      await requireHost().actions[`scheduledTasks.${action}`]({
+        taskId: requireValue(taskId, '缺少定时任务标识，请刷新页面后重试。'),
       })
     },
     saveDynamicExtension: async ({

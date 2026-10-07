@@ -266,6 +266,7 @@ export function registerWorkspaceRoutes({
               dynamicCreation: false,
               developmentShell: false,
               unrestrictedFileAccess: false,
+              scheduledTasks: true,
             }
           : parsed.capabilities
       await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
@@ -456,6 +457,7 @@ export function registerWorkspaceRoutes({
           ...(parsed.unrestrictedFileAccess === undefined
             ? {}
             : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
+          ...(parsed.scheduledTasks === undefined ? {} : { scheduledTasks: parsed.scheduledTasks }),
         }
         const updated = runtime.core.reviseAgent(agentId, revision.id, {
           displayName: revision.displayName,

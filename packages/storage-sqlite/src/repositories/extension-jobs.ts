@@ -176,6 +176,56 @@ export function createExtensionJobsRepository(database: DrizzleCoreDatabase) {
       return result.changes > 0
     },
 
+    /** Changes one job's content, schedule or state; omitted fields keep their value. */
+    updateExtensionJob(
+      id: JobId,
+      patch: Partial<
+        Pick<
+          ExtensionJobRecord,
+          | 'label'
+          | 'scheduleKind'
+          | 'runAt'
+          | 'cron'
+          | 'timezone'
+          | 'payloadJson'
+          | 'nextRunAt'
+          | 'lastFiredAt'
+          | 'paused'
+        >
+      >,
+    ): boolean {
+      const { paused, ...rest } = patch
+      const values = { ...rest, ...(paused === undefined ? {} : { paused: paused ? 1 : 0 }) }
+      if (Object.keys(values).length === 0)
+        return database.select().from(extensionJobs).where(eq(extensionJobs.id, id)).get() !== undefined
+      const result = database.update(extensionJobs).set(values).where(eq(extensionJobs.id, id)).run()
+      return result.changes > 0
+    },
+
+    /** Removes one-off jobs that already fired before `firedBefore`; returns how many. */
+    deleteFinishedExtensionJobs(firedBefore: number): number {
+      const result = database
+        .delete(extensionJobs)
+        .where(
+          and(
+            eq(extensionJobs.scheduleKind, 'once'),
+            isNull(extensionJobs.nextRunAt),
+            sql`${extensionJobs.lastFiredAt} < ${firedBefore}`,
+          ),
+        )
+        .run()
+      return result.changes
+    },
+
+    listAllExtensionJobs(): ExtensionJobRecord[] {
+      return database
+        .select()
+        .from(extensionJobs)
+        .orderBy(asc(extensionJobs.createdAt), asc(extensionJobs.id))
+        .all()
+        .map(mapRowToRecord)
+    },
+
     deleteDeclaredJobsExcept(options: { agentId: AgentId; extensionId: ExtensionId | null; keep: string[] }): number {
       const conditions = [eq(extensionJobs.agentId, options.agentId), eq(extensionJobs.source, 'declared')]
 

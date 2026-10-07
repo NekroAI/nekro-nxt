@@ -55,6 +55,10 @@ export interface ProductActions {
   'authoring.stop': Action<'stopAuthoringTask'>
   'authoring.restore': Action<'restoreAuthoringAttempt'>
   'authoring.delete': Action<'deleteAuthoringTask'>
+  'scheduledTasks.pause': Action<'pauseScheduledTask'>
+  'scheduledTasks.resume': Action<'resumeScheduledTask'>
+  'scheduledTasks.run': Action<'runScheduledTask'>
+  'scheduledTasks.delete': Action<'deleteScheduledTask'>
   'extensions.activate': Action<'activateExtension'>
   'extensions.uninstall': Action<'uninstallHostExtension'>
   'extensions.hostClientDiagnostic': Action<'hostExtensionClientDiagnostic'>

@@ -25,6 +25,7 @@ const base: AgentDraft = {
     dynamicCreation: false,
     developmentShell: false,
     unrestrictedFileAccess: false,
+    scheduledTasks: true,
   },
 }
 

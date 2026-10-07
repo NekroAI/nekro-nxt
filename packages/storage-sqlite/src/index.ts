@@ -537,6 +537,12 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensionJobs.setExtensionJobsPaused(...args)
   readonly countExtensionJobs = (...args: Parameters<ExtensionJobsRepository['countExtensionJobs']>) =>
     this.#extensionJobs.countExtensionJobs(...args)
+  readonly updateExtensionJob = (...args: Parameters<ExtensionJobsRepository['updateExtensionJob']>) =>
+    this.#extensionJobs.updateExtensionJob(...args)
+  readonly deleteFinishedExtensionJobs = (
+    ...args: Parameters<ExtensionJobsRepository['deleteFinishedExtensionJobs']>
+  ) => this.#extensionJobs.deleteFinishedExtensionJobs(...args)
+  readonly listAllExtensionJobs = () => this.#extensionJobs.listAllExtensionJobs()
 
   readonly getInboundHookDecision = (...args: Parameters<InboundHooksRepository['getInboundHookDecision']>) =>
     this.#inboundHooks.getInboundHookDecision(...args)

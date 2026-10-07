@@ -186,6 +186,7 @@ export function registerExtensionsRoutes({
                   dynamicCreation: false,
                   developmentShell: false,
                   unrestrictedFileAccess: false,
+                  scheduledTasks: true,
                 } as const)
               await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
               const entity = await runtime.createAgentWithInternalChannel({
@@ -237,6 +238,7 @@ export function registerExtensionsRoutes({
                 ...(parsed.unrestrictedFileAccess === undefined
                   ? {}
                   : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
+                ...(parsed.scheduledTasks === undefined ? {} : { scheduledTasks: parsed.scheduledTasks }),
               }
               const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
                 displayName: current.revision.displayName,
