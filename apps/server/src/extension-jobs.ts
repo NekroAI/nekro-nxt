@@ -1,4 +1,4 @@
-import type { ChannelRuntime } from '@nekro-nxt/channel-runtime'
+import type { ExtensionJobFiring } from '@nekro-nxt/channel-runtime'
 import {
   AgentIdSchema,
   ChannelIdSchema,
@@ -40,7 +40,8 @@ export interface ExtensionJobSchedulerOptions {
   /** Whether the job's extension is still enabled for its agent; chat-created tasks are always active. */
   readonly active: (row: ScheduledJobRow) => boolean
   readonly extensionName: (extensionId: ExtensionId) => string | undefined
-  readonly fire: ChannelRuntime['fireExtensionJob']
+  /** Commits the due event, or lets it pass when the extension's handler says so; either way the job advances. */
+  readonly fire: (job: ExtensionJobFiring) => Promise<unknown>
   readonly now: () => number
   readonly diagnostic?: (row: ScheduledJobRow, message: string) => void
   /** After each sweep, with how many jobs it advanced. */

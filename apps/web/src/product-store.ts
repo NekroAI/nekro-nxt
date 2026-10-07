@@ -461,9 +461,10 @@ export function createProductStore(
       })
     },
     scheduledTaskAction: async (taskId, action) => {
-      await requireHost().actions[`scheduledTasks.${action}`]({
-        taskId: requireValue(taskId, '缺少定时任务标识，请刷新页面后重试。'),
-      })
+      const id = requireValue(taskId, '缺少定时任务标识，请刷新页面后重试。')
+      if (action === 'run') return (await requireHost().actions['scheduledTasks.run']({ taskId: id })).woke
+      await requireHost().actions[`scheduledTasks.${action}`]({ taskId: id })
+      return true
     },
     saveDynamicExtension: async ({
       taskId,

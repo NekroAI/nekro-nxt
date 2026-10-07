@@ -1923,7 +1923,8 @@ export const HostApiContracts = {
     path: '/api/scheduled-tasks/:taskId/run',
     params: scheduledTaskParam,
     request: NoRequestBodySchema,
-    response: ScheduledTaskSchema,
+    /** `woke: false` when the owning extension's due-job handler let this run pass without waking the agent. */
+    response: z.object({ task: ScheduledTaskSchema, woke: z.boolean() }).strict(),
     error: HostApiErrorSchema,
   }),
   deleteScheduledTask: defineContract({

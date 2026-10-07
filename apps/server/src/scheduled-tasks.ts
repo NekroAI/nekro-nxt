@@ -1,4 +1,4 @@
-import type { ChannelRuntime } from '@nekro-nxt/channel-runtime'
+import type { ExtensionJobFiring } from '@nekro-nxt/channel-runtime'
 import type { AgentId, ChannelId, ExtensionId, JsonValue, ScheduledTask } from '@nekro-nxt/contracts'
 import type { ExtensionJobRecord } from '@nekro-nxt/storage-sqlite'
 import { nextJobRun, type NxtJobSchedule } from './extension-host-service.js'
@@ -39,6 +39,9 @@ export interface ScheduledTaskRepository {
   deleteFinishedExtensionJobs(firedBefore: number): number
 }
 
+/** `quiet`: the extension's due-job handler decided not to wake the agent this time. */
+export type JobFireOutcome = 'fired' | 'quiet' | 'not-delivered'
+
 export interface ScheduledTasksOptions {
   readonly repository: ScheduledTaskRepository
   /** Whether the owning extension is enabled for the agent; chat tasks have no extension and are always active. */
@@ -46,7 +49,7 @@ export interface ScheduledTasksOptions {
   readonly extensionName: (extensionId: ExtensionId) => string | undefined
   /** False for deleted agents; their leftover tasks are hidden and removed by the sweep. */
   readonly agentLive: (agentId: AgentId) => boolean
-  readonly fire: ChannelRuntime['fireExtensionJob']
+  readonly fire: (job: ExtensionJobFiring) => Promise<JobFireOutcome>
   readonly now: () => number
   readonly nextId: () => string
 }
@@ -243,15 +246,15 @@ export class ScheduledTasks {
     this.changed()
   }
 
-  /** Fires one occurrence now without moving the plan. */
-  async run(actor: ScheduledTaskActor, id: string): Promise<ScheduledTask> {
+  /** Fires one occurrence now without moving the plan; `woke` is false when the extension let it pass quietly. */
+  async run(actor: ScheduledTaskActor, id: string): Promise<{ readonly task: ScheduledTask; readonly woke: boolean }> {
     const row = this.#authorize(actor, id, 'run')
     if (row.extensionId !== null && !this.#options.extensionActive(row.agentId, row.extensionId)) {
       throw new ScheduledTaskError('这个任务所属的扩展已停用，启用后才能执行。', 'invalid')
     }
     const now = this.#options.now()
     const extensionName = row.extensionId === null ? undefined : this.#options.extensionName(row.extensionId)
-    const committed = await this.#options.fire({
+    const outcome = await this.#options.fire({
       channelId: row.channelId,
       agentId: row.agentId,
       jobId: row.id,
@@ -261,11 +264,11 @@ export class ScheduledTasks {
       scheduledAt: now,
       firedAt: now,
     })
-    if (committed === undefined) {
+    if (outcome === 'not-delivered') {
       throw new ScheduledTaskError('频道已解绑或不再由这个智能体响应，无法执行。', 'invalid')
     }
     this.#options.repository.updateExtensionJob(row.id, { lastFiredAt: now })
-    return this.#reload(row.id)
+    return { task: this.#reload(row.id), woke: outcome === 'fired' }
   }
 
   /** Removes tasks of deleted agents and one-off tasks that fired long ago; one-off tasks overdue past expiry are already dropped by the sweep. */

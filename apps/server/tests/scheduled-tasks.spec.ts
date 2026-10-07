@@ -174,7 +174,8 @@ describe('scheduled tasks in a real Host', () => {
       expect(resumed.state).toBe('scheduled')
       expect(resumed.nextRunAt).toBeGreaterThan(Date.now())
 
-      const ran = await runtime.scheduledTasks.run(admin, task.id)
+      const { task: ran, woke } = await runtime.scheduledTasks.run(admin, task.id)
+      expect(woke).toBe(true)
       expect(ran.nextRunAt).toBe(resumed.nextRunAt)
       expect(ran.lastFiredAt).toBeDefined()
       const fired = runtime.repository
@@ -260,6 +261,98 @@ describe('scheduled tasks in a real Host', () => {
       expect(runtime.host.toolNames(sessionOf(on.agentId))).toEqual(expect.arrayContaining(names))
       expect(runtime.host.toolNames(sessionOf(off.agentId))).not.toContain('schedule_create')
       expect(runtime.repository.getAgent(off.agentId)).toBeDefined()
+    })
+  })
+})
+
+describe('extension due-job handlers', () => {
+  it('lets the extension skip waking the agent or pass a note with the due event', async () => {
+    await withRuntime(async (runtime) => {
+      const entity = await createAgent(runtime, '定时己')
+      const saved = await runtime.extensionService.saveDynamicPackage({
+        snapshot: {
+          name: '示例订阅检查',
+          purpose: '只有新内容时才唤醒智能体。',
+          hostCode: `harness.onJob(async (job, nxt) => {
+  if (job.payload.mode === 'quiet') return { wake: false }
+  return { note: '新内容：' + job.label + '（' + job.channel.kind + '）' }
+})
+return { inject: ['nxt'], apply() {} }`,
+          permissions: {
+            permissions: [],
+            networkOrigins: [],
+            capabilities: { jobs: { runtime: { maxActive: 5 } } },
+          },
+          contributions: [],
+        },
+        slug: 'job-handler-probe',
+        displayName: '示例订阅检查',
+        description: '只有新内容时才唤醒智能体。',
+        verification: {
+          dshVersion: 'fixture',
+          contractVersion: 'nekro-nxt-extension-v4',
+          origin: { episodeId: 'fixture', pluginId: 'fixture', packageId: 'fixture', pluginRunId: 'fixture' },
+          toolInvocations: [],
+          rpcMethods: [],
+          renderedPanels: [],
+          renderedToolViews: [],
+          renderedMessageRenderers: [],
+          permissions: {
+            permissions: [],
+            networkOrigins: [],
+            capabilities: { jobs: { runtime: { maxActive: 5 } } },
+          },
+        },
+      })
+      const requirement = runtime.activation.getPermissionRequirement(
+        entity.agentId,
+        saved.extension.id,
+        saved.revision.id,
+      )
+      await runtime.activation.activate({
+        agentId: entity.agentId,
+        extensionId: saved.extension.id,
+        revisionId: saved.revision.id,
+        permissionApproval: { permissionDigest: requirement.permissionDigest },
+      })
+      const job = (id: string, mode: string) => {
+        runtime.repository.createExtensionJob({
+          id,
+          agentId: entity.agentId,
+          extensionId: saved.extension.id,
+          channelId: entity.channelId,
+          source: 'runtime',
+          declaredKey: null,
+          label: '示例订阅',
+          scheduleKind: 'cron',
+          runAt: null,
+          cron: '0 * * * *',
+          timezone: 'UTC',
+          payloadJson: { mode },
+          nextRunAt: Date.now() + HOUR,
+          lastFiredAt: null,
+          paused: false,
+          createdAt: Date.now(),
+        })
+        return id
+      }
+      const admin = { kind: 'admin' } as const
+      const jobEvents = () =>
+        runtime.repository
+          .listChannelEvents(entity.channelId, { limit: 50 })
+          .filter((event) => event.facts?.['extensionJob'] !== undefined)
+
+      const quiet = await runtime.scheduledTasks.run(admin, job('job_QUIET', 'quiet'))
+      expect(quiet.woke).toBe(false)
+      expect(quiet.task.lastFiredAt).toBeDefined()
+      expect(jobEvents()).toHaveLength(0)
+
+      const noted = await runtime.scheduledTasks.run(admin, job('job_NOTED', 'note'))
+      expect(noted.woke).toBe(true)
+      const [event] = jobEvents()
+      expect(event?.facts?.['extensionJob']).toMatchObject({ jobId: 'job_NOTED', note: '新内容：示例订阅（internal）' })
+      const part = event?.parts[0]
+      expect(part?.type === 'text' ? part.text : '').toContain('新内容：示例订阅')
     })
   })
 })

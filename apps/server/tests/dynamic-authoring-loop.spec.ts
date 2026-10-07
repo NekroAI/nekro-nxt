@@ -4,7 +4,7 @@ import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai
 import { HostApiContracts, type ExtensionCapabilities } from '@nekro-nxt/contracts'
 import { NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE } from '@nekro-nxt/extension-sdk'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -463,6 +463,50 @@ return { inject: ['nxt'], apply() {} }`
           }).inboundHook,
         ).toEqual({ trigger: 'default', hidden: true, extensions: ['广告过滤'] }),
       )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('accepts a due-job handler in the dynamic run of a candidate that declares jobs', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    const host = `harness.onJob(async () => ({ wake: false }))
+return { inject: ['nxt'], apply() {} }`
+    try {
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'poll' },
+        name: '示例轮询',
+        purpose: '只在有新内容时唤醒智能体。',
+        scope: 'agent' as const,
+        code: { host },
+        resources: {},
+        permissions: {
+          permissions: [],
+          networkOrigins: [],
+          capabilities: { jobs: { runtime: { maxActive: 3 } } },
+        },
+        contributions: [],
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('ready')
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      // The saved Revision keeps the original source, not the Host's dynamic wrapper.
+      const saved = await runtime.authoring.save({
+        taskId: task.id,
+        attemptId: attempt.id,
+        displayName: '示例轮询',
+        slug: 'poll-probe',
+        description: '只在有新内容时唤醒智能体。',
+      })
+      const source = await readFile(
+        path.join(runtime.extensionService.revisionSourceDirectory(saved.revision), 'source', 'host.ts'),
+        'utf8',
+      )
+      expect(source).toContain('harness.onJob')
+      expect(source).not.toContain('__nxtInbound')
     } finally {
       await runtime.dispose()
     }

@@ -22,6 +22,7 @@ import type {
   ExtensionToolDefinition,
   NxtCallContext,
   NxtInboundHandler,
+  NxtJobHandler,
   NxtInboundMessage,
 } from '@nekro-nxt/extension-sdk'
 import { createFakeAdapterHostContext } from '@nekro-nxt/test-harness'
@@ -639,6 +640,14 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
             }
             if (inbound !== undefined) throw new Error('一个扩展只能注册一个入站处理函数。')
             inbound = handler
+            return () => undefined
+          },
+          // Recorded only: a due-job handler acts on real jobs, and verification has none.
+          onJob: (handler: NxtJobHandler) => {
+            if (manifest.scope !== 'agent' || manifest.permissions.capabilities?.jobs === undefined) {
+              throw new Error('注册 harness.onJob 需要声明 permissions.capabilities.jobs。')
+            }
+            if (typeof handler !== 'function') throw new TypeError('harness.onJob 需要一个处理函数。')
             return () => undefined
           },
           config: () => defaultConfig(input),

@@ -471,17 +471,26 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
           : this.definingAuthoringSnapshot === undefined && isLegacyAdapterDynamicHostSource(ownedRequest.code.host)
             ? ownedRequest.code.host
             : undefined
+      const declared = this.definingAuthoringSnapshot?.permissions.capabilities
+      const declaresInbound = declared?.inboundHook !== undefined
+      // Candidates with an inbound hook or jobs get the factory-time handler registration the sandbox lacks.
       const inboundHost =
         adapterHost === undefined &&
         this.definingAuthoringSnapshot?.scope === 'agent' &&
-        this.definingAuthoringSnapshot.permissions.capabilities?.inboundHook !== undefined
+        (declaresInbound || declared?.jobs !== undefined)
           ? ownedRequest.code.host
           : undefined
       const receipt = super.define(
         adapterHost !== undefined
           ? { ...ownedRequest, code: { ...ownedRequest.code, host: wrapAdapterDynamicHostSource(adapterHost) } }
           : inboundHost !== undefined
-            ? { ...ownedRequest, code: { ...ownedRequest.code, host: wrapInboundDynamicHostSource(inboundHost) } }
+            ? {
+                ...ownedRequest,
+                code: {
+                  ...ownedRequest.code,
+                  host: wrapInboundDynamicHostSource(inboundHost, { inbound: declaresInbound }),
+                },
+              }
             : ownedRequest,
       )
       if (adapterHost !== undefined) {
@@ -489,7 +498,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.originalHostByPackage.set(receipt.packageId, adapterHost)
       }
       if (inboundHost !== undefined) {
-        this.inboundPackages.add(receipt.packageId)
+        if (declaresInbound) this.inboundPackages.add(receipt.packageId)
         this.originalHostByPackage.set(receipt.packageId, inboundHost)
       }
       this.capabilitiesByPackage.set(receipt.packageId, this.definingAuthoringSnapshot?.permissions.capabilities)

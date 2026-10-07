@@ -13,6 +13,7 @@ import {
   type ExtensionToolDefinition,
   type NxtHostService,
   type NxtInboundHandler,
+  type NxtJobHandler,
 } from '@nekro-nxt/extension-sdk'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -65,6 +66,8 @@ interface PersistentExtensionRegistration {
   readonly handlers: Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>
   /** Activation-level inbound hook; it must run before any Session of the agent exists in a channel. */
   inbound?: NxtInboundHandler
+  /** Activation-level due-job handler; jobs fire whether or not a Session exists. */
+  job?: NxtJobHandler
   active: boolean
 }
 
@@ -138,6 +141,20 @@ export class PersistentExtensionMounts {
     return parseJsonValue(JSON.parse(JSON.stringify(await handler(input))))
   }
 
+  /** Due-job handler of one active Activation, if it registered one. */
+  jobHandler(
+    agentId: AgentRevisionRecord['agentId'],
+    extensionId: Revision['extensionId'],
+  ): { readonly revision: Revision; readonly config: JsonValue; readonly handler: NxtJobHandler } | undefined {
+    const registration = [...this.#persistentExtensions.values()].find(
+      (candidate) =>
+        candidate.agentId === agentId && candidate.revision.extensionId === extensionId && candidate.active,
+    )
+    return registration?.job === undefined
+      ? undefined
+      : { revision: registration.revision, config: registration.config, handler: registration.job }
+  }
+
   /** Inbound hooks of the agent's active Activations, in stable Extension order. */
   inboundHandlers(agentId: AgentRevisionRecord['agentId']): readonly PersistentInboundHandler[] {
     return [...this.#persistentExtensions.values()]
@@ -181,6 +198,7 @@ export class PersistentExtensionMounts {
     if (this.#persistentExtensions.has(key)) throw new Error('Extension Revision is already mounted for this Agent.')
     const handlers = new Map<string, (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>>()
     let inbound: NxtInboundHandler | undefined
+    let job: NxtJobHandler | undefined
     let plugin: ExtensionPluginDefinition | undefined
     if (artifact.hostEntry) {
       let factoryOpen = true
@@ -227,6 +245,15 @@ export class PersistentExtensionMounts {
                 inbound = undefined
               }
             },
+            onJob: (handler: NxtJobHandler) => {
+              if (!factoryOpen) throw new Error('harness.onJob 必须在 factory 阶段注册，不能在每个 Session 中注册。')
+              if (typeof handler !== 'function') throw new TypeError('harness.onJob 需要一个处理函数。')
+              if (job !== undefined) throw new Error('一个扩展只能注册一个定时任务处理函数。')
+              job = handler
+              return () => {
+                job = undefined
+              }
+            },
             config: () => config,
           },
           config,
@@ -257,6 +284,7 @@ export class PersistentExtensionMounts {
       mounting: new Map(),
       handlers,
       ...(inbound === undefined ? {} : { inbound }),
+      ...(job === undefined ? {} : { job }),
       active: true,
     }
     this.#persistentExtensions.set(key, registration)

@@ -1443,7 +1443,9 @@ test.describe('NekroNxt browser projections', () => {
           await request.fulfill({
             status: 200,
             contentType: 'application/json',
-            body: JSON.stringify(action === undefined ? { deleted: true } : current),
+            body: JSON.stringify(
+              action === undefined ? { deleted: true } : action === 'run' ? { task: current, woke: true } : current,
+            ),
           })
         })
       },

@@ -344,6 +344,8 @@ export interface ExtensionJobFiring {
   /** Extension display name, or absent for a chat-created task. */
   readonly extensionName?: string
   readonly payload: JsonValue
+  /** From the extension's due-job handler: what it found, shown to the agent. */
+  readonly note?: string
   readonly scheduledAt: number
   readonly firedAt: number
 }
@@ -359,12 +361,13 @@ const chatNote = (job: ExtensionJobFiring): string | undefined =>
     : undefined
 
 const jobDetail = (job: ExtensionJobFiring): string => {
-  const note = chatNote(job)
-  if (note !== undefined) return `\n补充：${note}`
+  const chat = chatNote(job)
+  if (chat !== undefined) return `\n补充：${chat}`
+  const handlerNote = job.note === undefined ? '' : `\n${job.note}`
   const empty =
     job.payload === null ||
     (typeof job.payload === 'object' && !Array.isArray(job.payload) && Object.keys(job.payload).length === 0)
-  return empty ? '' : `\n${JSON.stringify(job.payload)}`
+  return `${handlerNote}${empty ? '' : `\n${JSON.stringify(job.payload)}`}`
 }
 
 export const isExtensionJobEvent = (event: Pick<ChannelEventRecord, 'facts'>): boolean =>
@@ -608,7 +611,7 @@ export class ChannelRuntime {
     const connection = this.#coreRepository.getConnection(channel.connectionId)
     if (!connection) return undefined
     const delayMinutes = Math.max(0, Math.round((job.firedAt - job.scheduledAt) / 60_000))
-    const note = chatNote(job)
+    const note = job.note ?? chatNote(job)
     return this.acceptChannelInbound({
       connectionId: channel.connectionId,
       channelId: channel.id,

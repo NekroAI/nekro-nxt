@@ -570,7 +570,8 @@ export interface ProductState {
   stopAuthoringTask(taskId: string, expectedRevision: number): Promise<void>
   restoreAuthoringAttempt(taskId: string, attemptId: string, expectedRevision: number): Promise<void>
   deleteAuthoringTask(taskId: string): Promise<void>
-  scheduledTaskAction(taskId: string, action: 'pause' | 'resume' | 'run' | 'delete'): Promise<void>
+  /** Resolves `false` only when a run let the agent sleep because the owning extension decided so. */
+  scheduledTaskAction(taskId: string, action: 'pause' | 'resume' | 'run' | 'delete'): Promise<boolean>
   saveDynamicExtension(input: {
     readonly taskId?: string
     readonly attemptId?: string

@@ -2,12 +2,13 @@
 export const INBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_inbound_probe_v1'
 
 /**
- * The DSH dynamic sandbox has no `harness.onInbound`. For candidates that declare an inbound hook, the Host wraps the
- * source: `onInbound` records the handler at factory time, the plugin's `apply` captures `ctx.nxt`, and a private RPC
- * lets the verifier call the handler with a synthetic message. The saved Revision keeps the original source.
+ * The DSH dynamic sandbox has no `harness.onInbound` or `harness.onJob`. For candidates that declare an inbound hook
+ * or jobs, the Host wraps the source: both record their handler at factory time and the plugin's `apply` captures
+ * `ctx.nxt`. With an inbound hook, a private RPC lets the verifier call that handler with a synthetic message; jobs
+ * never fire in dynamic runs, so the job handler is only recorded. The saved Revision keeps the original source.
  */
-export const wrapInboundDynamicHostSource = (source: string): string => `
-const __nxtInbound = { handler: undefined, nxt: undefined, factoryOpen: true }
+export const wrapInboundDynamicHostSource = (source: string, options: { readonly inbound: boolean }): string => `
+const __nxtInbound = { handler: undefined, job: undefined, nxt: undefined, factoryOpen: true }
 harness.onInbound = (handler) => {
   if (!__nxtInbound.factoryOpen) {
     throw new Error('harness.onInbound 必须在 factory 阶段（Host 源码顶层、return 之前）注册，不能在 apply 或工具里注册。')
@@ -17,7 +18,19 @@ harness.onInbound = (handler) => {
   __nxtInbound.handler = handler
   return () => { __nxtInbound.handler = undefined }
 }
-harness.handle('${INBOUND_DYNAMIC_PROBE_METHOD}', async (message) => {
+harness.onJob = (handler) => {
+  if (!__nxtInbound.factoryOpen) {
+    throw new Error('harness.onJob 必须在 factory 阶段（Host 源码顶层、return 之前）注册，不能在 apply 或工具里注册。')
+  }
+  if (typeof handler !== 'function') throw new TypeError('harness.onJob 需要一个处理函数。')
+  if (__nxtInbound.job !== undefined) throw new Error('一个扩展只能注册一个定时任务处理函数。')
+  __nxtInbound.job = handler
+  return () => { __nxtInbound.job = undefined }
+}
+${
+  !options.inbound
+    ? ''
+    : `harness.handle('${INBOUND_DYNAMIC_PROBE_METHOD}', async (message) => {
   if (__nxtInbound.handler === undefined) throw new Error('声明了 inboundHook，但 Host 没有调用 harness.onInbound 注册处理函数。')
   const probe = message ?? {
     logicalMessageId: 'msg_PREVIEW',
@@ -30,7 +43,8 @@ harness.handle('${INBOUND_DYNAMIC_PROBE_METHOD}', async (message) => {
   }
   const decision = await __nxtInbound.handler(probe, __nxtInbound.nxt)
   return decision === undefined ? null : JSON.parse(JSON.stringify(decision))
-})
+})`
+}
 const __nxtPlugin = (() => {
 ${source}
 })()

@@ -1384,7 +1384,10 @@ const scheduledTaskTools = (agentId: AgentId, channelId: ChannelId, tasks: Sched
       description: '立即触发一次由对话创建的定时任务，用于试运行；不改变原计划。',
       parameters: taskIdParameter,
       output: taskOutput('已触发'),
-      execute: async (args) => taskJson(describeTask(await tasks.run(actor, args.taskId))),
+      execute: async (args) => {
+        const { task, woke } = await tasks.run(actor, args.taskId)
+        return taskJson({ ...describeTask(task), ...(woke ? {} : { result: '扩展判断这次无需唤醒' }) })
+      },
     }),
   ]
 }
@@ -3582,6 +3585,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   }
 
   /** Activation-level inbound hooks of one agent's enabled extensions. */
+  jobHandler(agentId: AgentId, extensionId: Revision['extensionId']) {
+    return this.#extensionMounts.jobHandler(agentId, extensionId)
+  }
+
   inboundHandlers(agentId: AgentId): readonly PersistentInboundHandler[] {
     return this.#extensionMounts.inboundHandlers(agentId)
   }

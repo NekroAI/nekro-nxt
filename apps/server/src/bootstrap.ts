@@ -11,7 +11,7 @@ import {
   type AdapterTransportService,
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
-import { ChannelRuntime, type InboundHookDecision } from '@nekro-nxt/channel-runtime'
+import { ChannelRuntime, type ExtensionJobFiring, type InboundHookDecision } from '@nekro-nxt/channel-runtime'
 import {
   AgentIdSchema,
   ChannelIdSchema,
@@ -67,7 +67,7 @@ import { AuthoringTestSecrets } from './authoring-test-secrets.js'
 import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
-import { ScheduledTasks } from './scheduled-tasks.js'
+import { ScheduledTasks, type JobFireOutcome } from './scheduled-tasks.js'
 import { McpStatusRegistry } from './mcp-servers.js'
 import {
   createNxtProductBackends,
@@ -95,6 +95,10 @@ export type { ConnectionTestResult } from './connection-application.js'
  * the M1–M5 vertical-slice tests; disposal waits for resources to settle in
  * reverse order (docs/06).
  */
+/** Due-job handlers decide quickly; a slow one wakes the agent as if it had no handler. */
+const JOB_HANDLER_TIMEOUT_MS = 15_000
+const JOB_NOTE_MAX_CHARS = 2000
+
 export interface NekroRuntimeOptions {
   /** Production startup keeps inbound facts durable while migration and recovery settle. */
   readonly deferAdmission?: boolean
@@ -436,15 +440,79 @@ export class NekroRuntime {
         message: result.message,
         ...(result.value === undefined ? {} : { value: result.value }),
       })
+      /**
+       * Fires a due job, first asking the owning extension's due-job handler (if any) whether to wake the agent. A
+       * handler that fails or times out falls back to waking it, so a broken extension cannot silence a plan.
+       */
+      const fireJob = async (job: ExtensionJobFiring): Promise<JobFireOutcome> => {
+        const channels = settled.current
+        if (channels === undefined) throw new Error('Channel Runtime is not ready.')
+        const record = repository.getExtensionJob(job.jobId)
+        const extensionId = record?.extensionId ?? null
+        const registered =
+          extensionId === null ? undefined : hostReference.current?.jobHandler(job.agentId, extensionId)
+        let note: string | undefined
+        if (registered !== undefined && record !== undefined) {
+          const described = extensionHost.describeRevision(registered.revision)
+          const channel = repository.getChannel(job.channelId)
+          const nxt = createNxtHostService(
+            {
+              mode: 'activation',
+              agentId: job.agentId,
+              ownerKey: registered.revision.extensionId,
+              displayName: described.displayName,
+              channelId: job.channelId,
+              capabilities: () => described.capabilities,
+              config: () => registered.config,
+            },
+            extensionHost.activationBackends,
+          )
+          try {
+            const decision = await Promise.race([
+              Promise.resolve(
+                registered.handler(
+                  {
+                    jobId: job.jobId,
+                    label: job.label,
+                    payload: job.payload,
+                    scheduledAt: job.scheduledAt,
+                    firedAt: job.firedAt,
+                    ...(record.declaredKey === null ? {} : { declaredId: record.declaredKey }),
+                    channel: {
+                      id: job.channelId,
+                      kind: channel?.kind ?? 'group',
+                      ...(channel?.displayName === undefined ? {} : { displayName: channel.displayName }),
+                    },
+                  },
+                  nxt,
+                ),
+              ),
+              new Promise<never>((_resolve, reject) =>
+                setTimeout(
+                  () => reject(new Error('定时任务处理函数超过 15 秒未返回。')),
+                  JOB_HANDLER_TIMEOUT_MS,
+                ).unref(),
+              ),
+            ])
+            if (decision?.wake === false) return 'quiet'
+            if (typeof decision?.note === 'string' && decision.note.trim() !== '') {
+              note = decision.note.trim().slice(0, JOB_NOTE_MAX_CHARS)
+            }
+          } catch (error) {
+            console.warn(
+              `[nekro-nxt] 扩展「${described.displayName}」的定时任务处理函数出错，按默认唤醒智能体：${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+        }
+        const committed = await channels.fireExtensionJob({ ...job, ...(note === undefined ? {} : { note }) })
+        return committed === undefined ? 'not-delivered' : 'fired'
+      }
       const scheduledTasks = new ScheduledTasks({
         repository,
         extensionActive: (agentId, extensionId) => repository.getActivation(agentId, extensionId) !== undefined,
         extensionName: (extensionId) => repository.getExtension(extensionId)?.displayName,
         agentLive: (agentId) => repository.getAgent(agentId) !== undefined,
-        fire: (job) =>
-          settled.current === undefined
-            ? Promise.reject(new Error('Channel Runtime is not ready.'))
-            : settled.current.fireExtensionJob(job),
+        fire: fireJob,
         now,
         nextId: nextUlid,
       })
@@ -728,7 +796,7 @@ export class NekroRuntime {
         active: (job) =>
           job.extensionId === null || repository.getActivation(job.agentId, job.extensionId) !== undefined,
         extensionName: (extensionId) => repository.getExtension(extensionId)?.displayName,
-        fire: (job) => channels.fireExtensionJob(job),
+        fire: fireJob,
         now,
         diagnostic: (job, message) => {
           console.warn(`[nekro-nxt] 定时任务 ${job.id}（${job.label}）：${message}`)

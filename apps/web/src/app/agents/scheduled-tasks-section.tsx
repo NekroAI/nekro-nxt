@@ -40,8 +40,8 @@ export function useScheduledTaskActions() {
       return
     }
     try {
-      await api.getState().scheduledTaskAction(task.id, action)
-      toast(DONE[action])
+      const woke = await api.getState().scheduledTaskAction(task.id, action)
+      toast(action === 'run' && !woke ? '已执行，扩展判断这次无需唤醒智能体' : DONE[action])
     } catch (error) {
       failure(error)
     }

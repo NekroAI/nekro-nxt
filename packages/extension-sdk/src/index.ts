@@ -285,6 +285,35 @@ export type NxtInboundHandler = (
   nxt: NxtHostService,
 ) => NxtInboundDecision | undefined | Promise<NxtInboundDecision | undefined>
 
+/** A job of this extension that came due in one channel. */
+export interface NxtJobDue {
+  readonly jobId: string
+  readonly label: string
+  readonly payload: ExtensionJsonValue
+  /** Planned time; earlier than `firedAt` when the Host was offline. */
+  readonly scheduledAt: number
+  readonly firedAt: number
+  /** `jobs.declared[].id` for a fixed plan; absent for jobs created with `nxt.jobs.schedule`. */
+  readonly declaredId?: string
+  readonly channel: {
+    readonly id: string
+    readonly kind: 'internal' | 'direct' | 'group'
+    readonly displayName?: string
+  }
+}
+
+export interface NxtJobDecision {
+  /** `false` lets the due time pass without waking the agent, e.g. an RSS check that found nothing new. */
+  readonly wake?: boolean
+  /** Shown to the agent with the due event, e.g. what is new; at most 2000 characters. */
+  readonly note?: string
+}
+
+export type NxtJobHandler = (
+  job: NxtJobDue,
+  nxt: NxtHostService,
+) => NxtJobDecision | undefined | Promise<NxtJobDecision | undefined>
+
 export interface NxtPlatformAction {
   readonly name: string
   readonly title: string
@@ -434,6 +463,12 @@ export interface ExtensionHostEnvironment {
      * factory evaluation (like `handle`). It runs after the message is stored and before the agent is woken.
      */
     onInbound?(handler: NxtInboundHandler): () => void
+    /**
+     * Agent extensions with `permissions.capabilities.jobs` register one due-job handler during factory evaluation. It
+     * runs before the agent is woken for this extension's jobs and can decide not to wake it; without a handler every
+     * due job wakes the agent.
+     */
+    onJob?(handler: NxtJobHandler): () => void
     /**
      * Current configuration validated against the Manifest config schema. Dynamic runs have no saved configuration;
      * read it as `harness.config?.() ?? {}` so the same source works before and after saving.
@@ -1051,6 +1086,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
       "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
       'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
+      'harness.onJob((job, nxt) => ({ wake, note }))：声明了 jobs 的扩展可在 factory 阶段注册唯一的到期处理函数，本扩展的任务到期时先运行它（job 含 jobId、label、payload、scheduledAt、declaredId、channel），nxt 绑定到任务所在频道；返回 { wake: false } 则这次不唤醒智能体（例如订阅检查没有新内容），返回 note 会随到期事件交给智能体（例如新文章列表，最多 2000 字）。15 秒内未返回或抛错时按默认唤醒。轮询类需求一定要用它，避免每次检查都消耗一次模型调用。',
       'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。',
       "ctx.nxt.render.svg(svg, { scale, format: 'png' | 'jpeg' | 'webp', background }) → { base64, mediaType, width, height }：用宿主系统字体把 SVG 渲染成图片，无需声明能力；把结果交给 assets.create({ base64, mediaType, name }) 再由智能体发送。文字用 font-family=\"sans-serif\"；SVG 只能引用 #片段或 data: 内联资源，网络图片先用 http.fetch 取回再以 data: 内联。适合卡片、榜单、签到图、运势图等。",
       "ctx.nxt.parse.html(html, { url, mode: 'article' | 'full', maxChars }) → { title, excerpt, markdown, truncated, links }：把网页转成 Markdown，默认只保留正文，传 url 时链接变为绝对地址；parse.feed(xml, { url }) → { kind, title, link, items: [{ id, title, link, published, author, summary }] }：统一解析 RSS 2.0、RSS 1.0 与 Atom，id 可用于去重。两者都无需声明能力，取回网页或订阅源仍需要 network。",
@@ -1074,7 +1110,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
       '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
       '不要声明 permissions.capabilities.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
-      '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息。',
+      '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息；定时检查类需求在 onJob 里先检查，没有新内容就返回 { wake: false }。',
     ],
   },
   recoveryRules: [
