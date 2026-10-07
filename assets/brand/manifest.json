@@ -1552,17 +1552,17 @@
       "source": "Release preparation and reviewed product captures"
     },
     {
-      "path": "release-images/current/about.png",
+      "path": "release-images/current/channel-workbench.png",
       "format": "png",
-      "bytes": 388741,
-      "sha256": "f19454f5d35a6c9f51201c3942402bebe6e3aba7b2ff92190d3695ad985199fa",
+      "bytes": 122423,
+      "sha256": "2fdec37b2cea93f063829af82719b050a49700393af12f9c66cb7bfc0cca3828",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "Release-scoped temporary artwork",
       "source": "Release preparation and reviewed product captures",
-      "width": 1360,
-      "height": 880,
-      "alpha": true
+      "width": 1440,
+      "height": 900,
+      "alpha": false
     },
     {
       "path": "screenshots/README.md",
@@ -1577,8 +1577,8 @@
     {
       "path": "screenshots/agent-workbench.png",
       "format": "png",
-      "bytes": 211748,
-      "sha256": "ec8371c7cfaf684a4a5882574edf1eef3023f34693ee425365be81c633bee6aa",
+      "bytes": 107510,
+      "sha256": "9b2736cbea91109902604f3abb7ef5be439210f28547df609155d99afc7f9de3",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "Public product screenshot with fictional data",
@@ -1590,8 +1590,8 @@
     {
       "path": "screenshots/channel-conversation.png",
       "format": "png",
-      "bytes": 188441,
-      "sha256": "124a1098872d8ea1604ff3d31cf1aba6e78bcc8599b24727c52712c5e01b9c87",
+      "bytes": 122423,
+      "sha256": "2fdec37b2cea93f063829af82719b050a49700393af12f9c66cb7bfc0cca3828",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "Public product screenshot with fictional data",
@@ -1603,8 +1603,8 @@
     {
       "path": "screenshots/connections.png",
       "format": "png",
-      "bytes": 147654,
-      "sha256": "b2cdddfb4349157040216bfc9ad20a7139e09fd4938a116791e2bf971084b55e",
+      "bytes": 117171,
+      "sha256": "1a917ec8205bf3a615543d230e027bd324cf27f3674ec9377a1799da0339b66d",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "Public product screenshot with fictional data",
@@ -1616,8 +1616,8 @@
     {
       "path": "screenshots/creator-workbench.png",
       "format": "png",
-      "bytes": 162016,
-      "sha256": "62683fa4a13ae784799aae46aaca6c403f0f2436967a3d2b569baa603d642ee2",
+      "bytes": 90419,
+      "sha256": "da8e0f7d88b0d4e28250b617bc6ca7aab2633e13248fdf014aa8264e1464a10a",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "Public product screenshot with fictional data",
