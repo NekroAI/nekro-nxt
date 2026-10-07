@@ -19,6 +19,7 @@ declare const styles: {
   readonly faint: string
   readonly finding: string
   readonly inline: string
+  readonly inlineSwitch: string
   readonly item: string
   readonly itemActions: string
   readonly itemBody: string

@@ -2529,6 +2529,8 @@ export const HostApiContracts = {
       .object({
         query: z.string().trim().max(80).optional(),
         scope: z.enum(['agent', 'host-adapter', 'host-ui']).optional(),
+        /** 只列社区后台认定的官方扩展。 */
+        official: z.enum(['1']).optional(),
         cursor: z.string().max(200).optional(),
       })
       .strict(),

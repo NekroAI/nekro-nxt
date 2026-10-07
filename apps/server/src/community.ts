@@ -527,11 +527,13 @@ export class CommunityService {
   async listExtensions(input: {
     readonly query?: string | undefined
     readonly scope?: string | undefined
+    readonly official?: '1' | undefined
     readonly cursor?: string | undefined
   }): Promise<{ readonly items: CommunityExtensionSummary[]; readonly nextCursor: string | null }> {
     const search = new URLSearchParams({ limit: '30' })
     if (input.query) search.set('q', input.query)
     if (input.scope) search.set('scope', input.scope)
+    if (input.official) search.set('official', input.official)
     if (input.cursor) search.set('cursor', input.cursor)
     const body = z
       .object({ items: z.array(z.unknown()), nextCursor: z.string().nullable() })

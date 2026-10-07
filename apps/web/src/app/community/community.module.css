@@ -272,6 +272,14 @@
   max-width: 360px;
 }
 
+.inlineSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--fg-2);
+  cursor: pointer;
+}
+
 .communityGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));

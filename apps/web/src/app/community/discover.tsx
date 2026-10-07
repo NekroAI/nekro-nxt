@@ -23,6 +23,7 @@ import {
   PropertyRow,
   SearchField,
   Segmented,
+  Switch,
   Skeleton,
   toast,
 } from '../../ui-kit/index.js'
@@ -70,6 +71,7 @@ export function CommunityView({
 function CommunityCatalog() {
   const [query, setQuery] = useState('')
   const [scope, setScope] = useState<Scope>('')
+  const [officialOnly, setOfficialOnly] = useState(false)
   const [items, setItems] = useState<readonly CommunityExtensionSummary[]>()
   const [cursor, setCursor] = useState<string | null>(null)
   const [error, setError] = useState<string>()
@@ -81,7 +83,11 @@ function CommunityCatalog() {
       setError(undefined)
       callHostApi(
         HostApiContracts.listCommunityExtensions,
-        { ...(query.trim() ? { query: query.trim() } : {}), ...(scope ? { scope } : {}) },
+        {
+          ...(query.trim() ? { query: query.trim() } : {}),
+          ...(scope ? { scope } : {}),
+          ...(officialOnly ? { official: '1' as const } : {}),
+        },
         undefined,
       )
         .then((result) => {
@@ -97,7 +103,7 @@ function CommunityCatalog() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [query, scope])
+  }, [query, scope, officialOnly])
 
   const loadMore = async () => {
     if (!cursor) return
@@ -105,7 +111,12 @@ function CommunityCatalog() {
     try {
       const result = await callHostApi(
         HostApiContracts.listCommunityExtensions,
-        { ...(query.trim() ? { query: query.trim() } : {}), ...(scope ? { scope } : {}), cursor },
+        {
+          ...(query.trim() ? { query: query.trim() } : {}),
+          ...(scope ? { scope } : {}),
+          ...(officialOnly ? { official: '1' as const } : {}),
+          cursor,
+        },
         undefined,
       )
       setItems((current) => [...(current ?? []), ...result.items])
@@ -131,6 +142,15 @@ function CommunityCatalog() {
       <div className={styles.communityTools}>
         <SearchField value={query} onChange={setQuery} label="搜索社区扩展" placeholder="搜索名称、介绍或标签" />
         <Segmented<Scope> label="扩展类型" value={scope} onChange={setScope} options={SCOPES} />
+        <label className={styles.inlineSwitch} htmlFor="community-official-only">
+          <Switch
+            id="community-official-only"
+            checked={officialOnly}
+            onCheckedChange={setOfficialOnly}
+            label="只看官方扩展"
+          />
+          只看官方
+        </label>
       </div>
       {error ? (
         <Banner tone="bad">{error}</Banner>

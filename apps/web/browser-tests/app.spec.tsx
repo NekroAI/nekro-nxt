@@ -1192,9 +1192,12 @@ test.describe('NekroNxt browser projections', () => {
       pageUrl: 'https://community.example.test/extensions/ext_communityweather',
     }
     const importRequests: string[] = []
+    const listRequests: string[] = []
     await withProductPage(
       '/community',
       async (page) => {
+        await page.getByRole('switch', { name: '只看官方扩展' }).click()
+        await playwrightExpect.poll(() => listRequests.some((url) => url.includes('official=1'))).toBe(true)
         await page.getByRole('link', { name: /社区天气/u }).click()
         await playwrightExpect(page.getByText('测试站')).toBeVisible()
         await playwrightExpect(page.getByRole('heading', { name: '社区天气' })).toBeVisible()
@@ -1220,9 +1223,10 @@ test.describe('NekroNxt browser projections', () => {
             },
           }),
         )
-        await page.route('**/api/community/extensions?**', (request) =>
-          request.fulfill({ json: { items: [summary], nextCursor: null } }),
-        )
+        await page.route('**/api/community/extensions?**', (request) => {
+          listRequests.push(request.request().url())
+          return request.fulfill({ json: { items: [summary], nextCursor: null } })
+        })
         await page.route('**/api/community/extensions', (request) =>
           request.fulfill({ json: { items: [summary], nextCursor: null } }),
         )

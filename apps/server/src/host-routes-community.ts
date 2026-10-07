@@ -255,6 +255,7 @@ export function registerCommunityRoutes({ runtime, registerRoute, extensionImpor
           const params = HostApiContracts.listCommunityExtensions.parseParams({
             ...(url.searchParams.get('query') ? { query: url.searchParams.get('query') } : {}),
             ...(url.searchParams.get('scope') ? { scope: url.searchParams.get('scope') } : {}),
+            ...(url.searchParams.get('official') ? { official: url.searchParams.get('official') } : {}),
             ...(url.searchParams.get('cursor') ? { cursor: url.searchParams.get('cursor') } : {}),
           })
           writeContractJson(res, 200, HostApiContracts.listCommunityExtensions, await community.listExtensions(params))
