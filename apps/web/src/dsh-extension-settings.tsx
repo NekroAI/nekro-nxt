@@ -1629,7 +1629,8 @@ export function DshPluginDetail({
         )}
       </PropertyGroup>
 
-      {plugin ? (
+      {/* 有配置区域时，配置自己的诊断信息已列出所属包，这里不再重复一份。 */}
+      {plugin && !activeNamespace ? (
         <Diagnostics items={[{ label: '包名', value: `${plugin.packageName}@${plugin.packageVersion}` }]} />
       ) : null}
 

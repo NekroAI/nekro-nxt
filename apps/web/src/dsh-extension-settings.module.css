@@ -193,6 +193,7 @@ summary.groupTitle {
 
 .saveRow {
   display: flex;
+  max-width: var(--reader-width);
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
