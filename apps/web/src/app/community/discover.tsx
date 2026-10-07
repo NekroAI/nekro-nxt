@@ -1,4 +1,5 @@
 import {
+  communityPublisherLabel,
   communityReviewLabel,
   HostApiContracts,
   type CommunityExtensionDetail,
@@ -149,10 +150,11 @@ function CommunityCatalog() {
               </span>
               <span className={styles.communitySummary}>{item.summary || '作者还没有填写介绍。'}</span>
               <span className={styles.communityCardFoot}>
+                {item.official ? <Chip tone="accent">官方</Chip> : null}
                 <ReviewChip status={item.latest} />
                 {item.latest?.grade ? <Chip>质量 {item.latest.grade}</Chip> : null}
                 <span className={styles.faint}>
-                  @{item.publisher.handle} · {relativeTime(item.updatedAt)}更新
+                  {communityPublisherLabel(item.publisher.handle)} · {relativeTime(item.updatedAt)}更新
                 </span>
               </span>
             </Link>
@@ -250,7 +252,7 @@ function CommunityDetail({
         meta={
           <>
             <span>{scopeLabel[detail.scope]}</span>
-            <span>@{detail.publisher.handle}</span>
+            <span>{communityPublisherLabel(detail.publisher.handle)}</span>
             {latest ? <span>{relativeTime(latest.createdAt)}发布</span> : null}
             <span>{detail.downloads} 次下载</span>
           </>

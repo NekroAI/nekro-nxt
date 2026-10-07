@@ -808,6 +808,8 @@ const normalizeSummary = (raw: unknown, pageUrl: (id: string) => string): Record
     displayName: record['displayName'],
     summary: record['summary'],
     tags: record['tags'],
+    // 旧版社区没有这个字段，按非官方处理。
+    official: record['official'] === true,
     publisher: {
       handle: publisher['handle'],
       displayName: publisher['displayName'],

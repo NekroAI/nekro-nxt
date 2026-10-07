@@ -3,7 +3,7 @@ import { CompatibilityNotices } from '../system/compatibility.js'
 import { ChevronRight, Download, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import { communityPublisherLabel, HostApiContracts } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import {
   useHostActions,
@@ -109,7 +109,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
             <span>{scopeLabel[extension.scope]}</span>
             {current?.source ? (
               <Link to={`/community/extensions/${extension.id}`} className={styles.metaLink}>
-                来自社区 @{current.source.publisherHandle}
+                来自社区 {communityPublisherLabel(current.source.publisherHandle)}
               </Link>
             ) : (
               <span>{extension.createdByAgent ? `由${extension.createdByAgent}创造` : '本地导入'}</span>

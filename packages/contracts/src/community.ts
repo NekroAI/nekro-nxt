@@ -73,6 +73,13 @@ export const CommunityReleaseSchema = z
   .strict()
 export type CommunityRelease = z.output<typeof CommunityReleaseSchema>
 
+/** 社区为官方扩展保留的发布者标识：官方扩展由多位官方成员维护，对外不显示个人账号。 */
+export const COMMUNITY_OFFICIAL_HANDLE = 'nekro-nxt'
+
+/** 发布者的展示文字：官方扩展显示「NekroNXT 官方」，其余显示 @账号。 */
+export const communityPublisherLabel = (handle: string): string =>
+  handle === COMMUNITY_OFFICIAL_HANDLE ? 'NekroNXT 官方' : `@${handle}`
+
 export const CommunityExtensionSummarySchema = z
   .object({
     id: ExtensionIdSchema,
@@ -80,6 +87,8 @@ export const CommunityExtensionSummarySchema = z
     displayName: z.string().max(200),
     summary: z.string().max(1000),
     tags: z.array(z.string().max(40)).max(16),
+    /** 由社区后台认定的官方扩展；此时发布者是社区保留的官方主页（`COMMUNITY_OFFICIAL_HANDLE`）。 */
+    official: z.boolean(),
     publisher: CommunityAccountSchema,
     latest: CommunityReleaseSchema.nullable(),
     downloads: z.number().int().nonnegative(),

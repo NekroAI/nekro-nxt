@@ -1175,7 +1175,8 @@ test.describe('NekroNxt browser projections', () => {
       displayName: '社区天气',
       summary: '查询城市天气预报。',
       tags: ['天气'],
-      publisher: { handle: 'demo-author', displayName: '示例作者', avatarUrl: null },
+      official: true,
+      publisher: { handle: 'nekro-nxt', displayName: 'NekroNXT 官方', avatarUrl: null },
       latest: {
         id: 'rel_communityweather',
         reviewStatus: 'pending',
@@ -1198,11 +1199,12 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(page.getByText('测试站')).toBeVisible()
         await playwrightExpect(page.getByRole('heading', { name: '社区天气' })).toBeVisible()
         await playwrightExpect(page.locator('body')).toContainText('风险未知')
+        await playwrightExpect(page.locator('body')).toContainText('NekroNXT 官方')
         await playwrightExpect(page.locator('body')).toContainText('访问指定网站')
         await page.getByRole('button', { name: '安装' }).click()
         const dialog = page.getByRole('dialog', { name: '导入「社区天气」' })
         await playwrightExpect(dialog).toBeVisible()
-        await playwrightExpect(dialog).toContainText('来自社区 @demo-author')
+        await playwrightExpect(dialog).toContainText('来自社区 NekroNXT 官方')
         expect(importRequests).toEqual(['rel_communityweather'])
       },
       browserSnapshot,

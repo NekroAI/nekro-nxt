@@ -1,4 +1,9 @@
-import { communityReviewLabel, type CommunityPermissionItem, type HostApiResponse } from '@nekro-nxt/contracts'
+import {
+  communityPublisherLabel,
+  communityReviewLabel,
+  type CommunityPermissionItem,
+  type HostApiResponse,
+} from '@nekro-nxt/contracts'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useHostActions } from '../../product-runtime.js'
 import { Button, Chip, Dialog, Field, Input, toast } from '../../ui-kit/index.js'
@@ -23,7 +28,7 @@ export function CommunityImportNote({
         <p>这次发布新增了权限：{addedPermissions.map((item) => item.label).join('、')}。启用时会再次请你确认。</p>
       ) : null}
       <p>
-        来自社区 @{publisher}
+        来自社区 {communityPublisherLabel(publisher)}
         {label ? (
           <>
             {' · '}

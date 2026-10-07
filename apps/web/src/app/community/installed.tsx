@@ -1,4 +1,9 @@
-import { communityReviewLabel, HostApiContracts, type CommunityInstalledItem } from '@nekro-nxt/contracts'
+import {
+  communityPublisherLabel,
+  communityReviewLabel,
+  HostApiContracts,
+  type CommunityInstalledItem,
+} from '@nekro-nxt/contracts'
 import { PackageCheck, RefreshCw } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -119,7 +124,8 @@ export function InstalledView({
                     {!item.sameCommunity ? <Chip>来自其他社区地址</Chip> : null}
                   </div>
                   <span className={styles.itemMeta}>
-                    来自 @{item.source.publisherHandle} · {relativeTime(item.source.installedAt)}安装
+                    来自 {communityPublisherLabel(item.source.publisherHandle)} ·{' '}
+                    {relativeTime(item.source.installedAt)}安装
                     {item.updateAvailable && item.latest ? ` · 新发布于${relativeTime(item.latest.createdAt)}` : ''}
                     {item.updateAvailable && label ? ` · ${label.label}` : ''}
                   </span>
