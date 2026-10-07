@@ -16,6 +16,7 @@ declare const styles: {
   readonly dimension: string
   readonly dimensionHead: string
   readonly dimensions: string
+  readonly endpointLine: string
   readonly faint: string
   readonly finding: string
   readonly inline: string
@@ -29,6 +30,7 @@ declare const styles: {
   readonly list: string
   readonly location: string
   readonly objectGlyph: string
+  readonly quietLink: string
   readonly release: string
   readonly releases: string
   readonly row: string

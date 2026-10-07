@@ -57,7 +57,12 @@ import { SerialProfileMonitor, type ProfileMonitorTarget } from './serial-profil
 import { bringChildViewToFront, desktopViewBounds } from './view-layout.js'
 import { SnapshotRevisionClock } from './snapshot-revision.js'
 import { ProfileGenerationRegistry } from './profile-generation.js'
-import type { OverlayOpenIntent, OverlayVisibility } from './overlay-visibility.js'
+import {
+  parseOverlayAnchor,
+  type OverlayAnchor,
+  type OverlayOpenIntent,
+  type OverlayVisibility,
+} from './overlay-visibility.js'
 import { IpcRegistrationRegistry, type IpcRegistrationTarget } from './ipc-registration.js'
 import { initializeDesktopManager } from './ipc-registration.js'
 import { RuntimeCredentialStore } from './runtime-credential-store.js'
@@ -179,6 +184,7 @@ export class DesktopInstanceManager {
   #overlayOpen = false
   #overlayOpeningSource: OverlayOpeningSource | undefined
   #overlayIntent: OverlayOpenIntent = { kind: 'list' }
+  #overlayAnchor: OverlayAnchor | undefined
   #overlayTrustedUrl = overlayRendererUrl()
   #overlayCloseTimer: ReturnType<typeof setTimeout> | undefined
   #overlayOpenSerial = 0
@@ -335,6 +341,7 @@ export class DesktopInstanceManager {
   async openOverlay(
     source: OverlayOpeningSource = 'product',
     intent: OverlayOpenIntent = { kind: 'list' },
+    anchor?: OverlayAnchor,
   ): Promise<void> {
     if (this.#disposed) return Promise.reject(new Error('Desktop 实例管理器已经停止。'))
     const serial = ++this.#overlayOpenSerial
@@ -342,6 +349,7 @@ export class DesktopInstanceManager {
     if (this.#disposed) throw new Error('Desktop 实例管理器已经停止。')
     if (serial !== this.#overlayOpenSerial) return
     this.#overlayIntent = intent
+    this.#overlayAnchor = anchor
     this.#overlayLoadGate.updateIntent()
     if (!this.#overlayOpen) {
       this.#overlayOpen = true
@@ -437,6 +445,7 @@ export class DesktopInstanceManager {
     this.#profileGenerations.clear()
     this.#fallbackLoads.clear()
     this.#overlayIntent = { kind: 'list' }
+    this.#overlayAnchor = undefined
     this.#lastCurrentPresentationSignature = undefined
     if (this.#overlayCloseTimer !== undefined) clearTimeout(this.#overlayCloseTimer)
     this.#overlayCloseTimer = undefined
@@ -456,9 +465,9 @@ export class DesktopInstanceManager {
         this.#assertProductSender(event.sender.id)
         return this.#currentPresentation()
       })
-      this.#ipcRegistrations.registerHandle('nxt:shell:open-switcher', (event) => {
+      this.#ipcRegistrations.registerHandle('nxt:shell:open-switcher', (event, anchor: unknown) => {
         this.#assertProductSender(event.sender.id)
-        return this.openOverlay('product', { kind: 'list' })
+        return this.openOverlay('product', { kind: 'list' }, parseOverlayAnchor(anchor))
       })
       this.#ipcRegistrations.registerHandle('nxt:shell:close-switcher', (event) => {
         this.#assertProductSender(event.sender.id)
@@ -1064,7 +1073,11 @@ export class DesktopInstanceManager {
     if (decision === 'send-open') {
       void this.#applyOverlayTheme(view).then(() => {
         if (this.#overlayView === view && this.#overlayOpen && !view.webContents.isDestroyed()) {
-          this.#sendOverlayVisibility({ state: 'open', intent: this.#overlayIntent })
+          this.#sendOverlayVisibility({
+            state: 'open',
+            intent: this.#overlayIntent,
+            ...(this.#overlayAnchor === undefined ? {} : { anchor: this.#overlayAnchor }),
+          })
         }
       })
     }

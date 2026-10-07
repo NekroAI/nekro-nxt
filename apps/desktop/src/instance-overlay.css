@@ -185,6 +185,19 @@ html[data-visibility='closing'] .panel {
   transition-timing-function: var(--ease-exit);
 }
 
+/* 从顶栏的实例按钮打开：面板贴着按钮左缘、紧挨顶栏下方展开，窗口太窄时不越出右边。 */
+html[data-anchor='top'] .sheet-backdrop {
+  align-items: start;
+  padding: 6px 12px 12px max(12px, min(var(--anchor-left, 12px), calc(100vw - min(420px, 100vw - 76px) - 12px)));
+}
+html[data-anchor='top'] .panel {
+  transform-origin: left top;
+}
+html[data-anchor='top'][data-visibility='closed'] .panel,
+html[data-anchor='top'][data-visibility='closing'] .panel {
+  transform: translate(0, -6px) scale(0.98);
+}
+
 .head,
 .foot {
   display: flex;

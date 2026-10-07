@@ -9,7 +9,6 @@ import {
   Palette,
   Plug,
   Plus,
-  Store,
   Upload,
 } from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
@@ -64,7 +63,6 @@ import { useProductApi } from '../model/store.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
-import { CommunitySection } from './community-section.js'
 import styles from './settings.module.css'
 
 const SECTIONS = [
@@ -73,7 +71,6 @@ const SECTIONS = [
   { key: 'adapters', label: '平台适配器', icon: <Plug size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
-  { key: 'community', label: '社区', icon: <Store size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
   { key: 'about', label: '关于', icon: <Info size={16} /> },
 ] as const
@@ -111,6 +108,8 @@ export default function SettingsSpace() {
   useEffect(() => {
     if (section === 'models' && !llm.settings && !llm.loading) void llm.load()
   }, [section])
+  // 社区地址已移到「社区 → 账号」底部，旧地址直接带过去。
+  if (section === 'community') return <Navigate to="/community/account" replace />
   if (!isSection(section)) return <Navigate to="/settings/models" replace />
 
   const selectProvider = (provider: string) =>
@@ -139,11 +138,7 @@ export default function SettingsSpace() {
     >
       <MainContent
         width={
-          section === 'notifications' ||
-          section === 'appearance' ||
-          section === 'about' ||
-          section === 'access' ||
-          section === 'community'
+          section === 'notifications' || section === 'appearance' || section === 'about' || section === 'access'
             ? 'readable'
             : 'full'
         }
@@ -174,12 +169,6 @@ export default function SettingsSpace() {
           <>
             <SectionHead title="登录设备" />
             <AccessSection />
-          </>
-        ) : null}
-        {section === 'community' ? (
-          <>
-            <SectionHead title="社区" />
-            <CommunitySection />
           </>
         ) : null}
         {section === 'appearance' ? <Appearance /> : null}

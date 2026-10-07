@@ -1,6 +1,5 @@
 import { UserRound } from 'lucide-react'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
   Banner,
   Button,
@@ -8,8 +7,8 @@ import {
   ConfirmDialog,
   MainContent,
   ObjectHeader,
-  PropertyGroup,
   PropertyList,
+  Pressable,
   PropertyRow,
   Skeleton,
   toast,
@@ -17,10 +16,12 @@ import {
 import { relativeTime } from '../channels/timeline-model.js'
 import { ENVIRONMENT_LABEL, errorMessage, openExternal, type CommunityState } from './community-model.js'
 import styles from './community.module.css'
+import { CommunityEndpointDialog } from './endpoint-dialog.js'
 
 /** 本实例登录的社区账号；登录用于发布扩展与查看审查结果，浏览和安装不需要登录。 */
 export function AccountView({ community }: { readonly community: CommunityState }) {
   const [confirmSignOut, setConfirmSignOut] = useState(false)
+  const [editingEndpoint, setEditingEndpoint] = useState(false)
   const [busy, setBusy] = useState(false)
   const status = community.status
   const account = status?.account ?? null
@@ -63,24 +64,13 @@ export function AccountView({ community }: { readonly community: CommunityState 
       {community.waiting && !account ? (
         <Banner tone="info">已在浏览器中打开社区授权页。在那里同意授权后，这里会自动更新。</Banner>
       ) : null}
-      <PropertyGroup title="连接">
+      {account && status.signedInAt !== null ? (
         <PropertyList>
-          <PropertyRow label="社区地址" description="可在设置中修改，方便连接测试站或本机开发服务。">
-            <span className={styles.inline}>
-              <span className={styles.faint}>{status.communityUrl}</span>
-              {status.environment && status.environment !== 'production' ? (
-                <Chip tone="warn">{ENVIRONMENT_LABEL[status.environment]}</Chip>
-              ) : null}
-              {status.environment === null ? <Chip tone="bad">无法连接</Chip> : null}
-            </span>
+          <PropertyRow label="登录时间">
+            <span className={styles.faint}>{relativeTime(status.signedInAt)}</span>
           </PropertyRow>
-          {account && status.signedInAt !== null ? (
-            <PropertyRow label="登录时间">
-              <span className={styles.faint}>{relativeTime(status.signedInAt)}</span>
-            </PropertyRow>
-          ) : null}
         </PropertyList>
-      </PropertyGroup>
+      ) : null}
       <div className={styles.inline}>
         {account ? (
           <>
@@ -101,10 +91,23 @@ export function AccountView({ community }: { readonly community: CommunityState 
             ) : null}
           </>
         )}
-        <Link to="/settings/community" className={styles.textLink}>
-          修改社区地址
-        </Link>
       </div>
+      {/* 地址只有少数开发成员需要更改，放在页面最下方的一行小字里。 */}
+      <p className={styles.endpointLine}>
+        <span>社区地址 {status.communityUrl.replace(/^https:\/\//u, '')}</span>
+        {status.environment && status.environment !== 'production' ? (
+          <Chip tone="warn">{ENVIRONMENT_LABEL[status.environment]}</Chip>
+        ) : null}
+        {status.environment === null ? <Chip tone="bad">无法连接</Chip> : null}
+        <Pressable type="button" className={styles.quietLink} onClick={() => setEditingEndpoint(true)}>
+          更改
+        </Pressable>
+      </p>
+      <CommunityEndpointDialog
+        open={editingEndpoint}
+        onOpenChange={setEditingEndpoint}
+        onChanged={() => void community.refresh()}
+      />
       <ConfirmDialog
         open={confirmSignOut}
         onOpenChange={setConfirmSignOut}

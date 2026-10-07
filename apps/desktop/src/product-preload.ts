@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 contextBridge.exposeInMainWorld('nekroDesktopShell', {
   getCurrentInstancePresentation: () => ipcRenderer.invoke('nxt:shell:current'),
-  openInstanceSwitcher: () => ipcRenderer.invoke('nxt:shell:open-switcher'),
+  openInstanceSwitcher: (anchor?: unknown) => ipcRenderer.invoke('nxt:shell:open-switcher', anchor),
   closeInstanceSwitcher: () => ipcRenderer.invoke('nxt:shell:close-switcher'),
   subscribeCurrentInstanceStatus: (listener: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)

@@ -125,14 +125,16 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
           data-desktop-instance-switcher=""
           aria-expanded={switcherOpen}
           aria-label={`管理并添加远程服务实例：${desktop.presentation.displayName} · ${desktopStatusLabel[desktop.presentation.status]}`}
-          onClick={() => {
+          onClick={(event) => {
             if (switcherOpen) {
               setSwitcherOpen(false)
               void window.nekroDesktopShell?.closeInstanceSwitcher()
               return
             }
             setSwitcherOpen(true)
-            void window.nekroDesktopShell?.openInstanceSwitcher().finally(() => setSwitcherOpen(false))
+            // 选择器贴着这个按钮弹出；按钮在顶栏中的位置随平台的窗口按钮而变。
+            const left = event.currentTarget.getBoundingClientRect().left
+            void window.nekroDesktopShell?.openInstanceSwitcher({ left }).finally(() => setSwitcherOpen(false))
           }}
         >
           {instance}

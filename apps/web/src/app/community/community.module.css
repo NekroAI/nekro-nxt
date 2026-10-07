@@ -272,6 +272,31 @@
   max-width: 360px;
 }
 
+.endpointLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-8);
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.quietLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.quietLink:hover {
+  color: var(--fg-2);
+}
+
 .inlineSwitch {
   display: inline-flex;
   align-items: center;

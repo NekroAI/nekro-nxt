@@ -12,7 +12,8 @@ export interface DesktopInstancePresentation {
 
 export interface DesktopShellBridge {
   getCurrentInstancePresentation(): Promise<DesktopInstancePresentation>
-  openInstanceSwitcher(): Promise<void>
+  /** `anchor.left` is the switcher button's left edge; older Desktop builds ignore it. */
+  openInstanceSwitcher(anchor?: { readonly left: number }): Promise<void>
   closeInstanceSwitcher(): Promise<void>
   subscribeCurrentInstanceStatus(listener: (state: DesktopInstancePresentation) => void): () => void
 }

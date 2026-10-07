@@ -810,6 +810,15 @@ const startOverlay = () => {
       visibility?.intent?.kind === 'reauthenticate' && typeof visibility.intent.profileId === 'string'
         ? { kind: 'reauthenticate', profileId: visibility.intent.profileId }
         : { kind: 'list' }
+    // 从顶栏按钮打开时贴着按钮弹出；从其他入口打开时保持默认位置。
+    const anchorLeft = visibility?.anchor?.left
+    if (typeof anchorLeft === 'number') {
+      document.documentElement.dataset.anchor = 'top'
+      document.documentElement.style.setProperty('--anchor-left', `${anchorLeft}px`)
+    } else {
+      delete document.documentElement.dataset.anchor
+      document.documentElement.style.removeProperty('--anchor-left')
+    }
     document.documentElement.dataset.visibility = 'closed'
     applyPendingOpenIntent()
     requestAnimationFrame(() => {
