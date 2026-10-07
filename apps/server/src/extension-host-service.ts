@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
+import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
 import {
   EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
   EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES,
@@ -507,6 +508,13 @@ export const createNxtHostService = (
         return backends.complete(binding, request, Math.max(1, maxOutputTokens))
       },
     },
+    render: {
+      svg: (svg, options) => renderSvg(svg, options),
+    },
+    parse: {
+      html: (html, options) => Promise.resolve(parseHtml(html, options)),
+      feed: (xml, options) => Promise.resolve(parseFeed(xml, options)),
+    },
     prompt: {
       static(name, text) {
         const declaration = contextDeclaration(binding, name, 'static')
@@ -591,6 +599,12 @@ export const createNxtDynamicFacade = (resolve: () => NxtHostService): NxtHostSe
   },
   get llm() {
     return resolve().llm
+  },
+  get render() {
+    return resolve().render
+  },
+  get parse() {
+    return resolve().parse
   },
   get prompt() {
     return resolve().prompt

@@ -124,6 +124,17 @@ describe('nxt Host service', () => {
     expect(() => nxt.prompt.static('usage', '用法')).toThrow(/kind: 'static'/u)
   })
 
+  it('renders and parses without any declared capability', async () => {
+    const { nxt } = fixture(undefined)
+    const image = await nxt.render.svg('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>', { scale: 1 })
+    expect(image).toMatchObject({ mediaType: 'image/png', width: 10, height: 10 })
+    expect(
+      (await nxt.parse.html('<p>示例 <a href="/a">链接</a></p>', { url: 'https://example.com/', mode: 'full' }))
+        .markdown,
+    ).toBe('示例 [链接](https://example.com/a)')
+    expect((await nxt.parse.feed('<rss><channel><title>示例</title></channel></rss>')).title).toBe('示例')
+  })
+
   it('derives the egress policy from the declaration and the user-configured host', async () => {
     const domains = fixture({ network: { mode: 'domains', domains: ['api.example.com'] } })
     await domains.nxt.http.fetch('https://api.example.com/v1')

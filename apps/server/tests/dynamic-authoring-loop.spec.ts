@@ -315,6 +315,9 @@ describe('dynamic authoring closed loop', () => {
         const context = await ctx.nxt.context.current()
         let denied = ''
         try { await ctx.nxt.http.fetch('https://api.example.com/') } catch (error) { denied = String(error.message) }
+        const card = await ctx.nxt.render.svg('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8"/>', { scale: 1 })
+        const feed = await ctx.nxt.parse.feed('<rss><channel><title>示例</title></channel></rss>')
+        if (card.width !== 12 || feed.title !== '示例') throw new Error('render or parse failed')
         return { label, visits: previous + 1, channelKind: context.channel.kind, apiKey: (await ctx.nxt.secrets.get('apiKey')) ?? null, denied }
       }
     }))

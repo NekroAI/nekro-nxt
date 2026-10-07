@@ -121,6 +121,62 @@ export interface NxtAssetCreateInput {
   readonly name?: string
 }
 
+export interface NxtRenderSvgOptions {
+  /** Output pixels per SVG user unit; default 2, at most 4. */
+  readonly scale?: number
+  readonly format?: 'png' | 'jpeg' | 'webp'
+  /** CSS color painted behind transparent areas; JPEG defaults to white. */
+  readonly background?: string
+}
+
+/** Rendered bytes as base64; pass `{ base64, mediaType }` to `assets.create` to send it. */
+export interface NxtRenderedImage {
+  readonly base64: string
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'image/webp'
+  readonly width: number
+  readonly height: number
+  readonly byteSize: number
+}
+
+export interface NxtParseHtmlOptions {
+  /** Page address; relative links and images become absolute. */
+  readonly url?: string
+  /** `article` (default) keeps the main content; `full` converts the whole body. */
+  readonly mode?: 'article' | 'full'
+  /** Markdown length limit; default 20000, at most 200000. */
+  readonly maxChars?: number
+}
+
+export interface NxtParsedHtml {
+  readonly title?: string
+  readonly excerpt?: string
+  readonly markdown: string
+  readonly truncated: boolean
+  /** Distinct absolute http(s) links in the converted content, at most 200. */
+  readonly links: readonly { readonly text: string; readonly url: string }[]
+}
+
+export interface NxtFeedItem {
+  /** `guid` / `id`, else the link or title; stable for de-duplication. */
+  readonly id: string
+  readonly title?: string
+  readonly link?: string
+  /** Milliseconds since epoch. */
+  readonly published?: number
+  readonly author?: string
+  /** Plain text, at most 2000 characters. */
+  readonly summary?: string
+}
+
+export interface NxtFeed {
+  readonly kind: 'rss2' | 'rss1' | 'atom'
+  readonly title?: string
+  readonly description?: string
+  readonly link?: string
+  /** At most 100, in feed order. */
+  readonly items: readonly NxtFeedItem[]
+}
+
 export interface NxtAssetRecord {
   /** Pass to the agent so it can send the asset with `send_channel_message` image/file/audio parts. */
   readonly assetId: string
@@ -332,6 +388,19 @@ export interface NxtHostService {
      * `permissions.capabilities.llm`; calls beyond `maxCallsPerTurn` in one turn are rejected.
      */
     complete(request: NxtLlmRequest): Promise<NxtLlmResponse>
+  }
+  readonly render: {
+    /**
+     * Rasterizes SVG with the Host's system fonts (use generic families such as `sans-serif`). References are limited
+     * to `#fragment` and `data:` URLs. No capability needed; sending the image needs `assets`.
+     */
+    svg(svg: string, options?: NxtRenderSvgOptions): Promise<NxtRenderedImage>
+  }
+  readonly parse: {
+    /** HTML to Markdown, main content by default. No capability needed; fetching the page needs `network`. */
+    html(html: string, options?: NxtParseHtmlOptions): Promise<NxtParsedHtml>
+    /** RSS 2.0, RSS 1.0 or Atom into one item list. */
+    feed(xml: string, options?: { readonly url?: string }): Promise<NxtFeed>
   }
   readonly prompt: {
     /** Fixed text added to the system prompt; declare `{ name, kind: 'static' }` in `permissions.capabilities.context`. */
@@ -983,6 +1052,8 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
       'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
       'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。',
+      "ctx.nxt.render.svg(svg, { scale, format: 'png' | 'jpeg' | 'webp', background }) → { base64, mediaType, width, height }：用宿主系统字体把 SVG 渲染成图片，无需声明能力；把结果交给 assets.create({ base64, mediaType, name }) 再由智能体发送。文字用 font-family=\"sans-serif\"；SVG 只能引用 #片段或 data: 内联资源，网络图片先用 http.fetch 取回再以 data: 内联。适合卡片、榜单、签到图、运势图等。",
+      "ctx.nxt.parse.html(html, { url, mode: 'article' | 'full', maxChars }) → { title, excerpt, markdown, truncated, links }：把网页转成 Markdown，默认只保留正文，传 url 时链接变为绝对地址；parse.feed(xml, { url }) → { kind, title, link, items: [{ id, title, link, published, author, summary }] }：统一解析 RSS 2.0、RSS 1.0 与 Atom，id 可用于去重。两者都无需声明能力，取回网页或订阅源仍需要 network。",
       "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
     ],
     rules: [

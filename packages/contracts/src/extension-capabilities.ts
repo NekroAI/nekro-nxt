@@ -5,7 +5,7 @@ import { z } from 'zod'
  * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump only when a new optional
  * Manifest capability ships; never reuse a level for a different meaning.
  */
-export const EXTENSION_SDK_LEVEL = 5
+export const EXTENSION_SDK_LEVEL = 6
 
 export const ExtensionRequiresSchema = z.object({ sdk: z.number().int().min(1).max(1000) }).strict()
 export type ExtensionRequires = z.output<typeof ExtensionRequiresSchema>
