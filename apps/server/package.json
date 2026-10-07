@@ -96,6 +96,7 @@
     "@nekro-nxt/contracts": "workspace:*",
     "@nekro-nxt/core": "workspace:*",
     "@nekro-nxt/dsh-compat": "workspace:*",
+    "@nekro-nxt/extension-format": "workspace:*",
     "@nekro-nxt/extension-runtime": "workspace:*",
     "@nekro-nxt/extension-sdk": "workspace:*",
     "@nekro-nxt/storage-sqlite": "workspace:*",

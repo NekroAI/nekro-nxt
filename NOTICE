@@ -6,6 +6,11 @@ Unless otherwise stated, the software source code in this repository is
 licensed under the GNU Affero General Public License, version 3 only
 (SPDX: AGPL-3.0-only). See LICENSE for the full terms.
 
+The packages packages/contracts and packages/extension-format are licensed
+under the MIT License (SPDX: MIT), as stated in their own LICENSE files, so
+that the NekroNXT community service and third-party tools can use the
+extension package format.
+
 The NekroNXT and NXT names, Shuiyue Ying character, project logos,
 illustrations, installer artwork, and promotional media are Copyright © 2026
 NekroAI. These brand assets are not licensed under the repository software

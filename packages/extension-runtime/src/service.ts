@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { extensionManifestSchema, type ExtensionManifest } from './manifest.js'
+import {
+  assertRevisionMatchesTransfer,
+  extensionManifestSchema,
+  type ExtensionManifest,
+} from '@nekro-nxt/extension-format'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, type AgentId, type ExtensionId } from '@nekro-nxt/contracts'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
@@ -204,19 +208,7 @@ export class ExtensionService {
       sources: input.sources,
       ...(input.resources === undefined ? {} : { resources: input.resources }),
     })
-    if (
-      materialized.manifest.extensionId !== input.extension.id ||
-      materialized.manifest.revisionId !== input.revision.id
-    ) {
-      throw new Error('导入扩展的 Manifest 身份与传输清单不一致。')
-    }
-    if (materialized.scope !== input.extension.scope) throw new Error('导入扩展的 scope 与 Manifest 不一致。')
-    if (
-      materialized.contentDigest !== input.revision.contentDigest ||
-      materialized.payloadDigest !== input.revision.payloadDigest
-    ) {
-      throw new Error('导入扩展的内容摘要不一致。')
-    }
+    assertRevisionMatchesTransfer({ extension: input.extension, revision: input.revision }, materialized)
     const existingRevision = this.#repository.getExtensionRevision(input.revision.id)
     if (existingRevision) {
       if (

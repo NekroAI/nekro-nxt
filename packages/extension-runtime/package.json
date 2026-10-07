@@ -20,13 +20,13 @@
   "dependencies": {
     "@nekro-nxt/contracts": "workspace:*",
     "@nekro-nxt/core": "workspace:*",
+    "@nekro-nxt/dsh-compat": "workspace:*",
+    "@nekro-nxt/extension-format": "workspace:*",
     "@nekro-nxt/extension-sdk": "workspace:*",
     "esbuild": "0.25.12",
     "fflate": "0.8.3",
-    "postcss": "8.5.26",
     "ulid": "3.0.2",
-    "zod": "4.4.3",
-    "@nekro-nxt/dsh-compat": "workspace:*"
+    "zod": "4.4.3"
   },
   "description": "@nekro-nxt/extension-runtime workspace package",
   "author": "NekroAI contributors",

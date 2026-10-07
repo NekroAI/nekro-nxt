@@ -1,8 +1,9 @@
 {
-  "name": "@nekro-nxt/contracts",
+  "name": "@nekro-nxt/extension-format",
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
+  "description": "NekroNXT 扩展包格式：.nxt-extension 结构校验、扩展清单与内容摘要",
   "exports": {
     ".": {
       "types": "./lib/types/index.d.ts",
@@ -23,19 +24,22 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch --no-clean",
-    "test": "vitest run --root ../.. packages/contracts/tests",
+    "test": "vitest run --root ../.. packages/extension-format/tests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@nekro-nxt/contracts": "workspace:^",
+    "@noble/hashes": "2.3.0",
+    "fflate": "0.8.3",
+    "postcss": "8.5.26",
     "zod": "4.4.3"
   },
-  "description": "NekroNXT 跨进程公共契约",
   "author": "NekroAI contributors",
-  "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
+  "homepage": "https://github.com/NekroAI/nekro-nxt/tree/main/packages/extension-format#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/NekroAI/nekro-nxt.git",
-    "directory": "packages/contracts"
+    "directory": "packages/extension-format"
   },
   "bugs": {
     "url": "https://github.com/NekroAI/nekro-nxt/issues"

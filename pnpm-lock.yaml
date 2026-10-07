@@ -313,6 +313,9 @@ importers:
       '@nekro-nxt/dsh-compat':
         specifier: workspace:*
         version: link:../../packages/dsh-compat
+      '@nekro-nxt/extension-format':
+        specifier: workspace:*
+        version: link:../../packages/extension-format
       '@nekro-nxt/extension-runtime':
         specifier: workspace:*
         version: link:../../packages/extension-runtime
@@ -739,6 +742,24 @@ importers:
         specifier: 18.3.7
         version: 18.3.7(@types/react@18.3.31)
 
+  packages/extension-format:
+    dependencies:
+      '@nekro-nxt/contracts':
+        specifier: workspace:^
+        version: link:../contracts
+      '@noble/hashes':
+        specifier: 2.3.0
+        version: 2.3.0
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
+      postcss:
+        specifier: 8.5.26
+        version: 8.5.26
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
   packages/extension-runtime:
     dependencies:
       '@nekro-nxt/contracts':
@@ -750,6 +771,9 @@ importers:
       '@nekro-nxt/dsh-compat':
         specifier: workspace:*
         version: link:../dsh-compat
+      '@nekro-nxt/extension-format':
+        specifier: workspace:*
+        version: link:../extension-format
       '@nekro-nxt/extension-sdk':
         specifier: workspace:*
         version: link:../extension-sdk
@@ -759,9 +783,6 @@ importers:
       fflate:
         specifier: 0.8.3
         version: 0.8.3
-      postcss:
-        specifier: 8.5.26
-        version: 8.5.26
       ulid:
         specifier: 3.0.2
         version: 3.0.2
@@ -13159,7 +13180,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+      vitest: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.20.0)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
   '@vitest/expect@4.1.8':
     dependencies:

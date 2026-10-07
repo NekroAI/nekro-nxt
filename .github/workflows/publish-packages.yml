@@ -1,0 +1,57 @@
+name: Publish packages
+
+# 把公开的共享包暂存到 npm。暂存版本不会立即可安装：维护者需要在 npmjs.com 或用
+# `npm stage approve <id>` 以 2FA 确认后才会正式发布。只有版本号在 npm 上尚不存在的包会被暂存。
+on:
+  push:
+    tags: ['packages-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-packages
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Build and test the public packages
+        run: |
+          pnpm exec tsc -b packages/extension-format
+          pnpm --filter @nekro-nxt/contracts --filter @nekro-nxt/extension-format run build
+          pnpm exec vitest run packages/contracts packages/extension-format
+      # 暂存发布需要 npm 11.15 及以上。
+      - run: npm install -g npm@12
+      - name: Stage unpublished versions
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 依赖顺序：extension-format 依赖 contracts。
+          for dir in packages/contracts packages/extension-format; do
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version 已发布，跳过。"
+              continue
+            fi
+            # pnpm pack 把 workspace: 依赖改写为真实版本号，再从解包目录暂存。
+            out=$(mktemp -d)
+            (cd "$dir" && pnpm pack --pack-destination "$out" >/dev/null)
+            tar -xzf "$out"/*.tgz -C "$out"
+            (cd "$out/package" && npm stage publish)
+            echo "$name@$version 已暂存，等待维护者确认。"
+          done

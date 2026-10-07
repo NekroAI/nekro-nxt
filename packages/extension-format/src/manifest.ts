@@ -35,12 +35,15 @@ export const clientCssSchema = z
 
 export const VERIFICATION_INPUT_MAX_BYTES = 16 * 1024
 
+const encoder = new TextEncoder()
+const utf8Length = (value: string): number => encoder.encode(value).byteLength
+
 /**
  * Representative, side-effect-free input used to really call a Tool or RPC during verification (dynamic run, save
  * and import). Absent means the historical empty call: `{}` for Tools and `null` for RPC.
  */
 export const verificationInputSchema = JsonValueSchema.refine(
-  (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= VERIFICATION_INPUT_MAX_BYTES,
+  (value) => utf8Length(JSON.stringify(value)) <= VERIFICATION_INPUT_MAX_BYTES,
   `验证样例不能超过 ${VERIFICATION_INPUT_MAX_BYTES} 字节。`,
 )
 
@@ -48,7 +51,7 @@ export const verificationInputSchema = JsonValueSchema.refine(
 export const toolVerificationInputSchema = z
   .record(z.string(), JsonValueSchema)
   .refine(
-    (value) => Buffer.byteLength(JSON.stringify(value), 'utf8') <= VERIFICATION_INPUT_MAX_BYTES,
+    (value) => utf8Length(JSON.stringify(value)) <= VERIFICATION_INPUT_MAX_BYTES,
     `验证样例不能超过 ${VERIFICATION_INPUT_MAX_BYTES} 字节。`,
   )
 

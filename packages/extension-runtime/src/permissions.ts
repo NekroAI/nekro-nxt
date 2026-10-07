@@ -10,7 +10,7 @@ import {
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
-import type { ExtensionManifest } from './manifest.js'
+import type { ExtensionManifest } from '@nekro-nxt/extension-format'
 import type { HostUiPermissionGrant } from './types.js'
 
 const sorted = <Value extends string>(values: readonly Value[]): Value[] => [...values].sort()

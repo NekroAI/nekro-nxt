@@ -1,5 +1,5 @@
 import { DSH_RUNTIME_FINGERPRINT } from '@nekro-nxt/dsh-compat/release'
-import { extensionManifestSchema } from './manifest.js'
+import { extensionManifestSchema, validateHostUiCss, validateHostUiSvg } from '@nekro-nxt/extension-format'
 import { ExtensionRevisionIdSchema, type ExtensionId, type ExtensionRevisionId } from '@nekro-nxt/contracts'
 import { EXTENSION_SDK_BUNDLE_SOURCE } from '@nekro-nxt/extension-sdk'
 import { createHash, randomUUID } from 'node:crypto'
@@ -8,7 +8,6 @@ import path from 'node:path'
 import { build, type Plugin } from 'esbuild'
 import { z } from 'zod'
 import type { ExtensionBuildArtifact } from './types.js'
-import { validateHostUiCss, validateHostUiSvg } from './ui-assets.js'
 
 const BUILDER_VERSION = 'nekro-nxt-esbuild-v5'
 

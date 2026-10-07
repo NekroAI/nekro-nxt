@@ -1,27 +1,25 @@
 import {
-  adapterContributionSchema,
-  clientCssSchema,
-  extensionEntrypointsSchema,
+  extensionContributionSchema,
   extensionManifestSchema,
-  rpcContributionSchema,
-  toolContributionSchema,
-} from './manifest.js'
+  normalizeSource,
+  revisionDigests,
+  revisionResourcesSchema,
+  revisionSourcesSchema,
+  sha256Hex,
+  validateHostUiCss,
+  validateHostUiSvg,
+  type MaterializedExtensionRevision,
+} from '@nekro-nxt/extension-format'
 import {
   ExtensionConfigDeclarationSchema,
-  HostPageContributionSchema,
   HostUiPermissionDeclarationSchema,
-  MessageRendererContributionSchema,
-  PanelContributionSchema,
-  ToolViewContributionSchema,
-  JsonValueSchema,
   type ExtensionId,
   type ExtensionRevisionId,
-  type JsonValue,
 } from '@nekro-nxt/contracts'
-import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type { DynamicPackageSnapshot, MaterializedExtensionRevision } from './types.js'
-import { validateHostUiCss, validateHostUiSvg } from './ui-assets.js'
+import type { DynamicPackageSnapshot } from './types.js'
+
+export { materializeImportedRevision } from '@nekro-nxt/extension-format'
 
 const inputSchema = z
   .object({
@@ -49,19 +47,7 @@ const inputSchema = z
           .strict()
           .optional(),
         config: ExtensionConfigDeclarationSchema.optional(),
-        contributions: z
-          .array(
-            z.union([
-              toolContributionSchema,
-              rpcContributionSchema,
-              PanelContributionSchema,
-              ToolViewContributionSchema,
-              MessageRendererContributionSchema,
-              adapterContributionSchema,
-              HostPageContributionSchema,
-            ]),
-          )
-          .default([]),
+        contributions: z.array(extensionContributionSchema).default([]),
       })
       .strict()
       .refine(({ hostCode, clientCode }) => hostCode !== undefined || clientCode !== undefined, {
@@ -69,51 +55,6 @@ const inputSchema = z
       }),
   })
   .strict()
-
-const normalizeSource = (source: string): string => source.replaceAll('\r\n', '\n').trim() + '\n'
-
-const sourcesSchema = z.union([
-  z.object({ host: z.string(), client: z.string() }).strict(),
-  z.object({ host: z.string() }).strict(),
-  z.object({ client: z.string() }).strict(),
-])
-
-const resourcesSchema = z.record(z.string().regex(/^assets\/[a-z0-9][a-z0-9/_.-]*$/u), z.string().max(256 * 1024))
-
-const digestInputSchema = z
-  .object({
-    manifest: extensionManifestSchema,
-    sources: sourcesSchema,
-    resources: resourcesSchema,
-  })
-  .strict()
-
-const payloadDigestInputSchema = z
-  .object({
-    manifest: z
-      .object({
-        schemaVersion: z.literal(6),
-        scope: z.enum(['agent', 'host-adapter', 'host-ui']),
-        entrypoints: extensionEntrypointsSchema,
-        contributions: inputSchema.shape.snapshot.shape.contributions,
-        permissions: HostUiPermissionDeclarationSchema,
-        config: ExtensionConfigDeclarationSchema.optional(),
-        clientCss: clientCssSchema.optional(),
-      })
-      .strict(),
-    sources: sourcesSchema,
-    resources: resourcesSchema,
-  })
-  .strict()
-
-const canonicalJson = (value: JsonValue): string => {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
-  return `{${Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`)
-    .join(',')}}`
-}
 
 const wrapHost = (body: string): string =>
   normalizeSource(`import { defineHostExtension } from '@nekro-nxt/extension-sdk'
@@ -161,7 +102,7 @@ export function materializeDynamicPackage(input: {
     hasClientCss: parsed.snapshot.clientCss !== undefined,
     hasClient: parsed.snapshot.clientCode !== undefined,
   })
-  const sources = sourcesSchema.parse({
+  const sources = revisionSourcesSchema.parse({
     ...(parsed.snapshot.hostCode === undefined ? {} : { host: wrapHost(parsed.snapshot.hostCode) }),
     ...(parsed.snapshot.clientCode === undefined
       ? {}
@@ -182,7 +123,7 @@ export function materializeDynamicPackage(input: {
     ...(parsed.snapshot.config === undefined ? {} : { config: parsed.snapshot.config }),
     contributions,
   })
-  const resources = resourcesSchema.parse(parsed.snapshot.resources ?? {})
+  const resources = revisionResourcesSchema.parse(parsed.snapshot.resources ?? {})
   const expectedResources = new Map<string, { readonly digest: string; readonly kind: 'css' | 'svg' }>()
   if (parsed.snapshot.clientCss) {
     expectedResources.set(parsed.snapshot.clientCss.path, { digest: parsed.snapshot.clientCss.sha256, kind: 'css' })
@@ -198,89 +139,11 @@ export function materializeDynamicPackage(input: {
   for (const [resourcePath, expected] of expectedResources) {
     const source = resources[resourcePath]
     if (source === undefined) throw new Error(`动态扩展缺少资源：${resourcePath}`)
-    if (createHash('sha256').update(source).digest('hex') !== expected.digest) {
+    if (sha256Hex(source) !== expected.digest) {
       throw new Error(`动态扩展资源摘要不一致：${resourcePath}`)
     }
     if (expected.kind === 'css') validateHostUiCss(source)
     else validateHostUiSvg(source)
   }
-  const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources, resources })))
-  const payloadManifest = {
-    schemaVersion: manifest.schemaVersion,
-    scope: manifest.scope,
-    entrypoints: manifest.entrypoints,
-    contributions: manifest.contributions,
-    permissions: manifest.permissions,
-    ...(manifest.config === undefined ? {} : { config: manifest.config }),
-    ...(manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
-  }
-  const payloadDigestInput = canonicalJson(
-    JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources, resources })),
-  )
-  return {
-    manifest,
-    sources,
-    resources,
-    contentDigest: createHash('sha256').update(digestInput).digest('hex'),
-    payloadDigest: createHash('sha256').update(payloadDigestInput).digest('hex'),
-    scope,
-  }
-}
-
-/** Recomputes canonical digests for a transferred immutable Revision without trusting archive metadata. */
-export function materializeImportedRevision(input: {
-  readonly manifest: unknown
-  readonly sources: { readonly host?: string; readonly client?: string }
-  readonly resources?: Readonly<Record<string, string>>
-}): MaterializedExtensionRevision {
-  const manifest = extensionManifestSchema.parse(input.manifest)
-  const sources = sourcesSchema.parse({
-    ...(input.sources.host === undefined ? {} : { host: normalizeSource(input.sources.host) }),
-    ...(input.sources.client === undefined ? {} : { client: normalizeSource(input.sources.client) }),
-  })
-  const resources = resourcesSchema.parse(input.resources ?? {})
-  if (
-    'host' in manifest.entrypoints !== 'host' in sources ||
-    'client' in manifest.entrypoints !== 'client' in sources
-  ) {
-    throw new Error('导入扩展的 Manifest entrypoints 与源码文件不一致。')
-  }
-  const expectedResources = new Map<string, string>()
-  if (manifest.clientCss) expectedResources.set(manifest.clientCss.path, manifest.clientCss.sha256)
-  for (const page of manifest.contributions) {
-    if (page.kind === 'host-page' && page.icon.kind === 'svg') expectedResources.set(page.icon.path, page.icon.sha256)
-  }
-  if (expectedResources.size !== Object.keys(resources).length) {
-    throw new Error('导入扩展的资源文件与 Manifest 声明不一致。')
-  }
-  for (const [resourcePath, expectedDigest] of expectedResources) {
-    const source = resources[resourcePath]
-    if (source === undefined) throw new Error(`导入扩展缺少资源：${resourcePath}`)
-    const digest = createHash('sha256').update(source).digest('hex')
-    if (digest !== expectedDigest) throw new Error(`导入扩展资源摘要不一致：${resourcePath}`)
-    if (resourcePath.endsWith('.module.css')) validateHostUiCss(source)
-    else if (resourcePath.endsWith('.svg')) validateHostUiSvg(source)
-    else throw new Error(`导入扩展包含不支持的资源：${resourcePath}`)
-  }
-  const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources, resources })))
-  const payloadManifest = {
-    schemaVersion: manifest.schemaVersion,
-    scope: manifest.scope,
-    entrypoints: manifest.entrypoints,
-    contributions: manifest.contributions,
-    permissions: manifest.permissions,
-    ...(manifest.config === undefined ? {} : { config: manifest.config }),
-    ...(manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
-  }
-  const payloadDigestInput = canonicalJson(
-    JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources, resources })),
-  )
-  return {
-    manifest,
-    sources,
-    resources,
-    contentDigest: createHash('sha256').update(digestInput).digest('hex'),
-    payloadDigest: createHash('sha256').update(payloadDigestInput).digest('hex'),
-    scope: manifest.scope,
-  }
+  return { manifest, sources, resources, ...revisionDigests({ manifest, sources, resources }), scope }
 }

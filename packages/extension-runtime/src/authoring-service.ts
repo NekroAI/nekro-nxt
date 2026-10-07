@@ -18,7 +18,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
-import { toolVerificationInputSchema, verificationInputSchema } from './manifest.js'
+import { toolVerificationInputSchema, verificationInputSchema } from '@nekro-nxt/extension-format'
 import type {
   AuthoringApprovalPolicy,
   AuthoringAttemptFailure,

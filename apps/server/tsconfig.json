@@ -17,6 +17,7 @@
     { "path": "../../packages/contracts" },
     { "path": "../../packages/core" },
     { "path": "../../packages/dsh-compat" },
+    { "path": "../../packages/extension-format" },
     { "path": "../../packages/extension-runtime" },
     { "path": "../../packages/extension-sdk" },
     { "path": "../../packages/storage-sqlite" },

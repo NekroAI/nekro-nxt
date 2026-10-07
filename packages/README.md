@@ -12,6 +12,7 @@
 - [`channel-runtime`](channel-runtime/README.md)：Episode、Admission、Outbox、回执和当前频道历史契约；
 - [`client-migrations`](client-migrations/README.md)：纯函数客户端状态迁移与宿主升级步骤协调；
 - [`dsh-compat`](dsh-compat/README.md)：DSH 精确版本断言和公开 API 兼容探针；
+- [`extension-format`](extension-format/README.md)：`.nxt-extension` 结构校验、扩展清单与内容摘要；NekroNXT 导入与社区发布共用，与 `contracts` 一起以 MIT 发布到 npm；
 - [`extension-sdk`](extension-sdk/README.md)：本地扩展唯一允许导入的版本化 Host/Client 契约；
 - [`extension-runtime`](extension-runtime/README.md)：动态 Package 捕获、源码 Revision、构建缓存和 Activation 状态机；
 - [`storage-sqlite`](storage-sqlite/README.md)：Core/Runtime/Asset 的 SQLite 持久化、WAL 与备份；频道历史按分页后的字面子串检索；

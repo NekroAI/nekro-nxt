@@ -1,4 +1,4 @@
-import type { ExtensionManifest, ExtensionManifestContribution } from './manifest.js'
+import type { ExtensionManifestContribution } from '@nekro-nxt/extension-format'
 import type {
   AgentId,
   ExtensionConfigDeclaration,
@@ -62,7 +62,7 @@ export type ExtensionContribution = ExtensionManifestContribution
 
 export type HostAdapterContributionEvidence = Extract<ExtensionContribution, { readonly kind: 'adapter' }>
 
-export type { ExtensionManifest } from './manifest.js'
+export type { ExtensionManifest, MaterializedExtensionRevision } from '@nekro-nxt/extension-format'
 
 export interface ExtensionRevisionVerification {
   readonly revisionId: ExtensionRevisionId
@@ -123,15 +123,6 @@ export interface ExtensionRuntimeDiagnostic {
   readonly status: 'active' | 'restore-failed' | 'dispose-failed'
   readonly message?: string
   readonly observedAt: number
-}
-
-export interface MaterializedExtensionRevision {
-  readonly manifest: ExtensionManifest
-  readonly sources: { readonly host?: string; readonly client?: string }
-  readonly resources?: Readonly<Record<string, string>>
-  readonly contentDigest: string
-  readonly payloadDigest: string
-  readonly scope: LocalExtensionScope
 }
 
 export interface ExtensionBuildArtifact {
