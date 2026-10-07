@@ -136,18 +136,28 @@ const secretReferences = (
   )
 }
 
+/** Skipped schema keys must also leave the value, or validation reports them as unknown fields. */
+const withoutKeys = (value: JsonValue | undefined, keys: readonly string[]): JsonValue | undefined => {
+  // A non-object value is left as is so validation still reports it.
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return value
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)))
+}
+
 /** Validates a configuration value against the Manifest config schema and fills its defaults. */
 export const resolveExtensionConfig = (manifest: ExtensionManifest | undefined, value: JsonValue | undefined) => {
   const schema = manifest?.config?.schema ?? EMPTY_CONFIG_SCHEMA
   const secrets = configSecretKeys(schema)
-  return { ...parseConfigValue(schema, value ?? {}, { skipKeys: secrets }), ...secretReferences(secrets, value) }
+  return {
+    ...parseConfigValue(schema, withoutKeys(value, secrets) ?? {}, { skipKeys: secrets }),
+    ...secretReferences(secrets, value),
+  }
 }
 
 /** Keeps a previous configuration when it is still valid for the new Revision, otherwise falls back to defaults. */
 export const carryExtensionConfig = (manifest: ExtensionManifest | undefined, previous: JsonValue | undefined) => {
   const schema = manifest?.config?.schema ?? EMPTY_CONFIG_SCHEMA
   const secrets = configSecretKeys(schema)
-  const carried = validateConfigValue(schema, previous ?? {}, { skipKeys: secrets })
+  const carried = validateConfigValue(schema, withoutKeys(previous, secrets) ?? {}, { skipKeys: secrets })
   const base = carried.issues.length === 0 ? carried.value : parseConfigValue(schema, {}, { skipKeys: secrets })
   return { ...base, ...secretReferences(secrets, previous) }
 }

@@ -15,6 +15,7 @@ import { ChannelRuntime, type InboundHookDecision } from '@nekro-nxt/channel-run
 import {
   AgentIdSchema,
   ChannelIdSchema,
+  configSecretKeys,
   ConnectionIdSchema,
   parseJsonValue,
   type JsonValue,
@@ -811,12 +812,49 @@ export class NekroRuntime {
     }
   }
 
+  /** Disables one agent extension and then deletes the credentials only that Activation referenced. */
+  async disableAgentExtension(agentId: AgentId, extensionId: ExtensionId): Promise<void> {
+    const activation = this.repository.getActivation(agentId, extensionId)
+    const references = activation === undefined ? [] : this.#activationSecretReferences([activation])
+    await this.activation.disable(agentId, extensionId)
+    await this.#deleteCredentials(references)
+  }
+
+  /**
+   * Credentials typed into an Activation config live in the credential store and are referenced only by that config.
+   * Resolve the references while the Revision is still readable; delete them only after the product change commits.
+   */
+  #activationSecretReferences(
+    activations: readonly { readonly extensionRevisionId: ExtensionRevisionId; readonly config: JsonValue }[],
+  ): readonly string[] {
+    return activations.flatMap((activation) => {
+      const revision = this.repository.getExtensionRevision(activation.extensionRevisionId)
+      const manifest = revision === undefined ? undefined : this.extensionService.revisionManifest(revision)
+      const keys = manifest?.config === undefined ? [] : configSecretKeys(manifest.config.schema)
+      const config = activation.config
+      if (config === null || typeof config !== 'object' || Array.isArray(config)) return []
+      return keys.flatMap((key) => {
+        const reference = (config as Readonly<Record<string, JsonValue>>)[key]
+        return typeof reference === 'string' && reference !== '' ? [reference] : []
+      })
+    })
+  }
+
+  /** Failures are logged, not thrown: the product operation has already committed. */
+  async #deleteCredentials(references: readonly string[]): Promise<void> {
+    const results = await Promise.allSettled(references.map((reference) => this.credentials.delete(reference)))
+    for (const result of results) {
+      if (result.status === 'rejected') console.warn('[nekro-nxt] 扩展凭据清理失败：', String(result.reason))
+    }
+  }
+
   async deleteLocalExtension(extensionId: ExtensionId): Promise<void> {
     const extension = this.repository.getExtension(extensionId)
     if (!extension) throw new Error('本地扩展不存在或已被删除。')
     const revisions = this.repository.listExtensionRevisions(extensionId)
     const activations = this.repository.listActivations().filter((activation) => activation.extensionId === extensionId)
     const installation = this.repository.getHostInstallation(extensionId)
+    const secretReferences = this.#activationSecretReferences(activations)
     const disabled: (typeof activations)[number][] = []
     let uninstalled = false
     let stagedSources: string | undefined
@@ -867,6 +905,7 @@ export class NekroRuntime {
       }
       throw error
     }
+    await this.#deleteCredentials(secretReferences)
     this.#hostClientDiagnostics.delete(extensionId)
     await this.extensionService.deleteRevisionCaches(revisions).catch((error) => {
       console.warn(
@@ -932,7 +971,9 @@ export class NekroRuntime {
 
     for (const channelId of deletedChannelIds) await this.channels.deleteChannel(channelId)
     for (const channelId of unboundChannelIds) await this.channels.clearBinding(channelId)
-    for (const activation of this.repository.listActivations(agentId)) {
+    const agentActivations = this.repository.listActivations(agentId)
+    const secretReferences = this.#activationSecretReferences(agentActivations)
+    for (const activation of agentActivations) {
       await this.activation.disable(agentId, activation.extensionId)
     }
     for (const activation of this.repository
@@ -942,6 +983,7 @@ export class NekroRuntime {
     }
     this.core.deleteAgent(agentId)
     this.#agents.delete(agentId)
+    await this.#deleteCredentials(secretReferences)
     // Lanes are stopped and bindings gone, so nothing writes into the workspace any more.
     if (options.deleteWorkspace)
       await rm(agentWorkspacePath(this.workspaceRoot, agentId), { recursive: true, force: true })

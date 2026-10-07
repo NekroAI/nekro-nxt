@@ -120,7 +120,7 @@ export function registerWorkspaceRoutes({
           return
         }
         HostApiContracts.deactivateExtension.parseRequest(undefined)
-        await runtime.activation.disable(params.agentId, params.extensionId)
+        await runtime.disableAgentExtension(params.agentId, params.extensionId)
         writeJson(res, 200, HostApiContracts.deactivateExtension.parseResponse({ disabled: true }))
         broadcastExtensionsChanged()
       } catch (error) {

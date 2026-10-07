@@ -238,3 +238,100 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
     }
   })
 })
+
+describe('agent extension credentials', () => {
+  it('stores secrets through the config API, never returns them, and deletes them when the extension goes away', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-secrets-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    await runtime.start()
+    await runtime.recover()
+    const agent = runtime.core.createAgent({
+      displayName: '凭据测试智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const saved = await runtime.extensionService.saveDynamicPackage({
+      snapshot: {
+        name: '带凭据的工具',
+        purpose: '读取凭据。',
+        hostCode: `return {
+        inject: ['tools', 'nxt'],
+        apply(ctx) {
+          harness.registerTool(ctx, harness.defineTool({
+            name: 'secret_probe',
+            description: 'probe',
+            parameters: {},
+            output: { schema: { type: 'string' }, render(_a, v) { return [{ type: 'text', text: v }] } },
+            async execute() { return (await ctx.nxt.secrets.get('apiKey')) ? 'set' : 'missing' }
+          }))
+        }
+      }`,
+        permissions: { permissions: [], networkOrigins: [] },
+        config: {
+          schema: {
+            type: 'object',
+            dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+          },
+        },
+        contributions: [{ kind: 'tool', name: 'secret_probe', description: 'probe' }],
+      },
+      slug: 'secret-probe',
+      displayName: '带凭据的工具',
+      description: '读取凭据。',
+      createdByAgentId: agent.definition.id,
+      verification: {
+        dshVersion: '0.1.1-rc.2',
+        contractVersion: 'nekro-nxt-extension-v4',
+        origin: {
+          episodeId: 'eps_synthetic_secret',
+          pluginId: 'plugin-synthetic-secret',
+          packageId: 'package-synthetic-secret',
+          pluginRunId: 'run-synthetic-secret',
+        },
+        toolInvocations: [{ name: 'secret_probe', succeeded: true }],
+        rpcMethods: [],
+        renderedPanels: [],
+        renderedToolViews: [],
+        renderedMessageRenderers: [],
+        permissions: { permissions: [], networkOrigins: [] },
+      },
+    })
+    const webContext = new Context()
+    try {
+      await runtime.activation.activate({
+        agentId: agent.definition.id,
+        extensionId: saved.extension.id,
+        revisionId: saved.revision.id,
+      })
+      await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+      const api = createNekroHostApi(webContext.webServer, runtime)
+      const base = `http://127.0.0.1:${api.port}/api/agents/${agent.definition.id}/extensions/${saved.extension.id}/activation`
+      const updated = await fetch(`${base}/config`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ config: {}, secrets: { apiKey: 'fixture-api-key' } }),
+      })
+      const updatedBody: unknown = await updated.json()
+      expect(updatedBody, JSON.stringify(updatedBody)).toEqual({ config: {}, configuredSecrets: ['apiKey'] })
+      const stored = runtime.repository.getActivation(agent.definition.id, saved.extension.id)?.config
+      const reference =
+        stored !== null && typeof stored === 'object' && !Array.isArray(stored) ? stored['apiKey'] : undefined
+      if (typeof reference !== 'string') throw new Error('Activation config does not hold a credential reference.')
+      expect(await runtime.credentials.has(reference)).toBe(true)
+
+      const disabled = await fetch(base, { method: 'DELETE' })
+      expect(disabled.status).toBe(200)
+      expect(await runtime.credentials.has(reference)).toBe(false)
+    } finally {
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+})
