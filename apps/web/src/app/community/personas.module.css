@@ -158,40 +158,6 @@
   font: var(--t-caption);
 }
 
-.avatar {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  overflow: hidden;
-  border-radius: var(--r-2);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--fs-lg);
-  font-weight: 650;
-}
-
-.avatar[data-size='sm'] {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--r-1);
-  font-size: var(--fs-md);
-}
-
-.avatar[data-size='lg'] {
-  width: 64px;
-  height: 64px;
-  border-radius: var(--r-3);
-  font-size: var(--fs-2xl);
-}
-
-.avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
 /* 详情 */
 .detail {
   display: grid;

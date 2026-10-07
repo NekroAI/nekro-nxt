@@ -51,7 +51,7 @@ export function MyPersonasSection({ refreshKey }: { readonly refreshKey: unknown
             const label = communityPersonaReviewLabel(item.latestRevision.reviewStatus)
             return (
               <article key={item.id} className={styles.mineItem} aria-label={item.name}>
-                <PersonaAvatar name={item.name} url={item.avatarUrl} size="sm" />
+                <PersonaAvatar id={item.id} name={item.name} url={item.avatarUrl} size="sm" />
                 <div className={styles.mineBody}>
                   <div className={styles.mineTitle}>
                     {item.status === 'listed' && item.latestRevision.reviewStatus === 'approved' ? (

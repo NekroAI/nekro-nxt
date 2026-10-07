@@ -136,3 +136,11 @@
   height: 100%;
   object-fit: contain;
 }
+
+.extensionIcon[data-image='cover'] {
+  box-shadow: none;
+}
+
+.extensionIcon[data-image='cover'] img {
+  object-fit: cover;
+}
