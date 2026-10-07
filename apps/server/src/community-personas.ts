@@ -267,7 +267,8 @@ export class CommunityPersonaService {
     const form = new FormData()
     form.set('name', input.name.trim())
     form.set('summary', input.summary.trim())
-    form.set('description', input.description)
+    // 更新时介绍留空：不提交这一项，社区沿用上一修订的介绍（未公开的修订取不回介绍，不能当作清空）。
+    if (!(input.personaId && input.description.trim() === '')) form.set('description', input.description)
     form.set('tags', JSON.stringify(input.tags.map((tag) => tag.trim())))
     form.set('persona', input.persona)
     if (input.personaId) form.set('personaId', input.personaId)
