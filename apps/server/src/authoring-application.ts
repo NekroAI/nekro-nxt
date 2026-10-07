@@ -30,7 +30,13 @@ export class AuthoringApplicationService {
     const key =
       'taskId' in input ? input.taskId : `${input.agentId}:${input.episodeId}:${input.pluginId}:${input.packageId}`
     if (this.#saving.has(key)) throw new Error('该候选正在保存，请等待当前操作完成。')
-    const saving = this.#save(input).finally(() => this.#saving.delete(key))
+    const saving = this.#save(input)
+      .then(async (result) => {
+        // The saved extension asks for its own credentials when enabled; task test credentials end here.
+        if ('taskId' in input) await this.#runtime.authoringTestSecrets.clear(input.taskId)
+        return result
+      })
+      .finally(() => this.#saving.delete(key))
     this.#saving.set(key, saving)
     return saving
   }

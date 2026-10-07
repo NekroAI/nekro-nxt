@@ -1,3 +1,4 @@
+import { AuthoringAttemptIdSchema, AuthoringTaskIdSchema } from '@nekro-nxt/contracts'
 import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,7 +6,13 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
-import { productSnapshot, summaryExtensionId, targetAgentId, targetChannelId } from '../e2e/fixtures/product-quality.js'
+import {
+  productSnapshot,
+  summaryExtensionId,
+  targetAgentId,
+  targetChannelId,
+  targetEpisodeId,
+} from '../e2e/fixtures/product-quality.js'
 
 /** Workshop journeys against a stubbed Host: every `/api` call is answered here, never by a real service. */
 test.describe('workshop', () => {
@@ -52,6 +59,67 @@ test.describe('workshop', () => {
     await page.goto(`${baseUrl}/workshop`)
     return page
   }
+
+  test('takes write-only test credentials for a running authoring task', async () => {
+    const taskId = AuthoringTaskIdSchema.parse('aut_FIXTURETASK')
+    const attempt = {
+      id: AuthoringAttemptIdSchema.parse('aua_FIXTUREATTEMPT'),
+      ordinal: 1,
+      name: '天气查询',
+      purpose: '查询实时天气。',
+      state: 'active' as const,
+      riskDigest: 'e'.repeat(64),
+      host: { status: 'running' as const, waitingFor: [] },
+      client: { status: 'absent' as const, waitingFor: [] },
+      createdAt: 1_725_000_000_000,
+    }
+    const task = {
+      id: taskId,
+      agentId: targetAgentId,
+      channelId: targetChannelId,
+      episodeId: targetEpisodeId,
+      title: '天气查询',
+      requirementSummary: '按城市查询实时天气。',
+      status: 'running' as const,
+      approvalPolicy: 'risk-stable' as const,
+      revision: 2,
+      activeAttempt: attempt,
+      candidateAttempt: attempt,
+      createdAt: 1_725_000_000_000,
+      updatedAt: 1_725_000_000_100,
+    }
+    const page = await openWorkshop({ ...productSnapshot, authoringTasks: [task] })
+    let submitted: unknown
+    await page.route(`**/api/authoring/tasks/${taskId}`, (route) =>
+      route.fulfill({
+        json: {
+          task,
+          attempts: [attempt],
+          events: [],
+          testSecrets: { fields: [{ key: 'apiKey', title: '高德 Key' }], configured: [] },
+        },
+      }),
+    )
+    await page.route(`**/api/authoring/tasks/${taskId}/test-secrets`, async (route) => {
+      submitted = route.request().postDataJSON()
+      await route.fulfill({ json: { configured: ['apiKey'] } })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/tasks/${taskId}`)
+      const input = page.getByLabel('高德 Key')
+      await expect(input).toBeVisible()
+      const save = page.getByRole('button', { name: '保存测试凭据' })
+      await expect(save).toBeDisabled()
+      await input.fill('fixture-test-key')
+      await page.screenshot({ path: '.local/browser-test-results/authoring-test-secrets.png' })
+      await save.click()
+      await expect.poll(() => submitted).toEqual({ secrets: { apiKey: 'fixture-test-key' } })
+      await expect(input).toHaveValue('')
+      await expect(input).toHaveAttribute('placeholder', '已保存，留空则不修改')
+    } finally {
+      await page.close()
+    }
+  })
 
   test('edits an agent extension credential without ever receiving the stored value', async () => {
     const snapshot = {

@@ -378,6 +378,8 @@ export interface DshHostRuntimeOptions {
       readonly displayName: string
       readonly capabilities: ExtensionCapabilities | undefined
     }
+    /** Config a dynamic candidate sees: secret references of the task's test credentials. */
+    readonly dynamicConfig?: (agentId: AgentId, episodeId: EpisodeId) => JsonValue
     /** Built-in reminders of an agent in one channel; they are jobs without an extension. */
     readonly reminders?: ReminderPort
     /** Runs when an Activation mounts into a Session, i.e. into one bound channel (declared jobs live per channel). */
@@ -2789,8 +2791,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
               displayName: '创造中的扩展',
               channelId: input.channelId,
               capabilities: () => runner.activeCandidateCapabilities(),
-              // A candidate has no saved configuration yet; it reads Schema defaults like `harness.config()`.
-              config: () => ({}),
+              // A candidate has no saved configuration; only test credentials typed for this task are visible.
+              config: () => extensionHost.dynamicConfig?.(revision.agentId, input.episodeId) ?? {},
             },
             extensionHost.dynamicBackends,
           )

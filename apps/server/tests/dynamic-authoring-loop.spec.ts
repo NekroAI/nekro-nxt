@@ -451,6 +451,79 @@ return { inject: ['nxt'], apply() {} }`
     }
   })
 
+  it('lets only the dynamic run of a task read its test credentials', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    const host = `return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'needs_key',
+      description: 'Fails without the test credential.',
+      parameters: {},
+      output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+      async execute() {
+        const key = await ctx.nxt.secrets.get('apiKey')
+        if (key !== 'fixture-test-key') throw new Error('test credential missing')
+        return 'ok'
+      }
+    }))
+  }
+}`
+    try {
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'key' },
+        name: '需要凭据',
+        purpose: '验证测试凭据。',
+        scope: 'agent' as const,
+        code: { host },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        config: {
+          schema: {
+            type: 'object',
+            dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+          },
+        },
+        contributions: [],
+      })
+      const task = await vi.waitFor(() => {
+        const recorded = runtime.repository.listAuthoringTasks(entity.agentId)[0]
+        if (recorded === undefined || runtime.repository.listAuthoringAttempts(recorded.id).length === 0) {
+          throw new Error('authoring task not recorded yet')
+        }
+        return recorded
+      })
+      expect(await runtime.authoringTestSecrets.describe(task.id)).toEqual({
+        fields: [{ key: 'apiKey', title: 'API Key' }],
+        configured: [],
+      })
+      await expect(runtime.authoringTestSecrets.set(task.id, { other: 'x' })).rejects.toThrow(/没有这些凭据字段/u)
+      await runtime.authoringTestSecrets.set(task.id, { apiKey: 'fixture-test-key' })
+      expect((await runtime.authoringTestSecrets.describe(task.id)).configured).toEqual(['apiKey'])
+
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('ready')
+      // Save verification runs without any credential, so the test value never leaks into the saved Revision;
+      // this tool throws instead of returning a readable result and therefore cannot be saved.
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      await expect(
+        runtime.authoring.save({
+          taskId: task.id,
+          attemptId: attempt.id,
+          displayName: '需要凭据',
+          slug: 'needs-key',
+          description: '验证测试凭据。',
+        }),
+      ).rejects.toThrow('test credential missing')
+      await runtime.authoringTestSecrets.clear(task.id)
+      expect((await runtime.authoringTestSecrets.describe(task.id)).configured).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('refuses to save a Revision whose materialized artifact fails at runtime', async () => {
     const runtime = await createRuntime()
     try {

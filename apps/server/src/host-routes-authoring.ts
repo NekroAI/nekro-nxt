@@ -27,6 +27,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
       const stopMatch = /^\/api\/authoring\/tasks\/([^/]+)\/stop$/.exec(url.pathname)
       const restoreMatch = /^\/api\/authoring\/tasks\/([^/]+)\/attempts\/([^/]+)\/restore$/.exec(url.pathname)
       const taskMatch = /^\/api\/authoring\/tasks\/([^/]+)$/.exec(url.pathname)
+      const testSecretsMatch = /^\/api\/authoring\/tasks\/([^/]+)\/test-secrets$/.exec(url.pathname)
       try {
         if (decisionMatch) {
           if (req.method !== 'POST') throw new Error('创造任务审批只支持 POST。')
@@ -48,6 +49,18 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           writeContractJson(res, 200, HostApiContracts.restoreAuthoringAttempt, projectAuthoringTask(runtime, task))
           return
         }
+        if (testSecretsMatch) {
+          if (req.method !== 'PUT') throw new Error('测试凭据只支持 PUT。')
+          const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(testSecretsMatch[1] ?? ''))
+          const params = HostApiContracts.setAuthoringTestSecrets.parseParams({ taskId })
+          const body = HostApiContracts.setAuthoringTestSecrets.parseRequest(await readJsonBody(req))
+          await runtime.authoringTestSecrets.set(params.taskId, body.secrets)
+          const described = await runtime.authoringTestSecrets.describe(params.taskId)
+          writeContractJson(res, 200, HostApiContracts.setAuthoringTestSecrets, {
+            configured: [...described.configured],
+          })
+          return
+        }
         if (stopMatch) {
           if (req.method !== 'POST') throw new Error('停止创造任务只支持 POST。')
           const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(stopMatch[1] ?? ''))
@@ -64,14 +77,19 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
         const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(taskMatch[1] ?? ''))
         if (req.method === 'DELETE') {
           const deleted = await runtime.host.deleteAuthoringTask(taskId)
+          await runtime.authoringTestSecrets.clear(taskId)
           writeContractJson(res, 200, HostApiContracts.deleteAuthoringTask, { deleted })
           return
         }
         if (req.method !== 'GET') throw new Error('创造任务详情只支持 GET。')
         const task = runtime.repository.getAuthoringTask(taskId)
         if (!task) throw new Error('创造任务不存在。')
+        const testSecrets = await runtime.authoringTestSecrets.describe(task.id)
         writeContractJson(res, 200, HostApiContracts.getAuthoringTask, {
           task: projectAuthoringTask(runtime, task),
+          ...(testSecrets.fields.length === 0
+            ? {}
+            : { testSecrets: { fields: [...testSecrets.fields], configured: [...testSecrets.configured] } }),
           attempts: runtime.repository.listAuthoringAttempts(task.id).map(projectAuthoringAttempt),
           events: runtime.repository.listAuthoringEvents(task.id).map((event) => ({
             sequence: event.sequence,

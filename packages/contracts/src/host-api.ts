@@ -1760,6 +1760,14 @@ export const HostApiContracts = {
       .object({
         task: AuthoringTaskSummarySchema,
         attempts: z.array(AuthoringAttemptSummarySchema),
+        /** Secret fields of the latest candidate and which have a test value for this task's dynamic runs. */
+        testSecrets: z
+          .object({
+            fields: z.array(z.object({ key: z.string(), title: z.string() }).strict()),
+            configured: z.array(z.string()),
+          })
+          .strict()
+          .optional(),
         events: z.array(
           z
             .object({
@@ -1804,6 +1812,14 @@ export const HostApiContracts = {
     params: authoringTaskParam,
     request: z.object({ expectedRevision: z.number().int().positive() }).strict(),
     response: AuthoringTaskSummarySchema,
+    error: HostApiErrorSchema,
+  }),
+  setAuthoringTestSecrets: defineContract({
+    method: 'PUT',
+    path: '/api/authoring/tasks/:taskId/test-secrets',
+    params: authoringTaskParam,
+    request: z.object({ secrets: z.record(z.string(), z.string().max(8192)) }).strict(),
+    response: z.object({ configured: z.array(z.string()) }).strict(),
     error: HostApiErrorSchema,
   }),
   deleteAuthoringTask: defineContract({

@@ -63,6 +63,7 @@ import { LocalCredentialStore } from './credentials.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
+import { AuthoringTestSecrets } from './authoring-test-secrets.js'
 import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
@@ -175,6 +176,7 @@ export class NekroRuntime {
   readonly connections: ConnectionApplicationService
   readonly adapters: AdapterRegistry
   readonly #jobScheduler: ExtensionJobScheduler
+  readonly authoringTestSecrets: AuthoringTestSecrets
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -213,6 +215,7 @@ export class NekroRuntime {
     readonly now: () => number
     readonly adapters: AdapterRegistry
     readonly jobScheduler: ExtensionJobScheduler
+    readonly authoringTestSecrets: AuthoringTestSecrets
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -239,6 +242,7 @@ export class NekroRuntime {
     this.#now = input.now
     this.adapters = input.adapters
     this.#jobScheduler = input.jobScheduler
+    this.authoringTestSecrets = input.authoringTestSecrets
     this.connections = new ConnectionApplicationService(
       this,
       input.now,
@@ -306,6 +310,21 @@ export class NekroRuntime {
         new AuthoringArtifactStore(authoringWorkspaceRoot),
         { now, nextUlid },
       )
+      const credentials = new LocalCredentialStore(
+        options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
+      )
+      const authoringTestSecrets = new AuthoringTestSecrets({
+        getTask: (taskId) => repository.getAuthoringTask(taskId),
+        listTasks: (agentId) => repository.listAuthoringTasks(agentId),
+        listAttempts: (taskId) => repository.listAuthoringAttempts(taskId),
+        snapshotForAttempt: (attempt) => authoringService.snapshotForAttempt(attempt),
+        getSetting: (key) => repository.getSystemSetting(key),
+        putSetting: (key, value, expectedRevision, updatedAt) => {
+          repository.putSystemSetting(key, value, expectedRevision, updatedAt)
+        },
+        credentials,
+        now,
+      })
       const core = new CoreService(repository, { now, nextUlid })
       const adapters = new AdapterRegistry()
       const adapterHandles = (options.adapterContributions ?? BUILTIN_ADAPTER_CONTRIBUTIONS).map(
@@ -338,9 +357,6 @@ export class NekroRuntime {
       // Adapter inbound and Channel Runtime delivery reference each other lazily.
       const settled: { current?: ChannelRuntime } = {}
       const hostReference: { current?: DshHostRuntime } = {}
-      const credentials = new LocalCredentialStore(
-        options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
-      )
       const nxtFacts: NxtProductFacts = {
         history: repository,
         getConnectionName: (connectionId) => {
@@ -459,6 +475,7 @@ export class NekroRuntime {
           displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
           capabilities: repository.getExtensionRevisionVerification(revision.id)?.permissions?.capabilities,
         }),
+        dynamicConfig: (agentId, episodeId) => authoringTestSecrets.configForEpisode(agentId, episodeId),
         reminders: {
           create: ({ agentId, channelId, label, schedule, nextRunAt, note }) => {
             const row = {
@@ -742,6 +759,7 @@ export class NekroRuntime {
       })
       const runtime = new NekroRuntime({
         jobScheduler,
+        authoringTestSecrets,
         compatibility,
         database,
         repository,

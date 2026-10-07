@@ -51,6 +51,9 @@ declare const styles: {
   readonly subgroup: string
   readonly taskGrid: string
   readonly taskSide: string
+  readonly testSecrets: string
+  readonly testSecretsActions: string
+  readonly testSecretsNote: string
 }
 
 export default styles

@@ -655,3 +655,25 @@
   position: absolute;
   inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
+
+/* 测试凭据 */
+.testSecrets {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+}
+
+.testSecretsNote {
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.testSecretsActions {
+  display: flex;
+  justify-content: flex-end;
+}
