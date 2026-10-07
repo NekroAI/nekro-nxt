@@ -348,6 +348,25 @@ export interface ExtensionJobFiring {
   readonly firedAt: number
 }
 
+/** A chat-created task keeps its note as `{ note }`; extension payloads stay JSON for the agent to read. */
+const chatNote = (job: ExtensionJobFiring): string | undefined =>
+  job.extensionName === undefined &&
+  job.payload !== null &&
+  typeof job.payload === 'object' &&
+  !Array.isArray(job.payload) &&
+  typeof job.payload['note'] === 'string'
+    ? job.payload['note']
+    : undefined
+
+const jobDetail = (job: ExtensionJobFiring): string => {
+  const note = chatNote(job)
+  if (note !== undefined) return `\n补充：${note}`
+  const empty =
+    job.payload === null ||
+    (typeof job.payload === 'object' && !Array.isArray(job.payload) && Object.keys(job.payload).length === 0)
+  return empty ? '' : `\n${JSON.stringify(job.payload)}`
+}
+
 export const isExtensionJobEvent = (event: Pick<ChannelEventRecord, 'facts'>): boolean =>
   event.facts?.['extensionJob'] !== undefined
 
@@ -589,21 +608,13 @@ export class ChannelRuntime {
     const connection = this.#coreRepository.getConnection(channel.connectionId)
     if (!connection) return undefined
     const delayMinutes = Math.max(0, Math.round((job.firedAt - job.scheduledAt) / 60_000))
+    const note = chatNote(job)
     return this.acceptChannelInbound({
       connectionId: channel.connectionId,
       channelId: channel.id,
       adapterKey: connection.adapterKey,
       kind: 'control',
-      parts: [
-        {
-          type: 'text',
-          text: `${job.label}${
-            job.payload === null || (typeof job.payload === 'object' && Object.keys(job.payload).length === 0)
-              ? ''
-              : `\n${JSON.stringify(job.payload)}`
-          }`,
-        },
-      ],
+      parts: [{ type: 'text', text: `${job.label}${jobDetail(job)}` }],
       platformTimestamp: job.firedAt,
       receivedAt: job.firedAt,
       dedupeKey: `extension-job:${job.jobId}:${job.scheduledAt}`,
@@ -612,6 +623,7 @@ export class ChannelRuntime {
           jobId: job.jobId,
           label: job.label,
           ...(job.extensionName === undefined ? {} : { extensionName: job.extensionName }),
+          ...(note === undefined ? {} : { note }),
           scheduledAt: job.scheduledAt,
           delayMinutes,
         },

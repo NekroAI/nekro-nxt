@@ -506,15 +506,33 @@ export const decorateMessageParts = (
     return { ...part, ...(displayName === undefined ? {} : { displayName }) }
   })
 
+const scheduledTaskFact = (
+  facts: Extract<ChannelHistoryEntry, { source: 'channel-event' }>['facts'],
+): HostSnapshotMessage['scheduledTask'] => {
+  const job = facts?.['extensionJob']
+  if (job === null || job === undefined || typeof job !== 'object' || Array.isArray(job)) return undefined
+  const label = job['label']
+  if (typeof label !== 'string') return undefined
+  const extensionName = job['extensionName']
+  const note = job['note']
+  return {
+    label,
+    ...(typeof extensionName === 'string' ? { extensionName } : {}),
+    ...(typeof note === 'string' ? { note } : {}),
+  }
+}
+
 export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistoryEntry): HostSnapshotMessage => {
   const parts = decorateMessageParts(runtime, entry.parts)
   if (entry.source === 'channel-event') {
     const sender =
       entry.senderMemberId === undefined ? undefined : runtime.repository.getChannelMember(entry.senderMemberId)
+    const scheduledTask = scheduledTaskFact(entry.facts)
     return {
       id: entry.sourceId,
       channelId: entry.channelId,
-      role: entry.activityKey === undefined ? 'member' : 'system',
+      role: entry.activityKey === undefined && scheduledTask === undefined ? 'member' : 'system',
+      ...(scheduledTask === undefined ? {} : { scheduledTask }),
       parts,
       ...(entry.senderMemberId === undefined
         ? {}

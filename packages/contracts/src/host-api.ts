@@ -395,6 +395,11 @@ export const HostSnapshotMessageSchema = z
       .strict()
       .optional(),
     origin: z.enum(['admin-console']).optional(),
+    /** A scheduled task came due: a Host fact shown as a notice, not a member message. */
+    scheduledTask: z
+      .object({ label: z.string(), extensionName: z.string().optional(), note: z.string().optional() })
+      .strict()
+      .optional(),
   })
   .strict()
 

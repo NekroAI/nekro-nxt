@@ -1,4 +1,4 @@
-import { Check, ChevronRight, CircleAlert, Square, X } from 'lucide-react'
+import { AlarmClock, Check, ChevronRight, CircleAlert, Square, X } from 'lucide-react'
 import { ToolView } from '../../extension-ui/index.js'
 import { memo, useEffect, useState } from 'react'
 import { MessageContent, resolveMessageSide } from './message-content.js'
@@ -34,6 +34,22 @@ export const MessageRow = memo(function MessageRow({
     role: message.role,
     ...(message.origin ? { origin: message.origin } : {}),
   })
+  if (message.scheduledTask !== undefined) {
+    const task = message.scheduledTask
+    return (
+      <div className={styles.scheduledNotice} data-message-id={message.id}>
+        <AlarmClock size={14} aria-hidden="true" />
+        <span className={styles.scheduledNoticeText}>
+          <span className={styles.scheduledNoticeTitle}>
+            {task.extensionName === undefined ? '定时任务' : `${task.extensionName} 定时任务`}
+          </span>
+          <span>{task.label}</span>
+          {task.note === undefined ? null : <span className={styles.scheduledNoticeNote}>{task.note}</span>}
+        </span>
+        <span className={styles.time}>{message.time}</span>
+      </div>
+    )
+  }
   if (side === 'system') {
     return (
       <div className={styles.systemLine}>

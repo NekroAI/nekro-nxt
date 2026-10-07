@@ -57,6 +57,10 @@ declare const styles: {
   readonly rowSub: string
   readonly rowTime: string
   readonly runDot: string
+  readonly scheduledNotice: string
+  readonly scheduledNoticeNote: string
+  readonly scheduledNoticeText: string
+  readonly scheduledNoticeTitle: string
   readonly send: string
   readonly sourceName: string
   readonly stack: string

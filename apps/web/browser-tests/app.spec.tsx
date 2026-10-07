@@ -1321,6 +1321,17 @@ test.describe('NekroNxt browser projections', () => {
     })
     const snapshot = {
       ...browserSnapshot,
+      messages: [
+        ...browserSnapshot.messages,
+        {
+          id: ChannelEventIdSchema.parse('evt_scheduled'),
+          channelId: browserChannelId,
+          role: 'system' as const,
+          parts: [{ type: 'text' as const, text: '提醒示例成员：定时功能测试\n补充：由示例成员发起' }],
+          scheduledTask: { label: '提醒示例成员：定时功能测试', note: '由示例成员发起' },
+          occurredAt: 1_725_000_000_500,
+        },
+      ],
       scheduledTasks: [
         task('job_morning', { label: '工作日早报' }),
         task('job_digest', {
@@ -1371,6 +1382,11 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(inspector).toContainText('定时任务')
         await playwrightExpect(inspector).toContainText('工作日早报')
         await playwrightExpect(inspector).not.toContainText('提醒喝水')
+        const notice = page.locator('[data-message-id="evt_scheduled"]')
+        await playwrightExpect(notice).toContainText('定时任务')
+        await playwrightExpect(notice).toContainText('提醒示例成员：定时功能测试')
+        await playwrightExpect(notice).toContainText('由示例成员发起')
+        await playwrightExpect(page.getByText('群成员', { exact: true })).toHaveCount(0)
         await inspector.getByRole('button', { name: '立即执行「工作日早报」' }).click()
         await playwrightExpect.poll(() => calls).toContain('POST job_morning/run')
         await page.screenshot({ path: '.local/browser-test-results/channel-scheduled-tasks.png' })

@@ -538,6 +538,46 @@
   font-size: var(--fs-xs);
 }
 
+/* 定时任务到期：宿主事实，居中提示，不是成员发言 */
+.scheduledNotice {
+  justify-self: center;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  max-width: min(560px, 100%);
+  margin: var(--s-2) 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.scheduledNotice > svg {
+  flex: none;
+  margin-top: calc(var(--s-1) / 2);
+  color: var(--brass);
+}
+
+.scheduledNoticeText {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--s-2);
+  min-width: 0;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.scheduledNoticeTitle {
+  color: var(--muted);
+}
+
+.scheduledNoticeNote {
+  flex-basis: 100%;
+  color: var(--muted);
+}
+
 /* —— 轮次 —— */
 .turn {
   position: relative;

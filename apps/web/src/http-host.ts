@@ -326,13 +326,15 @@ const projectConversationMessage = (
     author:
       message.role === 'agent'
         ? (sourceAgent?.name ?? '智能体')
-        : message.role === 'system'
-          ? '频道事件'
-          : message.sender !== undefined
-            ? nonEmptyLabel(message.sender.displayName, '群成员')
-            : sourceChannel?.kind === 'internal'
-              ? '你'
-              : '群成员',
+        : message.scheduledTask !== undefined
+          ? '定时任务'
+          : message.role === 'system'
+            ? '频道事件'
+            : message.sender !== undefined
+              ? nonEmptyLabel(message.sender.displayName, '群成员')
+              : sourceChannel?.kind === 'internal'
+                ? '你'
+                : '群成员',
     body: renderConversationBody(message.parts),
     parts,
     mentionedConnectionAccount: message.mentionedConnectionAccount === true,
@@ -342,6 +344,7 @@ const projectConversationMessage = (
     ...(delivery === undefined ? {} : { delivery }),
     ...(message.deliveryResolution === undefined ? {} : { deliveryResolution: message.deliveryResolution.action }),
     ...(message.origin === 'admin-console' ? { origin: 'admin-console' as const } : {}),
+    ...(message.scheduledTask === undefined ? {} : { scheduledTask: { ...message.scheduledTask } }),
   }
 }
 

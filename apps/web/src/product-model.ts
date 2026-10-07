@@ -196,6 +196,12 @@ export interface ConversationMessage {
   /** Administrator resolution of an unsettled delivery (retry or confirmed as delivered). */
   readonly deliveryResolution?: 'retry' | 'confirm-delivered'
   readonly origin?: 'admin-console'
+  /** A scheduled task came due; shown as a notice instead of a member message. */
+  readonly scheduledTask?: {
+    readonly label: string
+    readonly extensionName?: string | undefined
+    readonly note?: string | undefined
+  }
   readonly resources: readonly {
     readonly assetId: string
     readonly name: string
