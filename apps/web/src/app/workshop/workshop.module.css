@@ -667,12 +667,6 @@
   box-shadow: var(--sh-1);
 }
 
-.testSecretsNote {
-  margin: 0;
-  color: var(--muted);
-  font: var(--t-note);
-}
-
 .testSecretsActions {
   display: flex;
   justify-content: flex-end;

@@ -1,16 +1,4 @@
-import {
-  Bell,
-  Blocks,
-  ChevronLeft,
-  ChevronRight,
-  Cpu,
-  Info,
-  MonitorSmartphone,
-  Palette,
-  Plug,
-  Plus,
-  Upload,
-} from 'lucide-react'
+import { Bell, Blocks, ChevronRight, Cpu, Info, MonitorSmartphone, Palette, Plug, Plus, Upload } from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -41,9 +29,11 @@ import {
   DataTable,
   EmptyState,
   Field,
+  InfoTip,
   Input,
   ListPane,
   MainContent,
+  MasterDetail,
   PropertyGroup,
   PropertyList,
   PropertyRow,
@@ -136,44 +126,39 @@ export default function SettingsSpace() {
         </ListPane>
       }
     >
-      <MainContent
-        width={
-          section === 'notifications' || section === 'appearance' || section === 'about' || section === 'access'
-            ? 'readable'
-            : 'full'
-        }
-      >
-        <NarrowNav section={section} />
-        {section === 'models' ? (
-          <ModelsSection
-            providers={providers}
-            providerId={providerId}
-            ready={llm.settings !== null}
-            onRetry={() => void llm.load()}
-            onSelect={selectProvider}
-          />
-        ) : null}
-        {section === 'dsh' ? (
-          <DshSection
-            entry={dshEntry}
-            entries={dsh.entries}
-            loading={dsh.loading}
-            error={dsh.error}
-            onRefresh={dsh.refresh}
-            onSelect={(id) => setParams(id ? { entry: id } : {})}
-          />
-        ) : null}
-        {section === 'adapters' ? <Adapters /> : null}
-        {section === 'notifications' ? <Notifications /> : null}
-        {section === 'access' ? (
-          <>
-            <SectionHead title="登录设备" />
-            <AccessSection />
-          </>
-        ) : null}
-        {section === 'appearance' ? <Appearance /> : null}
-        {section === 'about' ? <About /> : null}
-      </MainContent>
+      {section === 'models' ? (
+        <ModelsSection
+          providers={providers}
+          providerId={providerId}
+          ready={llm.settings !== null}
+          onRetry={() => void llm.load()}
+          onSelect={selectProvider}
+        />
+      ) : section === 'dsh' ? (
+        <DshSection
+          entry={dshEntry}
+          entries={dsh.entries}
+          loading={dsh.loading}
+          error={dsh.error}
+          onRefresh={dsh.refresh}
+          onSelect={(id) => setParams(id ? { entry: id } : {})}
+        />
+      ) : (
+        // Every settings section shares one readable width and the same left edge (05 §6.1).
+        <MainContent width="readable">
+          <NarrowNav section={section} />
+          {section === 'adapters' ? <Adapters /> : null}
+          {section === 'notifications' ? <Notifications /> : null}
+          {section === 'access' ? (
+            <>
+              <SectionHead title="登录设备" />
+              <AccessSection />
+            </>
+          ) : null}
+          {section === 'appearance' ? <Appearance /> : null}
+          {section === 'about' ? <About /> : null}
+        </MainContent>
+      )}
     </WorkbenchPage>
   )
 }
@@ -199,31 +184,21 @@ function NarrowNav({ section }: { readonly section: SectionKey }) {
 function SectionHead({
   title,
   actions,
-  back,
+  tip,
 }: {
   readonly title: string
   readonly actions?: ReactNode
-  /** On an item's page the item's own header is the page title; this only offers the way back to the overview. */
-  readonly back?: { readonly label: string; readonly onBack: () => void }
+  readonly tip?: ReactNode
 }) {
   return (
     <>
-      {back ? (
-        <Button
-          size="small"
-          variant="ghost"
-          icon={<ChevronLeft size={15} />}
-          className={styles.back}
-          onClick={back.onBack}
-        >
-          {back.label}
-        </Button>
-      ) : (
-        <header className={styles.head}>
-          <h1 className={styles.title}>{title}</h1>
-          {actions ? <div className={styles.headActions}>{actions}</div> : null}
-        </header>
-      )}
+      <header className={styles.head}>
+        <h1 className={styles.title}>
+          {title}
+          {tip ? <InfoTip label={title}>{tip}</InfoTip> : null}
+        </h1>
+        {actions ? <div className={styles.headActions}>{actions}</div> : null}
+      </header>
       <CompatibilityNotices showContextReset />
     </>
   )
@@ -284,13 +259,13 @@ function ModelsSection({
       render: () => <ChevronRight size={16} className={styles.rowChevron} aria-hidden="true" />,
     },
   ]
-  return (
+  const list = (
     <>
+      <NarrowNav section="models" />
       <SectionHead
         title="模型"
-        {...(providerId ? { back: { label: '全部供应商', onBack: () => onSelect('') } } : {})}
         actions={
-          ready && !providerId ? (
+          ready ? (
             <Button size="small" icon={<Plus size={14} aria-hidden="true" />} onClick={() => setAdding(true)}>
               添加供应商
             </Button>
@@ -299,14 +274,13 @@ function ModelsSection({
       />
       {!ready ? (
         <ProviderCatalogState onRetry={onRetry} />
-      ) : providerId ? (
-        <ModelProviderDetail key={providerId} providerId={providerId} onSelect={onSelect} />
       ) : configured.length > 0 ? (
         <DataTable
           label="模型供应商"
           columns={columns}
           rows={configured}
           rowKey={(provider) => provider.provider}
+          selectedKey={providerId || undefined}
           onSelect={(provider) => onSelect(provider.provider)}
         />
       ) : (
@@ -324,6 +298,20 @@ function ModelsSection({
       )}
       <AddProviderDialog open={adding} onOpenChange={setAdding} providers={providers} onPick={onSelect} />
     </>
+  )
+  return (
+    <MasterDetail
+      label="模型供应商"
+      lead={<NarrowNav section="models" />}
+      list={list}
+      selectedKey={providerId || undefined}
+      back={{ label: '全部供应商', onBack: () => onSelect('') }}
+      detail={
+        ready && providerId ? (
+          <ModelProviderDetail key={providerId} providerId={providerId} onSelect={onSelect} />
+        ) : undefined
+      }
+    />
   )
 }
 
@@ -387,27 +375,24 @@ function DshSection({
       render: () => <ChevronRight size={16} className={styles.rowChevron} aria-hidden="true" />,
     },
   ]
-  return (
+  const list = (
     <>
+      <NarrowNav section="dsh" />
       <SectionHead
         title="DSH 插件"
-        {...(entry ? { back: { label: '全部插件', onBack: () => onSelect('') } } : {})}
         actions={
-          entry ? undefined : (
-            <Button size="small" icon={<Upload size={14} aria-hidden="true" />} onClick={() => setInstalling(true)}>
-              安装插件
-            </Button>
-          )
+          <Button size="small" icon={<Upload size={14} aria-hidden="true" />} onClick={() => setInstalling(true)}>
+            安装插件
+          </Button>
         }
       />
-      {entry ? (
-        <DshPluginDetail key={entry.id} entry={entry} onRefresh={onRefresh} onRemoved={() => onSelect('')} />
-      ) : ordered.length > 0 ? (
+      {ordered.length > 0 ? (
         <DataTable
           label="DSH 插件"
           columns={columns}
           rows={ordered}
           rowKey={(item) => item.id}
+          selectedKey={entry?.id}
           onSelect={(item) => onSelect(item.id)}
         />
       ) : (
@@ -415,6 +400,20 @@ function DshSection({
       )}
       <InstallDshPluginDialog open={installing} onOpenChange={setInstalling} onInstalled={() => void onRefresh()} />
     </>
+  )
+  return (
+    <MasterDetail
+      label="DSH 插件列表"
+      lead={<NarrowNav section="dsh" />}
+      list={list}
+      selectedKey={entry?.id}
+      back={{ label: '全部插件', onBack: () => onSelect('') }}
+      detail={
+        entry ? (
+          <DshPluginDetail key={entry.id} entry={entry} onRefresh={onRefresh} onRemoved={() => onSelect('')} />
+        ) : undefined
+      }
+    />
   )
 }
 
@@ -590,7 +589,7 @@ function Notifications() {
       <SectionHead title="通知" />
       <PropertyGroup title="渠道">
         <PropertyList>
-          <PropertyRow label="系统通知" description="由桌面端弹出；服务器实例转发给在线的桌面端">
+          <PropertyRow label="系统通知" tip="由桌面端弹出；服务器实例转发给在线的桌面端">
             <span className={styles.rowControls}>
               <Button
                 size="small"
@@ -604,7 +603,7 @@ function Notifications() {
               <Switch label="系统通知" checked={system} onCheckedChange={setSystem} />
             </span>
           </PropertyRow>
-          <PropertyRow label="Bark" description="推送到安装了 Bark 的设备">
+          <PropertyRow label="Bark" tip="推送到安装了 Bark 的设备">
             <span className={styles.rowControls}>
               <Button
                 size="small"
@@ -664,7 +663,7 @@ function Notifications() {
       </PropertyGroup>
       <PropertyGroup title="通知我">
         <PropertyList>
-          <PropertyRow label="创造任务等待确认运行" description="智能体写好带界面的候选，需要你允许运行时">
+          <PropertyRow label="创造任务等待确认运行" tip="智能体写好带界面的候选，需要你允许运行时">
             <Switch label="创造任务等待确认运行" checked={approval} onCheckedChange={setApproval} />
           </PropertyRow>
         </PropertyList>
@@ -700,7 +699,7 @@ function Appearance() {
             ]}
           />
         </PropertyRow>
-        <PropertyRow label="界面密度" description="紧凑会缩小行高和控件，在一屏内显示更多内容">
+        <PropertyRow label="界面密度" tip="紧凑会缩小行高和控件，在一屏内显示更多内容">
           <Segmented
             label="界面密度"
             value={density}
@@ -711,7 +710,7 @@ function Appearance() {
             ]}
           />
         </PropertyRow>
-        <PropertyRow label="减少动态效果" description="关闭滑动、展开与入场动画">
+        <PropertyRow label="减少动态效果" tip="关闭滑动、展开与入场动画">
           <Switch
             label="减少动态效果"
             checked={reducedMotion}

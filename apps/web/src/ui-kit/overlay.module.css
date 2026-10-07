@@ -249,6 +249,7 @@
 }
 
 .infoTip {
+  position: relative;
   display: inline-grid;
   flex: none;
   place-items: center;
@@ -264,6 +265,13 @@
   transition:
     color 120ms ease,
     background-color 120ms ease;
+}
+
+/* The mark stays small; the hit area reaches the 32px minimum target. */
+.infoTip::after {
+  position: absolute;
+  inset: -7px;
+  content: '';
 }
 
 .infoTip:hover,

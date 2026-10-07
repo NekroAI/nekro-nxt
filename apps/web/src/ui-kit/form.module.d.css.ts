@@ -4,6 +4,7 @@ declare const styles: {
   readonly field: string
   readonly hint: string
   readonly label: string
+  readonly labelLine: string
   readonly secret: string
   readonly secretState: string
   readonly select: string

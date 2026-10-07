@@ -145,12 +145,7 @@ function AliasRow({
   readonly onChange: (value: string) => void
 }) {
   return (
-    <PropertyRow
-      label="名称"
-      description="可选，用来区分同一平台的多个账号"
-      layout="stacked"
-      htmlFor="connection-alias"
-    >
+    <PropertyRow label="名称" tip="可选，用来区分同一平台的多个账号" layout="stacked" htmlFor="connection-alias">
       <Input
         id="connection-alias"
         value={value}

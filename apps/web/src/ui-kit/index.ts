@@ -53,7 +53,7 @@ export {
   type GaugeSegment,
 } from './layout.js'
 export { cssVars } from './css-vars.js'
-export { ReaderPage, BoardPage, WorkbenchPage, ListPane, MainContent } from './page.js'
+export { ReaderPage, BoardPage, WorkbenchPage, ListPane, MainContent, MasterDetail } from './page.js'
 export {
   ObjectHeader,
   DetailPane,

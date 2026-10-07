@@ -859,11 +859,11 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         await playwrightExpect(page.getByRole('dialog')).toHaveCount(0)
         await playwrightExpect(page.getByRole('heading', { name: '新建智能体' })).toBeVisible()
-        await page.getByLabel('名称').fill('临时智能体')
+        await page.getByLabel('名称', { exact: true }).fill('临时智能体')
         await playwrightExpect(page.getByText('当前没有可用模型。请先保存一个供应商。', { exact: true })).toBeVisible()
         await playwrightExpect(page.getByRole('button', { name: '保存供应商' })).toBeVisible()
         await playwrightExpect(page).toHaveURL(/\/agents\/new$/u)
-        await playwrightExpect(page.getByLabel('名称')).toHaveValue('临时智能体')
+        await playwrightExpect(page.getByLabel('名称', { exact: true })).toHaveValue('临时智能体')
       },
       { ...browserSnapshot, models: [] },
       async (page) => {
@@ -1786,7 +1786,7 @@ test.describe('NekroNxt browser projections', () => {
           .getByRole('main')
           .getByRole('button', { name: /^示例群聊平台/u })
           .click()
-        await page.getByLabel('名称').fill('项目机器人')
+        await page.getByLabel('名称', { exact: true }).fill('项目机器人')
         await page.getByRole('button', { name: '添加账号' }).click()
         await playwrightExpect(page).toHaveURL(/\/wiring/u)
         await playwrightExpect
@@ -2154,9 +2154,9 @@ test.describe('NekroNxt browser projections', () => {
       await playwrightExpect(page.locator('body')).not.toContainText('未完整验证')
       await page.getByText('@example/dsh-broken-extension', { exact: true }).click()
       await playwrightExpect(page.getByText('缺少运行所需的测试服务。', { exact: true })).toBeVisible()
-      // An item page leads back to the plugin overview.
-      await page.getByRole('button', { name: '全部插件' }).click()
-      await page.getByText('DeepSeek 网页搜索', { exact: true }).first().click()
+      // A wide window keeps the plugin list beside the open plugin, so the next one is one click away.
+      await playwrightExpect(page.getByRole('button', { name: '全部插件' })).toBeHidden()
+      await page.getByRole('table', { name: 'DSH 插件' }).getByText('DeepSeek 网页搜索', { exact: true }).click()
       await playwrightExpect(page.locator('[data-dsh-native-surface]')).toHaveCount(0)
       await page.getByLabel('每次请求最多搜索次数').fill('4')
       await page.getByRole('button', { name: '保存扩展配置' }).click()
@@ -2168,13 +2168,13 @@ test.describe('NekroNxt browser projections', () => {
       await playwrightExpect(page.getByText('已保存并实时生效。')).toBeVisible()
 
       const writeOnlyValue = 'browser-write-only-fixture'
-      await page.getByLabel('新的凭据值').fill(writeOnlyValue)
+      await page.getByLabel('新的凭据值', { exact: true }).fill(writeOnlyValue)
       await page.getByRole('button', { name: '保存凭据' }).click()
       await playwrightExpect.poll(() => credentialWrites.length).toBe(1)
       expect(credentialWrites[0]).toEqual({ value: writeOnlyValue })
-      await playwrightExpect(page.getByLabel('新的凭据值')).toHaveValue('')
+      await playwrightExpect(page.getByLabel('新的凭据值', { exact: true })).toHaveValue('')
       await playwrightExpect(page.locator('body')).not.toContainText(writeOnlyValue)
-      await page.getByLabel('新的凭据值').fill('unsaved-replacement')
+      await page.getByLabel('新的凭据值', { exact: true }).fill('unsaved-replacement')
 
       const clearTrigger = page.getByRole('button', { name: '清除凭据' })
       await clearTrigger.click()
@@ -2199,8 +2199,8 @@ test.describe('NekroNxt browser projections', () => {
       await playwrightExpect.poll(() => credentialDeleteAttempts).toBe(2)
       await playwrightExpect(clearDialog).toBeHidden()
       await playwrightExpect(page.getByText('凭据已清除。', { exact: true })).toBeVisible()
-      await playwrightExpect(page.getByLabel('新的凭据值')).toHaveValue('')
-      await playwrightExpect(page.getByLabel('新的凭据值')).toBeFocused()
+      await playwrightExpect(page.getByLabel('新的凭据值', { exact: true })).toHaveValue('')
+      await playwrightExpect(page.getByLabel('新的凭据值', { exact: true })).toBeFocused()
 
       await page.getByLabel('单次生成上限').fill('2048')
       await page.getByRole('button', { name: '保存扩展配置' }).click()

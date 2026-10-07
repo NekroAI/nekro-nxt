@@ -975,7 +975,7 @@ test('the workshop saves the verified candidate, enables it for its agent and ca
 
   await page.getByRole('button', { name: '保存为扩展' }).click()
   const dialog = page.getByRole('dialog', { name: '保存为本地扩展' })
-  await expect(dialog.getByLabel('名称')).toHaveValue('群聊摘要卡片')
+  await expect(dialog.getByLabel('名称', { exact: true })).toHaveValue('群聊摘要卡片')
   await dialog.getByLabel('标识').fill('group-digest-card')
   await capture(page, testInfo, 'workshop-save')
   await dialog.getByRole('button', { name: '保存', exact: true }).click()

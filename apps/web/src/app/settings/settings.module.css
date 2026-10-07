@@ -54,7 +54,10 @@
 }
 
 .title {
+  display: flex;
   flex: 1;
+  align-items: center;
+  gap: var(--s-2);
   min-width: 0;
   margin: 0;
   font: var(--t-page);
@@ -173,11 +176,6 @@
 }
 
 /* An item page offers the way back to its section overview above the item's own header. */
-.back {
-  justify-self: start;
-  margin-left: calc(var(--s-2) * -1);
-}
-
 .rowChevron {
   color: var(--faint);
 }

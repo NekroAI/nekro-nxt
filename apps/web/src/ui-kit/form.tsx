@@ -12,18 +12,23 @@ import {
   type ButtonHTMLAttributes,
   type TextareaHTMLAttributes,
 } from 'react'
+import { InfoTip } from './overlay.js'
 import styles from './form.module.css'
 
 /** Label, control, hint and error with consistent spacing. The single child receives the generated id. */
 export function Field({
   label,
   hint,
+  tip,
   error,
   children,
   className,
 }: {
   readonly label: ReactNode
+  /** Always visible under the control; keep it short. */
   readonly hint?: ReactNode
+  /** Background the user needs once, behind the help mark beside the label. */
+  readonly tip?: ReactNode
   readonly error?: ReactNode
   readonly children: ReactElement<{
     id?: string | undefined
@@ -40,9 +45,18 @@ export function Field({
   const control = isValidElement(children) ? cloneElement(children, extra) : children
   return (
     <div className={[styles.field, className ?? ''].join(' ')}>
-      <label className={styles.label} htmlFor={children.props.id ?? id}>
-        {label}
-      </label>
+      {tip ? (
+        <span className={styles.labelLine}>
+          <label className={styles.label} htmlFor={children.props.id ?? id}>
+            {label}
+          </label>
+          <InfoTip label={typeof label === 'string' ? label : '说明'}>{tip}</InfoTip>
+        </span>
+      ) : (
+        <label className={styles.label} htmlFor={children.props.id ?? id}>
+          {label}
+        </label>
+      )}
       {control}
       {error ? (
         <span id={`${id}-error`} className={styles.error} role="alert">
@@ -206,6 +220,7 @@ export function Switch({
 export function SwitchRow({
   title,
   description,
+  tip,
   checked,
   onCheckedChange,
   disabled,
@@ -213,6 +228,8 @@ export function SwitchRow({
 }: {
   readonly title: ReactNode
   readonly description?: ReactNode
+  /** Background the user needs once, behind the help mark beside the title. */
+  readonly tip?: ReactNode
   readonly checked: boolean
   readonly onCheckedChange: (checked: boolean) => void
   readonly disabled?: boolean | undefined
@@ -221,10 +238,15 @@ export function SwitchRow({
   const id = useId()
   return (
     <div className={styles.switchRow}>
-      <label className={styles.switchText} htmlFor={id}>
-        <span className={styles.switchTitle}>{title}</span>
+      <div className={styles.switchText}>
+        <span className={styles.labelLine}>
+          <label className={styles.switchTitle} htmlFor={id}>
+            {title}
+          </label>
+          {tip ? <InfoTip label={typeof title === 'string' ? title : '说明'}>{tip}</InfoTip> : null}
+        </span>
         {description ? <span className={styles.hint}>{description}</span> : null}
-      </label>
+      </div>
       {trailing}
       <Switch
         id={id}

@@ -159,7 +159,10 @@ html[data-ui='next'] {
   --statusbar-height: 32px;
   --pane-list: 272px;
   --pane-detail: 360px;
+  /* Page widths (05 §6.1): forms and settings, object pages with tables, the master column of a split view. */
   --reader-width: 840px;
+  --content-width: 1200px;
+  --pane-master: 360px;
   --t-page: 650 var(--fs-2xl) / 1.25 var(--font-sans);
   --t-section: 650 var(--fs-lg) / 1.4 var(--font-sans);
   --t-title: 600 var(--fs-md) / 1.45 var(--font-sans);

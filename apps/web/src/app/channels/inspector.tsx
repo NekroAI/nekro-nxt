@@ -210,7 +210,8 @@ export function ChannelInspector({
           {agent && binding && showFeedback ? (
             <PropertyRow
               label="处理中反馈"
-              description={feedbackCapability?.reason ?? '处理期间给触发消息加临时回应，结束后移除'}
+              description={feedbackCapability?.reason}
+              tip={feedbackCapability?.reason ? undefined : '处理期间给触发消息加临时回应，结束后移除'}
             >
               <Switch
                 label="处理中反馈"
@@ -288,12 +289,12 @@ export function ChannelInspector({
           ) : null}
           {runtime?.episodeId ? (
             <PropertyList>
-              <PropertyRow label="压缩" description="把较早的对话整理成摘要，腾出空间">
+              <PropertyRow label="压缩" tip="把较早的对话整理成摘要，腾出空间">
                 <Button size="small" onClick={() => setReset('compact')}>
                   压缩
                 </Button>
               </PropertyRow>
-              <PropertyRow label="清空" description="从空白开始，聊天记录保留">
+              <PropertyRow label="清空" tip="从空白开始，聊天记录保留">
                 <Button size="small" variant="danger" onClick={() => setReset('clear')}>
                   清空
                 </Button>

@@ -71,7 +71,7 @@ export function AgentCreate() {
 
         <PropertyGroup title="基本信息">
           <PropertyList>
-            <PropertyRow label="名称" htmlFor="agent-create-name" description="频道里显示的名字，之后可以改">
+            <PropertyRow label="名称" htmlFor="agent-create-name" tip="频道里显示的名字，之后可以改">
               <Input
                 id="agent-create-name"
                 className={styles.nameInput}
@@ -85,7 +85,7 @@ export function AgentCreate() {
             {models.length > 0 ? (
               <PropertyRow
                 label="主模型"
-                description="负责理解消息、思考和回复"
+                tip="负责理解消息、思考和回复"
                 badge={
                   model ? (
                     <Chip tone={supportsImages(model) ? 'ok' : 'neutral'}>
@@ -122,7 +122,7 @@ export function AgentCreate() {
           ) : null}
         </PropertyGroup>
 
-        <PropertyGroup title="设定" description="一两句话就够，之后随时可以改">
+        <PropertyGroup title="设定" tip="一两句话就够，之后随时可以改">
           <PromptReferenceEditor
             value={persona.document}
             label="设定"
