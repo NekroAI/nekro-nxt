@@ -140,7 +140,9 @@ export function McpServerDialog({
   const [args, setArgs] = useState('')
   const [rows, setRows] = useState<readonly Row[]>([])
   const [name, setName] = useState('')
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? NO_AGENT)
+  // Defaults to the first agent once the list has loaded; an explicit choice wins.
+  const [agentChoice, setAgentChoice] = useState<string>()
+  const agentId = agentChoice ?? agents[0]?.id ?? NO_AGENT
   const [testing, setTesting] = useState(false)
   const [tested, setTested] = useState<TestResult>()
   const [busy, setBusy] = useState(false)
@@ -188,6 +190,7 @@ export function McpServerDialog({
     setArgs('')
     setRows([])
     setName('')
+    setAgentChoice(undefined)
     setTested(undefined)
   }
 
@@ -311,7 +314,7 @@ export function McpServerDialog({
               <Field label="参数" hint="每行一个">
                 <Textarea
                   value={args}
-                  rows={3}
+                  rows={2}
                   spellCheck={false}
                   placeholder={'-y\n@example/mcp-server'}
                   onChange={(event) => setArgs(event.target.value)}
@@ -338,7 +341,7 @@ export function McpServerDialog({
             <Select
               aria-label="启用到"
               value={agentId}
-              onValueChange={setAgentId}
+              onValueChange={setAgentChoice}
               options={[
                 ...agents.map((agent) => ({ value: agent.id, label: agent.name })),
                 { value: NO_AGENT, label: '暂不启用' },
@@ -346,7 +349,11 @@ export function McpServerDialog({
             />
           </Field>
           {tested ? (
-            <div className={styles.mcpTest} data-ok={tested.ok}>
+            <div
+              className={styles.mcpTest}
+              data-ok={tested.ok}
+              ref={(node) => node?.scrollIntoView({ block: 'nearest' })}
+            >
               <span className={styles.mcpTestHead}>
                 {tested.ok ? <CircleCheck size={15} /> : <CircleX size={15} />}
                 {tested.message}
