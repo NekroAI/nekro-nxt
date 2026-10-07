@@ -32,6 +32,8 @@ export default defineConfig({
       // 开发模式下把领域 API 转发到本机 NekroNxt Server（apps/server，默认 4960）。
       // 生产构建由 server 通过 dsh-host-frontend-static 同源托管，无需代理。
       '/health': { target: apiProxyTarget, changeOrigin: true },
+      // 社区登录的回跳页由 Server 直接返回；不转发时会落到前端路由，登录永远完成不了。
+      '/community/callback': { target: apiProxyTarget, changeOrigin: true },
       '/api': {
         target: apiProxyTarget,
         changeOrigin: true,
