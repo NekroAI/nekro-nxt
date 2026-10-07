@@ -23,7 +23,6 @@ import {
   PropertyGroup,
   PropertyList,
   PropertyRow,
-  Pressable,
   SearchField,
   Segmented,
   Switch,
@@ -86,14 +85,15 @@ function ReviewSummary({
           {review.summary || (review.highlights.length > 0 ? `${review.highlights.length} 条审查发现` : '暂无审查摘要')}
         </span>
         {hasDetail ? (
-          <Pressable
-            className={styles.textLink}
+          <Button
+            size="small"
+            variant="ghost"
             aria-expanded={open}
             aria-controls="community-review-detail"
             onClick={() => setOpen((value) => !value)}
           >
             {open ? '收起' : '审查详情'}
-          </Pressable>
+          </Button>
         ) : null}
       </div>
       <Disclosure open={open} id="community-review-detail">
@@ -108,12 +108,17 @@ function ReviewSummary({
               </p>
             )
           })}
-          <p className={styles.faint}>
-            审查结论只描述审查发现，不代表扩展绝对安全。
-            <Pressable className={styles.textLink} onClick={() => openExternal(pageUrl)}>
+          <p className={styles.faint}>审查结论只描述审查发现，不代表扩展绝对安全。</p>
+          <div>
+            <Button
+              size="small"
+              variant="ghost"
+              icon={<ExternalLink size={14} />}
+              onClick={() => openExternal(pageUrl)}
+            >
               在社区查看完整报告
-            </Pressable>
-          </p>
+            </Button>
+          </div>
         </div>
       </Disclosure>
     </section>
@@ -393,7 +398,9 @@ function CommunityDetail({
 
       <PropertyGroup title="介绍">
         {detail.description.trim() ? (
-          <SafeMarkdown text={detail.description} />
+          <div className={styles.authorMarkdown}>
+            <SafeMarkdown text={detail.description} />
+          </div>
         ) : (
           <p className={styles.faint}>作者还没有填写详细介绍。</p>
         )}
