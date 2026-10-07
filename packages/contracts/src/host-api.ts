@@ -2563,7 +2563,6 @@ export const HostApiContracts = {
     response: z
       .object({
         releaseId: CommunityReleaseIdSchema,
-        number: z.number().int().positive(),
         reviewStatus: CommunityReviewStatusSchema,
         pageUrl: z.string().url(),
         reportUrl: z.string().url(),

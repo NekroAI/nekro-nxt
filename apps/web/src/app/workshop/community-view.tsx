@@ -251,7 +251,7 @@ function CommunityDetail({
           <>
             <span>{scopeLabel[detail.scope]}</span>
             <span>@{detail.publisher.handle}</span>
-            {latest ? <span>第 {latest.number} 次发布</span> : null}
+            {latest ? <span>{relativeTime(latest.createdAt)}发布</span> : null}
             <span>{detail.downloads} 次下载</span>
           </>
         }
@@ -322,7 +322,7 @@ function CommunityDetail({
         </PropertyGroup>
       ) : null}
       {latest?.notes ? (
-        <PropertyGroup title={`第 ${latest.number} 次发布`} description={relativeTime(latest.createdAt)}>
+        <PropertyGroup title="更新说明" description={`${relativeTime(latest.createdAt)}发布`}>
           <p className={styles.communityDescription}>{latest.notes}</p>
         </PropertyGroup>
       ) : null}

@@ -436,7 +436,6 @@ export class CommunityService {
 
   async publish(input: { readonly filename: string; readonly body: Uint8Array; readonly notes: string }): Promise<{
     readonly releaseId: string
-    readonly number: number
     readonly reviewStatus: z.output<typeof CommunityReviewStatusSchema>
     readonly pageUrl: string
     readonly reportUrl: string
@@ -456,7 +455,6 @@ export class CommunityService {
       .parse(await this.#api('/api/v1/releases', { method: 'POST', body: form }, true))
     return {
       releaseId: body.release.id,
-      number: body.release.number,
       reviewStatus: body.release.reviewStatus,
       pageUrl: this.#extensionPage(body.extension.id),
       reportUrl: new URL(`/me/releases/${encodeURIComponent(body.release.id)}`, this.communityUrl).toString(),
@@ -493,7 +491,6 @@ const normalizeSummary = (raw: unknown, pageUrl: (id: string) => string): Record
         ? null
         : {
             id: latest['id'],
-            number: latest['number'],
             reviewStatus: latest['reviewStatus'],
             grade: latest['grade'] ?? null,
             permissions: (Array.isArray(latest['permissions']) ? latest['permissions'] : []).map((item) => {

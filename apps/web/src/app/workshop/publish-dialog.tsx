@@ -74,7 +74,7 @@ export function PublishDialog({
       <Dialog
         open={open}
         onOpenChange={(next) => !next && close()}
-        title={`已发布第 ${published.number} 次`}
+        title="已发布到社区"
         actions={
           <>
             <Button onClick={close}>完成</Button>

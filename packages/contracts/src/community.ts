@@ -53,7 +53,6 @@ export const CommunityPermissionItemSchema = z
 export const CommunityReleaseSchema = z
   .object({
     id: CommunityReleaseIdSchema,
-    number: z.number().int().positive(),
     reviewStatus: CommunityReviewStatusSchema,
     grade: CommunityGradeSchema.nullable(),
     permissions: z.array(CommunityPermissionItemSchema).max(64),

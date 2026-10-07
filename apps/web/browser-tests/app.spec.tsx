@@ -1178,7 +1178,6 @@ test.describe('NekroNxt browser projections', () => {
       publisher: { handle: 'demo-author', displayName: '示例作者', avatarUrl: null },
       latest: {
         id: 'rel_communityweather',
-        number: 2,
         reviewStatus: 'pending',
         grade: null,
         permissions: [{ key: 'network', level: 'normal', label: '访问指定网站', detail: 'api.example.com' }],
