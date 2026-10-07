@@ -1,4 +1,5 @@
 import type { ExtensionId, ExtensionRevisionId } from '@nekro-nxt/contracts'
+import { resourceBytes } from '@nekro-nxt/extension-format'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -66,7 +67,8 @@ export class ExtensionSourceStore {
           ? []
           : [writeFile(path.join(staging, 'source', 'client.ts'), materialized.sources.client, { mode: 0o600 })]),
         ...Object.entries(resources).map(([resourcePath, content]) =>
-          writeFile(path.join(staging, resourcePath), content, { encoding: 'utf8', mode: 0o600 }),
+          // Binary icons are base64 in memory and raw bytes on disk, matching the package layout.
+          writeFile(path.join(staging, resourcePath), resourceBytes(resourcePath, content), { mode: 0o600 }),
         ),
         writeFile(path.join(staging, 'content.sha256'), materialized.contentDigest + '\n', {
           encoding: 'utf8',

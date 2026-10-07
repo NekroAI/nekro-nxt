@@ -16,6 +16,7 @@ import {
   Chip,
   ConfirmDialog,
   EmptyState,
+  ExtensionIcon,
   MainContent,
   ObjectHeader,
   PropertyGroup,
@@ -82,6 +83,12 @@ export function MineView({ community }: { readonly community: CommunityState }) 
   }
 
   const published = new Set<string>(items?.map((item) => item.id))
+  const localPublishable = new Map(
+    localExtensions.filter((extension) => usableRevision(extension)).map((extension) => [extension.id, extension]),
+  )
+  // 社区返回的图标优先；旧版社区没有图标时用本机同一扩展的图标。
+  const communityIcon = (extension: CommunityMyExtension) =>
+    extension.iconUrl ?? localPublishable.get(extension.id)?.iconUrl
   const unpublished = localExtensions.filter((extension) => !published.has(extension.id) && usableRevision(extension))
 
   const requestReview = async (release: Release) => {
@@ -119,9 +126,12 @@ export function MineView({ community }: { readonly community: CommunityState }) 
         <div className={styles.cardList}>
           {items?.map((extension, index) => (
             <article key={extension.id} className={styles.item} style={{ ['--i' as string]: index }}>
-              <span className={styles.objectGlyph} data-scope={extension.scope}>
-                {[...extension.displayName][0] ?? '扩'}
-              </span>
+              <ExtensionIcon
+                id={extension.id}
+                name={extension.displayName}
+                iconUrl={communityIcon(extension)}
+                size="lg"
+              />
               <div className={styles.itemBody}>
                 <div className={styles.itemTitle}>
                   {extension.displayName}
@@ -169,6 +179,11 @@ export function MineView({ community }: { readonly community: CommunityState }) 
                 >
                   社区页面
                 </Button>
+                {localPublishable.get(extension.id) ? (
+                  <Button size="small" onClick={() => setPublishing(localPublishable.get(extension.id))}>
+                    发布更新
+                  </Button>
+                ) : null}
               </div>
             </article>
           ))}
@@ -185,9 +200,7 @@ export function MineView({ community }: { readonly community: CommunityState }) 
           <div className={styles.cardList}>
             {unpublished.map((extension) => (
               <div key={extension.id} className={styles.item}>
-                <span className={styles.objectGlyph} data-scope={extension.scope}>
-                  {[...extension.name][0] ?? '扩'}
-                </span>
+                <ExtensionIcon id={extension.id} name={extension.name} iconUrl={extension.iconUrl} size="lg" />
                 <div className={styles.itemBody}>
                   <div className={styles.itemTitle}>{extension.name}</div>
                   <span className={styles.itemMeta}>{scopeLabel[extension.scope]}</span>

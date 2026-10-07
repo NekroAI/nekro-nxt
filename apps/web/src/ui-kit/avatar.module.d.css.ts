@@ -1,5 +1,6 @@
 declare const styles: {
   readonly avatar: string
+  readonly extensionIcon: string
   readonly lg: string
   readonly live: string
   readonly md: string

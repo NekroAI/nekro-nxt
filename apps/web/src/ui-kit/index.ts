@@ -9,7 +9,7 @@ export {
   type ButtonProps,
   type Tone,
 } from './primitives.js'
-export { AgentAvatar, MemberAvatar, initialOf, hueOf, type AvatarSize } from './avatar.js'
+export { AgentAvatar, MemberAvatar, ExtensionIcon, initialOf, hueOf, type AvatarSize } from './avatar.js'
 export { Segmented, TabStrip, SelectionList, type Option } from './selection.js'
 export { useIndicator, type IndicatorGeometry } from './indicator.js'
 export {

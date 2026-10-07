@@ -2,6 +2,7 @@ import {
   CommunityAccountSchema,
   CommunityExtensionDetailSchema,
   CommunityExtensionSummarySchema,
+  type CommunityListingInput,
   CommunityMyExtensionSchema,
   CommunityPermissionItemSchema,
   CommunityReleaseSchema,
@@ -594,7 +595,12 @@ export class CommunityService {
     return bytes
   }
 
-  async publish(input: { readonly filename: string; readonly body: Uint8Array; readonly notes: string }): Promise<{
+  async publish(input: {
+    readonly filename: string
+    readonly body: Uint8Array
+    readonly notes: string
+    readonly listing?: CommunityListingInput | undefined
+  }): Promise<{
     readonly releaseId: string
     readonly reviewStatus: z.output<typeof CommunityReviewStatusSchema>
     readonly pageUrl: string
@@ -604,6 +610,12 @@ export class CommunityService {
     const form = new FormData()
     form.set('package', new Blob([Uint8Array.from(input.body)], { type: 'application/zip' }), input.filename)
     form.set('notes', input.notes)
+    // 条目信息只提交填写了的字段；社区据此建条目或覆盖对应字段。
+    const listing = input.listing
+    if (listing?.summary !== undefined) form.set('summary', listing.summary)
+    if (listing?.description !== undefined) form.set('description', listing.description)
+    if (listing?.tags !== undefined) form.set('tags', JSON.stringify(listing.tags))
+    if (listing?.sourceUrl !== undefined) form.set('sourceUrl', listing.sourceUrl)
     const body = z
       .object({
         extension: z.object({ id: z.string() }).passthrough(),
@@ -825,6 +837,16 @@ const normalizeRelease = (raw: unknown): Record<string, unknown> => {
   }
 }
 
+const httpUrlOrNull = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
 /** 只取 NXT 需要的字段；社区新增字段不透传。 */
 const normalizeSummary = (raw: unknown, pageUrl: (id: string) => string): Record<string, unknown> => {
   const record = asRecord(raw)
@@ -836,6 +858,8 @@ const normalizeSummary = (raw: unknown, pageUrl: (id: string) => string): Record
     displayName: record['displayName'],
     summary: record['summary'],
     tags: record['tags'],
+    // 旧版社区没有图标字段；只接受 http(s) 地址。
+    iconUrl: httpUrlOrNull(record['iconUrl']),
     // 旧版社区没有这个字段，按非官方处理。
     official: record['official'] === true,
     publisher: {

@@ -87,6 +87,8 @@ export const CommunityExtensionSummarySchema = z
     displayName: z.string().max(200),
     summary: z.string().max(1000),
     tags: z.array(z.string().max(40)).max(16),
+    /** 最新公开发布包内的扩展图标（社区的绝对地址）；没有图标或旧版社区时为 null。 */
+    iconUrl: z.string().url().nullable(),
     /** 由社区后台认定的官方扩展；此时发布者是社区保留的官方主页（`COMMUNITY_OFFICIAL_HANDLE`）。 */
     official: z.boolean(),
     publisher: CommunityAccountSchema,
@@ -112,6 +114,29 @@ export const CommunityExtensionDetailSchema = CommunityExtensionSummarySchema.ex
     .nullable(),
 }).strict()
 export type CommunityExtensionDetail = z.output<typeof CommunityExtensionDetailSchema>
+
+/**
+ * 发布时随包提交的条目信息（作者自己写的介绍）。首次发布用于建条目；之后提供了哪项就覆盖哪项，未提供的保持不变。
+ */
+export const COMMUNITY_LISTING_LIMITS = { summary: 160, description: 20_000, tags: 8, tag: 40 } as const
+
+export const CommunityListingInputSchema = z
+  .object({
+    summary: z.string().trim().max(COMMUNITY_LISTING_LIMITS.summary).optional(),
+    description: z.string().max(COMMUNITY_LISTING_LIMITS.description).optional(),
+    tags: z
+      .array(z.string().trim().min(1).max(COMMUNITY_LISTING_LIMITS.tag))
+      .max(COMMUNITY_LISTING_LIMITS.tags)
+      .optional(),
+    sourceUrl: z
+      .string()
+      .trim()
+      .url()
+      .refine((value) => /^https?:\/\//iu.test(value), '源码地址必须是 http(s) 链接。')
+      .optional(),
+  })
+  .strict()
+export type CommunityListingInput = z.output<typeof CommunityListingInputSchema>
 
 export const CommunityEndpointSchema = z
   .object({

@@ -18,7 +18,12 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
-import { toolVerificationInputSchema, verificationInputSchema } from '@nekro-nxt/extension-format'
+import {
+  extensionIconSchema,
+  resourceBytes,
+  toolVerificationInputSchema,
+  verificationInputSchema,
+} from '@nekro-nxt/extension-format'
 import type {
   AuthoringApprovalPolicy,
   AuthoringAttemptFailure,
@@ -59,6 +64,7 @@ const SnapshotSchema = z
       })
       .strict()
       .optional(),
+    icon: extensionIconSchema.optional(),
     permissions: HostUiPermissionDeclarationSchema,
     contributions: z.array(JsonValueSchema),
     config: ExtensionConfigDeclarationSchema.optional(),
@@ -84,6 +90,7 @@ const parseSnapshot = (input: unknown): DynamicAuthoringSnapshot => {
     },
     resources: parsed.resources,
     ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
+    ...(parsed.icon === undefined ? {} : { icon: parsed.icon }),
     permissions: parsed.permissions,
     contributions: parsed.contributions,
     ...(parsed.config === undefined ? {} : { config: parsed.config }),
@@ -161,7 +168,7 @@ export class AuthoringArtifactStore {
           ? []
           : [writeFile(path.join(staging, 'source', 'client.js'), snapshot.code.client, { mode: 0o600 })]),
         ...Object.entries(snapshot.resources).map(([resourcePath, source]) =>
-          writeFile(path.join(staging, resourcePath), source, { mode: 0o600 }),
+          writeFile(path.join(staging, resourcePath), resourceBytes(resourcePath, source), { mode: 0o600 }),
         ),
       ])
       await mkdir(path.dirname(final), { recursive: true, mode: 0o700 })

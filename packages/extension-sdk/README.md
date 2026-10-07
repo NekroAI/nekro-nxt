@@ -6,7 +6,7 @@ npm 发布说明见 [PUBLISH-README](PUBLISH-README.md)。运行时能力通过 
 
 ## Manifest V6
 
-扩展只有 Manifest V6（`schemaVersion: 6`），旧格式不再读取或重建。`scope` 为 `agent | host-adapter | host-ui`，每种 scope 都声明 `permissions`（可为空），可选 `config: { schema }` 使用序列化 Schemastery，可选 `requires: { sdk }`；智能体扩展的 `permissions` 另可包含 `capabilities`（见“宿主能力”）。贡献与放置规则见[客户端体验重构与扩展界面统一 §5](../../docs/decisions/accepted/2026-10-04-客户端体验重构与扩展界面统一.md)：
+扩展只有 Manifest V6（`schemaVersion: 6`），旧格式不再读取或重建。`scope` 为 `agent | host-adapter | host-ui`，每种 scope 都声明 `permissions`（可为空），可选 `config: { schema }` 使用序列化 Schemastery，可选 `requires: { sdk }`，可选 `icon: { path, sha256 }` 指向包内 `assets/icon.{svg,png,webp}`（64–512 像素正方形、不超过 128 KiB，规则见 [扩展包格式](../extension-format/README.md#扩展图标)），在工坊、社区和智能体能力列表中显示；智能体扩展的 `permissions` 另可包含 `capabilities`（见“宿主能力”）。贡献与放置规则见[客户端体验重构与扩展界面统一 §5](../../docs/decisions/accepted/2026-10-04-客户端体验重构与扩展界面统一.md)：
 
 | 贡献               | scope                                                                               | 放置                               |
 | ------------------ | ----------------------------------------------------------------------------------- | ---------------------------------- |

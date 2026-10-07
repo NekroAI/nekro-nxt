@@ -12,7 +12,13 @@ import {
   type AgentId,
   type HostUiPermission,
 } from '@nekro-nxt/contracts'
-import { scopeHostUiCss, validateHostUiSvg } from '@nekro-nxt/extension-runtime'
+import {
+  extensionIconContentType,
+  resourceContent,
+  scopeHostUiCss,
+  validateExtensionIcon,
+  validateHostUiSvg,
+} from '@nekro-nxt/extension-runtime'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -709,6 +715,39 @@ export function registerExtensionsRoutes({
           res.end(css ? scopeHostUiCss(source, artifact.buildKey) : source)
         } catch (error) {
           writeError(res, 409, 'host-ui-client-unavailable', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+      const extensionIconMatch =
+        /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/icon\/([a-f0-9]{64})\.(svg|png|webp)$/u.exec(url.pathname)
+      if (extensionIconMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '扩展图标只支持 GET。')
+          return
+        }
+        try {
+          const extensionId = ExtensionIdSchema.parse(decodeURIComponent(extensionIconMatch[1] ?? ''))
+          const revisionId = ExtensionRevisionIdSchema.parse(decodeURIComponent(extensionIconMatch[2] ?? ''))
+          const revision = runtime.repository.getExtensionRevision(revisionId)
+          if (!revision || revision.extensionId !== extensionId) throw new Error('找不到扩展版本。')
+          const icon = runtime.extensionService.revisionManifest(revision)?.icon
+          if (!icon || icon.sha256 !== extensionIconMatch[3] || !icon.path.endsWith(`.${extensionIconMatch[4]}`)) {
+            throw new Error('扩展图标不存在。')
+          }
+          const sourceDirectory = runtime.extensionService.revisionSourceDirectory(revision)
+          const bytes = await readFile(path.join(sourceDirectory, icon.path))
+          if (createHash('sha256').update(bytes).digest('hex') !== icon.sha256) throw new Error('扩展图标摘要不一致。')
+          validateExtensionIcon(icon.path, resourceContent(icon.path, bytes))
+          res.writeHead(200, {
+            'content-type': extensionIconContentType(icon.path),
+            'cache-control': 'private, max-age=31536000, immutable',
+            'x-content-type-options': 'nosniff',
+            // SVG 图标只作为图片显示；即使被直接打开也不能执行脚本或加载外部资源。
+            'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          })
+          res.end(bytes)
+        } catch (error) {
+          writeError(res, 404, 'extension-icon-unavailable', error instanceof Error ? error.message : String(error))
         }
         return
       }

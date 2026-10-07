@@ -1149,6 +1149,7 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 - 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
 - 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
+- 可选扩展图标：在 \`resources\` 放 \`assets/icon.svg\`（推荐，规则同页面 SVG 图标）或 64–512 像素正方形、不超过 128 KiB 的 \`assets/icon.png\` / \`assets/icon.webp\`（内容填标准 base64），再用 \`iconPath\` 指向它；图标显示在工坊、社区和智能体能力列表。
 
 ## 界面组件（${reference.ui.kitVersion}）
 

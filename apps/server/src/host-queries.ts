@@ -103,6 +103,14 @@ const dynamicRunError = (error: {
   pluginRunId: error.pluginRunId,
 })
 
+/** 扩展图标的同源读取路径：按图标摘要寻址，内容变化时地址随之变化。 */
+export const extensionIconUrl = (
+  extensionId: string,
+  revisionId: string,
+  icon: { readonly path: string; readonly sha256: string },
+): string =>
+  `/api/extensions/${encodeURIComponent(extensionId)}/revisions/${encodeURIComponent(revisionId)}/icon/${icon.sha256}.${icon.path.slice(icon.path.lastIndexOf('.') + 1)}`
+
 export const projectExtensions = (runtime: NekroRuntime) => {
   const activationsByExtension = groupBy(runtime.repository.listActivations(), (item) => item.extensionId)
   const revisionsByExtension = groupBy(runtime.repository.listExtensionRevisions(), (item) => item.extensionId)
@@ -142,6 +150,9 @@ export const projectExtensions = (runtime: NekroRuntime) => {
           format: manifest === undefined ? ('unavailable' as const) : ('current' as const),
           ui: extensionUiContributions(manifest),
           ...(manifest?.config === undefined ? {} : { configSchema: manifest.config.schema }),
+          ...(manifest?.icon === undefined
+            ? {}
+            : { iconUrl: extensionIconUrl(extension.id, revision.id, manifest.icon) }),
           createdAt: revision.createdAt,
           ...communitySource(runtime, revision.id),
           scope: extension.scope,

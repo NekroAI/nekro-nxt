@@ -33,6 +33,7 @@ import { ConfigSchemaDocumentSchema } from './config-schema.js'
 import {
   CommunityExtensionDetailSchema,
   CommunityExtensionSummarySchema,
+  CommunityListingInputSchema,
   CommunityReleaseIdSchema,
   CommunityReviewStatusSchema,
   CommunityStatusSchema,
@@ -1183,6 +1184,11 @@ export const HostSnapshotSchema = z
                 format: z.enum(['current', 'unavailable']).optional(),
                 ui: ExtensionUiContributionsSchema.default(EMPTY_EXTENSION_UI_CONTRIBUTIONS),
                 configSchema: ConfigSchemaDocumentSchema.optional(),
+                /** 扩展包自带图标的读取路径（同源、按摘要寻址、可长期缓存）；没有图标时缺省。 */
+                iconUrl: z
+                  .string()
+                  .regex(/^\/api\/extensions\/[^/]+\/revisions\/[^/]+\/icon\/[a-f0-9]{64}\.(?:svg|png|webp)$/u)
+                  .optional(),
                 createdAt: z.number().int().safe().nonnegative(),
                 /** 从社区安装的保存记录的来源；本机保存与文件导入没有来源。 */
                 source: CommunitySourceSchema.optional(),
@@ -2655,6 +2661,8 @@ export const HostApiContracts = {
         extensionId: ExtensionIdSchema,
         revisionId: ExtensionRevisionIdSchema,
         notes: z.string().max(2000),
+        /** 作者填写的条目信息；省略的字段不改动社区上已有的内容。 */
+        listing: CommunityListingInputSchema.optional(),
       })
       .strict(),
     response: z

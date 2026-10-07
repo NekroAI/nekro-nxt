@@ -1,13 +1,12 @@
 import {
   extensionContributionSchema,
+  extensionIconSchema,
   extensionManifestSchema,
   normalizeSource,
   revisionDigests,
   revisionResourcesSchema,
   revisionSourcesSchema,
-  sha256Hex,
-  validateHostUiCss,
-  validateHostUiSvg,
+  validateRevisionResources,
   type MaterializedExtensionRevision,
 } from '@nekro-nxt/extension-format'
 import {
@@ -46,6 +45,7 @@ const inputSchema = z
           })
           .strict()
           .optional(),
+        icon: extensionIconSchema.optional(),
         config: ExtensionConfigDeclarationSchema.optional(),
         contributions: z.array(extensionContributionSchema).default([]),
       })
@@ -119,31 +119,12 @@ export function materializeDynamicPackage(input: {
       ...('client' in sources ? { client: 'source/client.ts' } : {}),
     },
     ...(parsed.snapshot.clientCss === undefined ? {} : { clientCss: parsed.snapshot.clientCss }),
+    ...(parsed.snapshot.icon === undefined ? {} : { icon: parsed.snapshot.icon }),
     permissions: parsed.snapshot.permissions ?? { permissions: [], networkOrigins: [] },
     ...(parsed.snapshot.config === undefined ? {} : { config: parsed.snapshot.config }),
     contributions,
   })
   const resources = revisionResourcesSchema.parse(parsed.snapshot.resources ?? {})
-  const expectedResources = new Map<string, { readonly digest: string; readonly kind: 'css' | 'svg' }>()
-  if (parsed.snapshot.clientCss) {
-    expectedResources.set(parsed.snapshot.clientCss.path, { digest: parsed.snapshot.clientCss.sha256, kind: 'css' })
-  }
-  for (const contribution of parsed.snapshot.contributions) {
-    if (contribution.kind === 'host-page' && contribution.icon.kind === 'svg') {
-      expectedResources.set(contribution.icon.path, { digest: contribution.icon.sha256, kind: 'svg' })
-    }
-  }
-  if (expectedResources.size !== Object.keys(resources).length) {
-    throw new Error('动态扩展资源文件与 Manifest 声明不一致。')
-  }
-  for (const [resourcePath, expected] of expectedResources) {
-    const source = resources[resourcePath]
-    if (source === undefined) throw new Error(`动态扩展缺少资源：${resourcePath}`)
-    if (sha256Hex(source) !== expected.digest) {
-      throw new Error(`动态扩展资源摘要不一致：${resourcePath}`)
-    }
-    if (expected.kind === 'css') validateHostUiCss(source)
-    else validateHostUiSvg(source)
-  }
+  validateRevisionResources(manifest, resources, '动态扩展')
   return { manifest, sources, resources, ...revisionDigests({ manifest, sources, resources }), scope }
 }

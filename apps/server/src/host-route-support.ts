@@ -226,6 +226,7 @@ export const createExtensionRevisionExport = async (
   const resourceManifest = extensionManifestSchema.parse(JSON.parse(strFromU8(files['revision/manifest.json']!)))
   const resourcePaths = new Set<string>()
   if ('clientCss' in resourceManifest && resourceManifest.clientCss) resourcePaths.add(resourceManifest.clientCss.path)
+  if (resourceManifest.icon) resourcePaths.add(resourceManifest.icon.path)
   for (const contribution of 'contributions' in resourceManifest ? resourceManifest.contributions : []) {
     const page = HostPageContributionSchema.safeParse(contribution)
     if (page.success && page.data.icon.kind === 'svg') resourcePaths.add(page.data.icon.path)

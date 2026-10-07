@@ -6,6 +6,7 @@ declare const styles: {
   readonly communityCard: string
   readonly communityCardFoot: string
   readonly communityCardHead: string
+  readonly communityCardTitle: string
   readonly communityDescription: string
   readonly communityGrid: string
   readonly communityHighlight: string
@@ -28,11 +29,15 @@ declare const styles: {
   readonly itemTitle: string
   readonly lead: string
   readonly list: string
+  readonly listingMeta: string
   readonly location: string
   readonly objectGlyph: string
   readonly quietLink: string
   readonly release: string
   readonly releases: string
+  readonly reviewLine: string
+  readonly reviewLineHead: string
+  readonly reviewLineSummary: string
   readonly row: string
   readonly rowGlyph: string
   readonly rowName: string

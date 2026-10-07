@@ -64,6 +64,7 @@
 | Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/client-diagnostic` | 保存当前 Activation 最近一次 loaded/failed；不回滚 Host |
 | 删除本地扩展 | `DELETE /api/extensions/:extensionId` | 先关闭全部 Activation 或卸载 Adapter，再删除源码、版本、验证与诊断；失败时恢复原运行关系 |
 | Extension 导出/导入 | `GET /api/extensions/:id/revisions/:revisionId/export`、`POST /api/extensions/imports/inspect`、`POST /api/extensions/imports/:token/commit` | 单 Revision `.nxt-extension`；两阶段检查、冲突处理、本机构建，检查凭证十分钟失效，提交后处于关闭状态 |
+| 扩展图标 | `GET /api/extensions/:id/revisions/:revisionId/icon/:sha256.(svg\|png\|webp)` | 返回 Manifest `icon` 指向的包内图标原始字节；按摘要寻址、长期缓存，摘要或类型不符时 404 |
 | Host UI 页面偏好 | `PUT /api/host-ui/page-preferences` | `expectedRevision` 原子提交完整页面顺序与显隐，冲突时以 Host 为准 |
 | Host UI 页面服务 | `POST /api/host-ui/pages/:pageInstanceId/call` | 精确 owner、Artifact、权限和输入 Schema 下的产品服务、状态、事件、网络与自定义 RPC |
 | Host UI 页面诊断 | `POST /api/host-ui/pages/:pageInstanceId/diagnostic` | 记录 Client、导航或 RPC 故障，不改变 Installation/Activation 事实 |

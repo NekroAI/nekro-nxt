@@ -1,5 +1,13 @@
 import { DSH_RUNTIME_FINGERPRINT } from '@nekro-nxt/dsh-compat/release'
-import { extensionManifestSchema, validateHostUiCss, validateHostUiSvg } from '@nekro-nxt/extension-format'
+import {
+  expectedRevisionResources,
+  extensionManifestSchema,
+  resourceContent,
+  resourceDigest,
+  validateExtensionIcon,
+  validateHostUiCss,
+  validateHostUiSvg,
+} from '@nekro-nxt/extension-format'
 import { ExtensionRevisionIdSchema, type ExtensionId, type ExtensionRevisionId } from '@nekro-nxt/contracts'
 import { EXTENSION_SDK_BUNDLE_SOURCE } from '@nekro-nxt/extension-sdk'
 import { createHash, randomUUID } from 'node:crypto'
@@ -249,27 +257,17 @@ export class ExtensionBuilder {
   }
 
   async #validateResources(sourceDirectory: string, manifest: z.infer<typeof extensionManifestSchema>): Promise<void> {
-    const expected = new Map<string, { readonly digest: string; readonly kind: 'css' | 'svg' }>()
-    if ('clientCss' in manifest && manifest.clientCss) {
-      expected.set(manifest.clientCss.path, { digest: manifest.clientCss.sha256, kind: 'css' })
-    }
-    if ('contributions' in manifest) {
-      for (const contribution of manifest.contributions) {
-        if (contribution.kind === 'host-page' && contribution.icon.kind === 'svg') {
-          expected.set(contribution.icon.path, { digest: contribution.icon.sha256, kind: 'svg' })
-        }
-      }
-    }
-    for (const [relativePath, descriptor] of expected) {
+    for (const [relativePath, descriptor] of expectedRevisionResources(manifest)) {
       const resourcePath = path.resolve(sourceDirectory, relativePath)
       const relative = path.relative(sourceDirectory, resourcePath)
       if (relative.startsWith('..') || path.isAbsolute(relative))
         throw new Error('Host UI 资源路径越过 Revision 根目录。')
-      const source = await readFile(resourcePath, 'utf8')
-      if (createHash('sha256').update(source).digest('hex') !== descriptor.digest) {
+      const source = resourceContent(relativePath, await readFile(resourcePath))
+      if (resourceDigest(relativePath, source) !== descriptor.digest) {
         throw new Error(`Host UI 资源摘要不一致：${relativePath}`)
       }
       if (descriptor.kind === 'css') validateHostUiCss(source)
+      else if (descriptor.kind === 'icon') validateExtensionIcon(relativePath, source)
       else validateHostUiSvg(source)
     }
   }

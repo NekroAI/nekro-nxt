@@ -148,6 +148,7 @@ export class AuthoringApplicationService {
         ...(authoringSnapshot?.config === undefined ? {} : { config: authoringSnapshot.config }),
         ...(authoringSnapshot === undefined ? {} : { resources: authoringSnapshot.resources }),
         ...(authoringSnapshot?.clientCss === undefined ? {} : { clientCss: authoringSnapshot.clientCss }),
+        ...(authoringSnapshot?.icon === undefined ? {} : { icon: authoringSnapshot.icon }),
       },
       slug: input.slug,
       displayName: input.displayName,

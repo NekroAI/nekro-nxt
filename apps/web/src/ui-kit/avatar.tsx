@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { cssVars } from './css-vars.js'
 import styles from './avatar.module.css'
 
@@ -67,6 +68,44 @@ export function MemberAvatar({ name, size = 'default', className }: AvatarProps)
       aria-hidden="true"
     >
       {initialOf(name)}
+    </span>
+  )
+}
+
+const extensionSizePx: Record<AvatarSize, number> = { xs: 18, sm: 22, md: 28, default: 34, lg: 52 }
+
+/**
+ * 扩展图标：有包内图标时显示图片（加载失败回退）；没有时用名称首字和由扩展 ID 推出的稳定配色，
+ * 同一扩展在工坊、社区和智能体能力列表里颜色一致。
+ */
+export function ExtensionIcon({
+  id,
+  name,
+  iconUrl,
+  size = 'default',
+  className,
+}: {
+  readonly id: string
+  readonly name: string
+  readonly iconUrl?: string | null | undefined
+  readonly size?: AvatarSize
+  readonly className?: string
+}) {
+  const [failedUrl, setFailedUrl] = useState<string>()
+  const showImage = Boolean(iconUrl) && failedUrl !== iconUrl
+  const style = cssVars({ '--h': hueOf(id), '--size': `${extensionSizePx[size]}px` })
+  return (
+    <span
+      className={[styles.extensionIcon, className ?? ''].join(' ')}
+      style={style}
+      data-image={showImage ? '' : undefined}
+      aria-hidden="true"
+    >
+      {showImage && iconUrl ? (
+        <img src={iconUrl} alt="" loading="lazy" decoding="async" onError={() => setFailedUrl(iconUrl)} />
+      ) : (
+        initialOf(name)
+      )}
     </span>
   )
 }
