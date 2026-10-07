@@ -222,7 +222,7 @@ const assertViewportIntegrity = async (page: Page): Promise<void> => {
   expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth)
   expect(geometry.bodyWidth).toBeLessThanOrEqual(geometry.viewportWidth)
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '搜索' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '搜索', exact: true })).toBeVisible()
 }
 
 /** Masks for values that change with the wall clock. */
@@ -551,7 +551,7 @@ test('the command palette searches and navigates by keyboard and returns focus o
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)
   await page.goto('/live')
-  const trigger = page.getByRole('button', { name: '搜索' })
+  const trigger = page.getByRole('button', { name: '搜索', exact: true })
   await trigger.click()
   const input = page.getByRole('combobox', { name: '搜索' })
   await expect(input).toBeFocused()

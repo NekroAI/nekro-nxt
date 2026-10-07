@@ -295,7 +295,10 @@ test('settings exposes the provider editor and survives real navigation', async 
   await expect(page.getByLabel('API 密钥', { exact: true })).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('API 密钥', { exact: true })).toHaveAttribute('autocomplete', 'off')
   await expect(page.getByLabel('API 密钥', { exact: true })).toHaveAttribute('data-1p-ignore', 'true')
-  await expect(page.getByText(/已保存密钥无法查看/u)).toBeVisible()
+  // The "saved keys cannot be viewed" note lives behind the field's InfoTip.
+  await page.getByRole('button', { name: '说明：API 密钥', exact: true }).click()
+  await expect(page.getByRole('dialog').getByText(/已保存密钥无法查看/u)).toBeVisible()
+  await page.keyboard.press('Escape')
 
   const sections = page.getByRole('complementary', { name: '设置' })
   await sections.getByRole('link', { name: '平台适配器' }).click()
