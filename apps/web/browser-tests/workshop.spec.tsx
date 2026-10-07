@@ -245,6 +245,12 @@ test.describe('workshop', () => {
           ? extension
           : {
               ...extension,
+              activations: extension.activations.map((activation) => ({
+                ...activation,
+                mcpServers: [
+                  { name: 'docs', state: 'missing-credentials' as const, missing: ['Authorization'], observedAt: 1 },
+                ],
+              })),
               revisions: extension.revisions.map((revision) => ({
                 ...revision,
                 verification: {
@@ -290,6 +296,7 @@ test.describe('workshop', () => {
       await expect(overview).toContainText('mcp__docs__')
       await expect(overview).toContainText('远程 https://docs.example.com/mcp')
       await expect(overview).not.toContainText('还没有经过验证')
+      await expect(page.getByRole('region', { name: '使用' })).toContainText('缺少凭据：Authorization')
     } finally {
       await page.close()
     }

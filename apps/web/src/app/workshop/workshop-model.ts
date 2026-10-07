@@ -231,6 +231,32 @@ export const CONTRIBUTION_PLACE: Record<string, string> = {
   'MCP 服务': '启用后它提供的工具出现在智能体的对话中',
 }
 
+/** One line for the MCP servers of an Activation, e.g. 「已连接 · 3 个工具」 or 「缺少凭据：Authorization」. */
+export const mcpStatusText = (
+  servers: readonly {
+    readonly name: string
+    readonly state: 'connecting' | 'connected' | 'unavailable' | 'missing-credentials'
+    readonly toolCount?: number | undefined
+    readonly missing?: readonly string[] | undefined
+    readonly message?: string | undefined
+  }[],
+): string =>
+  servers
+    .map((server) => {
+      const prefix = servers.length > 1 ? `${server.name} ` : ''
+      switch (server.state) {
+        case 'connected':
+          return `${prefix}已连接 · ${server.toolCount ?? 0} 个工具`
+        case 'connecting':
+          return `${prefix}正在连接`
+        case 'missing-credentials':
+          return `${prefix}缺少凭据：${(server.missing ?? []).join('、')}`
+        case 'unavailable':
+          return `${prefix}未连接：${server.message ?? '原因未知'}`
+      }
+    })
+    .join('；')
+
 /** MCP servers a Revision connects, as Overview rows; they are capabilities, not contributions. */
 export const mcpParts = (
   servers: readonly {

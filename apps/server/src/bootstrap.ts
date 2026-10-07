@@ -68,6 +68,7 @@ import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
 import { ScheduledTasks } from './scheduled-tasks.js'
+import { McpStatusRegistry } from './mcp-servers.js'
 import {
   createNxtProductBackends,
   memoryNxtJobs,
@@ -178,6 +179,7 @@ export class NekroRuntime {
   readonly adapters: AdapterRegistry
   readonly #jobScheduler: ExtensionJobScheduler
   readonly scheduledTasks: ScheduledTasks
+  readonly mcpStatus: McpStatusRegistry
   readonly authoringTestSecrets: AuthoringTestSecrets
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
@@ -218,6 +220,7 @@ export class NekroRuntime {
     readonly adapters: AdapterRegistry
     readonly jobScheduler: ExtensionJobScheduler
     readonly scheduledTasks: ScheduledTasks
+    readonly mcpStatus: McpStatusRegistry
     readonly authoringTestSecrets: AuthoringTestSecrets
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
@@ -246,6 +249,7 @@ export class NekroRuntime {
     this.adapters = input.adapters
     this.#jobScheduler = input.jobScheduler
     this.scheduledTasks = input.scheduledTasks
+    this.mcpStatus = input.mcpStatus
     this.authoringTestSecrets = input.authoringTestSecrets
     this.connections = new ConnectionApplicationService(
       this,
@@ -444,6 +448,7 @@ export class NekroRuntime {
         now,
         nextId: nextUlid,
       })
+      const mcpStatus = new McpStatusRegistry()
       const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
         activationBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
@@ -493,6 +498,7 @@ export class NekroRuntime {
         }),
         dynamicConfig: (agentId, episodeId) => authoringTestSecrets.configForEpisode(agentId, episodeId),
         scheduledTasks,
+        mcpStatus,
         onSessionMount: ({
           agentId,
           revision,
@@ -735,6 +741,7 @@ export class NekroRuntime {
       const runtime = new NekroRuntime({
         jobScheduler,
         scheduledTasks,
+        mcpStatus,
         authoringTestSecrets,
         compatibility,
         database,

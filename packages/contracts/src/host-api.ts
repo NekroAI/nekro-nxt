@@ -1210,6 +1210,21 @@ export const HostSnapshotSchema = z
                     observedAt: z.number().int().safe().nonnegative(),
                   })
                   .optional(),
+                /** Latest connection attempt of each MCP server this Activation declares. */
+                mcpServers: z
+                  .array(
+                    z
+                      .object({
+                        name: z.string(),
+                        state: z.enum(['connecting', 'connected', 'unavailable', 'missing-credentials']),
+                        toolCount: z.number().int().nonnegative().optional(),
+                        missing: z.array(z.string()).optional(),
+                        message: z.string().optional(),
+                        observedAt: z.number().int().safe().nonnegative(),
+                      })
+                      .strict(),
+                  )
+                  .optional(),
               })
               .strict(),
           ),

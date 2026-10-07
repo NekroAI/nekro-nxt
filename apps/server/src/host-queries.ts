@@ -191,6 +191,14 @@ export const projectExtensions = (runtime: NekroRuntime) => {
         extensionRevisionId: activation.extensionRevisionId,
         ...maskExtensionSecrets(activationManifest(runtime, activation.extensionRevisionId), activation.config),
         activatedAt: activation.activatedAt,
+        ...(runtime.mcpStatus.list(activation.agentId, extension.id).length === 0
+          ? {}
+          : {
+              mcpServers: runtime.mcpStatus.list(activation.agentId, extension.id).map((status) => ({
+                ...status,
+                ...(status.missing === undefined ? {} : { missing: [...status.missing] }),
+              })),
+            }),
         ...(runtime.activation.getDiagnostic(activation.agentId, extension.id) === undefined
           ? {}
           : { runtime: runtime.activation.getDiagnostic(activation.agentId, extension.id) }),

@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import * as McpClientPlugin from '@deepseek-ai/dsh-mcp-client'
+import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import {
@@ -143,11 +144,16 @@ export const mcpPluginConfig = async (
 export const mountMcpServers = (
   context: Context,
   configs: readonly McpPluginConfig[],
-  onError: (serverName: string, error: unknown) => void,
+  report: (serverName: string, outcome: { readonly toolCount: number } | { readonly error: unknown }) => void,
 ): void => {
   for (const config of configs) {
-    void Promise.resolve(context.plugin(McpClientPlugin, config)).catch((error: unknown) =>
-      onError(config.serverName, error),
+    const prefix = `mcp__${config.serverName}__`
+    void Promise.resolve(context.plugin(McpClientPlugin, config)).then(
+      () =>
+        report(config.serverName, {
+          toolCount: context.tools.schemas(scopeOf(context)).filter(({ name }) => name.startsWith(prefix)).length,
+        }),
+      (error: unknown) => report(config.serverName, { error }),
     )
   }
 }
@@ -200,5 +206,42 @@ export const testMcpServer = async (form: McpServerForm, cwd: string): Promise<M
     return { ok: false, message: `连接失败：${message}`, tools: [] }
   } finally {
     await client.close().catch(() => undefined)
+  }
+}
+
+export interface McpServerStatus {
+  readonly name: string
+  readonly state: 'connecting' | 'connected' | 'unavailable' | 'missing-credentials'
+  readonly toolCount?: number
+  readonly missing?: readonly string[]
+  readonly message?: string
+  readonly observedAt: number
+}
+
+/**
+ * Latest connection attempt per (agent, extension, server), for the extension's usage rows. Each Session connects
+ * separately, so the newest attempt of any Session wins; the DSH bridge's later reconnects are not tracked here.
+ */
+export class McpStatusRegistry {
+  readonly #statuses = new Map<string, Map<string, McpServerStatus>>()
+  readonly #listeners = new Set<() => void>()
+
+  set(agentId: string, extensionId: string, status: McpServerStatus): void {
+    const key = `${agentId}\0${extensionId}`
+    const servers = this.#statuses.get(key) ?? new Map<string, McpServerStatus>()
+    servers.set(status.name, status)
+    this.#statuses.set(key, servers)
+    for (const listener of this.#listeners) listener()
+  }
+
+  list(agentId: string, extensionId: string): readonly McpServerStatus[] {
+    return [...(this.#statuses.get(`${agentId}\0${extensionId}`)?.values() ?? [])].sort((left, right) =>
+      left.name.localeCompare(right.name),
+    )
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener)
+    return () => this.#listeners.delete(listener)
   }
 }

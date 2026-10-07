@@ -188,7 +188,13 @@ import {
 import type { NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
 import { formatTaskTime, hostTimezone, parseTaskSchedule, type ScheduledTasks } from './scheduled-tasks.js'
 import { PersistentExtensionMounts, type PersistentInboundHandler } from './persistent-extension-mounts.js'
-import { mcpPluginConfig, mountMcpServers, type McpPluginConfig } from './mcp-servers.js'
+import {
+  mcpPluginConfig,
+  mountMcpServers,
+  type McpPluginConfig,
+  type McpServerStatus,
+  type McpStatusRegistry,
+} from './mcp-servers.js'
 import {
   collectVisibleImageDigests,
   collectVisibleImageResidency,
@@ -383,6 +389,8 @@ export interface DshHostRuntimeOptions {
     readonly dynamicConfig?: (agentId: AgentId, episodeId: EpisodeId) => JsonValue
     /** Scheduled tasks agents manage from chat; tools are offered when the agent's `scheduledTasks` is on. */
     readonly scheduledTasks?: ScheduledTaskPort
+    /** Latest MCP connection attempt per Activation and server, shown on the extension's usage rows. */
+    readonly mcpStatus?: McpStatusRegistry
     /** Runs when an Activation mounts into a Session, i.e. into one bound channel (declared jobs live per channel). */
     readonly onSessionMount?: (input: {
       readonly agentId: AgentId
@@ -2378,23 +2386,34 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
                 capabilities: () => described.capabilities,
                 config: () => config,
               }
+              const status = (name: string, update: Omit<McpServerStatus, 'name' | 'observedAt'>) =>
+                extensionHost.mcpStatus?.set(agentId, revision.extensionId, { name, ...update, observedAt: Date.now() })
               const configs: McpPluginConfig[] = []
               for (const server of servers) {
                 const resolved = await mcpPluginConfig(server, {
                   readSecret: (key) => extensionHost.activationBackends.secret(binding, key),
                   cwd,
                 })
-                if ('config' in resolved) configs.push(resolved.config)
-                else {
-                  console.warn(
-                    `[nekro-nxt] MCP 服务 ${server.name}（${described.displayName}）缺少凭据，未连接：${resolved.missing.join('、')}`,
-                  )
+                if ('config' in resolved) {
+                  configs.push(resolved.config)
+                  status(server.name, { state: 'connecting' })
+                } else {
+                  status(server.name, { state: 'missing-credentials', missing: resolved.missing })
                 }
               }
-              mountMcpServers(fiberContext, configs, (serverName, error) => {
-                console.warn(
-                  `[nekro-nxt] MCP 服务 ${serverName}（${described.displayName}）加载失败：${error instanceof Error ? error.message : String(error)}`,
-                )
+              mountMcpServers(fiberContext, configs, (serverName, outcome) => {
+                if ('toolCount' in outcome && outcome.toolCount > 0) {
+                  status(serverName, { state: 'connected', toolCount: outcome.toolCount })
+                  return
+                }
+                const message =
+                  'error' in outcome
+                    ? outcome.error instanceof Error
+                      ? outcome.error.message
+                      : String(outcome.error)
+                    : '没有可用的工具：连接失败或服务没有提供工具'
+                status(serverName, { state: 'unavailable', message })
+                console.warn(`[nekro-nxt] MCP 服务 ${serverName}（${described.displayName}）：${message}`)
               })
             },
           },

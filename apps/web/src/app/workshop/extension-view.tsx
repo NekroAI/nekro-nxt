@@ -46,6 +46,7 @@ import {
   contributionParts,
   extensionUsage,
   mcpParts,
+  mcpStatusText,
   recordLabels,
   scopeLabel,
 } from './workshop-model.js'
@@ -333,6 +334,18 @@ function AgentUsage({
               <b>{agent.name}</b>
               {broken ? (
                 <small className={styles.bad}>{record.runtime?.message ?? '运行异常'}</small>
+              ) : record?.mcpServers !== undefined && record.mcpServers.length > 0 ? (
+                <small
+                  className={
+                    record.mcpServers.some(
+                      (server) => server.state === 'unavailable' || server.state === 'missing-credentials',
+                    )
+                      ? styles.bad
+                      : undefined
+                  }
+                >
+                  {mcpStatusText(record.mcpServers)}
+                </small>
               ) : record ? (
                 <small>{relativeTime(record.activatedAt)}启用</small>
               ) : null}

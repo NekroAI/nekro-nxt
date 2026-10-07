@@ -274,6 +274,12 @@ describe('MCP servers in a real Host', () => {
         interval: 100,
       })
 
+      await vi.waitFor(() =>
+        expect(runtime.mcpStatus.list(entity.agentId, extensionId)).toEqual([
+          expect.objectContaining({ name: 'fixture', state: 'connected', toolCount: 1 }),
+        ]),
+      )
+
       // The bridged tool runs in the server process with the stored credential, not the one typed in the test call.
       await runtime.internalChannel.postMessage({
         channelId: entity.channelId,
@@ -281,6 +287,32 @@ describe('MCP servers in a real Host', () => {
         parts: [{ type: 'text', text: '调用回声工具。' }],
       })
       await vi.waitFor(() => expect(model.toolResult).toContain('echo:示例:token'), { timeout: 15_000 })
+
+      // A second agent enabled without the credential reports it instead of connecting.
+      const second = await runtime.createAgentWithInternalChannel({
+        displayName: 'MCP 智能体二',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+      })
+      await runtime.activation.activate({
+        agentId: second.agentId,
+        extensionId,
+        revisionId,
+        permissionApproval: {
+          permissionDigest: runtime.activation.getPermissionRequirement(second.agentId, extensionId, revisionId)
+            .permissionDigest,
+        },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: second.channelId,
+        clientEventId: 'mcp-missing',
+        parts: [{ type: 'text', text: '建立会话。' }],
+      })
+      await vi.waitFor(() =>
+        expect(runtime.mcpStatus.list(second.agentId, extensionId)).toEqual([
+          expect.objectContaining({ name: 'fixture', state: 'missing-credentials', missing: ['FIXTURE_TOKEN'] }),
+        ]),
+      )
 
       const disabled = await fetch(`${base}/api/agents/${entity.agentId}/extensions/${extensionId}/activation`, {
         method: 'DELETE',

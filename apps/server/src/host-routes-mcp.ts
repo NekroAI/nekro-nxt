@@ -16,8 +16,13 @@ const MCP_FORM_ORIGIN = {
 export function registerMcpRoutes({
   runtime,
   registerRoute,
+  broadcast,
   broadcastExtensionsChanged,
 }: HostRouteContext): () => void {
+  // Connection outcomes arrive after the Session mounted; clients refresh the extension's usage rows.
+  const unsubscribe = runtime.mcpStatus.subscribe(() =>
+    broadcast({ event: 'snapshot-changed', data: { changed: true } }),
+  )
   registerRoute({
     kind: 'exact',
     path: '/api/mcp-servers/test',
@@ -85,5 +90,5 @@ export function registerMcpRoutes({
       }
     },
   })
-  return () => undefined
+  return unsubscribe
 }

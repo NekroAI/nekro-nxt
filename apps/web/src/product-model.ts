@@ -306,6 +306,8 @@ export interface LocalExtensionSummary {
     readonly config: JsonValue
     /** Secret fields the Host stores for this Activation; their values never reach the client. */
     readonly configuredSecrets: readonly string[]
+    /** Latest connection attempt of each declared MCP server. */
+    readonly mcpServers?: HostApiResponse<'snapshot'>['extensions'][number]['activations'][number]['mcpServers']
     readonly runtime?: {
       readonly status: 'active' | 'restore-failed' | 'dispose-failed'
       readonly message?: string

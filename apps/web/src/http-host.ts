@@ -582,6 +582,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           activatedAt: candidate.activatedAt,
           config: candidate.config,
           configuredSecrets: candidate.configuredSecrets ?? [],
+          ...(candidate.mcpServers === undefined ? {} : { mcpServers: candidate.mcpServers }),
           ...(candidate.runtime === undefined
             ? {}
             : {
