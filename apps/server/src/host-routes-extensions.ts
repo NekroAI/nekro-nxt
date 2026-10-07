@@ -23,7 +23,6 @@ import {
   buildSnapshotMessage,
   createExtensionRevisionExport,
   HOST_UI_PRODUCT_MUTATIONS,
-  parseExtensionImport,
   projectDshPlugins,
   readBinaryBody,
   readJsonBody,
@@ -32,7 +31,6 @@ import {
   writeError,
   writeJson,
   type HostRouteContext,
-  type ParsedExtensionImport,
 } from './host-route-support.js'
 import { performHostUiNetworkRequest } from './host-ui-network.js'
 export function registerExtensionsRoutes({
@@ -40,11 +38,8 @@ export function registerExtensionsRoutes({
   registerRoute,
   broadcast,
   broadcastExtensionsChanged,
+  extensionImports,
 }: HostRouteContext): () => void {
-  const pendingExtensionImports = new Map<
-    string,
-    { readonly parsed: ParsedExtensionImport; readonly expiresAt: number }
-  >()
   const pendingHostUiCredentials = new Map<
     string,
     {
@@ -57,11 +52,6 @@ export function registerExtensionsRoutes({
   const pruneExpiredHostUiCredentials = (now = Date.now()): void => {
     for (const [token, pending] of pendingHostUiCredentials) {
       if (pending.expiresAt <= now) pendingHostUiCredentials.delete(token)
-    }
-  }
-  const pruneExpiredExtensionImports = (now = Date.now()): void => {
-    for (const [token, pending] of pendingExtensionImports) {
-      if (pending.expiresAt <= now) pendingExtensionImports.delete(token)
     }
   }
   registerRoute({
@@ -553,30 +543,12 @@ export function registerExtensionsRoutes({
           return
         }
         try {
-          pruneExpiredExtensionImports()
-          const parsed = parseExtensionImport(await readBinaryBody(req, 16 * 1024 * 1024))
-          const existingRevision = runtime.repository.getExtensionRevision(parsed.manifest.revision.id)
-          if (
-            existingRevision &&
-            (existingRevision.extensionId !== parsed.manifest.extension.id ||
-              existingRevision.contentDigest !== parsed.manifest.revision.contentDigest ||
-              existingRevision.payloadDigest !== parsed.manifest.revision.payloadDigest)
-          ) {
-            throw new Error('相同 Extension/Revision 身份已存在，但内容不同；不会覆盖本地版本。')
-          }
-          const token = randomUUID()
-          pendingExtensionImports.set(token, { parsed, expiresAt: Date.now() + 10 * 60_000 })
-          const slugOwner = runtime.repository.getExtensionBySlug(parsed.manifest.extension.slug)
-          writeContractJson(res, 200, HostApiContracts.inspectExtensionImport, {
-            token,
-            extensionId: parsed.manifest.extension.id,
-            revisionId: parsed.manifest.revision.id,
-            slug: parsed.manifest.extension.slug,
-            displayName: parsed.manifest.extension.displayName,
-            scope: parsed.manifest.extension.scope,
-            idempotent: existingRevision !== undefined,
-            slugConflict: slugOwner !== undefined && slugOwner.id !== parsed.manifest.extension.id,
-          })
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.inspectExtensionImport,
+            extensionImports.inspect(runtime, await readBinaryBody(req, 16 * 1024 * 1024)),
+          )
         } catch (error) {
           writeError(
             res,
@@ -594,22 +566,21 @@ export function registerExtensionsRoutes({
           return
         }
         try {
-          pruneExpiredExtensionImports()
           const token = decodeURIComponent(importCommitMatch[1] ?? '')
           const params = HostApiContracts.commitExtensionImport.parseParams({ token })
           const input = HostApiContracts.commitExtensionImport.parseRequest(await readJsonBody(req))
-          const pending = pendingExtensionImports.get(params.token)
+          const pending = extensionImports.get(params.token)
           if (!pending) throw new Error('扩展导入检查已失效，请重新选择文件。')
           const result = await runtime.extensionService.importRevision({
-            extension: pending.parsed.manifest.extension,
-            revision: pending.parsed.manifest.revision,
-            manifest: pending.parsed.revisionManifest,
-            sources: pending.parsed.sources,
-            resources: pending.parsed.resources,
+            extension: pending.manifest.extension,
+            revision: pending.manifest.revision,
+            manifest: pending.revisionManifest,
+            sources: pending.sources,
+            resources: pending.resources,
             dshVersion: DEEPSEEK_HARNESS_VERSION,
             ...(input.localSlug === undefined ? {} : { localSlug: input.localSlug }),
           })
-          pendingExtensionImports.delete(params.token)
+          extensionImports.delete(params.token)
           broadcastExtensionsChanged()
           writeContractJson(res, 200, HostApiContracts.commitExtensionImport, {
             extensionId: result.extension.id,
@@ -914,7 +885,7 @@ export function registerExtensionsRoutes({
     },
   })
   return () => {
-    pendingExtensionImports.clear()
+    extensionImports.clear()
     pendingHostUiCredentials.clear()
   }
 }

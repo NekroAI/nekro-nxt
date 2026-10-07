@@ -7,10 +7,20 @@ declare const styles: {
   readonly attemptKey: string
   readonly attemptMeta: string
   readonly attempts: string
+  readonly backLink: string
   readonly bad: string
   readonly cellAgent: string
   readonly cellAgentText: string
   readonly chevron: string
+  readonly communityCard: string
+  readonly communityCardFoot: string
+  readonly communityCardHead: string
+  readonly communityDescription: string
+  readonly communityGrid: string
+  readonly communityHighlight: string
+  readonly communityReview: string
+  readonly communitySummary: string
+  readonly communityTools: string
   readonly config: string
   readonly contributionName: string
   readonly contributions: string

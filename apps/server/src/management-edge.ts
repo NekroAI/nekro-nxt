@@ -152,12 +152,17 @@ const cookie = (
 ): string =>
   `${name}=${value}; Path=/; Max-Age=${maxAgeSeconds}; ${options.httpOnly ? 'HttpOnly; ' : ''}${options.secure ? 'Secure; ' : ''}SameSite=Lax`
 
-/** Health and the brand icon the login page shows are the only anonymous pages passed to the product server. */
+/**
+ * Anonymous pages passed to the product server: health, the brand icon the login page shows, and the community
+ * sign-in callback. The callback completes only a sign-in this instance started, matched by a one-time state; the
+ * browser that returns from the community (often the system browser of a Desktop user) carries no session here.
+ */
 const publicProxyPath = (pathname: string): boolean =>
   pathname === '/health/live' ||
   pathname === '/health/ready' ||
   pathname === '/favicon.svg' ||
-  pathname === '/brand/mark.svg'
+  pathname === '/brand/mark.svg' ||
+  pathname === '/community/callback'
 
 /** A short device name from the browser's User-Agent, e.g. 「浏览器 · Chrome · macOS」. */
 export const browserDeviceLabel = (userAgent: string | undefined): string => {

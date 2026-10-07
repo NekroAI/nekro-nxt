@@ -87,6 +87,7 @@ import {
   type DshHostRuntimeOptions,
 } from './index.js'
 import { NotificationService } from './notifications.js'
+import { CommunityService } from './community.js'
 export type { ConnectionTestResult } from './connection-application.js'
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
@@ -128,6 +129,8 @@ export interface NekroRuntimeOptions {
   readonly now?: () => number
   readonly nextUlid?: () => string
   readonly notifications?: { readonly fetch?: typeof fetch }
+  /** NekroNXT 社区地址（默认正式社区）与测试用 fetch。 */
+  readonly community?: { readonly url?: string | undefined; readonly fetch?: typeof fetch }
   /** Replaced by an offline Fake for tests and AI validation; production uses fetch/ws. */
   readonly adapterTransport?: AdapterTransportService
   /** Overrides first-party Adapter composition for isolated tests and custom hosts. */
@@ -174,6 +177,7 @@ export class NekroRuntime {
   readonly installation: HostExtensionInstallationCoordinator
   readonly credentials: LocalCredentialStore
   readonly notifications: NotificationService
+  readonly community: CommunityService
   readonly dshPluginInstaller: DshPluginPackageInstaller
   readonly sessionStoragePreparation: DshSessionStoragePreparation
   readonly sessionStorageRetirement: DshSessionStorageRetirementReport | undefined
@@ -216,6 +220,7 @@ export class NekroRuntime {
     readonly extensionBuilder: ExtensionBuilder
     readonly credentials: LocalCredentialStore
     readonly notifications: NotificationService
+    readonly community: CommunityService
     readonly dshPluginInstaller: DshPluginPackageInstaller
     readonly unsubscribeDynamicApproval: () => void
     readonly sessionStoragePreparation: DshSessionStoragePreparation
@@ -244,6 +249,7 @@ export class NekroRuntime {
     this.activation = input.activation
     this.credentials = input.credentials
     this.notifications = input.notifications
+    this.community = input.community
     this.dshPluginInstaller = input.dshPluginInstaller
     this.#unsubscribeDynamicApproval = input.unsubscribeDynamicApproval
     this.compatibility = input.compatibility
@@ -770,6 +776,11 @@ export class NekroRuntime {
         ...(options.notifications?.fetch === undefined ? {} : { fetch: options.notifications.fetch }),
         now,
       })
+      const community = new CommunityService(repository, credentials, {
+        communityUrl: options.community?.url,
+        ...(options.community?.fetch === undefined ? {} : { fetch: options.community.fetch }),
+        now,
+      })
       const unsubscribeDynamicApproval = host.subscribeDynamicApprovalRequests((event) => {
         const displayName = repository.getAgent(event.agentId)?.revision.displayName ?? '未命名智能体'
         void notifications
@@ -826,6 +837,7 @@ export class NekroRuntime {
         extensionBuilder,
         credentials,
         notifications,
+        community,
         dshPluginInstaller,
         unsubscribeDynamicApproval,
         sessionStoragePreparation,

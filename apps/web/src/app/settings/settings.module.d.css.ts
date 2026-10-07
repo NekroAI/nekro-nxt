@@ -1,4 +1,5 @@
 declare const styles: {
+  readonly actions: string
   readonly adapterName: string
   readonly back: string
   readonly barkFields: string

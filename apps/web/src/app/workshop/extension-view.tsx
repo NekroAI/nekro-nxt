@@ -1,6 +1,6 @@
 import { useGo } from '../model/nav.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
-import { ChevronRight, Download, MoreHorizontal, Trash2 } from 'lucide-react'
+import { ChevronRight, Download, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { HostApiContracts } from '@nekro-nxt/contracts'
@@ -50,6 +50,7 @@ import {
   recordLabels,
   scopeLabel,
 } from './workshop-model.js'
+import { PublishDialog } from './publish-dialog.js'
 import styles from './workshop.module.css'
 
 type Revision = LocalExtensionSummary['revisions'][number]
@@ -83,6 +84,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   const hostActions = useHostActions()
   const usage = extensionUsage(extension)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [publishOpen, setPublishOpen] = useState(false)
   const labels = useMemo(() => recordLabels(extension.revisions), [extension.revisions])
   const latest = extension.revisions.at(-1)
   const current = extension.revisions.findLast(usable) ?? latest
@@ -127,6 +129,16 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                       icon: <Download size={14} />,
                       onSelect: () => void download(extension, current).catch(failure),
                     },
+                    ...(usable(current)
+                      ? [
+                          {
+                            key: 'publish',
+                            label: '发布到社区',
+                            icon: <Share2 size={14} />,
+                            onSelect: () => setPublishOpen(true),
+                          },
+                        ]
+                      : []),
                   ]
                 : []),
               {
@@ -140,6 +152,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
           />
         }
       />
+      <PublishDialog extension={extension} revision={current} open={publishOpen} onOpenChange={setPublishOpen} />
       {extension.description ? <p className={styles.lead}>{extension.description}</p> : null}
       <CompatibilityNotices extensionId={extension.id} />
       {unsupported > 0 ? (

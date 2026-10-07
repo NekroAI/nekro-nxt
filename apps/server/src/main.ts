@@ -630,6 +630,8 @@ const startLeasedServer = async (
       llmSettingsPath: path.join(dataRoot, 'dsh', 'settings.yaml'),
       llmCredentialPath: path.join(dataRoot, 'dsh', '.credentials.yaml'),
       developmentWorkspaceRoot,
+      // 默认连接正式社区；测试站或本地社区开发服务用 NEKRO_COMMUNITY_URL 覆盖。
+      community: { url: process.env['NEKRO_COMMUNITY_URL'] },
       ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
     },
     options.signal,

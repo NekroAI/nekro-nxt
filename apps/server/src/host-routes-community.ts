@@ -1,0 +1,199 @@
+import { ExtensionIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+import type { ServerResponse } from 'node:http'
+import { COMMUNITY_CALLBACK_PATH, CommunityError } from './community.js'
+import {
+  createExtensionRevisionExport,
+  readJsonBody,
+  writeContractJson,
+  writeError,
+  type HostRouteContext,
+} from './host-route-support.js'
+
+const escapeHtml = (value: string): string => value.replace(/[&<>"']/gu, (char) => `&#${char.charCodeAt(0)};`)
+
+/** 社区回跳后显示的自包含页面：无脚本、无外部资源。 */
+const callbackPage = (ok: boolean, message: string): string => `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${ok ? '已登录社区' : '登录社区未完成'} · NekroNXT</title>
+<style>
+:root { color-scheme: light dark; --bg: #f3f1ec; --surface: #fffefb; --fg: #14243d; --muted: #566275; --line: rgb(23 42 69 / 0.09); --accent: ${ok ? '#1b6843' : '#b03a30'}; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0b1524; --surface: #12223a; --fg: #eef2f8; --muted: #8e9bb0; --line: rgb(190 210 240 / 0.09); --accent: ${ok ? '#6dcf98' : '#f08f83'}; } }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--bg); color: var(--fg);
+  font: 14px/1.6 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif; }
+main { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 28px; text-align: center; }
+.mark { width: 44px; height: 44px; border-radius: 50%; margin: 0 auto 14px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-size: 22px; font-weight: 600; }
+h1 { margin: 0 0 6px; font-size: 18px; }
+p { margin: 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+<div class="mark" aria-hidden="true">${ok ? '✓' : '!'}</div>
+<h1>${ok ? '已登录社区' : '登录社区未完成'}</h1>
+<p>${escapeHtml(message)}</p>
+</main>
+</body>
+</html>`
+
+const writeCallbackPage = (res: ServerResponse, status: number, ok: boolean, message: string): void => {
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'no-store',
+    'content-security-policy':
+      "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    'referrer-policy': 'no-referrer',
+    'x-content-type-options': 'nosniff',
+  })
+  res.end(callbackPage(ok, message))
+}
+
+const communityFailure = (res: ServerResponse, error: unknown, fallbackCode: string): void => {
+  if (error instanceof CommunityError) {
+    writeError(res, error.status, error.code, error.message)
+    return
+  }
+  writeError(res, 400, fallbackCode, error instanceof Error ? error.message : String(error))
+}
+
+/**
+ * 社区账号、目录浏览、安装与发布。安装复用本地文件导入的检查与确认；发布导出所选保存记录后上传。
+ * `/community/callback` 是社区授权后的回跳页，在安全入口中免登录，凭一次性 state 完成登录。
+ */
+export function registerCommunityRoutes({ runtime, registerRoute, extensionImports }: HostRouteContext): () => void {
+  const community = runtime.community
+
+  registerRoute({
+    kind: 'exact',
+    path: COMMUNITY_CALLBACK_PATH,
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        return
+      }
+      try {
+        const account = await community.completeLogin(new URL(req.url ?? '/', 'http://localhost').searchParams)
+        writeCallbackPage(res, 200, true, `已用 @${account.handle} 登录社区。可以关闭这个页面，回到 NekroNXT。`)
+      } catch (error) {
+        writeCallbackPage(
+          res,
+          400,
+          false,
+          error instanceof CommunityError ? error.message : '登录失败，请回到 NekroNXT 重新登录社区。',
+        )
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/community/status',
+    handler: (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        return
+      }
+      writeContractJson(res, 200, HostApiContracts.getCommunityStatus, community.status())
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/community/login',
+    handler: async (req, res) => {
+      try {
+        if (req.method === 'POST') {
+          const input = HostApiContracts.startCommunityLogin.parseRequest(await readJsonBody(req))
+          writeContractJson(res, 200, HostApiContracts.startCommunityLogin, {
+            authorizeUrl: community.startLogin(input.returnOrigin),
+          })
+          return
+        }
+        if (req.method === 'DELETE') {
+          writeContractJson(res, 200, HostApiContracts.communityLogout, await community.logout())
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', '只支持 POST 与 DELETE。')
+      } catch (error) {
+        communityFailure(res, error, 'community-login-failed')
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/community/publish',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        return
+      }
+      try {
+        const input = HostApiContracts.publishToCommunity.parseRequest(await readJsonBody(req))
+        const exported = await createExtensionRevisionExport(runtime, input.extensionId, input.revisionId)
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.publishToCommunity,
+          await community.publish({ filename: exported.filename, body: exported.body, notes: input.notes }),
+        )
+      } catch (error) {
+        communityFailure(res, error, 'community-publish-failed')
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/community',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      try {
+        if (url.pathname === '/api/community/extensions') {
+          if (req.method !== 'GET') {
+            writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+            return
+          }
+          const params = HostApiContracts.listCommunityExtensions.parseParams({
+            ...(url.searchParams.get('query') ? { query: url.searchParams.get('query') } : {}),
+            ...(url.searchParams.get('scope') ? { scope: url.searchParams.get('scope') } : {}),
+            ...(url.searchParams.get('cursor') ? { cursor: url.searchParams.get('cursor') } : {}),
+          })
+          writeContractJson(res, 200, HostApiContracts.listCommunityExtensions, await community.listExtensions(params))
+          return
+        }
+        const extensionMatch = /^\/api\/community\/extensions\/([^/]+)$/u.exec(url.pathname)
+        if (extensionMatch) {
+          if (req.method !== 'GET') {
+            writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+            return
+          }
+          const extensionId = ExtensionIdSchema.parse(decodeURIComponent(extensionMatch[1] ?? ''))
+          writeContractJson(res, 200, HostApiContracts.getCommunityExtension, await community.getExtension(extensionId))
+          return
+        }
+        const importMatch = /^\/api\/community\/releases\/([^/]+)\/import$/u.exec(url.pathname)
+        if (importMatch) {
+          if (req.method !== 'POST') {
+            writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+            return
+          }
+          const params = HostApiContracts.importCommunityRelease.parseParams({
+            releaseId: decodeURIComponent(importMatch[1] ?? ''),
+          })
+          const bytes = await community.downloadRelease(params.releaseId)
+          writeContractJson(res, 200, HostApiContracts.importCommunityRelease, extensionImports.inspect(runtime, bytes))
+          return
+        }
+        writeError(res, 404, 'not-found', '接口不存在。')
+      } catch (error) {
+        communityFailure(res, error, 'community-request-failed')
+      }
+    },
+  })
+
+  return () => undefined
+}

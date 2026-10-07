@@ -192,3 +192,9 @@
 .faint {
   color: var(--muted);
 }
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}

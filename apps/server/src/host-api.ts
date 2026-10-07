@@ -10,11 +10,13 @@ import {
 } from '@nekro-nxt/contracts'
 import type { NekroRuntime } from './bootstrap.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
+import { ExtensionImportStaging } from './extension-import-staging.js'
 import { assembleChannelRuntime, HostQueries } from './host-queries.js'
 import { projectChannelFact, projectConnectionEvent, writeError, writeJson } from './host-route-support.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
 import { registerMcpRoutes } from './host-routes-mcp.js'
+import { registerCommunityRoutes } from './host-routes-community.js'
 import { registerConnectionsRoutes } from './host-routes-connections.js'
 import { registerExtensionsRoutes } from './host-routes-extensions.js'
 import { registerSettingsRoutes } from './host-routes-settings.js'
@@ -146,6 +148,7 @@ export const createNekroHostApi = (
     if (event.event === 'snapshot-changed' || event.event === 'dynamic-changed') projections.scheduleAttentionCheck()
   }
   const projections = new WorkspaceProjections(runtime, (event) => hub.publish(event))
+  const extensionImports = new ExtensionImportStaging()
   disposers.push(() => projections.dispose())
   const broadcastExtensionsChanged = (): void => {
     broadcast({ event: 'extensions-changed', data: { changed: true } })
@@ -297,6 +300,7 @@ export const createNekroHostApi = (
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
       projections,
+      extensionImports,
     }),
   )
   disposers.push(
@@ -307,6 +311,7 @@ export const createNekroHostApi = (
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
       projections,
+      extensionImports,
     }),
   )
   disposers.push(
@@ -317,6 +322,7 @@ export const createNekroHostApi = (
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
       projections,
+      extensionImports,
     }),
   )
   disposers.push(
@@ -327,6 +333,7 @@ export const createNekroHostApi = (
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
       projections,
+      extensionImports,
     }),
   )
   disposers.push(
@@ -337,6 +344,7 @@ export const createNekroHostApi = (
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
       projections,
+      extensionImports,
     }),
   )
 
@@ -348,6 +356,18 @@ export const createNekroHostApi = (
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
       projections,
+      extensionImports,
+    }),
+  )
+  disposers.push(
+    registerCommunityRoutes({
+      runtime,
+      registerRoute,
+      broadcast,
+      broadcastExtensionsChanged,
+      readCursor: () => hub.cursor,
+      projections,
+      extensionImports,
     }),
   )
   disposers.push(
@@ -358,6 +378,7 @@ export const createNekroHostApi = (
       broadcastExtensionsChanged,
       readCursor: () => hub.cursor,
       projections,
+      extensionImports,
     }),
   )
 

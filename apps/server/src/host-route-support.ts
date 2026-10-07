@@ -27,6 +27,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import path from 'node:path'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
+import type { ExtensionImportStaging } from './extension-import-staging.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
 export interface HostRouteContext {
   readonly readCursor: () => HostApiResponse<'snapshot'>['cursor']
@@ -35,6 +36,7 @@ export interface HostRouteContext {
   readonly broadcast: (event: HostSseEvent) => void
   readonly broadcastExtensionsChanged: () => void
   readonly projections: WorkspaceProjections
+  readonly extensionImports: ExtensionImportStaging
 }
 export const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
 

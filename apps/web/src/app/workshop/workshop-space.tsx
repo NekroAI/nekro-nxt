@@ -1,8 +1,13 @@
 import { useGo } from '../model/nav.js'
-import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, Upload, Wrench } from 'lucide-react'
+import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, Store, Upload, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
-import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
+import {
+  communityReviewLabel,
+  HostApiContracts,
+  type CommunityExtensionDetail,
+  type HostApiResponse,
+} from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import { useHostActions, useProductRuntime, useProductStore } from '../../product-runtime.js'
 import {
@@ -27,6 +32,7 @@ import {
 import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
 import { useCrumb } from '../shell/crumb.js'
+import { CommunityView } from './community-view.js'
 import { ExtensionView } from './extension-view.js'
 import { McpServerDialog } from './mcp-dialog.js'
 import { TaskView } from './task-view.js'
@@ -46,9 +52,13 @@ import styles from './workshop.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
 
-type Route = { readonly kind: 'task' | 'extension'; readonly id: string }
+type Route =
+  | { readonly kind: 'task' | 'extension'; readonly id: string }
+  | { readonly kind: 'community'; readonly id: string | undefined }
 
 const parse = (path: string): Route | undefined => {
+  const community = /^\/workshop\/community(?:\/([^/]+))?\/?$/u.exec(path)
+  if (community) return { kind: 'community', id: community[1] ? decodeURIComponent(community[1]) : undefined }
   const match = /^\/workshop\/(tasks|extensions)\/([^/]+)/u.exec(path)
   return match
     ? { kind: match[1] === 'tasks' ? 'task' : 'extension', id: decodeURIComponent(match[2] ?? '') }
@@ -86,14 +96,25 @@ export default function WorkshopSpace() {
   const [dragging, setDragging] = useState(false)
   const [dropped, setDropped] = useState<File>()
   const [addingMcp, setAddingMcp] = useState(false)
+  const [communityImport, setCommunityImport] = useState<{
+    readonly inspection: Inspection
+    readonly detail: CommunityExtensionDetail
+  }>()
   const importer = useRef<HTMLInputElement>(null)
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
-  useCrumb('工坊', task?.title ?? extension?.name)
+  const community = route?.kind === 'community'
+  useCrumb('工坊', task?.title ?? extension?.name ?? (community ? '社区扩展' : undefined))
 
-  if (route && !task && !extension && hostStatus === 'ready') return <Navigate to="/workshop" replace />
+  if (route && !community && !task && !extension && hostStatus === 'ready') return <Navigate to="/workshop" replace />
 
-  const selected = task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined
+  const selected = community
+    ? 'community'
+    : task
+      ? `task:${task.id}`
+      : extension
+        ? `extension:${extension.id}`
+        : undefined
   const agentOf = (id: string) => agents.find((item) => item.id === id)
   const needle = query.trim().toLowerCase()
   const visibleTasks = tasks.filter((item) => matches(needle, item.title, agentOf(item.agentId)?.name))
@@ -142,6 +163,18 @@ export default function WorkshopSpace() {
         }}
       >
         <SelectionList selectedKey={selected}>
+          <Link
+            to="/workshop/community"
+            className={styles.row}
+            data-selected={selected === 'community'}
+            aria-current={selected === 'community' ? 'page' : undefined}
+          >
+            <span className={styles.rowGlyph}>
+              <Store size={14} />
+            </span>
+            <span className={styles.rowName}>社区扩展</span>
+            <span className={styles.rowSub}>浏览与安装其他人分享的扩展</span>
+          </Link>
           <h3 className={styles.group}>创造任务</h3>
           {tasks.length === 0 ? <p className={styles.groupEmpty}>还没有创造任务</p> : null}
           {taskGroups.map(({ group, items }) => (
@@ -243,7 +276,21 @@ export default function WorkshopSpace() {
         onOpenChange={setAddingMcp}
         onCreated={(id) => navigate(`/workshop/extensions/${id}`)}
       />
-      {task ? (
+      <ImportDialog
+        inspection={communityImport?.inspection}
+        note={communityImport ? <CommunityImportNote detail={communityImport.detail} /> : null}
+        onClose={() => setCommunityImport(undefined)}
+        onImported={(id) => {
+          setCommunityImport(undefined)
+          navigate(`/workshop/extensions/${id}`)
+        }}
+      />
+      {route?.kind === 'community' ? (
+        <CommunityView
+          extensionId={route.id}
+          onInspected={(inspection, detail) => setCommunityImport({ inspection, detail })}
+        />
+      ) : task ? (
         <TaskView key={task.id} task={task} />
       ) : extension ? (
         <ExtensionView key={extension.id} extension={extension} />
@@ -370,20 +417,17 @@ function ImportFlow({
   readonly dropped: File | undefined
   readonly onImported: (extensionId: string) => void
 }) {
-  const hostActions = useHostActions()
   const [inspection, setInspection] = useState<Inspection>()
-  const [slug, setSlug] = useState('')
-  const [busy, setBusy] = useState(false)
 
   const inspect = async (file: File) => {
     try {
-      const result = await callHostApi(
-        HostApiContracts.inspectExtensionImport,
-        {},
-        { bytes: new Uint8Array(await file.arrayBuffer()) },
+      setInspection(
+        await callHostApi(
+          HostApiContracts.inspectExtensionImport,
+          {},
+          { bytes: new Uint8Array(await file.arrayBuffer()) },
+        ),
       )
-      setInspection(result)
-      setSlug(result.slugConflict ? `${result.slug}-2` : result.slug)
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
     }
@@ -392,6 +436,58 @@ function ImportFlow({
     if (dropped) void inspect(dropped)
     // A new drop is a new File object; inspect each one once.
   }, [dropped])
+
+  return (
+    <>
+      <FileChooser ref={input} accept=".nxt-extension,.zip,application/zip" onFile={(file) => void inspect(file)} />
+      <ImportDialog
+        inspection={inspection}
+        note={null}
+        onClose={() => setInspection(undefined)}
+        onImported={(id) => {
+          setInspection(undefined)
+          onImported(id)
+        }}
+      />
+    </>
+  )
+}
+
+/** 社区来源的导入额外说明审查结论：安装者在确认前再看一次。 */
+function CommunityImportNote({ detail }: { readonly detail: CommunityExtensionDetail }) {
+  const label = detail.latest ? communityReviewLabel(detail.latest.reviewStatus) : undefined
+  return (
+    <p>
+      来自社区 @{detail.publisher.handle}
+      {label ? (
+        <>
+          {' · '}
+          <Chip tone={label.tone}>{label.label}</Chip>
+        </>
+      ) : null}
+    </p>
+  )
+}
+
+/** The confirmation step shared by file and community imports; the package was already checked by the Host. */
+function ImportDialog({
+  inspection,
+  note,
+  onClose,
+  onImported,
+}: {
+  readonly inspection: Inspection | undefined
+  readonly note: ReactNode
+  readonly onClose: () => void
+  readonly onImported: (extensionId: string) => void
+}) {
+  const hostActions = useHostActions()
+  const [slug, setSlug] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (inspection) setSlug(inspection.slugConflict ? `${inspection.slug}-2` : inspection.slug)
+  }, [inspection?.token])
+
   const commit = async () => {
     if (!inspection) return
     setBusy(true)
@@ -400,7 +496,6 @@ function ImportFlow({
         token: inspection.token,
         ...(inspection.slugConflict ? { localSlug: slug } : {}),
       })
-      setInspection(undefined)
       toast(result.idempotent ? '本机已有相同的保存记录' : '已导入，尚未启用')
       onImported(result.extensionId)
     } catch (error) {
@@ -411,42 +506,40 @@ function ImportFlow({
   }
 
   return (
-    <>
-      <FileChooser ref={input} accept=".nxt-extension,.zip,application/zip" onFile={(file) => void inspect(file)} />
-      <Dialog
-        open={inspection !== undefined}
-        onOpenChange={(open) => !open && !busy && setInspection(undefined)}
-        title={`导入「${inspection?.displayName ?? ''}」`}
-        actions={
-          <>
-            <Button onClick={() => setInspection(undefined)} disabled={busy}>
-              取消
-            </Button>
-            <Button
-              variant="primary"
-              busy={busy}
-              disabled={inspection?.slugConflict === true && !SLUG_PATTERN.test(slug)}
-              onClick={() => void commit()}
-            >
-              {inspection?.idempotent ? '确认' : '导入'}
-            </Button>
-          </>
-        }
-      >
-        {inspection ? (
-          <>
-            <div>
-              <Chip>{scopeLabel[inspection.scope]}</Chip>
-            </div>
-            <p>{inspection.idempotent ? '本机已有完全相同的保存记录。' : '导入后不会自动启用。'}</p>
-            {inspection.slugConflict ? (
-              <Field label="标识" hint="原标识已被占用">
-                <Input value={slug} spellCheck={false} onChange={(event) => setSlug(event.target.value.trim())} />
-              </Field>
-            ) : null}
-          </>
-        ) : null}
-      </Dialog>
-    </>
+    <Dialog
+      open={inspection !== undefined}
+      onOpenChange={(open) => !open && !busy && onClose()}
+      title={`导入「${inspection?.displayName ?? ''}」`}
+      actions={
+        <>
+          <Button onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            disabled={inspection?.slugConflict === true && !SLUG_PATTERN.test(slug)}
+            onClick={() => void commit()}
+          >
+            {inspection?.idempotent ? '确认' : '导入'}
+          </Button>
+        </>
+      }
+    >
+      {inspection ? (
+        <>
+          <div>
+            <Chip>{scopeLabel[inspection.scope]}</Chip>
+          </div>
+          {note}
+          <p>{inspection.idempotent ? '本机已有完全相同的保存记录。' : '导入后不会自动启用。'}</p>
+          {inspection.slugConflict ? (
+            <Field label="标识" hint="原标识已被占用">
+              <Input value={slug} spellCheck={false} onChange={(event) => setSlug(event.target.value.trim())} />
+            </Field>
+          ) : null}
+        </>
+      ) : null}
+    </Dialog>
   )
 }

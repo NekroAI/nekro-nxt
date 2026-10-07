@@ -1168,6 +1168,73 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('browses community extensions, warns about unreviewed releases and installs through the import dialog', async () => {
+    const summary = {
+      id: 'ext_communityweather',
+      scope: 'agent',
+      displayName: '社区天气',
+      summary: '查询城市天气预报。',
+      tags: ['天气'],
+      publisher: { handle: 'demo-author', displayName: '示例作者', avatarUrl: null },
+      latest: {
+        id: 'rel_communityweather',
+        number: 2,
+        reviewStatus: 'pending',
+        grade: null,
+        permissions: [{ key: 'network', level: 'normal', label: '访问指定网站', detail: 'api.example.com' }],
+        packageSize: 2048,
+        requiresSdk: 6,
+        notes: '',
+        createdAt: 1_790_000_000_000,
+      },
+      downloads: 3,
+      updatedAt: 1_790_000_000_000,
+      pageUrl: 'https://community.example.test/extensions/ext_communityweather',
+    }
+    const importRequests: string[] = []
+    await withProductPage(
+      '/workshop/community',
+      async (page) => {
+        await page.getByRole('link', { name: /社区天气/u }).click()
+        await playwrightExpect(page.getByRole('heading', { name: '社区天气' })).toBeVisible()
+        await playwrightExpect(page.locator('body')).toContainText('风险未知')
+        await playwrightExpect(page.locator('body')).toContainText('访问指定网站')
+        await page.getByRole('button', { name: '安装' }).click()
+        const dialog = page.getByRole('dialog', { name: '导入「社区天气」' })
+        await playwrightExpect(dialog).toBeVisible()
+        await playwrightExpect(dialog).toContainText('来自社区 @demo-author')
+        expect(importRequests).toEqual(['rel_communityweather'])
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/community/extensions?**', (request) =>
+          request.fulfill({ json: { items: [summary], nextCursor: null } }),
+        )
+        await page.route('**/api/community/extensions', (request) =>
+          request.fulfill({ json: { items: [summary], nextCursor: null } }),
+        )
+        await page.route('**/api/community/extensions/ext_communityweather', (request) =>
+          request.fulfill({ json: { ...summary, description: '', sourceUrl: null, review: null } }),
+        )
+        await page.route('**/api/community/releases/*/import', async (request) => {
+          importRequests.push(request.request().url().split('/').at(-2) ?? '')
+          await request.fulfill({
+            json: {
+              token: 'community-token',
+              extensionId: 'ext_communityweather',
+              revisionId: 'xrv_communityweather',
+              slug: 'community-weather',
+              displayName: '社区天气',
+              scope: 'agent',
+              idempotent: false,
+              slugConflict: false,
+            },
+          })
+        })
+      },
+    )
+  })
+
   test('finds platform members in the account detail and through the command palette', async () => {
     const queries: string[] = []
     await withProductPage(

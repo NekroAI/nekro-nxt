@@ -31,6 +31,13 @@ import {
 import { ClientNotificationSchema, ManagementDeviceIdSchema, ManagementDeviceViewSchema } from './management-api.js'
 import { ConfigSchemaDocumentSchema } from './config-schema.js'
 import {
+  CommunityExtensionDetailSchema,
+  CommunityExtensionSummarySchema,
+  CommunityReleaseIdSchema,
+  CommunityReviewStatusSchema,
+  CommunityStatusSchema,
+} from './community.js'
+import {
   DshNxtHostUiSchema,
   EMPTY_EXTENSION_UI_CONTRIBUTIONS,
   ExtensionUiContributionsSchema,
@@ -1693,6 +1700,20 @@ export interface HostApiContract<
   readonly parseError: (input: unknown) => z.output<ErrorSchema>
 }
 
+/** 扩展包导入检查的结果：本地文件与社区下载共用同一确认步骤。 */
+export const ExtensionImportInspectionSchema = z
+  .object({
+    token: NonEmptyStringSchema,
+    extensionId: ExtensionIdSchema,
+    revisionId: ExtensionRevisionIdSchema,
+    slug: NonEmptyStringSchema,
+    displayName: NonEmptyStringSchema,
+    scope: z.enum(['agent', 'host-adapter', 'host-ui']),
+    idempotent: z.boolean(),
+    slugConflict: z.boolean(),
+  })
+  .strict()
+
 const defineContract = <
   const Method extends HttpMethod,
   Params extends AnySchema,
@@ -2437,18 +2458,7 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: BinaryUploadRequestSchema,
     encodeRequest: encodeBinaryUpload,
-    response: z
-      .object({
-        token: NonEmptyStringSchema,
-        extensionId: ExtensionIdSchema,
-        revisionId: ExtensionRevisionIdSchema,
-        slug: NonEmptyStringSchema,
-        displayName: NonEmptyStringSchema,
-        scope: z.enum(['agent', 'host-adapter', 'host-ui']),
-        idempotent: z.boolean(),
-        slugConflict: z.boolean(),
-      })
-      .strict(),
+    response: ExtensionImportInspectionSchema,
     error: HostApiErrorSchema,
   }),
   /**
@@ -2477,6 +2487,89 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: z.object({ authenticated: z.literal(false) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getCommunityStatus: defineContract({
+    method: 'GET',
+    path: '/api/community/status',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  startCommunityLogin: defineContract({
+    method: 'POST',
+    path: '/api/community/login',
+    params: EmptyParamsSchema,
+    /** 浏览器当前访问本实例使用的来源；社区授权完成后回到 `<returnOrigin>/community/callback`。 */
+    request: z.object({ returnOrigin: z.string().url().max(300) }).strict(),
+    response: z.object({ authorizeUrl: z.string().url() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  communityLogout: defineContract({
+    method: 'DELETE',
+    path: '/api/community/login',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  listCommunityExtensions: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/extensions',
+    params: z
+      .object({
+        query: z.string().trim().max(80).optional(),
+        scope: z.enum(['agent', 'host-adapter', 'host-ui']).optional(),
+        cursor: z.string().max(200).optional(),
+      })
+      .strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ items: z.array(CommunityExtensionSummarySchema), nextCursor: z.string().nullable() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getCommunityExtension: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/extensions/:extensionId',
+    params: z.object({ extensionId: ExtensionIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityExtensionDetailSchema,
+    error: HostApiErrorSchema,
+  }),
+  /** 下载社区发布并按包摘要校验，结果与本地文件导入的检查相同，再经 `commitExtensionImport` 确认。 */
+  importCommunityRelease: defineContract({
+    timeoutMs: 120_000,
+    method: 'POST',
+    path: '/api/community/releases/:releaseId/import',
+    params: z.object({ releaseId: CommunityReleaseIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: ExtensionImportInspectionSchema,
+    error: HostApiErrorSchema,
+  }),
+  publishToCommunity: defineContract({
+    timeoutMs: 120_000,
+    method: 'POST',
+    path: '/api/community/publish',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        extensionId: ExtensionIdSchema,
+        revisionId: ExtensionRevisionIdSchema,
+        notes: z.string().max(2000),
+      })
+      .strict(),
+    response: z
+      .object({
+        releaseId: CommunityReleaseIdSchema,
+        number: z.number().int().positive(),
+        reviewStatus: CommunityReviewStatusSchema,
+        pageUrl: z.string().url(),
+        reportUrl: z.string().url(),
+        findings: z.array(z.object({ severity: z.string(), title: z.string() }).strict()),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   testMcpServer: defineContract({

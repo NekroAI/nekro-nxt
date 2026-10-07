@@ -208,6 +208,17 @@ describe('browser sign-in through the management edge', () => {
     expect((await send('http', edge.port, '/api/snapshot', { headers: { cookie: deviceOnly } })).status).toBe(401)
   })
 
+  it('passes only the community sign-in callback through without a session', async () => {
+    const { edge } = await start()
+    const callback = await send('http', edge.port, '/community/callback?code=c&state=s', {
+      headers: { accept: 'text/html' },
+    })
+    expect(callback.status).toBe(200)
+    expect(JSON.parse(callback.text)).toMatchObject({ method: 'GET', viewer: null })
+    expect((await send('http', edge.port, '/community/other', { headers: { accept: 'text/html' } })).status).toBe(302)
+    expect((await send('http', edge.port, '/api/community/status')).status).toBe(401)
+  })
+
   it('skips the risk notice and marks cookies Secure over HTTPS or a trusted HTTPS proxy', async () => {
     const { edge } = await start()
     const page = await send('https', edge.port, '/login')
