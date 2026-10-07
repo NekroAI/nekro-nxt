@@ -15,9 +15,12 @@ import {
 import type { SqliteHostSecurityRepository } from '@nekro-nxt/storage-sqlite'
 import { X509Certificate, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { request as httpRequest } from 'node:http'
-import type { ClientRequest, IncomingMessage, ServerResponse } from 'node:http'
+import { createServer as createHttpServer, request as httpRequest } from 'node:http'
+import type { ClientRequest, Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
 import { createServer, type Server as HttpsServer } from 'node:https'
+import { createServer as createNetServer, type Server as NetServer } from 'node:net'
+import { z } from 'zod'
+import { managementLoginPage } from './management-login-page.js'
 import type { Duplex } from 'node:stream'
 import path from 'node:path'
 import { generate } from 'selfsigned'
@@ -26,6 +29,11 @@ import { monotonicFactory } from 'ulid'
 
 const SESSION_COOKIE = 'nxt_session'
 const CSRF_COOKIE = 'nxt_csrf'
+/** A browser's device credential `<deviceId>.<secret>`; HttpOnly, so page and extension scripts cannot read it. */
+const DEVICE_COOKIE = 'nxt_device'
+const BROWSER_DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1_000
+/** Last activity is written at most once a minute per device. */
+const ACTIVITY_WRITE_INTERVAL_MS = 60_000
 const CHALLENGE_TTL_MS = 60_000
 const SESSION_TTL_MS = 12 * 60 * 60 * 1_000
 const MAX_JSON_BYTES = 64 * 1_024
@@ -45,6 +53,10 @@ interface SessionRecord {
   readonly expiresAt: number
 }
 
+export const managementLoginRequestSchema = z
+  .object({ managementKey: z.string().min(1).max(4096), acknowledgeInsecure: z.boolean().default(false) })
+  .strict()
+
 export interface ManagementEdgeOptions {
   readonly host: '127.0.0.1' | '0.0.0.0'
   readonly port: number
@@ -54,6 +66,8 @@ export interface ManagementEdgeOptions {
   readonly releaseId: string
   readonly productVersion: string
   readonly repository: SqliteHostSecurityRepository
+  /** Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy that terminates HTTPS in front of plain HTTP. */
+  readonly trustProxy?: boolean
   readonly now?: () => number
 }
 
@@ -126,16 +140,59 @@ const parseCookies = (request: IncomingMessage): ReadonlyMap<string, string> => 
   return cookies
 }
 
-const sessionCookie = (value: string, maxAgeSeconds: number): string =>
-  `${SESSION_COOKIE}=${value}; Path=/; Max-Age=${maxAgeSeconds}; HttpOnly; Secure; SameSite=Strict`
+/**
+ * `Secure` only over HTTPS, or browsers drop the cookie on plain HTTP. `Lax` keeps a login across links opened from
+ * elsewhere; mutations stay protected by the same-origin and CSRF checks.
+ */
+const cookie = (
+  name: string,
+  value: string,
+  maxAgeSeconds: number,
+  options: { readonly httpOnly: boolean; readonly secure: boolean },
+): string =>
+  `${name}=${value}; Path=/; Max-Age=${maxAgeSeconds}; ${options.httpOnly ? 'HttpOnly; ' : ''}${options.secure ? 'Secure; ' : ''}SameSite=Lax`
 
-const csrfCookie = (value: string, maxAgeSeconds: number): string =>
-  `${CSRF_COOKIE}=${value}; Path=/; Max-Age=${maxAgeSeconds}; Secure; SameSite=Strict`
+/** Health and the brand icon the login page shows are the only anonymous pages passed to the product server. */
+const publicProxyPath = (pathname: string): boolean =>
+  pathname === '/health/live' ||
+  pathname === '/health/ready' ||
+  pathname === '/favicon.svg' ||
+  pathname === '/brand/mark.svg'
 
-const expiredCookie = (name: string, httpOnly: boolean): string =>
-  `${name}=; Path=/; Max-Age=0; ${httpOnly ? 'HttpOnly; ' : ''}Secure; SameSite=Strict`
+/** A short device name from the browser's User-Agent, e.g. 「浏览器 · Chrome · macOS」. */
+export const browserDeviceLabel = (userAgent: string | undefined): string => {
+  const agent = userAgent ?? ''
+  const browser = /Edg\//u.test(agent)
+    ? 'Edge'
+    : /Firefox\//u.test(agent)
+      ? 'Firefox'
+      : /Chrome\//u.test(agent)
+        ? 'Chrome'
+        : /Safari\//u.test(agent)
+          ? 'Safari'
+          : undefined
+  const system = /iPhone|iPad/u.test(agent)
+    ? 'iOS'
+    : /Android/u.test(agent)
+      ? 'Android'
+      : /Mac OS X|Macintosh/u.test(agent)
+        ? 'macOS'
+        : /Windows/u.test(agent)
+          ? 'Windows'
+          : /Linux/u.test(agent)
+            ? 'Linux'
+            : undefined
+  return ['浏览器', browser, system].filter((part) => part !== undefined).join(' · ')
+}
 
-const publicProxyPath = (pathname: string): boolean => pathname === '/health/live' || pathname === '/health/ready'
+/** Relative path inside this site to return to after login; anything else falls back to the root. */
+const safeNext = (value: string | null): string =>
+  value !== null && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/login') ? value : '/'
+
+const wantsPage = (request: IncomingMessage, pathname: string): boolean =>
+  (request.method === 'GET' || request.method === 'HEAD') &&
+  !pathname.startsWith('/api/') &&
+  (request.headers.accept ?? '').includes('text/html')
 
 const methodIsSafe = (method: string | undefined): boolean =>
   method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
@@ -229,10 +286,20 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
   const challenges = new Map<string, ChallengeRecord>()
   const sessions = new Map<string, SessionRecord>()
   const challengeRequests = new Map<string, number[]>()
+  const lastActivityWrite = new Map<ManagementDeviceId, number>()
   const upstreamRequests = new Set<ClientRequest>()
   const sockets = new Set<Duplex>()
   let stopping = false
   let stopPromise: Promise<void> | undefined
+
+  /** Pairing challenges and browser logins share one per-address budget of attempts per minute. */
+  const allowAttempt = (address: string): boolean => {
+    cleanExpired()
+    const recent = challengeRequests.get(address) ?? []
+    if (recent.length >= CHALLENGES_PER_ADDRESS_PER_MINUTE) return false
+    challengeRequests.set(address, [...recent, now()])
+    return true
+  }
 
   const cleanExpired = (): void => {
     const timestamp = now()
@@ -245,22 +312,87 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     }
   }
 
+  const header = (request: IncomingMessage, name: string): string | undefined => {
+    const value = request.headers[name]
+    const first = Array.isArray(value) ? value[0] : value
+    return first?.split(',')[0]?.trim() || undefined
+  }
+
+  /** HTTPS on this socket, or a trusted reverse proxy that terminated HTTPS in front of it. */
+  const secureRequest = (request: IncomingMessage): boolean =>
+    ('encrypted' in request.socket && request.socket.encrypted === true) ||
+    (options.trustProxy === true && header(request, 'x-forwarded-proto') === 'https')
+
+  const publicHost = (request: IncomingMessage): string | undefined =>
+    (options.trustProxy === true ? header(request, 'x-forwarded-host') : undefined) ?? request.headers.host
+
+  const touchActivity = (deviceId: ManagementDeviceId): void => {
+    const timestamp = now()
+    if (timestamp - (lastActivityWrite.get(deviceId) ?? 0) < ACTIVITY_WRITE_INTERVAL_MS) return
+    lastActivityWrite.set(deviceId, timestamp)
+    options.repository.touchDevice(deviceId, timestamp)
+  }
+
+  const openSession = (
+    request: IncomingMessage,
+    deviceId: ManagementDeviceId,
+  ): { readonly token: string; readonly session: SessionRecord; readonly cookies: readonly string[] } => {
+    const token = randomBytes(32).toString('base64url')
+    const csrfToken = randomBytes(24).toString('base64url')
+    const session = { deviceId, csrfToken, expiresAt: now() + SESSION_TTL_MS }
+    sessions.set(token, session)
+    touchActivity(deviceId)
+    const secure = secureRequest(request)
+    return {
+      token,
+      session,
+      cookies: [
+        cookie(SESSION_COOKIE, token, SESSION_TTL_MS / 1_000, { httpOnly: true, secure }),
+        cookie(CSRF_COOKIE, csrfToken, SESSION_TTL_MS / 1_000, { httpOnly: false, secure }),
+      ],
+    }
+  }
+
+  const deviceFromCookie = (request: IncomingMessage): ManagementDeviceId | undefined => {
+    const value = parseCookies(request).get(DEVICE_COOKIE)
+    const separator = value?.indexOf('.') ?? -1
+    if (value === undefined || separator < 1) return undefined
+    const deviceId = ManagementDeviceIdSchema.safeParse(value.slice(0, separator))
+    if (!deviceId.success) return undefined
+    const device = options.repository.getActiveDevice(deviceId.data)
+    return device !== undefined &&
+      safeEqual(device.secretDigest, digest('nxt-device-secret-v1', value.slice(separator + 1)))
+      ? device.id
+      : undefined
+  }
+
+  /**
+   * The request's live session; a browser whose session expired but still carries its device cookie gets a new one,
+   * with the cookies queued on `response`.
+   */
   const authenticatedSession = (
     request: IncomingMessage,
+    response?: ServerResponse,
   ): { readonly token: string; readonly session: SessionRecord } | undefined => {
     cleanExpired()
     const token = parseCookies(request).get(SESSION_COOKIE)
-    if (token === undefined) return undefined
-    const session = sessions.get(token)
-    if (session === undefined || options.repository.getActiveDevice(session.deviceId) === undefined) return undefined
-    return { token, session }
+    const session = token === undefined ? undefined : sessions.get(token)
+    if (token !== undefined && session !== undefined && options.repository.getActiveDevice(session.deviceId)) {
+      touchActivity(session.deviceId)
+      return { token, session }
+    }
+    const deviceId = response === undefined ? undefined : deviceFromCookie(request)
+    if (deviceId === undefined || response === undefined) return undefined
+    const opened = openSession(request, deviceId)
+    response.setHeader('set-cookie', [...opened.cookies])
+    return opened
   }
 
   const validateMutation = (request: IncomingMessage, session: SessionRecord): boolean => {
     if (methodIsSafe(request.method)) return true
-    const host = request.headers.host
+    const host = publicHost(request)
     const origin = request.headers.origin
-    if (host === undefined || origin !== `https://${host}`) return false
+    if (host === undefined || origin !== `${secureRequest(request) ? 'https' : 'http'}://${host}`) return false
     const cookieToken = parseCookies(request).get(CSRF_COOKIE)
     const headerToken = request.headers['x-nxt-csrf']
     return (
@@ -282,13 +414,19 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         headers: {
           ...Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== VIEWER_HEADER)),
           host: `127.0.0.1:${options.internalPort}`,
-          'x-forwarded-proto': 'https',
+          'x-forwarded-proto': secureRequest(request) ? 'https' : 'http',
           // The edge is the only place that knows the paired device; clients cannot claim another viewer.
           ...(viewer === undefined ? {} : { [VIEWER_HEADER]: viewer }),
         },
       },
       (upstreamResponse) => {
-        response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers)
+        // Keep a session the edge just renewed from the device cookie alongside the product server's own cookies.
+        const renewed = response.getHeader('set-cookie')
+        const upstreamCookies = upstreamResponse.headers['set-cookie'] ?? []
+        response.writeHead(upstreamResponse.statusCode ?? 502, {
+          ...upstreamResponse.headers,
+          ...(Array.isArray(renewed) ? { 'set-cookie': [...renewed, ...upstreamCookies] } : {}),
+        })
         upstreamResponse.once('aborted', () => response.destroy(new Error('上游响应提前中断。')))
         upstreamResponse.once('error', (error) => response.destroy(error))
         upstreamResponse.pipe(response)
@@ -313,9 +451,9 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     request.pipe(upstream)
   }
 
-  const server: HttpsServer = createServer({ key: certificate.key, cert: certificate.cert }, (request, response) => {
+  const handle = (request: IncomingMessage, response: ServerResponse): void => {
     void (async () => {
-      const url = new URL(request.url ?? '/', `https://${request.headers.host ?? 'localhost'}`)
+      const url = new URL(request.url ?? '/', 'http://edge.invalid')
       if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname === '/.well-known/nekro-nxt') {
         writeJson(response, 200, descriptor)
         return
@@ -384,23 +522,80 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
           writeProblem(response, 401, 'device_credential_invalid', '设备会话已经失效，请重新认证。')
           return
         }
-        const token = randomBytes(32).toString('base64url')
-        const csrfToken = randomBytes(24).toString('base64url')
-        const expiresAt = now() + SESSION_TTL_MS
-        sessions.set(token, { deviceId: device.id, csrfToken, expiresAt })
-        options.repository.touchDevice(device.id, now())
+        const opened = openSession(request, device.id)
         writeJson(
           response,
           200,
-          ManagementSessionResponseSchema.parse({ authenticated: true, deviceId: device.id, csrfToken }),
+          ManagementSessionResponseSchema.parse({
+            authenticated: true,
+            deviceId: device.id,
+            csrfToken: opened.session.csrfToken,
+          }),
+          { 'set-cookie': [...opened.cookies] },
+        )
+        return
+      }
+      if (request.method === 'POST' && url.pathname === '/api/management/login') {
+        if (!allowAttempt(request.socket.remoteAddress ?? 'unknown')) {
+          writeProblem(response, 429, 'login_rate_limited', '登录尝试过于频繁，请一分钟后再试。')
+          return
+        }
+        const input = managementLoginRequestSchema.parse(await readJson(request))
+        const secure = secureRequest(request)
+        if (!secure && !input.acknowledgeInsecure) {
+          writeProblem(response, 400, 'insecure_not_acknowledged', '当前连接未加密，请先确认了解风险。')
+          return
+        }
+        if (!safeEqual(digest('nxt-login-key', input.managementKey), digest('nxt-login-key', options.managementKey))) {
+          writeProblem(response, 401, 'management_key_invalid', '管理密钥不正确。')
+          return
+        }
+        const deviceId = ManagementDeviceIdSchema.parse(`nxt_device_${nextUlid()}`)
+        const deviceSecret = randomBytes(32).toString('base64url')
+        options.repository.putDevice({
+          id: deviceId,
+          label: browserDeviceLabel(request.headers['user-agent']),
+          secretDigest: digest('nxt-device-secret-v1', deviceSecret),
+          createdAt: now(),
+        })
+        const opened = openSession(request, deviceId)
+        writeJson(
+          response,
+          200,
+          { authenticated: true, deviceId },
           {
-            'set-cookie': [sessionCookie(token, SESSION_TTL_MS / 1_000), csrfCookie(csrfToken, SESSION_TTL_MS / 1_000)],
+            'set-cookie': [
+              cookie(DEVICE_COOKIE, `${deviceId}.${deviceSecret}`, BROWSER_DEVICE_TTL_MS / 1_000, {
+                httpOnly: true,
+                secure,
+              }),
+              ...opened.cookies,
+            ],
           },
         )
         return
       }
+      if (request.method === 'GET' && url.pathname === '/login') {
+        const next = safeNext(url.searchParams.get('next'))
+        if (authenticatedSession(request, response) !== undefined) {
+          response.writeHead(302, { location: next, 'cache-control': 'no-store' })
+          response.end()
+          return
+        }
+        const page = managementLoginPage({ secure: secureRequest(request), next })
+        response.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-store',
+          'content-length': Buffer.byteLength(page),
+          'x-frame-options': 'DENY',
+          'content-security-policy':
+            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
+        })
+        response.end(page)
+        return
+      }
 
-      const authenticated = authenticatedSession(request)
+      const authenticated = authenticatedSession(request, response)
       if (request.method === 'GET' && url.pathname === '/api/management/session') {
         if (authenticated === undefined) {
           writeProblem(response, 401, 'authentication_required', '请先建立设备会话。')
@@ -414,7 +609,15 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         return
       }
       if (authenticated === undefined && !publicProxyPath(url.pathname)) {
-        writeProblem(response, 401, 'authentication_required', '请先建立设备会话。')
+        if (wantsPage(request, url.pathname)) {
+          response.writeHead(302, {
+            location: `/login?next=${encodeURIComponent(`${url.pathname}${url.search}`)}`,
+            'cache-control': 'no-store',
+          })
+          response.end()
+          return
+        }
+        writeProblem(response, 401, 'authentication_required', '请先登录。')
         return
       }
       if (authenticated !== undefined && !validateMutation(request, authenticated.session)) {
@@ -422,13 +625,25 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         return
       }
       if (request.method === 'DELETE' && url.pathname === '/api/management/session') {
+        const session = authenticated!.session
         sessions.delete(authenticated!.token)
+        // A browser logs out for good: its device is revoked with the session. Desktop keeps its paired device.
+        const browserDevice = deviceFromCookie(request)
+        if (browserDevice !== undefined && browserDevice === session.deviceId) {
+          options.repository.revokeDevice(browserDevice, now())
+          for (const [token, other] of sessions) if (other.deviceId === browserDevice) sessions.delete(token)
+        }
+        const secure = secureRequest(request)
         writeJson(
           response,
           200,
           { authenticated: false },
           {
-            'set-cookie': [expiredCookie(SESSION_COOKIE, true), expiredCookie(CSRF_COOKIE, false)],
+            'set-cookie': [
+              cookie(SESSION_COOKIE, '', 0, { httpOnly: true, secure }),
+              cookie(CSRF_COOKIE, '', 0, { httpOnly: false, secure }),
+              ...(browserDevice === undefined ? [] : [cookie(DEVICE_COOKIE, '', 0, { httpOnly: true, secure })]),
+            ],
           },
         )
         return
@@ -438,6 +653,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
           devices: options.repository.listDevices().map((device) => ({
             id: device.id,
             label: device.label,
+            current: device.id === authenticated!.session.deviceId,
             createdAt: device.createdAt,
             ...(device.lastUsedAt === undefined ? {} : { lastUsedAt: device.lastUsedAt }),
             ...(device.revokedAt === undefined ? {} : { revokedAt: device.revokedAt }),
@@ -462,21 +678,33 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       const message = error instanceof Error ? error.message : '请求格式无效。'
       writeProblem(response, 400, 'invalid_request', message)
     })
-  })
+  }
 
-  server.on('connection', (socket) => {
+  const tlsServer: HttpsServer = createServer({ key: certificate.key, cert: certificate.cert }, handle)
+  const plainServer: HttpServer = createHttpServer(handle)
+  /**
+   * One port serves both: a TLS ClientHello always starts with record type 0x16, plain HTTP never does. Desktop and
+   * `https://` keep the pinned certificate; `http://` works for browsers on a LAN or behind a reverse proxy.
+   */
+  const listener: NetServer = createNetServer((socket) => {
     sockets.add(socket)
     socket.once('close', () => sockets.delete(socket))
+    socket.once('data', (chunk: Buffer) => {
+      socket.pause()
+      socket.unshift(chunk)
+      ;(chunk[0] === 0x16 ? tlsServer : plainServer).emit('connection', socket)
+      process.nextTick(() => socket.resume())
+    })
   })
 
   await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(options.port, options.host, () => {
-      server.off('error', reject)
+    listener.once('error', reject)
+    listener.listen(options.port, options.host, () => {
+      listener.off('error', reject)
       resolve()
     })
   })
-  const address = server.address()
+  const address = listener.address()
   if (address === null || typeof address === 'string') throw new Error('安全入口未获得有效监听端口。')
   return {
     port: address.port,
@@ -487,13 +715,15 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       stopping = true
       stopPromise = (async () => {
         for (const upstream of upstreamRequests) upstream.destroy(new Error('Management Edge 正在关闭。'))
-        server.closeIdleConnections()
+        tlsServer.closeIdleConnections()
+        plainServer.closeIdleConnections()
         const closed = new Promise<void>((resolve, reject) =>
-          server.close((error) => (error ? reject(error) : resolve())),
+          listener.close((error) => (error ? reject(error) : resolve())),
         )
         const timeout = setTimeout(() => {
           for (const socket of sockets) socket.destroy()
-          server.closeAllConnections()
+          tlsServer.closeAllConnections()
+          plainServer.closeAllConnections()
         }, 5_000)
         timeout.unref()
         try {

@@ -28,7 +28,7 @@ import {
   PromptDocumentV1Schema,
   promptDocumentPlainText,
 } from './domain.js'
-import { ClientNotificationSchema } from './management-api.js'
+import { ClientNotificationSchema, ManagementDeviceIdSchema, ManagementDeviceViewSchema } from './management-api.js'
 import { ConfigSchemaDocumentSchema } from './config-schema.js'
 import {
   DshNxtHostUiSchema,
@@ -2449,6 +2449,34 @@ export const HostApiContracts = {
         slugConflict: z.boolean(),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  /**
+   * Management-edge endpoints: they exist only when the Server is reached through its management edge (a management
+   * key is set); clients tell that from the edge's CSRF cookie.
+   */
+  listManagementDevices: defineContract({
+    method: 'GET',
+    path: '/api/management/devices',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ devices: z.array(ManagementDeviceViewSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  revokeManagementDevice: defineContract({
+    method: 'DELETE',
+    path: '/api/management/devices/:deviceId',
+    params: z.object({ deviceId: ManagementDeviceIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ revoked: z.boolean() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  managementLogout: defineContract({
+    method: 'DELETE',
+    path: '/api/management/session',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ authenticated: z.literal(false) }).strict(),
     error: HostApiErrorSchema,
   }),
   testMcpServer: defineContract({

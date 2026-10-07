@@ -63,7 +63,9 @@ docker run -d \
   ghcr.io/nekroai/nekro-nxt:latest
 ```
 
-[查看公网访问、Docker Compose、设备配对与备份说明](docs/guide/server.md)
+启动后用浏览器打开 `http://127.0.0.1:4960`，输入管理密钥登录。
+
+[查看网页登录、公网访问、Docker Compose 与备份说明](docs/guide/server.md)
 
 ## 三步开始使用
 

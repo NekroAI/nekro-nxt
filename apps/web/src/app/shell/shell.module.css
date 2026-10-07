@@ -384,6 +384,15 @@ a.instance {
   background: var(--line-2);
 }
 
+.statusInsecure {
+  margin-left: auto;
+  color: var(--warn);
+}
+
+.statusInsecure + .statusClock {
+  margin-left: 0;
+}
+
 .statusClock {
   flex: none;
   margin-left: auto;

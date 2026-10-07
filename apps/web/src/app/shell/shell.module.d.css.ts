@@ -25,6 +25,7 @@ declare const styles: {
   readonly search: string
   readonly status: string
   readonly statusClock: string
+  readonly statusInsecure: string
   readonly statusItem: string
   readonly statusSep: string
   readonly top: string

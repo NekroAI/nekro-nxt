@@ -137,6 +137,68 @@ test.describe('settings space', () => {
     }
   })
 
+  test('lists signed-in devices with last activity and revokes one or signs this browser out', async () => {
+    const now = Date.now()
+    let devices = [
+      {
+        id: 'nxt_device_01J9ZK3QXW0000000000000001',
+        label: '浏览器 · Chrome · macOS',
+        createdAt: now - 3 * 24 * 60 * 60 * 1000,
+        lastUsedAt: now - 60 * 1000,
+        current: true,
+      },
+      {
+        id: 'nxt_device_01J9ZK3QXW0000000000000002',
+        label: '示例的 Desktop',
+        createdAt: now - 10 * 24 * 60 * 60 * 1000,
+        lastUsedAt: now - 2 * 60 * 60 * 1000,
+        current: false,
+      },
+    ]
+    const calls: string[] = []
+    const { page, errors } = await open('/settings/access', {
+      before: async (target) => {
+        // The management edge sets this cookie with every session; a direct local Host never does.
+        await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture-csrf', url: baseUrl }])
+        await target.route('**/api/management/session', async (request) => {
+          calls.push('logout')
+          await request.fulfill({ json: { authenticated: false } })
+        })
+        await target.route('**/api/management/devices', (request) => request.fulfill({ json: { devices } }))
+        await target.route('**/api/management/devices/*', async (request) => {
+          calls.push(`revoke ${new URL(request.request().url()).pathname.split('/').at(-1)}`)
+          devices = devices.filter((device) => !request.request().url().endsWith(device.id))
+          await request.fulfill({ json: { revoked: true } })
+        })
+      },
+    })
+    try {
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(7)
+      const table = page.getByRole('table', { name: '已登录设备' })
+      await expect(table).toContainText('浏览器 · Chrome · macOS')
+      await expect(table).toContainText('此设备')
+      await expect(table).toContainText('示例的 Desktop')
+      await expect(table).toContainText('1 分钟前')
+      await page.screenshot({ path: '.local/browser-test-results/settings-access.png' })
+
+      await table.getByRole('button', { name: '撤销' }).click()
+      await page
+        .getByRole('dialog', { name: '撤销「示例的 Desktop」的登录？' })
+        .getByRole('button', { name: '撤销' })
+        .click()
+      await expect.poll(() => calls).toEqual(['revoke nxt_device_01J9ZK3QXW0000000000000002'])
+      await expect(table).not.toContainText('示例的 Desktop')
+
+      await table.getByRole('button', { name: '退出登录' }).click()
+      await page.getByRole('dialog', { name: '退出这台设备的登录？' }).getByRole('button', { name: '退出登录' }).click()
+      await expect.poll(() => calls).toContain('logout')
+      await expect(page).toHaveURL(/\/login$/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('switches interface density and keeps it after reload', async () => {
     const { page, errors } = await open('/settings/appearance')
     try {

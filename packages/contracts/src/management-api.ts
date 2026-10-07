@@ -108,6 +108,8 @@ export const ManagementDeviceViewSchema = z
     createdAt: z.number().int().nonnegative(),
     lastUsedAt: z.number().int().nonnegative().optional(),
     revokedAt: z.number().int().nonnegative().optional(),
+    /** The device this request is signed in with. */
+    current: z.boolean().optional(),
   })
   .strict()
 export type ManagementDeviceView = z.output<typeof ManagementDeviceViewSchema>

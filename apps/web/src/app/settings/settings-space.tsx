@@ -1,4 +1,16 @@
-import { Bell, Blocks, ChevronLeft, ChevronRight, Cpu, Info, Palette, Plug, Plus, Upload } from 'lucide-react'
+import {
+  Bell,
+  Blocks,
+  ChevronLeft,
+  ChevronRight,
+  Cpu,
+  Info,
+  MonitorSmartphone,
+  Palette,
+  Plug,
+  Plus,
+  Upload,
+} from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -50,6 +62,7 @@ import { useDensity } from '../model/density.js'
 import { useProductApi } from '../model/store.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
+import { AccessSection, useManagementAccessAvailable } from './access-section.js'
 import styles from './settings.module.css'
 
 const SECTIONS = [
@@ -57,6 +70,7 @@ const SECTIONS = [
   { key: 'dsh', label: 'DSH 插件', icon: <Blocks size={16} /> },
   { key: 'adapters', label: '平台适配器', icon: <Plug size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
+  { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
   { key: 'about', label: '关于', icon: <Info size={16} /> },
 ] as const
@@ -76,6 +90,9 @@ export default function SettingsSpace() {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const current = SECTIONS.find((item) => item.key === section)
+  // Sign-in exists only when this page reaches the Server through its management edge.
+  const accessAvailable = useManagementAccessAvailable()
+  const sections = SECTIONS.filter((item) => item.key !== 'access' || accessAvailable || section === 'access')
   useCrumb('设置', current?.label)
   const llm = useLlmProviders()
   const dsh = useDshCatalog(section === 'dsh')
@@ -101,7 +118,7 @@ export default function SettingsSpace() {
       list={
         <ListPane title="设置" label="设置">
           <SelectionList selectedKey={section}>
-            {SECTIONS.map((item) => (
+            {sections.map((item) => (
               <Link
                 key={item.key}
                 to={`/settings/${item.key}`}
@@ -118,7 +135,11 @@ export default function SettingsSpace() {
       }
     >
       <MainContent
-        width={section === 'notifications' || section === 'appearance' || section === 'about' ? 'readable' : 'full'}
+        width={
+          section === 'notifications' || section === 'appearance' || section === 'about' || section === 'access'
+            ? 'readable'
+            : 'full'
+        }
       >
         <NarrowNav section={section} />
         {section === 'models' ? (
@@ -142,6 +163,12 @@ export default function SettingsSpace() {
         ) : null}
         {section === 'adapters' ? <Adapters /> : null}
         {section === 'notifications' ? <Notifications /> : null}
+        {section === 'access' ? (
+          <>
+            <SectionHead title="登录设备" />
+            <AccessSection />
+          </>
+        ) : null}
         {section === 'appearance' ? <Appearance /> : null}
         {section === 'about' ? <About /> : null}
       </MainContent>
@@ -152,12 +179,15 @@ export default function SettingsSpace() {
 /** Below 1100px the settings list collapses; this selector keeps every section reachable. */
 function NarrowNav({ section }: { readonly section: SectionKey }) {
   const navigate = useNavigate()
+  const accessAvailable = useManagementAccessAvailable()
   return (
     <div className={styles.narrowNav}>
       <Select
         aria-label="设置分节"
         value={section}
-        options={SECTIONS.map((item) => ({ value: item.key, label: item.label }))}
+        options={SECTIONS.filter((item) => item.key !== 'access' || accessAvailable || section === 'access').map(
+          (item) => ({ value: item.key, label: item.label }),
+        )}
         onValueChange={(value) => void navigate(`/settings/${value}`)}
       />
     </div>

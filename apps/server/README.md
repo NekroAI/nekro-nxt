@@ -48,7 +48,7 @@ Compaction 使用 `NekroNxtCompactionEngine` 继承 DSH `BasicCompactionEngine`�
 
 `WorkspaceProjections` 拥有工作区读模型和运行控制：按观察者的频道活动与已读、关注聚合与忽略、排队上下文、停止当前任务、投递处理、活跃度统计和智能体外观/头像。观察者身份由 `viewer.ts` 从 `x-nxt-viewer` 解析；远程管理入口剥离客户端自带值并写入已认证设备身份。关注检查在快照失效、动态变化和出站事实后合并执行，只在 revision 变化时推送 `attention-changed`。轮次的 `startedAt`、`endedAt` 与 `triggerEventId` 由 `channel-runtime-events.ts` 从 DSH Session 日志派生：DSH 在 step 开始时拼接收件箱，因此该轮首次模型输出前记录的频道输入是触发者。
 
-公开容器入口使用自动 TLS 与设备鉴权。`NEKRO_HOST=0.0.0.0` 必须同时设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`；证书写入 `/data/host/tls/`，实例身份和配对设备写入 Core SQLite。除健康、实例描述和配对/设备 Session 必要端点外，产品页面、API、SSE、Asset 与 Extension Client 默认要求设备 Session；Mutation 同时校验同源与 CSRF。管理密钥只参与 HMAC proof，轮换会撤销旧设备。协议见 [Desktop 多实例与设备鉴权](../../docs/decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
+公开容器入口是设备鉴权安全入口，同一端口按首字节同时接受 HTTPS（自动自签名证书）与 HTTP。`NEKRO_HOST=0.0.0.0` 必须同时设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`；证书写入 `/data/host/tls/`，实例身份和设备写入 Core SQLite。除健康、实例描述、登录页、品牌图标和配对/登录/设备 Session 必要端点外，产品页面、API、SSE、Asset 与 Extension Client 默认要求设备 Session；未登录的页面请求跳转 `/login`，Mutation 同时校验同源与 CSRF。Desktop 用管理密钥参与 HMAC proof 配对，浏览器在登录页提交管理密钥并以 HttpOnly 设备 Cookie 保持 30 天登录；`NEKRO_TRUST_PROXY=1` 时信任反向代理的转发协议与主机。轮换管理密钥会撤销全部设备。协议见 [Desktop 多实例与设备鉴权](../../docs/decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md) 与 [服务器网页访问与浏览器登录](../../docs/decisions/implemented/2026-10-07-服务器网页访问与浏览器登录.md)。
 
 当前锁定 DSH 的 `frontend-static` 只服务真实文件和明确的 index 路径，未知路径返回 404。Server 因此为 NekroNXT 的产品页面前缀显式注册 SPA index 路由；`/api` 和不存在的 Asset 仍保持各自的 JSON/404 语义，不能用全局 index 回退掩盖错误路径。
 

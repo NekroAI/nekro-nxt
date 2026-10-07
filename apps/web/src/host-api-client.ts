@@ -1,4 +1,5 @@
 import { hostReleaseGuard, type HostReleaseGuard } from './host-release-guard.js'
+import { managementCsrfToken, redirectToSignIn } from './management-access.js'
 import {
   HostApiContracts,
   HostApiErrorSchema,
@@ -91,6 +92,8 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
           ...(releaseGuard.getSnapshot().expected
             ? { 'x-nekro-client-release': releaseGuard.getSnapshot().expected! }
             : {}),
+          // Desktop adds this itself; a plain browser behind the management edge sends the cookie's token.
+          ...(mutation && managementCsrfToken() !== undefined ? { 'x-nxt-csrf': managementCsrfToken()! } : {}),
           ...serialized?.headers,
         },
         ...(serialized !== undefined
@@ -125,6 +128,9 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
     }
     if (!response.ok) {
       const error = HostApiErrorSchema.safeParse(json)
+      if (response.status === 401 && error.success && error.data.error.code === 'authentication_required') {
+        redirectToSignIn()
+      }
       // Host can reject a release that changed after our preflight probe.
       if (error.success && error.data.error.code === 'release-mismatch') {
         releaseGuard.rejectCurrentRelease()

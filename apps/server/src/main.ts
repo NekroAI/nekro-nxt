@@ -73,6 +73,13 @@ export const parseManagementKey = (input: string | undefined, required = false):
   return input
 }
 
+/** `NEKRO_TRUST_PROXY=1` (or `true`) only when a reverse proxy in front terminates HTTPS and sets forwarded headers. */
+export const parseTrustProxy = (input: string | undefined): boolean => {
+  if (input === undefined || input.trim() === '' || input === '0' || input === 'false') return false
+  if (input === '1' || input === 'true') return true
+  throw new TypeError(`NEKRO_TRUST_PROXY 只能是 1 或 0：${input}`)
+}
+
 /** Parse the Host-owned provider route allowlist; DSH still owns each route's catalog and protocol. */
 export const parseLlmProviderRoutes = (input: string | undefined): readonly string[] => {
   if (input === undefined || input.trim() === '') return []
@@ -579,6 +586,8 @@ export interface StartServerOptions {
   readonly signal?: AbortSignal
   /** Enables the automatic TLS edge and device authentication. Never persisted. */
   readonly managementKey?: string
+  /** The edge sits behind a reverse proxy that terminates HTTPS; trust its forwarded protocol and host. */
+  readonly trustProxy?: boolean
   /** Optional real LLM adapter wiring for a non-test server. */
   readonly configureLlm?: (context: LlmContext) => Promise<void> | void
 }
@@ -760,6 +769,7 @@ const startLeasedServer = async (
           releaseId,
           productVersion: SERVER_PACKAGE_VERSION,
           repository: runtime.hostSecurity,
+          ...(options.trustProxy === true ? { trustProxy: true } : {}),
         })
         owner.edge = managementEdge
       } catch (error) {
@@ -916,6 +926,7 @@ if (isEntryPoint()) {
         port,
         releaseId,
         ...(managementKey === undefined ? {} : { managementKey }),
+        ...(parseTrustProxy(process.env['NEKRO_TRUST_PROXY']) ? { trustProxy: true } : {}),
         ...(developmentWorkspaceRoot === undefined || developmentWorkspaceRoot.trim() === ''
           ? {}
           : { developmentWorkspaceRoot }),
@@ -923,7 +934,11 @@ if (isEntryPoint()) {
       })
       process.removeListener('SIGTERM', cancelStartup)
       process.removeListener('SIGINT', cancelStartup)
-      console.log(`[nekro-nxt] Server ${releaseId} 已监听 ${handle.secure ? 'https' : 'http'}://${host}:${handle.port}`)
+      console.log(
+        handle.secure
+          ? `[nekro-nxt] Server ${releaseId} 已监听 https://${host}:${handle.port}（同一端口也接受 http://，浏览器访问需输入管理密钥登录）`
+          : `[nekro-nxt] Server ${releaseId} 已监听 http://${host}:${handle.port}`,
+      )
       if (llmProviderRoutes.length > 0) {
         console.log(`[nekro-nxt] DSH 模型供应商已启用：${llmProviderRoutes.join(', ')}`)
       }

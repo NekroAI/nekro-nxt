@@ -3,6 +3,8 @@ declare const styles: {
   readonly back: string
   readonly barkFields: string
   readonly brand: string
+  readonly deviceName: string
+  readonly faint: string
   readonly head: string
   readonly headActions: string
   readonly link: string

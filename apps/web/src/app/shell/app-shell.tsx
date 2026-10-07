@@ -1,6 +1,18 @@
 import { useGo } from '../model/nav.js'
 import { ReleaseBanner } from '../system/compatibility.js'
-import { Activity, Bell, Cable, MessagesSquare, Search, Server, Settings, Sparkles, Wrench } from 'lucide-react'
+import {
+  Activity,
+  Bell,
+  Cable,
+  LockOpen,
+  MessagesSquare,
+  Search,
+  Server,
+  Settings,
+  Sparkles,
+  Wrench,
+} from 'lucide-react'
+import { browserInstanceName, isUnencryptedRemoteConnection } from '../../management-access.js'
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
@@ -91,7 +103,7 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
   const instance = (
     <>
       <Server aria-hidden="true" />
-      <span>{desktop.enabled ? desktop.presentation.displayName : '本机'}</span>
+      <span>{desktop.enabled ? desktop.presentation.displayName : browserInstanceName()}</span>
       {!desktop.enabled && hostStatus !== 'ready' ? (
         <span className={styles.instanceState}>{hostLabel[hostStatus]}</span>
       ) : null}
@@ -219,6 +231,17 @@ function StatusBar() {
           {agent.name}
         </Pressable>
       ))}
+      {isUnencryptedRemoteConnection() ? (
+        <Pressable
+          type="button"
+          className={[styles.statusItem, styles.statusInsecure].join(' ')}
+          title="当前通过未加密的 HTTP 访问，管理密钥和登录状态可能在网络中被截获。公网访问请使用 HTTPS 或反向代理。"
+          onClick={() => navigate('/settings/access')}
+        >
+          <LockOpen size={13} aria-hidden="true" />
+          未加密连接
+        </Pressable>
+      ) : null}
       <Clock />
     </footer>
   )
