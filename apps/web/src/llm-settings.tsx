@@ -69,9 +69,13 @@ const customProviderKey = (displayName: string, providers: readonly ProviderView
 export const providerKind = (provider: ProviderView): string =>
   provider.declared ? '自定义接入' : provider.settingsNs === 'llm-pi-ai' ? '通用接入' : '内置固定接入'
 
+/**
+ * `active` means the Host's model runtime registered the provider, not that a request ever
+ * succeeded: connection tests are not recorded, so the label says it is switched on rather than that it works.
+ */
 export const providerStatus = (provider: ProviderView): { readonly label: string; readonly tone: Tone } =>
   provider.active
-    ? { label: '可用', tone: 'ok' }
+    ? { label: '已启用', tone: 'ok' }
     : provider.configured
       ? { label: '待启用', tone: 'warn' }
       : { label: '未配置', tone: 'neutral' }
@@ -423,10 +427,12 @@ export function ModelProviderDetail({
       >
         {modelsEditable ? (
           <ModelListEditor
+            key={selectedKey}
             rows={rows}
             discovered={discovered}
             disabled={pending !== null}
-            error={modelsError}
+            validate={submitsModels}
+            revealErrors={submitted}
             onChange={(next) => {
               setRows(next)
               setModelsDirty(true)

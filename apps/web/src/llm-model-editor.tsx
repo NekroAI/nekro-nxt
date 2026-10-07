@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Button, DataTable, IconButton, Input, Switch, type Column } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
@@ -97,6 +97,21 @@ export const formatTokenCount = (value: number | string | undefined): string => 
 const label = (row: ModelRow): string => row.id || '新模型'
 
 /**
+ * The error worth showing right now. Rows the user has not touched yet (for example the blank row "添加模型" just
+ * appended) only count once the form was submitted, so adding a row never greets the user with a complaint.
+ */
+export const visibleModelRowsError = (
+  rows: readonly ModelRow[],
+  touched: ReadonlySet<string>,
+  options: { readonly revealAll: boolean; readonly listTouched: boolean },
+): string | undefined => {
+  if (options.revealAll) return modelRowsError(rows)
+  if (rows.length === 0) return options.listTouched ? modelRowsError(rows) : undefined
+  const relevant = rows.filter((row) => touched.has(row.key) || row.id.trim() !== '')
+  return relevant.length > 0 ? modelRowsError(relevant) : undefined
+}
+
+/**
  * Editable model catalog of one provider. Narrow containers drop the display name and output columns first; the id,
  * context size and image switch always stay.
  */
@@ -105,16 +120,28 @@ export function ModelListEditor({
   onChange,
   discovered,
   disabled = false,
-  error,
+  validate,
+  revealErrors = false,
 }: {
   readonly rows: readonly ModelRow[]
   readonly onChange: (rows: readonly ModelRow[]) => void
   readonly discovered: readonly EditableModel[]
   readonly disabled?: boolean
-  readonly error?: string | undefined
+  /** Whether the rows are checked at all (an untouched catalog that will not be submitted is not). */
+  readonly validate: boolean
+  /** True once the user tried to save: every row counts, touched or not. */
+  readonly revealErrors?: boolean
 }): ReactNode {
-  const update = (key: string, patch: Partial<Omit<ModelRow, 'key'>>): void =>
+  const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set())
+  const [listTouched, setListTouched] = useState(false)
+  const touch = (key: string): void => {
+    if (!touched.has(key)) setTouched(new Set([...touched, key]))
+  }
+  const update = (key: string, patch: Partial<Omit<ModelRow, 'key'>>): void => {
+    touch(key)
     onChange(rows.map((row) => (row.key === key ? { ...row, ...patch } : row)))
+  }
+  const error = validate ? visibleModelRowsError(rows, touched, { revealAll: revealErrors, listTouched }) : undefined
   const addable = modelsToAdd(rows, discovered)
   const columns: readonly Column<ModelRow>[] = [
     {
@@ -128,6 +155,7 @@ export function ModelListEditor({
           disabled={disabled}
           spellCheck={false}
           placeholder="例如 deepseek-flash"
+          onBlur={() => touch(row.key)}
           onChange={(event) => update(row.key, { id: event.target.value })}
         />
       ),
@@ -208,7 +236,10 @@ export function ModelListEditor({
           label={`删除模型 ${label(row)}`}
           size="small"
           disabled={disabled}
-          onClick={() => onChange(rows.filter((candidate) => candidate.key !== row.key))}
+          onClick={() => {
+            setListTouched(true)
+            onChange(rows.filter((candidate) => candidate.key !== row.key))
+          }}
         >
           <Trash2 size={14} aria-hidden="true" />
         </IconButton>

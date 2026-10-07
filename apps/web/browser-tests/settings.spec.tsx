@@ -110,6 +110,14 @@ test.describe('settings space', () => {
         'example-flash-vision-preview-long',
       )
       await expect(page.getByText('100 万', { exact: true }).first()).toBeVisible()
+      // A freshly added blank row waits until the user leaves it empty before complaining.
+      await page.getByRole('button', { name: '添加模型' }).click()
+      const blankId = page.getByRole('textbox', { name: '模型 ID' }).last()
+      await expect(blankId).toHaveValue('')
+      await expect(page.getByText('模型 ID 不能为空。')).toBeHidden()
+      await blankId.focus()
+      await blankId.blur()
+      await expect(page.getByRole('alert').filter({ hasText: '模型 ID 不能为空。' })).toBeVisible()
       expect(errors).toEqual([])
     } finally {
       await page.close()

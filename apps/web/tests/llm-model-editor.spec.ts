@@ -6,6 +6,7 @@ import {
   modelRowFromModel,
   modelRowsError,
   modelsToAdd,
+  visibleModelRowsError,
 } from '../src/llm-model-editor.js'
 
 describe('model list editor', () => {
@@ -32,6 +33,18 @@ describe('model list editor', () => {
     expect(modelRowsError([row, { ...row, key: 'other' }])).toBe('模型 ID same 重复。')
     expect(modelRowsError([{ ...row, contextWindow: '12.5' }])).toContain('正整数')
     expect(modelRowsError([row])).toBeUndefined()
+  })
+
+  it('waits for an edit or a save attempt before complaining about a blank row', () => {
+    const listed = modelRowFromModel({ id: 'listed' })
+    const blank = emptyModelRow()
+    const quiet = { revealAll: false, listTouched: false }
+    expect(visibleModelRowsError([listed, blank], new Set(), quiet)).toBeUndefined()
+    expect(visibleModelRowsError([], new Set(), quiet)).toBeUndefined()
+    expect(visibleModelRowsError([listed, blank], new Set([blank.key]), quiet)).toBe('模型 ID 不能为空。')
+    expect(visibleModelRowsError([listed, blank], new Set(), { ...quiet, revealAll: true })).toBe('模型 ID 不能为空。')
+    expect(visibleModelRowsError([], new Set(), { ...quiet, listTouched: true })).toBe('请至少添加一个模型。')
+    expect(visibleModelRowsError([listed, { ...listed, key: 'other' }], new Set(), quiet)).toBe('模型 ID listed 重复。')
   })
 
   it('offers only discovered models that are not already listed', () => {
