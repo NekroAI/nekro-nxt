@@ -84,6 +84,7 @@ export function DataTable<Row>({
               key={key}
               role="row"
               className={styles.row}
+              data-key={key}
               data-selected={selectedKey === key}
               data-interactive={onSelect ? '' : undefined}
               aria-selected={onSelect ? selectedKey === key : undefined}

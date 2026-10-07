@@ -179,7 +179,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
       <ExtensionSettings extension={extension} />
 
-      <PropertyGroup title="保存记录" description="每次保存都会留下一份记录，可以切换使用或导出。">
+      <PropertyGroup title="保存记录" tip="每次保存都会留下一份记录，可以切换使用或导出。">
         <div className={styles.records}>
           {extension.revisions.toReversed().map((revision) => (
             <RecordRow

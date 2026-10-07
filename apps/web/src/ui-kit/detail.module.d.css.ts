@@ -34,6 +34,7 @@ declare const styles: {
   readonly rowControl: string
   readonly rowDescription: string
   readonly rowLabel: string
+  readonly rowLabelLine: string
   readonly rowText: string
   readonly stacked: string
   readonly title: string

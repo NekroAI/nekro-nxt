@@ -90,7 +90,7 @@ export function ModelSection({
       <PropertyList>
         <PropertyRow
           label="主模型"
-          description="负责理解消息、思考和回复"
+          tip="负责理解消息、思考和回复"
           badge={
             model ? (
               <Chip tone={supportsImages(model) ? 'ok' : 'neutral'}>
@@ -164,7 +164,7 @@ export function ChannelsSection({
     <PropertyGroup
       id="profile-channels"
       title="频道"
-      description="触发方式修改后立即生效"
+      tip="触发方式修改后立即生效"
       actions={
         <Menu
           label="添加频道"
@@ -377,7 +377,7 @@ export function CapabilitiesSection({
   return (
     <PropertyGroup id="profile-capabilities" title="能力">
       <PropertyList>
-        <PropertyRow label="系统访问" description="逐级递进，级别越高能做的事越多，风险也越高" layout="stacked">
+        <PropertyRow label="系统访问" tip="逐级递进，级别越高能做的事越多，风险也越高" layout="stacked">
           <RiskLadder
             label="系统访问"
             steps={ACCESS_STEPS}
@@ -398,7 +398,7 @@ export function CapabilitiesSection({
             }
           />
         </PropertyRow>
-        <PropertyRow label="子智能体" description="把任务分给后台助手并行处理">
+        <PropertyRow label="子智能体" tip="把任务分给后台助手并行处理">
           <Switch
             label="子智能体"
             checked={caps.subagents}
@@ -407,11 +407,8 @@ export function CapabilitiesSection({
         </PropertyRow>
         <PropertyRow
           label="网页搜索"
-          description={
-            availability.webSearch.available
-              ? '查询公开网页，结果来自外部服务'
-              : '需要 DeepSeek API 密钥，每次搜索另计模型费用'
-          }
+          description={availability.webSearch.available ? undefined : '需要 DeepSeek API 密钥，每次搜索另计模型费用'}
+          tip={availability.webSearch.available ? '查询公开网页，结果来自外部服务' : undefined}
           badge={caps.webSearch && !availability.webSearch.available ? <Chip tone="warn">待配置</Chip> : undefined}
         >
           <Switch
@@ -422,18 +419,18 @@ export function CapabilitiesSection({
           />
         </PropertyRow>
         {availability.webSearch.available ? null : (
-          <PropertyRow label="搜索凭据" description="保存后即可开启网页搜索">
+          <PropertyRow label="搜索凭据" tip="保存后即可开启网页搜索">
             <WebSearchCredential />
           </PropertyRow>
         )}
-        <PropertyRow label="动态创造" description="在频道里按需求制作新工具和界面">
+        <PropertyRow label="动态创造" tip="在频道里按需求制作新工具和界面">
           <Switch
             label="动态创造"
             checked={caps.dynamicCreation}
             onCheckedChange={(checked) => setCapability('dynamicCreation', checked)}
           />
         </PropertyRow>
-        <PropertyRow label="定时任务" description="频道成员可以请它设置提醒和周期任务">
+        <PropertyRow label="定时任务" tip="频道成员可以请它设置提醒和周期任务">
           <Switch
             label="定时任务"
             checked={caps.scheduledTasks}
@@ -482,7 +479,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
     <PropertyGroup
       id="profile-extensions"
       title="扩展"
-      description="开关立即生效"
+      tip="开关立即生效"
       actions={
         <Button size="small" variant="ghost" icon={<ExternalLink />} onClick={() => go('/workshop')}>
           浏览工坊

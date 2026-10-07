@@ -23,6 +23,7 @@ import {
   EmptyState,
   Field,
   FileChooser,
+  InfoTip,
   Input,
   ObjectHeader,
   PropertyGroup,
@@ -792,7 +793,7 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
         </span>
         <Chip tone={info?.configured ? 'ok' : 'warn'}>{info?.configured ? '已保存' : '待配置'}</Chip>
       </div>
-      <Field label="新的凭据值" hint="凭据只能覆盖，无法查看已保存的值。" error={error || undefined}>
+      <Field label="新的凭据值" tip="凭据只能覆盖，无法查看已保存的值。" error={error || undefined}>
         <SecretInput
           ref={input}
           configured={info?.configured === true}
@@ -980,7 +981,12 @@ function NamespaceEditor({
           <span className={styles.bannerList}>
             <span>每次网页搜索都会产生额外的模型请求费用。</span>
             <span>网页内容来自外部，属于不可信输入。</span>
-            <span>默认单次生成上限 1024 tokens、每次请求最多搜索 2 次、最多返回 5 条结果、工具 60 秒超时。</span>
+            <span>
+              默认限制
+              <InfoTip label="网页搜索默认限制">
+                单次生成上限 1024 tokens、每次请求最多搜索 2 次、最多返回 5 条结果、工具 60 秒超时。
+              </InfoTip>
+            </span>
           </span>
         </Banner>
       ) : null}
@@ -1481,7 +1487,7 @@ export function DshPluginDetail({
       ) : null}
 
       {plugin?.origin === 'installed' && (plugin.entries ?? []).length > 0 ? (
-        <PropertyGroup title="入口" description="每个入口可以在本机或给某个智能体启用。">
+        <PropertyGroup title="入口" tip="每个入口可以在本机或给某个智能体启用。">
           {(plugin.entries ?? []).map((item) => {
             const scope = entryScope[item.id] ?? item.selectedScope ?? item.suggestedScope
             const inspection = configInspections[item.id]

@@ -137,6 +137,100 @@ test.describe('settings space', () => {
     }
   })
 
+  test('gives every section the same width and left edge', async () => {
+    const { page, errors } = await open('/settings/notifications', { width: 1680 })
+    try {
+      const boxes: { left: number; width: number }[] = []
+      for (const [section, heading] of [
+        ['notifications', '通知'],
+        ['adapters', '平台适配器'],
+        ['appearance', '外观'],
+        ['about', '关于'],
+        ['models', '模型'],
+      ] as const) {
+        await page.goto(`${baseUrl}/settings/${section}`)
+        const title = page.getByRole('heading', { name: heading, level: 1 })
+        await expect(title).toBeVisible()
+        const box = await title.evaluate((element) => {
+          const column = element.closest('header')?.parentElement
+          const rect = column?.getBoundingClientRect()
+          return { left: Math.round(rect?.left ?? -1), width: Math.round(rect?.width ?? -1) }
+        })
+        boxes.push(box)
+      }
+      expect(new Set(boxes.map((box) => box.left)).size).toBe(1)
+      expect(new Set(boxes.map((box) => box.width)).size).toBe(1)
+      // Background a user needs once sits behind a help mark instead of under every row.
+      await page.goto(`${baseUrl}/settings/notifications`)
+      await expect(page.getByText('推送到安装了 Bark 的设备')).toBeHidden()
+      await page.getByRole('button', { name: '说明：Bark' }).hover()
+      await expect(page.getByText('推送到安装了 Bark 的设备')).toBeVisible()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('keeps the provider list beside the open provider on a wide window', async () => {
+    const { page, errors } = await open('/settings/models', { width: 1680 })
+    try {
+      const overview = page.getByRole('table', { name: '模型供应商' })
+      await overview.getByText('示例供应商乙', { exact: true }).click()
+      await expect(page).toHaveURL(/provider=example-b/u)
+      await expect(page.getByRole('heading', { name: '示例供应商乙' })).toBeVisible()
+      // The list stays, marks the open item and needs no way back.
+      await expect(overview).toBeVisible()
+      await expect(overview.getByRole('row', { selected: true })).toContainText('示例供应商乙')
+      await expect(page.getByRole('button', { name: '全部供应商' })).toBeHidden()
+      const [listBox, titleBox] = await Promise.all([
+        overview.boundingBox(),
+        page.getByRole('heading', { name: '示例供应商乙' }).boundingBox(),
+      ])
+      expect((titleBox?.x ?? 0) > (listBox?.x ?? 0) + (listBox?.width ?? 0)).toBe(true)
+      await overview.getByText('示例供应商甲', { exact: true }).click()
+      await expect(page.getByRole('heading', { name: '示例供应商甲' })).toBeVisible()
+      await expect(overview.getByRole('row', { selected: true })).toContainText('示例供应商甲')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('returns a narrow window to the opened provider in the list', async () => {
+    const many = {
+      ...providers,
+      providers: Array.from({ length: 30 }, (_, index) =>
+        provider(`example-${index + 1}`, `示例供应商 ${String(index + 1).padStart(2, '0')}`, true),
+      ),
+    }
+    const { page, errors } = await open('/settings/models', {
+      width: 1000,
+      before: async (target) => {
+        await target.route('**/api/llm/providers', (request) => request.fulfill({ json: many }))
+      },
+    })
+    try {
+      const overview = page.getByRole('table', { name: '模型供应商' })
+      const target = overview.getByText('示例供应商 27', { exact: true })
+      await target.scrollIntoViewIfNeeded()
+      await target.click()
+      await expect(page.getByRole('heading', { name: '示例供应商 27' })).toBeVisible()
+      await expect(overview).toBeHidden()
+      await page.getByRole('button', { name: '全部供应商' }).click()
+      await expect(page).not.toHaveURL(/provider=/u)
+      await expect(target).toBeInViewport()
+      await expect(overview.getByRole('row', { name: /示例供应商 27/u })).toBeFocused()
+      // The browser's back button reopens it; the address alone opens it too.
+      await page.goBack()
+      await expect(page.getByRole('heading', { name: '示例供应商 27' })).toBeVisible()
+      await page.goBack()
+      await expect(target).toBeInViewport()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('lists signed-in devices with last activity and revokes one or signs this browser out', async () => {
     const now = Date.now()
     let devices = [

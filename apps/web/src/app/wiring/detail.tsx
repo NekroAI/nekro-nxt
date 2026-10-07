@@ -204,7 +204,7 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
       {connection.userManaged && descriptor?.aliasEditable !== false ? (
         <PropertyGroup title="名称">
           <PropertyList>
-            <PropertyRow label="显示名称" description="用来区分同一平台的多个账号" layout="stacked">
+            <PropertyRow label="显示名称" tip="用来区分同一平台的多个账号" layout="stacked">
               <InlineEdit
                 value={connection.alias ?? ''}
                 label="名称"
@@ -239,13 +239,14 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
       ) : null}
 
       {activities.length ? (
-        <PropertyGroup title="默认触发的活动" description="各频道可在频道设置里单独调整">
+        <PropertyGroup title="默认触发的活动" tip="各频道可在频道设置里单独调整">
           <PropertyList>
             {activities.map((activity) => (
               <PropertyRow
                 key={activity.key}
                 label={activity.displayName}
-                description={connection.activityCapabilities[activity.key]?.reason ?? activity.description}
+                description={connection.activityCapabilities[activity.key]?.reason}
+                tip={connection.activityCapabilities[activity.key]?.reason ? undefined : activity.description}
               >
                 <Switch
                   label={activity.displayName}
@@ -424,7 +425,7 @@ function ChannelDetail({ channelId }: { readonly channelId: string }) {
             />
           </PropertyRow>
           {agent ? (
-            <PropertyRow label="触发方式" description="在频道设置里调整">
+            <PropertyRow label="触发方式" tip="在频道设置里调整">
               <span className={styles.value}>{trigger}</span>
             </PropertyRow>
           ) : null}

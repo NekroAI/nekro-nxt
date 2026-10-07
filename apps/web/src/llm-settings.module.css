@@ -10,7 +10,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--s-4);
-  max-width: 720px;
+  max-width: var(--reader-width);
 }
 
 .loading {

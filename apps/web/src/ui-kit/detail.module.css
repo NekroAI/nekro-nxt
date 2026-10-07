@@ -140,6 +140,9 @@
 }
 
 .groupTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
   margin: 0;
   font: var(--t-section);
 }
@@ -205,6 +208,13 @@
 
 .rowText {
   display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.rowLabelLine {
+  display: inline-flex;
+  align-items: center;
   gap: var(--s-1);
   min-width: 0;
 }

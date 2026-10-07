@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useId, useRef, useState, type Rea
 import { Input } from './form.js'
 import { IconButton, Pressable } from './primitives.js'
 import { Disclosure } from './layout.js'
+import { InfoTip } from './overlay.js'
 import styles from './detail.module.css'
 
 /** Heading level for object headers: the main area owns the page's h1, detail panes sit one level below. */
@@ -85,12 +86,16 @@ export function DetailPane({
 export function PropertyGroup({
   title,
   description,
+  tip,
   actions,
   children,
   id,
 }: {
   readonly title: ReactNode
+  /** Always visible: only what the user needs every time (a consequence, a current state). */
   readonly description?: ReactNode
+  /** Background the user needs once; shown on hover or tap of the help mark beside the title. */
+  readonly tip?: ReactNode
   readonly actions?: ReactNode
   readonly children: ReactNode
   readonly id?: string
@@ -99,7 +104,10 @@ export function PropertyGroup({
     <section className={styles.group} id={id} aria-label={typeof title === 'string' ? title : undefined}>
       <div className={styles.groupHead}>
         <div className={styles.groupTitles}>
-          <h3 className={styles.groupTitle}>{title}</h3>
+          <h3 className={styles.groupTitle}>
+            {title}
+            {tip ? <InfoTip label={typeof title === 'string' ? title : '说明'}>{tip}</InfoTip> : null}
+          </h3>
           {description ? <p className={styles.groupDescription}>{description}</p> : null}
         </div>
         {actions ? <div className={styles.groupActions}>{actions}</div> : null}
@@ -121,13 +129,17 @@ export function PropertyList({ children, framed = true }: { readonly children: R
 export function PropertyRow({
   label,
   description,
+  tip,
   children,
   layout = 'inline',
   htmlFor,
   badge,
 }: {
   readonly label: ReactNode
+  /** Always visible under the label: keep it to what changes the user's decision every time. */
   readonly description?: ReactNode
+  /** Explanation the user needs once; shown from the help mark beside the label. */
+  readonly tip?: ReactNode
   readonly children?: ReactNode
   readonly layout?: 'inline' | 'stacked'
   readonly htmlFor?: string
@@ -137,10 +149,13 @@ export function PropertyRow({
   return (
     <div className={[styles.row, layout === 'stacked' ? styles.stacked : ''].join(' ')}>
       <div className={styles.rowText}>
-        <Label className={styles.rowLabel} {...(htmlFor ? { htmlFor } : {})}>
-          {label}
-          {badge}
-        </Label>
+        <span className={styles.rowLabelLine}>
+          <Label className={styles.rowLabel} {...(htmlFor ? { htmlFor } : {})}>
+            {label}
+            {badge}
+          </Label>
+          {tip ? <InfoTip label={typeof label === 'string' ? label : '说明'}>{tip}</InfoTip> : null}
+        </span>
         {description ? <div className={styles.rowDescription}>{description}</div> : null}
       </div>
       {children !== undefined ? <div className={styles.rowControl}>{children}</div> : null}

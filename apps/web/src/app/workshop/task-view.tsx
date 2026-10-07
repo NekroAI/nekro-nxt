@@ -115,7 +115,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const attempts = useMemo(() => [...(detail?.attempts ?? [])].reverse(), [detail])
 
   return (
-    <MainContent>
+    <MainContent width="full">
       {activation.dialog}
       <ObjectHeader
         visual={agent ? <AgentAvatar name={agent.name} hue={agentHue(agent)} size="md" /> : undefined}

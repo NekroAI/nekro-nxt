@@ -132,7 +132,7 @@ export function AddProviderDialog({
         </>
       }
     >
-      <Field label="模型供应商" hint="候选项来自当前运行环境的供应商目录。">
+      <Field label="模型供应商" tip="候选项来自当前运行环境的供应商目录。">
         <Select
           value={candidate}
           onValueChange={(value) => setCandidate(value)}
@@ -388,7 +388,7 @@ export function ModelProviderDetail({
           ) : null}
           <Field
             label="API 密钥"
-            hint={
+            tip={
               selected?.credential?.configured ? '留空表示沿用当前密钥；已保存密钥无法查看。' : '保存后的密钥无法查看。'
             }
           >
@@ -404,10 +404,11 @@ export function ModelProviderDetail({
 
       <PropertyGroup
         title="模型"
-        description={
+        description={modelsEditable ? undefined : '这个供应商的模型由其适配器固定提供。'}
+        tip={
           modelsEditable
             ? `打开“看图”的模型可以直接理解频道里的图片。${catalogRoute ? '加入目录外的模型时，需要在高级设置中选择 API 协议。' : ''}`
-            : '这个供应商的模型由其适配器固定提供。'
+            : undefined
         }
         actions={
           <>
@@ -474,7 +475,7 @@ export function ModelProviderDetail({
                   />
                 </Field>
               ) : catalogRoute ? (
-                <Field label="API 协议" hint="选择后该供应商的全部模型都使用此协议；加入目录外的模型时必须选择。">
+                <Field label="API 协议" tip="选择后该供应商的全部模型都使用此协议；加入目录外的模型时必须选择。">
                   <Select
                     value={api || CATALOG_PROTOCOL}
                     onValueChange={(value) => setApi(value === CATALOG_PROTOCOL ? '' : value)}
@@ -689,7 +690,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
           }))}
         />
       </Field>
-      <Field label="API 密钥" hint="保存后的密钥无法查看。" error={error || undefined}>
+      <Field label="API 密钥" tip="保存后的密钥无法查看。" error={error || undefined}>
         <SecretInput
           configured={selected?.credential?.configured === true}
           data-1p-ignore="true"

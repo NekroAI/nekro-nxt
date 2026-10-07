@@ -91,7 +91,7 @@ export default function WiringSpace() {
   if (creating) return <ConnectionCreate />
   return (
     <WorkbenchPage detail={<WiringDetail selected={selected} />}>
-      <MainContent fill>
+      <MainContent width="full" fill>
         <header className={styles.head}>
           <h1 className={styles.title}>接线</h1>
           <div className={styles.search}>

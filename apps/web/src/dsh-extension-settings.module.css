@@ -71,7 +71,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: var(--s-3);
-  max-width: 640px;
+  max-width: var(--reader-width);
 }
 
 /* —— 配置表单 —— */
@@ -84,7 +84,7 @@
 .schemaRoot {
   display: grid;
   gap: var(--s-4);
-  max-width: 720px;
+  max-width: var(--reader-width);
 }
 
 .control {
@@ -203,7 +203,7 @@ summary.groupTitle {
 .credential {
   display: grid;
   gap: var(--s-3);
-  max-width: 720px;
+  max-width: var(--reader-width);
   padding: var(--s-4);
   border: 1px solid var(--line);
   border-radius: var(--r-2);

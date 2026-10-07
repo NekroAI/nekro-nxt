@@ -11,6 +11,13 @@
   font-weight: 600;
 }
 
+.labelLine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
 .hint {
   color: var(--muted);
   font-size: var(--fs-xs);

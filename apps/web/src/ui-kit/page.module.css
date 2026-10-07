@@ -95,9 +95,83 @@
   flex: 1;
 }
 
+/* Workbench content widths: always start-aligned, never centred in the leftover space (05 §6.1). */
 .readable {
   max-width: calc(var(--reader-width) + 2 * var(--s-7));
-  margin-inline: auto;
+}
+
+.wide {
+  max-width: calc(var(--content-width) + 2 * var(--s-7));
+}
+
+.full {
+  max-width: none;
+}
+
+/* —— 主从分栏 —— */
+.split {
+  flex: 1;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+.splitGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.master,
+.detailColumn {
+  min-height: 0;
+  overflow: auto;
+}
+
+.masterInner,
+.detailInner {
+  display: grid;
+  align-content: start;
+  gap: var(--s-6);
+  width: 100%;
+  padding: var(--s-6) var(--s-7) var(--s-8);
+}
+
+.masterInner {
+  max-width: calc(var(--reader-width) + 2 * var(--s-7));
+}
+
+.detailInner {
+  max-width: calc(var(--content-width) + 2 * var(--s-7));
+}
+
+.splitBack {
+  justify-self: start;
+  margin-inline-start: calc(-1 * var(--s-2));
+}
+
+/* Narrow: the open detail replaces the list. */
+.splitGrid[data-open] > .master {
+  display: none;
+}
+
+@container (min-width: 1080px) {
+  .splitGrid[data-open] {
+    grid-template-columns: var(--pane-master) minmax(0, 1fr);
+  }
+
+  .splitGrid[data-open] > .master {
+    display: block;
+    border-right: 1px solid var(--line);
+  }
+
+  .splitGrid[data-open] .masterInner {
+    padding: var(--s-6) var(--s-4) var(--s-8) var(--s-6);
+  }
+
+  .splitBack {
+    display: none;
+  }
 }
 
 /* 列表栏 */
@@ -148,7 +222,9 @@
     --pane-detail: 320px;
   }
 
-  .mainInner {
+  .mainInner,
+  .masterInner,
+  .detailInner {
     padding: var(--s-5) var(--s-6) var(--s-7);
   }
 }
