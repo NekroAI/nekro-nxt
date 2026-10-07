@@ -1,4 +1,4 @@
-import { History, MessagesSquare, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { History, MessagesSquare, MoreHorizontal, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useProductStore, type AgentSummary, type ModelSummary } from '../../product-runtime.js'
 import {
@@ -32,6 +32,7 @@ import {
   imagePolicyFor,
   type AgentDraft,
 } from './agent-draft.js'
+import { PersonaPublishDialog } from '../community/persona-publish-dialog.js'
 import { RestoreDialog } from './agent-restore.js'
 import {
   CapabilitiesSection,
@@ -133,6 +134,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
   const [editingPersona, setEditingPersona] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmName, setConfirmName] = useState('')
   const [deleteBuiltIn, setDeleteBuiltIn] = useState(true)
@@ -188,7 +190,13 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
       <div className={styles.profile} style={cssVars({ '--agent-accent': agentAccent(agent) })}>
         <ObjectHeader
           visual={
-            <AgentAvatar name={draft.name || agent.name} hue={agentHue(agent)} size="lg" live={isAgentWorking(agent)} />
+            <AgentAvatar
+              name={draft.name || agent.name}
+              hue={agentHue(agent)}
+              size="lg"
+              live={isAgentWorking(agent)}
+              {...(agent.appearance?.avatarUrl ? { imageUrl: agent.appearance.avatarUrl } : {})}
+            />
           }
           title={
             renaming ? (
@@ -261,6 +269,12 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
                     icon: <History size={15} />,
                     onSelect: () => setRestoreOpen(true),
                   },
+                  {
+                    key: 'share-persona',
+                    label: '分享人设到社区',
+                    icon: <Share2 size={15} />,
+                    onSelect: () => setSharing(true),
+                  },
                   'separator',
                   {
                     key: 'delete',
@@ -318,6 +332,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
 
       <BindDialog intent={bindIntent} onClose={() => setBindIntent(null)} />
       <RestoreDialog agent={agent} open={restoreOpen} onOpenChange={setRestoreOpen} blocked={changes.length > 0} />
+      <PersonaPublishDialog agent={agent} open={sharing} onOpenChange={setSharing} />
       <ConfirmDialog
         open={deleting}
         onOpenChange={(open) => {

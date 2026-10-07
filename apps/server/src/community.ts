@@ -766,6 +766,32 @@ export class CommunityService {
   async withdraw(releaseId: string): Promise<void> {
     await this.#api(`/api/v1/releases/${encodeURIComponent(releaseId)}/withdraw`, { method: 'POST' }, true)
   }
+
+  /** 同一社区通道上的其他资源（如人设）读取开放接口：沿用地址、登录、超时与出错格式。 */
+  async apiJson(path: string, init: RequestInit = {}, authenticated = false): Promise<unknown> {
+    return this.#api(path, init, authenticated)
+  }
+
+  /** 下载一个社区资源（如人设头像），超过上限即停止。 */
+  async download(
+    path: string,
+    maxBytes: number,
+  ): Promise<{ readonly bytes: Uint8Array; readonly contentType: string }> {
+    const response = await this.#request(new URL(path, this.communityUrl), { headers: { accept: 'image/*' } })
+    if (!response.ok) {
+      throw new CommunityError(
+        response.status === 404 ? 404 : 502,
+        response.status === 404 ? '社区上没有这个文件。' : `社区返回 ${response.status}。`,
+        response.status === 404 ? 'community-not-found' : 'community-request-failed',
+      )
+    }
+    if (Number(response.headers.get('content-length') ?? 0) > maxBytes) {
+      throw new CommunityError(502, '社区返回的文件过大。')
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.byteLength > maxBytes) throw new CommunityError(502, '社区返回的文件过大。')
+    return { bytes, contentType: response.headers.get('content-type') ?? '' }
+  }
 }
 
 const RecordSchema = z.record(z.string(), z.unknown())

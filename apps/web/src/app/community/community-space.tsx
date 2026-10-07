@@ -1,4 +1,4 @@
-import { Compass, PackageCheck, Send, UserRound } from 'lucide-react'
+import { Compass, PackageCheck, Send, UserRound, UsersRound } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import type { CommunityPermissionItem, CommunityReviewStatus, HostApiResponse } from '@nekro-nxt/contracts'
@@ -11,6 +11,8 @@ import { ENVIRONMENT_LABEL, useCommunityStatus } from './community-model.js'
 import { CommunityView } from './discover.js'
 import { InstalledView } from './installed.js'
 import { MineView, ReviewReportView } from './mine.js'
+import { useWideLayout } from './persona-model.js'
+import { PersonaCatalog, PersonaDetail } from './personas.js'
 import styles from './community.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
@@ -24,6 +26,7 @@ export interface PendingCommunityImport {
 
 type Section =
   | { readonly kind: 'discover'; readonly extensionId?: string }
+  | { readonly kind: 'personas'; readonly personaId?: string }
   | { readonly kind: 'installed' }
   | { readonly kind: 'mine'; readonly releaseId?: string }
   | { readonly kind: 'account' }
@@ -32,6 +35,9 @@ const parse = (pathname: string): Section | undefined => {
   if (pathname === '/community' || pathname === '/community/') return { kind: 'discover' }
   const extension = /^\/community\/extensions\/([^/]+)\/?$/u.exec(pathname)
   if (extension) return { kind: 'discover', extensionId: decodeURIComponent(extension[1] ?? '') }
+  if (/^\/community\/personas\/?$/u.test(pathname)) return { kind: 'personas' }
+  const persona = /^\/community\/personas\/([^/]+)\/?$/u.exec(pathname)
+  if (persona) return { kind: 'personas', personaId: decodeURIComponent(persona[1] ?? '') }
   if (/^\/community\/installed\/?$/u.test(pathname)) return { kind: 'installed' }
   if (/^\/community\/mine\/?$/u.test(pathname)) return { kind: 'mine' }
   const release = /^\/community\/mine\/releases\/([^/]+)\/?$/u.exec(pathname)
@@ -42,6 +48,7 @@ const parse = (pathname: string): Section | undefined => {
 
 const CRUMB: Readonly<Record<Section['kind'], string>> = {
   discover: '发现',
+  personas: '人设',
   installed: '已安装',
   mine: '我的发布',
   account: '账号',
@@ -56,6 +63,7 @@ export default function CommunitySpace() {
   const navigate = useGo()
   const community = useCommunityStatus()
   const [pending, setPending] = useState<PendingCommunityImport>()
+  const wide = useWideLayout()
   const section = parse(pathname)
   useCrumb('社区', section ? CRUMB[section.kind] : undefined)
   if (!section) return <Navigate to="/community" replace />
@@ -92,6 +100,7 @@ export default function CommunitySpace() {
     >
       <SelectionList selectedKey={selected}>
         {row('discover', '/community', <Compass size={14} />, '发现', '浏览、搜索与安装社区扩展')}
+        {row('personas', '/community/personas', <UsersRound size={14} />, '人设', '安装社区作者分享的人设')}
         {row(
           'installed',
           '/community/installed',
@@ -121,7 +130,19 @@ export default function CommunitySpace() {
   )
 
   return (
-    <WorkbenchPage list={list}>
+    <WorkbenchPage
+      list={list}
+      detail={
+        section.kind === 'personas' && section.personaId && wide ? (
+          <PersonaDetail
+            key={section.personaId}
+            personaId={section.personaId}
+            mode="pane"
+            onClose={() => navigate('/community/personas')}
+          />
+        ) : undefined
+      }
+    >
       <ImportDialog
         inspection={pending?.inspection}
         note={
@@ -147,6 +168,12 @@ export default function CommunitySpace() {
             setPending({ inspection, publisher: detail.publisher.handle, status: detail.latest?.reviewStatus })
           }
         />
+      ) : section.kind === 'personas' ? (
+        section.personaId && !wide ? (
+          <PersonaDetail key={section.personaId} personaId={section.personaId} mode="page" />
+        ) : (
+          <PersonaCatalog selectedId={section.personaId} />
+        )
       ) : section.kind === 'installed' ? (
         <InstalledView onInspected={setPending} onChecked={() => void community.refresh()} />
       ) : section.kind === 'mine' ? (

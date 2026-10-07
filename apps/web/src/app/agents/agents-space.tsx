@@ -50,7 +50,13 @@ export default function AgentsSpace() {
                 data-selected={item.id === agent?.id}
                 aria-current={item.id === agent?.id ? 'page' : undefined}
               >
-                <AgentAvatar name={item.name} hue={agentHue(item)} size="md" live={isAgentWorking(item)} />
+                <AgentAvatar
+                  name={item.name}
+                  hue={agentHue(item)}
+                  size="md"
+                  live={isAgentWorking(item)}
+                  {...(item.appearance?.avatarUrl ? { imageUrl: item.appearance.avatarUrl } : {})}
+                />
                 <span className={styles.rowName}>{item.name}</span>
                 <span className={styles.rowState}>{agentPhase[item.state].label}</span>
                 <span className={styles.rowSub}>{item.channels.length} 个频道</span>

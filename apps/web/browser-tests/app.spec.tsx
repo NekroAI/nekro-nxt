@@ -1252,6 +1252,189 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  const personaSummary = {
+    id: 'psn_01LIBRARIAN',
+    name: '温柔的图书管理员',
+    summary: '轻声细语，帮你找书。',
+    tags: ['陪伴', '读书'],
+    avatarUrl: '/api/community/personas/psn_01LIBRARIAN/avatar?v=abc123',
+    official: false,
+    publisher: { handle: 'demo-author', displayName: '示例作者', avatarUrl: null },
+    installs: 12,
+    updatedAt: 1_790_000_000_000,
+    pageUrl: 'https://community.example.test/personas/psn_01LIBRARIAN',
+  }
+  const personaDetail = {
+    ...personaSummary,
+    description: '## 适合读书会\n会推荐书目，**不会剧透**。',
+    persona: '你是一位温柔的图书管理员，说话轻声细语。\n'.repeat(10),
+    revision: { id: 'prv_01REV', notes: '', createdAt: 1_790_000_000_000 },
+    review: { status: 'approved', summary: '内容合规。' },
+  }
+  const personaRoutes = async (page: Page, installs: unknown[], account: unknown = null) => {
+    await page.route('**/api/community/status', (request) =>
+      request.fulfill({
+        json: {
+          communityUrl: 'https://community.example.test',
+          environment: 'production',
+          account,
+          signedInAt: account ? 1 : null,
+          updatesAvailable: 0,
+        },
+      }),
+    )
+    await page.route('**/api/community/personas?**', (request) =>
+      request.fulfill({ json: { items: [personaSummary], nextCursor: null } }),
+    )
+    await page.route('**/api/community/personas', (request) =>
+      request.fulfill({ json: { items: [personaSummary], nextCursor: null } }),
+    )
+    await page.route('**/api/community/personas/psn_01LIBRARIAN', (request) => request.fulfill({ json: personaDetail }))
+    await page.route('**/api/community/personas/psn_01LIBRARIAN/avatar*', (request) =>
+      request.fulfill({
+        contentType: 'image/png',
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+          'base64',
+        ),
+      }),
+    )
+    await page.route('**/api/community/personas/psn_01LIBRARIAN/install', async (request) => {
+      installs.push(request.request().postDataJSON())
+      await request.fulfill({
+        json: {
+          agentId: browserAgentId,
+          channelId: null,
+          currentRevisionId: browserRevisionId,
+          avatar: 'applied',
+        },
+      })
+    })
+  }
+
+  test('browses community personas in a side detail and installs one as a new agent', async () => {
+    const installs: unknown[] = []
+    await withProductPage(
+      '/community/personas',
+      async (page) => {
+        const card = page.getByRole('link', { name: /温柔的图书管理员/u })
+        await card.click()
+        await playwrightExpect(page).toHaveURL(/\/community\/personas\/psn_01LIBRARIAN$/u)
+        const pane = page.getByRole('complementary', { name: '人设详情' })
+        await playwrightExpect(pane.getByRole('heading', { name: '温柔的图书管理员' })).toBeVisible()
+        await playwrightExpect(pane.getByRole('heading', { name: '适合读书会' })).toBeVisible()
+        await playwrightExpect(pane.locator('strong')).toHaveText('不会剧透')
+        await playwrightExpect(pane).toContainText('内容审查通过')
+        // 列表保持可见，选中的卡片有明确标记。
+        await playwrightExpect(card).toHaveAttribute('aria-current', 'true')
+        await pane.getByRole('button', { name: '展开全文' }).click()
+        await playwrightExpect(pane.getByRole('button', { name: '收起' })).toBeVisible()
+
+        await pane.getByRole('button', { name: '安装' }).click()
+        const dialog = page.getByRole('dialog', { name: '安装「温柔的图书管理员」' })
+        await playwrightExpect(dialog.getByLabel('名称')).toHaveValue('温柔的图书管理员')
+        await dialog.getByLabel('名称').fill('图书管理员')
+        await dialog.getByRole('button', { name: '创建智能体' }).click()
+        await playwrightExpect(page).toHaveURL(new RegExp(`/agents/${browserAgentId}$`, 'u'))
+        expect(installs).toEqual([
+          {
+            target: 'new',
+            expectedRevisionId: 'prv_01REV',
+            displayName: '图书管理员',
+            model: { provider: 'openai', model: 'gpt-5' },
+            useAvatar: true,
+          },
+        ])
+      },
+      browserSnapshot,
+      (page) => personaRoutes(page, installs),
+    )
+  })
+
+  test('opens a community persona deep link and replaces the persona of an existing agent', async () => {
+    const installs: unknown[] = []
+    await withProductPage(
+      '/community/personas/psn_01LIBRARIAN',
+      async (page) => {
+        const pane = page.getByRole('complementary', { name: '人设详情' })
+        await pane.getByRole('button', { name: '安装' }).click()
+        const dialog = page.getByRole('dialog', { name: '安装「温柔的图书管理员」' })
+        await dialog.getByRole('radio', { name: '替换现有智能体的设定' }).click()
+        await dialog.getByRole('combobox', { name: '要替换设定的智能体' }).click()
+        await page.getByRole('option', { name: '资料员' }).click()
+        await playwrightExpect(dialog).toContainText('原设定可在版本历史中恢复')
+        await dialog.getByRole('switch', { name: /同时改名/u }).click()
+        await dialog.getByRole('switch', { name: '同时换成人设头像' }).click()
+        await dialog.getByRole('button', { name: '替换设定' }).click()
+        await playwrightExpect(page).toHaveURL(new RegExp(`/agents/${browserAgentId}$`, 'u'))
+        expect(installs).toEqual([
+          {
+            target: 'replace',
+            expectedRevisionId: 'prv_01REV',
+            agentId: browserAgentId,
+            expectedCurrentRevisionId: browserRevisionId,
+            displayName: '温柔的图书管理员',
+            useAvatar: false,
+          },
+        ])
+      },
+      browserSnapshot,
+      (page) => personaRoutes(page, installs),
+    )
+  })
+
+  test('shares an agent persona to the community and lists it under my publications', async () => {
+    const published: unknown[] = []
+    const mine = {
+      ...personaSummary,
+      status: 'listed',
+      latestRevision: { id: 'prv_01REV', createdAt: 1_790_000_000_000, reviewStatus: 'pending', reviewSummary: null },
+    }
+    const account = { handle: 'demo-author', displayName: '示例作者', avatarUrl: null }
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        await page.getByRole('button', { name: '更多操作' }).click()
+        await page.getByRole('menuitem', { name: '分享人设到社区' }).click()
+        const dialog = page.getByRole('dialog', { name: '分享人设到社区' })
+        await playwrightExpect(dialog.getByLabel('名称')).toHaveValue('资料员')
+        await playwrightExpect(dialog.getByLabel('人设正文')).toHaveValue('严谨、简洁')
+        await playwrightExpect(dialog.getByRole('button', { name: '分享' })).toBeDisabled()
+        await dialog.getByLabel('简介').fill('严谨的资料整理助手')
+        await dialog.getByLabel('标签').fill('资料，效率 资料')
+        await dialog.getByRole('button', { name: '分享' }).click()
+        await playwrightExpect(page.getByRole('dialog', { name: '已分享到社区' })).toContainText('审查中')
+        expect(published).toEqual([
+          {
+            agentId: browserAgentId,
+            name: '资料员',
+            summary: '严谨的资料整理助手',
+            description: '',
+            tags: ['资料', '效率'],
+            persona: '严谨、简洁',
+          },
+        ])
+        await page.getByRole('button', { name: '查看我的发布' }).click()
+        await playwrightExpect(page).toHaveURL(/\/community\/mine$/u)
+        const item = page.getByRole('article', { name: '温柔的图书管理员' })
+        await playwrightExpect(item).toContainText('审查中')
+        await playwrightExpect(item).toContainText('12 次安装')
+      },
+      browserSnapshot,
+      async (page) => {
+        await personaRoutes(page, [], account)
+        await page.route('**/api/community/mine', (request) => request.fulfill({ json: { items: [] } }))
+        await page.route('**/api/community/mine/personas', (request) =>
+          request.fulfill({ json: { items: published.length > 0 ? [mine] : [], agentLinks: {} } }),
+        )
+        await page.route('**/api/community/personas/publish', async (request) => {
+          published.push(request.request().postDataJSON())
+          await request.fulfill({ json: mine })
+        })
+      },
+    )
+  })
+
   test('finds platform members in the account detail and through the command palette', async () => {
     const queries: string[] = []
     await withProductPage(
