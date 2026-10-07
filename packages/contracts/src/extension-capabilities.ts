@@ -150,6 +150,107 @@ export const ExtensionPlatformCapabilitySchema = z
   .strict()
 export type ExtensionPlatformCapability = z.output<typeof ExtensionPlatformCapabilitySchema>
 
+/** A header or environment value: literal text, or the current value of a `meta.role: 'secret'` config field. */
+export const ExtensionMcpValueSchema = z.union([
+  z.string().max(4096),
+  z.object({ secret: z.string().trim().min(1).max(64) }).strict(),
+])
+export type ExtensionMcpValue = z.output<typeof ExtensionMcpValueSchema>
+
+/** Becomes the model-facing tool prefix `mcp__<name>__`. */
+export const ExtensionMcpServerNameSchema = z.string().regex(/^[A-Za-z0-9_-]{1,32}$/u)
+
+const McpValueMapSchema = z
+  .record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/u), ExtensionMcpValueSchema)
+  .refine((value) => Object.keys(value).length <= 32, '最多 32 项。')
+  .default({})
+
+export const ExtensionMcpServerSchema = z.discriminatedUnion('transport', [
+  z
+    .object({
+      transport: z.literal('streamable-http'),
+      name: ExtensionMcpServerNameSchema,
+      url: z
+        .string()
+        .url()
+        .refine((value) => /^https?:\/\//iu.test(value), 'MCP 地址必须是 http 或 https。'),
+      headers: McpValueMapSchema,
+    })
+    .strict(),
+  z
+    .object({
+      transport: z.literal('stdio'),
+      name: ExtensionMcpServerNameSchema,
+      command: z.string().trim().min(1).max(512),
+      args: z.array(z.string().max(4096)).max(64).default([]),
+      env: McpValueMapSchema,
+    })
+    .strict(),
+])
+export type ExtensionMcpServer = z.output<typeof ExtensionMcpServerSchema>
+
+/**
+ * MCP servers the Host connects for the agent while the extension is enabled; their tools appear as
+ * `mcp__<name>__<tool>`. `stdio` runs a program on the Host and is only created from the administrator's form.
+ */
+export const ExtensionMcpCapabilitySchema = z
+  .object({
+    servers: z
+      .array(ExtensionMcpServerSchema)
+      .min(1)
+      .max(8)
+      .refine((value) => new Set(value.map(({ name }) => name)).size === value.length, 'MCP 服务名称不能重复。'),
+  })
+  .strict()
+export type ExtensionMcpCapability = z.output<typeof ExtensionMcpCapabilitySchema>
+
+/** One header or environment row of the administrator's form; secret rows become credential config fields. */
+const McpFormValueSchema = z
+  .object({
+    name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/u, '名称只能包含字母、数字、下划线和连字符。'),
+    value: z.string().max(4096),
+    secret: z.boolean().default(false),
+  })
+  .strict()
+
+export const McpServerFormSchema = z.discriminatedUnion('transport', [
+  z
+    .object({
+      transport: z.literal('streamable-http'),
+      name: ExtensionMcpServerNameSchema,
+      url: z.string().url(),
+      headers: z.array(McpFormValueSchema).max(32).default([]),
+    })
+    .strict(),
+  z
+    .object({
+      transport: z.literal('stdio'),
+      name: ExtensionMcpServerNameSchema,
+      command: z.string().trim().min(1).max(512),
+      args: z.array(z.string().max(4096)).max(64).default([]),
+      env: z.array(McpFormValueSchema).max(32).default([]),
+    })
+    .strict(),
+])
+export type McpServerForm = z.output<typeof McpServerFormSchema>
+
+/** Secret config fields an MCP declaration reads. */
+export const mcpSecretFields = (mcp: ExtensionMcpCapability | undefined): readonly string[] => [
+  ...new Set(
+    (mcp?.servers ?? []).flatMap((server) =>
+      Object.values(server.transport === 'stdio' ? server.env : server.headers).flatMap((value) =>
+        typeof value === 'string' ? [] : [value.secret],
+      ),
+    ),
+  ),
+]
+
+/** What a server connects to; changing it needs a new approval, unlike its credentials. */
+const mcpTarget = (server: ExtensionMcpServer): string =>
+  server.transport === 'stdio'
+    ? JSON.stringify(['stdio', server.name, server.command, server.args])
+    : JSON.stringify(['streamable-http', server.name, server.url])
+
 /**
  * Optional Host capabilities of an agent-scope Revision. Every field is additive to Manifest V6: an absent field
  * means the Revision cannot use that capability, exactly as before the field existed.
@@ -170,6 +271,7 @@ export const ExtensionCapabilitiesSchema = z
     jobs: ExtensionJobsCapabilitySchema.optional(),
     platform: ExtensionPlatformCapabilitySchema.optional(),
     llm: ExtensionLlmCapabilitySchema.optional(),
+    mcp: ExtensionMcpCapabilitySchema.optional(),
     context: z
       .array(ExtensionContextContributionSchema)
       .max(8)
@@ -235,6 +337,8 @@ export const extensionCapabilitiesExpand = (
   ) {
     return true
   }
+  const previousMcp = new Set((previous?.mcp?.servers ?? []).map(mcpTarget))
+  if ((next.mcp?.servers ?? []).some((server) => !previousMcp.has(mcpTarget(server)))) return true
   if (
     next.llm !== undefined &&
     (previous?.llm === undefined ||
@@ -339,6 +443,23 @@ export const summarizeExtensionCapabilities = (
       label: '使用这个智能体的模型',
       detail: `每轮最多 ${capabilities.llm.maxCallsPerTurn} 次，计入智能体用量`,
     })
+  }
+  for (const server of capabilities.mcp?.servers ?? []) {
+    items.push(
+      server.transport === 'stdio'
+        ? {
+            key: `mcp.${server.name}`,
+            risk: 'high',
+            label: `在本机运行 MCP 程序 ${server.name}`,
+            detail: [server.command, ...server.args].join(' '),
+          }
+        : {
+            key: `mcp.${server.name}`,
+            risk: 'sensitive',
+            label: `连接 MCP 服务 ${server.name}`,
+            detail: new URL(server.url).host,
+          },
+    )
   }
   if (capabilities.context !== undefined && capabilities.context.length > 0) {
     items.push({

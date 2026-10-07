@@ -51,6 +51,13 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
           },
         }),
     ...(capabilities.inboundHook === undefined ? {} : { inboundHook: capabilities.inboundHook }),
+    ...(capabilities.mcp === undefined
+      ? {}
+      : {
+          mcp: {
+            servers: [...capabilities.mcp.servers].sort((left, right) => left.name.localeCompare(right.name)),
+          },
+        }),
     ...(capabilities.jobs === undefined
       ? {}
       : {

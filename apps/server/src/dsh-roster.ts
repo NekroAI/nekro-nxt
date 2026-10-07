@@ -28,6 +28,8 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-llm-deepseek-api-key',
   '@deepseek-ai/dsh-llm-pi-ai',
   '@deepseek-ai/dsh-llm-retry',
+  '@deepseek-ai/dsh-mcp-client',
+  '@deepseek-ai/dsh-mcp-resources',
   '@deepseek-ai/dsh-output-retention',
   '@deepseek-ai/dsh-sandbox-local',
   '@deepseek-ai/dsh-sandbox-policy',

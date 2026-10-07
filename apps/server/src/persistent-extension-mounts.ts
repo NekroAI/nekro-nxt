@@ -44,6 +44,15 @@ export type PersistentNxtFactory = (input: {
   readonly context: Context
 }) => NxtHostService
 
+/** Connects the MCP servers an Activation declares inside its Session context; disposed with that context. */
+export type PersistentMcpMount = (input: {
+  readonly agentId: AgentRevisionRecord['agentId']
+  readonly revision: Revision
+  readonly config: JsonValue
+  readonly sessionId: string
+  readonly context: Context
+}) => Promise<void>
+
 interface PersistentExtensionRegistration {
   readonly key: string
   readonly agentId: AgentRevisionRecord['agentId']
@@ -90,9 +99,14 @@ export class PersistentExtensionMounts {
   readonly #pendingUnmounts = new Set<Promise<void>>()
   #disposal: Promise<void> | undefined
   readonly #nxt: PersistentNxtFactory | undefined
-  constructor(sessions: SessionRegistry<unknown>, options: { readonly nxt?: PersistentNxtFactory } = {}) {
+  readonly #mcp: PersistentMcpMount | undefined
+  constructor(
+    sessions: SessionRegistry<unknown>,
+    options: { readonly nxt?: PersistentNxtFactory; readonly mcp?: PersistentMcpMount } = {},
+  ) {
     this.#sessions = sessions
     this.#nxt = options.nxt
+    this.#mcp = options.mcp
   }
   async invokeExtensionHost(
     dshSessionId: string,
@@ -321,6 +335,13 @@ export class PersistentExtensionMounts {
                 })
               : undefined
           await apply(persistentExtensionContext(context, nxt))
+          await this.#mcp?.({
+            agentId: registration.agentId,
+            revision: registration.revision,
+            config: registration.config,
+            sessionId,
+            context,
+          })
         },
       }
       const fiber = extensionContext.plugin(extensionPlugin)

@@ -14,6 +14,7 @@ import {
   configSecretKeys,
   EMPTY_EXTENSION_UI_CONTRIBUTIONS,
   EXTENSION_SDK_LEVEL,
+  mcpSecretFields,
   ExtensionRequiresSchema,
   type ExtensionCapabilities,
   type ExtensionUiContributions,
@@ -162,12 +163,17 @@ const checkCapabilities = (
   },
   issue: Issue,
 ): void => {
-  const network = value.permissions.capabilities?.network
-  if (network?.mode !== 'config') return
   const parsed = value.config === undefined ? undefined : ExtensionConfigDeclarationSchema.safeParse(value.config)
   const fields = new Map(
     parsed?.success === true ? configFields(parsed.data.schema).map((field) => [field.key, field.kind]) : [],
   )
+  for (const field of mcpSecretFields(value.permissions.capabilities?.mcp)) {
+    if (fields.get(field) !== 'secret') {
+      issue(`MCP 请求头或环境变量引用的凭据必须是 config.schema 中的凭据字段：${field}`)
+    }
+  }
+  const network = value.permissions.capabilities?.network
+  if (network?.mode !== 'config') return
   for (const field of network.fields) {
     if (fields.get(field) !== 'string') {
       issue(`permissions.capabilities.network.fields 只能引用 config.schema 中的文本字段：${field}`)

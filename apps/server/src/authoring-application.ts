@@ -129,6 +129,9 @@ export class AuthoringApplicationService {
       identity.pluginId,
       identity.packageId,
     )
+    if (verified.permissions?.capabilities?.mcp !== undefined) {
+      throw new Error('动态创造不能声明 MCP 服务；请在工坊用「添加 MCP 服务」连接。')
+    }
     const adapterVerification = 'scope' in verified && verified.scope === 'host-adapter' ? verified : undefined
     const scopedVerification =
       'scope' in verified && (verified.scope === 'host-adapter' || verified.scope === 'host-ui') ? verified : undefined

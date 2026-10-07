@@ -677,3 +677,66 @@
   display: flex;
   justify-content: flex-end;
 }
+
+/* —— 添加 MCP 服务 —— */
+.mcpForm {
+  display: grid;
+  gap: var(--s-3);
+}
+
+.mcpRows {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.mcpRowsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--fg-2);
+  font-size: var(--fs-sm);
+}
+
+.mcpRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.mcpRowsHint {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.mcpTest {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--inset);
+}
+
+.mcpTestHead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ok);
+}
+
+.mcpTest[data-ok='false'] .mcpTestHead {
+  color: var(--bad);
+}
+
+.mcpTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+.startActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}

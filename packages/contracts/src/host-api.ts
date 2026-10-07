@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { McpServerFormSchema } from './extension-capabilities.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
 import {
   AgentIdSchema,
@@ -2419,6 +2420,45 @@ export const HostApiContracts = {
         scope: z.enum(['agent', 'host-adapter', 'host-ui']),
         idempotent: z.boolean(),
         slugConflict: z.boolean(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  testMcpServer: defineContract({
+    timeoutMs: 30_000,
+    method: 'POST',
+    path: '/api/mcp-servers/test',
+    params: EmptyParamsSchema,
+    request: z.object({ server: McpServerFormSchema }).strict(),
+    response: z
+      .object({
+        ok: z.boolean(),
+        message: z.string(),
+        serverName: z.string().optional(),
+        tools: z.array(z.object({ name: z.string(), description: z.string().optional() }).strict()),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  createMcpExtension: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 120_000,
+    method: 'POST',
+    path: '/api/mcp-servers',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        displayName: z.string().trim().min(1).max(80),
+        description: z.string().trim().max(500).default(''),
+        server: McpServerFormSchema,
+      })
+      .strict(),
+    response: z
+      .object({
+        extensionId: ExtensionIdSchema,
+        revisionId: ExtensionRevisionIdSchema,
+        /** Credential config fields created for the form's secret rows, by row name. */
+        secretFields: z.array(z.object({ key: z.string(), name: z.string() }).strict()),
       })
       .strict(),
     error: HostApiErrorSchema,

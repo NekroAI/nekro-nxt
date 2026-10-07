@@ -14,6 +14,7 @@ import { assembleChannelRuntime, HostQueries } from './host-queries.js'
 import { projectChannelFact, projectConnectionEvent, writeError, writeJson } from './host-route-support.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
+import { registerMcpRoutes } from './host-routes-mcp.js'
 import { registerConnectionsRoutes } from './host-routes-connections.js'
 import { registerExtensionsRoutes } from './host-routes-extensions.js'
 import { registerSettingsRoutes } from './host-routes-settings.js'
@@ -339,6 +340,16 @@ export const createNekroHostApi = (
     }),
   )
 
+  disposers.push(
+    registerMcpRoutes({
+      runtime,
+      registerRoute,
+      broadcast,
+      broadcastExtensionsChanged,
+      readCursor: () => hub.cursor,
+      projections,
+    }),
+  )
   disposers.push(
     registerScheduledTaskRoutes({
       runtime,

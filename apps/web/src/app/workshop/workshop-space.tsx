@@ -1,5 +1,5 @@
 import { useGo } from '../model/nav.js'
-import { Hammer, LayoutPanelLeft, PanelsTopLeft, Upload, Wrench } from 'lucide-react'
+import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, Upload, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
@@ -28,6 +28,7 @@ import { relativeTime } from '../channels/timeline-model.js'
 import { agentHue } from '../model/identity.js'
 import { useCrumb } from '../shell/crumb.js'
 import { ExtensionView } from './extension-view.js'
+import { McpServerDialog } from './mcp-dialog.js'
 import { TaskView } from './task-view.js'
 import {
   EXTENSION_GROUPS,
@@ -84,6 +85,7 @@ export default function WorkshopSpace() {
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
   const [dropped, setDropped] = useState<File>()
+  const [addingMcp, setAddingMcp] = useState(false)
   const importer = useRef<HTMLInputElement>(null)
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
@@ -105,9 +107,14 @@ export default function WorkshopSpace() {
       title="工坊"
       label="工坊"
       actions={
-        <IconButton label="导入扩展" size="small" onClick={() => importer.current?.click()}>
-          <Upload size={15} />
-        </IconButton>
+        <>
+          <IconButton label="添加 MCP 服务" size="small" onClick={() => setAddingMcp(true)}>
+            <Plug size={15} />
+          </IconButton>
+          <IconButton label="导入扩展" size="small" onClick={() => importer.current?.click()}>
+            <Upload size={15} />
+          </IconButton>
+        </>
       }
       toolbar={<SearchField value={query} onChange={setQuery} label="搜索任务和扩展" placeholder="搜索任务和扩展" />}
     >
@@ -231,12 +238,17 @@ export default function WorkshopSpace() {
   return (
     <WorkbenchPage list={list}>
       <ImportFlow input={importer} dropped={dropped} onImported={(id) => navigate(`/workshop/extensions/${id}`)} />
+      <McpServerDialog
+        open={addingMcp}
+        onOpenChange={setAddingMcp}
+        onCreated={(id) => navigate(`/workshop/extensions/${id}`)}
+      />
       {task ? (
         <TaskView key={task.id} task={task} />
       ) : extension ? (
         <ExtensionView key={extension.id} extension={extension} />
       ) : hostStatus === 'initializing' ? null : (
-        <Start onImport={() => importer.current?.click()} />
+        <Start onImport={() => importer.current?.click()} onAddMcp={() => setAddingMcp(true)} />
       )}
     </WorkbenchPage>
   )
@@ -279,7 +291,7 @@ const EXAMPLES = [
  * Nothing made yet. Extensions are created by asking an agent in one of its channels; each example opens such a
  * channel with the request already typed.
  */
-function Start({ onImport }: { readonly onImport: () => void }) {
+function Start({ onImport, onAddMcp }: { readonly onImport: () => void; readonly onAddMcp: () => void }) {
   const agents = useProductStore((state) => state.agents)
   const ui = useProductRuntime().uiStore
   const navigate = useGo()
@@ -334,9 +346,14 @@ function Start({ onImport }: { readonly onImport: () => void }) {
               </Button>
             </div>
           )}
-          <Button size="small" variant="ghost" icon={<Upload size={14} />} onClick={onImport}>
-            导入扩展文件
-          </Button>
+          <span className={styles.startActions}>
+            <Button size="small" variant="ghost" icon={<Plug size={14} />} onClick={onAddMcp}>
+              添加 MCP 服务
+            </Button>
+            <Button size="small" variant="ghost" icon={<Upload size={14} />} onClick={onImport}>
+              导入扩展文件
+            </Button>
+          </span>
         </div>
       </div>
     </MainContent>

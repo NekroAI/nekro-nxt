@@ -28,6 +28,14 @@ declare const styles: {
   readonly grow: string
   readonly inlineLink: string
   readonly lead: string
+  readonly mcpForm: string
+  readonly mcpRow: string
+  readonly mcpRows: string
+  readonly mcpRowsHead: string
+  readonly mcpRowsHint: string
+  readonly mcpTest: string
+  readonly mcpTestHead: string
+  readonly mcpTools: string
   readonly metaLink: string
   readonly objectGlyph: string
   readonly permissions: string
@@ -47,6 +55,7 @@ declare const styles: {
   readonly rowState: string
   readonly rowSub: string
   readonly start: string
+  readonly startActions: string
   readonly startFoot: string
   readonly subgroup: string
   readonly taskGrid: string

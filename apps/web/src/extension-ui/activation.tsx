@@ -91,7 +91,7 @@ export function useExtensionActivation(): {
         <SwitchRow
           key={risk.key}
           title={risk.label}
-          description={`${risk.detail === undefined ? '' : `用途：${risk.detail}。`}这项能力不受范围限制，打开开关表示你了解并接受风险。`}
+          description={`${risk.detail === undefined ? '' : `${risk.key.startsWith('mcp.') ? '将运行' : '用途'}：${risk.detail}。`}这项能力不受范围限制，打开开关表示你了解并接受风险。`}
           checked={acceptedRisks.has(risk.key)}
           onCheckedChange={(checked) =>
             setAcceptedRisks((current) => {

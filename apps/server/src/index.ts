@@ -150,6 +150,7 @@ import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { z } from 'zod'
@@ -187,6 +188,7 @@ import {
 import type { NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
 import { formatTaskTime, hostTimezone, parseTaskSchedule, type ScheduledTasks } from './scheduled-tasks.js'
 import { PersistentExtensionMounts, type PersistentInboundHandler } from './persistent-extension-mounts.js'
+import { mcpPluginConfig, mountMcpServers, type McpPluginConfig } from './mcp-servers.js'
 import {
   collectVisibleImageDigests,
   collectVisibleImageResidency,
@@ -2357,6 +2359,43 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
                 extensionHost.activationBackends,
                 dshPromptRegistry(fiberContext, sessionId),
               )
+            },
+            mcp: async ({ agentId, revision, config, sessionId, context: fiberContext }) => {
+              const described = extensionHost.describeRevision(revision)
+              const servers = described.capabilities?.mcp?.servers ?? []
+              if (servers.length === 0) return
+              const cwd =
+                this.#developmentWorkspaceRoot === undefined
+                  ? homedir()
+                  : resolveAgentWorkspace(this.#developmentWorkspaceRoot, agentId)
+              await mkdir(cwd, { recursive: true })
+              const binding = {
+                mode: 'activation' as const,
+                agentId,
+                ownerKey: revision.extensionId,
+                displayName: described.displayName,
+                channelId: this.#sessions.require(sessionId).channelId,
+                capabilities: () => described.capabilities,
+                config: () => config,
+              }
+              const configs: McpPluginConfig[] = []
+              for (const server of servers) {
+                const resolved = await mcpPluginConfig(server, {
+                  readSecret: (key) => extensionHost.activationBackends.secret(binding, key),
+                  cwd,
+                })
+                if ('config' in resolved) configs.push(resolved.config)
+                else {
+                  console.warn(
+                    `[nekro-nxt] MCP 服务 ${server.name}（${described.displayName}）缺少凭据，未连接：${resolved.missing.join('、')}`,
+                  )
+                }
+              }
+              mountMcpServers(fiberContext, configs, (serverName, error) => {
+                console.warn(
+                  `[nekro-nxt] MCP 服务 ${serverName}（${described.displayName}）加载失败：${error instanceof Error ? error.message : String(error)}`,
+                )
+              })
             },
           },
     )

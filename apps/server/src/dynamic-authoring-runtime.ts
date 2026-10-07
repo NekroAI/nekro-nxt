@@ -460,6 +460,10 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     if (ownedRequest.plugin.kind === 'existing' && ownedRequest.plugin.pluginId !== state.primaryPluginId) {
       throw new Error(`只能向当前 Episode 的 Plugin ${state.primaryPluginId ?? '（尚未创建）'} 追加 Package。`)
     }
+    if (this.definingAuthoringSnapshot?.permissions.capabilities?.mcp !== undefined) {
+      // MCP servers, and local programs in particular, are only added by the administrator in the Workshop.
+      throw new Error('动态创造不能声明 MCP 服务；请让用户在工坊用「添加 MCP 服务」连接。')
+    }
     try {
       const adapterHost =
         this.definingAuthoringSnapshot?.scope === 'host-adapter'

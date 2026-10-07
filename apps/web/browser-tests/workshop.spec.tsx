@@ -60,6 +60,65 @@ test.describe('workshop', () => {
     return page
   }
 
+  test('adds a remote MCP server after a connection test, keeping the token out of the extension', async () => {
+    const page = await openWorkshop(productSnapshot)
+    const requests: { path: string; body: unknown }[] = []
+    await page.route('**/api/mcp-servers/test', async (route) => {
+      requests.push({ path: 'test', body: route.request().postDataJSON() })
+      await route.fulfill({
+        json: {
+          ok: true,
+          message: '已连接，提供 2 个工具。',
+          serverName: 'fixture',
+          tools: [{ name: 'search_docs' }, { name: 'read_page' }],
+        },
+      })
+    })
+    await page.route('**/api/mcp-servers', async (route) => {
+      requests.push({ path: 'create', body: route.request().postDataJSON() })
+      await route.fulfill({
+        json: {
+          extensionId: summaryExtensionId,
+          revisionId: 'xrv_mcpfixture',
+          secretFields: [{ key: 'header_1', name: 'Authorization' }],
+        },
+      })
+    })
+    try {
+      await page.getByRole('button', { name: '添加 MCP 服务' }).first().click()
+      const dialog = page.getByRole('dialog', { name: '添加 MCP 服务' })
+      await dialog.getByLabel('名称', { exact: true }).fill('示例知识库')
+      await dialog.getByLabel('地址').fill('https://docs.example.com/mcp')
+      await expect(dialog.getByLabel('工具前缀')).toHaveAttribute('placeholder', 'docs')
+      await dialog.getByRole('button', { name: '添加', exact: true }).first().click()
+      await dialog.getByLabel('请求头 1 名称').fill('Authorization')
+      await dialog.getByLabel('请求头 1 值').fill('Bearer fixture-token')
+      await dialog.getByRole('button', { name: '测试连接' }).click()
+      await expect(dialog).toContainText('已连接，提供 2 个工具。')
+      await expect(dialog).toContainText('search_docs')
+      await dialog.getByRole('combobox', { name: '启用到' }).click()
+      await page.getByRole('option', { name: '暂不启用' }).click()
+      await page.screenshot({ path: '.local/browser-test-results/workshop-add-mcp.png' })
+      await dialog.getByRole('button', { name: '添加', exact: true }).last().click()
+      await expect.poll(() => requests.map(({ path }) => path)).toEqual(['test', 'create'])
+      const server = {
+        transport: 'streamable-http',
+        name: 'docs',
+        url: 'https://docs.example.com/mcp',
+        headers: [{ name: 'Authorization', value: 'Bearer fixture-token', secret: true }],
+      }
+      expect(requests[0]?.body).toEqual({ server })
+      expect(requests[1]?.body).toEqual({
+        displayName: '示例知识库',
+        description: '',
+        server: { ...server, headers: [{ name: 'Authorization', value: '', secret: true }] },
+      })
+      await expect(dialog).toBeHidden()
+    } finally {
+      await page.close()
+    }
+  })
+
   test('takes write-only test credentials for a running authoring task', async () => {
     const taskId = AuthoringTaskIdSchema.parse('aut_FIXTURETASK')
     const attempt = {
