@@ -33,7 +33,10 @@ jobs:
           pnpm exec tsc -b packages/extension-format
           pnpm --filter @nekro-nxt/contracts --filter @nekro-nxt/extension-format run build
           pnpm exec vitest run packages/contracts packages/extension-format
-          # SDK 的发布物内联未公开的 adapter-sdk 与 dsh-compat，只依赖 contracts。
+          # SDK 的发布物内联未公开的 adapter-sdk 与 dsh-compat，只依赖 contracts；
+          # 内联需要它们先有运行时产物与类型声明。
+          pnpm --filter @nekro-nxt/dsh-compat --filter @nekro-nxt/adapter-sdk run build
+          pnpm exec tsc -b packages/extension-sdk
           node scripts/prepare-extension-sdk-publish.mjs
       # 暂存发布需要 npm 11.15 及以上。
       - run: npm install -g npm@12

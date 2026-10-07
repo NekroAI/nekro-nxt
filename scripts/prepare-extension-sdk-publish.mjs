@@ -19,6 +19,23 @@ const contracts = readJson(path.join(root, 'packages/contracts/package.json'))
 execFileSync('pnpm', ['exec', 'tsdown', '-c', 'tsdown.publish.config.ts'], { cwd: sdkDir, stdio: 'inherit' })
 
 const publishDir = path.join(sdkDir, 'publish')
+
+// 内部包若没有先构建，打包器会把它们留作外部导入，发布后无法安装；这里直接失败。
+const ALLOWED_IMPORTS = new Set(['@nekro-nxt/contracts', 'react', 'zod'])
+for (const file of ['index.mjs', 'index.d.mts']) {
+  const text = readFileSync(path.join(publishDir, 'dist', file), 'utf8')
+  const imports = [...text.matchAll(/\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu)].map(
+    (match) => match[1] ?? match[2],
+  )
+  const leaked = imports.filter(
+    (specifier) => specifier && !specifier.startsWith('.') && !ALLOWED_IMPORTS.has(specifier),
+  )
+  if (leaked.length > 0) {
+    throw new Error(
+      `发布物 ${file} 仍导入未公开的包：${[...new Set(leaked)].join('、')}。请先构建 adapter-sdk 与 dsh-compat。`,
+    )
+  }
+}
 const manifest = {
   name: sdk.name,
   version: sdk.version,
