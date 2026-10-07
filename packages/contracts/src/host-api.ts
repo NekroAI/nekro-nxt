@@ -43,6 +43,16 @@ import {
   CommunityReviewReportSchema,
 } from './community.js'
 import {
+  COMMUNITY_PERSONA_AVATAR_TYPES,
+  COMMUNITY_PERSONA_MAX_LENGTH,
+  CommunityMyPersonaSchema,
+  CommunityMyPersonasSchema,
+  CommunityPersonaDetailSchema,
+  CommunityPersonaIdSchema,
+  CommunityPersonaRevisionIdSchema,
+  CommunityPersonaSummarySchema,
+} from './community-personas.js'
+import {
   DshNxtHostUiSchema,
   EMPTY_EXTENSION_UI_CONTRIBUTIONS,
   ExtensionUiContributionsSchema,
@@ -2656,6 +2666,114 @@ export const HostApiContracts = {
         findings: z.array(z.object({ severity: z.string(), title: z.string() }).strict()),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  listCommunityPersonas: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/personas',
+    params: z
+      .object({
+        query: z.string().trim().min(1).max(200).optional(),
+        tag: z.string().trim().min(1).max(40).optional(),
+        official: z.literal('1').optional(),
+        cursor: z.string().min(1).max(500).optional(),
+      })
+      .strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ items: z.array(CommunityPersonaSummarySchema), nextCursor: z.string().nullable() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getCommunityPersona: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/personas/:personaId',
+    params: z.object({ personaId: CommunityPersonaIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityPersonaDetailSchema,
+    error: HostApiErrorSchema,
+  }),
+  /**
+   * 把社区人设装进本机：新建一个智能体，或为现有智能体保存一次只换设定（及可选名称）的新配置。头像下载后作为
+   * 智能体头像；下载失败不影响安装。`expectedRevisionId` 是用户看过的修订，社区已更新时拒绝，避免装入未看过的内容。
+   */
+  installCommunityPersona: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 60_000,
+    method: 'POST',
+    path: '/api/community/personas/:personaId/install',
+    params: z.object({ personaId: CommunityPersonaIdSchema }).strict(),
+    request: z.discriminatedUnion('target', [
+      z
+        .object({
+          target: z.literal('new'),
+          expectedRevisionId: CommunityPersonaRevisionIdSchema,
+          displayName: z.string().trim().min(1).max(80),
+          model: AgentModelSchema,
+          useAvatar: z.boolean(),
+        })
+        .strict(),
+      z
+        .object({
+          target: z.literal('replace'),
+          expectedRevisionId: CommunityPersonaRevisionIdSchema,
+          agentId: AgentIdSchema,
+          expectedCurrentRevisionId: AgentRevisionIdSchema,
+          /** 同时改名；省略时保留原名称。 */
+          displayName: z.string().trim().min(1).max(80).optional(),
+          useAvatar: z.boolean(),
+        })
+        .strict(),
+    ]),
+    response: z
+      .object({
+        agentId: AgentIdSchema,
+        channelId: ChannelIdSchema.nullable(),
+        currentRevisionId: AgentRevisionIdSchema,
+        avatar: z.enum(['applied', 'none', 'failed']),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  listCommunityMyPersonas: defineContract({
+    timeoutMs: 30_000,
+    method: 'GET',
+    path: '/api/community/mine/personas',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityMyPersonasSchema,
+    error: HostApiErrorSchema,
+  }),
+  /** 把智能体的设定分享到社区；带 `personaId` 时更新自己已发布的人设（生成新修订并重新审查）。 */
+  publishCommunityPersona: defineContract({
+    timeoutMs: 60_000,
+    method: 'POST',
+    path: '/api/community/personas/publish',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        agentId: AgentIdSchema,
+        personaId: CommunityPersonaIdSchema.optional(),
+        name: z.string().trim().min(1).max(80),
+        summary: z.string().trim().min(1).max(200),
+        description: z.string().max(20_000),
+        tags: z.array(z.string().trim().min(1).max(40)).max(16),
+        persona: z.string().trim().min(1).max(COMMUNITY_PERSONA_MAX_LENGTH),
+        notes: z.string().max(2000).optional(),
+        /** 页面缩放后的头像（Base64）；省略时不上传头像，更新时保留社区上的原头像。 */
+        avatar: z
+          .object({
+            mediaType: z.enum(COMMUNITY_PERSONA_AVATAR_TYPES),
+            base64: z
+              .string()
+              .min(1)
+              .max(Math.ceil((512 * 1024 * 4) / 3) + 4),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+    response: CommunityMyPersonaSchema,
     error: HostApiErrorSchema,
   }),
   testMcpServer: defineContract({

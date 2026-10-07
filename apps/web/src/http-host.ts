@@ -389,7 +389,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     imageDiagnostics: agent.imageDiagnostics,
     appearance: {
       ...(agent.appearance?.hue === undefined ? {} : { hue: agent.appearance.hue }),
-      ...(agent.appearance?.avatarAssetId === undefined ? {} : { avatarUrl: workspaceApi.agentAvatarUrl(agent.id) }),
+      // The asset id changes with every upload, so a replaced avatar is fetched again instead of reused from cache.
+      ...(agent.appearance?.avatarAssetId === undefined
+        ? {}
+        : {
+            avatarUrl: `${workspaceApi.agentAvatarUrl(agent.id)}?v=${encodeURIComponent(agent.appearance.avatarAssetId)}`,
+          }),
     },
   }))
   const connectionAdapterName = (connection: SnapshotJson['connections'][number]): string =>

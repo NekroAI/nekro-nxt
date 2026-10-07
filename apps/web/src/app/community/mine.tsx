@@ -26,6 +26,7 @@ import { relativeTime } from '../channels/timeline-model.js'
 import { PublishDialog } from '../workshop/publish-dialog.js'
 import { scopeLabel } from '../workshop/workshop-model.js'
 import { errorMessage, openExternal, type CommunityState } from './community-model.js'
+import { MyPersonasSection } from './my-personas.js'
 import styles from './community.module.css'
 
 type Release = CommunityMyExtension['releases'][number]
@@ -173,6 +174,8 @@ export function MineView({ community }: { readonly community: CommunityState }) 
           ))}
         </div>
       )}
+
+      {account ? <MyPersonasSection refreshKey={items} /> : null}
 
       {unpublished.length > 0 ? (
         <PropertyGroup

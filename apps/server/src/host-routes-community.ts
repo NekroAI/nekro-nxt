@@ -7,6 +7,7 @@ import {
 } from '@nekro-nxt/contracts'
 import type { ServerResponse } from 'node:http'
 import type { NekroRuntime } from './bootstrap.js'
+import { registerCommunityPersonaRoutes } from './host-routes-community-personas.js'
 import { COMMUNITY_CALLBACK_PATH, CommunityError, UPDATE_CHECK_INTERVAL_MS } from './community.js'
 import {
   createExtensionRevisionExport,
@@ -70,8 +71,10 @@ const communityFailure = (res: ServerResponse, error: unknown, fallbackCode: str
  * 社区账号、目录浏览、安装与发布。安装复用本地文件导入的检查与确认；发布导出所选保存记录后上传。
  * `/community/callback` 是社区授权后的回跳页，在安全入口中免登录，凭一次性 state 完成登录。
  */
-export function registerCommunityRoutes({ runtime, registerRoute, extensionImports }: HostRouteContext): () => void {
+export function registerCommunityRoutes(context: HostRouteContext): () => void {
+  const { runtime, registerRoute, extensionImports } = context
   const community = runtime.community
+  registerCommunityPersonaRoutes(context)
   const checkInstalled = () => community.installed(installedSources(runtime))
   // 每天检查一次已安装扩展的更新；失败静默，下次打开社区时会再检查。
   const timer = setInterval(() => {
