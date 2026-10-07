@@ -248,6 +248,61 @@
   line-height: 1.5;
 }
 
+.infoTip {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  vertical-align: middle;
+  cursor: help;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.infoTip:hover,
+.infoTip[data-state='open'] {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.infoTip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.infoTipContent {
+  z-index: 70;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-2);
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+
+.infoTipContent[data-state='open'] {
+  animation: popIn 160ms var(--ease) both;
+}
+
+.infoTipContent p {
+  margin: 0;
+}
+
+.infoTipContent p + p {
+  margin-top: var(--s-1);
+}
+
 .tooltip[data-state='delayed-open'],
 .tooltip[data-state='instant-open'] {
   animation: popIn 160ms var(--ease) both;

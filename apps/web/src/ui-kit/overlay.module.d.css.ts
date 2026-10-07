@@ -3,6 +3,8 @@ declare const styles: {
   readonly bad: string
   readonly body: string
   readonly dialog: string
+  readonly infoTip: string
+  readonly infoTipContent: string
   readonly media: string
   readonly menu: string
   readonly menuDanger: string

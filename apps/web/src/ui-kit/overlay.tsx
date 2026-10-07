@@ -2,9 +2,9 @@ import * as RadixDialog from '@radix-ui/react-dialog'
 import * as RadixMenu from '@radix-ui/react-dropdown-menu'
 import * as RadixPopover from '@radix-ui/react-popover'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
-import { Check, TriangleAlert, X } from 'lucide-react'
+import { Check, CircleHelp, TriangleAlert, X } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
-import { Button, IconButton } from './primitives.js'
+import { Button, IconButton, Pressable } from './primitives.js'
 import styles from './overlay.module.css'
 
 /**
@@ -349,6 +349,77 @@ export function Tooltip({
         </RadixTooltip.Content>
       </RadixTooltip.Portal>
     </RadixTooltip.Root>
+  )
+}
+
+/**
+ * Explanation the user reads once and then no longer needs on screen. A small help mark next to a label: hovering
+ * opens it after a short pause, clicking (or tapping on touch screens) pins it open until the pointer leaves or the
+ * user presses Escape. Keep the visible label self-explanatory; the tip only adds the why and the details.
+ */
+export function InfoTip({
+  label,
+  children,
+  side = 'top',
+  className,
+}: {
+  /** What the tip explains, read by screen readers as "说明：{label}". */
+  readonly label: string
+  readonly children: ReactNode
+  readonly side?: 'top' | 'right' | 'bottom' | 'left'
+  readonly className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const pinned = useRef(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const schedule = (next: boolean, delay: number) => {
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => setOpen(next), delay)
+  }
+  useLayoutEffect(() => () => clearTimeout(timer.current), [])
+  const enter = () => schedule(true, 280)
+  const leave = () => {
+    if (!pinned.current) schedule(false, 160)
+  }
+  return (
+    <RadixPopover.Root
+      open={open}
+      onOpenChange={(next) => {
+        pinned.current = next
+        clearTimeout(timer.current)
+        setOpen(next)
+      }}
+    >
+      <RadixPopover.Trigger asChild>
+        <Pressable
+          className={[styles.infoTip, className].filter(Boolean).join(' ')}
+          aria-label={`说明：${label}`}
+          onPointerEnter={(event) => {
+            if (event.pointerType === 'mouse') enter()
+          }}
+          onPointerLeave={(event) => {
+            if (event.pointerType === 'mouse') leave()
+          }}
+        >
+          <CircleHelp aria-hidden size={14} strokeWidth={1.8} />
+        </Pressable>
+      </RadixPopover.Trigger>
+      <RadixPopover.Portal>
+        <RadixPopover.Content
+          className={styles.infoTipContent}
+          side={side}
+          sideOffset={6}
+          collisionPadding={12}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onPointerEnter={() => clearTimeout(timer.current)}
+          onPointerLeave={(event) => {
+            if (event.pointerType === 'mouse') leave()
+          }}
+        >
+          {children}
+        </RadixPopover.Content>
+      </RadixPopover.Portal>
+    </RadixPopover.Root>
   )
 }
 

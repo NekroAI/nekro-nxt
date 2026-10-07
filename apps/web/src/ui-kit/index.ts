@@ -32,6 +32,7 @@ export {
   Popover,
   Tooltip,
   TooltipProvider,
+  InfoTip,
   Toaster,
   toast,
   type MenuEntry,
