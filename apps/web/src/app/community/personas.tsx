@@ -156,7 +156,7 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
           <span className={styles.metaWithTip}>
             社区作者分享的智能体人设
             <InfoTip label="人设">
-              人设只包含名称、头像和设定，不含模型与扩展。可以安装成新的智能体，也可以替换现有智能体的设定，原来的设定能在版本历史中恢复。
+              人设只包含名称、头像和设定，不含模型与扩展。可以安装成新的智能体，也可以替换现有智能体的设定，原来的设定能在智能体的「恢复之前的配置」中找回。
             </InfoTip>
           </span>
         }

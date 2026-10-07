@@ -170,7 +170,7 @@ export function PersonaInstallDialog({
               disabled={!agent}
             />
             <p className={styles.dialogNote}>
-              模型、能力与频道不变，原设定可在版本历史中恢复。
+              模型、能力与频道不变，原设定可以在智能体的「恢复之前的配置」中找回。
               <InfoTip label="恢复原来的设定">
                 在智能体页选择「更多 → 恢复之前的配置」，可以回到替换前的设定。头像不属于版本，换掉后需要重新上传。
               </InfoTip>

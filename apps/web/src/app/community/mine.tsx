@@ -121,7 +121,7 @@ export function MineView({ community }: { readonly community: CommunityState }) 
       {items === undefined && !error ? (
         <Skeleton height={140} />
       ) : items && items.length === 0 ? (
-        <p className={styles.faint}>还没有发布过扩展。可以从下方选择一个本机扩展发布。</p>
+        <p className={styles.faint}>还没有发布过扩展。在工坊打开自己的扩展，就能发布到社区。</p>
       ) : (
         <div className={styles.cardList}>
           {items?.map((extension, index) => (
