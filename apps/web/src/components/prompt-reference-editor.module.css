@@ -17,6 +17,16 @@
   line-height: 18px;
 }
 
+.field > .srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .field[data-fill] {
   grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;

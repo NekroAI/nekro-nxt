@@ -543,6 +543,7 @@ export function PersonaSection({
         value={draft.persona}
         currentAgentId={agent.id}
         label="设定"
+        labelHidden
         description="它是谁、怎么说话、在群里负责什么"
         onChange={setPersona}
       />

@@ -126,6 +126,7 @@ export function AgentCreate() {
           <PromptReferenceEditor
             value={persona.document}
             label="设定"
+            labelHidden
             description="它是谁、怎么说话、在群里负责什么"
             placeholder="它是谁、怎么说话、在群里负责什么"
             onChange={(document, text) => setPersona({ document, text })}

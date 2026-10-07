@@ -550,6 +550,7 @@ export function PromptReferenceEditor({
   label = '人设',
   description = '引用会将所选对象加入人设。',
   placeholder,
+  labelHidden = false,
   fill = false,
 }: {
   readonly value: PromptDocumentV1
@@ -558,6 +559,8 @@ export function PromptReferenceEditor({
   readonly label?: string
   readonly description?: string
   readonly placeholder?: string
+  /** Keep the label for screen readers only, when a surrounding heading already shows the same words. */
+  readonly labelHidden?: boolean
   /** Stretch to the parent's height (full-screen editing) instead of capping at twenty lines. */
   readonly fill?: boolean
 }) {
@@ -691,10 +694,13 @@ export function PromptReferenceEditor({
 
   return (
     <div className={styles.field} data-fill={fill || undefined}>
-      <label id={`${fieldId}-label`} htmlFor={fieldId}>
+      <label id={`${fieldId}-label`} htmlFor={fieldId} className={labelHidden ? styles.srOnly : undefined}>
         {label}
       </label>
-      <p id={descriptionId}>{description}</p>
+      {/* An empty editor already shows the placeholder; repeating the same words below the label adds nothing. */}
+      <p id={descriptionId} className={description === placeholder ? styles.srOnly : undefined}>
+        {description}
+      </p>
       <ReferenceResolutionContext.Provider value={{ currentAgentId, knownUsers, resolvedUserIds }}>
         <LexicalComposer initialConfig={initialConfig}>
           <div className={styles.editorFrame} ref={wrapperRef}>

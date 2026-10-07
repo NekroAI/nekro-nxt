@@ -899,6 +899,16 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage('/agents/new', async (page) => {
       const editor = page.getByRole('textbox', { name: '设定' })
       await playwrightExpect(editor).toBeVisible()
+      // The group heading already says 设定 and the placeholder already says what to write: neither repeats visibly.
+      // Both stay in the accessibility tree, only clipped to a single pixel.
+      await playwrightExpect(page.getByRole('heading', { name: '设定' })).toBeVisible()
+      await playwrightExpect(editor).toHaveAccessibleDescription('它是谁、怎么说话、在群里负责什么')
+      for (const hidden of [
+        page.locator('label').filter({ hasText: /^设定$/u }),
+        page.locator('p').filter({ hasText: /^它是谁、怎么说话、在群里负责什么$/u }),
+      ]) {
+        expect(await hidden.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(1)
+      }
       const initialHeight = await editor.evaluate((element) => element.getBoundingClientRect().height)
       expect(initialHeight).toBeGreaterThanOrEqual(240)
 
@@ -1382,7 +1392,7 @@ test.describe('NekroNxt browser projections', () => {
         await dialog.getByRole('radio', { name: '替换现有智能体的设定' }).click()
         await dialog.getByRole('combobox', { name: '要替换设定的智能体' }).click()
         await page.getByRole('option', { name: '资料员' }).click()
-        await playwrightExpect(dialog).toContainText('原设定可在版本历史中恢复')
+        await playwrightExpect(dialog).toContainText('原设定可以在智能体的「恢复之前的配置」中找回')
         await dialog.getByRole('switch', { name: /同时改名/u }).click()
         await dialog.getByRole('switch', { name: '同时换成人设头像' }).click()
         await dialog.getByRole('button', { name: '替换设定' }).click()

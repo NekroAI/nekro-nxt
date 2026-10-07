@@ -9,6 +9,7 @@ declare const styles: {
   readonly referenceMenu: string
   readonly referenceNode: string
   readonly referenceOptions: string
+  readonly srOnly: string
 }
 
 export default styles
