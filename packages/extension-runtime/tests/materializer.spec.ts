@@ -4,13 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { materializeDynamicPackage, materializeImportedRevision, type DynamicPackageSnapshot } from '../src/index.js'
 
 const page = {
-  kind: 'host-page' as const,
+  kind: 'host-page',
   entryId: 'overview',
   title: '项目面板',
-  icon: { kind: 'host-icon' as const, name: 'layout-dashboard' },
-  objectPane: 'hidden' as const,
+  icon: { kind: 'host-icon', name: 'layout-dashboard' },
+  objectPane: 'hidden',
   startPath: '',
-}
+} as const
 const adapter = { kind: 'adapter' as const, apiVersion: 2 as const, key: 'example', descriptorDigest: 'a'.repeat(64) }
 const tool = { kind: 'tool' as const, name: 'lookup', description: '查询示例数据' }
 const css = '.panel { color: var(--nxt-text-primary); }\n'
