@@ -41,7 +41,14 @@ import {
   useExtensionActivation,
 } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
-import { CONTRIBUTION_PLACE, contributionParts, extensionUsage, recordLabels, scopeLabel } from './workshop-model.js'
+import {
+  CONTRIBUTION_PLACE,
+  contributionParts,
+  extensionUsage,
+  mcpParts,
+  recordLabels,
+  scopeLabel,
+} from './workshop-model.js'
 import styles from './workshop.module.css'
 
 type Revision = LocalExtensionSummary['revisions'][number]
@@ -202,7 +209,10 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
 /** What the extension gives the user and where it shows up. */
 function Overview({ revision }: { readonly revision: Revision | undefined }) {
-  const parts = (revision?.contributions ?? []).map(contributionParts)
+  const parts = [
+    ...(revision?.contributions ?? []).map((value) => ({ ...contributionParts(value), detail: undefined })),
+    ...mcpParts(revision?.verification?.permissions?.capabilities?.mcp?.servers ?? []),
+  ]
   return (
     <PropertyGroup title="能提供什么">
       {parts.length === 0 ? (
@@ -213,7 +223,7 @@ function Overview({ revision }: { readonly revision: Revision | undefined }) {
             <PropertyRow
               key={`${part.kind}:${part.name}`}
               label={part.kind}
-              description={CONTRIBUTION_PLACE[part.kind] ?? CONTRIBUTION_PLACE['内容']}
+              description={part.detail ?? CONTRIBUTION_PLACE[part.kind] ?? CONTRIBUTION_PLACE['内容']}
             >
               <code className={styles.contributionName}>{part.name}</code>
             </PropertyRow>

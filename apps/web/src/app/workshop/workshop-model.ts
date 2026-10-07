@@ -228,4 +228,20 @@ export const CONTRIBUTION_PLACE: Record<string, string> = {
   适配器: '在接线里添加这个平台的账号',
   数据接口: '供扩展界面读取数据',
   内容: '扩展提供的内容',
+  'MCP 服务': '启用后它提供的工具出现在智能体的对话中',
 }
+
+/** MCP servers a Revision connects, as Overview rows; they are capabilities, not contributions. */
+export const mcpParts = (
+  servers: readonly {
+    readonly transport: string
+    readonly name: string
+    readonly url?: string
+    readonly command?: string
+  }[],
+): readonly { readonly kind: string; readonly name: string; readonly detail: string }[] =>
+  servers.map((server) => ({
+    kind: 'MCP 服务',
+    name: `mcp__${server.name}__`,
+    detail: server.transport === 'stdio' ? `本机程序 ${server.command ?? ''}` : `远程 ${server.url ?? ''}`,
+  }))

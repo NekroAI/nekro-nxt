@@ -237,6 +237,64 @@ test.describe('workshop', () => {
     }
   })
 
+  test('describes an MCP extension by the services it connects', async () => {
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id !== summaryExtensionId
+          ? extension
+          : {
+              ...extension,
+              revisions: extension.revisions.map((revision) => ({
+                ...revision,
+                verification: {
+                  verifiedAt: 1_725_000_000_000,
+                  dshVersion: 'fixture',
+                  contractVersion: 'nekro-nxt-extension-v4',
+                  hostBuilt: true,
+                  clientBuilt: false,
+                  buildKey: 'fixture',
+                  toolInvocationCount: 0,
+                  rpcMethods: [],
+                  renderedPanels: [],
+                  renderedToolViews: [],
+                  renderedMessageRenderers: [],
+                  permissions: {
+                    permissions: [],
+                    networkOrigins: [],
+                    capabilities: {
+                      mcp: {
+                        servers: [
+                          {
+                            transport: 'streamable-http' as const,
+                            name: 'docs',
+                            url: 'https://docs.example.com/mcp',
+                            headers: { Authorization: { secret: 'header_1' } },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  permissionDigest: 'e'.repeat(64),
+                  permissionApprovalRequired: true,
+                },
+              })),
+            },
+      ),
+    }
+    const page = await openWorkshop(snapshot)
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      const overview = page.getByRole('region', { name: '能提供什么' })
+      await expect(overview).toContainText('MCP 服务')
+      await expect(overview).toContainText('mcp__docs__')
+      await expect(overview).toContainText('远程 https://docs.example.com/mcp')
+      await expect(overview).not.toContainText('还没有经过验证')
+    } finally {
+      await page.close()
+    }
+  })
+
   test('lists Host capabilities on enable approval and holds high-risk ones until accepted one by one', async () => {
     const digest = 'd'.repeat(64)
     const snapshot = {
