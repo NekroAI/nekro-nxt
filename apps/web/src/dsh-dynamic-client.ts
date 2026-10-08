@@ -1008,11 +1008,6 @@ export class DshClientRuntime {
     return this.#runner.getSnapshot()
   }
 
-  /** Agent a loaded candidate belongs to. */
-  agentOf(pluginId: string): string | undefined {
-    return this.#packages.get(pluginId)?.agentId
-  }
-
   pageEntries(): readonly DynamicHostPageEntry[] {
     this.#assertActive()
     return this.pages.entries()

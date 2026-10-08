@@ -191,10 +191,7 @@ class DynamicClientCoordinator {
   candidates(agentId: string): readonly { readonly pluginId: string; readonly pluginRunId: string }[] {
     const runtime = this.#runtime
     if (!runtime) return []
-    return runtime
-      .loaded()
-      .filter((loaded) => runtime.agentOf(loaded.pluginId) === agentId)
-      .map((loaded) => ({ pluginId: loaded.pluginId, pluginRunId: loaded.pluginRunId }))
+    return ownedCandidates(runtime.loaded(), this.#activeAgentId, agentId)
   }
 
   pageEntries(): readonly DynamicHostPageEntry[] {
@@ -795,6 +792,17 @@ function DynamicPagePreview({
 }
 
 const DynamicClientContext = createContext<DynamicClientCoordinator | null>(null)
+/**
+ * The browser runtime only holds the active Episode's candidates, and its inventory rows name the DSH Session
+ * (`nxt-<episodeId>`) as their agent rather than the product agent. Ownership is therefore the active product agent.
+ */
+export const ownedCandidates = (
+  loaded: readonly { readonly pluginId: string; readonly pluginRunId: string }[],
+  activeAgentId: string | undefined,
+  agentId: string,
+): readonly { readonly pluginId: string; readonly pluginRunId: string }[] =>
+  activeAgentId === agentId ? loaded.map(({ pluginId, pluginRunId }) => ({ pluginId, pluginRunId })) : []
+
 export const dynamicClientInventoryVersion = (inventory: readonly DynamicPackageSummary[], agentId: string): string =>
   inventory
     .filter((item) => item.agentId === agentId)
