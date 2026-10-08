@@ -249,6 +249,12 @@ export class OneBotWebSocketClient {
         return
       }
       if (lockedSelfId === undefined) await this.#context.state.save(ACCOUNT_STATE_KEY, { selfId })
+      const nickname = typeof login?.['nickname'] === 'string' ? login['nickname'].trim() : ''
+      await this.#context.account.report({
+        platformUserId: selfId,
+        ...(nickname ? { displayName: nickname.slice(0, 120) } : {}),
+        observedAt: this.#context.now(),
+      })
       this.#selfId = selfId
       this.#version = version
       this.#reconnectAttempt = 0

@@ -169,7 +169,11 @@ export interface QQInboundBridge {
     readonly openId: string
     readonly displayName?: string
     readonly observedAt: number
+    /** This OpenID is the receiving bot itself in this channel. */
+    readonly self?: boolean
   }): Promise<ChannelMemberId>
+  /** Whether a member was earlier recognised as the receiving bot itself. */
+  isSelfMember(channelId: ChannelId, memberId: ChannelMemberId): Promise<boolean>
   importAttachment(
     input: QQInboundAttachment & {
       readonly connectionId: ConnectionId
@@ -233,6 +237,8 @@ export interface QQNormalizedInboundMessage {
     readonly openId: string
     readonly displayName?: string
     readonly bot?: boolean
+    /** QQ marked this mention as the receiving bot itself. */
+    readonly self?: boolean
   }[]
   readonly attachments?: readonly QQInboundAttachment[]
   readonly platformReference?: string
@@ -546,20 +552,36 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     const parts: MessagePart[] = []
     const assetOccurrences: { readonly partIndex: number; readonly assetId: AssetId }[] = []
     let replyToBot = false
+    // An @-event proves the bot itself was mentioned, and a private chat has no other bot, so there the only bot mention
+    // is this bot; QQ may also say so outright. Any other bot mention counts only once its OpenID is known to be this bot.
     let mentionedBot = message.eventType === 'GROUP_AT_MESSAGE_CREATE'
-    for (const atom of splitQQContentAtoms(message.content, message.mentions ?? [])) {
+    const atoms = splitQQContentAtoms(message.content, message.mentions ?? [])
+    const botOpenIds = new Set(atoms.flatMap((atom) => (atom.kind === 'mention' && atom.bot ? [atom.openId] : [])))
+    const selfOpenId =
+      atoms.flatMap((atom) => (atom.kind === 'mention' && atom.self ? [atom.openId] : []))[0] ??
+      ((message.eventType === 'GROUP_AT_MESSAGE_CREATE' || message.eventType === 'C2C_MESSAGE_CREATE') &&
+      botOpenIds.size === 1
+        ? [...botOpenIds][0]
+        : undefined)
+    for (const atom of atoms) {
       if (atom.kind === 'text') {
         if (atom.value) parts.push({ type: 'text', text: atom.value })
         continue
       }
-      if (atom.bot) mentionedBot = true
       const memberId = await inbound.ensureMember({
         connectionId: this.#context.connectionId,
         channelId,
         openId: atom.openId,
         ...(atom.displayName === undefined ? {} : { displayName: atom.displayName }),
         observedAt: receivedAt,
+        ...(atom.openId === selfOpenId ? { self: true } : {}),
       })
+      if (
+        atom.bot &&
+        !mentionedBot &&
+        (atom.openId === selfOpenId || (await inbound.isSelfMember(channelId, memberId)))
+      )
+        mentionedBot = true
       parts.push({ type: 'mention', memberId })
     }
     if (message.rich) {

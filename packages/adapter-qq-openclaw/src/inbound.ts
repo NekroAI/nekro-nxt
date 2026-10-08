@@ -369,6 +369,8 @@ type QQDecodedMention = {
   readonly openId: string
   readonly displayName?: string
   readonly bot?: boolean
+  /** QQ marked this mention as the receiving bot itself. */
+  readonly self?: boolean
 }
 
 export type QQContentAtom =
@@ -378,6 +380,7 @@ export type QQContentAtom =
       readonly openId: string
       readonly displayName?: string
       readonly bot?: boolean
+      readonly self?: boolean
     }
 
 const parseMentions = (value: unknown): readonly QQDecodedMention[] =>
@@ -390,6 +393,7 @@ const parseMentions = (value: unknown): readonly QQDecodedMention[] =>
         openId,
         ...(mentionDisplayName === undefined ? {} : { displayName: mentionDisplayName }),
         ...(mention['bot'] === true ? { bot: true } : {}),
+        ...(mention['is_you'] === true ? { self: true } : {}),
       }
     })
     .filter((mention): mention is QQDecodedMention => mention !== undefined)
@@ -401,6 +405,7 @@ const mentionAtom = (mention: QQDecodedMention): QQContentAtom => {
     openId: mention.openId,
     ...(displayName === undefined ? {} : { displayName }),
     ...(mention.bot ? { bot: true } : {}),
+    ...(mention.self ? { self: true } : {}),
   }
 }
 

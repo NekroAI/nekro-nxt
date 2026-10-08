@@ -10,6 +10,28 @@ import {
 const c2c = (value: Record<string, unknown>) => decodeQQInboundMessage('C2C_MESSAGE_CREATE', value, { now: () => 999 })
 
 describe('QQ inbound malformed and media boundaries', () => {
+  it('keeps the platform marker that a mention is the receiving bot', () => {
+    const decoded = decodeQQInboundMessage(
+      'GROUP_AT_MESSAGE_CREATE',
+      {
+        id: 'group-self',
+        group_openid: 'group',
+        author: { member_openid: 'sender' },
+        content: '<@other-bot> <@self-bot>',
+        mentions: [
+          { member_openid: 'other-bot', bot: true },
+          { member_openid: 'self-bot', bot: true, is_you: true },
+        ],
+        timestamp: '1786852800',
+      },
+      { now: () => 999 },
+    )
+    expect(decoded?.mentions).toEqual([
+      { openId: 'other-bot', bot: true },
+      { openId: 'self-bot', bot: true, self: true },
+    ])
+  })
+
   it('normalizes every supported attachment suffix and keeps mention tokens in content', () => {
     const decoded = decodeQQInboundMessage(
       'GROUP_MESSAGE_CREATE',

@@ -400,6 +400,7 @@ describe('QQ OpenClaw Adapter', () => {
     const bridge: QQInboundBridge = {
       ensureTarget: () => Promise.resolve(channelId),
       ensureMember: ({ openId }) => Promise.resolve(ChannelMemberIdSchema.parse(`mbr_${openId.replaceAll('-', '')}`)),
+      isSelfMember: () => Promise.resolve(false),
       importAttachment: ({ fileName, mediaType }) =>
         Promise.resolve({
           assetId: AssetIdSchema.parse(`ast_${(fileName ?? 'unknown').replaceAll('.', '')}`),
@@ -526,6 +527,7 @@ describe('QQ OpenClaw Adapter', () => {
         inbound: {
           ensureTarget: () => Promise.resolve(channelId),
           ensureMember: () => Promise.resolve(memberId),
+          isSelfMember: () => Promise.resolve(false),
           importAttachment: () => Promise.reject(new Error('not used')),
           resolveQuote: () => Promise.resolve(undefined),
         },

@@ -45,7 +45,9 @@ const createDirectory = (context: AdapterConnectionHostContext): QQIdentityDirec
       platformUserId: input.openId,
       ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
       observedAt: input.observedAt,
+      ...(input.self === true ? { self: true } : {}),
     }),
+  isSelfMember: (channelId, memberId) => context.members.isSelf(channelId, memberId),
   importAttachment: async (
     input: QQInboundAttachment & {
       readonly connectionId: ConnectionId

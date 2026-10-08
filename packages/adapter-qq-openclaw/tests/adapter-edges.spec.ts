@@ -205,6 +205,7 @@ describe('QQ OpenClaw connection boundaries', () => {
     const inbound: QQInboundBridge = {
       ensureTarget: () => Promise.resolve(channelId),
       ensureMember: ({ openId }) => Promise.resolve(ChannelMemberIdSchema.parse(`mbr_${openId.replaceAll('-', '')}`)),
+      isSelfMember: () => Promise.resolve(false),
       importAttachment: ({ fileName, mediaType }) => {
         const values = [
           {
@@ -316,11 +317,92 @@ describe('QQ OpenClaw connection boundaries', () => {
     await adapter.stop()
   })
 
+  it('marks only the receiving bot as itself and ignores mentions of other bots', async () => {
+    const accepted: AdapterChannelInboundEvent[] = []
+    const ensured: { readonly openId: string; readonly self?: boolean }[] = []
+    const knownSelf = new Set<string>()
+    const memberOf = (openId: string) => ChannelMemberIdSchema.parse(`mbr_${openId.replaceAll('-', '')}`)
+    const inbound: QQInboundBridge = {
+      ensureTarget: () => Promise.resolve(channelId),
+      ensureMember: ({ openId, self }) => {
+        ensured.push({ openId, ...(self === undefined ? {} : { self }) })
+        if (self) knownSelf.add(memberOf(openId))
+        return Promise.resolve(memberOf(openId))
+      },
+      isSelfMember: (_channelId, memberId) => Promise.resolve(knownSelf.has(memberId)),
+      importAttachment: () => Promise.reject(new Error('not used')),
+      resolveQuote: () => Promise.resolve(undefined),
+    }
+    const adapter = makeAdapter({
+      context: makeContext({
+        now: () => 500,
+        acceptChannelInbound: (event) => {
+          accepted.push(event)
+          return Promise.resolve({
+            channelEventId: ChannelEventIdSchema.parse(`evt_self${accepted.length}`),
+            inserted: true,
+          })
+        },
+      }),
+      inbound,
+    })
+    await adapter.start()
+    const group = { kind: 'group' as const, openId: 'group' }
+    // Someone @s another bot in a group this bot reads in full: not a mention of this bot.
+    await adapter.receive({
+      eventType: 'GROUP_MESSAGE_CREATE',
+      platformMessageId: 'other-bot',
+      target: group,
+      senderOpenId: 'sender',
+      content: '<@other-bot> 你好',
+      mentions: [{ openId: 'other-bot', bot: true }],
+      platformTimestamp: 400,
+    })
+    // An @-event with one bot mention: that bot is this bot.
+    await adapter.receive({
+      eventType: 'GROUP_AT_MESSAGE_CREATE',
+      platformMessageId: 'at-self',
+      target: group,
+      senderOpenId: 'sender',
+      content: '<@self-bot> 在吗',
+      mentions: [{ openId: 'self-bot', bot: true }],
+      platformTimestamp: 401,
+    })
+    // Two bots @ed: only the one QQ marks as the receiver counts as this bot.
+    await adapter.receive({
+      eventType: 'GROUP_AT_MESSAGE_CREATE',
+      platformMessageId: 'two-bots',
+      target: group,
+      senderOpenId: 'sender',
+      content: '<@other-bot> <@self-bot>',
+      mentions: [
+        { openId: 'other-bot', bot: true },
+        { openId: 'self-bot', bot: true, self: true },
+      ],
+      platformTimestamp: 402,
+    })
+    // Later, a full-group message mentioning the known bot is a mention of this bot.
+    await adapter.receive({
+      eventType: 'GROUP_MESSAGE_CREATE',
+      platformMessageId: 'known-self',
+      target: group,
+      senderOpenId: 'sender',
+      content: '<@self-bot> 再看看',
+      mentions: [{ openId: 'self-bot', bot: true }],
+      platformTimestamp: 403,
+    })
+    expect(accepted.map((event) => event.facts?.['mentionedBot'])).toEqual([false, true, true, true])
+    expect(ensured.filter(({ self }) => self).map(({ openId }) => openId)).toEqual(['self-bot', 'self-bot'])
+    expect(ensured.filter(({ openId }) => openId === 'other-bot').every(({ self }) => self === undefined)).toBe(true)
+    await adapter.stop()
+  })
+
   it('commits miniapp cards as rich parts and imports the preview into Asset', async () => {
     const accepted: AdapterChannelInboundEvent[] = []
     const inbound: QQInboundBridge = {
       ensureTarget: () => Promise.resolve(channelId),
       ensureMember: () => Promise.resolve(memberId),
+      isSelfMember: () => Promise.resolve(false),
       importAttachment: () =>
         Promise.resolve({ assetId: AssetIdSchema.parse('ast_preview'), mediaType: 'image/jpeg', fileName: 'preview' }),
       resolveQuote: () => Promise.resolve(undefined),
@@ -378,6 +460,7 @@ describe('QQ OpenClaw connection boundaries', () => {
     const inbound: QQInboundBridge = {
       ensureTarget: () => Promise.resolve(channelId),
       ensureMember: () => Promise.resolve(memberId),
+      isSelfMember: () => Promise.resolve(false),
       importAttachment: ({ url, fileName }) => {
         imported.push(url)
         const assetId =

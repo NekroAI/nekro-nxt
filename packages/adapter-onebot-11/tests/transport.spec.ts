@@ -50,7 +50,14 @@ describe('OneBot forward WebSocket transport', () => {
         requests.push(request)
         const action = request['action']
         if (action === 'get_login_info')
-          socket.send(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: '90001' }, echo: request['echo'] }))
+          socket.send(
+            JSON.stringify({
+              status: 'ok',
+              retcode: 0,
+              data: { user_id: '90001', nickname: '虚构机器人' },
+              echo: request['echo'],
+            }),
+          )
         else if (action === 'get_version_info')
           socket.send(
             JSON.stringify({
@@ -82,6 +89,8 @@ describe('OneBot forward WebSocket transport', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([{ order: 1 }, { order: 2 }])
     expect(authorization).toBe('Bearer fixture-token')
     expect(requests.every((request) => typeof request['echo'] === 'string')).toBe(true)
+    // The logged-in account is reported to the Host once the connection is initialised.
+    expect(fake.accountReports).toEqual(['90001'])
     await client.stop()
   })
 

@@ -88,6 +88,7 @@ describe('QQ OpenClaw composed runtime', () => {
       inbound: {
         ensureTarget: () => Promise.resolve(channelId),
         ensureMember: ({ openId }) => Promise.resolve(ChannelMemberIdSchema.parse(`mbr_${openId.replaceAll('-', '')}`)),
+        isSelfMember: () => Promise.resolve(false),
         importAttachment: ({ fileName, mediaType }) =>
           Promise.resolve({
             assetId: AssetIdSchema.parse('ast_video'),
