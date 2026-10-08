@@ -32,6 +32,8 @@ export const createFakeContext = () => {
   const channels = new Map<string, ReturnType<typeof ChannelIdSchema.parse>>()
   const identities = new Map<string, ReturnType<typeof PlatformIdentityIdSchema.parse>>()
   const members = new Map<string, ReturnType<typeof ChannelMemberIdSchema.parse>>()
+  const selfMembers = new Set<string>()
+  const accountReports: string[] = []
   let channelSequence = 0
   let identitySequence = 0
   let memberSequence = 0
@@ -79,10 +81,9 @@ export const createFakeContext = () => {
     members: {
       ensure: (input) => {
         const key = `${input.channelId}:${input.platformUserId}`
-        const existing = members.get(key)
-        if (existing) return Promise.resolve(existing)
-        const id = ChannelMemberIdSchema.parse(`mbr_${++memberSequence}`)
+        const id = members.get(key) ?? ChannelMemberIdSchema.parse(`mbr_${++memberSequence}`)
         members.set(key, id)
+        if (input.self === true) selfMembers.add(id)
         return Promise.resolve(id)
       },
       resolvePlatformUserId: (channelId, memberId) =>
@@ -92,6 +93,13 @@ export const createFakeContext = () => {
             .split(':')
             .at(-1),
         ),
+      isSelf: (_channelId, memberId) => Promise.resolve(selfMembers.has(memberId)),
+    },
+    account: {
+      report: ({ platformUserId }) => {
+        accountReports.push(platformUserId)
+        return Promise.resolve()
+      },
     },
     messages: {
       resolvePlatformMessage: () => Promise.resolve(undefined),
@@ -127,5 +135,16 @@ export const createFakeContext = () => {
     },
     transport: new FakeAdapterTransport(),
   }
-  return { context, events, connectionEvents, diagnostics, states, channels, identities, members }
+  return {
+    context,
+    events,
+    connectionEvents,
+    diagnostics,
+    states,
+    channels,
+    identities,
+    members,
+    selfMembers,
+    accountReports,
+  }
 }

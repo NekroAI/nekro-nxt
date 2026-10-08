@@ -33,6 +33,7 @@
     "0028_extension_storage.sql": "45e143b7f1f6de831971dbb47fcfdb7254be9c1c9ba12d71a655d218fb615dbb",
     "0029_extension_jobs_hooks.sql": "6a4b5cf37dc070fcd250d2c6f3a7af736888e1548742a7ba9813f07fb8705134",
     "0030_extension_revision_sources.sql": "d38dbade4d542b0e95e8185fb0159a7b17fab7854b501850b05b61d3142e430e",
+    "0031_platform_identity_self.sql": "5ef9dd98d96e4e605dec03186d0588a9ee9d0bb0e2aa3245317a308d8eee28d9",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -64,6 +65,7 @@
     "meta/0028_snapshot.json": "feb71703af6a6af53955bfdef9724bf8483e0e99cda9a7ead6e860c01b349e0a",
     "meta/0029_snapshot.json": "2b077dfb7b406b786853f8f9695010fba549444ebfb9c7550a0fcd0afa3a6613",
     "meta/0030_snapshot.json": "9569d6099ddc80c06a9d23f3c4a656796a619ab6219a114d9eef12f91397c30d",
-    "meta/_journal.json": "8036150d727d42b05c7b94491be3f512df19df0b9cff907b0280e2abfbf6d828"
+    "meta/0031_snapshot.json": "02c1d924584d1bb3c5541972e684b9239c867e102d22c21b3034634397b03b6a",
+    "meta/_journal.json": "e918e088694aefef02750ebb54f058aa5415c5d1ca5c2a6f32e63ee4eaa2bec6"
   }
 }

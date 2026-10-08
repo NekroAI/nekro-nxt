@@ -114,6 +114,7 @@ export interface AdapterConnectionContext {
   readonly channels?: AdapterChannelDirectory
   readonly identities?: AdapterIdentityDirectory
   readonly members?: AdapterMemberDirectory
+  readonly account?: AdapterAccountDirectory
   readonly messages?: AdapterMessageDirectory
   readonly assets?: AdapterAssetHost
   readonly credentials?: AdapterCredentialHost
@@ -130,6 +131,7 @@ export type AdapterConnectionHostContext = AdapterConnectionContext &
       | 'channels'
       | 'identities'
       | 'members'
+      | 'account'
       | 'messages'
       | 'assets'
       | 'credentials'
@@ -167,8 +169,32 @@ export interface AdapterMemberDirectory {
     readonly platformUserId: string
     readonly displayName?: string
     readonly observedAt: number
+    /**
+     * This platform user is the connection's own account, e.g. the platform said the mention or the message is the
+     * bot's. Set it only when the platform says so; the Host shows the member to the agent as itself.
+     */
+    readonly self?: boolean
   }): Promise<ChannelMemberId>
+  /**
+   * The member's platform user id. Undefined when the member is not in this channel, or is the connection's own account
+   * and its platform id is unknown; use `isSelf` to tell the second case apart.
+   */
   resolvePlatformUserId(channelId: ChannelId, memberId: ChannelMemberId): Promise<string | undefined>
+  /** Whether the member stands for the connection's own account. */
+  isSelf(channelId: ChannelId, memberId: ChannelMemberId): Promise<boolean>
+}
+
+/**
+ * The connection's own platform account. An Adapter that can read its account id (for example from a login call)
+ * reports it after each (re)connect; the agent never sees the id, but the Host uses it to resolve the account for
+ * platform actions and to recognise other local connections' accounts in a shared channel.
+ */
+export interface AdapterAccountDirectory {
+  report(input: {
+    readonly platformUserId: string
+    readonly displayName?: string
+    readonly observedAt: number
+  }): Promise<void>
 }
 
 export interface AdapterMessageDirectory {

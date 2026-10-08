@@ -72,7 +72,9 @@ export const createFakeContext = () => {
         return Promise.resolve(id)
       },
       resolvePlatformUserId: () => Promise.resolve(undefined),
+      isSelf: () => Promise.resolve(false),
     },
+    account: { report: () => Promise.resolve() },
     messages: {
       resolvePlatformMessage: () => Promise.resolve(undefined),
       resolvePlatformMessageId: () => Promise.resolve(undefined),

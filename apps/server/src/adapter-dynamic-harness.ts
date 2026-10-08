@@ -75,7 +75,11 @@ harness.registerAdapter = (contribution) => {
           if (!members.has(key)) members.set(key, 'mbr_VALIDATE' + (++memberSequence))
           return members.get(key)
         },
-        resolvePlatformUserId: async () => 'user-example'
+        resolvePlatformUserId: async () => 'user-example',
+        isSelf: async () => false
+      },
+      account: {
+        report: async () => {}
       },
       messages: {
         resolvePlatformMessage: async () => undefined,

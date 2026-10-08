@@ -32,7 +32,7 @@ import {
   PlatformIdentityIdSchema,
 } from '@nekro-nxt/contracts'
 import type { JsonValue } from '@nekro-nxt/contracts'
-import { CoreService } from '@nekro-nxt/core'
+import { CoreService, SELF_PLACEHOLDER_PLATFORM_USER_ID } from '@nekro-nxt/core'
 import {
   backupCoreDatabase,
   coreSchema,
@@ -714,6 +714,53 @@ describe('Core SQLite baseline', () => {
       expect(migrated.pragma('foreign_keys')).toBe(1)
     } finally {
       migrated.close()
+    }
+  })
+
+  it('raises a self mark only upward, keeps one account per connection, and orders the channel self member', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const channel = core.ensureChannel({
+        connectionId: connection.id,
+        platformChannelId: 'group-1',
+        kind: 'group',
+        observedAt: 1000,
+      })
+      const placeholder = core.ensureSelfChannelMember(channel.id)
+      const marked = core.observeChannelMember({
+        connectionId: connection.id,
+        channelId: channel.id,
+        platformUserId: 'bot-openid',
+        observedAt: 1000,
+        self: true,
+      })
+      // A real member the Adapter marked as itself outranks the placeholder.
+      expect(repository.findSelfChannelMember(channel.id)?.id).toBe(marked.member.id)
+      core.observeChannelMember({
+        connectionId: connection.id,
+        channelId: channel.id,
+        platformUserId: 'bot-openid',
+        displayName: '小助手',
+        observedAt: 1001,
+      })
+      expect(repository.getPlatformIdentity(marked.identity.id)).toMatchObject({
+        self: 'member',
+        displayName: '小助手',
+      })
+
+      core.reportConnectionAccount({ connectionId: connection.id, platformUserId: '10001', observedAt: 1002 })
+      const account = core.ensureSelfChannelMember(channel.id)
+      expect(repository.findSelfChannelMember(channel.id)?.id).toBe(account.id)
+      core.reportConnectionAccount({ connectionId: connection.id, platformUserId: '10002', observedAt: 1003 })
+      expect(repository.getAccountIdentity(connection.id)?.platformUserId).toBe('10002')
+      expect(repository.getPlatformIdentity(repository.getChannelMember(account.id)!.platformIdentityId)?.self).toBe(
+        'member',
+      )
+      expect(
+        repository.getPlatformIdentity(repository.getChannelMember(placeholder.id)!.platformIdentityId),
+      ).toMatchObject({ platformUserId: SELF_PLACEHOLDER_PLATFORM_USER_ID, self: 'member' })
+    } finally {
+      database.close()
     }
   })
 

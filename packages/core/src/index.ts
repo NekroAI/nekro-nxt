@@ -146,7 +146,18 @@ export interface PlatformIdentityRecord {
   readonly connectionId: ConnectionId
   readonly platformUserId: string
   readonly displayName?: string
+  /**
+   * The connection's own account. `member`: the Adapter marked this platform user as itself; `account`: the platform
+   * user id the Adapter reported for the whole connection (at most one per connection).
+   */
+  readonly self?: 'member' | 'account'
 }
+
+/**
+ * Platform user id of the stand-in identity for a connection's own account when the Adapter cannot tell its real id.
+ * It is never handed back to an Adapter as a platform user id.
+ */
+export const SELF_PLACEHOLDER_PLATFORM_USER_ID = 'nxt:self'
 
 export interface ChannelMemberRecord {
   readonly id: ChannelMemberId
@@ -292,8 +303,14 @@ export interface CoreRepository {
   getChannel(id: ChannelId): ChannelRecord | undefined
   getChannelByPlatformId(connectionId: ConnectionId, platformChannelId: string): ChannelRecord | undefined
   listChannelIdsByConnection(connectionId: ConnectionId): readonly ChannelId[]
+  /** Inserts or refreshes an identity; a `self` mark is only ever raised here, never cleared. */
   ensurePlatformIdentity(record: PlatformIdentityRecord): PlatformIdentityRecord
   getPlatformIdentity(id: PlatformIdentityId): PlatformIdentityRecord | undefined
+  /** Makes one identity the connection's reported account; the previous account identity stays a `member` self. */
+  markAccountIdentity(connectionId: ConnectionId, identityId: PlatformIdentityId): void
+  getAccountIdentity(connectionId: ConnectionId): PlatformIdentityRecord | undefined
+  /** The channel member backed by a self identity: the account first, then a real member, then the placeholder. */
+  findSelfChannelMember(channelId: ChannelId): ChannelMemberRecord | undefined
   listPlatformUsers(): readonly PlatformUserDirectoryRecord[]
   ensureChannelMember(record: ChannelMemberRecord): ChannelMemberRecord
   getChannelMember(id: ChannelMemberId): ChannelMemberRecord | undefined
@@ -483,10 +500,16 @@ const observedIdentitySchema = z
     platformUserId: z.string().trim().min(1),
     displayName: z.string().trim().min(1).max(120).optional(),
     observedAt: z.number().int().safe().nonnegative(),
+    self: z.boolean().optional(),
   })
   .strict()
 
 const connectionIdentitySchema = observedIdentitySchema.omit({ channelId: true })
+
+const assertRealPlatformUserId = (platformUserId: string): void => {
+  if (platformUserId.trim() === SELF_PLACEHOLDER_PLATFORM_USER_ID)
+    throw new Error(`${SELF_PLACEHOLDER_PLATFORM_USER_ID} is reserved for the account placeholder.`)
+}
 
 const bindingInputSchema = z
   .object({
@@ -974,8 +997,11 @@ export class CoreService {
     readonly platformUserId: string
     readonly displayName?: string
     readonly observedAt: number
+    /** The Adapter recognises this platform user as its own account. */
+    readonly self?: boolean
   }): PlatformIdentityRecord {
     const parsed = connectionIdentitySchema.parse(input)
+    assertRealPlatformUserId(parsed.platformUserId)
     if (!this.#repository.getConnection(input.connectionId)) {
       throw new Error(`Unknown connection: ${input.connectionId}`)
     }
@@ -984,6 +1010,53 @@ export class CoreService {
       connectionId: input.connectionId,
       platformUserId: parsed.platformUserId,
       ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
+      ...(parsed.self === true ? { self: 'member' as const } : {}),
+    })
+  }
+
+  /** The Adapter reports the platform user id of the account this connection runs as (e.g. after login). */
+  reportConnectionAccount(input: {
+    readonly connectionId: ConnectionId
+    readonly platformUserId: string
+    readonly displayName?: string
+    readonly observedAt: number
+  }): PlatformIdentityRecord {
+    const identity = this.ensurePlatformIdentity({ ...input, self: true })
+    if (identity.self !== 'account') this.#repository.markAccountIdentity(input.connectionId, identity.id)
+    return { ...identity, self: 'account' }
+  }
+
+  /** The platform user id the connection last reported as its own account, when it could tell. */
+  connectionAccountPlatformUserId(connectionId: ConnectionId): string | undefined {
+    return this.#repository.getAccountIdentity(connectionId)?.platformUserId
+  }
+
+  /**
+   * The channel member that stands for the connection's own account. It always exists: the reported account when the
+   * Adapter told it, otherwise a member it marked as itself, otherwise a placeholder identity with no platform id.
+   */
+  ensureSelfChannelMember(channelId: ChannelId): ChannelMemberRecord {
+    const existing = this.#repository.findSelfChannelMember(channelId)
+    const channel = this.#repository.getChannel(channelId)
+    if (!channel) throw new Error(`Unknown channel: ${channelId}`)
+    const account = this.#repository.getAccountIdentity(channel.connectionId)
+    if (existing !== undefined) {
+      const identity = this.#repository.getPlatformIdentity(existing.platformIdentityId)
+      if (account === undefined || identity?.id === account.id) return existing
+    }
+    const identity =
+      account ??
+      this.#repository.ensurePlatformIdentity({
+        id: PlatformIdentityIdSchema.parse(`pid_${this.#nextUlid()}`),
+        connectionId: channel.connectionId,
+        platformUserId: SELF_PLACEHOLDER_PLATFORM_USER_ID,
+        self: 'member',
+      })
+    return this.#repository.ensureChannelMember({
+      id: ChannelMemberIdSchema.parse(`mbr_${this.#nextUlid()}`),
+      channelId,
+      platformIdentityId: identity.id,
+      ...(identity.displayName === undefined ? {} : { displayName: identity.displayName }),
     })
   }
 
@@ -1049,6 +1122,8 @@ export class CoreService {
     readonly platformUserId: string
     readonly displayName?: string
     readonly observedAt: number
+    /** The Adapter recognises this member as its own account. */
+    readonly self?: boolean
   }): { readonly identity: PlatformIdentityRecord; readonly member: ChannelMemberRecord } {
     const parsed = observedIdentitySchema.parse(input)
     const channel = this.#repository.getChannel(input.channelId)
@@ -1060,6 +1135,7 @@ export class CoreService {
       platformUserId: parsed.platformUserId,
       ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
       observedAt: parsed.observedAt,
+      ...(parsed.self === true ? { self: true } : {}),
     })
     const member = this.#repository.ensureChannelMember({
       id: ChannelMemberIdSchema.parse(`mbr_${this.#nextUlid()}`),
@@ -1068,6 +1144,36 @@ export class CoreService {
       ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
     })
     return { identity, member }
+  }
+
+  /**
+   * Who a channel member is relative to this host: the channel's own account, or the account another local connection
+   * of the same Adapter reported (with that connection's channel for the same platform channel, when it has one).
+   * Only reported account ids are compared, so a placeholder or a guessed name never matches.
+   */
+  describeChannelMember(
+    channelId: ChannelId,
+    memberId: ChannelMemberId,
+  ):
+    | { readonly kind: 'self' }
+    | { readonly kind: 'local-account'; readonly connectionId: ConnectionId; readonly channelId?: ChannelId }
+    | { readonly kind: 'member' }
+    | undefined {
+    const channel = this.#repository.getChannel(channelId)
+    const member = this.#repository.getChannelMember(memberId)
+    if (!channel || !member || member.channelId !== channelId) return undefined
+    const identity = this.#repository.getPlatformIdentity(member.platformIdentityId)
+    if (!identity) return undefined
+    if (identity.self !== undefined) return { kind: 'self' }
+    const connection = this.#repository.getConnection(channel.connectionId)
+    if (!connection) return { kind: 'member' }
+    for (const otherId of this.#repository.listConnectionIdsByAdapter(connection.adapterKey)) {
+      if (otherId === channel.connectionId) continue
+      if (this.#repository.getAccountIdentity(otherId)?.platformUserId !== identity.platformUserId) continue
+      const otherChannel = this.#repository.getChannelByPlatformId(otherId, channel.platformChannelId)
+      return { kind: 'local-account', connectionId: otherId, ...(otherChannel ? { channelId: otherChannel.id } : {}) }
+    }
+    return { kind: 'member' }
   }
 
   resolveChannelMemberIdentity(

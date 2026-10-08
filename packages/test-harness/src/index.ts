@@ -101,6 +101,8 @@ export const createFakeAdapterHostContext = (clock = new VirtualClock(1)) => {
   const channelKinds = new Map<string, 'direct' | 'group'>()
   const identities = new Map<string, ReturnType<typeof PlatformIdentityIdSchema.parse>>()
   const members = new Map<string, ReturnType<typeof ChannelMemberIdSchema.parse>>()
+  const selfMembers = new Set<string>()
+  const accountReports: { readonly platformUserId: string; readonly displayName?: string }[] = []
   const states = new Map<string, JsonValue>()
   const credentials = new Map<string, string>()
   let channelSequence = 0
@@ -150,9 +152,9 @@ export const createFakeAdapterHostContext = (clock = new VirtualClock(1)) => {
       ensure: (input) => {
         const key = `${input.channelId}:${input.platformUserId}`
         const existing = members.get(key)
-        if (existing) return Promise.resolve(existing)
-        const memberId = ChannelMemberIdSchema.parse(`mbr_HARNESS${++memberSequence}`)
+        const memberId = existing ?? ChannelMemberIdSchema.parse(`mbr_HARNESS${++memberSequence}`)
         members.set(key, memberId)
+        if (input.self === true) selfMembers.add(memberId)
         return Promise.resolve(memberId)
       },
       resolvePlatformUserId: (channelId, memberId) =>
@@ -162,6 +164,13 @@ export const createFakeAdapterHostContext = (clock = new VirtualClock(1)) => {
             .split(':')
             .at(-1),
         ),
+      isSelf: (_channelId, memberId) => Promise.resolve(selfMembers.has(memberId)),
+    },
+    account: {
+      report: ({ platformUserId, displayName }) => {
+        accountReports.push({ platformUserId, ...(displayName === undefined ? {} : { displayName }) })
+        return Promise.resolve()
+      },
     },
     messages: {
       resolvePlatformMessage: () => Promise.resolve(undefined),
@@ -210,6 +219,8 @@ export const createFakeAdapterHostContext = (clock = new VirtualClock(1)) => {
     channels,
     identities,
     members,
+    selfMembers,
+    accountReports,
     credentials,
     states,
     assertIdle: () => {

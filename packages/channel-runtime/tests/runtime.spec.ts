@@ -273,6 +273,13 @@ class MemoryCoreRepository implements CoreRepository {
   getPlatformIdentity(id: PlatformIdentityId) {
     return this.identities.get(id)
   }
+  markAccountIdentity() {}
+  getAccountIdentity() {
+    return undefined
+  }
+  findSelfChannelMember() {
+    return undefined
+  }
   listPlatformUsers() {
     return []
   }

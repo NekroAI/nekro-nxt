@@ -258,6 +258,12 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channels.ensurePlatformIdentity(...args)
   readonly getPlatformIdentity = (...args: Parameters<CoreRepository['getPlatformIdentity']>) =>
     this.#channels.getPlatformIdentity(...args)
+  readonly markAccountIdentity = (...args: Parameters<CoreRepository['markAccountIdentity']>) =>
+    this.#channels.markAccountIdentity(...args)
+  readonly getAccountIdentity = (...args: Parameters<CoreRepository['getAccountIdentity']>) =>
+    this.#channels.getAccountIdentity(...args)
+  readonly findSelfChannelMember = (...args: Parameters<CoreRepository['findSelfChannelMember']>) =>
+    this.#channels.findSelfChannelMember(...args)
   readonly listPlatformUsers = (...args: Parameters<CoreRepository['listPlatformUsers']>) =>
     this.#channels.listPlatformUsers(...args)
   readonly ensureChannelMember = (...args: Parameters<CoreRepository['ensureChannelMember']>) =>

@@ -218,6 +218,13 @@
       "when": 1791368118308,
       "tag": "0030_extension_revision_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1791476691714,
+      "tag": "0031_platform_identity_self",
+      "breakpoints": true
     }
   ]
 }

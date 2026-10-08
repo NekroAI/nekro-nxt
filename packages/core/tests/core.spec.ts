@@ -42,6 +42,7 @@ import {
   parseAgentCapabilityGrants,
   parseStoredAgentCapabilityGrants,
   parseImageUnderstandingPolicy,
+  SELF_PLACEHOLDER_PLATFORM_USER_ID,
 } from '../src/index.ts'
 
 const deniedCapabilities = {
@@ -279,10 +280,13 @@ class MemoryRepository implements CoreRepository {
     const existing = [...this.identities.values()].find(
       (identity) => identity.connectionId === record.connectionId && identity.platformUserId === record.platformUserId,
     )
-    const stored = existing
+    const self: PlatformIdentityRecord['self'] =
+      existing?.self === 'account' || record.self === 'account' ? 'account' : (existing?.self ?? record.self)
+    const stored: PlatformIdentityRecord = existing
       ? {
           ...existing,
           ...(record.displayName === undefined ? {} : { displayName: record.displayName }),
+          ...(self === undefined ? {} : { self }),
         }
       : record
     this.identities.set(stored.id, stored)
@@ -291,6 +295,32 @@ class MemoryRepository implements CoreRepository {
 
   getPlatformIdentity(id: PlatformIdentityId) {
     return this.identities.get(id)
+  }
+
+  markAccountIdentity(connectionId: ConnectionId, identityId: PlatformIdentityId): void {
+    for (const identity of this.identities.values()) {
+      if (identity.connectionId !== connectionId) continue
+      if (identity.id === identityId) this.identities.set(identity.id, { ...identity, self: 'account' })
+      else if (identity.self === 'account') this.identities.set(identity.id, { ...identity, self: 'member' })
+    }
+  }
+
+  getAccountIdentity(connectionId: ConnectionId) {
+    return [...this.identities.values()].find(
+      (identity) => identity.connectionId === connectionId && identity.self === 'account',
+    )
+  }
+
+  findSelfChannelMember(channelId: ChannelId) {
+    const rank = (member: ChannelMemberRecord): number => {
+      const identity = this.identities.get(member.platformIdentityId)
+      if (identity?.self === undefined) return Number.POSITIVE_INFINITY
+      if (identity.self === 'account') return 0
+      return identity.platformUserId === SELF_PLACEHOLDER_PLATFORM_USER_ID ? 2 : 1
+    }
+    return [...this.members.values()]
+      .filter((member) => member.channelId === channelId && Number.isFinite(rank(member)))
+      .sort((left, right) => rank(left) - rank(right))[0]
   }
 
   listPlatformUsers() {
@@ -817,6 +847,107 @@ describe('CoreService', () => {
       platformUserId: 'member-openid',
     })
     expect(core.resolveChannelMemberIdentity(secondConnection.id, firstChannel.id, repeated.member.id)).toBeUndefined()
+  })
+
+  it('gives every channel one member for its own account and recognises other local accounts', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `SELF${++id}` })
+    const alpha = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+    const beta = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+    const other = core.createConnection({ adapterKey: 'fixture-beta', config: {} })
+    const alphaGroup = core.ensureChannel({
+      connectionId: alpha.id,
+      platformChannelId: 'group-1',
+      kind: 'group',
+      observedAt: 100,
+    })
+    const betaGroup = core.ensureChannel({
+      connectionId: beta.id,
+      platformChannelId: 'group-1',
+      kind: 'group',
+      observedAt: 100,
+    })
+    const otherGroup = core.ensureChannel({
+      connectionId: other.id,
+      platformChannelId: 'group-1',
+      kind: 'group',
+      observedAt: 100,
+    })
+
+    // Without any report the account is a placeholder that never reaches an Adapter as a platform id.
+    const placeholder = core.ensureSelfChannelMember(alphaGroup.id)
+    expect(core.ensureSelfChannelMember(alphaGroup.id).id).toBe(placeholder.id)
+    expect(core.resolveChannelMemberIdentity(alpha.id, alphaGroup.id, placeholder.id)).toMatchObject({
+      platformUserId: SELF_PLACEHOLDER_PLATFORM_USER_ID,
+      self: 'member',
+    })
+    expect(core.describeChannelMember(alphaGroup.id, placeholder.id)).toEqual({ kind: 'self' })
+    expect(core.connectionAccountPlatformUserId(alpha.id)).toBeUndefined()
+    expect(() =>
+      core.ensurePlatformIdentity({
+        connectionId: alpha.id,
+        platformUserId: SELF_PLACEHOLDER_PLATFORM_USER_ID,
+        observedAt: 100,
+      }),
+    ).toThrow('reserved')
+
+    // A reported account takes over as the channel's own member; the placeholder keeps reading as self.
+    core.reportConnectionAccount({
+      connectionId: alpha.id,
+      platformUserId: '10001',
+      displayName: '小助手',
+      observedAt: 100,
+    })
+    const account = core.ensureSelfChannelMember(alphaGroup.id)
+    expect(account.id).not.toBe(placeholder.id)
+    expect(account.displayName).toBe('小助手')
+    expect(core.connectionAccountPlatformUserId(alpha.id)).toBe('10001')
+    expect(core.describeChannelMember(alphaGroup.id, placeholder.id)).toEqual({ kind: 'self' })
+
+    // A member the Adapter marks as itself reads as self; a plain later observation does not clear it.
+    core.reportConnectionAccount({ connectionId: beta.id, platformUserId: '20002', observedAt: 100 })
+    const marked = core.observeChannelMember({
+      connectionId: beta.id,
+      channelId: betaGroup.id,
+      platformUserId: '20002',
+      observedAt: 100,
+      self: true,
+    })
+    core.observeChannelMember({
+      connectionId: beta.id,
+      channelId: betaGroup.id,
+      platformUserId: '20002',
+      observedAt: 101,
+    })
+    expect(core.describeChannelMember(betaGroup.id, marked.member.id)).toEqual({ kind: 'self' })
+    expect(core.ensureSelfChannelMember(betaGroup.id).id).toBe(marked.member.id)
+
+    // Beta's account seen in alpha's copy of the same group is a local account, linked to beta's channel.
+    const betaInAlpha = core.observeChannelMember({
+      connectionId: alpha.id,
+      channelId: alphaGroup.id,
+      platformUserId: '20002',
+      observedAt: 100,
+    })
+    expect(core.describeChannelMember(alphaGroup.id, betaInAlpha.member.id)).toEqual({
+      kind: 'local-account',
+      connectionId: beta.id,
+      channelId: betaGroup.id,
+    })
+    // The same id under another Adapter is unrelated, and an ordinary member stays a member.
+    const lookalike = core.observeChannelMember({
+      connectionId: other.id,
+      channelId: otherGroup.id,
+      platformUserId: '20002',
+      observedAt: 100,
+    })
+    expect(core.describeChannelMember(otherGroup.id, lookalike.member.id)).toEqual({ kind: 'member' })
+
+    // Switching accounts demotes the old account to a plain self member instead of keeping two accounts.
+    core.reportConnectionAccount({ connectionId: alpha.id, platformUserId: '10003', observedAt: 200 })
+    expect(core.connectionAccountPlatformUserId(alpha.id)).toBe('10003')
+    expect(core.resolveChannelMemberIdentity(alpha.id, alphaGroup.id, account.id)).toMatchObject({ self: 'member' })
   })
 
   it('keeps Connection events owned, idempotent, paginated, and outside Channels', () => {

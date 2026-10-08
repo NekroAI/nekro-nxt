@@ -21,7 +21,7 @@ import {
   type ConnectionId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
-import type { ConnectionEventRecord, ConnectionRecord } from '@nekro-nxt/core'
+import { SELF_PLACEHOLDER_PLATFORM_USER_ID, type ConnectionEventRecord, type ConnectionRecord } from '@nekro-nxt/core'
 import { readFile } from 'node:fs/promises'
 import { fetchAdapterRemoteBytes } from './adapter-remote-assets.js'
 import type { NekroRuntime } from './bootstrap.js'
@@ -1014,12 +1014,32 @@ export class ConnectionApplicationService {
               platformUserId: input.platformUserId,
               ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
               observedAt: input.observedAt,
+              ...(input.self === true ? { self: true } : {}),
             }).member.id,
           ),
-        resolvePlatformUserId: (channelId, memberId) =>
+        resolvePlatformUserId: (channelId, memberId) => {
+          const platformUserId = this.ports.core.resolveChannelMemberIdentity(
+            connectionId,
+            channelId,
+            memberId,
+          )?.platformUserId
+          return Promise.resolve(platformUserId === SELF_PLACEHOLDER_PLATFORM_USER_ID ? undefined : platformUserId)
+        },
+        isSelf: (channelId, memberId) =>
           Promise.resolve(
-            this.ports.core.resolveChannelMemberIdentity(connectionId, channelId, memberId)?.platformUserId,
+            this.ports.core.resolveChannelMemberIdentity(connectionId, channelId, memberId)?.self !== undefined,
           ),
+      },
+      account: {
+        report: (input) => {
+          this.ports.core.reportConnectionAccount({
+            connectionId,
+            platformUserId: input.platformUserId,
+            ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+            observedAt: input.observedAt,
+          })
+          return Promise.resolve()
+        },
       },
       messages: {
         resolvePlatformMessage: (channelId, platformMessageId) =>

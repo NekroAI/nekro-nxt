@@ -167,6 +167,8 @@ export const platformIdentities = sqliteTable(
       .references(() => connections.id, { onDelete: 'restrict' }),
     platformUserId: text('platform_user_id').notNull(),
     displayName: text('display_name'),
+    /** `member`: the Adapter marked this user as its own account; `account`: the account it reported for the connection. */
+    selfKind: text('self_kind').$type<'member' | 'account'>(),
   },
   (table) => [
     uniqueIndex('platform_identities_connection_user_uq').on(table.connectionId, table.platformUserId),

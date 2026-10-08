@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm'
-import { normalizeConnectionAlias, type CoreRepository } from '@nekro-nxt/core'
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm'
+import { SELF_PLACEHOLDER_PLATFORM_USER_ID, normalizeConnectionAlias, type CoreRepository } from '@nekro-nxt/core'
 import type {
   AppendChannelEventCommit,
   AppendConnectionEventCommit,
@@ -70,6 +70,9 @@ type ChannelRepository = Pick<
   | 'listChannelIdsByConnection'
   | 'ensurePlatformIdentity'
   | 'getPlatformIdentity'
+  | 'markAccountIdentity'
+  | 'getAccountIdentity'
+  | 'findSelfChannelMember'
   | 'listPlatformUsers'
   | 'ensureChannelMember'
   | 'getChannelMember'
@@ -138,6 +141,7 @@ const toIdentity = (input: typeof platformIdentities.$inferSelect): PlatformIden
     connectionId: row.connectionId,
     platformUserId: row.platformUserId,
     ...(row.displayName === null ? {} : { displayName: row.displayName }),
+    ...(row.selfKind === 'member' || row.selfKind === 'account' ? { self: row.selfKind } : {}),
   }
 }
 
@@ -526,8 +530,16 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         .map(({ id }) => id)
     },
     ensurePlatformIdentity(record): PlatformIdentityRecord {
-      const insert = database.insert(platformIdentities).values(record)
-      if (record.displayName === undefined) {
+      const { self, ...values } = record
+      const insert = database.insert(platformIdentities).values({ ...values, selfKind: self ?? null })
+      // A self mark is raised, never lowered: `account` outranks `member`, and a plain observation keeps either.
+      const selfKind =
+        self === 'account'
+          ? 'account'
+          : self === 'member'
+            ? sql`coalesce(${platformIdentities.selfKind}, 'member')`
+            : undefined
+      if (record.displayName === undefined && selfKind === undefined) {
         insert
           .onConflictDoNothing({ target: [platformIdentities.connectionId, platformIdentities.platformUserId] })
           .run()
@@ -535,7 +547,10 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         insert
           .onConflictDoUpdate({
             target: [platformIdentities.connectionId, platformIdentities.platformUserId],
-            set: { displayName: record.displayName },
+            set: {
+              ...(record.displayName === undefined ? {} : { displayName: record.displayName }),
+              ...(selfKind === undefined ? {} : { selfKind }),
+            },
           })
           .run()
       }
@@ -553,6 +568,45 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
       return toIdentity(row)
     },
     getPlatformIdentity,
+    markAccountIdentity(connectionId, identityId): void {
+      database.transaction((tx) => {
+        tx.update(platformIdentities)
+          .set({ selfKind: 'member' })
+          .where(
+            and(
+              eq(platformIdentities.connectionId, connectionId),
+              eq(platformIdentities.selfKind, 'account'),
+              ne(platformIdentities.id, identityId),
+            ),
+          )
+          .run()
+        tx.update(platformIdentities)
+          .set({ selfKind: 'account' })
+          .where(and(eq(platformIdentities.connectionId, connectionId), eq(platformIdentities.id, identityId)))
+          .run()
+      })
+    },
+    getAccountIdentity(connectionId): PlatformIdentityRecord | undefined {
+      const row = database
+        .select()
+        .from(platformIdentities)
+        .where(and(eq(platformIdentities.connectionId, connectionId), eq(platformIdentities.selfKind, 'account')))
+        .get()
+      return row === undefined ? undefined : toIdentity(row)
+    },
+    findSelfChannelMember(channelId): ChannelMemberRecord | undefined {
+      const row = database
+        .select({ member: channelMembers })
+        .from(channelMembers)
+        .innerJoin(platformIdentities, eq(platformIdentities.id, channelMembers.platformIdentityId))
+        .where(and(eq(channelMembers.channelId, channelId), isNotNull(platformIdentities.selfKind)))
+        .orderBy(
+          sql`case when ${platformIdentities.selfKind} = 'account' then 0 when ${platformIdentities.platformUserId} = ${SELF_PLACEHOLDER_PLATFORM_USER_ID} then 2 else 1 end`,
+          asc(channelMembers.id),
+        )
+        .get()
+      return row === undefined ? undefined : toMember(row.member)
+    },
     listPlatformUsers(): readonly PlatformUserDirectoryRecord[] {
       const rows = database
         .select({ identity: platformIdentities, connection: connections, member: channelMembers, channel: channels })
