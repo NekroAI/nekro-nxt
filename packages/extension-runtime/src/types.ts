@@ -127,6 +127,20 @@ export interface ExtensionRuntimeDiagnostic {
   readonly observedAt: number
 }
 
+/**
+ * The latest enable or disable request of one agent extension that has not settled into its Activation: still waiting
+ * for the agent's safe gap, or failed with the reason the user needs to see.
+ */
+export interface ExtensionActivationTransition {
+  readonly agentId: AgentId
+  readonly extensionId: ExtensionId
+  readonly target: 'enabled' | 'disabled'
+  readonly extensionRevisionId?: ExtensionRevisionId
+  readonly state: 'waiting' | 'failed'
+  readonly message?: string
+  readonly since: number
+}
+
 export interface ExtensionBuildArtifact {
   readonly revisionId: ExtensionRevisionId
   readonly buildKey: string

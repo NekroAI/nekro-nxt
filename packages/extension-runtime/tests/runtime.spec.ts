@@ -1536,6 +1536,54 @@ describe('Extension Activation lifecycle', () => {
     expect(host.mounted.get(`${first.agentId}\0${extension.id}`)).toBe(nextRevision.id)
   })
 
+  it('publishes a request as waiting until the safe gap, then keeps only the Activation or the failure reason', async () => {
+    const repository = new MemoryExtensionRepository()
+    const extension = localExtension(extensionId('transition'))
+    const usable = revision(revisionId('transitionUsable'), extension.id, 1)
+    const broken = revision(revisionId('transitionBroken'), extension.id, 2)
+    repository.saveExtensionRevision({ extension, revision: usable })
+    repository.saveExtensionRevision({ extension, revision: broken })
+    const host = new FakeActivationHost()
+    host.failRevisionId = broken.id
+    const gate = deferred<undefined>()
+    host.safeGate = gate.promise
+    const coordinator = activationCoordinator(repository, host)
+    const agent = agentId('transition')
+
+    const enabling = coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: usable.id })
+    expect(coordinator.getTransition(agent, extension.id)).toEqual({
+      agentId: agent,
+      extensionId: extension.id,
+      target: 'enabled',
+      extensionRevisionId: usable.id,
+      state: 'waiting',
+      since: 100,
+    })
+    expect(coordinator.listTransitions(extension.id)).toHaveLength(1)
+    expect(repository.getActivation(agent, extension.id)).toBeUndefined()
+    gate.resolve(undefined)
+    await enabling
+    expect(coordinator.listTransitions(extension.id)).toEqual([])
+    expect(repository.getActivation(agent, extension.id)?.extensionRevisionId).toBe(usable.id)
+
+    await expect(
+      coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: broken.id }),
+    ).rejects.toThrow('Mount failed.')
+    expect(coordinator.getTransition(agent, extension.id)).toMatchObject({
+      target: 'enabled',
+      extensionRevisionId: broken.id,
+      state: 'failed',
+      message: 'Mount failed.',
+    })
+
+    // The next request replaces the failure; a successful disable leaves nothing behind.
+    const disabling = coordinator.disable(agent, extension.id)
+    expect(coordinator.getTransition(agent, extension.id)).toMatchObject({ target: 'disabled', state: 'waiting' })
+    await disabling
+    expect(coordinator.getTransition(agent, extension.id)).toBeUndefined()
+    expect(repository.getActivation(agent, extension.id)).toBeUndefined()
+  })
+
   it('serializes concurrent switches for one Agent and Extension pair', async () => {
     const repository = new MemoryExtensionRepository()
     const extension = localExtension(extensionId('serialized'))

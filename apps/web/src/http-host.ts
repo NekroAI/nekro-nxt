@@ -617,6 +617,16 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               }),
         }
       }),
+      ...(extension.activationTransitions === undefined
+        ? {}
+        : {
+            activationTransitions: extension.activationTransitions.map((transition) => ({
+              agentId: transition.agentId,
+              target: transition.target,
+              state: transition.state,
+              ...(transition.message === undefined ? {} : { message: transition.message }),
+            })),
+          }),
       contributions: latestRevision?.contributions ?? [],
       ...(latestRevision?.verification === undefined
         ? {}

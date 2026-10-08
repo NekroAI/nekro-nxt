@@ -16,6 +16,7 @@ import {
   permissionRequirement,
   type DynamicAuthoringAttempt,
   type DynamicAuthoringTask,
+  type ExtensionActivationTransition,
 } from '@nekro-nxt/extension-runtime'
 import { maskExtensionSecrets } from './extension-secret-config.js'
 import type { NekroRuntime } from './bootstrap.js'
@@ -217,6 +218,7 @@ export const projectExtensions = (runtime: NekroRuntime) => {
           ? {}
           : { runtime: runtime.activation.getDiagnostic(activation.agentId, extension.id) }),
       })),
+      ...activationTransitionsProjection(runtime.activation.listTransitions(extension.id)),
       ...(installation === undefined
         ? {}
         : {
@@ -598,3 +600,21 @@ const communitySource = (runtime: NekroRuntime, revisionId: ExtensionRevisionId)
   })
   return parsed.success ? { source: parsed.data } : {}
 }
+
+const activationTransitionsProjection = (
+  transitions: readonly ExtensionActivationTransition[],
+): Pick<HostApiResponse<'snapshot'>['extensions'][number], 'activationTransitions'> =>
+  transitions.length === 0
+    ? {}
+    : {
+        activationTransitions: transitions.map((transition) => ({
+          agentId: transition.agentId,
+          target: transition.target,
+          ...(transition.extensionRevisionId === undefined
+            ? {}
+            : { extensionRevisionId: transition.extensionRevisionId }),
+          state: transition.state,
+          ...(transition.message === undefined ? {} : { message: transition.message }),
+          since: transition.since,
+        })),
+      }

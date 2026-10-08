@@ -9,6 +9,7 @@ import { createServer, type ViteDevServer } from 'vite'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
   productSnapshot,
+  sourceAgentId,
   summaryExtensionId,
   targetAgentId,
   targetChannelId,
@@ -403,17 +404,25 @@ test.describe('workshop', () => {
         typeof body === 'object' && body !== null && 'permissionApproval' in body ? body.permissionApproval : undefined
       // 启用需要一点时间：开关应先切到目标位置并显示进行中。
       await new Promise((resolve) => setTimeout(resolve, 600))
-      await route.fulfill({
-        json: {
-          activation: {
-            agentId: targetAgentId,
-            extensionId: summaryExtensionId,
-            extensionRevisionId: snapshot.extensions[0]?.revisions[0]?.id,
-            config: {},
-            activatedAt: 1_725_000_100_000,
+      const revisionId = snapshot.extensions.find((extension) => extension.id === summaryExtensionId)?.revisions[0]?.id
+      const activation = {
+        agentId: targetAgentId,
+        extensionRevisionId: revisionId,
+        config: {},
+        activatedAt: 1_725_000_100_000,
+      }
+      // 之后的快照反映这次启用，开关才结束进行中。
+      await page.route('**/api/snapshot', (snapshotRoute) =>
+        snapshotRoute.fulfill({
+          json: {
+            ...snapshot,
+            extensions: snapshot.extensions.map((extension) =>
+              extension.id === summaryExtensionId ? { ...extension, activations: [activation] } : extension,
+            ),
           },
-        },
-      })
+        }),
+      )
+      await route.fulfill({ json: { activation: { ...activation, extensionId: summaryExtensionId } } })
     })
     try {
       await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
@@ -438,6 +447,66 @@ test.describe('workshop', () => {
       await expect(dialog).toBeHidden()
       await expect(usage).not.toHaveAttribute('aria-busy', 'true')
       expect(approvedDigest).toEqual({ permissionDigest: digest })
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('keeps only the switching row busy while the agent is replying and shows a failed switch with its reason', async () => {
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id !== summaryExtensionId
+          ? extension
+          : {
+              ...extension,
+              activationTransitions: [
+                {
+                  agentId: targetAgentId,
+                  target: 'disabled' as const,
+                  state: 'failed' as const,
+                  message: '扩展卸载超时',
+                  since: 1_725_000_200_000,
+                },
+              ],
+            },
+      ),
+    }
+    const page = await openWorkshop(snapshot)
+    await page.route(`**/api/agents/${sourceAgentId}/extensions/${summaryExtensionId}/activation`, async (route) => {
+      const since = 1_725_000_300_000
+      const pending = { agentId: sourceAgentId, target: 'enabled' as const, state: 'waiting' as const, since }
+      await page.route('**/api/snapshot', (snapshotRoute) =>
+        snapshotRoute.fulfill({
+          json: {
+            ...snapshot,
+            extensions: snapshot.extensions.map((extension) =>
+              extension.id !== summaryExtensionId
+                ? extension
+                : { ...extension, activationTransitions: [...(extension.activationTransitions ?? []), pending] },
+            ),
+          },
+        }),
+      )
+      await route.fulfill({ json: { pending } })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      const usage = page.getByRole('table', { name: '使用这个扩展的智能体' })
+      await expect(usage.getByText('停用失败：扩展卸载超时')).toBeVisible()
+      const waitingSwitch = page.getByRole('switch', { name: '记录员使用「群聊摘要」' })
+      await waitingSwitch.click()
+      await expect(usage.getByText('正在回复，结束后启用')).toBeVisible()
+      await expect(waitingSwitch).toHaveAttribute('aria-busy', 'true')
+      await expect(waitingSwitch).toHaveAttribute('data-state', 'checked')
+      // 只有正在切换的那一行进入进行中，其他智能体的开关照常可用。
+      const otherSwitch = page.getByRole('switch', { name: '资料员使用「群聊摘要」' })
+      await expect(otherSwitch).not.toHaveAttribute('aria-busy', 'true')
+      await expect(otherSwitch).toBeEnabled()
+      // 旋转指示在短暂停顿后出现。
+      await page.waitForTimeout(800)
+      await waitingSwitch.screenshot({ path: '.local/browser-test-results/extension-activation-waiting-switch.png' })
+      await page.screenshot({ path: '.local/browser-test-results/extension-activation-waiting.png' })
     } finally {
       await page.close()
     }

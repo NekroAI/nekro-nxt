@@ -5,7 +5,14 @@ import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '.
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { PanelSlot, useExtensionActivation } from '../../extension-ui/index.js'
 import { callHostApi } from '../../host-api-client.js'
-import { connectionDisplayName, useProductStore, type AgentSummary, type ModelSummary } from '../../product-runtime.js'
+import {
+  connectionDisplayName,
+  useProductRuntime,
+  useProductStore,
+  type AgentSummary,
+  type LocalExtensionSummary,
+  type ModelSummary,
+} from '../../product-runtime.js'
 import {
   Banner,
   Button,
@@ -457,9 +464,21 @@ export function CapabilitiesSection({
   )
 }
 
+/** A request waiting for the agent's current reply to end shows its target position and stays busy until it lands. */
+const activationSwitchState = (
+  extension: LocalExtensionSummary,
+  agentId: string,
+): { readonly checked: boolean; readonly pending: boolean } => {
+  const transition = extension.activationTransitions?.find((item) => item.agentId === agentId)
+  return transition?.state === 'waiting'
+    ? { checked: transition.target === 'enabled', pending: true }
+    : { checked: extension.activations.some((item) => item.agentId === agentId), pending: false }
+}
+
 /** Agent extensions; switching one on or off applies immediately (with permission approval when needed). */
 export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
   const activation = useExtensionActivation()
+  const product = useProductRuntime()
   const go = useGo()
   const extensions = useProductStore((state) => state.extensions)
   const agentExtensions = extensions.filter((extension) => extension.scope === 'agent')
@@ -471,7 +490,17 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
         enabled,
         ...(revisionId === undefined ? {} : { revisionId }),
       })
-      if (changed) toast(enabled ? '已启用' : '已停用')
+      if (!changed) return
+      const transition = product.store
+        .getState()
+        .extensions.find((extension) => extension.id === extensionId)
+        ?.activationTransitions?.find((item) => item.agentId === agent.id)
+      if (transition?.state === 'failed') {
+        failure(new Error(transition.message ?? (enabled ? '启用失败。' : '停用失败。')))
+        return
+      }
+      const action = enabled ? '启用' : '停用'
+      toast(transition?.state === 'waiting' ? `${agent.name}正在回复，结束后${action}` : `已${action}`)
     } catch (error) {
       failure(error)
     }
@@ -503,7 +532,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
             >
               <Switch
                 label={`为${agent.name}启用${extension.name}`}
-                checked={extension.activations.some((item) => item.agentId === agent.id)}
+                {...activationSwitchState(extension, agent.id)}
                 onCheckedChange={(checked) => toggle(extension.id, checked, extension.revisions[0]?.id)}
               />
             </PropertyRow>

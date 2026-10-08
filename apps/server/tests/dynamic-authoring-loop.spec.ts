@@ -445,6 +445,8 @@ describe('dynamic authoring closed loop', () => {
           revisionId: saved.revision.id,
         }),
       ).rejects.toThrow('permission-approval-required')
+      // The authoring Session still runs the candidate with the same Tool, so only that Session is handed off.
+      const handoff = vi.spyOn(runtime.channels, 'rolloverEpisodesForActivation')
       await expect(
         runtime.activation.activate({
           agentId: entity.agentId,
@@ -453,6 +455,11 @@ describe('dynamic authoring closed loop', () => {
           permissionApproval: { permissionDigest: requirement.permissionDigest },
         }),
       ).resolves.toMatchObject({ extensionRevisionId: saved.revision.id })
+      expect(handoff).toHaveBeenCalledTimes(1)
+      const next = runtime.repository.listActiveEpisodesForAgent(entity.agentId)
+      expect(next).toHaveLength(1)
+      expect(next[0]?.dshSessionId).not.toBe(dshSessionId)
+      expect(runtime.host.toolNames(next[0]!.dshSessionId!)).toContain('visit_counter')
     } finally {
       await runtime.dispose()
     }

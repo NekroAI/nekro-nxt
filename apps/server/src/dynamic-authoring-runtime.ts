@@ -1769,6 +1769,20 @@ export class DynamicAuthoringRuntime {
     return { provider: skill.provider, content: skill.content }
   }
 
+  /** Episodes of the agent whose Session still runs a dynamic candidate; its Tools may be those of a saved Revision. */
+  episodesRunningDynamicCandidates(agentId: AgentRevisionRecord['agentId']): readonly EpisodeId[] {
+    this.#assertActive()
+    return [...this.#sessions.records()]
+      .filter(
+        (record) =>
+          record.revision.agentId === agentId &&
+          record.dynamic?.runner
+            .inventory()
+            .some((row) => row.agentId === SessionId(record.sessionId) && row.activeRun !== undefined) === true,
+      )
+      .map((record) => record.episodeId)
+  }
+
   async waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
     this.#assertActive()
     const handles = [...this.#sessions.handles()].filter(

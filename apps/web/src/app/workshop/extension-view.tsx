@@ -308,7 +308,8 @@ function AgentUsage({
   readonly labels: ReadonlyMap<string, string>
 }) {
   const agents = useProductStore((state) => state.agents)
-  const [pending, setPending] = useState('')
+  // Rows with a request in flight; only those rows lock, the rest of the table stays usable.
+  const [changing, setChanging] = useState<ReadonlySet<string>>(new Set())
   const activation = useExtensionActivation()
   const latestUsable = extension.revisions.findLast(usable)
   const recordOptions = extension.revisions.toReversed().map((item) => ({
@@ -317,10 +318,18 @@ function AgentUsage({
     disabled: !usable(item),
   }))
 
-  const enabledFor = (agent: AgentSummary): boolean => extension.activations.some((item) => item.agentId === agent.id)
+  const transitionFor = (agent: AgentSummary) =>
+    extension.activationTransitions?.find((item) => item.agentId === agent.id)
+  /** A request waiting for the agent's current reply to end already shows its target position. */
+  const enabledFor = (agent: AgentSummary): boolean => {
+    const transition = transitionFor(agent)
+    return transition?.state === 'waiting'
+      ? transition.target === 'enabled'
+      : extension.activations.some((item) => item.agentId === agent.id)
+  }
 
   const change = async (agentId: string, enabled: boolean, revisionId?: string) => {
-    setPending(agentId)
+    setChanging((current) => new Set(current).add(agentId))
     try {
       await activation.setActive({
         extensionId: extension.id,
@@ -331,7 +340,11 @@ function AgentUsage({
     } catch (error) {
       failure(error)
     } finally {
-      setPending('')
+      setChanging((current) => {
+        const next = new Set(current)
+        next.delete(agentId)
+        return next
+      })
     }
   }
 
@@ -343,12 +356,20 @@ function AgentUsage({
       render: (agent) => {
         const record = extension.activations.find((item) => item.agentId === agent.id)
         const broken = record?.runtime && record.runtime.status !== 'active'
+        const transition = transitionFor(agent)
+        const action = transition?.target === 'enabled' ? '启用' : '停用'
         return (
           <Link to={`/agents/${agent.id}`} className={styles.cellAgent}>
             <AgentAvatar name={agent.name} hue={agentHue(agent)} size="sm" />
             <span className={styles.cellAgentText}>
               <b>{agent.name}</b>
-              {broken ? (
+              {transition?.state === 'waiting' ? (
+                <small>正在回复，结束后{action}</small>
+              ) : transition?.state === 'failed' ? (
+                <small className={styles.bad}>
+                  {action}失败：{transition.message ?? '原因未知'}
+                </small>
+              ) : broken ? (
                 <small className={styles.bad}>{record.runtime?.message ?? '运行异常'}</small>
               ) : record?.mcpServers !== undefined && record.mcpServers.length > 0 ? (
                 <small
@@ -381,7 +402,7 @@ function AgentUsage({
           <Select
             aria-label={`${agent.name}使用的保存记录`}
             value={record.revisionId}
-            disabled={pending !== ''}
+            disabled={changing.has(agent.id) || transitionFor(agent)?.state === 'waiting'}
             onValueChange={(value) => void change(agent.id, true, value)}
             options={recordOptions}
           />
@@ -401,7 +422,8 @@ function AgentUsage({
           <Switch
             label={`${agent.name}使用「${extension.name}」`}
             checked={enabled}
-            disabled={pending !== '' || (!enabled && !latestUsable)}
+            pending={changing.has(agent.id) || transitionFor(agent)?.state === 'waiting'}
+            disabled={!enabled && !latestUsable}
             onCheckedChange={(next) => change(agent.id, next, next ? latestUsable?.id : undefined)}
           />
         )

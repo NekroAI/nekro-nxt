@@ -335,3 +335,150 @@ describe('agent extension credentials', () => {
     }
   })
 })
+
+describe('agent extension switching while the agent is replying', () => {
+  it('answers pending at once, shows the waiting request, and lands or fails at the safe gap', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-pending-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    await runtime.start()
+    await runtime.recover()
+    const agent = runtime.core.createAgent({
+      displayName: '忙碌的测试智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const saved = await runtime.extensionService.saveDynamicPackage({
+      snapshot: {
+        name: '掷骰探针',
+        purpose: '验证回复期间的启停。',
+        hostCode: `return {
+        inject: ['tools'],
+        apply(ctx) {
+          harness.registerTool(ctx, harness.defineTool({
+            name: 'dice_probe',
+            description: 'probe',
+            parameters: {},
+            output: { schema: { type: 'string' }, render(_a, v) { return [{ type: 'text', text: v }] } },
+            execute() { return '4' }
+          }))
+        }
+      }`,
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [{ kind: 'tool', name: 'dice_probe', description: 'probe' }],
+      },
+      slug: 'dice-probe',
+      displayName: '掷骰探针',
+      description: '验证回复期间的启停。',
+      createdByAgentId: agent.definition.id,
+      verification: {
+        dshVersion: '0.1.1-rc.2',
+        contractVersion: 'nekro-nxt-extension-v4',
+        origin: {
+          episodeId: 'eps_synthetic_pending',
+          pluginId: 'plugin-synthetic-pending',
+          packageId: 'package-synthetic-pending',
+          pluginRunId: 'run-synthetic-pending',
+        },
+        toolInvocations: [{ name: 'dice_probe', succeeded: true }],
+        rpcMethods: [],
+        renderedPanels: [],
+        renderedToolViews: [],
+        renderedMessageRenderers: [],
+        permissions: { permissions: [], networkOrigins: [] },
+      },
+    })
+    // The agent is "replying" until the test opens the gate.
+    let openGate: () => void = () => undefined
+    const closeGate = () =>
+      new Promise<void>((resolve) => {
+        openGate = resolve
+      })
+    let gate = closeGate()
+    const waitUntilSafe = vi.spyOn(runtime.host, 'waitUntilSafe').mockImplementation(() => gate)
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    const activationUrl = `${origin}/api/agents/${agent.definition.id}/extensions/${saved.extension.id}/activation`
+    const projected = async () =>
+      HostApiContracts.snapshot
+        .parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
+        .extensions.find((extension) => extension.id === saved.extension.id)
+    const until = async (check: () => Promise<boolean>) => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (await check()) return
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      throw new Error('Condition was not reached.')
+    }
+    try {
+      const enabling = await fetch(activationUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: saved.revision.id }),
+      })
+      expect(enabling.status).toBe(200)
+      const enabled = HostApiContracts.activateExtension.parseResponse(await enabling.json())
+      expect(enabled.activation).toBeUndefined()
+      expect(enabled.pending).toMatchObject({ agentId: agent.definition.id, target: 'enabled', state: 'waiting' })
+      expect((await projected())?.activationTransitions).toEqual([
+        expect.objectContaining({ agentId: agent.definition.id, target: 'enabled', state: 'waiting' }),
+      ])
+      expect((await projected())?.activations).toEqual([])
+
+      openGate()
+      await until(async () => (await projected())?.activations.length === 1)
+      expect((await projected())?.activationTransitions).toBeUndefined()
+
+      // Disabling while replying is pending as well.
+      gate = closeGate()
+      const disabling = await fetch(activationUrl, { method: 'DELETE' })
+      expect(HostApiContracts.deactivateExtension.parseResponse(await disabling.json()).pending).toMatchObject({
+        target: 'disabled',
+        state: 'waiting',
+      })
+      openGate()
+      await until(async () => (await projected())?.activations.length === 0)
+
+      // A failure at the safe gap stays visible with its reason.
+      gate = closeGate()
+      vi.spyOn(runtime.host, 'mount').mockRejectedValueOnce(new Error('扩展加载失败：示例原因'))
+      const failing = await fetch(activationUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: saved.revision.id }),
+      })
+      expect(failing.status).toBe(200)
+      openGate()
+      await until(async () => (await projected())?.activationTransitions?.[0]?.state === 'failed')
+      expect((await projected())?.activationTransitions).toEqual([
+        expect.objectContaining({ target: 'enabled', state: 'failed', message: '扩展加载失败：示例原因' }),
+      ])
+      expect((await projected())?.activations).toEqual([])
+
+      // An idle agent gets the committed Activation in the same response.
+      waitUntilSafe.mockImplementation(() => Promise.resolve())
+      const immediate = await fetch(activationUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: saved.revision.id }),
+      })
+      expect(HostApiContracts.activateExtension.parseResponse(await immediate.json()).activation).toMatchObject({
+        extensionRevisionId: saved.revision.id,
+      })
+      expect((await projected())?.activationTransitions).toBeUndefined()
+    } finally {
+      openGate()
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+})

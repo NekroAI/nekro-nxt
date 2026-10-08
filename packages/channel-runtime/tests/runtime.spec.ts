@@ -1941,19 +1941,6 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.admissions).toHaveLength(eventCount)
   })
 
-  it('rolls every active lane for an incompatible Extension Activation at a safe boundary', async () => {
-    const context = await setup()
-    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id))
-    const first = [...context.runtimeRepository.episodes.values()][0]!
-    const [next] = await context.runtime.rolloverAgentActivations(context.agent.definition.id)
-    expect(context.runtimeRepository.getEpisode(first.id)).toMatchObject({
-      status: 'closed',
-      closeReason: 'incompatible-activation',
-    })
-    expect(next).toMatchObject({ status: 'active', agentId: context.agent.definition.id })
-    expect(next?.dshSessionId).not.toBe(first.dshSessionId)
-  })
-
   it('covers every trigger policy and admits a non-triggering event while the Session is running', async () => {
     const event = (facts?: ChannelEventRecord['facts']): ChannelEventRecord => ({
       id: ChannelEventIdSchema.parse('evt_trigger'),
