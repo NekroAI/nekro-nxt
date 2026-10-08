@@ -12,6 +12,7 @@ declare const styles: {
   readonly muted: string
   readonly narrowNav: string
   readonly notice: string
+  readonly providerStatus: string
   readonly row: string
   readonly rowChevron: string
   readonly rowControls: string

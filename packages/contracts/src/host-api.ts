@@ -1634,6 +1634,22 @@ export const LlmProviderCredentialSchema = z
   .object({ configured: z.boolean(), source: z.string().optional(), writable: z.boolean() })
   .strict()
 
+/**
+ * The latest connection test that still describes the provider's saved address, protocol and API key. Tests made
+ * before one of those changed are dropped. Never carries a key, request or response body.
+ */
+export const LlmProviderTestResultSchema = z
+  .object({
+    /** Epoch milliseconds when the test finished. */
+    at: z.number().int().nonnegative(),
+    ok: z.boolean(),
+    /** Short failure reason shown to the user; absent when the test passed. */
+    message: z.string().max(240).optional(),
+    /** The model the test asked. */
+    model: NonEmptyStringSchema.optional(),
+  })
+  .strict()
+
 export const LlmProviderViewSchema = z
   .object({
     provider: NonEmptyStringSchema,
@@ -1652,6 +1668,8 @@ export const LlmProviderViewSchema = z
     modelsCustomized: z.boolean(),
     /** The provider's adapter can list the models its endpoint offers. */
     discoverable: z.boolean(),
+    /** `null` when the current configuration was never tested; absent from hosts that do not record tests. */
+    lastTest: LlmProviderTestResultSchema.nullable().optional(),
   })
   .strict()
 

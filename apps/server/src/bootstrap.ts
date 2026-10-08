@@ -1,6 +1,7 @@
 import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
 import type { DshSessionStorageRetirementReport, InboundHookDecisionRecord } from '@nekro-nxt/storage-sqlite'
 import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
+import { LlmProviderTestResults } from './llm-provider-test-results.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { BUILTIN_ADAPTER_CONTRIBUTIONS } from '@nekro-nxt/adapter-builtin-roster'
 import {
@@ -597,6 +598,7 @@ export class NekroRuntime {
 
       const host = await DshHostRuntime.create({
         providerRemoval,
+        providerTestResults: new LlmProviderTestResults(repository, now),
         sessionDatabasePath: options.sessionDatabasePath,
         ...(options.developmentWorkspaceRoot === undefined
           ? {}

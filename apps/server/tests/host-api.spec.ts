@@ -1219,6 +1219,146 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
+  it('records the latest connection test per saved configuration without keeping any key', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-llm-test-record-'))
+    temporaryDirectories.push(directory)
+    let accept = false
+    const upstream = createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        if (!accept) {
+          response.writeHead(401, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ error: { message: 'synthetic rejected credential' } }))
+          return
+        }
+        const chunk = (delta: Record<string, unknown>, finish: string | null) =>
+          `data: ${JSON.stringify({
+            id: 'chatcmpl-fixture',
+            object: 'chat.completion.chunk',
+            created: 0,
+            model: 'probe-model',
+            choices: [{ index: 0, delta, finish_reason: finish }],
+          })}\n\n`
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.end(`${chunk({ role: 'assistant', content: 'OK' }, null)}${chunk({}, 'stop')}data: [DONE]\n\n`)
+      })
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const address = upstream.address()
+    if (address === null || typeof address === 'string') throw new TypeError('Upstream did not expose a TCP port.')
+    const baseURL = `http://127.0.0.1:${address.port}/v1`
+    const dshRoot = path.join(directory, 'dsh')
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      llmSettingsPath: path.join(dshRoot, 'settings.yaml'),
+      llmCredentialPath: path.join(dshRoot, 'credentials.yaml'),
+      configureLlm: configureDshLlmProviders([]),
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    const savedKey = 'synthetic-saved-probe-key'
+    const view = async () => {
+      const settings = HostApiContracts.llmProviders.parseResponse(
+        await (await fetch(`${origin}/api/llm/providers`)).json(),
+      )
+      const provider = settings.providers.find((entry) => entry.provider === 'probe-gateway')
+      if (!provider) throw new TypeError('Probe provider is missing.')
+      return provider
+    }
+    // What the settings page sends: the saved address and protocol, the model list and no new key.
+    const testSaved = (overrides: Record<string, unknown> = {}) =>
+      fetch(`${origin}/api/llm/test-provider`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'probe-gateway',
+          model: 'probe-model',
+          settingsNs: 'llm-pi-ai',
+          baseURL,
+          api: 'openai-completions',
+          models: [{ id: 'probe-model' }],
+          ...overrides,
+        }),
+      })
+    try {
+      const revision = (await runtime.host.getLlmProviderSettings()).providers[0]?.settingsRevision
+      if (revision === undefined) throw new TypeError('Missing settings revision.')
+      await runtime.host.saveLlmProvider({
+        provider: 'probe-gateway',
+        expectedRevision: revision,
+        apiKey: savedKey,
+        displayName: 'Probe gateway',
+        baseURL,
+        api: 'openai-completions',
+        models: [{ id: 'probe-model' }],
+      })
+      expect((await view()).lastTest).toBeNull()
+
+      expect((await testSaved()).status).toBe(400)
+      const failed = (await view()).lastTest
+      expect(failed).toMatchObject({ ok: false, model: 'probe-model' })
+      expect(failed?.message).toContain('认证失败')
+
+      accept = true
+      expect((await testSaved()).status).toBe(200)
+      const passed = (await view()).lastTest
+      expect(passed).toMatchObject({ ok: true, model: 'probe-model' })
+      expect(passed).not.toHaveProperty('message')
+
+      // An unsaved draft with another address keeps the saved configuration's result.
+      accept = false
+      expect(
+        (await testSaved({ baseURL: `http://127.0.0.1:${address.port}/v2`, apiKey: 'synthetic-other-key' })).status,
+      ).toBe(400)
+      expect((await view()).lastTest).toEqual(passed)
+
+      const stored = JSON.stringify(runtime.repository.getSystemSetting('llm.provider-test.probe-gateway')?.value)
+      expect(stored).not.toContain(savedKey)
+      expect(stored).not.toContain('synthetic-other-key')
+      expect(stored).not.toContain('Bearer')
+      expect(stored).not.toContain('这是一次连接测试')
+
+      // A new key retires the result; so does a new address after a later test.
+      await runtime.host.saveLlmProvider({
+        provider: 'probe-gateway',
+        expectedRevision: (await view()).settingsRevision,
+        apiKey: 'synthetic-rotated-probe-key',
+      })
+      expect((await view()).lastTest).toBeNull()
+      accept = true
+      expect((await testSaved()).status).toBe(200)
+      expect((await view()).lastTest).toMatchObject({ ok: true })
+      await runtime.host.saveLlmProvider({
+        provider: 'probe-gateway',
+        expectedRevision: (await view()).settingsRevision,
+        baseURL: `http://127.0.0.1:${address.port}/v3`,
+      })
+      expect((await view()).lastTest).toBeNull()
+
+      await runtime.host.removeLlmProvider('probe-gateway', (await view()).settingsRevision)
+      expect(runtime.repository.getSystemSetting('llm.provider-test.probe-gateway')?.value).toEqual({
+        version: 1,
+        entries: [],
+      })
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+      await new Promise<void>((resolve, reject) =>
+        upstream.close((error) => {
+          if (error) reject(error)
+          else resolve()
+        }),
+      )
+    }
+  })
+
   it('persists notification settings and exposes a transient Desktop notification feed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-notification-api-'))
     temporaryDirectories.push(directory)

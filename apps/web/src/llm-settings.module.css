@@ -211,3 +211,10 @@
   position: absolute;
   inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+}

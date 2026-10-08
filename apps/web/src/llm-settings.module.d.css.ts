@@ -22,6 +22,7 @@ declare const styles: {
   readonly removalBlock: string
   readonly removalTitle: string
   readonly srOnly: string
+  readonly status: string
   readonly tag: string
 }
 

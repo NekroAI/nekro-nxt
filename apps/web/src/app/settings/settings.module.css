@@ -95,6 +95,13 @@
   padding: var(--s-1) 0;
 }
 
+.providerStatus {
+  display: grid;
+  justify-items: start;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
 .source {
   color: var(--accent);
   font: var(--t-note);
