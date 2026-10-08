@@ -227,6 +227,8 @@ const createFixture = async (communityUrl = COMMUNITY) => {
   const repository = {
     getSystemSetting: (key: string) => records.get(key),
     putSystemSetting: (key: string, value: JsonValue, expectedRevision: number | undefined, updatedAt: number) => {
+      // 与 SQLite 的 system_settings.value NOT NULL 一致。
+      if (value === null) throw new Error('NOT NULL constraint failed: system_settings.value')
       const current = records.get(key)
       if (current?.revision !== expectedRevision) throw new Error('System setting revision conflict.')
       const record = { key, value, revision: (current?.revision ?? 0) + 1, updatedAt }

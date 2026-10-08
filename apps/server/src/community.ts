@@ -230,7 +230,8 @@ export class CommunityService {
   setEndpoint(url: string | null, acknowledgeInsecure: boolean): CommunityEndpoint {
     const record = this.#repository.getSystemSetting(ENDPOINT_SETTING_KEY)
     if (url === null) {
-      if (record) this.#repository.putSystemSetting(ENDPOINT_SETTING_KEY, null, record.revision, this.#now())
+      // 设置值不能为 NULL：写入空对象，读取时不符合结构即视为未设置。
+      if (record) this.#repository.putSystemSetting(ENDPOINT_SETTING_KEY, {}, record.revision, this.#now())
     } else {
       const { origin, insecure } = inspectCommunityUrl(url, { allowInsecure: acknowledgeInsecure })
       this.#repository.putSystemSetting(
@@ -295,7 +296,7 @@ export class CommunityService {
       record?.revision,
       this.#now(),
     )
-    this.#repository.putSystemSetting(LEGACY_ACCOUNT_SETTING_KEY, null, legacyRecord.revision, this.#now())
+    this.#repository.putSystemSetting(LEGACY_ACCOUNT_SETTING_KEY, {}, legacyRecord.revision, this.#now())
     return { accounts, revision: written.revision }
   }
 
