@@ -2238,6 +2238,14 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(model.calls[0]?.tools?.find(({ name }) => name === 'send_channel_message')?.description).toContain(
         '可在同一 Turn 中多次调用',
       )
+      const context = host.sessionContext(episode.dshSessionId!)!
+      expect(context.route).toMatchObject({ provider: 'test-provider', model: 'chat-model', contextWindow: 128000 })
+      expect(context.tools.map(({ name }) => name)).toEqual(model.calls[0]?.tools?.map(({ name }) => name))
+      expect(JSON.parse(context.tools.find(({ name }) => name === 'finish_channel_turn')!.parameters!)).toMatchObject({
+        required: ['outcome', 'reason'],
+      })
+      expect(context.instructions).toEqual([{ role: 'system', text: systemText(model.calls[0]), truncated: false }])
+      expect(context.changes).toEqual([expect.objectContaining({ reason: 'initial', toolCount: 8 })])
       const eventText = JSON.stringify(host.sessionEvents(episode.dshSessionId!))
       expect(eventText).toContain('这段模型原始文字只能留在运行轨迹。')
       expect(eventText).toContain('工具完成后的原始结束文字也不会发送。')

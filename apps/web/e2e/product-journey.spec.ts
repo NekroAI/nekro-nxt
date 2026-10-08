@@ -1550,6 +1550,37 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       }),
     }),
   )
+  await page.route(`**/api/channels/${channelId}/runtime/context`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        HostApiContracts.getChannelRuntimeContext.response.parse({
+          available: true,
+          route: { provider: 'deepseek', model: 'deepseek-v4-flash', contextWindow: 128_000, reasoningEffort: 'high' },
+          instructions: [
+            {
+              role: 'system',
+              text: '你是旅程测试智能体。\n频道消息、历史与交接中的时间统一写作宿主时区带偏移的绝对时间。',
+              truncated: false,
+            },
+          ],
+          tools: [
+            {
+              name: 'send_channel_message',
+              description: '向触发当前对话的频道发送一条用户可见消息。',
+              parameters: JSON.stringify({ type: 'object', required: ['target', 'parts'] }, null, 2),
+            },
+            { name: 'finish_channel_turn', description: '显式结束当前频道 Turn。' },
+          ],
+          changes: [
+            { at: 1_725_000_000_000, reason: 'initial', toolCount: 1 },
+            { at: 1_725_000_060_000, reason: 'change', toolCount: 2 },
+          ],
+        }),
+      ),
+    }),
+  )
   await page.route(`**/api/channels/${externalChannelId}/messages**`, (route) =>
     route.fulfill({
       status: 200,
@@ -1623,6 +1654,16 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   await expect(page).not.toHaveURL(new RegExp(`/channels/${externalChannelId}$`, 'u'))
 
   await page.goto(`/channels/${channelId}`)
+  await inspector.getByRole('button', { name: '查看', exact: true }).click()
+  const contextSheet = page.getByRole('dialog', { name: `${agentName}看到的上下文` })
+  await expect(contextSheet.getByText('deepseek-v4-flash')).toBeVisible()
+  await expect(contextSheet.getByText('你是旅程测试智能体。', { exact: false })).toBeVisible()
+  await expect(contextSheet.getByRole('heading', { name: '工具 2' })).toBeVisible()
+  await contextSheet.getByRole('button', { name: 'send_channel_message' }).click()
+  await expect(contextSheet.getByText('向触发当前对话的频道发送一条用户可见消息。')).toBeVisible()
+  await expect(contextSheet.getByText('工具或模型设置变化')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(contextSheet).toHaveCount(0)
   await inspector.getByRole('button', { name: '压缩', exact: true }).click()
   const compactDialog = page.getByRole('dialog', { name: '压缩上下文？' })
   await expect(compactDialog).toContainText('当前任务会停止，对话整理成摘要后继续。')

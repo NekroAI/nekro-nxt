@@ -13,7 +13,12 @@ import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { z } from 'zod'
 import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from './extension-secret-config.js'
-import { activationManifest, assembleChannelRuntime, assembleChannelToolCall } from './host-queries.js'
+import {
+  activationManifest,
+  assembleChannelRuntime,
+  assembleChannelRuntimeContext,
+  assembleChannelToolCall,
+} from './host-queries.js'
 import {
   assertAuxiliaryImageModel,
   buildSnapshotMessage,
@@ -615,6 +620,7 @@ export function registerWorkspaceRoutes({
       const nameMatch = /^\/api\/channels\/([^/]+)\/display-name$/.exec(url.pathname)
       const runtimeMatch = /^\/api\/channels\/([^/]+)\/runtime$/.exec(url.pathname)
       const toolCallMatch = /^\/api\/channels\/([^/]+)\/runtime\/tools\/([^/]+)$/.exec(url.pathname)
+      const runtimeContextMatch = /^\/api\/channels\/([^/]+)\/runtime\/context$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
       const channelMatch = /^\/api\/channels\/([^/]+)$/.exec(url.pathname)
@@ -623,6 +629,7 @@ export function registerWorkspaceRoutes({
         nameMatch?.[1] ??
         runtimeMatch?.[1] ??
         toolCallMatch?.[1] ??
+        runtimeContextMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
         channelMatch?.[1]
@@ -677,6 +684,20 @@ export function registerWorkspaceRoutes({
         } catch (error) {
           writeError(res, 404, 'channel-runtime-missing', error instanceof Error ? error.message : String(error))
         }
+        return
+      }
+
+      if (runtimeContextMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          return
+        }
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.getChannelRuntimeContext,
+          assembleChannelRuntimeContext(runtime, typedChannelId),
+        )
         return
       }
 

@@ -396,7 +396,7 @@ export const previewText = (value: string): string => {
 /** Full tool detail stays bounded: a runaway command output must not stall the page that opens it. */
 const DETAIL_LIMIT = 64_000
 
-const bounded = (value: string): { readonly text: string; readonly truncated: boolean } =>
+export const boundedDetail = (value: string): { readonly text: string; readonly truncated: boolean } =>
   value.length <= DETAIL_LIMIT
     ? { text: value, truncated: false }
     : { text: value.slice(0, DETAIL_LIMIT), truncated: true }
@@ -423,9 +423,11 @@ export const findToolCallDetail = (events: readonly RuntimeProjectionEvent[], ca
   const call = events.find((event) => event.type === 'tool/call' && event.callId === callId)
   if (!call || call.type !== 'tool/call') return undefined
   const result = events.find((event) => event.type === 'tool/result' && event.callId === callId)
-  const input = call.arguments.trim() ? bounded(detailToolArguments(call.arguments)) : undefined
+  const input = call.arguments.trim() ? boundedDetail(detailToolArguments(call.arguments)) : undefined
   const output =
-    result?.type === 'tool/result' && result.resultPreview !== undefined ? bounded(result.resultPreview) : undefined
+    result?.type === 'tool/result' && result.resultPreview !== undefined
+      ? boundedDetail(result.resultPreview)
+      : undefined
   return {
     callId,
     available: true,

@@ -31,6 +31,7 @@ import {
 import { triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
+import { ContextSheet } from './context-sheet.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
@@ -72,6 +73,7 @@ export function ChannelInspector({
   const [reset, setReset] = useState<'compact' | 'clear' | null>(null)
   const [removing, setRemoving] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
   const allTasks = useProductStore((state) => state.scheduledTasks)
   const tasks = sortTasks(
     allTasks.filter((task) => task.channelId === channel.id && task.agentId === agent?.id && task.state !== 'finished'),
@@ -289,6 +291,11 @@ export function ChannelInspector({
           ) : null}
           {runtime?.episodeId ? (
             <PropertyList>
+              <PropertyRow label="完整内容" tip="模型实际收到的系统提示词和工具">
+                <Button size="small" onClick={() => setContextOpen(true)}>
+                  查看
+                </Button>
+              </PropertyRow>
               <PropertyRow label="压缩" tip="把较早的对话整理成摘要，腾出空间">
                 <Button size="small" onClick={() => setReset('compact')}>
                   压缩
@@ -378,6 +385,9 @@ export function ChannelInspector({
       />
 
       <BindDialog intent={intent} onClose={() => setIntent(null)} />
+      {agent ? (
+        <ContextSheet open={contextOpen} onOpenChange={setContextOpen} channelId={channel.id} agentName={agent.name} />
+      ) : null}
       <ConfirmDialog
         open={reset !== null}
         onOpenChange={(open) => !open && setReset(null)}

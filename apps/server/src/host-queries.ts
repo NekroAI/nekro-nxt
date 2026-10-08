@@ -19,6 +19,7 @@ import {
   type ExtensionActivationTransition,
 } from '@nekro-nxt/extension-runtime'
 import { maskExtensionSecrets } from './extension-secret-config.js'
+import { unavailableSessionContext } from './channel-runtime-context.js'
 import type { NekroRuntime } from './bootstrap.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
 import {
@@ -75,6 +76,14 @@ export const assembleChannelToolCall = (runtime: NekroRuntime, channelId: Channe
   const episode = runtime.repository.getActiveEpisode(channelId, binding.agentId)
   if (episode?.dshSessionId === undefined || !runtime.host.tryLiveSession(episode.dshSessionId)) return undefined
   return findToolCallDetail(runtime.host.normalizedSessionEvents(episode.dshSessionId), callId)
+}
+
+export const assembleChannelRuntimeContext = (runtime: NekroRuntime, channelId: ChannelId) => {
+  const binding = runtime.core.listBindings(channelId)[0]
+  if (!binding) return unavailableSessionContext
+  const episode = runtime.repository.getActiveEpisode(channelId, binding.agentId)
+  if (episode?.dshSessionId === undefined) return unavailableSessionContext
+  return runtime.host.sessionContext(episode.dshSessionId) ?? unavailableSessionContext
 }
 
 /** The Manifest of the Revision an Activation runs, when that Revision is still readable. */

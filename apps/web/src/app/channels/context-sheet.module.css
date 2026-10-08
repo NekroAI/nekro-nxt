@@ -1,0 +1,96 @@
+.loading {
+  display: grid;
+  place-items: center;
+  padding: var(--s-6) 0;
+}
+
+.value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.muted {
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.instruction {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.code {
+  max-height: 50vh;
+  margin: 0;
+  overflow: auto;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-1);
+  background: var(--inset);
+  color: var(--fg-2);
+  font: var(--t-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prose {
+  margin: 0;
+  color: var(--fg-2);
+  font: var(--t-body);
+  white-space: pre-wrap;
+}
+
+.tools {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  list-style: none;
+}
+
+.tool + .tool {
+  border-top: 1px solid var(--line);
+}
+
+.toolHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: var(--control);
+  padding: 0 var(--s-3);
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.toolHead:hover {
+  background: var(--hover);
+}
+
+.toolName {
+  min-width: 0;
+  overflow: hidden;
+  font: var(--t-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  color: var(--muted);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.chevron[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.toolBody {
+  display: grid;
+  gap: var(--s-2);
+  padding: 0 var(--s-3) var(--s-3);
+}

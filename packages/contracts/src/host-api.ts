@@ -704,6 +704,38 @@ export const ChannelRuntimeSseDataSchema = ChannelRuntimeProjectionSchema.extend
   truncated: z.boolean().optional(),
 }).strict()
 
+export const ChannelRuntimeContextSchema = z
+  .object({
+    available: z.boolean(),
+    route: z
+      .object({
+        provider: z.string(),
+        model: z.string(),
+        contextWindow: z.number().int().positive().optional(),
+        reasoningEffort: z.string().optional(),
+        temperature: z.number().optional(),
+        maxTokens: z.number().int().positive().optional(),
+      })
+      .strict()
+      .optional(),
+    instructions: z.array(
+      z.object({ role: z.enum(['system', 'developer']), text: z.string(), truncated: z.boolean() }).strict(),
+    ),
+    tools: z.array(
+      z.object({ name: z.string(), description: z.string().optional(), parameters: z.string().optional() }).strict(),
+    ),
+    changes: z.array(
+      z
+        .object({
+          at: z.number().nonnegative().optional(),
+          reason: z.enum(['initial', 'resume', 'change', 'series']),
+          toolCount: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
 export type ChannelRuntimeUsage = z.output<typeof ChannelRuntimeUsageSchema>
 export type ChannelRuntimeOccupancy = z.output<typeof ChannelRuntimeOccupancySchema>
@@ -712,6 +744,7 @@ export type ChannelRuntimeCache = z.output<typeof ChannelRuntimeCacheSchema>
 export type ChannelRuntimePerformanceSample = z.output<typeof ChannelRuntimePerformanceSampleSchema>
 export type ChannelRuntimePerformance = z.output<typeof ChannelRuntimePerformanceSchema>
 export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
+export type ChannelRuntimeContext = z.output<typeof ChannelRuntimeContextSchema>
 export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
 export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>
 
@@ -2264,6 +2297,16 @@ export const HostApiContracts = {
         resultTruncated: z.boolean(),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  getChannelRuntimeContext: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/runtime/context',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    // What the live session sends the model: route, rendered instructions and tool schemas. Read on demand; the runtime
+    // projection pushed over SSE never carries it. `available: false` when no session of the channel is in memory.
+    response: ChannelRuntimeContextSchema,
     error: HostApiErrorSchema,
   }),
   resetChannelContext: defineContract({
