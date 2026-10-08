@@ -1,4 +1,4 @@
-import { formatTaskTime, hostTimezone } from './scheduled-tasks.js'
+import { formatContextTime } from './scheduled-tasks.js'
 import { sessionEvents } from './session-event-history.js'
 import type { DshHostRuntimeOptions } from './index.js'
 import type { Context } from '@deepseek-ai/cordis'
@@ -218,9 +218,7 @@ const extensionJobHeader = (event: ChannelEventRecord): string | undefined => {
   if (job === null || typeof job !== 'object' || Array.isArray(job)) return undefined
   const source = typeof job['extensionName'] === 'string' ? `扩展「${job['extensionName']}」` : '对话创建的定时任务'
   const task = typeof job['jobId'] === 'string' ? `，taskId ${job['jobId']}` : ''
-  const timezone = hostTimezone()
-  const scheduledAt =
-    typeof job['scheduledAt'] === 'number' ? `${formatTaskTime(job['scheduledAt'], timezone)}（${timezone}）` : '未知'
+  const scheduledAt = typeof job['scheduledAt'] === 'number' ? formatContextTime(job['scheduledAt']) : '未知'
   const delay =
     typeof job['delayMinutes'] === 'number' && job['delayMinutes'] > 0
       ? `；宿主离线导致延迟约 ${job['delayMinutes']} 分钟`
@@ -757,7 +755,7 @@ export class SessionImageContext {
           }
           blocks.push({
             type: 'text',
-            text: `引用频道消息 ${part.messageId}${historyEntrySenderDescription(this.#history, quoted)}：`,
+            text: `引用频道消息 ${part.messageId}（${formatContextTime(quoted.occurredAt)}）${historyEntrySenderDescription(this.#history, quoted)}：`,
           })
           blocks.push(
             ...(await this.projectMessageParts(sessionId, channelId, quoted.parts, visibleDigests, imageStats, false)),
@@ -779,21 +777,27 @@ export class SessionImageContext {
     return blocks
   }
 
+  /**
+   * `previousAt` is the receive time of the event projected just before this one in the same batch; a message on the
+   * same day then states only its clock time.
+   */
   async projectEvent(
     sessionId: SessionId,
     event: ChannelEventRecord,
     visibleDigests?: Set<string>,
     imageStats?: ImageProjectionStats,
+    previousAt?: number,
   ): Promise<ContentBlock[]> {
     const sender = event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId)
     const senderDescription =
       sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
     const mentionDescription = event.facts?.['mentionedBot'] === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
     const job = extensionJobHeader(event)
+    const time = formatContextTime(event.receivedAt, previousAt)
     const blocks: ContentBlock[] = [
       {
         type: 'text',
-        text: job ?? `频道消息 ${event.logicalMessageId}${senderDescription}${mentionDescription}：`,
+        text: job ?? `频道消息 ${event.logicalMessageId}（${time}）${senderDescription}${mentionDescription}：`,
       },
     ]
     const seen =

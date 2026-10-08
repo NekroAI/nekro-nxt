@@ -2248,9 +2248,12 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(eventText).toContain('该消息提及了当前智能体关联的机器人账号')
       expect(eventText).toContain('当前频道身份（Host 权威运行时事实）')
       expect(eventText).toContain(channel.id)
-      expect(eventText).toContain(`频道消息 ${browserEvent.logicalMessageId}`)
+      const contextTime = String.raw`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}`
+      expect(eventText).toMatch(new RegExp(`频道消息 ${browserEvent.logicalMessageId}（${contextTime}）`))
       expect(eventText).not.toContain(`频道事件 ${browserEvent.id}`)
-      expect(eventText).toContain(`引用频道消息 ${quotedEvent.logicalMessageId}，发送成员：成员甲`)
+      expect(eventText).toMatch(
+        new RegExp(`引用频道消息 ${quotedEvent.logicalMessageId}（${contextTime}），发送成员：成员甲`),
+      )
       expect(eventText).toContain('这是被引用的当前频道内容。')
       expect(eventText).toContain('@成员乙')
       expect(eventText).toContain(`收到图片资源 ${quotedImage.asset.id}（引用图片）`)
@@ -2301,7 +2304,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(resumedEvents).toContain('nekro-nxt-handoff')
       expect(resumedEvents).toContain('你好，请回复我。')
       expect(resumedEvents).toContain(`[原文 ${browserEvent.logicalMessageId}]`)
-      expect(resumedEvents).toContain(`引用频道消息 ${outboundHistory[0]!.logicalMessageId}，本频道智能体此前发送`)
+      expect(resumedEvents).toMatch(
+        new RegExp(`引用频道消息 ${outboundHistory[0]!.logicalMessageId}（${contextTime}），本频道智能体此前发送`),
+      )
       expect(resumedEvents).toContain('派生交接摘要，不是原始消息或系统事实')
       expect(resumedEvents).not.toContain('把它视为有来源的既有背景')
       expect(model.calls.some(({ system }) => system?.startsWith('你是对话交接摘要器'))).toBe(true)

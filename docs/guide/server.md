@@ -12,9 +12,12 @@ docker run -d \
   --restart unless-stopped \
   -p 127.0.0.1:4960:4960 \
   -e NEKRO_MANAGEMENT_KEY='<管理密钥>' \
+  -e TZ='Asia/Shanghai' \
   -v '<持久化目录>:/data' \
   ghcr.io/nekroai/nekro-nxt:latest
 ```
+
+`TZ` 是服务端所在的时区（IANA 名称），决定智能体看到的消息时间和定时任务的默认时区；不设置时容器使用 UTC。请设为频道成员实际所在的时区，否则成员说「下午三点」时，智能体会按 UTC 理解。
 
 启动后用浏览器打开 `http://127.0.0.1:4960`，输入管理密钥登录即可使用网页界面；这台浏览器会保持登录 30 天。也可以在桌面版的实例菜单中添加这台服务端。
 
@@ -25,7 +28,7 @@ docker run -d \
 ```bash
 git clone https://github.com/NekroAI/nekro-nxt.git
 cd nekro-nxt
-NEKRO_MANAGEMENT_KEY='<至少32个字符的管理密钥>' docker compose up -d
+NEKRO_MANAGEMENT_KEY='<至少32个字符的管理密钥>' TZ='Asia/Shanghai' docker compose up -d
 ```
 
 查看状态与日志：

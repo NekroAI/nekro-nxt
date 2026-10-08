@@ -5,6 +5,8 @@ services:
       NEKRO_MANAGEMENT_KEY: '${NEKRO_MANAGEMENT_KEY:?请设置至少 32 个字符的 NEKRO_MANAGEMENT_KEY}'
       # 仅当容器位于终止 HTTPS 的反向代理之后、端口不直接暴露时设为 1。
       NEKRO_TRUST_PROXY: '${NEKRO_TRUST_PROXY:-0}'
+      # 智能体看到的消息时间按此 IANA 时区书写，例如 Asia/Shanghai；未设置时为 UTC。
+      TZ: '${TZ:-UTC}'
     ports:
       - '${NEKRO_BIND_ADDRESS:-127.0.0.1}:4960:4960'
     volumes:

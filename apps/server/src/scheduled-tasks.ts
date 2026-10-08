@@ -358,6 +358,30 @@ export const formatTaskTime = (epoch: number, timezone: string): string => {
   return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`
 }
 
+const formatOffset = (epoch: number, timezone: string): string => {
+  const minutes = Math.round(zoneOffset(epoch, timezone) / 60_000)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const sign = minutes < 0 ? '-' : '+'
+  return `${sign}${pad(Math.floor(Math.abs(minutes) / 60))}:${pad(Math.abs(minutes) % 60)}`
+}
+
+/**
+ * The one time format the Agent sees in context: `2026-10-08 14:03:12 +08:00` in the host zone. With `previous`
+ * on the same wall-clock day and offset, only `14:03:12` is written, so a batch of messages states its date once.
+ */
+export const formatContextTime = (epoch: number, previous?: number, timezone: string = hostTimezone()): string => {
+  const p = zoneParts(epoch, timezone)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const clock = `${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)}`
+  const offset = formatOffset(epoch, timezone)
+  if (previous !== undefined) {
+    const q = zoneParts(previous, timezone)
+    if (q.year === p.year && q.month === p.month && q.day === p.day && formatOffset(previous, timezone) === offset)
+      return clock
+  }
+  return `${p.year}-${pad(p.month)}-${pad(p.day)} ${clock} ${offset}`
+}
+
 const LOCAL_TIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/u
 
 /**

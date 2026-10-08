@@ -7,6 +7,7 @@ import { NekroRuntime } from '../src/bootstrap.js'
 import {
   CHAT_TASK_LIMIT_PER_CHANNEL,
   FINISHED_TASK_RETENTION_MS,
+  formatContextTime,
   formatTaskTime,
   parseTaskSchedule,
 } from '../src/scheduled-tasks.js'
@@ -97,6 +98,22 @@ describe('scheduled task schedules', () => {
       timezone: 'Asia/Shanghai',
     })
     expect(formatTaskTime(Date.UTC(2026, 9, 8, 0, 0), 'Asia/Shanghai')).toBe('2026-10-08 08:00')
+  })
+
+  it('writes context time with an explicit offset and states the date once per day', () => {
+    const morning = Date.UTC(2026, 9, 8, 6, 3, 12)
+    expect(formatContextTime(morning, undefined, 'Asia/Shanghai')).toBe('2026-10-08 14:03:12 +08:00')
+    expect(formatContextTime(morning, undefined, 'UTC')).toBe('2026-10-08 06:03:12 +00:00')
+    expect(formatContextTime(morning, undefined, 'America/St_Johns')).toBe('2026-10-08 03:33:12 -02:30')
+    expect(formatContextTime(morning + 60_000, morning, 'Asia/Shanghai')).toBe('14:04:12')
+    // Midnight in the zone starts a new date even when UTC has not.
+    expect(formatContextTime(Date.UTC(2026, 9, 8, 16, 0, 0), morning, 'Asia/Shanghai')).toBe(
+      '2026-10-09 00:00:00 +08:00',
+    )
+    // A DST change on the same day restates the offset.
+    expect(formatContextTime(Date.UTC(2026, 10, 1, 7, 0, 0), Date.UTC(2026, 10, 1, 4, 0, 0), 'America/New_York')).toBe(
+      '2026-11-01 02:00:00 -05:00',
+    )
   })
 
   it('rejects past times, several schedules at once, bad cron and unknown zones', () => {
