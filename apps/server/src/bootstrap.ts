@@ -89,6 +89,7 @@ import {
 } from './index.js'
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
+import { channelMemberRelations } from './channel-member-relations.js'
 export type { ConnectionTestResult } from './connection-application.js'
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
@@ -376,6 +377,7 @@ export class NekroRuntime {
       // Adapter inbound and Channel Runtime delivery reference each other lazily.
       const settled: { current?: ChannelRuntime } = {}
       const hostReference: { current?: DshHostRuntime } = {}
+      const memberRelations = channelMemberRelations(core, repository, now)
       const nxtFacts: NxtProductFacts = {
         history: repository,
         getConnectionName: (connectionId) => {
@@ -398,6 +400,9 @@ export class NekroRuntime {
           return { assetId: asset.assetId, byteSize: asset.byteSize, mediaType: asset.mediaType }
         },
         resolveCredential: (reference) => credentials.resolve(reference),
+        members: memberRelations,
+        accountPlatformUserId: (connectionId) =>
+          core.connectionAccountPlatformUserId(ConnectionIdSchema.parse(connectionId)),
       }
       const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init) =>
         createExtensionEgress({ policy }).fetch(url, init)
@@ -629,6 +634,7 @@ export class NekroRuntime {
         },
         history: repository,
         resolveAdapterDisplayName: (adapterKey) => adapters.get(adapterKey)?.descriptor.displayName,
+        members: memberRelations,
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),

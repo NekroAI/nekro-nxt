@@ -61,6 +61,7 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
       invoke: (_binding, action, args) =>
         Promise.resolve({ status: 'succeeded' as const, message: action, value: args }),
       raw: (_binding, api) => Promise.resolve({ status: 'succeeded' as const, message: api }),
+      selfPlatformUserId: () => Promise.resolve('10001'),
     },
     secret: (binding, key) =>
       resolveExtensionSecret(
@@ -70,6 +71,10 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
       ),
     createAsset,
     callContext: () => Promise.resolve(callContext),
+    members: {
+      describe: (_channelId, memberId) =>
+        Promise.resolve(memberId === 'mbr_SELF' ? { memberId, self: true as const } : undefined),
+    },
     history: {
       list: () => Promise.resolve({ messages: [] }),
       search: () => Promise.resolve([]),
@@ -280,9 +285,17 @@ describe('nxt Host service', () => {
     await expect(nxt.platform.invoke('mute_member', {})).rejects.toThrow(/没有声明平台动作/u)
     await expect(nxt.platform.invoke('set_title', {})).rejects.toThrow(/不支持动作/u)
     await expect(nxt.platform.raw('get_group_info', {})).rejects.toThrow(/platform\.raw/u)
+    await expect(nxt.platform.selfPlatformUserId()).rejects.toThrow(/platform\.raw/u)
     const raw = fixture({ platform: { actions: [], raw: ['onebot-11'] } })
     await expect(raw.nxt.platform.raw('get_group_info', { group_id: 1 })).resolves.toMatchObject({
       status: 'succeeded',
+    })
+    // The account's platform id is only for extensions already trusted with the raw API.
+    await expect(raw.nxt.platform.selfPlatformUserId()).resolves.toBe('10001')
+    // Who a member is needs no capability.
+    await expect(fixture(undefined).nxt.members.describe('mbr_SELF')).resolves.toEqual({
+      memberId: 'mbr_SELF',
+      self: true,
     })
   })
 

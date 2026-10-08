@@ -15,6 +15,7 @@ import type {
   NxtAssetCreateInput,
   NxtAssetRecord,
   NxtCallContext,
+  NxtMemberSummary,
   NxtFetchInit,
   NxtFetchResponse,
   NxtHistoryMessage,
@@ -74,6 +75,9 @@ export interface NxtServiceBackends {
   readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
   readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
+  readonly members: {
+    describe(channelId: string, memberId: string): Promise<NxtMemberSummary | undefined>
+  }
   readonly platform: {
     /** The Adapter of the channel, its raw-API support and the typed actions valid for this channel kind. */
     catalog(channelId: string): Promise<NxtPlatformCatalog>
@@ -87,6 +91,8 @@ export interface NxtServiceBackends {
       api: string,
       params: Readonly<Record<string, JsonValue>>,
     ): Promise<NxtPlatformResult>
+    /** The platform user id the channel's connection reported as its own account. */
+    selfPlatformUserId(channelId: string): Promise<string | undefined>
   }
   readonly jobs: {
     schedule(binding: NxtServiceBinding, job: NxtValidatedJob, maxActive: number): Promise<NxtJobRecord>
@@ -410,6 +416,9 @@ export const createNxtHostService = (
     context: {
       current: () => backends.callContext(binding),
     },
+    members: {
+      describe: (memberId) => backends.members.describe(binding.channelId, memberId),
+    },
     history: {
       async list(options) {
         requireCapability(binding, 'history', 'history（读取频道聊天记录）')
@@ -460,6 +469,16 @@ export const createNxtHostService = (
         if (!catalog.raw) throw new NxtCapabilityError('当前频道的平台不支持原始接口透传。')
         if (typeof api !== 'string' || api.trim() === '') throw new NxtCapabilityError('原始接口名不能为空。')
         return backends.platform.raw(binding, api.trim(), jsonRecord(params))
+      },
+      async selfPlatformUserId() {
+        const platform = requireCapability(binding, 'platform', 'platform（平台动作）')
+        const catalog = await backends.platform.catalog(binding.channelId)
+        if (!platform.raw.includes(catalog.adapterKey)) {
+          throw new NxtCapabilityError(
+            `读取机器人账号的平台 ID 需要声明 ${catalog.adapterKey} 的原始接口，请加入 permissions.capabilities.platform.raw。`,
+          )
+        }
+        return backends.platform.selfPlatformUserId(binding.channelId)
       },
     },
     jobs: {
@@ -587,6 +606,9 @@ export const createNxtDynamicFacade = (resolve: () => NxtHostService): NxtHostSe
   },
   get context() {
     return resolve().context
+  },
+  get members() {
+    return resolve().members
   },
   get history() {
     return resolve().history

@@ -1165,15 +1165,59 @@ export class CoreService {
     const identity = this.#repository.getPlatformIdentity(member.platformIdentityId)
     if (!identity) return undefined
     if (identity.self !== undefined) return { kind: 'self' }
-    const connection = this.#repository.getConnection(channel.connectionId)
-    if (!connection) return { kind: 'member' }
-    for (const otherId of this.#repository.listConnectionIdsByAdapter(connection.adapterKey)) {
-      if (otherId === channel.connectionId) continue
-      if (this.#repository.getAccountIdentity(otherId)?.platformUserId !== identity.platformUserId) continue
-      const otherChannel = this.#repository.getChannelByPlatformId(otherId, channel.platformChannelId)
-      return { kind: 'local-account', connectionId: otherId, ...(otherChannel ? { channelId: otherChannel.id } : {}) }
+    const local = this.#localAccounts(channel).find((account) => account.platformUserId === identity.platformUserId)
+    if (local === undefined) return { kind: 'member' }
+    return {
+      kind: 'local-account',
+      connectionId: local.connectionId,
+      ...(local.channelId === undefined ? {} : { channelId: local.channelId }),
     }
-    return { kind: 'member' }
+  }
+
+  /**
+   * Accounts other local connections of the same Adapter reported, with their channel for the same platform channel.
+   * Each also gets a member in this channel, so the agent can reference it like any member it has seen.
+   */
+  localAccountMembers(
+    channelId: ChannelId,
+    observedAt: number,
+  ): readonly {
+    readonly connectionId: ConnectionId
+    readonly channelId: ChannelId
+    readonly member: ChannelMemberRecord
+  }[] {
+    const channel = this.#repository.getChannel(channelId)
+    if (!channel || channel.kind === 'internal') return []
+    return this.#localAccounts(channel).flatMap((account) => {
+      if (account.channelId === undefined) return []
+      const { member } = this.observeChannelMember({
+        connectionId: channel.connectionId,
+        channelId,
+        platformUserId: account.platformUserId,
+        ...(account.displayName === undefined ? {} : { displayName: account.displayName }),
+        observedAt,
+      })
+      return [{ connectionId: account.connectionId, channelId: account.channelId, member }]
+    })
+  }
+
+  #localAccounts(channel: ChannelRecord) {
+    const connection = this.#repository.getConnection(channel.connectionId)
+    if (!connection) return []
+    return this.#repository.listConnectionIdsByAdapter(connection.adapterKey).flatMap((otherId) => {
+      if (otherId === channel.connectionId) return []
+      const account = this.#repository.getAccountIdentity(otherId)
+      if (account === undefined) return []
+      const otherChannel = this.#repository.getChannelByPlatformId(otherId, channel.platformChannelId)
+      return [
+        {
+          connectionId: otherId,
+          platformUserId: account.platformUserId,
+          ...(account.displayName === undefined ? {} : { displayName: account.displayName }),
+          ...(otherChannel === undefined ? {} : { channelId: otherChannel.id }),
+        },
+      ]
+    })
   }
 
   resolveChannelMemberIdentity(

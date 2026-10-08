@@ -11,12 +11,13 @@ import type {
 import {
   AgentIdSchema,
   ChannelIdSchema,
+  ChannelMemberIdSchema,
   ConnectionIdSchema,
   EpisodeIdSchema,
   JsonValueSchema,
   parseJsonValue,
 } from '@nekro-nxt/contracts'
-import type { CoreRepository, CoreService } from '@nekro-nxt/core'
+import { SELF_PLACEHOLDER_PLATFORM_USER_ID, type CoreRepository, type CoreService } from '@nekro-nxt/core'
 import type { ChannelInteractionResult, ChannelRuntimeOptions, EpisodeRecord, RuntimeRepository } from './index.js'
 type ChannelInteractionStatus = ChannelInteractionResult['status']
 
@@ -277,6 +278,7 @@ export class ChannelInteractions {
     const channel = this.#coreRepository.getChannel(episode.channelId)!
     const member = this.#coreRepository.getChannelMember(input.memberId)
     if (!member || member.channelId !== channel.id) throw new Error('只能戳一戳当前频道中的已知成员。')
+    this.#assertPlatformReachableMembers(channel.id, [input.memberId])
     await this.ensureInteractionsLoaded(channel.connectionId)
     const existing = this.#findInteraction(episode, input.clientRequestId)
     if (existing) return this.#interactionResult(existing)
@@ -315,6 +317,30 @@ export class ChannelInteractions {
     )
   }
 
+  /**
+   * A platform action aimed at the channel's own account cannot reach the platform when the Adapter never told the
+   * account id; say so instead of letting the Adapter report an unknown member.
+   */
+  #assertPlatformReachableMembers(channelId: ChannelId, values: readonly JsonValue[]): void {
+    const strings = values.flatMap((value) =>
+      typeof value === 'string'
+        ? [value]
+        : Array.isArray(value)
+          ? value.filter((item) => typeof item === 'string')
+          : [],
+    )
+    for (const value of strings) {
+      const parsed = ChannelMemberIdSchema.safeParse(value)
+      if (!parsed.success) continue
+      const member = this.#coreRepository.getChannelMember(parsed.data)
+      if (member?.channelId !== channelId) continue
+      const identity = this.#coreRepository.getPlatformIdentity(member.platformIdentityId)
+      if (identity?.platformUserId === SELF_PLACEHOLDER_PLATFORM_USER_ID) {
+        throw new Error('当前平台无法确定机器人账号的平台身份，不能对它执行此操作。')
+      }
+    }
+  }
+
   async invokeChannelPlatformAction(input: {
     readonly episodeId: EpisodeId
     readonly action: string
@@ -333,6 +359,7 @@ export class ChannelInteractions {
   }): Promise<ChannelInteractionResult> {
     const episode = this.#requireInteractionEpisode(input.episodeId)
     const channel = this.#coreRepository.getChannel(episode.channelId)!
+    this.#assertPlatformReachableMembers(channel.id, Object.values(input.args))
     await this.ensureInteractionsLoaded(channel.connectionId)
     const existing = this.#findInteraction(episode, input.clientRequestId)
     if (existing) return this.#interactionResult(existing)

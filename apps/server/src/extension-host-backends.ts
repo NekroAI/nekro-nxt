@@ -11,6 +11,7 @@ import {
   type MessagePart,
 } from '@nekro-nxt/contracts'
 import type { CoreRepository } from '@nekro-nxt/core'
+import type { ChannelMemberRelations } from './session-image-context.js'
 import { z } from 'zod'
 import type {
   NxtAssetCreateInput,
@@ -18,6 +19,7 @@ import type {
   NxtCallContext,
   NxtHistoryMessage,
   NxtJobRecord,
+  NxtMemberSummary,
   NxtPlatformResult,
 } from '@nekro-nxt/extension-sdk'
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
@@ -37,13 +39,25 @@ export interface NxtProductFacts {
   readonly getAgentName: (agentId: string) => string
   readonly createAsset: (channelId: ChannelId, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly resolveCredential: (reference: string) => Promise<string>
+  /** Who members are relative to the agent; absent hosts describe every member plainly. */
+  readonly members?: ChannelMemberRelations
+  /** The platform user id a connection reported as its own account. */
+  readonly accountPlatformUserId?: (connectionId: string) => string | undefined
 }
 
-const member = (facts: NxtProductFacts, memberId: string | undefined) => {
+const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMemberSummary | undefined => {
   if (memberId === undefined) return undefined
   const parsed = ChannelMemberIdSchema.safeParse(memberId)
   const displayName = parsed.success ? facts.history.getChannelMember(parsed.data)?.displayName : undefined
-  return { memberId, ...(displayName === undefined ? {} : { displayName }) }
+  const relation = parsed.success ? facts.members?.describe(parsed.data) : undefined
+  return {
+    memberId,
+    ...(displayName === undefined ? {} : { displayName }),
+    ...(relation?.kind === 'self' ? { self: true as const } : {}),
+    ...(relation?.kind === 'local-agent'
+      ? { localAgent: relation.agentName === undefined ? {} : { name: relation.agentName } }
+      : {}),
+  }
 }
 
 /** Plain-text projection of message parts for extensions; structure stays available to the agent itself. */
@@ -118,9 +132,26 @@ export const resolveExtensionSecret = async (
  */
 export const createNxtProductBackends = (
   facts: NxtProductFacts,
-  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs' | 'platform'>,
+  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs'> & {
+    readonly platform: Omit<NxtServiceBackends['platform'], 'selfPlatformUserId'>
+  },
 ): NxtServiceBackends => ({
   ...infrastructure,
+  platform: {
+    ...infrastructure.platform,
+    selfPlatformUserId: (channelId) => {
+      const channel = facts.history.getChannel(ChannelIdSchema.parse(channelId))
+      return Promise.resolve(channel === undefined ? undefined : facts.accountPlatformUserId?.(channel.connectionId))
+    },
+  },
+  members: {
+    describe: (channelId, memberId) => {
+      const parsed = ChannelMemberIdSchema.safeParse(memberId)
+      if (!parsed.success || facts.history.getChannelMember(parsed.data)?.channelId !== channelId)
+        return Promise.resolve(undefined)
+      return Promise.resolve(member(facts, parsed.data))
+    },
+  },
   secret: (binding: NxtServiceBinding, key: string) => resolveExtensionSecret(facts, binding.config(), key),
   createAsset: (channelId, input) => facts.createAsset(ChannelIdSchema.parse(channelId), input),
   callContext(binding): Promise<NxtCallContext> {
@@ -139,6 +170,9 @@ export const createNxtProductBackends = (
         kind: channel.kind,
         ...(channel.displayName === undefined ? {} : { displayName: channel.displayName }),
         ...(connectionName === undefined ? {} : { connectionName }),
+        ...(facts.members === undefined || channel.kind === 'internal'
+          ? {}
+          : { selfMemberId: facts.members.self(channel.id).memberId }),
       },
       ...(latest === undefined
         ? {}

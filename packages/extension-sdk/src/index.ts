@@ -210,6 +210,10 @@ export interface NxtStorageEntry {
 export interface NxtMemberSummary {
   readonly memberId: string
   readonly displayName?: string
+  /** The channel's own account, i.e. the agent itself. */
+  readonly self?: true
+  /** The account of another agent on this host that answers the same platform channel. */
+  readonly localAgent?: { readonly name?: string }
 }
 
 export interface NxtCallContext {
@@ -220,6 +224,8 @@ export interface NxtCallContext {
     readonly displayName?: string
     /** Connection display name, e.g. the platform account the channel belongs to. */
     readonly connectionName?: string
+    /** The member standing for the agent's own account in this channel; absent in built-in channels. */
+    readonly selfMemberId?: string
   }
   /** The newest inbound message in this channel when the call started, if any. */
   readonly latestInbound?: {
@@ -385,6 +391,10 @@ export interface NxtHostService {
   readonly context: {
     current(): Promise<NxtCallContext>
   }
+  readonly members: {
+    /** Who a member of the current channel is (the agent itself, another local agent, or a member); no capability. */
+    describe(memberId: string): Promise<NxtMemberSummary | undefined>
+  }
   readonly history: {
     /** Requires `permissions.capabilities.history`. Newest first, current channel only. */
     list(options?: {
@@ -400,6 +410,11 @@ export interface NxtHostService {
     invoke(action: string, args: Readonly<Record<string, ExtensionJsonValue>>): Promise<NxtPlatformResult>
     /** Raw API of the current channel's Adapter; requires `platform.raw` to list that Adapter. */
     raw(api: string, params: Readonly<Record<string, ExtensionJsonValue>>): Promise<NxtPlatformResult>
+    /**
+     * The platform user id of the agent's own account, for raw API calls that need it; undefined when the Adapter
+     * cannot tell. Requires `platform.raw` to list the channel's Adapter.
+     */
+    selfPlatformUserId(): Promise<string | undefined>
   }
   readonly jobs: {
     /**
@@ -1081,13 +1096,14 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       "ctx.nxt.secrets.get(key)：读取 config.schema 中 meta.role: 'secret' 的字段；用户未填写时返回 undefined。凭据字段不能有默认值，也不能出现在 harness.config() 中。",
       'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
       'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享）。单值不超过 256 KiB，默认配额 8 MiB。',
-      'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息。',
+      'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。',
+      'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
       'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
       "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
       "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
       'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
       'harness.onJob((job, nxt) => ({ wake, note }))：声明了 jobs 的扩展可在 factory 阶段注册唯一的到期处理函数，本扩展的任务到期时先运行它（job 含 jobId、label、payload、scheduledAt、declaredId、channel），nxt 绑定到任务所在频道；返回 { wake: false } 则这次不唤醒智能体（例如订阅检查没有新内容），返回 note 会随到期事件交给智能体（例如新文章列表，最多 2000 字）。15 秒内未返回或抛错时按默认唤醒。轮询类需求一定要用它，避免每次检查都消耗一次模型调用。',
-      'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。',
+      'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。对拿不到真实身份的机器人账号执行动作会明确失败。platform.selfPlatformUserId() 返回机器人账号的平台 ID（拿不到时为 undefined），只给声明了该适配器 raw 的扩展。',
       "ctx.nxt.render.svg(svg, { scale, format: 'png' | 'jpeg' | 'webp', background }) → { base64, mediaType, width, height }：用宿主系统字体把 SVG 渲染成图片，无需声明能力；把结果交给 assets.create({ base64, mediaType, name }) 再由智能体发送。文字用 font-family=\"sans-serif\"；SVG 只能引用 #片段或 data: 内联资源，网络图片先用 http.fetch 取回再以 data: 内联。适合卡片、榜单、签到图、运势图等。",
       "ctx.nxt.parse.html(html, { url, mode: 'article' | 'full', maxChars }) → { title, excerpt, markdown, truncated, links }：把网页转成 Markdown，默认只保留正文，传 url 时链接变为绝对地址；parse.feed(xml, { url }) → { kind, title, link, items: [{ id, title, link, published, author, summary }] }：统一解析 RSS 2.0、RSS 1.0 与 Atom，id 可用于去重。两者都无需声明能力，取回网页或订阅源仍需要 network。",
       "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",

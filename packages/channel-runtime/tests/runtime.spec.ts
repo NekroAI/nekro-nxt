@@ -2670,6 +2670,28 @@ describe('ChannelRuntime M1 lane', () => {
     ).rejects.toThrow('活动频道会话')
   })
 
+  it('refuses a platform action aimed at the account placeholder instead of reaching the Adapter', async () => {
+    let actionCalls = 0
+    const context = await setup(true, undefined, undefined, {
+      invokePlatformAction: () => {
+        actionCalls += 1
+        return Promise.resolve({ status: 'succeeded' })
+      },
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'self-action'))
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+    const self = context.core.ensureSelfChannelMember(context.channel.id)
+    await expect(
+      context.runtime.invokeChannelPlatformAction({
+        episodeId: episode.id,
+        action: 'set_member_card',
+        args: { memberId: self.id, card: '值班中' },
+        clientRequestId: 'self-card',
+      }),
+    ).rejects.toThrow('无法确定机器人账号的平台身份')
+    expect(actionCalls).toBe(0)
+  })
+
   it('reports failed, uncertain and valued platform actions and replays a repeated request', async () => {
     type PlatformOutcome = ReturnType<NonNullable<AdapterConnectionInteractions['invokePlatformAction']>>
     const outcomes: (() => PlatformOutcome)[] = [

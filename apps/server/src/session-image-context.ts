@@ -22,6 +22,7 @@ import {
   richPartContextText,
   type AssetId,
   type ChannelId,
+  type ChannelMemberId,
   type ChannelRuntimeUsage,
   type MessagePart,
 } from '@nekro-nxt/contracts'
@@ -192,24 +193,68 @@ export const requireNekroAssetAttachmentStore = (store: AttachmentStore): NekroA
 
 export type ProductChannelHistoryRepository = DshHostRuntimeOptions['history']
 
+/** Who a channel member is for the agent answering that channel. */
+export type ChannelMemberRelation =
+  | { readonly kind: 'self' }
+  | { readonly kind: 'local-agent'; readonly agentName?: string }
+  | { readonly kind: 'member' }
+
+/** Host knowledge of the channel's own account and other local agents' accounts; absent hosts show plain members. */
+export interface ChannelMemberRelations {
+  describe(memberId: ChannelMemberId): ChannelMemberRelation
+  /** The member standing for the channel's own account; it always exists. */
+  self(channelId: ChannelId): { readonly memberId: ChannelMemberId; readonly displayName?: string }
+  /** Accounts of other agents on this host that answer the same platform channel. */
+  localAgents(channelId: ChannelId): readonly {
+    readonly memberId: ChannelMemberId
+    readonly displayName?: string
+    readonly agentName: string
+  }[]
+}
+
+export type MemberSummary = {
+  readonly memberId: string
+  readonly displayName?: string
+  /** Absent for an ordinary member. */
+  readonly relation?: Exclude<ChannelMemberRelation, { kind: 'member' }>
+}
+
 export const memberSummary = (
   history: ProductChannelHistoryRepository,
   memberId: NonNullable<ChannelEventRecord['senderMemberId']>,
-): { readonly memberId: string; readonly displayName?: string } => {
+  relations?: ChannelMemberRelations,
+): MemberSummary => {
   const displayName = history.getChannelMember(memberId)?.displayName
-  return { memberId, ...(displayName === undefined ? {} : { displayName }) }
+  const relation = relations?.describe(memberId)
+  return {
+    memberId,
+    ...(displayName === undefined ? {} : { displayName }),
+    ...(relation === undefined || relation.kind === 'member' ? {} : { relation }),
+  }
+}
+
+/** How a member is named to the agent: the stable member id always, and what the host knows about who it is. */
+export const memberLabel = (member: MemberSummary): string => {
+  const relation = member.relation
+  if (relation?.kind === 'self') return `你（当前智能体的机器人账号，成员标识 ${member.memberId}）`
+  const name = member.displayName ?? '未知成员'
+  if (relation?.kind === 'local-agent') {
+    const owner = relation.agentName === undefined ? '本机另一个连接' : `本机智能体「${relation.agentName}」`
+    return `${name}（${owner}的机器人账号，成员标识 ${member.memberId}）`
+  }
+  return `${name}（成员标识 ${member.memberId}）`
 }
 
 export const historyEntrySenderDescription = (
   history: ProductChannelHistoryRepository,
   entry: ChannelHistoryEntry,
+  relations?: ChannelMemberRelations,
 ): string => {
   if (entry.source === 'outbound-intent') {
     return isAdminConsoleOutbound(entry.sourceTurnId) ? '，管理员此前通过机器人账号发送' : '，本频道智能体此前发送'
   }
   if (entry.senderMemberId === undefined) return ''
-  const sender = memberSummary(history, entry.senderMemberId)
-  return `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
+  return `，发送成员：${memberLabel(memberSummary(history, entry.senderMemberId, relations))}`
 }
 
 /** Header for a due scheduled job; it is a Host fact, not a member message, and does not oblige a reply. */
@@ -370,17 +415,20 @@ export class SessionImageContext {
   readonly #context: Context
   readonly #sessions: SessionRegistry<unknown>
   readonly #history: ProductChannelHistoryRepository
+  readonly #members: ChannelMemberRelations | undefined
   readonly #assets: AssetAccessRepository
   constructor(
     context: Context,
     sessions: SessionRegistry<unknown>,
     history: ProductChannelHistoryRepository,
     assets: AssetAccessRepository,
+    members?: ChannelMemberRelations,
   ) {
     this.#context = context
     this.#sessions = sessions
     this.#history = history
     this.#assets = assets
+    this.#members = members
   }
   async getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
     const blockers: string[] = []
@@ -717,10 +765,9 @@ export class SessionImageContext {
           blocks.push({ type: 'text', text: part.text })
           break
         case 'mention': {
-          const member = memberSummary(this.#history, part.memberId)
           blocks.push({
             type: 'text',
-            text: `@${member.displayName ?? '未知成员'}（成员标识 ${member.memberId}）`,
+            text: `@${memberLabel(memberSummary(this.#history, part.memberId, this.#members))}`,
           })
           break
         }
@@ -755,7 +802,7 @@ export class SessionImageContext {
           }
           blocks.push({
             type: 'text',
-            text: `引用频道消息 ${part.messageId}（${formatContextTime(quoted.occurredAt)}）${historyEntrySenderDescription(this.#history, quoted)}：`,
+            text: `引用频道消息 ${part.messageId}（${formatContextTime(quoted.occurredAt)}）${historyEntrySenderDescription(this.#history, quoted, this.#members)}：`,
           })
           blocks.push(
             ...(await this.projectMessageParts(sessionId, channelId, quoted.parts, visibleDigests, imageStats, false)),
@@ -788,10 +835,15 @@ export class SessionImageContext {
     imageStats?: ImageProjectionStats,
     previousAt?: number,
   ): Promise<ContentBlock[]> {
-    const sender = event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId)
-    const senderDescription =
-      sender === undefined ? '' : `，发送成员：${sender.displayName ?? '未知成员'}（成员标识 ${sender.memberId}）`
-    const mentionDescription = event.facts?.['mentionedBot'] === true ? '；该消息提及了当前智能体关联的机器人账号' : ''
+    const sender =
+      event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId, this.#members)
+    const senderDescription = sender === undefined ? '' : `，发送成员：${memberLabel(sender)}`
+    // A mention of the account already reads 「@你」 in place; the note covers platforms that @ without a mention part.
+    const mentionsSelf = event.parts.some(
+      (part) => part.type === 'mention' && this.#members?.describe(part.memberId).kind === 'self',
+    )
+    const mentionDescription =
+      event.facts?.['mentionedBot'] === true && !mentionsSelf ? '；该消息提及了当前智能体关联的机器人账号' : ''
     const job = extensionJobHeader(event)
     const time = formatContextTime(event.receivedAt, previousAt)
     const blocks: ContentBlock[] = [
