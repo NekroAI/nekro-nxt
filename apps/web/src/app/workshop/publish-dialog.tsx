@@ -43,17 +43,27 @@ const isHttpUrl = (value: string): boolean => {
   }
 }
 
+/** 扩展在社区上的页面；源码地址不能为空，留空时用它。 */
+export const communityExtensionPage = (communityUrl: string, extensionId: string): string =>
+  new URL(`/extensions/${encodeURIComponent(extensionId)}`, communityUrl).toString()
+
 /**
- * 只提交和社区现有内容不同的条目信息；首次发布只提交填写了的字段。清空源码地址不提交（社区只接受链接）。
+ * 只提交和社区现有内容不同的条目信息；首次发布只提交填写了的字段。源码地址不能为空：留空时重置为扩展在社区上的
+ * 页面（`defaultSourceUrl`）。
  */
-export const listingChanges = (draft: ListingDraft, initial: ListingDraft): CommunityListingInput => {
+export const listingChanges = (
+  draft: ListingDraft,
+  initial: ListingDraft,
+  defaultSourceUrl?: string,
+): CommunityListingInput => {
   const changed = (key: keyof ListingDraft) => draft[key].trim() !== initial[key].trim()
   const tags = parseListingTags(draft.tags)
+  const sourceUrl = draft.sourceUrl.trim() || defaultSourceUrl || ''
   return {
     ...(changed('summary') ? { summary: draft.summary.trim() } : {}),
     ...(changed('description') ? { description: draft.description.trim() } : {}),
     ...(changed('tags') ? { tags } : {}),
-    ...(changed('sourceUrl') && draft.sourceUrl.trim() ? { sourceUrl: draft.sourceUrl.trim() } : {}),
+    ...(sourceUrl && sourceUrl !== initial.sourceUrl.trim() ? { sourceUrl } : {}),
   }
 }
 
@@ -129,6 +139,9 @@ export function PublishDialog({
       cancelled = true
     }
   }, [open, account?.handle, extension.id])
+  const defaultSourceUrl = community.status
+    ? communityExtensionPage(community.status.communityUrl, extension.id)
+    : undefined
   const errors = listingErrors(listing)
   const invalid = errors.tags !== undefined || errors.sourceUrl !== undefined
   const edit = (key: keyof ListingDraft) => (event: { readonly target: { readonly value: string } }) =>
@@ -152,7 +165,7 @@ export function PublishDialog({
             extensionId: extension.id,
             revisionId: revision.id,
             notes: notes.trim(),
-            listing: listingChanges(listing, initialListing),
+            listing: listingChanges(listing, initialListing, defaultSourceUrl),
           },
         ),
       )
@@ -267,8 +280,18 @@ export function PublishDialog({
           <Field label="标签" hint={`用逗号或空格分隔，最多 ${COMMUNITY_LISTING_LIMITS.tags} 个。`} error={errors.tags}>
             <Input value={listing.tags} placeholder="天气、提醒" onChange={edit('tags')} />
           </Field>
-          <Field label="源码地址" hint="可选。" error={errors.sourceUrl}>
-            <Input value={listing.sourceUrl} inputMode="url" placeholder="https://" onChange={edit('sourceUrl')} />
+          <Field label="源码地址" hint="留空时使用这个扩展在社区上的页面。" error={errors.sourceUrl}>
+            <Input
+              value={listing.sourceUrl}
+              inputMode="url"
+              placeholder={defaultSourceUrl ?? 'https://'}
+              onChange={edit('sourceUrl')}
+              onBlur={() => {
+                if (!listing.sourceUrl.trim() && defaultSourceUrl) {
+                  setListing((current) => ({ ...current, sourceUrl: defaultSourceUrl }))
+                }
+              }}
+            />
           </Field>
           <Field label="更新说明" hint="可选。告诉使用者这次改了什么。">
             <Textarea value={notes} maxLength={2000} rows={3} onChange={(event) => setNotes(event.target.value)} />

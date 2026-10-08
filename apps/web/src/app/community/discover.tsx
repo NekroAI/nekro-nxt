@@ -317,6 +317,8 @@ function CommunityDetail({
   }
 
   const latest = detail.latest
+  // 源码地址留空时作者端会填入社区扩展页；与「在社区查看」重复时不再单独显示。
+  const sourceUrl = detail.sourceUrl && detail.sourceUrl !== detail.pageUrl ? detail.sourceUrl : null
   const label = latest ? communityReviewLabel(latest.reviewStatus) : undefined
   const install = async () => {
     if (!latest) return
@@ -367,18 +369,13 @@ function CommunityDetail({
         }
       />
       {detail.summary ? <p className={styles.lead}>{detail.summary}</p> : null}
-      {detail.tags.length > 0 || detail.sourceUrl ? (
+      {detail.tags.length > 0 || sourceUrl ? (
         <div className={styles.listingMeta}>
           {detail.tags.map((tag) => (
             <Chip key={tag}>{tag}</Chip>
           ))}
-          {detail.sourceUrl ? (
-            <Button
-              size="small"
-              variant="ghost"
-              icon={<Code2 size={14} />}
-              onClick={() => openExternal(detail.sourceUrl ?? '')}
-            >
+          {sourceUrl ? (
+            <Button size="small" variant="ghost" icon={<Code2 size={14} />} onClick={() => openExternal(sourceUrl)}>
               源码
             </Button>
           ) : null}

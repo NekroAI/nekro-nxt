@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { listingChanges, parseListingTags } from '../src/app/workshop/publish-dialog.tsx'
+import { communityExtensionPage, listingChanges, parseListingTags } from '../src/app/workshop/publish-dialog.tsx'
 import { extensionIconUrl } from '../src/http-host.ts'
 import { ExtensionIcon, hueOf } from '../src/ui-kit/index.ts'
 
@@ -63,5 +63,15 @@ describe('community listing input', () => {
     ).toEqual({ summary: '查询城市天气', tags: ['天气', '提醒'] })
     const empty = { summary: '', description: '', tags: '', sourceUrl: '' }
     expect(listingChanges({ ...empty, description: '## 用法' }, empty)).toEqual({ description: '## 用法' })
+  })
+
+  it('resets an empty source address to the extension page on the community', () => {
+    const page = communityExtensionPage('https://community.example.com', 'ext_01DEMO')
+    expect(page).toBe('https://community.example.com/extensions/ext_01DEMO')
+    const initial = { summary: '查询天气', description: '', tags: '', sourceUrl: 'https://example.com/a' }
+    expect(listingChanges({ ...initial, sourceUrl: '  ' }, initial, page)).toEqual({ sourceUrl: page })
+    const first = { summary: '', description: '', tags: '', sourceUrl: '' }
+    expect(listingChanges(first, first, page)).toEqual({ sourceUrl: page })
+    expect(listingChanges({ ...initial, sourceUrl: page }, { ...initial, sourceUrl: page }, page)).toEqual({})
   })
 })

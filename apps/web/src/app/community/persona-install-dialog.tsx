@@ -56,8 +56,12 @@ export function PersonaInstallDialog({
     setModelKey('')
     setAgentId('')
     setRename(false)
-    setUseAvatar(persona.avatarUrl !== null)
   }, [open, persona.id])
+
+  // 新建智能体默认用人设头像；替换现有智能体时默认保留原头像（换掉的头像不进版本，无法恢复），需要时再勾选。
+  useEffect(() => {
+    if (open) setUseAvatar(target === 'new' && persona.avatarUrl !== null)
+  }, [open, target, persona.avatarUrl])
 
   const model = models.find((item) => agentModelKey(item) === (modelKey || initialModelKey))
   const agent = agents.find((item) => item.id === agentId)
@@ -179,7 +183,7 @@ export function PersonaInstallDialog({
         )}
         {hasAvatar ? (
           <SwitchRow
-            title={target === 'new' ? '使用人设头像' : '同时换成人设头像'}
+            title={target === 'new' ? '使用人设头像' : '同时应用人设头像'}
             checked={useAvatar}
             onCheckedChange={setUseAvatar}
           />

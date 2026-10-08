@@ -1394,7 +1394,11 @@ test.describe('NekroNxt browser projections', () => {
         await page.getByRole('option', { name: '资料员' }).click()
         await playwrightExpect(dialog).toContainText('原设定可以在智能体的「恢复之前的配置」中找回')
         await dialog.getByRole('switch', { name: /同时改名/u }).click()
-        await dialog.getByRole('switch', { name: '同时换成人设头像' }).click()
+        // 替换现有智能体时默认保留原头像。
+        await playwrightExpect(dialog.getByRole('switch', { name: '同时应用人设头像' })).toHaveAttribute(
+          'aria-checked',
+          'false',
+        )
         await dialog.getByRole('button', { name: '替换设定' }).click()
         await playwrightExpect(page).toHaveURL(new RegExp(`/agents/${browserAgentId}$`, 'u'))
         expect(installs).toEqual([
