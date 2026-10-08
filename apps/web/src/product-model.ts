@@ -118,8 +118,11 @@ export interface ChannelSummary {
     readonly agentId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
     readonly processingFeedback: 'auto' | 'off'
+    readonly localAgentMessages: 'observe' | 'trigger'
     readonly activityTriggerOverrides: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
   }[]
+  /** Other agents on this host that answer the same platform channel through another connection. */
+  readonly localAgentIds: readonly string[]
   readonly unread: number
   readonly lastActivityAt?: number
   readonly lastMessage?: { readonly author: string; readonly text: string }
@@ -197,6 +200,8 @@ export interface ConversationMessage {
   /** Administrator resolution of an unsettled delivery (retry or confirmed as delivered). */
   readonly deliveryResolution?: 'retry' | 'confirm-delivered'
   readonly origin?: 'admin-console'
+  /** The sender is another agent on this host, speaking through its own account in the same group. */
+  readonly localAgentId?: string
   /** What the agent's inbound hooks decided, when it differs from the default. */
   readonly inboundHook?: NonNullable<HostApiResponse<'snapshot'>['messages'][number]['inboundHook']>
   /** A scheduled task came due; shown as a notice instead of a member message. */
@@ -565,6 +570,7 @@ export interface ProductState {
     readonly channelId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
     readonly processingFeedback?: 'auto' | 'off'
+    readonly localAgentMessages?: 'observe' | 'trigger'
     readonly activityTriggerOverrides?: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
   }): Promise<void>
   clearBinding(channelId: string): Promise<void>

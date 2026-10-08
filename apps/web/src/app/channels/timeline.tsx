@@ -20,6 +20,7 @@ export const MessageRow = memo(function MessageRow({
   message,
   channelKind,
   agent,
+  localAgentName,
   continued,
   fresh,
   onResolve,
@@ -27,6 +28,8 @@ export const MessageRow = memo(function MessageRow({
   readonly message: ConversationMessage
   readonly channelKind: ChannelSummary['kind']
   readonly agent: AgentSummary | undefined
+  /** The sender is this other agent on the same host, speaking through its own account. */
+  readonly localAgentName?: string | undefined
   readonly continued: boolean
   readonly fresh: boolean
   readonly onResolve?: ((messageId: string, action: 'retry' | 'confirm-delivered') => void) | undefined
@@ -84,6 +87,11 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.meta}>
           <b>{message.author}</b>
           {message.origin === 'admin-console' ? <span className={styles.adminTag}>管理员</span> : null}
+          {localAgentName === undefined ? null : (
+            <span className={styles.adminTag} title="本机的另一个智能体，用它自己的账号在这个群里发言">
+              本机 · {localAgentName}
+            </span>
+          )}
           <span className={styles.time}>{message.time}</span>
           {message.delivery === '已发送' ? (
             <span className={styles.delivered} title="已送达">

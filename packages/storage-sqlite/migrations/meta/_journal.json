@@ -225,6 +225,13 @@
       "when": 1791476691714,
       "tag": "0031_platform_identity_self",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1791479436964,
+      "tag": "0032_binding_local_agent_messages",
+      "breakpoints": true
     }
   ]
 }

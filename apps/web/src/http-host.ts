@@ -357,6 +357,7 @@ const projectConversationMessage = (
     ...(delivery === undefined ? {} : { delivery }),
     ...(message.deliveryResolution === undefined ? {} : { deliveryResolution: message.deliveryResolution.action }),
     ...(message.origin === 'admin-console' ? { origin: 'admin-console' as const } : {}),
+    ...(message.sender?.localAgentId === undefined ? {} : { localAgentId: message.sender.localAgentId }),
     ...(message.scheduledTask === undefined ? {} : { scheduledTask: { ...message.scheduledTask } }),
     ...(message.inboundHook === undefined ? {} : { inboundHook: message.inboundHook }),
   }
@@ -451,8 +452,10 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       agentId: binding.agentId,
       triggerPolicy: binding.triggerPolicy,
       processingFeedback: binding.processingFeedback,
+      localAgentMessages: binding.localAgentMessages ?? 'observe',
       activityTriggerOverrides: binding.activityTriggerOverrides,
     })),
+    localAgentIds: channel.localAgentIds ?? [],
     unread: channel.activity?.unreadCount ?? 0,
     ...(channel.activity?.lastActivityAt === undefined ? {} : { lastActivityAt: channel.activity.lastActivityAt }),
     ...(channel.activity?.lastMessage === undefined

@@ -214,12 +214,20 @@ export function createProductStore(
       })
       return { channelId: result['channelId'] }
     },
-    createBinding: async ({ agentId, channelId, triggerPolicy, processingFeedback, activityTriggerOverrides }) => {
+    createBinding: async ({
+      agentId,
+      channelId,
+      triggerPolicy,
+      processingFeedback,
+      localAgentMessages,
+      activityTriggerOverrides,
+    }) => {
       await requireHost().actions['bindings.create']({
         agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
         channelId: requireValue(channelId, '请选择要绑定的频道。'),
         triggerPolicy,
         ...(processingFeedback === undefined ? {} : { processingFeedback }),
+        ...(localAgentMessages === undefined ? {} : { localAgentMessages }),
         ...(activityTriggerOverrides === undefined ? {} : { activityTriggerOverrides }),
       })
     },

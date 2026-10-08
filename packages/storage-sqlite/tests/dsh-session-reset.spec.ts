@@ -59,6 +59,7 @@ const fixture = async () => {
     boundAt: 10,
     triggerPolicy: 'always' as const,
     processingFeedback: 'off' as const,
+    localAgentMessages: 'observe' as const,
     activityTriggerOverrides: {},
   }
   repository.replaceBinding(binding)

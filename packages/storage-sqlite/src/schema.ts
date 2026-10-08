@@ -240,6 +240,9 @@ export const channelBindings = sqliteTable(
     triggerPolicy: text('trigger_policy', {
       enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'],
     }).notNull(),
+    localAgentMessages: text('local_agent_messages', { enum: ['observe', 'trigger'] })
+      .notNull()
+      .default('observe'),
     processingFeedback: text('processing_feedback', { enum: ['auto', 'off'] })
       .notNull()
       .default('auto'),
@@ -256,6 +259,7 @@ export const channelBindings = sqliteTable(
       sql`${table.triggerPolicy} IN ('always', 'mentioned-or-replied', 'command', 'observe-only')`,
     ),
     check('channel_bindings_processing_feedback_ck', sql`${table.processingFeedback} IN ('auto', 'off')`),
+    check('channel_bindings_local_agent_messages_ck', sql`${table.localAgentMessages} IN ('observe', 'trigger')`),
   ],
 )
 

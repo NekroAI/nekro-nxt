@@ -368,6 +368,7 @@ export function registerExtensionsRoutes({
                 agentId: parsed.agentId,
                 triggerPolicy: parsed.triggerPolicy,
                 ...(parsed.processingFeedback === undefined ? {} : { processingFeedback: parsed.processingFeedback }),
+                ...(parsed.localAgentMessages === undefined ? {} : { localAgentMessages: parsed.localAgentMessages }),
                 ...(parsed.activityTriggerOverrides === undefined
                   ? {}
                   : { activityTriggerOverrides: parsed.activityTriggerOverrides }),

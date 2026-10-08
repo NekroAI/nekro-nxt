@@ -222,6 +222,7 @@ export function Conversation({
   const messages = useProductStore((state) => state.messagesByChannel[channel.id] ?? EMPTY)
   const history = useProductStore((state) => state.channelHistory[channel.id])
   const runtime = useProductStore((state) => state.channelRuntimes[channel.id])
+  const agents = useProductStore((state) => state.agents)
   const [xray, setXrayState] = useState(readXray)
   const [stopping, setStopping] = useState(false)
   const [xrayAnimated, setXrayAnimated] = useState(false)
@@ -392,6 +393,11 @@ export function Conversation({
                 message={item.message}
                 channelKind={channel.kind}
                 agent={agent}
+                localAgentName={
+                  item.message.localAgentId === undefined
+                    ? undefined
+                    : (agents.find((candidate) => candidate.id === item.message.localAgentId)?.name ?? '智能体')
+                }
                 continued={item.continued}
                 fresh={fresh.has(item.message.id)}
                 onResolve={(messageId, action) => void resolve(messageId, action)}

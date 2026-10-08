@@ -190,6 +190,8 @@ export interface BindingRecord {
   readonly agentId: AgentId
   readonly triggerPolicy: BindingTriggerPolicy
   readonly processingFeedback: 'auto' | 'off'
+  /** Messages from another local agent's account: `observe` keeps them as context unless they @ or reply to this agent. */
+  readonly localAgentMessages: 'observe' | 'trigger'
   /** Missing keys inherit the concrete Connection default. */
   readonly activityTriggerOverrides: Readonly<Record<AdapterActivityKey, boolean>>
   readonly boundAt: number
@@ -517,6 +519,7 @@ const bindingInputSchema = z
     agentId: z.string().trim().min(1),
     triggerPolicy: z.enum(['always', 'mentioned-or-replied', 'command', 'observe-only']),
     processingFeedback: z.enum(['auto', 'off']).default('auto'),
+    localAgentMessages: z.enum(['observe', 'trigger']).default('observe'),
     activityTriggerOverrides: z.record(AdapterActivityKeySchema, z.boolean()).default({}),
   })
   .strict()
@@ -759,6 +762,7 @@ export class CoreService {
       agentId,
       triggerPolicy: channelInput.triggerPolicy,
       processingFeedback: 'auto',
+      localAgentMessages: 'observe',
       activityTriggerOverrides: {},
       boundAt: createdAt,
     }
@@ -1201,6 +1205,18 @@ export class CoreService {
     })
   }
 
+  /** Read-only form of {@link localAccountMembers}: other local connections' accounts and their channel, if any. */
+  listLocalAccounts(
+    channelId: ChannelId,
+  ): readonly { readonly connectionId: ConnectionId; readonly channelId?: ChannelId }[] {
+    const channel = this.#repository.getChannel(channelId)
+    if (!channel || channel.kind === 'internal') return []
+    return this.#localAccounts(channel).map((account) => ({
+      connectionId: account.connectionId,
+      ...(account.channelId === undefined ? {} : { channelId: account.channelId }),
+    }))
+  }
+
   #localAccounts(channel: ChannelRecord) {
     const connection = this.#repository.getConnection(channel.connectionId)
     if (!connection) return []
@@ -1273,6 +1289,7 @@ export class CoreService {
     readonly agentId: AgentId
     readonly triggerPolicy: BindingTriggerPolicy
     readonly processingFeedback?: 'auto' | 'off'
+    readonly localAgentMessages?: 'observe' | 'trigger'
     readonly activityTriggerOverrides?: Readonly<Record<AdapterActivityKey, boolean>>
   }): BindingRecord {
     const parsed = bindingInputSchema.parse(input)
@@ -1285,6 +1302,7 @@ export class CoreService {
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
       processingFeedback: parsed.processingFeedback,
+      localAgentMessages: parsed.localAgentMessages,
       activityTriggerOverrides: parsed.activityTriggerOverrides,
       boundAt: this.#timestamp(),
     }
@@ -1296,6 +1314,7 @@ export class CoreService {
     readonly agentId: AgentId
     readonly triggerPolicy: BindingTriggerPolicy
     readonly processingFeedback?: 'auto' | 'off'
+    readonly localAgentMessages?: 'observe' | 'trigger'
     readonly activityTriggerOverrides?: Readonly<Record<AdapterActivityKey, boolean>>
   }): BindingRecord {
     const parsed = bindingInputSchema.parse(input)
@@ -1306,6 +1325,7 @@ export class CoreService {
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
       processingFeedback: parsed.processingFeedback,
+      localAgentMessages: parsed.localAgentMessages,
       activityTriggerOverrides: parsed.activityTriggerOverrides,
       boundAt: this.#timestamp(),
     })

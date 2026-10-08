@@ -400,6 +400,18 @@ const inboundHookFact = (
   }
 }
 
+/** The agent whose account on another local connection sent this message, when the host can tell. */
+const localAgentOf = (
+  runtime: NekroRuntime,
+  channelId: ChannelHistoryEntry['channelId'],
+  memberId: NonNullable<Extract<ChannelHistoryEntry, { source: 'channel-event' }>['senderMemberId']>,
+): { readonly localAgentId?: AgentId } => {
+  const relation = runtime.core.describeChannelMember(channelId, memberId)
+  if (relation?.kind !== 'local-account' || relation.channelId === undefined) return {}
+  const agentId = runtime.repository.getBinding(relation.channelId)?.agentId
+  return agentId === undefined ? {} : { localAgentId: agentId }
+}
+
 export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistoryEntry): HostSnapshotMessage => {
   const parts = decorateMessageParts(runtime, entry.parts)
   if (entry.source === 'channel-event') {
@@ -420,6 +432,7 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
             sender: {
               memberId: entry.senderMemberId,
               ...(sender?.displayName === undefined ? {} : { displayName: sender.displayName }),
+              ...localAgentOf(runtime, entry.channelId, entry.senderMemberId),
             },
           }),
       ...(entry.facts?.['mentionedBot'] === true ? { mentionedConnectionAccount: true } : {}),

@@ -662,7 +662,18 @@ export class ChannelRuntime {
     const decision = this.#hookDecision(binding, event)
     if (decision?.hidden === true || decision?.trigger === 'suppress') return false
     if (decision?.trigger === 'force') return binding.triggerPolicy !== 'observe-only'
+    if (this.#isObservedLocalAgentMessage(binding, event)) return false
     return isTriggered(binding, event, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault)
+  }
+
+  /**
+   * Another agent on this host speaking in the same group stays context unless it addresses this agent, so two agents
+   * that both answer every message do not answer each other forever.
+   */
+  #isObservedLocalAgentMessage(binding: BindingRecord, event: ChannelEventRecord): boolean {
+    if (binding.localAgentMessages === 'trigger' || event.senderMemberId === undefined) return false
+    if (event.facts?.['mentionedBot'] === true || event.facts?.['replyToBot'] === true) return false
+    return this.#core.describeChannelMember(event.channelId, event.senderMemberId)?.kind === 'local-account'
   }
 
   /** A scheduled job wakes the agent without obliging it to speak. */
@@ -829,6 +840,7 @@ export class ChannelRuntime {
     readonly agentId: AgentId
     readonly triggerPolicy: BindingRecord['triggerPolicy']
     readonly processingFeedback?: BindingRecord['processingFeedback']
+    readonly localAgentMessages?: BindingRecord['localAgentMessages']
     readonly activityTriggerOverrides?: BindingRecord['activityTriggerOverrides']
   }): Promise<BindingRecord> {
     if (input.activityTriggerOverrides !== undefined)
@@ -854,6 +866,7 @@ export class ChannelRuntime {
         return this.#core.replaceBinding({
           ...input,
           processingFeedback: input.processingFeedback ?? current?.processingFeedback ?? 'auto',
+          localAgentMessages: input.localAgentMessages ?? current?.localAgentMessages ?? 'observe',
           activityTriggerOverrides: input.activityTriggerOverrides ?? current?.activityTriggerOverrides ?? {},
         })
       })

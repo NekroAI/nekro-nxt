@@ -419,7 +419,15 @@ export const HostSnapshotMessageSchema = z
     channelId: ChannelIdSchema,
     role: z.enum(['member', 'agent', 'system']),
     parts: z.array(SnapshotMessagePartSchema),
-    sender: z.object({ memberId: ChannelMemberIdSchema, displayName: z.string().optional() }).strict().optional(),
+    sender: z
+      .object({
+        memberId: ChannelMemberIdSchema,
+        displayName: z.string().optional(),
+        /** The sender is the account of this agent on this host, answering the channel through another connection. */
+        localAgentId: AgentIdSchema.optional(),
+      })
+      .strict()
+      .optional(),
     mentionedConnectionAccount: z.boolean().optional(),
     activityKey: AdapterActivityKeySchema.optional(),
     targetLogicalMessageId: LogicalMessageIdSchema.optional(),
@@ -1149,6 +1157,8 @@ export const HostSnapshotSchema = z
           boundAgentId: AgentIdSchema.optional(),
           runtimePhase: ChannelRuntimePhaseSchema.default('idle'),
           activity: ChannelActivitySummarySchema.default({ unreadCount: 0, unreadCapped: false }),
+          /** Other agents on this host that answer the same platform channel through another connection; absent when none. */
+          localAgentIds: z.array(AgentIdSchema).min(1).optional(),
           bindings: z.array(
             z
               .object({
@@ -1156,6 +1166,8 @@ export const HostSnapshotSchema = z
                 agentId: AgentIdSchema,
                 triggerPolicy: TriggerPolicySchema,
                 processingFeedback: z.enum(['auto', 'off']).default('auto'),
+                /** Absent means `observe`. */
+                localAgentMessages: z.enum(['observe', 'trigger']).optional(),
                 activityTriggerOverrides: ActivityTriggerOverridesSchema.default({}),
                 boundAt: z.number().int().safe().nonnegative(),
               })
@@ -2210,6 +2222,8 @@ export const HostApiContracts = {
         channelId: ChannelIdSchema,
         triggerPolicy: TriggerPolicySchema,
         processingFeedback: z.enum(['auto', 'off']).optional(),
+        /** Messages from another local agent's account: `observe` keeps them as context unless they @ this agent. */
+        localAgentMessages: z.enum(['observe', 'trigger']).optional(),
         activityTriggerOverrides: ActivityTriggerOverridesSchema.optional(),
       })
       .strict(),
@@ -2219,6 +2233,7 @@ export const HostApiContracts = {
         agentId: AgentIdSchema,
         triggerPolicy: TriggerPolicySchema,
         processingFeedback: z.enum(['auto', 'off']).default('auto'),
+        localAgentMessages: z.enum(['observe', 'trigger']).optional(),
         activityTriggerOverrides: ActivityTriggerOverridesSchema.default({}),
         boundAt: z.number().int().safe().nonnegative(),
       })

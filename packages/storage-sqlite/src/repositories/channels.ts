@@ -162,6 +162,7 @@ const toBinding = (input: typeof channelBindings.$inferSelect): BindingRecord =>
     agentId: row.agentId,
     triggerPolicy: row.triggerPolicy,
     processingFeedback: row.processingFeedback,
+    localAgentMessages: row.localAgentMessages,
     activityTriggerOverrides: Object.fromEntries([
       ...row.activityTriggerOverridesEnabled.map((key) => [key, true] as const),
       ...row.activityTriggerSuppressions.map((key) => [key, false] as const),
@@ -703,6 +704,7 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
             agentId: record.agentId,
             triggerPolicy: record.triggerPolicy,
             processingFeedback: record.processingFeedback,
+            localAgentMessages: record.localAgentMessages,
             activityTriggerOverridesEnabled,
             activityTriggerSuppressions,
             boundAt: record.boundAt,

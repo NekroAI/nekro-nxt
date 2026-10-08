@@ -111,9 +111,15 @@ export function ChannelInspector({
     feedbackCapability?.state !== 'disabled' &&
     feedbackCapability?.state !== 'unsupported'
   const overrides = binding ? Object.keys(binding.activityTriggerOverrides).length : 0
+  const localAgentNames = channel.localAgentIds.flatMap((agentId) => {
+    const name = agents.find((candidate) => candidate.id === agentId)?.name
+    return name === undefined ? [] : [name]
+  })
 
   const updateBinding = async (
-    patch: Partial<Pick<NonNullable<typeof binding>, 'processingFeedback' | 'activityTriggerOverrides'>>,
+    patch: Partial<
+      Pick<NonNullable<typeof binding>, 'processingFeedback' | 'localAgentMessages' | 'activityTriggerOverrides'>
+    >,
   ) => {
     if (!agent || !binding) return
     try {
@@ -122,6 +128,7 @@ export function ChannelInspector({
         channelId: channel.id,
         triggerPolicy: binding.triggerPolicy,
         processingFeedback: patch.processingFeedback ?? binding.processingFeedback,
+        localAgentMessages: patch.localAgentMessages ?? binding.localAgentMessages,
         activityTriggerOverrides: patch.activityTriggerOverrides ?? binding.activityTriggerOverrides,
       })
     } catch (error) {
@@ -219,6 +226,19 @@ export function ChannelInspector({
                 label="处理中反馈"
                 checked={binding.processingFeedback === 'auto'}
                 onCheckedChange={(checked) => updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
+              />
+            </PropertyRow>
+          ) : null}
+          {agent && binding && localAgentNames.length > 0 ? (
+            <PropertyRow
+              label="回应本机智能体"
+              description={`${localAgentNames.join('、')}也在这个群`}
+              tip="关闭时，本机其他智能体的发言只记入上下文；它 @ 或回复本智能体时仍会回应。打开后按上面的触发方式处理，两个智能体可能互相接话。"
+            >
+              <Switch
+                label="回应本机智能体"
+                checked={binding.localAgentMessages === 'trigger'}
+                onCheckedChange={(checked) => updateBinding({ localAgentMessages: checked ? 'trigger' : 'observe' })}
               />
             </PropertyRow>
           ) : null}

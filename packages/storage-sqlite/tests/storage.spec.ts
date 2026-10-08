@@ -246,6 +246,50 @@ describe('Core SQLite baseline', () => {
     }
   })
 
+  it('upgrades migration 31 bindings to observe other local agents without dropping rows that reference them', async () => {
+    const filename = path.join(await temporaryDirectory(), 'core.sqlite')
+    await createDatabaseAtMigration(filename, 31)
+    const old = openCoreDatabase(filename)
+    const repository = new SqliteCoreRepository(old)
+    let sequence = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `BIND${++sequence}` })
+    const agent = createAgent(core)
+    const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'group-1', kind: 'group' })
+    const event = appendTextEvent(core, connection.id, channel.id, 'bound-inbound', '旧绑定的消息', 100)
+    old.close()
+    mutateSqlite(
+      filename,
+      `INSERT INTO channel_bindings (channel_id, agent_id, trigger_policy, processing_feedback, bound_at)
+       VALUES (?, ?, 'always', 'off', 100)`,
+      channel.id,
+      agent.definition.id,
+    )
+    mutateSqlite(filename, `INSERT INTO dsh_session_resets VALUES ('reset-fixture', 101, 0, 0, 1, 0)`)
+    mutateSqlite(
+      filename,
+      `INSERT INTO binding_admission_cutoffs VALUES (?, ?, 100, ?, 'reset-fixture')`,
+      channel.id,
+      agent.definition.id,
+      event.id,
+    )
+    const migrated = await openMigratedCoreDatabase(filename)
+    try {
+      expect(new SqliteCoreRepository(migrated).getBinding(channel.id)).toMatchObject({
+        processingFeedback: 'off',
+        localAgentMessages: 'observe',
+      })
+    } finally {
+      migrated.close()
+    }
+    const native = new BetterSqlite3(filename)
+    try {
+      expect(native.prepare('SELECT count(*) AS count FROM binding_admission_cutoffs').get()).toEqual({ count: 1 })
+    } finally {
+      native.close()
+    }
+  })
+
   it('persists revisioned product settings across a database reopen', async () => {
     const directory = await temporaryDirectory()
     const filename = path.join(directory, 'core.sqlite')
@@ -1266,6 +1310,7 @@ describe('Core SQLite baseline', () => {
         agentId: agent.definition.id,
         triggerPolicy: 'always',
         processingFeedback: 'auto',
+        localAgentMessages: 'observe',
         activityTriggerOverrides: {},
         boundAt: 1,
       }

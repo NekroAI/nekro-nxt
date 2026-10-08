@@ -70,6 +70,14 @@ export const assembleChannelRuntime = (
 }
 
 /** One tool call of the channel's live session in full, for the step a person opens in the timeline. */
+const localAgentIdsOf = (runtime: NekroRuntime, channelId: ChannelId): { readonly localAgentIds?: AgentId[] } => {
+  const localAgentIds = runtime.core.listLocalAccounts(channelId).flatMap(({ channelId: otherChannelId }) => {
+    const agentId = otherChannelId === undefined ? undefined : runtime.repository.getBinding(otherChannelId)?.agentId
+    return agentId === undefined ? [] : [agentId]
+  })
+  return localAgentIds.length === 0 ? {} : { localAgentIds }
+}
+
 export const assembleChannelToolCall = (runtime: NekroRuntime, channelId: ChannelId, callId: string) => {
   const binding = runtime.core.listBindings(channelId)[0]
   if (!binding) return undefined
@@ -478,12 +486,14 @@ export class HostQueries {
         ...(channel.displayName === undefined ? {} : { displayName: channel.displayName }),
         ...(boundAgentId === undefined ? {} : { boundAgentId }),
         runtimePhase: runtimeByChannel.get(channel.id)?.phase ?? 'idle',
+        ...localAgentIdsOf(runtime, channel.id),
         activity: activityByChannel.get(channel.id) ?? { unreadCount: 0, unreadCapped: false },
         bindings: bindings.map((binding) => ({
           channelId: binding.channelId,
           agentId: binding.agentId,
           triggerPolicy: binding.triggerPolicy,
           processingFeedback: binding.processingFeedback,
+          localAgentMessages: binding.localAgentMessages,
           activityTriggerOverrides: binding.activityTriggerOverrides,
           boundAt: binding.boundAt,
         })),

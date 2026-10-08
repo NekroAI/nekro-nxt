@@ -130,6 +130,9 @@ const createLegacyFixture = async () => {
         .prepare('INSERT INTO __drizzle_migrations(hash, created_at) VALUES (?, ?)')
         .run(createHash('sha256').update(entry.sql).digest('hex'), entry.when)
     }
+    // The fixture writes rows with today's repository, which also writes binding columns added after migration 24;
+    // migration 32 rebuilds the table and resets the column to its default either way.
+    legacy.exec("ALTER TABLE channel_bindings ADD COLUMN local_agent_messages text NOT NULL DEFAULT 'observe'")
     expect(legacy.prepare('PRAGMA foreign_key_check').all()).toEqual([])
     legacy.exec('COMMIT')
   } finally {

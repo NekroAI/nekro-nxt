@@ -273,9 +273,17 @@ class MemoryCoreRepository implements CoreRepository {
   getPlatformIdentity(id: PlatformIdentityId) {
     return this.identities.get(id)
   }
-  markAccountIdentity() {}
-  getAccountIdentity() {
-    return undefined
+  markAccountIdentity(connectionId: ConnectionId, identityId: PlatformIdentityId) {
+    for (const identity of this.identities.values()) {
+      if (identity.connectionId !== connectionId) continue
+      if (identity.id === identityId) this.identities.set(identity.id, { ...identity, self: 'account' })
+      else if (identity.self === 'account') this.identities.set(identity.id, { ...identity, self: 'member' })
+    }
+  }
+  getAccountIdentity(connectionId: ConnectionId) {
+    return [...this.identities.values()].find(
+      (identity) => identity.connectionId === connectionId && identity.self === 'account',
+    )
   }
   findSelfChannelMember() {
     return undefined
@@ -1647,6 +1655,38 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.admissions).toHaveLength(2)
   })
 
+  it('keeps messages of another local agent as context unless it addresses this agent or the binding opts in', async () => {
+    const context = await setup()
+    const other = context.core.createConnection({ adapterKey: 'fake', config: {} })
+    context.core.createChannel({ connectionId: other.id, platformChannelId: 'main', kind: 'group' })
+    context.core.reportConnectionAccount({ connectionId: other.id, platformUserId: '20002', observedAt: 100 })
+    const recorder = context.core.observeChannelMember({
+      connectionId: context.connection.id,
+      channelId: context.channel.id,
+      platformUserId: '20002',
+      observedAt: 100,
+    }).member
+    const fromRecorder = (eventId: string, facts?: Readonly<Record<string, boolean>>) => ({
+      ...inbound(context.connection.id, context.channel.id, eventId),
+      senderMemberId: recorder.id,
+      ...(facts === undefined ? {} : { facts }),
+    })
+
+    await context.runtime.acceptChannelInbound(fromRecorder('recorder-chat'))
+    expect(context.runtimeRepository.admissions).toHaveLength(0)
+    await context.runtime.acceptChannelInbound(fromRecorder('recorder-mention', { mentionedBot: true }))
+    expect(context.runtimeRepository.admissions).toHaveLength(1)
+
+    await context.runtime.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'always',
+      localAgentMessages: 'trigger',
+    })
+    await context.runtime.acceptChannelInbound(fromRecorder('recorder-opted-in'))
+    expect(context.runtimeRepository.admissions).toHaveLength(2)
+  })
+
   it('sends admin console outbound as the robot account and notifies the session without a model turn', async () => {
     const context = await setup()
     context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'console-1' })
@@ -1966,6 +2006,7 @@ describe('ChannelRuntime M1 lane', () => {
       agentId: AgentIdSchema.parse('agt_trigger'),
       triggerPolicy,
       processingFeedback: 'auto',
+      localAgentMessages: 'observe',
       activityTriggerOverrides: {},
       boundAt: 1,
     })

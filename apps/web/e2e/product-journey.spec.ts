@@ -1135,6 +1135,13 @@ test('external channel exposes processing feedback and per-event trigger control
     } as const)
   const connectionId = ConnectionIdSchema.parse('con_activitysettings')
   const channelId = ChannelIdSchema.parse('chn_activitysettings')
+  // Another agent on this host answers the same group through its own account.
+  const recorder = {
+    ...sourceAgent,
+    id: AgentIdSchema.parse('agt_activityrecorder'),
+    displayName: '记录员',
+    channels: [],
+  }
   let binding = HostApiContracts.createBinding.response.parse({
     channelId,
     agentId: sourceAgent.id,
@@ -1195,10 +1202,12 @@ test('external channel exposes processing feedback and per-event trigger control
             configSchema: { type: 'object' as const, dict: {} },
           },
         ],
-    agents: (baseSnapshot.agents.some(({ id }) => id === sourceAgent.id)
-      ? baseSnapshot.agents
-      : [...baseSnapshot.agents, sourceAgent]
-    ).map((agent) =>
+    agents: [
+      ...(baseSnapshot.agents.some(({ id }) => id === sourceAgent.id)
+        ? baseSnapshot.agents
+        : [...baseSnapshot.agents, sourceAgent]),
+      recorder,
+    ].map((agent) =>
       agent.id === sourceAgent.id ? { ...agent, channels: [...new Set([...agent.channels, channelId])] } : agent,
     ),
     connections: [
@@ -1237,6 +1246,7 @@ test('external channel exposes processing feedback and per-event trigger control
         boundAgentId: sourceAgent.id,
         runtimePhase: 'idle',
         activity: { unreadCount: 0, unreadCapped: false },
+        localAgentIds: [recorder.id],
         bindings: [binding],
       },
     ],
@@ -1251,7 +1261,20 @@ test('external channel exposes processing feedback and per-event trigger control
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages: [], hasMore: false }),
+      body: JSON.stringify({
+        cursor: { epoch: 'fixture', sequence: 0 },
+        messages: [
+          {
+            id: 'evt_recorderline',
+            channelId,
+            role: 'member',
+            sender: { memberId: 'mbr_recorder', displayName: '记录号', localAgentId: recorder.id },
+            parts: [{ type: 'text', text: '已记录今天的讨论。' }],
+            occurredAt: 1_725_000_000_000,
+          },
+        ],
+        hasMore: false,
+      }),
     }),
   )
   await page.route(`**/api/channels/${channelId}/runtime`, (route) =>
@@ -1358,6 +1381,18 @@ test('external channel exposes processing feedback and per-event trigger control
   await installWorkspaceRoutes(page, () => snapshot)
   await page.goto(`/channels/${channelId}`)
   const inspector = page.getByRole('complementary', { name: '频道信息' })
+  await expect(page.getByText('本机 · 记录员', { exact: true })).toBeVisible()
+  const localAgents = inspector.getByRole('switch', { name: '回应本机智能体' })
+  await expect(inspector.getByText('记录员也在这个群', { exact: true })).toBeVisible()
+  await expect(localAgents).not.toBeChecked()
+  await localAgents.click()
+  await expect(localAgents).toBeChecked()
+  await expect.poll(() => bindingRequests.at(-1)).toMatchObject({ localAgentMessages: 'trigger' })
+  await localAgents.click()
+  await expect(localAgents).not.toBeChecked()
+  await expect.poll(() => bindingRequests.length).toBe(2)
+  expect(bindingRequests.at(-1)).toMatchObject({ localAgentMessages: 'observe' })
+  bindingRequests.length = 0
   const feedback = inspector.getByRole('switch', { name: '处理中反馈' })
   await expect(feedback).toBeChecked()
   await feedback.click()
