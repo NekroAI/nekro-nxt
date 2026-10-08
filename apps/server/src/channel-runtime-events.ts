@@ -9,7 +9,10 @@ import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { projectTokenUsage } from './token-usage.js'
 import { ChannelEventIdSchema, type ChannelEventId } from '@nekro-nxt/contracts'
 
-/** Session log types that change the product runtime projection. Streaming chunks do not. */
+/**
+ * Session log types that change the product runtime projection. Streaming chunks do not; request header and route
+ * metadata reach the projection through `sessionProjections.onChanged` (context occupancy) instead.
+ */
 export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'turn/start',
   'turn/end',
@@ -19,8 +22,6 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'tool/result',
   'assistant/message',
   'user/message',
-  'request/header',
-  'request/context',
   'llm/retry',
   'llm/retry-started',
 ])

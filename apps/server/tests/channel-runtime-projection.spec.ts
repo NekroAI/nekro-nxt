@@ -330,7 +330,8 @@ describe('channel runtime projection', () => {
     expect(shouldBroadcastChannelRuntime(undefined)).toBe(false)
     expect(shouldBroadcastChannelRuntime('tool/call')).toBe(true)
     expect(shouldBroadcastChannelRuntime('turn/end')).toBe(true)
-    expect(shouldBroadcastChannelRuntime('request/context')).toBe(true)
+    expect(shouldBroadcastChannelRuntime('request/context')).toBe(false)
+    expect(shouldBroadcastChannelRuntime('request/header')).toBe(false)
     expect(shouldBroadcastChannelRuntime('user/message')).toBe(true)
   })
 
