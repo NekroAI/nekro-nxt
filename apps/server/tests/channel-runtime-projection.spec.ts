@@ -1,3 +1,4 @@
+import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import {
@@ -112,8 +113,10 @@ describe('channel runtime projection', () => {
       content: [
         { type: 'text', text: '频道消息 msg_A（2026-10-08 14:03:12 +08:00）：' },
         { type: 'text', text: '帮我看看这张图' },
-        // Only the block's place matters here; the attachment is never read.
-        { type: 'image', attachment: { kind: 'nekro-asset', assetId: 'ast_A' } as never },
+        {
+          type: 'image',
+          attachment: { attachmentId: AttachmentId('ast_A'), mediaType: 'image/png', bytes: 68, width: 1, height: 1 },
+        },
       ],
       source: { kind: 'nekro-nxt-channel', admissionId: 'adm_A', channelEventIds: ['evt_A', 'evt_B'] },
     })
