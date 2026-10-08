@@ -8,10 +8,12 @@ import styles from './page.module.css'
  * panes are never nested.
  *
  * Width rules, so switching between menus never makes the page jump:
- * - Inside a workbench the content always starts at the list pane's edge; it is never centred in the leftover space.
+ * - Width-limited content is centred in the space the list leaves, so a wide screen keeps even margins instead of
+ *   leaning towards the list.
  * - A page picks one of three widths and never sets its own: `readable` (`--reader-width`) for forms and every
  *   settings section, `wide` (`--content-width`) for object pages built from tables and groups, `full` only for
- *   canvases (wiring board, task preview with its side column, conversations).
+ *   canvases (wiring board, task preview with its side column, conversations) and card grids that add columns as
+ *   the space grows (community discover and personas).
  * - A list whose items open a detail uses `MasterDetail`: on a wide main area the list stays on the left and the
  *   detail opens to its right; on a narrow one the detail replaces the list and going back restores the list's
  *   position. Clicking an item never jumps away from the list when there is room to keep it.
@@ -103,8 +105,8 @@ export function ListPane({
 }
 
 /**
- * The scrolling content of a workbench's main area, aligned to the start (see the width rules above):
- * `readable` for forms and settings, `wide` for object pages, `full` for canvases.
+ * The scrolling content of a workbench's main area (see the width rules above): `readable` for forms and settings and
+ * `wide` for object pages, both centred in the space left by the list; `full` for canvases and card grids.
  */
 export function MainContent({
   width = 'wide',

@@ -111,7 +111,7 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
   }, [seenTags, tag])
 
   return (
-    <MainContent>
+    <MainContent width="full">
       <ObjectHeader
         visual={
           <span className={styles.glyph}>

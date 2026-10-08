@@ -96,12 +96,15 @@
 }
 
 /* Workbench content widths: always start-aligned, never centred in the leftover space (05 §6.1). */
+/* 限宽内容在剩余空间里居中：宽屏上左右留白对称，不会整页歪向列表一侧。 */
 .readable {
   max-width: calc(var(--reader-width) + 2 * var(--s-7));
+  margin-inline: auto;
 }
 
 .wide {
   max-width: calc(var(--content-width) + 2 * var(--s-7));
+  margin-inline: auto;
 }
 
 .full {
@@ -134,6 +137,7 @@
   align-content: start;
   gap: var(--s-6);
   width: 100%;
+  margin-inline: auto;
   padding: var(--s-6) var(--s-7) var(--s-8);
 }
 

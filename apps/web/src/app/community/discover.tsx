@@ -201,7 +201,7 @@ function CommunityCatalog() {
   }
 
   return (
-    <MainContent>
+    <MainContent width="full">
       <ObjectHeader
         visual={
           <span className={styles.objectGlyph}>
