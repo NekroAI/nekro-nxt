@@ -4,6 +4,12 @@ import {
   type LlmProviderRemovalCoordinator,
   type RemovalImpact,
 } from './llm-provider-removal.js'
+import {
+  llmTestFailureMessage,
+  type LlmProviderConnection,
+  type LlmProviderTestResult,
+  type LlmProviderTestResults,
+} from './llm-provider-test-results.js'
 import { HOST_DSH_PACKAGE_VERSIONS, DSH_BUILTIN_EXTENSION_ROSTER, DSH_SETTINGS_OWNER } from './dsh-roster.js'
 import { Context } from '@deepseek-ai/cordis'
 import CredentialProvider, {
@@ -117,6 +123,8 @@ export interface ConfigurableLlmProviderView {
   readonly models: readonly LlmModelView[]
   readonly modelsCustomized: boolean
   readonly discoverable: boolean
+  /** Absent when this host does not record connection tests. */
+  readonly lastTest?: LlmProviderTestResult | null
 }
 
 export type LlmModelModality = 'text' | 'image'
@@ -303,18 +311,23 @@ const readObjectPath = (value: unknown, pathSegments: readonly string[]): Record
   return result.success ? result.data : undefined
 }
 
+const stringField = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+
 const credentialReferenceForProvider = (provider: string): string =>
   `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`
 export class HostModelSettings {
   readonly #context: Context
   readonly #hasLlmSettings: boolean
+  readonly #testResults: LlmProviderTestResults | undefined
   constructor(
     context: Context,
     hasSettings: boolean,
     readonly providerRemoval?: LlmProviderRemovalCoordinator,
+    testResults?: LlmProviderTestResults,
   ) {
     this.#context = context
     this.#hasLlmSettings = hasSettings
+    this.#testResults = testResults
   }
   registerLlmAdapter(providers: string[], adapter: LlmAdapter): () => void {
     return this.#context.llm.registerAdapter(providers, adapter)
@@ -387,6 +400,9 @@ export class HostModelSettings {
           models: configuredModels.length > 0 ? configuredModels : liveModels,
           modelsCustomized,
           discoverable: await this.#hasModelDiscovery(entry.settingsNs),
+          ...(this.#testResults === undefined
+            ? {}
+            : { lastTest: this.#testResults.latest(await this.#connectionOf(entry.provider, profile)) }),
         }
       }),
     )
@@ -612,6 +628,11 @@ export class HostModelSettings {
           [{ op: 'unset', path: ['providers', provider] }],
           expectedRevision,
         )
+        try {
+          this.#testResults?.forget(provider)
+        } catch {
+          // A stale result is retired anyway once a later configuration differs.
+        }
         // Credentials may be shared. A failed response read does not undo this commit.
         try {
           return await this.getLlmProviderSettings()
@@ -779,7 +800,9 @@ export class HostModelSettings {
       input.api !== undefined ||
       input.models !== undefined
     if (!hasDraft) {
-      await this.#runLlmConnectionProbe(this.#context.llm, input.provider, input.model)
+      await this.#recordedProbe(await this.#savedConnection(input.provider), input.model, undefined, () =>
+        this.#runLlmConnectionProbe(this.#context.llm, input.provider, input.model),
+      )
       return { provider: input.provider, model: input.model }
     }
     if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
@@ -787,7 +810,6 @@ export class HostModelSettings {
       .listConfigurableProviders()
       .find((candidate) => candidate.provider === input.provider)
     const settingsNs = input.settingsNs ?? directoryEntry?.settingsNs ?? 'llm-pi-ai'
-    if (settingsNs !== 'llm-pi-ai') throw new Error(`当前不支持测试此模型适配器：${settingsNs}`)
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === settingsNs)
@@ -795,6 +817,20 @@ export class HostModelSettings {
     const settingsPath = directoryEntry?.settingsPath ?? ['providers', input.provider]
     const rawCurrent = readObjectPath(descriptor.value, settingsPath)
     const current = rawCurrent === undefined ? {} : LlmProviderProfileSchema.parse(rawCurrent)
+    if (settingsNs !== 'llm-pi-ai') {
+      // Other adapters cannot be rebuilt in isolation; a draft that keeps their saved connection tests the live route.
+      const changesConnection =
+        input.apiKey !== undefined ||
+        (input.baseURL !== undefined && input.baseURL !== stringField(current.baseURL)) ||
+        (input.api !== undefined && input.api !== stringField(current.api))
+      if (changesConnection || directoryEntry === undefined) {
+        throw new Error(`当前不支持测试此模型适配器：${settingsNs}`)
+      }
+      await this.#recordedProbe(await this.#savedConnection(input.provider), input.model, undefined, () =>
+        this.#runLlmConnectionProbe(this.#context.llm, input.provider, input.model),
+      )
+      return { provider: input.provider, model: input.model }
+    }
     const profile: Record<string, unknown> = { ...current }
     if (input.baseURL !== undefined) profile['baseURL'] = input.baseURL
     if (input.api !== undefined) profile['api'] = input.api
@@ -812,26 +848,90 @@ export class HostModelSettings {
         : undefined
     const draftApiKey = input.apiKey ?? storedApiKey
     if (input.apiKey !== undefined || storedRef !== undefined) profile['apiKeyEnv'] = DRAFT_LLM_CREDENTIAL_REF
-
-    const draftContext = new Context()
-    try {
-      await draftContext.plugin(DraftLlmCredentialProvider, {
-        ...(draftApiKey === undefined ? {} : { apiKey: draftApiKey }),
-      })
-      await draftContext.plugin(LlmRuntime)
-      await draftContext.plugin(LlmPiAi, {
-        // The saved section was already validated by DSH; this isolated plugin validates the merged draft again.
-        providers: { [input.provider]: profile },
-      })
-      await this.#runLlmConnectionProbe(draftContext.llm, input.provider, input.model)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      if (draftApiKey && message.includes(draftApiKey)) throw new Error('模型供应商连接测试失败。')
-      throw cause
-    } finally {
-      await draftContext.fiber.dispose()
+    const connection: LlmProviderConnection = {
+      provider: input.provider,
+      baseURL: stringField(profile['baseURL']),
+      api: stringField(profile['api']),
+      apiKey: draftApiKey,
     }
+
+    await this.#recordedProbe(connection, input.model, draftApiKey, async () => {
+      const draftContext = new Context()
+      try {
+        await draftContext.plugin(DraftLlmCredentialProvider, {
+          ...(draftApiKey === undefined ? {} : { apiKey: draftApiKey }),
+        })
+        await draftContext.plugin(LlmRuntime)
+        await draftContext.plugin(LlmPiAi, {
+          // The saved section was already validated by DSH; this isolated plugin validates the merged draft again.
+          providers: { [input.provider]: profile },
+        })
+        await this.#runLlmConnectionProbe(draftContext.llm, input.provider, input.model)
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        if (draftApiKey && message.includes(draftApiKey)) throw new Error('模型供应商连接测试失败。')
+        throw cause
+      } finally {
+        await draftContext.fiber.dispose()
+      }
+    })
     return { provider: input.provider, model: input.model }
+  }
+
+  /** The address, protocol and key the saved configuration of a provider uses. */
+  async #savedConnection(provider: string): Promise<LlmProviderConnection | undefined> {
+    if (!this.#hasLlmSettings || !this.#testResults) return undefined
+    const entry = this.#context.llm.listConfigurableProviders().find((candidate) => candidate.provider === provider)
+    if (!entry) return undefined
+    const descriptor = this.#context.settings
+      .describe({ redactSecrets: true })
+      .find((candidate) => candidate.ns === entry.settingsNs)
+    const rawProfile = readObjectPath(descriptor?.value, entry.settingsPath)
+    const profile = rawProfile === undefined ? undefined : LlmProviderProfileSchema.parse(rawProfile)
+    return this.#connectionOf(provider, profile)
+  }
+
+  async #connectionOf(
+    provider: string,
+    profile: z.infer<typeof LlmProviderProfileSchema> | undefined,
+  ): Promise<LlmProviderConnection> {
+    const apiKeyEnv = stringField(profile?.apiKeyEnv)
+    const apiKey =
+      apiKeyEnv === undefined
+        ? undefined
+        : await this.#context.credentials
+            .resolve(credentialRef(apiKeyEnv))
+            .then((resolved) => resolved?.value)
+            .catch(() => undefined)
+    return { provider, baseURL: stringField(profile?.baseURL), api: stringField(profile?.api), apiKey }
+  }
+
+  /** Runs a probe and records its outcome for `connection`; recording never changes the probe's own result. */
+  async #recordedProbe(
+    connection: LlmProviderConnection | undefined,
+    model: string,
+    apiKey: string | undefined,
+    probe: () => Promise<void>,
+  ): Promise<void> {
+    try {
+      await probe()
+    } catch (cause) {
+      this.#recordTest(connection, { ok: false, model, message: llmTestFailureMessage(cause, apiKey) })
+      throw cause
+    }
+    this.#recordTest(connection, { ok: true, model })
+  }
+
+  #recordTest(
+    connection: LlmProviderConnection | undefined,
+    result: { readonly ok: boolean; readonly model: string; readonly message?: string },
+  ): void {
+    if (!connection || !this.#testResults) return
+    try {
+      this.#testResults.record(connection, result)
+    } catch {
+      // A concurrent test of the same provider won the write; its result is at least as recent.
+    }
   }
 
   async #runLlmConnectionProbe(llm: Pick<LlmRuntime, 'stream'>, provider: string, model: string): Promise<void> {

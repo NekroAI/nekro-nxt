@@ -12,6 +12,7 @@ import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
 import { readFile } from 'node:fs/promises'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
+import type { LlmProviderTestResults } from './llm-provider-test-results.js'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-agent-loop'
@@ -347,6 +348,8 @@ export interface AgentCommunicationPort {
 
 export interface DshHostRuntimeOptions {
   readonly providerRemoval?: LlmProviderRemovalCoordinator
+  /** Host-local record of provider connection tests shown beside each provider. */
+  readonly providerTestResults?: LlmProviderTestResults
   readonly sessionDatabasePath: string
   readonly communication: AgentCommunicationPort
   readonly history: ChannelHistoryRepository &
@@ -2367,7 +2370,12 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
-    this.#modelSettings = new HostModelSettings(context, options.llmSettingsPath !== undefined, options.providerRemoval)
+    this.#modelSettings = new HostModelSettings(
+      context,
+      options.llmSettingsPath !== undefined,
+      options.providerRemoval,
+      options.providerTestResults,
+    )
     this.#imageContext = new SessionImageContext(context, this.#sessions, options.history, options.assets)
     this.#authoring = options.authoring
     this.#channelReplyGuard = channelReplyGuard

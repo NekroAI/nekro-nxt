@@ -204,6 +204,69 @@ test.describe('settings space', () => {
     }
   })
 
+  test('shows whether each provider passed its latest connection test', async () => {
+    const minutesAgo = (minutes: number) => Date.now() - minutes * 60_000
+    let tested = false
+    const tests = () => ({
+      ...providers,
+      providers: [
+        { ...provider('example-a', '示例供应商甲', true), lastTest: null },
+        {
+          ...provider('example-b', '示例供应商乙', true),
+          lastTest: { at: minutesAgo(5), ok: true, model: 'example-pro' },
+        },
+        {
+          ...provider('example-c', '示例供应商丙', true),
+          lastTest: tested
+            ? { at: Date.now(), ok: true, model: 'example-pro' }
+            : { at: minutesAgo(12), ok: false, model: 'example-pro', message: '认证失败，请更新 API 密钥。' },
+        },
+        { ...provider('example-d', '示例供应商丁', true), active: false, lastTest: null },
+      ],
+    })
+    let testRequest: unknown
+    const { page, errors } = await open('/settings/models', {
+      before: async (target) => {
+        await target.route('**/api/llm/providers', (request) => request.fulfill({ json: tests() }))
+        await target.route('**/api/llm/test-provider', (request) => {
+          testRequest = request.request().postDataJSON()
+          tested = true
+          return request.fulfill({ json: { provider: 'example-c', model: 'example-flash-vision-preview-long' } })
+        })
+      },
+    })
+    try {
+      const overview = page.getByRole('table', { name: '模型供应商' })
+      // The list shows the result with its time on a second line, like the provider's kind beside its name.
+      await expect(overview.getByRole('row', { name: /示例供应商甲/u })).toContainText('未测试')
+      await expect(overview.getByRole('row', { name: /示例供应商乙/u })).toContainText('测试通过5 分钟前')
+      await expect(overview.getByRole('row', { name: /示例供应商丙/u })).toContainText('测试失败12 分钟前')
+      // Not registered yet: that comes before any test result.
+      await expect(overview.getByRole('row', { name: /示例供应商丁/u })).toContainText('待启用')
+      await expect(overview).not.toContainText('已启用')
+      // The list keeps the reason out of the row; the provider page has it behind a help mark.
+      await expect(overview).not.toContainText('认证失败')
+
+      await overview.getByText('示例供应商丙', { exact: true }).click()
+      const header = page.getByRole('heading', { name: '示例供应商丙' }).locator('xpath=..')
+      await expect(header).toContainText('测试失败 · 12 分钟前')
+      await expect(page.getByText('认证失败，请更新 API 密钥。')).toBeHidden()
+      await page.getByRole('button', { name: '说明：失败原因' }).click()
+      await expect(page.getByText('认证失败，请更新 API 密钥。')).toBeVisible()
+      await page.keyboard.press('Escape')
+
+      // A new test is read back from the Host and replaces the failure.
+      await page.getByRole('button', { name: '测试连接' }).click()
+      await expect(header).toContainText('测试通过 · 刚刚')
+      await expect(page.getByRole('button', { name: '说明：失败原因' })).toHaveCount(0)
+      expect(testRequest).toMatchObject({ provider: 'example-c', settingsNs: 'llm-pi-ai' })
+      expect(JSON.stringify(testRequest)).not.toContain('apiKey')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('returns a narrow window to the opened provider in the list', async () => {
     const many = {
       ...providers,

@@ -238,9 +238,12 @@ function ModelsSection({
       render: (provider) => {
         const status = providerStatus(provider)
         return (
-          <Chip tone={status.tone} dot>
-            {status.label}
-          </Chip>
+          <span className={styles.providerStatus}>
+            <Chip tone={status.tone} dot>
+              {status.label}
+            </Chip>
+            {status.when ? <span className={styles.muted}>{status.when}</span> : null}
+          </span>
         )
       },
     },

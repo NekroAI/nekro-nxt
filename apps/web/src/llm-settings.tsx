@@ -5,6 +5,7 @@ import { ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { providerDisplayName } from './provider-labels.js'
+import { relativeTime } from './app/channels/timeline-model.js'
 import {
   ModelListEditor,
   ModelListView,
@@ -24,6 +25,7 @@ import {
   Disclosure,
   EmptyState,
   Field,
+  InfoTip,
   Input,
   ObjectHeader,
   Pressable,
@@ -69,16 +71,43 @@ const customProviderKey = (displayName: string, providers: readonly ProviderView
 export const providerKind = (provider: ProviderView): string =>
   provider.declared ? '自定义接入' : provider.settingsNs === 'llm-pi-ai' ? '通用接入' : '内置固定接入'
 
+export interface ProviderStatus {
+  readonly label: string
+  readonly tone: Tone
+  /** When the latest connection test ran, as a short relative time. */
+  readonly when?: string
+  /** Why the latest connection test failed; shown behind an info tip. */
+  readonly reason?: string
+}
+
 /**
- * `active` means the Host's model runtime registered the provider, not that a request ever
- * succeeded: connection tests are not recorded, so the label says it is switched on rather than that it works.
+ * One status per provider. A registered provider (`active`) is described by its latest connection test of the saved
+ * configuration, since registration alone says nothing about whether requests work. Hosts that do not record tests
+ * omit `lastTest` and keep the plain "已启用".
  */
-export const providerStatus = (provider: ProviderView): { readonly label: string; readonly tone: Tone } =>
-  provider.active
-    ? { label: '已启用', tone: 'ok' }
-    : provider.configured
-      ? { label: '待启用', tone: 'warn' }
-      : { label: '未配置', tone: 'neutral' }
+export const providerStatus = (provider: ProviderView, now = Date.now()): ProviderStatus => {
+  if (!provider.active) {
+    return provider.configured ? { label: '待启用', tone: 'warn' } : { label: '未配置', tone: 'neutral' }
+  }
+  const test = provider.lastTest
+  if (test === undefined) return { label: '已启用', tone: 'ok' }
+  if (test === null) return { label: '未测试', tone: 'neutral' }
+  const when = relativeTime(test.at, now)
+  return test.ok
+    ? { label: '测试通过', tone: 'ok', when }
+    : { label: '测试失败', tone: 'bad', when, reason: test.message || '供应商没有说明原因。' }
+}
+
+/** The provider page's status: result, when it ran and, after a failure, the reason one tap away. */
+export function ProviderStatusChip({ provider }: { readonly provider: ProviderView }) {
+  const status = providerStatus(provider)
+  return (
+    <span className={styles.status}>
+      <Chip tone={status.tone}>{status.when ? `${status.label} · ${status.when}` : status.label}</Chip>
+      {status.reason ? <InfoTip label="失败原因">{status.reason}</InfoTip> : null}
+    </span>
+  )
+}
 
 /** The shared provider catalog query; the first caller loads it. */
 export function useLlmProviders() {
@@ -348,6 +377,11 @@ export function ModelProviderDetail({
     } finally {
       setPending(null)
     }
+    // The Host recorded the result; read it back so the status shows it when it matches the saved configuration.
+    void store
+      .getState()
+      .loadLlmProviders(true)
+      .catch(() => undefined)
   }
 
   const displayNameError = submitted && customEditor && !displayName.trim() ? '请输入供应商名称。' : undefined
@@ -360,7 +394,6 @@ export function ModelProviderDetail({
     (!customEditor || Boolean(displayName.trim() && baseURL.trim() && api))
   const canTest =
     Boolean(providerId && testModel) && modelsError === undefined && (!customEditor || Boolean(baseURL.trim() && api))
-  const status = selected ? providerStatus(selected) : undefined
   const title = selected ? providerDisplayName(selected.provider, selected.displayName) : '自定义供应商'
 
   return (
@@ -369,7 +402,7 @@ export function ModelProviderDetail({
         level={2}
         size="compact"
         title={title}
-        status={status ? <Chip tone={status.tone}>{status.label}</Chip> : <Chip>新建</Chip>}
+        status={selected ? <ProviderStatusChip provider={selected} /> : <Chip>新建</Chip>}
         meta={
           selected ? (
             <>
