@@ -401,6 +401,8 @@ test.describe('workshop', () => {
       const body: unknown = route.request().postDataJSON()
       approvedDigest =
         typeof body === 'object' && body !== null && 'permissionApproval' in body ? body.permissionApproval : undefined
+      // 启用需要一点时间：开关应先切到目标位置并显示进行中。
+      await new Promise((resolve) => setTimeout(resolve, 600))
       await route.fulfill({
         json: {
           activation: {
@@ -415,10 +417,12 @@ test.describe('workshop', () => {
     })
     try {
       await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
-      await page
-        .getByRole('switch', { name: /使用「群聊摘要」/u })
-        .first()
-        .click()
+      const usage = page.getByRole('switch', { name: /使用「群聊摘要」/u }).first()
+      await usage.click()
+      // 等待批准与启用期间，开关停在目标位置并显示进行中，不能再点（对话框打开时背后的页面不在无障碍树中，按属性定位）。
+      const behindDialog = page.locator('[role="switch"][aria-label*="使用「群聊摘要」"]').first()
+      await expect(behindDialog).toHaveAttribute('aria-busy', 'true')
+      await expect(behindDialog).toHaveAttribute('data-state', 'checked')
       const dialog = page.getByRole('dialog')
       await expect(dialog.getByText('为这个智能体保存数据')).toBeVisible()
       await expect(dialog.getByText('读取当前频道的聊天记录')).toBeVisible()
@@ -432,6 +436,7 @@ test.describe('workshop', () => {
       await page.screenshot({ path: '.local/browser-test-results/capability-approval.png' })
       await confirm.click()
       await expect(dialog).toBeHidden()
+      await expect(usage).not.toHaveAttribute('aria-busy', 'true')
       expect(approvedDigest).toEqual({ permissionDigest: digest })
     } finally {
       await page.close()

@@ -242,6 +242,49 @@
   transform: translateX(15px);
 }
 
+/* 进行中：不可再点，但不像禁用那样变淡；稍等片刻后在旋钮里显示旋转指示，快速完成的切换不会闪烁。 */
+.switch[data-pending],
+.switch[data-pending]:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+.thumb::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.switch[data-pending] .thumb::after {
+  animation:
+    switchSpinIn var(--dur-2) var(--ease) 180ms forwards,
+    switchSpin 720ms linear infinite;
+}
+
+@keyframes switchSpinIn {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes switchSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch[data-pending] .thumb::after {
+    animation: switchSpinIn var(--dur-2) var(--ease) 180ms forwards;
+    border-top-color: var(--accent);
+    opacity: 0.6;
+  }
+}
+
 .switchRow {
   display: flex;
   align-items: center;

@@ -504,7 +504,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
               <Switch
                 label={`为${agent.name}启用${extension.name}`}
                 checked={extension.activations.some((item) => item.agentId === agent.id)}
-                onCheckedChange={(checked) => void toggle(extension.id, checked, extension.revisions[0]?.id)}
+                onCheckedChange={(checked) => toggle(extension.id, checked, extension.revisions[0]?.id)}
               />
             </PropertyRow>
           ))}

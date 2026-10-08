@@ -18,6 +18,7 @@ export {
   Textarea,
   Select,
   Switch,
+  type SwitchChange,
   SwitchRow,
   SecretInput,
   FileChooser,

@@ -216,7 +216,7 @@ export function ChannelInspector({
               <Switch
                 label="处理中反馈"
                 checked={binding.processingFeedback === 'auto'}
-                onCheckedChange={(checked) => void updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
+                onCheckedChange={(checked) => updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
               />
             </PropertyRow>
           ) : null}

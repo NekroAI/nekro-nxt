@@ -402,7 +402,7 @@ function AgentUsage({
             label={`${agent.name}使用「${extension.name}」`}
             checked={enabled}
             disabled={pending !== '' || (!enabled && !latestUsable)}
-            onCheckedChange={(next) => void change(agent.id, next, next ? latestUsable?.id : undefined)}
+            onCheckedChange={(next) => change(agent.id, next, next ? latestUsable?.id : undefined)}
           />
         )
       },

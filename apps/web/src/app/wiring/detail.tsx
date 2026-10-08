@@ -251,7 +251,7 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
                 <Switch
                   label={activity.displayName}
                   checked={connection.activityTriggerDefaults.includes(activity.key)}
-                  onCheckedChange={(checked) => void setActivity(activity.key, checked)}
+                  onCheckedChange={(checked) => setActivity(activity.key, checked)}
                 />
               </PropertyRow>
             ))}

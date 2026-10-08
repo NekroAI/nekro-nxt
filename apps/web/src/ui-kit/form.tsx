@@ -6,6 +6,7 @@ import {
   forwardRef,
   isValidElement,
   useId,
+  useState,
   type InputHTMLAttributes,
   type ReactElement,
   type ReactNode,
@@ -189,27 +190,53 @@ export const Select = forwardRef<
   )
 })
 
+/** A change handler may return a Promise; the switch then shows the outcome while the work runs. */
+export type SwitchChange = (checked: boolean) => void | Promise<unknown>
+
+/**
+ * On/off control. When `onCheckedChange` returns a Promise, the switch moves to the new position at once, shows a
+ * spinner in its knob (after a short pause, so fast changes do not flicker) and ignores further clicks until the
+ * Promise settles; it then follows `checked` again, which returns it to the old position if the change did not
+ * happen. `pending` shows the same busy state for work the caller tracks itself.
+ */
 export function Switch({
   checked,
   onCheckedChange,
   label,
   disabled,
+  pending = false,
   id,
 }: {
   readonly checked: boolean
-  readonly onCheckedChange: (checked: boolean) => void
+  readonly onCheckedChange: SwitchChange
   readonly label: string
   readonly disabled?: boolean | undefined
+  readonly pending?: boolean | undefined
   readonly id?: string | undefined
 }) {
+  const [target, setTarget] = useState<boolean | undefined>(undefined)
+  const busy = pending || target !== undefined
+  const change = (next: boolean) => {
+    if (busy) return
+    const result = onCheckedChange(next)
+    if (result && typeof result.then === 'function') {
+      setTarget(next)
+      void result.then(
+        () => setTarget(undefined),
+        () => setTarget(undefined),
+      )
+    }
+  }
   return (
     <RadixSwitch.Root
       id={id}
       className={styles.switch}
-      checked={checked}
-      onCheckedChange={onCheckedChange}
+      checked={target ?? checked}
+      onCheckedChange={change}
       disabled={disabled}
       aria-label={label}
+      aria-busy={busy || undefined}
+      data-pending={busy || undefined}
     >
       <RadixSwitch.Thumb className={styles.thumb} />
     </RadixSwitch.Root>
@@ -224,6 +251,7 @@ export function SwitchRow({
   checked,
   onCheckedChange,
   disabled,
+  pending,
   trailing,
 }: {
   readonly title: ReactNode
@@ -231,8 +259,9 @@ export function SwitchRow({
   /** Background the user needs once, behind the help mark beside the title. */
   readonly tip?: ReactNode
   readonly checked: boolean
-  readonly onCheckedChange: (checked: boolean) => void
+  readonly onCheckedChange: SwitchChange
   readonly disabled?: boolean | undefined
+  readonly pending?: boolean | undefined
   readonly trailing?: ReactNode
 }) {
   const id = useId()
@@ -253,6 +282,7 @@ export function SwitchRow({
         checked={checked}
         onCheckedChange={onCheckedChange}
         disabled={disabled}
+        pending={pending}
         label={typeof title === 'string' ? title : '开关'}
       />
     </div>
