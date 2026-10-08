@@ -10,7 +10,7 @@ Channel Event Log 与 DSH Session 是不同事实层。一个 `(channelId, agent
 - Adapter 事件按 `dedupeKey` 入库。每条 `(channelId, agentId)` lane 串行处理 Trigger、Admission 和 rollover；一个智能体可以同时拥有多条 lane；
 - 空闲时 followup，运行中普通消息 `inject()`，在下一安全 Step 投影尚未准入的有序事件；
 - 上下文压力使用 DSH 原 Session 压缩，不因此切换 Session；
-- 只有人工新建、默认 6 小时空闲、不兼容 Revision/Activation 或不可恢复时，才在安全间隙交接 Episode；
+- 只有人工新建、默认 6 小时空闲、不兼容 Revision 或不可恢复时，才在安全间隙交接 Episode；扩展的启用、换版本、改配置和停用在安全间隙直接装卸现有 Session 的 Tool，不交接 Episode（见[本地扩展持久化](2026-08-15-本地扩展持久化.md#activation)）；
 - 历史检索按频道分页读取 `search_text`，做字面子串匹配后再精确回读；
 - 通信工具先写 Outbound Intent，再产生 PhysicalDelivery 与回执；`unknown` 不自动重试。
 

@@ -225,6 +225,21 @@ const AgentModelSchema = z
   })
   .strict()
 
+/**
+ * An enable or disable request of one agent extension that has not settled: `waiting` until the agent reaches a safe
+ * gap (its current reply ends), or `failed` with the reason until the next request replaces it.
+ */
+export const ExtensionActivationTransitionSchema = z
+  .object({
+    agentId: AgentIdSchema,
+    target: z.enum(['enabled', 'disabled']),
+    extensionRevisionId: ExtensionRevisionIdSchema.optional(),
+    state: z.enum(['waiting', 'failed']),
+    message: z.string().optional(),
+    since: z.number().int().safe().nonnegative(),
+  })
+  .strict()
+
 export const ImageUnderstandingPolicyApiSchema = z
   .object({
     history: z
@@ -1269,6 +1284,8 @@ export const HostSnapshotSchema = z
               })
               .strict(),
           ),
+          /** Present only while some agent's enable or disable request is waiting or has failed. */
+          activationTransitions: z.array(ExtensionActivationTransitionSchema).optional(),
           installation: z
             .object({
               extensionRevisionId: ExtensionRevisionIdSchema,
@@ -3300,6 +3317,10 @@ export const HostApiContracts = {
           .optional(),
       })
       .strict(),
+    /**
+     * The committed Activation, or — while the agent is still replying — `pending` with the accepted request; it then
+     * takes effect at the agent's next safe gap and its progress appears in the snapshot's `activationTransitions`.
+     */
     response: z
       .object({
         activation: z
@@ -3311,9 +3332,12 @@ export const HostApiContracts = {
             configuredSecrets: z.array(z.string()).optional(),
             activatedAt: z.number().int().safe().nonnegative(),
           })
-          .strict(),
+          .strict()
+          .optional(),
+        pending: ExtensionActivationTransitionSchema.optional(),
       })
-      .strict(),
+      .strict()
+      .refine((value) => (value.activation === undefined) !== (value.pending === undefined), '启用结果必须二选一。'),
     error: HostApiErrorSchema,
   }),
   deactivateExtension: defineContract({
@@ -3322,7 +3346,8 @@ export const HostApiContracts = {
     path: '/api/agents/:agentId/extensions/:extensionId/activation',
     params: agentExtensionParam,
     request: NoRequestBodySchema,
-    response: z.object({ disabled: z.literal(true) }).strict(),
+    /** `pending` is present when the agent is still replying; the Activation is removed at its next safe gap. */
+    response: z.object({ disabled: z.literal(true), pending: ExtensionActivationTransitionSchema.optional() }).strict(),
     error: HostApiErrorSchema,
   }),
   updateExtensionActivationConfig: defineContract({

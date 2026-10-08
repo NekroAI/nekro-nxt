@@ -6,6 +6,7 @@ import {
   HostApiContracts,
   type AgentId,
   type ChannelId,
+  type ExtensionId,
 } from '@nekro-nxt/contracts'
 import type { AgentRevisionContent } from '@nekro-nxt/core'
 import { readFile } from 'node:fs/promises'
@@ -22,6 +23,61 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
+/**
+ * How long an enable or disable request waits for its result. Switching waits for the agent's safe gap, which lasts
+ * as long as its current reply; past this window the request answers `pending` and finishes in the background.
+ */
+export const ACTIVATION_RESPONSE_GRACE_MS = 800
+
+/**
+ * Resolves with the operation's result when it settles within `graceMs` (a failure in that window rejects), otherwise
+ * with `settled: false` and the still-running operation.
+ */
+const settleWithin = async <T>(
+  operation: Promise<T>,
+  graceMs: number,
+): Promise<
+  { readonly settled: true; readonly value: T } | { readonly settled: false; readonly result: Promise<T> }
+> => {
+  // Marks a late failure as handled; the caller still observes it through `result`.
+  operation.catch(() => undefined)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<{ readonly settled: false; readonly result: Promise<T> }>((resolve) => {
+    timer = setTimeout(() => resolve({ settled: false, result: operation }), graceMs)
+  })
+  try {
+    return await Promise.race([operation.then((value) => ({ settled: true as const, value })), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * The request still waiting for the agent's safe gap, or `undefined` when it has just settled. A pending request
+ * refreshes every view once it finishes; its failure stays in the snapshot with the reason.
+ */
+const waitingTransition = (
+  runtime: HostRouteContext['runtime'],
+  agentId: AgentId,
+  extensionId: ExtensionId,
+  result: Promise<unknown>,
+  settledLater: () => void,
+) => {
+  const transition = runtime.activation.getTransition(agentId, extensionId)
+  if (transition?.state !== 'waiting') return undefined
+  result.then(settledLater, (error: unknown) => {
+    console.warn('[nekro-nxt] 扩展启用状态切换失败：', error instanceof Error ? error.message : String(error))
+    settledLater()
+  })
+  return {
+    agentId: transition.agentId,
+    target: transition.target,
+    ...(transition.extensionRevisionId === undefined ? {} : { extensionRevisionId: transition.extensionRevisionId }),
+    state: transition.state,
+    since: transition.since,
+  }
+}
+
 export function registerWorkspaceRoutes({
   runtime,
   readCursor,
@@ -91,12 +147,24 @@ export function registerWorkspaceRoutes({
         return
       }
       try {
-        const activation = await runtime.activation.activate({
-          agentId: params.agentId,
-          extensionId: params.extensionId,
-          revisionId: parsed.revisionId,
-          ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
-        })
+        const outcome = await settleWithin(
+          runtime.activation.activate({
+            agentId: params.agentId,
+            extensionId: params.extensionId,
+            revisionId: parsed.revisionId,
+            ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
+          }),
+          ACTIVATION_RESPONSE_GRACE_MS,
+        )
+        const pending = outcome.settled
+          ? undefined
+          : waitingTransition(runtime, params.agentId, params.extensionId, outcome.result, broadcastExtensionsChanged)
+        if (pending !== undefined) {
+          writeJson(res, 200, HostApiContracts.activateExtension.parseResponse({ pending }))
+          broadcastExtensionsChanged()
+          return
+        }
+        const activation = outcome.settled ? outcome.value : await outcome.result
         writeJson(
           res,
           200,
@@ -109,6 +177,8 @@ export function registerWorkspaceRoutes({
         )
         broadcastExtensionsChanged()
       } catch (error) {
+        // The failed request stays in the snapshot with its reason; refresh so every view shows it.
+        broadcastExtensionsChanged()
         writeError(res, 400, 'activation-failed', error instanceof Error ? error.message : String(error))
       }
       return
@@ -120,10 +190,25 @@ export function registerWorkspaceRoutes({
           return
         }
         HostApiContracts.deactivateExtension.parseRequest(undefined)
-        await runtime.disableAgentExtension(params.agentId, params.extensionId)
-        writeJson(res, 200, HostApiContracts.deactivateExtension.parseResponse({ disabled: true }))
+        const outcome = await settleWithin(
+          runtime.disableAgentExtension(params.agentId, params.extensionId),
+          ACTIVATION_RESPONSE_GRACE_MS,
+        )
+        const pending = outcome.settled
+          ? undefined
+          : waitingTransition(runtime, params.agentId, params.extensionId, outcome.result, broadcastExtensionsChanged)
+        if (!outcome.settled && pending === undefined) await outcome.result
+        writeJson(
+          res,
+          200,
+          HostApiContracts.deactivateExtension.parseResponse({
+            disabled: true,
+            ...(pending === undefined ? {} : { pending }),
+          }),
+        )
         broadcastExtensionsChanged()
       } catch (error) {
+        broadcastExtensionsChanged()
         writeError(res, 400, 'disable-failed', error instanceof Error ? error.message : String(error))
       }
       return

@@ -1319,8 +1319,8 @@ export class ChannelRuntime {
     })
   }
 
-  async rolloverAgentActivations(agentId: AgentId): Promise<readonly EpisodeRecord[]> {
-    const episodeIds = this.#runtimeRepository.listActiveEpisodesForAgent(agentId).map(({ id }) => id)
+  /** Hands the given Episodes off to new Sessions because an Extension switch cannot apply inside them. */
+  async rolloverEpisodesForActivation(episodeIds: readonly EpisodeId[]): Promise<readonly EpisodeRecord[]> {
     return Promise.all(
       episodeIds.map((episodeId) => this.#rolloverEpisodeWithReason(episodeId, 'incompatible-activation')),
     )

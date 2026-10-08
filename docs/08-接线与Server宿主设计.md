@@ -47,8 +47,8 @@
 | 创建绑定 | `POST /api/bindings` | 智能体可多频道；一频道一个当前智能体；已绑定时为换绑 |
 | 解除绑定 | `DELETE /api/bindings/:channelId` | 若该频道有活动工作则先 `stopEpisode`，再删除 Binding |
 | 工作树顺序 | `PUT /api/work-tree-order` | 智能体 / 频道展示序，未知 id 丢弃，新对象追加 |
-| 启用扩展 | `POST /api/agents/:agentId/extensions/:extensionId/activation` | AgentActivation |
-| 停用扩展 | `DELETE /api/agents/:agentId/extensions/:extensionId/activation` | 去掉该智能体的启用关系 |
+| 启用扩展 | `POST /api/agents/:agentId/extensions/:extensionId/activation` | AgentActivation；智能体正在回复时返回 `pending`，回复结束后生效 |
+| 停用扩展 | `DELETE /api/agents/:agentId/extensions/:extensionId/activation` | 去掉该智能体的启用关系；正在回复时同样返回 `pending` |
 | 修改能力 | `POST /api/agents/:id/capabilities` | 六字段授权 |
 | 修改配置 | `POST /api/agents/:id/revision` | 名称、人设、模型；带 expectedCurrentRevisionId |
 | 查询平台用户 | `GET /api/platform-users` | 名称、Adapter、平台连接筛选与游标分页；不返回平台原始用户 ID |

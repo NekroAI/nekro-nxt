@@ -38,7 +38,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   ASSET_READ_TEXT_HARD_MAX_BYTES,
@@ -1259,7 +1259,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
     }
   })
 
-  it('switches a persisted Activation through Episode handoff before mounting its Tool', async () => {
+  it('switches a persisted Activation inside the live Session without an Episode handoff', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-activation-'))
     temporaryDirectories.push(directory)
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -1322,7 +1322,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       const saved = await service.saveDynamicPackage({
         snapshot: {
           name: '安全启用探针',
-          purpose: '验证 Activation 先交接 Session。',
+          purpose: '验证 Activation 在现有 Session 中生效。',
           hostCode: `return {
           inject: ['tools'],
           apply(ctx) {
@@ -1349,18 +1349,36 @@ describe('DSH Host and internal Channel vertical slice', () => {
         new ChannelExtensionActivationHost(runtime, host),
         { now: () => 600 },
       )
+      const handoffs = vi.spyOn(host, 'createHandoffSummary')
       await coordinator.activate({
         agentId: agent.definition.id,
         extensionId: saved.extension.id,
         revisionId: saved.revision.id,
       })
-      expect(repository.getEpisode(before.id)).toMatchObject({
-        status: 'closed',
-        closeReason: 'incompatible-activation',
+      // Enabling neither closes the Episode nor asks the model for a handoff summary.
+      expect(handoffs).not.toHaveBeenCalled()
+      expect(repository.getActiveEpisode(channel.id, agent.definition.id)).toMatchObject({
+        id: before.id,
+        status: 'active',
+        dshSessionId: before.dshSessionId,
       })
-      const after = repository.getActiveEpisode(channel.id, agent.definition.id)!
-      expect(after.dshSessionId).not.toBe(before.dshSessionId)
-      expect(host.toolNames(after.dshSessionId!)).toContain('activation_probe')
+      expect(host.toolNames(before.dshSessionId!)).toContain('activation_probe')
+
+      // The next model request of the same Session already offers the Tool.
+      const callsBefore = model.calls.length
+      await web.postMessage({
+        channelId: channel.id,
+        clientEventId: 'activation-after',
+        parts: [{ type: 'text', text: '启用后的下一条消息。' }],
+      })
+      await host.whenIdle(before.dshSessionId!)
+      expect(model.calls.length).toBeGreaterThan(callsBefore)
+      expect(model.calls.at(-1)?.tools?.map(({ name }) => name)).toContain('activation_probe')
+
+      await coordinator.disable(agent.definition.id, saved.extension.id)
+      expect(handoffs).not.toHaveBeenCalled()
+      expect(repository.getActiveEpisode(channel.id, agent.definition.id)?.id).toBe(before.id)
+      expect(host.toolNames(before.dshSessionId!)).not.toContain('activation_probe')
     } finally {
       await coordinator?.dispose()
       await web.stop()

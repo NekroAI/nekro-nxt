@@ -12,6 +12,7 @@ import {
 import type { ExtensionService } from './service.js'
 import type {
   Activation,
+  ExtensionActivationTransition,
   ExtensionBuildArtifact,
   ExtensionRepository,
   ExtensionRuntimeDiagnostic,
@@ -56,6 +57,7 @@ export class ExtensionActivationCoordinator {
   readonly #mounted = new Map<string, MountedExtension>()
   readonly #diagnostics = new Map<string, ExtensionRuntimeDiagnostic>()
   readonly #transitions = new Map<string, Promise<void>>()
+  readonly #requests = new Map<string, ExtensionActivationTransition>()
   #disposed = false
   #disposePromise: Promise<void> | undefined
 
@@ -100,6 +102,16 @@ export class ExtensionActivationCoordinator {
     readonly permissionApproval?: { readonly permissionDigest: string }
   }): Promise<Activation> {
     const key = this.#key(input.agentId, input.extensionId)
+    const request = {
+      agentId: input.agentId,
+      extensionId: input.extensionId,
+      target: 'enabled',
+      extensionRevisionId: input.revisionId,
+    } as const
+    return this.#tracked(key, request, () => this.#activate(key, input))
+  }
+
+  async #activate(key: string, input: Parameters<ExtensionActivationCoordinator['activate']>[0]): Promise<Activation> {
     return this.#exclusive(key, async () => {
       this.#assertAvailable()
       const revision = this.#repository.getExtensionRevision(input.revisionId)
@@ -276,6 +288,12 @@ export class ExtensionActivationCoordinator {
 
   async disable(agentId: AgentId, extensionId: ExtensionId): Promise<void> {
     const key = this.#key(agentId, extensionId)
+    await this.#tracked(key, { agentId, extensionId, target: 'disabled' }, () =>
+      this.#disable(key, agentId, extensionId),
+    )
+  }
+
+  async #disable(key: string, agentId: AgentId, extensionId: ExtensionId): Promise<void> {
     await this.#exclusive(key, async () => {
       this.#assertAvailable()
       const activation = this.#repository.getActivation(agentId, extensionId)
@@ -309,6 +327,43 @@ export class ExtensionActivationCoordinator {
 
   getDiagnostic(agentId: AgentId, extensionId: ExtensionId): ExtensionRuntimeDiagnostic | undefined {
     return this.#diagnostics.get(this.#key(agentId, extensionId))
+  }
+
+  /** Enable or disable requests of this Extension that are still waiting for a safe gap or failed last time. */
+  listTransitions(extensionId: ExtensionId): readonly ExtensionActivationTransition[] {
+    return [...this.#requests.values()].filter((request) => request.extensionId === extensionId)
+  }
+
+  getTransition(agentId: AgentId, extensionId: ExtensionId): ExtensionActivationTransition | undefined {
+    return this.#requests.get(this.#key(agentId, extensionId))
+  }
+
+  /**
+   * Publishes a request as waiting until it settles. Success leaves only the committed Activation; failure stays
+   * visible with its reason until the next request for the same agent extension replaces it.
+   */
+  async #tracked<T>(
+    key: string,
+    request: Pick<ExtensionActivationTransition, 'agentId' | 'extensionId' | 'target' | 'extensionRevisionId'>,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const waiting: ExtensionActivationTransition = { ...request, state: 'waiting', since: this.#timestamp() }
+    this.#requests.set(key, waiting)
+    try {
+      const result = await operation()
+      if (this.#requests.get(key) === waiting) this.#requests.delete(key)
+      return result
+    } catch (error) {
+      if (this.#requests.get(key) === waiting) {
+        this.#requests.set(key, {
+          ...request,
+          state: 'failed',
+          message: error instanceof Error ? error.message : String(error),
+          since: this.#timestamp(),
+        })
+      }
+      throw error
+    }
   }
 
   async dispose(): Promise<void> {

@@ -322,6 +322,13 @@ export interface LocalExtensionSummary {
       readonly observedAt: number
     }
   }[]
+  /** Enable or disable requests still waiting for the agent's current reply to end, or failed with their reason. */
+  readonly activationTransitions?: readonly {
+    readonly agentId: string
+    readonly target: 'enabled' | 'disabled'
+    readonly state: 'waiting' | 'failed'
+    readonly message?: string
+  }[]
   readonly contributions: readonly string[]
   readonly verification?: {
     readonly verifiedAt: number

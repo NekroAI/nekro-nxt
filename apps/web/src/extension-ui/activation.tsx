@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { useProductRuntime, type LocalExtensionSummary } from '../product-runtime.js'
+import { useProductRuntime, type LocalExtensionSummary, type ProductState } from '../product-runtime.js'
 import { ConfirmDialog, SwitchRow } from '../ui-kit/index.js'
 import { highRiskCapabilities, permissionLines } from './permissions.js'
 import styles from './activation.module.css'
@@ -12,6 +12,38 @@ interface PendingApproval {
   readonly digest: string
   readonly resolve: (approved: boolean) => void
 }
+
+interface ActivationRequest {
+  readonly extensionId: string
+  readonly agentId: string
+  readonly enabled: boolean
+  readonly revisionId?: string
+}
+
+type ActivationTransition = NonNullable<LocalExtensionSummary['activationTransitions']>[number]
+
+const transitionOf = (state: ProductState, input: ActivationRequest): ActivationTransition | undefined =>
+  state.extensions
+    .find((extension) => extension.id === input.extensionId)
+    ?.activationTransitions?.find((transition) => transition.agentId === input.agentId)
+
+/**
+ * Whether the store already shows the outcome of a request: the Activation in its new state, or a fresh waiting or
+ * failed transition for it. A request returns before the snapshot refresh it triggers, so the switch would otherwise
+ * jump back for a moment.
+ */
+const reflects = (state: ProductState, input: ActivationRequest, before: ActivationTransition | undefined): boolean => {
+  const extension = state.extensions.find((candidate) => candidate.id === input.extensionId)
+  if (extension === undefined) return true
+  const transition = transitionOf(state, input)
+  if (transition !== undefined && transition !== before) return true
+  const record = extension.activations.find((activation) => activation.agentId === input.agentId)
+  return input.enabled
+    ? record !== undefined && (input.revisionId === undefined || record.revisionId === input.revisionId)
+    : record === undefined
+}
+
+const REFLECT_TIMEOUT_MS = 5_000
 
 /**
  * Enabling an agent extension with the permission approval its Revision requires. Disabling and Revisions without
@@ -31,6 +63,27 @@ export function useExtensionActivation(): {
   const [pending, setPending] = useState<PendingApproval>()
   const [acceptedRisks, setAcceptedRisks] = useState<ReadonlySet<string>>(new Set())
 
+  /** Sends the request and resolves once the store shows its outcome (or after a bounded wait). */
+  const apply = async (input: ActivationRequest, permissionDigest?: string): Promise<void> => {
+    const store = product.store
+    const before = transitionOf(store.getState(), input)
+    await store
+      .getState()
+      .setExtensionActive(input.extensionId, input.agentId, input.enabled, input.revisionId, permissionDigest)
+    if (reflects(store.getState(), input, before)) return
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        clearTimeout(timer)
+        unsubscribe()
+        resolve()
+      }
+      const timer = setTimeout(finish, REFLECT_TIMEOUT_MS)
+      const unsubscribe = store.subscribe((state) => {
+        if (reflects(state, input, before)) finish()
+      })
+    })
+  }
+
   const setActive = async (input: {
     readonly extensionId: string
     readonly agentId: string
@@ -43,7 +96,7 @@ export function useExtensionActivation(): {
     const revision = extension?.revisions.find((candidate) => candidate.id === revisionId)
     const verification = revision?.verification
     if (!input.enabled || !extension || !revision || !verification?.permissionApprovalRequired) {
-      await state.setExtensionActive(input.extensionId, input.agentId, input.enabled, revisionId)
+      await apply({ ...input, ...(revisionId === undefined ? {} : { revisionId }) })
       return true
     }
     const digest = verification.permissionDigest
@@ -75,9 +128,15 @@ export function useExtensionActivation(): {
       confirmLabel="允许并启用"
       confirmDisabled={risks.some((risk) => !acceptedRisks.has(risk.key))}
       onConfirm={async () => {
-        await product.store
-          .getState()
-          .setExtensionActive(pending.extension.id, pending.agentId, true, pending.revision.id, pending.digest)
+        await apply(
+          {
+            extensionId: pending.extension.id,
+            agentId: pending.agentId,
+            enabled: true,
+            revisionId: pending.revision.id,
+          },
+          pending.digest,
+        )
         pending.resolve(true)
         setPending(undefined)
       }}

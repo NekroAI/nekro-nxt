@@ -2851,14 +2851,16 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         })
         return () => this.#sessions.remove(sessionId, record)
       }, 'nekro-nxt: product Agent ownership')
-      const compiledPersona = compilePersonaDocument({
-        document: revision.personaDocument,
-        plainText: revision.persona,
-        repository: this.#history,
-        channel: channelContext,
-        agentId: revision.agentId,
-        resolveAdapterDisplayName: this.#resolveAdapterDisplayName,
-      })
+      const compilePersona = () =>
+        compilePersonaDocument({
+          document: revision.personaDocument,
+          plainText: revision.persona,
+          repository: this.#history,
+          channel: channelContext,
+          agentId: revision.agentId,
+          resolveAdapterDisplayName: this.#resolveAdapterDisplayName,
+        })
+      const compiledPersona = compilePersona()
       if (compiledPersona.usesReferences) {
         agentContext.systemPrompt.section({
           name: 'nekro-nxt:persona-reference-protocol',
@@ -2869,7 +2871,8 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       agentContext.systemPrompt.section({
         name: PERSONA_PREFIX_SECTION,
         order: agentContext.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_PREFIX'),
-        text: compiledPersona.text,
+        // Referenced extensions report whether they are enabled; that changes without a Session handoff.
+        text: compiledPersona.usesReferences ? () => compilePersona().text : compiledPersona.text,
       })
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:channel-context',
@@ -3813,6 +3816,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return this.#dynamic.waitUntilSafe(agentId)
   }
 
+  episodesRunningDynamicCandidates(agentId: AgentRevisionRecord['agentId']): readonly EpisodeId[] {
+    return this.#dynamic.episodesRunningDynamicCandidates(agentId)
+  }
+
   mount(
     agentId: AgentRevisionRecord['agentId'],
     revision: Revision,
@@ -3869,7 +3876,13 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
   }
 }
 
-/** Composes Extension switching with Channel Episode handoff instead of hot-replacing a live Session. */
+/**
+ * Switches agent Extensions inside the agent's live Sessions at their safe gap. DSH assembles the tool list for every
+ * model request, so mounted or disposed Tool Fibers take effect at the next step without an Episode handoff, and the
+ * conversation keeps its context. The exception is a Session still running a dynamic candidate, typically the one in
+ * which the extension was just created and saved: its Tools can collide with the saved Revision, so when mounting
+ * fails and such Sessions exist they are handed off to new Episodes first and the mount is retried once.
+ */
 export class ChannelExtensionActivationHost implements ExtensionActivationHost {
   readonly #channels: ChannelRuntime
   readonly #dsh: DshHostRuntime
@@ -3879,18 +3892,24 @@ export class ChannelExtensionActivationHost implements ExtensionActivationHost {
     this.#dsh = dsh
   }
 
-  async waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
-    await this.#dsh.waitUntilSafe(agentId)
-    await this.#channels.rolloverAgentActivations(agentId)
+  waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
+    return this.#dsh.waitUntilSafe(agentId)
   }
 
-  mount(
+  async mount(
     agentId: AgentRevisionRecord['agentId'],
     revision: Revision,
     artifact: ExtensionBuildArtifact,
     config: JsonValue,
   ): Promise<MountedExtension> {
-    return this.#dsh.mount(agentId, revision, artifact, config)
+    try {
+      return await this.#dsh.mount(agentId, revision, artifact, config)
+    } catch (error) {
+      const episodes = this.#dsh.episodesRunningDynamicCandidates(agentId)
+      if (episodes.length === 0) throw error
+      await this.#channels.rolloverEpisodesForActivation(episodes)
+      return this.#dsh.mount(agentId, revision, artifact, config)
+    }
   }
 }
 
