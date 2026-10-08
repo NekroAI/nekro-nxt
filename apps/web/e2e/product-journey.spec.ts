@@ -1401,7 +1401,7 @@ test('external channel exposes processing feedback and per-event trigger control
   await expect(connectionDefault).toBeChecked()
   await connectionDefault.click()
   await expect(connectionDefault).not.toBeChecked()
-  expect(defaultRequests).toEqual([{ activityKeys: [] }])
+  await expect.poll(() => defaultRequests).toEqual([{ activityKeys: [] }])
 
   await detail.getByRole('button', { name: '删除连接' }).click()
   const deleteDialog = page.getByRole('dialog', { name: '删除「测试协议端」？' })
