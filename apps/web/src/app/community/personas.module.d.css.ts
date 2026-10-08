@@ -16,7 +16,6 @@ declare const styles: {
   readonly grid: string
   readonly installs: string
   readonly lead: string
-  readonly markdown: string
   readonly metaWithTip: string
   readonly mineBody: string
   readonly mineItem: string

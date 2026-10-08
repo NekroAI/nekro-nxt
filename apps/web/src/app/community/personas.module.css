@@ -177,65 +177,6 @@
   gap: var(--s-1);
 }
 
-.markdown {
-  min-width: 0;
-  color: var(--fg-2);
-  font: var(--t-body);
-  overflow-wrap: anywhere;
-}
-
-.markdown > :first-child {
-  margin-top: 0;
-}
-
-.markdown > :last-child {
-  margin-bottom: 0;
-}
-
-.markdown p,
-.markdown ul,
-.markdown ol,
-.markdown blockquote,
-.markdown pre,
-.markdown table {
-  margin: 0 0 var(--s-2);
-}
-
-.markdown h1,
-.markdown h2,
-.markdown h3,
-.markdown h4 {
-  margin: var(--s-3) 0 var(--s-2);
-  color: var(--fg);
-  font: var(--t-title);
-}
-
-.markdown ul,
-.markdown ol {
-  padding-left: var(--s-5);
-}
-
-.markdown blockquote {
-  padding-left: var(--s-2);
-  border-left: 2px solid var(--line-3);
-}
-
-.markdown pre {
-  overflow-x: auto;
-  padding: var(--s-2) var(--s-3);
-  border-radius: var(--r-1);
-  background: var(--inset);
-}
-
-.markdown code {
-  font-family: var(--font-mono);
-  font-size: 0.92em;
-}
-
-.markdown a {
-  color: var(--accent);
-}
-
 .personaBox {
   padding: var(--s-3);
   border-radius: var(--r-1);

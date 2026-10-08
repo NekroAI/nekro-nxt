@@ -29,7 +29,7 @@ import {
   Skeleton,
   toast,
 } from '../../ui-kit/index.js'
-import { SafeMarkdown } from '../channels/message-content.js'
+import { MarkdownDocument } from '../../components/markdown-document.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { openExternal } from './community-model.js'
 import { scopeLabel } from '../workshop/workshop-model.js'
@@ -395,9 +395,7 @@ function CommunityDetail({
 
       <PropertyGroup title="介绍">
         {detail.description.trim() ? (
-          <div className={styles.authorMarkdown}>
-            <SafeMarkdown text={detail.description} />
-          </div>
+          <MarkdownDocument text={detail.description} />
         ) : (
           <p className={styles.faint}>作者还没有填写详细介绍。</p>
         )}

@@ -1,10 +1,8 @@
 import { communityPublisherLabel, HostApiContracts, type CommunityPersonaSummary } from '@nekro-nxt/contracts'
 import { ArrowLeft, ExternalLink, UsersRound, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import { Link } from 'react-router-dom'
-import rehypeSanitize from 'rehype-sanitize'
-import remarkGfm from 'remark-gfm'
+import { MarkdownDocument } from '../../components/markdown-document.js'
 import { callHostApi } from '../../host-api-client.js'
 import {
   Banner,
@@ -46,37 +44,6 @@ export function PersonaAvatar({
   readonly size?: 'sm' | 'md' | 'lg'
 }) {
   return <ObjectTile seed={id} name={name} imageUrl={url} pixels={PERSONA_AVATAR_PX[size]} fit="cover" />
-}
-
-const markdownComponents: Components = {
-  a: ({ children, ...props }) => (
-    <a {...props} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  ),
-}
-
-const urlTransform = (url: string): string => {
-  const transformed = defaultUrlTransform(url)
-  return /^(https?:|mailto:)/iu.test(transformed) ? transformed : ''
-}
-
-/** 作者写的介绍：Markdown，不渲染 HTML 与外部图片。 */
-function PersonaMarkdown({ text }: { readonly text: string }) {
-  return (
-    <div className={styles.markdown}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
-        skipHtml
-        urlTransform={urlTransform}
-        components={markdownComponents}
-        disallowedElements={['img']}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  )
 }
 
 /** 「社区 → 人设」：卡片网格，搜索与标签筛选。宽窗口下选中的卡片在右侧详情中打开，列表保持可见。 */
@@ -305,7 +272,7 @@ export function PersonaDetail({
       ) : null}
       {detail.description ? (
         <PropertyGroup title="介绍">
-          <PersonaMarkdown text={detail.description} />
+          <MarkdownDocument text={detail.description} />
         </PropertyGroup>
       ) : null}
       <PropertyGroup

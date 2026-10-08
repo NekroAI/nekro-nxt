@@ -1,6 +1,5 @@
 declare const styles: {
   readonly account: string
-  readonly authorMarkdown: string
   readonly avatar: string
   readonly backLink: string
   readonly cardList: string

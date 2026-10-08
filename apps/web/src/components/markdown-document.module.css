@@ -1,0 +1,145 @@
+/* 文档排版：标题字号不超过页面分组标题，层级靠字重与上方留白区分。 */
+.document {
+  min-width: 0;
+  max-width: var(--reader-width);
+  color: var(--fg-2);
+  font: var(--t-body);
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.document > :first-child {
+  margin-top: 0;
+}
+
+.document > :last-child {
+  margin-bottom: 0;
+}
+
+.document p,
+.document ul,
+.document ol,
+.document blockquote,
+.document pre,
+.tableWrap {
+  margin: 0 0 var(--s-3);
+}
+
+.document h1,
+.document h2,
+.document h3 {
+  margin: var(--s-5) 0 var(--s-2);
+  color: var(--fg);
+  font: var(--t-title);
+}
+
+.document h4,
+.document h5,
+.document h6 {
+  margin: var(--s-4) 0 var(--s-1);
+  color: var(--fg);
+  font: var(--t-label);
+}
+
+.document ul,
+.document ol {
+  display: grid;
+  gap: var(--s-1);
+  padding-left: var(--s-5);
+}
+
+.document li > ul,
+.document li > ol {
+  margin: var(--s-1) 0 0;
+}
+
+.document li::marker {
+  color: var(--muted);
+}
+
+.document li:has(> input[type='checkbox']) {
+  list-style: none;
+}
+
+.document input[type='checkbox'] {
+  margin: 0 var(--s-1) 0 0;
+  accent-color: var(--accent);
+}
+
+.document strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.document a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 2px;
+}
+
+.document blockquote {
+  padding-left: var(--s-3);
+  border-left: 2px solid var(--accent-line);
+  color: var(--muted);
+}
+
+.document hr {
+  margin: var(--s-4) 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.document code {
+  padding: calc(var(--s-1) / 4) var(--s-1);
+  border-radius: 5px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.document pre {
+  overflow-x: auto;
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  line-height: 1.6;
+}
+
+.document pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+
+.tableWrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--t-note);
+}
+
+.tableWrap th,
+.tableWrap td {
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.tableWrap th {
+  background: var(--surface-2);
+  color: var(--fg);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.tableWrap tr:last-child td {
+  border-bottom: 0;
+}

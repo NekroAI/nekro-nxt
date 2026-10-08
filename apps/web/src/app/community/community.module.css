@@ -430,19 +430,3 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* 作者介绍里的标题不压过页面的分组标题。 */
-.authorMarkdown {
-  max-width: 72ch;
-  color: var(--fg-2);
-  font: var(--t-body);
-}
-
-.authorMarkdown h1,
-.authorMarkdown h2,
-.authorMarkdown h3,
-.authorMarkdown h4 {
-  margin: var(--s-3) 0 var(--s-1);
-  color: var(--fg);
-  font: var(--t-title);
-}
