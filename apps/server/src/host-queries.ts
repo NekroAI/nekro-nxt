@@ -78,6 +78,14 @@ export const assembleChannelToolCall = (runtime: NekroRuntime, channelId: Channe
   return findToolCallDetail(runtime.host.normalizedSessionEvents(episode.dshSessionId), callId)
 }
 
+export const assembleChannelRuntimeInput = (runtime: NekroRuntime, channelId: ChannelId, messageId: string) => {
+  const binding = runtime.core.listBindings(channelId)[0]
+  if (!binding) return undefined
+  const episode = runtime.repository.getActiveEpisode(channelId, binding.agentId)
+  if (episode?.dshSessionId === undefined) return undefined
+  return runtime.host.sessionInput(episode.dshSessionId, messageId)
+}
+
 export const assembleChannelRuntimeContext = (runtime: NekroRuntime, channelId: ChannelId) => {
   const binding = runtime.core.listBindings(channelId)[0]
   if (!binding) return unavailableSessionContext

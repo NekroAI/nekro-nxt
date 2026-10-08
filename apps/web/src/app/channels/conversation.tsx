@@ -282,6 +282,7 @@ export function Conversation({
   }
 
   const items = useMemo(() => buildTimeline(messages, runtime?.turns ?? []), [messages, runtime?.turns])
+  const messageById = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages])
   const phase = agent ? agentPhase[runtime?.phase ?? channel.runtimePhase ?? agent.state] : undefined
   const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
 
@@ -400,6 +401,7 @@ export function Conversation({
                 key={item.key}
                 turn={item.turn}
                 agent={agent}
+                trigger={item.turn.triggerEventId === undefined ? undefined : messageById.get(item.turn.triggerEventId)}
                 channelId={channel.id}
                 xray={xray}
                 animateXray={xrayAnimated}

@@ -8,7 +8,11 @@ import {
   HostSseEventSchema,
 } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
-import { normalizeSessionEvents, shouldBroadcastChannelRuntime } from '../src/channel-runtime-events.ts'
+import {
+  findInputDetail,
+  normalizeSessionEvents,
+  shouldBroadcastChannelRuntime,
+} from '../src/channel-runtime-events.ts'
 import {
   findToolCallDetail,
   previewToolArguments,
@@ -87,6 +91,81 @@ describe('channel runtime projection', () => {
         cursor: { epoch: 'synthetic-host', sequence: 0 },
       }).turns[1],
     ).not.toHaveProperty('endedAt')
+  })
+
+  it('lists every message that entered a turn, with its source, and returns one in full', () => {
+    let seq = 0
+    const at = (time: number) => ({ seq: SessionSeq(++seq), time })
+    const handoff = createUserMessage({
+      content: [{ type: 'text', text: '下面是上一 Episode 生成的派生交接摘要。' }],
+      source: {
+        kind: 'nekro-nxt-handoff',
+        handoffId: 'hof_A',
+        fromEpisodeId: 'eps_old',
+        sourceEventIds: [],
+        recentEventIds: [],
+        createdAt: 90,
+        form: 'recall',
+      },
+    })
+    const admission = createUserMessage({
+      content: [
+        { type: 'text', text: '频道消息 msg_A（2026-10-08 14:03:12 +08:00）：' },
+        { type: 'text', text: '帮我看看这张图' },
+        // Only the block's place matters here; the attachment is never read.
+        { type: 'image', attachment: { kind: 'nekro-asset', assetId: 'ast_A' } as never },
+      ],
+      source: { kind: 'nekro-nxt-channel', admissionId: 'adm_A', channelEventIds: ['evt_A', 'evt_B'] },
+    })
+    const reminder = createUserMessage({
+      content: [{ type: 'text', text: '你还没有回应频道。' }],
+      source: { kind: 'nekro-nxt-channel-reply-guard', turn: 1 },
+    })
+    const log = [
+      // Logged before the turn opens: both belong to turn 1.
+      { type: 'user/message' as const, ...at(100), surfaceOp: 'append' as const, data: handoff },
+      { type: 'user/message' as const, ...at(101), surfaceOp: 'append' as const, data: admission },
+      { type: 'turn/start' as const, ...at(110), data: { turn: 1 } },
+      { type: 'step/start' as const, ...at(120), data: { turn: 1, step: 1 } },
+      { type: 'user/message' as const, ...at(130), surfaceOp: 'append' as const, data: reminder },
+      { type: 'turn/end' as const, ...at(150), data: { turn: 1, reason: { kind: 'completed' as const } } },
+    ]
+    const projection = projectChannelRuntime({
+      channelId,
+      sessionStatus: 'idle',
+      pendingInjectCount: 0,
+      events: normalizeSessionEvents(log),
+    })
+    expect(projection.turns[0]?.inputs).toEqual([
+      {
+        messageId: handoff.id,
+        source: 'nekro-nxt-handoff',
+        preview: '下面是上一 Episode 生成的派生交接摘要。',
+        at: 100,
+      },
+      {
+        messageId: admission.id,
+        source: 'nekro-nxt-channel',
+        eventCount: 2,
+        preview: '频道消息 msg_A（2026-10-08 14:03:12 +08:00）： 帮我看看这张图 ［图片］',
+        at: 101,
+      },
+      { messageId: reminder.id, source: 'nekro-nxt-channel-reply-guard', preview: '你还没有回应频道。', at: 130 },
+    ])
+    expect(findInputDetail(log, String(admission.id))).toEqual({
+      messageId: String(admission.id),
+      available: true,
+      source: 'nekro-nxt-channel',
+      text: '频道消息 msg_A（2026-10-08 14:03:12 +08:00）：\n帮我看看这张图\n［图片］',
+      truncated: false,
+    })
+    expect(findInputDetail(log, 'missing')).toBeUndefined()
+    expect(
+      HostApiContracts.getChannelRuntime.parseResponse({
+        ...projection,
+        cursor: { epoch: 'synthetic-host', sequence: 0 },
+      }).turns[0]?.inputs,
+    ).toHaveLength(3)
   })
 
   it('preserves authoritative DSH totals across REST and SSE without leaking provider fields', () => {

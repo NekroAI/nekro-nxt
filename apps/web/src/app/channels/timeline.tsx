@@ -1,5 +1,6 @@
 import { AlarmClock, BellOff, BellRing, Check, ChevronRight, CircleAlert, EyeOff, Info, Square, X } from 'lucide-react'
 import { ToolView } from '../../extension-ui/index.js'
+import { workspaceApi } from '../../host-api-client.js'
 import { memo, useEffect, useState } from 'react'
 import { MessageContent, resolveMessageSide } from './message-content.js'
 import type { AgentSummary, ChannelSummary, ConversationMessage } from '../../product-runtime.js'
@@ -13,6 +14,7 @@ import { formatDuration, formatTokens, isTurnRunning, isUnconfirmed, type Runtim
 
 type RuntimeStep = RuntimeTurn['steps'][number]
 type RuntimeTool = RuntimeStep['tools'][number]
+type RuntimeInput = NonNullable<RuntimeTurn['inputs']>[number]
 
 export const MessageRow = memo(function MessageRow({
   message,
@@ -259,6 +261,73 @@ function ToolCard({
   )
 }
 
+/** Where a message the model received came from (DSH `user/message` source kinds the host writes). */
+const INPUT_SOURCES: Readonly<Record<string, string>> = {
+  'nekro-nxt-handoff': '交接摘要',
+  'nekro-nxt-console-outbound': '管理员发送的消息',
+  'nekro-nxt-channel-reply-guard': '回应提醒',
+  'nekro-nxt-visual-restore': '恢复历史图片',
+  'nekro-nxt-authoring-event': '扩展开发进展',
+}
+
+const inputLabel = (input: RuntimeInput): string =>
+  input.source === 'nekro-nxt-channel'
+    ? `收到 ${input.eventCount ?? 1} 条频道消息`
+    : (INPUT_SOURCES[input.source] ?? '注入的上下文')
+
+/** What the model received as input: a preview at once, the full text on request (it is read from the live session). */
+function InputCard({
+  input,
+  index,
+  channelId,
+}: {
+  readonly input: RuntimeInput
+  readonly index: number
+  readonly channelId: string | undefined
+}) {
+  const [full, setFull] = useState<{ readonly text: string; readonly truncated: boolean } | 'missing' | undefined>()
+  const [loading, setLoading] = useState(false)
+  const load = () => {
+    if (!channelId) return
+    setLoading(true)
+    workspaceApi
+      .getChannelRuntimeInput(channelId, input.messageId)
+      .then((detail) =>
+        setFull(
+          detail.available && detail.text !== undefined
+            ? { text: detail.text, truncated: detail.truncated }
+            : 'missing',
+        ),
+      )
+      .catch(() => setFull('missing'))
+      .finally(() => setLoading(false))
+  }
+  return (
+    <div className={[styles.card, styles.thinking].join(' ')} style={cssVars({ '--i': index })}>
+      <div className={styles.cardHead}>
+        <span className={styles.cardIndex}>{index + 1}</span>
+        <b>{inputLabel(input)}</b>
+        {full === undefined && channelId ? (
+          <Button size="small" variant="ghost" className={styles.cardState} disabled={loading} onClick={load}>
+            {loading ? <Spinner /> : '查看全文'}
+          </Button>
+        ) : null}
+      </div>
+      {full !== undefined && full !== 'missing' ? (
+        <pre className={styles.inputText}>
+          {full.text}
+          {full.truncated ? '\n…' : ''}
+        </pre>
+      ) : input.preview ? (
+        <p className={styles.thinkingText}>
+          {input.preview}
+          {full === 'missing' ? '（会话已结束，只保留了预览）' : ''}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 function ThinkingCard({ text, index }: { readonly text: string; readonly index: number }) {
   return (
     <div className={[styles.card, styles.thinking].join(' ')} style={cssVars({ '--i': index })}>
@@ -290,6 +359,7 @@ const turnSummary = (turn: RuntimeTurn): string => {
 export function TurnRow({
   turn,
   agent,
+  trigger,
   channelId,
   xray,
   animateXray,
@@ -298,6 +368,8 @@ export function TurnRow({
 }: {
   readonly turn: RuntimeTurn
   readonly agent: AgentSummary | undefined
+  /** The channel message that opened this turn, when it is loaded. */
+  readonly trigger?: ConversationMessage | undefined
   /** Lets an opened step load the call's full arguments and result. */
   readonly channelId?: string | undefined
   readonly xray: boolean
@@ -324,6 +396,7 @@ export function TurnRow({
     >
       <div className={styles.turnHead}>
         <b>{agent?.name ?? '智能体'}</b>
+        {trigger && trigger.role !== 'agent' ? <span className={styles.turnTrigger}>回应 {trigger.author}</span> : null}
         {running ? (
           <Chip tone="accent" icon={<Spinner />}>
             {startedAt ? <Elapsed since={startedAt} /> : '进行中'}
@@ -346,6 +419,9 @@ export function TurnRow({
       </div>
       {xray ? (
         <div className={[styles.xray, animateXray ? styles.xrayIn : ''].join(' ')}>
+          {(turn.inputs ?? []).map((input) => (
+            <InputCard key={input.messageId} input={input} index={cardIndex++} channelId={channelId} />
+          ))}
           {turn.steps.flatMap((step) => {
             const nodes = []
             const thinking = stepThinking(step)

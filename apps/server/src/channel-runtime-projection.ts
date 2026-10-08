@@ -4,6 +4,7 @@ import type {
   ChannelId,
   ChannelRuntimeCache,
   ChannelRuntimeCacheSample,
+  ChannelRuntimeInput,
   ChannelRuntimeOccupancy,
   ChannelRuntimePerformance,
   ChannelRuntimePerformanceSample,
@@ -46,6 +47,15 @@ export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'
 export type RuntimeProjectionEvent =
   | { readonly type: 'turn/start'; readonly turn: number; readonly at?: number }
   | { readonly type: 'turn/trigger'; readonly turn: number; readonly eventId: ChannelEventId }
+  | {
+      readonly type: 'turn/input'
+      readonly turn: number
+      readonly messageId: string
+      readonly source: string
+      readonly eventCount?: number
+      readonly text?: string
+      readonly at?: number
+    }
   | {
       readonly type: 'channel/response-state'
       readonly turn: number
@@ -168,6 +178,7 @@ type ProjectedTurn = {
   startedAt?: number
   endedAt?: number
   triggerEventId?: ChannelEventId
+  inputs: ChannelRuntimeInput[]
   steps: Map<number, ProjectedStep>
 }
 
@@ -498,6 +509,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       state: 'in-progress',
       producedReply: false,
       responseState: 'not-required',
+      inputs: [],
       steps: new Map(),
     }
     turns.set(turn, created)
@@ -521,6 +533,16 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     }
     if (event.type === 'turn/trigger') {
       ensureTurn(event.turn).triggerEventId = event.eventId
+      continue
+    }
+    if (event.type === 'turn/input') {
+      ensureTurn(event.turn).inputs.push({
+        messageId: event.messageId,
+        source: event.source,
+        ...(event.eventCount === undefined ? {} : { eventCount: event.eventCount }),
+        ...(event.text === undefined ? {} : { preview: previewText(event.text) }),
+        ...(event.at === undefined ? {} : { at: event.at }),
+      })
       continue
     }
     if (event.type === 'turn/end') {
@@ -621,6 +643,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       ...(record.startedAt === undefined ? {} : { startedAt: record.startedAt }),
       ...(record.endedAt === undefined ? {} : { endedAt: record.endedAt }),
       ...(record.triggerEventId === undefined ? {} : { triggerEventId: record.triggerEventId }),
+      ...(record.inputs.length === 0 ? {} : { inputs: record.inputs }),
       steps: [...record.steps.values()]
         .sort((left, right) => left.step - right.step)
         .map((step) => {

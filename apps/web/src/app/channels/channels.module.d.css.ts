@@ -32,6 +32,7 @@ declare const styles: {
   readonly hookNote: string
   readonly iconToggle: string
   readonly input: string
+  readonly inputText: string
   readonly jump: string
   readonly knob: string
   readonly listCount: string
@@ -90,6 +91,7 @@ declare const styles: {
   readonly turnHead: string
   readonly turnRunning: string
   readonly turnStop: string
+  readonly turnTrigger: string
   readonly unboundHead: string
   readonly unsent: string
   readonly unsentBar: string

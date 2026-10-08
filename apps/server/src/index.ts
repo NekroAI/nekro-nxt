@@ -159,7 +159,7 @@ import path from 'node:path'
 import { z } from 'zod'
 import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
 import { projectSessionContext } from './channel-runtime-context.js'
-import { normalizeSessionEvents } from './channel-runtime-events.js'
+import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
 import { DshPluginLifecycleCoordinator, disposeDshPluginFiber } from './dsh-plugin-lifecycle.js'
 import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
@@ -3566,6 +3566,13 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
     return sessionEvents(agent.session)
+  }
+
+  /** One input message as the model received it; undefined when the session or the message is not in memory. */
+  sessionInput(dshSessionId: string, messageId: string) {
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) return undefined
+    return findInputDetail(sessionEvents(agent.session), messageId)
   }
 
   /** What the live session sends the model; undefined when the session is not in memory. */

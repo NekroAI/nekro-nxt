@@ -579,6 +579,19 @@ export const ChannelRuntimeStepSchema = z
   })
   .strict()
 
+/** One message that entered the model's input during a turn: channel admissions and host or DSH injections. */
+export const ChannelRuntimeInputSchema = z
+  .object({
+    messageId: z.string().min(1),
+    /** DSH `user/message` source kind, e.g. `nekro-nxt-channel` or `nekro-nxt-handoff`. */
+    source: z.string().min(1),
+    /** Channel Events carried by a channel admission. */
+    eventCount: z.number().int().positive().optional(),
+    preview: z.string().optional(),
+    at: z.number().int().safe().nonnegative().optional(),
+  })
+  .strict()
+
 export const ChannelRuntimeTurnSchema = z
   .object({
     turn: z.number().int().nonnegative(),
@@ -594,6 +607,8 @@ export const ChannelRuntimeTurnSchema = z
     endedAt: z.number().int().safe().nonnegative().optional(),
     /** Newest Channel Event of the admission that opened this turn; absent for non-channel turns. */
     triggerEventId: ChannelEventIdSchema.optional(),
+    /** Messages that entered the model's input during the turn, in log order; absent when there were none. */
+    inputs: z.array(ChannelRuntimeInputSchema).optional(),
   })
   .strict()
 
@@ -745,6 +760,7 @@ export type ChannelRuntimePerformanceSample = z.output<typeof ChannelRuntimePerf
 export type ChannelRuntimePerformance = z.output<typeof ChannelRuntimePerformanceSchema>
 export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
 export type ChannelRuntimeContext = z.output<typeof ChannelRuntimeContextSchema>
+export type ChannelRuntimeInput = z.output<typeof ChannelRuntimeInputSchema>
 export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
 export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>
 
@@ -2307,6 +2323,24 @@ export const HostApiContracts = {
     // What the live session sends the model: route, rendered instructions and tool schemas. Read on demand; the runtime
     // projection pushed over SSE never carries it. `available: false` when no session of the channel is in memory.
     response: ChannelRuntimeContextSchema,
+    error: HostApiErrorSchema,
+  }),
+  getChannelRuntimeInput: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/runtime/inputs/:messageId',
+    params: z.object({ channelId: ChannelIdSchema, messageId: z.string().trim().min(1).max(200) }).strict(),
+    request: NoRequestBodySchema,
+    // The full text of one input message as the model received it; the runtime projection only carries a preview.
+    // `available: false` when the session has left memory.
+    response: z
+      .object({
+        messageId: z.string(),
+        available: z.boolean(),
+        source: z.string().optional(),
+        text: z.string().optional(),
+        truncated: z.boolean(),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   resetChannelContext: defineContract({

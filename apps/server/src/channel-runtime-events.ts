@@ -5,7 +5,7 @@ import {
   responseObligationState,
   type ResponseObligationState,
 } from './channel-reply-guard.js'
-import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
+import { boundedDetail, type RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { projectTokenUsage } from './token-usage.js'
 import { ChannelEventIdSchema, type ChannelEventId } from '@nekro-nxt/contracts'
 
@@ -49,6 +49,29 @@ const reasoningFromBlocks = (
   return text.length > 0 ? text : undefined
 }
 
+/** Model-visible text of an input message; an image block keeps its place as a marker. */
+export const inputText = (blocks: readonly { readonly type: string; readonly text?: string }[]): string =>
+  blocks
+    .flatMap((block) =>
+      block.type === 'text' && typeof block.text === 'string'
+        ? [block.text]
+        : block.type === 'image'
+          ? ['［图片］']
+          : [],
+    )
+    .join('\n')
+    .trim()
+
+/** The full text of one `user/message` in the log, for the runtime input detail. */
+export const findInputDetail = (events: readonly SessionEvent[], messageId: string) => {
+  for (const event of events) {
+    if (event.type !== 'user/message' || String(event.data.id) !== messageId) continue
+    const text = boundedDetail(inputText(event.data.content))
+    return { messageId, available: true, source: event.data.source.kind, text: text.text, truncated: text.truncated }
+  }
+  return undefined
+}
+
 export const normalizeSessionEvents = (
   events: readonly SessionEvent[],
   responseStateForTurn: (turn: number) => ResponseObligationState = (turn) => responseObligationState(events, turn),
@@ -63,6 +86,8 @@ export const normalizeSessionEvents = (
   let openTurn: number | undefined
   let openTurnAnswered = false
   let heldTrigger: ChannelEventId | undefined
+  // Inputs logged while no turn is open are spliced into the next one.
+  let heldInputs: Extract<RuntimeProjectionEvent, { type: 'turn/input' }>[] = []
   const triggered = new Set<number>()
   const assignTrigger = (turn: number, eventId: ChannelEventId): void => {
     if (triggered.has(turn)) return
@@ -83,10 +108,24 @@ export const normalizeSessionEvents = (
         assignTrigger(event.data.turn, heldTrigger)
         heldTrigger = undefined
       }
+      for (const input of heldInputs) result.push({ ...input, turn: event.data.turn })
+      heldInputs = []
       continue
     }
     if (event.type === 'user/message') {
       const source = event.data.source
+      const text = inputText(event.data.content)
+      const input = {
+        type: 'turn/input' as const,
+        turn: openTurn ?? -1,
+        messageId: String(event.data.id),
+        source: source.kind,
+        at,
+        ...(source.kind === 'nekro-nxt-channel' ? { eventCount: source.channelEventIds.length } : {}),
+        ...(text ? { text } : {}),
+      }
+      if (openTurn === undefined) heldInputs.push(input)
+      else result.push(input)
       const eventId =
         source.kind === 'nekro-nxt-channel' ? ChannelEventIdSchema.safeParse(source.channelEventIds.at(-1)) : undefined
       if (eventId?.success === true) {

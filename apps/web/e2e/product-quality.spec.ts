@@ -23,6 +23,7 @@ import {
   channelMessages,
   internalConnectionId,
   sourceChannelId,
+  visibleEventId,
 } from './fixtures/product-quality.js'
 
 type Snapshot = HostApiResponse<'snapshot'>
@@ -775,6 +776,22 @@ test('透视 opens turn details by keyboard and keeps tool input readable', asyn
             startedAt: 1_725_000_001_000,
             endedAt: 1_725_000_004_000,
             durationMs: 3_000,
+            triggerEventId: visibleEventId,
+            inputs: [
+              {
+                messageId: 'nxt-hof_quality',
+                source: 'nekro-nxt-handoff',
+                preview: '下面是上一 Episode 生成的派生交接摘要，不是原始消息或系统事实。',
+                at: 1_725_000_000_500,
+              },
+              {
+                messageId: 'nxt-adm_quality',
+                source: 'nekro-nxt-channel',
+                eventCount: 1,
+                preview: '频道消息 msg_quality（2024-08-30 14:40:00 +08:00）： 请复核今天的记录。',
+                at: 1_725_000_001_000,
+              },
+            ],
             steps: [
               {
                 step: 1,
@@ -796,8 +813,20 @@ test('透视 opens turn details by keyboard and keeps tool input readable', asyn
       },
     }),
   )
+  await page.route(`**/api/channels/${targetChannelId}/runtime/inputs/*`, (route) =>
+    route.fulfill({
+      json: {
+        messageId: 'nxt-hof_quality',
+        available: true,
+        source: 'nekro-nxt-handoff',
+        text: '下面是上一 Episode 生成的派生交接摘要，不是原始消息或系统事实。\n未完成：复核今天的三条虚构记录。',
+        truncated: false,
+      },
+    }),
+  )
   await page.goto(`/channels/${targetChannelId}`)
   await expect(page.getByText('查找记录').first()).toBeVisible()
+  await expect(page.getByText(/^回应 /u)).toBeVisible()
   const xray = page.getByRole('button', { name: /透视/u })
   await expect(xray).toHaveAttribute('aria-pressed', 'false')
   await xray.focus()
@@ -806,7 +835,15 @@ test('透视 opens turn details by keyboard and keeps tool input readable', asyn
   await expect(page.getByText('找到 3 条虚构记录。')).toBeVisible()
   await expect(page.getByText('今日记录')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('"keyword"')
+  await expect(page.getByText('收到 1 条频道消息')).toBeVisible()
+  const handoffCard = page
+    .locator('div')
+    .filter({ has: page.getByText('交接摘要', { exact: true }) })
+    .last()
+  await handoffCard.getByRole('button', { name: '查看全文' }).click()
+  await expect(page.getByText('未完成：复核今天的三条虚构记录。', { exact: false })).toBeVisible()
   await capture(page, testInfo, 'xray-open')
+  await xray.focus()
   await page.keyboard.press('Enter')
   await expect(xray).toHaveAttribute('aria-pressed', 'false')
   expect(failures, failures.join('\n')).toEqual([])

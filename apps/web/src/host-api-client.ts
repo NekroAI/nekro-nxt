@@ -208,6 +208,8 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.resolveOutbound, { outboundId }, { action }, options),
   getChannelToolCall: (channelId: string, callId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelToolCall, { channelId, callId }, undefined, options),
+  getChannelRuntimeInput: (channelId: string, messageId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getChannelRuntimeInput, { channelId, messageId }, undefined, options),
   getChannelRuntimeContext: (channelId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelRuntimeContext, { channelId }, undefined, options),
   getChannelActivity: (

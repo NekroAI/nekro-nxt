@@ -17,6 +17,7 @@ import {
   activationManifest,
   assembleChannelRuntime,
   assembleChannelRuntimeContext,
+  assembleChannelRuntimeInput,
   assembleChannelToolCall,
 } from './host-queries.js'
 import {
@@ -621,6 +622,7 @@ export function registerWorkspaceRoutes({
       const runtimeMatch = /^\/api\/channels\/([^/]+)\/runtime$/.exec(url.pathname)
       const toolCallMatch = /^\/api\/channels\/([^/]+)\/runtime\/tools\/([^/]+)$/.exec(url.pathname)
       const runtimeContextMatch = /^\/api\/channels\/([^/]+)\/runtime\/context$/.exec(url.pathname)
+      const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
       const channelMatch = /^\/api\/channels\/([^/]+)$/.exec(url.pathname)
@@ -630,6 +632,7 @@ export function registerWorkspaceRoutes({
         runtimeMatch?.[1] ??
         toolCallMatch?.[1] ??
         runtimeContextMatch?.[1] ??
+        runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
         channelMatch?.[1]
@@ -684,6 +687,25 @@ export function registerWorkspaceRoutes({
         } catch (error) {
           writeError(res, 404, 'channel-runtime-missing', error instanceof Error ? error.message : String(error))
         }
+        return
+      }
+
+      if (runtimeInputMatch) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          return
+        }
+        const messageId = decodeURIComponent(runtimeInputMatch[2] ?? '')
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.getChannelRuntimeInput,
+          assembleChannelRuntimeInput(runtime, typedChannelId, messageId) ?? {
+            messageId,
+            available: false,
+            truncated: false,
+          },
+        )
         return
       }
 

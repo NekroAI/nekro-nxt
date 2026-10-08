@@ -642,6 +642,13 @@
   margin-left: auto;
 }
 
+.turnTrigger {
+  overflow: hidden;
+  max-width: 24ch;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* One step per line, in the order they ran; wrapping let a short step slip beside a long one. */
 .steps {
   display: flex;
@@ -873,6 +880,17 @@ button.step:hover {
 .thinking .cardHead {
   padding-bottom: 0;
   border-bottom: 0;
+}
+
+.inputText {
+  max-height: 320px;
+  margin: 0;
+  overflow: auto;
+  padding: var(--s-2) var(--s-4);
+  color: var(--fg-2);
+  font: var(--t-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .thinkingText {
