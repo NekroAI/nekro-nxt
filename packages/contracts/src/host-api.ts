@@ -759,6 +759,30 @@ export const ChannelRuntimeContextSchema = z
   })
   .strict()
 
+/** A channel's own instructions for whoever answers it, with recent earlier versions to restore. */
+export const ChannelPromptViewSchema = z
+  .object({
+    document: PromptDocumentV1Schema,
+    /** The agent may not rewrite a locked prompt. */
+    locked: z.boolean(),
+    /** 0 before the first save; send it back as `expectedRevision`. */
+    revision: z.number().int().nonnegative(),
+    maxChars: z.number().int().positive(),
+    updatedBy: z.enum(['admin', 'agent']).optional(),
+    updatedAt: z.number().int().nonnegative().optional(),
+    revisions: z.array(
+      z
+        .object({
+          revision: z.number().int().positive(),
+          document: PromptDocumentV1Schema,
+          updatedBy: z.enum(['admin', 'agent']),
+          updatedAt: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
 export type ChannelRuntimeUsage = z.output<typeof ChannelRuntimeUsageSchema>
 export type ChannelRuntimeOccupancy = z.output<typeof ChannelRuntimeOccupancySchema>
@@ -769,6 +793,7 @@ export type ChannelRuntimePerformance = z.output<typeof ChannelRuntimePerformanc
 export type ChannelRuntimeProjection = z.output<typeof ChannelRuntimeProjectionSchema>
 export type ChannelRuntimeContext = z.output<typeof ChannelRuntimeContextSchema>
 export type ChannelRuntimeInput = z.output<typeof ChannelRuntimeInputSchema>
+export type ChannelPromptView = z.output<typeof ChannelPromptViewSchema>
 export type ChannelRuntimeSseData = z.output<typeof ChannelRuntimeSseDataSchema>
 export type ChannelFactSseData = z.output<typeof ChannelFactSseDataSchema>
 
@@ -2356,6 +2381,29 @@ export const HostApiContracts = {
         truncated: z.boolean(),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  getChannelPrompt: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/prompt',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: ChannelPromptViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateChannelPrompt: defineContract({
+    method: 'PUT',
+    path: '/api/channels/:channelId/prompt',
+    params: channelParam,
+    request: z
+      .object({
+        document: PromptDocumentV1Schema,
+        locked: z.boolean(),
+        /** The revision the edit started from; a newer stored revision rejects the save. */
+        expectedRevision: z.number().int().nonnegative(),
+      })
+      .strict(),
+    response: ChannelPromptViewSchema,
     error: HostApiErrorSchema,
   }),
   resetChannelContext: defineContract({

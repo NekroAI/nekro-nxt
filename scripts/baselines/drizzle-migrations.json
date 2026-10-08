@@ -35,6 +35,7 @@
     "0030_extension_revision_sources.sql": "d38dbade4d542b0e95e8185fb0159a7b17fab7854b501850b05b61d3142e430e",
     "0031_platform_identity_self.sql": "5ef9dd98d96e4e605dec03186d0588a9ee9d0bb0e2aa3245317a308d8eee28d9",
     "0032_binding_local_agent_messages.sql": "04cf4075335ce272225a500d468bf65267230afdf0e9d3a60b05ed0e95184ed8",
+    "0033_channel_prompts.sql": "4b9e7932167995ccc0547201351142b624556d3531a66074056d287c477da040",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -68,6 +69,7 @@
     "meta/0030_snapshot.json": "9569d6099ddc80c06a9d23f3c4a656796a619ab6219a114d9eef12f91397c30d",
     "meta/0031_snapshot.json": "02c1d924584d1bb3c5541972e684b9239c867e102d22c21b3034634397b03b6a",
     "meta/0032_snapshot.json": "622f207dcf70e7ea6c15d0fb7a36ac1631f78696b76d0d8f4de26b91e9b6288f",
-    "meta/_journal.json": "1eb8c662e0cd6a3574850092f0f1af275cd961e6a3e99938e68d20823dfa4aad"
+    "meta/0033_snapshot.json": "a132fd5de3bd140ae0ed9d1e3d01311fa9624fcf697433087124acaed58c6930",
+    "meta/_journal.json": "a8db80f67da91ee5c04a5702e7b07d2c60fea97a3a7a9d17f6bfb500aee1138a"
   }
 }

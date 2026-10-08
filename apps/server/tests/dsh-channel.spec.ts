@@ -22,6 +22,7 @@ import {
   EpisodeHandoffIdSchema,
   EpisodeIdSchema,
   LogicalMessageIdSchema,
+  promptDocumentFromText,
 } from '@nekro-nxt/contracts'
 import {
   AuthoringArtifactStore,
@@ -48,6 +49,7 @@ import {
   readChannelAssetText,
 } from '../src/index.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
+import { ChannelPrompts } from '../src/channel-prompts.ts'
 
 const systemText = (options: GenerateOptions | undefined): string =>
   options?.messages
@@ -2140,6 +2142,13 @@ describe('DSH Host and internal Channel vertical slice', () => {
       if (!runtimeRef.current) return Promise.reject(new Error('Channel Runtime is not ready.'))
       return runtimeRef.current.acceptChannelInbound(event)
     })
+    const channelPrompts = new ChannelPrompts(repository, () => 1000)
+    channelPrompts.saveByAdmin({
+      channelId: channel.id,
+      document: promptDocumentFromText('本频道是内部测试频道，回答附带调试数据。'),
+      locked: false,
+      expectedRevision: 0,
+    })
     const createHost = (hostModel: ScriptedCommunicationModel) =>
       DshHostRuntime.create({
         sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
@@ -2149,6 +2158,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
             return runtimeRef.current.sendMessage(input)
           },
         },
+        channelPrompts,
         history: repository,
         assets: repository,
         assetService,
@@ -2222,6 +2232,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         'asset_create',
         'asset_inspect',
         'asset_read_text',
+        'channel_prompt_update',
         'conversation_history_read',
         'conversation_history_search',
         'finish_channel_turn',
@@ -2230,6 +2241,15 @@ describe('DSH Host and internal Channel vertical slice', () => {
       ])
       expect(systemText(model.calls[0])).toContain(channel.id)
       expect(systemText(model.calls[0])).toContain('主测试频道')
+      expect(systemText(model.calls[0])).toContain('以下是管理员为本频道写的专属说明')
+      expect(systemText(model.calls[0])).toContain('本频道是内部测试频道，回答附带调试数据。')
+      // The channel's rules sit after the persona and before the channel identity.
+      expect(systemText(model.calls[0]).indexOf('你应当简洁、准确地回应频道消息。')).toBeLessThan(
+        systemText(model.calls[0]).indexOf('本频道是内部测试频道'),
+      )
+      expect(systemText(model.calls[0]).indexOf('本频道是内部测试频道')).toBeLessThan(
+        systemText(model.calls[0]).indexOf('当前 NekroNxt 会话身份如下'),
+      )
       expect(systemText(model.calls[0])).toContain('普通 text 或 reasoning 只会作为内部运行轨迹保存')
       expect(systemText(model.calls[0])).toContain('一次 send_channel_message 不会结束当前 Turn')
       expect(systemText(model.calls[0])).toContain('更早的发送不能覆盖后来注入的新请求')
@@ -2245,7 +2265,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         required: ['outcome', 'reason'],
       })
       expect(context.instructions).toEqual([{ role: 'system', text: systemText(model.calls[0]), truncated: false }])
-      expect(context.changes).toEqual([expect.objectContaining({ reason: 'initial', toolCount: 8 })])
+      expect(context.changes).toEqual([expect.objectContaining({ reason: 'initial', toolCount: 9 })])
       const eventText = JSON.stringify(host.sessionEvents(episode.dshSessionId!))
       expect(eventText).toContain('这段模型原始文字只能留在运行轨迹。')
       expect(eventText).toContain('工具完成后的原始结束文字也不会发送。')

@@ -1,0 +1,63 @@
+.loading {
+  display: grid;
+  place-items: center;
+  padding: var(--s-6) 0;
+}
+
+.lead {
+  margin: 0;
+  color: var(--fg-2);
+  font: var(--t-body);
+}
+
+.editor {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.count {
+  justify-self: end;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.count[data-over] {
+  color: var(--bad);
+}
+
+.note {
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.revisions {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  list-style: none;
+}
+
+.revision {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+}
+
+.revision + .revision {
+  border-top: 1px solid var(--line);
+}
+
+.revisionText {
+  display: grid;
+  flex: 1;
+  gap: calc(var(--s-1) / 2);
+  min-width: 0;
+  color: var(--fg);
+  font: var(--t-body);
+  overflow-wrap: anywhere;
+}

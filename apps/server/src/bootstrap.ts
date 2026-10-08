@@ -90,6 +90,7 @@ import {
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
 import { channelMemberRelations } from './channel-member-relations.js'
+import { ChannelPrompts } from './channel-prompts.js'
 export type { ConnectionTestResult } from './connection-application.js'
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
@@ -189,6 +190,7 @@ export class NekroRuntime {
   readonly adapters: AdapterRegistry
   readonly #jobScheduler: ExtensionJobScheduler
   readonly scheduledTasks: ScheduledTasks
+  readonly channelPrompts: ChannelPrompts
   readonly mcpStatus: McpStatusRegistry
   readonly authoringTestSecrets: AuthoringTestSecrets
   readonly #hostClientDiagnostics = new Map<
@@ -231,6 +233,7 @@ export class NekroRuntime {
     readonly adapters: AdapterRegistry
     readonly jobScheduler: ExtensionJobScheduler
     readonly scheduledTasks: ScheduledTasks
+    readonly channelPrompts: ChannelPrompts
     readonly mcpStatus: McpStatusRegistry
     readonly authoringTestSecrets: AuthoringTestSecrets
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
@@ -261,6 +264,7 @@ export class NekroRuntime {
     this.adapters = input.adapters
     this.#jobScheduler = input.jobScheduler
     this.scheduledTasks = input.scheduledTasks
+    this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.authoringTestSecrets = input.authoringTestSecrets
     this.connections = new ConnectionApplicationService(
@@ -378,6 +382,7 @@ export class NekroRuntime {
       const settled: { current?: ChannelRuntime } = {}
       const hostReference: { current?: DshHostRuntime } = {}
       const memberRelations = channelMemberRelations(core, repository, now)
+      const channelPrompts = new ChannelPrompts(repository, now)
       const nxtFacts: NxtProductFacts = {
         history: repository,
         getConnectionName: (connectionId) => {
@@ -635,6 +640,7 @@ export class NekroRuntime {
         history: repository,
         resolveAdapterDisplayName: (adapterKey) => adapters.get(adapterKey)?.descriptor.displayName,
         members: memberRelations,
+        channelPrompts,
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
@@ -828,6 +834,7 @@ export class NekroRuntime {
       const runtime = new NekroRuntime({
         jobScheduler,
         scheduledTasks,
+        channelPrompts,
         mcpStatus,
         authoringTestSecrets,
         compatibility,

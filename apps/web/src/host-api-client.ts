@@ -7,6 +7,7 @@ import {
   type HostApiContract,
   type HostApiContractParams,
   type HostApiContractRequest,
+  type HostApiRequest,
 } from '@nekro-nxt/contracts'
 
 export interface HostRequestOptions {
@@ -208,6 +209,13 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.resolveOutbound, { outboundId }, { action }, options),
   getChannelToolCall: (channelId: string, callId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelToolCall, { channelId, callId }, undefined, options),
+  getChannelPrompt: (channelId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getChannelPrompt, { channelId }, undefined, options),
+  updateChannelPrompt: (
+    channelId: string,
+    request: HostApiRequest<'updateChannelPrompt'>,
+    options?: HostRequestOptions,
+  ) => callHostApi(HostApiContracts.updateChannelPrompt, { channelId }, request, options),
   getChannelRuntimeInput: (channelId: string, messageId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelRuntimeInput, { channelId, messageId }, undefined, options),
   getChannelRuntimeContext: (channelId: string, options?: HostRequestOptions) =>

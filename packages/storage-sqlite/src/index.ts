@@ -18,6 +18,7 @@ import { createAuthoringRepository } from './repositories/authoring.js'
 import { createExtensionStorageRepository, type ExtensionStorageRepository } from './repositories/extension-storage.js'
 import { createExtensionJobsRepository, type ExtensionJobsRepository } from './repositories/extension-jobs.js'
 import { createInboundHooksRepository, type InboundHooksRepository } from './repositories/inbound-hooks.js'
+import { createChannelPromptsRepository, type ChannelPromptsRepository } from './repositories/channel-prompts.js'
 import { createExtensionSourcesRepository } from './repositories/extension-sources.js'
 export type { ExtensionRevisionSourceRecord } from './repositories/extension-sources.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
@@ -34,6 +35,13 @@ export type { ExtensionStorageRepository } from './repositories/extension-storag
 export { ExtensionStorageQuotaError } from './repositories/extension-storage.js'
 export type { ExtensionJobsRepository, ExtensionJobRecord } from './repositories/extension-jobs.js'
 export type { InboundHooksRepository, InboundHookDecisionRecord } from './repositories/inbound-hooks.js'
+export {
+  ChannelPromptConflictError,
+  type ChannelPromptAuthor,
+  type ChannelPromptRecord,
+  type ChannelPromptRevisionRecord,
+  type ChannelPromptsRepository,
+} from './repositories/channel-prompts.js'
 export { OutboundResolutionError } from './repositories/projections.js'
 export type {
   ChannelReadPosition,
@@ -84,6 +92,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #extensionStorage
   readonly #extensionJobs
   readonly #inboundHooks
+  readonly #channelPrompts
   readonly #extensionSources
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
@@ -104,6 +113,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensionStorage = createExtensionStorageRepository(database.db)
     this.#extensionJobs = createExtensionJobsRepository(database.db)
     this.#inboundHooks = createInboundHooksRepository(database.db)
+    this.#channelPrompts = createChannelPromptsRepository(database.db)
     this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.projections = createProjectionRepository(database.db)
   }
@@ -567,4 +577,10 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#inboundHooks.saveInboundHookDecision(...args)
   readonly listInboundHookDecisions = (...args: Parameters<InboundHooksRepository['listInboundHookDecisions']>) =>
     this.#inboundHooks.listInboundHookDecisions(...args)
+  readonly getChannelPrompt = (...args: Parameters<ChannelPromptsRepository['getChannelPrompt']>) =>
+    this.#channelPrompts.getChannelPrompt(...args)
+  readonly saveChannelPrompt = (...args: Parameters<ChannelPromptsRepository['saveChannelPrompt']>) =>
+    this.#channelPrompts.saveChannelPrompt(...args)
+  readonly listChannelPromptRevisions = (...args: Parameters<ChannelPromptsRepository['listChannelPromptRevisions']>) =>
+    this.#channelPrompts.listChannelPromptRevisions(...args)
 }

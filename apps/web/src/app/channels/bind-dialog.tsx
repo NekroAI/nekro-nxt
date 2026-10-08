@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
-import { AgentAvatar, ConfirmDialog, Field, Select, toast, cssVars } from '../../ui-kit/index.js'
+import { promptDocumentPlainText } from '@nekro-nxt/contracts'
+import { workspaceApi } from '../../host-api-client.js'
+import { AgentAvatar, ConfirmDialog, Field, Select, Switch, toast, cssVars } from '../../ui-kit/index.js'
 import { agentAccent, agentHue, triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
@@ -29,6 +31,24 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
   useEffect(() => {
     setTrigger(current?.triggerPolicy ?? (channel?.kind === 'internal' ? 'always' : 'mentioned-or-replied'))
   }, [intent, current?.triggerPolicy, channel?.kind])
+  // The channel's own instructions follow it to the next agent unless the admin clears them here.
+  const [prompt, setPrompt] = useState<{ readonly revision: number; readonly preview: string } | undefined>()
+  const [keepPrompt, setKeepPrompt] = useState(true)
+  const replacing = intent?.kind === 'replace' ? intent.channelId : undefined
+  useEffect(() => {
+    setPrompt(undefined)
+    setKeepPrompt(true)
+    if (replacing === undefined) return
+    const controller = new AbortController()
+    workspaceApi
+      .getChannelPrompt(replacing, { signal: controller.signal })
+      .then((view) => {
+        const text = promptDocumentPlainText(view.document).trim()
+        if (text) setPrompt({ revision: view.revision, preview: text.length > 60 ? `${text.slice(0, 59)}…` : text })
+      })
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [replacing])
 
   if (!intent || !channel)
     return <ConfirmDialog open={false} onOpenChange={onClose} title="" confirmLabel="" onConfirm={() => undefined} />
@@ -60,6 +80,13 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
       onConfirm={async () => {
         if (!nextAgent) throw new Error('智能体已不存在。')
         await api.getState().createBinding({ agentId: nextAgent.id, channelId: channel.id, triggerPolicy: trigger })
+        if (prompt !== undefined && !keepPrompt) {
+          await workspaceApi.updateChannelPrompt(channel.id, {
+            document: { version: 1, segments: [] },
+            locked: false,
+            expectedRevision: prompt.revision,
+          })
+        }
         toast(`「${channel.name}」已交给${nextAgent.name}`)
       }}
     >
@@ -83,6 +110,11 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
           onValueChange={(value) => isTriggerPolicy(value) && setTrigger(value)}
         />
       </Field>
+      {prompt !== undefined ? (
+        <Field label="频道说明" hint={keepPrompt ? `继续生效：${prompt.preview}` : '换绑后清空，之前的版本仍可找回'}>
+          <Switch label="保留频道说明" checked={keepPrompt} onCheckedChange={setKeepPrompt} />
+        </Field>
+      ) : null}
     </ConfirmDialog>
   )
 }

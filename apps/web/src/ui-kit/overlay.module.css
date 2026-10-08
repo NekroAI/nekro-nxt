@@ -138,6 +138,8 @@
 .sheetBody {
   display: grid;
   flex: 1;
+  /* Rows keep their content height when the body scrolls; framed (overflow: hidden) children would collapse. */
+  grid-auto-rows: max-content;
   align-content: start;
   gap: var(--s-4);
   overflow: auto;

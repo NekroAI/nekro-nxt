@@ -1327,3 +1327,43 @@ export const coreSchema = {
   extensionJobs,
   inboundHookDecisions,
 } as const
+
+/** Channel-specific instructions for the agent answering a channel; they follow the channel across rebinding. */
+export const channelPrompts = sqliteTable(
+  'channel_prompts',
+  {
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .primaryKey()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    document: jsonText<PromptDocumentV1>('document').notNull(),
+    /** The agent may not rewrite a locked prompt. */
+    locked: integer({ mode: 'boolean' }).notNull().default(false),
+    revision: integer().notNull(),
+    updatedBy: text('updated_by', { enum: ['admin', 'agent'] }).notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    check('channel_prompts_revision_ck', sql`${table.revision} >= 1`),
+    check('channel_prompts_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
+  ],
+)
+
+/** Recent earlier versions of a channel prompt, kept so an edit by the agent or an admin can be undone. */
+export const channelPromptRevisions = sqliteTable(
+  'channel_prompt_revisions',
+  {
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    revision: integer().notNull(),
+    document: jsonText<PromptDocumentV1>('document').notNull(),
+    updatedBy: text('updated_by', { enum: ['admin', 'agent'] }).notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.channelId, table.revision] }),
+    check('channel_prompt_revisions_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
+  ],
+)

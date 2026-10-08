@@ -1585,6 +1585,23 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       }),
     }),
   )
+  let promptView = HostApiContracts.getChannelPrompt.response.parse({
+    document: { version: 1, segments: [{ type: 'text', text: '本频道只讨论旅程测试。' }] },
+    locked: false,
+    revision: 2,
+    maxChars: 4000,
+    updatedBy: 'agent',
+    updatedAt: 1_725_000_100_000,
+    revisions: [
+      {
+        revision: 1,
+        document: { version: 1, segments: [{ type: 'text', text: '最早的旅程说明。' }] },
+        updatedBy: 'admin',
+        updatedAt: 1_725_000_000_000,
+      },
+    ],
+  })
+  const promptSaves: unknown[] = []
   await page.route(`**/api/channels/${channelId}/runtime/context`, (route) =>
     route.fulfill({
       status: 200,
@@ -1678,6 +1695,22 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   })
 
   await installWorkspaceRoutes(page, () => snapshot)
+  // Registered after the shared routes so it answers this channel's prompt.
+  await page.route(`**/api/channels/${channelId}/prompt`, async (route) => {
+    if (route.request().method() === 'PUT') {
+      const input = HostApiContracts.updateChannelPrompt.request.parse(route.request().postDataJSON())
+      promptSaves.push(input)
+      promptView = HostApiContracts.getChannelPrompt.response.parse({
+        ...promptView,
+        document: input.document,
+        locked: input.locked,
+        revision: promptView.revision + 1,
+        updatedBy: 'admin',
+        updatedAt: 1_725_000_200_000,
+      })
+    }
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptView) })
+  })
   await page.goto(`/channels/${externalChannelId}`)
   const inspector = page.getByRole('complementary', { name: '频道信息' })
   await expect(inspector.getByRole('combobox', { name: '智能体' })).toHaveText('选择智能体')
@@ -1689,6 +1722,28 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   await expect(page).not.toHaveURL(new RegExp(`/channels/${externalChannelId}$`, 'u'))
 
   await page.goto(`/channels/${channelId}`)
+  await expect(inspector.getByText('本频道只讨论旅程测试。', { exact: false })).toBeVisible()
+  await expect(inspector.getByText('智能体于', { exact: false })).toBeVisible()
+  await inspector.getByRole('button', { name: '编辑', exact: true }).click()
+  const promptSheet = page.getByRole('dialog', { name: '「上下文旅程频道」的频道说明' })
+  const promptEditor = promptSheet.getByRole('textbox', { name: '频道说明' })
+  await expect(promptEditor).toContainText('本频道只讨论旅程测试。')
+  await promptSheet.getByRole('button', { name: '恢复', exact: true }).click()
+  await expect(promptEditor).toContainText('最早的旅程说明。')
+  await promptEditor.click()
+  await page.keyboard.press('End')
+  await page.keyboard.type('回答保持简短。')
+  await promptSheet.getByRole('switch', { name: '锁定频道说明' }).click()
+  await promptSheet.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(promptSheet).toHaveCount(0)
+  expect(promptSaves).toEqual([
+    {
+      document: { version: 1, segments: [{ type: 'text', text: '最早的旅程说明。回答保持简短。' }] },
+      locked: true,
+      expectedRevision: 2,
+    },
+  ])
+  await expect(inspector.getByText('已锁定', { exact: false })).toBeVisible()
   await inspector.getByRole('button', { name: '查看', exact: true }).click()
   const contextSheet = page.getByRole('dialog', { name: `${agentName}看到的上下文` })
   await expect(contextSheet.getByText('deepseek-v4-flash')).toBeVisible()

@@ -29,6 +29,8 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
+import { ChannelPromptConflictError } from '@nekro-nxt/storage-sqlite'
+import { ChannelPromptError } from './channel-prompts.js'
 /**
  * How long an enable or disable request waits for its result. Switching waits for the agent's safe gap, which lasts
  * as long as its current reply; past this window the request answers `pending` and finishes in the background.
@@ -623,6 +625,7 @@ export function registerWorkspaceRoutes({
       const runtimeMatch = /^\/api\/channels\/([^/]+)\/runtime$/.exec(url.pathname)
       const toolCallMatch = /^\/api\/channels\/([^/]+)\/runtime\/tools\/([^/]+)$/.exec(url.pathname)
       const runtimeContextMatch = /^\/api\/channels\/([^/]+)\/runtime\/context$/.exec(url.pathname)
+      const promptMatch = /^\/api\/channels\/([^/]+)\/prompt$/.exec(url.pathname)
       const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
@@ -633,6 +636,7 @@ export function registerWorkspaceRoutes({
         runtimeMatch?.[1] ??
         toolCallMatch?.[1] ??
         runtimeContextMatch?.[1] ??
+        promptMatch?.[1] ??
         runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
@@ -707,6 +711,41 @@ export function registerWorkspaceRoutes({
             truncated: false,
           },
         )
+        return
+      }
+
+      if (promptMatch) {
+        if (!runtime.repository.getChannel(typedChannelId)) {
+          writeError(res, 404, 'not-found', '频道不存在或已被删除。')
+          return
+        }
+        if (req.method === 'GET') {
+          writeContractJson(res, 200, HostApiContracts.getChannelPrompt, runtime.channelPrompts.view(typedChannelId))
+          return
+        }
+        if (req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', '频道说明只支持 GET 与 PUT。')
+          return
+        }
+        try {
+          const parsed = HostApiContracts.updateChannelPrompt.parseRequest(await readJsonBody(req))
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.updateChannelPrompt,
+            runtime.channelPrompts.saveByAdmin({ channelId: typedChannelId, ...parsed }),
+          )
+        } catch (error) {
+          if (error instanceof ChannelPromptConflictError) {
+            writeError(res, 409, 'channel-prompt-conflict', error.message)
+            return
+          }
+          if (error instanceof ChannelPromptError) {
+            writeError(res, 400, `channel-prompt-${error.code}`, error.message)
+            return
+          }
+          throw error
+        }
         return
       }
 

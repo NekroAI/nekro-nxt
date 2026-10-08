@@ -1,7 +1,8 @@
 import { useGo } from '../model/nav.js'
 import { PanelSlot } from '../../extension-ui/index.js'
 import { ArrowUpRight, Cable, ChevronRight, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { promptDocumentPlainText } from '@nekro-nxt/contracts'
 
 import {
   connectionDisplayName,
@@ -32,6 +33,8 @@ import { triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/iden
 import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { ContextSheet } from './context-sheet.js'
+import { ChannelPromptSheet, promptUpdateNote, type ChannelPromptView } from './channel-prompt-sheet.js'
+import { workspaceApi } from '../../host-api-client.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
@@ -50,6 +53,15 @@ const triggerHint: Record<TriggerPolicy, string> = {
 }
 
 const kindLabel: Record<ChannelSummary['kind'], string> = { internal: '内置频道', group: '群聊', direct: '私聊' }
+
+/** What the inspector says about a channel prompt: whether it exists, a glimpse of it, and who changed it last. */
+const channelPromptSummary = (view: ChannelPromptView | undefined): string | undefined => {
+  if (view === undefined) return undefined
+  const text = promptDocumentPlainText(view.document).replace(/\s+/gu, ' ').trim()
+  if (!text) return '还没有'
+  const glimpse = text.length > 18 ? `${text.slice(0, 17)}…` : text
+  return [glimpse, promptUpdateNote(view), view.locked ? '已锁定' : undefined].filter(Boolean).join(' · ')
+}
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 
@@ -74,6 +86,21 @@ export function ChannelInspector({
   const [removing, setRemoving] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
+  const [promptOpen, setPromptOpen] = useState(false)
+  const [prompt, setPrompt] = useState<ChannelPromptView | undefined>()
+  const boundAgentId = channel.bindings[0]?.agentId
+  useEffect(() => {
+    setPrompt(undefined)
+    // The row only shows for a bound channel.
+    if (boundAgentId === undefined) return
+    const controller = new AbortController()
+    workspaceApi
+      .getChannelPrompt(channel.id, { signal: controller.signal })
+      .then(setPrompt)
+      .catch(() => undefined)
+    return () => controller.abort()
+    // A turn may have rewritten the prompt through the agent's tool.
+  }, [channel.id, boundAgentId, runtime?.turns.at(-1)?.endedAt])
   const allTasks = useProductStore((state) => state.scheduledTasks)
   const tasks = sortTasks(
     allTasks.filter((task) => task.channelId === channel.id && task.agentId === agent?.id && task.state !== 'finished'),
@@ -214,6 +241,17 @@ export function ChannelInspector({
                 options={TRIGGERS.map((value) => ({ value, label: triggerLabel[value] ?? value }))}
                 onValueChange={(value) => isTriggerPolicy(value) && void changeTrigger(value)}
               />
+            </PropertyRow>
+          ) : null}
+          {agent && binding ? (
+            <PropertyRow
+              label="频道说明"
+              description={channelPromptSummary(prompt)}
+              tip="只在这个频道生效的要求，例如群规、语气和称呼；不改变智能体的人设。"
+            >
+              <Button size="small" onClick={() => setPromptOpen(true)}>
+                {prompt === undefined || prompt.revision === 0 ? '添加' : '编辑'}
+              </Button>
             </PropertyRow>
           ) : null}
           {agent && binding && showFeedback ? (
@@ -405,6 +443,14 @@ export function ChannelInspector({
       />
 
       <BindDialog intent={intent} onClose={() => setIntent(null)} />
+      <ChannelPromptSheet
+        open={promptOpen}
+        onOpenChange={setPromptOpen}
+        channelId={channel.id}
+        channelName={channel.name}
+        agentId={agent?.id}
+        onSaved={setPrompt}
+      />
       {agent ? (
         <ContextSheet open={contextOpen} onOpenChange={setContextOpen} channelId={channel.id} agentName={agent.name} />
       ) : null}
