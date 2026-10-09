@@ -39,7 +39,9 @@ import {
   ExtensionConfigEditor,
   PanelSlot,
   activeConfigSchema,
-  permissionLines,
+  approvalRiskKeys,
+  configFieldTitles,
+  PermissionApprovalList,
   useExtensionActivation,
 } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
@@ -236,7 +238,14 @@ function Overview({ revision, pages }: { readonly revision: Revision | undefined
             <PropertyRow
               key={`${part.kind}:${part.name}`}
               label={part.kind}
-              description={part.detail ?? CONTRIBUTION_PLACE[part.kind] ?? CONTRIBUTION_PLACE['内容']}
+              description={
+                part.detail ??
+                (part.kind === '页面' && pages.find((page) => page.title === part.name)?.rail !== undefined
+                  ? '独立页面，已加入左侧导航'
+                  : undefined) ??
+                CONTRIBUTION_PLACE[part.kind] ??
+                CONTRIBUTION_PLACE['内容']
+              }
             >
               <code className={styles.contributionName}>{part.name}</code>
               {part.kind === '页面' ? (
@@ -474,6 +483,7 @@ function Installation({
     readonly host?: NonNullable<NonNullable<Revision['verification']>['hostPermission']>
     readonly agent?: NonNullable<NonNullable<Revision['verification']>['agentPermission']>
   }>()
+  const [acceptedRisks, setAcceptedRisks] = useState<ReadonlySet<string>>(new Set())
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const chosen = extension.revisions.find((item) => item.id === choice)
   const chosenInstalled = chosen !== undefined && chosen.id === installed?.revisionId
@@ -494,6 +504,7 @@ function Installation({
     // Agents move with the installation; a record that asks them for more needs their approval as well.
     const needsAgent = extension.activations.length > 0 && agent?.approvalRequired === true
     if (needsHost || needsAgent) {
+      setAcceptedRisks(new Set())
       setApprove({
         revision,
         ...(needsHost && host !== undefined ? { host } : {}),
@@ -555,6 +566,7 @@ function Installation({
         onOpenChange={(open) => !open && setApprove(undefined)}
         title="批准这份记录申请的权限"
         confirmLabel="批准并安装"
+        confirmDisabled={approvalRiskKeys(approve?.host, approve?.agent).some((key) => !acceptedRisks.has(key))}
         onConfirm={() =>
           approve
             ? install(approve.revision, {
@@ -564,26 +576,15 @@ function Installation({
             : undefined
         }
       >
-        {approve?.host === undefined ? null : (
-          <>
-            <p className={styles.faint}>对整台机器生效：</p>
-            <ul className={styles.permissions}>
-              {permissionLines(approve.host.declaration).map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </>
-        )}
-        {approve?.agent === undefined ? null : (
-          <>
-            <p className={styles.faint}>对正在使用它的 {extension.activations.length} 个智能体生效：</p>
-            <ul className={styles.permissions}>
-              {permissionLines(approve.agent.declaration).map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          </>
-        )}
+        <PermissionApprovalList
+          host={approve?.host}
+          agent={approve?.agent}
+          hostTitle="对整台机器生效："
+          agentTitle={`对正在使用它的 ${extension.activations.length} 个智能体生效：`}
+          accepted={acceptedRisks}
+          onAcceptedChange={setAcceptedRisks}
+          {...(approve === undefined ? {} : { fieldTitle: configFieldTitles(approve.revision) })}
+        />
       </ConfirmDialog>
       <ConfirmDialog
         open={uninstallOpen}

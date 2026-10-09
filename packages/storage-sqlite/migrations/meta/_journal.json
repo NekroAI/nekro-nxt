@@ -253,6 +253,13 @@
       "when": 1791515891449,
       "tag": "0035_extension_provides",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1791520688406,
+      "tag": "0036_host_ui_page_rail",
+      "breakpoints": true
     }
   ]
 }

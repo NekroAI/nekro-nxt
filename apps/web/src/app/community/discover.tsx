@@ -48,6 +48,12 @@ const PROVIDES: readonly { readonly value: Provides; readonly label: string }[] 
 const LEVEL_LABEL = { normal: '常规', elevated: '需留意', high: '高风险' } as const
 const LEVEL_TONE = { normal: 'neutral', elevated: 'warn', high: 'bad' } as const
 
+/** Older community releases have no layer; their items were all agent-layer capabilities. */
+const PERMISSION_LAYERS = {
+  host: { title: '本机权限', description: '安装到本机时确认，对整台机器生效。' },
+  agent: { title: '智能体权限', description: '给智能体启用时确认，只对该智能体生效。' },
+} as const
+
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const ReviewChip = ({ status }: { readonly status: CommunityExtensionSummary['latest'] }) => {
@@ -403,19 +409,30 @@ function CommunityDetail({
 
       {detail.review ? <ReviewSummary review={detail.review} pageUrl={detail.pageUrl} /> : null}
 
-      <PropertyGroup title="需要的权限" description="启用时还会再次请你确认。">
-        {latest && latest.permissions.length > 0 ? (
-          <PropertyList>
-            {latest.permissions.map((permission, index) => (
-              <PropertyRow key={`${permission.key}-${index}`} label={permission.label} description={permission.detail}>
-                <Chip tone={LEVEL_TONE[permission.level]}>{LEVEL_LABEL[permission.level]}</Chip>
-              </PropertyRow>
-            ))}
-          </PropertyList>
-        ) : (
+      {latest && latest.permissions.length > 0 ? (
+        Object.entries(PERMISSION_LAYERS).map(([layer, { title, description }]) => {
+          const items = latest.permissions.filter((permission) => (permission.layer ?? 'agent') === layer)
+          return items.length === 0 ? null : (
+            <PropertyGroup key={layer} title={title} description={description}>
+              <PropertyList>
+                {items.map((permission, index) => (
+                  <PropertyRow
+                    key={`${permission.key}-${index}`}
+                    label={permission.label}
+                    description={permission.detail}
+                  >
+                    <Chip tone={LEVEL_TONE[permission.level]}>{LEVEL_LABEL[permission.level]}</Chip>
+                  </PropertyRow>
+                ))}
+              </PropertyList>
+            </PropertyGroup>
+          )
+        })
+      ) : (
+        <PropertyGroup title="需要的权限">
           <p className={styles.faint}>没有申请额外权限。</p>
-        )}
-      </PropertyGroup>
+        </PropertyGroup>
+      )}
 
       {latest?.notes ? (
         <PropertyGroup title="更新说明" description={`${relativeTime(latest.createdAt)}发布`}>

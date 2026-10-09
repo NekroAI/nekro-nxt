@@ -1,3 +1,4 @@
+import { hostPageRailOrder } from '@nekro-nxt/contracts'
 import type {
   DshPluginActivationRecord,
   DshPluginDiagnosticRecord,
@@ -269,6 +270,7 @@ export const createDshPluginRepository = (database: DrizzleCoreDatabase): DshPlu
                 icon: page.icon,
                 objectPane: page.objectPane,
                 startPath: page.startPath,
+                railOrder: hostPageRailOrder(page),
                 visible: previous?.visible ?? true,
                 sortOrder: previous?.sortOrder ?? nextSortOrder++,
                 clientBuildKey: input.hostUi.clientBuildKey,
@@ -284,6 +286,7 @@ export const createDshPluginRepository = (database: DrizzleCoreDatabase): DshPlu
                   icon: page.icon,
                   objectPane: page.objectPane,
                   startPath: page.startPath,
+                  railOrder: hostPageRailOrder(page),
                   clientBuildKey: input.hostUi.clientBuildKey,
                   updatedAt: input.hostUi.now,
                 },

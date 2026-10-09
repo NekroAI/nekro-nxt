@@ -303,6 +303,14 @@ a.instance {
   flex: 1;
 }
 
+/* Extension pages that registered a rail entry; long titles are cut to the rail width. */
+.railExtension span {
+  max-width: 54px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .railDivider {
   width: 28px;
   height: 1px;
@@ -461,6 +469,8 @@ a.instance {
     width: auto;
   }
 
+  /* The bottom bar has room for the built-in spaces only; extension pages stay in the command palette and workshop. */
+  .railExtension,
   .railSpacer,
   .railDivider,
   .status,

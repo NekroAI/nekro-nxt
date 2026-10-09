@@ -817,6 +817,8 @@ export const hostUiPageEntries = sqliteTable(
     startPath: text('start_path').notNull(),
     visible: integer({ mode: 'boolean' }).notNull(),
     sortOrder: integer('sort_order').notNull(),
+    /** Navigation rail position when the page registered a rail entry; null otherwise. */
+    railOrder: integer('rail_order'),
     clientBuildKey: text('client_build_key').notNull(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),

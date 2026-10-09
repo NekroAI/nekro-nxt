@@ -49,6 +49,8 @@ export const CommunityPermissionItemSchema = z.object({
   level: z.enum(['normal', 'elevated', 'high']),
   label: z.string().max(200),
   detail: z.string().max(2000).optional(),
+  /** `host`: approved when installed on this machine; `agent`: approved when enabled for an agent. */
+  layer: z.enum(['host', 'agent']).optional(),
 })
 
 export type CommunityPermissionItem = z.output<typeof CommunityPermissionItemSchema>

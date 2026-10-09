@@ -146,6 +146,13 @@ export const HostPageContributionSchema = z
 
 export type HostPageContribution = z.output<typeof HostPageContributionSchema>
 
+/** Rail position of a page that registers a rail entry without an explicit order. */
+export const HOST_PAGE_DEFAULT_RAIL_ORDER = 100
+
+/** The stored rail position of a page; `null` when the page has no rail entry. */
+export const hostPageRailOrder = (page: Pick<HostPageContribution, 'rail'>): number | null =>
+  page.rail === undefined ? null : (page.rail.order ?? HOST_PAGE_DEFAULT_RAIL_ORDER)
+
 export const HostUiNavigationItemSchema = z
   .object({
     id: z.string().trim().min(1).max(80),
@@ -300,6 +307,11 @@ export const HostUiPageEntrySchema = z
     startPath: z.string(),
     visible: z.boolean(),
     sortOrder: z.number().int().nonnegative(),
+    /** Present when the page registered a navigation rail entry; lower orders come first. */
+    rail: z
+      .object({ order: z.number().int().min(0).max(999) })
+      .strict()
+      .optional(),
     routeBase: z.string().regex(/^\/apps\/hup_[0-9A-Za-z]+$/u),
     client: z
       .object({

@@ -52,6 +52,18 @@
   font: var(--t-section);
 }
 
+/* Narrow windows: the status moves under a title that wraps instead of being cut to a few characters. */
+@media (max-width: 760px) {
+  .titleRow {
+    flex-wrap: wrap;
+  }
+
+  .title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;
@@ -246,6 +258,24 @@
 .stacked .rowControl > * {
   flex: 1;
   min-width: 0;
+}
+
+/* Narrow windows: a wide control (select and buttons) wraps under its label instead of squeezing it. */
+@media (max-width: 760px) {
+  .row:not(.stacked) {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .row:not(.stacked) > .rowText {
+    flex: 1 1 10em;
+  }
+
+  .row:not(.stacked) > .rowControl {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    margin-left: auto;
+  }
 }
 
 /* —— 诊断 —— */

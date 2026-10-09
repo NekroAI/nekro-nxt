@@ -65,7 +65,8 @@ export function ContributionFrame(props: ContributionFrameProps) {
         >
           {Icon ? <Icon size={15} aria-hidden="true" /> : null}
           <span className={styles.title}>{props.title}</span>
-          <span className={styles.source}>{props.source}</span>
+          {/* The source names the extension; a panel titled after its extension does not repeat it. */}
+          {props.source === props.title ? null : <span className={styles.source}>{props.source}</span>}
           <ChevronDown size={14} aria-hidden="true" className={styles.chevron} />
         </Pressable>
       </header>

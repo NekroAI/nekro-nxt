@@ -391,9 +391,17 @@ export interface ExtensionCapabilitySummaryItem {
   readonly detail?: string
 }
 
-/** User-facing summary of declared capabilities, in a stable order, for approval and inspection pages. */
+/**
+ * User-facing summary of declared capabilities, in a stable order, for approval and inspection pages. `layer: 'host'`
+ * phrases host-layer capabilities (passed through {@link hostLayerAsCapabilities}) for the host instance.
+ */
 export const summarizeExtensionCapabilities = (
   capabilities: ExtensionCapabilities | undefined,
+  options: {
+    readonly layer?: 'host' | 'agent'
+    /** Display name of a config field, so `network.mode: 'config'` names the fields as the user knows them. */
+    readonly fieldTitle?: (key: string) => string
+  } = {},
 ): readonly ExtensionCapabilitySummaryItem[] => {
   if (capabilities === undefined) return []
   const items: ExtensionCapabilitySummaryItem[] = []
@@ -401,11 +409,18 @@ export const summarizeExtensionCapabilities = (
   if (network?.mode === 'domains') {
     items.push({ key: 'network', risk: 'normal', label: '访问指定网站', detail: network.domains.join('、') })
   } else if (network?.mode === 'config') {
-    items.push({ key: 'network', risk: 'normal', label: '访问你在配置中填写的地址', detail: network.fields.join('、') })
+    items.push({
+      key: 'network',
+      risk: 'normal',
+      label: '访问你在配置中填写的地址',
+      detail: network.fields.map((field) => options.fieldTitle?.(field) ?? field).join('、'),
+    })
   } else if (network?.mode === 'unrestricted') {
     items.push({ key: 'network', risk: 'high', label: '访问任意公网地址', detail: network.purpose })
   }
-  if (capabilities.storage !== undefined) {
+  if (capabilities.storage !== undefined && options.layer === 'host') {
+    items.push({ key: 'storage', risk: 'normal', label: '在本机保存扩展数据，页面与启用它的智能体共用' })
+  } else if (capabilities.storage !== undefined) {
     const shared = capabilities.storage.scopes.includes('shared')
     items.push({
       key: 'storage',

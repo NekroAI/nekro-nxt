@@ -1,10 +1,110 @@
-import type { ExtensionPermissionRequirement } from '@nekro-nxt/contracts'
+import { configFields, type ConfigSchemaDocument, type ExtensionPermissionRequirement } from '@nekro-nxt/contracts'
 import { useState, type ReactNode } from 'react'
 import type { ExtensionApprovals } from '../product-model.js'
 import { useProductRuntime, type LocalExtensionSummary, type ProductState } from '../product-runtime.js'
 import { ConfirmDialog, SwitchRow } from '../ui-kit/index.js'
-import { highRiskCapabilities, permissionLines } from './permissions.js'
+import { highRiskCapabilities, permissionLines, type PermissionLayer } from './permissions.js'
 import styles from './activation.module.css'
+
+/** Keys of the high-risk capabilities in a host and an agent approval; each must be accepted before confirming. */
+export const approvalRiskKeys = (
+  host: ExtensionPermissionRequirement | undefined,
+  agent: ExtensionPermissionRequirement | undefined,
+): readonly string[] =>
+  [...highRiskCapabilities(host?.declaration, 'host'), ...highRiskCapabilities(agent?.declaration, 'agent')].map(
+    (risk) => risk.key,
+  )
+
+const sentence = (text: string): string => text.replace(/[。.！!？?]+$/u, '')
+
+/** Config field titles of one record, for naming the fields a `network.mode: 'config'` permission reaches. */
+export const configFieldTitles = (revision: {
+  readonly hostConfigSchema?: ConfigSchemaDocument | undefined
+  readonly agentConfigSchema?: ConfigSchemaDocument | undefined
+}): ((key: string) => string) => {
+  const titles = new Map(
+    [revision.hostConfigSchema, revision.agentConfigSchema].flatMap((schema) =>
+      schema === undefined ? [] : configFields(schema).map((field) => [field.key, field.title] as const),
+    ),
+  )
+  return (key) => titles.get(key) ?? key
+}
+
+/** One layer of an approval: its title, the ordinary permissions and one switch per high-risk capability. */
+function ApprovalLayer({
+  layer,
+  title,
+  requirement,
+  accepted,
+  onAcceptedChange,
+  fieldTitle,
+}: {
+  readonly layer: PermissionLayer
+  readonly title: string
+  readonly requirement: ExtensionPermissionRequirement
+  readonly accepted: ReadonlySet<string>
+  readonly onAcceptedChange: (accepted: ReadonlySet<string>) => void
+  readonly fieldTitle?: ((key: string) => string) | undefined
+}) {
+  const lines = permissionLines(requirement.declaration, layer, fieldTitle)
+  const risks = highRiskCapabilities(requirement.declaration, layer)
+  return (
+    <div>
+      <p className={styles.layer}>{title}</p>
+      {lines.length === 0 ? null : (
+        <ul className={styles.permissions}>
+          {lines.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+      {risks.map((risk) => (
+        <SwitchRow
+          key={risk.key}
+          title={risk.label}
+          description={`${risk.detail === undefined ? '' : `${risk.key.startsWith(`${layer}:mcp.`) ? '将运行' : '用途'}：${sentence(risk.detail)}。`}这项能力不受范围限制，打开开关表示你了解并接受风险。`}
+          checked={accepted.has(risk.key)}
+          onCheckedChange={(checked) => {
+            const next = new Set(accepted)
+            if (checked) next.add(risk.key)
+            else next.delete(risk.key)
+            onAcceptedChange(next)
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The body of a permission approval: the host layer (installing on this machine), then the agent layer, followed by
+ * one switch per high-risk capability.
+ */
+export function PermissionApprovalList({
+  host,
+  agent,
+  hostTitle,
+  agentTitle,
+  accepted,
+  onAcceptedChange,
+  fieldTitle,
+}: {
+  readonly fieldTitle?: (key: string) => string
+  readonly host?: ExtensionPermissionRequirement | undefined
+  readonly agent?: ExtensionPermissionRequirement | undefined
+  readonly hostTitle: string
+  readonly agentTitle: string
+  readonly accepted: ReadonlySet<string>
+  readonly onAcceptedChange: (accepted: ReadonlySet<string>) => void
+}) {
+  const shared = { accepted, onAcceptedChange, fieldTitle }
+  return (
+    <>
+      {host === undefined ? null : <ApprovalLayer layer="host" title={hostTitle} requirement={host} {...shared} />}
+      {agent === undefined ? null : <ApprovalLayer layer="agent" title={agentTitle} requirement={agent} {...shared} />}
+    </>
+  )
+}
 
 interface PendingApproval {
   readonly extension: LocalExtensionSummary
@@ -123,10 +223,7 @@ export function useExtensionActivation(): {
     return approved
   }
 
-  const risks =
-    pending === undefined
-      ? []
-      : [...highRiskCapabilities(pending.host?.declaration), ...highRiskCapabilities(pending.agent?.declaration)]
+  const risks = pending === undefined ? [] : approvalRiskKeys(pending.host, pending.agent)
   const dialog = pending ? (
     <ConfirmDialog
       open
@@ -137,7 +234,7 @@ export function useExtensionActivation(): {
       }}
       title={`允许「${pending.extension.name}」为${pending.agentName}工作？`}
       confirmLabel="允许并启用"
-      confirmDisabled={risks.some((risk) => !acceptedRisks.has(risk.key))}
+      confirmDisabled={risks.some((key) => !acceptedRisks.has(key))}
       onConfirm={async () => {
         await apply(
           {
@@ -155,42 +252,15 @@ export function useExtensionActivation(): {
         setPending(undefined)
       }}
     >
-      {pending.host === undefined ? null : (
-        <>
-          <p className={styles.layer}>安装到本机，对整台机器生效：</p>
-          <ul className={styles.permissions}>
-            {permissionLines(pending.host.declaration).map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        </>
-      )}
-      {pending.agent === undefined ? null : (
-        <>
-          {pending.host === undefined ? null : <p className={styles.layer}>只对{pending.agentName}生效：</p>}
-          <ul className={styles.permissions}>
-            {permissionLines(pending.agent.declaration).map((line) => (
-              <li key={line}>{line}</li>
-            ))}
-          </ul>
-        </>
-      )}
-      {risks.map((risk) => (
-        <SwitchRow
-          key={risk.key}
-          title={risk.label}
-          description={`${risk.detail === undefined ? '' : `${risk.key.startsWith('mcp.') ? '将运行' : '用途'}：${risk.detail}。`}这项能力不受范围限制，打开开关表示你了解并接受风险。`}
-          checked={acceptedRisks.has(risk.key)}
-          onCheckedChange={(checked) =>
-            setAcceptedRisks((current) => {
-              const next = new Set(current)
-              if (checked) next.add(risk.key)
-              else next.delete(risk.key)
-              return next
-            })
-          }
-        />
-      ))}
+      <PermissionApprovalList
+        host={pending.host}
+        agent={pending.agent}
+        hostTitle="安装到本机，对整台机器生效："
+        agentTitle={`只对${pending.agentName}生效：`}
+        accepted={acceptedRisks}
+        onAcceptedChange={setAcceptedRisks}
+        fieldTitle={configFieldTitles(pending.revision)}
+      />
     </ConfirmDialog>
   ) : null
 

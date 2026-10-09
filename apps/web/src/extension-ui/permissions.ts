@@ -27,19 +27,31 @@ export const PERMISSION_LABELS: Readonly<Record<HostUiPermission, string>> = {
 const capabilityLine = (item: ExtensionCapabilitySummaryItem): string =>
   item.detail === undefined ? item.label : `${item.label}：${item.detail}`
 
-/** One line per permission, network origins and ordinary Host capabilities last. */
-export const permissionLines = (declaration: HostUiPermissionDeclaration | undefined): readonly string[] => [
+export type PermissionLayer = 'host' | 'agent'
+
+/** One line per permission, network origins and ordinary capabilities last; high-risk ones are accepted separately. */
+export const permissionLines = (
+  declaration: HostUiPermissionDeclaration | undefined,
+  layer: PermissionLayer = 'agent',
+  fieldTitle?: (key: string) => string,
+): readonly string[] => [
   ...(declaration?.permissions ?? [])
     .filter((item) => item !== 'network.request')
     .map((item) => PERMISSION_LABELS[item]),
   ...(declaration?.networkOrigins ?? []).map((origin) => `访问 ${origin}`),
-  ...summarizeExtensionCapabilities(declaration?.capabilities)
+  ...summarizeExtensionCapabilities(declaration?.capabilities, {
+    layer,
+    ...(fieldTitle === undefined ? {} : { fieldTitle }),
+  })
     .filter((item) => item.risk !== 'high')
     .map(capabilityLine),
 ]
 
-/** High-risk capabilities the user must accept one by one before enabling. */
+/** High-risk capabilities the user must accept one by one; keys carry the layer, since both layers may declare one. */
 export const highRiskCapabilities = (
   declaration: HostUiPermissionDeclaration | undefined,
+  layer: PermissionLayer = 'agent',
 ): readonly ExtensionCapabilitySummaryItem[] =>
-  summarizeExtensionCapabilities(declaration?.capabilities).filter((item) => item.risk === 'high')
+  summarizeExtensionCapabilities(declaration?.capabilities, { layer })
+    .filter((item) => item.risk === 'high')
+    .map((item) => ({ ...item, key: `${layer}:${item.key}` }))

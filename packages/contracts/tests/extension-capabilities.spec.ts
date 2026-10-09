@@ -7,6 +7,7 @@ import {
   mcpSecretFields,
   McpServerFormSchema,
   summarizeExtensionCapabilities,
+  hostLayerAsCapabilities,
   type ExtensionCapabilities,
 } from '../src/index.js'
 
@@ -235,6 +236,15 @@ describe('extensionCapabilitiesExpand', () => {
 })
 
 describe('summarizeExtensionCapabilities', () => {
+  it('phrases host-layer storage for the host instance instead of as data shared between agents', () => {
+    const host = hostLayerAsCapabilities({ storage: {}, network: { mode: 'config', fields: ['endpoint'] } })
+    expect(summarizeExtensionCapabilities(host, { layer: 'host' })).toEqual([
+      { key: 'network', risk: 'normal', label: '访问你在配置中填写的地址', detail: 'endpoint' },
+      { key: 'storage', risk: 'normal', label: '在本机保存扩展数据，页面与启用它的智能体共用' },
+    ])
+    expect(summarizeExtensionCapabilities(host)[1]).toMatchObject({ risk: 'sensitive' })
+  })
+
   it('describes every capability with its risk tier', () => {
     expect(summarizeExtensionCapabilities(undefined)).toEqual([])
     const summary = summarizeExtensionCapabilities(

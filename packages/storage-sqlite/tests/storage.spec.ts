@@ -2495,6 +2495,7 @@ describe('Extension and backup', () => {
         nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
       })
       expect(first).toHaveLength(1)
+      expect(first[0]!.rail).toBeUndefined()
       const pageInstanceId = first[0]!.pageInstanceId
       const preferenceRevision = repository.getHostUiPreferencesRevision()
       expect(
@@ -2522,13 +2523,15 @@ describe('Extension and backup', () => {
             icon: { kind: 'host-icon', name: 'layout-dashboard' },
             objectPane: 'navigation',
             startPath: 'projects',
+            rail: {},
           },
         ],
         clientBuildKey: 'f'.repeat(64),
         now: 13,
         nextPageInstanceId: () => HostUiPageInstanceIdSchema.parse(`hup_PAGE${++sequence}`),
       })
-      expect(updated[0]).toMatchObject({ pageInstanceId, visible: false, title: '项目概览' })
+      // A rail entry without an explicit order takes the default position.
+      expect(updated[0]).toMatchObject({ pageInstanceId, visible: false, title: '项目概览', rail: { order: 100 } })
       expect(repository.getHostUiDiagnostic(pageInstanceId)).toBeUndefined()
       repository.upsertHostUiDiagnostic({ pageInstanceId, status: 'ready', observedAt: 14 })
       expect(repository.getHostUiDiagnostic(pageInstanceId)).toMatchObject({ status: 'ready' })

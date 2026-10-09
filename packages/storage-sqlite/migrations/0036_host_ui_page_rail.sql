@@ -1,0 +1,1 @@
+ALTER TABLE `host_ui_page_entries` ADD `rail_order` integer;

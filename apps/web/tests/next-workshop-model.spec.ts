@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   contributionParts,
+  extensionUsage,
   lifecyclePosition,
   recordLabels,
   taskGroup,
@@ -8,6 +9,7 @@ import {
   SLUG_PATTERN,
   sortTasks,
   type AuthoringAttempt,
+  type ExtensionUsageInput,
   type LifecycleInput,
 } from '../src/app/workshop/workshop-model.js'
 
@@ -97,5 +99,24 @@ describe('workshop list and records', () => {
     expect(labels.get('b')).toBe('10月1日 14:20:25')
     expect(labels.get('c')).toBe('10月1日 15:20')
     expect([...labels.values()].some((label) => /\br\d/u.test(label))).toBe(false)
+  })
+})
+
+describe('extension usage', () => {
+  const extension = (patch: Partial<ExtensionUsageInput> = {}): ExtensionUsageInput => ({
+    provides: ['agent'],
+    revisions: [{ id: 'xrv_A', format: 'current', agentLayer: true }],
+    activations: [],
+    ...patch,
+  })
+  const installation = { revisionId: 'xrv_A' }
+
+  it('tells an installed agent-only extension apart from one that is not on this machine yet', () => {
+    expect(extensionUsage(extension())).toEqual({ label: '未启用', tone: 'neutral' })
+    expect(extensionUsage(extension({ installation }))).toEqual({ label: '已安装 · 未启用', tone: 'neutral' })
+    expect(extensionUsage(extension({ provides: ['agent', 'page'], installation }))).toEqual({
+      label: '已安装',
+      tone: 'ok',
+    })
   })
 })

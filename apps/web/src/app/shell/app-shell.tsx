@@ -2,6 +2,7 @@ import { useGo } from '../model/nav.js'
 import { ReleaseBanner } from '../system/compatibility.js'
 import {
   Activity,
+  AppWindow,
   Bell,
   Cable,
   LockOpen,
@@ -17,6 +18,7 @@ import { browserInstanceName, isUnencryptedRemoteConnection } from '../../manage
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
+import { HOST_ICONS } from '../../extension-ui/icons.js'
 import { useProductStore, type ProductHostStatus } from '../../product-runtime.js'
 import { Kbd, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
 import { AttentionList } from '../attention/attention-list.js'
@@ -46,9 +48,21 @@ const hostLabel: Record<ProductHostStatus, string> = {
   error: '无法连接',
 }
 
+/** Extension pages that registered a rail entry (`rail` in the page contribution) and are not hidden by the user. */
+function useRailPages() {
+  const pages = useProductStore((state) => state.hostUi.pages)
+  return pages
+    .filter((page) => page.rail !== undefined && page.visible)
+    .sort((a, b) => (a.rail?.order ?? 0) - (b.rail?.order ?? 0) || a.sortOrder - b.sortOrder)
+}
+
 function Rail() {
   const location = useLocation()
-  const space = spaceOf(location.pathname)
+  const railPages = useRailPages()
+  const activePage = railPages.find(
+    (page) => location.pathname === page.routeBase || location.pathname.startsWith(`${page.routeBase}/`),
+  )
+  const space = activePage?.routeBase ?? spaceOf(location.pathname)
   const ref = useRef<HTMLElement>(null)
   const { geometry, ready } = useIndicator(ref, '[aria-current="page"]', space)
   return (
@@ -69,6 +83,23 @@ function Rail() {
           <span>{label}</span>
         </NavLink>
       ))}
+      {railPages.length > 0 ? <span className={styles.railDivider} aria-hidden="true" /> : null}
+      {railPages.map((page) => {
+        const Icon = page.icon.kind === 'host-icon' ? HOST_ICONS[page.icon.name] : AppWindow
+        return (
+          <NavLink
+            key={page.pageInstanceId}
+            to={`${page.routeBase}${page.startPath ? `/${page.startPath}` : ''}`}
+            className={[styles.railItem, styles.railExtension].join(' ')}
+            aria-current={space === page.routeBase ? 'page' : undefined}
+            title={page.title}
+            data-extension-rail=""
+          >
+            <Icon aria-hidden="true" strokeWidth={1.7} />
+            <span>{page.title}</span>
+          </NavLink>
+        )
+      })}
       <span className={styles.railSpacer} />
       <NavLink to="/settings" className={styles.railItem} aria-current={space === '/settings' ? 'page' : undefined}>
         <Settings aria-hidden="true" strokeWidth={1.7} />

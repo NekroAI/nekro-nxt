@@ -137,8 +137,16 @@ export const providesLabel = (provides: readonly string[]): string => {
   return labels.length === 0 ? '扩展' : labels.join(' · ')
 }
 
+/** The parts of an extension that decide whether it has agent abilities and who uses it. */
+export interface ExtensionUsageInput {
+  readonly provides: LocalExtensionSummary['provides']
+  readonly revisions: readonly Pick<LocalExtensionSummary['revisions'][number], 'id' | 'format' | 'agentLayer'>[]
+  readonly installation?: Pick<NonNullable<LocalExtensionSummary['installation']>, 'revisionId' | 'runtime'> | undefined
+  readonly activations: readonly Pick<LocalExtensionSummary['activations'][number], 'runtime'>[]
+}
+
 /** Whether the installed (or else the latest usable) record can be enabled for agents. */
-export const hasAgentLayer = (extension: LocalExtensionSummary): boolean => {
+export const hasAgentLayer = (extension: Pick<ExtensionUsageInput, 'revisions' | 'installation'>): boolean => {
   const installed = extension.revisions.find((revision) => revision.id === extension.installation?.revisionId)
   return (
     (installed ?? extension.revisions.findLast((revision) => revision.format !== 'unavailable'))?.agentLayer === true
@@ -146,7 +154,7 @@ export const hasAgentLayer = (extension: LocalExtensionSummary): boolean => {
 }
 
 /** One short line describing who uses an extension right now. */
-export const extensionUsage = (extension: LocalExtensionSummary): { readonly label: string; readonly tone: Tone } => {
+export const extensionUsage = (extension: ExtensionUsageInput): { readonly label: string; readonly tone: Tone } => {
   const broken =
     (extension.installation?.runtime !== undefined && extension.installation.runtime.status !== 'active') ||
     extension.activations.some((item) => item.runtime && item.runtime.status !== 'active')
@@ -155,7 +163,8 @@ export const extensionUsage = (extension: LocalExtensionSummary): { readonly lab
     return { label: `${extension.activations.length} 个智能体使用`, tone: 'ok' }
   }
   if (hasAgentLayer(extension) && !extension.provides.some((item) => item === 'page' || item === 'adapter')) {
-    return { label: '未启用', tone: 'neutral' }
+    // Installing an agent-only extension (e.g. to fill in its shared API key) does not enable it for any agent yet.
+    return { label: extension.installation ? '已安装 · 未启用' : '未启用', tone: 'neutral' }
   }
   return extension.installation ? { label: '已安装', tone: 'ok' } : { label: '未安装', tone: 'neutral' }
 }

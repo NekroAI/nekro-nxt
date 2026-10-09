@@ -24,7 +24,7 @@ export { createClientContext, mountClient, type MountedClient } from './client.j
 export { createExtensionData } from './data.js'
 export { extensionUiKit, extensionReactFacade } from './ui-kit.js'
 export { HOST_ICONS } from './icons.js'
-export { useExtensionActivation } from './activation.js'
+export { PermissionApprovalList, approvalRiskKeys, configFieldTitles, useExtensionActivation } from './activation.js'
 export { ExtensionConfigEditor, activeConfigSchema } from './config-editor.js'
 export { PERMISSION_LABELS, permissionLines } from './permissions.js'
 export {
