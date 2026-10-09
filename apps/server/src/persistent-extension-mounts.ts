@@ -158,6 +158,8 @@ const unavailableHostNxt = (): NxtHostLayerService => {
 export class PersistentExtensionMounts {
   readonly #sessions: SessionRegistry<unknown>
   readonly #instances = new Map<Revision['extensionId'], Instance>()
+  /** Extensions whose factory is running; a second load for the same Extension is rejected before it starts. */
+  readonly #loading = new Set<Revision['extensionId']>()
   readonly #pending = new Set<Promise<unknown>>()
   #disposal: Promise<void> | undefined
   readonly #nxt: PersistentNxtFactory | undefined
@@ -229,13 +231,18 @@ export class PersistentExtensionMounts {
     readonly config: JsonValue
   }): Promise<LoadedExtension> {
     if (this.#disposal) throw new Error('Extension mounts are disposed.')
-    if (this.#instances.has(input.revision.extensionId)) throw new Error('这个扩展已经在本机运行。')
+    const { extensionId } = input.revision
+    if (this.#instances.has(extensionId) || this.#loading.has(extensionId)) {
+      throw new Error('这个扩展已经在本机运行。')
+    }
+    this.#loading.add(extensionId)
     const pending = this.#load(input)
     this.#pending.add(pending)
     try {
       return await pending
     } finally {
       this.#pending.delete(pending)
+      this.#loading.delete(extensionId)
     }
   }
 
@@ -362,6 +369,14 @@ export class PersistentExtensionMounts {
       ...(expectedAdapter === undefined ? {} : { adapterKey: expectedAdapter.key }),
       attach: (agentId, agentConfig) => this.#attach(instance, agentId, agentConfig),
       call: (method, value, caller) => this.#call(instance, method, value, caller),
+      ...(registered === undefined
+        ? {}
+        : {
+            releaseAdapter: async () => {
+              await registered?.dispose()
+              registered = undefined
+            },
+          }),
       dispose: async () => {
         instance.active = false
         if (this.#instances.get(revision.extensionId) === instance) this.#instances.delete(revision.extensionId)

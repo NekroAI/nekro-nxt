@@ -3,6 +3,7 @@ import { strToU8, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import {
   canonicalJson,
+  LEGACY_EXTENSION_MESSAGE,
   extensionManifestSchema,
   revisionDigests,
   sha256Hex,
@@ -17,8 +18,7 @@ export default defineHostExtension(async ({ harness }) => {
 `
 
 const manifest = (overrides: Record<string, unknown> = {}) => ({
-  schemaVersion: 6,
-  scope: 'agent',
+  schemaVersion: 7,
   extensionId: 'ext_01FORMATFIXTURE0000000000',
   revisionId: 'xrv_01FORMATFIXTURE0000000000',
   entrypoints: { host: 'source/host.ts' },
@@ -46,11 +46,10 @@ const buildPackage = (
     'revision/source/host.ts': strToU8(host),
   }
   const transfer: Record<string, unknown> = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'nekro-nxt-extension',
     extension: {
       id: 'ext_01FORMATFIXTURE0000000000',
-      scope: 'agent',
       slug: 'weather-fixture',
       displayName: '示例天气',
       description: '虚构的格式测试扩展。',
@@ -95,8 +94,31 @@ describe('verifyExtensionPackage', () => {
   it('accepts a package whose manifest, sources and digests agree', () => {
     const verified = verifyExtensionPackage(buildPackage())
     expect(verified.transfer.extension.slug).toBe('weather-fixture')
-    expect(verified.revision.scope).toBe('agent')
+    expect(verified.transfer.schemaVersion).toBe(2)
+    expect(verified.transfer.extension).not.toHaveProperty('scope')
+    expect(verified.revision.manifest.schemaVersion).toBe(7)
+    expect(verified.revision.provides).toEqual(['agent'])
     expect(verified.revision.sources.host).toBe(HOST)
+  })
+
+  it('rejects retired transfer v1 and Manifest V6 with the actionable legacy-format message', () => {
+    expect(() =>
+      verifyExtensionPackage(buildPackage({ transfer: (value) => ({ ...value, schemaVersion: 1 }) })),
+    ).toThrow(LEGACY_EXTENSION_MESSAGE)
+    expect(() =>
+      verifyExtensionPackage(buildPackage({ manifest: manifest({ schemaVersion: 6, scope: 'agent' }) })),
+    ).toThrow(LEGACY_EXTENSION_MESSAGE)
+  })
+
+  it('rejects the removed scope field in both current manifests', () => {
+    expect(() =>
+      verifyExtensionPackage(
+        buildPackage({
+          transfer: (value) => ({ ...value, extension: { ...Object(value['extension']), scope: 'agent' } }),
+        }),
+      ),
+    ).toThrow('scope')
+    expect(() => verifyExtensionPackage(buildPackage({ manifest: manifest({ scope: 'agent' }) }))).toThrow('scope')
   })
 
   it('normalizes line endings before hashing', () => {
@@ -109,13 +131,6 @@ describe('verifyExtensionPackage', () => {
     expect(() =>
       verifyExtensionPackage(buildPackage({ manifest: manifest({ revisionId: 'xrv_01OTHER0000000000000000000' }) })),
     ).toThrow('身份')
-    expect(() =>
-      verifyExtensionPackage(
-        buildPackage({
-          transfer: (value) => ({ ...value, extension: { ...Object(value['extension']), scope: 'host-ui' } }),
-        }),
-      ),
-    ).toThrow('scope')
     expect(() => verifyExtensionPackage(buildPackage({ manifest: manifest({ unknownField: true }) }))).toThrow()
     expect(() => verifyExtensionPackage(new Uint8Array([1, 2, 3]))).toThrow()
   })

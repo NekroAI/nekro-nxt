@@ -695,7 +695,7 @@ describe('Core SQLite baseline', () => {
     }
   })
 
-  it('backfills Extension scope and payload digest while preserving schema 0014 data', async () => {
+  it('preserves legacy Extension metadata and payload digest with empty provides after migrating schema 0014', async () => {
     const directory = await temporaryDirectory()
     const filename = path.join(directory, 'core.sqlite')
     await createDatabaseAtMigration(filename, 14)
@@ -740,7 +740,8 @@ describe('Core SQLite baseline', () => {
     try {
       const repository = new SqliteCoreRepository(migrated)
       expect(repository.getExtension(extensionId)?.displayName).toBe('迁移夹具扩展')
-      expect(repository.getExtension(extensionId)?.scope).toBe('host-adapter')
+      expect(repository.getExtension(extensionId)?.provides).toEqual([])
+      expect(repository.getExtension(extensionId)).not.toHaveProperty('scope')
       expect(repository.getExtensionRevision(revisionId)).toMatchObject({
         contentDigest: 'a'.repeat(64),
         payloadDigest: 'a'.repeat(64),
@@ -2398,7 +2399,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
-          scope: 'agent',
+          provides: ['agent'],
           slug: 'sourced',
           displayName: '社区扩展',
           description: '',
@@ -2442,7 +2443,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
-          scope: 'host-ui',
+          provides: ['page'],
           slug: 'host-ui-test',
           displayName: '页面扩展',
           description: '',
@@ -2460,7 +2461,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
-          scope: 'host-ui',
+          provides: ['page'],
           slug: 'host-ui-test',
           displayName: '页面扩展',
           description: '',
@@ -2662,6 +2663,128 @@ describe('Extension and backup', () => {
     }
   })
 
+  it('commits the installation, every agent attachment and both permission layers atomically', async () => {
+    const { database, repository, core } = await createFixture()
+    try {
+      const agents = [createAgent(core).definition.id, createAgent(core).definition.id]
+      const extensionId = ExtensionIdSchema.parse('ext_ATOMICLAYERS')
+      const revisions = [
+        ExtensionRevisionIdSchema.parse('xrv_ATOMICLAYERS1'),
+        ExtensionRevisionIdSchema.parse('xrv_ATOMICLAYERS2'),
+      ]
+      for (const [index, revisionId] of revisions.entries()) {
+        repository.saveExtensionRevision({
+          extension: {
+            id: extensionId,
+            provides: ['agent', 'page'],
+            slug: 'atomic-layers',
+            displayName: '两层提交样本',
+            description: '',
+            createdAt: 1,
+          },
+          revision: {
+            id: revisionId,
+            extensionId,
+            revisionNumber: index + 1,
+            contentDigest: String(index + 1).repeat(64),
+            payloadDigest: String(index + 3).repeat(64),
+            createdAt: index + 1,
+          },
+        })
+      }
+      const firstRevision = revisions[0]!
+      const secondRevision = revisions[1]!
+      const pageId = HostUiPageInstanceIdSchema.parse('hup_ATOMICLAYERS')
+      const hostOwner = `extension:${extensionId}`
+      const state = (revisionId: typeof firstRevision, timestamp: number, entryId = 'overview') => ({
+        installation: {
+          extensionId,
+          extensionRevisionId: revisionId,
+          installedAt: timestamp,
+          config: { hostSetting: timestamp },
+        },
+        attachments: agents.map((agentId, index) => ({
+          activation: {
+            agentId,
+            extensionId,
+            extensionRevisionId: revisionId,
+            activatedAt: timestamp,
+            config: { agentSetting: index },
+          },
+          grant: {
+            ownerKey: `activation:${agentId}:${extensionId}`,
+            artifactDigest: String(timestamp).repeat(64),
+            permissionDigest: 'c'.repeat(64),
+            declaration: { permissions: [], networkOrigins: [], capabilities: { history: { read: true as const } } },
+            approvedAt: timestamp,
+          },
+        })),
+        hostUi: {
+          grant: {
+            ownerKey: hostOwner,
+            artifactDigest: String(timestamp).repeat(64),
+            permissionDigest: 'd'.repeat(64),
+            declaration: { permissions: ['agents.read' as const], networkOrigins: [] },
+            approvedAt: timestamp,
+          },
+          pages: [
+            {
+              kind: 'host-page' as const,
+              entryId,
+              title: '原子页面',
+              icon: { kind: 'host-icon' as const, name: 'layout-dashboard' as const },
+              objectPane: 'hidden' as const,
+              startPath: '',
+            },
+          ],
+          clientBuildKey: 'e'.repeat(64),
+          now: timestamp,
+          nextPageInstanceId: () => pageId,
+        },
+      })
+      repository.commitHostInstallationState(state(firstRevision, 1))
+      const beforeInstallation = repository.getHostInstallation(extensionId)
+      const beforeAttachments = repository.listActivations()
+      const beforeGrants = [hostOwner, ...agents.map((id) => `activation:${id}:${extensionId}`)].map((owner) =>
+        repository.getHostUiPermissionGrant(owner),
+      )
+      const beforePages = repository.listHostUiPageEntries()
+      // A new page deliberately collides with the existing primary key, after the attachment writes.
+      expect(() => repository.commitHostInstallationState(state(secondRevision, 2, 'conflicting-page'))).toThrow()
+      expect(repository.getHostInstallation(extensionId)).toEqual(beforeInstallation)
+      expect(repository.listActivations()).toEqual(beforeAttachments)
+      expect(
+        [hostOwner, ...agents.map((id) => `activation:${id}:${extensionId}`)].map((owner) =>
+          repository.getHostUiPermissionGrant(owner),
+        ),
+      ).toEqual(beforeGrants)
+      expect(repository.listHostUiPageEntries()).toEqual(beforePages)
+
+      repository.commitHostInstallationState(state(secondRevision, 2))
+      expect(repository.getHostInstallation(extensionId)).toMatchObject({
+        extensionRevisionId: secondRevision,
+        config: { hostSetting: 2 },
+      })
+      expect(repository.listActivations()).toHaveLength(2)
+      for (const [index, agentId] of agents.entries()) {
+        expect(repository.getActivation(agentId, extensionId)).toMatchObject({
+          extensionRevisionId: secondRevision,
+          config: { agentSetting: index },
+        })
+        expect(repository.getHostUiPermissionGrant(`activation:${agentId}:${extensionId}`)).toMatchObject({
+          approvedAt: 2,
+          artifactDigest: '2'.repeat(64),
+        })
+      }
+      expect(repository.getHostUiPermissionGrant(hostOwner)).toMatchObject({ approvedAt: 2 })
+      expect(repository.listHostUiPageEntries()).toMatchObject([
+        { pageInstanceId: pageId, owner: { revisionId: secondRevision } },
+      ])
+    } finally {
+      database.close()
+    }
+  })
+
   it('keeps historical Extension verification evidence readable after a DSH upgrade', async () => {
     const { database, repository } = await createFixture()
     try {
@@ -2670,7 +2793,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
-          scope: 'agent',
+          provides: ['agent'],
           slug: 'historical-extension',
           displayName: '历史验证扩展',
           description: '',
@@ -2687,7 +2810,7 @@ describe('Extension and backup', () => {
         verification: {
           revisionId,
           dshVersion: '0.1.1-rc.1',
-          contractVersion: 'nekro-nxt-extension-v4',
+          contractVersion: 'nekro-nxt-extension-v5',
           origin: {
             episodeId: 'eps_history',
             pluginId: 'plugin_history',
@@ -2702,13 +2825,22 @@ describe('Extension and backup', () => {
           renderedPanels: [],
           renderedToolViews: [],
           renderedMessageRenderers: [],
+          permissions: {
+            permissions: [],
+            networkOrigins: [],
+            host: { storage: {} },
+            agent: { history: { read: true } },
+          },
         },
       })
 
       expect(repository.getExtensionRevisionVerification(revisionId)).toMatchObject({
         revisionId,
         dshVersion: '0.1.1-rc.1',
+        contractVersion: 'nekro-nxt-extension-v5',
+        permissions: { permissions: [], networkOrigins: [], host: { storage: {} }, agent: { history: { read: true } } },
       })
+      expect(repository.getExtensionRevisionVerification(revisionId)).not.toHaveProperty('scope')
     } finally {
       database.close()
     }
@@ -2724,7 +2856,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
-          scope: 'agent',
+          provides: ['agent'],
           slug: 'test-extension',
           displayName: '测试扩展',
           description: '',
@@ -2778,7 +2910,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
-          scope: 'agent',
+          provides: ['agent'],
           slug: 'query-extension',
           displayName: '查询扩展',
           description: '有创建者',
@@ -2797,7 +2929,7 @@ describe('Extension and backup', () => {
       repository.saveExtensionRevision({
         extension: {
           id: extensionId,
-          scope: 'agent',
+          provides: ['agent', 'page'],
           slug: 'query-extension',
           displayName: '查询扩展',
           description: '重复的扩展元数据不会覆盖',
@@ -2816,6 +2948,7 @@ describe('Extension and backup', () => {
         { id: extensionId, slug: 'query-extension', createdByAgentId: firstAgent.definition.id },
       ])
       expect(repository.getExtension(extensionId)?.description).toBe('有创建者')
+      expect(repository.getExtension(extensionId)?.provides).toEqual(['agent', 'page'])
       expect(repository.getExtensionBySlug('query-extension')?.id).toBe(extensionId)
       expect(repository.getExtension(ExtensionIdSchema.parse('ext_MISSING'))).toBeUndefined()
       expect(repository.getExtensionBySlug('missing')).toBeUndefined()
@@ -2826,26 +2959,45 @@ describe('Extension and backup', () => {
       expect(repository.nextExtensionRevisionNumber(extensionId)).toBe(3)
       expect(repository.nextExtensionRevisionNumber(ExtensionIdSchema.parse('ext_EMPTY'))).toBe(1)
 
-      repository.upsertActivation({
-        agentId: firstAgent.definition.id,
-        extensionId,
-        extensionRevisionId: revisionOneId,
-        config: { owner: 'first' },
-        activatedAt: 3,
+      repository.commitHostInstallationState({
+        installation: { extensionId, extensionRevisionId: revisionOneId, installedAt: 3, config: {} },
+        attachments: [firstAgent, secondAgent].map((agent, index) => ({
+          activation: {
+            agentId: agent.definition.id,
+            extensionId,
+            extensionRevisionId: revisionOneId,
+            config: { owner: index === 0 ? 'first' : 'second' },
+            activatedAt: 3,
+          },
+          grant: {
+            ownerKey: `activation:${agent.definition.id}:${extensionId}`,
+            artifactDigest: 'a'.repeat(64),
+            permissionDigest: 'b'.repeat(64),
+            declaration: { permissions: [], networkOrigins: [] },
+            approvedAt: 3,
+          },
+        })),
       })
-      repository.upsertActivation({
-        agentId: firstAgent.definition.id,
-        extensionId,
-        extensionRevisionId: revisionTwoId,
-        config: { owner: 'first', revision: 2 },
-        activatedAt: 4,
-      })
-      repository.upsertActivation({
-        agentId: secondAgent.definition.id,
-        extensionId,
-        extensionRevisionId: revisionTwoId,
-        config: { owner: 'second' },
-        activatedAt: 5,
+      repository.commitHostInstallationState({
+        installation: { extensionId, extensionRevisionId: revisionTwoId, installedAt: 4, config: {} },
+        attachments: repository.listActivations().map((activation) => ({
+          activation: {
+            ...activation,
+            extensionRevisionId: revisionTwoId,
+            config: {
+              ...(typeof activation.config === 'object' && !Array.isArray(activation.config) ? activation.config : {}),
+              ...(activation.agentId === firstAgent.definition.id ? { revision: 2 } : {}),
+            },
+            activatedAt: 4,
+          },
+          grant: {
+            ownerKey: `activation:${activation.agentId}:${extensionId}`,
+            artifactDigest: 'c'.repeat(64),
+            permissionDigest: 'b'.repeat(64),
+            declaration: { permissions: [], networkOrigins: [] },
+            approvedAt: 4,
+          },
+        })),
       })
       expect(repository.getActivation(firstAgent.definition.id, extensionId)).toMatchObject({
         extensionRevisionId: revisionTwoId,

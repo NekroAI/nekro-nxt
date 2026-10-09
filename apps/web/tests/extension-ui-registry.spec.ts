@@ -91,7 +91,10 @@ describe('ContributionRegistry', () => {
       toolViews: ['project_status'],
       messageRenderers: ['synthetic.card'],
     })
-    for (const { kind: _kind, ...panel } of manifest.panels) registry.addPanel(adapterOwner, panel, Component, manifest)
+    for (const panel of manifest.panels) {
+      const declaration = Object.fromEntries(Object.entries(panel).filter(([key]) => key !== 'kind'))
+      registry.addPanel(adapterOwner, declaration, Component, manifest)
+    }
     registry.addToolView(adapterOwner, 'project_status', Component, manifest)
     registry.addMessageRenderer(adapterOwner, 'synthetic.card', Component, manifest)
     expect(registry.registeredBy(adapterOwner.key)).toEqual({

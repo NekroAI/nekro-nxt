@@ -28,6 +28,7 @@ import { ToolCallId, freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
+import { extensionManifestContributionSchema } from '@nekro-nxt/extension-format'
 import {
   ExtensionLayeredConfigSchema,
   ExtensionPermissionsSchema,
@@ -172,8 +173,12 @@ export const preflightNekroNxtAuthoringDefinition = (
   const resourceEntries = Object.entries(input.resources)
   const resourcePaths = new Set(resourceEntries.map(([resourcePath]) => resourcePath))
   if (resourcePaths.size !== resourceEntries.length) throw new Error('动态页面预检失败：资源路径不能重复。')
-  if (input.contributions.length > 8) throw new Error('动态页面预检失败：一个 Revision 最多声明 8 个页面入口。')
-  const pages = input.contributions.map((contribution) => HostPageContributionSchema.parse(contribution))
+  // Tools, panels and pages may be declared together; the page rules below apply to the host-page entries only.
+  const pages = input.contributions
+    .map((contribution) => extensionManifestContributionSchema.parse(contribution))
+    .filter((contribution) => contribution.kind === 'host-page')
+    .map((contribution) => HostPageContributionSchema.parse(contribution))
+  if (pages.length > 8) throw new Error('动态页面预检失败：一个 Revision 最多声明 8 个页面入口。')
   if (new Set(pages.map(({ entryId }) => entryId)).size !== pages.length) {
     throw new Error('动态页面预检失败：页面 entryId 不能重复。')
   }
@@ -332,21 +337,22 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
 
   /** Agent-layer capabilities of the candidate this runner most recently started; dynamic `nxt` checks against them. */
   activeCandidateCapabilities(): ExtensionCapabilities | undefined {
-    return this.#activeDeclaration()?.permissions.agent
+    return this.activeDeclaration()?.permissions.agent
   }
 
   /** Host-layer capabilities of the running candidate, in the agent-capability shape. */
   activeCandidateHostCapabilities(): ExtensionCapabilities | undefined {
-    return hostLayerAsCapabilities(this.#activeDeclaration()?.permissions.host)
+    return hostLayerAsCapabilities(this.activeDeclaration()?.permissions.host)
   }
 
   /** Schema defaults of one configuration layer of the running candidate; a candidate has no saved configuration. */
   activeCandidateConfig(layer: 'host' | 'agent'): JsonValue {
-    const config = this.#activeDeclaration()?.config
+    const config = this.activeDeclaration()?.config
     return validateConfigValue(layerConfigSchema({ config }, layer), {}).value
   }
 
-  #activeDeclaration() {
+  // Not `#private`: callers reach this service through a Cordis proxy, which has no access to private members.
+  private activeDeclaration() {
     return this.runningPackageId === undefined ? undefined : this.declarationsByPackage.get(this.runningPackageId)
   }
 
@@ -1630,9 +1636,9 @@ export class DynamicAuthoringRuntime {
     try {
       const declared = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
       if (declared) {
-        const declaredPages = declared.contributions.map((contribution) =>
-          HostPageContributionSchema.parse(contribution),
-        )
+        const declaredPages = declared.contributions
+          .filter((contribution) => HostPageContributionSchema.safeParse(contribution).success)
+          .map((contribution) => HostPageContributionSchema.parse(contribution))
         if (JSON.stringify(declaredPages) !== JSON.stringify(renderedPages)) {
           throw new Error('动态 Client 实际注册的页面与候选声明不一致。')
         }

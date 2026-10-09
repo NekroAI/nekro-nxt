@@ -59,6 +59,11 @@ export interface LoadedExtension {
   /** Mounts the agent attachment in every live and future Session of the agent. */
   attach(agentId: AgentId, config: JsonValue): Promise<MountedAttachment>
   call(method: string, input: JsonValue, caller: ExtensionCaller): Promise<JsonValue>
+  /**
+   * Stops the adapter's Connections and unregisters it. Called before anything else is torn down, so a failure
+   * (a Connection that will not stop) leaves the whole Extension running and the stop can be retried.
+   */
+  releaseAdapter?(): Promise<void>
   /** Disposes the host instance; attachments are disposed by the coordinator first. */
   dispose(): Promise<void>
 }
@@ -711,6 +716,21 @@ export class ExtensionLifecycleCoordinator {
   /** Stops attachments at each agent's safe gap, then the host instance at its adapter's safe gap. */
   async #stop(extensionId: ExtensionId, live: LiveExtension | undefined, waitForSafeGap = true): Promise<void> {
     if (!live) return
+    if (live.loaded.releaseAdapter !== undefined) {
+      if (waitForSafeGap && live.loaded.adapterKey !== undefined) {
+        await this.#host.waitUntilAdapterSafe(live.loaded.adapterKey)
+      }
+      try {
+        await live.loaded.releaseAdapter()
+      } catch (error) {
+        this.#diagnostics.set(extensionId, {
+          status: 'dispose-failed',
+          message: message(error),
+          observedAt: this.#timestamp(),
+        })
+        throw error
+      }
+    }
     if (this.#live.get(extensionId) === live) this.#live.delete(extensionId)
     const failures: unknown[] = []
     for (const [agentId, attachment] of [...live.attachments]) {
@@ -817,7 +837,7 @@ export class ExtensionLifecycleCoordinator {
       objectKind: 'extension',
       objectId: installation.extensionId,
       objectVersion: installation.extensionRevisionId,
-      configurationRevision: 'host',
+      configurationRevision: JSON.stringify(['host', installation.config]),
     }
   }
 

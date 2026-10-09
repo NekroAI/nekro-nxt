@@ -149,7 +149,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
       })
       expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
         dshVersion: '0.1.7-rc.2',
-        contractVersion: 'nekro-nxt-extension-v4',
+        contractVersion: 'nekro-nxt-extension-v5',
         origin: {
           episodeId: episode!.id,
           pluginId: defined.pluginId,
@@ -170,9 +170,9 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
       const archive = unzipSync(archiveBytes)
       const transferManifest: unknown = JSON.parse(strFromU8(archive['manifest.json']!))
       expect(transferManifest).toMatchObject({
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: 'nekro-nxt-extension',
-        extension: { id: saved.extensionId, scope: 'agent', slug: 'saved-probe' },
+        extension: { id: saved.extensionId, slug: 'saved-probe' },
         revision: { id: saved.revisionId },
       })
       expect(strFromU8(archive['revision/source/host.ts']!)).toContain('saved_probe')

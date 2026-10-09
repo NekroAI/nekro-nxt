@@ -1,3 +1,5 @@
+import { unusedNxtBackends } from './fixtures/unused-nxt-backends.js'
+import { extensionVerification } from './fixtures/extension-verification.js'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { preflightNekroNxtDynamicSource } from '../src/dynamic-authoring-runtime.js'
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -27,7 +29,7 @@ import {
 import {
   AuthoringArtifactStore,
   DynamicAuthoringService,
-  ExtensionActivationCoordinator,
+  ExtensionLifecycleCoordinator,
   ExtensionBuilder,
   ExtensionService,
   ExtensionSourceStore,
@@ -44,7 +46,7 @@ import { z } from 'zod'
 import {
   ASSET_READ_TEXT_HARD_MAX_BYTES,
   assertHostDshPackageVersions,
-  ChannelExtensionActivationHost,
+  ChannelExtensionRuntimeHost,
   DshHostRuntime,
   readChannelAssetText,
 } from '../src/index.ts'
@@ -1309,8 +1311,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
     const service = new ExtensionService(repository, sourceStore, {
       now: () => 500 + extensionId,
       nextUlid: () => `SX${++extensionId}`,
+      builder: new ExtensionBuilder(path.join(directory, 'extension-cache')),
     })
-    let coordinator: ExtensionActivationCoordinator | undefined
+    let coordinator: ExtensionLifecycleCoordinator | undefined
     try {
       await web.start()
       await web.postMessage({
@@ -1325,6 +1328,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         snapshot: {
           name: '安全启用探针',
           purpose: '验证 Activation 在现有 Session 中生效。',
+          contributions: [{ kind: 'tool', name: 'activation_probe', description: 'Activation probe' }],
           hostCode: `return {
           inject: ['tools'],
           apply(ctx) {
@@ -1339,16 +1343,20 @@ describe('DSH Host and internal Channel vertical slice', () => {
           }
         }`,
         },
+        verification: extensionVerification(['activation_probe']),
         slug: 'activation-probe',
         displayName: '安全启用探针',
         description: '安全启用验证。',
         createdByAgentId: agent.definition.id,
       })
-      coordinator = new ExtensionActivationCoordinator(
+      coordinator = new ExtensionLifecycleCoordinator(
         repository,
         service,
         new ExtensionBuilder(path.join(directory, 'extension-cache')),
-        new ChannelExtensionActivationHost(runtime, host),
+        new ChannelExtensionRuntimeHost(runtime, host, {
+          waitUntilSafe: async () => {},
+          assertKeyAvailable: async () => {},
+        }),
         { now: () => 600 },
       )
       const handoffs = vi.spyOn(host, 'createHandoffSummary')
@@ -1514,7 +1522,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       await expect(host.queryNekroNxtInspect(enabledSession, 'supportedContributions')).resolves.toEqual({
         contractVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.contractVersion,
         dshVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshVersion,
-        scopes: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.scopes,
+        model: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.model,
         ui: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.ui,
         dshNativeWebUi: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshNativeWebUi,
       })
@@ -1559,7 +1567,6 @@ describe('DSH Host and internal Channel vertical slice', () => {
           plugin: { kind: 'new', idPrefix: 'page' },
           name: '越界页面',
           purpose: '验证页面路径在运行和审批前被拒绝。',
-          scope: 'host-ui',
           code: {
             client: `return { inject: ['pages', 'ui'], apply(ctx) { ctx.pages.register({ page: { kind: 'host-page', entryId: 'main', title: '页面', icon: { kind: 'host-icon', name: 'puzzle' }, objectPane: 'hidden', startPath: '/outside' } }, () => React.createElement(ctx.ui.Section, null, '内容')) } }`,
           },
@@ -1755,13 +1762,16 @@ describe('DSH Host and internal Channel vertical slice', () => {
       const extensionService = new ExtensionService(repository, sourceStore, {
         now: () => 600 + localId,
         nextUlid: () => `L${++localId}`,
+        builder: new ExtensionBuilder(path.join(directory, 'extension-cache')),
       })
       const saved = await extensionService.saveDynamicPackage({
         snapshot: {
           name: '持久探针',
           purpose: '验证动态运行、保存和启用彼此独立。',
+          contributions: [{ kind: 'tool', name: 'dynamic_probe', description: 'Scoped dynamic probe' }],
           ...(inspected.code.host === undefined ? {} : { hostCode: inspected.code.host }),
         },
+        verification: extensionVerification(['dynamic_probe']),
         slug: 'persistent-probe',
         displayName: '持久探针',
         description: '真实 DSH Scope 持久化验证。',
@@ -1769,11 +1779,16 @@ describe('DSH Host and internal Channel vertical slice', () => {
       })
       expect(host.toolNames(enabledSession)).not.toContain('dynamic_probe')
       const cacheRoot = path.join(directory, 'extension-cache')
-      const coordinator = new ExtensionActivationCoordinator(
+      const coordinator = new ExtensionLifecycleCoordinator(
         repository,
         extensionService,
         new ExtensionBuilder(cacheRoot),
-        host,
+        {
+          load: (input) => host.loadExtension(input),
+          waitUntilAgentSafe: (agentId) => host.waitUntilSafe(agentId),
+          waitUntilAdapterSafe: async () => {},
+          assertAdapterKeyAvailable: async () => {},
+        },
         { now: () => 700 },
       )
       const activation = await coordinator.activate({
@@ -1798,14 +1813,20 @@ describe('DSH Host and internal Channel vertical slice', () => {
         await modelToolNamesAfter(enabledSession, enabledChannel.id, 'adm_DYNAMICMODELUNLOADED', '持久扩展已卸载。'),
       ).not.toContain('dynamic_probe')
       await rm(cacheRoot, { recursive: true, force: true })
-      const restored = new ExtensionActivationCoordinator(
+      const restored = new ExtensionLifecycleCoordinator(
         repository,
         extensionService,
         new ExtensionBuilder(cacheRoot),
-        host,
+        {
+          load: (input) => host.loadExtension(input),
+          waitUntilAgentSafe: (agentId) => host.waitUntilSafe(agentId),
+          waitUntilAdapterSafe: async () => {},
+          assertAdapterKeyAvailable: async () => {},
+        },
         { now: () => 800 },
       )
-      expect(await restored.restore()).toEqual({ restored: 1, failed: 0 })
+      expect(await restored.restoreInstances()).toEqual({ restored: 1, failed: 0 })
+      expect(await restored.restoreAttachments()).toEqual({ restored: 1, failed: 0 })
       expect(host.toolNames(enabledSession)).toContain('dynamic_probe')
       await restored.disable(enabled.definition.id, saved.extension.id)
       expect(host.toolNames(enabledSession)).not.toContain('dynamic_probe')
@@ -1870,6 +1891,11 @@ describe('DSH Host and internal Channel vertical slice', () => {
       assetService,
       resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
       authoring: { service: authoring, resolveInitiatingEvent: () => initiatingEventId },
+      extensionHost: {
+        activationBackends: unusedNxtBackends(),
+        dynamicBackends: unusedNxtBackends(),
+        describeRevision: () => ({ displayName: '生命周期探针', capabilities: undefined, hostCapabilities: undefined }),
+      },
       configureLlm: (context) => {
         context.llm.registerAdapter(['test-provider'], new ToolSchemaProbeModel())
       },
@@ -1887,7 +1913,6 @@ describe('DSH Host and internal Channel vertical slice', () => {
         plugin: { kind: 'new', idPrefix: 'delete' },
         name: '删除生命周期探针',
         purpose: '验证删除任务会先停止并撤销动态运行包。',
-        scope: 'agent',
         code: {
           host: `return {
             inject: ['tools'],
@@ -1917,11 +1942,11 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(task).toBeDefined()
       const attempt = repository.listAuthoringAttempts(task!.id).at(-1)
       expect(attempt).toBeDefined()
-      expect(host.toolNames(sessionId)).toContain('authoring_delete_probe')
+      expect(host.dynamicToolNames(sessionId)).toContain('authoring_delete_probe')
 
       await expect(host.deleteAuthoringTask(task!.id)).resolves.toBe(true)
 
-      expect(host.toolNames(sessionId)).not.toContain('authoring_delete_probe')
+      expect(host.dynamicToolNames(sessionId)).not.toContain('authoring_delete_probe')
       expect(host.dynamicInventory(sessionId)).toEqual([])
       expect(repository.getAuthoringTask(task!.id)).toBeUndefined()
       expect(changes.at(-1)).toEqual({ taskId: task!.id, agentId: created.definition.id })

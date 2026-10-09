@@ -298,7 +298,7 @@ return { inject: ['nxt'], apply() {} }`,
           permissions: {
             permissions: [],
             networkOrigins: [],
-            capabilities: { jobs: { runtime: { maxActive: 5 } } },
+            agent: { jobs: { runtime: { maxActive: 5 } } },
           },
           contributions: [],
         },
@@ -307,7 +307,7 @@ return { inject: ['nxt'], apply() {} }`,
         description: '只有新内容时才唤醒智能体。',
         verification: {
           dshVersion: 'fixture',
-          contractVersion: 'nekro-nxt-extension-v4',
+          contractVersion: 'nekro-nxt-extension-v5',
           origin: { episodeId: 'fixture', pluginId: 'fixture', packageId: 'fixture', pluginRunId: 'fixture' },
           toolInvocations: [],
           rpcMethods: [],
@@ -317,16 +317,12 @@ return { inject: ['nxt'], apply() {} }`,
           permissions: {
             permissions: [],
             networkOrigins: [],
-            capabilities: { jobs: { runtime: { maxActive: 5 } } },
+            agent: { jobs: { runtime: { maxActive: 5 } } },
           },
         },
       })
-      const requirement = runtime.activation.getPermissionRequirement(
-        entity.agentId,
-        saved.extension.id,
-        saved.revision.id,
-      )
-      await runtime.activation.activate({
+      const requirement = runtime.extensions.agentRequirement(entity.agentId, saved.extension.id, saved.revision.id)
+      await runtime.extensions.activate({
         agentId: entity.agentId,
         extensionId: saved.extension.id,
         revisionId: saved.revision.id,

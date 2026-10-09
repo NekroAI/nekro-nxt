@@ -1,7 +1,15 @@
-import { ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
+import { configSchema, ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import { materializeDynamicPackage, materializeImportedRevision, type DynamicPackageSnapshot } from '../src/index.js'
+import {
+  materializeDynamicPackage,
+  materializeImportedRevision,
+  type DynamicPackageSnapshot,
+  verifyExtensionPackage,
+} from '../src/index.js'
+
+import { createStylesArchive } from './fixtures/host-ui-styles-archive.js'
+import { stylesCss } from './fixtures/host-ui-styles.js'
 
 const page = {
   kind: 'host-page',
@@ -24,14 +32,55 @@ const materialize = (snapshot: Partial<DynamicPackageSnapshot>) =>
   })
 
 describe('materializeDynamicPackage', () => {
-  it('rejects mixed or incomplete scopes', () => {
-    expect(() => materialize({ clientCode: 'return {}', contributions: [adapter] })).toThrow('必须包含 Host Adapter')
-    expect(() => materialize({ hostCode: 'return {}', contributions: [adapter, tool] })).toThrow('不能混装')
-    expect(() => materialize({ hostCode: 'return {}', contributions: [tool, page] })).toThrow('不能贡献顶级页面')
-    expect(() => materialize({ hostCode: 'return {}', contributions: [page] })).toThrow('页面 Revision 必须包含 Client')
+  it('combines agent and host contributions without scope and derives provides', () => {
+    const saved = materialize({ hostCode: 'return {}', clientCode: 'return {}', contributions: [adapter, tool, page] })
+    expect(saved.manifest.schemaVersion).toBe(7)
+    expect(saved.manifest).not.toHaveProperty('scope')
+    expect(saved.provides).toEqual(['agent', 'page', 'adapter'])
+    const imported = materializeImportedRevision({ manifest: saved.manifest, sources: saved.sources })
+    expect(imported.provides).toEqual(saved.provides)
+    expect(imported.contentDigest).toBe(saved.contentDigest)
+  })
+
+  it('requires source halves used by contributions and a Client for CSS', () => {
+    expect(() => materialize({ clientCode: 'return {}', contributions: [adapter, page] })).toThrow('需要 Host 源码')
+    expect(() => materialize({ hostCode: 'return {}', contributions: [page] })).toThrow('界面贡献需要 Client 源码')
     expect(() =>
-      materialize({ hostCode: 'return {}', clientCss: { path: 'assets/panel.module.css', sha256: cssDigest } }),
+      materialize({
+        hostCode: 'return {}',
+        contributions: [tool],
+        clientCss: { path: 'assets/panel.module.css', sha256: cssDigest },
+      }),
     ).toThrow('Client CSS 需要同时提交 Client 源码')
+  })
+
+  it('carries layered permissions and config into the Manifest', () => {
+    const permissions = {
+      permissions: [],
+      networkOrigins: [],
+      host: { storage: {} },
+      agent: { history: { read: true as const } },
+    }
+    const config = {
+      host: { schema: configSchema.object({ endpoint: configSchema.string('地址') }) },
+      agent: { schema: configSchema.object({ city: configSchema.string('城市') }) },
+    }
+    const saved = materialize({ hostCode: 'return {}', contributions: [tool], permissions, config })
+    expect(saved.manifest.permissions).toEqual(permissions)
+    expect(saved.manifest.config).toEqual(config)
+    expect(materializeImportedRevision({ manifest: saved.manifest, sources: saved.sources }).contentDigest).toBe(
+      saved.contentDigest,
+    )
+  })
+
+  it('generates a valid transfer v2 archive from the V7 styles fixture', () => {
+    const { archive, extensionId, revisionId } = createStylesArchive('FORMAT')
+    const verified = verifyExtensionPackage(archive)
+    expect(verified.transfer.schemaVersion).toBe(2)
+    expect(verified.transfer.extension).not.toHaveProperty('scope')
+    expect(verified.revision.manifest).toMatchObject({ schemaVersion: 7, extensionId, revisionId })
+    expect(verified.revision.provides).toEqual(['page'])
+    expect(verified.revision.resources?.['assets/probe.module.css']).toBe(stylesCss)
   })
 
   it('checks declared resources against the files and their digests', () => {
@@ -45,7 +94,7 @@ describe('materializeDynamicPackage', () => {
       materialize({ ...withCss, clientCss, resources: { 'assets/panel.module.css': `${css}/* 改动 */\n` } }),
     ).toThrow('动态扩展资源摘要不一致')
     const ok = materialize({ ...withCss, clientCss, resources: { 'assets/panel.module.css': css } })
-    expect(ok.scope).toBe('host-ui')
+    expect(ok.provides).toEqual(['page'])
   })
 
   it('carries an extension icon into the Manifest and validates it like an import', () => {

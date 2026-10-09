@@ -1,4 +1,4 @@
-import { configFields, ExtensionConfigDeclarationSchema, type AgentId, type JsonValue } from '@nekro-nxt/contracts'
+import { configFields, ExtensionLayeredConfigSchema, type AgentId, type JsonValue } from '@nekro-nxt/contracts'
 import type {
   DynamicAuthoringAttempt,
   DynamicAuthoringSnapshot,
@@ -50,9 +50,11 @@ export class AuthoringTestSecrets {
     const attempt = this.#deps.listAttempts(taskId).at(-1)
     if (attempt === undefined) return { fields: [], configured: [] }
     const snapshot = await this.#deps.snapshotForAttempt(attempt)
-    const parsed = ExtensionConfigDeclarationSchema.safeParse(snapshot.config)
+    // Field names are unique across the host and agent layers, so one test value per key serves both.
+    const parsed = ExtensionLayeredConfigSchema.safeParse(snapshot.config ?? {})
     const fields = parsed.success
-      ? configFields(parsed.data.schema)
+      ? [parsed.data.host, parsed.data.agent]
+          .flatMap((layer) => (layer === undefined ? [] : configFields(layer.schema)))
           .filter((field) => field.kind === 'secret')
           .map((field) => ({ key: field.key, title: field.title }))
       : []

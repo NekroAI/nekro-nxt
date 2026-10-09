@@ -122,7 +122,7 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
 describe('nxt Host service', () => {
   it('names the Manifest field to add when a capability is missing', async () => {
     const { nxt } = fixture(undefined)
-    await expect(nxt.http.fetch('https://api.example.com/')).rejects.toThrow(/permissions\.capabilities/u)
+    await expect(nxt.http.fetch('https://api.example.com/')).rejects.toThrow(/permissions\.agent/u)
     await expect(nxt.storage.get('key')).rejects.toBeInstanceOf(NxtCapabilityError)
     await expect(nxt.assets.create({ text: 'x' })).rejects.toThrow(/assets/u)
     await expect(nxt.history.list()).rejects.toThrow(/history/u)
@@ -310,21 +310,22 @@ describe('nxt Host service', () => {
   })
 })
 
-describe('extension secret configuration', () => {
+describe.each(['host', 'agent'] as const)('extension %s secret configuration', (layer) => {
   const manifest = extensionManifestSchema.parse({
-    schemaVersion: 6,
+    schemaVersion: 7,
     extensionId: 'ext_FIXTURE',
     revisionId: 'xrv_FIXTURE',
-    scope: 'agent',
     entrypoints: { host: 'source/host.ts' },
-    contributions: [],
+    contributions: [{ kind: 'tool', name: 'secret_probe', description: '凭据探针' }],
     config: {
-      schema: configSchema.object({ city: configSchema.string('城市'), token: configSchema.secret('令牌') }),
+      [layer]: {
+        schema: configSchema.object({ city: configSchema.string('城市'), token: configSchema.secret('令牌') }),
+      },
     },
   })
 
   it('never returns secret references to the client', () => {
-    expect(maskExtensionSecrets(manifest, { city: '示例市', token: 'credential:local:ref' })).toEqual({
+    expect(maskExtensionSecrets(manifest, layer, { city: '示例市', token: 'credential:local:ref' })).toEqual({
       config: { city: '示例市' },
       configuredSecrets: ['token'],
     })
@@ -345,6 +346,7 @@ describe('extension secret configuration', () => {
     }
     const kept = await commitExtensionConfigWithSecrets({
       manifest,
+      layer,
       previous: { city: '旧市', token: 'credential:local:old' },
       config: { city: '新市', token: 'client-forged-reference' },
       secrets: { token: '' },
@@ -355,6 +357,7 @@ describe('extension secret configuration', () => {
 
     const replaced = await commitExtensionConfigWithSecrets({
       manifest,
+      layer,
       previous: { city: '旧市', token: 'credential:local:old' },
       config: { city: '新市' },
       secrets: { token: 'fixture-secret' },
@@ -367,6 +370,7 @@ describe('extension secret configuration', () => {
     await expect(
       commitExtensionConfigWithSecrets({
         manifest,
+        layer,
         previous: { token: 'credential:local:old' },
         config: {},
         secrets: { token: 'second-secret' },
@@ -378,6 +382,7 @@ describe('extension secret configuration', () => {
     await expect(
       commitExtensionConfigWithSecrets({
         manifest,
+        layer,
         previous: {},
         config: {},
         secrets: { city: 'x' },

@@ -222,7 +222,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     try {
       const extension = {
         id: ExtensionIdSchema.parse('ext_legacy'),
-        scope: 'host-ui' as const,
+        provides: ['page'] as const,
         slug: 'legacy-ui',
         displayName: '旧页面',
         description: '',

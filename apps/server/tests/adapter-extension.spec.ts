@@ -115,7 +115,7 @@ const CLIENT_CODE = `return {
 }`
 
 describe('Host Adapter Extension end-to-end', () => {
-  it('runs with the offline harness, saves V6, installs, creates a Connection, and uninstalls without data loss', async () => {
+  it('runs with the offline harness, saves V7, installs, creates a Connection, and uninstalls without data loss', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-extension-'))
     temporaryDirectories.push(directory)
     const runtime = await NekroRuntime.create({
@@ -212,8 +212,8 @@ describe('Host Adapter Extension end-to-end', () => {
       expect(save.ok, await save.clone().text()).toBe(true)
       const saved = HostApiContracts.saveExtensionFromDynamic.parseResponse(await save.json())
       expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
-        contractVersion: 'nekro-nxt-extension-v4',
-        scope: 'host-adapter',
+        contractVersion: 'nekro-nxt-extension-v5',
+
         renderedMessageRenderers: ['synthetic-chat.card'],
         adapter: { key: 'synthetic-chat', registered: true, started: true, stopped: true },
       })
@@ -252,7 +252,6 @@ describe('Host Adapter Extension end-to-end', () => {
         )
         expect(commitResponse.ok, await commitResponse.clone().text()).toBe(true)
         expect(importedRuntime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
-          scope: 'host-adapter',
           origin: { pluginRunId: 'local-runtime-verification' },
           adapter: {
             key: 'synthetic-chat',

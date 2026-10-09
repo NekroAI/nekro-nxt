@@ -94,7 +94,7 @@ describe('MCP capability declarations', () => {
     })
     expect(JSON.stringify(snapshot)).not.toContain('fixture-token')
     expect(secretFields).toEqual([{ key: 'header_1', name: 'Authorization' }])
-    const capabilities = ExtensionCapabilitiesSchema.parse(snapshot.permissions?.capabilities)
+    const capabilities = ExtensionCapabilitiesSchema.parse(snapshot.permissions?.agent)
     expect(capabilities.mcp?.servers[0]).toEqual({
       transport: 'streamable-http',
       name: 'demo',
@@ -120,16 +120,16 @@ describe('MCP capability declarations', () => {
 
   it('rejects a credential reference that is not a secret config field', () => {
     const manifest = {
-      schemaVersion: 6,
+      schemaVersion: 7,
       extensionId: 'ext_mcpfixture',
       revisionId: 'xrv_mcpfixture',
       entrypoints: { host: 'source/host.ts' },
-      scope: 'agent',
+
       contributions: [],
       permissions: {
         permissions: [],
         networkOrigins: [],
-        capabilities: {
+        agent: {
           mcp: {
             servers: [
               {
@@ -244,9 +244,9 @@ describe('MCP servers in a real Host', () => {
       const { extensionId, revisionId, secretFields } = HostApiContracts.createMcpExtension.parseResponse(createdBody)
       expect(secretFields).toEqual([{ key: 'env_1', name: 'FIXTURE_TOKEN' }])
 
-      const requirement = runtime.activation.getPermissionRequirement(entity.agentId, extensionId, revisionId)
+      const requirement = runtime.extensions.agentRequirement(entity.agentId, extensionId, revisionId)
       expect(requirement.approvalRequired).toBe(true)
-      await runtime.activation.activate({
+      await runtime.extensions.activate({
         agentId: entity.agentId,
         extensionId,
         revisionId,
@@ -294,12 +294,12 @@ describe('MCP servers in a real Host', () => {
         persona: '',
         model: { provider: 'test-provider', model: 'chat-model' },
       })
-      await runtime.activation.activate({
+      await runtime.extensions.activate({
         agentId: second.agentId,
         extensionId,
         revisionId,
         permissionApproval: {
-          permissionDigest: runtime.activation.getPermissionRequirement(second.agentId, extensionId, revisionId)
+          permissionDigest: runtime.extensions.agentRequirement(second.agentId, extensionId, revisionId)
             .permissionDigest,
         },
       })

@@ -18,11 +18,10 @@ export function createStylesArchive(suffix: string) {
   }
   files['manifest.json'] = strToU8(
     JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: 'nekro-nxt-extension',
       extension: {
         id: extensionId,
-        scope: 'host-ui',
         slug: `styles-probe-${suffix.toLowerCase()}`,
         displayName: stylesSnapshot.name,
         description: stylesSnapshot.purpose,

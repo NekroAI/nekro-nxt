@@ -78,11 +78,20 @@ export class RuntimeCompatibilityRegistry {
         )
       }
       if (diagnostic.objectKind === 'extension') {
-        return activations.some(
-          (activation) =>
-            activation.extensionId === diagnostic.objectId &&
-            activation.extensionRevisionId === diagnostic.objectVersion &&
-            JSON.stringify([activation.agentId, activation.config]) === diagnostic.configurationRevision,
+        // The host instance is keyed by its host config, each agent attachment by agent and agent config.
+        return (
+          installations.some(
+            (installation) =>
+              installation.extensionId === diagnostic.objectId &&
+              installation.extensionRevisionId === diagnostic.objectVersion &&
+              JSON.stringify(['host', installation.config]) === diagnostic.configurationRevision,
+          ) ||
+          activations.some(
+            (activation) =>
+              activation.extensionId === diagnostic.objectId &&
+              activation.extensionRevisionId === diagnostic.objectVersion &&
+              JSON.stringify([activation.agentId, activation.config]) === diagnostic.configurationRevision,
+          )
         )
       }
       if (diagnostic.objectKind === 'adapter' || diagnostic.objectKind === 'client-page') {

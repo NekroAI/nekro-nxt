@@ -104,7 +104,10 @@ export const contributionLayer = (contribution: Contribution): 'agent' | 'host' 
       return 'agent'
     case 'panel':
       return PANEL_ANCHOR_LAYER[contribution.anchor]
-    default:
+    case 'rpc':
+    case 'adapter':
+    case 'host-page':
+    case 'message-renderer':
       return 'host'
   }
 }

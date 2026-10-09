@@ -1,9 +1,5 @@
 import { LlmAdapter, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import {
-  ExtensionConfigDeclarationSchema,
-  HostUiPermissionDeclarationSchema,
-  JsonValueSchema,
-} from '@nekro-nxt/contracts'
+import { ExtensionLayeredConfigSchema, ExtensionPermissionsSchema, JsonValueSchema } from '@nekro-nxt/contracts'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -23,8 +19,8 @@ const DefinitionSchema = z
     name: z.string().min(1),
     purpose: z.string().min(1),
     slug: z.string().regex(/^[a-z0-9][a-z0-9-]{1,48}$/u),
-    permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
-    config: ExtensionConfigDeclarationSchema.optional(),
+    permissions: ExtensionPermissionsSchema.default({ permissions: [], networkOrigins: [] }),
+    config: ExtensionLayeredConfigSchema.optional(),
     verificationInputs: z
       .object({
         tools: z.record(z.string(), z.record(z.string(), JsonValueSchema)).default({}),
@@ -95,7 +91,6 @@ const portOne = async (directory: string): Promise<Record<string, unknown>> => {
       plugin: { kind: 'new', idPrefix: 'port' },
       name: definition.name,
       purpose: definition.purpose,
-      scope: 'agent',
       code: { host },
       resources: {},
       permissions: definition.permissions,
@@ -128,15 +123,15 @@ const portOne = async (directory: string): Promise<Record<string, unknown>> => {
       description: definition.purpose,
     })
     stages.push('saved')
-    const requirement = runtime.activation.getPermissionRequirement(
-      entity.agentId,
-      saved.extension.id,
-      saved.revision.id,
-    )
-    await runtime.activation.activate({
+    const requirement = runtime.extensions.agentRequirement(entity.agentId, saved.extension.id, saved.revision.id)
+    const hostRequirement = runtime.extensions.hostRequirement(saved.extension.id, saved.revision.id)
+    await runtime.extensions.activate({
       agentId: entity.agentId,
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
+      ...(hostRequirement.approvalRequired
+        ? { hostPermissionApproval: { permissionDigest: hostRequirement.permissionDigest } }
+        : {}),
       ...(requirement.approvalRequired
         ? { permissionApproval: { permissionDigest: requirement.permissionDigest } }
         : {}),
@@ -147,7 +142,7 @@ const portOne = async (directory: string): Promise<Record<string, unknown>> => {
       ok: true,
       stages,
       tools: verification?.toolInvocations ?? [],
-      capabilities: Object.keys(definition.permissions.capabilities ?? {}),
+      capabilities: Object.keys(definition.permissions.agent ?? {}),
     }
   } catch (error) {
     return { ok: false, stages, error: error instanceof Error ? error.message : String(error) }

@@ -28,8 +28,8 @@ describe('Extension Storage Repository', () => {
     // Create test data
     sqlite.exec(`
       INSERT INTO agent_definitions (id, created_at) VALUES ('agt_STORAGETEST', 1000);
-      INSERT INTO local_extensions (id, scope, slug, display_name, description, created_at)
-        VALUES ('ext_STORAGETEST', 'agent', 'test-ext', 'Test Extension', 'A test extension', 1000);
+      INSERT INTO local_extensions (id, provides, slug, display_name, description, created_at)
+        VALUES ('ext_STORAGETEST', '["agent"]', 'test-ext', 'Test Extension', 'A test extension', 1000);
     `)
 
     repo = createExtensionStorageRepository(db)
@@ -475,8 +475,8 @@ describe('Extension Storage Repository', () => {
 
       // Create test extension
       sqlite.exec(`
-        INSERT INTO local_extensions (id, scope, slug, display_name, description, created_at)
-          VALUES ('ext_STORAGEUSAGE', 'agent', 'usage-test-ext', 'Usage Test', 'Test extension', 1000);
+        INSERT INTO local_extensions (id, provides, slug, display_name, description, created_at)
+          VALUES ('ext_STORAGEUSAGE', '["agent"]', 'usage-test-ext', 'Usage Test', 'Test extension', 1000);
       `)
 
       repo.setExtensionStorageEntry({

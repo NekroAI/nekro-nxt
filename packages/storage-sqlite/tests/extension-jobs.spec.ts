@@ -30,8 +30,8 @@ describe('Extension Jobs Repository', () => {
       INSERT INTO connections (id, adapter_key, config, credential_refs, created_at) VALUES ('con_JOBSTEST', 'test', '{}', '{}', 1000);
       INSERT INTO channels (id, connection_id, platform_channel_id, kind, display_name, created_at) VALUES ('${channelId}', 'con_JOBSTEST', 'platform_chn_1', 'internal', 'Test Channel', 1000);
       INSERT INTO channel_bindings (channel_id, agent_id, trigger_policy, processing_feedback, bound_at) VALUES ('${channelId}', '${agentId}', 'always', 'auto', 1000);
-      INSERT INTO local_extensions (id, scope, slug, display_name, description, created_at)
-        VALUES ('${extensionId}', 'agent', 'test-ext', 'Test Extension', 'A test extension', 1000);
+      INSERT INTO local_extensions (id, provides, slug, display_name, description, created_at)
+        VALUES ('${extensionId}', '["agent"]', 'test-ext', 'Test Extension', 'A test extension', 1000);
     `)
 
     repo = createExtensionJobsRepository(db)

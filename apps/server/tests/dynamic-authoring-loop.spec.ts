@@ -96,14 +96,14 @@ const startAuthoringSession = async (model = new QuietModel()) => {
 }
 
 describe('dynamic authoring closed loop', () => {
-  it('accepts Client CSS beside an agent-scope Client and rejects it without one', () => {
+  it('accepts Client CSS beside an Client and rejects it without one', () => {
     const css = '.panel { color: var(--nxt-text); }'
     const candidate = (code: { readonly client?: string }) =>
       preflightNekroNxtAuthoringDefinition({
         plugin: { kind: 'new', idPrefix: 'css' },
         name: '带样式的面板',
-        purpose: 'V6 面板通过自带 CSS 设定样式。',
-        scope: 'agent',
+        purpose: 'V7 面板通过自带 CSS 设定样式。',
+
         code,
         resources: { 'assets/panel.module.css': css },
         clientCss: { path: 'assets/panel.module.css', sha256: createHash('sha256').update(css).digest('hex') },
@@ -112,6 +112,31 @@ describe('dynamic authoring closed loop', () => {
       })
     expect(() => candidate({ client: 'return { apply() {} }' })).not.toThrow()
     expect(() => candidate({})).toThrow('必须配套 Client 源码')
+  })
+
+  it('accepts tool and page contributions together during V7 authoring preflight', () => {
+    const page = {
+      kind: 'host-page' as const,
+      entryId: 'overview',
+      title: '组合概览',
+      icon: { kind: 'host-icon' as const, name: 'puzzle' as const },
+      objectPane: 'hidden' as const,
+      startPath: '',
+    }
+    expect(() =>
+      preflightNekroNxtAuthoringDefinition({
+        plugin: { kind: 'new', idPrefix: 'mixed' },
+        name: '组合扩展',
+        purpose: '工具与管理页面由同一扩展提供。',
+        code: {
+          host: toolHost('mixed_probe', "return 'ok'"),
+          client: `return { apply(ctx) { ctx.pages.register({ page: ${JSON.stringify(page)} }, () => React.createElement('section', null, '组合概览')) } }`,
+        },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [{ kind: 'tool', name: 'mixed_probe', description: '组合探针' }, page],
+      }),
+    ).not.toThrow()
   })
 
   it('accepts an extension icon without Client source and checks its digest and pixels', () => {
@@ -125,7 +150,6 @@ describe('dynamic authoring closed loop', () => {
         plugin: { kind: 'new', idPrefix: 'icon' },
         name: '带图标的工具',
         purpose: '图标随扩展保存。',
-        scope: 'agent',
         code: { host: toolHost('icon_probe', "return 'ok'") },
         resources: { 'assets/icon.png': resource },
         icon: { path: 'assets/icon.png', sha256 },
@@ -152,7 +176,6 @@ describe('dynamic authoring closed loop', () => {
         plugin: { kind: 'new', idPrefix: 'icon' },
         name: '图标探针',
         purpose: '验证扩展图标随保存进入 Revision。',
-        scope: 'agent',
         code: { host: toolHost('icon_probe', "return 'ok'") },
         resources: { 'assets/icon.svg': svg },
         icon: { path: 'assets/icon.svg', sha256: createHash('sha256').update(svg).digest('hex') },
@@ -290,7 +313,6 @@ describe('dynamic authoring closed loop', () => {
     const definition = {
       name: '项目状态',
       purpose: '按项目名返回状态。',
-      scope: 'agent' as const,
       code: { host: hostTool },
       resources: {},
       permissions: { permissions: [], networkOrigins: [] },
@@ -402,22 +424,22 @@ describe('dynamic authoring closed loop', () => {
         plugin: { kind: 'new', idPrefix: 'visit' },
         name: '访问计数',
         purpose: '验证 nxt 宿主能力。',
-        scope: 'agent' as const,
         code: { host },
         resources: {},
-        permissions: { permissions: [], networkOrigins: [], capabilities },
+        permissions: { permissions: [], networkOrigins: [], agent: capabilities },
         config: {
-          schema: {
-            type: 'object',
-            dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+          agent: {
+            schema: {
+              type: 'object',
+              dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+            },
           },
         },
         contributions: [],
         verificationInputs: { tools: { visit_counter: { label: '示例' } }, rpc: {} },
       })
-      await expect(
-        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
-      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const run = await runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+      expect(run, JSON.stringify(run)).toMatchObject({ ok: true, status: 'running' })
       const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
       const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
       expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('ready')
@@ -431,15 +453,11 @@ describe('dynamic authoring closed loop', () => {
         description: '使用 nxt 存储与上下文的工具。',
       })
       const verification = runtime.repository.getExtensionRevisionVerification(saved.revision.id)
-      expect(verification?.permissions?.capabilities).toEqual(capabilities)
-      const requirement = runtime.activation.getPermissionRequirement(
-        entity.agentId,
-        saved.extension.id,
-        saved.revision.id,
-      )
+      expect(verification?.permissions?.agent).toEqual(capabilities)
+      const requirement = runtime.extensions.agentRequirement(entity.agentId, saved.extension.id, saved.revision.id)
       expect(requirement.approvalRequired).toBe(true)
       await expect(
-        runtime.activation.activate({
+        runtime.extensions.activate({
           agentId: entity.agentId,
           extensionId: saved.extension.id,
           revisionId: saved.revision.id,
@@ -448,7 +466,7 @@ describe('dynamic authoring closed loop', () => {
       // The authoring Session still runs the candidate with the same Tool, so only that Session is handed off.
       const handoff = vi.spyOn(runtime.channels, 'rolloverEpisodesForActivation')
       await expect(
-        runtime.activation.activate({
+        runtime.extensions.activate({
           agentId: entity.agentId,
           extensionId: saved.extension.id,
           revisionId: saved.revision.id,
@@ -483,10 +501,9 @@ return { inject: ['nxt'], apply() {} }`
         plugin: { kind: 'new', idPrefix: 'guard' },
         name: '广告过滤',
         purpose: '对智能体隐藏广告消息。',
-        scope: 'agent' as const,
         code: { host },
         resources: {},
-        permissions: { permissions: [], networkOrigins: [], capabilities },
+        permissions: { permissions: [], networkOrigins: [], agent: capabilities },
         contributions: [],
       })
       await expect(
@@ -504,12 +521,8 @@ return { inject: ['nxt'], apply() {} }`
         slug: 'ad-guard',
         description: '隐藏广告消息。',
       })
-      const requirement = runtime.activation.getPermissionRequirement(
-        entity.agentId,
-        saved.extension.id,
-        saved.revision.id,
-      )
-      await runtime.activation.activate({
+      const requirement = runtime.extensions.agentRequirement(entity.agentId, saved.extension.id, saved.revision.id)
+      await runtime.extensions.activate({
         agentId: entity.agentId,
         extensionId: saved.extension.id,
         revisionId: saved.revision.id,
@@ -553,13 +566,12 @@ return { inject: ['nxt'], apply() {} }`
         plugin: { kind: 'new', idPrefix: 'poll' },
         name: '示例轮询',
         purpose: '只在有新内容时唤醒智能体。',
-        scope: 'agent' as const,
         code: { host },
         resources: {},
         permissions: {
           permissions: [],
           networkOrigins: [],
-          capabilities: { jobs: { runtime: { maxActive: 3 } } },
+          agent: { jobs: { runtime: { maxActive: 3 } } },
         },
         contributions: [],
       })
@@ -611,14 +623,15 @@ return { inject: ['nxt'], apply() {} }`
         plugin: { kind: 'new', idPrefix: 'key' },
         name: '需要凭据',
         purpose: '验证测试凭据。',
-        scope: 'agent' as const,
         code: { host },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
         config: {
-          schema: {
-            type: 'object',
-            dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+          agent: {
+            schema: {
+              type: 'object',
+              dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+            },
           },
         },
         contributions: [],
@@ -690,11 +703,11 @@ return { inject: ['nxt'], apply() {} }`
             name: '保存后失效',
             purpose: '物化后的产物在运行时抛错。',
             hostCode: "throw new Error('materialized factory failure')",
-            contributions: [],
+            contributions: [{ kind: 'rpc', method: 'probe' }],
           },
           verification: {
             dshVersion: 'synthetic',
-            contractVersion: 'nekro-nxt-extension-v4',
+            contractVersion: 'nekro-nxt-extension-v5',
             origin: { episodeId: 'eps_synthetic', pluginId: 'p', packageId: 'pkg', pluginRunId: 'run' },
             toolInvocations: [],
             rpcMethods: [],
@@ -717,7 +730,6 @@ return { inject: ['nxt'], apply() {} }`
         plugin: { kind: 'new', idPrefix: 'back' },
         name: '可回退工具',
         purpose: '先通过验证。',
-        scope: 'agent',
         code: { host: toolHost('restorable_probe', "return 'ok'") },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -778,7 +790,6 @@ return { inject: ['nxt'], apply() {} }`
         plugin: { kind: 'new', idPrefix: 'rpc' },
         name: '失败接口面板',
         purpose: '界面调用会失败的 Host RPC。',
-        scope: 'agent',
         code: {
           host: "harness.handle('broken_summary', () => { throw new Error('synthetic rpc failure') }); return { apply() {} }",
           client: `return {

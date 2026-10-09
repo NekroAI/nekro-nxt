@@ -64,9 +64,11 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       }`,
         permissions: { permissions: ['agents.read'], networkOrigins: [] },
         config: {
-          schema: {
-            type: 'object',
-            dict: { length: { type: 'natural', meta: { description: '摘要长度', default: 3 } } },
+          agent: {
+            schema: {
+              type: 'object',
+              dict: { length: { type: 'natural', meta: { description: '摘要长度', default: 3 } } },
+            },
           },
         },
         contributions: [
@@ -81,7 +83,7 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       createdByAgentId: agent.definition.id,
       verification: {
         dshVersion: '0.1.1-rc.2',
-        contractVersion: 'nekro-nxt-extension-v4',
+        contractVersion: 'nekro-nxt-extension-v5',
         origin: {
           episodeId: 'eps_synthetic_extension_api',
           pluginId: 'plugin-synthetic-extension-api',
@@ -112,6 +114,7 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       expect(snapshot.extensions).toHaveLength(1)
       expect(snapshot.extensions[0]).toMatchObject({
         slug: 'channel-summary',
+        provides: ['agent'],
         revisions: [
           {
             id: saved.revision.id,
@@ -139,7 +142,7 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
       const activationResponse = await fetch(activationUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ revisionId: saved.revision.id, permissionApproval: { permissionDigest: digest } }),
+        body: JSON.stringify({ revisionId: saved.revision.id, hostPermissionApproval: { permissionDigest: digest } }),
       })
       expect(activationResponse.ok).toBe(true)
       const activationJson = HostApiContracts.activateExtension.parseResponse(await activationResponse.json())
@@ -224,7 +227,8 @@ describe('NekroNxt domain API — local Extension lifecycle (M4 slice)', () => {
           body: JSON.stringify({ agentId: agent.definition.id, method: 'summary' }),
         },
       )
-      expect(inactiveRpc.ok).toBe(false)
+      expect(inactiveRpc.ok).toBe(true)
+      expect(runtime.repository.getHostInstallation(saved.extension.id)?.extensionRevisionId).toBe(saved.revision.id)
 
       snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${origin}/api/snapshot`)).json())
       expect(snapshot.extensions.find((extension) => extension.id === saved.extension.id)?.activations).toEqual([])
@@ -275,9 +279,11 @@ describe('agent extension credentials', () => {
       }`,
         permissions: { permissions: [], networkOrigins: [] },
         config: {
-          schema: {
-            type: 'object',
-            dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+          agent: {
+            schema: {
+              type: 'object',
+              dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+            },
           },
         },
         contributions: [{ kind: 'tool', name: 'secret_probe', description: 'probe' }],
@@ -288,7 +294,7 @@ describe('agent extension credentials', () => {
       createdByAgentId: agent.definition.id,
       verification: {
         dshVersion: '0.1.1-rc.2',
-        contractVersion: 'nekro-nxt-extension-v4',
+        contractVersion: 'nekro-nxt-extension-v5',
         origin: {
           episodeId: 'eps_synthetic_secret',
           pluginId: 'plugin-synthetic-secret',
@@ -305,7 +311,7 @@ describe('agent extension credentials', () => {
     })
     const webContext = new Context()
     try {
-      await runtime.activation.activate({
+      await runtime.extensions.activate({
         agentId: agent.definition.id,
         extensionId: saved.extension.id,
         revisionId: saved.revision.id,
@@ -379,7 +385,7 @@ describe('agent extension switching while the agent is replying', () => {
       createdByAgentId: agent.definition.id,
       verification: {
         dshVersion: '0.1.1-rc.2',
-        contractVersion: 'nekro-nxt-extension-v4',
+        contractVersion: 'nekro-nxt-extension-v5',
         origin: {
           episodeId: 'eps_synthetic_pending',
           pluginId: 'plugin-synthetic-pending',
@@ -393,6 +399,22 @@ describe('agent extension switching while the agent is replying', () => {
         renderedMessageRenderers: [],
         permissions: { permissions: [], networkOrigins: [] },
       },
+    })
+    // The host instance survives disable; inject an attachment failure at the next safe gap.
+    let failNextAttachment = false
+    const originalLoad = runtime.host.loadExtension.bind(runtime.host)
+    vi.spyOn(runtime.host, 'loadExtension').mockImplementation(async (input) => {
+      const loaded = await originalLoad(input)
+      return {
+        ...loaded,
+        attach: (agentId, config) => {
+          if (failNextAttachment) {
+            failNextAttachment = false
+            return Promise.reject(new Error('扩展加载失败：示例原因'))
+          }
+          return loaded.attach(agentId, config)
+        },
+      }
     })
     // The agent is "replying" until the test opens the gate.
     let openGate: () => void = () => undefined
@@ -449,7 +471,7 @@ describe('agent extension switching while the agent is replying', () => {
 
       // A failure at the safe gap stays visible with its reason.
       gate = closeGate()
-      vi.spyOn(runtime.host, 'mount').mockRejectedValueOnce(new Error('扩展加载失败：示例原因'))
+      failNextAttachment = true
       const failing = await fetch(activationUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

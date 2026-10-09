@@ -1898,7 +1898,7 @@ class FakeRuntimeHost implements ExtensionRuntimeHost {
   readonly failLoad = new Set<ExtensionRevisionId>()
   readonly failAttach = new Set<string>()
   readonly occupiedAdapterKeys = new Set<string>()
-  safeGate?: Promise<void>
+  safeGate: Promise<void> | undefined
 
   load(input: Parameters<ExtensionRuntimeHost['load']>[0]): Promise<LoadedExtension> {
     const { revision, manifest } = input
@@ -1995,7 +1995,7 @@ const lifecycleManifest = (
   })
 
 const lifecycleFixture = (
-  manifests: Readonly<Record<string, (item: Revision) => ExtensionManifest>> = {},
+  manifests: Readonly<Record<string, (item: Revision) => ExtensionManifest | undefined>> = {},
   now: () => number = () => 100,
 ) => {
   const repository = new MemoryExtensionRepository()
@@ -2217,7 +2217,7 @@ describe('Extension lifecycle', () => {
 
   it('rejects unverified and unreadable records before loading anything', async () => {
     const { repository, host, extension, first, second, coordinator } = lifecycleFixture({
-      [revisionId('lifecycleSecond')]: () => undefined as unknown as ExtensionManifest,
+      [revisionId('lifecycleSecond')]: () => undefined,
     })
     repository.verifications.delete(first.id)
     await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(

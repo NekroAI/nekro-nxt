@@ -27,7 +27,7 @@ const user = { handle: 'demo-author', displayName: '示例作者', avatarUrl: nu
 
 const summary = (id: string) => ({
   id,
-  scope: 'agent',
+  provides: ['agent'],
   displayName: '天气小助手',
   summary: '查询城市天气。',
   tags: ['天气'],
@@ -39,7 +39,7 @@ const summary = (id: string) => ({
     revisionId: 'xrv_01demo',
     packageSha256: 'a'.repeat(64),
     packageSize: 10,
-    requiresSdk: 6,
+    requiresSdk: 7,
     notes: '',
     reviewStatus: 'passed',
     grade: 'A',
@@ -479,7 +479,7 @@ describe('CommunityService installed extensions and authoring', () => {
 describe('CommunityService catalog', () => {
   it('normalizes listings and details, dropping fields NekroNXT does not know', async () => {
     const { service, community } = await createFixture()
-    const list = await service.listExtensions({ query: '天气', scope: 'agent' })
+    const list = await service.listExtensions({ query: '天气', provides: 'agent' })
     expect(list.items[0]).toMatchObject({
       id: 'ext_01DEMO',
       pageUrl: `${COMMUNITY}/extensions/ext_01DEMO`,
@@ -494,6 +494,7 @@ describe('CommunityService catalog', () => {
     ])
     expect(list.items[0]?.latest).not.toHaveProperty('packageSha256')
     expect(community.requests.at(-1)?.url.searchParams.get('q')).toBe('天气')
+    expect(community.requests.at(-1)?.url.searchParams.get('provides')).toBe('agent')
     const detail = await service.getExtension('ext_01DEMO')
     expect(detail.review).toEqual({ status: 'passed', grade: 'A', summary: '良好。', highlights: [] })
     await expect(service.getExtension('ext_MISSING')).rejects.toMatchObject({

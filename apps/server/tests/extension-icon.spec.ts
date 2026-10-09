@@ -3,6 +3,7 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { ExtensionRevisionIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import {
   bytesToBase64,
+  LEGACY_EXTENSION_MESSAGE,
   materializeImportedRevision,
   resourceContent,
   verifyExtensionPackage,
@@ -57,8 +58,7 @@ const fictionalPng = (): Uint8Array => {
 
 const iconPackage = (icon: Uint8Array): Uint8Array => {
   const manifest = {
-    schemaVersion: 6,
-    scope: 'agent',
+    schemaVersion: 7,
     extensionId: EXTENSION_ID,
     revisionId: REVISION_ID,
     entrypoints: { host: 'source/host.ts' },
@@ -77,11 +77,11 @@ const iconPackage = (icon: Uint8Array): Uint8Array => {
     'revision/assets/icon.png': icon,
   }
   const transfer = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'nekro-nxt-extension',
     extension: {
       id: EXTENSION_ID,
-      scope: 'agent',
+
       slug: 'icon-probe',
       displayName: '图标探针',
       description: '虚构的图标测试扩展。',
@@ -163,4 +163,33 @@ describe('extension icons', () => {
       await runtime.dispose()
     }
   })
+})
+
+it('rejects transfer v1 instead of importing its legacy scope', () => {
+  const files = unzipSync(iconPackage(fictionalPng()))
+  const manifest: unknown = JSON.parse(new TextDecoder().decode(files['manifest.json']))
+  files['manifest.json'] = strToU8(
+    JSON.stringify(manifest, function (this: unknown, key, value: unknown) {
+      if (this !== manifest) return value
+      if (key === 'schemaVersion') return 1
+      return key === 'extension' && typeof value === 'object' ? { ...value, scope: 'agent' } : value
+    }),
+  )
+  expect(() => verifyExtensionPackage(zipSync(files))).toThrow(LEGACY_EXTENSION_MESSAGE)
+})
+
+it('rejects V6 revisions instead of silently changing their factory semantics', () => {
+  expect(() =>
+    materializeImportedRevision({
+      manifest: {
+        schemaVersion: 6,
+        scope: 'agent',
+        extensionId: EXTENSION_ID,
+        revisionId: REVISION_ID,
+        entrypoints: { host: 'source/host.ts' },
+        contributions: [{ kind: 'tool', name: 'icon_probe', description: 'icon probe' }],
+      },
+      sources: { host: HOST },
+    }),
+  ).toThrow(LEGACY_EXTENSION_MESSAGE)
 })

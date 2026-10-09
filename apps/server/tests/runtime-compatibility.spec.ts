@@ -1,7 +1,7 @@
+import { extensionVerification } from './fixtures/extension-verification.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { LlmAdapter, LlmError, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { AgentIdSchema, type ExtensionId, type JsonValue } from '@nekro-nxt/contracts'
-import { ExtensionBuilder } from '@nekro-nxt/extension-runtime'
+import { AgentIdSchema, type ExtensionId } from '@nekro-nxt/contracts'
 import { DSH_RUNTIME_FINGERPRINT } from '@nekro-nxt/dsh-compat/release'
 import type * as RuntimeRelease from '@nekro-nxt/dsh-compat/release'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
@@ -303,12 +303,9 @@ describe('NekroRuntime compatibility recovery', () => {
     },
   )
 
-  it('clears an unchanged isolation verdict after ordinary manual activation and restores that activation after a cold restart', async () => {
+  it('clears attachment isolation after manual activation and restores the instance before attachments on restart', async () => {
     const root = await directory()
-    const configure = (context: Context) => {
-      context.llm.registerAdapter(['synthetic'], new CompatibilityModel())
-    }
-    const runtime = await runtimeFixture(configure, false, root)
+    const runtime = await runtimeFixture(undefined, false, root)
     const agent = runtime.core.createAgent({
       displayName: '手动启用修复探针',
       persona: '',
@@ -320,92 +317,121 @@ describe('NekroRuntime compatibility recovery', () => {
       description: '',
       snapshot: {
         name: '手动修复扩展',
-        purpose: '验证普通启用提交兼容性证据',
+        purpose: '验证本机实例与智能体挂载分别恢复',
         hostCode: "harness.handle('probe', () => 'recovered'); return { apply() {} }",
-        config: { schema: { type: 'object', dict: { option: { type: 'string', meta: { description: '选项' } } } } },
+        contributions: [
+          { kind: 'rpc', method: 'probe' },
+          { kind: 'panel', id: 'probe', anchor: 'agent', title: '探针', densities: ['full'] },
+        ],
+        clientCode:
+          "return { apply(ctx) { ctx.panels.register({ id: 'probe', anchor: 'agent', title: '探针', densities: ['full'] }, () => React.createElement('section', null, 'probe')) } }",
+        config: {
+          agent: { schema: { type: 'object', dict: { option: { type: 'string', meta: { description: '选项' } } } } },
+        },
       },
+      verification: { ...extensionVerification([], ['probe']), renderedPanels: ['probe'] },
     })
     const config = { option: 'unchanged' }
-    const previous = {
+    await runtime.extensions.install({ extensionId: saved.extension.id, revisionId: saved.revision.id })
+    runtime.repository.upsertActivation({
       agentId: agent.definition.id,
       extensionId: saved.extension.id,
       extensionRevisionId: saved.revision.id,
       config,
       activatedAt: 1,
-    }
-    runtime.repository.upsertActivation(previous)
+    })
     const identity = {
       objectKind: 'extension' as const,
       objectId: saved.extension.id,
       objectVersion: saved.revision.id,
       configurationRevision: JSON.stringify([agent.definition.id, config]),
     }
-    // Fail only the first real mount attempt; the saved source and activation stay unchanged.
-    const mount = vi.spyOn(runtime.host, 'mount').mockRejectedValueOnce(new Error('synthetic temporary mount failure'))
-    expect(await runtime.activation.restore()).toEqual({ restored: 0, failed: 1 })
-    expect(runtime.compatibility.read(identity)?.status).toBe('isolated')
-    expect(await runtime.activation.restore()).toEqual({ restored: 0, failed: 1 })
-    expect(mount).toHaveBeenCalledTimes(1)
-    const committed = await runtime.activation.activate({
+    runtime.compatibility.record(identity, {
+      status: 'isolated',
+      phase: 'restore',
+      retryable: true,
+      reason: 'synthetic attachment failure',
+    })
+    expect(await runtime.extensions.restoreAttachments()).toEqual({ restored: 0, failed: 1 })
+    const committed = await runtime.extensions.activate({
       agentId: agent.definition.id,
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
       config,
     })
-    expect(mount).toHaveBeenCalledTimes(2)
     expect(runtime.repository.getActivation(agent.definition.id, saved.extension.id)).toEqual(committed)
-    expect(new RuntimeCompatibilityRegistry(runtime.repository).read(identity)).toMatchObject({ status: 'compatible' })
-    expect(new RuntimeCompatibilityRegistry(runtime.repository).read(identity)).not.toHaveProperty('reason')
-    await expect(
-      runtime.host.invokeExtensionActivation(agent.definition.id, saved.revision.id, 'probe', null),
-    ).resolves.toBe('recovered')
+    expect(runtime.compatibility.read(identity)).toMatchObject({ status: 'compatible' })
+    expect(runtime.compatibility.read(identity)).not.toHaveProperty('reason')
+    await expect(runtime.extensions.call(saved.extension.id, 'probe', null, { surface: 'verification' })).resolves.toBe(
+      'recovered',
+    )
     await runtime.dispose()
-    const restarted = await runtimeFixture(configure, false, root)
-    expect(await restarted.activation.restore()).toEqual({ restored: 1, failed: 0 })
+    const restarted = await runtimeFixture(undefined, false, root)
+    expect(await restarted.extensions.restoreInstances()).toEqual({ restored: 1, failed: 0 })
+    expect(await restarted.extensions.restoreAttachments()).toEqual({ restored: 1, failed: 0 })
     expect(restarted.repository.getActivation(agent.definition.id, saved.extension.id)).toEqual(committed)
-    expect(restarted.compatibility.list()).toEqual([expect.objectContaining({ ...identity, status: 'compatible' })])
     await expect(
-      restarted.host.invokeExtensionActivation(agent.definition.id, saved.revision.id, 'probe', null),
+      restarted.extensions.call(saved.extension.id, 'probe', null, { surface: 'verification' }),
     ).resolves.toBe('recovered')
   })
 
-  it('keeps failed extensions enabled, skips unchanged failures, and rechecks changed config, runtime and revision before publishing success', async () => {
-    const model = new CompatibilityModel()
-    const runtime = await runtimeFixture((context) => {
-      context.llm.registerAdapter(['synthetic'], model)
-    })
+  it('keeps failed installations and attachments, skips unchanged failures and rechecks runtime and revision', async () => {
+    const runtime = await runtimeFixture()
     const agent = runtime.core.createAgent({
       displayName: '扩展恢复探针',
       persona: '',
       model: { provider: 'synthetic', model: 'healthy-model' },
     })
-    const save = (slug: string, hostCode: string, extensionId?: ExtensionId) =>
+    const save = (slug: string, extensionId?: ExtensionId) =>
       runtime.extensionService.saveDynamicPackage({
         slug,
         displayName: slug,
         description: '',
-        snapshot: { name: slug, purpose: '合成兼容性回归', hostCode },
+        snapshot: {
+          name: slug,
+          purpose: '合成兼容性回归',
+          hostCode: `harness.handle('probe', () => '${extensionId ? 'fixed' : 'good'}'); return { apply() {} }`,
+          contributions: [{ kind: 'rpc', method: 'probe' }],
+          permissions: { permissions: [], networkOrigins: [], agent: { history: { read: true } } },
+          config: {
+            host: {
+              schema: {
+                type: 'object',
+                dict: { option: { type: 'natural', meta: { description: '选项', default: 1 } } },
+              },
+            },
+          },
+        },
+        verification: extensionVerification([], ['probe']),
         ...(extensionId ? { extensionId } : {}),
       })
-    const good = await save('good-probe', "harness.handle('probe', () => 'good'); return { apply() {} }")
-    const bad = await save('bad-probe', "throw new Error('synthetic runtime ABI mismatch')")
-    const activation = (
-      extensionId: ExtensionId,
-      extensionRevisionId: typeof bad.revision.id,
-      config: JsonValue = {},
-    ) => ({ agentId: agent.definition.id, extensionId, extensionRevisionId, config, activatedAt: 1 })
-    runtime.repository.upsertActivation(activation(good.extension.id, good.revision.id))
-    runtime.repository.upsertActivation(activation(bad.extension.id, bad.revision.id))
-    const build = vi.spyOn(ExtensionBuilder.prototype, 'build')
-    expect(await runtime.activation.restore()).toEqual({ restored: 1, failed: 1 })
-    expect(build).toHaveBeenCalledTimes(2)
-    await expect(
-      runtime.host.invokeExtensionActivation(agent.definition.id, good.revision.id, 'probe', null),
-    ).resolves.toBe('good')
-    expect(runtime.repository.listActivations()).toHaveLength(2)
-    const unchanged = runtime.repository.getActivation(agent.definition.id, bad.extension.id)
-    expect(await runtime.activation.restore()).toEqual({ restored: 0, failed: 1 })
-    expect(build).toHaveBeenCalledTimes(2)
+    const good = await save('good-probe')
+    const bad = await save('bad-probe')
+    for (const saved of [good, bad]) {
+      runtime.repository.upsertHostInstallation({
+        extensionId: saved.extension.id,
+        extensionRevisionId: saved.revision.id,
+        config: { option: 1 },
+        installedAt: 1,
+      })
+      runtime.repository.upsertActivation({
+        agentId: agent.definition.id,
+        extensionId: saved.extension.id,
+        extensionRevisionId: saved.revision.id,
+        config: {},
+        activatedAt: 1,
+      })
+    }
+    const originalLoad = runtime.host.loadExtension.bind(runtime.host)
+    const load = vi.spyOn(runtime.host, 'loadExtension').mockImplementation((input) => {
+      if (input.revision.id === bad.revision.id) return Promise.reject(new Error('synthetic runtime ABI mismatch'))
+      return originalLoad(input)
+    })
+    expect(await runtime.extensions.restoreInstances()).toEqual({ restored: 1, failed: 1 })
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(await runtime.extensions.restoreInstances()).toEqual({ restored: 0, failed: 1 })
+    expect(load).toHaveBeenCalledTimes(2)
+    const attachment = runtime.repository.getActivation(agent.definition.id, bad.extension.id)
     const failed = await runtime.retryCompatibility({ objectKind: 'extension', objectId: bad.extension.id })
     expect(failed.diagnostics).toContainEqual(
       expect.objectContaining({
@@ -414,37 +440,75 @@ describe('NekroRuntime compatibility recovery', () => {
         reason: 'synthetic runtime ABI mismatch',
       }),
     )
-    expect(build).toHaveBeenCalledTimes(3)
-    expect(runtime.repository.getActivation(agent.definition.id, bad.extension.id)).toEqual(unchanged)
-    runtime.repository.upsertActivation(activation(bad.extension.id, bad.revision.id, { revision: 2 }))
-    expect(await runtime.activation.restore()).toEqual({ restored: 0, failed: 1 })
-    expect(build).toHaveBeenCalledTimes(4)
+    expect(load).toHaveBeenCalledTimes(3)
+    expect(runtime.repository.getActivation(agent.definition.id, bad.extension.id)).toEqual(attachment)
     environment.fingerprint = 'synthetic-runtime-upgrade'
-    expect(await runtime.activation.restore()).toEqual({ restored: 0, failed: 1 })
-    expect(build).toHaveBeenCalledTimes(5)
-    const fixed = await save(
-      'bad-probe',
-      "harness.handle('probe', () => 'fixed'); return { apply() {} }",
-      bad.extension.id,
+    expect(await runtime.extensions.restoreInstances()).toEqual({ restored: 0, failed: 1 })
+    expect(load).toHaveBeenCalledTimes(4)
+    const fixed = await save('bad-probe', bad.extension.id)
+    const requirement = runtime.extensions.agentRequirement(agent.definition.id, fixed.extension.id, fixed.revision.id)
+    await runtime.extensions.install({
+      extensionId: fixed.extension.id,
+      revisionId: fixed.revision.id,
+      agentPermissionApproval: { permissionDigest: requirement.permissionDigest },
+    })
+    expect(runtime.repository.getActivation(agent.definition.id, fixed.extension.id)?.extensionRevisionId).toBe(
+      fixed.revision.id,
     )
-    runtime.repository.upsertActivation(activation(fixed.extension.id, fixed.revision.id, { revision: 2 }))
-    // A new immutable version receives a fresh check without requiring force-retry.
-    expect(await runtime.activation.restore()).toEqual({ restored: 1, failed: 0 })
-    await expect(
-      runtime.host.invokeExtensionActivation(agent.definition.id, fixed.revision.id, 'probe', null),
-    ).resolves.toBe('fixed')
-    const success = await runtime.retryCompatibility({ objectKind: 'extension', objectId: bad.extension.id })
+    await expect(runtime.extensions.call(fixed.extension.id, 'probe', null, { surface: 'verification' })).resolves.toBe(
+      'fixed',
+    )
+    const success = await runtime.retryCompatibility({ objectKind: 'extension', objectId: fixed.extension.id })
     expect(success.diagnostics).toContainEqual(
       expect.objectContaining({
-        objectId: bad.extension.id,
+        objectId: fixed.extension.id,
         objectVersion: fixed.revision.id,
         status: 'compatible',
         runtimeFingerprint: 'synthetic-runtime-upgrade',
       }),
     )
     expect(runtime.repository.getExtensionRevision(bad.revision.id)).toEqual(bad.revision)
-    await expect(
-      runtime.host.invokeExtensionActivation(agent.definition.id, good.revision.id, 'probe', null),
-    ).resolves.toBe('good')
+    await expect(runtime.extensions.call(good.extension.id, 'probe', null, { surface: 'verification' })).resolves.toBe(
+      'good',
+    )
+  })
+  it('rechecks an isolated host instance when its persisted host config changes', async () => {
+    const runtime = await runtimeFixture()
+    const saved = await runtime.extensionService.saveDynamicPackage({
+      slug: 'config-retry',
+      displayName: '配置重试探针',
+      description: '',
+      snapshot: {
+        name: '配置重试探针',
+        purpose: '配置变化使旧兼容性判断失效',
+        hostCode: "harness.handle('probe', () => 'ok'); return { apply() {} }",
+        contributions: [{ kind: 'rpc', method: 'probe' }],
+        config: {
+          host: {
+            schema: {
+              type: 'object',
+              dict: { option: { type: 'natural', meta: { description: '选项', default: 1 } } },
+            },
+          },
+        },
+      },
+      verification: extensionVerification([], ['probe']),
+    })
+    const installation = {
+      extensionId: saved.extension.id,
+      extensionRevisionId: saved.revision.id,
+      config: { option: 1 },
+      installedAt: 1,
+    }
+    runtime.repository.upsertHostInstallation(installation)
+    const originalLoad = runtime.host.loadExtension.bind(runtime.host)
+    const load = vi.spyOn(runtime.host, 'loadExtension').mockRejectedValueOnce(new Error('synthetic config failure'))
+    expect(await runtime.extensions.restoreInstances()).toEqual({ restored: 0, failed: 1 })
+    expect(await runtime.extensions.restoreInstances()).toEqual({ restored: 0, failed: 1 })
+    expect(load).toHaveBeenCalledTimes(1)
+    load.mockImplementation(originalLoad)
+    runtime.repository.upsertHostInstallation({ ...installation, config: { option: 2 } })
+    expect(await runtime.extensions.restoreInstances()).toEqual({ restored: 1, failed: 0 })
+    expect(load).toHaveBeenCalledTimes(2)
   })
 })

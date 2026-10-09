@@ -97,7 +97,6 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       plugin: { kind: 'new', idPrefix: 'client' },
       name: '动态客户端',
       purpose: '验证浏览器审批。',
-      scope: 'agent',
       code: {
         host: `return {
           inject: ['tools'],
@@ -349,7 +348,6 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
         plugin: { kind: 'new', idPrefix: 'recv' },
         name: '恢复探针',
         purpose: '重启后继续提供同一个已验证工具。',
-        scope: 'agent',
         code: {
           host: `return {
             inject: ['tools'],

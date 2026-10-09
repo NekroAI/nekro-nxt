@@ -66,8 +66,7 @@ const webpVp8x = (width: number, height: number): Uint8Array =>
   ])
 
 const agentManifest = (overrides: Record<string, unknown> = {}) => ({
-  schemaVersion: 6,
-  scope: 'agent',
+  schemaVersion: 7,
   extensionId: 'ext_01FORMATFIXTURE0000000000',
   revisionId: 'xrv_01FORMATFIXTURE0000000000',
   entrypoints: { host: 'source/host.ts' },
@@ -91,11 +90,10 @@ const buildPackage = (revisionManifest: Record<string, unknown>, assets: Record<
     ...Object.fromEntries(Object.entries(assets).map(([filePath, bytes]) => [`revision/${filePath}`, bytes])),
   }
   const transfer = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'nekro-nxt-extension',
     extension: {
       id: 'ext_01FORMATFIXTURE0000000000',
-      scope: 'agent',
       slug: 'weather-fixture',
       displayName: '示例天气',
       description: '虚构的格式测试扩展。',
@@ -188,7 +186,7 @@ describe('manifest icon', () => {
     }
   })
 
-  it('keeps digests of packages without an icon unchanged', () => {
+  it('pins V7 digests for packages without an icon', () => {
     expect(
       revisionDigests({
         manifest: extensionManifestSchema.parse(agentManifest()),
@@ -196,12 +194,11 @@ describe('manifest icon', () => {
         resources: {},
       }),
     ).toEqual({
-      contentDigest: '418cb24a7dc808a774a3e7b1335120e542664c857a088c2cf3c8643e74d49092',
-      payloadDigest: '6e1794a41dc8e945936d9ba33f1460a18e9822f9e4e2ae8e11627c99e5e8011b',
+      contentDigest: 'd894a918eef437096d08e4049b22288fb852c2adc086c91cd64781aa29bc79ba',
+      payloadDigest: '25eede4c9c92f61111859374496dd9919ddf99f8ceb20102cb3eb796aa189da4',
     })
     const page = {
-      schemaVersion: 6,
-      scope: 'host-ui',
+      schemaVersion: 7,
       extensionId: 'ext_01FORMATFIXTURE0000000000',
       revisionId: 'xrv_01FORMATFIXTURE0000000000',
       entrypoints: { client: 'source/client.ts' },
@@ -224,7 +221,7 @@ describe('manifest icon', () => {
         sources: { client: HOST },
         resources: { 'assets/page.module.css': CSS, 'assets/board.svg': SVG },
       }).contentDigest,
-    ).toBe('9a5199746cdcdde35165881f001edc7554536c43bd8d6cba96058753d88199bb')
+    ).toBe('c54df6a32fbfbaf7dc75b4e49bfa2f88bb8e0950c4f41a99a4519483fe2eced7')
   })
 
   it('covers the icon in both digests', () => {

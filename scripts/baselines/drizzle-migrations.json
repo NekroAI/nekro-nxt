@@ -36,6 +36,8 @@
     "0031_platform_identity_self.sql": "5ef9dd98d96e4e605dec03186d0588a9ee9d0bb0e2aa3245317a308d8eee28d9",
     "0032_binding_local_agent_messages.sql": "04cf4075335ce272225a500d468bf65267230afdf0e9d3a60b05ed0e95184ed8",
     "0033_channel_prompts.sql": "4b9e7932167995ccc0547201351142b624556d3531a66074056d287c477da040",
+    "0034_extension_scope_retired.sql": "b8277be6016e70fa2f9d63969d8042364e963f900c8957c9e0ca22eb253fc061",
+    "0035_extension_provides.sql": "d40fa10d78e742cc5b069bf79cb9bcb9e1c9f17330e607c018dafaf082d14600",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -70,6 +72,8 @@
     "meta/0031_snapshot.json": "02c1d924584d1bb3c5541972e684b9239c867e102d22c21b3034634397b03b6a",
     "meta/0032_snapshot.json": "622f207dcf70e7ea6c15d0fb7a36ac1631f78696b76d0d8f4de26b91e9b6288f",
     "meta/0033_snapshot.json": "a132fd5de3bd140ae0ed9d1e3d01311fa9624fcf697433087124acaed58c6930",
-    "meta/_journal.json": "a8db80f67da91ee5c04a5702e7b07d2c60fea97a3a7a9d17f6bfb500aee1138a"
+    "meta/0034_snapshot.json": "6d20a10a3f4093ba28fa0ec19ed3d0dbdfda66d1c2f8794dd964a271ca97ef4f",
+    "meta/0035_snapshot.json": "391d43437c3b63d273762c83205401dba61587a87452c0a19097a159b147360a",
+    "meta/_journal.json": "b97c51db90a092dd4f88dc6223141daddaa199786c0ed502f142e769fb24d738"
   }
 }
