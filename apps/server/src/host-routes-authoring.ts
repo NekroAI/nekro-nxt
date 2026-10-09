@@ -350,9 +350,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
             extensionId: saved.extension.id,
             revisionId: saved.revision.id,
             activation: 'inactive',
-            ...(runtime.repository.getExtensionRevisionVerification(saved.revision.id)?.scope === 'host-adapter'
-              ? { installation: 'uninstalled' as const }
-              : {}),
+            installation: 'uninstalled' as const,
           }),
         )
       } catch (error) {

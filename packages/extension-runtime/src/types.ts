@@ -1,7 +1,6 @@
 import type { ExtensionIcon, ExtensionManifestContribution } from '@nekro-nxt/extension-format'
 import type {
   AgentId,
-  ExtensionConfigDeclaration,
   DshPluginEntryId,
   ExtensionId,
   ExtensionRevisionId,
@@ -10,21 +9,23 @@ import type {
   HostUiPageGeometryEvidence,
   HostUiPageEntry,
   HostUiPageInstanceId,
+  ExtensionLayeredConfig,
+  ExtensionProvide,
+  ExtensionPermissions,
   HostUiPermissionDeclaration,
   JsonValue,
 } from '@nekro-nxt/contracts'
 
 export interface LocalExtension {
   readonly id: ExtensionId
-  readonly scope: LocalExtensionScope
+  /** What the latest Revision provides; listing and filtering only, never a lifecycle switch. */
+  readonly provides: readonly ExtensionProvide[]
   readonly slug: string
   readonly displayName: string
   readonly description: string
   readonly createdByAgentId?: AgentId
   readonly createdAt: number
 }
-
-export type LocalExtensionScope = 'agent' | 'host-adapter' | 'host-ui'
 
 export interface Revision {
   readonly id: ExtensionRevisionId
@@ -36,7 +37,10 @@ export interface Revision {
   readonly createdAt: number
 }
 
-/** The single currently mounted Revision for one Agent and Extension pair. */
+/**
+ * One agent attachment of an installed Extension. `extensionRevisionId` always equals the installation's Revision
+ * (one current version per machine); the coordinator updates both in the same transaction.
+ */
 export interface Activation {
   readonly agentId: AgentId
   readonly extensionId: ExtensionId
@@ -51,9 +55,9 @@ export interface DynamicPackageSnapshot {
   readonly purpose: string
   readonly hostCode?: string
   readonly clientCode?: string
-  readonly permissions?: HostUiPermissionDeclaration
+  readonly permissions?: ExtensionPermissions
   readonly contributions?: readonly ExtensionContribution[]
-  readonly config?: ExtensionConfigDeclaration
+  readonly config?: ExtensionLayeredConfig
   readonly resources?: Readonly<Record<string, string>>
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   /** Extension icon; its resource text is base64 for PNG / WebP and source for SVG. */
@@ -70,8 +74,7 @@ export interface ExtensionRevisionVerification {
   readonly revisionId: ExtensionRevisionId
   /** Exact DSH release used when this immutable verification evidence was produced. */
   readonly dshVersion: string
-  readonly contractVersion: 'nekro-nxt-extension-v4'
-  readonly scope?: 'host-adapter' | 'host-ui'
+  readonly contractVersion: 'nekro-nxt-extension-v5'
   readonly origin: {
     readonly episodeId: string
     readonly pluginId: string
@@ -90,7 +93,7 @@ export interface ExtensionRevisionVerification {
   readonly renderedPages?: readonly HostPageContribution[]
   readonly usedUiComponents?: readonly HostUiKitComponentName[]
   readonly pageGeometry?: readonly HostUiPageGeometryEvidence[]
-  readonly permissions?: HostUiPermissionDeclaration
+  readonly permissions?: ExtensionPermissions
   readonly adapter?: {
     readonly apiVersion: 2
     readonly key: string
@@ -103,12 +106,12 @@ export interface ExtensionRevisionVerification {
   }
 }
 
-/** The single currently installed Host-scoped Revision for one Extension. */
+/** The Extension's host instance on this machine: the single current Revision and the host configuration. */
 export interface HostInstallation {
   readonly extensionId: ExtensionId
   readonly extensionRevisionId: ExtensionRevisionId
   readonly installedAt: number
-  /** Validated against the installed Revision's config schema; `{}` when it declares none. */
+  /** Validated against the installed Revision's `config.host`; `{}` when it declares none. */
   readonly config: JsonValue
 }
 
@@ -183,9 +186,13 @@ export interface ExtensionRepository {
 }
 
 export interface HostUiRepository {
-  /** Atomically publishes the Installation fact together with its permission grant and page directory. */
+  /**
+   * Atomically publishes the Installation fact together with its permission grant, page directory and the agent
+   * attachments that moved with it to the installed Revision.
+   */
   commitHostInstallationState(input: {
     readonly installation: HostInstallation
+    readonly attachments?: readonly { readonly activation: Activation; readonly grant: HostUiPermissionGrant }[]
     readonly hostUi?: {
       readonly grant: HostUiPermissionGrant
       readonly pages: readonly HostPageContribution[]

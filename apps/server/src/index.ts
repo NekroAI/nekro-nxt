@@ -89,14 +89,15 @@ import {
 } from '@nekro-nxt/channel-runtime'
 import {
   type ExtensionCapabilities,
+  type ExtensionId,
   AdmissionIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
   DshPluginEntryIdSchema,
   ChannelMemberIdSchema,
-  ExtensionConfigDeclarationSchema,
+  ExtensionLayeredConfigSchema,
   HostPageContributionSchema,
-  HostUiPermissionDeclarationSchema,
+  ExtensionPermissionsSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
   parseJsonValue,
@@ -136,10 +137,9 @@ import {
   type Activation,
   type DynamicAuthoringService,
   type DynamicAuthoringSnapshot,
-  type ExtensionActivationHost,
-  type ExtensionBuildArtifact,
+  type ExtensionRuntimeHost,
+  type LoadedExtension,
   type LocalExtension,
-  type MountedExtension,
   type Revision,
   EXTENSION_ICON_PATHS,
   resourceDigest,
@@ -185,6 +185,7 @@ import {
   type WebSearchCapabilityStatus,
 } from './host-model-settings.js'
 import {
+  createHostLayerNxt,
   createNxtDynamicFacade,
   createNxtHostService,
   dshPromptRegistry,
@@ -199,7 +200,11 @@ import {
   parseTaskSchedule,
   type ScheduledTasks,
 } from './scheduled-tasks.js'
-import { PersistentExtensionMounts, type PersistentInboundHandler } from './persistent-extension-mounts.js'
+import {
+  PersistentExtensionMounts,
+  type PersistentAdapterPort,
+  type PersistentInboundHandler,
+} from './persistent-extension-mounts.js'
 import {
   mcpPluginConfig,
   mountMcpServers,
@@ -407,8 +412,13 @@ export interface DshHostRuntimeOptions {
     readonly dynamicBackends: NxtServiceBackends
     readonly describeRevision: (revision: Revision) => {
       readonly displayName: string
+      /** Approved agent-layer capabilities (`permissions.agent`). */
       readonly capabilities: ExtensionCapabilities | undefined
+      /** Host-layer capabilities (`permissions.host`) in the agent-capability shape. */
+      readonly hostCapabilities: ExtensionCapabilities | undefined
     }
+    /** Registers an installed extension's adapter in the product Registry and mounts its connections. */
+    readonly adapters?: PersistentAdapterPort
     /** Config a dynamic candidate sees: secret references of the task's test credentials. */
     readonly dynamicConfig?: (agentId: AgentId, episodeId: EpisodeId) => JsonValue
     /** Scheduled tasks agents manage from chat; tools are offered when the agent's `scheduledTasks` is on. */
@@ -792,7 +802,6 @@ const DynamicAuthoringFacadeInputSchema = z
     ]),
     name: z.string().trim().min(1).max(80),
     purpose: z.string().trim().min(1).max(500),
-    scope: z.enum(['agent', 'host-adapter', 'host-ui']),
     code: z
       .object({
         host: z
@@ -823,8 +832,8 @@ const DynamicAuthoringFacadeInputSchema = z
       .optional(),
     iconPath: z.enum(EXTENSION_ICON_PATHS).optional(),
     pages: z.array(HostPageContributionSchema).max(8).default([]),
-    permissions: HostUiPermissionDeclarationSchema.default({ permissions: [], networkOrigins: [] }),
-    config: ExtensionConfigDeclarationSchema.optional(),
+    permissions: ExtensionPermissionsSchema.default({ permissions: [], networkOrigins: [] }),
+    config: ExtensionLayeredConfigSchema.optional(),
     verification: z
       .object({
         tools: z.record(z.string().min(1), toolVerificationInputSchema).default({}),
@@ -871,7 +880,6 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
     plugin: parsed.plugin,
     name: parsed.name,
     purpose: parsed.purpose,
-    scope: parsed.scope,
     code,
     resources,
     ...(clientCss === undefined ? {} : { clientCss }),
@@ -887,7 +895,7 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
   defineTool({
     name: 'nekro_nxt_extension_define',
     description:
-      '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、配置、CSS 和 SVG 的宿主预检。Tool、RPC、面板、工具视图、富消息渲染器和页面都使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。',
+      '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、配置、CSS 和 SVG 的宿主预检。一个扩展可以同时提供工具、界面数据接口、面板、工具视图、适配器、富消息渲染器和页面，都使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。',
     parameters: {
       plugin: {
         required: true,
@@ -916,18 +924,16 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
       },
       name: { type: 'string', required: true, description: '用户可读的候选名称。' },
       purpose: { type: 'string', required: true, description: '一句话说明这个候选为用户完成什么。' },
-      scope: {
-        type: 'string',
-        enum: ['agent', 'host-adapter', 'host-ui'],
-        required: true,
-        description: '智能体工具、面板和工具视图使用 agent，平台适配器使用 host-adapter，专属页面使用 host-ui。',
-      },
       code: {
         type: 'object',
         additionalProperties: false,
         required: true,
         properties: {
-          host: { type: 'string', description: '返回 Host Cordis Plugin 的纯 JavaScript 函数体。' },
+          host: {
+            type: 'string',
+            description:
+              'Host factory 的纯 JavaScript 函数体：顶层只在本机执行一次（可用 harness 与本机层 nxt），return 的 Cordis Plugin 挂载到每个启用它的智能体。',
+          },
           client: { type: 'string', description: '返回 Client Cordis Plugin 的纯 JavaScript 函数体。' },
         },
       },
@@ -969,19 +975,24 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
         properties: {
           permissions: { type: 'array', items: { type: 'string' }, required: true },
           networkOrigins: { type: 'array', items: { type: 'string' }, required: true },
-          capabilities: {
+          host: {
             type: 'json',
             description:
-              '智能体扩展 Host 通过 ctx.nxt 使用的能力：network、storage、assets、history、context。格式见 cordis-plugin-development 技能的“宿主能力”一节。',
+              '本机层能力：factory 参数 nxt 使用的 network、storage（本机分区）。格式见 cordis-plugin-development 技能的“宿主能力”一节。',
+          },
+          agent: {
+            type: 'json',
+            description:
+              '智能体层能力：挂载内 ctx.nxt 使用的 network、storage、assets、history、context、llm、inboundHook、jobs、platform。',
           },
         },
         description:
-          'Client 需要的完整权限和 HTTP(S) origin 清单；使用 ctx.data 的 Hook 也要声明对应读取权限。Host 端能力写在 capabilities。',
+          'permissions/networkOrigins 是页面与面板经 host.call 的产品读写和 HTTP(S) origin；使用 ctx.data 的 Hook 也要声明对应读取权限。Host 端能力按层写在 host 与 agent。',
       },
       config: {
         type: 'json',
         description:
-          '可选配置界面：{ schema: 序列化 Schemastery 对象 }。用户在启用后可修改；Host 通过 harness.config?.() 读取，动态运行阶段使用默认值。',
+          '可选配置界面：{ host?: { schema }, agent?: { schema } }，schema 为序列化 Schemastery 对象，两层字段名不能重复。本机配置用 harness.config() 读取，智能体配置在挂载内用 ctx.config() 读取；动态运行阶段使用默认值。',
       },
       verification: {
         type: 'json',
@@ -2483,7 +2494,7 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
 }
 
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
-export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHost {
+export class DshHostRuntime implements AgentSessionDriver {
   readonly #context: Context
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
@@ -2552,7 +2563,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
       extensionHost === undefined
         ? {}
         : {
-            nxt: ({ agentId, revision, config, sessionId, context: fiberContext }) => {
+            nxt: ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext }) => {
               const described = extensionHost.describeRevision(revision)
               const channelId = this.#sessions.require(sessionId).channelId
               extensionHost.onSessionMount?.({ agentId, revision, channelId })
@@ -2565,12 +2576,29 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
                   channelId,
                   capabilities: () => described.capabilities,
                   config: () => config,
+                  hostConfig: () => hostConfig,
                 },
                 extensionHost.activationBackends,
                 dshPromptRegistry(fiberContext, sessionId),
               )
             },
-            mcp: async ({ agentId, revision, config, sessionId, context: fiberContext }) => {
+            hostNxt: ({ revision, config }) => {
+              const described = extensionHost.describeRevision(revision)
+              return createHostLayerNxt(
+                {
+                  mode: 'host',
+                  agentId: '',
+                  ownerKey: revision.extensionId,
+                  displayName: described.displayName,
+                  channelId: '',
+                  capabilities: () => described.hostCapabilities,
+                  config: () => config,
+                },
+                extensionHost.activationBackends,
+              )
+            },
+            ...(extensionHost.adapters === undefined ? {} : { adapters: extensionHost.adapters }),
+            mcp: async ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext }) => {
               const described = extensionHost.describeRevision(revision)
               const servers = described.capabilities?.mcp?.servers ?? []
               if (servers.length === 0) return
@@ -2587,6 +2615,7 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
                 channelId: this.#sessions.require(sessionId).channelId,
                 capabilities: () => described.capabilities,
                 config: () => config,
+                hostConfig: () => hostConfig,
               }
               const status = (name: string, update: Omit<McpServerStatus, 'name' | 'observedAt'>) =>
                 extensionHost.mcpStatus?.set(agentId, revision.extensionId, { name, ...update, observedAt: Date.now() })
@@ -3149,22 +3178,47 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
         runner.bindEpisode(input.episodeId)
         const extensionHost = this.#extensionHost
         if (extensionHost !== undefined) {
+          // A candidate has no saved configuration: schema defaults plus the test credentials typed for this task.
+          const candidateConfig = (layer: 'host' | 'agent'): JsonValue => {
+            const record = (value: JsonValue | undefined) =>
+              value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
+            return {
+              ...record(runner.activeCandidateConfig(layer)),
+              ...record(extensionHost.dynamicConfig?.(revision.agentId, input.episodeId)),
+            }
+          }
+          const ownerKey = `authoring-${input.episodeId}`
           const dynamicNxt = createNxtHostService(
             {
               mode: 'dynamic',
               agentId: revision.agentId,
-              ownerKey: `authoring-${input.episodeId}`,
+              ownerKey,
               displayName: '创造中的扩展',
               channelId: input.channelId,
               capabilities: () => runner.activeCandidateCapabilities(),
-              // A candidate has no saved configuration; only test credentials typed for this task are visible.
-              config: () => extensionHost.dynamicConfig?.(revision.agentId, input.episodeId) ?? {},
+              config: () => candidateConfig('agent'),
+              hostConfig: () => candidateConfig('host'),
+            },
+            extensionHost.dynamicBackends,
+          )
+          const dynamicHostNxt = createHostLayerNxt(
+            {
+              mode: 'host',
+              agentId: revision.agentId,
+              ownerKey,
+              displayName: '创造中的扩展',
+              channelId: '',
+              capabilities: () => runner.activeCandidateHostCapabilities(),
+              config: () => candidateConfig('host'),
             },
             extensionHost.dynamicBackends,
           )
           dynamicContext.provide(
             NXT_HOST_SERVICE_NAME,
-            createNxtDynamicFacade(() => dynamicNxt),
+            createNxtDynamicFacade(
+              () => dynamicNxt,
+              () => dynamicHostNxt,
+            ),
           )
         }
         const resolveOwner = (caller: Agent): Agent =>
@@ -3997,25 +4051,6 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return this.#dynamic.toolNames(dshSessionId)
   }
 
-  invokeExtensionHost(
-    dshSessionId: string,
-    extensionRevisionId: string,
-    method: string,
-    input: JsonValue = null,
-  ): Promise<JsonValue> {
-    this.#assertActive()
-    return this.#extensionMounts.invokeExtensionHost(dshSessionId, extensionRevisionId, method, input)
-  }
-
-  invokeExtensionActivation(
-    agentId: AgentRevisionRecord['agentId'],
-    extensionRevisionId: string,
-    method: string,
-    input: JsonValue = null,
-  ): Promise<JsonValue> {
-    this.#assertActive()
-    return this.#extensionMounts.invokeExtensionActivation(agentId, extensionRevisionId, method, input)
-  }
   queryNekroNxtInspect(
     dshSessionId: string,
     method: 'currentContext' | 'supportedContributions' | 'developmentExample' | 'extensionLifecycle',
@@ -4038,14 +4073,10 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
     return this.#dynamic.episodesRunningDynamicCandidates(agentId)
   }
 
-  mount(
-    agentId: AgentRevisionRecord['agentId'],
-    revision: Revision,
-    artifact: ExtensionBuildArtifact,
-    config: JsonValue,
-  ): Promise<MountedExtension> {
+  /** Runs an installed extension's Host factory once; its attachments mount into the agents' Sessions. */
+  loadExtension(input: Parameters<PersistentExtensionMounts['load']>[0]): Promise<LoadedExtension> {
     this.#assertActive()
-    return this.#extensionMounts.mount(agentId, revision, artifact, config)
+    return this.#extensionMounts.load(input)
   }
 
   dispose(): Promise<void> {
@@ -4095,39 +4126,60 @@ export class DshHostRuntime implements AgentSessionDriver, ExtensionActivationHo
 }
 
 /**
- * Switches agent Extensions inside the agent's live Sessions at their safe gap. DSH assembles the tool list for every
- * model request, so mounted or disposed Tool Fibers take effect at the next step without an Episode handoff, and the
- * conversation keeps its context. The exception is a Session still running a dynamic candidate, typically the one in
- * which the extension was just created and saved: its Tools can collide with the saved Revision, so when mounting
- * fails and such Sessions exist they are handed off to new Episodes first and the mount is retried once.
+ * Runs installed Extensions for the lifecycle coordinator. Attachments switch inside the agent's live Sessions at
+ * their safe gap: DSH assembles the tool list for every model request, so mounted or disposed Tool Fibers take effect
+ * at the next step without an Episode handoff. The exception is a Session still running a dynamic candidate, typically
+ * the one in which the extension was just created and saved: its Tools can collide with the saved Revision, so when
+ * attaching fails and such Sessions exist they are handed off to new Episodes first and the attach is retried once.
  */
-export class ChannelExtensionActivationHost implements ExtensionActivationHost {
+export class ChannelExtensionRuntimeHost implements ExtensionRuntimeHost {
   readonly #channels: ChannelRuntime
   readonly #dsh: DshHostRuntime
-
-  constructor(channels: ChannelRuntime, dsh: DshHostRuntime) {
-    this.#channels = channels
-    this.#dsh = dsh
+  readonly #adapters: {
+    readonly waitUntilSafe: (adapterKey: string) => Promise<void>
+    readonly assertKeyAvailable: (adapterKey: string, extensionId: ExtensionId) => Promise<void>
   }
 
-  waitUntilSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
+  constructor(
+    channels: ChannelRuntime,
+    dsh: DshHostRuntime,
+    adapters: {
+      readonly waitUntilSafe: (adapterKey: string) => Promise<void>
+      readonly assertKeyAvailable: (adapterKey: string, extensionId: ExtensionId) => Promise<void>
+    },
+  ) {
+    this.#channels = channels
+    this.#dsh = dsh
+    this.#adapters = adapters
+  }
+
+  async load(input: Parameters<ExtensionRuntimeHost['load']>[0]): Promise<LoadedExtension> {
+    const loaded = await this.#dsh.loadExtension(input)
+    return {
+      ...loaded,
+      attach: async (agentId, config) => {
+        try {
+          return await loaded.attach(agentId, config)
+        } catch (error) {
+          const episodes = this.#dsh.episodesRunningDynamicCandidates(agentId)
+          if (episodes.length === 0) throw error
+          await this.#channels.rolloverEpisodesForActivation(episodes)
+          return loaded.attach(agentId, config)
+        }
+      },
+    }
+  }
+
+  waitUntilAgentSafe(agentId: AgentRevisionRecord['agentId']): Promise<void> {
     return this.#dsh.waitUntilSafe(agentId)
   }
 
-  async mount(
-    agentId: AgentRevisionRecord['agentId'],
-    revision: Revision,
-    artifact: ExtensionBuildArtifact,
-    config: JsonValue,
-  ): Promise<MountedExtension> {
-    try {
-      return await this.#dsh.mount(agentId, revision, artifact, config)
-    } catch (error) {
-      const episodes = this.#dsh.episodesRunningDynamicCandidates(agentId)
-      if (episodes.length === 0) throw error
-      await this.#channels.rolloverEpisodesForActivation(episodes)
-      return this.#dsh.mount(agentId, revision, artifact, config)
-    }
+  waitUntilAdapterSafe(adapterKey: string): Promise<void> {
+    return this.#adapters.waitUntilSafe(adapterKey)
+  }
+
+  assertAdapterKeyAvailable(adapterKey: string, extensionId: ExtensionId): Promise<void> {
+    return this.#adapters.assertKeyAvailable(adapterKey, extensionId)
   }
 }
 

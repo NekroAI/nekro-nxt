@@ -71,7 +71,7 @@ const waitingTransition = (
   result: Promise<unknown>,
   settledLater: () => void,
 ) => {
-  const transition = runtime.activation.getTransition(agentId, extensionId)
+  const transition = runtime.extensions.getTransition(agentId, extensionId)
   if (transition?.state !== 'waiting') return undefined
   result.then(settledLater, (error: unknown) => {
     console.warn('[nekro-nxt] 扩展启用状态切换失败：', error instanceof Error ? error.message : String(error))
@@ -127,17 +127,18 @@ export function registerWorkspaceRoutes({
         const manifest = activationManifest(runtime, current?.extensionRevisionId)
         const activation = await commitExtensionConfigWithSecrets({
           manifest,
+          layer: 'agent',
           previous: current?.config,
           config: input.config,
           secrets: input.secrets,
           credentials: runtime.credentials,
-          commit: (config) => runtime.activation.updateConfig(params.agentId, params.extensionId, config),
+          commit: (config) => runtime.extensions.updateAgentConfig(params.agentId, params.extensionId, config),
         })
         writeJson(
           res,
           200,
           HostApiContracts.updateExtensionActivationConfig.parseResponse(
-            maskExtensionSecrets(manifest, activation.config),
+            maskExtensionSecrets(manifest, 'agent', activation.config),
           ),
         )
         broadcastExtensionsChanged()
@@ -156,11 +157,14 @@ export function registerWorkspaceRoutes({
       }
       try {
         const outcome = await settleWithin(
-          runtime.activation.activate({
+          runtime.extensions.activate({
             agentId: params.agentId,
             extensionId: params.extensionId,
             revisionId: parsed.revisionId,
             ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
+            ...(parsed.hostPermissionApproval === undefined
+              ? {}
+              : { hostPermissionApproval: parsed.hostPermissionApproval }),
           }),
           ACTIVATION_RESPONSE_GRACE_MS,
         )
@@ -179,7 +183,11 @@ export function registerWorkspaceRoutes({
           HostApiContracts.activateExtension.parseResponse({
             activation: {
               ...activation,
-              ...maskExtensionSecrets(activationManifest(runtime, activation.extensionRevisionId), activation.config),
+              ...maskExtensionSecrets(
+                activationManifest(runtime, activation.extensionRevisionId),
+                'agent',
+                activation.config,
+              ),
             },
           }),
         )

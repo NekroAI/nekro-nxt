@@ -19,6 +19,7 @@ import type {
   NxtFetchInit,
   NxtFetchResponse,
   NxtHistoryMessage,
+  NxtHostLayerService,
   NxtHostService,
   NxtJobRecord,
   NxtPlatformAction,
@@ -36,15 +37,29 @@ export const NXT_HOST_SERVICE_NAME = 'nxt'
 
 /** Where an `nxt` instance runs and which product facts it may touch. */
 export interface NxtServiceBinding {
-  readonly mode: 'activation' | 'dynamic' | 'verification'
+  /** `host` is the extension's single host instance; it has no agent or channel. */
+  readonly mode: 'activation' | 'dynamic' | 'verification' | 'host'
   readonly agentId: string
-  /** `extensionId` for Activations; the authoring task owner key for dynamic runs. */
+  /** `extensionId` for installed extensions; the authoring task owner key for dynamic runs. */
   readonly ownerKey: string
   readonly displayName: string
   readonly channelId: string
-  /** Approved capabilities; `undefined` means none. Dynamic runs read the current candidate's declaration. */
+  /**
+   * Approved capabilities of this layer; `undefined` means none. Host bindings carry host-layer capabilities in the
+   * same shape. Dynamic runs read the current candidate's declaration.
+   */
   readonly capabilities: () => ExtensionCapabilities | undefined
+  /** The configuration of this layer: the agent's for agent bindings, the host's for host bindings. */
   readonly config: () => JsonValue
+  /** Host configuration of an agent binding; secrets declared in `config.host` resolve from it. */
+  readonly hostConfig?: () => JsonValue
+}
+
+/** Every configuration value a binding's secrets may come from; field names are unique across both layers. */
+export const bindingSecretConfig = (binding: NxtServiceBinding): JsonValue => {
+  const record = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> =>
+    value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  return { ...record(binding.hostConfig?.()), ...record(binding.config()) }
 }
 
 export interface NxtStoragePartition {
@@ -185,6 +200,9 @@ const DYNAMIC_RENDER_TIMEOUT_MS = 2000
 const STATIC_SECTION_ORDER = 30
 const DYNAMIC_CONTEXT_ORDER = 900
 
+const layerField = (binding: NxtServiceBinding): string =>
+  binding.mode === 'host' ? 'permissions.host' : 'permissions.agent'
+
 const requireCapability = <Key extends keyof ExtensionCapabilities>(
   binding: NxtServiceBinding,
   key: Key,
@@ -192,7 +210,7 @@ const requireCapability = <Key extends keyof ExtensionCapabilities>(
 ): NonNullable<ExtensionCapabilities[Key]> => {
   const value = binding.capabilities()?.[key]
   if (value === undefined) {
-    throw new NxtCapabilityError(`这个扩展没有声明 ${manifestHint}，请在 Manifest 的 permissions.capabilities 中声明。`)
+    throw new NxtCapabilityError(`这个扩展没有声明 ${manifestHint}，请在 Manifest 的 ${layerField(binding)} 中声明。`)
   }
   return value
 }
@@ -228,7 +246,9 @@ const storageLocation = (
   const scope = options?.scope ?? 'agent'
   if (!storage.scopes.includes(scope)) {
     throw new NxtCapabilityError(
-      `这个扩展没有声明 ${scope} 存储作用域，请加入 permissions.capabilities.storage.scopes。`,
+      binding.mode === 'host'
+        ? '本机实例的存储需要在 permissions.host 中声明 storage。'
+        : `这个扩展没有声明 ${scope} 存储作用域，请加入 permissions.agent.storage.scopes。`,
     )
   }
   switch (scope) {
@@ -272,7 +292,7 @@ const contextDeclaration = (
   const declared = binding.capabilities()?.context?.find((entry) => entry.name === name)
   if (declared?.kind !== kind) {
     throw new NxtCapabilityError(
-      `上下文 ${name} 没有以 ${kind} 声明，请在 permissions.capabilities.context 中加入 { name: '${name}', kind: '${kind}', maxChars }。`,
+      `上下文 ${name} 没有以 ${kind} 声明，请在 permissions.agent.context 中加入 { name: '${name}', kind: '${kind}', maxChars }。`,
     )
   }
   return declared
@@ -388,6 +408,7 @@ export const createNxtHostService = (
   const label = `[扩展：${binding.displayName}]`
 
   return {
+    config: () => binding.config(),
     http: { fetch: fetchWithPolicy },
     secrets: {
       async get(key) {
@@ -576,6 +597,43 @@ export const createNxtHostService = (
   }
 }
 
+/**
+ * The host instance's `nxt` (扩展形态统一 §5): controlled network, secrets, the extension's host storage partition and
+ * the pure render and parse services, checked against `permissions.host`.
+ */
+export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtHostLayerService => {
+  const quota = (): number => binding.capabilities()?.storage?.quotaBytes ?? EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES
+  const location = () => storageLocation(binding, { scope: 'shared' }).location
+  return {
+    http: { fetch: async (url, init) => backends.fetch(egressPolicy(binding), url, init) },
+    secrets: { get: async (key) => backends.secret(binding, key) },
+    storage: {
+      async get(key) {
+        return backends.storage.get(binding.ownerKey, location(), checkedKey(key))
+      },
+      async set(key, value) {
+        await backends.storage.set(binding.ownerKey, location(), checkedKey(key), jsonValue(value), quota())
+      },
+      async delete(key) {
+        return backends.storage.delete(binding.ownerKey, location(), checkedKey(key))
+      },
+      async list(options) {
+        const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 50), 1), 200)
+        return backends.storage.list(binding.ownerKey, location(), {
+          limit,
+          ...(options?.prefix === undefined ? {} : { prefix: options.prefix }),
+          ...(options?.after === undefined ? {} : { after: options.after }),
+        })
+      },
+    },
+    render: { svg: (svg, options) => renderSvg(svg, options) },
+    parse: {
+      html: (html, options) => Promise.resolve(parseHtml(html, options)),
+      feed: (xml, options) => Promise.resolve(parseFeed(xml, options)),
+    },
+  }
+}
+
 /** Adapts a DSH agent Context to {@link NxtPromptRegistry}; registrations are effects of that Context. */
 export const dshPromptRegistry = (context: Context, sessionId: string): NxtPromptRegistry => ({
   section: (section) => context.systemPrompt.section(section),
@@ -591,7 +649,15 @@ export const dshPromptRegistry = (context: Context, sessionId: string): NxtPromp
  * `nxt` facade for dynamic runs, published with `context.set('nxt', …)`. The DSH dynamic sandbox lets a host half
  * reach Services it lists in `inject` and proxies their members; resolving per access follows the current candidate.
  */
-export const createNxtDynamicFacade = (resolve: () => NxtHostService): NxtHostService => ({
+export const createNxtDynamicFacade = (
+  resolve: () => NxtHostService,
+  resolveHostLayer?: () => NxtHostLayerService,
+): NxtHostService & { readonly hostLayer: NxtHostLayerService | undefined } => ({
+  config: () => resolve().config(),
+  /** The candidate's host-layer `nxt`; the dynamic wrapper hands it to the factory's top-level `nxt`. */
+  get hostLayer() {
+    return resolveHostLayer?.()
+  },
   get http() {
     return resolve().http
   },

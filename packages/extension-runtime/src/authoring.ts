@@ -8,7 +8,7 @@ import {
   JsonValueSchema,
 } from '@nekro-nxt/contracts'
 import type {
-  ExtensionConfigDeclaration,
+  ExtensionLayeredConfig,
   AgentId,
   AuthoringAttemptId,
   AuthoringTaskId,
@@ -18,7 +18,7 @@ import type {
   HostPageContribution,
   HostUiKitComponentName,
   HostUiPageGeometryEvidence,
-  HostUiPermissionDeclaration,
+  ExtensionPermissions,
   JsonValue,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
@@ -183,16 +183,15 @@ export interface AuthoringRepository {
 export interface DynamicAuthoringSnapshot {
   readonly name: string
   readonly purpose: string
-  readonly scope: 'agent' | 'host-adapter' | 'host-ui'
   readonly code: { readonly host?: string; readonly client?: string }
   readonly resources: Readonly<Record<string, string>>
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   /** Extension icon carried into the saved Manifest; the resource lives in `resources`. */
   readonly icon?: ExtensionIcon
-  readonly permissions: HostUiPermissionDeclaration
+  readonly permissions: ExtensionPermissions
   readonly contributions: readonly JsonValue[]
-  /** Optional serialized Schemastery configuration surface carried into the saved Manifest. */
-  readonly config?: ExtensionConfigDeclaration
+  /** Optional host and agent configuration forms carried into the saved Manifest. */
+  readonly config?: ExtensionLayeredConfig
   /** Representative inputs the Host uses to really call each Tool and RPC during verification. */
   readonly verificationInputs?: DynamicAuthoringVerificationInputs
 }

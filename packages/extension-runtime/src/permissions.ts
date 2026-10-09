@@ -1,7 +1,9 @@
 import {
+  agentPermissionDeclaration,
   configSecretKeys,
-  EMPTY_CONFIG_SCHEMA,
   extensionCapabilitiesExpand,
+  hostPermissionDeclaration,
+  type ExtensionConfigLayer,
   HostUiPermissionDeclarationSchema,
   type ExtensionCapabilities,
   parseConfigValue,
@@ -10,7 +12,7 @@ import {
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
-import type { ExtensionManifest } from '@nekro-nxt/extension-format'
+import { layerConfigSchema, type ExtensionManifest } from '@nekro-nxt/extension-format'
 import type { HostUiPermissionGrant } from './types.js'
 
 const sorted = <Value extends string>(values: readonly Value[]): Value[] => [...values].sort()
@@ -150,9 +152,13 @@ const withoutKeys = (value: JsonValue | undefined, keys: readonly string[]): Jso
   return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)))
 }
 
-/** Validates a configuration value against the Manifest config schema and fills its defaults. */
-export const resolveExtensionConfig = (manifest: ExtensionManifest | undefined, value: JsonValue | undefined) => {
-  const schema = manifest?.config?.schema ?? EMPTY_CONFIG_SCHEMA
+/** Validates a configuration value against one layer's config schema and fills its defaults. */
+export const resolveExtensionConfig = (
+  manifest: ExtensionManifest | undefined,
+  layer: ExtensionConfigLayer,
+  value: JsonValue | undefined,
+) => {
+  const schema = layerConfigSchema(manifest, layer)
   const secrets = configSecretKeys(schema)
   return {
     ...parseConfigValue(schema, withoutKeys(value, secrets) ?? {}, { skipKeys: secrets }),
@@ -161,13 +167,43 @@ export const resolveExtensionConfig = (manifest: ExtensionManifest | undefined, 
 }
 
 /** Keeps a previous configuration when it is still valid for the new Revision, otherwise falls back to defaults. */
-export const carryExtensionConfig = (manifest: ExtensionManifest | undefined, previous: JsonValue | undefined) => {
-  const schema = manifest?.config?.schema ?? EMPTY_CONFIG_SCHEMA
+export const carryExtensionConfig = (
+  manifest: ExtensionManifest | undefined,
+  layer: ExtensionConfigLayer,
+  previous: JsonValue | undefined,
+) => {
+  const schema = layerConfigSchema(manifest, layer)
   const secrets = configSecretKeys(schema)
   const carried = validateConfigValue(schema, withoutKeys(previous, secrets) ?? {}, { skipKeys: secrets })
   const base = carried.issues.length === 0 ? carried.value : parseConfigValue(schema, {}, { skipKeys: secrets })
   return { ...base, ...secretReferences(secrets, previous) }
 }
+
+/** Credential references a configuration of one layer holds; deleted once nothing references them. */
+export const configSecretReferences = (
+  manifest: ExtensionManifest | undefined,
+  layer: ExtensionConfigLayer,
+  value: JsonValue | undefined,
+): readonly string[] =>
+  Object.values(secretReferences(configSecretKeys(layerConfigSchema(manifest, layer)), value)).flatMap((reference) =>
+    typeof reference === 'string' ? [reference] : [],
+  )
+
+/** What installing this Revision on the machine asks the user to approve, against the current host grant. */
+export const hostPermissionRequirement = (
+  manifest: ExtensionManifest | undefined,
+  current: HostUiPermissionGrant | undefined,
+): PermissionRequirement =>
+  permissionRequirement(manifest === undefined ? undefined : hostPermissionDeclaration(manifest.permissions), current)
+
+/** What enabling this Revision for one agent asks the user to approve, against that agent's current grant. */
+export const agentPermissionRequirement = (
+  manifest: ExtensionManifest | undefined,
+  current: HostUiPermissionGrant | undefined,
+): PermissionRequirement =>
+  permissionRequirement(manifest === undefined ? undefined : agentPermissionDeclaration(manifest.permissions), current)
+
+export const extensionOwnerKey = (extensionId: string): string => `extension:${extensionId}`
 
 export const activationOwnerKey = (agentId: string, extensionId: string): string =>
   `activation:${agentId}:${extensionId}`

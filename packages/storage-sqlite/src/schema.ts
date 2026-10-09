@@ -720,7 +720,8 @@ export const assetChannelGrants = sqliteTable(
 
 export const localExtensions = sqliteTable('local_extensions', {
   id: text().$type<ExtensionId>().primaryKey(),
-  scope: text({ enum: ['agent', 'host-adapter', 'host-ui'] }).notNull(),
+  /** What the latest Revision provides (Manifest V7 labels); listing and filtering only. */
+  provides: jsonText<readonly ('agent' | 'page' | 'adapter' | 'mcp')[]>('provides').notNull().default([]),
   slug: text().notNull().unique(),
   displayName: text('display_name').notNull(),
   description: text().notNull(),

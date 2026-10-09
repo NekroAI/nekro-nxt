@@ -129,12 +129,9 @@ export class AuthoringApplicationService {
       identity.pluginId,
       identity.packageId,
     )
-    if (verified.permissions?.capabilities?.mcp !== undefined) {
+    if (verified.permissions.agent?.mcp !== undefined) {
       throw new Error('动态创造不能声明 MCP 服务；请在工坊用「添加 MCP 服务」连接。')
     }
-    const adapterVerification = 'scope' in verified && verified.scope === 'host-adapter' ? verified : undefined
-    const scopedVerification =
-      'scope' in verified && (verified.scope === 'host-adapter' || verified.scope === 'host-ui') ? verified : undefined
     const hasHostPages = verified.renderedPages.length > 0
     const sourceCode = authoringSnapshot?.code ?? inspection.code
     const saved = await runtime.extensionService.saveDynamicPackage({
@@ -157,9 +154,8 @@ export class AuthoringApplicationService {
       createdByAgentId: identity.agentId,
       verification: {
         dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
-        contractVersion: 'nekro-nxt-extension-v4',
-        ...(scopedVerification === undefined ? {} : { scope: scopedVerification.scope }),
-        ...(adapterVerification === undefined ? {} : { adapter: adapterVerification.adapter }),
+        contractVersion: 'nekro-nxt-extension-v5',
+        ...(verified.adapter === undefined ? {} : { adapter: verified.adapter }),
         origin: {
           episodeId: identity.episodeId,
           pluginId: identity.pluginId,

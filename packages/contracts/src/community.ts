@@ -23,54 +23,46 @@ export const CommunityGradeSchema = z.enum(['A', 'B', 'C', 'D'])
 
 export const CommunityReleaseIdSchema = z.string().regex(/^rel_[0-9A-Za-z]+$/u)
 
-export const CommunityAccountSchema = z
-  .object({
-    handle: z.string().min(1).max(80),
-    displayName: z.string().max(200),
-    avatarUrl: z.string().url().nullable(),
-  })
-  .strict()
+export const CommunityAccountSchema = z.object({
+  handle: z.string().min(1).max(80),
+  displayName: z.string().max(200),
+  avatarUrl: z.string().url().nullable(),
+})
 export type CommunityAccount = z.output<typeof CommunityAccountSchema>
 
 export const CommunityEnvironmentSchema = z.enum(['production', 'staging', 'development'])
 export type CommunityEnvironment = z.output<typeof CommunityEnvironmentSchema>
 
-export const CommunityStatusSchema = z
-  .object({
-    communityUrl: z.string().url(),
-    /** 社区自我声明的环境；连不上或旧版社区时为 null。 */
-    environment: CommunityEnvironmentSchema.nullable(),
-    account: CommunityAccountSchema.nullable(),
-    signedInAt: z.number().int().nullable(),
-    /** 最近一次更新检查发现的可更新扩展数量（只读缓存，不发起网络请求）。 */
-    updatesAvailable: z.number().int().nonnegative(),
-  })
-  .strict()
+export const CommunityStatusSchema = z.object({
+  communityUrl: z.string().url(),
+  /** 社区自我声明的环境；连不上或旧版社区时为 null。 */
+  environment: CommunityEnvironmentSchema.nullable(),
+  account: CommunityAccountSchema.nullable(),
+  signedInAt: z.number().int().nullable(),
+  /** 最近一次更新检查发现的可更新扩展数量（只读缓存，不发起网络请求）。 */
+  updatesAvailable: z.number().int().nonnegative(),
+})
 export type CommunityStatus = z.output<typeof CommunityStatusSchema>
 
-export const CommunityPermissionItemSchema = z
-  .object({
-    key: z.string().max(120),
-    level: z.enum(['normal', 'elevated', 'high']),
-    label: z.string().max(200),
-    detail: z.string().max(2000).optional(),
-  })
-  .strict()
+export const CommunityPermissionItemSchema = z.object({
+  key: z.string().max(120),
+  level: z.enum(['normal', 'elevated', 'high']),
+  label: z.string().max(200),
+  detail: z.string().max(2000).optional(),
+})
 
 export type CommunityPermissionItem = z.output<typeof CommunityPermissionItemSchema>
 
-export const CommunityReleaseSchema = z
-  .object({
-    id: CommunityReleaseIdSchema,
-    reviewStatus: CommunityReviewStatusSchema,
-    grade: CommunityGradeSchema.nullable(),
-    permissions: z.array(CommunityPermissionItemSchema).max(64),
-    packageSize: z.number().int().nonnegative(),
-    requiresSdk: z.number().int().positive().nullable(),
-    notes: z.string().max(2000),
-    createdAt: z.number().int(),
-  })
-  .strict()
+export const CommunityReleaseSchema = z.object({
+  id: CommunityReleaseIdSchema,
+  reviewStatus: CommunityReviewStatusSchema,
+  grade: CommunityGradeSchema.nullable(),
+  permissions: z.array(CommunityPermissionItemSchema).max(64),
+  packageSize: z.number().int().nonnegative(),
+  requiresSdk: z.number().int().positive().nullable(),
+  notes: z.string().max(2000),
+  createdAt: z.number().int(),
+})
 export type CommunityRelease = z.output<typeof CommunityReleaseSchema>
 
 /** 社区为官方扩展保留的发布者标识：官方扩展由多位官方成员维护，对外不显示个人账号。 */
@@ -80,24 +72,23 @@ export const COMMUNITY_OFFICIAL_HANDLE = 'nekro-nxt'
 export const communityPublisherLabel = (handle: string): string =>
   handle === COMMUNITY_OFFICIAL_HANDLE ? 'NekroNXT 官方' : `@${handle}`
 
-export const CommunityExtensionSummarySchema = z
-  .object({
-    id: ExtensionIdSchema,
-    scope: z.enum(['agent', 'host-adapter', 'host-ui']),
-    displayName: z.string().max(200),
-    summary: z.string().max(1000),
-    tags: z.array(z.string().max(40)).max(16),
-    /** 最新公开发布包内的扩展图标（社区的绝对地址）；没有图标或旧版社区时为 null。 */
-    iconUrl: z.string().url().nullable(),
-    /** 由社区后台认定的官方扩展；此时发布者是社区保留的官方主页（`COMMUNITY_OFFICIAL_HANDLE`）。 */
-    official: z.boolean(),
-    publisher: CommunityAccountSchema,
-    latest: CommunityReleaseSchema.nullable(),
-    downloads: z.number().int().nonnegative(),
-    updatedAt: z.number().int(),
-    pageUrl: z.string().url(),
-  })
-  .strict()
+export const CommunityExtensionSummarySchema = z.object({
+  id: ExtensionIdSchema,
+  /** What the extension provides, derived from its Manifest; unknown future labels are dropped. */
+  provides: z.array(z.string().max(32)).max(8),
+  displayName: z.string().max(200),
+  summary: z.string().max(1000),
+  tags: z.array(z.string().max(40)).max(16),
+  /** 最新公开发布包内的扩展图标（社区的绝对地址）；没有图标或旧版社区时为 null。 */
+  iconUrl: z.string().url().nullable(),
+  /** 由社区后台认定的官方扩展；此时发布者是社区保留的官方主页（`COMMUNITY_OFFICIAL_HANDLE`）。 */
+  official: z.boolean(),
+  publisher: CommunityAccountSchema,
+  latest: CommunityReleaseSchema.nullable(),
+  downloads: z.number().int().nonnegative(),
+  updatedAt: z.number().int(),
+  pageUrl: z.string().url(),
+})
 export type CommunityExtensionSummary = z.output<typeof CommunityExtensionSummarySchema>
 
 export const CommunityExtensionDetailSchema = CommunityExtensionSummarySchema.extend({
@@ -108,11 +99,10 @@ export const CommunityExtensionDetailSchema = CommunityExtensionSummarySchema.ex
       status: CommunityReviewStatusSchema,
       grade: CommunityGradeSchema.nullable(),
       summary: z.string().max(2000).nullable(),
-      highlights: z.array(z.object({ severity: z.string().max(20), title: z.string().max(200) }).strict()).max(16),
+      highlights: z.array(z.object({ severity: z.string().max(20), title: z.string().max(200) })).max(16),
     })
-    .strict()
     .nullable(),
-}).strict()
+})
 export type CommunityExtensionDetail = z.output<typeof CommunityExtensionDetailSchema>
 
 /**
@@ -120,76 +110,69 @@ export type CommunityExtensionDetail = z.output<typeof CommunityExtensionDetailS
  */
 export const COMMUNITY_LISTING_LIMITS = { summary: 160, description: 20_000, tags: 8, tag: 40 } as const
 
-export const CommunityListingInputSchema = z
-  .object({
-    summary: z.string().trim().max(COMMUNITY_LISTING_LIMITS.summary).optional(),
-    description: z.string().max(COMMUNITY_LISTING_LIMITS.description).optional(),
-    tags: z
-      .array(z.string().trim().min(1).max(COMMUNITY_LISTING_LIMITS.tag))
-      .max(COMMUNITY_LISTING_LIMITS.tags)
-      .optional(),
-    sourceUrl: z
-      .string()
-      .trim()
-      .url()
-      .refine((value) => /^https?:\/\//iu.test(value), '源码地址必须是 http(s) 链接。')
-      .optional(),
-  })
-  .strict()
+export const CommunityListingInputSchema = z.object({
+  summary: z.string().trim().max(COMMUNITY_LISTING_LIMITS.summary).optional(),
+  description: z.string().max(COMMUNITY_LISTING_LIMITS.description).optional(),
+  tags: z
+    .array(z.string().trim().min(1).max(COMMUNITY_LISTING_LIMITS.tag))
+    .max(COMMUNITY_LISTING_LIMITS.tags)
+    .optional(),
+  sourceUrl: z
+    .string()
+    .trim()
+    .url()
+    .refine((value) => /^https?:\/\//iu.test(value), '源码地址必须是 http(s) 链接。')
+    .optional(),
+})
 export type CommunityListingInput = z.output<typeof CommunityListingInputSchema>
 
-export const CommunityEndpointSchema = z
-  .object({
-    url: z.string().url(),
-    source: z.enum(['setting', 'environment', 'default']),
-    defaultUrl: z.string().url(),
-    environmentUrl: z.string().url().nullable(),
-    /** 当前地址是未加密的非本机地址。 */
-    insecure: z.boolean(),
-  })
-  .strict()
+export const CommunityEndpointSchema = z.object({
+  url: z.string().url(),
+  source: z.enum(['setting', 'environment', 'default']),
+  defaultUrl: z.string().url(),
+  environmentUrl: z.string().url().nullable(),
+  /** 当前地址是未加密的非本机地址。 */
+  insecure: z.boolean(),
+})
 export type CommunityEndpoint = z.output<typeof CommunityEndpointSchema>
 
-export const CommunitySourceSchema = z
-  .object({
-    kind: z.literal('community'),
-    communityUrl: z.string().url(),
-    releaseId: CommunityReleaseIdSchema,
-    publisherHandle: z.string().min(1).max(80),
-    installedAt: z.number().int().nonnegative(),
-  })
-  .strict()
+export const CommunitySourceSchema = z.object({
+  kind: z.literal('community'),
+  communityUrl: z.string().url(),
+  releaseId: CommunityReleaseIdSchema,
+  publisherHandle: z.string().min(1).max(80),
+  installedAt: z.number().int().nonnegative(),
+})
 export type CommunitySource = z.output<typeof CommunitySourceSchema>
 
-export const CommunityInstalledItemSchema = z
-  .object({
-    extensionId: ExtensionIdSchema,
-    displayName: z.string(),
-    revisionId: z.string(),
-    source: CommunitySourceSchema,
-    /** 来源与当前社区地址一致时才能检查更新。 */
-    sameCommunity: z.boolean(),
-    /** 社区仍有这个条目。 */
-    found: z.boolean(),
-    delisted: z.boolean(),
-    delistedReason: z.string().nullable(),
-    releaseWithdrawn: z.boolean(),
-    latest: CommunityReleaseSchema.nullable(),
-    updateAvailable: z.boolean(),
-    addedPermissions: z.array(CommunityPermissionItemSchema),
-  })
-  .strict()
-export type CommunityInstalledItem = z.output<typeof CommunityInstalledItemSchema>
-
-export const CommunityInstalledSchema = z
-  .object({ checkedAt: z.number().int().nullable(), items: z.array(CommunityInstalledItemSchema) })
-  .strict()
-
-export const CommunityMyExtensionSchema = CommunityExtensionSummarySchema.extend({
-  releases: z.array(CommunityReleaseSchema.extend({ withdrawn: z.boolean() }).strict()),
+export const CommunityInstalledItemSchema = z.object({
+  extensionId: ExtensionIdSchema,
+  displayName: z.string(),
+  revisionId: z.string(),
+  source: CommunitySourceSchema,
+  /** 来源与当前社区地址一致时才能检查更新。 */
+  sameCommunity: z.boolean(),
+  /** 社区仍有这个条目。 */
+  found: z.boolean(),
   delisted: z.boolean(),
   delistedReason: z.string().nullable(),
-}).strict()
+  releaseWithdrawn: z.boolean(),
+  latest: CommunityReleaseSchema.nullable(),
+  updateAvailable: z.boolean(),
+  addedPermissions: z.array(CommunityPermissionItemSchema),
+})
+export type CommunityInstalledItem = z.output<typeof CommunityInstalledItemSchema>
+
+export const CommunityInstalledSchema = z.object({
+  checkedAt: z.number().int().nullable(),
+  items: z.array(CommunityInstalledItemSchema),
+})
+
+export const CommunityMyExtensionSchema = CommunityExtensionSummarySchema.extend({
+  releases: z.array(CommunityReleaseSchema.extend({ withdrawn: z.boolean() })),
+  delisted: z.boolean(),
+  delistedReason: z.string().nullable(),
+})
 export type CommunityMyExtension = z.output<typeof CommunityMyExtensionSchema>
 
 export const COMMUNITY_REVIEW_DIMENSIONS = [
@@ -214,58 +197,47 @@ export const COMMUNITY_REVIEW_DIMENSION_LABELS: Readonly<Record<(typeof COMMUNIT
   }
 
 /** 作者看到的完整审查报告。 */
-export const CommunityReviewReportSchema = z
-  .object({
-    releaseId: CommunityReleaseIdSchema,
-    status: CommunityReviewStatusSchema,
-    grade: CommunityGradeSchema.nullable(),
-    deterministic: z.array(
-      z
-        .object({
-          severity: z.enum(['info', 'warning', 'risk', 'block']),
+export const CommunityReviewReportSchema = z.object({
+  releaseId: CommunityReleaseIdSchema,
+  status: CommunityReviewStatusSchema,
+  grade: CommunityGradeSchema.nullable(),
+  deterministic: z.array(
+    z.object({
+      severity: z.enum(['info', 'warning', 'risk', 'block']),
+      title: z.string(),
+      detail: z.string(),
+      file: z.string().optional(),
+      line: z.number().int().optional(),
+    }),
+  ),
+  ai: z
+    .object({
+      summary: z.string(),
+      verdict: z.string(),
+      grade: CommunityGradeSchema,
+      dimensions: z.array(
+        z.object({ key: z.enum(COMMUNITY_REVIEW_DIMENSIONS), grade: CommunityGradeSchema, notes: z.string() }),
+      ),
+      findings: z.array(
+        z.object({
+          dimension: z.enum(COMMUNITY_REVIEW_DIMENSIONS),
+          severity: z.enum(['info', 'suggestion', 'warning', 'risk', 'critical']),
           title: z.string(),
           detail: z.string(),
           file: z.string().optional(),
           line: z.number().int().optional(),
-        })
-        .strict(),
-    ),
-    ai: z
-      .object({
-        summary: z.string(),
-        verdict: z.string(),
-        grade: CommunityGradeSchema,
-        dimensions: z.array(
-          z
-            .object({ key: z.enum(COMMUNITY_REVIEW_DIMENSIONS), grade: CommunityGradeSchema, notes: z.string() })
-            .strict(),
-        ),
-        findings: z.array(
-          z
-            .object({
-              dimension: z.enum(COMMUNITY_REVIEW_DIMENSIONS),
-              severity: z.enum(['info', 'suggestion', 'warning', 'risk', 'critical']),
-              title: z.string(),
-              detail: z.string(),
-              file: z.string().optional(),
-              line: z.number().int().optional(),
-              suggestion: z.string().optional(),
-            })
-            .strict(),
-        ),
-        exploitability: z.string().optional(),
-      })
-      .strict()
-      .nullable(),
-    model: z.string().nullable(),
-    error: z.string().nullable(),
-    decisions: z.array(
-      z.object({ decision: z.string(), note: z.string(), by: z.string(), createdAt: z.number().int() }).strict(),
-    ),
-    finishedAt: z.number().int().nullable(),
-    reportUrl: z.string().url(),
-  })
-  .strict()
+          suggestion: z.string().optional(),
+        }),
+      ),
+      exploitability: z.string().optional(),
+    })
+    .nullable(),
+  model: z.string().nullable(),
+  error: z.string().nullable(),
+  decisions: z.array(z.object({ decision: z.string(), note: z.string(), by: z.string(), createdAt: z.number().int() })),
+  finishedAt: z.number().int().nullable(),
+  reportUrl: z.string().url(),
+})
 export type CommunityReviewReport = z.output<typeof CommunityReviewReportSchema>
 
 /** 安装者看到的审查标签：只描述审查发现，不做「安全」担保。 */

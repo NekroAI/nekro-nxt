@@ -2,20 +2,24 @@ import { ExtensionIdSchema, ExtensionRevisionIdSchema, parseJsonValue } from '@n
 import { strFromU8, unzipSync } from 'fflate'
 import { z } from 'zod'
 import { resourceContent } from './icon.js'
-import { materializeImportedRevision, sha256Hex, type MaterializedExtensionRevision } from './revision.js'
+import {
+  LEGACY_EXTENSION_MESSAGE,
+  materializeImportedRevision,
+  sha256Hex,
+  type MaterializedExtensionRevision,
+} from './revision.js'
 
 /**
- * `.nxt-extension` 传输包：根目录 `manifest.json` 描述扩展身份、Revision 摘要与文件清单，`revision/` 下是清单、
+ * `.nxt-extension` 传输包（v2，承载 Manifest V7）：根目录 `manifest.json` 描述扩展身份、Revision 摘要与文件清单，`revision/` 下是清单、
  * 源码与资源。解析只做结构与完整性校验；清单与内容摘要由 `verifyExtensionPackage` 进一步校验。
  */
 export const extensionTransferManifestSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     kind: z.literal('nekro-nxt-extension'),
     extension: z
       .object({
         id: ExtensionIdSchema,
-        scope: z.enum(['agent', 'host-adapter', 'host-ui']),
         slug: z.string().trim().min(3).max(64),
         displayName: z.string().trim().min(1).max(80),
         description: z.string().max(500),
@@ -146,7 +150,11 @@ export const parseExtensionImport = (data: Uint8Array): ParsedExtensionImport =>
   const files = unzipTransferArchive(data)
   const root = files['manifest.json']
   if (!root) throw new Error('导入包缺少根 manifest.json。')
-  const manifest = extensionTransferManifestSchema.parse(JSON.parse(strFromU8(root)))
+  const rawRoot: unknown = JSON.parse(strFromU8(root))
+  if (typeof rawRoot === 'object' && rawRoot !== null && 'schemaVersion' in rawRoot && rawRoot.schemaVersion === 1) {
+    throw new Error(LEGACY_EXTENSION_MESSAGE)
+  }
+  const manifest = extensionTransferManifestSchema.parse(rawRoot)
   const expected = new Set(['manifest.json', ...manifest.files.map((file) => file.path)])
   for (const name of Object.keys(files)) if (!expected.has(name)) throw new Error(`导入包包含清单外文件：${name}`)
   for (const descriptor of manifest.files) {
@@ -202,7 +210,7 @@ export const verifyExtensionPackage = (data: Uint8Array): VerifiedExtensionPacka
 
 export const assertRevisionMatchesTransfer = (
   transfer: {
-    readonly extension: { readonly id: string; readonly scope: string }
+    readonly extension: { readonly id: string }
     readonly revision: { readonly id: string; readonly contentDigest: string; readonly payloadDigest: string }
   },
   revision: MaterializedExtensionRevision,
@@ -213,7 +221,6 @@ export const assertRevisionMatchesTransfer = (
   ) {
     throw new Error('导入扩展的 Manifest 身份与传输清单不一致。')
   }
-  if (revision.scope !== transfer.extension.scope) throw new Error('导入扩展的 scope 与 Manifest 不一致。')
   if (
     revision.contentDigest !== transfer.revision.contentDigest ||
     revision.payloadDigest !== transfer.revision.payloadDigest

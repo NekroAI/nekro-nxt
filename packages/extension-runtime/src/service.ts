@@ -3,6 +3,7 @@ import path from 'node:path'
 import {
   assertRevisionMatchesTransfer,
   extensionManifestSchema,
+  manifestAdapter,
   type ExtensionManifest,
 } from '@nekro-nxt/extension-format'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, type AgentId, type ExtensionId } from '@nekro-nxt/contracts'
@@ -103,29 +104,19 @@ export class ExtensionService {
       revisionId,
       snapshot: input.snapshot,
     })
-    if (existing && existing.scope !== materialized.scope) {
-      throw new Error('An existing Extension cannot change scope across Revisions.')
-    }
-    if (existing?.scope === 'host-adapter') {
-      const previousKey = this.#repository
-        .listExtensionRevisions(existing.id)
-        .map((revision) => this.#repository.getExtensionRevisionVerification(revision.id)?.adapter?.key)
-        .find((key) => key !== undefined)
-      const nextKey = input.verification?.adapter?.key
-      if (previousKey !== undefined && nextKey !== previousKey) {
-        throw new Error('A Host Adapter Extension cannot change adapter key across Revisions.')
-      }
-    }
+    if (existing) this.#assertAdapterKeyKept(existing.id, materialized.manifest)
     const duplicate = this.#repository.getExtensionRevisionByPayloadDigest(extensionId, materialized.payloadDigest)
     if (duplicate) return { extension: existing ?? this.#requireExtension(extensionId), revision: duplicate }
-    const extension: LocalExtension = existing ?? {
-      id: extensionId,
-      scope: materialized.scope,
-      slug,
-      displayName: metadata.displayName,
-      description: metadata.description,
-      ...(input.createdByAgentId === undefined ? {} : { createdByAgentId: input.createdByAgentId }),
-      createdAt: now,
+    const extension: LocalExtension = {
+      ...(existing ?? {
+        id: extensionId,
+        slug,
+        displayName: metadata.displayName,
+        description: metadata.description,
+        ...(input.createdByAgentId === undefined ? {} : { createdByAgentId: input.createdByAgentId }),
+        createdAt: now,
+      }),
+      provides: materialized.provides,
     }
     const revision: Revision = {
       id: revisionId,
@@ -184,7 +175,6 @@ export class ExtensionService {
   async importRevision(input: {
     readonly extension: {
       readonly id: ExtensionId
-      readonly scope: 'agent' | 'host-adapter' | 'host-ui'
       readonly slug: string
       readonly displayName: string
       readonly description: string
@@ -225,19 +215,20 @@ export class ExtensionService {
       }
     }
     const existingExtension = this.#repository.getExtension(input.extension.id)
-    if (existingExtension && (existingExtension.scope !== input.extension.scope || existingExtension.slug !== slug)) {
-      throw new Error('同一 Extension 身份不能改变 scope 或本地 slug。')
-    }
+    if (existingExtension && existingExtension.slug !== slug) throw new Error('同一 Extension 身份不能改变本地 slug。')
+    if (existingExtension) this.#assertAdapterKeyKept(existingExtension.id, materialized.manifest)
     const slugOwner = this.#repository.getExtensionBySlug(slug)
     if (slugOwner && slugOwner.id !== input.extension.id) throw new Error(`Extension slug already exists: ${slug}`)
     const now = this.#timestamp()
-    const extension: LocalExtension = existingExtension ?? {
-      id: input.extension.id,
-      scope: input.extension.scope,
-      slug,
-      displayName: metadata.displayName,
-      description: metadata.description,
-      createdAt: now,
+    const extension: LocalExtension = {
+      ...(existingExtension ?? {
+        id: input.extension.id,
+        slug,
+        displayName: metadata.displayName,
+        description: metadata.description,
+        createdAt: now,
+      }),
+      provides: materialized.provides,
     }
     const revision: Revision = {
       id: input.revision.id,
@@ -279,7 +270,7 @@ export class ExtensionService {
     return { extension, revision, idempotent: false }
   }
 
-  /** Current-format Manifest of an immutable Revision; `undefined` when the source is missing or not V6. */
+  /** Current-format Manifest of an immutable Revision; `undefined` when the source is missing or not V7. */
   revisionManifest(revision: Revision): ExtensionManifest | undefined {
     const cached = this.#manifests.get(revision.id)
     if (cached?.digest === revision.contentDigest) return cached.manifest
@@ -304,6 +295,19 @@ export class ExtensionService {
     this.#closing = true
     this.#manifests.clear()
     return Promise.resolve()
+  }
+
+  /** An Extension keeps its adapter key across Revisions; connections and channels are keyed by it. */
+  #assertAdapterKeyKept(extensionId: ExtensionId, next: ExtensionManifest): void {
+    const nextKey = manifestAdapter(next)?.key
+    for (const revision of this.#repository.listExtensionRevisions(extensionId)) {
+      const manifest = this.revisionManifest(revision)
+      if (manifest === undefined) continue
+      const previousKey = manifestAdapter(manifest)?.key
+      if (previousKey !== undefined && previousKey !== nextKey) {
+        throw new Error('同一个扩展的适配器 key 不能在版本之间改变。')
+      }
+    }
   }
 
   #requireExtension(extensionId: ExtensionId): LocalExtension {

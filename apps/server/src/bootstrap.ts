@@ -16,8 +16,8 @@ import { ChannelRuntime, type ExtensionJobFiring, type InboundHookDecision } fro
 import {
   AgentIdSchema,
   ChannelIdSchema,
-  configSecretKeys,
   ConnectionIdSchema,
+  hostLayerAsCapabilities,
   parseJsonValue,
   type JsonValue,
   DshNxtHostUiSchema,
@@ -36,11 +36,11 @@ import { AssetService, CoreService } from '@nekro-nxt/core'
 import {
   AuthoringArtifactStore,
   DynamicAuthoringService,
-  ExtensionActivationCoordinator,
+  configSecretReferences,
   ExtensionBuilder,
+  ExtensionLifecycleCoordinator,
   ExtensionService,
   ExtensionSourceStore,
-  HostExtensionInstallationCoordinator,
   hostUiPermissionDigest,
   type Revision,
 } from '@nekro-nxt/extension-runtime'
@@ -62,7 +62,7 @@ import { AuthoringApplicationService } from './authoring-application.js'
 import { ConnectionApplicationService } from './connection-application.js'
 import { LocalCredentialStore } from './credentials.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
-import { ServerAdapterHostInstallationHost } from './host-extension-installation.js'
+import type { PersistentAdapterPort } from './persistent-extension-mounts.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
 import { AuthoringTestSecrets } from './authoring-test-secrets.js'
 import { createExtensionEgress } from './extension-egress.js'
@@ -81,12 +81,7 @@ import {
 } from './extension-host-backends.js'
 import type { NxtPlatformResult } from '@nekro-nxt/extension-sdk'
 import { createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
-import {
-  ChannelExtensionActivationHost,
-  createChannelAsset,
-  DshHostRuntime,
-  type DshHostRuntimeOptions,
-} from './index.js'
+import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type DshHostRuntimeOptions } from './index.js'
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
 import { channelMemberRelations } from './channel-member-relations.js'
@@ -176,8 +171,8 @@ export class NekroRuntime {
   /** Parent of every agent workspace (`<root>/<agentId>/`). */
   readonly workspaceRoot: string
   readonly extensionService: ExtensionService
-  readonly activation: ExtensionActivationCoordinator
-  readonly installation: HostExtensionInstallationCoordinator
+  /** Install, enable, switch and remove Extensions (one host instance plus agent attachments each). */
+  readonly extensions: ExtensionLifecycleCoordinator
   readonly credentials: LocalCredentialStore
   readonly notifications: NotificationService
   readonly community: CommunityService
@@ -220,8 +215,8 @@ export class NekroRuntime {
     readonly internalConnectionId: ConnectionId
     readonly workspaceRoot: string
     readonly extensionService: ExtensionService
-    readonly activation: ExtensionActivationCoordinator
     readonly extensionBuilder: ExtensionBuilder
+    readonly adapterPort: { current?: PersistentAdapterPort }
     readonly credentials: LocalCredentialStore
     readonly notifications: NotificationService
     readonly community: CommunityService
@@ -251,7 +246,6 @@ export class NekroRuntime {
     this.internalConnectionId = input.internalConnectionId
     this.workspaceRoot = input.workspaceRoot
     this.extensionService = input.extensionService
-    this.activation = input.activation
     this.credentials = input.credentials
     this.notifications = input.notifications
     this.community = input.community
@@ -275,30 +269,23 @@ export class NekroRuntime {
       input.adapterHandles,
       () => ({ started: this.#started, disposed: this.#disposed }),
     )
-    this.installation = new HostExtensionInstallationCoordinator(
+    input.adapterPort.current = {
+      register: (owner, contribution) => this.registerAdapter(owner, contribution),
+      mountConnections: (adapterKey) => this.mountAdapterConnections(adapterKey),
+    }
+    this.extensions = new ExtensionLifecycleCoordinator(
       this.repository,
       this.extensionService,
       input.extensionBuilder,
-      new ServerAdapterHostInstallationHost({
-        expectedAdapter: (revision) => {
-          const verification = this.repository.getExtensionRevisionVerification(revision.id)
-          if (verification?.scope !== 'host-adapter' || !verification.adapter) {
-            throw new Error('Host 安装只接受完成适配器验证的 Extension Revision。')
-          }
-          return { key: verification.adapter.key, descriptorDigest: verification.adapter.descriptorDigest }
-        },
-        assertAdapterKeyAvailable: (adapterKey, extensionId) => {
-          const registered = this.adapters.get(adapterKey)
-          const owned = this.adapters.getByOwner(`extension:${extensionId}`)
-          if (registered && registered !== owned) {
-            throw new Error(`适配器 key 已被占用: ${adapterKey}`)
-          }
-          return Promise.resolve()
-        },
-        register: (owner, contribution) => this.registerAdapter(owner, contribution),
-        mountConnections: (adapterKey) => this.mountAdapterConnections(adapterKey),
+      new ChannelExtensionRuntimeHost(this.channels, this.host, {
         waitUntilSafe: async (adapterKey) => {
           await this.connections.waitUntilSafe(adapterKey)
+        },
+        assertKeyAvailable: (adapterKey, extensionId) => {
+          const registered = this.adapters.get(adapterKey)
+          const owned = this.adapters.getByOwner(`extension:${extensionId}`)
+          if (registered && registered !== owned) throw new Error(`适配器 key 已被占用: ${adapterKey}`)
+          return Promise.resolve()
         },
       }),
       { now: this.#now, compatibility: this.compatibility },
@@ -534,6 +521,7 @@ export class NekroRuntime {
         nextId: nextUlid,
       })
       const mcpStatus = new McpStatusRegistry()
+      const adapterPort: { current?: PersistentAdapterPort } = {}
       const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
         activationBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
@@ -577,10 +565,24 @@ export class NekroRuntime {
             raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
           },
         }),
-        describeRevision: (revision: Revision) => ({
-          displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
-          capabilities: repository.getExtensionRevisionVerification(revision.id)?.permissions?.capabilities,
-        }),
+        describeRevision: (revision: Revision) => {
+          const permissions = repository.getExtensionRevisionVerification(revision.id)?.permissions
+          return {
+            displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
+            capabilities: permissions?.agent,
+            hostCapabilities: hostLayerAsCapabilities(permissions?.host),
+          }
+        },
+        adapters: {
+          register: (owner, contribution) => {
+            if (!adapterPort.current) return Promise.reject(new Error('适配器注册尚未就绪。'))
+            return adapterPort.current.register(owner, contribution)
+          },
+          mountConnections: (adapterKey) => {
+            if (!adapterPort.current) return Promise.reject(new Error('适配器连接尚未就绪。'))
+            return adapterPort.current.mountConnections(adapterKey)
+          },
+        },
         dynamicConfig: (agentId, episodeId) => authoringTestSecrets.configForEpisode(agentId, episodeId),
         scheduledTasks,
         mcpStatus,
@@ -594,7 +596,7 @@ export class NekroRuntime {
           channelId: ChannelId
         }) => {
           const declared =
-            repository.getExtensionRevisionVerification(revision.id)?.permissions?.capabilities?.jobs?.declared ?? []
+            repository.getExtensionRevisionVerification(revision.id)?.permissions?.agent?.jobs?.declared ?? []
           syncDeclaredJobs(repository, {
             agentId,
             extensionId: revision.extensionId,
@@ -779,13 +781,6 @@ export class NekroRuntime {
         builder: extensionBuilder,
         importVerifier: verifyImportedExtensionRevision,
       })
-      const activation = new ExtensionActivationCoordinator(
-        repository,
-        extensionService,
-        extensionBuilder,
-        new ChannelExtensionActivationHost(channels, host),
-        { now, compatibility, grants: repository },
-      )
       const notifications = new NotificationService(repository, credentials, {
         ...(options.notifications?.fetch === undefined ? {} : { fetch: options.notifications.fetch }),
         now,
@@ -848,8 +843,8 @@ export class NekroRuntime {
         internalConnectionId,
         workspaceRoot: authoringWorkspaceRoot,
         extensionService,
-        activation,
         extensionBuilder,
+        adapterPort,
         credentials,
         notifications,
         community,
@@ -911,28 +906,24 @@ export class NekroRuntime {
   /** Disables one agent extension and then deletes the credentials only that Activation referenced. */
   async disableAgentExtension(agentId: AgentId, extensionId: ExtensionId): Promise<void> {
     const activation = this.repository.getActivation(agentId, extensionId)
-    const references = activation === undefined ? [] : this.#activationSecretReferences([activation])
-    await this.activation.disable(agentId, extensionId)
+    const references = activation === undefined ? [] : this.#secretReferences([activation], 'agent')
+    await this.extensions.disable(agentId, extensionId)
     await this.#deleteCredentials(references)
   }
 
   /**
-   * Credentials typed into an Activation config live in the credential store and are referenced only by that config.
-   * Resolve the references while the Revision is still readable; delete them only after the product change commits.
+   * Credentials typed into a configuration live in the credential store and are referenced only by that
+   * configuration. Resolve the references while the Revision is still readable; delete them only after the product
+   * change commits.
    */
-  #activationSecretReferences(
-    activations: readonly { readonly extensionRevisionId: ExtensionRevisionId; readonly config: JsonValue }[],
+  #secretReferences(
+    configs: readonly { readonly extensionRevisionId: ExtensionRevisionId; readonly config: JsonValue }[],
+    layer: 'host' | 'agent',
   ): readonly string[] {
-    return activations.flatMap((activation) => {
-      const revision = this.repository.getExtensionRevision(activation.extensionRevisionId)
+    return configs.flatMap((entry) => {
+      const revision = this.repository.getExtensionRevision(entry.extensionRevisionId)
       const manifest = revision === undefined ? undefined : this.extensionService.revisionManifest(revision)
-      const keys = manifest?.config === undefined ? [] : configSecretKeys(manifest.config.schema)
-      const config = activation.config
-      if (config === null || typeof config !== 'object' || Array.isArray(config)) return []
-      return keys.flatMap((key) => {
-        const reference = (config as Readonly<Record<string, JsonValue>>)[key]
-        return typeof reference === 'string' && reference !== '' ? [reference] : []
-      })
+      return configSecretReferences(manifest, layer, entry.config)
     })
   }
 
@@ -944,23 +935,26 @@ export class NekroRuntime {
     }
   }
 
+  /** Uninstalls the Extension (stopping every agent attachment), then removes its sources and database facts. */
   async deleteLocalExtension(extensionId: ExtensionId): Promise<void> {
     const extension = this.repository.getExtension(extensionId)
     if (!extension) throw new Error('本地扩展不存在或已被删除。')
     const revisions = this.repository.listExtensionRevisions(extensionId)
     const activations = this.repository.listActivations().filter((activation) => activation.extensionId === extensionId)
     const installation = this.repository.getHostInstallation(extensionId)
-    const secretReferences = this.#activationSecretReferences(activations)
-    const disabled: (typeof activations)[number][] = []
+    const secretReferences = [
+      ...this.#secretReferences(activations, 'agent'),
+      ...(installation === undefined ? [] : this.#secretReferences([installation], 'host')),
+    ]
+    // Activations without an installation belong to unreadable older Revisions; they never ran.
+    for (const activation of installation === undefined ? activations : []) {
+      this.repository.deleteActivation(activation.agentId, extensionId)
+    }
     let uninstalled = false
     let stagedSources: string | undefined
     try {
-      for (const activation of activations) {
-        await this.activation.disable(activation.agentId, extensionId)
-        disabled.push(activation)
-      }
       if (installation) {
-        await this.uninstallHostExtension(extensionId)
+        await this.extensions.uninstall(extensionId)
         uninstalled = true
       }
       stagedSources = await this.extensionService.stageExtensionDeletion(extensionId)
@@ -976,22 +970,19 @@ export class NekroRuntime {
       }
       if (uninstalled && installation) {
         try {
-          await this.installHostExtension({
+          await this.extensions.install({
             extensionId,
             revisionId: installation.extensionRevisionId,
+            config: installation.config,
           })
-        } catch (restoreError) {
-          rollbackFailures.push(restoreError)
-        }
-      }
-      for (const activation of disabled) {
-        try {
-          await this.activation.activate({
-            agentId: activation.agentId,
-            extensionId,
-            revisionId: activation.extensionRevisionId,
-            config: activation.config,
-          })
+          for (const activation of activations) {
+            await this.extensions.activate({
+              agentId: activation.agentId,
+              extensionId,
+              revisionId: installation.extensionRevisionId,
+              config: activation.config,
+            })
+          }
         } catch (restoreError) {
           rollbackFailures.push(restoreError)
         }
@@ -1068,9 +1059,13 @@ export class NekroRuntime {
     for (const channelId of deletedChannelIds) await this.channels.deleteChannel(channelId)
     for (const channelId of unboundChannelIds) await this.channels.clearBinding(channelId)
     const agentActivations = this.repository.listActivations(agentId)
-    const secretReferences = this.#activationSecretReferences(agentActivations)
+    const secretReferences = this.#secretReferences(agentActivations, 'agent')
     for (const activation of agentActivations) {
-      await this.activation.disable(agentId, activation.extensionId)
+      if (this.repository.getHostInstallation(activation.extensionId) === undefined) {
+        this.repository.deleteActivation(agentId, activation.extensionId)
+      } else {
+        await this.extensions.disable(agentId, activation.extensionId)
+      }
     }
     for (const activation of this.repository
       .listDshPluginActivations()
@@ -1090,7 +1085,7 @@ export class NekroRuntime {
 
   /** Resume persisted Episodes, Admissions, Outbounds and active Extensions after a cold start. */
   async recover(options: { readonly openAdmission?: boolean } = {}): Promise<void> {
-    await this.installation.restore()
+    await this.extensions.restoreInstances()
     await this.#restoreDshHostUiPages()
     for (const connection of this.core.listConnections()) {
       await this.connections.mountAdapter(connection.id)
@@ -1098,7 +1093,7 @@ export class NekroRuntime {
     await this.checkAgentCompatibility()
     await this.channels.recoverProcessingFeedback()
     await this.channels.recover()
-    await this.activation.restore()
+    await this.extensions.restoreAttachments()
     if (options.openAdmission !== false) await this.openAdmission()
   }
 
@@ -1112,11 +1107,15 @@ export class NekroRuntime {
     const request = HostApiContracts.retryRuntimeCompatibility.parseRequest(input)
     if (request.objectKind === 'model-provider' || request.objectKind === 'dsh-plugin') {
       await this.host.retryCompatibility(request.objectKind, request.objectId)
-    } else if (request.objectKind === 'extension') {
-      await this.activation.restore(true, ExtensionIdSchema.parse(request.objectId))
-    } else if (request.objectKind === 'adapter' || request.objectKind === 'client-page') {
-      await this.installation.restore(true, ExtensionIdSchema.parse(request.objectId))
+    } else if (
+      request.objectKind === 'extension' ||
+      request.objectKind === 'adapter' ||
+      request.objectKind === 'client-page'
+    ) {
+      const extensionId = ExtensionIdSchema.parse(request.objectId)
+      await this.extensions.restoreInstances(true, extensionId)
       for (const connection of this.core.listConnections()) await this.connections.mountAdapter(connection.id)
+      await this.extensions.restoreAttachments(true, extensionId)
     } else if (!this.core.listAgents().some(({ definition }) => definition.id === request.objectId)) {
       throw new Error('智能体不存在。')
     }
@@ -1297,20 +1296,28 @@ export class NekroRuntime {
     return this.connections.registerAdapter(...args)
   }
 
-  installHostExtension(input: Parameters<HostExtensionInstallationCoordinator['install']>[0]) {
-    return this.installation.install(input)
+  installHostExtension(input: Parameters<ExtensionLifecycleCoordinator['install']>[0]) {
+    return this.extensions.install(input)
   }
 
-  updateHostExtensionConfig(...args: Parameters<HostExtensionInstallationCoordinator['updateConfig']>) {
-    return this.installation.updateConfig(...args)
+  updateHostExtensionConfig(...args: Parameters<ExtensionLifecycleCoordinator['updateHostConfig']>) {
+    return this.extensions.updateHostConfig(...args)
   }
 
   updateHostUiPagePreferences(input: Omit<Parameters<SqliteCoreRepository['updateHostUiPagePreferences']>[0], 'now'>) {
     return this.repository.updateHostUiPagePreferences({ ...input, now: this.#now() })
   }
 
-  uninstallHostExtension(extensionId: Parameters<HostExtensionInstallationCoordinator['uninstall']>[0]): Promise<void> {
-    return this.installation.uninstall(extensionId)
+  /** Uninstalls the Extension and then deletes the credentials only its configurations referenced. */
+  async uninstallHostExtension(extensionId: ExtensionId): Promise<void> {
+    const installation = this.repository.getHostInstallation(extensionId)
+    const activations = this.repository.listActivations().filter((activation) => activation.extensionId === extensionId)
+    const references = [
+      ...this.#secretReferences(activations, 'agent'),
+      ...(installation === undefined ? [] : this.#secretReferences([installation], 'host')),
+    ]
+    await this.extensions.uninstall(extensionId)
+    await this.#deleteCredentials(references)
   }
   mountAdapterConnections(...args: Parameters<ConnectionApplicationService['mountAdapterConnections']>) {
     return this.connections.mountAdapterConnections(...args)
@@ -1332,11 +1339,7 @@ export class NekroRuntime {
     const failures: unknown[] = []
     this.#unsubscribeDynamicApproval()
     this.connections.clearObservers()
-    for (const operation of [
-      () => this.channels.dispose(),
-      () => this.activation.dispose(),
-      () => this.installation.dispose(),
-    ]) {
+    for (const operation of [() => this.channels.dispose(), () => this.extensions.dispose()]) {
       try {
         await operation()
       } catch (error) {

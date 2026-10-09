@@ -1,0 +1,1 @@
+ALTER TABLE `local_extensions` DROP COLUMN `scope`;

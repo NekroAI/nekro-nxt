@@ -1,23 +1,20 @@
 import {
-  ExtensionConfigDeclarationSchema,
+  ExtensionLayeredConfigSchema,
+  ExtensionPermissionsSchema,
   HostPageContributionSchema,
-  HostUiPermissionDeclarationSchema,
   JsonValueSchema,
-  MessageRendererContributionSchema,
-  PanelContributionSchema,
-  ToolViewContributionSchema,
+  type ExtensionProvide,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js'
 import { z } from 'zod'
 import {
-  adapterContributionSchema,
   clientCssSchema,
   extensionEntrypointsSchema,
+  extensionManifestContributionSchema,
   extensionManifestSchema,
-  rpcContributionSchema,
-  toolContributionSchema,
+  extensionProvides,
   type ExtensionManifest,
 } from './manifest.js'
 import { extensionIconSchema, resourceDigest, validateExtensionIcon } from './icon.js'
@@ -41,15 +38,7 @@ export const revisionResourcesSchema = z.record(
   z.string().max(256 * 1024),
 )
 
-export const extensionContributionSchema = z.union([
-  toolContributionSchema,
-  rpcContributionSchema,
-  PanelContributionSchema,
-  ToolViewContributionSchema,
-  MessageRendererContributionSchema,
-  adapterContributionSchema,
-  HostPageContributionSchema,
-])
+export const extensionContributionSchema = extensionManifestContributionSchema
 
 const digestInputSchema = z
   .object({
@@ -63,12 +52,11 @@ const payloadDigestInputSchema = z
   .object({
     manifest: z
       .object({
-        schemaVersion: z.literal(6),
-        scope: z.enum(['agent', 'host-adapter', 'host-ui']),
+        schemaVersion: z.literal(7),
         entrypoints: extensionEntrypointsSchema,
         contributions: z.array(extensionContributionSchema),
-        permissions: HostUiPermissionDeclarationSchema,
-        config: ExtensionConfigDeclarationSchema.optional(),
+        permissions: ExtensionPermissionsSchema,
+        config: ExtensionLayeredConfigSchema.optional(),
         clientCss: clientCssSchema.optional(),
         icon: extensionIconSchema.optional(),
       })
@@ -104,7 +92,6 @@ export const revisionDigests = (
   const digestInput = canonicalJson(JsonValueSchema.parse(digestInputSchema.parse({ manifest, sources, resources })))
   const payloadManifest = {
     schemaVersion: manifest.schemaVersion,
-    scope: manifest.scope,
     entrypoints: manifest.entrypoints,
     contributions: manifest.contributions,
     permissions: manifest.permissions,
@@ -176,7 +163,24 @@ export interface MaterializedExtensionRevision {
   readonly resources?: Readonly<Record<string, string>>
   readonly contentDigest: string
   readonly payloadDigest: string
-  readonly scope: 'agent' | 'host-adapter' | 'host-ui'
+  readonly provides: readonly ExtensionProvide[]
+}
+
+/** 旧格式（Manifest V6 / 传输包 v1）扩展的统一提示；扩展形态统一后不再读取旧格式。 */
+export const LEGACY_EXTENSION_MESSAGE =
+  '这是旧格式的扩展，当前 NekroNXT 已不再支持。请从社区获取新版，或让智能体重新创造。'
+
+/** Rejects a Manifest written in a retired format with a message the user can act on. */
+export const assertCurrentManifestFormat = (manifest: unknown): void => {
+  if (
+    typeof manifest === 'object' &&
+    manifest !== null &&
+    'schemaVersion' in manifest &&
+    typeof manifest.schemaVersion === 'number' &&
+    manifest.schemaVersion < 7
+  ) {
+    throw new Error(LEGACY_EXTENSION_MESSAGE)
+  }
 }
 
 /** 校验导入的清单、源码与资源并计算摘要；与 NekroNXT 保存时的计算完全相同。 */
@@ -185,6 +189,7 @@ export function materializeImportedRevision(input: {
   readonly sources: { readonly host?: string; readonly client?: string }
   readonly resources?: Readonly<Record<string, string>>
 }): MaterializedExtensionRevision {
+  assertCurrentManifestFormat(input.manifest)
   const manifest = extensionManifestSchema.parse(input.manifest)
   const sources = revisionSourcesSchema.parse({
     ...(input.sources.host === undefined ? {} : { host: normalizeSource(input.sources.host) }),
@@ -198,5 +203,11 @@ export function materializeImportedRevision(input: {
     throw new Error('导入扩展的 Manifest entrypoints 与源码文件不一致。')
   }
   validateRevisionResources(manifest, resources, '导入扩展')
-  return { manifest, sources, resources, ...revisionDigests({ manifest, sources, resources }), scope: manifest.scope }
+  return {
+    manifest,
+    sources,
+    resources,
+    ...revisionDigests({ manifest, sources, resources }),
+    provides: extensionProvides(manifest),
+  }
 }

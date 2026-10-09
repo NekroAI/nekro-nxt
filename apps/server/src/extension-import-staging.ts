@@ -1,4 +1,5 @@
 import type { CommunitySource, HostApiResponse } from '@nekro-nxt/contracts'
+import { extensionManifestSchema, extensionProvides } from '@nekro-nxt/extension-runtime'
 import { randomUUID } from 'node:crypto'
 import type { NekroRuntime } from './bootstrap.js'
 import { parseExtensionImport, type ParsedExtensionImport } from './host-route-support.js'
@@ -8,6 +9,12 @@ const IMPORT_TTL_MS = 10 * 60_000
 /**
  * 扩展包导入的第一步：解析并校验包，暂存到用户确认。本地文件与社区下载共用这一步，确认仍走同一个提交接口。
  */
+/** What an imported package provides; empty when its Manifest is unreadable (the commit then reports why). */
+const extensionProvidesOf = (manifest: unknown) => {
+  const parsed = extensionManifestSchema.safeParse(manifest)
+  return parsed.success ? extensionProvides(parsed.data) : []
+}
+
 export class ExtensionImportStaging {
   readonly #pending = new Map<string, { readonly parsed: ParsedExtensionImport; readonly expiresAt: number }>()
   readonly #sources = new Map<string, Omit<CommunitySource, 'installedAt'>>()
@@ -33,7 +40,7 @@ export class ExtensionImportStaging {
       revisionId: parsed.manifest.revision.id,
       slug: parsed.manifest.extension.slug,
       displayName: parsed.manifest.extension.displayName,
-      scope: parsed.manifest.extension.scope,
+      provides: [...extensionProvidesOf(parsed.revisionManifest)],
       idempotent: existingRevision !== undefined,
       slugConflict: slugOwner !== undefined && slugOwner.id !== parsed.manifest.extension.id,
     }

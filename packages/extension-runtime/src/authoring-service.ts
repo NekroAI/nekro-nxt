@@ -2,8 +2,8 @@ import {
   AgentIdSchema,
   AuthoringAttemptIdSchema,
   AuthoringTaskIdSchema,
-  ExtensionConfigDeclarationSchema,
-  HostUiPermissionDeclarationSchema,
+  ExtensionLayeredConfigSchema,
+  ExtensionPermissionsSchema,
   JsonValueSchema,
   type AgentId,
   type AuthoringAttemptId,
@@ -42,7 +42,6 @@ const SnapshotSchema = z
   .object({
     name: z.string().trim().min(1).max(80),
     purpose: z.string().trim().min(1).max(500),
-    scope: z.enum(['agent', 'host-adapter', 'host-ui']),
     code: z
       .object({
         host: z
@@ -65,9 +64,9 @@ const SnapshotSchema = z
       .strict()
       .optional(),
     icon: extensionIconSchema.optional(),
-    permissions: HostUiPermissionDeclarationSchema,
+    permissions: ExtensionPermissionsSchema,
     contributions: z.array(JsonValueSchema),
-    config: ExtensionConfigDeclarationSchema.optional(),
+    config: ExtensionLayeredConfigSchema.optional(),
     verificationInputs: z
       .object({
         tools: z.record(z.string().min(1), toolVerificationInputSchema),
@@ -83,7 +82,6 @@ const parseSnapshot = (input: unknown): DynamicAuthoringSnapshot => {
   return {
     name: parsed.name,
     purpose: parsed.purpose,
-    scope: parsed.scope,
     code: {
       ...(parsed.code.host === undefined ? {} : { host: parsed.code.host }),
       ...(parsed.code.client === undefined ? {} : { client: parsed.code.client }),
@@ -303,7 +301,6 @@ export class DynamicAuthoringService {
     const attemptId = AuthoringAttemptIdSchema.parse(`aua_${this.#nextUlid()}`)
     const now = this.#now()
     const riskDigest = digest({
-      scope: parsedSnapshot.scope,
       host: parsedSnapshot.code.host !== undefined,
       client: parsedSnapshot.code.client !== undefined,
       permissions: parsedSnapshot.permissions,

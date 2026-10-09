@@ -2,10 +2,10 @@ import { z } from 'zod'
 
 /**
  * Host capability level this build implements. A Revision that declares `requires.sdk` above it is rejected at
- * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump only when a new optional
- * Manifest capability ships; never reuse a level for a different meaning.
+ * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump when a Manifest capability
+ * ships; never reuse a level for a different meaning. Level 7 is Manifest V7 (host instance + agent attachments).
  */
-export const EXTENSION_SDK_LEVEL = 6
+export const EXTENSION_SDK_LEVEL = 7
 
 export const ExtensionRequiresSchema = z.object({ sdk: z.number().int().min(1).max(1000) }).strict()
 export type ExtensionRequires = z.output<typeof ExtensionRequiresSchema>
@@ -252,8 +252,8 @@ const mcpTarget = (server: ExtensionMcpServer): string =>
     : JSON.stringify(['streamable-http', server.name, server.url])
 
 /**
- * Optional Host capabilities of an agent-scope Revision. Every field is additive to Manifest V6: an absent field
- * means the Revision cannot use that capability, exactly as before the field existed.
+ * Agent-layer capabilities (`permissions.agent`): what the extension may do inside the agents it is enabled for. An
+ * absent field means the extension cannot use that capability.
  */
 export const ExtensionCapabilitiesSchema = z
   .object({
@@ -280,6 +280,37 @@ export const ExtensionCapabilitiesSchema = z
   })
   .strict()
 export type ExtensionCapabilities = z.output<typeof ExtensionCapabilitiesSchema>
+
+/**
+ * Host-layer capabilities (`permissions.host`): what the extension's single host instance may do through the `nxt`
+ * service its factory receives. Host storage is the extension's `shared` partition.
+ */
+export const HostLayerCapabilitiesSchema = z
+  .object({
+    network: ExtensionNetworkCapabilitySchema.optional(),
+    storage: z
+      .object({ quotaBytes: z.number().int().min(1024).max(EXTENSION_STORAGE_MAX_QUOTA_BYTES).optional() })
+      .strict()
+      .optional(),
+  })
+  .strict()
+export type HostLayerCapabilities = z.output<typeof HostLayerCapabilitiesSchema>
+
+/** Host-layer capabilities in the agent-capability shape, so digests, expansion and summaries share one implementation. */
+export const hostLayerAsCapabilities = (host: HostLayerCapabilities | undefined): ExtensionCapabilities | undefined =>
+  host === undefined || Object.keys(host).length === 0
+    ? undefined
+    : {
+        ...(host.network === undefined ? {} : { network: host.network }),
+        ...(host.storage === undefined
+          ? {}
+          : {
+              storage: {
+                scopes: ['shared'],
+                ...(host.storage.quotaBytes === undefined ? {} : { quotaBytes: host.storage.quotaBytes }),
+              },
+            }),
+      }
 
 const NETWORK_MODE_RANK = { domains: 0, config: 1, unrestricted: 2 } as const
 

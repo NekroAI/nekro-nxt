@@ -29,12 +29,14 @@ import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import {
-  ExtensionConfigDeclarationSchema,
+  ExtensionLayeredConfigSchema,
+  ExtensionPermissionsSchema,
   HostPageContributionSchema,
-  HostUiPermissionDeclarationSchema,
   JsonValueSchema,
-  configSecretKeys,
+  hostLayerAsCapabilities,
+  validateConfigValue,
   type ExtensionCapabilities,
+  type ExtensionPermissions,
   type PanelContribution,
   type AgentId,
   type AuthoringAttemptId,
@@ -44,13 +46,13 @@ import {
   type HostPageContribution,
   type HostUiKitComponentName,
   type HostUiPageGeometryEvidence,
-  type HostUiPermissionDeclaration,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import type { AgentRevisionRecord } from '@nekro-nxt/core'
 import { canonicalJson } from '@nekro-nxt/core'
 import {
   assertClientCssScope,
+  layerConfigSchema,
   resourceDigest,
   scopeHostUiCss,
   validateExtensionIcon,
@@ -68,7 +70,7 @@ import {
   isLegacyAdapterDynamicHostSource,
   wrapAdapterDynamicHostSource,
 } from './adapter-dynamic-harness.js'
-import { INBOUND_DYNAMIC_PROBE_METHOD, wrapInboundDynamicHostSource } from './inbound-dynamic-harness.js'
+import { INBOUND_DYNAMIC_PROBE_METHOD, wrapDynamicHostSource } from './inbound-dynamic-harness.js'
 import { z } from 'zod'
 
 const InboundProbeDecisionSchema = z
@@ -101,11 +103,10 @@ export interface DynamicPackageDefinitionInput {
 }
 
 export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDefinitionInput {
-  readonly scope: DynamicAuthoringSnapshot['scope']
   readonly resources: Readonly<Record<string, string>>
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   readonly icon?: ExtensionIcon
-  readonly permissions: HostUiPermissionDeclaration
+  readonly permissions: ExtensionPermissions
   readonly contributions: readonly JsonValue[]
   readonly config?: DynamicAuthoringSnapshot['config']
   readonly verificationInputs?: DynamicAuthoringSnapshot['verificationInputs']
@@ -176,22 +177,12 @@ export const preflightNekroNxtAuthoringDefinition = (
   if (new Set(pages.map(({ entryId }) => entryId)).size !== pages.length) {
     throw new Error('动态页面预检失败：页面 entryId 不能重复。')
   }
-  HostUiPermissionDeclarationSchema.parse(input.permissions)
-  if (input.config !== undefined) {
-    const config = ExtensionConfigDeclarationSchema.safeParse(input.config)
-    if (!config.success) throw new Error('动态扩展预检失败：config.schema 必须是序列化 Schemastery 对象。')
-    if (input.scope !== 'agent' && configSecretKeys(config.data.schema).length > 0) {
-      throw new Error('动态扩展预检失败：只有智能体扩展的配置可以声明凭据字段。')
-    }
+  if (pages.filter((page) => page.rail !== undefined).length > 1) {
+    throw new Error('动态页面预检失败：一个扩展最多有一个页面注册导航轨入口。')
   }
-  if (input.scope === 'host-ui' && pages.length === 0) {
-    throw new Error('动态页面预检失败：host-ui 候选必须声明至少一个页面入口。')
-  }
-  if (input.scope === 'agent' && pages.length > 0) {
-    throw new Error('动态页面预检失败：智能体候选不能贡献顶级页面。')
-  }
-  if (input.scope === 'host-adapter' && input.code.host === undefined) {
-    throw new Error('动态 Adapter 预检失败：host-adapter 候选必须包含 Host 源码。')
+  ExtensionPermissionsSchema.parse(input.permissions)
+  if (input.config !== undefined && !ExtensionLayeredConfigSchema.safeParse(input.config).success) {
+    throw new Error('动态扩展预检失败：config.host 与 config.agent 的 schema 必须是序列化 Schemastery 对象。')
   }
   const clientResources = resourceEntries.filter(([resourcePath]) => resourcePath !== input.icon?.path)
   if (
@@ -286,8 +277,11 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   >()
   private readonly adapterPackages = new Set<string>()
   private readonly inboundPackages = new Set<string>()
-  /** Capabilities each candidate Package declared; `nxt` calls of a running candidate check against these. */
-  private readonly capabilitiesByPackage = new Map<string, ExtensionCapabilities | undefined>()
+  /** What each candidate Package declared; `nxt` calls of a running candidate check against these. */
+  private readonly declarationsByPackage = new Map<
+    string,
+    { readonly permissions: ExtensionPermissions; readonly config: DynamicAuthoringSnapshot['config'] }
+  >()
   private runningPackageId: string | undefined
   private readonly originalHostByPackage = new Map<string, string>()
   private readonly authoringPersistenceByPackage = new Map<string, Promise<void>>()
@@ -336,9 +330,24 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.sessionOwnerResolver = input.resolveSession
   }
 
-  /** Capabilities of the candidate this runner most recently started; `nxt` checks dynamic calls against them. */
+  /** Agent-layer capabilities of the candidate this runner most recently started; dynamic `nxt` checks against them. */
   activeCandidateCapabilities(): ExtensionCapabilities | undefined {
-    return this.runningPackageId === undefined ? undefined : this.capabilitiesByPackage.get(this.runningPackageId)
+    return this.#activeDeclaration()?.permissions.agent
+  }
+
+  /** Host-layer capabilities of the running candidate, in the agent-capability shape. */
+  activeCandidateHostCapabilities(): ExtensionCapabilities | undefined {
+    return hostLayerAsCapabilities(this.#activeDeclaration()?.permissions.host)
+  }
+
+  /** Schema defaults of one configuration layer of the running candidate; a candidate has no saved configuration. */
+  activeCandidateConfig(layer: 'host' | 'agent'): JsonValue {
+    const config = this.#activeDeclaration()?.config
+    return validateConfigValue(layerConfigSchema({ config }, layer), {}).value
+  }
+
+  #activeDeclaration() {
+    return this.runningPackageId === undefined ? undefined : this.declarationsByPackage.get(this.runningPackageId)
   }
 
   resolveDynamicAuthoringOwner(agent: Agent): Agent {
@@ -379,7 +388,6 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.definingAuthoringSnapshot = {
       name: parsed.name,
       purpose: parsed.purpose,
-      scope: parsed.scope,
       code: parsed.code,
       resources: parsed.resources,
       ...(parsed.clientCss === undefined ? {} : { clientCss: parsed.clientCss }),
@@ -401,7 +409,6 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       plugin: { kind: 'new', idPrefix: 'rest' },
       name: snapshot.name,
       purpose: snapshot.purpose,
-      scope: snapshot.scope,
       code: snapshot.code,
       resources: snapshot.resources,
       ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
@@ -414,7 +421,6 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       plugin: { kind: 'new', idPrefix: 'rest' },
       name: snapshot.name,
       purpose: snapshot.purpose,
-      scope: snapshot.scope,
       code: snapshot.code,
       resources: snapshot.resources,
       ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
@@ -480,55 +486,46 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     if (ownedRequest.plugin.kind === 'existing' && ownedRequest.plugin.pluginId !== state.primaryPluginId) {
       throw new Error(`只能向当前 Episode 的 Plugin ${state.primaryPluginId ?? '（尚未创建）'} 追加 Package。`)
     }
-    if (this.definingAuthoringSnapshot?.permissions.capabilities?.mcp !== undefined) {
+    if (this.definingAuthoringSnapshot?.permissions.agent?.mcp !== undefined) {
       // MCP servers, and local programs in particular, are only added by the administrator in the Workshop.
       throw new Error('动态创造不能声明 MCP 服务；请让用户在工坊用「添加 MCP 服务」连接。')
     }
     try {
-      const adapterHost =
-        this.definingAuthoringSnapshot?.scope === 'host-adapter'
-          ? ownedRequest.code.host
-          : this.definingAuthoringSnapshot === undefined && isLegacyAdapterDynamicHostSource(ownedRequest.code.host)
-            ? ownedRequest.code.host
-            : undefined
-      const declared = this.definingAuthoringSnapshot?.permissions.capabilities
-      const declaresInbound = declared?.inboundHook !== undefined
-      // Candidates with an inbound hook or jobs get the factory-time handler registration the sandbox lacks.
-      const inboundHost =
-        adapterHost === undefined &&
-        this.definingAuthoringSnapshot?.scope === 'agent' &&
-        (declaresInbound || declared?.jobs !== undefined)
-          ? ownedRequest.code.host
-          : undefined
+      const snapshot = this.definingAuthoringSnapshot
+      const host = ownedRequest.code.host
+      // A candidate registers an adapter when its source calls harness.registerAdapter; the harness validates it.
+      const registersAdapter = isLegacyAdapterDynamicHostSource(host)
+      const declaresInbound = snapshot?.permissions.agent?.inboundHook !== undefined
+      // Candidates defined through the product tool run with the saved factory contract; raw cordis_define calls keep
+      // the sandbox's own contract.
+      const wrappedHost =
+        host === undefined
+          ? undefined
+          : snapshot === undefined
+            ? registersAdapter
+              ? wrapAdapterDynamicHostSource(host)
+              : host
+            : wrapDynamicHostSource(registersAdapter ? wrapAdapterDynamicHostSource(host) : host, {
+                inbound: declaresInbound,
+              })
       const receipt = super.define(
-        adapterHost !== undefined
-          ? { ...ownedRequest, code: { ...ownedRequest.code, host: wrapAdapterDynamicHostSource(adapterHost) } }
-          : inboundHost !== undefined
-            ? {
-                ...ownedRequest,
-                code: {
-                  ...ownedRequest.code,
-                  host: wrapInboundDynamicHostSource(inboundHost, { inbound: declaresInbound }),
-                },
-              }
-            : ownedRequest,
+        wrappedHost === undefined || wrappedHost === host
+          ? ownedRequest
+          : { ...ownedRequest, code: { ...ownedRequest.code, host: wrappedHost } },
       )
-      if (adapterHost !== undefined) {
-        this.adapterPackages.add(receipt.packageId)
-        this.originalHostByPackage.set(receipt.packageId, adapterHost)
-      }
-      if (inboundHost !== undefined) {
-        if (declaresInbound) this.inboundPackages.add(receipt.packageId)
-        this.originalHostByPackage.set(receipt.packageId, inboundHost)
-      }
-      this.capabilitiesByPackage.set(receipt.packageId, this.definingAuthoringSnapshot?.permissions.capabilities)
+      if (registersAdapter) this.adapterPackages.add(receipt.packageId)
+      if (declaresInbound && snapshot !== undefined) this.inboundPackages.add(receipt.packageId)
+      if (host !== undefined && wrappedHost !== host) this.originalHostByPackage.set(receipt.packageId, host)
+      this.declarationsByPackage.set(receipt.packageId, {
+        permissions: snapshot?.permissions ?? { permissions: [], networkOrigins: [] },
+        config: snapshot?.config,
+      })
       if (ownedRequest.plugin.kind === 'new') this.state = { ...state, primaryPluginId: receipt.pluginId }
       if (this.onAuthoringDefinition && !this.suppressAuthoringPersistence) {
         const persistDefinition = this.onAuthoringDefinition
         const snapshot = this.definingAuthoringSnapshot ?? {
           name: ownedRequest.name,
           purpose: ownedRequest.purpose,
-          scope: adapterHost === undefined ? 'agent' : 'host-adapter',
           code: ownedRequest.code,
           resources: {},
           permissions: { permissions: [], networkOrigins: [] },
@@ -1092,34 +1089,37 @@ export class DynamicAuthoringRuntime {
     return this.#authoring.service.deleteTask(taskId)
   }
 
+  /**
+   * Product verification of a running candidate (扩展形态统一): the adapter (if registered) passes its synthetic
+   * lifecycle, every Tool and RPC is really called with its declared verification input, the inbound hook answers a
+   * synthetic message, and every Client contribution rendered. The result is the Manifest contribution list.
+   */
   async verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
     const { agent, runner } = this.dynamicRuntime(dshSessionId)
     const evidence = runner.verificationSnapshot(agent, pluginId, packageId)
-    const inputs = (await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId))?.verificationInputs
-    const rpcInput = (method: string): JsonValue => inputs?.rpc[method] ?? null
+    const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
+    const inputs = snapshot?.verificationInputs
     const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
     const toolInvocations = [] as Array<{ readonly name: string; readonly succeeded: boolean }>
-    const permissions = (await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId))?.permissions ?? {
-      permissions: [],
-      networkOrigins: [],
-    }
+    const permissions: ExtensionPermissions = snapshot?.permissions ?? { permissions: [], networkOrigins: [] }
     const contributions: ExtensionContribution[] = []
-    const agentPanels = evidence.renderedPanels.filter((panel) => panel.anchor !== 'connection')
+    const invoke = (method: string, input: JsonValue | null) =>
+      runner.invoke(CordisDynamicPluginId(pluginId), CordisDynamicPluginRunId(evidence.pluginRunId), method, input)
+
+    let adapter:
+      | {
+          readonly apiVersion: 2
+          readonly key: string
+          readonly descriptorDigest: string
+          readonly registered: true
+          readonly started: boolean
+          readonly stopped: boolean
+          readonly inboundCommitted: boolean
+          readonly outboundReceipt: 'sent' | 'failed' | 'unknown'
+        }
+      | undefined
     if (runner.isAdapterPackage(packageId)) {
-      if (evidence.toolNames.length > 0 || evidence.renderedToolViews.length > 0) {
-        throw new Error('适配器 Revision 不能混装智能体工具或工具视图，请拆分为两个扩展。')
-      }
-      if (evidence.renderedPanels.some((panel) => panel.anchor !== 'connection' && panel.anchor !== 'channel')) {
-        throw new Error('适配器面板只能放在连接或频道上。')
-      }
-      const foreignRpc = evidence.rpcMethods.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
-      if (foreignRpc.length > 0) throw new Error('适配器 Revision 不能混装智能体 RPC，请拆分为两个扩展。')
-      const result = await runner.invoke(
-        CordisDynamicPluginId(pluginId),
-        CordisDynamicPluginRunId(evidence.pluginRunId),
-        ADAPTER_DYNAMIC_EVIDENCE_METHOD,
-        null,
-      )
+      const result = await invoke(ADAPTER_DYNAMIC_EVIDENCE_METHOD, null)
       if (!result.ok) throw new Error(`Adapter synthetic verification failed: ${result.message}`)
       const observed = AdapterDynamicEvidenceSchema.parse(result.value)
       if (
@@ -1136,8 +1136,8 @@ export class DynamicAuthoringRuntime {
       const descriptorDigest = createHash('sha256')
         .update(canonicalJson(JsonValueSchema.parse(observed.descriptor)))
         .digest('hex')
-      const adapter = {
-        apiVersion: 2 as const,
+      adapter = {
+        apiVersion: 2,
         key: observed.descriptor.key,
         descriptorDigest,
         registered: true,
@@ -1146,55 +1146,9 @@ export class DynamicAuthoringRuntime {
         inboundCommitted: observed.inboundCommitted,
         outboundReceipt: observed.outboundReceipt,
       }
-      contributions.push(...evidence.renderedPanels)
-      for (const richKind of evidence.renderedMessageRenderers)
-        contributions.push({ kind: 'message-renderer', richKind })
-      contributions.push(...evidence.renderedPages)
       contributions.push({ kind: 'adapter', apiVersion: 2, key: adapter.key, descriptorDigest })
-      return {
-        ...evidence,
-        permissions,
-        rpcMethods: [],
-        contributions,
-        toolInvocations,
-        scope: 'host-adapter' as const,
-        adapter,
-      }
     }
-    if (evidence.renderedMessageRenderers.length > 0) {
-      throw new Error('富消息渲染器只属于适配器扩展，请拆分为两个扩展。')
-    }
-    if (evidence.renderedPages.length > 0) {
-      if (
-        evidence.toolNames.length > 0 ||
-        evidence.renderedPanels.length > 0 ||
-        evidence.renderedToolViews.length > 0
-      ) {
-        throw new Error('页面扩展不能混装智能体工具、面板或工具视图，请拆分为两个扩展。')
-      }
-      for (const method of evidence.rpcMethods) {
-        const result = await runner.invoke(
-          CordisDynamicPluginId(pluginId),
-          CordisDynamicPluginRunId(evidence.pluginRunId),
-          method,
-          rpcInput(method),
-        )
-        if (!result.ok) throw new Error(verificationFailure('RPC', method, result.message, inputs?.rpc[method]))
-        if (JSON.stringify(result.value).length > 16 * 1024) {
-          throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
-        }
-      }
-      return {
-        ...evidence,
-        permissions,
-        contributions: evidence.renderedPages,
-        toolInvocations,
-        scope: 'host-ui' as const,
-      }
-    }
-    if (agentPanels.length !== evidence.renderedPanels.length) {
-      throw new Error('智能体扩展的面板只能放在智能体、频道或扩展上。')
-    }
+
     for (const name of evidence.toolNames) {
       const schema = visibleTools.find((candidate) => candidate.name === name)
       if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
@@ -1217,28 +1171,21 @@ export class DynamicAuthoringRuntime {
         ...(verificationInput === undefined ? {} : { verificationInput }),
       })
     }
-    for (const method of evidence.rpcMethods) {
+    const rpcMethods = evidence.rpcMethods.filter(
+      (method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD && method !== INBOUND_DYNAMIC_PROBE_METHOD,
+    )
+    for (const method of rpcMethods) {
       const verificationInput = inputs?.rpc[method]
-      const result = await runner.invoke(
-        CordisDynamicPluginId(pluginId),
-        CordisDynamicPluginRunId(evidence.pluginRunId),
-        method,
-        verificationInput ?? null,
-      )
+      const result = await invoke(method, verificationInput ?? null)
       if (!result.ok) throw new Error(verificationFailure('RPC', method, result.message, verificationInput))
       if (JSON.stringify(result.value).length > 16 * 1024)
         throw new Error(`Dynamic RPC verification exceeded 16 KiB: ${method}`)
       contributions.push({ kind: 'rpc', method, ...(verificationInput === undefined ? {} : { verificationInput }) })
     }
     if (runner.isInboundPackage(packageId)) {
-      const probe = await runner.invoke(
-        CordisDynamicPluginId(pluginId),
-        CordisDynamicPluginRunId(evidence.pluginRunId),
-        INBOUND_DYNAMIC_PROBE_METHOD,
-        null,
-      )
+      const probe = await invoke(INBOUND_DYNAMIC_PROBE_METHOD, null)
       if (!probe.ok) throw new Error(`入站处理函数验证失败：${probe.message}`)
-      const declared = permissions.capabilities?.inboundHook
+      const declared = permissions.agent?.inboundHook
       const decision = InboundProbeDecisionSchema.safeParse(probe.value)
       if (!decision.success) throw new Error('入站处理函数应返回 { trigger?, hideFromAgent?, annotation? } 或不返回。')
       if (decision.data?.hideFromAgent === true && declared?.mayHide !== true) {
@@ -1248,12 +1195,27 @@ export class DynamicAuthoringRuntime {
         throw new Error('入站处理函数返回了 force，但没有声明 mayForceTrigger。')
       }
     }
+    if (adapter === undefined && evidence.renderedPanels.some((panel) => panel.anchor === 'connection')) {
+      throw new Error('连接面板需要扩展同时注册适配器。')
+    }
+    if (adapter === undefined && evidence.renderedMessageRenderers.length > 0) {
+      throw new Error('富消息渲染器需要扩展同时注册适配器。')
+    }
     contributions.push(...evidence.renderedPanels)
     for (const tool of evidence.renderedToolViews) {
       if (!evidence.toolNames.includes(tool)) throw new Error(`工具视图只能渲染本扩展声明的工具：${tool}`)
       contributions.push({ kind: 'tool-view', tool })
     }
-    return { ...evidence, permissions, contributions, toolInvocations }
+    for (const richKind of evidence.renderedMessageRenderers) contributions.push({ kind: 'message-renderer', richKind })
+    contributions.push(...evidence.renderedPages)
+    return {
+      ...evidence,
+      rpcMethods,
+      permissions,
+      contributions,
+      toolInvocations,
+      ...(adapter === undefined ? {} : { adapter }),
+    }
   }
 
   async completeAuthoringVerification(dshSessionId: string, pluginId: string, packageId: string): Promise<void> {

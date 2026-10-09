@@ -1,5 +1,9 @@
 import { z } from 'zod'
-import { ExtensionCapabilitiesSchema } from './extension-capabilities.js'
+import {
+  ExtensionCapabilitiesSchema,
+  HostLayerCapabilitiesSchema,
+  hostLayerAsCapabilities,
+} from './extension-capabilities.js'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageInstanceIdSchema } from './domain.js'
 import { ConfigSchemaDocumentSchema } from './config-schema.js'
 
@@ -132,6 +136,11 @@ export const HostPageContributionSchema = z
       .string()
       .trim()
       .regex(/^(?:[a-z0-9][a-z0-9/_-]*)?$/u),
+    /** Registers a navigation rail entry for this page; at most one page of an extension may declare it. */
+    rail: z
+      .object({ order: z.number().int().min(0).max(999).optional() })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -189,31 +198,76 @@ export const HostUiNetworkOriginSchema = z
     return url.origin
   })
 
+const checkBrowserPermissions = (
+  value: { readonly permissions: readonly HostUiPermission[]; readonly networkOrigins: readonly string[] },
+  context: z.RefinementCtx,
+): void => {
+  if (new Set(value.permissions).size !== value.permissions.length) {
+    context.addIssue({ code: 'custom', path: ['permissions'], message: 'Host UI permissions must be unique.' })
+  }
+  if (new Set(value.networkOrigins).size !== value.networkOrigins.length) {
+    context.addIssue({ code: 'custom', path: ['networkOrigins'], message: 'Host UI network origins must be unique.' })
+  }
+  if (value.networkOrigins.length > 0 && !value.permissions.includes('network.request')) {
+    context.addIssue({
+      code: 'custom',
+      path: ['networkOrigins'],
+      message: 'Host UI network origins require network.request.',
+    })
+  }
+}
+
+/**
+ * One approval: browser-side permissions plus the capabilities of one layer. Grants, digests and the approval page
+ * use this shape for both the host approval and each agent approval.
+ */
 export const HostUiPermissionDeclarationSchema = z
   .object({
     permissions: z.array(HostUiPermissionSchema).max(HostUiPermissionSchema.options.length),
     networkOrigins: z.array(HostUiNetworkOriginSchema).max(32).default([]),
-    /** Host capabilities of an agent-scope Revision; absent keeps the pre-capability digest unchanged. */
     capabilities: ExtensionCapabilitiesSchema.optional(),
   })
   .strict()
-  .superRefine((value, context) => {
-    if (new Set(value.permissions).size !== value.permissions.length) {
-      context.addIssue({ code: 'custom', path: ['permissions'], message: 'Host UI permissions must be unique.' })
-    }
-    if (new Set(value.networkOrigins).size !== value.networkOrigins.length) {
-      context.addIssue({ code: 'custom', path: ['networkOrigins'], message: 'Host UI network origins must be unique.' })
-    }
-    if (value.networkOrigins.length > 0 && !value.permissions.includes('network.request')) {
-      context.addIssue({
-        code: 'custom',
-        path: ['networkOrigins'],
-        message: 'Host UI network origins require network.request.',
-      })
-    }
-  })
+  .superRefine(checkBrowserPermissions)
 
 export type HostUiPermissionDeclaration = z.output<typeof HostUiPermissionDeclarationSchema>
+
+/**
+ * Manifest V7 `permissions`: browser-side permissions of pages and panels (`host.call`), host-layer capabilities used
+ * by the single host instance, and agent-layer capabilities used inside each enabled agent.
+ */
+export const ExtensionPermissionsSchema = z
+  .object({
+    permissions: z.array(HostUiPermissionSchema).max(HostUiPermissionSchema.options.length).default([]),
+    networkOrigins: z.array(HostUiNetworkOriginSchema).max(32).default([]),
+    host: HostLayerCapabilitiesSchema.optional(),
+    agent: ExtensionCapabilitiesSchema.optional(),
+  })
+  .strict()
+  .superRefine(checkBrowserPermissions)
+
+export type ExtensionPermissions = z.output<typeof ExtensionPermissionsSchema>
+
+export const EMPTY_EXTENSION_PERMISSIONS: ExtensionPermissions = { permissions: [], networkOrigins: [] }
+
+/** What installing the extension on this machine asks the user to approve. */
+export const hostPermissionDeclaration = (permissions: ExtensionPermissions): HostUiPermissionDeclaration => {
+  const capabilities = hostLayerAsCapabilities(permissions.host)
+  return {
+    permissions: [...permissions.permissions],
+    networkOrigins: [...permissions.networkOrigins],
+    ...(capabilities === undefined ? {} : { capabilities }),
+  }
+}
+
+/** What enabling the extension for one agent asks the user to approve. */
+export const agentPermissionDeclaration = (permissions: ExtensionPermissions): HostUiPermissionDeclaration => ({
+  permissions: [],
+  networkOrigins: [],
+  ...(permissions.agent === undefined || Object.keys(permissions.agent).length === 0
+    ? {}
+    : { capabilities: permissions.agent }),
+})
 
 export const HostUiOwnerSchema = z.discriminatedUnion('kind', [
   z
@@ -308,8 +362,17 @@ export type DshNxtHostUi = z.output<typeof DshNxtHostUiSchema>
 export const ExtensionPanelAnchorSchema = z.enum(['agent', 'channel', 'extension', 'connection'])
 export type ExtensionPanelAnchor = z.output<typeof ExtensionPanelAnchorSchema>
 
-export const AGENT_PANEL_ANCHORS = ['agent', 'channel', 'extension'] as const satisfies readonly ExtensionPanelAnchor[]
-export const ADAPTER_PANEL_ANCHORS = ['connection', 'channel'] as const satisfies readonly ExtensionPanelAnchor[]
+/**
+ * Which layer a panel belongs to. Agent and channel panels follow the agents the extension is enabled for (a channel
+ * panel also shows on channels of the extension's own adapter); extension and connection panels belong to the host
+ * instance.
+ */
+export const PANEL_ANCHOR_LAYER = {
+  agent: 'agent',
+  channel: 'agent',
+  extension: 'host',
+  connection: 'host',
+} as const satisfies Readonly<Record<ExtensionPanelAnchor, 'agent' | 'host'>>
 
 export const PanelDensitySchema = z.enum(['compact', 'full'])
 export type PanelDensity = z.output<typeof PanelDensitySchema>
@@ -402,9 +465,21 @@ export const MessageRendererContributionSchema = z
   .strict()
 export type MessageRendererContribution = z.output<typeof MessageRendererContributionSchema>
 
-/** Optional configuration surface shared by every extension scope. */
+/** What an extension provides, derived from its Manifest; for listing and filtering, never a lifecycle switch. */
+export const EXTENSION_PROVIDES = ['agent', 'page', 'adapter', 'mcp'] as const
+export const ExtensionProvideSchema = z.enum(EXTENSION_PROVIDES)
+export type ExtensionProvide = z.output<typeof ExtensionProvideSchema>
+
+/** One configuration form: a serialized Schemastery document. */
 export const ExtensionConfigDeclarationSchema = z.object({ schema: ConfigSchemaDocumentSchema }).strict()
 export type ExtensionConfigDeclaration = z.output<typeof ExtensionConfigDeclarationSchema>
+
+/** Manifest V7 `config`: the host instance's configuration and each enabled agent's configuration. */
+export const ExtensionLayeredConfigSchema = z
+  .object({ host: ExtensionConfigDeclarationSchema.optional(), agent: ExtensionConfigDeclarationSchema.optional() })
+  .strict()
+export type ExtensionLayeredConfig = z.output<typeof ExtensionLayeredConfigSchema>
+export type ExtensionConfigLayer = 'host' | 'agent'
 
 /** Product projection of what one Revision contributes to the shell. */
 export const ExtensionUiContributionsSchema = z

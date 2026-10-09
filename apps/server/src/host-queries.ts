@@ -12,8 +12,10 @@ import {
   type HostSnapshotMessage,
 } from '@nekro-nxt/contracts'
 import {
+  agentPermissionRequirement,
+  extensionProvides,
   extensionUiContributions,
-  permissionRequirement,
+  hasAgentLayer,
   type DynamicAuthoringAttempt,
   type DynamicAuthoringTask,
   type ExtensionActivationTransition,
@@ -145,43 +147,39 @@ export const projectExtensions = (runtime: NekroRuntime) => {
     const installation = installations.get(extension.id)
     const revisions = revisionsByExtension.get(extension.id) ?? []
     const activations = activationsByExtension.get(extension.id) ?? []
-    const permissions = new Map(
-      revisions.map((revision) => [
-        revision.id,
-        extension.scope === 'agent'
-          ? permissionRequirement(
-              runtime.repository.getExtensionRevisionVerification(revision.id)?.permissions,
-              undefined,
-            )
-          : runtime.installation.getHostUiPermissionRequirement(extension.id, revision.id),
-      ]),
-    )
+    const readable = (revisionId: ExtensionRevisionId) => activationManifest(runtime, revisionId) !== undefined
+    const hostPermission = (revisionId: ExtensionRevisionId) =>
+      readable(revisionId) ? runtime.extensions.hostRequirement(extension.id, revisionId) : undefined
     const hostClientDiagnostic = runtime.hostClientDiagnostic(extension.id)
     const latestRevision = revisions.at(-1)
-    const hostUiPermission = latestRevision === undefined ? undefined : permissions.get(latestRevision.id)
+    const latestHostPermission = latestRevision === undefined ? undefined : hostPermission(latestRevision.id)
+    const installedManifest = activationManifest(runtime, installation?.extensionRevisionId)
     return {
       id: extension.id,
-      scope: extension.scope,
+      provides: [...extension.provides],
       slug: extension.slug,
       displayName: extension.displayName,
       description: extension.description,
       ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
       revisions: revisions.map((revision) => {
         const verification = runtime.repository.getExtensionRevisionVerification(revision.id)
-        const permissionRequirement = permissions.get(revision.id)
         const manifest = runtime.extensionService.revisionManifest(revision)
+        const revisionHostPermission = hostPermission(revision.id)
+        const agentPermission = manifest === undefined ? undefined : agentPermissionRequirement(manifest, undefined)
         return {
           id: revision.id,
           revisionNumber: revision.revisionNumber,
           format: manifest === undefined ? ('unavailable' as const) : ('current' as const),
           ui: extensionUiContributions(manifest),
-          ...(manifest?.config === undefined ? {} : { configSchema: manifest.config.schema }),
+          ...(manifest?.config?.host === undefined ? {} : { hostConfigSchema: manifest.config.host.schema }),
+          ...(manifest?.config?.agent === undefined ? {} : { agentConfigSchema: manifest.config.agent.schema }),
           ...(manifest?.icon === undefined
             ? {}
             : { iconUrl: extensionIconUrl(extension.id, revision.id, manifest.icon) }),
           createdAt: revision.createdAt,
           ...communitySource(runtime, revision.id),
-          scope: extension.scope,
+          provides: manifest === undefined ? [] : [...extensionProvides(manifest)],
+          agentLayer: manifest !== undefined && hasAgentLayer(manifest),
           contributions:
             verification === undefined
               ? []
@@ -215,12 +213,8 @@ export const projectExtensions = (runtime: NekroRuntime) => {
                     : { usedUiComponents: verification.usedUiComponents }),
                   ...(verification.pageGeometry === undefined ? {} : { pageGeometry: verification.pageGeometry }),
                   ...(verification.permissions === undefined ? {} : { permissions: verification.permissions }),
-                  ...(permissionRequirement === undefined
-                    ? {}
-                    : {
-                        permissionDigest: permissionRequirement.permissionDigest,
-                        permissionApprovalRequired: permissionRequirement.approvalRequired,
-                      }),
+                  ...(revisionHostPermission === undefined ? {} : { hostPermission: revisionHostPermission }),
+                  ...(agentPermission === undefined ? {} : { agentPermission }),
                   ...(verification.adapter === undefined ? {} : { adapter: verification.adapter }),
                 },
               }),
@@ -229,7 +223,11 @@ export const projectExtensions = (runtime: NekroRuntime) => {
       activations: activations.map((activation) => ({
         agentId: activation.agentId,
         extensionRevisionId: activation.extensionRevisionId,
-        ...maskExtensionSecrets(activationManifest(runtime, activation.extensionRevisionId), activation.config),
+        ...maskExtensionSecrets(
+          activationManifest(runtime, activation.extensionRevisionId),
+          'agent',
+          activation.config,
+        ),
         activatedAt: activation.activatedAt,
         ...(runtime.mcpStatus.list(activation.agentId, extension.id).length === 0
           ? {}
@@ -239,24 +237,24 @@ export const projectExtensions = (runtime: NekroRuntime) => {
                 ...(status.missing === undefined ? {} : { missing: [...status.missing] }),
               })),
             }),
-        ...(runtime.activation.getDiagnostic(activation.agentId, extension.id) === undefined
+        ...(runtime.extensions.getAttachmentDiagnostic(activation.agentId, extension.id) === undefined
           ? {}
-          : { runtime: runtime.activation.getDiagnostic(activation.agentId, extension.id) }),
+          : { runtime: runtime.extensions.getAttachmentDiagnostic(activation.agentId, extension.id) }),
       })),
-      ...activationTransitionsProjection(runtime.activation.listTransitions(extension.id)),
+      ...activationTransitionsProjection(runtime.extensions.listTransitions(extension.id)),
       ...(installation === undefined
         ? {}
         : {
             installation: {
               extensionRevisionId: installation.extensionRevisionId,
               installedAt: installation.installedAt,
-              config: installation.config,
-              ...(runtime.installation.getDiagnostic(extension.id) === undefined
+              ...maskExtensionSecrets(installedManifest, 'host', installation.config),
+              ...(runtime.extensions.getDiagnostic(extension.id) === undefined
                 ? {}
-                : { runtime: runtime.installation.getDiagnostic(extension.id) }),
+                : { runtime: runtime.extensions.getDiagnostic(extension.id) }),
             },
           }),
-      ...(hostUiPermission === undefined ? {} : { hostUiPermission }),
+      ...(latestHostPermission === undefined ? {} : { hostPermission: latestHostPermission }),
       ...(hostClientDiagnostic === undefined ? {} : { hostClientDiagnostic }),
       clientDiagnostics: activations.flatMap((activation) => {
         const diagnostic = runtime.repository.getExtensionClientDiagnostic(activation.agentId, extension.id)

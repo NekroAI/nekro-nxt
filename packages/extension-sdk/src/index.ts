@@ -87,10 +87,16 @@ export interface ExtensionToolRegistry {
   register(tool: ExtensionToolDefinition): () => void
 }
 
+/** Context of one agent attachment: the plugin returned by the Host factory, mounted in each Session of the agent. */
 export interface ExtensionHostContext {
   readonly tools: ExtensionToolRegistry
   /** Present when the plugin declares `inject: ['tools', 'nxt']`; see {@link NxtHostService}. */
   readonly nxt?: NxtHostService
+  /**
+   * This agent's configuration, validated against `config.agent`. Dynamic runs have no saved configuration and get
+   * the schema defaults.
+   */
+  config(): ExtensionJsonValue
 }
 
 /** Request accepted by `ctx.nxt.http.fetch`; `body` and `bodyBase64` are mutually exclusive. */
@@ -187,7 +193,7 @@ export interface NxtAssetRecord {
 export type NxtStorageScope = 'agent' | 'channel' | 'member' | 'shared'
 
 export interface NxtStorageOptions {
-  /** Defaults to `agent`. Must be listed in `permissions.capabilities.storage.scopes`. */
+  /** Defaults to `agent`. Must be listed in `permissions.agent.storage.scopes`. */
   readonly scope?: NxtStorageScope
   /** Required for `member` scope: a channel member ID from `context.current()` or history. */
   readonly memberId?: string
@@ -366,8 +372,10 @@ export interface NxtPromptRenderApi {
  * needs an undeclared or unapproved capability throws an error naming the Manifest field to add.
  */
 export interface NxtHostService {
+  /** This agent's configuration (`config.agent`); same value as `ctx.config()`. */
+  config(): ExtensionJsonValue
   readonly http: {
-    /** Requires `permissions.capabilities.network`. */
+    /** Requires `permissions.agent.network`. */
     fetch(url: string, init?: NxtFetchInit): Promise<NxtFetchResponse>
   }
   readonly secrets: {
@@ -375,7 +383,7 @@ export interface NxtHostService {
     get(key: string): Promise<string | undefined>
   }
   readonly assets: {
-    /** Requires `permissions.capabilities.assets`. Saves a current-channel Asset (max 8 MiB). */
+    /** Requires `permissions.agent.assets`. Saves a current-channel Asset (max 8 MiB). */
     create(input: NxtAssetCreateInput): Promise<NxtAssetRecord>
     /** Requires `assets` and `network`; downloads through the controlled fetch. */
     fromUrl(url: string, options?: { readonly name?: string }): Promise<NxtAssetRecord>
@@ -396,7 +404,7 @@ export interface NxtHostService {
     describe(memberId: string): Promise<NxtMemberSummary | undefined>
   }
   readonly history: {
-    /** Requires `permissions.capabilities.history`. Newest first, current channel only. */
+    /** Requires `permissions.agent.history`. Newest first, current channel only. */
     list(options?: {
       readonly limit?: number
       readonly before?: string
@@ -419,7 +427,7 @@ export interface NxtHostService {
   readonly jobs: {
     /**
      * Wakes the agent in the current channel when due; whether it speaks is up to the agent. Requires
-     * `permissions.capabilities.jobs.runtime`.
+     * `permissions.agent.jobs.runtime`.
      */
     schedule(input: NxtJobScheduleInput): Promise<NxtJobRecord>
     /** This extension's jobs for this agent in the current channel. */
@@ -429,7 +437,7 @@ export interface NxtHostService {
   readonly llm: {
     /**
      * One completion with the agent's configured model, counted in the agent's usage. Requires
-     * `permissions.capabilities.llm`; calls beyond `maxCallsPerTurn` in one turn are rejected.
+     * `permissions.agent.llm`; calls beyond `maxCallsPerTurn` in one turn are rejected.
      */
     complete(request: NxtLlmRequest): Promise<NxtLlmResponse>
   }
@@ -447,7 +455,7 @@ export interface NxtHostService {
     feed(xml: string, options?: { readonly url?: string }): Promise<NxtFeed>
   }
   readonly prompt: {
-    /** Fixed text added to the system prompt; declare `{ name, kind: 'static' }` in `permissions.capabilities.context`. */
+    /** Fixed text added to the system prompt; declare `{ name, kind: 'static' }` in `permissions.agent.context`. */
     static(name: string, text: string): () => void
     /**
      * Rendered once at the start of each turn and appended to the runtime context only when it changes. Keep it
@@ -457,40 +465,97 @@ export interface NxtHostService {
   }
 }
 
-export type ExtensionRpcHandler = (input: ExtensionJsonValue) => ExtensionJsonValue | Promise<ExtensionJsonValue>
+/**
+ * Where an RPC call comes from. The Host checks the anchor of a panel call (the agent has the extension enabled, the
+ * channel or connection exists) before the handler runs, so handlers need not validate it.
+ */
+export type ExtensionRpcCaller =
+  | { readonly surface: 'page' }
+  | {
+      readonly surface: 'panel'
+      readonly anchor: { readonly kind: ExtensionPanelAnchor; readonly id: string }
+      /** The agent the panel is shown for: the anchored agent, or the agent responding in the anchored channel. */
+      readonly agentId?: string
+      readonly channelId?: string
+      readonly connectionId?: string
+    }
+  | { readonly surface: 'verification' }
+
+export type ExtensionRpcHandler = (
+  input: ExtensionJsonValue,
+  caller: ExtensionRpcCaller,
+) => ExtensionJsonValue | Promise<ExtensionJsonValue>
+
+export interface NxtHostStorageListOptions {
+  readonly prefix?: string
+  /** 1–200, default 50. */
+  readonly limit?: number
+  /** `next` from the previous page. */
+  readonly after?: string
+}
+
+/**
+ * The host instance's `nxt` (the Host factory's `nxt` argument). Storage is the extension's host partition, the same
+ * data agent attachments read with `scope: 'shared'`. Calls are checked against `permissions.host`.
+ */
+export interface NxtHostLayerService {
+  readonly http: NxtHostService['http']
+  readonly secrets: NxtHostService['secrets']
+  readonly storage: {
+    get(key: string): Promise<ExtensionJsonValue | undefined>
+    set(key: string, value: ExtensionJsonValue): Promise<void>
+    delete(key: string): Promise<boolean>
+    list(
+      options?: NxtHostStorageListOptions,
+    ): Promise<{ readonly entries: readonly NxtStorageEntry[]; readonly next?: string }>
+  }
+  readonly render: NxtHostService['render']
+  readonly parse: NxtHostService['parse']
+}
 
 export interface ExtensionPluginDefinition<Context = ExtensionHostContext> {
   readonly inject?: readonly string[]
   apply(context: Context): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
 }
 
+/**
+ * Argument of the Host factory. The factory runs once per machine (the extension's host instance) when the extension
+ * is installed; the plugin it returns is the agent attachment, mounted in each Session of every agent the extension is
+ * enabled for.
+ */
 export interface ExtensionHostEnvironment {
   readonly harness: {
     defineTool<Args extends ExtensionJsonObject, Output extends ExtensionJsonValue>(
       options: ExtensionToolDefinition<Args, Output>,
     ): ExtensionToolDefinition<Args, Output>
+    /** Registers a Tool in the agent attachment; call it inside the returned plugin's `apply`. */
     registerTool(context: ExtensionHostContext, tool: ExtensionToolDefinition): () => void
+    /** Registers an RPC of the host instance during factory evaluation; pages and panels call it with `host.call`. */
     handle(method: string, handler: ExtensionRpcHandler): () => void
-    /** Host-scoped Adapter Revisions register exactly one contribution during factory evaluation. */
+    /** Registers the extension's single adapter during factory evaluation. */
     registerAdapter(contribution: AdapterHostContributionV2): () => void
     /**
-     * Agent extensions that declare `permissions.capabilities.inboundHook` register one inbound handler during
-     * factory evaluation (like `handle`). It runs after the message is stored and before the agent is woken.
+     * Extensions that declare `permissions.agent.inboundHook` register one inbound handler during factory
+     * evaluation. It runs for every agent the extension is enabled for, after the message is stored and before the
+     * agent is woken; its `nxt` is bound to that agent and channel.
      */
     onInbound?(handler: NxtInboundHandler): () => void
     /**
-     * Agent extensions with `permissions.capabilities.jobs` register one due-job handler during factory evaluation. It
-     * runs before the agent is woken for this extension's jobs and can decide not to wake it; without a handler every
-     * due job wakes the agent.
+     * Extensions with `permissions.agent.jobs` register one due-job handler during factory evaluation. It runs before
+     * the agent is woken for this extension's jobs and can decide not to wake it; without a handler every due job
+     * wakes the agent.
      */
     onJob?(handler: NxtJobHandler): () => void
     /**
-     * Current configuration validated against the Manifest config schema. Dynamic runs have no saved configuration;
-     * read it as `harness.config?.() ?? {}` so the same source works before and after saving.
+     * The host instance's configuration (`config.host`). Each agent's configuration is `ctx.config()` inside the
+     * attachment. Dynamic runs have no saved configuration and get the schema defaults.
      */
     config(): ExtensionJsonValue
   }
+  /** Same value as `harness.config()`. */
   readonly config: ExtensionJsonValue
+  /** Host-layer services, checked against `permissions.host`; see {@link NxtHostLayerService}. */
+  readonly nxt: NxtHostLayerService
 }
 
 export type AdapterRichMessagePart = Extract<MessagePart, { readonly type: 'rich' }>
@@ -1111,7 +1176,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     rules: [
       "config.schema 是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }。不要写 properties、required 数组或 additionalProperties。",
       '工具 parameters 中类型为 object 的参数必须显式写 additionalProperties: true 或 false；尽量用扁平的 string/number/boolean 参数。',
-      'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网只声明 permissions.capabilities.network，两者不要混用。',
+      'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网只声明 permissions.agent.network，两者不要混用。',
       "工具的 output.schema 必须与 execute 的真实返回一致：返回对象就声明 { type: 'json' } 或完整的 object Schema，返回字符串才声明 { type: 'string' }；不确定时用 { type: 'json' }。",
       '静态说明只能是固定字符串，只在版本或配置切换时变化；会变化的状态放进 dynamic，宿主每轮开始渲染一次，内容不变就不会追加新的上下文。',
       '动态上下文禁止写入时间戳、随机数和精确计数，写“好感度：友好”这类粗粒度描述；保存时宿主会用相同输入渲染两次，结果不同则拒绝保存。',
@@ -1125,7 +1190,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       'verification 样例必须没有副作用：验证会真实发出网络请求，样例应是查询而不是提交、发送或付款。',
       '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
       '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
-      '不要声明 permissions.capabilities.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
+      '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
       '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息；定时检查类需求在 onJob 里先检查，没有新内容就返回 { wake: false }。',
     ],
   },

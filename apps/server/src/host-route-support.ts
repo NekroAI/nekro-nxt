@@ -242,11 +242,10 @@ export const createExtensionRevisionExport = async (
   files['manifest.json'] = strToU8(
     JSON.stringify(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         kind: 'nekro-nxt-extension',
         extension: {
           id: extension.id,
-          scope: extension.scope,
           slug: extension.slug,
           displayName: extension.displayName,
           description: extension.description,

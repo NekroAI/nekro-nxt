@@ -6,7 +6,7 @@ import {
   HostPageContributionSchema,
   HostUiKitComponentNameSchema,
   HostUiPageGeometryEvidenceSchema,
-  HostUiPermissionDeclarationSchema,
+  ExtensionPermissionsSchema,
   type AgentId,
   type ExtensionId,
   type ExtensionRevisionId,
@@ -52,7 +52,7 @@ const toExtension = (input: typeof localExtensions.$inferSelect): LocalExtension
   const row = LocalExtensionRowSchema.parse(input)
   return {
     id: row.id,
-    scope: row.scope,
+    provides: row.provides,
     slug: row.slug,
     displayName: row.displayName,
     description: row.description,
@@ -155,8 +155,7 @@ const toHostUiDiagnostic = (input: typeof hostUiDiagnostics.$inferSelect): HostU
 const ExtensionRevisionVerificationSchema = z.object({
   revisionId: ExtensionRevisionIdSchema,
   dshVersion: z.string().trim().min(1),
-  contractVersion: z.literal('nekro-nxt-extension-v4'),
-  scope: z.enum(['host-adapter', 'host-ui']).optional(),
+  contractVersion: z.literal('nekro-nxt-extension-v5'),
   origin: z.object({ episodeId: z.string(), pluginId: z.string(), packageId: z.string(), pluginRunId: z.string() }),
   verifiedAt: z.number().int().nonnegative(),
   hostBuild: z.object({ built: z.boolean(), buildKey: z.string() }),
@@ -169,7 +168,7 @@ const ExtensionRevisionVerificationSchema = z.object({
   renderedPages: z.array(HostPageContributionSchema).max(8).optional(),
   usedUiComponents: z.array(HostUiKitComponentNameSchema).optional(),
   pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).optional(),
-  permissions: HostUiPermissionDeclarationSchema.optional(),
+  permissions: ExtensionPermissionsSchema.optional(),
   adapter: z
     .object({
       apiVersion: z.literal(2),
@@ -202,7 +201,6 @@ const parseExtensionRevisionVerification = (input: unknown): ExtensionRevisionVe
     renderedPanels: parsed.renderedPanels,
     renderedToolViews: parsed.renderedToolViews,
     renderedMessageRenderers: parsed.renderedMessageRenderers,
-    ...(parsed.scope === undefined ? {} : { scope: parsed.scope }),
     ...(parsed.renderedPages === undefined ? {} : { renderedPages: parsed.renderedPages }),
     ...(parsed.usedUiComponents === undefined ? {} : { usedUiComponents: parsed.usedUiComponents }),
     ...(parsed.pageGeometry === undefined ? {} : { pageGeometry: parsed.pageGeometry }),
@@ -262,7 +260,10 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
     saveExtensionRevision({ extension, revision, verification }): void {
       database.transaction(
         (tx) => {
-          tx.insert(localExtensions).values(extension).onConflictDoNothing({ target: localExtensions.id }).run()
+          tx.insert(localExtensions)
+            .values(extension)
+            .onConflictDoUpdate({ target: localExtensions.id, set: { provides: extension.provides } })
+            .run()
           tx.insert(extensionRevisions).values(revision).run()
           if (verification) {
             tx.insert(extensionRevisionVerifications)
@@ -431,6 +432,33 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
               },
             })
             .run()
+          for (const { activation, grant } of input.attachments ?? []) {
+            transaction
+              .insert(agentActivations)
+              .values(activation)
+              .onConflictDoUpdate({
+                target: [agentActivations.agentId, agentActivations.extensionId],
+                set: {
+                  extensionRevisionId: activation.extensionRevisionId,
+                  config: activation.config,
+                  activatedAt: activation.activatedAt,
+                },
+              })
+              .run()
+            transaction
+              .insert(hostUiPermissionGrants)
+              .values(grant)
+              .onConflictDoUpdate({
+                target: hostUiPermissionGrants.ownerKey,
+                set: {
+                  artifactDigest: grant.artifactDigest,
+                  permissionDigest: grant.permissionDigest,
+                  declaration: grant.declaration,
+                  approvedAt: grant.approvedAt,
+                },
+              })
+              .run()
+          }
 
           const existing = transaction
             .select()

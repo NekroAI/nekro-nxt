@@ -10,15 +10,23 @@ import {
   LogicalMessageIdSchema,
   PhysicalDeliveryIdSchema,
   validateConfigValue,
+  hostLayerAsCapabilities,
   type ExtensionCapabilities,
   type ExtensionDataHookName,
+  type ExtensionPermissions,
   type HostPageContribution,
-  type HostUiPermissionDeclaration,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { canonicalJson } from '@nekro-nxt/core'
-import type { ImportedRevisionVerificationInput, ImportedRevisionVerifier } from '@nekro-nxt/extension-runtime'
+import {
+  hasAgentLayer,
+  layerConfigSchema,
+  manifestAdapter,
+  type ImportedRevisionVerificationInput,
+  type ImportedRevisionVerifier,
+} from '@nekro-nxt/extension-runtime'
 import type {
+  ExtensionRpcHandler,
   ExtensionToolDefinition,
   NxtCallContext,
   NxtInboundHandler,
@@ -31,7 +39,7 @@ import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { createExtensionEgress } from './extension-egress.js'
 import { memoryNxtJobs, memoryNxtStorage, previewPlatformResult } from './extension-host-backends.js'
-import { createNxtHostService } from './extension-host-service.js'
+import { createHostLayerNxt, createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
 
 const IMPORT_ORIGIN = {
   episodeId: 'import',
@@ -131,12 +139,6 @@ const createClientHarness = () => {
   }
 }
 
-/** Declared defaults stand in for user configuration; required fields without defaults stay absent. */
-const defaultConfig = (input: ImportedRevisionVerificationInput): JsonValue => {
-  const declaration = input.materialized.manifest.config
-  return declaration === undefined ? {} : validateConfigValue(declaration.schema, {}).value
-}
-
 const SYNTHETIC_ANCHOR_IDS = {
   agent: 'agt_IMPORT',
   channel: 'chn_IMPORT',
@@ -191,42 +193,15 @@ const runPluginApply = async (
   }
 }
 
-const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnType<ImportedRevisionVerifier> => {
-  const manifest = input.materialized.manifest
-  if (manifest.scope !== 'host-adapter') throw new Error('Adapter 导入 Manifest 无效。')
-  if (!input.artifact.hostEntry) throw new Error('Adapter 导入缺少 Host 构建产物。')
-  const declaredAdapter = manifest.contributions.find((entry) => entry.kind === 'adapter')
-  if (!declaredAdapter || declaredAdapter.kind !== 'adapter') throw new Error('Adapter Manifest 缺少适配器贡献。')
-  const registry = new AdapterRegistry()
-  let registered: ReturnType<AdapterRegistry['register']> | undefined
-  const factory = await importFactory(input.artifact.hostEntry, input.artifact.buildKey, 'Adapter Host')
-  const forbidden = (kind: string): never => {
-    throw new Error(`Adapter 导入不能注册${kind}。`)
-  }
-  const definition = await factory(undefined, [
-    {
-      harness: {
-        defineTool: () => forbidden('智能体工具'),
-        registerTool: () => forbidden('智能体工具'),
-        handle: () => forbidden('智能体 RPC'),
-        config: () => defaultConfig(input),
-        registerAdapter: (contribution: AdapterHostContributionV2) => {
-          if (registered) throw new Error('Adapter Host 只能注册一个适配器贡献。')
-          registered = registry.register(`import:${input.revision.id}`, contribution)
-          return () => void registered?.dispose()
-        },
-      },
-      config: defaultConfig(input),
-    },
-  ])
-  recordOf(definition, 'Adapter Host factory 结果')
-  const contribution = registry.list()[0]
-  if (!contribution || registry.list().length !== 1) throw new Error('Adapter Host 必须注册且只能注册一个贡献。')
+/** Runs one registered adapter through a fake Host: start, an inbound fact, one delivery and a quiet stop. */
+const verifyAdapterContribution = async (
+  contribution: AdapterHostContributionV2,
+  declared: { readonly key: string; readonly descriptorDigest: string },
+) => {
   const digest = descriptorDigest(contribution)
-  if (contribution.descriptor.key !== declaredAdapter.key || digest !== declaredAdapter.descriptorDigest) {
-    throw new Error('Adapter Host 实际注册内容与 Manifest 不一致。')
+  if (contribution.descriptor.key !== declared.key || digest !== declared.descriptorDigest) {
+    throw new Error('适配器实际注册内容与扩展清单不一致。')
   }
-
   const fake = createFakeAdapterHostContext()
   const configuration: Record<string, string | number | boolean> = {}
   const credentialRefs: Record<string, string> = {}
@@ -273,8 +248,8 @@ const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnTy
       new AbortController().signal,
     )
     receipt = outcome.status
-    if (fake.events.length === 0) throw new Error('Adapter 本机验证没有提交任何入站事件。')
-    if (receipt !== 'sent') throw new Error(`Adapter 本机验证出站结果不是 sent：${receipt}`)
+    if (fake.events.length === 0) throw new Error('适配器本机验证没有提交任何入站事件。')
+    if (receipt !== 'sent') throw new Error(`适配器本机验证出站结果不是 sent：${receipt}`)
   } catch (error) {
     lifecycleError = errorOf(error)
   } finally {
@@ -286,34 +261,19 @@ const verifyAdapter = async (input: ImportedRevisionVerificationInput): ReturnTy
       lifecycleError =
         lifecycleError === undefined
           ? errorOf(stopError)
-          : new AggregateError([lifecycleError, errorOf(stopError)], 'Adapter 本机验证失败且未完整静止。')
+          : new AggregateError([lifecycleError, errorOf(stopError)], '适配器本机验证失败且未完整静止。')
     }
-    await registered?.dispose()
   }
   if (lifecycleError !== undefined) throw errorOf(lifecycleError)
-
-  const clientEvidence = await verifyClient(input, new Map())
   return {
-    contractVersion: 'nekro-nxt-extension-v4',
-    scope: 'host-adapter',
-    origin: IMPORT_ORIGIN,
-    toolInvocations: [],
-    rpcMethods: [],
-    renderedPanels: clientEvidence.renderedPanels,
-    renderedToolViews: [],
-    renderedMessageRenderers: clientEvidence.renderedMessageRenderers,
-    ...(clientEvidence.renderedPages.length === 0 ? {} : { renderedPages: clientEvidence.renderedPages }),
-    permissions: clientEvidence.permissions,
-    adapter: {
-      apiVersion: 2,
-      key: contribution.descriptor.key,
-      descriptorDigest: digest,
-      registered: true,
-      started,
-      stopped,
-      inboundCommitted: fake.events.length > 0,
-      outboundReceipt: receipt,
-    },
+    apiVersion: 2 as const,
+    key: contribution.descriptor.key,
+    descriptorDigest: digest,
+    registered: true,
+    started,
+    stopped,
+    inboundCommitted: fake.events.length > 0,
+    outboundReceipt: receipt,
   }
 }
 
@@ -322,7 +282,7 @@ interface ClientEvidence {
   readonly renderedToolViews: readonly string[]
   readonly renderedMessageRenderers: readonly string[]
   readonly renderedPages: readonly HostPageContribution[]
-  readonly permissions: HostUiPermissionDeclaration
+  readonly permissions: ExtensionPermissions
 }
 
 const sameSet = (left: readonly string[], right: readonly string[]) =>
@@ -330,7 +290,7 @@ const sameSet = (left: readonly string[], right: readonly string[]) =>
 
 const verifyClient = async (
   input: ImportedRevisionVerificationInput,
-  handlers: ReadonlyMap<string, (value: JsonValue) => JsonValue | Promise<JsonValue>>,
+  handlers: ReadonlyMap<string, ExtensionRpcHandler>,
 ): Promise<ClientEvidence> => {
   const manifest = input.materialized.manifest
   const contributions = manifest.contributions
@@ -342,7 +302,7 @@ const verifyClient = async (
   const expectedPages: readonly HostPageContribution[] = contributions.flatMap((entry) =>
     entry.kind === 'host-page' ? [HostPageContributionSchema.parse(entry)] : [],
   )
-  const permissions: HostUiPermissionDeclaration = manifest.permissions
+  const permissions: ExtensionPermissions = manifest.permissions
   if (!input.artifact.clientEntry) {
     if (expectedPanels.length || expectedToolViews.length || expectedRenderers.length || expectedPages.length) {
       throw new Error('Manifest 声明了 Client 贡献，但导入包缺少 Client 构建产物。')
@@ -361,7 +321,7 @@ const verifyClient = async (
   const call = async (method: string, value: JsonValue = null): Promise<JsonValue> => {
     const handler = handlers.get(method)
     if (!handler) throw new Error(`Client 调用了未注册的 Host RPC：${method}`)
-    return JsonValueSchema.parse(await handler(value))
+    return JsonValueSchema.parse(await handler(value, { surface: 'verification' }))
   }
   const track = (unregister: () => void) => {
     let active = true
@@ -543,134 +503,173 @@ const VERIFICATION_CALL_CONTEXT: NxtCallContext = {
 }
 
 /**
- * `nxt` for save/import verification: throwaway storage, synthetic call context and assets, no saved secrets.
+ * `nxt` backends for save/import verification: throwaway storage, synthetic call context and assets, no saved secrets.
  * Network requests are real, which is why `verificationInput` samples must be side-effect free.
  */
-const createVerificationNxt = (capabilities: ExtensionCapabilities | undefined, config: () => JsonValue) =>
-  createNxtHostService(
-    {
-      mode: 'verification',
-      agentId: 'agt_VERIFY',
-      ownerKey: 'verification',
-      displayName: '验证扩展',
-      channelId: 'chn_VERIFY',
-      capabilities: () => capabilities,
-      config,
+const verificationBackends = (capabilities: ExtensionCapabilities | undefined): NxtServiceBackends => ({
+  fetch: (policy, url, init) => createExtensionEgress({ policy }).fetch(url, init),
+  storage: memoryNxtStorage(),
+  jobs: memoryNxtJobs(),
+  platform: {
+    catalog: () => {
+      const declared = capabilities?.platform
+      const adapterKey = declared?.actions[0]?.adapter ?? declared?.raw[0] ?? 'verification'
+      return Promise.resolve({
+        adapterKey,
+        raw: declared?.raw.includes(adapterKey) === true,
+        actions: (declared?.actions ?? [])
+          .filter(({ adapter }) => adapter === adapterKey)
+          .map(({ action }) => ({
+            name: action,
+            title: action,
+            description: '验证动作',
+            risk: 'low' as const,
+            parameters: {},
+          })),
+      })
     },
-    {
-      fetch: (policy, url, init) => createExtensionEgress({ policy }).fetch(url, init),
-      storage: memoryNxtStorage(),
-      jobs: memoryNxtJobs(),
-      platform: {
-        catalog: () => {
-          const declared = capabilities?.platform
-          const adapterKey = declared?.actions[0]?.adapter ?? declared?.raw[0] ?? 'verification'
-          return Promise.resolve({
-            adapterKey,
-            raw: declared?.raw.includes(adapterKey) === true,
-            actions: (declared?.actions ?? [])
-              .filter(({ adapter }) => adapter === adapterKey)
-              .map(({ action }) => ({
-                name: action,
-                title: action,
-                description: '验证动作',
-                risk: 'low' as const,
-                parameters: {},
-              })),
-          })
-        },
-        invoke: (_binding, action) => Promise.resolve(previewPlatformResult('平台动作', action)),
-        raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
-        selfPlatformUserId: () => Promise.resolve(undefined),
-      },
-      members: { describe: (_channelId, memberId) => Promise.resolve({ memberId }) },
-      secret: () => Promise.resolve(undefined),
-      // Verification never spends the user's model quota; a fixed reply exercises the call path.
-      complete: () => Promise.resolve({ text: '验证模型回复' }),
-      createAsset: (_channelId, asset) =>
-        Promise.resolve({
-          assetId: 'ast_VERIFY',
-          byteSize: Buffer.byteLength(asset.base64 ?? asset.text ?? '', asset.base64 === undefined ? 'utf8' : 'base64'),
-          mediaType: asset.mediaType ?? 'application/octet-stream',
-        }),
-      callContext: () => Promise.resolve(VERIFICATION_CALL_CONTEXT),
-      history: {
-        list: () => Promise.resolve({ messages: [] }),
-        search: () => Promise.resolve([]),
-      },
-    },
-    {
-      section: () => () => undefined,
-      context: () => () => undefined,
-      onTurnStart: () => () => undefined,
-    },
-  )
+    invoke: (_binding, action) => Promise.resolve(previewPlatformResult('平台动作', action)),
+    raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
+    selfPlatformUserId: () => Promise.resolve(undefined),
+  },
+  members: { describe: (_channelId, memberId) => Promise.resolve({ memberId }) },
+  secret: () => Promise.resolve(undefined),
+  // Verification never spends the user's model quota; a fixed reply exercises the call path.
+  complete: () => Promise.resolve({ text: '验证模型回复' }),
+  createAsset: (_channelId, asset) =>
+    Promise.resolve({
+      assetId: 'ast_VERIFY',
+      byteSize: Buffer.byteLength(asset.base64 ?? asset.text ?? '', asset.base64 === undefined ? 'utf8' : 'base64'),
+      mediaType: asset.mediaType ?? 'application/octet-stream',
+    }),
+  callContext: () => Promise.resolve(VERIFICATION_CALL_CONTEXT),
+  history: {
+    list: () => Promise.resolve({ messages: [] }),
+    search: () => Promise.resolve([]),
+  },
+})
 
-const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): ReturnType<ImportedRevisionVerifier> => {
+const verificationBinding = {
+  agentId: 'agt_VERIFY',
+  ownerKey: 'verification',
+  displayName: '验证扩展',
+  channelId: 'chn_VERIFY',
+} as const
+
+/** Declared defaults of one layer stand in for user configuration; required fields without defaults stay absent. */
+const defaultConfig = (input: ImportedRevisionVerificationInput, layer: 'host' | 'agent'): JsonValue =>
+  validateConfigValue(layerConfigSchema(input.materialized.manifest, layer), {}).value
+
+/**
+ * Verifies a Manifest V7 Revision as installed: the Host factory runs once as the host instance (its adapter, RPC and
+ * hooks register), the agent attachment applies with a synthetic agent, every Tool and RPC is really called with its
+ * verification input, and every Client contribution renders. Nothing here touches product data.
+ */
+export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (input) => {
   const manifest = input.materialized.manifest
-  const handlers = new Map<string, (value: JsonValue) => JsonValue | Promise<JsonValue>>()
+  const agentCapabilities = manifest.permissions.agent
+  const backends = verificationBackends(agentCapabilities)
+  const hostConfig = defaultConfig(input, 'host')
+  const agentConfig = defaultConfig(input, 'agent')
+  const nxt = createNxtHostService(
+    {
+      ...verificationBinding,
+      mode: 'verification',
+      capabilities: () => agentCapabilities,
+      config: () => agentConfig,
+      hostConfig: () => hostConfig,
+    },
+    backends,
+    { section: () => () => undefined, context: () => () => undefined, onTurnStart: () => () => undefined },
+  )
+  const hostNxt = createHostLayerNxt(
+    {
+      ...verificationBinding,
+      mode: 'host',
+      capabilities: () => hostLayerAsCapabilities(manifest.permissions.host),
+      config: () => hostConfig,
+    },
+    backends,
+  )
+  const declaredAdapter = manifestAdapter(manifest)
+  const handlers = new Map<string, ExtensionRpcHandler>()
   const tools = new Map<string, ExtensionToolDefinition>()
   const toolInvocations: Array<{ name: string; succeeded: boolean }> = []
   let disposePlugin: (() => void | Promise<void>) | undefined
   let inbound: NxtInboundHandler | undefined
-  const nxt = createVerificationNxt(manifest.scope === 'agent' ? manifest.permissions.capabilities : undefined, () =>
-    defaultConfig(input),
-  )
-  if (input.artifact.hostEntry) {
-    const factory = await importFactory(input.artifact.hostEntry, input.artifact.buildKey, 'Extension Host')
-    const forbiddenAdapter = (): never => {
-      throw new Error('非 Adapter 导入不能注册适配器贡献。')
+  let adapterContribution: AdapterHostContributionV2 | undefined
+  const registry = new AdapterRegistry()
+  const registeredAdapters: Array<{ dispose(): Promise<void> }> = []
+  try {
+    if (input.artifact.hostEntry) {
+      const factory = await importFactory(input.artifact.hostEntry, input.artifact.buildKey, 'Extension Host')
+      const definition = await factory(undefined, [
+        {
+          harness: {
+            defineTool: (tool: ExtensionToolDefinition) => tool,
+            registerTool: (_context: unknown, tool: ExtensionToolDefinition) => {
+              if (tools.has(tool.name)) throw new Error(`重复工具：${tool.name}`)
+              tools.set(tool.name, tool)
+              return () => tools.delete(tool.name)
+            },
+            handle: (method: string, handler: ExtensionRpcHandler) => {
+              if (!method.trim() || handlers.has(method)) throw new Error(`重复或无效 RPC：${method}`)
+              handlers.set(method, handler)
+              return () => handlers.delete(method)
+            },
+            registerAdapter: (contribution: AdapterHostContributionV2) => {
+              if (declaredAdapter === undefined) throw new Error('扩展清单没有声明适配器，不能注册适配器。')
+              if (adapterContribution !== undefined) throw new Error('一个扩展只能注册一个适配器。')
+              adapterContribution = contribution
+              registeredAdapters.push(registry.register(`import:${input.revision.id}`, contribution))
+              return () => undefined
+            },
+            onInbound: (handler: NxtInboundHandler) => {
+              if (agentCapabilities?.inboundHook === undefined) {
+                throw new Error('注册 harness.onInbound 需要声明 permissions.agent.inboundHook。')
+              }
+              if (inbound !== undefined) throw new Error('一个扩展只能注册一个入站处理函数。')
+              inbound = handler
+              return () => undefined
+            },
+            // Recorded only: a due-job handler acts on real jobs, and verification has none.
+            onJob: (handler: NxtJobHandler) => {
+              if (agentCapabilities?.jobs === undefined) {
+                throw new Error('注册 harness.onJob 需要声明 permissions.agent.jobs。')
+              }
+              if (typeof handler !== 'function') throw new TypeError('harness.onJob 需要一个处理函数。')
+              return () => undefined
+            },
+            config: () => hostConfig,
+          },
+          config: hostConfig,
+          nxt: hostNxt,
+        },
+      ])
+      if (definition !== undefined && definition !== null && hasAgentLayer(manifest)) {
+        disposePlugin = await runPluginApply(definition, {
+          tools: {
+            register: (tool: ExtensionToolDefinition) => {
+              tools.set(tool.name, tool)
+              return () => tools.delete(tool.name)
+            },
+          },
+          nxt,
+          config: () => agentConfig,
+        })
+      }
     }
-    const definition = await factory(undefined, [
-      {
-        harness: {
-          defineTool: (tool: ExtensionToolDefinition) => tool,
-          registerTool: (_context: unknown, tool: ExtensionToolDefinition) => {
-            if (tools.has(tool.name)) throw new Error(`重复工具：${tool.name}`)
-            tools.set(tool.name, tool)
-            return () => tools.delete(tool.name)
-          },
-          handle: (method: string, handler: (value: JsonValue) => JsonValue | Promise<JsonValue>) => {
-            if (!method.trim() || handlers.has(method)) throw new Error(`重复或无效 RPC：${method}`)
-            handlers.set(method, handler)
-            return () => handlers.delete(method)
-          },
-          registerAdapter: forbiddenAdapter,
-          onInbound: (handler: NxtInboundHandler) => {
-            if (manifest.scope !== 'agent' || manifest.permissions.capabilities?.inboundHook === undefined) {
-              throw new Error('注册 harness.onInbound 需要声明 permissions.capabilities.inboundHook。')
-            }
-            if (inbound !== undefined) throw new Error('一个扩展只能注册一个入站处理函数。')
-            inbound = handler
-            return () => undefined
-          },
-          // Recorded only: a due-job handler acts on real jobs, and verification has none.
-          onJob: (handler: NxtJobHandler) => {
-            if (manifest.scope !== 'agent' || manifest.permissions.capabilities?.jobs === undefined) {
-              throw new Error('注册 harness.onJob 需要声明 permissions.capabilities.jobs。')
-            }
-            if (typeof handler !== 'function') throw new TypeError('harness.onJob 需要一个处理函数。')
-            return () => undefined
-          },
-          config: () => defaultConfig(input),
-        },
-        config: defaultConfig(input),
-      },
-    ])
-    disposePlugin = await runPluginApply(definition, {
-      tools: {
-        register: (tool: ExtensionToolDefinition) => {
-          tools.set(tool.name, tool)
-          return () => tools.delete(tool.name)
-        },
-      },
-      ...(manifest.scope === 'agent' ? { nxt } : {}),
-    })
-  }
-  // Use the same representative inputs that verified the dynamic run; absent means the historical empty call.
-  const toolInputs = new Map<string, Readonly<Record<string, JsonValue>>>()
-  const rpcInputs = new Map<string, JsonValue>()
-  if (manifest.scope === 'agent') {
+    if (declaredAdapter !== undefined && adapterContribution === undefined) {
+      throw new Error('扩展清单声明了适配器，但 Host factory 没有注册适配器。')
+    }
+    const adapter =
+      declaredAdapter === undefined || adapterContribution === undefined
+        ? undefined
+        : await verifyAdapterContribution(adapterContribution, declaredAdapter)
+
+    // Use the same representative inputs that verified the dynamic run; absent means the historical empty call.
+    const toolInputs = new Map<string, Readonly<Record<string, JsonValue>>>()
+    const rpcInputs = new Map<string, JsonValue>()
     for (const contribution of manifest.contributions) {
       if (contribution.kind === 'tool' && contribution.verificationInput !== undefined) {
         toolInputs.set(contribution.name, contribution.verificationInput)
@@ -679,15 +678,15 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
         rpcInputs.set(contribution.method, contribution.verificationInput)
       }
     }
-  }
-  try {
     for (const tool of tools.values()) {
       JsonValueSchema.parse(await tool.execute(toolInputs.get(tool.name) ?? {}))
       toolInvocations.push({ name: tool.name, succeeded: true })
     }
-    for (const [method, handler] of handlers) JsonValueSchema.parse(await handler(rpcInputs.get(method) ?? null))
+    for (const [method, handler] of handlers) {
+      JsonValueSchema.parse(await handler(rpcInputs.get(method) ?? null, { surface: 'verification' }))
+    }
     if (inbound !== undefined) {
-      const declared = manifest.scope === 'agent' ? manifest.permissions.capabilities?.inboundHook : undefined
+      const declared = agentCapabilities?.inboundHook
       const decision = await inbound(VERIFICATION_INBOUND_MESSAGE, nxt)
       if (decision !== undefined && decision !== null) {
         const parsed = InboundDecisionSchema.safeParse(decision)
@@ -709,44 +708,30 @@ const verifyAgentOrHostUi = async (input: ImportedRevisionVerificationInput): Re
       )
     }
     const clientEvidence = await verifyClient(input, handlers)
-    const declaredTools =
-      manifest.scope === 'agent'
-        ? manifest.contributions.filter((entry) => entry.kind === 'tool').map(({ name }) => name)
-        : []
-    const declaredRpc =
-      manifest.scope === 'agent'
-        ? manifest.contributions.filter((entry) => entry.kind === 'rpc').map(({ method }) => method)
-        : []
-    const isAgentManifest = manifest.scope === 'agent'
-    if (isAgentManifest && (declaredTools.some((name) => !tools.has(name)) || tools.size !== declaredTools.length)) {
-      throw new Error('Host 实际工具注册与 Manifest 不一致。')
+    const declaredTools = manifest.contributions.filter((entry) => entry.kind === 'tool').map(({ name }) => name)
+    const declaredRpc = manifest.contributions.filter((entry) => entry.kind === 'rpc').map(({ method }) => method)
+    if (declaredTools.some((name) => !tools.has(name)) || tools.size !== declaredTools.length) {
+      throw new Error('Host 实际工具注册与扩展清单不一致。')
     }
-    if (
-      isAgentManifest &&
-      (declaredRpc.some((method) => !handlers.has(method)) || handlers.size !== declaredRpc.length)
-    ) {
-      throw new Error('Host 实际 RPC 注册与 Manifest 不一致。')
+    if (declaredRpc.some((method) => !handlers.has(method)) || handlers.size !== declaredRpc.length) {
+      throw new Error('Host 实际界面数据接口注册与扩展清单不一致。')
     }
-    const isHostUi = manifest.scope === 'host-ui'
-    if (isHostUi && tools.size > 0) throw new Error('Host UI 导入不能注册智能体工具。')
     return {
-      contractVersion: 'nekro-nxt-extension-v4',
-      ...(isHostUi ? { scope: 'host-ui' as const } : {}),
+      contractVersion: 'nekro-nxt-extension-v5',
       origin: IMPORT_ORIGIN,
       toolInvocations,
       rpcMethods: [...handlers.keys()],
       renderedPanels: clientEvidence.renderedPanels,
       renderedToolViews: clientEvidence.renderedToolViews,
-      renderedMessageRenderers: [],
+      renderedMessageRenderers: clientEvidence.renderedMessageRenderers,
       ...(clientEvidence.renderedPages.length === 0 ? {} : { renderedPages: clientEvidence.renderedPages }),
       permissions: clientEvidence.permissions,
+      ...(adapter === undefined ? {} : { adapter }),
     }
   } finally {
     await disposePlugin?.()
+    for (const registered of registeredAdapters) await registered.dispose()
     tools.clear()
     handlers.clear()
   }
 }
-
-export const verifyImportedExtensionRevision: ImportedRevisionVerifier = (input) =>
-  input.materialized.scope === 'host-adapter' ? verifyAdapter(input) : verifyAgentOrHostUi(input)

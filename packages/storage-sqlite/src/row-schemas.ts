@@ -232,6 +232,7 @@ export const AssetChannelGrantRowSchema = createSelectSchema(assetChannelGrants,
 })
 export const LocalExtensionRowSchema = createSelectSchema(localExtensions, {
   id: ExtensionIdSchema,
+  provides: z.array(z.enum(['agent', 'page', 'adapter', 'mcp'])),
   createdByAgentId: AgentIdSchema.nullable(),
 })
 export const ExtensionRevisionRowSchema = createSelectSchema(extensionRevisions, {

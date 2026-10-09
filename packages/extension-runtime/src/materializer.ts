@@ -2,6 +2,7 @@ import {
   extensionContributionSchema,
   extensionIconSchema,
   extensionManifestSchema,
+  extensionProvides,
   normalizeSource,
   revisionDigests,
   revisionResourcesSchema,
@@ -10,8 +11,8 @@ import {
   type MaterializedExtensionRevision,
 } from '@nekro-nxt/extension-format'
 import {
-  ExtensionConfigDeclarationSchema,
-  HostUiPermissionDeclarationSchema,
+  ExtensionLayeredConfigSchema,
+  ExtensionPermissionsSchema,
   type ExtensionId,
   type ExtensionRevisionId,
 } from '@nekro-nxt/contracts'
@@ -34,7 +35,7 @@ const inputSchema = z
           .string()
           .max(1024 * 1024)
           .optional(),
-        permissions: HostUiPermissionDeclarationSchema.optional(),
+        permissions: ExtensionPermissionsSchema.optional(),
         resources: z
           .record(z.string().regex(/^assets\/[a-z0-9][a-z0-9/_.-]*$/u), z.string().max(256 * 1024))
           .optional(),
@@ -46,7 +47,7 @@ const inputSchema = z
           .strict()
           .optional(),
         icon: extensionIconSchema.optional(),
-        config: ExtensionConfigDeclarationSchema.optional(),
+        config: ExtensionLayeredConfigSchema.optional(),
         contributions: z.array(extensionContributionSchema).default([]),
       })
       .strict()
@@ -59,7 +60,7 @@ const inputSchema = z
 const wrapHost = (body: string): string =>
   normalizeSource(`import { defineHostExtension } from '@nekro-nxt/extension-sdk'
 
-export default defineHostExtension(async ({ harness }) => {
+export default defineHostExtension(async ({ harness, nxt }) => {
 ${body}
 })`)
 
@@ -70,8 +71,6 @@ import { defineClientExtension } from '@nekro-nxt/extension-sdk'
 export default defineClientExtension(async ({ React, host, styles }) => {
 ${body}
 })`)
-
-const AGENT_KINDS = new Set(['tool', 'rpc', 'panel', 'tool-view'])
 
 /** Client CSS is scoped to this Revision's rendered UI, so it is only meaningful with a Client half. */
 export const assertClientCssScope = (input: { readonly hasClientCss: boolean; readonly hasClient: boolean }): void => {
@@ -87,17 +86,6 @@ export function materializeDynamicPackage(input: {
     snapshot: input.snapshot,
   })
   const contributions = parsed.snapshot.contributions
-  const isHostAdapter = contributions.some(({ kind }) => kind === 'adapter' || kind === 'message-renderer')
-  const hasAgentContribution = contributions.some(({ kind }) => AGENT_KINDS.has(kind))
-  const isHostUi = !isHostAdapter && !hasAgentContribution && contributions.some(({ kind }) => kind === 'host-page')
-  if (isHostAdapter && !parsed.snapshot.hostCode) throw new Error('适配器 Revision 必须包含 Host Adapter。')
-  if (isHostAdapter && contributions.some(({ kind }) => kind === 'tool' || kind === 'rpc' || kind === 'tool-view')) {
-    throw new Error('适配器 Revision 不能混装智能体工具、RPC 或工具视图，请拆分为两个扩展。')
-  }
-  if (!isHostAdapter && hasAgentContribution && contributions.some(({ kind }) => kind === 'host-page')) {
-    throw new Error('智能体扩展不能贡献顶级页面，请拆分为两个扩展。')
-  }
-  if (isHostUi && !parsed.snapshot.clientCode) throw new Error('页面 Revision 必须包含 Client。')
   assertClientCssScope({
     hasClientCss: parsed.snapshot.clientCss !== undefined,
     hasClient: parsed.snapshot.clientCode !== undefined,
@@ -108,10 +96,8 @@ export function materializeDynamicPackage(input: {
       ? {}
       : { client: wrapClient(parsed.snapshot.clientCode, parsed.snapshot.clientCss?.path) }),
   })
-  const scope = isHostAdapter ? 'host-adapter' : isHostUi ? 'host-ui' : 'agent'
   const manifest = extensionManifestSchema.parse({
-    schemaVersion: 6,
-    scope,
+    schemaVersion: 7,
     extensionId: input.extensionId,
     revisionId: input.revisionId,
     entrypoints: {
@@ -126,5 +112,11 @@ export function materializeDynamicPackage(input: {
   })
   const resources = revisionResourcesSchema.parse(parsed.snapshot.resources ?? {})
   validateRevisionResources(manifest, resources, '动态扩展')
-  return { manifest, sources, resources, ...revisionDigests({ manifest, sources, resources }), scope }
+  return {
+    manifest,
+    sources,
+    resources,
+    ...revisionDigests({ manifest, sources, resources }),
+    provides: extensionProvides(manifest),
+  }
 }

@@ -65,6 +65,9 @@ import {
   HostUiPageGeometryEvidenceSchema,
   HostUiPageEntrySchema,
   HostUiPermissionDeclarationSchema,
+  ExtensionPanelAnchorSchema,
+  ExtensionPermissionsSchema,
+  ExtensionProvideSchema,
 } from './extension-ui.js'
 
 const EmptyParamsSchema = z.object({}).strict()
@@ -229,6 +232,15 @@ const AgentModelSchema = z
  * An enable or disable request of one agent extension that has not settled: `waiting` until the agent reaches a safe
  * gap (its current reply ends), or `failed` with the reason until the next request replaces it.
  */
+/** What one approval asks the user to grant and whether the current grant already covers it. */
+export const ExtensionPermissionRequirementSchema = z
+  .object({
+    declaration: HostUiPermissionDeclarationSchema,
+    permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    approvalRequired: z.boolean(),
+  })
+  .strict()
+
 export const ExtensionActivationTransitionSchema = z
   .object({
     agentId: AgentIdSchema,
@@ -1272,7 +1284,8 @@ export const HostSnapshotSchema = z
       z
         .object({
           id: ExtensionIdSchema,
-          scope: z.enum(['agent', 'host-adapter', 'host-ui']),
+          /** What the latest Revision provides; listing and filtering only. */
+          provides: z.array(ExtensionProvideSchema),
           slug: NonEmptyStringSchema,
           displayName: z.string(),
           description: z.string(),
@@ -1284,7 +1297,10 @@ export const HostSnapshotSchema = z
                 revisionNumber: z.number().int().positive(),
                 format: z.enum(['current', 'unavailable']).optional(),
                 ui: ExtensionUiContributionsSchema.default(EMPTY_EXTENSION_UI_CONTRIBUTIONS),
-                configSchema: ConfigSchemaDocumentSchema.optional(),
+                /** The host instance's configuration form (`config.host`). */
+                hostConfigSchema: ConfigSchemaDocumentSchema.optional(),
+                /** Each enabled agent's configuration form (`config.agent`). */
+                agentConfigSchema: ConfigSchemaDocumentSchema.optional(),
                 /** 扩展包自带图标的读取路径（同源、按摘要寻址、可长期缓存）；没有图标时缺省。 */
                 iconUrl: z
                   .string()
@@ -1293,7 +1309,9 @@ export const HostSnapshotSchema = z
                 createdAt: z.number().int().safe().nonnegative(),
                 /** 从社区安装的保存记录的来源；本机保存与文件导入没有来源。 */
                 source: CommunitySourceSchema.optional(),
-                scope: z.enum(['agent', 'host-adapter', 'host-ui']),
+                provides: z.array(ExtensionProvideSchema),
+                /** Whether this Revision can be enabled for agents (agent-layer contributions or capabilities). */
+                agentLayer: z.boolean(),
                 contributions: z.array(z.string()),
                 verification: z
                   .object({
@@ -1311,12 +1329,11 @@ export const HostSnapshotSchema = z
                     renderedPages: z.array(HostPageContributionSchema).max(8).optional(),
                     usedUiComponents: z.array(HostUiKitComponentNameSchema).optional(),
                     pageGeometry: z.array(HostUiPageGeometryEvidenceSchema).max(8).optional(),
-                    permissions: HostUiPermissionDeclarationSchema.optional(),
-                    permissionDigest: z
-                      .string()
-                      .regex(/^[a-f0-9]{64}$/u)
-                      .optional(),
-                    permissionApprovalRequired: z.boolean().optional(),
+                    permissions: ExtensionPermissionsSchema.optional(),
+                    /** Installing this Revision on the machine, against the current host grant. */
+                    hostPermission: ExtensionPermissionRequirementSchema.optional(),
+                    /** Enabling this Revision for an agent that has no grant yet. */
+                    agentPermission: ExtensionPermissionRequirementSchema.optional(),
                     adapter: z
                       .object({
                         apiVersion: z.literal(2),
@@ -1376,7 +1393,9 @@ export const HostSnapshotSchema = z
             .object({
               extensionRevisionId: ExtensionRevisionIdSchema,
               installedAt: z.number().int().safe().nonnegative(),
+              /** Secret fields are removed; `configuredSecrets` lists those the Host stores. */
               config: JsonValueSchema.default({}),
+              configuredSecrets: z.array(z.string()).optional(),
               runtime: z
                 .object({
                   status: z.enum(['active', 'restore-failed', 'dispose-failed']),
@@ -1387,14 +1406,8 @@ export const HostSnapshotSchema = z
             })
             .strict()
             .optional(),
-          hostUiPermission: z
-            .object({
-              declaration: HostUiPermissionDeclarationSchema,
-              permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-              approvalRequired: z.boolean(),
-            })
-            .strict()
-            .optional(),
+          /** Installing the latest Revision on this machine, against the current host grant. */
+          hostPermission: ExtensionPermissionRequirementSchema.optional(),
           hostClientDiagnostic: z
             .object({
               revisionId: ExtensionRevisionIdSchema,
@@ -1852,7 +1865,7 @@ export const ExtensionImportInspectionSchema = z
     revisionId: ExtensionRevisionIdSchema,
     slug: NonEmptyStringSchema,
     displayName: NonEmptyStringSchema,
-    scope: z.enum(['agent', 'host-adapter', 'host-ui']),
+    provides: z.array(ExtensionProvideSchema),
     idempotent: z.boolean(),
     slugConflict: z.boolean(),
   })
@@ -1912,6 +1925,8 @@ export type AgentRevisionHistory = z.output<typeof AgentRevisionHistorySchema>
 const channelParam = z.object({ channelId: ChannelIdSchema }).strict()
 const connectionParam = z.object({ connectionId: ConnectionIdSchema }).strict()
 const agentExtensionParam = z.object({ agentId: AgentIdSchema, extensionId: ExtensionIdSchema }).strict()
+
+const PermissionApprovalSchema = z.object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()
 const extensionParam = z.object({ extensionId: ExtensionIdSchema }).strict()
 const dshPluginPackageParam = z.object({ packageId: DshPluginPackageIdSchema }).strict()
 const dshPluginEntryParam = z.object({ entryId: DshPluginEntryIdSchema }).strict()
@@ -2719,7 +2734,7 @@ export const HostApiContracts = {
     params: z
       .object({
         query: z.string().trim().max(80).optional(),
-        scope: z.enum(['agent', 'host-adapter', 'host-ui']).optional(),
+        provides: ExtensionProvideSchema.optional(),
         /** 只列社区后台认定的官方扩展。 */
         official: z.enum(['1']).optional(),
         cursor: z.string().max(200).optional(),
@@ -3415,8 +3430,18 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/extensions/:extensionId/revisions/:revisionId/call',
     params: extensionRevisionParam,
+    /**
+     * A panel's call to its extension's host instance. The Host checks the anchor (the agent has the extension
+     * enabled; the channel or connection exists) and hands the extension the resolved caller.
+     */
     request: z
-      .object({ agentId: AgentIdSchema, method: NonEmptyStringSchema, input: JsonValueSchema.optional() })
+      .object({
+        anchor: z.object({ kind: ExtensionPanelAnchorSchema, id: NonEmptyStringSchema }).strict(),
+        /** The agent the panel is shown for; required for channel panels outside the extension's own adapter. */
+        agentId: AgentIdSchema.optional(),
+        method: NonEmptyStringSchema,
+        input: JsonValueSchema.optional(),
+      })
       .strict(),
     response: z.object({ value: JsonValueSchema }).strict(),
     error: HostApiErrorSchema,
@@ -3451,10 +3476,10 @@ export const HostApiContracts = {
     request: z
       .object({
         revisionId: ExtensionRevisionIdSchema,
-        permissionApproval: z
-          .object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) })
-          .strict()
-          .optional(),
+        /** Approval of the agent-layer capabilities. */
+        permissionApproval: PermissionApprovalSchema.optional(),
+        /** Approval of the host layer when enabling also installs or switches the extension on this machine. */
+        hostPermissionApproval: PermissionApprovalSchema.optional(),
       })
       .strict(),
     /**
@@ -3511,8 +3536,14 @@ export const HostApiContracts = {
     method: 'PUT',
     path: '/api/extensions/:extensionId/installation/config',
     params: extensionParam,
-    request: z.object({ config: JsonValueSchema }).strict(),
-    response: z.object({ config: JsonValueSchema }).strict(),
+    request: z
+      .object({
+        config: JsonValueSchema,
+        /** Write-only credential drafts keyed by secret field; an absent or empty draft keeps the stored one. */
+        secrets: z.record(z.string(), z.string().max(8192)).optional(),
+      })
+      .strict(),
+    response: z.object({ config: JsonValueSchema, configuredSecrets: z.array(z.string()).optional() }).strict(),
     error: HostApiErrorSchema,
   }),
   installHostExtension: defineContract({
@@ -3524,10 +3555,10 @@ export const HostApiContracts = {
     request: z
       .object({
         revisionId: ExtensionRevisionIdSchema,
-        permissionApproval: z
-          .object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) })
-          .strict()
-          .optional(),
+        /** Approval of the host layer (browser permissions and `permissions.host`). */
+        permissionApproval: PermissionApprovalSchema.optional(),
+        /** Approval of expanded agent-layer capabilities for the agents that move to this Revision. */
+        agentPermissionApproval: PermissionApprovalSchema.optional(),
       })
       .strict(),
     response: z

@@ -73,9 +73,9 @@ export const mcpExtensionSnapshot = (input: {
       name: input.displayName,
       purpose: input.description,
       hostCode: MCP_EXTENSION_HOST_CODE,
-      permissions: { permissions: [], networkOrigins: [], capabilities: { mcp } },
+      permissions: { permissions: [], networkOrigins: [], agent: { mcp } },
       contributions: [],
-      ...(Object.keys(dict).length === 0 ? {} : { config: { schema: { type: 'object', dict } } }),
+      ...(Object.keys(dict).length === 0 ? {} : { config: { agent: { schema: { type: 'object', dict } } } }),
     },
     secretFields,
   }

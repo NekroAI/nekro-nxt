@@ -14,10 +14,12 @@ import {
 } from '@nekro-nxt/contracts'
 import {
   extensionIconContentType,
+  manifestAdapter,
   resourceContent,
   scopeHostUiCss,
   validateExtensionIcon,
   validateHostUiSvg,
+  type ExtensionCaller,
 } from '@nekro-nxt/extension-runtime'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -39,6 +41,61 @@ import {
   type HostRouteContext,
 } from './host-route-support.js'
 import { performHostUiNetworkRequest } from './host-ui-network.js'
+import { activationManifest } from './host-queries.js'
+import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from './extension-secret-config.js'
+
+/**
+ * Resolves and checks where a panel call comes from (扩展形态统一 §5): agent panels need the agent to have the extension
+ * enabled; channel panels need the channel's responding agent to have it enabled, or the channel to belong to the
+ * extension's own adapter; connection panels need the extension's adapter; extension panels need this extension.
+ */
+const resolvePanelCaller = (
+  runtime: HostRouteContext['runtime'],
+  extensionId: z.output<typeof ExtensionIdSchema>,
+  revisionId: z.output<typeof ExtensionRevisionIdSchema>,
+  anchor: { readonly kind: 'agent' | 'channel' | 'extension' | 'connection'; readonly id: string },
+  requestedAgentId: AgentId | undefined,
+): ExtensionCaller => {
+  const attached = (agentId: AgentId) => runtime.repository.getActivation(agentId, extensionId) !== undefined
+  const adapterKey = (() => {
+    const manifest = activationManifest(runtime, revisionId)
+    return manifest === undefined ? undefined : manifestAdapter(manifest)?.key
+  })()
+  switch (anchor.kind) {
+    case 'agent': {
+      const agentId = AgentIdSchema.parse(anchor.id)
+      if (!attached(agentId)) throw new Error('这个扩展没有启用给该智能体。')
+      return { surface: 'panel', anchor, agentId }
+    }
+    case 'channel': {
+      const channel = runtime.repository.getChannel(ChannelIdSchema.parse(anchor.id))
+      if (!channel) throw new Error('频道不存在。')
+      const agentId = runtime.repository.getBinding(channel.id)?.agentId
+      if (requestedAgentId !== undefined && requestedAgentId !== agentId)
+        throw new Error('该智能体不是这个频道的响应者。')
+      const ownAdapter =
+        adapterKey !== undefined && runtime.repository.getConnection(channel.connectionId)?.adapterKey === adapterKey
+      const agentAttached = agentId !== undefined && attached(agentId)
+      if (!agentAttached && !ownAdapter) throw new Error('这个扩展在该频道没有启用。')
+      return {
+        surface: 'panel',
+        anchor,
+        channelId: channel.id,
+        connectionId: channel.connectionId,
+        ...(agentAttached ? { agentId } : {}),
+      }
+    }
+    case 'connection': {
+      if (adapterKey === undefined) throw new Error('这个扩展没有适配器，不能提供连接面板。')
+      const connection = runtime.repository.getConnection(ConnectionIdSchema.parse(anchor.id))
+      if (connection && connection.adapterKey !== adapterKey) throw new Error('这个连接不属于该扩展的适配器。')
+      return { surface: 'panel', anchor, ...(connection ? { connectionId: connection.id } : {}) }
+    }
+    case 'extension':
+      if (anchor.id !== extensionId) throw new Error('扩展面板只能调用自己的扩展。')
+      return { surface: 'panel', anchor }
+  }
+}
 export function registerExtensionsRoutes({
   runtime,
   registerRoute,
@@ -380,7 +437,7 @@ export function registerExtensionsRoutes({
             } else if (input.method === 'extensions.list') {
               value = runtime.repository.listExtensions().map((extension) => ({
                 id: extension.id,
-                scope: extension.scope,
+                provides: extension.provides,
                 displayName: extension.displayName,
                 description: extension.description,
               }))
@@ -489,7 +546,9 @@ export function registerExtensionsRoutes({
             }
           } else {
             if (page.owner.kind !== 'extension') throw new Error('DSH 页面没有注册自定义 Host RPC。')
-            value = await runtime.installation.callHostUi(page.owner.extensionId, input.method, input.input)
+            value = await runtime.extensions.call(page.owner.extensionId, input.method, input.input, {
+              surface: 'page',
+            })
           }
           writeContractJson(res, 200, HostApiContracts.callHostUiPage, { value })
           if (HOST_UI_PRODUCT_MUTATIONS.has(input.method)) {
@@ -635,8 +694,23 @@ export function registerExtensionsRoutes({
             extensionId: decodeURIComponent(installationConfigMatch[1] ?? ''),
           })
           const input = HostApiContracts.updateHostExtensionConfig.parseRequest(await readJsonBody(req))
-          const installation = await runtime.updateHostExtensionConfig(params.extensionId, input.config)
-          writeContractJson(res, 200, HostApiContracts.updateHostExtensionConfig, { config: installation.config })
+          const current = runtime.repository.getHostInstallation(params.extensionId)
+          const manifest = activationManifest(runtime, current?.extensionRevisionId)
+          const installation = await commitExtensionConfigWithSecrets({
+            manifest,
+            layer: 'host',
+            previous: current?.config,
+            config: input.config,
+            secrets: input.secrets,
+            credentials: runtime.credentials,
+            commit: (config) => runtime.updateHostExtensionConfig(params.extensionId, config),
+          })
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.updateHostExtensionConfig,
+            maskExtensionSecrets(manifest, 'host', installation.config),
+          )
           broadcastExtensionsChanged()
         } catch (error) {
           writeError(res, 400, 'extension-config-invalid', error instanceof Error ? error.message : String(error))
@@ -660,8 +734,17 @@ export function registerExtensionsRoutes({
               extensionId: params.extensionId,
               revisionId: parsed.revisionId,
               ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
+              ...(parsed.agentPermissionApproval === undefined
+                ? {}
+                : { agentPermissionApproval: parsed.agentPermissionApproval }),
             })
-            writeContractJson(res, 200, HostApiContracts.installHostExtension, { installation })
+            const manifest = activationManifest(runtime, installation.extensionRevisionId)
+            writeContractJson(res, 200, HostApiContracts.installHostExtension, {
+              installation: {
+                ...installation,
+                config: maskExtensionSecrets(manifest, 'host', installation.config).config,
+              },
+            })
             broadcastExtensionsChanged()
           } catch (error) {
             writeError(res, 400, 'installation-failed', error instanceof Error ? error.message : String(error))
@@ -823,26 +906,10 @@ export function registerExtensionsRoutes({
           writeError(res, 405, 'method-not-allowed', 'Client Artifact 只支持 GET。')
           return
         }
-        const verification = runtime.repository.getExtensionRevisionVerification(revisionId)
-        if (verification?.scope === 'host-adapter') {
-          const installation = runtime.repository.getHostInstallation(extensionId)
-          if (installation?.extensionRevisionId !== revisionId) {
-            writeError(res, 409, 'stale-client-build', '该 Revision 不是当前安装到本机的版本。')
-            return
-          }
-        } else {
-          let agentId: AgentId
-          try {
-            agentId = AgentIdSchema.parse(url.searchParams.get('agentId'))
-          } catch {
-            writeError(res, 400, 'invalid-agent', 'Client Artifact 缺少有效的智能体 ID。')
-            return
-          }
-          const activation = runtime.repository.getActivation(agentId, extensionId)
-          if (activation?.extensionRevisionId !== revisionId) {
-            writeError(res, 409, 'stale-client-build', '该 Revision 不是此智能体当前启用的版本。')
-            return
-          }
+        // One current version per machine: only the installed Revision serves its Client.
+        if (runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId !== revisionId) {
+          writeError(res, 409, 'stale-client-build', '该保存记录不是当前安装到本机的版本。')
+          return
         }
         try {
           const artifact = await runtime.extensionService.buildRevision(revision)
@@ -873,14 +940,11 @@ export function registerExtensionsRoutes({
       if (action === 'call') {
         try {
           const parsed = HostApiContracts.extensionClientCall.parseRequest(await readJsonBody(req))
-          const activation = runtime.repository.getActivation(parsed.agentId, extensionId)
-          if (activation?.extensionRevisionId !== revisionId) throw new Error('该 Revision 不是当前 Activation。')
-          const value = await runtime.host.invokeExtensionActivation(
-            parsed.agentId,
-            revisionId,
-            parsed.method,
-            parsed.input,
-          )
+          if (runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId !== revisionId) {
+            throw new Error('该保存记录不是当前安装到本机的版本。')
+          }
+          const caller = resolvePanelCaller(runtime, extensionId, revisionId, parsed.anchor, parsed.agentId)
+          const value = await runtime.extensions.call(extensionId, parsed.method, parsed.input ?? null, caller)
           writeJson(res, 200, HostApiContracts.extensionClientCall.parseResponse({ value }))
         } catch (error) {
           writeError(res, 400, 'extension-client-call-failed', error instanceof Error ? error.message : String(error))

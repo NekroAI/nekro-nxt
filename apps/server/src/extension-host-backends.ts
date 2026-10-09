@@ -23,11 +23,12 @@ import type {
   NxtPlatformResult,
 } from '@nekro-nxt/extension-sdk'
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
-import type {
-  NxtServiceBackends,
-  NxtServiceBinding,
-  NxtStorageBackend,
-  NxtStoragePartition,
+import {
+  bindingSecretConfig,
+  type NxtServiceBackends,
+  type NxtServiceBinding,
+  type NxtStorageBackend,
+  type NxtStoragePartition,
 } from './extension-host-service.js'
 
 /** Matches the opaque references `LocalCredentialStore` issues; anything else in a secret field is not resolved. */
@@ -152,7 +153,7 @@ export const createNxtProductBackends = (
       return Promise.resolve(member(facts, parsed.data))
     },
   },
-  secret: (binding: NxtServiceBinding, key: string) => resolveExtensionSecret(facts, binding.config(), key),
+  secret: (binding: NxtServiceBinding, key: string) => resolveExtensionSecret(facts, bindingSecretConfig(binding), key),
   createAsset: (channelId, input) => facts.createAsset(ChannelIdSchema.parse(channelId), input),
   callContext(binding): Promise<NxtCallContext> {
     const channelId = ChannelIdSchema.parse(binding.channelId)

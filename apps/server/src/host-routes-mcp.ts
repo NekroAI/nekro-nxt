@@ -69,7 +69,7 @@ export function registerMcpRoutes({
           description: snapshot.purpose,
           verification: {
             dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
-            contractVersion: 'nekro-nxt-extension-v4',
+            contractVersion: 'nekro-nxt-extension-v5',
             origin: MCP_FORM_ORIGIN,
             toolInvocations: [],
             rpcMethods: [],

@@ -1,0 +1,1 @@
+ALTER TABLE `local_extensions` ADD `provides` text DEFAULT '[]' NOT NULL;
