@@ -146,7 +146,7 @@ export function CommunityEndpointDialog({
       ) : (
         <>
           <p className={styles.faint}>
-            一般不需要更改。连接测试站或本机社区开发服务时使用；每个地址分别保存登录。
+            连接测试站或本机开发的社区时才需要修改。每个地址分别登录。
             {endpoint.source === 'environment' ? '当前地址来自环境变量 NEKRO_COMMUNITY_URL。' : ''}
           </p>
           <Field label="社区地址" hint={`默认 ${endpoint.defaultUrl}，只填协议、主机与端口。`}>
@@ -162,7 +162,7 @@ export function CommunityEndpointDialog({
           </Field>
           {insecure ? (
             <Banner tone="warn">
-              这是未加密的 HTTP 地址，只允许局域网地址。扩展包会以明文在网络中传输，只在你信任的网络中使用。
+              这是未加密的局域网地址，扩展包会明文传输，只在你信任的网络里使用。
               <span className={styles.inlineSwitch}>
                 <Switch checked={acknowledge} onCheckedChange={setAcknowledge} label="我了解风险" />
                 我了解风险

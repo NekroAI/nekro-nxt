@@ -17,7 +17,7 @@ export const AGENT_ACCESS_LEVELS: readonly {
     label: '基础权限',
     risk: '无额外访问',
     tone: 'neutral',
-    description: '不授予文件读写、命令运行或完整访问。',
+    description: '不能读写文件或运行命令。',
   },
   {
     level: 1,
@@ -25,7 +25,7 @@ export const AGENT_ACCESS_LEVELS: readonly {
     label: '文件读写',
     risk: '受限访问',
     tone: 'info',
-    description: '可以读取文件，并在智能体工作区内写入文件；不能运行命令。',
+    description: '读取文件，并在工作区里写文件。',
   },
   {
     level: 2,
@@ -33,7 +33,7 @@ export const AGENT_ACCESS_LEVELS: readonly {
     label: '运行命令',
     risk: '高风险',
     tone: 'warning',
-    description: '包含文件读写，并允许在智能体工作区中运行命令。',
+    description: '读写文件，并在工作区里运行命令。',
   },
   {
     level: 3,
@@ -41,7 +41,7 @@ export const AGENT_ACCESS_LEVELS: readonly {
     label: '完整访问',
     risk: '极高风险',
     tone: 'error',
-    description: '包含文件读写和命令运行，并扩大到宿主进程被允许访问的系统范围。',
+    description: '读写工作区以外的文件，范围与 NekroNXT 程序本身相同。',
   },
 ]
 

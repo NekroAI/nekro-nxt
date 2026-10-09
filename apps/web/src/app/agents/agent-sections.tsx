@@ -93,7 +93,7 @@ export function ModelSection({
             ) : undefined
           }
         >
-          默认模型 {missing.model} 已不在供应商的模型列表中，可能已停用；看图能力也无法确认
+          默认模型 {missing.model} 已不在供应商的模型列表里，可能已下线
         </Banner>
       ) : null}
       <PropertyList>
@@ -289,7 +289,7 @@ const ACCESS_SWITCHES: readonly {
 }[] = [
   { key: 'fileTools', label: '文件读写', description: '读取文件，并在自己的工作区里写入' },
   { key: 'developmentShell', label: '运行命令', description: '在工作区里运行命令，需要文件读写' },
-  { key: 'unrestrictedFileAccess', label: '工作区以外的文件', description: '访问宿主进程允许的全部文件，需要文件读写' },
+  { key: 'unrestrictedFileAccess', label: '工作区以外的文件', description: '读写工作区以外的文件，需要先开启文件读写' },
 ]
 
 /** Web search runs through an external model service; its credential is saved right where the switch is. */
@@ -386,7 +386,7 @@ export function CapabilitiesSection({
   return (
     <PropertyGroup id="profile-capabilities" title="能力">
       <PropertyList>
-        <PropertyRow label="系统访问" tip="逐级递进，级别越高能做的事越多，风险也越高" layout="stacked">
+        <PropertyRow label="系统访问" layout="stacked">
           <RiskLadder
             label="系统访问"
             steps={ACCESS_STEPS}
@@ -407,7 +407,7 @@ export function CapabilitiesSection({
             }
           />
         </PropertyRow>
-        <PropertyRow label="子智能体" tip="把任务分给后台助手并行处理">
+        <PropertyRow label="子智能体" tip="把任务交给子智能体在后台处理">
           <Switch
             label="子智能体"
             checked={caps.subagents}

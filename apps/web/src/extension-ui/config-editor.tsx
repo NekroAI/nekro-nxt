@@ -75,6 +75,9 @@ export function ExtensionConfigEditor({
         config: draft,
         ...(Object.keys(typedSecrets).length === 0 ? {} : { secrets: typedSecrets }),
       })
+      // Typed secrets are never echoed back, so a save that changes only them leaves the stored config as it was.
+      setSecretDrafts({})
+      setSubmitted(false)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {

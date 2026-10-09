@@ -30,7 +30,7 @@ export function TestSecretsGroup({ taskId, secrets }: { readonly taskId: string;
     }
   }
   return (
-    <PropertyGroup title="测试凭据" tip="只在这个创造任务的试运行中使用；保存成扩展后，启用时需要重新填写。">
+    <PropertyGroup title="测试凭据" tip="只用于试运行。保存成扩展后要在扩展配置里重新填写。">
       <div className={styles.testSecrets}>
         {secrets.fields.map((field) => (
           <Field key={field.key} label={field.title}>

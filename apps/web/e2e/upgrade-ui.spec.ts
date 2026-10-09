@@ -139,7 +139,9 @@ test('upgrade summary keeps reset context visible and retries an isolated extens
     issue('model-provider', 'deepseek', '合成模型配置需要重新检查。'),
   ])
   await page.goto('/live')
-  await expect(page.locator('[data-compatibility-notices]')).toContainText('旧上下文已归档，聊天记录保留')
+  await expect(page.locator('[data-compatibility-notices]')).toContainText(
+    '聊天记录保留，智能体从下一条消息开始新的上下文',
+  )
   await page.goto(`/agents/${targetAgentId}`)
   const agentNotice = page.locator('[data-compatibility-notices]')
   await expect(agentNotice).toContainText('合成扩展需要重新检查加载兼容性。')
@@ -155,7 +157,7 @@ test('upgrade summary keeps reset context visible and retries an isolated extens
   await expect(page.locator('[data-compatibility-notices]')).toHaveCount(0)
   await page.goto('/settings/about')
   const settingsNotice = page.locator('[data-compatibility-notices]')
-  await expect(settingsNotice).toContainText('旧上下文已归档，聊天记录保留')
+  await expect(settingsNotice).toContainText('聊天记录保留，智能体从下一条消息开始新的上下文')
   await expect(settingsNotice).toContainText('合成模型配置需要重新检查。')
   await testInfo.attach('upgrade-summary', { body: await page.screenshot(), contentType: 'image/png' })
   expect(fixture.pageErrors).toEqual([])

@@ -93,7 +93,7 @@ export function ConnectionCreate() {
             </PropertyList>
           </PropertyGroup>
           {archived.length > 0 ? (
-            <PropertyGroup title="恢复已移除的账号" description="频道和消息仍保留，恢复后继续使用">
+            <PropertyGroup title="恢复已移除的账号" description="频道和消息都还在">
               <PropertyList>
                 {archived.map((connection) => (
                   <PropertyRow

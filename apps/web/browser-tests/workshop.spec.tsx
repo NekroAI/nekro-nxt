@@ -256,8 +256,9 @@ test.describe('workshop', () => {
 
       await secret.fill('fixture-new-key')
       await page.getByRole('button', { name: '保存配置' }).click()
-      // The stubbed snapshot still holds the original values, so the editor resets to them after each save.
-      await expect.poll(() => saved).toEqual({ config: { city: '示例市' }, secrets: { apiKey: 'fixture-new-key' } })
+      // The stubbed snapshot never catches up, so the editor keeps the edited city; the typed key is cleared once saved.
+      await expect.poll(() => saved).toEqual({ config: { city: '另一市' }, secrets: { apiKey: 'fixture-new-key' } })
+      await expect(secret).toHaveValue('')
     } finally {
       await page.close()
     }

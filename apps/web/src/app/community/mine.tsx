@@ -195,10 +195,7 @@ export function MineView({ community }: { readonly community: CommunityState }) 
       {account ? <MyPersonasSection refreshKey={items} /> : null}
 
       {unpublished.length > 0 ? (
-        <PropertyGroup
-          title="本机尚未发布的扩展"
-          description="发布最新的一次保存；社区会自动审查源码与权限并给出建议。"
-        >
+        <PropertyGroup title="本机尚未发布的扩展" description="发布最新版本，社区会自动审查源码和权限。">
           <div className={styles.cardList}>
             {unpublished.map((extension) => (
               <div key={extension.id} className={styles.item}>
@@ -250,7 +247,7 @@ export function MineView({ community }: { readonly community: CommunityState }) 
           }
         }}
       >
-        <p>社区不再提供这次发布；已经安装的用户不受影响，会看到「作者已撤回」的提示。</p>
+        <p>撤回后社区不再提供这次发布，已安装的用户会看到「作者已撤回」。</p>
       </ConfirmDialog>
     </MainContent>
   )
@@ -419,7 +416,7 @@ export function ReviewReportView({ releaseId }: { readonly releaseId: string }) 
       ) : null}
       <PropertyGroup title={`自动检查（${report.deterministic.length}）`}>
         {report.deterministic.length === 0 ? (
-          <p className={styles.faint}>包结构、凭据、危险写法与能力组合检查均未发现问题。</p>
+          <p className={styles.faint}>自动检查没有发现问题。</p>
         ) : (
           <div>
             {report.deterministic.map((finding, index) => (

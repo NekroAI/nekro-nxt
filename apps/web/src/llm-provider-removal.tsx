@@ -121,7 +121,7 @@ export function LlmProviderRemovalDialog({
               <strong>{providerDisplayName(impact.provider, impact.displayName)}</strong>
               {impact.declared
                 ? '：删除这个自定义供应商的名称、地址、协议和模型。之后需要重新添加。'
-                : '：移除已保存的配置。供应商仍留在目录里，之后可以从“添加供应商”重新配置。'}
+                : '：清除已保存的配置，之后可以重新添加。'}
             </p>
             <div className={styles.removalBlock}>
               <span className={styles.removalTitle}>涉及的模型（{impact.models.length}）</span>
@@ -136,7 +136,7 @@ export function LlmProviderRemovalDialog({
             <div className={styles.removalBlock}>
               <span className={styles.removalTitle}>引用它的智能体与频道（{impact.references.length}）</span>
               {impact.references.length === 0 ? (
-                <p className={styles.muted}>没有智能体当前配置或活动频道上下文引用此供应商。</p>
+                <p className={styles.muted}>没有智能体在用这个供应商。</p>
               ) : (
                 <ul className={styles.referenceList}>
                   {impact.references.map((reference, index) => (
@@ -155,14 +155,11 @@ export function LlmProviderRemovalDialog({
                 </ul>
               )}
             </div>
-            <p className={styles.muted}>
-              API
-              密钥保留在本机凭据存储，不会删除，以免影响共用密钥的其他供应商或功能。智能体配置、频道绑定和聊天记录也不会删除。
-            </p>
+            <p className={styles.muted}>已保存的 API 密钥会保留。</p>
             {impact.blockedReason ? (
               <Banner tone="bad">{impact.blockedReason}</Banner>
             ) : (
-              <p>确认后，此供应商及其模型将退出可用列表。</p>
+              <p>移除后，智能体不能再选这个供应商的模型。</p>
             )}
           </>
         ) : null}

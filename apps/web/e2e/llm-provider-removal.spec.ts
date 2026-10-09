@@ -73,8 +73,8 @@ for (const theme of ['light', 'dark'] as const) {
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '检查供应商移除影响' })
     await expect(dialog.getByText('synthetic-chat', { exact: true })).toBeVisible()
-    await expect(dialog).toContainText('API 密钥保留在本机凭据存储')
-    await expect(dialog).toContainText('没有智能体当前配置或活动频道上下文引用此供应商')
+    await expect(dialog).toContainText('已保存的 API 密钥会保留')
+    await expect(dialog).toContainText('没有智能体在用这个供应商')
     await expect(dialog.getByRole('button', { name: '确认删除供应商' })).toBeEnabled()
     await page.screenshot({ animations: 'disabled', path: `.local/provider-removal-${theme}.png` })
     await dialog.getByRole('button', { name: '取消', exact: true }).click()
@@ -157,7 +157,7 @@ test('built-in removal blocks references, requires a fresh preview after conflic
       .getByRole('row', { name: /DeepSeek 内置固定接入/u })
       .click()
     await page.getByRole('button', { name: '移除配置', exact: true }).click()
-    await expect(dialog).toContainText('宿主固定装载')
+    await expect(dialog).toContainText('内置供应商不能移除')
     await expect(dialog.getByRole('button', { name: '确认移除配置' })).toBeDisabled()
     expect(failures).toEqual([])
   } finally {
@@ -210,7 +210,7 @@ for (const failReconciliation of [false, true]) {
     const dialog = page.getByRole('dialog', { name: '检查供应商移除影响' })
     await dialog.getByRole('button', { name: '确认删除供应商' }).click()
     if (failReconciliation) {
-      await expect(dialog.getByRole('alert')).toContainText('未能确认供应商是否已移除')
+      await expect(dialog.getByRole('alert')).toContainText('不确定供应商是否已移除')
       await expect(dialog.getByRole('button', { name: '确认移除配置' })).toBeDisabled()
       await dialog.getByRole('button', { name: '重新检查影响' }).click()
     }

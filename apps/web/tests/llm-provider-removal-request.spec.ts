@@ -70,7 +70,7 @@ describe('provider removal response reconciliation', () => {
   it('does not claim success or retry when reconciliation also fails', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new TypeError('synthetic offline'))
     vi.stubGlobal('fetch', fetch)
-    await expect(removeLlmProviderAndReconcile(provider, 2)).rejects.toThrow('未能确认供应商是否已移除')
+    await expect(removeLlmProviderAndReconcile(provider, 2)).rejects.toThrow('不确定供应商是否已移除')
     expect(fetch.mock.calls.map(([, options]) => options?.method)).toEqual(['DELETE', 'GET'])
   })
 })

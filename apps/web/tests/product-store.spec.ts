@@ -88,7 +88,7 @@ describe('product store Host mutations', () => {
           error: { code: 'network' as const, message: 'Host 不可达。' },
           lastSuccessfulAt: null,
         },
-        diagnosticNote: 'Host 初始化失败：Host 不可达。',
+        diagnosticNote: '无法连接服务：Host 不可达。',
       }),
       subscribe: () => () => undefined,
       execute: () => Promise.resolve(null),

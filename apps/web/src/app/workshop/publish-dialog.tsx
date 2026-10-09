@@ -208,8 +208,8 @@ export function PublishDialog({
         </p>
         <p>
           {published.reviewStatus === 'rejected'
-            ? '自动检查发现了必须修改的问题，这次发布不会公开。请查看审查报告，修改后重新保存并发布。'
-            : '社区正在审查这次发布，通常几分钟内完成。审查报告里有安全、可靠性等方面的建议。'}
+            ? '自动检查发现了必须修改的问题，这次发布没有公开。看完审查报告修改后再发布。'
+            : '社区正在审查，通常几分钟内完成。'}
         </p>
         {notable.length > 0 ? (
           <ul>
@@ -259,7 +259,7 @@ export function PublishDialog({
         <>
           <p>
             以 @{account.handle} 发布{revision ? `${relativeTime(revision.createdAt)}的版本` : '最新版本'}
-            。所有人都能看到并安装它，同一个扩展再次发布会成为新的一次发布。
+            。所有人都能看到并安装它。
           </p>
           <Field label="一句话简介" hint="显示在社区列表的卡片上。">
             <Input
@@ -296,14 +296,12 @@ export function PublishDialog({
           <Field label="更新说明" hint="可选。告诉使用者这次改了什么。">
             <Textarea value={notes} maxLength={2000} rows={3} onChange={(event) => setNotes(event.target.value)} />
           </Field>
-          <Banner tone="info">
-            社区会自动审查源码与权限并给出建议。审查完成前会标注「风险未知」；源码中包含凭据等明确问题时不会公开。
-          </Banner>
+          <Banner tone="info">社区会自动审查源码和权限，审查完成前标为「风险未知」。</Banner>
         </>
       ) : (
         <>
-          <p>发布需要先登录社区。登录在浏览器中完成，授权后回到这里继续。</p>
-          {community.waiting ? <Banner tone="info">已在浏览器中打开社区授权页，完成后这里会自动更新。</Banner> : null}
+          <p>发布前先登录社区，登录会在浏览器中完成。</p>
+          {community.waiting ? <Banner tone="info">已在浏览器打开授权页，授权后这里会自动更新。</Banner> : null}
         </>
       )}
     </Dialog>

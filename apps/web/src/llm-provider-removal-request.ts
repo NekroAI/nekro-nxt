@@ -18,7 +18,7 @@ export async function removeLlmProviderAndReconcile(
     try {
       settings = await callHostApi(HostApiContracts.llmProviders, {}, undefined)
     } catch {
-      throw new Error('未能确认供应商是否已移除，请重新检查影响以核对结果。', { cause })
+      throw new Error('不确定供应商是否已移除，请刷新后查看。', { cause })
     }
     if (isLlmProviderRemoved(settings, provider)) return settings
     throw cause

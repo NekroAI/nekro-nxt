@@ -62,7 +62,7 @@ function ApprovalLayer({
         <SwitchRow
           key={risk.key}
           title={risk.label}
-          description={`${risk.detail === undefined ? '' : `${risk.key.startsWith(`${layer}:mcp.`) ? '将运行' : '用途'}：${sentence(risk.detail)}。`}这项能力不受范围限制，打开开关表示你了解并接受风险。`}
+          description={`${risk.detail === undefined ? '' : `${risk.key.startsWith(`${layer}:mcp.`) ? '将运行' : '用途'}：${sentence(risk.detail)}。`}这项能力没有范围限制，打开即表示接受风险。`}
           checked={accepted.has(risk.key)}
           onCheckedChange={(checked) => {
             const next = new Set(accepted)

@@ -209,16 +209,14 @@ export function PersonaPublishDialog({
         <p>正在读取社区账号…</p>
       ) : !account ? (
         <>
-          <p>分享需要先登录社区。登录在浏览器中完成，授权后回到这里继续。</p>
-          {community.waiting ? <Banner tone="info">已在浏览器中打开社区授权页，完成后这里会自动更新。</Banner> : null}
+          <p>分享前先登录社区，登录会在浏览器中完成。</p>
+          {community.waiting ? <Banner tone="info">已在浏览器打开授权页，授权后这里会自动更新。</Banner> : null}
         </>
       ) : (
         <div className={styles.dialogBody}>
           <p className={styles.dialogNote}>
             以 @{account.handle} 分享。只分享名称、头像和设定，不含模型、能力与扩展。
-            <InfoTip label="审查与公开">
-              社区会检查内容是否合规、是否含有联系方式或密钥等信息，通过后公开。更新会生成新的修订并重新审查。
-            </InfoTip>
+            <InfoTip label="审查与公开">审核通过后公开，之后更新会重新审核。</InfoTip>
           </p>
           {mineError ? <Banner tone="bad">{mineError}</Banner> : null}
           {mine && mine.items.length > 0 ? (

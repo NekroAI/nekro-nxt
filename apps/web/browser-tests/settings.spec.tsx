@@ -428,7 +428,7 @@ test.describe('settings space', () => {
       await expect(dialog.getByRole('button', { name: '安装（不启用）' })).toBeDisabled()
       await dialog.getByLabel('npm 包与版本').fill('@example/dsh-sample-plugin@1.2.3')
       await dialog.getByRole('button', { name: '检查安装内容' }).click()
-      await expect(dialog).toContainText('安装后不会自动启用')
+      await expect(dialog).toContainText('装好后默认关闭')
       await dialog.getByRole('switch', { name: 'example-native-addon' }).click()
       await dialog.getByRole('button', { name: '安装（不启用）' }).click()
       await expect(dialog).toBeHidden()

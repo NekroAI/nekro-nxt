@@ -191,9 +191,7 @@ export function InstalledView({
         </div>
       )}
       {updates > 0 ? (
-        <p className={styles.faint}>
-          导入新发布会成为这个扩展的一个新版本，智能体仍使用原来的版本，确认无误后再在扩展详情中切换。
-        </p>
+        <p className={styles.faint}>导入后作为新版本保存，智能体继续用当前版本，需要时在扩展详情里切换。</p>
       ) : null}
     </MainContent>
   )

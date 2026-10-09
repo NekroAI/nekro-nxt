@@ -2264,7 +2264,7 @@ describe('HttpProductHost', () => {
     await flush()
 
     validSnapshot = false
-    await expect(host.actions['host.refresh']()).rejects.toThrow('数据格式无效')
+    await expect(host.actions['host.refresh']()).rejects.toThrow('数据无法识别')
     expect(host.getSnapshot().host).toMatchObject({
       status: 'stale',
       error: { code: 'invalid-snapshot' },

@@ -370,7 +370,7 @@ test('provider connection test uses the unsaved page draft without saving it', a
   await page.getByRole('textbox', { name: '模型 ID' }).fill('draft-model')
   await page.getByRole('button', { name: '测试连接' }).click()
 
-  await expect(page.getByText('当前页面配置测试通过，可使用 draft-model。', { exact: true })).toBeVisible()
+  await expect(page.getByText('测试通过，可以使用 draft-model。', { exact: true })).toBeVisible()
   expect(testRequests).toEqual([
     {
       provider: 'draft-gateway',
@@ -424,7 +424,7 @@ test('settings saves a built-in provider credential without exposing it again', 
   const apiKey = page.getByLabel('API 密钥', { exact: true })
   await apiKey.fill('playwright-write-only-test-key')
   await page.getByRole('button', { name: '保存供应商', exact: true }).click()
-  await expect(page.getByText('供应商配置已保存。API 密钥只写入本机凭据存储。', { exact: true })).toBeVisible()
+  await expect(page.getByText('供应商配置已保存', { exact: true })).toBeVisible()
   await expect(apiKey).toHaveValue('')
 
   // The address keeps the open provider, so a reload returns to the same page.
@@ -586,7 +586,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
                 ? { state: 'connected', credentialConfigured: true, proactiveSend: true }
                 : {
                     state: 'stopped',
-                    message: '这个连接的适配器未安装。',
+                    message: '这个连接的平台扩展没有安装。',
                     credentialConfigured: true,
                     proactiveSend: true,
                   },
@@ -724,7 +724,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   expect(installationRequests.at(-1)).toBe('uninstall')
 
   await page.goto(`/wiring/connections/${connectionId}`)
-  await expect(detail).toContainText('这个连接的适配器未安装。')
+  await expect(detail).toContainText('这个连接的平台扩展没有安装。')
   await expect(detail.getByRole('heading', { name: /频道 1/u })).toBeVisible()
   const retainedScreenshot = testInfo.outputPath('adapter-uninstalled-connection-retained.png')
   await page.screenshot({ path: retainedScreenshot, animations: 'disabled' })

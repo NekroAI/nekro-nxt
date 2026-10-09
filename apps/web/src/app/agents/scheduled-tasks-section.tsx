@@ -41,7 +41,7 @@ export function useScheduledTaskActions() {
     }
     try {
       const woke = await api.getState().scheduledTaskAction(task.id, action)
-      toast(action === 'run' && !woke ? '已执行，扩展判断这次无需唤醒智能体' : DONE[action])
+      toast(action === 'run' && !woke ? '已执行，这次不需要智能体处理' : DONE[action])
     } catch (error) {
       failure(error)
     }

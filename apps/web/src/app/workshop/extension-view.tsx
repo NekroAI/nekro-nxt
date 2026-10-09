@@ -176,7 +176,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
       <ExtensionSettings extension={extension} />
 
-      <PropertyGroup title="版本" tip="智能体每次保存、每次从社区或文件导入都会多一个版本，可以切换使用或导出。">
+      <PropertyGroup title="版本">
         <div className={styles.records}>
           {extension.revisions.toReversed().map((revision) => (
             <RecordRow
@@ -446,7 +446,7 @@ function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }
   ]
 
   return (
-    <PropertyGroup title="智能体" tip="启用后，这个智能体在对话中获得扩展的能力；所有智能体使用本机安装的同一个版本。">
+    <PropertyGroup title="智能体" tip="启用后它在对话里就能用这个扩展。">
       {activation.dialog}
       <DataTable
         label="使用这个扩展的智能体"

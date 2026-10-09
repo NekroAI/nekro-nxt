@@ -2250,7 +2250,7 @@ test.describe('NekroNxt browser projections', () => {
 
       await page.getByLabel('单次生成上限').fill('2048')
       await page.getByRole('button', { name: '保存扩展配置' }).click()
-      await playwrightExpect(page.getByText('配置已在其他位置更新；当前草稿已保留，请核对后重新保存。')).toBeVisible()
+      await playwrightExpect(page.getByText('配置在别处被修改过。你的修改还在，核对后重新保存。')).toBeVisible()
       await playwrightExpect(page.getByLabel('单次生成上限')).toHaveValue('2048')
       expect(runtimeErrors.filter((message) => !message.includes('status of 500'))).toEqual([])
     } finally {
@@ -2362,14 +2362,14 @@ test.describe('NekroNxt browser projections', () => {
       await playwrightExpect(page.getByText('runtime-extra', { exact: true }).first()).toBeVisible()
       await playwrightExpect(page.getByText('其他扩展', { exact: true }).first()).toBeVisible()
       await page.getByText('runtime-extra', { exact: true }).first().click()
-      await playwrightExpect(page.getByText(/由运行环境注册/)).toBeVisible()
+      await playwrightExpect(page.getByText(/运行环境自带/)).toBeVisible()
       await playwrightExpect(page.locator('body')).not.toContainText('未评估归属')
       await playwrightExpect(page.getByText('保存后需要重启')).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '添加一项' })).toBeVisible()
       await playwrightExpect(page.getByRole('button', { name: '添加键值' })).toBeVisible()
       await playwrightExpect(page.getByLabel('mode的配置类型')).toBeVisible()
       await playwrightExpect(page.getByText(/Schema 类型“custom-fixture”使用高级 JSON 配置/)).toBeVisible()
-      await playwrightExpect(page.getByText(/包含只写 Secret/)).toBeVisible()
+      await playwrightExpect(page.getByText(/含有密钥/).first()).toBeVisible()
       expect(runtimeErrors).toEqual([])
     } finally {
       await page.close()

@@ -289,7 +289,7 @@ function Start({ onImport, onAddMcp }: { readonly onImport: () => void; readonly
     <MainContent width="readable">
       <div className={styles.start}>
         <EmptyState icon={<Hammer size={22} />} title="让智能体为你做新能力">
-          扩展能让智能体多一项本领、在界面上多一块信息，或者成为一个独立的小应用。在频道里描述需求，智能体会写好、试运行，确认后保存到这里。
+          在频道里告诉智能体你想要什么，它会写好扩展；试用满意后保存到这里。
         </EmptyState>
         <div className={styles.examples}>
           {EXAMPLES.map((example) => (

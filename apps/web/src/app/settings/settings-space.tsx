@@ -592,7 +592,7 @@ function Notifications() {
       <SectionHead title="通知" />
       <PropertyGroup title="渠道">
         <PropertyList>
-          <PropertyRow label="系统通知" tip="由桌面端弹出；服务器实例转发给在线的桌面端">
+          <PropertyRow label="系统通知" tip="在桌面版上弹出">
             <span className={styles.rowControls}>
               <Button
                 size="small"

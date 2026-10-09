@@ -151,7 +151,7 @@ function CommunityCatalog() {
           </span>
         }
         title="发现"
-        meta={<span>扩展由社区作者提供，每次发布都会经过自动审查；安装后不会自动启用</span>}
+        meta={<span>由社区作者发布，均经过自动审查</span>}
       />
       <div className={styles.communityTools}>
         <SearchField value={query} onChange={setQuery} label="搜索社区扩展" placeholder="搜索名称、介绍或标签" />
@@ -331,16 +331,10 @@ function CommunityDetail({
       ) : null}
       {detail.review ? <RatingCard review={detail.review} pageUrl={detail.pageUrl} /> : null}
       {label?.tone === 'neutral' ? (
-        <Banner tone="warn">
-          这次发布还没有完成审查，风险未知。扩展会以 NekroNXT 的权限运行，请只安装你信任的作者的扩展。
-        </Banner>
+        <Banner tone="warn">这次发布还没审查完，风险未知。只安装你信任的作者的扩展。</Banner>
       ) : null}
-      {label?.tone === 'warn' ? (
-        <Banner tone="bad">审查发现了可能被利用或伤害你的问题。请阅读审查记录，理解风险后再安装。</Banner>
-      ) : null}
-      {installed ? (
-        <Banner tone="info">本机已有这个扩展。导入新的发布会成为它的一个新版本，不会自动切换使用。</Banner>
-      ) : null}
+      {label?.tone === 'warn' ? <Banner tone="bad">审查发现了安全问题，安装前请先看审查记录。</Banner> : null}
+      {installed ? <Banner tone="info">本机已有这个扩展，这次会作为新版本导入，需要时在扩展详情里切换。</Banner> : null}
 
       <PropertyGroup title="介绍">
         {detail.description.trim() ? (

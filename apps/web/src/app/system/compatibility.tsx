@@ -130,7 +130,7 @@ export function CompatibilityNotices(props: CompatibilityFilter & { readonly sho
     <div className={styles.stack} data-compatibility-notices="">
       {showReset ? (
         <Banner tone="info">
-          引擎已升级到 {summary.runtimeVersion}。旧上下文已归档，聊天记录保留；下一条消息开始新的上下文。
+          引擎已升级到 {summary.runtimeVersion}。聊天记录保留，智能体从下一条消息开始新的上下文。
         </Banner>
       ) : null}
       {diagnostics.map((diagnostic) => {
@@ -203,7 +203,7 @@ function HostConnectionBanner() {
         }
       >
         <b>{status === 'stale' ? '连接不稳定' : '无法连接'}</b>{' '}
-        {status === 'stale' ? '当前显示最近一次同步的数据。' : '当前内容可能为空或不是最新状态。'}
+        {status === 'stale' ? '显示的是最近一次同步的内容。' : '页面内容可能不是最新的。'}
       </Banner>
     </div>
   )

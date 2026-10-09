@@ -950,7 +950,7 @@ export class HttpProductHost implements ProductHostPort {
         void this.#refreshAndNotify()
       },
       error: () => {
-        this.#publishFailure({ code: 'sse', message: '与 NekroNXT Host 的实时连接已中断，正在尝试恢复。' })
+        this.#publishFailure({ code: 'sse', message: '与服务的连接中断，正在重连。' })
       },
     }
     const unsubscribeEvents = this.#events.subscribe(
@@ -1681,9 +1681,7 @@ export class HttpProductHost implements ProductHostPort {
         error,
         lastSuccessfulAt: this.#snapshot.host.lastSuccessfulAt,
       },
-      diagnosticNote: hasSnapshot
-        ? `Host 连接异常，当前显示上次成功数据：${error.message}`
-        : `Host 初始化失败：${error.message}`,
+      diagnosticNote: hasSnapshot ? `连接异常，显示的是上次的数据：${error.message}` : `无法连接服务：${error.message}`,
     }
     this.#listener?.()
   }

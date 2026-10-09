@@ -61,9 +61,7 @@ export function AccountView({ community }: { readonly community: CommunityState 
         status={account ? <Chip tone="ok">已登录</Chip> : <Chip>未登录</Chip>}
         meta={account ? <span>@{account.handle}</span> : <span>登录后可以发布扩展并查看审查结果</span>}
       />
-      {community.waiting && !account ? (
-        <Banner tone="info">已在浏览器中打开社区授权页。在那里同意授权后，这里会自动更新。</Banner>
-      ) : null}
+      {community.waiting && !account ? <Banner tone="info">已在浏览器打开授权页，授权后这里会自动更新。</Banner> : null}
       {account && status.signedInAt !== null ? (
         <PropertyList>
           <PropertyRow label="登录时间">
@@ -123,7 +121,7 @@ export function AccountView({ community }: { readonly community: CommunityState 
           }
         }}
       >
-        <p>这个实例会删除保存的社区凭据，并在社区撤销授权。已经安装的社区扩展不受影响。</p>
+        <p>会在社区撤销这台设备的授权。已安装的扩展照常使用。</p>
       </ConfirmDialog>
     </MainContent>
   )

@@ -103,7 +103,7 @@ export function ImportDialog({
             <Chip>{providesLabel(inspection.provides)}</Chip>
           </div>
           {note}
-          <p>{inspection.idempotent ? '本机已有完全相同的版本。' : '导入后不会自动启用。'}</p>
+          <p>{inspection.idempotent ? '本机已有完全相同的版本。' : '导入后需要手动启用。'}</p>
           {inspection.slugConflict ? (
             <Field label="标识" hint="原标识已被占用">
               <Input value={slug} spellCheck={false} onChange={(event) => setSlug(event.target.value.trim())} />

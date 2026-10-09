@@ -165,7 +165,7 @@ export function AddProviderDialog({
         </>
       }
     >
-      <Field label="模型供应商" tip="候选项来自当前运行环境的供应商目录。">
+      <Field label="模型供应商">
         <Select
           value={candidate}
           onValueChange={(value) => setCandidate(value)}
@@ -321,7 +321,7 @@ export function ModelProviderDetail({
       if (customMode) onSelect(providerId)
       try {
         await store.getState().refreshHost()
-        toast('供应商配置已保存。API 密钥只写入本机凭据存储。', { group: `llm-provider-save:${providerId}` })
+        toast('供应商配置已保存', { group: `llm-provider-save:${providerId}` })
       } catch (refreshError) {
         toast(`配置已保存，但页面数据刷新失败：${failure(refreshError)}`, {
           tone: 'bad',
@@ -371,7 +371,7 @@ export function ModelProviderDetail({
           models: testModels.map((model) => ({ ...model })),
         },
       )
-      toast(`当前页面配置测试通过，可使用 ${testModelName}。`, { group: `llm-provider-test:${providerId}` })
+      toast(`测试通过，可以使用 ${testModelName}。`, { group: `llm-provider-test:${providerId}` })
     } catch (cause) {
       toast(failure(cause), { tone: 'bad', group: `llm-provider-test:${providerId}` })
     } finally {
@@ -441,7 +441,7 @@ export function ModelProviderDetail({
 
       <PropertyGroup
         title="模型"
-        description={modelsEditable ? undefined : '这个供应商的模型由其适配器固定提供。'}
+        description={modelsEditable ? undefined : '这个供应商的模型列表不能修改。'}
         tip={
           modelsEditable
             ? `打开“看图”的模型可以直接理解频道里的图片。${catalogRoute ? '加入目录外的模型时，需要在高级设置中选择 API 协议。' : ''}`
@@ -514,7 +514,7 @@ export function ModelProviderDetail({
                   />
                 </Field>
               ) : catalogRoute ? (
-                <Field label="API 协议" tip="选择后该供应商的全部模型都使用此协议；加入目录外的模型时必须选择。">
+                <Field label="API 协议" tip="这个供应商的所有模型都用这个协议。添加目录外的模型时需要选择。">
                   <Select
                     value={api || CATALOG_PROTOCOL}
                     onValueChange={(value) => setApi(value === CATALOG_PROTOCOL ? '' : value)}
@@ -683,7 +683,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
       setApiKey('')
       try {
         await store.getState().refreshHost()
-        toast('供应商配置已保存。API 密钥只写入本机凭据存储。', { group: `llm-provider-save:${selected.provider}` })
+        toast('供应商配置已保存', { group: `llm-provider-save:${selected.provider}` })
         onSaved?.()
       } catch (refreshError) {
         toast(`配置已保存，但页面数据刷新失败：${failure(refreshError)}`, {
@@ -714,7 +714,7 @@ export function AddModelProviderForm({ onSaved }: { readonly onSaved?: () => voi
     )
   }
   if (settings.providers.length === 0) {
-    return <Banner tone="info">当前没有可配置的供应商。完整目录和自定义供应商位于设置。</Banner>
+    return <Banner tone="info">没有可配置的供应商，请到「设置 → 模型」添加。</Banner>
   }
 
   return (

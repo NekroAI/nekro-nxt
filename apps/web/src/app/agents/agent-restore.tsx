@@ -98,9 +98,7 @@ export function RestoreDialog({
       wide
       actions={<Button onClick={() => onOpenChange(false)}>关闭</Button>}
     >
-      <p className={styles.note}>
-        恢复后，{agent.name}的名称、设定、模型和能力回到当时的样子；进行中的对话在当前这一步结束后使用。
-      </p>
+      <p className={styles.note}>{agent.name}的名称、设定、模型和能力会回到当时的样子。</p>
       {blocked ? <p className={styles.noteWarn}>页面上还有未保存的修改，先保存或放弃后再恢复。</p> : null}
       {error ? <p className={styles.noteWarn}>{error}</p> : null}
       {!history && !error ? (

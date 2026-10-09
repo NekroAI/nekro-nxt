@@ -42,7 +42,7 @@ export class HostReleaseGuard {
   }
 
   assertCompatible(): void {
-    if (this.#state.mismatch) throw new Error('服务已升级，当前页面版本过旧。未发送此操作，请保留草稿后刷新页面。')
+    if (this.#state.mismatch) throw new Error('服务已升级，这次操作没有发出。请刷新页面后重试。')
   }
 
   /** Probe before dispatch, so a disconnected old tab cannot submit to a new Host. */

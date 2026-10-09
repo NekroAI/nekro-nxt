@@ -317,11 +317,7 @@ function JsonField(props: GenericFieldProps) {
   const [text, setText] = useState(() => JSON.stringify(value ?? defaultValueForNode(node), null, 2))
   const [error, setError] = useState('')
   if (secret) {
-    return (
-      <Banner tone="warn">
-        “{fieldTitle(name, node)}”包含只写 Secret，无法安全拆分编辑；已禁止整体替换，避免清除或回显已保存的值。
-      </Banner>
-    )
+    return <Banner tone="warn">“{fieldTitle(name, node)}”含有密钥，不能在这里整体修改。</Banner>
   }
   return (
     <div className={styles.jsonField}>
@@ -527,11 +523,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
   if (node.type === 'array' && node.inner) {
     const inner = node.inner
     if (containsSecretNode(inner)) {
-      return (
-        <Banner tone="warn">
-          “{fieldTitle(name, node)}”的集合项包含只写 Secret，因此整体添加、删除和排序不可用，以免覆盖未回传的值。
-        </Banner>
-      )
+      return <Banner tone="warn">“{fieldTitle(name, node)}”的列表项含有密钥，不能在这里添加、删除或排序。</Banner>
     }
     const entries: readonly unknown[] = Array.isArray(value) ? value : []
     return (
@@ -601,11 +593,7 @@ function GenericField(props: GenericFieldProps): ReactNode {
 
   if (node.type === 'dict' && node.inner) {
     if (containsSecretNode(node.inner)) {
-      return (
-        <Banner tone="warn">
-          “{fieldTitle(name, node)}”的键值包含只写 Secret，因此整体改名、添加和删除不可用，以免覆盖未回传的值。
-        </Banner>
-      )
+      return <Banner tone="warn">“{fieldTitle(name, node)}”的键值含有密钥，不能在这里改名、添加或删除。</Banner>
     }
     return <DictField {...props} disabled={locked} />
   }
@@ -839,7 +827,7 @@ function CredentialEditor({ refName, onChanged }: { readonly refName: string; re
           }
         }}
       >
-        清除后，依赖这个凭据的功能将不可用；已保存的值无法从浏览器恢复。
+        清除后，用到这个凭据的功能将不可用，且无法恢复。
       </ConfirmDialog>
     </div>
   )
@@ -1018,12 +1006,12 @@ function NamespaceEditor({
           )}
         </div>
       ) : (
-        <Banner tone="bad">这组配置的结构无法安全读取，已停止编辑，避免写入错误配置。</Banner>
+        <Banner tone="bad">无法读取这组配置的结构，暂时不能编辑。</Banner>
       )}
       {credentialRefs.map((refName) => (
         <CredentialEditor refName={refName} onChanged={onSaved} key={refName} />
       ))}
-      {conflict ? <Banner tone="warn">配置已在其他位置更新；当前草稿已保留，请核对后重新保存。</Banner> : null}
+      {conflict ? <Banner tone="warn">配置在别处被修改过。你的修改还在，核对后重新保存。</Banner> : null}
       {error && !conflict ? <Banner tone="bad">{error}</Banner> : null}
       <div className={styles.saveRow}>
         <span className={notice ? styles.notice : styles.muted} role={notice ? 'status' : undefined}>
@@ -1308,7 +1296,7 @@ export function InstallDshPluginDialog({
             <div className={styles.inspectionHead}>
               <b>{packageLabel(inspection.packageName)}</b>
               <span className={styles.muted}>
-                版本 {inspection.packageVersion} · {inspection.entries.length} 个入口 · 安装后不会自动启用
+                版本 {inspection.packageVersion} · {inspection.entries.length} 个入口 · 装好后默认关闭
               </span>
             </div>
             {inspection.hostUi ? (
@@ -1319,7 +1307,7 @@ export function InstallDshPluginDialog({
             {inspection.blockedBuilds.length > 0 ? (
               <>
                 <Banner tone="warn">
-                  以下依赖要执行安装构建脚本。未批准的依赖会按禁用脚本的方式安装；批准只对当前精确版本有效。
+                  下面的依赖要在安装时运行构建脚本。不批准就跳过脚本安装；批准只对这个版本有效。
                 </Banner>
                 {inspection.blockedBuilds.map((name) => (
                   <SwitchRow
@@ -1388,7 +1376,7 @@ export function DshPluginDetail({
     const target = entryScope[item.id] ?? item.selectedScope ?? item.suggestedScope
     const agentId = entryAgent[item.id] ?? agents[0]?.id
     if (target === 'agent' && !agentId) {
-      setOperationError('当前没有可选择的智能体。创建智能体后可启用该入口。')
+      setOperationError('还没有智能体，先创建一个再启用。')
       return
     }
     setOperationError('')
@@ -1436,7 +1424,7 @@ export function DshPluginDetail({
     setOperationError('')
     try {
       await callHostApi(HostApiContracts.deactivateDshPluginEntry, { entryId }, { targetKey })
-      toast('入口已关闭，资源已清理。', { group: `dsh-entry:${entryId}` })
+      toast('入口已关闭。', { group: `dsh-entry:${entryId}` })
       await onRefresh()
     } catch (cause) {
       setOperationError(failure(cause))
@@ -1477,11 +1465,9 @@ export function DshPluginDetail({
           ) : undefined
         }
       />
-      {entry.group === 'runtime' ? <Banner tone="info">这组配置由运行环境注册，不属于任何已安装的插件。</Banner> : null}
+      {entry.group === 'runtime' ? <Banner tone="info">运行环境自带的配置。</Banner> : null}
       {plugin?.loadError ? <Banner tone="bad">{plugin.loadError.message}</Banner> : null}
-      {plugin?.clientUiDetected ? (
-        <Banner tone="info">插件自带的原生界面没有接入；它的服务端能力和配置可以正常使用。</Banner>
-      ) : null}
+      {plugin?.clientUiDetected ? <Banner tone="info">插件自带的界面不可用，其他功能和配置照常使用。</Banner> : null}
       {plugin?.hostUi ? (
         <Banner tone="info">插件提供 {plugin.hostUi.pages.length} 个页面，在本机启用对应入口后出现。</Banner>
       ) : null}
@@ -1548,7 +1534,7 @@ export function DshPluginDetail({
                       </Button>
                     }
                   >
-                    检查配置和启用入口都会初始化第三方模块，表示你信任这个安装来源。
+                    检查配置或启用入口都会运行插件代码，只安装可信来源的插件。
                   </Banner>
                 ) : null}
                 {inspection?.mode === 'schema' ? (

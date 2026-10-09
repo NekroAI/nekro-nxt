@@ -156,7 +156,7 @@ export function ChannelPromptSheet({
         })
       }
       onSaved(saved)
-      if (instructionsChanged || notesChanged) toast('已保存，从智能体下一轮开始生效')
+      if (instructionsChanged || notesChanged) toast('已保存，下一条消息起生效')
       onOpenChange(false)
     } catch (error) {
       if (error instanceof HostRequestError && error.status === 409) {
@@ -192,10 +192,7 @@ export function ChannelPromptSheet({
         </div>
       ) : (
         <>
-          <PropertyGroup
-            title="频道说明"
-            description="管理员写给智能体的要求，例如群规、话题范围、语气和称呼。只在这个频道生效，换智能体时保留。"
-          >
+          <PropertyGroup title="频道说明" description="写给智能体的群规、话题范围、语气和称呼，只在这个频道生效。">
             <div className={styles.editor}>
               <PromptReferenceEditor
                 value={instructions}
@@ -225,10 +222,7 @@ export function ChannelPromptSheet({
             />
           </PropertyGroup>
 
-          <PropertyGroup
-            title="智能体笔记"
-            description="智能体根据对这个群的了解自己记下的长期要求和约定。默认锁定，解锁后智能体才会记；你可以随时修改、清空或重新锁定。"
-          >
+          <PropertyGroup title="智能体笔记" description="智能体自己记下的这个群的约定。解锁后它才能修改。">
             <div className={styles.editor}>
               <Textarea
                 aria-label="智能体笔记"
