@@ -10,7 +10,7 @@ import {
   type CommunityRating,
 } from '@nekro-nxt/contracts'
 import { ChevronDown, ExternalLink } from 'lucide-react'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Button, Chip, Disclosure } from '../../ui-kit/index.js'
 import { openExternal } from './community-model.js'
 import styles from './community.module.css'
@@ -105,12 +105,71 @@ export function Stars({ stars }: { readonly stars: number }) {
   )
 }
 
-/** The reviewer's seal, used as her signature. */
-export function ReviewerSeal() {
+/**
+ * 审查员小澄：水月荧贝雷帽上那只半透明的小水母，戴圆眼镜、举着放大镜；与社区网站同一形象，颜色固定以适配深浅主题。
+ */
+export function ReviewerSeal({ size = 28 }: { readonly size?: number }) {
+  const id = useId().replaceAll(':', '')
   return (
-    <span className={styles.reviewerSeal} aria-hidden="true">
-      澄
-    </span>
+    <svg viewBox="0 0 64 64" width={size} height={size} className={styles.reviewerMascot} aria-hidden="true">
+      <defs>
+        <radialGradient id={`${id}-bell`} cx="0.38" cy="0.3" r="0.8">
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="0.55" stopColor="#dfe9fb" />
+          <stop offset="1" stopColor="#a9c2ec" />
+        </radialGradient>
+        <linearGradient id={`${id}-tentacle`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#9fbbe9" />
+          <stop offset="1" stopColor="#9fbbe9" stopOpacity="0.15" />
+        </linearGradient>
+      </defs>
+      <g fill="none" stroke={`url(#${id}-tentacle)`} strokeWidth="2.6" strokeLinecap="round">
+        <path d="M19 37 C16 43 21 47 18 53 C16.5 56 18 58.5 19 60" />
+        <path d="M27 38 C25 44 29 48 27 55" />
+        <path d="M37 38 C39 44 35 48 37 55" />
+      </g>
+      <path d="M45 37 C48 41 46 44 49 47" fill="none" stroke="#9fbbe9" strokeWidth="2.6" strokeLinecap="round" />
+      <line x1="50.2" y1="48.2" x2="53" y2="51" stroke="#b4884a" strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="56" cy="54" r="4.2" fill="#e4eeff" stroke="#b4884a" strokeWidth="1.8" />
+      <path d="M54.3 52.6 a2.4 2.4 0 0 1 2.6 -0.6" fill="none" stroke="#ffffff" strokeWidth="1" strokeLinecap="round" />
+      <path
+        d="M9 33 C9 17.5 19.5 7 32 7 C44.5 7 55 17.5 55 33 C55 36.2 52.4 37.6 50 35.8 C47.6 38.6 44 38.6 41.5 35.8 C39 38.6 35 38.6 32 35.8 C29 38.6 25 38.6 22.5 35.8 C20 38.6 16.4 38.6 14 35.8 C11.6 37.6 9 36.2 9 33 Z"
+        fill={`url(#${id}-bell)`}
+        stroke="#3f5b8f"
+        strokeWidth="1.4"
+        strokeLinejoin="round"
+      />
+      <g fill="none" stroke="#b4884a" strokeWidth="1.1" strokeLinecap="round" opacity="0.9">
+        <path d="M12.5 22.5 Q32 14 51.5 22.5" />
+        <path d="M23.5 9.8 Q19.5 20 20.5 30" />
+        <path d="M40.5 9.8 Q44.5 20 43.5 30" />
+      </g>
+      <g fill="#c99a52">
+        <circle cx="21.4" cy="18.9" r="1.3" />
+        <circle cx="42.6" cy="18.9" r="1.3" />
+        <circle cx="32" cy="16.5" r="1.3" />
+      </g>
+      <path
+        d="M15 21 C16.5 15 21 11.2 25.5 10.2"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        opacity="0.85"
+      />
+      <ellipse cx="19.5" cy="30.5" rx="2.6" ry="1.5" fill="#f2a7b6" opacity="0.55" />
+      <ellipse cx="44.5" cy="30.5" rx="2.6" ry="1.5" fill="#f2a7b6" opacity="0.55" />
+      <ellipse cx="25.5" cy="27" rx="2.3" ry="2.7" fill="#22355c" />
+      <ellipse cx="38.5" cy="27" rx="2.3" ry="2.7" fill="#22355c" />
+      <circle cx="26.3" cy="26" r="0.9" fill="#ffffff" />
+      <circle cx="39.3" cy="26" r="0.9" fill="#ffffff" />
+      <g fill="none" stroke="#2a3d66" strokeWidth="1.2">
+        <circle cx="25.5" cy="27" r="4.6" />
+        <circle cx="38.5" cy="27" r="4.6" />
+        <path d="M30.1 26.6 Q32 25.4 33.9 26.6" />
+      </g>
+      <path d="M30.4 32.2 Q32 33.4 33.6 32.2" fill="none" stroke="#22355c" strokeWidth="1.1" strokeLinecap="round" />
+    </svg>
   )
 }
 

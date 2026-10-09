@@ -536,17 +536,8 @@
   margin-left: auto;
 }
 
-.reviewerSeal {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1.5px solid color-mix(in srgb, var(--brass) 70%, transparent);
-  border-radius: var(--r-1);
-  background: color-mix(in srgb, var(--brass) 10%, transparent);
-  color: var(--brass);
-  font-size: 14px;
-  font-weight: 600;
+.reviewerMascot {
+  flex: none;
 }
 
 .ratingPending {

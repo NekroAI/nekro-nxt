@@ -48,7 +48,7 @@ declare const styles: {
   readonly reviewRecord: string
   readonly reviewRecordMeta: string
   readonly reviewRecordRow: string
-  readonly reviewerSeal: string
+  readonly reviewerMascot: string
   readonly row: string
   readonly rowGlyph: string
   readonly rowName: string
