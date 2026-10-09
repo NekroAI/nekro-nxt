@@ -2175,6 +2175,13 @@ describe('DSH Host and internal Channel vertical slice', () => {
       locked: false,
       expectedRevision: 0,
     })
+    channelPrompts.saveByAdmin({
+      channelId: channel.id,
+      kind: 'notes',
+      document: { version: 1, segments: [] },
+      locked: false,
+      expectedRevision: 0,
+    })
     channelPrompts.updateNotesByAgent(channel.id, '成员甲喜欢简短的回答。')
     const createHost = (hostModel: ScriptedCommunicationModel) =>
       DshHostRuntime.create({

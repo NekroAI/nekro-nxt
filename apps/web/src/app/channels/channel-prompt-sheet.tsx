@@ -227,7 +227,7 @@ export function ChannelPromptSheet({
 
           <PropertyGroup
             title="智能体笔记"
-            description="智能体根据对这个群的了解自己记下的长期要求和约定。你可以修改、清空或锁定。"
+            description="智能体根据对这个群的了解自己记下的长期要求和约定。默认锁定，解锁后智能体才会记；你可以随时修改、清空或重新锁定。"
           >
             <div className={styles.editor}>
               <Textarea
@@ -242,7 +242,10 @@ export function ChannelPromptSheet({
               </div>
             </div>
             <PropertyList>
-              <PropertyRow label="锁定" description={locked ? '智能体不能修改笔记' : '智能体可以更新笔记'}>
+              <PropertyRow
+                label="锁定"
+                description={locked ? '智能体不能修改笔记' : '智能体可以根据对群的了解更新笔记'}
+              >
                 <Switch label="锁定智能体笔记" checked={locked} onCheckedChange={setLocked} />
               </PropertyRow>
             </PropertyList>

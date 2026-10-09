@@ -35,13 +35,24 @@ const withReference = PromptDocumentV1Schema.parse({
 })
 
 describe('channel prompts', () => {
-  it('keeps the admin instructions for the admin and lets the agent keep its own notes unless locked', async () => {
+  it('keeps the admin instructions for the admin and lets the agent keep notes only once an admin opens them', async () => {
     const { database, channel, prompts } = await fixture()
     try {
       expect(prompts.view(channel.id)).toMatchObject({
         instructions: { revision: 0, maxChars: CHANNEL_PROMPT_MAX_CHARS.instructions },
-        notes: { revision: 0, locked: false, maxChars: CHANNEL_PROMPT_MAX_CHARS.notes },
+        notes: { revision: 0, locked: true, maxChars: CHANNEL_PROMPT_MAX_CHARS.notes },
       })
+      // Notes start locked: the agent cannot write until an admin opens them.
+      expect(() => prompts.updateNotesByAgent(channel.id, '先记一笔')).toThrow(/没有开放/u)
+      expect(
+        prompts.saveByAdmin({
+          channelId: channel.id,
+          kind: 'notes',
+          document: { version: 1, segments: [] },
+          locked: false,
+          expectedRevision: 0,
+        }).notes,
+      ).toMatchObject({ revision: 1, locked: false })
 
       // Instructions: references allowed, never locked, not touched by the agent.
       const admin = prompts.saveByAdmin({
@@ -55,12 +66,12 @@ describe('channel prompts', () => {
 
       expect(prompts.updateNotesByAgent(channel.id, '  本群讨论开源项目，回答附代码示例。  ')).toMatchObject({
         kind: 'notes',
-        revision: 1,
+        revision: 2,
         updatedBy: 'agent',
         document: promptDocumentFromText('本群讨论开源项目，回答附代码示例。'),
       })
       // Writing the same notes again is not a new version.
-      expect(prompts.updateNotesByAgent(channel.id, '本群讨论开源项目，回答附代码示例。').revision).toBe(1)
+      expect(prompts.updateNotesByAgent(channel.id, '本群讨论开源项目，回答附代码示例。').revision).toBe(2)
       expect(prompts.current(channel.id, 'instructions')?.document).toEqual(withReference)
 
       expect(() =>
@@ -69,7 +80,7 @@ describe('channel prompts', () => {
           kind: 'notes',
           document: withReference,
           locked: false,
-          expectedRevision: 1,
+          expectedRevision: 2,
         }),
       ).toThrow(ChannelPromptError)
       const locked = prompts.saveByAdmin({
@@ -77,10 +88,13 @@ describe('channel prompts', () => {
         kind: 'notes',
         document: promptDocumentFromText('本群讨论开源项目。'),
         locked: true,
-        expectedRevision: 1,
+        expectedRevision: 2,
       })
-      expect(locked.notes).toMatchObject({ revision: 2, locked: true, updatedBy: 'admin' })
-      expect(locked.notes.revisions).toEqual([expect.objectContaining({ revision: 1, updatedBy: 'agent' })])
+      expect(locked.notes).toMatchObject({ revision: 3, locked: true, updatedBy: 'admin' })
+      expect(locked.notes.revisions.map(({ revision, updatedBy }) => [revision, updatedBy])).toEqual([
+        [2, 'agent'],
+        [1, 'admin'],
+      ])
       expect(() => prompts.updateNotesByAgent(channel.id, '改成活泼风格')).toThrow(/锁定/u)
 
       // A stale editor does not overwrite a newer save.
@@ -99,7 +113,7 @@ describe('channel prompts', () => {
           kind: 'notes',
           document: promptDocumentFromText('长'.repeat(CHANNEL_PROMPT_MAX_CHARS.notes + 1)),
           locked: true,
-          expectedRevision: 2,
+          expectedRevision: 3,
         }),
       ).toThrow(/最多/u)
 
@@ -121,12 +135,19 @@ describe('channel prompts', () => {
   it('keeps the latest twenty earlier versions of each part', async () => {
     const { database, channel, prompts } = await fixture()
     try {
+      prompts.saveByAdmin({
+        channelId: channel.id,
+        kind: 'notes',
+        document: { version: 1, segments: [] },
+        locked: false,
+        expectedRevision: 0,
+      })
       for (let revision = 0; revision < 25; revision += 1)
         prompts.updateNotesByAgent(channel.id, `第 ${revision + 1} 版`)
       const revisions = prompts.view(channel.id).notes.revisions.map(({ revision }) => revision)
       expect(revisions).toHaveLength(20)
-      expect(revisions[0]).toBe(24)
-      expect(revisions.at(-1)).toBe(5)
+      expect(revisions[0]).toBe(25)
+      expect(revisions.at(-1)).toBe(6)
       expect(prompts.view(channel.id).instructions.revisions).toEqual([])
     } finally {
       database.close()

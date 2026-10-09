@@ -35,7 +35,7 @@ export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapsho
         maxChars: 4000,
         revisions: [],
       },
-      notes: { document: { version: 1, segments: [] }, locked: false, revision: 0, maxChars: 2000, revisions: [] },
+      notes: { document: { version: 1, segments: [] }, locked: true, revision: 0, maxChars: 2000, revisions: [] },
     }),
   )
   await page.route('**/api/channels/*/pending', (route) => {

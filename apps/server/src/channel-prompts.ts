@@ -22,6 +22,11 @@ export const CHANNEL_PROMPT_MAX_CHARS: Readonly<Record<ChannelPromptKind, number
   notes: EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
 }
 
+/** Notes the admin never saved stay locked: the agent writes them only after an admin opens them. */
+const NOTES_LOCKED_BY_DEFAULT = true
+
+const notesLocked = (record: ChannelPromptRecord | undefined): boolean => record?.locked ?? NOTES_LOCKED_BY_DEFAULT
+
 export class ChannelPromptError extends Error {
   constructor(
     message: string,
@@ -81,7 +86,7 @@ export class ChannelPrompts {
       const record = this.#repository.getChannelPrompt(channelId, kind)
       return {
         document: record?.document ?? { version: 1 as const, segments: [] },
-        locked: record?.locked ?? false,
+        locked: kind === 'notes' ? notesLocked(record) : false,
         revision: record?.revision ?? 0,
         maxChars: CHANNEL_PROMPT_MAX_CHARS[kind],
         ...(record === undefined ? {} : { updatedBy: record.updatedBy, updatedAt: record.updatedAt }),
@@ -115,8 +120,11 @@ export class ChannelPrompts {
   /** The agent replaces its whole notes with plain text; an empty text clears them. */
   updateNotesByAgent(channelId: ChannelId, text: string): ChannelPromptRecord {
     const current = this.#repository.getChannelPrompt(channelId, 'notes')
-    if (current?.locked === true) {
-      throw new ChannelPromptError('管理员已锁定本频道的笔记，不能修改。', 'locked')
+    if (notesLocked(current)) {
+      throw new ChannelPromptError(
+        current === undefined ? '管理员还没有开放本频道的笔记，不能修改。' : '管理员已锁定本频道的笔记，不能修改。',
+        'locked',
+      )
     }
     const document = promptDocumentFromText(text.trim())
     assertLength('notes', document)
