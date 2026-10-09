@@ -814,9 +814,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const consecutive = state.consecutiveFailures + 1
     const blockedReason =
       repeated >= 2
-        ? '相同动态扩展错误已连续出现两次，请停止修改并向用户报告诊断。'
+        ? '同样的错误已经出现两次，先停下来，把问题告诉用户。'
         : consecutive >= 3
-          ? '本轮动态扩展已连续失败三次，请停止修改并向用户报告诊断。'
+          ? '已经连续失败三次，先停下来，把问题告诉用户。'
           : undefined
     this.state = {
       ...state,
@@ -841,7 +841,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   private assertWritable(operation: string): void {
     if (this.userOperationDepth > 0) return
     const blockedReason = this.requireState().blockedReason
-    if (blockedReason) throw new Error(`动态创造已熔断，拒绝 ${operation}：${blockedReason}`)
+    if (blockedReason) throw new Error(`扩展开发已暂停，不能继续 ${operation}：${blockedReason}`)
   }
 
   private requireState(): DynamicAuthoringPolicyState {
@@ -910,7 +910,7 @@ export class DynamicAuthoringRuntime {
       )
       if (!hasPending && agent.status !== 'running') return
     }
-    throw new Error('智能体扩展开发收尾没有静止，暂时不能保存候选。')
+    throw new Error('智能体还在收尾，稍后再保存。')
   }
 
   defineDynamicPackage(dshSessionId: string, input: DynamicPackageDefinitionInput): DynamicCordisDefineReceipt {
@@ -986,13 +986,13 @@ export class DynamicAuthoringRuntime {
 
   decideAuthoringAttempt(input: Parameters<DynamicAuthoringService['decideAttempt']>[0]) {
     this.#assertActive()
-    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
     return this.#authoring.service.decideAttempt(input)
   }
 
   stopAuthoringTask(input: Parameters<DynamicAuthoringService['stopTask']>[0]) {
     this.#assertActive()
-    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
     return this.#authoring.service.stopTask(input, async (task) => {
       const session = [...this.#sessions.records()].find((record) => record.episodeId === task.episodeId)
       if (!session) return
@@ -1013,7 +1013,7 @@ export class DynamicAuthoringRuntime {
     readonly expectedRevision: number
   }): Promise<void> {
     this.#assertActive()
-    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
     const service = this.#authoring.service
     const task = service.getTask(input.taskId)
     if (!task || task.revision !== input.expectedRevision) throw new Error('创造任务状态已更新，请刷新后重试。')
@@ -1048,7 +1048,7 @@ export class DynamicAuthoringRuntime {
         content: [
           {
             type: 'text',
-            text: `这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。\n用户已在创造工作台把任务“${task.title}”回到第 ${attempt.ordinal} 次候选，以候选 ${receipt.packageId} 重新运行验证。后续修复请基于该候选。`,
+            text: `〔系统通知〕用户在工坊把「${task.title}」退回到第 ${attempt.ordinal} 次候选（${receipt.packageId}），正在重新试运行。之后的修改请在这个候选上做。`,
           },
         ],
         source: {
@@ -1070,7 +1070,7 @@ export class DynamicAuthoringRuntime {
 
   async deleteAuthoringTask(taskId: AuthoringTaskId): Promise<boolean> {
     this.#assertActive()
-    if (!this.#authoring) throw new Error('动态创造账本未启用。')
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
     const task = this.#authoring.service.getTask(taskId)
     if (!task) return false
     const dshSessionId = [...this.#sessions.records()].find((record) => record.episodeId === task.episodeId)?.sessionId
@@ -1090,7 +1090,7 @@ export class DynamicAuthoringRuntime {
     }
     const settledTask = this.#authoring.service.getTask(taskId)
     if (settledTask && !['interrupted', 'stopped', 'completed'].includes(settledTask.status)) {
-      this.#authoring.service.interruptTask(settledTask, '删除前未找到可继续运行的临时 Plugin。')
+      this.#authoring.service.interruptTask(settledTask, 'No resumable plugin before deletion.')
     }
     return this.#authoring.service.deleteTask(taskId)
   }
@@ -1137,7 +1137,7 @@ export class DynamicAuthoringRuntime {
         observed.outboundReceipt !== 'sent' ||
         !observed.transportIdle
       ) {
-        throw new Error('适配器验证未完整通过创建、入站、出站、凭据隔离和停止静止检查。')
+        throw new Error('平台扩展没有通过验证（创建、收消息、发消息、凭据隔离或停止）。')
       }
       const descriptorDigest = createHash('sha256')
         .update(canonicalJson(JsonValueSchema.parse(observed.descriptor)))
@@ -1232,7 +1232,7 @@ export class DynamicAuthoringRuntime {
     const row = this.dynamicInventory(dshSessionId).find((candidate) => candidate.pluginId === pluginId)
     const latest = row?.latestRun
     if (!latest || latest.packageId !== packageId || latest.status !== 'running') {
-      throw new Error('动态扩展验证完成时，候选已经不再是当前运行版本。')
+      throw new Error('验证完成时已经有了更新的候选，这次结果作废。')
     }
     this.#authoring.service.syncAttempt({
       episodeId,
@@ -1399,13 +1399,12 @@ export class DynamicAuthoringRuntime {
       `${latest.packageId}:${latest.pluginRunId ?? 'pending'}:${latest.status}`,
       (task) =>
         [
-          '这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。',
-          `任务：${task.title}（${task.id}）`,
-          `候选：${latest.packageId}；状态：${latest.status}。`,
+          `〔系统通知〕「${task.title}」（${task.id}）的试运行有结果了。`,
+          `候选 ${latest.packageId}：${latest.status}。`,
           latest.error === undefined
-            ? '运行链路已经返回结果。请核对真实预览和验证证据；成功时向用户清楚说明可见成果，失败时继续修复同一 Plugin。'
-            : `失败阶段：${latest.error.phase}；错误：${latest.error.message}。请读取当前诊断，向同一 Plugin 追加修复候选并继续验证。`,
-          '不需要等待用户再发送“继续”，也不要把定义、审批或 Host 启动误报为最终成功。',
+            ? '看一下预览和验证结果：成功了就告诉用户现在能用它做什么；没成功就在同一个扩展上接着修。'
+            : `在「${latest.error.phase}」这一步失败：${latest.error.message}。看一下诊断，在同一个扩展上接着修。`,
+          '不用等用户催。只有试运行真正通过才算做好。',
         ].join('\n'),
     )
   }
@@ -1586,10 +1585,9 @@ export class DynamicAuthoringRuntime {
       `${pluginRunId}:rpc:${method}:${message}`,
       (task) =>
         [
-          '这是 NekroNXT Host 产生的扩展开发状态事件，不是用户的新需求。',
-          `任务：${task.title}（${task.id}）`,
-          `候选：${latest.packageId}；界面调用 Host RPC ${method} 失败：${message}。`,
-          '界面验证要求每个 Host RPC 都调用成功，当前候选无法完成验证。请修复同一 Plugin 后用 update 重新运行。',
+          `〔系统通知〕「${task.title}」（${task.id}）的界面试运行失败。`,
+          `候选 ${latest.packageId} 的界面调用 ${method} 出错：${message}。`,
+          '界面里每个调用都要成功才算通过。修好后用 update 重新运行。',
         ].join('\n'),
     )
   }

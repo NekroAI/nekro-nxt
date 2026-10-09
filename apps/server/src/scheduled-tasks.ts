@@ -398,7 +398,7 @@ export const parseTaskSchedule = (
   now: number,
 ): NxtJobSchedule => {
   const given = [input.at, input.delayMinutes, input.cron].filter((value) => value !== undefined).length
-  if (given !== 1) throw new ScheduledTaskError('at、delayMinutes 与 cron 需要且只能提供其中一个。', 'invalid')
+  if (given !== 1) throw new ScheduledTaskError('at、delayMinutes、cron 只能给一个。', 'invalid')
   const timezone = input.timezone ?? hostTimezone()
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: timezone })

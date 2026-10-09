@@ -296,6 +296,38 @@ class FinishChannelTurnModel extends ScriptedCommunicationModel {
   }
 }
 
+/** Claims the turn as answered before sending anything, then sends once the claim is refused. */
+class ClaimedReplyModel extends ScriptedCommunicationModel {
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    const hasResult = (callId: string): boolean =>
+      options.messages.some((message) => message.role === 'tool' && String(message.toolCallId) === callId)
+    const [callId, name, argumentsText] = !hasResult('claim-early')
+      ? [
+          ToolCallId('claim-early'),
+          'finish_channel_turn',
+          JSON.stringify({ outcome: 'response-complete', reason: '已经回答了。' }),
+        ]
+      : !hasResult('claim-send')
+        ? [
+            ToolCallId('claim-send'),
+            'send_channel_message',
+            JSON.stringify({ target: { type: 'current' }, parts: [{ text: '真正发出的回复。' }] }),
+          ]
+        : [
+            ToolCallId('claim-done'),
+            'finish_channel_turn',
+            JSON.stringify({ outcome: 'response-complete', reason: '已经回复。' }),
+          ]
+    const toolCall = { type: 'tool-call' as const, id: callId, name, arguments: argumentsText }
+    yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+    yield { type: 'tool-call-delta', index: 0, id: callId, name, argumentsDelta: argumentsText }
+    yield { type: 'block-end', index: 0, block: toolCall }
+    yield { type: 'finish', reason: { kind: 'tool-calls' } }
+  }
+}
+
 class LateRequiredAdmissionModel extends ScriptedCommunicationModel {
   readonly plainStepStarted: Promise<void>
   private resolvePlainStepStarted!: () => void
@@ -790,7 +822,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       ).toHaveLength(1)
       expect(recovered.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
       expect(JSON.stringify(recovered.events)).toContain('发送后的内部结束文字。')
-      expect(JSON.stringify(recovered.events)).toContain('普通 text/reasoning 仍只保存在内部运行轨迹中')
+      expect(JSON.stringify(recovered.events)).toContain('刚才写的文字大家看不到')
       expect(JSON.stringify(recovered.events)).not.toContain('replyRequired')
     } finally {
       await recovered.host.dispose()
@@ -862,7 +894,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         responseState: 'finished',
         producedReply: false,
       })
-      expect(explicitlyFinished.projection.summary).toBe('智能体已明确结束本轮处理。')
+      expect(explicitlyFinished.projection.summary).toBe('智能体这一轮没有回复。')
       expect(explicitlyFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(1)
       expect(explicitlyFinished.projection.turns[0]?.steps[0]?.tools[0]?.resultPreview).toContain(
         '测试场景明确保持静默。',
@@ -870,6 +902,22 @@ describe('DSH Host and internal Channel vertical slice', () => {
     } finally {
       await explicitlyFinished.host.dispose()
       explicitlyFinished.database.close()
+    }
+
+    const claimedBeforeSending = await runScenario(new ClaimedReplyModel(), 'CLAIMEDREPLY')
+    try {
+      expect(claimedBeforeSending.sentParts).toEqual([[{ type: 'text', text: '真正发出的回复。' }]])
+      const claimResult = claimedBeforeSending.events.find(
+        (event) => event.type === 'tool/result' && String(event.data.message.toolCallId) === 'claim-early',
+      )
+      expect(claimResult?.type === 'tool/result' ? claimResult.data.message : undefined).toMatchObject({
+        isError: true,
+      })
+      expect(JSON.stringify(claimResult)).toContain('你还没有发出任何消息')
+      expect(claimedBeforeSending.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+    } finally {
+      await claimedBeforeSending.host.dispose()
+      claimedBeforeSending.database.close()
     }
 
     const invalidThenFinished = await runScenario(new FinishChannelTurnModel(true), 'INVALIDFINISH')
@@ -963,7 +1011,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         ),
       ).toHaveLength(2)
       expect(missed.projection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
-      expect(missed.projection.summary).toBe('智能体未按频道回应协议完成本轮。')
+      expect(missed.projection.summary).toBe('智能体这一轮既没有回复，也没有说明原因。')
       await missed.host.dispose()
       missedHostDisposed = true
       const resumed = await DshHostRuntime.create({
@@ -1636,7 +1684,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         consecutiveFailures: 2,
         repeatedFingerprintCount: 2,
       })
-      expect(blockedPolicy.blockedReason).toContain('相同动态扩展错误')
+      expect(blockedPolicy.blockedReason).toContain('同样的错误已经出现两次')
       expect(() =>
         host.defineDynamicPackage(enabledSession, {
           plugin: { kind: 'existing', pluginId: privateServiceProbe.pluginId },
@@ -1644,7 +1692,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
           purpose: '熔断后不再增长库存。',
           code: { host: 'return { apply() {} }' },
         }),
-      ).toThrow('动态创造已熔断')
+      ).toThrow('扩展开发已暂停')
       await modelToolNamesAfter(enabledSession, enabledChannel.id, 'adm_DYNAMICPOLICYRESET', '开始新的普通用户轮次。')
       expect(host.dynamicAuthoringPolicy(enabledSession)).toMatchObject({
         turn: 1,
@@ -2275,7 +2323,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       ])
       expect(systemText(model.calls[0])).toContain(channel.id)
       expect(systemText(model.calls[0])).toContain('主测试频道')
-      expect(systemText(model.calls[0])).toContain('以下是管理员为本频道写的频道说明')
+      expect(systemText(model.calls[0])).toContain('管理员对这个群的要求')
       // The agent's notes change often, so they ride in the runtime context, not the cached system prompt.
       expect(systemText(model.calls[0])).not.toContain('成员甲喜欢简短的回答。')
       expect(
@@ -2291,16 +2339,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
         systemText(model.calls[0]).indexOf('本频道是内部测试频道'),
       )
       expect(systemText(model.calls[0]).indexOf('本频道是内部测试频道')).toBeLessThan(
-        systemText(model.calls[0]).indexOf('当前 NekroNxt 会话身份如下'),
+        systemText(model.calls[0]).indexOf('当前频道：'),
       )
-      expect(systemText(model.calls[0])).toContain('普通 text 或 reasoning 只会作为内部运行轨迹保存')
-      expect(systemText(model.calls[0])).toContain('一次 send_channel_message 不会结束当前 Turn')
-      expect(systemText(model.calls[0])).toContain('更早的发送不能覆盖后来注入的新请求')
-      expect(systemText(model.calls[0])).toContain('通常适合先简短说明你理解的任务和马上要做的事')
-      expect(systemText(model.calls[0])).toContain('沟通篇幅和频率应结合当前智能体人设')
-      expect(model.calls[0]?.tools?.find(({ name }) => name === 'send_channel_message')?.description).toContain(
-        '可在同一 Turn 中多次调用',
-      )
+      expect(systemText(model.calls[0])).toContain('大家只能看到你用 send_channel_message 发出去的消息')
       const context = host.sessionContext(episode.dshSessionId!)!
       expect(context.route).toMatchObject({ provider: 'test-provider', model: 'chat-model', contextWindow: 128000 })
       expect(context.tools.map(({ name }) => name)).toEqual(model.calls[0]?.tools?.map(({ name }) => name))
@@ -2314,29 +2355,27 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(eventText).toContain('工具完成后的原始结束文字也不会发送。')
       expect(eventText).toContain('nekro-nxt-channel')
       expect(eventText).toContain('这是通信工具确认发送的回复。')
-      expect(eventText).toContain('发送成员：成员甲')
+      expect(eventText).toContain(' 成员甲（')
       expect(eventText).toContain('@成员乙')
-      expect(eventText).toContain('该消息提及了当前智能体关联的机器人账号')
-      expect(eventText).toContain('当前频道身份（Host 权威运行时事实）')
+      expect(eventText).toContain('（提到了你）')
+      expect(eventText).toContain('当前频道：')
       expect(eventText).toContain(channel.id)
       const contextTime = String.raw`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}`
-      expect(eventText).toMatch(new RegExp(`频道消息 ${browserEvent.logicalMessageId}（${contextTime}）`))
+      expect(eventText).toMatch(new RegExp(`\\[${contextTime} · ${browserEvent.logicalMessageId}\\]`))
       expect(eventText).not.toContain(`频道事件 ${browserEvent.id}`)
-      expect(eventText).toMatch(
-        new RegExp(`引用频道消息 ${quotedEvent.logicalMessageId}（${contextTime}），发送成员：成员甲`),
-      )
+      expect(eventText).toMatch(new RegExp(`\\[引用 ${quotedEvent.logicalMessageId}（${contextTime}，成员甲`))
       expect(eventText).toContain('这是被引用的当前频道内容。')
       expect(eventText).toContain('@成员乙')
-      expect(eventText).toContain(`收到图片资源 ${quotedImage.asset.id}（引用图片）`)
-      expect(eventText).toContain('当前模型不直接支持图片输入')
-      expect(eventText).toContain(`收到文件资源 ${quotedFileId}（引用资料.txt）`)
-      expect(eventText).toContain('可使用 asset_read_text 读取正文')
-      expect(eventText).toContain(`收到音频资源 ${quotedAudioId}`)
+      expect(eventText).toContain(`[图片 ${quotedImage.asset.id}：引用图片]`)
+      expect(eventText).toContain('你看不到图片本身')
+      expect(eventText).toContain(`[文件 ${quotedFileId}：引用资料.txt]`)
+      expect(eventText).toContain('可以用 asset_read_text 读')
+      expect(eventText).toContain(`[语音 ${quotedAudioId}]`)
       expect(eventText).toContain('引用卡片摘要')
-      expect(eventText).toContain(`引用频道消息 ${staleEvent.logicalMessageId}`)
+      expect(eventText).toContain(`[引用 ${staleEvent.logicalMessageId}`)
       expect(eventText).not.toContain('同频道但未准入旧 Episode 的内容')
-      expect(eventText).toContain(`引用频道消息 ${otherChannelEvent.logicalMessageId}，当前频道中无法读取该消息`)
-      expect(eventText).toContain('引用频道消息 msg_MISSINGQUOTE，当前频道中无法读取该消息')
+      expect(eventText).toContain(`[引用 ${otherChannelEvent.logicalMessageId}，原消息找不到了]`)
+      expect(eventText).toContain('[引用 msg_MISSINGQUOTE，原消息找不到了]')
       expect(eventText).not.toContain('另一个频道的秘密内容')
 
       core.reviseAgent(agent.definition.id, agent.revision.id, {
@@ -2376,9 +2415,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(resumedEvents).toContain('你好，请回复我。')
       expect(resumedEvents).toContain(`[原文 ${browserEvent.logicalMessageId}]`)
       expect(resumedEvents).toMatch(
-        new RegExp(`引用频道消息 ${outboundHistory[0]!.logicalMessageId}（${contextTime}），本频道智能体此前发送`),
+        new RegExp(`\\[引用 ${outboundHistory[0]!.logicalMessageId}（${contextTime}，你发的`),
       )
-      expect(resumedEvents).toContain('派生交接摘要，不是原始消息或系统事实')
+      expect(resumedEvents).toContain('〔之前聊天内容的摘要〕')
       expect(resumedEvents).not.toContain('把它视为有来源的既有背景')
       expect(model.calls.some(({ system }) => system?.startsWith('你是对话交接摘要器'))).toBe(true)
       expect(observed).toEqual(['这是通信工具确认发送的回复。', '这是通信工具确认发送的回复。'])
@@ -2496,7 +2535,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(model.calls[0]?.tools?.map(({ name }) => name)).toContain('asset_read_text')
       expect(observed).toEqual([[{ type: 'text', text: '已读到文件正文：Markdown 正文' }]])
       const sessionEvents = JSON.stringify(host.sessionEvents(sessionId))
-      expect(sessionEvents).toContain('可使用 asset_read_text 读取正文')
+      expect(sessionEvents).toContain('可以用 asset_read_text 读')
       expect(sessionEvents).toContain(JSON.stringify(fileText).slice(1, -1))
       expect(sessionEvents).not.toContain(path.join(directory, 'assets'))
     } finally {

@@ -118,7 +118,7 @@ describe('scheduled task schedules', () => {
 
   it('rejects past times, several schedules at once, bad cron and unknown zones', () => {
     expect(() => parseTaskSchedule({ at: '2026-10-07 08:00', timezone: 'Asia/Shanghai' }, now)).toThrow('已经过去')
-    expect(() => parseTaskSchedule({ delayMinutes: 5, cron: '* * * * *' }, now)).toThrow('只能提供其中一个')
+    expect(() => parseTaskSchedule({ delayMinutes: 5, cron: '* * * * *' }, now)).toThrow('只能给一个')
     expect(() => parseTaskSchedule({ cron: '0 8 * *' }, now)).toThrow('五段')
     expect(() => parseTaskSchedule({ cron: '0 8 * * *', timezone: 'Mars/Base' }, now)).toThrow('时区无效')
     expect(() => parseTaskSchedule({ at: '明天早上' }, now)).toThrow('at 需要')

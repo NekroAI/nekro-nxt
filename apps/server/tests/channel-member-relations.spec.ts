@@ -72,11 +72,9 @@ describe('channel member relations', () => {
       expect(relations.describe(stranger.id)).toEqual({ kind: 'member' })
 
       const label = (memberId: typeof stranger.id) => memberLabel(memberSummary(repository, memberId, relations))
-      expect(label(self.memberId)).toBe(`你（当前智能体的机器人账号，成员标识 ${self.memberId}）`)
-      expect(label(recorder!.memberId)).toBe(
-        `记录号（本机智能体「记录员」的机器人账号，成员标识 ${recorder!.memberId}）`,
-      )
-      expect(label(stranger.id)).toBe(`成员甲（成员标识 ${stranger.id}）`)
+      expect(label(self.memberId)).toBe(`你（${self.memberId}）`)
+      expect(label(recorder!.memberId)).toBe(`记录号（智能体「记录员」的账号，${recorder!.memberId}）`)
+      expect(label(stranger.id)).toBe(`成员甲（${stranger.id}）`)
 
       const prompt = channelContextPrompt(
         {
@@ -87,8 +85,8 @@ describe('channel member relations', () => {
         },
         relations,
       )
-      expect(prompt).toContain(`你在本频道使用的机器人账号：小助手号（成员标识 ${self.memberId}）`)
-      expect(prompt).toContain(`本频道还有本机的其他智能体：记录员（成员标识 ${recorder!.memberId}）`)
+      expect(prompt).toContain(`你在这个群里的账号是「小助手号」，成员 ID ${self.memberId}`)
+      expect(prompt).toContain(`群里还有别的智能体：记录员（${recorder!.memberId}）`)
       // The built-in channel has no platform account to describe.
       expect(
         channelContextPrompt(
@@ -100,7 +98,7 @@ describe('channel member relations', () => {
           },
           relations,
         ),
-      ).not.toContain('机器人账号')
+      ).not.toContain('你在这个群里的账号')
     } finally {
       database.close()
     }

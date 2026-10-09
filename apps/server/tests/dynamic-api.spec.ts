@@ -258,7 +258,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
           request.messages.some(
             (message) =>
               message.role === 'user' &&
-              message.content.some((block) => block.type === 'text' && block.text.includes('扩展开发状态事件')),
+              message.content.some((block) => block.type === 'text' && block.text.includes('〔系统通知〕')),
           ),
         )
       await expect.poll(sawAuthoringEvent).toBe(true)

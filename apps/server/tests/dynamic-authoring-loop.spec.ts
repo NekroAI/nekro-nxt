@@ -288,12 +288,12 @@ describe('dynamic authoring closed loop', () => {
       await expect(
         runtime.host.runDynamicPackage(dshSessionId, first.pluginId, second.packageId, 'update'),
       ).rejects.toThrow()
-      expect(runtime.host.dynamicAuthoringPolicy(dshSessionId).blockedReason).toContain('相同动态扩展错误')
+      expect(runtime.host.dynamicAuthoringPolicy(dshSessionId).blockedReason).toContain('同样的错误已经出现两次')
 
       await expect(runtime.host.undefineDynamicPlugin(dshSessionId, first.pluginId)).resolves.toMatchObject({
         ok: true,
       })
-      expect(runtime.host.dynamicAuthoringPolicy(dshSessionId).blockedReason).toContain('相同动态扩展错误')
+      expect(runtime.host.dynamicAuthoringPolicy(dshSessionId).blockedReason).toContain('同样的错误已经出现两次')
       expect(() =>
         runtime.host.defineDynamicPackage(dshSessionId, {
           plugin: { kind: 'new', idPrefix: 'esc' },
@@ -301,7 +301,7 @@ describe('dynamic authoring closed loop', () => {
           purpose: '不应被允许。',
           code: { host: toolHost('escape_probe', "return 'ok'") },
         }),
-      ).toThrow('动态创造已熔断')
+      ).toThrow('扩展开发已暂停')
     } finally {
       await runtime.dispose()
     }
@@ -757,7 +757,7 @@ return { inject: ['nxt'], apply() {} }`
           slug: 'restorable-probe',
           description: '',
         }),
-      ).rejects.toThrow('只能保存该创造任务当前的精确候选')
+      ).rejects.toThrow('只能保存这个任务最新的候选')
 
       await runtime.authoring.restore({
         taskId: task.id,
@@ -852,7 +852,7 @@ return { inject: ['nxt'], apply() {} }`
                   message.content.some(
                     (block) =>
                       block.type === 'text' &&
-                      block.text.includes('Host RPC broken_summary 失败') &&
+                      block.text.includes('界面调用 broken_summary 出错') &&
                       block.text.includes('synthetic rpc failure'),
                   ),
               ),

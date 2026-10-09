@@ -236,13 +236,13 @@ export const memberSummary = (
 /** How a member is named to the agent: the stable member id always, and what the host knows about who it is. */
 export const memberLabel = (member: MemberSummary): string => {
   const relation = member.relation
-  if (relation?.kind === 'self') return `你（当前智能体的机器人账号，成员标识 ${member.memberId}）`
+  if (relation?.kind === 'self') return `你（${member.memberId}）`
   const name = member.displayName ?? '未知成员'
   if (relation?.kind === 'local-agent') {
-    const owner = relation.agentName === undefined ? '本机另一个连接' : `本机智能体「${relation.agentName}」`
-    return `${name}（${owner}的机器人账号，成员标识 ${member.memberId}）`
+    const owner = relation.agentName === undefined ? '本机另一个账号' : `智能体「${relation.agentName}」的账号`
+    return `${name}（${owner}，${member.memberId}）`
   }
-  return `${name}（成员标识 ${member.memberId}）`
+  return `${name}（${member.memberId}）`
 }
 
 export const historyEntrySenderDescription = (
@@ -251,10 +251,10 @@ export const historyEntrySenderDescription = (
   relations?: ChannelMemberRelations,
 ): string => {
   if (entry.source === 'outbound-intent') {
-    return isAdminConsoleOutbound(entry.sourceTurnId) ? '，管理员此前通过机器人账号发送' : '，本频道智能体此前发送'
+    return isAdminConsoleOutbound(entry.sourceTurnId) ? '，管理员用你的账号发的' : '，你发的'
   }
   if (entry.senderMemberId === undefined) return ''
-  return `，发送成员：${memberLabel(memberSummary(history, entry.senderMemberId, relations))}`
+  return `，${memberLabel(memberSummary(history, entry.senderMemberId, relations))}`
 }
 
 /** Header for a due scheduled job; it is a Host fact, not a member message, and does not oblige a reply. */
@@ -266,9 +266,9 @@ const extensionJobHeader = (event: ChannelEventRecord): string | undefined => {
   const scheduledAt = typeof job['scheduledAt'] === 'number' ? formatContextTime(job['scheduledAt']) : '未知'
   const delay =
     typeof job['delayMinutes'] === 'number' && job['delayMinutes'] > 0
-      ? `；宿主离线导致延迟约 ${job['delayMinutes']} 分钟`
+      ? `；因为程序没在运行，晚了约 ${job['delayMinutes']} 分钟`
       : ''
-  return `定时任务到期（来源：${source}${task}；计划时间 ${scheduledAt}${delay}）。这不是成员发言；是否需要在频道发言由你判断，需要时使用 send_channel_message：`
+  return `〔定时任务到时间了〕来源：${source}${task}；计划时间 ${scheduledAt}${delay}。要不要在群里说话由你决定：`
 }
 
 export const DirectImageInspectionValueSchema = z
@@ -445,23 +445,23 @@ export class SessionImageContext {
             route = { mode: 'delegated', provider: selection.provider, model: selection.model }
           } else {
             route = { mode: 'unavailable' }
-            blockers.push('配置的辅助视觉模型没有明确声明支持图片输入。')
+            blockers.push('看图模型没有声明支持图片。')
           }
         } catch {
           route = { mode: 'unavailable' }
-          blockers.push('配置的辅助视觉模型当前不可用。')
+          blockers.push('看图模型现在不可用。')
         }
       } else {
         route = { mode: 'unavailable' }
         blockers.push(
           primary.inputModalities === undefined
-            ? '主模型没有声明图片输入能力，且未配置辅助视觉模型。'
-            : '主模型仅支持文本，且未配置辅助视觉模型。',
+            ? '主模型不支持图片，也没有设置看图模型。'
+            : '主模型不支持图片，也没有设置看图模型。',
         )
       }
     } catch {
       route = { mode: 'unavailable' }
-      blockers.push('主模型当前不可用，无法建立图片理解路由。')
+      blockers.push('主模型现在不可用，看不了图片。')
     }
 
     const sessions = [...this.#sessions.records()]
@@ -635,7 +635,7 @@ export class SessionImageContext {
         const blocks: ContentBlock[] = [
           {
             type: 'text',
-            text: '以下原图来自当前频道最近消息，是压缩后的视觉上下文恢复，不是新的频道消息。',
+            text: '〔之前聊天里的图片〕重新附上方便你回看，不是新消息。',
           },
         ]
         for (const asset of assetsToRestore) {
@@ -739,7 +739,7 @@ export class SessionImageContext {
           if (imageStats) imageStats.duplicateCount += 1
           blocks.push({
             type: 'text',
-            text: `图片资源 ${assetId} 与当前上下文中已驻留图片内容相同，沿用已有视觉内容。`,
+            text: `[图片 ${assetId}，和前面的一张相同]`,
           })
           return
         }
@@ -756,7 +756,7 @@ export class SessionImageContext {
       }
       blocks.push({
         type: 'text',
-        text: `图片资源 ${asset.id} 已收到，但当前模型不直接支持图片输入；如已配置辅助视觉模型，可使用 asset_inspect_images 批量理解。`,
+        text: `[图片 ${asset.id}]（你看不到图片本身，需要时用 asset_inspect_images）`,
       })
     }
     for (const part of parts) {
@@ -774,35 +774,35 @@ export class SessionImageContext {
         case 'image':
           blocks.push({
             type: 'text',
-            text: `收到图片资源 ${part.assetId}${part.alt ? `（${part.alt}）` : ''}`,
+            text: `[图片 ${part.assetId}${part.alt ? `：${part.alt}` : ''}]`,
           })
           await attachImage(part.assetId, part.alt)
           break
         case 'file':
           blocks.push({
             type: 'text',
-            text: `收到文件资源 ${part.assetId}${part.name ? `（${part.name}）` : ''}。若这是小型文本文件，可使用 asset_read_text 读取正文。`,
+            text: `[文件 ${part.assetId}${part.name ? `：${part.name}` : ''}]（小的文本文件可以用 asset_read_text 读）`,
           })
           break
         case 'audio':
-          blocks.push({ type: 'text', text: `收到音频资源 ${part.assetId}` })
+          blocks.push({ type: 'text', text: `[语音 ${part.assetId}]` })
           break
         case 'quote': {
           if (!expandQuotes) {
-            blocks.push({ type: 'text', text: `引用频道消息 ${part.messageId}` })
+            blocks.push({ type: 'text', text: `[引用 ${part.messageId}]` })
             break
           }
           const quoted = this.#history.getChannelHistoryEntryByLogicalMessageId(channelId, part.messageId)
           if (quoted === undefined) {
             blocks.push({
               type: 'text',
-              text: `引用频道消息 ${part.messageId}，当前频道中无法读取该消息`,
+              text: `[引用 ${part.messageId}，原消息找不到了]`,
             })
             break
           }
           blocks.push({
             type: 'text',
-            text: `引用频道消息 ${part.messageId}（${formatContextTime(quoted.occurredAt)}）${historyEntrySenderDescription(this.#history, quoted, this.#members)}：`,
+            text: `[引用 ${part.messageId}（${formatContextTime(quoted.occurredAt)}${historyEntrySenderDescription(this.#history, quoted, this.#members)}）：`,
           })
           blocks.push(
             ...(await this.projectMessageParts(sessionId, channelId, quoted.parts, visibleDigests, imageStats, false)),
@@ -837,19 +837,18 @@ export class SessionImageContext {
   ): Promise<ContentBlock[]> {
     const sender =
       event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId, this.#members)
-    const senderDescription = sender === undefined ? '' : `，发送成员：${memberLabel(sender)}`
+    const senderDescription = sender === undefined ? '' : ` ${memberLabel(sender)}`
     // A mention of the account already reads 「@你」 in place; the note covers platforms that @ without a mention part.
     const mentionsSelf = event.parts.some(
       (part) => part.type === 'mention' && this.#members?.describe(part.memberId).kind === 'self',
     )
-    const mentionDescription =
-      event.facts?.['mentionedBot'] === true && !mentionsSelf ? '；该消息提及了当前智能体关联的机器人账号' : ''
+    const mentionDescription = event.facts?.['mentionedBot'] === true && !mentionsSelf ? '（提到了你）' : ''
     const job = extensionJobHeader(event)
     const time = formatContextTime(event.receivedAt, previousAt)
     const blocks: ContentBlock[] = [
       {
         type: 'text',
-        text: job ?? `频道消息 ${event.logicalMessageId}（${time}）${senderDescription}${mentionDescription}：`,
+        text: job ?? `[${time} · ${event.logicalMessageId}]${senderDescription}${mentionDescription}：`,
       },
     ]
     const seen =

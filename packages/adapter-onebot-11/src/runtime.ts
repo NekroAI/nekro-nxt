@@ -446,7 +446,11 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
         }
         case 'file':
         case 'rich':
-          throw new OneBotActionError(`OneBot 首版不主动发送 ${part.type} 内容。`, 'invalid', false)
+          throw new OneBotActionError(
+            `这个平台暂时发不了${part.type === 'file' ? '文件' : '这类内容'}，可以把内容直接写在消息里。`,
+            'invalid',
+            false,
+          )
       }
     }
     return output

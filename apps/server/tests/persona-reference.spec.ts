@@ -100,7 +100,7 @@ describe('persona reference compiler', () => {
     expect(compiled.text).toContain('"availability":"inactive"')
     expect(compiled.text).not.toContain('private-platform-id')
     expect(compiled.text).not.toContain('</nxt-reference> 不可信描述')
-    expect(PERSONA_REFERENCE_PROTOCOL).toContain('不授予任何权限')
+    expect(PERSONA_REFERENCE_PROTOCOL).toContain('引用只用来认出对象')
   })
 
   it('keeps reference-free personas byte-for-byte plain', () => {

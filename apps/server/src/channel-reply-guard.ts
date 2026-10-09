@@ -177,10 +177,9 @@ const responseReminder = (turn: number): UserMessage =>
       {
         type: 'text',
         text: [
-          '自最新待回应消息之后，你尚未成功发送频道消息，也没有调用 finish_channel_turn。',
-          '普通 text/reasoning 仍只保存在内部运行轨迹中，频道成员看不到。',
-          '现在必须二选一：调用 send_channel_message 发送频道可见回应，或调用 finish_channel_turn 明确结束本轮处理。',
-          '不要再用普通文本回答本提示。send_channel_message 返回 failed 或 unknown 时仍未确认送达；unknown 不得盲目重发，应使用 finish_channel_turn 明确收口。',
+          '〔提醒〕最新的消息你还没回，刚才写的文字大家看不到。',
+          '要回就用 send_channel_message；不用回就调用 finish_channel_turn 写明原因。',
+          '如果刚才的发送结果是 unknown，可能已经发出去了，别重发，直接结束。',
         ].join('\n'),
       },
     ],
@@ -219,6 +218,8 @@ const withReminder = (
 export interface ChannelReplyGuardController {
   rememberAdmission(agent: Agent, admissionId: string, replyRequired: boolean): void
   responseState(agent: Agent, turn: number): ResponseObligationState
+  /** Whether a message that needs a reply is still unanswered in the agent's open turn. */
+  awaitingReply(agent: Agent): boolean
   dispose(): void
 }
 
@@ -292,6 +293,15 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
         [],
         resolverFor(agent),
         correctionResolverFor(agent),
+      )
+    },
+    awaitingReply(agent) {
+      const events = sessionEvents(agent.session)
+      const open = events.findLast((event) => event.type === 'turn/start')
+      if (open?.type !== 'turn/start') return false
+      return (
+        responseObligationState(events, open.data.turn, [], resolverFor(agent), correctionResolverFor(agent))
+          .responseState === 'pending'
       )
     },
     dispose() {

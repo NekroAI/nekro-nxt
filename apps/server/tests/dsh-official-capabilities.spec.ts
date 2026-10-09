@@ -224,7 +224,7 @@ class DynamicDelegationModel extends LlmAdapter {
         return
       }
       yield* toolCallChunks('finish_channel_turn', 'dynamic-root-finish', {
-        outcome: 'response-complete',
+        outcome: 'no-response-needed',
         reason: '子智能体已完成动态扩展验证。',
       })
       return
@@ -400,7 +400,7 @@ class DenylistRecoveryModel extends LlmAdapter {
       return
     }
     yield* toolCallChunks('finish_channel_turn', 'denylist-finish', {
-      outcome: 'response-complete',
+      outcome: 'no-response-needed',
       reason: '子智能体恢复策略已验证。',
     })
   }
@@ -717,12 +717,12 @@ describe('DSH 0.1.7-rc.2 official capability composition', () => {
           'list_agents',
         ]),
       )
-      expect(systemText(model.rootRequestOptions[0])).toContain('上下文管理：当前频道对话')
-      expect(systemText(model.rootRequestOptions[0])).toContain('只有成功调用 **send_channel_message**')
+      expect(systemText(model.rootRequestOptions[0])).toContain('可以交给子智能体去做')
+      expect(systemText(model.rootRequestOptions[0])).toContain('大家只能看到你用 send_channel_message 发出去的消息')
       expect(systemText(model.childRequests[0])).toContain('完整继承人设：只报告已经核验的事实。')
-      expect(systemText(model.childRequests[0])).toContain('你是主智能体委派的子智能体')
-      expect(systemText(model.childRequests[0])).not.toContain('上下文管理：当前频道对话')
-      expect(systemText(model.childRequests[0])).not.toContain('只有成功调用 **send_channel_message**')
+      expect(systemText(model.childRequests[0])).toContain('不能直接在频道里说话')
+      expect(systemText(model.childRequests[0])).not.toContain('可以交给子智能体去做')
+      expect(systemText(model.childRequests[0])).not.toContain('大家只能看到你用 send_channel_message 发出去的消息')
       expect(JSON.stringify(model.childRequests[0]?.messages)).not.toContain('启动后台子任务。')
 
       const liveChildren = await host.listSubagents(sessionId)
