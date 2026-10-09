@@ -350,7 +350,7 @@ export function ChannelInspector({
                         { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
                         { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
                         {
-                          label: occupancy.imageCount ? `其他（含 ${occupancy.imageCount} 张图片）` : '其他',
+                          label: occupancy.imageCount ? `其他（含 ${occupancy.imageCount} 张图）` : '其他',
                           value: other,
                           color: 'var(--faint)',
                         },
