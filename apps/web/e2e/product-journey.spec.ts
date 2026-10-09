@@ -717,7 +717,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await testInfo.attach('adapter-installed', { path: installedScreenshot, contentType: 'image/png' })
   await page.getByRole('button', { name: '卸载', exact: true }).click()
   const uninstallDialog = page.getByRole('dialog')
-  await expect(uninstallDialog).toContainText('连接、频道和历史保留')
+  await expect(uninstallDialog).toContainText('连接、频道和消息保留')
   await uninstallDialog.getByRole('button', { name: '卸载', exact: true }).click()
   await expect(uninstallDialog).toBeHidden()
   await expect(page.getByText('未安装', { exact: true }).first()).toBeVisible()

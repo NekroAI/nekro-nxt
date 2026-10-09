@@ -216,7 +216,7 @@ test.describe('workshop', () => {
               ...extension,
               revisions: extension.revisions.map((revision) => ({
                 ...revision,
-                configSchema: {
+                agentConfigSchema: {
                   type: 'object' as const,
                   dict: {
                     city: { type: 'string' as const, meta: { description: '默认城市', default: '示例市' } },
@@ -264,6 +264,16 @@ test.describe('workshop', () => {
   })
 
   test('describes an MCP extension by the services it connects', async () => {
+    const docsMcp = {
+      servers: [
+        {
+          transport: 'streamable-http' as const,
+          name: 'docs',
+          url: 'https://docs.example.com/mcp',
+          headers: { Authorization: { secret: 'header_1' } },
+        },
+      ],
+    }
     const snapshot = {
       ...productSnapshot,
       extensions: productSnapshot.extensions.map((extension) =>
@@ -282,7 +292,7 @@ test.describe('workshop', () => {
                 verification: {
                   verifiedAt: 1_725_000_000_000,
                   dshVersion: 'fixture',
-                  contractVersion: 'nekro-nxt-extension-v4',
+                  contractVersion: 'nekro-nxt-extension-v5',
                   hostBuilt: true,
                   clientBuilt: false,
                   buildKey: 'fixture',
@@ -291,24 +301,12 @@ test.describe('workshop', () => {
                   renderedPanels: [],
                   renderedToolViews: [],
                   renderedMessageRenderers: [],
-                  permissions: {
-                    permissions: [],
-                    networkOrigins: [],
-                    capabilities: {
-                      mcp: {
-                        servers: [
-                          {
-                            transport: 'streamable-http' as const,
-                            name: 'docs',
-                            url: 'https://docs.example.com/mcp',
-                            headers: { Authorization: { secret: 'header_1' } },
-                          },
-                        ],
-                      },
-                    },
+                  permissions: { permissions: [], networkOrigins: [], agent: { mcp: docsMcp } },
+                  agentPermission: {
+                    declaration: { permissions: [], networkOrigins: [], capabilities: { mcp: docsMcp } },
+                    permissionDigest: 'e'.repeat(64),
+                    approvalRequired: true,
                   },
-                  permissionDigest: 'e'.repeat(64),
-                  permissionApprovalRequired: true,
                 },
               })),
             },
@@ -322,7 +320,7 @@ test.describe('workshop', () => {
       await expect(overview).toContainText('mcp__docs__')
       await expect(overview).toContainText('远程 https://docs.example.com/mcp')
       await expect(overview).not.toContainText('还没有经过验证')
-      await expect(page.getByRole('region', { name: '使用' })).toContainText('缺少凭据：Authorization')
+      await expect(page.getByRole('region', { name: '智能体' })).toContainText('缺少凭据：Authorization')
     } finally {
       await page.close()
     }
@@ -358,6 +356,11 @@ test.describe('workshop', () => {
 
   test('lists Host capabilities on enable approval and holds high-risk ones until accepted one by one', async () => {
     const digest = 'd'.repeat(64)
+    const capabilities = {
+      network: { mode: 'unrestricted' as const, purpose: '打开群友分享的任意链接并生成摘要' },
+      storage: { scopes: ['agent' as const] },
+      history: { read: true as const },
+    }
     const snapshot = {
       ...productSnapshot,
       extensions: productSnapshot.extensions.map((extension) =>
@@ -371,7 +374,7 @@ test.describe('workshop', () => {
                 verification: {
                   verifiedAt: 1_725_000_000_000,
                   dshVersion: 'fixture',
-                  contractVersion: 'nekro-nxt-extension-v4',
+                  contractVersion: 'nekro-nxt-extension-v5',
                   hostBuilt: true,
                   clientBuilt: false,
                   buildKey: 'fixture',
@@ -380,17 +383,12 @@ test.describe('workshop', () => {
                   renderedPanels: [],
                   renderedToolViews: [],
                   renderedMessageRenderers: [],
-                  permissions: {
-                    permissions: [],
-                    networkOrigins: [],
-                    capabilities: {
-                      network: { mode: 'unrestricted' as const, purpose: '打开群友分享的任意链接并生成摘要' },
-                      storage: { scopes: ['agent' as const] },
-                      history: { read: true as const },
-                    },
+                  permissions: { permissions: [], networkOrigins: [], agent: capabilities },
+                  agentPermission: {
+                    declaration: { permissions: [], networkOrigins: [], capabilities },
+                    permissionDigest: digest,
+                    approvalRequired: true,
                   },
-                  permissionDigest: digest,
-                  permissionApprovalRequired: true,
                 },
               })),
             },
@@ -438,6 +436,7 @@ test.describe('workshop', () => {
       const confirm = dialog.getByRole('button', { name: '允许并启用' })
       await expect(confirm).toBeDisabled()
       const risk = dialog.getByRole('switch', { name: '访问任意公网地址' })
+      await expect(dialog).toContainText('用途：打开群友分享的任意链接并生成摘要。')
       await risk.click()
       await expect(risk).toHaveAttribute('data-state', 'checked')
       await expect(confirm).toBeEnabled()

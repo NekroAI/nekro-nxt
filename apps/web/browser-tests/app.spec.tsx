@@ -252,13 +252,14 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
       displayName: '文档复核',
       description: '检查文档中的遗漏',
       createdByAgentId: browserAgentId,
-      scope: 'agent',
+      provides: ['agent'],
       revisions: [
         {
           id: browserExtensionPreviousRevisionId,
           revisionNumber: 2,
           createdAt: 1_724_000_000_000,
-          scope: 'agent',
+          provides: ['agent'],
+          agentLayer: true,
           contributions: ['工具：legacy_review'],
           verification: {
             verifiedAt: 1_724_000_000_000,
@@ -278,7 +279,8 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
           id: browserExtensionRevisionId,
           revisionNumber: 3,
           createdAt: 1_725_000_000_000,
-          scope: 'agent',
+          provides: ['agent'],
+          agentLayer: true,
           contributions: ['工具：document_review'],
           verification: {
             verifiedAt: 1_725_000_000_000,
@@ -675,6 +677,11 @@ test.describe('NekroNxt browser projections', () => {
         body: JSON.stringify({ cursor: { epoch: 'fixture', sequence: 0 }, messages, hasMore: false }),
       })
     })
+    await page.route('**/api/channels/*/prompt', (request) =>
+      request.fulfill({
+        json: { document: { version: 1, segments: [] }, locked: false, revision: 0, maxChars: 2000, revisions: [] },
+      }),
+    )
     await page.route('**/api/dynamic/*/inventory', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
     )
@@ -1168,7 +1175,7 @@ test.describe('NekroNxt browser projections', () => {
               revisionId: 'xrv_shared',
               slug: 'shared-extension',
               displayName: '共享扩展',
-              scope: 'agent',
+              provides: ['agent'],
               idempotent: false,
               slugConflict: false,
             },
@@ -1181,7 +1188,7 @@ test.describe('NekroNxt browser projections', () => {
   test('browses community extensions, warns about unreviewed releases and installs through the import dialog', async () => {
     const summary = {
       id: 'ext_communityweather',
-      scope: 'agent',
+      provides: ['agent'],
       displayName: '社区天气',
       summary: '查询城市天气预报。',
       tags: ['天气'],
@@ -1191,7 +1198,7 @@ test.describe('NekroNxt browser projections', () => {
       latest: {
         id: 'rel_communityweather',
         reviewStatus: 'pending',
-        grade: null,
+        rating: null,
         permissions: [{ key: 'network', level: 'normal', label: '访问指定网站', detail: 'api.example.com' }],
         packageSize: 2048,
         requiresSdk: 6,
@@ -1209,18 +1216,20 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         await page.getByRole('switch', { name: '只看官方扩展' }).click()
         await playwrightExpect.poll(() => listRequests.some((url) => url.includes('official=1'))).toBe(true)
+        await page.getByRole('radio', { name: '综合评分' }).click()
+        await playwrightExpect.poll(() => listRequests.some((url) => url.includes('sort=score'))).toBe(true)
         await page.getByRole('link', { name: /社区天气/u }).click()
         await playwrightExpect(page.getByText('测试站')).toBeVisible()
         await playwrightExpect(page.getByRole('heading', { name: '社区天气' })).toBeVisible()
         await playwrightExpect(page.locator('body')).toContainText('风险未知')
         await playwrightExpect(page.locator('body')).toContainText('NekroNXT 官方')
         await playwrightExpect(page.locator('body')).toContainText('访问指定网站')
-        // 作者的介绍按 Markdown 渲染并排在审查之前；审查默认只有一行，点开才显示全部发现。
+        // 作者的介绍按 Markdown 渲染；审查原文收在评级卡的「审查记录」里，点开才显示全部发现。
         await playwrightExpect(page.locator('strong', { hasText: '示例市' })).toBeVisible()
         await playwrightExpect(page.locator('body')).not.toContainText('<script>')
         const finding = page.getByText('自动检查：示例提醒')
         await playwrightExpect(finding).toBeHidden()
-        await page.getByRole('button', { name: '审查详情' }).click()
+        await page.getByRole('button', { name: '审查记录' }).click()
         await playwrightExpect(finding).toBeVisible()
         await page.getByRole('button', { name: '安装' }).click()
         const dialog = page.getByRole('dialog', { name: '导入「社区天气」' })
@@ -1256,9 +1265,12 @@ test.describe('NekroNxt browser projections', () => {
               sourceUrl: 'https://example.com/community-weather',
               review: {
                 status: 'pending',
-                grade: null,
+                rating: null,
                 summary: null,
-                highlights: [{ severity: 'warning', title: '自动检查：示例提醒' }],
+                dimensions: [],
+                findings: [],
+                checks: [{ severity: 'warning', title: '自动检查：示例提醒' }],
+                reviewedAt: null,
               },
             },
           }),
@@ -1272,7 +1284,7 @@ test.describe('NekroNxt browser projections', () => {
               revisionId: 'xrv_communityweather',
               slug: 'community-weather',
               displayName: '社区天气',
-              scope: 'agent',
+              provides: ['agent'],
               idempotent: false,
               slugConflict: false,
             },
