@@ -329,13 +329,14 @@ function CommunityDetail({
           ) : null}
         </div>
       ) : null}
+      {detail.review ? <RatingCard review={detail.review} pageUrl={detail.pageUrl} /> : null}
       {label?.tone === 'neutral' ? (
         <Banner tone="warn">
           这次发布还没有完成审查，风险未知。扩展会以 NekroNXT 的权限运行，请只安装你信任的作者的扩展。
         </Banner>
       ) : null}
       {label?.tone === 'warn' ? (
-        <Banner tone="bad">审查发现了可能被利用或伤害你的问题。请阅读审查发现，理解风险后再安装。</Banner>
+        <Banner tone="bad">审查发现了可能被利用或伤害你的问题。请阅读审查记录，理解风险后再安装。</Banner>
       ) : null}
       {installed ? (
         <Banner tone="info">本机已有这个扩展。导入新的发布会成为它的一条保存记录，不会自动切换使用。</Banner>
@@ -348,8 +349,6 @@ function CommunityDetail({
           <p className={styles.faint}>作者还没有填写详细介绍。</p>
         )}
       </PropertyGroup>
-
-      {detail.review ? <RatingCard review={detail.review} pageUrl={detail.pageUrl} /> : null}
 
       {latest && latest.permissions.length > 0 ? (
         Object.entries(PERMISSION_LAYERS).map(([layer, { title, description }]) => {

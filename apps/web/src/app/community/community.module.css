@@ -409,6 +409,7 @@
 /* —— 审查评级（社区审查标准 v1）—— */
 .ratingCard {
   display: grid;
+  max-width: var(--reader-width);
   gap: var(--s-4);
   padding: var(--s-4) var(--s-5);
   border: 1px solid var(--line);
