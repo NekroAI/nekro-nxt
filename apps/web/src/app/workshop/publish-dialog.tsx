@@ -258,7 +258,7 @@ export function PublishDialog({
       ) : account ? (
         <>
           <p>
-            以 @{account.handle} 发布{revision ? `${relativeTime(revision.createdAt)}的保存` : '最新保存'}
+            以 @{account.handle} 发布{revision ? `${relativeTime(revision.createdAt)}的版本` : '最新版本'}
             。所有人都能看到并安装它，同一个扩展再次发布会成为新的一次发布。
           </p>
           <Field label="一句话简介" hint="显示在社区列表的卡片上。">

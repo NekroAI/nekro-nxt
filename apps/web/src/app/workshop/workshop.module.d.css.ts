@@ -46,6 +46,7 @@ declare const styles: {
   readonly record: string
   readonly recordBody: string
   readonly recordCount: string
+  readonly recordFoot: string
   readonly recordHead: string
   readonly records: string
   readonly row: string

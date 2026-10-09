@@ -517,12 +517,31 @@
   font-weight: 600;
 }
 
+.recordFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3) var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.recordFoot .faint {
+  margin: 0;
+}
+
 .facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: var(--s-1) var(--s-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-5);
   margin: 0;
   font: var(--t-note);
+}
+
+.facts > div {
+  display: flex;
+  gap: var(--s-2);
 }
 
 .facts dt {
@@ -531,6 +550,7 @@
 
 .facts dd {
   margin: 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* —— 空状态 —— */

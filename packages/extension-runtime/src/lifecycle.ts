@@ -221,7 +221,7 @@ export class ExtensionLifecycleCoordinator {
 
     const activations = this.#repository.listActivations().filter((entry) => entry.extensionId === input.extensionId)
     if (activations.length > 0 && !hasAgentLayer(manifest)) {
-      throw new Error('这份保存记录没有智能体能力，请先给正在使用它的智能体停用这个扩展。')
+      throw new Error('这个版本没有智能体能力，请先给正在使用它的智能体停用这个扩展。')
     }
     const agentGrants = activations.map((activation) => {
       const requirement = agentPermissionRequirement(
@@ -604,7 +604,7 @@ export class ExtensionLifecycleCoordinator {
           }
           if (live.attachments.has(activation.agentId)) return false
           if (live.revision.id !== activation.extensionRevisionId) {
-            throw new Error('智能体使用的保存记录与本机安装不一致。')
+            throw new Error('智能体使用的版本与本机安装的版本不一致。')
           }
           const requirement = agentPermissionRequirement(
             live.manifest,
@@ -774,7 +774,7 @@ export class ExtensionLifecycleCoordinator {
         message: message(restoreError),
         observedAt: this.#timestamp(),
       })
-      throw new AggregateError([originalError, restoreError], '扩展变更失败，且原保存记录无法恢复运行。')
+      throw new AggregateError([originalError, restoreError], '扩展变更失败，且原来的版本无法恢复运行。')
     }
   }
 
@@ -799,7 +799,7 @@ export class ExtensionLifecycleCoordinator {
 
   #assertVerified(revision: Revision): void {
     if (this.#repository.getExtensionRevisionVerification(revision.id)?.contractVersion !== 'nekro-nxt-extension-v5') {
-      throw new Error('只能安装在本机完成验证的扩展保存记录。')
+      throw new Error('只能安装在本机完成验证的扩展版本。')
     }
   }
 
@@ -811,7 +811,7 @@ export class ExtensionLifecycleCoordinator {
     readonly manifest: ExtensionManifest
   } {
     const revision = this.#repository.getExtensionRevision(revisionId)
-    if (!revision || revision.extensionId !== extensionId) throw new Error('这份保存记录不属于所选扩展。')
+    if (!revision || revision.extensionId !== extensionId) throw new Error('这个版本不属于所选扩展。')
     const manifest = this.#service.revisionManifest(revision)
     if (!manifest) throw new Error(LEGACY_EXTENSION_MESSAGE)
     return { revision, manifest }

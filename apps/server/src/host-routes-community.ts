@@ -68,7 +68,7 @@ const communityFailure = (res: ServerResponse, error: unknown, fallbackCode: str
 }
 
 /**
- * 社区账号、目录浏览、安装与发布。安装复用本地文件导入的检查与确认；发布导出所选保存记录后上传。
+ * 社区账号、目录浏览、安装与发布。安装复用本地文件导入的检查与确认；发布导出所选版本后上传。
  * `/community/callback` 是社区授权后的回跳页，在安全入口中免登录，凭一次性 state 完成登录。
  */
 export function registerCommunityRoutes(context: HostRouteContext): () => void {
@@ -340,7 +340,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
   return () => clearInterval(timer)
 }
 
-/** 每个扩展最近一次从社区导入的保存记录及其来源。 */
+/** 每个扩展最近一次从社区导入的版本及其来源。 */
 const installedSources = (
   runtime: NekroRuntime,
 ): { extensionId: ExtensionId; displayName: string; revisionId: string; source: CommunitySource }[] => {

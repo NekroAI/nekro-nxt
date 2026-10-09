@@ -276,7 +276,7 @@ export interface LocalExtensionSummary {
   readonly revision: number
   /** What the latest saved record provides: agent abilities, pages, an adapter, MCP servers. */
   readonly provides: readonly ExtensionProvide[]
-  /** 扩展包自带的图标：取正在使用的保存记录，没有时取最新一条带图标的记录。 */
+  /** 扩展包自带的图标：取正在使用的版本，没有时取最新一个带图标的版本。 */
   readonly iconUrl?: string
   readonly revisions: readonly {
     readonly id: string
@@ -284,7 +284,7 @@ export interface LocalExtensionSummary {
     readonly format?: 'current' | 'unavailable'
     readonly iconUrl?: string
     readonly createdAt: number
-    /** 从社区安装的保存记录的来源。 */
+    /** 从社区安装的版本的来源。 */
     readonly source?: CommunitySource
     readonly provides: readonly ExtensionProvide[]
     /** Whether this record can be enabled for agents. */

@@ -193,7 +193,6 @@ export default function WorkshopSpace() {
           {visibleExtensions.map((item) => {
             const usage = extensionUsage(item)
             const key = `extension:${item.id}`
-            const latest = item.revisions.at(-1)
             return (
               <Link
                 key={key}
@@ -207,10 +206,7 @@ export default function WorkshopSpace() {
                 <span className={styles.rowState}>
                   <StatusDot tone={usage.tone} />
                 </span>
-                <span className={styles.rowSub}>
-                  {usage.label}
-                  {latest ? ` · ${relativeTime(latest.createdAt)}保存` : ''}
-                </span>
+                <span className={styles.rowSub}>{usage.label}</span>
               </Link>
             )
           })}

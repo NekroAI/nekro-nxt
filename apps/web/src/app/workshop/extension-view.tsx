@@ -115,7 +115,6 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
             ) : (
               <span>{extension.createdByAgent ? `由${extension.createdByAgent}创造` : '本地导入'}</span>
             )}
-            {latest ? <span>{relativeTime(latest.createdAt)}保存</span> : null}
           </>
         }
         actions={
@@ -132,7 +131,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                 ? [
                     {
                       key: 'export',
-                      label: '导出最新保存',
+                      label: '导出最新版本',
                       icon: <Download size={14} />,
                       onSelect: () => void download(extension, current).catch(failure),
                     },
@@ -165,8 +164,8 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
       {unsupported > 0 ? (
         <Banner tone="warn">
           {unsupported === extension.revisions.length
-            ? '这个扩展的保存格式已不再受支持，无法启用；请让智能体重新创造。'
-            : '部分较早的保存记录格式不再受支持，无法启用。'}
+            ? '这个扩展的格式已不再受支持，无法启用；请让智能体重新创造。'
+            : '部分较早版本的格式不再受支持，无法启用。'}
         </Banner>
       ) : null}
 
@@ -177,7 +176,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
       <ExtensionSettings extension={extension} />
 
-      <PropertyGroup title="保存记录" tip="每次保存都会留下一份记录，可以切换使用或导出。">
+      <PropertyGroup title="版本" tip="智能体每次保存、每次从社区或文件导入都会多一个版本，可以切换使用或导出。">
         <div className={styles.records}>
           {extension.revisions.toReversed().map((revision) => (
             <RecordRow
@@ -196,8 +195,8 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
           { label: '扩展 ID', value: extension.id },
           { label: '本地标识', value: extension.slug },
           ...extension.revisions.toReversed().map((revision) => ({
-            label: `${labels.get(revision.id) ?? ''} 保存`,
-            value: `${revision.id}（第 ${revision.revision} 份）`,
+            label: `${labels.get(revision.id) ?? ''} 版本`,
+            value: `${revision.id}（第 ${revision.revision} 个）`,
           })),
         ]}
       />
@@ -214,7 +213,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
           navigate('/workshop', { replace: true })
         }}
       >
-        {extension.revisions.length} 份保存记录、源码与验证记录会被永久删除
+        {extension.revisions.length} 个版本、源码与验证记录会被永久删除
         {removalConsequences(extension)}
       </ConfirmDialog>
     </MainContent>
@@ -231,7 +230,7 @@ function Overview({ revision, pages }: { readonly revision: Revision | undefined
   return (
     <PropertyGroup title="能提供什么">
       {parts.length === 0 ? (
-        <p className={styles.faint}>这份保存记录还没有经过验证，暂时无法说明它提供的内容。</p>
+        <p className={styles.faint}>这个版本还没有经过验证，暂时无法说明它提供的内容。</p>
       ) : (
         <PropertyList>
           {parts.map((part) => (
@@ -344,7 +343,7 @@ function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSu
   )
 }
 
-/** One row per agent with an on/off switch; every agent uses the record installed on this machine. */
+/** One row per agent with an on/off switch; every agent uses the version installed on this machine. */
 function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }) {
   const agents = useProductStore((state) => state.agents)
   // Rows with a request in flight; only those rows lock, the rest of the table stays usable.
@@ -447,10 +446,7 @@ function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }
   ]
 
   return (
-    <PropertyGroup
-      title="智能体"
-      tip="启用后，这个智能体在对话中获得扩展的能力；所有智能体使用本机安装的同一份保存记录。"
-    >
+    <PropertyGroup title="智能体" tip="启用后，这个智能体在对话中获得扩展的能力；所有智能体使用本机安装的同一个版本。">
       {activation.dialog}
       <DataTable
         label="使用这个扩展的智能体"
@@ -492,7 +488,7 @@ function Installation({
     setBusy(true)
     try {
       await api.getState().setHostExtensionInstalled(extension.id, revision.id, approvals)
-      toast(`已安装${labels.get(revision.id) ?? ''}保存的记录`)
+      toast(`已安装${labels.get(revision.id) ?? ''}的版本`)
     } finally {
       setBusy(false)
     }
@@ -501,7 +497,7 @@ function Installation({
     const host = revision.verification?.hostPermission
     const agent = revision.verification?.agentPermission
     const needsHost = host?.approvalRequired === true
-    // Agents move with the installation; a record that asks them for more needs their approval as well.
+    // Agents move with the installation; a version that asks them for more needs their approval as well.
     const needsAgent = extension.activations.length > 0 && agent?.approvalRequired === true
     if (needsHost || needsAgent) {
       setAcceptedRisks(new Set())
@@ -527,17 +523,19 @@ function Installation({
       ) : null}
       <PropertyList>
         <PropertyRow
-          label="使用的保存记录"
+          label="当前版本"
           description={
             installed
-              ? `${relativeTime(installed.installedAt)}安装`
+              ? installed.revisionId === extension.revisions.findLast(usable)?.id
+                ? '已是最新版本'
+                : '有更新的版本，可以切换'
               : onlyAgents
                 ? '给智能体启用时会自动安装'
                 : '还没有安装到本机'
           }
         >
           <Select
-            aria-label="保存记录"
+            aria-label="版本"
             value={choice}
             onValueChange={(value) => setChoice(value)}
             options={extension.revisions.toReversed().map((item) => ({
@@ -552,7 +550,7 @@ function Installation({
             disabled={!chosen || chosenInstalled}
             onClick={() => chosen && request(chosen)}
           >
-            {installed ? '切换到这份' : '安装'}
+            {installed ? '切换到这个版本' : '安装'}
           </Button>
           {installed ? (
             <Button variant="danger" disabled={busy} onClick={() => setUninstallOpen(true)}>
@@ -564,7 +562,7 @@ function Installation({
       <ConfirmDialog
         open={approve !== undefined}
         onOpenChange={(open) => !open && setApprove(undefined)}
-        title="批准这份记录申请的权限"
+        title="批准这个版本申请的权限"
         confirmLabel="批准并安装"
         confirmDisabled={approvalRiskKeys(approve?.host, approve?.agent).some((key) => !acceptedRisks.has(key))}
         onConfirm={() =>
@@ -630,7 +628,7 @@ function RecordRow({
         {users.length > 0 ? <Chip tone="ok">{users.map((item) => item.agentName).join('、')} 在用</Chip> : null}
         {!usable(revision) ? <Chip tone="warn">格式不受支持</Chip> : null}
         <span className={styles.grow} />
-        <span className={styles.recordCount}>{revision.contributions.length} 项内容</span>
+        {open ? null : <span className={styles.recordCount}>{revision.contributions.length} 项内容</span>}
       </Pressable>
       <Disclosure open={open} id={id}>
         <div className={styles.recordBody}>
@@ -647,19 +645,25 @@ function RecordRow({
               })}
             </ul>
           ) : null}
-          {verification ? (
-            <dl className={styles.facts}>
-              <dt>验证</dt>
-              <dd>{relativeTime(verification.verifiedAt)}通过</dd>
-              <dt>工具调用</dt>
-              <dd>{verification.toolInvocationCount > 0 ? `${verification.toolInvocationCount} 次通过` : '无'}</dd>
-              <dt>界面</dt>
-              <dd>{verification.clientBuilt ? '已渲染' : '无'}</dd>
-            </dl>
-          ) : (
-            <p className={styles.faint}>本机没有这份记录的验证结果。</p>
-          )}
-          <div>
+          <div className={styles.recordFoot}>
+            {verification ? (
+              <dl className={styles.facts}>
+                <div>
+                  <dt>验证</dt>
+                  <dd>已通过</dd>
+                </div>
+                <div>
+                  <dt>工具调用</dt>
+                  <dd>{verification.toolInvocationCount > 0 ? `${verification.toolInvocationCount} 次通过` : '无'}</dd>
+                </div>
+                <div>
+                  <dt>界面</dt>
+                  <dd>{verification.clientBuilt ? '已渲染' : '无'}</dd>
+                </div>
+              </dl>
+            ) : (
+              <p className={styles.faint}>本机没有这个版本的验证结果。</p>
+            )}
             <Button
               size="small"
               icon={<Download size={14} />}
@@ -671,7 +675,7 @@ function RecordRow({
                   .finally(() => setBusy(false))
               }}
             >
-              导出这份
+              导出
             </Button>
           </div>
         </div>

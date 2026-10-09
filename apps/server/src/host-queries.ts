@@ -612,7 +612,7 @@ export class HostQueries {
   }
 }
 
-/** 从社区安装的保存记录带上来源，扩展详情据此显示「来自社区 @作者」。 */
+/** 从社区安装的版本带上来源，扩展详情据此显示「来自社区 @作者」。 */
 const communitySource = (runtime: NekroRuntime, revisionId: ExtensionRevisionId): { source?: CommunitySource } => {
   const record = runtime.repository.getExtensionRevisionSource(revisionId)
   if (!record) return {}

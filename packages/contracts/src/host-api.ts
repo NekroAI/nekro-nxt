@@ -1317,7 +1317,7 @@ export const HostSnapshotSchema = z
                   .regex(/^\/api\/extensions\/[^/]+\/revisions\/[^/]+\/icon\/[a-f0-9]{64}\.(?:svg|png|webp)$/u)
                   .optional(),
                 createdAt: z.number().int().safe().nonnegative(),
-                /** 从社区安装的保存记录的来源；本机保存与文件导入没有来源。 */
+                /** 从社区安装的版本的来源；本机保存与文件导入没有来源。 */
                 source: CommunitySourceSchema.optional(),
                 provides: z.array(ExtensionProvideSchema),
                 /** Whether this Revision can be enabled for agents (agent-layer contributions or capabilities). */

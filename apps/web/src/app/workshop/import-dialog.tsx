@@ -67,7 +67,7 @@ export function ImportDialog({
         token: inspection.token,
         ...(inspection.slugConflict ? { localSlug: slug } : {}),
       })
-      toast(result.idempotent ? '本机已有相同的保存记录' : '已导入，尚未启用')
+      toast(result.idempotent ? '本机已有相同的版本' : '已导入，尚未启用')
       onImported(result.extensionId)
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
@@ -103,7 +103,7 @@ export function ImportDialog({
             <Chip>{providesLabel(inspection.provides)}</Chip>
           </div>
           {note}
-          <p>{inspection.idempotent ? '本机已有完全相同的保存记录。' : '导入后不会自动启用。'}</p>
+          <p>{inspection.idempotent ? '本机已有完全相同的版本。' : '导入后不会自动启用。'}</p>
           {inspection.slugConflict ? (
             <Field label="标识" hint="原标识已被占用">
               <Input value={slug} spellCheck={false} onChange={(event) => setSlug(event.target.value.trim())} />

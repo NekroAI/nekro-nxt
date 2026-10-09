@@ -182,7 +182,7 @@ const eventCursor = (event: unknown): SyncCursor | undefined => {
 
 const nonEmptyLabel = (value: string | undefined, fallback: string): string => value?.trim() || fallback
 
-/** 扩展图标跟随正在使用的保存记录（安装或最近一次启用），否则取最新一条带图标的记录。 */
+/** 扩展图标跟随正在使用的版本（安装或最近一次启用），否则取最新一个带图标的版本。 */
 export const extensionIconUrl = (extension: {
   readonly installation?: { readonly extensionRevisionId: string } | undefined
   readonly activations: readonly { readonly extensionRevisionId: string; readonly activatedAt: number }[]

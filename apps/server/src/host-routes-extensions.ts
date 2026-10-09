@@ -911,7 +911,7 @@ export function registerExtensionsRoutes({
         }
         // One current version per machine: only the installed Revision serves its Client.
         if (runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId !== revisionId) {
-          writeError(res, 409, 'stale-client-build', '该保存记录不是当前安装到本机的版本。')
+          writeError(res, 409, 'stale-client-build', '这个版本不是当前安装到本机的版本。')
           return
         }
         try {
@@ -944,7 +944,7 @@ export function registerExtensionsRoutes({
         try {
           const parsed = HostApiContracts.extensionClientCall.parseRequest(await readJsonBody(req))
           if (runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId !== revisionId) {
-            throw new Error('该保存记录不是当前安装到本机的版本。')
+            throw new Error('这个版本不是当前安装到本机的版本。')
           }
           const caller = resolvePanelCaller(
             runtime,

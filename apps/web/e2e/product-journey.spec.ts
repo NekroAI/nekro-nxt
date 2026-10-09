@@ -675,7 +675,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await page.goto(`/workshop/extensions/${extensionId}`)
   await expect(page.getByRole('heading', { name: '合成聊天适配器', level: 1 })).toBeVisible()
   await expect(page.getByText('未安装', { exact: true }).first()).toBeVisible()
-  const version = page.getByRole('combobox', { name: '保存记录' })
+  const version = page.getByRole('combobox', { name: '版本' })
   // Records list newest first: the first option is v2, the second v1.
   const pickRecord = async (position: number) => {
     await version.click()
@@ -702,10 +702,10 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
 
   await page.goto(`/workshop/extensions/${extensionId}`)
   const v1 = await pickRecord(1)
-  await page.getByRole('button', { name: '切换到这份' }).click()
+  await page.getByRole('button', { name: '切换到这个版本' }).click()
   await expect(version).toHaveText(`${v1} · 已安装`)
   await pickRecord(0)
-  await page.getByRole('button', { name: '切换到这份' }).click()
+  await page.getByRole('button', { name: '切换到这个版本' }).click()
   await expect(version).toHaveText(/ · 已安装$/u)
   await expect(version).not.toHaveText(`${v1} · 已安装`)
   await expect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)

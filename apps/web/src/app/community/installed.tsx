@@ -28,7 +28,7 @@ import styles from './community.module.css'
 
 type Installed = { readonly checkedAt: number | null; readonly items: readonly CommunityInstalledItem[] }
 
-/** 从社区安装的扩展：显示来源、新发布与作者撤回、管理员下架；更新是导入新的保存记录，不自动切换。 */
+/** 从社区安装的扩展：显示来源、新发布与作者撤回、管理员下架；更新是导入新的版本，不自动切换。 */
 export function InstalledView({
   onInspected,
   onChecked,
@@ -192,7 +192,7 @@ export function InstalledView({
       )}
       {updates > 0 ? (
         <p className={styles.faint}>
-          导入新发布会成为这个扩展的一条新保存记录，智能体仍使用原来的保存，确认无误后再在扩展详情中切换。
+          导入新发布会成为这个扩展的一个新版本，智能体仍使用原来的版本，确认无误后再在扩展详情中切换。
         </p>
       ) : null}
     </MainContent>

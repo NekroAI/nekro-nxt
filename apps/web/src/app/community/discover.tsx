@@ -339,7 +339,7 @@ function CommunityDetail({
         <Banner tone="bad">审查发现了可能被利用或伤害你的问题。请阅读审查记录，理解风险后再安装。</Banner>
       ) : null}
       {installed ? (
-        <Banner tone="info">本机已有这个扩展。导入新的发布会成为它的一条保存记录，不会自动切换使用。</Banner>
+        <Banner tone="info">本机已有这个扩展。导入新的发布会成为它的一个新版本，不会自动切换使用。</Banner>
       ) : null}
 
       <PropertyGroup title="介绍">
