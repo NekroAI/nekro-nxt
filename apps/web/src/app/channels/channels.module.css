@@ -1276,6 +1276,16 @@ button.step:hover {
   background: var(--surface);
 }
 
+.memoryList {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
 .sourceName {
   display: inline-flex;
   align-items: center;

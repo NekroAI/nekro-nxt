@@ -18,6 +18,10 @@ import { createAuthoringRepository } from './repositories/authoring.js'
 import { createExtensionStorageRepository, type ExtensionStorageRepository } from './repositories/extension-storage.js'
 import { createExtensionJobsRepository, type ExtensionJobsRepository } from './repositories/extension-jobs.js'
 import { createInboundHooksRepository, type InboundHooksRepository } from './repositories/inbound-hooks.js'
+import {
+  createChannelContextPoliciesRepository,
+  type ChannelContextPoliciesRepository,
+} from './repositories/channel-context-policies.js'
 import { createChannelPromptsRepository, type ChannelPromptsRepository } from './repositories/channel-prompts.js'
 import { createExtensionSourcesRepository } from './repositories/extension-sources.js'
 export type { ExtensionRevisionSourceRecord } from './repositories/extension-sources.js'
@@ -94,6 +98,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #extensionJobs
   readonly #inboundHooks
   readonly #channelPrompts
+  readonly #channelContextPolicies
   readonly #extensionSources
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
@@ -115,6 +120,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensionJobs = createExtensionJobsRepository(database.db)
     this.#inboundHooks = createInboundHooksRepository(database.db)
     this.#channelPrompts = createChannelPromptsRepository(database.db)
+    this.#channelContextPolicies = createChannelContextPoliciesRepository(database.db)
     this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.projections = createProjectionRepository(database.db)
   }
@@ -584,4 +590,10 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channelPrompts.saveChannelPrompt(...args)
   readonly listChannelPromptRevisions = (...args: Parameters<ChannelPromptsRepository['listChannelPromptRevisions']>) =>
     this.#channelPrompts.listChannelPromptRevisions(...args)
+  readonly getChannelContextPolicy = (
+    ...args: Parameters<ChannelContextPoliciesRepository['getChannelContextPolicy']>
+  ) => this.#channelContextPolicies.getChannelContextPolicy(...args)
+  readonly saveChannelContextPolicy = (
+    ...args: Parameters<ChannelContextPoliciesRepository['saveChannelContextPolicy']>
+  ) => this.#channelContextPolicies.saveChannelContextPolicy(...args)
 }

@@ -122,7 +122,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
-    if (systemText(options).startsWith('你是对话交接摘要器')) {
+    if (systemText(options).startsWith('你在给一个群聊智能体写交接记录')) {
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: '用户希望继续当前频道任务。' }
       yield { type: 'block-end', index: 0, block: { type: 'text', text: '用户希望继续当前频道任务。' } }

@@ -151,6 +151,7 @@ export interface ChannelRuntimeView {
   readonly occupancy?: HostApiResponse<'getChannelRuntime'>['occupancy']
   readonly cache?: HostApiResponse<'getChannelRuntime'>['cache']
   readonly performance?: HostApiResponse<'getChannelRuntime'>['performance']
+  readonly memory?: HostApiResponse<'getChannelRuntime'>['memory']
   readonly turns: HostApiResponse<'getChannelRuntime'>['turns']
 }
 

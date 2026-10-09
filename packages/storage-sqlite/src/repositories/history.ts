@@ -1,8 +1,13 @@
-import { and, desc, eq, exists, lt, or, sql, type SQL } from 'drizzle-orm'
-import type { ChannelHistoryEntry, ChannelHistoryRepository, ChannelHistoryCursor } from '@nekro-nxt/channel-runtime'
+import { and, desc, eq, exists, gte, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
+import type {
+  ChannelHistoryCursor,
+  ChannelHistoryEntry,
+  ChannelHistoryFilter,
+  ChannelHistoryRepository,
+} from '@nekro-nxt/channel-runtime'
 import type { ChannelId, EpisodeId } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { admissionEvents, admissions, channelEvents, episodes, outboundIntents } from '../schema.js'
+import { admissionEvents, admissions, channelEvents, channelMembers, episodes, outboundIntents } from '../schema.js'
 import { ChannelEventRowSchema, OutboundIntentRowSchema } from '../row-schemas.js'
 
 const historyLimit = (value = 50): number => {
@@ -22,8 +27,17 @@ const beforeCursor = (
     : or(lt(time, cursor.occurredAt), and(eq(time, cursor.occurredAt), sql`${id} < ${cursor.sourceId} collate binary`))
 const textMatch = (
   column: typeof channelEvents.searchText | typeof outboundIntents.searchText,
-  query?: string,
-): SQL | undefined => (query === undefined ? undefined : sql`instr(nxt_casefold(${column}), ${query}) > 0`)
+  terms?: readonly string[],
+): SQL | undefined =>
+  terms === undefined ? undefined : and(...terms.map((term) => sql`instr(nxt_casefold(${column}), ${term}) > 0`))
+const timeRange = (
+  time: typeof channelEvents.receivedAt | typeof outboundIntents.createdAt,
+  filter: ChannelHistoryFilter,
+): SQL | undefined =>
+  and(
+    filter.since === undefined ? undefined : gte(time, filter.since),
+    filter.until === undefined ? undefined : lt(time, filter.until),
+  )
 
 const inboundEntry = (input: typeof channelEvents.$inferSelect): ChannelHistoryEntry => {
   const row = ChannelEventRowSchema.parse(input)
@@ -62,9 +76,29 @@ export function createHistoryRepository(
     channelId: ChannelId,
     limit: number,
     before?: ChannelHistoryCursor,
-    query?: string,
+    terms?: readonly string[],
     episodeId?: EpisodeId,
+    filter: ChannelHistoryFilter = {},
   ): readonly ChannelHistoryEntry[] => {
+    const sender = filter.sender?.trim().toLocaleLowerCase()
+    const senders =
+      sender === undefined || sender.length === 0
+        ? undefined
+        : inArray(
+            channelEvents.senderMemberId,
+            database
+              .select({ id: channelMembers.id })
+              .from(channelMembers)
+              .where(
+                and(
+                  eq(channelMembers.channelId, channelId),
+                  or(
+                    sql`nxt_casefold(${channelMembers.id}) = ${sender}`,
+                    sql`instr(nxt_casefold(coalesce(${channelMembers.displayName}, '')), ${sender}) > 0`,
+                  ),
+                ),
+              ),
+          )
     const admitted =
       episodeId === undefined
         ? undefined
@@ -75,38 +109,46 @@ export function createHistoryRepository(
               .innerJoin(admissions, eq(admissions.id, admissionEvents.admissionId))
               .where(and(eq(admissions.episodeId, episodeId), eq(admissionEvents.eventId, channelEvents.id))),
           )
-    const inbound = database
-      .select()
-      .from(channelEvents)
-      .where(
-        and(
-          eq(channelEvents.channelId, channelId),
-          visibleInbound,
-          admitted,
-          beforeCursor(channelEvents.receivedAt, channelEvents.id, before),
-          textMatch(channelEvents.searchText, query),
-        ),
-      )
-      .orderBy(desc(channelEvents.receivedAt), desc(channelEvents.id))
-      .limit(limit)
-      .all()
-      .map(inboundEntry)
-    const outbound = database
-      .select({ intent: outboundIntents })
-      .from(outboundIntents)
-      .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-      .where(
-        and(
-          eq(episodes.channelId, channelId),
-          episodeId === undefined ? undefined : eq(episodes.id, episodeId),
-          beforeCursor(outboundIntents.createdAt, outboundIntents.id, before),
-          textMatch(outboundIntents.searchText, query),
-        ),
-      )
-      .orderBy(desc(outboundIntents.createdAt), desc(outboundIntents.id))
-      .limit(limit)
-      .all()
-      .map(({ intent }) => outboundEntry(intent, channelId))
+    const inbound = filter.ownOnly
+      ? []
+      : database
+          .select()
+          .from(channelEvents)
+          .where(
+            and(
+              eq(channelEvents.channelId, channelId),
+              visibleInbound,
+              admitted,
+              senders,
+              timeRange(channelEvents.receivedAt, filter),
+              beforeCursor(channelEvents.receivedAt, channelEvents.id, before),
+              textMatch(channelEvents.searchText, terms),
+            ),
+          )
+          .orderBy(desc(channelEvents.receivedAt), desc(channelEvents.id))
+          .limit(limit)
+          .all()
+          .map(inboundEntry)
+    const outbound =
+      senders !== undefined
+        ? []
+        : database
+            .select({ intent: outboundIntents })
+            .from(outboundIntents)
+            .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+            .where(
+              and(
+                eq(episodes.channelId, channelId),
+                episodeId === undefined ? undefined : eq(episodes.id, episodeId),
+                timeRange(outboundIntents.createdAt, filter),
+                beforeCursor(outboundIntents.createdAt, outboundIntents.id, before),
+                textMatch(outboundIntents.searchText, terms),
+              ),
+            )
+            .orderBy(desc(outboundIntents.createdAt), desc(outboundIntents.id))
+            .limit(limit)
+            .all()
+            .map(({ intent }) => outboundEntry(intent, channelId))
     return [...inbound, ...outbound]
       .sort(
         (left, right) =>
@@ -116,7 +158,8 @@ export function createHistoryRepository(
       .slice(0, limit)
   }
   return {
-    listChannelHistory: (channelId, options = {}) => read(channelId, historyLimit(options.limit), options.before),
+    listChannelHistory: (channelId, options = {}) =>
+      read(channelId, historyLimit(options.limit), options.before, undefined, undefined, options),
     listEpisodeHistory: (episodeId, options = {}) => {
       const limit = historyLimit(options.limit)
       const episode = database
@@ -124,12 +167,15 @@ export function createHistoryRepository(
         .from(episodes)
         .where(eq(episodes.id, episodeId))
         .get()
-      return episode === undefined ? [] : read(episode.channelId, limit, undefined, undefined, episodeId)
+      return episode === undefined ? [] : read(episode.channelId, limit, options.before, undefined, episodeId)
     },
     searchChannelHistory: (channelId, query, options = {}) => {
-      const normalized = query.trim().toLocaleLowerCase()
-      if (normalized.length === 0) return []
-      return read(channelId, historyLimit(options.limit), undefined, normalized).map((entry) => ({ entry, rank: 1 }))
+      const terms = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean)
+      if (terms.length === 0) return []
+      return read(channelId, historyLimit(options.limit), options.before, terms, undefined, options).map((entry) => ({
+        entry,
+        rank: 1,
+      }))
     },
   }
 }

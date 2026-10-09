@@ -1459,6 +1459,7 @@ export class HttpProductHost implements ProductHostPort {
       | 'occupancy'
       | 'cache'
       | 'performance'
+      | 'memory'
       | 'turns'
     >,
   ): ChannelRuntimeView {
@@ -1470,6 +1471,7 @@ export class HttpProductHost implements ProductHostPort {
       summary: raw.summary,
       pendingInjectCount: raw.pendingInjectCount,
       ...(raw.occupancy === undefined ? {} : { occupancy: raw.occupancy }),
+      ...(raw.memory === undefined ? {} : { memory: raw.memory }),
       ...(raw.cache === undefined ? {} : { cache: raw.cache }),
       ...(raw.performance === undefined ? {} : { performance: raw.performance }),
       turns: raw.turns,

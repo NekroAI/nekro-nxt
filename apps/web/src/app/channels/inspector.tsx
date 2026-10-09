@@ -32,6 +32,7 @@ import {
 import { triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
+import { ChannelMemory } from './channel-memory.js'
 import { ContextSheet } from './context-sheet.js'
 import { ChannelPromptSheet, type ChannelPromptView } from './channel-prompt-sheet.js'
 import { workspaceApi } from '../../host-api-client.js'
@@ -334,7 +335,7 @@ export function ChannelInspector({
         ) : null}
       </PropertyGroup>
 
-      {agent && (occupancy || runtime?.episodeId) ? (
+      {agent ? (
         <PropertyGroup title="上下文" description={`${agent.name}在这个频道里当前记住的内容`}>
           {occupancy ? (
             <div className={styles.contextCard}>
@@ -348,7 +349,11 @@ export function ChannelInspector({
                         { label: '系统', value: breakdown.systemTokens, color: 'var(--accent)' },
                         { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
                         { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
-                        { label: '其他', value: other, color: 'var(--faint)' },
+                        {
+                          label: occupancy.imageCount ? `其他（含 ${occupancy.imageCount} 张图片）` : '其他',
+                          value: other,
+                          color: 'var(--faint)',
+                        },
                       ].filter((segment) => segment.value > 0)
                     : [{ label: '已用', value: occupancy.projectedTokens, color: 'var(--accent)' }]
                 }
@@ -374,6 +379,7 @@ export function ChannelInspector({
               </PropertyRow>
             </PropertyList>
           ) : null}
+          <ChannelMemory channelId={channel.id} activities={runtime?.memory} />
         </PropertyGroup>
       ) : null}
 

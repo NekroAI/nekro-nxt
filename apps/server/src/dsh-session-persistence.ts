@@ -6,6 +6,7 @@ const IGNORABLE_NXT_EVENTS = new Set([
   'nekro-nxt/image-inspection',
   'nekro-nxt/image-admission',
   'nekro-nxt/image-restoration',
+  'nekro-nxt/memory',
 ])
 
 /** A public Provider adapter; JSONL encoding, validation, locks and recovery remain upstream-owned. */

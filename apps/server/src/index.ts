@@ -80,6 +80,8 @@ import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import {
   type AgentSessionDriver,
+  type ChannelHistoryEntry,
+  type ChannelHistoryFilter,
   type ChannelHistoryRepository,
   type ChannelInteractionResult,
   type ChannelRuntime,
@@ -95,11 +97,13 @@ import {
   ChannelEventIdSchema,
   DshPluginEntryIdSchema,
   ChannelMemberIdSchema,
+  DEFAULT_CHANNEL_CONTEXT_POLICY,
   ExtensionLayeredConfigSchema,
   HostPageContributionSchema,
   ExtensionPermissionsSchema,
   JsonValueSchema,
   LogicalMessageIdSchema,
+  messagePartsSearchText,
   parseJsonValue,
   parseMessageParts,
   type AdmissionId,
@@ -107,6 +111,7 @@ import {
   type AgentRevisionId,
   type AssetId,
   type AuthoringTaskId,
+  type ChannelContextPolicy,
   type ChannelEventId,
   type ChannelId,
   type ChannelMemberId,
@@ -159,6 +164,8 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { z } from 'zod'
 import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
+import { backlogImageCount, foldedBacklogNotice, selectBacklog } from './backlog-budget.js'
+import './memory-events.js'
 import { CHANNEL_PROMPT_MAX_CHARS, type ChannelPrompts } from './channel-prompts.js'
 import { projectSessionContext } from './channel-runtime-context.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
@@ -197,6 +204,7 @@ import {
   formatContextTime,
   formatTaskTime,
   hostTimezone,
+  parseContextTime,
   parseTaskSchedule,
   type ScheduledTasks,
 } from './scheduled-tasks.js'
@@ -217,6 +225,7 @@ import {
   collectVisibleImageResidency,
   DirectImageInspectionValueSchema,
   effectiveImageDetail,
+  historyEntryLine,
   imageDetailRank,
   memberSummary,
   NekroAssetAttachmentStore,
@@ -294,6 +303,23 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'nekro-nxt-memory-review': { readonly kind: 'nekro-nxt-memory-review' }
+  }
+}
+
+/** Host reminder after a quiet spell; the group does not see it and it obliges no reply. */
+const idleReviewText = (quietMinutes: number): string =>
+  [
+    `〔后台提醒，群里看不到：群里已经安静了 ${quietMinutes} 分钟。`,
+    '回头看看这段时间的对话，有值得长期记住的（称呼、约定、固定活动、对某个人的了解、对旧说法的更正），就用 channel_notes_update 更新笔记；没有就直接结束。',
+    '这条提醒不用回复，也不要为它在群里发消息；如果这时正好有人找你，照常回。〕',
+  ].join('')
+
+/** A busy session is checked again this much later instead of being interrupted. */
+const IDLE_REVIEW_RETRY_MS = 5 * 60_000
+
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     'nekro-nxt/image-inspection': {
@@ -317,6 +343,7 @@ declare module '@deepseek-ai/dsh-session/types' {
       readonly injectedCount: number
       readonly duplicateCount: number
       readonly skippedCount: number
+      readonly deferredCount?: number
     }
     'nekro-nxt/image-restoration': {
       readonly compactionId: string
@@ -389,6 +416,8 @@ export interface DshHostRuntimeOptions {
   readonly members?: ChannelMemberRelations
   /** Channel-specific instructions, read on every model request so edits apply to running sessions. */
   readonly channelPrompts?: Pick<ChannelPrompts, 'current' | 'updateNotesByAgent'>
+  /** The channel's backlog and review budget; absent hosts use the defaults. */
+  readonly contextPolicy?: (channelId: ChannelId) => ChannelContextPolicy
   readonly assets: AssetAccessRepository
   readonly assetService: AssetService
   readonly resolveAgentRevision: (revisionId: AgentRevisionId) => AgentRevisionRecord | undefined
@@ -1036,6 +1065,27 @@ const ROOT_CHANNEL_MESSAGE_POLICY = `你在一个真实的聊天频道里。大�
 
 const CHILD_CHANNEL_MESSAGE_POLICY = `你是被派来完成一项具体任务的子智能体，不能直接在频道里说话。做完后把完整结果作为最后的回复交回去；中途有重要发现或卡住了，可以用 send_message 告诉派你来的智能体（用委派说明里给的标识）。`
 
+/** Conversation text a handoff summary reads; older messages stay reachable through the history tools. */
+const HANDOFF_TRANSCRIPT_MAX_CHARS = 80_000
+const HANDOFF_TIMEOUT_MS = 60_000
+
+const HANDOFF_INSTRUCTION = [
+  '按下面的结构写交接记录，每节用简短的条目，没有内容的节写「（无）」：',
+  '## 参与者与称呼：谁是谁、成员编号、希望怎么被称呼',
+  '## 正在进行的事：正在聊或正在玩的事和进展；跑团、游戏、剧本要保留设定、人物、掷骰结果、线索和已发生的事件',
+  '## 约定与要求：群规和长期要求，注明是谁说的；被更正过的只写最新说法',
+  '## 承诺与待办：你答应过的事、别人托你做的事、约好的时间地点',
+  '## 关键结论：大家确认过的结论；只是某人一面之词或玩笑的，注明出处',
+  '## 有用的资料：分享过的链接、文件、图片编号、消息编号，以及它们是什么',
+  '要求：名字、数字、时间、链接、编号照原文写；时间写成带日期的绝对时间；玩笑和没人确认的说法不要写成事实；上一份交接记录里仍然有效的内容合并进来，过时的删掉；只输出记录本身。',
+].join('\n')
+
+const ROOT_MEMORY_POLICY = [
+  '你记事靠两样：这个群的笔记，和完整的聊天记录。',
+  '有人问起以前的事（上次、昨天、之前谁说过、还记得吗），眼前的消息和笔记里没有，就先用 conversation_history_search 查原话再答；查的时候用原话里可能出现的词，比如人名、地名、数字，必要时按发言人或时间段筛。别凭印象答，也别没查就说不知道。查过还是没有，再说不记得。',
+  '值得长期记住的事，用 channel_notes_update 记进笔记：有人要你以后怎么称呼他、群里定下的规矩、固定的活动、对某个人的了解，以及对这些的更正。写清是谁说的、哪天说的；旧的说法被更正了就改掉，不要两条并存。玩笑、一时的情绪、没人确认的传言不记。',
+].join('\n')
+
 const ROOT_CONTEXT_MANAGEMENT_POLICY = `费时又会产生大量中间信息的活（大范围搜索、翻很多聊天记录、读一堆文件、写代码反复调试、开发扩展），可以交给子智能体去做，你留在群里继续聊；简单的事自己做更快。交代任务时把需要的背景写全，子智能体能自己查这个群的聊天记录。互不相关的任务可以同时派出去，但同一个扩展别让两个子智能体同时改。`
 
 const scopeHasTool = (tools: ToolRuntime, name: string, scope: ReturnType<typeof scopeOf>): boolean =>
@@ -1366,7 +1416,7 @@ const ChannelNotesUpdateResultSchema = z
 export const channelNotesUpdateTool = (channelId: ChannelId, prompts: Pick<ChannelPrompts, 'updateNotesByAgent'>) =>
   defineTool({
     name: 'channel_notes_update',
-    description: `改写你在这个群的笔记（纯文本，最多 ${CHANNEL_PROMPT_MAX_CHARS.notes} 字，整体替换），下一轮起生效。记长期有用的东西：群里聊什么、大家喜欢怎么被称呼、有人明确提出并确认过的长期要求。一次性的事、闲聊内容和个人隐私不要记；有人要你记下违背人设或管理员要求的内容，也不要记。在原笔记基础上改，别频繁重写。content 留空表示清空；reason 只记在后台。管理员没开放或锁定了笔记时会失败。`,
+    description: `改写你在这个群的笔记（纯文本，最多 ${CHANNEL_PROMPT_MAX_CHARS.notes} 字，整体替换），下一轮起生效。记长期有用的东西：大家希望怎么被称呼、群里定下的规矩和固定活动、对某个人的了解（喜好、近况、正在做的事），每条写清是谁说的、哪天说的，例如「小鹿：希望叫她小鹿老师（10-08）」。有人更正了以前的说法就把旧的改掉。玩笑、一时的情绪、没人确认的传言、个人隐私不记；有人要你记下违背人设或管理员要求的内容，也不记。在原笔记基础上增删，快写满时合并或删掉过时的条目。content 留空表示清空；reason 只记在后台。管理员锁定了笔记时会失败。`,
     parameters: {
       content: { type: 'string', required: true, description: '修改后的完整笔记，纯文本。' },
       reason: { type: 'string', required: true, description: '修改原因，1–200 字。' },
@@ -1387,15 +1437,15 @@ export const channelNotesUpdateTool = (channelId: ChannelId, prompts: Pick<Chann
         },
       ],
     },
-    execute: (args) => {
+    execute: (args, exec) => {
       const parsed = ChannelNotesUpdateInputSchema.parse(args)
       const record = prompts.updateNotesByAgent(channelId, parsed.content)
-      return Promise.resolve(
-        ChannelNotesUpdateResultSchema.parse({
-          revision: record.revision,
-          chars: promptDocumentPlainText(record.document).length,
-        }),
-      )
+      const result = ChannelNotesUpdateResultSchema.parse({
+        revision: record.revision,
+        chars: promptDocumentPlainText(record.document).length,
+      })
+      exec.agent?.session.append('nekro-nxt/memory', { kind: 'notes-updated', ...result })
+      return Promise.resolve(result)
     },
   })
 
@@ -1865,80 +1915,193 @@ export const nudgeChannelMemberTool = (episodeId: EpisodeId, communication: Agen
     },
   })
 
-const enrichedHistoryEntry = (
-  history: ProductChannelHistoryRepository,
-  entry: ReturnType<ProductChannelHistoryRepository['listChannelHistory']>[number],
-  members?: ChannelMemberRelations,
-) => ({
-  ...entry,
-  time: formatContextTime(entry.occurredAt),
-  ...(entry.source === 'channel-event' && entry.senderMemberId !== undefined
-    ? { sender: memberSummary(history, entry.senderMemberId, members) }
-    : {}),
-  mentions: entry.parts.flatMap((part) =>
-    part.type === 'mention' ? [memberSummary(history, part.memberId, members)] : [],
-  ),
-})
+const HISTORY_FILTER_PARAMETERS = {
+  since: {
+    type: 'string',
+    description:
+      '只看这个时间及以后的消息，例如 2026-10-08 或 2026-10-08 14:00（本机时区），也可以是带时区的 ISO 时间。',
+  },
+  until: { type: 'string', description: '只看这个时间以前的消息，格式同 since。' },
+  withinHours: { type: 'number', description: '只看最近多少小时的消息；和 since 同时给时取较晚的那个。' },
+  sender: {
+    type: 'string',
+    description: '只看某个人说的：成员编号（mbr_…）或名字里的一段。写「你」只看你自己发过的。',
+  },
+} as const
 
-const historyTools = (
-  channelId: Parameters<ChannelHistoryRepository['listChannelHistory']>[0],
-  history: ProductChannelHistoryRepository,
-  members?: ChannelMemberRelations,
-) => [
-  defineTool({
-    name: 'conversation_history_read',
-    description: '按时间倒序读取当前频道的原始历史消息，不读取其他频道。',
-    parameters: {
-      limit: { type: 'integer', description: '读取条数，1 到 100。' },
-      beforeOccurredAt: { type: 'integer', description: '上一页末项的 occurredAt。' },
-      beforeSourceId: { type: 'string', description: '上一页末项的 sourceId。' },
-    },
-    output: {
-      schema: { type: 'array', items: { type: 'json' } },
-      render: (_arguments, value) => [{ type: 'text', text: `读取到 ${value.length} 条当前频道历史。` }],
-    },
-    execute: (args) => {
-      const hasOccurredAt = args.beforeOccurredAt !== undefined
-      const hasSourceId = args.beforeSourceId !== undefined
-      if (hasOccurredAt !== hasSourceId) throw new Error('History pagination requires both cursor fields.')
-      const entries = history.listChannelHistory(channelId, {
-        ...(args.limit === undefined ? {} : { limit: args.limit }),
-        ...(hasOccurredAt && hasSourceId
-          ? { before: { occurredAt: args.beforeOccurredAt!, sourceId: args.beforeSourceId! } }
-          : {}),
-      })
-      return Promise.resolve(
-        JsonValueSchema.array().parse(
-          JSON.parse(JSON.stringify(entries.map((entry) => enrichedHistoryEntry(history, entry, members)))),
-        ),
-      )
-    },
-  }),
-  defineTool({
-    name: 'conversation_history_search',
-    description: '在当前频道已持久化的入站和出站原文中进行全文搜索，不读取其他频道。',
-    parameters: {
-      query: { type: 'string', required: true, description: '要查找的原文片段。' },
-      limit: { type: 'integer', description: '返回条数，1 到 100。' },
-    },
-    output: {
-      schema: { type: 'array', items: { type: 'json' } },
-      render: (_arguments, value) => [{ type: 'text', text: `找到 ${value.length} 条当前频道历史。` }],
-    },
-    execute: (args) => {
-      const hits = history.searchChannelHistory(channelId, args.query, {
-        ...(args.limit === undefined ? {} : { limit: args.limit }),
-      })
-      return Promise.resolve(
-        JsonValueSchema.array().parse(
-          JSON.parse(
-            JSON.stringify(hits.map((hit) => ({ ...hit, entry: enrichedHistoryEntry(history, hit.entry, members) }))),
-          ),
-        ),
-      )
-    },
-  }),
-]
+type HistoryToolFilterArgs = {
+  readonly since?: string | undefined
+  readonly until?: string | undefined
+  readonly withinHours?: number | undefined
+  readonly sender?: string | undefined
+}
+
+const historyFilter = (
+  channelId: ChannelId,
+  args: HistoryToolFilterArgs,
+  members: ChannelMemberRelations | undefined,
+  now: number,
+): ChannelHistoryFilter => {
+  const time = (value: string | undefined, field: string): number | undefined => {
+    if (value === undefined || value.trim() === '') return undefined
+    const parsed = parseContextTime(value)
+    if (!Number.isFinite(parsed)) throw new Error(`${field} 需要形如 2026-10-08 或 2026-10-08 14:00 的时间。`)
+    return parsed
+  }
+  const since = [
+    time(args.since, 'since'),
+    args.withinHours === undefined ? undefined : now - Math.max(0, args.withinHours) * 3_600_000,
+  ].filter((value): value is number => value !== undefined)
+  const until = time(args.until, 'until')
+  const sender = args.sender?.trim()
+  const ownOnly =
+    sender !== undefined &&
+    (['你', '自己', '你自己', 'self'].includes(sender) || sender === members?.self(channelId).memberId)
+  return {
+    ...(since.length === 0 ? {} : { since: Math.max(...since) }),
+    ...(until === undefined ? {} : { until }),
+    ...(ownOnly ? { ownOnly: true } : sender ? { sender } : {}),
+  }
+}
+
+/** What the history tools read: the channel's messages and the names of who sent them. */
+export type HistoryLookup = Pick<
+  ProductChannelHistoryRepository,
+  'listChannelHistory' | 'searchChannelHistory' | 'getChannelMember'
+>
+
+/** Oldest first, one line each, then where to continue: what the agent reads back is the messages themselves. */
+const renderHistoryLines = (
+  history: HistoryLookup,
+  entries: readonly ChannelHistoryEntry[],
+  members: ChannelMemberRelations | undefined,
+  limit: number,
+  empty: string,
+): string => {
+  if (entries.length === 0) return empty
+  const chronological = [...entries].reverse()
+  const lines = chronological.map((entry, index) =>
+    historyEntryLine(history, entry, members, index === 0 ? undefined : chronological[index - 1]!.occurredAt),
+  )
+  const oldest = entries.at(-1)!
+  if (entries.length >= limit) {
+    lines.push(`（还有更早的。继续往前看：beforeOccurredAt=${oldest.occurredAt}，beforeSourceId=${oldest.sourceId}）`)
+  }
+  return lines.join('\n')
+}
+
+const historyCursor = (args: { beforeOccurredAt?: number | undefined; beforeSourceId?: string | undefined }) => {
+  const hasOccurredAt = args.beforeOccurredAt !== undefined
+  const hasSourceId = args.beforeSourceId !== undefined
+  if (hasOccurredAt !== hasSourceId) throw new Error('继续往前看需要同时给 beforeOccurredAt 和 beforeSourceId。')
+  return hasOccurredAt && hasSourceId
+    ? { before: { occurredAt: args.beforeOccurredAt!, sourceId: args.beforeSourceId! } }
+    : {}
+}
+
+const HISTORY_READ_DEFAULT_LIMIT = 40
+const HISTORY_SEARCH_DEFAULT_LIMIT = 20
+
+type HistoryToolArgs = HistoryToolFilterArgs & {
+  readonly limit?: number | undefined
+  readonly beforeOccurredAt?: number | undefined
+  readonly beforeSourceId?: string | undefined
+}
+
+/** `conversation_history_read`: the channel's messages as lines the agent reads directly. */
+export const readHistoryText = (
+  input: { readonly channelId: ChannelId; readonly history: HistoryLookup; readonly members?: ChannelMemberRelations },
+  args: HistoryToolArgs,
+  now: number,
+): string => {
+  const limit = args.limit ?? HISTORY_READ_DEFAULT_LIMIT
+  const entries = input.history.listChannelHistory(input.channelId, {
+    limit,
+    ...historyCursor(args),
+    ...historyFilter(input.channelId, args, input.members, now),
+  })
+  return renderHistoryLines(input.history, entries, input.members, limit, '这个范围内没有消息。')
+}
+
+/** `conversation_history_search`: matching messages as lines, plus what was asked for the memory log. */
+export const searchHistoryText = (
+  input: { readonly channelId: ChannelId; readonly history: HistoryLookup; readonly members?: ChannelMemberRelations },
+  args: HistoryToolArgs & { readonly query: string },
+  now: number,
+): { readonly text: string; readonly hits: number; readonly filter: ChannelHistoryFilter } => {
+  const limit = args.limit ?? HISTORY_SEARCH_DEFAULT_LIMIT
+  const filter = historyFilter(input.channelId, args, input.members, now)
+  const hits = input.history.searchChannelHistory(input.channelId, args.query, {
+    limit,
+    ...historyCursor(args),
+    ...filter,
+  })
+  return {
+    text: renderHistoryLines(
+      input.history,
+      hits.map(({ entry }) => entry),
+      input.members,
+      limit,
+      `没有找到包含「${args.query}」的消息。可以换个说法、拆成更短的词，或者用 conversation_history_read 按时间翻。`,
+    ),
+    hits: hits.length,
+    filter,
+  }
+}
+
+const historyTools = (channelId: ChannelId, history: HistoryLookup, members?: ChannelMemberRelations) => {
+  const input = { channelId, history, ...(members === undefined ? {} : { members }) }
+  return [
+    defineTool({
+      name: 'conversation_history_read',
+      description: '翻看这个群的聊天记录，从新往旧取，按时间顺序列出。可以限定时间段和发言人。只能看当前这个群。',
+      parameters: {
+        limit: { type: 'integer', description: `取多少条，1 到 100，默认 ${HISTORY_READ_DEFAULT_LIMIT}。` },
+        ...HISTORY_FILTER_PARAMETERS,
+        beforeOccurredAt: { type: 'integer', description: '继续往前看时，填上次结果末尾给出的值。' },
+        beforeSourceId: { type: 'string', description: '继续往前看时，填上次结果末尾给出的值。' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_arguments, value) => [{ type: 'text', text: value }],
+      },
+      execute: (args) => Promise.resolve(readHistoryText(input, args, Date.now())),
+    }),
+    defineTool({
+      name: 'conversation_history_search',
+      description:
+        '在这个群的聊天记录里找包含某些字词的消息，结果按时间顺序列出。多个词用空格隔开，要求同时出现；可以限定时间段和发言人。只能查当前这个群。',
+      parameters: {
+        query: {
+          type: 'string',
+          required: true,
+          description: '要找的字词，用原文里可能出现的说法，比如名字、地名、数字；多个词用空格隔开。',
+        },
+        limit: { type: 'integer', description: `最多返回多少条，1 到 100，默认 ${HISTORY_SEARCH_DEFAULT_LIMIT}。` },
+        ...HISTORY_FILTER_PARAMETERS,
+        beforeOccurredAt: { type: 'integer', description: '继续往前找时，填上次结果末尾给出的值。' },
+        beforeSourceId: { type: 'string', description: '继续往前找时，填上次结果末尾给出的值。' },
+      },
+      output: {
+        schema: { type: 'string' },
+        render: (_arguments, value) => [{ type: 'text', text: value }],
+      },
+      execute: (args, exec) => {
+        const result = searchHistoryText(input, args, Date.now())
+        const { filter } = result
+        exec.agent?.session.append('nekro-nxt/memory', {
+          kind: 'history-search',
+          query: args.query,
+          hits: result.hits,
+          ...(filter.ownOnly ? { sender: '你' } : filter.sender === undefined ? {} : { sender: filter.sender }),
+          ...(filter.since === undefined ? {} : { since: filter.since }),
+          ...(filter.until === undefined ? {} : { until: filter.until }),
+        })
+        return Promise.resolve(result.text)
+      },
+    }),
+  ]
+}
 
 const assetInspectTool = (
   channelId: Parameters<AssetAccessRepository['canAccessAsset']>[1],
@@ -2514,6 +2677,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #history: ProductChannelHistoryRepository
   readonly #members: ChannelMemberRelations | undefined
   readonly #channelPrompts: DshHostRuntimeOptions['channelPrompts']
+  readonly #contextPolicy: (channelId: ChannelId) => ChannelContextPolicy
   readonly #imageContext: SessionImageContext
   readonly #dynamic: DynamicAuthoringRuntime
   readonly #assets: AssetAccessRepository
@@ -2536,6 +2700,8 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #channelReplyGuard: ChannelReplyGuardController
   #disposed = false
   #disposePromise: Promise<void> | undefined
+  /** One pending quiet-time review per live session, re-armed by each admission. */
+  readonly #idleReviews = new Map<string, ReturnType<typeof setTimeout>>()
 
   private constructor(
     context: Context,
@@ -2548,6 +2714,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#history = options.history
     this.#members = options.members
     this.#channelPrompts = options.channelPrompts
+    this.#contextPolicy = options.contextPolicy ?? (() => DEFAULT_CHANNEL_CONTEXT_POLICY)
     this.#assets = options.assets
     this.#assetService = options.assetService
     this.#resolveAgentRevision = options.resolveAgentRevision
@@ -3156,7 +3323,9 @@ export class DshHostRuntime implements AgentSessionDriver {
         name: 'nekro-nxt:context-management',
         order: 20.5,
         text: (context) =>
-          scopeHasTool(agentContext.tools, 'send_channel_message', context.scope) ? ROOT_CONTEXT_MANAGEMENT_POLICY : '',
+          scopeHasTool(agentContext.tools, 'send_channel_message', context.scope)
+            ? `${ROOT_MEMORY_POLICY}\n${ROOT_CONTEXT_MANAGEMENT_POLICY}`
+            : '',
       })
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:image-context',
@@ -3521,14 +3690,35 @@ export class DshHostRuntime implements AgentSessionDriver {
       skippedCount: 0,
     }
     const projectedEvents: ContentBlock[] = []
-    for (const [index, event] of input.events.entries()) {
+    const backlog = selectBacklog(input.events, this.#contextPolicy(input.events[0]!.channelId))
+    if (backlog.folded.length > 0) {
+      projectedEvents.push({
+        type: 'text',
+        text: foldedBacklogNotice(backlog.folded, {
+          formatTime: formatContextTime,
+          senderName: (event) =>
+            event.senderMemberId === undefined
+              ? undefined
+              : memberSummary(this.#history, event.senderMemberId, this.#members).displayName,
+        }),
+      })
+      agent.session.append('nekro-nxt/memory', {
+        kind: 'backlog-folded',
+        admissionId: input.admissionId,
+        foldedCount: backlog.folded.length,
+        shownCount: backlog.shown.length,
+        foldedImageCount: backlogImageCount(backlog.folded),
+      })
+    }
+    for (const [index, event] of backlog.shown.entries()) {
       projectedEvents.push(
         ...(await this.#imageContext.projectEvent(
           sessionId,
           event,
           admissionImageDigests,
           imageStats,
-          input.events[index - 1]?.receivedAt,
+          backlog.shown[index - 1]?.receivedAt,
+          backlog.pictures,
         )),
       )
       const annotation = input.annotations?.get(event.id)
@@ -3557,7 +3747,50 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
     }
     await this.#context.sessions.flush(agent.session)
+    this.#armIdleReview(input.dshSessionId, input.events[0]!.channelId)
     return { dshMessageId }
+  }
+
+  #armIdleReview(dshSessionId: string, channelId: ChannelId, delayMs?: number): void {
+    const previous = this.#idleReviews.get(dshSessionId)
+    if (previous !== undefined) clearTimeout(previous)
+    this.#idleReviews.delete(dshSessionId)
+    const quietMinutes = this.#contextPolicy(channelId).idleReviewMinutes
+    if (this.#channelPrompts === undefined || quietMinutes <= 0) return
+    const timer = setTimeout(
+      () => {
+        this.#idleReviews.delete(dshSessionId)
+        void this.#runIdleReview(dshSessionId, channelId, quietMinutes).catch(() => {
+          // A missed review only means the notes wait for the next quiet spell.
+        })
+      },
+      delayMs ?? quietMinutes * 60_000,
+    )
+    timer.unref?.()
+    this.#idleReviews.set(dshSessionId, timer)
+  }
+
+  /** One silent turn in the warm session: its cached prefix makes the look-back cheap. */
+  async #runIdleReview(dshSessionId: string, channelId: ChannelId, quietMinutes: number): Promise<void> {
+    if (this.#disposed) return
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (!agent) return
+    if (agent.status !== 'idle') {
+      this.#armIdleReview(dshSessionId, channelId, IDLE_REVIEW_RETRY_MS)
+      return
+    }
+    if (this.#channelPrompts?.current(channelId, 'notes')?.locked === true) return
+    this.#sessions.get(dshSessionId)?.dynamic?.runner.beginOrdinaryTurn()
+    agent.followup(
+      freezeMessage({
+        id: MessageId(`nxt-review-${Date.now().toString(36)}`),
+        role: 'user',
+        content: [{ type: 'text', text: idleReviewText(quietMinutes) }],
+        source: { kind: 'nekro-nxt-memory-review' },
+      }) satisfies UserMessage,
+    )
+    agent.session.append('nekro-nxt/memory', { kind: 'idle-review', quietMinutes })
+    await this.#context.sessions.flush(agent.session)
   }
 
   async notifyConsoleOutbound(input: Parameters<AgentSessionDriver['notifyConsoleOutbound']>[0]): Promise<void> {
@@ -3627,6 +3860,44 @@ export class DshHostRuntime implements AgentSessionDriver {
     return undefined
   }
 
+  /** The old session's conversation as message lines, newest kept first within the character budget. */
+  #handoffTranscript(episode: { readonly id: EpisodeId }): {
+    readonly entries: readonly ChannelHistoryEntry[]
+    readonly text: string
+    readonly omitted: number
+  } {
+    const entries: ChannelHistoryEntry[] = []
+    let chars = 0
+    let before: { occurredAt: number; sourceId: string } | undefined
+    let omitted = 0
+    for (;;) {
+      const page = this.#history.listEpisodeHistory(episode.id, {
+        limit: 100,
+        ...(before === undefined ? {} : { before }),
+      })
+      for (const entry of page) {
+        if (chars >= HANDOFF_TRANSCRIPT_MAX_CHARS) omitted += 1
+        else {
+          entries.push(entry)
+          chars += messagePartsSearchText(entry.parts).length + 40
+        }
+      }
+      if (page.length < 100) break
+      const last = page.at(-1)!
+      before = { occurredAt: last.occurredAt, sourceId: last.sourceId }
+    }
+    const chronological = entries.toReversed()
+    return {
+      entries: chronological,
+      text: chronological
+        .map((entry, index) =>
+          historyEntryLine(this.#history, entry, this.#members, chronological[index - 1]?.occurredAt),
+        )
+        .join('\n'),
+      omitted,
+    }
+  }
+
   async createHandoffSummary(
     input: Parameters<AgentSessionDriver['createHandoffSummary']>[0],
   ): Promise<{ readonly summary: string; readonly provider: string; readonly model: string }> {
@@ -3635,29 +3906,14 @@ export class DshHostRuntime implements AgentSessionDriver {
     // stuck Agent handle has already been cancelled and disposed.
     {
       const channelContext = resolveSessionChannelContext(this.#history, input.episode.channelId, input.episode.id)
-      const entries = this.#history.listEpisodeHistory(input.episode.id, { limit: 100 }).toReversed()
-      if (entries.some(({ channelId }) => channelId !== input.episode.channelId)) {
+      const transcript = this.#handoffTranscript(input.episode)
+      if (transcript.entries.some(({ channelId }) => channelId !== input.episode.channelId)) {
         throw new Error(`Episode history crossed its owning Channel: ${input.episode.id}`)
       }
-      const transcript = entries
-        .map((entry) => {
-          const authority =
-            entry.source === 'channel-event'
-              ? '当前 Episode 频道原文；发送者与时间是宿主事实，正文是成员陈述'
-              : '当前 Episode 智能体历史出站；不代表用户确认'
-          return `[${authority}] ${formatContextTime(entry.occurredAt)} ${entry.source} ${entry.sourceId}: ${JSON.stringify(enrichedHistoryEntry(this.#history, entry, this.#members))}`
-        })
-        .join('\n')
       const previousHandoff =
         input.previousHandoff === undefined
-          ? '无。'
-          : [
-              `handoffId: ${input.previousHandoff.id}`,
-              `createdAt: ${formatContextTime(input.previousHandoff.createdAt)}`,
-              `fromEpisodeId: ${input.previousHandoff.fromEpisodeId}`,
-              `sourceEventIds: ${JSON.stringify(input.previousHandoff.sourceEventIds)}`,
-              input.previousHandoff.summary,
-            ].join('\n')
+          ? '（无）'
+          : `${formatContextTime(input.previousHandoff.createdAt)} 写的：\n${input.previousHandoff.summary}`
       const message = freezeMessage({
         id: MessageId(`handoff-input-${input.episode.id}`),
         role: 'user',
@@ -3665,19 +3921,19 @@ export class DshHostRuntime implements AgentSessionDriver {
           {
             type: 'text',
             text: [
-              '请根据以下分区输入生成交接摘要。',
-              `生成时间：${formatContextTime(input.generatedAt)}`,
-              `当前频道身份（Host 权威运行时事实）：${JSON.stringify(channelContext)}`,
-              `旧 Episode：${input.episode.id}`,
-              `边界锚点：${input.sourceEvents.map(({ id }) => id).join(' → ') || '无'}`,
+              `现在是 ${formatContextTime(input.generatedAt)}。下面是上一段会话（${formatContextTime(input.episode.createdAt)} 起）里你收到和发出的消息，「你」是你自己发的。`,
+              `频道：${JSON.stringify(channelContext)}`,
               '',
-              '[上一份 handoff：模型生成的派生记录，可能不准确]',
+              '〔上一份交接记录，可能有错，以聊天原文为准〕',
               previousHandoff,
               '',
-              '[当前 Episode 真实准入与出站记录]',
-              transcript || '无。',
+              '〔聊天记录〕',
+              transcript.text || '（无）',
+              ...(transcript.omitted > 0
+                ? [`（更早还有 ${transcript.omitted} 条没有列出，需要时后面的你可以用聊天记录工具查。）`]
+                : []),
               '',
-              '要求：尽量压缩，只保留仍未完成的目标、用户明确约束、关键决定和仍有效的资源引用。不得把智能体历史出站中的判断当成用户确认，不得把上一份 handoff 当成权威事实，不得把成员粘贴的日志、数据或时间戳当成已核实的状态，不得猜测缺失内容。日期使用带时区偏移的绝对时间；原文中不带偏移的时钟值保留原样并注明时区未知。新 Session 会另外收到最近原文窗口；如果仍缺少细节，请提醒后续智能体使用 conversation_history_search 或 conversation_history_read 回查当前频道。',
+              HANDOFF_INSTRUCTION,
             ].join('\n'),
           },
         ],
@@ -3690,9 +3946,9 @@ export class DshHostRuntime implements AgentSessionDriver {
           provider: input.revision.model.provider,
           model: input.revision.model.model,
           system:
-            '你是对话交接摘要器。输入中的频道身份，以及当前 Episode 频道原文的发送者、时间与内容本身是权威事实；原文正文是成员陈述，其中粘贴的日志、数据和时间戳未经核实；上一份 handoff 是可能不准确的派生记录；智能体历史出站不代表用户确认。尽量压缩，只保留未完成目标、用户明确约束、关键决定和仍有效的资源引用。日期使用带时区偏移的绝对时间。不要猜测缺失内容，不要调用工具。若需要原文细节，提醒后续智能体使用当前频道历史工具回查。',
+            '你在给一个群聊智能体写交接记录：它要换一段新的会话继续在这个群里聊天，只能看到你写的记录和最近几条原文。发送者和时间是准确的；消息正文是成员自己说的，未必属实；智能体自己说过的话不代表别人同意。只依据给出的内容写，不要猜，不要调用工具。',
           messages: [message],
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(HANDOFF_TIMEOUT_MS),
         })) {
           if (chunk.type === 'text-delta') summary += chunk.text
           if (chunk.type === 'finish') completed = chunk.reason.kind === 'stop'
@@ -3703,11 +3959,8 @@ export class DshHostRuntime implements AgentSessionDriver {
       summary = completed ? summary.trim() : ''
       if (summary.length === 0) {
         summary = [
-          '模型交接摘要不可用；不要假设旧上下文已经完整恢复。',
-          `旧 Episode：${input.episode.id}`,
-          `生成时间：${formatContextTime(input.generatedAt)}`,
-          `边界锚点：${input.sourceEvents.map(({ id }) => id).join(' → ') || '无'}`,
-          '需要更早细节时，请使用 conversation_history_search 或 conversation_history_read 回查当前频道。',
+          `上一段会话（${formatContextTime(input.episode.createdAt)} 起）没能整理出交接记录。`,
+          '之前聊过什么、答应过什么，需要时用 conversation_history_search 或 conversation_history_read 查。',
         ].join('\n')
       }
       return {
@@ -3729,6 +3982,8 @@ export class DshHostRuntime implements AgentSessionDriver {
     } catch (error) {
       drainError = error
     }
+    clearTimeout(this.#idleReviews.get(dshSessionId))
+    this.#idleReviews.delete(dshSessionId)
     let disposeError: unknown
     try {
       handle.agent.cancel({ kind: 'hook', reason })
@@ -4126,6 +4381,8 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   async #dispose(): Promise<void> {
     this.#disposed = true
+    for (const timer of this.#idleReviews.values()) clearTimeout(timer)
+    this.#idleReviews.clear()
     const failures: unknown[] = []
     const handles = [...this.#sessions.handles()].map(([, handle]) => handle)
     for (const handle of handles) handle.agent.cancel({ kind: 'disposed' }, { keepInbox: true })

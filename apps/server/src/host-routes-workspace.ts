@@ -2,6 +2,7 @@ import {
   AgentIdSchema,
   AssetIdSchema,
   ChannelIdSchema,
+  DEFAULT_CHANNEL_CONTEXT_POLICY,
   ExtensionIdSchema,
   HostApiContracts,
   type AgentId,
@@ -634,6 +635,7 @@ export function registerWorkspaceRoutes({
       const toolCallMatch = /^\/api\/channels\/([^/]+)\/runtime\/tools\/([^/]+)$/.exec(url.pathname)
       const runtimeContextMatch = /^\/api\/channels\/([^/]+)\/runtime\/context$/.exec(url.pathname)
       const promptMatch = /^\/api\/channels\/([^/]+)\/prompt$/.exec(url.pathname)
+      const contextPolicyMatch = /^\/api\/channels\/([^/]+)\/context-policy$/.exec(url.pathname)
       const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
@@ -645,6 +647,7 @@ export function registerWorkspaceRoutes({
         toolCallMatch?.[1] ??
         runtimeContextMatch?.[1] ??
         promptMatch?.[1] ??
+        contextPolicyMatch?.[1] ??
         runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
@@ -719,6 +722,33 @@ export function registerWorkspaceRoutes({
             truncated: false,
           },
         )
+        return
+      }
+
+      if (contextPolicyMatch) {
+        if (!runtime.repository.getChannel(typedChannelId)) {
+          writeError(res, 404, 'not-found', '频道不存在或已被删除。')
+          return
+        }
+        const view = () => {
+          const stored = runtime.repository.getChannelContextPolicy(typedChannelId)
+          return {
+            policy: stored ?? DEFAULT_CHANNEL_CONTEXT_POLICY,
+            defaults: DEFAULT_CHANNEL_CONTEXT_POLICY,
+            custom: stored !== undefined,
+          }
+        }
+        if (req.method === 'GET') {
+          writeContractJson(res, 200, HostApiContracts.getChannelContextPolicy, view())
+          return
+        }
+        if (req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        const parsed = HostApiContracts.updateChannelContextPolicy.parseRequest(await readJsonBody(req))
+        runtime.repository.saveChannelContextPolicy(typedChannelId, parsed.policy ?? undefined, Date.now())
+        writeContractJson(res, 200, HostApiContracts.updateChannelContextPolicy, view())
         return
       }
 

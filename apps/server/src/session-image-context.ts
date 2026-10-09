@@ -13,7 +13,16 @@ import AttachmentStore, {
 } from '@deepseek-ai/dsh-attachment'
 import { readRequestImageFile } from '@deepseek-ai/dsh-attachment-local'
 import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
-import { freezeMessage, MessageId, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
+import {
+  BlockAssembler,
+  contentHasImage,
+  freezeMessage,
+  LlmError,
+  MessageId,
+  type ContentBlock,
+  type TextBlock,
+  type UserMessage,
+} from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { isAdminConsoleOutbound, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import {
@@ -180,7 +189,14 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
       decoded.detail === 'low'
         ? { ...policy, width: Math.min(policy.width, 512), height: Math.min(policy.height, 512) }
         : policy
-    return readRequestImageFile(this.requestImageRoot, await this.readImage(ref, signal), effectivePolicy, signal)
+    const stored = await this.readImage(ref, signal)
+    const version = await readRequestImageFile(this.requestImageRoot, stored, effectivePolicy, signal)
+    // The DeepSeek upload index only accepts `sha256:` attachment IDs and drops the whole index when one record
+    // does not match, which re-uploads every image on every step. The variant ID is already computed from the
+    // Asset reference, so only the identity handed to the provider adapter switches to the content digest.
+    const asset = this.assets.getAssetById(decoded.assetId)
+    if (!asset) throw new Error(`Attachment Asset is unavailable: ${ref.attachmentId}`)
+    return { ...version, attachment: { ...version.attachment, attachmentId: AttachmentId(asset.contentDigest) } }
   }
 }
 
@@ -220,7 +236,7 @@ export type MemberSummary = {
 }
 
 export const memberSummary = (
-  history: ProductChannelHistoryRepository,
+  history: Pick<ProductChannelHistoryRepository, 'getChannelMember'>,
   memberId: NonNullable<ChannelEventRecord['senderMemberId']>,
   relations?: ChannelMemberRelations,
 ): MemberSummary => {
@@ -255,6 +271,58 @@ export const historyEntrySenderDescription = (
   }
   if (entry.senderMemberId === undefined) return ''
   return `，${memberLabel(memberSummary(history, entry.senderMemberId, relations))}`
+}
+
+const HISTORY_LINE_MAX_CHARS = 2000
+
+/** Message parts as one plain-text line for history tools; images stay as references the agent can inspect. */
+export const historyPartsText = (
+  history: Pick<ProductChannelHistoryRepository, 'getChannelMember'>,
+  parts: readonly MessagePart[],
+  relations?: ChannelMemberRelations,
+): string =>
+  parts
+    .map((part) => {
+      switch (part.type) {
+        case 'text':
+          return part.text
+        case 'mention':
+          return `@${memberLabel(memberSummary(history, part.memberId, relations))}`
+        case 'image':
+          return `[图片 ${part.assetId}${part.alt ? `：${part.alt}` : ''}]`
+        case 'file':
+          return `[文件 ${part.assetId}${part.name ? `：${part.name}` : ''}]`
+        case 'audio':
+          return `[语音 ${part.assetId}]`
+        case 'quote':
+          return `[引用 ${part.messageId}]`
+        case 'rich':
+          return `[${part.kind === 'forward' ? '转发' : '卡片'}] ${richPartContextText(part)}`
+      }
+    })
+    .join('')
+
+/** One history entry as `[时间 · 消息编号] 发言人：正文`, the same header the agent sees for live messages. */
+export const historyEntryLine = (
+  history: Pick<ProductChannelHistoryRepository, 'getChannelMember'>,
+  entry: ChannelHistoryEntry,
+  relations?: ChannelMemberRelations,
+  previousAt?: number,
+): string => {
+  const sender =
+    entry.source === 'outbound-intent'
+      ? isAdminConsoleOutbound(entry.sourceTurnId)
+        ? ' 管理员用你的账号'
+        : ' 你'
+      : entry.senderMemberId === undefined
+        ? ''
+        : ` ${memberLabel(memberSummary(history, entry.senderMemberId, relations))}`
+  const text = historyPartsText(history, entry.parts, relations).replace(/\s*\n\s*/gu, ' ⏎ ')
+  const body =
+    text.length > HISTORY_LINE_MAX_CHARS
+      ? `${text.slice(0, HISTORY_LINE_MAX_CHARS)}……（后面还有 ${text.length - HISTORY_LINE_MAX_CHARS} 字）`
+      : text
+  return `[${formatContextTime(entry.occurredAt, previousAt)} · ${entry.logicalMessageId}]${sender}：${body}`
 }
 
 /** Header for a due scheduled job; it is a Host fact, not a member message, and does not oblige a reply. */
@@ -298,6 +366,8 @@ export type ImageProjectionStats = {
   injectedCount: number
   duplicateCount: number
   skippedCount: number
+  /** Over the backlog's picture budget: left as references the agent can open. */
+  deferredCount?: number
 }
 
 export const effectiveImageDetail = (detail: 'low' | 'auto' | 'high'): EffectiveImageDetail =>
@@ -354,8 +424,123 @@ export const collectVisibleImageDigests = (
 
 export type NekroCompactionResult = NonNullable<Awaited<ReturnType<BasicCompactionEngine['compactIfNeeded']>>>
 
+/**
+ * What the agent is asked to keep when older conversation is condensed. DSH's default is written for a coding
+ * assistant; a channel needs people, running games, agreements and promises kept with their exact wording.
+ */
+export const CHANNEL_COMPACTION_INSTRUCTION = [
+  '先停一下，把上面更早的对话整理成一份交接记录，让之后的你接着聊时不丢重要的信息。',
+  '',
+  '按下面的结构输出，每节用简短的条目，不写成段落；没有内容的节写「（无）」，不要删节：',
+  '',
+  '## 参与者与称呼',
+  '- 谁是谁、成员编号、希望怎么被称呼，和你的关系或常聊的话题',
+  '',
+  '## 正在进行的事',
+  '- 正在聊或正在玩的事情和进展。跑团、游戏、剧本这类要保留设定、人物、掷骰结果、线索和已发生的事件，名字和数字照原文写',
+  '',
+  '## 约定与要求',
+  '- 群规、管理员或成员提出的长期要求，注明是谁说的；被更正过的只写最新的说法',
+  '',
+  '## 承诺与待办',
+  '- 你答应过的事、别人托你做的事、约好的时间地点，以及还没完成的',
+  '',
+  '## 关键结论',
+  '- 大家确认过的结论或决定和依据；只是某人一面之词或玩笑的，注明出处',
+  '',
+  '## 有用的资料',
+  '- 有人分享的链接、文件、图片编号、消息编号，以及它们是什么',
+  '',
+  '## 你正在做的事',
+  '- 这段对话结束时你正在处理的事和下一步',
+  '',
+  '要求：',
+  '- 名字、数字、时间、链接、编号照原文写，不要改写或概括掉。时间写成带日期的绝对时间。',
+  '- 玩笑、反讽、没人确认的说法，不要写成事实。',
+  '- 不要提这次整理本身，不要调用工具，只输出整理结果。',
+  '- 上面如果已经有 <compacted-summary> 包着的旧记录，把仍然有效的内容合并进来、过时的删掉，输出一份完整的新记录。',
+].join('\n')
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'nekro-nxt-compaction-instruction': { readonly kind: 'nekro-nxt-compaction-instruction' }
+  }
+}
+
 export class NekroNxtCompactionEngine extends BasicCompactionEngine {
   private visualRestoreDepth = 0
+
+  /**
+   * DSH's own summarizer with the channel instruction: the replayed conversation stays the request prefix, so the
+   * provider's cache is reused, and only the final instruction differs.
+   */
+  protected override async summarize(
+    input: Parameters<BasicCompactionEngine['summarize']>[0],
+    agent: Parameters<BasicCompactionEngine['summarize']>[1],
+    signal?: AbortSignal,
+  ): ReturnType<BasicCompactionEngine['summarize']> {
+    const routed = agent.session.requestHeader()?.config
+    const conversation =
+      routed !== undefined && routed.provider.length > 0 && routed.model.length > 0
+        ? { provider: routed.provider, model: routed.model }
+        : agent.options.provider && agent.options.model
+          ? { provider: agent.options.provider, model: agent.options.model }
+          : undefined
+    const policy =
+      conversation === undefined
+        ? undefined
+        : this.config.modelPolicies.find(
+            (candidate) => candidate.provider === conversation.provider && candidate.model === conversation.model,
+          )
+    const summarizationProvider = policy?.summarizationProvider ?? this.config.summarizationProvider
+    const maxTokens = policy?.maxTokens ?? this.config.maxTokens
+    const target =
+      summarizationProvider.length > 0
+        ? { provider: summarizationProvider, model: policy?.summarizationModel ?? this.config.summarizationModel }
+        : conversation
+    if (target === undefined) throw new Error('No provider/model is available for compaction.')
+    const assembler = new BlockAssembler()
+    const options = {
+      provider: target.provider,
+      model: target.model,
+      messages: [
+        ...input.messages,
+        // Request-only, like DSH's own instruction: it is never written to the session log.
+        freezeMessage({
+          id: MessageId('nxt-compaction-instruction'),
+          role: 'user',
+          content: [{ type: 'text', text: CHANNEL_COMPACTION_INSTRUCTION }],
+          source: { kind: 'nekro-nxt-compaction-instruction' },
+        }) satisfies UserMessage,
+      ],
+      toolHistory: agent.session.toolHistory(),
+      ...(input.tools === undefined ? {} : { tools: [...input.tools] }),
+      maxTokens,
+      sessionId: agent.session.id,
+      purpose: 'compaction' as const,
+      ...(signal === undefined ? {} : { signal }),
+    }
+    for await (const chunk of this.ctx.llm.stream(options)) assembler.push(chunk)
+    const finish = assembler.finish
+    if (finish.kind === 'error' || finish.kind === 'aborted') {
+      throw new LlmError(finish.failure.message, finish.failure.code, finish.failure)
+    }
+    if (finish.kind === 'max-tokens') throw new Error('Compaction summary was cut off at the token limit.')
+    const rawOutput = assembler.blocks()
+    if (contentHasImage(rawOutput))
+      throw new LlmError('Compaction summary cannot contain images.', 'UNSUPPORTED_CONTENT')
+    const summary = rawOutput.filter((block): block is TextBlock => block.type === 'text')
+    if (!summary.some((block) => block.text.trim().length > 0)) throw new Error('Compaction produced no summary text.')
+    return {
+      summary,
+      rawOutput,
+      llmStreamCall: true,
+      provider: options.provider,
+      model: options.model,
+      maxTokens,
+      ...(assembler.usage === undefined ? {} : { usage: assembler.usage }),
+    }
+  }
   private visualRestoreHandler: ((result: NekroCompactionResult, agent: Agent) => Promise<void>) | undefined
 
   setVisualRestore(handler: (result: NekroCompactionResult, agent: Agent) => Promise<void>): void {
@@ -714,6 +899,7 @@ export class SessionImageContext {
     visibleDigests: Set<string>,
     imageStats?: ImageProjectionStats,
     expandQuotes = true,
+    pictures?: ReadonlySet<AssetId>,
   ): Promise<ContentBlock[]> {
     const blocks: ContentBlock[] = []
     const attachImage = async (assetId: AssetId, alt?: string): Promise<void> => {
@@ -735,6 +921,11 @@ export class SessionImageContext {
       }
       if (imageStats) imageStats.imageCount += 1
       if (this.#sessions.get(sessionId)?.imageInput) {
+        if (pictures !== undefined && !pictures.has(assetId)) {
+          if (imageStats) imageStats.deferredCount = (imageStats.deferredCount ?? 0) + 1
+          blocks.push({ type: 'text', text: '（这张没直接给你看，要看用 asset_inspect_images）' })
+          return
+        }
         if (visibleDigests.has(asset.contentDigest)) {
           if (imageStats) imageStats.duplicateCount += 1
           blocks.push({
@@ -834,6 +1025,7 @@ export class SessionImageContext {
     visibleDigests?: Set<string>,
     imageStats?: ImageProjectionStats,
     previousAt?: number,
+    pictures?: ReadonlySet<AssetId>,
   ): Promise<ContentBlock[]> {
     const sender =
       event.senderMemberId === undefined ? undefined : memberSummary(this.#history, event.senderMemberId, this.#members)
@@ -857,7 +1049,9 @@ export class SessionImageContext {
         const agent = this.#context.agents.get(sessionId)
         return agent === undefined ? new Set<string>() : collectVisibleImageDigests(agent, this.#assets)
       })()
-    blocks.push(...(await this.projectMessageParts(sessionId, event.channelId, event.parts, seen, imageStats)))
+    blocks.push(
+      ...(await this.projectMessageParts(sessionId, event.channelId, event.parts, seen, imageStats, true, pictures)),
+    )
     return blocks
   }
 }

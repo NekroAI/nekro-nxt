@@ -22,8 +22,11 @@ export const CHANNEL_PROMPT_MAX_CHARS: Readonly<Record<ChannelPromptKind, number
   notes: EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
 }
 
-/** Notes the admin never saved stay locked: the agent writes them only after an admin opens them. */
-const NOTES_LOCKED_BY_DEFAULT = true
+/**
+ * Notes are open until an admin locks them. They sit in the runtime context, where an edit appends a short snapshot
+ * and leaves the cached prompt prefix intact, so letting the agent write them costs no cache.
+ */
+const NOTES_LOCKED_BY_DEFAULT = false
 
 const notesLocked = (record: ChannelPromptRecord | undefined): boolean => record?.locked ?? NOTES_LOCKED_BY_DEFAULT
 
@@ -120,12 +123,7 @@ export class ChannelPrompts {
   /** The agent replaces its whole notes with plain text; an empty text clears them. */
   updateNotesByAgent(channelId: ChannelId, text: string): ChannelPromptRecord {
     const current = this.#repository.getChannelPrompt(channelId, 'notes')
-    if (notesLocked(current)) {
-      throw new ChannelPromptError(
-        current === undefined ? '管理员还没有开放本频道的笔记，不能修改。' : '管理员已锁定本频道的笔记，不能修改。',
-        'locked',
-      )
-    }
+    if (notesLocked(current)) throw new ChannelPromptError('管理员已锁定本频道的笔记，不能修改。', 'locked')
     const document = promptDocumentFromText(text.trim())
     assertLength('notes', document)
     if (current !== undefined && JSON.stringify(current.document) === JSON.stringify(document)) return current

@@ -7,7 +7,8 @@ import {
 } from './channel-reply-guard.js'
 import { boundedDetail, type RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { projectTokenUsage } from './token-usage.js'
-import { ChannelEventIdSchema, type ChannelEventId } from '@nekro-nxt/contracts'
+import { ChannelEventIdSchema, type ChannelEventId, type ChannelMemoryActivity } from '@nekro-nxt/contracts'
+import type { MemoryEventData } from './memory-events.js'
 
 /**
  * Session log types that change the product runtime projection. Streaming chunks do not; request header and route
@@ -24,6 +25,7 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'user/message',
   'llm/retry',
   'llm/retry-started',
+  'nekro-nxt/memory',
 ])
 
 export const shouldBroadcastChannelRuntime = (eventType: string | undefined): boolean =>
@@ -72,6 +74,32 @@ export const findInputDetail = (events: readonly SessionEvent[], messageId: stri
   return undefined
 }
 
+const memoryActivity = (data: MemoryEventData, at: number | undefined): ChannelMemoryActivity | undefined => {
+  const time = at === undefined ? {} : { at }
+  switch (data.kind) {
+    case 'backlog-folded':
+      return {
+        kind: data.kind,
+        ...time,
+        foldedCount: data.foldedCount,
+        shownCount: data.shownCount,
+        foldedImageCount: data.foldedImageCount,
+      }
+    case 'history-search':
+      return {
+        kind: data.kind,
+        ...time,
+        query: data.query,
+        hits: data.hits,
+        ...(data.sender === undefined ? {} : { sender: data.sender }),
+      }
+    case 'notes-updated':
+      return { kind: data.kind, ...time, revision: data.revision, chars: data.chars }
+    case 'idle-review':
+      return { kind: data.kind, ...time, quietMinutes: data.quietMinutes }
+  }
+}
+
 export const normalizeSessionEvents = (
   events: readonly SessionEvent[],
   responseStateForTurn: (turn: number) => ResponseObligationState = (turn) => responseObligationState(events, turn),
@@ -96,6 +124,11 @@ export const normalizeSessionEvents = (
   }
   for (const event of events) {
     const at = event.time
+    if (event.type === 'nekro-nxt/memory') {
+      const activity = memoryActivity(event.data, at)
+      if (activity !== undefined) result.push({ type: 'memory', activity })
+      continue
+    }
     if ((event.type === 'assistant/message' || event.type === 'tool/call') && event.data.turn === openTurn) {
       openTurnAnswered = true
     }

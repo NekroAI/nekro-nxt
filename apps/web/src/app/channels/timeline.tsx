@@ -273,6 +273,7 @@ function ToolCard({
 const INPUT_SOURCES: Readonly<Record<string, string>> = {
   'nekro-nxt-handoff': '交接摘要',
   'nekro-nxt-console-outbound': '管理员发送的消息',
+  'nekro-nxt-memory-review': '安静时回顾笔记',
   'nekro-nxt-channel-reply-guard': '回应提醒',
   'nekro-nxt-visual-restore': '恢复历史图片',
   'nekro-nxt-authoring-event': '扩展开发进展',

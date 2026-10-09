@@ -382,7 +382,19 @@ export const formatContextTime = (epoch: number, previous?: number, timezone: st
   return `${p.year}-${pad(p.month)}-${pad(p.day)} ${clock} ${offset}`
 }
 
-const LOCAL_TIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/u
+const LOCAL_TIME = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/u
+
+/** A time as the agent writes it: `2026-10-08`, `2026-10-08 14:00` in `timezone`, or ISO with an offset. NaN when unreadable. */
+export const parseContextTime = (text: string, timezone: string = hostTimezone()): number => {
+  const trimmed = text.trim()
+  const local = LOCAL_TIME.exec(trimmed)
+  return local === null
+    ? Date.parse(trimmed)
+    : zonedEpoch(
+        local.slice(1).map((part) => Number(part ?? 0)),
+        timezone,
+      )
+}
 
 /**
  * Schedule from what a model reliably writes: an ISO time with offset, a wall-clock time in `timezone`, minutes from
@@ -424,15 +436,7 @@ export const parseTaskSchedule = (
     }
     at = now + Math.round(input.delayMinutes * 60_000)
   } else {
-    const text = (input.at ?? '').trim()
-    const local = LOCAL_TIME.exec(text)
-    at =
-      local === null
-        ? Date.parse(text)
-        : zonedEpoch(
-            local.slice(1).map((part) => Number(part ?? 0)),
-            timezone,
-          )
+    at = parseContextTime(input.at ?? '', timezone)
     if (!Number.isFinite(at)) {
       throw new ScheduledTaskError('at 需要形如 2026-10-08 08:00 或带时区偏移的 ISO 时间。', 'invalid')
     }

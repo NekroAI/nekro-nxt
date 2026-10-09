@@ -35,15 +35,13 @@ const withReference = PromptDocumentV1Schema.parse({
 })
 
 describe('channel prompts', () => {
-  it('keeps the admin instructions for the admin and lets the agent keep notes only once an admin opens them', async () => {
+  it('keeps the admin instructions for the admin and lets the agent keep notes until an admin locks them', async () => {
     const { database, channel, prompts } = await fixture()
     try {
       expect(prompts.view(channel.id)).toMatchObject({
         instructions: { revision: 0, maxChars: CHANNEL_PROMPT_MAX_CHARS.instructions },
-        notes: { revision: 0, locked: true, maxChars: CHANNEL_PROMPT_MAX_CHARS.notes },
+        notes: { revision: 0, locked: false, maxChars: CHANNEL_PROMPT_MAX_CHARS.notes },
       })
-      // Notes start locked: the agent cannot write until an admin opens them.
-      expect(() => prompts.updateNotesByAgent(channel.id, '先记一笔')).toThrow(/没有开放/u)
       expect(
         prompts.saveByAdmin({
           channelId: channel.id,

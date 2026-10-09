@@ -71,6 +71,9 @@ export class SessionRuntimeProjection {
       systemTokens: snapshot.values.contextBreakdown?.systemTokens,
       toolsTokens: snapshot.values.contextBreakdown?.toolsTokens,
       messageTokens: snapshot.values.contextBreakdown?.messageTokens,
+      imageCount: agent.session
+        .deriveMessages()
+        .reduce((count, message) => count + message.content.filter((block) => block.type === 'image').length, 0),
     })
     const performanceTotals = snapshot.values.sessionStats
     if (occupancy === undefined && performanceTotals === undefined) return undefined

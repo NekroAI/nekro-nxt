@@ -173,6 +173,18 @@ export type ChannelHistoryEntry =
 export const isConsoleAnchorHistory = (entry: ChannelHistoryEntry): boolean =>
   entry.source === 'channel-event' && entry.facts?.['consoleAnchor'] === true
 
+/** Narrows a history read or search; every bound is optional and they combine with AND. */
+export interface ChannelHistoryFilter {
+  /** Inclusive lower bound on `occurredAt`. */
+  readonly since?: number
+  /** Exclusive upper bound on `occurredAt`. */
+  readonly until?: number
+  /** Inbound messages from members whose id equals this or whose display name contains it; outbound ones are left out. */
+  readonly sender?: string
+  /** Only what the channel's own account sent. */
+  readonly ownOnly?: boolean
+}
+
 export interface ChannelHistorySearchHit {
   readonly entry: ChannelHistoryEntry
   readonly rank: number
@@ -187,14 +199,18 @@ export interface ChannelHistoryRepository {
   ): ChannelHistoryEntry | undefined
   listChannelHistory(
     channelId: ChannelId,
-    options?: { readonly before?: ChannelHistoryCursor; readonly limit?: number },
+    options?: { readonly before?: ChannelHistoryCursor; readonly limit?: number } & ChannelHistoryFilter,
   ): readonly ChannelHistoryEntry[]
   /** Project only facts that were admitted or sent by one Episode; results are newest-first. */
-  listEpisodeHistory(episodeId: EpisodeId, options?: { readonly limit?: number }): readonly ChannelHistoryEntry[]
+  listEpisodeHistory(
+    episodeId: EpisodeId,
+    options?: { readonly before?: ChannelHistoryCursor; readonly limit?: number },
+  ): readonly ChannelHistoryEntry[]
+  /** Whitespace-separated terms must all appear; results are newest-first. */
   searchChannelHistory(
     channelId: ChannelId,
     query: string,
-    options?: { readonly limit?: number },
+    options?: { readonly before?: ChannelHistoryCursor; readonly limit?: number } & ChannelHistoryFilter,
   ): readonly ChannelHistorySearchHit[]
 }
 

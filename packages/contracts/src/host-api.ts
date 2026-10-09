@@ -647,6 +647,8 @@ export const ChannelRuntimeOccupancySchema = z
       })
       .strict()
       .optional(),
+    /** Pictures in the conversation; their tokens are not in the breakdown, so they make up most of the rest. */
+    imageCount: z.number().int().nonnegative().optional(),
   })
   .strict()
 
@@ -722,6 +724,45 @@ export const ChannelRuntimePerformanceSchema = z
   })
   .strict()
 
+/** What the agent remembered or looked up, newest first; the admin sees it, the model does not. */
+export const ChannelMemoryActivitySchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('backlog-folded'),
+      at: z.number().nonnegative().optional(),
+      foldedCount: z.number().int().nonnegative(),
+      shownCount: z.number().int().nonnegative(),
+      foldedImageCount: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('history-search'),
+      at: z.number().nonnegative().optional(),
+      query: z.string(),
+      hits: z.number().int().nonnegative(),
+      sender: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('notes-updated'),
+      at: z.number().nonnegative().optional(),
+      revision: z.number().int().nonnegative(),
+      chars: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('idle-review'),
+      at: z.number().nonnegative().optional(),
+      quietMinutes: z.number().int().nonnegative(),
+    })
+    .strict(),
+])
+
+export type ChannelMemoryActivity = z.output<typeof ChannelMemoryActivitySchema>
+
 export const ChannelRuntimeProjectionSchema = z
   .object({
     channelId: ChannelIdSchema,
@@ -733,6 +774,7 @@ export const ChannelRuntimeProjectionSchema = z
     occupancy: ChannelRuntimeOccupancySchema.optional(),
     cache: ChannelRuntimeCacheSchema.optional(),
     performance: ChannelRuntimePerformanceSchema.optional(),
+    memory: z.array(ChannelMemoryActivitySchema).optional(),
     turns: z.array(ChannelRuntimeTurnSchema),
   })
   .strict()
@@ -804,6 +846,44 @@ const ChannelPromptPartSchema = z
 export const ChannelPromptViewSchema = z
   .object({ instructions: ChannelPromptPartSchema, notes: ChannelPromptPartSchema })
   .strict()
+
+/**
+ * How much of a channel's unread backlog reaches the agent at once, and when it looks back on its own. Uncertain
+ * trade-offs stay per channel: a busy meme group and a long tabletop session want different budgets.
+ */
+export const ChannelContextPolicySchema = z
+  .object({
+    /** Text characters of a backlog read message by message; older messages collapse into one line. 0: no limit. */
+    backlogTextChars: z.number().int().nonnegative().max(1_000_000),
+    /** Backlog images shown as pictures, newest first; the rest stay references the agent can open. */
+    backlogImages: z.number().int().nonnegative().max(20),
+    /** Quiet minutes after which the agent reviews the conversation and updates its notes. 0: off. */
+    idleReviewMinutes: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(24 * 60),
+  })
+  .strict()
+
+export type ChannelContextPolicy = z.output<typeof ChannelContextPolicySchema>
+
+export const DEFAULT_CHANNEL_CONTEXT_POLICY: ChannelContextPolicy = Object.freeze({
+  backlogTextChars: 40_000,
+  backlogImages: 6,
+  idleReviewMinutes: 45,
+})
+
+export const ChannelContextPolicyViewSchema = z
+  .object({
+    policy: ChannelContextPolicySchema,
+    defaults: ChannelContextPolicySchema,
+    /** False while the channel follows the defaults. */
+    custom: z.boolean(),
+  })
+  .strict()
+
+export type ChannelContextPolicyView = z.output<typeof ChannelContextPolicyViewSchema>
 
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
 export type ChannelRuntimeUsage = z.output<typeof ChannelRuntimeUsageSchema>
@@ -2431,6 +2511,23 @@ export const HostApiContracts = {
       })
       .strict(),
     response: ChannelPromptViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  getChannelContextPolicy: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/context-policy',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: ChannelContextPolicyViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateChannelContextPolicy: defineContract({
+    method: 'PUT',
+    path: '/api/channels/:channelId/context-policy',
+    params: channelParam,
+    /** `null` returns the channel to the defaults. */
+    request: z.object({ policy: ChannelContextPolicySchema.nullable() }).strict(),
+    response: ChannelContextPolicyViewSchema,
     error: HostApiErrorSchema,
   }),
   resetChannelContext: defineContract({

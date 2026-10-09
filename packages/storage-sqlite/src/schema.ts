@@ -6,6 +6,7 @@ import type {
   AuthoringTaskId,
   AdmissionId,
   AssetId,
+  ChannelContextPolicy,
   ChannelEventId,
   AdapterActivityKey,
   ChannelId,
@@ -1357,6 +1358,16 @@ export const channelPrompts = sqliteTable(
     check('channel_prompts_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
   ],
 )
+
+/** A channel's own context budget; channels without a row follow the defaults. */
+export const channelContextPolicies = sqliteTable('channel_context_policies', {
+  channelId: text('channel_id')
+    .$type<ChannelId>()
+    .primaryKey()
+    .references(() => channels.id, { onDelete: 'cascade' }),
+  policy: jsonText<ChannelContextPolicy>('policy').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
 
 /** Recent earlier versions of a channel prompt, kept so an edit by the agent or an admin can be undone. */
 export const channelPromptRevisions = sqliteTable(

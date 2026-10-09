@@ -2,6 +2,7 @@ import type {
   AgentId,
   ChannelEventId,
   ChannelId,
+  ChannelMemoryActivity,
   ChannelRuntimeCache,
   ChannelRuntimeCacheSample,
   ChannelRuntimeInput,
@@ -44,7 +45,11 @@ const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
 
 export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'
 
+/** Memory activities the inspector lists. */
+const RECENT_MEMORY_ACTIVITY = 8
+
 export type RuntimeProjectionEvent =
+  | { readonly type: 'memory'; readonly activity: ChannelMemoryActivity }
   | { readonly type: 'turn/start'; readonly turn: number; readonly at?: number }
   | { readonly type: 'turn/trigger'; readonly turn: number; readonly eventId: ChannelEventId }
   | {
@@ -191,6 +196,7 @@ export const projectSessionOccupancy = (input: {
   readonly systemTokens?: number | undefined
   readonly toolsTokens?: number | undefined
   readonly messageTokens?: number | undefined
+  readonly imageCount?: number | undefined
 }): ChannelRuntimeOccupancy | undefined => {
   const projectedTokens = input.projectedTokens
   const contextWindow = input.contextWindow
@@ -208,6 +214,7 @@ export const projectSessionOccupancy = (input: {
           },
         }
       : {}),
+    ...(input.imageCount ? { imageCount: input.imageCount } : {}),
   }
 }
 
@@ -525,7 +532,12 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     return created
   }
 
+  const memory: ChannelMemoryActivity[] = []
   for (const event of input.events) {
+    if (event.type === 'memory') {
+      memory.push(event.activity)
+      continue
+    }
     if (event.type === 'turn/start') {
       const record = ensureTurn(event.turn)
       if (event.at !== undefined) record.startedAt = event.at
@@ -715,6 +727,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     ...(input.occupancy === undefined ? {} : { occupancy: input.occupancy }),
     ...(cache === undefined ? {} : { cache }),
     ...(performance === undefined ? {} : { performance }),
+    ...(memory.length === 0 ? {} : { memory: memory.slice(-RECENT_MEMORY_ACTIVITY).reverse() }),
     turns: orderedTurns,
   }
 }

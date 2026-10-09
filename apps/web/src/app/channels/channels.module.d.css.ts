@@ -36,6 +36,7 @@ declare const styles: {
   readonly jump: string
   readonly knob: string
   readonly listCount: string
+  readonly memoryList: string
   readonly meta: string
   readonly mine: string
   readonly msg: string

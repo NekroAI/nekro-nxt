@@ -40,6 +40,7 @@
     "0035_extension_provides.sql": "d40fa10d78e742cc5b069bf79cb9bcb9e1c9f17330e607c018dafaf082d14600",
     "0036_host_ui_page_rail.sql": "47c638ab0474dea919a4c7923b8576c4f71d623f03f99789e6ad676e3e072271",
     "0037_channel_prompt_kinds.sql": "504deae7286dd9bf60b66322825e596eba6da16caafaa7481d512d55b7ff9ba2",
+    "0038_channel_context_policies.sql": "d9d7670997880961a13d6f2c2473cc66b7e7fcdc3d974bb11abf8c428c9f29cb",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -78,6 +79,7 @@
     "meta/0035_snapshot.json": "391d43437c3b63d273762c83205401dba61587a87452c0a19097a159b147360a",
     "meta/0036_snapshot.json": "23e1b3c36c5440a1ffa0268118c9fa572001efa70c449db415e441ac6663be40",
     "meta/0037_snapshot.json": "9491704c29417f87aeacded99017b1350d86771999d183080a89cd9f20ca3371",
-    "meta/_journal.json": "af1bc239a289e9d5b3de6772ad8c2fb362e5a535fd7325011a725fa8ecaec02e"
+    "meta/0038_snapshot.json": "b66734d7cbd6814f515426eec2cc331c930172c69292de7ecfda6830e037e968",
+    "meta/_journal.json": "b30c480af7f8206c6454e0f482dafa256db6671c75049f10f7032e7ade041e1c"
   }
 }
