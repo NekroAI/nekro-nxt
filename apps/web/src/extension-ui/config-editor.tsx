@@ -34,23 +34,20 @@ export function ExtensionConfigEditor({
 }) {
   const product = useProductRuntime()
   const schema = activeConfigSchema(extension, agentId)
-  const saved = useMemo(() => {
-    const stored =
-      agentId === undefined
-        ? extension.installation?.config
-        : extension.activations.find((activation) => activation.agentId === agentId)?.config
-    return asConfigValue(stored === undefined ? undefined : parseJsonValue(stored))
-  }, [agentId, extension])
-  // Stored secret values never reach the client; only which ones are set.
-  const configuredSecrets = useMemo(
-    () =>
-      new Set(
-        agentId === undefined
-          ? (extension.installation?.configuredSecrets ?? [])
-          : (extension.activations.find((activation) => activation.agentId === agentId)?.configuredSecrets ?? []),
-      ),
-    [agentId, extension],
+  const layer =
+    agentId === undefined
+      ? extension.installation
+      : extension.activations.find((activation) => activation.agentId === agentId)
+  // Store refreshes rebuild `extension` on every update; keying on the stored content keeps an unsaved draft alive
+  // until the saved configuration itself changes.
+  const storedText = layer?.config === undefined ? '' : JSON.stringify(layer.config)
+  const saved = useMemo(
+    () => asConfigValue(storedText === '' ? undefined : parseJsonValue(JSON.parse(storedText))),
+    [storedText],
   )
+  // Stored secret values never reach the client; only which ones are set.
+  const secretsText = (layer?.configuredSecrets ?? []).join('\n')
+  const configuredSecrets = useMemo(() => new Set(secretsText === '' ? [] : secretsText.split('\n')), [secretsText])
   const [draft, setDraft] = useState<ConfigValue>(saved)
   const [secretDrafts, setSecretDrafts] = useState<Readonly<Record<string, string>>>({})
   const [submitted, setSubmitted] = useState(false)
