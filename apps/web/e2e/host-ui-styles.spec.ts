@@ -40,7 +40,13 @@ test('materialized Host UI styles survive durable save, installation and refresh
       (candidate) => candidate.owner.kind === 'extension' && candidate.owner.extensionId === fixture.extensionId,
     )
     expect(entry).toBeDefined()
-    await page.goto(entry!.routeBase)
+    // The extension's own detail page opens the installed page it contributes.
+    await page.goto(`/workshop/extensions/${fixture.extensionId}`)
+    const open = page.getByRole('button', { name: `打开「${entry!.title}」` })
+    await expect(open).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('host-ui-styles-workshop.png'), fullPage: true })
+    await open.click()
+    await expect(page).toHaveURL(new RegExp(`${entry!.routeBase}(?:/|$)`))
     const probe = page.locator('[data-styles-probe]')
     for (let load = 0; load < 2; load += 1) {
       if (load > 0) await page.reload()

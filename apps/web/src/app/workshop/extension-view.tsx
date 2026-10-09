@@ -166,7 +166,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         </Banner>
       ) : null}
 
-      <Overview revision={current} />
+      <Overview revision={current} pages={extension.revisions.flatMap((revision) => revision.pages)} />
 
       {extension.scope === 'agent' ? (
         <AgentUsage extension={extension} labels={labels} />
@@ -225,7 +225,8 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 }
 
 /** What the extension gives the user and where it shows up. */
-function Overview({ revision }: { readonly revision: Revision | undefined }) {
+function Overview({ revision, pages }: { readonly revision: Revision | undefined; readonly pages: Revision['pages'] }) {
+  const navigate = useGo()
   const parts = [
     ...(revision?.contributions ?? []).map((value) => ({ ...contributionParts(value), detail: undefined })),
     ...mcpParts(revision?.verification?.permissions?.capabilities?.mcp?.servers ?? []),
@@ -243,11 +244,34 @@ function Overview({ revision }: { readonly revision: Revision | undefined }) {
               description={part.detail ?? CONTRIBUTION_PLACE[part.kind] ?? CONTRIBUTION_PLACE['内容']}
             >
               <code className={styles.contributionName}>{part.name}</code>
+              {part.kind === '页面' ? (
+                <OpenPage page={pages.find((page) => page.title === part.name)} navigate={navigate} />
+              ) : null}
             </PropertyRow>
           ))}
         </PropertyList>
       )}
     </PropertyGroup>
+  )
+}
+
+/** Opens an installed page; a page that is not installed has nothing to open. */
+function OpenPage({
+  page,
+  navigate,
+}: {
+  readonly page: Revision['pages'][number] | undefined
+  readonly navigate: (path: string) => void
+}) {
+  if (!page) return null
+  return (
+    <Button
+      size="small"
+      aria-label={`打开「${page.title}」`}
+      onClick={() => navigate(`${page.routeBase}${page.startPath ? `/${page.startPath}` : ''}`)}
+    >
+      打开
+    </Button>
   )
 }
 
