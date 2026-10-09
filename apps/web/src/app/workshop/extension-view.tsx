@@ -272,12 +272,14 @@ function OpenPage({
 
 /** What removing or uninstalling the extension stops, ending with a full stop. */
 const removalConsequences = (extension: LocalExtensionSummary): string => {
-  const parts = [
+  const hasPages = extension.provides.includes('page')
+  const hasPlatform = extension.provides.some((item) => item === 'adapter')
+  const effects = [
     ...(extension.activations.length > 0 ? [`${extension.activations.length} 个智能体会停止使用`] : []),
-    ...(extension.provides.includes('page') ? ['页面入口随之移除'] : []),
-    ...(extension.provides.includes('adapter') ? ['连接、频道和消息保留，重新安装前这些连接无法收发消息'] : []),
+    ...(hasPages ? ['页面入口随之移除'] : []),
+    ...(hasPlatform ? ['连接、频道和消息保留，重新安装前这些连接无法收发消息'] : []),
   ]
-  return parts.length === 0 ? '。' : `；${parts.join('；')}。`
+  return effects.length === 0 ? '。' : `；${effects.join('；')}。`
 }
 
 /**

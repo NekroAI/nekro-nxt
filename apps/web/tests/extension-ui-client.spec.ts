@@ -27,10 +27,9 @@ const writeModule = async (source: string): Promise<string> => {
 }
 
 const owner: ContributionOwner = {
-  kind: 'agent',
-  key: 'agent:agt_alpha:ext_synthetic',
+  kind: 'extension',
+  key: 'extension:ext_synthetic',
   label: '合成扩展',
-  agentId: 'agt_alpha',
   extensionId: 'ext_synthetic',
   revisionId: 'xrv_synthetic',
   styleScope: 'c'.repeat(64),
@@ -41,6 +40,8 @@ const declaration: ExtensionPanelDeclaration = { id: 'summary', anchor: 'agent',
 const declared: ExtensionUiContributions = {
   ...EMPTY_EXTENSION_UI_CONTRIBUTIONS,
   panels: [{ kind: 'panel', ...declaration }],
+  toolViews: ['summary_read'],
+  messageRenderers: ['synthetic.card'],
 }
 
 describe('mountClient', () => {
@@ -51,6 +52,8 @@ describe('mountClient', () => {
       inject: ['panels', 'ui'],
       apply(ctx) {
         ctx.panels.register(${JSON.stringify(declaration)}, () => React.createElement(ctx.ui.Stack, null, '摘要'))
+        ctx.toolViews.register('summary_read', () => null)
+        ctx.messageRenderers.register('synthetic.card', () => null)
         return () => { globalThis.__nxtDisposed = true }
       },
     })`)
@@ -63,11 +66,35 @@ describe('mountClient', () => {
       registry,
       store: createProductRuntime(new HostEventStream()).store,
     })
-    expect(registry.panels().map((entry) => entry.declaration.id)).toEqual(['summary'])
+    expect(registry.registeredBy(owner.key)).toEqual({
+      panels: ['summary'],
+      toolViews: ['summary_read'],
+      messageRenderers: ['synthetic.card'],
+    })
     await mounted.dispose()
     disposed = Reflect.get(globalThis, '__nxtDisposed') === true
     expect(disposed).toBe(true)
-    expect(registry.panels()).toEqual([])
+    expect(registry.registeredBy(owner.key)).toEqual({ panels: [], toolViews: [], messageRenderers: [] })
+  })
+
+  it('cleans up partial registrations when a mixed Client misses a declared contribution', async () => {
+    const registry = new ContributionRegistry()
+    const moduleUrl = await writeModule(`export default () => ({ apply(ctx) {
+      ctx.panels.register(${JSON.stringify(declaration)}, () => null)
+      ctx.toolViews.register('summary_read', () => null)
+    } })`)
+    await expect(
+      mountClient({
+        owner,
+        moduleUrl,
+        declared,
+        permissions: [],
+        host,
+        registry,
+        store: createProductRuntime(new HostEventStream()).store,
+      }),
+    ).rejects.toThrow('没有注册声明的内容：富消息渲染器 synthetic.card')
+    expect(registry.registeredBy(owner.key)).toEqual({ panels: [], toolViews: [], messageRenderers: [] })
   })
 
   it('rejects a Client that skips a declared contribution and leaves nothing behind', async () => {
@@ -83,7 +110,7 @@ describe('mountClient', () => {
         registry,
         store: createProductRuntime(new HostEventStream()).store,
       }),
-    ).rejects.toThrow('没有注册声明的内容：面板 summary')
-    expect(registry.panels()).toEqual([])
+    ).rejects.toThrow('没有注册声明的内容：面板 summary、工具视图 summary_read、富消息渲染器 synthetic.card')
+    expect(registry.registeredBy(owner.key)).toEqual({ panels: [], toolViews: [], messageRenderers: [] })
   })
 })

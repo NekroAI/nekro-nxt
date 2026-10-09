@@ -47,7 +47,7 @@
 | 创建绑定 | `POST /api/bindings` | 智能体可多频道；一频道一个当前智能体；已绑定时为换绑 |
 | 解除绑定 | `DELETE /api/bindings/:channelId` | 若该频道有活动工作则先 `stopEpisode`，再删除 Binding |
 | 工作树顺序 | `PUT /api/work-tree-order` | 智能体 / 频道展示序，未知 id 丢弃，新对象追加 |
-| 启用扩展 | `POST /api/agents/:agentId/extensions/:extensionId/activation` | AgentActivation；智能体正在回复时返回 `pending`，回复结束后生效 |
+| 启用扩展 | `POST /api/agents/:agentId/extensions/:extensionId/activation` | AgentActivation，使用本机安装的 Revision，尚未安装时先安装（需要时附本机批准）；智能体正在回复时返回 `pending`，回复结束后生效 |
 | 停用扩展 | `DELETE /api/agents/:agentId/extensions/:extensionId/activation` | 去掉该智能体的启用关系；正在回复时同样返回 `pending` |
 | 修改能力 | `POST /api/agents/:id/capabilities` | 六字段授权 |
 | 修改配置 | `POST /api/agents/:id/revision` | 名称、人设、模型；带 expectedCurrentRevisionId |
@@ -57,12 +57,12 @@
 | Authoring 任务 | `GET/DELETE /api/authoring/tasks/:taskId`、`POST .../attempts/:attemptId/decision`、`POST .../stop` | 持久 Task/Attempt/Event；revision 冲突刷新权威状态；删除先静止并回收源码 |
 | 保存动态包 | `POST /api/extensions/save-from-dynamic` | 优先使用已验证的 `taskId + attemptId`；保存后不自动启用，旧 Runner 身份参数仅兼容 |
 | 动态回路 | `POST /api/dynamic/:agentId/...` | 每次请求携带精确 `episodeId`；审批、Host half、Client 源码、渲染证据、Guard 报告与结算不猜活动 Session |
-| Client Artifact | `GET /api/extensions/:extensionId/revisions/:revisionId/client/:buildKey.mjs` | 只向匹配当前 Agent Activation 的精确构建提供源码 |
-| Extension RPC | `POST /api/extensions/:extensionId/revisions/:revisionId/call` | 按 `agentId + revisionId + method` 调用 Activation handler |
-| 安装/切换 Host Revision | `PUT /api/extensions/:extensionId/installation` | 幂等安装或显式更新/回滚 `host-adapter`、`host-ui` Revision；权限扩大时保留旧 Runtime |
+| Client Artifact | `GET /api/extensions/:extensionId/revisions/:revisionId/client/:buildKey.mjs` | 只为当前安装到本机的精确构建提供源码 |
+| Extension RPC | `POST /api/extensions/:extensionId/revisions/:revisionId/call` | 面板调用本机实例的 RPC；Host 核对 `anchor`（智能体启用了本扩展、频道或连接存在）后把 `caller` 交给扩展，没有 `anchor` 时视为扩展自身调用 |
+| 安装/切换 Revision | `PUT /api/extensions/:extensionId/installation` | 幂等安装或显式更新/回滚；在用的智能体随之切换，智能体能力扩大时需附 `agentPermissionApproval`；权限扩大未批准时保留旧 Runtime |
 | 卸载 Host Revision | `DELETE /api/extensions/:extensionId/installation` | 停止 Runtime 并撤销 Adapter Slot 或页面；保留连接、频道与历史 |
-| Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/client-diagnostic` | 保存当前 Activation 最近一次 loaded/failed；不回滚 Host |
-| 删除本地扩展 | `DELETE /api/extensions/:extensionId` | 先关闭全部 Activation 或卸载 Adapter，再删除源码、版本、验证与诊断；失败时恢复原运行关系 |
+| Client 诊断 | `POST /api/extensions/:extensionId/revisions/:revisionId/host-client-diagnostic` | 保存当前安装的 Client 最近一次 loaded/failed；不回滚 Host |
+| 删除本地扩展 | `DELETE /api/extensions/:extensionId` | 先停止全部智能体挂载并卸载，再删除源码、版本、验证与诊断；失败时恢复原运行关系 |
 | Extension 导出/导入 | `GET /api/extensions/:id/revisions/:revisionId/export`、`POST /api/extensions/imports/inspect`、`POST /api/extensions/imports/:token/commit` | 单 Revision `.nxt-extension`；两阶段检查、冲突处理、本机构建，检查凭证十分钟失效，提交后处于关闭状态 |
 | 扩展图标 | `GET /api/extensions/:id/revisions/:revisionId/icon/:sha256.(svg\|png\|webp)` | 返回 Manifest `icon` 指向的包内图标原始字节；按摘要寻址、长期缓存，摘要或类型不符时 404 |
 | Host UI 页面偏好 | `PUT /api/host-ui/page-preferences` | `expectedRevision` 原子提交完整页面顺序与显隐，冲突时以 Host 为准 |
@@ -98,7 +98,7 @@
 
 - 工作区读模型和运行控制调用集中在 `host-api-client.ts` 的 `workspaceApi`（标记已读、关注列表与忽略、排队上下文、停止、处理投递、活跃度、外观与头像上传/地址）。
 - `apps/web/src/http-host.ts` 实现 `ProductHostPort`。`apps/web/src/host-event-stream.ts` 是浏览器 SSE 的唯一生命周期所有者，产品快照、DSH 设置和动态 Client 只订阅这条共享流，不各自建立连接。类型化 `actions` 覆盖创建/删除智能体、删除频道、两种上下文操作、发消息、改能力、扩展启停、Authoring 决策/停止/保存、创建/测试连接、修改连接别名和动态审批；决策先提交 Task revision，再由浏览器运行候选，Client evaluate/apply/render 或结算失败必须 reject，不能清空错误或发布成功提示。修改响应明确成功即完成提交，随后由数据层同步快照；同步失败显示“已保存，界面同步失败”，不能诱导重复提交。`host.refresh` 只读取快照，`host.reconnect` 才重建共享流。审批失败不自动重发修改。
-- 每个智能体使用独立产品 SlotCore。Snapshot/SSE 变化驱动 Client Activation 对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威 Activation 恢复。动态 Client 同样按 Host 的 `activeRun` 恢复精确源码和页面，对账键包含 `pluginRunId`，所以同一 Plugin 和 Package 在 Server 重启或重新运行后会先卸载旧 Client 再加载新 Run，不重复执行 Host half、审批或结算。Host Adapter Client 使用独立全局 Runtime，加载当前已安装 Revision 的 Artifact，并接受 Catalog 中的富消息、连接和频道检查器 Slot。Host UI Client 使用第三个独立 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider；三类 Registry 不互相注册。
+- 每个已安装扩展只运行一份 Client，它的智能体与频道面板、工具视图按快照中该扩展启用给哪些智能体实时放置。Snapshot/SSE 变化驱动对账；Revision 更新先 dispose 后 mount，刷新与 Server 重启按权威安装恢复。动态 Client 同样按 Host 的 `activeRun` 恢复精确源码和页面，对账键包含 `pluginRunId`，所以同一 Plugin 和 Package 在 Server 重启或重新运行后会先卸载旧 Client 再加载新 Run，不重复执行 Host half、审批或结算。适配器的富消息、连接与频道面板由同一份 Client 提供。Host UI 页面使用独立的页面 Runtime，按 Client Artifact 共享模块实例，每个页面拥有独立错误边界、滚动根和声明式导航 Provider。
 - Host UI 页面路由固定为 `/apps/:pageInstanceId/*`。Web 使用快照中的 `routeBase`，入口隐藏、Activation 关闭或 Extension 删除后跳转到其他可见扩展页面；没有可见页面时进入对应 Extension 或 DSH 详情。系统图标组和底部工具组不参与扩展排序。
 - 添加平台连接先选用户可创建的平台；默认按版本化 schema 渲染表单，声明 `qr-login` 的 Adapter 必须同时贡献 `connectionLogin`，Web 和 Server 只消费通用契约，不按 `adapterKey` 分支。从连接详情可重新认证同一账号，凭据与私有配置成功挂载后原子替换，Connection ID、Channel ID 和历史不变。系统托管内置 Adapter 不出现在创建目录。
 - `/api/snapshot` 只携带智能体的结构化人设文档，不承载平台用户全集。`/api/platform-users` 从持久身份与活动频道关系独立分页；Web 在 `channel-fact` 后使目录查询失效并防抖刷新。
@@ -108,7 +108,7 @@
 - 生产 CLI 由构建后的 `dist/main.mjs` 直接启动；`NEKRO_HOST` 默认 `127.0.0.1`。公开监听 `0.0.0.0` 必须设置至少 32 个字符的 `NEKRO_MANAGEMENT_KEY`，并在外部 4960 启动设备鉴权安全入口：同一端口接受自动 TLS 与 HTTP，浏览器经 `/login` 用管理密钥登录，`NEKRO_TRUST_PROXY=1` 时信任反向代理的转发协议与主机（见[服务器网页访问与浏览器登录](decisions/implemented/2026-10-07-服务器网页访问与浏览器登录.md)）；DSH WebServer 只监听随机 loopback。`GET /health/live` 与 `GET /health/ready` 保持匿名，只返回状态和 Release 身份。`NEKRO_COMMUNITY_URL` 覆盖默认社区地址，供测试站或本机社区开发服务使用（见[社区接入](decisions/implemented/2026-10-07-社区接入.md)）。
 - Desktop 自带本地 Host 使用随机 loopback HTTP，并按 `500ms → 1s → 2s → 5s → 5s` 有界退避恢复。Desktop BrowserWindow 使用可替换 Product View：本地 Profile 指向自带 Host，远程 Profile 指向固定 SPKI 的 Server TLS 入口；每个 Profile 使用独立 partition 和最近路由。切换关闭旧 Product View，不重启任何 Host Runtime。详细安全与 View 边界见 [Desktop 多实例与设备鉴权](decisions/implemented/2026-08-23-Desktop多实例与设备鉴权.md)。
 - 生产入口在开放 HTTP 前通过共享 `HostUpgradeCoordinator` 获取 `backups/upgrade.lock`，执行数据根与 SQLite preflight，创建 `backups/release-<releaseId digest>/` 恢复点，再按 `storage-owners-open-v1`、`runtime-recovery-v1` 两个幂等步骤打开各格式所有者并完成冷启动恢复。每个 Release 的 `upgrade-<releaseId digest>.json` 记录尝试、完成或失败摘要；任一步失败进入 `recovery`、释放锁并拒绝上线。当前恢复点仍只覆盖双 SQLite，不代表完整数据根已经可恢复。
-- 启动先注册内置 Adapter Contribution，再恢复 `host_extension_installations`，随后按统一 Registry 恢复全部 Connection、处理中反馈、Channel Runtime 与 Agent Activation。单个 Connection 网络或凭据故障不阻断 Installation 或其他 Connection 恢复。
+- 启动先注册内置 Adapter Contribution，再恢复 `host_extension_installations`（每个扩展的本机实例，扩展适配器在此注册），随后按统一 Registry 恢复全部 Connection、处理中反馈、Channel Runtime 与智能体挂载。单个 Connection 网络或凭据故障不阻断 Installation 或其他 Connection 恢复。
 
 一期缺口见 `04-一期开发计划与决策清单.md`。技术栈见 `decisions/accepted/2026-08-16-一期技术栈与UI基础设施.md`。
 

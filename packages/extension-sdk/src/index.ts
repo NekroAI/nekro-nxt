@@ -745,23 +745,26 @@ export type ExtensionPluginFactory<Environment, Context = ExtensionHostContext> 
 ) => ExtensionPluginDefinition<Context> | Promise<ExtensionPluginDefinition<Context>>
 
 export interface NekroNxtExtensionAuthoringReference {
-  readonly contractVersion: 'nekro-nxt-extension-v4'
+  readonly contractVersion: 'nekro-nxt-extension-v5'
   readonly dshVersion: string
-  readonly scopes: {
-    readonly agent: {
-      readonly contributions: readonly ['tool', 'rpc', 'panel', 'tool-view']
+  /** One extension = one host instance + one attachment per enabled agent (扩展形态统一). */
+  readonly model: {
+    readonly hostInstance: {
+      readonly contributions: readonly ['rpc', 'adapter', 'host-page', 'message-renderer', 'panel']
+      readonly panelAnchors: readonly ExtensionPanelAnchor[]
+      readonly maxPages: 8
+    }
+    readonly agentAttachment: {
+      readonly contributions: readonly ['tool', 'tool-view', 'panel']
       readonly panelAnchors: readonly ExtensionPanelAnchor[]
     }
-    readonly hostAdapter: {
+    readonly adapter: {
       readonly apiVersion: 2
       readonly registration: 'harness.registerAdapter'
-      readonly contributions: readonly ['adapter', 'panel', 'message-renderer', 'host-page']
-      readonly panelAnchors: readonly ExtensionPanelAnchor[]
       readonly connectionPanelRoles: readonly ConnectionPanelRole[]
       readonly allowedHostServices: readonly string[]
       readonly configSchemaExample: ConfigSchemaDocument
     }
-    readonly hostUi: { readonly contributions: readonly ['host-page']; readonly maxPages: 8 }
   }
   readonly ui: {
     readonly kitVersion: 'ui-kit@2'
@@ -795,6 +798,7 @@ export interface NekroNxtExtensionAuthoringReference {
     readonly toolView: string
     readonly hostAdapter: string
     readonly hostPage: string
+    readonly toolAndPage: string
   }
   readonly recoveryRules: readonly string[]
 }
@@ -843,7 +847,8 @@ const HOST_TOOL_EXAMPLE = `return {
         render(_args, value) { return [{ type: 'text', text: value }] }
       },
       execute({ project }) {
-        const settings = harness.config?.() ?? {}
+        // ctx.config() is this agent's configuration (config.agent); harness.config() is the host's (config.host).
+        const settings = ctx.config()
         return project + (settings.verbose ? ': ready (verbose)' : ': ready')
       }
     })
@@ -852,11 +857,12 @@ const HOST_TOOL_EXAMPLE = `return {
 }`
 
 const HOST_RPC_AND_PANEL_EXAMPLE = `// Host half
-// RPC belongs to the Activation, so register it in the factory before returning the per-Session plugin.
-harness.handle('summary', () => ({ text: 'Synthetic extension summary' }))
-return {
-  apply() {}
-}
+// The factory body runs once on this machine (the host instance). RPC belongs to it: register in the factory.
+// caller tells which page or panel anchor called; the Host has already checked the anchor.
+harness.handle('summary', (_input, caller) => ({
+  text: caller.surface === 'panel' && caller.agentId ? 'Summary for ' + caller.agentId : 'Synthetic extension summary'
+}))
+// No agent attachment needed: return nothing (or a plugin when the extension also gives agents tools).
 
 // Client half: declare where the panel belongs; the Host decides the page, frame and title bar.
 return {
@@ -872,7 +878,8 @@ return {
         React.createElement('p', null, (agent ? agent.name : '智能体') + (density === 'compact' ? '' : ' 的摘要')),
         text ? React.createElement('p', null, text) : null,
         React.createElement(Button, {
-          onClick: async () => setText((await host.call('summary')).text)
+          // Pass the panel's anchor so the RPC handler learns which agent or channel it is shown for.
+          onClick: async () => setText((await host.call('summary', null, { anchor })).text)
         }, '刷新摘要')
       )
     }
@@ -901,14 +908,17 @@ return {
 }`
 
 const HOST_CAPABILITIES_EXAMPLE = `// nekro_nxt_extension_define arguments (abridged):
-// config: { schema: { type: 'object', dict: {
-//   city: { type: 'string', meta: { description: '默认城市', default: '示例市' } },
-//   apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } } } }
-// permissions: { permissions: [], networkOrigins: [], capabilities: {
+// config: {
+//   host: { schema: { type: 'object', dict: {
+//     apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } } } },
+//   agent: { schema: { type: 'object', dict: {
+//     city: { type: 'string', meta: { description: '默认城市', default: '示例市' } } } } } }
+// permissions: { permissions: [], networkOrigins: [], agent: {
 //   network: { mode: 'domains', domains: ['api.example.com'] },
 //   storage: { scopes: ['member'] },
 //   assets: { write: true },
 //   context: [{ name: 'usage', kind: 'static', maxChars: 300 }, { name: 'favorite', kind: 'dynamic', maxChars: 200 }] } }
+// The API Key is filled in once for the machine (config.host); each agent picks its own default city (config.agent).
 return {
   inject: ['tools', 'nxt'],
   apply(ctx) {
@@ -930,7 +940,7 @@ return {
       async execute({ city }) {
         const apiKey = await ctx.nxt.secrets.get('apiKey')
         if (!apiKey) return { ok: false, message: '请先在扩展配置中填写 API Key。' }
-        const target = city || (harness.config?.() ?? {}).city || '示例市'
+        const target = city || ctx.config().city || '示例市'
         const response = await ctx.nxt.http.fetch('https://api.example.com/weather?city=' + encodeURIComponent(target), {
           headers: { authorization: 'Bearer ' + apiKey }
         })
@@ -973,7 +983,7 @@ harness.registerAdapter({
     return createRuntime(context, stored)
   }
 })
-return { apply() {} }`
+// The same extension may also give agents tools: return a plugin here. Without one, return nothing.`
 
 const HOST_PAGE_EXAMPLE = `return {
   inject: ['pages', 'ui'],
@@ -1051,23 +1061,84 @@ const HOST_PAGE_EXAMPLE = `return {
         title: '验收看板',
         icon: { kind: 'host-icon', name: 'layout-dashboard' },
         objectPane: 'navigation',
-        startPath: 'overview'
+        startPath: 'overview',
+        // Optional: one page of an extension may add an entry to the navigation rail.
+        rail: { order: 10 }
       },
       navigation
     }, AcceptancePage)
   }
 }`
 
+const TOOL_AND_PAGE_EXAMPLE = `// One extension gives agents a tool AND has a management page; both share the host storage.
+// nekro_nxt_extension_define arguments (abridged):
+// pages: [{ kind: 'host-page', entryId: 'list', title: '采购清单', icon: { kind: 'host-icon', name: 'file-text' },
+//           objectPane: 'hidden', startPath: '' }]
+// permissions: { permissions: [], networkOrigins: [], host: { storage: {} }, agent: { storage: { scopes: ['shared'] } } }
+
+// Host half — the factory runs once: host-layer nxt (storage is the extension's host partition).
+harness.handle('items.list', async () => (await nxt.storage.get('items')) ?? [])
+harness.handle('items.toggle', async ({ index }) => {
+  const items = (await nxt.storage.get('items')) ?? []
+  if (items[index]) items[index].done = !items[index].done
+  await nxt.storage.set('items', items)
+  return items
+})
+return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    // Agent attachment — scope 'shared' in an agent reads and writes the same host partition.
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'add_purchase_item',
+      description: 'Add an item to the team purchase list.',
+      parameters: { name: { type: 'string', required: true, description: 'Item name.' } },
+      output: { schema: { type: 'json' }, render(_args, value) { return [{ type: 'text', text: JSON.stringify(value) }] } },
+      async execute({ name }) {
+        const items = (await ctx.nxt.storage.get('items', { scope: 'shared' })) ?? []
+        items.push({ name, done: false })
+        await ctx.nxt.storage.set('items', items, { scope: 'shared' })
+        return { ok: true, count: items.length }
+      }
+    }))
+  }
+}
+
+// Client half — the page calls the host RPC; no anchor is needed for a page.
+return {
+  inject: ['pages', 'ui'],
+  apply(ctx) {
+    const { PageHeader, Stack, Switch } = ctx.ui
+    const ListPage = () => {
+      const [items, setItems] = React.useState([])
+      React.useEffect(() => { void host.call('items.list').then(setItems) }, [])
+      return React.createElement(Stack, null,
+        React.createElement(PageHeader, { title: '采购清单', meta: items.length + ' 项' }),
+        ...items.map((item, index) => React.createElement(Switch, {
+          key: index,
+          label: item.name,
+          checked: item.done,
+          onCheckedChange: async () => setItems(await host.call('items.toggle', { index }))
+        }))
+      )
+    }
+    ctx.pages.register({ page: { kind: 'host-page', entryId: 'list', title: '采购清单',
+      icon: { kind: 'host-icon', name: 'file-text' }, objectPane: 'hidden', startPath: '' } }, ListPage)
+  }
+}`
+
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
-  contractVersion: 'nekro-nxt-extension-v4',
+  contractVersion: 'nekro-nxt-extension-v5',
   dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
-  scopes: {
-    agent: { contributions: ['tool', 'rpc', 'panel', 'tool-view'], panelAnchors: ['agent', 'channel', 'extension'] },
-    hostAdapter: {
+  model: {
+    hostInstance: {
+      contributions: ['rpc', 'adapter', 'host-page', 'message-renderer', 'panel'],
+      panelAnchors: ['extension', 'connection'],
+      maxPages: 8,
+    },
+    agentAttachment: { contributions: ['tool', 'tool-view', 'panel'], panelAnchors: ['agent', 'channel'] },
+    adapter: {
       apiVersion: 2,
       registration: 'harness.registerAdapter',
-      contributions: ['adapter', 'panel', 'message-renderer', 'host-page'],
-      panelAnchors: ['connection', 'channel'],
       connectionPanelRoles: ['setup', 'status', 'diagnostics'],
       allowedHostServices: [
         'channels',
@@ -1088,7 +1159,6 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
         },
       },
     },
-    hostUi: { contributions: ['host-page'], maxPages: 8 },
   },
   ui: {
     kitVersion: 'ui-kit@2',
@@ -1159,16 +1229,18 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     toolView: TOOL_VIEW_EXAMPLE,
     hostAdapter: HOST_ADAPTER_EXAMPLE,
     hostPage: HOST_PAGE_EXAMPLE,
+    toolAndPage: TOOL_AND_PAGE_EXAMPLE,
   },
   hostCapabilities: {
     sdkLevel: EXTENSION_SDK_LEVEL,
     declaration:
-      '在 nekro_nxt_extension_define.permissions.capabilities 声明，并在 Host 插件 inject 中加入 nxt；未声明的能力调用会抛出指明缺失字段的错误。',
+      '能力分两层声明：智能体挂载内的 ctx.nxt 用 nekro_nxt_extension_define.permissions.agent（并在返回的插件 inject 中加入 nxt）；factory 顶层的本机层 nxt（http、secrets、storage、render、parse）用 permissions.host。未声明的能力调用会抛出指明缺失字段的错误。',
     services: [
       "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。",
-      "ctx.nxt.secrets.get(key)：读取 config.schema 中 meta.role: 'secret' 的字段；用户未填写时返回 undefined。凭据字段不能有默认值，也不能出现在 harness.config() 中。",
+      "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
+      "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse；需要 permissions.host：{ network?, storage?: { quotaBytes? } }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
       'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
-      'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享）。单值不超过 256 KiB，默认配额 8 MiB。',
+      'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享，也是页面 RPC 用的本机分区）。单值不超过 256 KiB，默认配额 8 MiB。',
       'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。',
       'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
       'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
@@ -1182,9 +1254,12 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
     ],
     rules: [
-      "config.schema 是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }。不要写 properties、required 数组或 additionalProperties。",
+      '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载：Host 源码顶层（factory）只在本机执行一次，在这里注册 harness.handle（RPC）、harness.registerAdapter、harness.onInbound、harness.onJob；return 的插件挂载到每个智能体，在它的 apply 里注册工具。一个扩展可以同时提供工具、页面、面板、适配器，不需要拆成多个扩展。',
+      '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。',
+      "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }。不要写 properties、required 数组或 additionalProperties。",
       '工具 parameters 中类型为 object 的参数必须显式写 additionalProperties: true 或 false；尽量用扁平的 string/number/boolean 参数。',
-      'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网只声明 permissions.agent.network，两者不要混用。',
+      'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网在智能体挂载里声明 permissions.agent.network，在 factory 顶层声明 permissions.host.network，不要混用。',
+      '面板调用 host.call 时传入 { anchor }（组件参数里的 anchor），RPC 的第二个参数 caller 会带上锚定的智能体、频道或连接；页面调用不需要 anchor。',
       "工具的 output.schema 必须与 execute 的真实返回一致：返回对象就声明 { type: 'json' } 或完整的 object Schema，返回字符串才声明 { type: 'string' }；不确定时用 { type: 'json' }。",
       '静态说明只能是固定字符串，只在版本或配置切换时变化；会变化的状态放进 dynamic，宿主每轮开始渲染一次，内容不变就不会追加新的上下文。',
       '动态上下文禁止写入时间戳、随机数和精确计数，写“好感度：友好”这类粗粒度描述；保存时宿主会用相同输入渲染两次，结果不同则拒绝保存。',
@@ -1205,12 +1280,11 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
   recoveryRules: [
     '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
     'define、run、保存和启用是四个独立提交点；不得把动态运行声称为已保存或已启用。',
-    '适配器使用 registerAdapter 在隔离 Host Harness 中验证；保存后仍是未安装，必须再执行安装到本机。',
-    '一个适配器 Revision 只允许一个稳定 adapterKey，且不能混装智能体 Tool、RPC 或工具视图。',
-    '智能体扩展不能贡献顶级页面；需要页面时拆成独立的页面扩展。',
+    '适配器使用 registerAdapter 在隔离 Host Harness 中验证；一个扩展最多一个适配器，adapterKey 在版本之间不能改变。',
+    '保存后扩展还没有安装：有页面或适配器的扩展需要用户安装到本机；只给智能体用的扩展在给智能体启用时自动安装。每台机器一个扩展只有一个当前版本，切换版本会带上所有在用的智能体。',
     'ctx.effect 的回调会立即执行；面板、工具视图和页面按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。',
-    'Host RPC 必须在 Activation factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份。',
-    '读取配置使用 harness.config?.() ?? {}；动态运行阶段没有保存的配置，使用 Schema 默认值。',
+    'Host RPC 必须在 factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份，改用 caller。',
+    '本机配置用 harness.config()，智能体配置用挂载内的 ctx.config()；动态运行阶段没有保存的配置，使用 Schema 默认值。',
     '面板读取对象数据使用 ctx.data 的 Hook，并在 nekro_nxt_extension_define.permissions 中声明对应读取权限。',
     '验证会在每种声明的密度和明暗两种主题下真实渲染面板，并渲染工具视图的 chip 与 card；任一渲染失败都不能保存。',
     'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
@@ -1229,12 +1303,12 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 ## 强制边界
 
 - 定义候选使用 \`nekro_nxt_extension_define\`：页面、权限、配置 Schema 和资源都写入持久任务账本并在运行前预检。
-- \`scope\` 按真实产物选择：智能体 Tool/RPC/面板/工具视图使用 \`agent\`，平台 Adapter 使用 \`host-adapter\`，顶级专属页面使用 \`host-ui\`。
-- 智能体面板锚点：${reference.scopes.agent.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}；适配器面板锚点：${reference.scopes.hostAdapter.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}，连接面板必须声明角色 ${reference.scopes.hostAdapter.connectionPanelRoles.map((role) => `\`${role}\``).join('、')}。
+- 一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载，可以同时提供工具、页面、面板、工具视图、适配器与富消息渲染器，不要为了「形态」拆成多个扩展。Host 源码顶层只在本机执行一次（RPC、适配器、入站钩子、定时任务处理在这里注册），return 的插件挂载到每个启用它的智能体（工具在这里注册）。
+- 智能体挂载的面板锚点：${reference.model.agentAttachment.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}（跟随启用它的智能体）；本机实例的面板锚点：${reference.model.hostInstance.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}，连接面板需要扩展同时注册适配器并声明角色 ${reference.model.adapter.connectionPanelRoles.map((role) => `\`${role}\``).join('、')}；最多 ${reference.model.hostInstance.maxPages} 个页面。
 - 面板声明 \`densities\`（${reference.ui.panelDensities.join('、')}），宿主决定放在哪个页面、绘制标题栏与外框。
 - 工具视图按 Tool 名注册，渲染 \`chip\` 与 \`card\` 两种密度；适配器用 \`message-renderer\` 按 rich kind 渲染富消息。
 - 数据 Hook：${reference.ui.dataHooks.map((hook) => `\`${hook}\`（${reference.ui.hookPermissions[hook]}）`).join('、')}。
-- 配置 Schema 是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字。只有智能体扩展可以声明 \`meta.role: 'secret'\` 凭据字段，Host 用 \`ctx.nxt.secrets.get(key)\` 读取。
+- 配置分 \`config.host\`（本机一份，\`harness.config()\`）与 \`config.agent\`（每个智能体一份，\`ctx.config()\`），都是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字。两层都可以声明 \`meta.role: 'secret'\` 凭据字段，用 \`secrets.get(key)\` 读取。
 - 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
 - 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
@@ -1287,6 +1361,12 @@ ${reference.examples.toolView}
 
 \`\`\`js
 ${reference.examples.hostAdapter}
+\`\`\`
+
+## 工具 + 页面（同一个扩展）示例
+
+\`\`\`js
+${reference.examples.toolAndPage}
 \`\`\`
 
 ## Host Page 示例

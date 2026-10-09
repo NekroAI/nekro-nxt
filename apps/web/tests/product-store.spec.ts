@@ -172,7 +172,7 @@ describe('product store Host mutations', () => {
           name: '测试扩展',
           description: '',
           revision: 1,
-          scope: 'agent',
+          provides: ['agent'],
           revisions: [],
           createdByAgentId: agentId,
           createdByAgent: '测试智能体',
@@ -308,7 +308,7 @@ describe('product store Host mutations', () => {
           name: '共享扩展',
           description: '',
           revision: 2,
-          scope: 'agent',
+          provides: ['agent'],
           revisions: [],
           createdByAgentId: agentId,
           createdByAgent: '创建者',
@@ -332,6 +332,109 @@ describe('product store Host mutations', () => {
     expect(execute).toHaveBeenNthCalledWith(2, 'extensions.deactivate', {
       extensionId,
       agentId: otherAgentId,
+    })
+  })
+
+  it.each([{ host: 'a'.repeat(64) }, { agent: 'b'.repeat(64) }, { host: 'a'.repeat(64), agent: 'b'.repeat(64) }])(
+    'forwards only the approved layers for installation and activation: %j',
+    async (approvals) => {
+      const execute = vi.fn(() => Promise.resolve(null))
+      setActiveProductHost({
+        getSnapshot: () => useProductStore.getState(),
+        subscribe: () => () => undefined,
+        execute,
+      })
+      useProductStore.setState({
+        extensions: [
+          {
+            id: extensionId,
+            slug: 'layered-extension',
+            name: '分层扩展',
+            description: '',
+            revision: 1,
+            provides: ['agent', 'page'],
+            revisions: [],
+            revisionId: extensionRevisionId,
+            createdByAgent: '',
+            activations: [],
+            contributions: [],
+            clientActivations: [],
+            clientDiagnostics: [],
+          },
+        ],
+      })
+
+      await useProductStore.getState().setExtensionActive(extensionId, otherAgentId, true, undefined, approvals)
+      await useProductStore.getState().setHostExtensionInstalled(extensionId, extensionRevisionId, approvals)
+      await useProductStore.getState().setHostExtensionInstalled(extensionId, null)
+
+      expect(execute).toHaveBeenNthCalledWith(1, 'extensions.activate', {
+        extensionId,
+        agentId: otherAgentId,
+        revisionId: extensionRevisionId,
+        ...('host' in approvals ? { hostPermissionApproval: { permissionDigest: approvals.host } } : {}),
+        ...('agent' in approvals ? { permissionApproval: { permissionDigest: approvals.agent } } : {}),
+      })
+      expect(execute).toHaveBeenNthCalledWith(2, 'extensions.install', {
+        extensionId,
+        revisionId: extensionRevisionId,
+        ...('host' in approvals ? { permissionDigest: approvals.host } : {}),
+        ...('agent' in approvals ? { agentPermissionDigest: approvals.agent } : {}),
+      })
+      expect(execute).toHaveBeenNthCalledWith(3, 'extensions.uninstall', { extensionId })
+    },
+  )
+
+  it('keeps host and agent configuration and secret submissions on their own layer', async () => {
+    const execute = vi.fn(() => Promise.resolve(null))
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+    await useProductStore.getState().updateExtensionConfig({
+      extensionId,
+      config: { endpoint: 'https://api.example.invalid' },
+      secrets: { hostToken: 'synthetic-host-token' },
+    })
+    await useProductStore.getState().updateExtensionConfig({
+      extensionId,
+      agentId: otherAgentId,
+      config: { style: 'brief' },
+      secrets: { agentToken: 'synthetic-agent-token' },
+    })
+    expect(execute).toHaveBeenNthCalledWith(1, 'extensions.installationConfig', {
+      extensionId,
+      config: { endpoint: 'https://api.example.invalid' },
+      secrets: { hostToken: 'synthetic-host-token' },
+    })
+    expect(execute).toHaveBeenNthCalledWith(2, 'extensions.activationConfig', {
+      extensionId,
+      agentId: otherAgentId,
+      config: { style: 'brief' },
+      secrets: { agentToken: 'synthetic-agent-token' },
+    })
+  })
+
+  it('forwards page and panel RPC calls with their optional anchor and agent', async () => {
+    const execute = vi.fn(() => Promise.resolve({ value: { count: 2 } }))
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+    const base = { extensionId, revisionId: extensionRevisionId, method: 'summary.read' }
+    await expect(useProductStore.getState().callExtensionClient(base)).resolves.toEqual({ count: 2 })
+    const anchor = { kind: 'channel' as const, id: 'chn_store' }
+    await expect(
+      useProductStore.getState().callExtensionClient({ ...base, anchor, agentId: otherAgentId, value: { limit: 2 } }),
+    ).resolves.toEqual({ count: 2 })
+    expect(execute).toHaveBeenNthCalledWith(1, 'extensions.clientCall', base)
+    expect(execute).toHaveBeenNthCalledWith(2, 'extensions.clientCall', {
+      ...base,
+      anchor,
+      agentId: otherAgentId,
+      value: { limit: 2 },
     })
   })
 
@@ -359,7 +462,7 @@ describe('product store Host mutations', () => {
           name: '缺少版本的扩展',
           description: '',
           revision: 1,
-          scope: 'agent',
+          provides: ['agent'],
           revisions: [],
           createdByAgent: '',
           activations: [],

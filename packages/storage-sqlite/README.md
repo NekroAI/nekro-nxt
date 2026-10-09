@@ -12,7 +12,7 @@
 
 频道历史在数据库中按时间与 ID 的 BINARY 倒序进行游标分页，隐藏事实在取页前排除。搜索使用 `search_text` 的确定性大小写折叠与参数化 `instr` 字面匹配，只解析限量的候选消息；无命中搜索仍可能扫描频道搜索文本。`%`、`_` 和中文短文本都保持字面语义。
 
-Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体当前启用版本。`host_extension_installations` 保存每个 `host-adapter` 或 `host-ui` Extension 当前安装的 Revision，并用复合外键保证 Revision 归属。
+Binding 只表达每个频道的当前归属，以 `channel_id` 为主键；历史消息和 Episode 不依赖历史 Binding 行。Agent Revision 继续不可变，当前 Revision 指针由独立表和复合外键保证归属。Asset Occurrence 以 `(channel_event_id, part_index)` 记录授权来源；Extension Activation 以 `(agent_id, extension_id)` 保存每个智能体的启用与配置，其版本列始终等于安装版本。`host_extension_installations` 保存每个已安装 Extension 的当前 Revision 与本机配置，并用复合外键保证 Revision 归属；`commitHostInstallationState` 在同一事务中提交安装、权限批准、页面目录与随之切换的智能体挂载。`0034`/`0035` 删除 `local_extensions.scope`、新增由 Manifest 推导的 `provides`（扩展形态统一）。
 
 `0015_extension_scope_payload_digest` 把 Extension scope 固定到父对象，并给 Revision 增加独立 `payload_digest`。`0016_dsh_plugin_packages` 保存不可变 DSH 包身份、精确版本、来源、内容与 lockfile 摘要、可选 registry integrity、批准构建依赖、Bundle 展开入口、Host/智能体 Activation 和最近 Loader 诊断。Activation 是启用事实源；诊断只记录 `active/load-failed/restore-failed/dispose-failed` 和 Loader 阶段，不代替启用关系。
 

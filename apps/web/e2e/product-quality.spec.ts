@@ -310,13 +310,14 @@ const authoringSnapshot = (status: 'ready' | 'repairing' | 'completed'): Snapsho
               displayName: '群聊摘要卡片',
               description: '',
               createdByAgentId: targetAgentId,
-              scope: 'agent',
+              provides: ['agent'],
               revisions: [
                 {
                   id: savedRevisionId,
                   revisionNumber: 1,
                   createdAt: 1_725_000_006_000,
-                  scope: 'agent',
+                  provides: ['agent'],
+                  agentLayer: true,
                   contributions: [],
                 },
               ],

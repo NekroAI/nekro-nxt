@@ -42,7 +42,7 @@ Desktop 中每个服务实例都是独立工作区。切换实例只更换当前
 | Session |智能体在一个 Channel 中连续工作的上下文 | 跨所有平台混合的聊天记录 |
 | Extension | 可贡献工具、适配器、预设、面板、工具视图、富消息渲染器或页面的能力包 | 只能提供 Tool 的狭义插件 |
 | Extension Revision | Extension 的不可变保存版本 | 动态试运行产生的临时 Package |
-| `AgentActivation` | 某智能体使用某 Extension Revision 的关系 | 安装插件后自动全局生效 |
+| `AgentActivation` | 某智能体使用某个已安装扩展的关系（版本跟随本机安装） | 安装插件后自动全局生效 |
 | Host Installation | 本机当前安装的 Adapter Extension Revision | 给每个智能体启用工具 |
 
 每个空间只有一个主要对象。频道检查器和接线详情只展示摘要和就地动作，完整编辑进入对应空间。
@@ -95,11 +95,11 @@ Extension Draft
 → Dynamic Run
 → Validation Evidence
 → Local Extension Revision
-→ 智能体扩展 Revision：`AgentActivation`（启用时批准权限）
-  或 Adapter Revision：Host Installation
+→ Host Installation（安装到本机，批准对整台机器生效的权限；只给智能体用的扩展在首次启用时自动安装）
+→ `AgentActivation`（给某个智能体启用，批准只对它生效的权限）
 ```
 
-这些状态不可合并：试跑成功不等于保存，保存不等于启用或安装；Adapter 安装只切换 Host 平台贡献，不创建 `AgentActivation`，也不强制替换活动智能体 Session。
+这些状态不可合并：试跑成功不等于保存，保存不等于启用或安装；安装只建立本机实例（页面、适配器、界面数据接口），不创建 `AgentActivation`，也不强制替换活动智能体 Session。
 
 ### 5.3 群消息投递流
 
@@ -170,7 +170,7 @@ Adapter 收到平台事件
 
 **需求：** 用 TypeScript、DSH/Cordis API 深入开发复杂 Adapter 或 Extension。
 **理想行为：** CLI 与 UI 使用同一 Extension/Revision/Activation 模型，源码开发不是另一套发布体系。
-**交互：** 用脚手架创建 V6 扩展 → 编写与测试 → 打包后在工坊导入 → 在指定智能体或账号上启用验证。
+**交互：** 用脚手架创建 V7 扩展 → 编写与测试 → 打包后在工坊导入 → 安装到本机，并在指定智能体上启用验证。
 
 ## 7. 交互实现铁律
 

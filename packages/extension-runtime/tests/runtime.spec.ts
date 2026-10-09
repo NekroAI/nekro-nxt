@@ -27,12 +27,11 @@ import { z } from 'zod'
 import {
   AuthoringArtifactStore,
   DynamicAuthoringService,
-  ExtensionActivationCoordinator,
   ExtensionBuilder,
+  ExtensionLifecycleCoordinator,
   ExtensionService,
   ExtensionSourceStore,
   extensionManifestSchema,
-  HostExtensionInstallationCoordinator,
   materializeDynamicPackage,
   materializeImportedRevision,
   scopeHostUiCss,
@@ -41,23 +40,21 @@ import {
   type Activation,
   type AuthoringRepository,
   type DynamicAuthoringAttempt,
-  type ExtensionActivationHost,
-  type ExtensionBuildArtifact,
+  type ExtensionManifest,
+  type ExtensionRuntimeHost,
   type ExtensionClientDiagnostic,
   type DynamicAuthoringEvent,
   type DynamicAuthoringSnapshot,
   type DynamicAuthoringTask,
   type ExtensionRepository,
   type ExtensionRevisionVerification,
-  type HostExtensionInstallationHost,
   type HostInstallation,
   type HostUiDiagnostic,
   type HostUiPermissionGrant,
   type HostUiRepository,
+  type LoadedExtension,
   type LocalExtension,
-  type MountedExtension,
-  type MountedHostExtension,
-  type MountedHostUiExtension,
+  type MountedAttachment,
   type Revision,
 } from '../src/index.ts'
 
@@ -131,7 +128,6 @@ describe('Dynamic authoring artifacts', () => {
     const snapshot: DynamicAuthoringSnapshot = {
       name: '验收面板',
       purpose: '验证源码账本。',
-      scope: 'host-ui',
       code: { client: 'return { apply() {} }' },
       resources: {},
       permissions: { permissions: [], networkOrigins: [] },
@@ -173,7 +169,6 @@ describe('Dynamic authoring artifacts', () => {
       snapshot: {
         name: '测试操作',
         purpose: '测试状态提交',
-        scope: 'agent' as const,
         code: { host: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -236,7 +231,6 @@ describe('Dynamic authoring artifacts', () => {
       snapshot: {
         name: '过期候选',
         purpose: '验证恢复窗口。',
-        scope: 'agent',
         code: { host: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -283,7 +277,6 @@ describe('Dynamic authoring artifacts', () => {
       snapshot: {
         name: '状态工具',
         purpose: '验证任务账本。',
-        scope: 'agent',
         code: { host: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -295,7 +288,6 @@ describe('Dynamic authoring artifacts', () => {
     const secondSnapshot: DynamicAuthoringSnapshot = {
       name: '状态工具修订',
       purpose: '验证同任务追加候选。',
-      scope: 'agent',
       code: { host: 'return { apply() { return undefined } }' },
       resources: { 'assets/probe.module.css': '.probe { color: red; }' },
       clientCss: {
@@ -441,7 +433,6 @@ describe('Dynamic authoring artifacts', () => {
       snapshot: {
         name: '界面探针',
         purpose: '覆盖 Client 恢复分支。',
-        scope: 'agent',
         code: { client: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -511,7 +502,6 @@ describe('Dynamic authoring artifacts', () => {
       snapshot: {
         name: '缺失候选探针',
         purpose: '覆盖恢复缺失候选。',
-        scope: 'agent',
         code: { host: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -535,7 +525,6 @@ describe('Dynamic authoring artifacts', () => {
       snapshot: {
         name: '缺失源码探针',
         purpose: '覆盖恢复缺失源码。',
-        scope: 'agent',
         code: { host: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -555,7 +544,6 @@ describe('Dynamic authoring artifacts', () => {
       snapshot: {
         name: '删除回滚探针',
         purpose: '验证目录恢复。',
-        scope: 'agent',
         code: { host: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
@@ -641,8 +629,7 @@ const revisionId = (value: string): ExtensionRevisionId => ExtensionRevisionIdSc
 
 const manifestRevisionSchema = z
   .object({
-    schemaVersion: z.literal(6),
-    scope: z.literal('agent'),
+    schemaVersion: z.literal(7),
     permissions: z.object({ permissions: z.array(z.string()), networkOrigins: z.array(z.string()) }).strict(),
     extensionId: ExtensionIdSchema,
     revisionId: ExtensionRevisionIdSchema,
@@ -787,8 +774,13 @@ class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository
     const previousInstallation = this.installations.get(input.installation.extensionId)
     const previousGrant = this.hostUiGrants.get(`extension:${input.installation.extensionId}`)
     const previousPages = new Map(this.hostUiPages)
+    const previousActivations = new Map(this.activations)
     try {
       this.upsertHostInstallation(input.installation)
+      for (const { activation, grant } of input.attachments ?? []) {
+        this.upsertActivation(activation)
+        this.upsertHostUiPermissionGrant(grant)
+      }
       if (input.hostUi) {
         this.upsertHostUiPermissionGrant(input.hostUi.grant)
         return this.replaceHostUiExtensionPages({
@@ -804,6 +796,8 @@ class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository
       this.deleteHostUiPermissionGrant(`extension:${input.installation.extensionId}`)
       return []
     } catch (error) {
+      this.activations.clear()
+      for (const [key, activation] of previousActivations) this.activations.set(key, activation)
       if (previousInstallation) this.installations.set(previousInstallation.extensionId, previousInstallation)
       else this.installations.delete(input.installation.extensionId)
       if (previousGrant) this.hostUiGrants.set(previousGrant.ownerKey, previousGrant)
@@ -947,45 +941,6 @@ class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository
   }
 }
 
-class FakeActivationHost implements ExtensionActivationHost {
-  readonly mounted = new Map<string, ExtensionRevisionId>()
-  readonly mountCalls: ExtensionRevisionId[] = []
-  readonly disposedRevisions: ExtensionRevisionId[] = []
-  readonly safeAgents: AgentId[] = []
-  failRevisionId?: ExtensionRevisionId
-  readonly failRevisionIds = new Set<ExtensionRevisionId>()
-  failDisposeRevisionId?: ExtensionRevisionId
-  safeGate?: Promise<void>
-
-  waitUntilSafe(agent: AgentId): Promise<void> {
-    this.safeAgents.push(agent)
-    return this.safeGate ?? Promise.resolve()
-  }
-
-  mount(
-    agent: AgentId,
-    revision: Revision,
-    artifact: ExtensionBuildArtifact,
-    config: JsonValue,
-  ): Promise<MountedExtension> {
-    void artifact
-    void config
-    this.mountCalls.push(revision.id)
-    if (revision.id === this.failRevisionId || this.failRevisionIds.has(revision.id)) throw new Error('Mount failed.')
-    const key = `${agent}\0${revision.extensionId}`
-    this.mounted.set(key, revision.id)
-    return Promise.resolve({
-      evidence: { hostLoaded: true, clientBuilt: false, details: [] },
-      dispose: () => {
-        this.disposedRevisions.push(revision.id)
-        if (this.failDisposeRevisionId === revision.id) return Promise.reject(new Error('Dispose failed.'))
-        if (this.mounted.get(key) === revision.id) this.mounted.delete(key)
-        return Promise.resolve()
-      },
-    })
-  }
-}
-
 const deferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
   const promise = new Promise<T>((resolver) => {
@@ -994,9 +949,12 @@ const deferred = <T>() => {
   return { promise, resolve }
 }
 
+/** A minimal agent Tool, so a saved package provides something (an empty Manifest V7 is rejected). */
+const GREETING_TOOL = { kind: 'tool' as const, name: 'greet', description: '问候' }
+
 const localExtension = (id: ExtensionId): LocalExtension => ({
   id,
-  scope: id.startsWith('ext_host') ? 'host-adapter' : 'agent',
+  provides: ['agent'],
   slug: 'test-extension',
   displayName: '测试扩展',
   description: '测试启停。',
@@ -1012,43 +970,6 @@ const revision = (id: ExtensionRevisionId, extension: ExtensionId, number: numbe
   createdAt: number,
 })
 
-/** Agent Revisions in lifecycle tests share one small config schema so per-Activation values validate. */
-const configuredManifest = (item: Revision) =>
-  extensionManifestSchema.parse({
-    schemaVersion: 6,
-    scope: 'agent',
-    extensionId: item.extensionId,
-    revisionId: item.id,
-    entrypoints: { host: 'source/host.ts' },
-    config: {
-      schema: configSchema.object({
-        version: configSchema.number('版本'),
-        mode: configSchema.string('模式'),
-      }),
-    },
-    contributions: [],
-  })
-
-const activationCoordinator = (
-  repository: MemoryExtensionRepository,
-  host: FakeActivationHost,
-  now: () => number = () => 100,
-): ExtensionActivationCoordinator =>
-  new ExtensionActivationCoordinator(
-    repository,
-    { revisionSourceDirectory: (item) => `/source/${item.id}`, revisionManifest: configuredManifest },
-    {
-      build: ({ revisionId: id, contentDigest }) =>
-        Promise.resolve({
-          revisionId: id,
-          buildKey: contentDigest,
-          directory: `/cache/${id}`,
-        }),
-    },
-    host,
-    { now },
-  )
-
 const materialize = (hostCode: string) =>
   materializeDynamicPackage({
     extensionId: extensionId('test'),
@@ -1057,11 +978,12 @@ const materialize = (hostCode: string) =>
       name: '构建探针',
       purpose: '验证受控构建。',
       hostCode,
+      contributions: [GREETING_TOOL],
     },
   })
 
 describe('Extension save', () => {
-  it('materializes a Host UI Manifest V6 with stable pages and an explicit permission set', () => {
+  it('materializes a page-only Manifest V7 with stable pages and an explicit permission set', () => {
     const materialized = materializeDynamicPackage({
       extensionId: extensionId('hostui'),
       revisionId: revisionId('hostui'),
@@ -1082,10 +1004,9 @@ describe('Extension save', () => {
         ],
       },
     })
-    expect(materialized.scope).toBe('host-ui')
+    expect(materialized.provides).toEqual(['page'])
     expect(materialized.manifest).toMatchObject({
-      schemaVersion: 6,
-      scope: 'host-ui',
+      schemaVersion: 7,
       permissions: { permissions: ['agents.read'], networkOrigins: [] },
       contributions: [{ kind: 'host-page', entryId: 'overview' }],
     })
@@ -1133,7 +1054,7 @@ describe('Extension save', () => {
     expect(await readFile(artifact.clientCssEntry!, 'utf8')).toContain('.panel')
   })
 
-  it.each([1, 2, 3, 4, 5])(
+  it.each([1, 2, 3, 4, 5, 6])(
     'treats a Manifest V%s Revision as unavailable without touching its source or Activation config',
     async (version) => {
       const directory = await mkdtemp(path.join(tmpdir(), 'nxt-legacy-manifest-'))
@@ -1238,7 +1159,12 @@ describe('Extension save', () => {
     })
 
     const saved = await service.saveDynamicPackage({
-      snapshot: { name: '问候', purpose: '问候工具', hostCode: 'return { apply() {} }' },
+      snapshot: {
+        name: '问候',
+        purpose: '问候工具',
+        hostCode: 'return { apply() {} }',
+        contributions: [GREETING_TOOL],
+      },
       slug: 'greeting-extension',
       displayName: '问候扩展',
       description: '提供问候。',
@@ -1255,13 +1181,12 @@ describe('Extension save', () => {
     const sourceDirectory = service.revisionSourceDirectory(saved.revision)
     expect(manifest.revisionId).toBe(saved.revision.id)
     expect(manifest).toEqual({
-      schemaVersion: 6,
-      scope: 'agent',
+      schemaVersion: 7,
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
       entrypoints: { host: 'source/host.ts' },
-      contributions: [],
+      contributions: [GREETING_TOOL],
     })
     expect(existsSync(path.join(sourceDirectory, 'source-input.json'))).toBe(false)
     expect((await readdir(sourceDirectory)).sort()).toEqual([
@@ -1288,14 +1213,15 @@ describe('Extension save', () => {
 
     const saved = await service.saveDynamicPackage({
       extensionId: existing.id,
-      snapshot: { name: '新版本', purpose: '沿用已有扩展。', hostCode: 'return {}' },
+      snapshot: { name: '新版本', purpose: '沿用已有扩展。', hostCode: 'return {}', contributions: [GREETING_TOOL] },
       slug: existing.slug,
       displayName: '忽略的新名称',
       description: '忽略的新描述',
     })
 
-    expect(saved.extension).toBe(existing)
-    expect(repository.listExtensions()).toEqual([existing])
+    // The Extension keeps its identity and metadata; only what it provides follows the latest Revision.
+    expect(saved.extension).toEqual({ ...existing, provides: ['agent'] })
+    expect(repository.listExtensions()).toEqual([{ ...existing, provides: ['agent'] }])
     expect(saved.revision).toMatchObject({
       extensionId: existing.id,
       id: revisionId('nextRevision'),
@@ -1316,14 +1242,24 @@ describe('Extension save', () => {
       nextUlid: () => ids.next().value ?? 'unexpected-id',
     })
     const first = await service.saveDynamicPackage({
-      snapshot: { name: '去重', purpose: '验证内容身份。', hostCode: 'return { apply() {} }\r\n' },
+      snapshot: {
+        name: '去重',
+        purpose: '验证内容身份。',
+        hostCode: 'return { apply() {} }\r\n',
+        contributions: [GREETING_TOOL],
+      },
       slug: 'dedupe-extension',
       displayName: '去重扩展',
       description: '',
     })
     const second = await service.saveDynamicPackage({
       extensionId: first.extension.id,
-      snapshot: { name: '去重', purpose: '验证内容身份。', hostCode: 'return { apply() {} }\n' },
+      snapshot: {
+        name: '去重',
+        purpose: '验证内容身份。',
+        hostCode: 'return { apply() {} }\n',
+        contributions: [GREETING_TOOL],
+      },
       slug: first.extension.slug,
       displayName: first.extension.displayName,
       description: first.extension.description,
@@ -1346,7 +1282,7 @@ describe('Extension save', () => {
     await expect(
       service.saveDynamicPackage({
         extensionId: existing.id,
-        snapshot: { name: '改名', purpose: '不应改变标识。', hostCode: 'return {}' },
+        snapshot: { name: '改名', purpose: '不应改变标识。', hostCode: 'return {}', contributions: [GREETING_TOOL] },
         slug: 'new-slug',
         displayName: '改名扩展',
         description: '',
@@ -1354,7 +1290,7 @@ describe('Extension save', () => {
     ).rejects.toThrow('An existing Extension slug cannot be changed by a Revision.')
     await expect(
       service.saveDynamicPackage({
-        snapshot: { name: '冲突', purpose: '不应发布。', hostCode: 'return {}' },
+        snapshot: { name: '冲突', purpose: '不应发布。', hostCode: 'return {}', contributions: [GREETING_TOOL] },
         slug: owner.slug,
         displayName: '冲突扩展',
         description: '',
@@ -1377,7 +1313,7 @@ describe('Extension save', () => {
 
     await expect(
       service.saveDynamicPackage({
-        snapshot: { name: '时钟', purpose: '拒绝非法时间。', hostCode: 'return {}' },
+        snapshot: { name: '时钟', purpose: '拒绝非法时间。', hostCode: 'return {}', contributions: [GREETING_TOOL] },
         slug: 'clock-extension',
         displayName: '时钟扩展',
         description: '',
@@ -1399,7 +1335,12 @@ describe('Extension save', () => {
 
     await expect(
       service.saveDynamicPackage({
-        snapshot: { name: '文件失败', purpose: '文件系统失败时不提交。', hostCode: 'return {}' },
+        snapshot: {
+          name: '文件失败',
+          purpose: '文件系统失败时不提交。',
+          hostCode: 'return {}',
+          contributions: [GREETING_TOOL],
+        },
         slug: 'filesystem-failure',
         displayName: '文件失败扩展',
         description: '',
@@ -1407,447 +1348,6 @@ describe('Extension save', () => {
     ).rejects.toThrow()
     expect(repository.listExtensions()).toEqual([])
     expect(repository.listExtensionRevisions()).toEqual([])
-  })
-})
-
-describe('Extension Activation lifecycle', () => {
-  it('keeps the previous database Activation and restores its mount when a new Revision fails', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('rollback'))
-    const oldRevision = revision(revisionId('old'), extension.id, 1)
-    const nextRevision = revision(revisionId('next'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: oldRevision })
-    repository.saveExtensionRevision({ extension, revision: nextRevision })
-    const previous: Activation = {
-      agentId: agentId('one'),
-      extensionId: extension.id,
-      extensionRevisionId: oldRevision.id,
-      config: { version: 1 },
-      activatedAt: 1,
-    }
-    repository.upsertActivation(previous)
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-    expect(await coordinator.restore()).toEqual({ restored: 1, failed: 0 })
-    host.failRevisionId = nextRevision.id
-
-    await expect(
-      coordinator.activate({
-        agentId: previous.agentId,
-        extensionId: extension.id,
-        revisionId: nextRevision.id,
-        config: { version: 2 },
-      }),
-    ).rejects.toThrow('Mount failed.')
-
-    expect(repository.getActivation(previous.agentId, extension.id)).toEqual(previous)
-    expect(host.mounted.get(`${previous.agentId}\0${extension.id}`)).toBe(oldRevision.id)
-  })
-
-  it('restores the old mount if the Activation repository transaction fails', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('transaction'))
-    const oldRevision = revision(revisionId('transactionOld'), extension.id, 1)
-    const nextRevision = revision(revisionId('transactionNext'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: oldRevision })
-    repository.saveExtensionRevision({ extension, revision: nextRevision })
-    const previous: Activation = {
-      agentId: agentId('transaction'),
-      extensionId: extension.id,
-      extensionRevisionId: oldRevision.id,
-      config: {},
-      activatedAt: 1,
-    }
-    repository.upsertActivation(previous)
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-    await coordinator.restore()
-    repository.failActivationUpsert = true
-
-    await expect(
-      coordinator.activate({
-        agentId: previous.agentId,
-        extensionId: extension.id,
-        revisionId: nextRevision.id,
-      }),
-    ).rejects.toThrow('Activation transaction failed.')
-    expect(repository.getActivation(previous.agentId, extension.id)).toEqual(previous)
-    expect(host.mounted.get(`${previous.agentId}\0${extension.id}`)).toBe(oldRevision.id)
-  })
-
-  it('refuses to remount the old Revision when a failed commit cannot release its candidate', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('unsafeRollback'))
-    const oldRevision = revision(revisionId('unsafeOld'), extension.id, 1)
-    const nextRevision = revision(revisionId('unsafeNext'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: oldRevision })
-    repository.saveExtensionRevision({ extension, revision: nextRevision })
-    const previous: Activation = {
-      agentId: agentId('unsafeRollback'),
-      extensionId: extension.id,
-      extensionRevisionId: oldRevision.id,
-      config: {},
-      activatedAt: 1,
-    }
-    repository.upsertActivation(previous)
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-    await coordinator.restore()
-    repository.failActivationUpsert = true
-    host.failDisposeRevisionId = nextRevision.id
-    await expect(
-      coordinator.activate({ agentId: previous.agentId, extensionId: extension.id, revisionId: nextRevision.id }),
-    ).rejects.toThrow('Extension commit and cleanup failed.')
-    expect(repository.getActivation(previous.agentId, extension.id)).toEqual(previous)
-    expect(host.mounted.get(`${previous.agentId}\0${extension.id}`)).not.toBe(oldRevision.id)
-  })
-
-  it('activates a first Revision with defaults and cleanly switches to the next Revision', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('switch'))
-    const firstRevision = revision(revisionId('switchFirst'), extension.id, 1)
-    const nextRevision = revision(revisionId('switchNext'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: firstRevision })
-    repository.saveExtensionRevision({ extension, revision: nextRevision })
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-
-    const first = await coordinator.activate({
-      agentId: agentId('switcher'),
-      extensionId: extension.id,
-      revisionId: firstRevision.id,
-    })
-    expect(first).toMatchObject({
-      extensionRevisionId: firstRevision.id,
-      config: {},
-      activatedAt: 100,
-    })
-    expect(host.mounted.get(`${first.agentId}\0${extension.id}`)).toBe(firstRevision.id)
-
-    const next = await coordinator.activate({
-      agentId: first.agentId,
-      extensionId: extension.id,
-      revisionId: nextRevision.id,
-      config: { mode: 'next' },
-    })
-    expect(next).toMatchObject({ extensionRevisionId: nextRevision.id, config: { mode: 'next' } })
-    expect(repository.getActivation(first.agentId, extension.id)).toEqual(next)
-    expect(host.disposedRevisions).toEqual([firstRevision.id])
-    expect(host.mounted.get(`${first.agentId}\0${extension.id}`)).toBe(nextRevision.id)
-  })
-
-  it('publishes a request as waiting until the safe gap, then keeps only the Activation or the failure reason', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('transition'))
-    const usable = revision(revisionId('transitionUsable'), extension.id, 1)
-    const broken = revision(revisionId('transitionBroken'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: usable })
-    repository.saveExtensionRevision({ extension, revision: broken })
-    const host = new FakeActivationHost()
-    host.failRevisionId = broken.id
-    const gate = deferred<undefined>()
-    host.safeGate = gate.promise
-    const coordinator = activationCoordinator(repository, host)
-    const agent = agentId('transition')
-
-    const enabling = coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: usable.id })
-    expect(coordinator.getTransition(agent, extension.id)).toEqual({
-      agentId: agent,
-      extensionId: extension.id,
-      target: 'enabled',
-      extensionRevisionId: usable.id,
-      state: 'waiting',
-      since: 100,
-    })
-    expect(coordinator.listTransitions(extension.id)).toHaveLength(1)
-    expect(repository.getActivation(agent, extension.id)).toBeUndefined()
-    gate.resolve(undefined)
-    await enabling
-    expect(coordinator.listTransitions(extension.id)).toEqual([])
-    expect(repository.getActivation(agent, extension.id)?.extensionRevisionId).toBe(usable.id)
-
-    await expect(
-      coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: broken.id }),
-    ).rejects.toThrow('Mount failed.')
-    expect(coordinator.getTransition(agent, extension.id)).toMatchObject({
-      target: 'enabled',
-      extensionRevisionId: broken.id,
-      state: 'failed',
-      message: 'Mount failed.',
-    })
-
-    // The next request replaces the failure; a successful disable leaves nothing behind.
-    const disabling = coordinator.disable(agent, extension.id)
-    expect(coordinator.getTransition(agent, extension.id)).toMatchObject({ target: 'disabled', state: 'waiting' })
-    await disabling
-    expect(coordinator.getTransition(agent, extension.id)).toBeUndefined()
-    expect(repository.getActivation(agent, extension.id)).toBeUndefined()
-  })
-
-  it('serializes concurrent switches for one Agent and Extension pair', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('serialized'))
-    const firstRevision = revision(revisionId('serializedFirst'), extension.id, 1)
-    const nextRevision = revision(revisionId('serializedNext'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: firstRevision })
-    repository.saveExtensionRevision({ extension, revision: nextRevision })
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-
-    const [first, next] = await Promise.all([
-      coordinator.activate({ agentId: agentId('serialized'), extensionId: extension.id, revisionId: firstRevision.id }),
-      coordinator.activate({ agentId: agentId('serialized'), extensionId: extension.id, revisionId: nextRevision.id }),
-    ])
-
-    expect(first.extensionRevisionId).toBe(firstRevision.id)
-    expect(next.extensionRevisionId).toBe(nextRevision.id)
-    expect(repository.getActivation(agentId('serialized'), extension.id)?.extensionRevisionId).toBe(nextRevision.id)
-    expect(host.disposedRevisions).toEqual([firstRevision.id])
-  })
-
-  it('rejects unavailable Revisions and invalid activation clocks before committing an Activation', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('validation'))
-    const otherExtension = localExtension(extensionId('otherOwner'))
-    const ownedRevision = revision(revisionId('owned'), extension.id, 1)
-    const otherRevision = revision(revisionId('otherOwned'), otherExtension.id, 1)
-    repository.saveExtensionRevision({ extension, revision: ownedRevision })
-    repository.saveExtensionRevision({ extension: otherExtension, revision: otherRevision })
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-
-    await expect(
-      coordinator.activate({
-        agentId: agentId('validation'),
-        extensionId: extension.id,
-        revisionId: revisionId('missing'),
-      }),
-    ).rejects.toThrow('Activation requires a Revision owned by the selected Extension.')
-    await expect(
-      coordinator.activate({
-        agentId: agentId('validation'),
-        extensionId: extension.id,
-        revisionId: otherRevision.id,
-      }),
-    ).rejects.toThrow('Activation requires a Revision owned by the selected Extension.')
-
-    const badClockCoordinator = activationCoordinator(repository, new FakeActivationHost(), () => 1.5)
-    await expect(
-      badClockCoordinator.activate({
-        agentId: agentId('badclock'),
-        extensionId: extension.id,
-        revisionId: ownedRevision.id,
-      }),
-    ).rejects.toThrow('Clock must return a non-negative integer.')
-    expect(repository.getActivation(agentId('badclock'), extension.id)).toBeUndefined()
-  })
-
-  it('requires permission approval at enable time, records the grant and applies new config', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('approval'))
-    const approvalRevision = revision(revisionId('approval'), extension.id, 1)
-    repository.saveExtensionRevision({
-      extension,
-      revision: approvalRevision,
-      verification: {
-        revisionId: approvalRevision.id,
-        dshVersion: 'test',
-        contractVersion: 'nekro-nxt-extension-v4',
-        origin: { episodeId: 'eps_a', pluginId: 'a', packageId: 'a', pluginRunId: 'a' },
-        verifiedAt: 1,
-        hostBuild: { built: true, buildKey: 'a' },
-        clientBuild: { built: true, buildKey: 'a' },
-        toolInvocations: [],
-        rpcMethods: [],
-        renderedPanels: [],
-        renderedToolViews: [],
-        renderedMessageRenderers: [],
-        permissions: { permissions: ['agents.read'], networkOrigins: [] },
-      },
-    })
-    const host = new FakeActivationHost()
-    const coordinator = new ExtensionActivationCoordinator(
-      repository,
-      { revisionSourceDirectory: (item) => `/source/${item.id}`, revisionManifest: configuredManifest },
-      { build: ({ revisionId: id }) => Promise.resolve({ revisionId: id, buildKey: 'b', directory: `/cache/${id}` }) },
-      host,
-      { now: () => 100, grants: repository },
-    )
-    const agent = agentId('approver')
-    const requirement = coordinator.getPermissionRequirement(agent, extension.id, approvalRevision.id)
-    expect(requirement.approvalRequired).toBe(true)
-    await expect(
-      coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: approvalRevision.id }),
-    ).rejects.toThrow(`permission-approval-required:${requirement.permissionDigest}`)
-    expect(host.mountCalls).toEqual([])
-    await coordinator.activate({
-      agentId: agent,
-      extensionId: extension.id,
-      revisionId: approvalRevision.id,
-      permissionApproval: { permissionDigest: requirement.permissionDigest },
-    })
-    expect(repository.getHostUiPermissionGrant(`activation:${agent}:${extension.id}`)?.declaration).toEqual({
-      permissions: ['agents.read'],
-      networkOrigins: [],
-    })
-    expect(coordinator.getPermissionRequirement(agent, extension.id, approvalRevision.id).approvalRequired).toBe(false)
-    const updated = await coordinator.updateConfig(agent, extension.id, { mode: 'focus' })
-    expect(updated.config).toEqual({ mode: 'focus' })
-    expect(host.mountCalls).toEqual([approvalRevision.id, approvalRevision.id])
-    await expect(coordinator.updateConfig(agent, extension.id, { unknown: 1 })).rejects.toThrow('未知配置项')
-    expect(repository.getActivation(agent, extension.id)?.config).toEqual({ mode: 'focus' })
-    await coordinator.disable(agent, extension.id)
-    expect(repository.getHostUiPermissionGrant(`activation:${agent}:${extension.id}`)).toBeUndefined()
-  })
-
-  it('starts and stops the same Extension independently for multiple Agents', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('shared'))
-    const currentRevision = revision(revisionId('shared'), extension.id, 1)
-    repository.saveExtensionRevision({ extension, revision: currentRevision })
-    const firstAgent = agentId('first')
-    const secondAgent = agentId('second')
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-
-    await coordinator.activate({ agentId: firstAgent, extensionId: extension.id, revisionId: currentRevision.id })
-    await coordinator.activate({ agentId: secondAgent, extensionId: extension.id, revisionId: currentRevision.id })
-    expect(repository.listActivations()).toHaveLength(2)
-    expect(host.mounted).toHaveLength(2)
-
-    await coordinator.disable(firstAgent, extension.id)
-    expect(repository.getActivation(firstAgent, extension.id)).toBeUndefined()
-    expect(repository.getActivation(secondAgent, extension.id)?.extensionRevisionId).toBe(currentRevision.id)
-    expect(host.mounted.has(`${firstAgent}\0${extension.id}`)).toBe(false)
-    expect(host.mounted.get(`${secondAgent}\0${extension.id}`)).toBe(currentRevision.id)
-  })
-
-  it('restores only valid committed Activations and counts failed restores without inventing state', async () => {
-    const repository = new MemoryExtensionRepository()
-    const firstExtension = localExtension(extensionId('restoreFirst'))
-    const secondExtension = localExtension(extensionId('restoreSecond'))
-    const validRevision = revision(revisionId('restoreValid'), firstExtension.id, 1)
-    const failingRevision = revision(revisionId('restoreFail'), firstExtension.id, 2)
-    repository.saveExtensionRevision({ extension: firstExtension, revision: validRevision })
-    repository.saveExtensionRevision({ extension: firstExtension, revision: failingRevision })
-    repository.upsertActivation({
-      agentId: agentId('restorevalid'),
-      extensionId: firstExtension.id,
-      extensionRevisionId: validRevision.id,
-      config: {},
-      activatedAt: 1,
-    })
-    repository.upsertActivation({
-      agentId: agentId('restorefail'),
-      extensionId: firstExtension.id,
-      extensionRevisionId: failingRevision.id,
-      config: {},
-      activatedAt: 1,
-    })
-    repository.upsertActivation({
-      agentId: agentId('restoremissing'),
-      extensionId: secondExtension.id,
-      extensionRevisionId: revisionId('restoreMissing'),
-      config: {},
-      activatedAt: 1,
-    })
-    const host = new FakeActivationHost()
-    host.failRevisionId = failingRevision.id
-    const coordinator = activationCoordinator(repository, host)
-
-    expect(await coordinator.restore()).toEqual({ restored: 1, failed: 2 })
-    expect(await coordinator.restore()).toEqual({ restored: 0, failed: 2 })
-    expect(host.mounted.get(`${agentId('restorevalid')}\0${firstExtension.id}`)).toBe(validRevision.id)
-  })
-
-  it('rejects disabling an inactive pair and restores its mount when deletion fails', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('disable'))
-    const currentRevision = revision(revisionId('disableCurrent'), extension.id, 1)
-    repository.saveExtensionRevision({ extension, revision: currentRevision })
-    const inactiveAgent = agentId('disableinactive')
-    const committedOnlyAgent = agentId('disablecommitted')
-    repository.upsertActivation({
-      agentId: committedOnlyAgent,
-      extensionId: extension.id,
-      extensionRevisionId: currentRevision.id,
-      config: {},
-      activatedAt: 1,
-    })
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-
-    await expect(coordinator.disable(inactiveAgent, extension.id)).rejects.toThrow(
-      `Extension is not active for Agent: ${extension.id}`,
-    )
-    await coordinator.disable(committedOnlyAgent, extension.id)
-    expect(repository.getActivation(committedOnlyAgent, extension.id)).toBeUndefined()
-
-    await coordinator.activate({
-      agentId: agentId('disablefailingdelete'),
-      extensionId: extension.id,
-      revisionId: currentRevision.id,
-    })
-    repository.failActivationDelete = true
-    await expect(coordinator.disable(agentId('disablefailingdelete'), extension.id)).rejects.toThrow(
-      'Activation delete failed.',
-    )
-    expect(repository.getActivation(agentId('disablefailingdelete'), extension.id)).toBeDefined()
-    expect(host.mounted.get(`${agentId('disablefailingdelete')}\0${extension.id}`)).toBe(currentRevision.id)
-  })
-
-  it('waits for in-flight transitions during concurrent dispose and rejects later work', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('dispose'))
-    const currentRevision = revision(revisionId('disposeCurrent'), extension.id, 1)
-    repository.saveExtensionRevision({ extension, revision: currentRevision })
-    const host = new FakeActivationHost()
-    const gate = deferred<void>()
-    host.safeGate = gate.promise
-    const coordinator = activationCoordinator(repository, host)
-    const activationPromise = coordinator.activate({
-      agentId: agentId('disposeagent'),
-      extensionId: extension.id,
-      revisionId: currentRevision.id,
-    })
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(host.safeAgents).toEqual([agentId('disposeagent')])
-
-    const firstDispose = coordinator.dispose()
-    const secondDispose = coordinator.dispose()
-    gate.resolve()
-    await expect(activationPromise).resolves.toMatchObject({ extensionRevisionId: currentRevision.id })
-    await Promise.all([firstDispose, secondDispose])
-
-    expect(host.disposedRevisions).toEqual([currentRevision.id])
-    await expect(
-      coordinator.activate({
-        agentId: agentId('disposeagent'),
-        extensionId: extension.id,
-        revisionId: currentRevision.id,
-      }),
-    ).rejects.toThrow('Extension Activation coordinator is disposed.')
-    await expect(coordinator.restore()).rejects.toThrow('Extension Activation coordinator is disposed.')
-  })
-
-  it('surfaces an AggregateError when a failed switch cannot restore its previous mount', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('aggregate'))
-    const oldRevision = revision(revisionId('aggregateOld'), extension.id, 1)
-    const nextRevision = revision(revisionId('aggregateNext'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: oldRevision })
-    repository.saveExtensionRevision({ extension, revision: nextRevision })
-    const host = new FakeActivationHost()
-    const coordinator = activationCoordinator(repository, host)
-    const agent = agentId('aggregateagent')
-    await coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: oldRevision.id })
-    host.failRevisionIds.add(oldRevision.id)
-    host.failRevisionIds.add(nextRevision.id)
-
-    await expect(
-      coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: nextRevision.id }),
-    ).rejects.toThrow('Activation failed and the previous mount could not be restored.')
-    expect(repository.getActivation(agent, extension.id)?.extensionRevisionId).toBe(oldRevision.id)
   })
 })
 
@@ -1890,7 +1390,7 @@ describe('Extension source store', () => {
       'Unknown Extension: ext_missingTrash',
     )
     const saved = await service.saveDynamicPackage({
-      snapshot: { name: '回收测试', purpose: '验证源码恢复。', hostCode: 'return {}' },
+      snapshot: { name: '回收测试', purpose: '验证源码恢复。', hostCode: 'return {}', contributions: [GREETING_TOOL] },
       slug: 'trash-extension',
       displayName: '回收测试',
       description: '',
@@ -1919,10 +1419,9 @@ describe('Extension source store', () => {
 })
 
 describe('Extension import validation', () => {
-  it('applies the Adapter page limit to imported manifests as well as dynamic packages', () => {
+  it('applies the page limit to imported manifests as well as dynamic packages', () => {
     const manifest = {
-      schemaVersion: 6,
-      scope: 'host-adapter',
+      schemaVersion: 7,
       extensionId: extensionId('pageLimit'),
       revisionId: revisionId('pageLimit'),
       entrypoints: { host: 'source/host.ts', client: 'source/client.ts' },
@@ -1980,7 +1479,7 @@ describe('Extension import validation', () => {
       importVerifier: ({ dshVersion }) => {
         expect(dshVersion).toBe('unknown')
         return Promise.resolve({
-          contractVersion: 'nekro-nxt-extension-v4',
+          contractVersion: 'nekro-nxt-extension-v5',
           origin: { episodeId: 'eps_import', pluginId: 'import', packageId: 'import', pluginRunId: 'import' },
           toolInvocations: [],
           rpcMethods: [],
@@ -2006,8 +1505,7 @@ describe('Extension import validation', () => {
     const svg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" fill="currentColor"/></svg>\n'
     const digest = (value: string): string => createHash('sha256').update(value).digest('hex')
     const manifest = {
-      schemaVersion: 6 as const,
-      scope: 'host-ui' as const,
+      schemaVersion: 7 as const,
       extensionId: extensionId('importUiAssets'),
       revisionId: revisionId('importUiAssets'),
       entrypoints: { client: 'source/client.ts' as const },
@@ -2050,13 +1548,12 @@ describe('Extension import validation', () => {
     ).toThrow('资源摘要不一致')
   })
 
-  it('rejects identity, scope, digest, existing Revision, and existing Extension conflicts', async () => {
+  it('rejects identity, digest, existing Revision, and existing Extension conflicts', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-import-validation-'))
     temporaryDirectories.push(directory)
     const incoming = materialize('return { imported: true }')
     const extension = {
       id: incoming.manifest.extensionId,
-      scope: 'agent' as const,
       slug: 'imported-extension',
       displayName: '导入扩展',
       description: '',
@@ -2077,14 +1574,6 @@ describe('Extension import validation', () => {
         sources: incoming.sources,
       }),
     ).rejects.toThrow('导入扩展的 Manifest 身份与传输清单不一致。')
-    await expect(
-      service.importRevision({
-        extension: { ...extension, scope: 'host-adapter' },
-        revision: revisionInput,
-        manifest: incoming.manifest,
-        sources: incoming.sources,
-      }),
-    ).rejects.toThrow('导入扩展的 scope 与 Manifest 不一致。')
     await expect(
       service.importRevision({
         extension,
@@ -2121,7 +1610,7 @@ describe('Extension import validation', () => {
         manifest: incoming.manifest,
         sources: incoming.sources,
       }),
-    ).rejects.toThrow('同一 Extension 身份不能改变 scope 或本地 slug。')
+    ).rejects.toThrow('同一 Extension 身份不能改变本地 slug。')
   })
 })
 
@@ -2132,13 +1621,12 @@ describe('Extension materialization and build policy', () => {
     expect(first.contentDigest).toBe(second.contentDigest)
     expect(first.sources.host).toContain("from '@nekro-nxt/extension-sdk'")
     expect(first.manifest).toEqual({
-      schemaVersion: 6,
-      scope: 'agent',
+      schemaVersion: 7,
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: extensionId('test'),
       revisionId: revisionId('test'),
       entrypoints: { host: 'source/host.ts' },
-      contributions: [],
+      contributions: [GREETING_TOOL],
     })
     expect(first).not.toHaveProperty('sourceInput')
   })
@@ -2156,7 +1644,10 @@ describe('Extension materialization and build policy', () => {
       densities: ['compact' as const],
     }
     const variants = [
-      { name: 'hostonly', snapshot: { name: 'Host', purpose: 'Host 构建。', hostCode: 'return {}' } },
+      {
+        name: 'hostonly',
+        snapshot: { name: 'Host', purpose: 'Host 构建。', hostCode: 'return {}', contributions: [GREETING_TOOL] },
+      },
       {
         name: 'clientonly',
         snapshot: { name: 'Client', purpose: 'Client 构建。', clientCode: 'return {}', contributions: [panel] },
@@ -2397,962 +1888,420 @@ describe('Extension materialization and build policy', () => {
   })
 })
 
-class FakeHostInstallationHost implements HostExtensionInstallationHost {
-  readonly mounted: ExtensionRevisionId[] = []
-  readonly disposed: ExtensionRevisionId[] = []
-  readonly handles = new Map<ExtensionRevisionId, { adapterKey: string; dispose(): Promise<void> }>()
-  readonly waitCalls: string[] = []
-  readonly availabilityChecks: string[] = []
-  readonly fail = new Set<ExtensionRevisionId>()
-  readonly unavailable = new Set<string>()
-  readonly keys = new Map<ExtensionRevisionId, string>()
-  readonly mountedHostUi: ExtensionRevisionId[] = []
-  readonly disposedHostUi: ExtensionRevisionId[] = []
-  readonly failedHostUiMounts = new Set<ExtensionRevisionId>()
-  readonly failedHostUiDisposals = new Set<ExtensionRevisionId>()
-  onMount?: (revision: Revision) => Promise<void>
-  onWaitUntilSafe?: (adapterKey: string) => Promise<void>
-  activeMounts = 0
-  maximumActiveMounts = 0
+// —— Extension lifecycle (扩展形态统一) ——
 
-  assertAdapterKeyAvailable(adapterKey: string): Promise<void> {
-    this.availabilityChecks.push(adapterKey)
-    if (this.unavailable.has(adapterKey)) throw new Error(`Adapter key is occupied: ${adapterKey}`)
+/** Records what the coordinator asks of the Server: loads, attachments, safe gaps and disposals, in order. */
+class FakeRuntimeHost implements ExtensionRuntimeHost {
+  readonly events: string[] = []
+  readonly loaded = new Map<ExtensionId, ExtensionRevisionId>()
+  readonly attached = new Map<string, JsonValue>()
+  readonly failLoad = new Set<ExtensionRevisionId>()
+  readonly failAttach = new Set<string>()
+  readonly occupiedAdapterKeys = new Set<string>()
+  safeGate?: Promise<void>
+
+  load(input: Parameters<ExtensionRuntimeHost['load']>[0]): Promise<LoadedExtension> {
+    const { revision, manifest } = input
+    this.events.push(`load:${revision.id}`)
+    if (this.failLoad.has(revision.id)) return Promise.reject(new Error(`Load failed: ${revision.id}`))
+    this.loaded.set(revision.extensionId, revision.id)
+    const adapterKey = manifest.contributions.find((entry) => entry.kind === 'adapter')?.key
+    return Promise.resolve({
+      ...(adapterKey === undefined ? {} : { adapterKey }),
+      attach: (agent: AgentId, config: JsonValue): Promise<MountedAttachment> => {
+        const key = `${agent}\0${revision.id}`
+        this.events.push(`attach:${agent}:${revision.id}`)
+        if (this.failAttach.has(key)) return Promise.reject(new Error(`Attach failed: ${agent}`))
+        this.attached.set(key, config)
+        return Promise.resolve({
+          dispose: () => {
+            this.events.push(`detach:${agent}:${revision.id}`)
+            this.attached.delete(key)
+            return Promise.resolve()
+          },
+        })
+      },
+      call: (method: string, value: JsonValue) => Promise.resolve({ method, value, revision: revision.id }),
+      dispose: () => {
+        this.events.push(`dispose:${revision.id}`)
+        if (this.loaded.get(revision.extensionId) === revision.id) this.loaded.delete(revision.extensionId)
+        return Promise.resolve()
+      },
+    })
+  }
+
+  waitUntilAgentSafe(agent: AgentId): Promise<void> {
+    this.events.push(`safe:${agent}`)
+    return this.safeGate ?? Promise.resolve()
+  }
+
+  waitUntilAdapterSafe(adapterKey: string): Promise<void> {
+    this.events.push(`adapter-safe:${adapterKey}`)
     return Promise.resolve()
   }
 
-  waitUntilSafe(adapterKey: string): Promise<void> {
-    this.waitCalls.push(adapterKey)
-    return this.onWaitUntilSafe?.(adapterKey) ?? Promise.resolve()
-  }
-
-  async mount(revision: Revision): Promise<MountedHostExtension> {
-    if (this.fail.has(revision.id)) throw new Error('Host mount failed.')
-    this.activeMounts += 1
-    this.maximumActiveMounts = Math.max(this.maximumActiveMounts, this.activeMounts)
-    try {
-      await this.onMount?.(revision)
-    } finally {
-      this.activeMounts -= 1
-    }
-    this.mounted.push(revision.id)
-    const mounted = {
-      adapterKey: this.keys.get(revision.id) ?? 'synthetic-adapter',
-      dispose: () => {
-        this.disposed.push(revision.id)
-        return Promise.resolve()
-      },
-    }
-    this.handles.set(revision.id, mounted)
-    return mounted
-  }
-
-  mountHostUi(revision: Revision): Promise<MountedHostUiExtension> {
-    if (this.failedHostUiMounts.has(revision.id)) return Promise.reject(new Error('Host UI mount failed.'))
-    this.mountedHostUi.push(revision.id)
-    return Promise.resolve({
-      call: () => Promise.resolve(null),
-      dispose: () => {
-        this.disposedHostUi.push(revision.id)
-        if (this.failedHostUiDisposals.has(revision.id)) return Promise.reject(new Error('Host UI dispose failed.'))
-        return Promise.resolve()
-      },
-    })
+  assertAdapterKeyAvailable(adapterKey: string): Promise<void> {
+    return this.occupiedAdapterKeys.has(adapterKey)
+      ? Promise.reject(new Error(`适配器 key 已被占用: ${adapterKey}`))
+      : Promise.resolve()
   }
 }
 
-const adapterVerification = (id: ExtensionRevisionId, key = 'synthetic-adapter'): ExtensionRevisionVerification => ({
+const lifecycleVerification = (id: ExtensionRevisionId): ExtensionRevisionVerification => ({
   revisionId: id,
-  dshVersion: '0.1.1-rc.2',
-  contractVersion: 'nekro-nxt-extension-v4',
-  scope: 'host-adapter',
-  origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
+  dshVersion: 'test',
+  contractVersion: 'nekro-nxt-extension-v5',
+  origin: { episodeId: 'eps_test', pluginId: 'test', packageId: 'test', pluginRunId: 'test' },
   verifiedAt: 1,
-  hostBuild: { built: true, buildKey: 'host' },
-  clientBuild: { built: false, buildKey: 'client' },
+  hostBuild: { built: true, buildKey: 'build' },
+  clientBuild: { built: false, buildKey: 'build' },
   toolInvocations: [],
   rpcMethods: [],
   renderedPanels: [],
   renderedToolViews: [],
   renderedMessageRenderers: [],
-  adapter: {
-    apiVersion: 2,
-    key,
-    descriptorDigest: 'a'.repeat(64),
-    registered: true,
-    started: true,
-    stopped: true,
-    inboundCommitted: true,
-    outboundReceipt: 'sent',
-  },
 })
 
-const hostUiVerification = (revision: Revision): ExtensionRevisionVerification => ({
-  revisionId: revision.id,
-  dshVersion: '0.1.1-rc.2',
-  contractVersion: 'nekro-nxt-extension-v4',
-  scope: 'host-ui',
-  origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
-  verifiedAt: 1,
-  hostBuild: { built: false, buildKey: 'host' },
-  clientBuild: { built: true, buildKey: 'client' },
-  toolInvocations: [],
-  rpcMethods: [],
-  renderedPanels: [],
-  renderedToolViews: [],
-  renderedMessageRenderers: [],
-  renderedPages: [
-    {
-      kind: 'host-page',
-      entryId: 'overview',
-      title: '概览',
-      icon: { kind: 'host-icon', name: 'layout-dashboard' },
-      objectPane: 'hidden',
-      startPath: '',
-    },
-  ],
-  permissions: { permissions: [], networkOrigins: [] },
-})
-
-const installationCoordinator = (
-  repository: MemoryExtensionRepository,
-  host: FakeHostInstallationHost,
-  options: {
-    readonly now?: () => number
-    readonly build?: (id: ExtensionRevisionId) => Promise<ExtensionBuildArtifact>
+/** A Manifest V7 with an agent Tool, a host and an agent config field, and optional extras per test. */
+const lifecycleManifest = (
+  item: Revision,
+  extra: {
+    readonly permissions?: Record<string, unknown>
+    readonly adapterKey?: string
+    readonly agentLayer?: boolean
   } = {},
-) =>
-  new HostExtensionInstallationCoordinator(
+): ExtensionManifest =>
+  extensionManifestSchema.parse({
+    schemaVersion: 7,
+    extensionId: item.extensionId,
+    revisionId: item.id,
+    entrypoints: { host: 'source/host.ts' },
+    permissions: { permissions: [], networkOrigins: [], ...extra.permissions },
+    config: {
+      host: {
+        schema: configSchema.object({ endpoint: configSchema.string('地址', { default: 'https://api.example.com' }) }),
+      },
+      ...(extra.agentLayer === false
+        ? {}
+        : { agent: { schema: configSchema.object({ greeting: configSchema.string('问候', { default: '你好' }) }) } }),
+    },
+    contributions: [
+      ...(extra.agentLayer === false ? [] : [GREETING_TOOL]),
+      ...(extra.adapterKey === undefined
+        ? []
+        : [{ kind: 'adapter', apiVersion: 2, key: extra.adapterKey, descriptorDigest: 'a'.repeat(64) }]),
+      ...(extra.agentLayer === false && extra.adapterKey === undefined ? [{ kind: 'rpc', method: 'items.list' }] : []),
+    ],
+  })
+
+const lifecycleFixture = (
+  manifests: Readonly<Record<string, (item: Revision) => ExtensionManifest>> = {},
+  now: () => number = () => 100,
+) => {
+  const repository = new MemoryExtensionRepository()
+  const host = new FakeRuntimeHost()
+  const extension = localExtension(extensionId('lifecycle'))
+  const first = revision(revisionId('lifecycleFirst'), extension.id, 1)
+  const second = revision(revisionId('lifecycleSecond'), extension.id, 2)
+  for (const item of [first, second]) {
+    repository.saveExtensionRevision({ extension, revision: item, verification: lifecycleVerification(item.id) })
+  }
+  const coordinator = new ExtensionLifecycleCoordinator(
     repository,
-    { revisionSourceDirectory: (item) => `/source/${item.id}`, revisionManifest: () => undefined },
     {
-      build: ({ revisionId: id }) =>
-        options.build?.(id) ??
-        Promise.resolve({ revisionId: id, buildKey: `build-${id}`, directory: '/cache', hostEntry: '/cache/host.mjs' }),
+      revisionSourceDirectory: (item) => `/source/${item.id}`,
+      revisionManifest: (item) => (manifests[item.id] ?? ((value: Revision) => lifecycleManifest(value)))(item),
+    },
+    {
+      build: ({ revisionId: id, contentDigest }) =>
+        Promise.resolve({ revisionId: id, buildKey: contentDigest, directory: `/cache/${id}` }),
     },
     host,
-    { now: options.now ?? (() => 100) },
+    { now },
   )
+  return { repository, host, extension, first, second, coordinator }
+}
 
-describe('Host Extension Installation', () => {
-  it('requires exact Host UI permission approval and preserves page identity through installation', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = { ...localExtension(extensionId('uiinstall')), scope: 'host-ui' as const }
-    const first = revision(revisionId('uiinstall1'), extension.id, 1)
-    const second = revision(revisionId('uiinstall2'), extension.id, 2)
-    const reduced = revision(revisionId('uiinstall3'), extension.id, 3)
-    const expanded = revision(revisionId('uiinstall4'), extension.id, 4)
-    const undeclared = revision(revisionId('uiinstall5'), extension.id, 5)
-    const unverified = revision(revisionId('uiinstall6'), extension.id, 6)
-    const pageLess = revision(revisionId('uiinstall7'), extension.id, 7)
-    const overfull = revision(revisionId('uiinstall8'), extension.id, 8)
-    const verification = (
-      savedRevision: Revision,
-      permissions?: NonNullable<ExtensionRevisionVerification['permissions']>,
-      renderedPages: NonNullable<ExtensionRevisionVerification['renderedPages']> = [
-        {
-          kind: 'host-page',
-          entryId: 'overview',
-          title: '概览',
-          icon: { kind: 'host-icon', name: 'layout-dashboard' },
-          objectPane: 'hidden',
-          startPath: '',
-        },
-      ],
-    ): ExtensionRevisionVerification => ({
-      revisionId: savedRevision.id,
-      dshVersion: '0.1.1-rc.2',
-      contractVersion: 'nekro-nxt-extension-v4',
-      scope: 'host-ui',
-      origin: { episodeId: 'episode', pluginId: 'plugin', packageId: 'package', pluginRunId: 'run' },
-      verifiedAt: 1,
-      hostBuild: { built: false, buildKey: 'build' },
-      clientBuild: { built: true, buildKey: 'build' },
-      toolInvocations: [],
-      rpcMethods: [],
-      renderedPanels: [],
-      renderedToolViews: [],
-      renderedMessageRenderers: [],
-      renderedPages,
-      ...(permissions === undefined ? {} : { permissions }),
-    })
-    const revisionsWithPermissions: Array<[Revision, NonNullable<ExtensionRevisionVerification['permissions']>]> = [
-      [first, { permissions: ['agents.read'], networkOrigins: [] }],
-      [second, { permissions: ['agents.read'], networkOrigins: [] }],
-      [reduced, { permissions: [], networkOrigins: [] }],
-      [
-        expanded,
-        { permissions: ['agents.read', 'channels.read', 'network.request'], networkOrigins: ['https://example.com'] },
-      ],
-    ]
-    for (const [savedRevision, permissions] of revisionsWithPermissions) {
-      repository.saveExtensionRevision({
-        extension,
-        revision: savedRevision,
-        verification: verification(savedRevision, permissions),
-      })
-    }
-    repository.saveExtensionRevision({ extension, revision: undeclared, verification: verification(undeclared) })
-    repository.saveExtensionRevision({ extension, revision: unverified })
-    repository.saveExtensionRevision({
-      extension,
-      revision: pageLess,
-      verification: verification(pageLess, { permissions: [], networkOrigins: [] }, []),
-    })
-    const overfullVerification = verification(overfull, { permissions: [], networkOrigins: [] })
-    repository.saveExtensionRevision({
-      extension,
-      revision: overfull,
-      verification: {
-        ...overfullVerification,
-        renderedPages: Array.from({ length: 9 }, (_, index) => ({
-          ...overfullVerification.renderedPages![0]!,
-          entryId: `page-${index}`,
-        })),
-      },
-    })
-    const agentExtension = localExtension(extensionId('uinotlocal'))
-    const agentRevision = revision(revisionId('uinotlocal1'), agentExtension.id, 1)
-    repository.saveExtensionRevision({ extension: agentExtension, revision: agentRevision })
-    const host = new FakeHostInstallationHost()
-    const build = (savedRevision: Revision): Promise<ExtensionBuildArtifact> =>
-      Promise.resolve({
-        revisionId: savedRevision.id,
-        buildKey: savedRevision.payloadDigest,
-        directory: '/cache',
-        clientEntry: '/cache/client.mjs',
-      })
-    const coordinator = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
-      host,
-      { now: () => 10 },
-    )
-    await expect(coordinator.callHostUi(extension.id, 'status', null)).rejects.toThrow('当前不可用')
-    expect(coordinator.getHostUiPermissionRequirement(agentExtension.id, agentRevision.id)).toBeUndefined()
-    await expect(coordinator.install({ extensionId: agentExtension.id, revisionId: agentRevision.id })).rejects.toThrow(
-      '只有 Host UI 或适配器扩展',
-    )
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: unverified.id })).rejects.toThrow(
-      'Host UI 安装只接受',
-    )
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: pageLess.id })).rejects.toThrow(
-      '1 到 8 个页面入口',
-    )
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: overfull.id })).rejects.toThrow(
-      '1 到 8 个页面入口',
-    )
-    const firstRequirement = coordinator.getHostUiPermissionRequirement(extension.id, first.id)!
-    const missingClient = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      {
-        build: ({ revisionId: id }) =>
-          Promise.resolve({ revisionId: id, buildKey: 'a'.repeat(64), directory: '/cache' }),
-      },
-      host,
-      { now: () => 10 },
-    )
-    await expect(
-      missingClient.install({
-        extensionId: extension.id,
-        revisionId: first.id,
-        permissionApproval: { permissionDigest: firstRequirement.permissionDigest },
-      }),
-    ).rejects.toThrow('缺少 Client 构建产物')
-    await missingClient.dispose()
-    const hostWithoutUi: HostExtensionInstallationHost = {
-      assertAdapterKeyAvailable: (adapterKey) => host.assertAdapterKeyAvailable(adapterKey),
-      waitUntilSafe: (adapterKey) => host.waitUntilSafe(adapterKey),
-      mount: (savedRevision) => host.mount(savedRevision),
-    }
-    const unsupportedHost = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
-      hostWithoutUi,
-      { now: () => 10 },
-    )
-    await expect(
-      unsupportedHost.install({
-        extensionId: extension.id,
-        revisionId: first.id,
-        permissionApproval: { permissionDigest: firstRequirement.permissionDigest },
-      }),
-    ).rejects.toThrow('未提供 Host UI Runtime')
-    await unsupportedHost.dispose()
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(
-      'permission-approval-required',
-    )
-    expect(host.mountedHostUi).toEqual([])
-    await coordinator.install({
+describe('Extension lifecycle', () => {
+  it('installs on first enable, runs the factory once and attaches each agent on the installed record', async () => {
+    const { repository, host, extension, first, coordinator } = lifecycleFixture()
+    const one = agentId('lifecycleOne')
+    const two = agentId('lifecycleTwo')
+
+    await coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
+    await coordinator.activate({
+      agentId: two,
       extensionId: extension.id,
       revisionId: first.id,
-      permissionApproval: { permissionDigest: firstRequirement.permissionDigest },
+      config: { greeting: '早上好' },
     })
-    expect(await coordinator.callHostUi(extension.id, 'status', null)).toBeNull()
-    expect(repository.listHostUiPageEntries()).toHaveLength(1)
 
-    expect(coordinator.getHostUiPermissionRequirement(extension.id, second.id)?.approvalRequired).toBe(false)
+    expect(host.events.filter((event) => event.startsWith('load:'))).toEqual([`load:${first.id}`])
+    expect(repository.getHostInstallation(extension.id)).toMatchObject({
+      extensionRevisionId: first.id,
+      config: { endpoint: 'https://api.example.com' },
+    })
+    expect(repository.getActivation(one, extension.id)).toMatchObject({
+      extensionRevisionId: first.id,
+      config: { greeting: '你好' },
+    })
+    expect(host.attached.get(`${two}\0${first.id}`)).toEqual({ greeting: '早上好' })
+    expect(coordinator.isAttached(one, extension.id)).toBe(true)
+    await expect(coordinator.call(extension.id, 'items.list', null, { surface: 'page' })).resolves.toMatchObject({
+      revision: first.id,
+    })
+
+    await coordinator.disable(one, extension.id)
+    expect(repository.getActivation(one, extension.id)).toBeUndefined()
+    expect(repository.getHostInstallation(extension.id)).toBeDefined()
+    expect(host.loaded.get(extension.id)).toBe(first.id)
+  })
+
+  it('switches the installation with every agent, carrying configuration and keeping one current version', async () => {
+    const { repository, host, extension, first, second, coordinator } = lifecycleFixture()
+    const one = agentId('switchOne')
+    const two = agentId('switchTwo')
+    await coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
+    await coordinator.activate({
+      agentId: two,
+      extensionId: extension.id,
+      revisionId: first.id,
+      config: { greeting: '保留' },
+    })
+    host.events.length = 0
+
     await coordinator.install({ extensionId: extension.id, revisionId: second.id })
-    expect(host.disposedHostUi).toContain(first.id)
+
+    expect(host.events).toEqual([
+      `safe:${one}`,
+      `detach:${one}:${first.id}`,
+      `safe:${two}`,
+      `detach:${two}:${first.id}`,
+      `dispose:${first.id}`,
+      `load:${second.id}`,
+      `attach:${one}:${second.id}`,
+      `attach:${two}:${second.id}`,
+    ])
     expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(second.id)
-    await coordinator.install({ extensionId: extension.id, revisionId: second.id })
-    expect(host.mountedHostUi).toEqual([first.id, second.id])
+    expect(repository.listActivations().map((activation) => activation.extensionRevisionId)).toEqual([
+      second.id,
+      second.id,
+    ])
+    expect(repository.getActivation(two, extension.id)?.config).toEqual({ greeting: '保留' })
+  })
 
-    expect(coordinator.getHostUiPermissionRequirement(extension.id, reduced.id)?.approvalRequired).toBe(false)
-    await coordinator.install({ extensionId: extension.id, revisionId: reduced.id })
-    expect(coordinator.getHostUiPermissionRequirement(extension.id, undeclared.id)).toMatchObject({
-      declaration: { permissions: [], networkOrigins: [] },
-      approvalRequired: false,
+  it('restores the previous record and leaves the database unchanged when the new record fails to load', async () => {
+    const { repository, host, extension, first, second, coordinator } = lifecycleFixture()
+    const one = agentId('rollbackOne')
+    await coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
+    host.failLoad.add(second.id)
+
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      'Load failed',
+    )
+
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(repository.getActivation(one, extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(host.loaded.get(extension.id)).toBe(first.id)
+    expect(host.attached.has(`${one}\0${first.id}`)).toBe(true)
+  })
+
+  it('restores the previous record when an agent cannot attach to the new one or the commit fails', async () => {
+    const { repository, host, extension, first, second, coordinator } = lifecycleFixture()
+    const one = agentId('attachFailOne')
+    await coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
+    host.failAttach.add(`${one}\0${second.id}`)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      'Attach failed',
+    )
+    expect(host.loaded.get(extension.id)).toBe(first.id)
+    expect(host.attached.has(`${one}\0${first.id}`)).toBe(true)
+
+    host.failAttach.clear()
+    repository.failInstallationUpsert = true
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      'Installation transaction failed.',
+    )
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(repository.getActivation(one, extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(host.loaded.get(extension.id)).toBe(first.id)
+  })
+
+  it('asks for the host approval at install and the agent approval at enable, and records both grants', async () => {
+    const { repository, extension, first, coordinator } = lifecycleFixture({
+      [revisionId('lifecycleFirst')]: (item) =>
+        lifecycleManifest(item, {
+          permissions: {
+            permissions: ['agents.read'],
+            host: { network: { mode: 'domains', domains: ['api.example.com'] } },
+            agent: { history: { read: true } },
+          },
+        }),
     })
+    const one = agentId('approvalOne')
+    const host = coordinator.hostRequirement(extension.id, first.id)
+    const agent = coordinator.agentRequirement(one, extension.id, first.id)
+    expect(host).toMatchObject({ approvalRequired: true, declaration: { permissions: ['agents.read'] } })
+    expect(host.declaration.capabilities?.network).toEqual({ mode: 'domains', domains: ['api.example.com'] })
+    expect(agent).toMatchObject({ approvalRequired: true, declaration: { capabilities: { history: { read: true } } } })
 
-    const expandedRequirement = coordinator.getHostUiPermissionRequirement(extension.id, expanded.id)!
-    expect(expandedRequirement.approvalRequired).toBe(true)
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: expanded.id })).rejects.toThrow(
-      'permission-approval-required',
+    await expect(
+      coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id }),
+    ).rejects.toThrow(`permission-approval-required:${host.permissionDigest}`)
+    await expect(
+      coordinator.activate({
+        agentId: one,
+        extensionId: extension.id,
+        revisionId: first.id,
+        hostPermissionApproval: { permissionDigest: host.permissionDigest },
+      }),
+    ).rejects.toThrow(`permission-approval-required:${agent.permissionDigest}`)
+    expect(coordinator.getTransition(one, extension.id)).toMatchObject({ state: 'failed', target: 'enabled' })
+
+    await coordinator.activate({
+      agentId: one,
+      extensionId: extension.id,
+      revisionId: first.id,
+      hostPermissionApproval: { permissionDigest: host.permissionDigest },
+      permissionApproval: { permissionDigest: agent.permissionDigest },
+    })
+    expect(repository.getHostUiPermissionGrant(`extension:${extension.id}`)?.permissionDigest).toBe(
+      host.permissionDigest,
+    )
+    expect(repository.getHostUiPermissionGrant(`activation:${one}:${extension.id}`)?.permissionDigest).toBe(
+      agent.permissionDigest,
+    )
+    expect(coordinator.getTransition(one, extension.id)).toBeUndefined()
+    expect(coordinator.agentRequirement(one, extension.id, first.id).approvalRequired).toBe(false)
+  })
+
+  it('requires the agents to approve a switch only when the new record asks them for more', async () => {
+    const { extension, first, second, coordinator } = lifecycleFixture({
+      [revisionId('lifecycleSecond')]: (item) =>
+        lifecycleManifest(item, { permissions: { agent: { llm: { maxCallsPerTurn: 2, maxOutputTokens: 400 } } } }),
+    })
+    const one = agentId('expandOne')
+    await coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
+    const expansion = coordinator.switchAgentRequirement(extension.id, second.id)
+    expect(expansion?.approvalRequired).toBe(true)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      `permission-approval-required:${expansion?.permissionDigest ?? ''}`,
     )
     await coordinator.install({
       extensionId: extension.id,
-      revisionId: expanded.id,
-      permissionApproval: { permissionDigest: expandedRequirement.permissionDigest },
+      revisionId: second.id,
+      agentPermissionApproval: { permissionDigest: expansion?.permissionDigest ?? '' },
     })
-    expect(host.mountedHostUi).toEqual([first.id, second.id, reduced.id, expanded.id])
-
-    await coordinator.dispose()
-    const restoredHost = new FakeHostInstallationHost()
-    const restored = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
-      restoredHost,
-      { now: () => 20 },
-    )
-    await expect(restored.restore()).resolves.toEqual({ restored: 1, failed: 0 })
-    expect(restored.getDiagnostic(extension.id)).toMatchObject({ status: 'active' })
-    expect(await restored.callHostUi(extension.id, 'status', null)).toBeNull()
-    await restored.uninstall(extension.id)
-    expect(restoredHost.disposedHostUi).toEqual([expanded.id])
-    expect(repository.listHostUiPageEntries()).toEqual([])
-    expect(repository.hostUiGrants.size).toBe(0)
-    await restored.dispose()
-    const defaultClockCoordinator = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      { build: ({ revisionId: id }) => build(repository.getExtensionRevision(id)!) },
-      new FakeHostInstallationHost(),
-    )
-    await defaultClockCoordinator.dispose()
+    expect(coordinator.switchAgentRequirement(extension.id, second.id)).toBeUndefined()
   })
 
-  it('restores the active Host UI revision after a failed update and keeps facts when disposal fails', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = { ...localExtension(extensionId('uifailure')), scope: 'host-ui' as const }
-    const first = revision(revisionId('uifailure1'), extension.id, 1)
-    const second = revision(revisionId('uifailure2'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: first, verification: hostUiVerification(first) })
-    repository.saveExtensionRevision({ extension, revision: second, verification: hostUiVerification(second) })
-    const host = new FakeHostInstallationHost()
-    const coordinator = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      {
-        build: ({ revisionId: id }) =>
-          Promise.resolve({
-            revisionId: id,
-            buildKey: `build-${id}`,
-            directory: '/cache',
-            clientEntry: '/cache/client.mjs',
-          }),
-      },
-      host,
-      { now: () => 30 },
-    )
-
+  it('checks the adapter key before stopping anything and waits for the adapter safe gap on switch', async () => {
+    const adapterManifest = (item: Revision) => lifecycleManifest(item, { adapterKey: 'synthetic', agentLayer: false })
+    const { host, extension, first, second, coordinator } = lifecycleFixture({
+      [revisionId('lifecycleFirst')]: adapterManifest,
+      [revisionId('lifecycleSecond')]: adapterManifest,
+    })
     await coordinator.install({ extensionId: extension.id, revisionId: first.id })
-    host.failedHostUiMounts.add(second.id)
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
-      'Host UI mount failed',
+    host.occupiedAdapterKeys.add('synthetic')
+    host.events.length = 0
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow('已被占用')
+    expect(host.events).toEqual([])
+
+    host.occupiedAdapterKeys.clear()
+    await coordinator.install({ extensionId: extension.id, revisionId: second.id })
+    expect(host.events).toEqual(['adapter-safe:synthetic', `dispose:${first.id}`, `load:${second.id}`])
+    await expect(
+      coordinator.activate({ agentId: agentId('adapterAgent'), extensionId: extension.id, revisionId: second.id }),
+    ).rejects.toThrow('没有智能体能力')
+  })
+
+  it('rejects unverified and unreadable records before loading anything', async () => {
+    const { repository, host, extension, first, second, coordinator } = lifecycleFixture({
+      [revisionId('lifecycleSecond')]: () => undefined as unknown as ExtensionManifest,
+    })
+    repository.verifications.delete(first.id)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(
+      '本机完成验证',
     )
-    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
-    expect(host.mountedHostUi).toEqual([first.id, first.id])
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow('旧格式')
+    expect(host.events).toEqual([])
+  })
 
-    host.failedHostUiDisposals.add(first.id)
-    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('Host UI dispose failed')
-    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
-    expect(repository.listHostUiPageEntries()).toHaveLength(1)
-    expect(coordinator.getDiagnostic(extension.id)).toMatchObject({ status: 'dispose-failed' })
-
-    host.failedHostUiDisposals.delete(first.id)
+  it('uninstalls every attachment, the instance and their grants', async () => {
+    const { repository, host, extension, first, coordinator } = lifecycleFixture()
+    const one = agentId('uninstallOne')
+    await coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
     await coordinator.uninstall(extension.id)
     expect(repository.getHostInstallation(extension.id)).toBeUndefined()
-    expect(repository.listHostUiPageEntries()).toEqual([])
-    await coordinator.dispose()
+    expect(repository.getActivation(one, extension.id)).toBeUndefined()
+    expect(repository.getHostUiPermissionGrant(`activation:${one}:${extension.id}`)).toBeUndefined()
+    expect(host.loaded.has(extension.id)).toBe(false)
+    await expect(coordinator.call(extension.id, 'items.list', null, { surface: 'page' })).rejects.toThrow(
+      '没有在本机运行',
+    )
   })
 
-  it('disposes a restored Host UI candidate when rebuilding its page directory fails', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = { ...localExtension(extensionId('uirestorefail')), scope: 'host-ui' as const }
-    const savedRevision = revision(revisionId('uirestorefail1'), extension.id, 1)
-    repository.saveExtensionRevision({
-      extension,
-      revision: savedRevision,
-      verification: hostUiVerification(savedRevision),
+  it('applies host and agent configuration by reloading or re-attaching only what changed', async () => {
+    const { repository, host, extension, first, coordinator } = lifecycleFixture()
+    const one = agentId('configOne')
+    await coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
+    host.events.length = 0
+    await coordinator.updateAgentConfig(one, extension.id, { greeting: '晚上好' })
+    expect(host.events).toEqual([`safe:${one}`, `detach:${one}:${first.id}`, `attach:${one}:${first.id}`])
+    expect(repository.getActivation(one, extension.id)?.config).toEqual({ greeting: '晚上好' })
+
+    host.events.length = 0
+    await coordinator.updateHostConfig(extension.id, { endpoint: 'https://self-hosted.example.com' })
+    expect(host.events).toContain(`load:${first.id}`)
+    expect(repository.getHostInstallation(extension.id)?.config).toEqual({
+      endpoint: 'https://self-hosted.example.com',
     })
-    const firstHost = new FakeHostInstallationHost()
-    const first = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      {
-        build: () =>
-          Promise.resolve({
-            revisionId: savedRevision.id,
-            buildKey: 'restore-build',
-            directory: '/cache',
-            clientEntry: '/cache/client.mjs',
-          }),
-      },
-      firstHost,
-      { now: () => 40 },
-    )
-    await first.install({ extensionId: extension.id, revisionId: savedRevision.id })
-    await first.dispose()
-
-    repository.failHostUiPageReplace = true
-    const restoringHost = new FakeHostInstallationHost()
-    const restoring = new HostExtensionInstallationCoordinator(
-      repository,
-      { revisionSourceDirectory: () => '/source', revisionManifest: () => undefined },
-      {
-        build: () =>
-          Promise.resolve({
-            revisionId: savedRevision.id,
-            buildKey: 'restore-build',
-            directory: '/cache',
-            clientEntry: '/cache/client.mjs',
-          }),
-      },
-      restoringHost,
-      { now: () => 41 },
-    )
-    await expect(restoring.restore()).resolves.toEqual({ restored: 0, failed: 1 })
-    expect(restoringHost.mountedHostUi).toEqual([savedRevision.id])
-    expect(restoringHost.disposedHostUi).toEqual([savedRevision.id])
-    expect(restoring.getDiagnostic(extension.id)).toMatchObject({ status: 'restore-failed' })
-    await expect(restoring.callHostUi(extension.id, 'status', null)).rejects.toThrow('当前不可用')
-    await restoring.dispose()
+    expect(host.attached.get(`${one}\0${first.id}`)).toEqual({ greeting: '晚上好' })
   })
 
-  it('installs, updates, rolls back, and restores the previous Revision after a failed update', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostinstall'))
-    const first = revision(revisionId('hostinstall1'), extension.id, 1)
-    const second = revision(revisionId('hostinstall2'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: first, verification: adapterVerification(first.id) })
-    repository.saveExtensionRevision({ extension, revision: second, verification: adapterVerification(second.id) })
-    const host = new FakeHostInstallationHost()
-    const coordinator = installationCoordinator(repository, host)
-
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).resolves.toMatchObject({
+  it('restores instances before attachments and records failures without inventing state', async () => {
+    const { repository, host, extension, first, coordinator } = lifecycleFixture()
+    const one = agentId('restoreOne')
+    repository.installations.set(extension.id, {
+      extensionId: extension.id,
       extensionRevisionId: first.id,
-    })
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).resolves.toMatchObject({
-      extensionRevisionId: second.id,
-    })
-    expect(host.disposed).toContain(first.id)
-
-    host.fail.add(first.id)
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(
-      'Host mount failed',
-    )
-    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(second.id)
-    expect(host.mounted.at(-1)).toBe(second.id)
-
-    host.fail.add(second.id)
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow(
-      '原 Revision 无法恢复',
-    )
-    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(second.id)
-
-    await coordinator.dispose()
-  })
-
-  it('restores the previous contribution when the Installation database commit fails', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hosttransaction'))
-    const first = revision(revisionId('hosttransaction1'), extension.id, 1)
-    const second = revision(revisionId('hosttransaction2'), extension.id, 2)
-    repository.saveExtensionRevision({ extension, revision: first, verification: adapterVerification(first.id) })
-    repository.saveExtensionRevision({ extension, revision: second, verification: adapterVerification(second.id) })
-    const host = new FakeHostInstallationHost()
-    const coordinator = installationCoordinator(repository, host)
-    await coordinator.install({ extensionId: extension.id, revisionId: first.id })
-
-    repository.failInstallationUpsert = true
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
-      'Installation transaction failed',
-    )
-    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
-    expect(host.mounted.at(-1)).toBe(first.id)
-    repository.failInstallationUpsert = false
-    await coordinator.dispose()
-  })
-
-  it('serializes concurrent installs by adapter key and rejects the conflicting Extension before stopping runtimes', async () => {
-    const repository = new MemoryExtensionRepository()
-    const firstExtension = localExtension(extensionId('hostkeyfirst'))
-    const secondExtension = localExtension(extensionId('hostkeysecond'))
-    const firstRevision = revision(revisionId('hostkeyfirst1'), firstExtension.id, 1)
-    const secondRevision = revision(revisionId('hostkeysecond1'), secondExtension.id, 1)
-    const key = 'shared-adapter'
-    repository.saveExtensionRevision({
-      extension: firstExtension,
-      revision: firstRevision,
-      verification: adapterVerification(firstRevision.id, key),
-    })
-    repository.saveExtensionRevision({
-      extension: secondExtension,
-      revision: secondRevision,
-      verification: adapterVerification(secondRevision.id, key),
-    })
-    const host = new FakeHostInstallationHost()
-    host.keys.set(firstRevision.id, key)
-    host.keys.set(secondRevision.id, key)
-    const coordinator = installationCoordinator(repository, host)
-
-    const outcomes = await Promise.allSettled([
-      coordinator.install({ extensionId: firstExtension.id, revisionId: firstRevision.id }),
-      coordinator.install({ extensionId: secondExtension.id, revisionId: secondRevision.id }),
-    ])
-
-    expect(outcomes.map(({ status }) => status).sort()).toEqual(['fulfilled', 'rejected'])
-    expect(host.waitCalls).toEqual([key])
-    expect(host.disposed).toEqual([])
-    expect(repository.listHostInstallations()).toHaveLength(1)
-    await coordinator.dispose()
-  })
-
-  it('allows different adapter keys to install in parallel', async () => {
-    const repository = new MemoryExtensionRepository()
-    const firstExtension = localExtension(extensionId('hostparallelfirst'))
-    const secondExtension = localExtension(extensionId('hostparallelsecond'))
-    const firstRevision = revision(revisionId('hostparallelfirst1'), firstExtension.id, 1)
-    const secondRevision = revision(revisionId('hostparallelsecond1'), secondExtension.id, 1)
-    repository.saveExtensionRevision({
-      extension: firstExtension,
-      revision: firstRevision,
-      verification: adapterVerification(firstRevision.id, 'parallel-first'),
-    })
-    repository.saveExtensionRevision({
-      extension: secondExtension,
-      revision: secondRevision,
-      verification: adapterVerification(secondRevision.id, 'parallel-second'),
-    })
-    const host = new FakeHostInstallationHost()
-    host.keys.set(firstRevision.id, 'parallel-first')
-    host.keys.set(secondRevision.id, 'parallel-second')
-    let startedMounts = 0
-    let announceBothStarted: (() => void) | undefined
-    const bothStarted = new Promise<void>((resolve) => {
-      announceBothStarted = resolve
-    })
-    let releaseMounts: (() => void) | undefined
-    const mountGate = new Promise<void>((resolve) => {
-      releaseMounts = resolve
-    })
-    host.onMount = () => {
-      startedMounts += 1
-      if (startedMounts === 2) announceBothStarted?.()
-      return mountGate
-    }
-    const coordinator = installationCoordinator(repository, host)
-
-    const installs = Promise.all([
-      coordinator.install({ extensionId: firstExtension.id, revisionId: firstRevision.id }),
-      coordinator.install({ extensionId: secondExtension.id, revisionId: secondRevision.id }),
-    ])
-    const ranConcurrently = await Promise.race([
-      bothStarted.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 200)),
-    ])
-    releaseMounts?.()
-    await installs
-
-    expect(ranConcurrently).toBe(true)
-    expect(host.maximumActiveMounts).toBe(2)
-    await coordinator.dispose()
-  })
-
-  it('restores only one Installation when persisted Extensions claim the same adapter key', async () => {
-    const repository = new MemoryExtensionRepository()
-    const firstExtension = localExtension(extensionId('hostrestorefirst'))
-    const secondExtension = localExtension(extensionId('hostrestoresecond'))
-    const firstRevision = revision(revisionId('hostrestorefirst1'), firstExtension.id, 1)
-    const secondRevision = revision(revisionId('hostrestoresecond1'), secondExtension.id, 1)
-    const key = 'restore-shared'
-    repository.saveExtensionRevision({
-      extension: firstExtension,
-      revision: firstRevision,
-      verification: adapterVerification(firstRevision.id, key),
-    })
-    repository.saveExtensionRevision({
-      extension: secondExtension,
-      revision: secondRevision,
-      verification: adapterVerification(secondRevision.id, key),
-    })
-    repository.upsertHostInstallation({
-      extensionId: firstExtension.id,
-      extensionRevisionId: firstRevision.id,
       installedAt: 1,
       config: {},
     })
-    repository.upsertHostInstallation({
-      extensionId: secondExtension.id,
-      extensionRevisionId: secondRevision.id,
-      installedAt: 2,
-      config: {},
+    repository.upsertActivation({
+      agentId: one,
+      extensionId: extension.id,
+      extensionRevisionId: first.id,
+      config: { greeting: '你好' },
+      activatedAt: 1,
     })
-    const host = new FakeHostInstallationHost()
-    host.keys.set(firstRevision.id, key)
-    host.keys.set(secondRevision.id, key)
-    const coordinator = installationCoordinator(repository, host)
 
-    await expect(coordinator.restore()).resolves.toEqual({ restored: 1, failed: 1 })
-    expect(host.mounted).toHaveLength(1)
-    await coordinator.dispose()
+    await expect(coordinator.restoreAttachments()).resolves.toEqual({ restored: 0, failed: 1 })
+    expect(coordinator.getAttachmentDiagnostic(one, extension.id)).toMatchObject({ status: 'restore-failed' })
+
+    await expect(coordinator.restoreInstances()).resolves.toEqual({ restored: 1, failed: 0 })
+    await expect(coordinator.restoreAttachments()).resolves.toEqual({ restored: 1, failed: 0 })
+    expect(host.attached.has(`${one}\0${first.id}`)).toBe(true)
+    await expect(coordinator.restoreInstances()).resolves.toEqual({ restored: 0, failed: 0 })
   })
 
-  it('serializes uninstall with another Extension installing the same adapter key', async () => {
-    const repository = new MemoryExtensionRepository()
-    const firstExtension = localExtension(extensionId('hosthandofffirst'))
-    const secondExtension = localExtension(extensionId('hosthandoffsecond'))
-    const firstRevision = revision(revisionId('hosthandofffirst1'), firstExtension.id, 1)
-    const secondRevision = revision(revisionId('hosthandoffsecond1'), secondExtension.id, 1)
-    const key = 'handoff-adapter'
-    repository.saveExtensionRevision({
-      extension: firstExtension,
-      revision: firstRevision,
-      verification: adapterVerification(firstRevision.id, key),
-    })
-    repository.saveExtensionRevision({
-      extension: secondExtension,
-      revision: secondRevision,
-      verification: adapterVerification(secondRevision.id, key),
-    })
-    const host = new FakeHostInstallationHost()
-    host.keys.set(firstRevision.id, key)
-    host.keys.set(secondRevision.id, key)
-    const coordinator = installationCoordinator(repository, host)
-    await coordinator.install({ extensionId: firstExtension.id, revisionId: firstRevision.id })
-
-    let announceWaiting: (() => void) | undefined
-    const waiting = new Promise<void>((resolve) => {
-      announceWaiting = resolve
-    })
-    let releaseUninstall: (() => void) | undefined
-    const uninstallGate = new Promise<void>((resolve) => {
-      releaseUninstall = resolve
-    })
-    host.onWaitUntilSafe = () => {
-      announceWaiting?.()
-      return uninstallGate
-    }
-    const uninstall = coordinator.uninstall(firstExtension.id)
-    await waiting
-    const install = coordinator.install({ extensionId: secondExtension.id, revisionId: secondRevision.id })
+  it('publishes a waiting request until the agent safe gap and rejects work after disposal', async () => {
+    const { host, extension, first, coordinator } = lifecycleFixture()
+    const one = agentId('waitingOne')
+    await coordinator.install({ extensionId: extension.id, revisionId: first.id })
+    const gate = deferred<void>()
+    host.safeGate = gate.promise
+    const pending = coordinator.activate({ agentId: one, extensionId: extension.id, revisionId: first.id })
     await Promise.resolve()
-    expect(host.mounted).not.toContain(secondRevision.id)
-    releaseUninstall?.()
+    expect(coordinator.getTransition(one, extension.id)).toMatchObject({ state: 'waiting', target: 'enabled' })
+    expect(coordinator.listTransitions(extension.id)).toHaveLength(1)
+    gate.resolve()
+    await pending
+    expect(coordinator.getTransition(one, extension.id)).toBeUndefined()
 
-    await Promise.all([uninstall, install])
-    expect(repository.getHostInstallation(firstExtension.id)).toBeUndefined()
-    expect(repository.getHostInstallation(secondExtension.id)?.extensionRevisionId).toBe(secondRevision.id)
+    host.safeGate = undefined
     await coordinator.dispose()
-  })
-
-  it('rejects a key occupied by the product Registry before waiting or mounting', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostbuiltinconflict'))
-    const hostRevision = revision(revisionId('hostbuiltinconflict1'), extension.id, 1)
-    const key = 'builtin-conflict'
-    repository.saveExtensionRevision({
-      extension,
-      revision: hostRevision,
-      verification: adapterVerification(hostRevision.id, key),
-    })
-    const host = new FakeHostInstallationHost()
-    host.keys.set(hostRevision.id, key)
-    host.unavailable.add(key)
-    const coordinator = installationCoordinator(repository, host)
-
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })).rejects.toThrow(
-      'Adapter key is occupied',
-    )
-    expect(host.waitCalls).toEqual([])
-    expect(host.mounted).toEqual([])
-    await coordinator.dispose()
-  })
-
-  it('rejects unrelated, unverified, unbuildable, and invalid-clock install requests without mounting', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostinvalidrequest'))
-    const otherExtension = localExtension(extensionId('hostinvalidother'))
-    const unverified = revision(revisionId('hostinvalidrequest1'), extension.id, 1)
-    const verified = revision(revisionId('hostinvalidrequest2'), extension.id, 2)
-    const otherRevision = revision(revisionId('hostinvalidother1'), otherExtension.id, 1)
-    repository.saveExtensionRevision({ extension, revision: unverified })
-    repository.saveExtensionRevision({
-      extension,
-      revision: verified,
-      verification: adapterVerification(verified.id),
-    })
-    repository.saveExtensionRevision({
-      extension: otherExtension,
-      revision: otherRevision,
-      verification: adapterVerification(otherRevision.id),
-    })
-    const host = new FakeHostInstallationHost()
-    const coordinator = installationCoordinator(repository, host)
-
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: otherRevision.id })).rejects.toThrow(
-      'Revision 不属于',
-    )
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: unverified.id })).rejects.toThrow(
-      '只接受完成适配器验证',
-    )
-
-    const missingHost = installationCoordinator(repository, host, {
-      build: (id) => Promise.resolve({ revisionId: id, buildKey: 'missing-host', directory: '/cache' }),
-    })
-    await expect(missingHost.install({ extensionId: extension.id, revisionId: verified.id })).rejects.toThrow(
-      '缺少 Host 构建产物',
-    )
-    const invalidClock = installationCoordinator(repository, host, { now: () => -1 })
-    await expect(invalidClock.install({ extensionId: extension.id, revisionId: verified.id })).rejects.toThrow(
-      'Clock must return',
-    )
-    expect(host.mounted).toEqual([])
-    await Promise.all([coordinator.dispose(), missingHost.dispose(), invalidClock.dispose()])
-  })
-
-  it('keeps repeated installation idempotent and rejects operations after disposal', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostidempotent'))
-    const hostRevision = revision(revisionId('hostidempotent1'), extension.id, 1)
-    repository.saveExtensionRevision({
-      extension,
-      revision: hostRevision,
-      verification: adapterVerification(hostRevision.id),
-    })
-    const host = new FakeHostInstallationHost()
-    const coordinator = installationCoordinator(repository, host)
-
-    const first = await coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })).resolves.toBe(first)
-    expect(host.mounted).toEqual([hostRevision.id])
-    await coordinator.dispose()
-    await coordinator.dispose()
-    await expect(coordinator.restore()).rejects.toThrow('coordinator is disposed')
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })).rejects.toThrow(
-      'coordinator is disposed',
-    )
-  })
-
-  it('rejects key changes and disposes a mount whose observed key differs from verification', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostkeyinvariant'))
-    const first = revision(revisionId('hostkeyinvariant1'), extension.id, 1)
-    const second = revision(revisionId('hostkeyinvariant2'), extension.id, 2)
-    const third = revision(revisionId('hostkeyinvariant3'), extension.id, 3)
-    repository.saveExtensionRevision({
-      extension,
-      revision: first,
-      verification: adapterVerification(first.id, 'stable-key'),
-    })
-    repository.saveExtensionRevision({
-      extension,
-      revision: second,
-      verification: adapterVerification(second.id, 'changed-key'),
-    })
-    repository.saveExtensionRevision({
-      extension,
-      revision: third,
-      verification: adapterVerification(third.id, 'stable-key'),
-    })
-    const host = new FakeHostInstallationHost()
-    host.keys.set(first.id, 'stable-key')
-    host.keys.set(second.id, 'changed-key')
-    const coordinator = installationCoordinator(repository, host)
-    await coordinator.install({ extensionId: extension.id, revisionId: first.id })
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
-      'key 不得跨 Revision 改变',
-    )
-    const mountedFirst = host.handles.get(first.id)
-    if (!mountedFirst) throw new Error('Expected the first fixture Revision to be mounted.')
-    mountedFirst.adapterKey = 'corrupted-runtime-key'
-    await expect(coordinator.install({ extensionId: extension.id, revisionId: third.id })).rejects.toThrow(
-      'key 不得跨 Revision 改变',
-    )
-
-    const mismatchedExtension = localExtension(extensionId('hostobservedkey'))
-    const mismatchedRevision = revision(revisionId('hostobservedkey1'), mismatchedExtension.id, 1)
-    repository.saveExtensionRevision({
-      extension: mismatchedExtension,
-      revision: mismatchedRevision,
-      verification: adapterVerification(mismatchedRevision.id, 'expected-key'),
-    })
-    await expect(
-      coordinator.install({ extensionId: mismatchedExtension.id, revisionId: mismatchedRevision.id }),
-    ).rejects.toThrow('实际注册的 key 与验证证据不一致')
-    expect(host.disposed).toContain(mismatchedRevision.id)
-    await coordinator.dispose()
-  })
-
-  it('covers cold-start skip and rejects invalid persisted Installations independently', async () => {
-    const repository = new MemoryExtensionRepository()
-    const validExtension = localExtension(extensionId('hostrestorevalid'))
-    const invalidExtension = localExtension(extensionId('hostrestoreinvalid'))
-    const missingHostExtension = localExtension(extensionId('hostrestoremissinghost'))
-    const wrongKeyExtension = localExtension(extensionId('hostrestorewrongkey'))
-    const validRevision = revision(revisionId('hostrestorevalid1'), validExtension.id, 1)
-    const invalidRevision = revision(revisionId('hostrestoreinvalid1'), invalidExtension.id, 1)
-    const missingHostRevision = revision(revisionId('hostrestoremissinghost1'), missingHostExtension.id, 1)
-    const wrongKeyRevision = revision(revisionId('hostrestorewrongkey1'), wrongKeyExtension.id, 1)
-    repository.saveExtensionRevision({
-      extension: validExtension,
-      revision: validRevision,
-      verification: adapterVerification(validRevision.id, 'restore-valid'),
-    })
-    repository.saveExtensionRevision({ extension: invalidExtension, revision: invalidRevision })
-    repository.saveExtensionRevision({
-      extension: missingHostExtension,
-      revision: missingHostRevision,
-      verification: adapterVerification(missingHostRevision.id, 'restore-missing-host'),
-    })
-    repository.saveExtensionRevision({
-      extension: wrongKeyExtension,
-      revision: wrongKeyRevision,
-      verification: adapterVerification(wrongKeyRevision.id, 'restore-expected-key'),
-    })
-    for (const [extensionIdValue, extensionRevisionId] of [
-      [validExtension.id, validRevision.id],
-      [invalidExtension.id, invalidRevision.id],
-      [missingHostExtension.id, missingHostRevision.id],
-      [wrongKeyExtension.id, wrongKeyRevision.id],
-    ] as const) {
-      repository.upsertHostInstallation({
-        extensionId: extensionIdValue,
-        extensionRevisionId,
-        installedAt: 1,
-        config: {},
-      })
-    }
-    const host = new FakeHostInstallationHost()
-    host.keys.set(validRevision.id, 'restore-valid')
-    const coordinator = installationCoordinator(repository, host, {
-      build: (id) =>
-        Promise.resolve({
-          revisionId: id,
-          buildKey: `restore-${id}`,
-          directory: '/cache',
-          ...(id === missingHostRevision.id ? {} : { hostEntry: '/cache/host.mjs' }),
-        }),
-    })
-
-    await expect(coordinator.restore()).resolves.toEqual({ restored: 1, failed: 3 })
-    await expect(coordinator.restore()).resolves.toEqual({ restored: 0, failed: 3 })
-    expect(host.disposed).toContain(wrongKeyRevision.id)
-    await coordinator.dispose()
-  })
-
-  it('uninstalls persisted and mounted states transactionally, including database rollback', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostuninstallpaths'))
-    const hostRevision = revision(revisionId('hostuninstallpaths1'), extension.id, 1)
-    repository.saveExtensionRevision({
-      extension,
-      revision: hostRevision,
-      verification: adapterVerification(hostRevision.id),
-    })
-    const host = new FakeHostInstallationHost()
-    const coordinator = installationCoordinator(repository, host)
-    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('尚未安装')
-
-    repository.upsertHostInstallation({
-      extensionId: extension.id,
-      extensionRevisionId: hostRevision.id,
-      installedAt: 1,
-      config: {},
-    })
-    await coordinator.uninstall(extension.id)
-    expect(repository.getHostInstallation(extension.id)).toBeUndefined()
-    expect(host.waitCalls).toEqual([])
-
-    await coordinator.install({ extensionId: extension.id, revisionId: hostRevision.id })
-    repository.failInstallationDelete = true
-    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('Installation delete failed')
-    expect(repository.getHostInstallation(extension.id)).toBeDefined()
-    expect(host.mounted.at(-1)).toBe(hostRevision.id)
-    repository.failInstallationDelete = false
-    await coordinator.dispose()
-  })
-
-  it('uninstalls a persisted installation that never mounted without rebuilding it', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostunbuildable'))
-    const hostRevision = revision(revisionId('hostunbuildable1'), extension.id, 1)
-    repository.saveExtensionRevision({
-      extension,
-      revision: hostRevision,
-      verification: adapterVerification(hostRevision.id),
-    })
-    repository.upsertHostInstallation({
-      extensionId: extension.id,
-      extensionRevisionId: hostRevision.id,
-      installedAt: 1,
-      config: {},
-    })
-    const coordinator = installationCoordinator(repository, new FakeHostInstallationHost(), {
-      build: () => Promise.reject(new Error('需要重建')),
-    })
-    await coordinator.uninstall(extension.id)
-    expect(repository.getHostInstallation(extension.id)).toBeUndefined()
-    await coordinator.dispose()
-  })
-
-  it('rejects an installed row that has no recoverable adapter key', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostmissingkey'))
-    const hostRevision = revision(revisionId('hostmissingkey1'), extension.id, 1)
-    repository.saveExtensionRevision({ extension, revision: hostRevision })
-    repository.upsertHostInstallation({
-      extensionId: extension.id,
-      extensionRevisionId: hostRevision.id,
-      installedAt: 1,
-      config: {},
-    })
-    const coordinator = installationCoordinator(repository, new FakeHostInstallationHost())
-    await expect(coordinator.uninstall(extension.id)).rejects.toThrow('缺少适配器 key')
-    await coordinator.dispose()
-  })
-
-  it('rejects Host Adapter Revisions through Agent Activation', async () => {
-    const repository = new MemoryExtensionRepository()
-    const extension = localExtension(extensionId('hostactivation'))
-    const hostRevision = revision(revisionId('hostactivation1'), extension.id, 1)
-    repository.saveExtensionRevision({
-      extension,
-      revision: hostRevision,
-      verification: adapterVerification(hostRevision.id),
-    })
-    const coordinator = activationCoordinator(repository, new FakeActivationHost())
-    await expect(
-      coordinator.activate({
-        agentId: agentId('hostactivation'),
-        extensionId: extension.id,
-        revisionId: hostRevision.id,
-      }),
-    ).rejects.toThrow('必须安装到本机')
+    expect(host.loaded.has(extension.id)).toBe(false)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow('已停止')
   })
 })

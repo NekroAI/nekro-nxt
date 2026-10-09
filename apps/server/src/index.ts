@@ -760,7 +760,7 @@ const nekroNxtInspectProvider = (input: {
         JsonValueSchema.parse({
           contractVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.contractVersion,
           dshVersion: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshVersion,
-          scopes: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.scopes,
+          model: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.model,
           ui: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.ui,
           dshNativeWebUi: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.dshNativeWebUi,
         }),
@@ -778,13 +778,15 @@ const nekroNxtInspectProvider = (input: {
             securityBoundary: false,
           },
           save: { createsImmutableSourceRevision: true, activatesAutomatically: false },
-          activation: { target: 'one-agent', safeSwitchRequired: true },
-          hostInstallation: {
+          installation: {
             target: 'local-host',
-            acceptsScope: 'host-adapter',
+            hostFactoryRunsOnce: true,
+            oneCurrentRevisionPerMachine: true,
             requiresVerifiedSavedRevision: true,
             restoresBeforeConnections: true,
+            installedOnFirstAgentEnable: true,
           },
+          activation: { target: 'one-agent', safeSwitchRequired: true, usesInstalledRevision: true },
           recoveryRules: NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE.recoveryRules,
           forbidden: ['host-path-as-identity', 'direct-core-database-access', 'implicit-shell-or-file-grant'],
         }),

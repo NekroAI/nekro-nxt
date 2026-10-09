@@ -8,7 +8,7 @@ Session 身份、固定 Revision、频道、Episode 与可选运行资源由 `Se
 
 人设 Revision 的权威内容是 `PromptDocumentV1`。无引用时 Host 继续注入原始纯文本；存在平台用户、频道或扩展引用时，Host 解析当前可用状态，使用转义后的 `<nxt-persona-document>` 内联标记，并先注入固定引用协议。展示名称和扩展描述始终作为不可信数据，引用不扩大权限、频道访问或工具目录。
 
-`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、`ConnectionApplicationService` 和 `HostExtensionInstallationCoordinator`。`ConnectionApplicationService` 独立持有连接运行实例、诊断、测试结果和订阅，负责创建、恢复、挂载、安全间隙与停止；组合根按依赖顺序调用其生命周期。第一方 Adapter 只从 `@nekro-nxt/adapter-builtin-roster` 的贡献集合注册；Server 不导入、比较或投影任何具体 Adapter 名称、key 和协议字段。内置与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。系统单例内置频道通过 Descriptor 的 `internal` kind 和 Runtime 的 `localChannel` 自动发现。Adapter Revision 切换会暂停该 key 的新入站，等待关联 Session 进入安全间隙，再停止全部 Connection Runtime；任一 `stop()` 失败会聚合上抛并恢复已停止的连接，不提交安装变化。启动顺序是内置 Registry → Host Installation → Connection → Agent Activation，关闭时反向撤销并等待静止。
+`NekroRuntime` 是生产组合根：它拥有 Core SQLite、Channel Runtime、Extension 恢复、本地凭据目录、统一 `AdapterRegistry`、`ConnectionApplicationService` 和 `ExtensionLifecycleCoordinator`（`runtime.extensions`）。`ConnectionApplicationService` 独立持有连接运行实例、诊断、测试结果和订阅，负责创建、恢复、挂载、安全间隙与停止；组合根按依赖顺序调用其生命周期。第一方 Adapter 只从 `@nekro-nxt/adapter-builtin-roster` 的贡献集合注册；Server 不导入、比较或投影任何具体 Adapter 名称、key 和协议字段。内置与动态安装 Revision 走同一创建、恢复、测试和停止路径；Secret 只由 Host 凭据存储解析，Core 只保存引用。系统单例内置频道通过 Descriptor 的 `internal` kind 和 Runtime 的 `localChannel` 自动发现。Adapter Revision 切换会暂停该 key 的新入站，等待关联 Session 进入安全间隙，再停止全部 Connection Runtime；任一 `stop()` 失败会聚合上抛并恢复已停止的连接，不提交安装变化。启动顺序是内置 Registry → 扩展本机实例（适配器在此注册）→ Connection → 智能体挂载，关闭时反向撤销并等待静止。
 
 频道活动设置分两层：具体 Connection 保存默认开启列表，Binding 保存按频道的布尔覆盖；Channel Runtime 每次触发和恢复时重新解析最终值。用户 Connection 删除前先停止相关 Channel lane 与 Adapter Runtime；保留频道数据时归档原 Connection 供明确恢复，选择同时删除时再清理 Connection 范围内的频道和运行事实。系统单例不进入删除流程。
 
@@ -22,11 +22,11 @@ Host Adapter 产物先在候选 Registry 执行 factory，实际 key、API 版�
 
 Task 的候选可以在智能体收尾前短暂进入 `ready`。Task 身份保存会先等待该 Session 的 Authoring continuation 和 Agent Loop 全部静止，再重新核对最新 Attempt；期间出现新候选时拒绝保存旧 Attempt。这个等待只保护 Task/Attempt 精确保存，不把动态运行、保存 Revision 和安装/启用合并成一个提交点。
 
-智能体、Adapter 与 Host Page 的贡献按 Manifest V6 的 scope 规则隔离；未知贡献、错误 key 和跨作用域混装会被拒绝。含 Client 半边的候选必须在创造工作台中真实渲染：面板覆盖每种声明密度与明暗主题，工具视图覆盖 chip 与 card，并渲染富消息渲染器与页面，实际页面和权限必须与 Define 时的风险声明完全一致；Host-only 候选也必须完成真实 Tool/RPC 调用。验证成功后 Task 才进入 `ready`。保存 API 优先使用 `taskId + attemptId`，只接受当前最后一个已验证候选；旧 `agentId + episodeId + pluginId + packageId` 暂时保留兼容。页面证据包含入口、对象列、权限和资源，Adapter 验证还覆盖注册、启动、入站、出站、凭据隔离、WebSocket/HTTP/状态存储和停止静止。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
+一个扩展可以同时提供工具、面板、工具视图、适配器、富消息渲染器与页面（Manifest V7，见[扩展形态统一](../../docs/decisions/accepted/2026-10-09-扩展形态统一.md)）；未知贡献与错误 key 会被拒绝。动态候选的 Host 源码统一按保存后的 factory 契约包装运行：factory 顶层可用本机层 `nxt`（挂载后可用）、`harness.onInbound`/`onJob`，挂载内可用 `ctx.config()`。含 Client 半边的候选必须在创造工作台中真实渲染：面板覆盖每种声明密度与明暗主题，工具视图覆盖 chip 与 card，并渲染富消息渲染器与页面，实际页面和权限必须与 Define 时的风险声明完全一致；Host-only 候选也必须完成真实 Tool/RPC 调用。验证成功后 Task 才进入 `ready`。保存 API 优先使用 `taskId + attemptId`，只接受当前最后一个已验证候选；旧 `agentId + episodeId + pluginId + packageId` 暂时保留兼容。页面证据包含入口、对象列、权限和资源，Adapter 验证还覆盖注册、启动、入站、出站、凭据隔离、WebSocket/HTTP/状态存储和停止静止。扩展 Revision 的验证证据保留生成证据时的实际 DSH 版本；升级不会改写或拒绝旧版本证据，新验证使用当前锁定的 rc.2。
 
 Host UI 页面由独立 Runtime 承载。页面实例、显隐、跨扩展顺序和权限批准来自 Host 快照；Server 为精确 Artifact 提供页面 Client/CSS/SVG、类型化产品服务、扩展命名空间状态、事件订阅和受控网络请求。网络请求逐跳校验获准 origin，并把已验证的公网地址固定到实际 socket，阻断私网、loopback、链路本地和 DNS 重绑定。Credential 明文不进入 SQLite，也不返回 Client；`credentials.write` 生成五分钟、owner 与 Adapter 绑定的一次性 token。Client 加载失败写页面诊断，不撤销已成功的 Host Installation 或 DSH Loader Activation。
 
-持久 Extension Host factory 每个 Activation 执行一次并拥有 RPC；返回的 Cordis Plugin 只负责向该智能体的每个 Session 挂载 Tool Fiber。Client Artifact、Activation RPC 和最近一次加载诊断分别通过 Revision 精确路由；stale build、错误智能体和已停用 Revision 都被拒绝，Client 失败不回滚 Host Tool。
+持久 Extension Host factory 在安装到本机时执行一次（本机实例），拥有 RPC、适配器、入站钩子与定时任务处理；返回的 Cordis Plugin 是智能体挂载，向每个启用它的智能体的每个 Session 挂载 Tool Fiber。Client Artifact 只服务当前安装的 Revision；面板 RPC 由 Host 核对锚点后把 `caller` 交给扩展；stale build 与未安装 Revision 被拒绝，Client 失败不回滚 Host Tool。
 
 生产入口用 `backups/host.lock` 持有整个进程生命周期的数据根独占权，正常运行和离线恢复都不能与另一实例共享可写数据根；`backups/upgrade.lock` 另行约束升级协调。共享 `HostUpgradeCoordinator` 在存储所有者打开前完成 preflight 与完整恢复点，journal 分别记录打开存储、检查并恢复 Runtime、准备 HTTP/TLS、开放 Admission 的结果。必需步骤失败进入 `recovery`；HTTP/TLS 准备完成后才开放 Admission，业务接口与 readiness 在最终就绪前返回 503，Desktop 还需核对同包 Release。开放运行后不能无条件回退数据。
 

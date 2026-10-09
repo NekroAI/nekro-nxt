@@ -12,6 +12,7 @@ import {
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   HostApiContracts,
+  configSchema,
   OutboundIntentIdSchema,
   PlatformIdentityIdSchema,
 } from '@nekro-nxt/contracts'
@@ -236,6 +237,29 @@ const snapshotBody = () =>
     dynamic: [],
   })
 
+const hostPermission = {
+  declaration: {
+    permissions: ['agents.read' as const],
+    networkOrigins: [],
+    capabilities: { storage: { scopes: ['shared' as const] } },
+  },
+  permissionDigest: 'a'.repeat(64),
+  approvalRequired: false,
+}
+const agentPermission = {
+  declaration: { permissions: [], networkOrigins: [], capabilities: { history: { read: true } } },
+  permissionDigest: 'b'.repeat(64),
+  approvalRequired: true,
+}
+const hostConfigSchema = configSchema.object({
+  endpoint: configSchema.string('服务地址'),
+  hostToken: configSchema.secret('本机令牌'),
+})
+const agentConfigSchema = configSchema.object({
+  style: configSchema.string('摘要风格'),
+  agentToken: configSchema.secret('智能体令牌'),
+})
+
 const snapshotBodyWithExtension = () => {
   const base = snapshotBody()
   const sourceAgent = base.agents[0]
@@ -257,7 +281,7 @@ const snapshotBodyWithExtension = () => {
     extensions: [
       {
         id: summaryExtensionId,
-        scope: 'agent',
+        provides: ['agent'],
         slug: 'channel-summary',
         displayName: '频道摘要',
         description: '生成结构化阶段摘要。',
@@ -267,8 +291,29 @@ const snapshotBodyWithExtension = () => {
             id: summaryRevisionId,
             revisionNumber: 1,
             createdAt: 1_700_000_000_000,
-            scope: 'agent',
-            contributions: [],
+            provides: ['agent'],
+            agentLayer: true,
+            hostConfigSchema,
+            agentConfigSchema,
+            contributions: ['工具：channel_summary'],
+            verification: {
+              verifiedAt: 1_700_000_000_000,
+              dshVersion: '0.1.7-rc.2',
+              contractVersion: 'nekro-nxt-extension-v5',
+              hostBuilt: true,
+              clientBuilt: false,
+              buildKey: 'c'.repeat(64),
+              toolInvocationCount: 1,
+              rpcMethods: [],
+              permissions: {
+                permissions: ['agents.read'],
+                networkOrigins: [],
+                host: { storage: {} },
+                agent: { history: { read: true } },
+              },
+              hostPermission,
+              agentPermission,
+            },
           },
         ],
         activations: [
@@ -280,6 +325,13 @@ const snapshotBodyWithExtension = () => {
             activatedAt: 1_700_000_000_100,
           },
         ],
+        installation: {
+          extensionRevisionId: summaryRevisionId,
+          installedAt: 1_700_000_000_000,
+          config: { endpoint: 'https://summary.example.invalid' },
+          configuredSecrets: ['hostToken'],
+        },
+        hostPermission,
         clientDiagnostics: [],
       },
     ],
@@ -1099,6 +1151,8 @@ describe('HttpProductHost', () => {
       extensionId: summaryExtensionId,
       agentId: webAgentId,
       revisionId: summaryRevisionId,
+      permissionApproval: { permissionDigest: agentPermission.permissionDigest },
+      hostPermissionApproval: { permissionDigest: hostPermission.permissionDigest },
     })
     const activateCall = requests.find(
       (request) =>
@@ -1110,6 +1164,8 @@ describe('HttpProductHost', () => {
     if (typeof activateBody !== 'string') throw new TypeError('activate request body must be JSON text.')
     expect(HostApiContracts.activateExtension.request.parse(JSON.parse(activateBody))).toEqual({
       revisionId: summaryRevisionId,
+      permissionApproval: { permissionDigest: agentPermission.permissionDigest },
+      hostPermissionApproval: { permissionDigest: hostPermission.permissionDigest },
     })
 
     await host.actions['extensions.deactivate']({ extensionId: summaryExtensionId, agentId: webAgentId })
@@ -1119,6 +1175,100 @@ describe('HttpProductHost', () => {
         request.init?.method === 'DELETE',
     )
     expect(deactivateCall?.init?.method).toBe('DELETE')
+    unsubscribe()
+  })
+
+  it('routes installation approvals and host credentials to the machine instance', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input === `/api/extensions/${summaryExtensionId}/installation`)
+        return Promise.resolve(
+          stubResponse(200, {
+            installation: {
+              extensionId: summaryExtensionId,
+              extensionRevisionId: summaryRevisionId,
+              installedAt: 1_700_000_000_000,
+              config: {},
+            },
+          }),
+        )
+      if (input === `/api/extensions/${summaryExtensionId}/installation/config`)
+        return Promise.resolve(
+          stubResponse(200, {
+            config: { endpoint: 'https://summary.example.invalid' },
+            configuredSecrets: ['hostToken'],
+          }),
+        )
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    await host.actions['extensions.install']({
+      extensionId: summaryExtensionId,
+      revisionId: summaryRevisionId,
+      permissionDigest: hostPermission.permissionDigest,
+      agentPermissionDigest: agentPermission.permissionDigest,
+    })
+    await host.actions['extensions.installationConfig']({
+      extensionId: summaryExtensionId,
+      config: { endpoint: 'https://summary.example.invalid' },
+      secrets: { hostToken: 'synthetic-token' },
+    })
+    const install = requests.find(({ url }) => url === `/api/extensions/${summaryExtensionId}/installation`)
+    const configure = requests.find(({ url }) => url === `/api/extensions/${summaryExtensionId}/installation/config`)
+    expect(install?.init?.method).toBe('PUT')
+    expect(configure?.init?.method).toBe('PUT')
+    if (typeof install?.init?.body !== 'string' || typeof configure?.init?.body !== 'string')
+      throw new TypeError('extension requests must be JSON text.')
+    expect(HostApiContracts.installHostExtension.parseRequest(JSON.parse(install.init.body))).toEqual({
+      revisionId: summaryRevisionId,
+      permissionApproval: { permissionDigest: hostPermission.permissionDigest },
+      agentPermissionApproval: { permissionDigest: agentPermission.permissionDigest },
+    })
+    expect(HostApiContracts.updateHostExtensionConfig.parseRequest(JSON.parse(configure.init.body))).toEqual({
+      config: { endpoint: 'https://summary.example.invalid' },
+      secrets: { hostToken: 'synthetic-token' },
+    })
+    unsubscribe()
+  })
+
+  it.each([
+    { method: 'summary.read' },
+    { method: 'summary.read', anchor: { kind: 'channel' as const, id: 'chn_summary' }, agentId: webAgentId },
+  ])('routes Client RPC with optional panel context: %j', async (context) => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const callUrl = `/api/extensions/${summaryExtensionId}/revisions/${summaryRevisionId}/call`
+    fetchMock = vi.fn((input: string, init?: RequestInit) => {
+      requests.push({ url: input, ...(init === undefined ? {} : { init }) })
+      if (input === '/api/snapshot') return Promise.resolve(stubResponse(200, snapshotBody()))
+      if (input === callUrl) return Promise.resolve(stubResponse(200, { value: { count: 2 } }))
+      return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('EventSource', FakeEventSource)
+    const host = new HttpProductHost()
+    const unsubscribe = host.subscribe(() => undefined)
+    await flush()
+    await expect(
+      host.actions['extensions.clientCall']({
+        extensionId: summaryExtensionId,
+        revisionId: summaryRevisionId,
+        ...context,
+        value: { limit: 2 },
+      }),
+    ).resolves.toEqual({ value: { count: 2 } })
+    const call = requests.find(({ url }) => url === callUrl)
+    expect(call?.init?.method).toBe('POST')
+    if (typeof call?.init?.body !== 'string') throw new TypeError('Client RPC body must be JSON text.')
+    expect(HostApiContracts.extensionClientCall.parseRequest(JSON.parse(call.init.body))).toEqual({
+      ...context,
+      input: { limit: 2 },
+    })
     unsubscribe()
   })
 
@@ -1900,6 +2050,24 @@ describe('HttpProductHost', () => {
     expect(extension).toMatchObject({
       name: '频道摘要',
       revision: 1,
+      provides: ['agent'],
+      hostPermission,
+      installation: {
+        revisionId: summaryRevisionId,
+        config: { endpoint: 'https://summary.example.invalid' },
+        configuredSecrets: ['hostToken'],
+      },
+      revisions: [
+        {
+          id: summaryRevisionId,
+          provides: ['agent'],
+          agentLayer: true,
+          hostConfigSchema,
+          agentConfigSchema,
+          verification: { hostPermission, agentPermission },
+        },
+      ],
+      verification: { hostPermission, agentPermission },
       createdByAgentId: webAgentId,
       createdByAgent: '小奈',
       activations: [
