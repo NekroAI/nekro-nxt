@@ -71,7 +71,7 @@ describe('NotificationService', () => {
     expect(service.readClientNotifications(cursor).notifications).toEqual([
       expect.objectContaining({
         id: 'dynamic-approval:approval_synthetic',
-        title: '扩展预览等待确认',
+        title: '有扩展等你试运行',
         route: '/workshop',
       }),
     ])

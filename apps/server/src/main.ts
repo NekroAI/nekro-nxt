@@ -440,12 +440,12 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
         .strict()
         .parse(JSON.parse(await readFile(lockPath, 'utf8')))
       if (current.version === 1 && current.pid !== process.pid && processIsAlive(current.pid)) {
-        throw new Error(`数据根正在由另一个 Host 执行升级：PID ${current.pid}，Release ${current.releaseId}`)
+        throw new Error(`另一个 NekroNXT 正在升级这个数据目录（PID ${current.pid}，版本 ${current.releaseId}）`)
       }
       await rename(lockPath, `${lockPath}.stale-${current.token}`)
     }
   }
-  throw new Error('无法获取 Host 升级锁。')
+  throw new Error('Cannot acquire the upgrade lock.')
 }
 
 const createRuntimeThroughUpgradeCoordinator = async (
@@ -553,9 +553,9 @@ const createRuntimeThroughUpgradeCoordinator = async (
     await progress.close()
   }
   if (status.phase !== 'ready' || !runtime) {
-    const summary = status.errorSummary ?? 'Host 升级未进入 ready。'
+    const summary = status.errorSummary ?? 'Upgrade did not reach ready.'
     await journal.finish('recovery', summary)
-    throw new Error(`Host 升级失败：${summary}`)
+    throw new Error(`升级失败：${summary}`)
   }
   await journal.finish('ready')
   await writeUpgradeJson(path.join(dataRoot, 'dsh', 'runtime-identity.json'), {
@@ -822,7 +822,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     await markUpgradeProgressFailure(
       resolveRoot(options.dataRoot),
       parseReleaseId(options.releaseId),
-      error instanceof Error ? error.message.slice(0, 512) : 'Host 启动失败。',
+      error instanceof Error ? error.message.slice(0, 512) : '启动失败。',
     ).catch((failure: unknown) => {
       progressFailure = failure
     })

@@ -32,7 +32,7 @@ export function registerSettingsRoutes({
     path: '/api/runtime/compatibility/retry',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -63,7 +63,7 @@ export function registerSettingsRoutes({
   } => {
     let phase: 'download' | 'dependencies' | 'build-scripts' | 'validation' | 'publish' =
       kind === 'inspect' ? 'download' : 'publish'
-    let message = kind === 'inspect' ? '正在检查 DSH 插件安装内容。' : '正在提交 DSH 插件安装。'
+    let message = kind === 'inspect' ? '正在检查插件。' : '正在安装插件。'
     const publish = (status: 'running' | 'done' | 'failed'): void =>
       broadcast({ event: 'dsh-plugin-operation', data: { operationId, kind, phase, status, message } })
     publish('running')
@@ -74,7 +74,7 @@ export function registerSettingsRoutes({
         publish('running')
       },
       done: () => {
-        message = kind === 'inspect' ? '安装内容检查完成。' : '插件已经安装并保持关闭。'
+        message = kind === 'inspect' ? '检查完成。' : '插件已安装，尚未启用。'
         publish('done')
       },
       failed: (failure) => {
@@ -88,7 +88,7 @@ export function registerSettingsRoutes({
     path: '/api/client-notifications',
     handler: (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '客户端通知只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -114,7 +114,7 @@ export function registerSettingsRoutes({
     path: '/api/settings/notifications',
     handler: async (req, res) => {
       if (req.method !== 'PUT') {
-        writeError(res, 405, 'method-not-allowed', '通知设置只支持 PUT。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -142,7 +142,7 @@ export function registerSettingsRoutes({
     path: '/api/settings/notifications/test',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', 'Bark 通知测试只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -163,7 +163,7 @@ export function registerSettingsRoutes({
     path: '/api/settings/notifications/test-system',
     handler: (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '系统通知测试只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -181,7 +181,7 @@ export function registerSettingsRoutes({
     path: '/api/dsh/plugins',
     handler: (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -201,7 +201,7 @@ export function registerSettingsRoutes({
     path: '/api/dsh/settings',
     handler: (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -221,7 +221,7 @@ export function registerSettingsRoutes({
     path: '/api/dsh/plugin-installs/inspect',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -247,7 +247,7 @@ export function registerSettingsRoutes({
     path: '/api/dsh/plugin-installs/inspect-tarball',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -285,7 +285,7 @@ export function registerSettingsRoutes({
     path: '/api/dsh/plugin-installs',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -323,7 +323,7 @@ export function registerSettingsRoutes({
         /^\/api\/dsh\/plugin-entries\/([^/]+)\/host-ui\/client\/([a-f0-9]{64})\.(mjs|css)$/u.exec(url.pathname)
       if (hostUiClientMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', 'DSH 页面 Client 只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -333,7 +333,7 @@ export function registerSettingsRoutes({
             .find((candidate) => candidate.target === 'host')
           if (!activation) throw new Error('对应 DSH Host 入口未启用。')
           const client = await runtime.dshPluginInstaller.readHostUiClient(entryId)
-          if (client.packageDigest !== hostUiClientMatch[2]) throw new Error('DSH 页面 Client 摘要已过期。')
+          if (client.packageDigest !== hostUiClientMatch[2]) throw new Error('DSH page client digest is stale.')
           const css = hostUiClientMatch[3] === 'css'
           res.writeHead(200, {
             'content-type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
@@ -350,7 +350,7 @@ export function registerSettingsRoutes({
       )
       if (hostUiAssetMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', 'DSH 页面图标只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -374,14 +374,14 @@ export function registerSettingsRoutes({
       const configMatch = /^\/api\/dsh\/plugin-entries\/([^/]+)\/config\/inspect$/u.exec(url.pathname)
       const encodedEntryId = activationMatch?.[1] ?? configMatch?.[1]
       if (!encodedEntryId) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       try {
         const entryId = DshPluginEntryIdSchema.parse(decodeURIComponent(encodedEntryId))
         if (configMatch) {
           if (req.method !== 'POST') {
-            writeError(res, 405, 'method-not-allowed', '检查 DSH 插件配置只支持 POST。')
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
           HostApiContracts.inspectDshPluginEntryConfig.parseRequest(undefined)
@@ -460,7 +460,7 @@ export function registerSettingsRoutes({
           writeContractJson(res, 200, HostApiContracts.deactivateDshPluginEntry, { disabled: true })
           return
         }
-        writeError(res, 405, 'method-not-allowed', '只支持 PUT 或 DELETE。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
       } catch (error) {
         writeError(res, 400, 'dsh-plugin-activation-failed', error instanceof Error ? error.message : String(error))
       }
@@ -475,7 +475,7 @@ export function registerSettingsRoutes({
       const exportMatch = /^\/api\/dsh\/plugin-installs\/([^/]+)\/export$/u.exec(url.pathname)
       if (exportMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '导出 DSH 插件只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -489,11 +489,11 @@ export function registerSettingsRoutes({
       }
       const match = /^\/api\/dsh\/plugin-installs\/([^/]+)$/u.exec(url.pathname)
       if (!match?.[1]) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       if (req.method !== 'DELETE') {
-        writeError(res, 405, 'method-not-allowed', '只支持 DELETE。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -515,17 +515,17 @@ export function registerSettingsRoutes({
       const url = new URL(req.url ?? '/', 'http://localhost')
       const match = /^\/api\/dsh\/settings\/([^/]+)\/mutate$/u.exec(url.pathname)
       if (!match) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
         const encodedNamespace = match[1]
         if (encodedNamespace === undefined) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         const params = HostApiContracts.dshSettingsMutate.parseParams({
@@ -555,7 +555,7 @@ export function registerSettingsRoutes({
     path: '/api/dsh/credentials/describe',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -577,13 +577,13 @@ export function registerSettingsRoutes({
       const url = new URL(req.url ?? '/', 'http://localhost')
       const match = /^\/api\/dsh\/credentials\/([^/]+)$/u.exec(url.pathname)
       if (!match) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       try {
         const encodedRef = match[1]
         if (encodedRef === undefined) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         const ref = decodeURIComponent(encodedRef)
@@ -609,7 +609,7 @@ export function registerSettingsRoutes({
           )
           return
         }
-        writeError(res, 405, 'method-not-allowed', '只支持 PUT/DELETE。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
       } catch (error) {
         writeError(res, 400, 'dsh-credentials-rejected', error instanceof Error ? error.message : String(error))
       }
@@ -621,7 +621,7 @@ export function registerSettingsRoutes({
     path: '/api/llm/providers',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -639,7 +639,7 @@ export function registerSettingsRoutes({
     path: '/api/llm/discover-models',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -665,7 +665,7 @@ export function registerSettingsRoutes({
     path: '/api/llm/test-provider',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -708,7 +708,7 @@ export function registerSettingsRoutes({
       const url = new URL(req.url ?? '/', 'http://localhost')
       const match = /^\/api\/llm\/providers\/([^/]+)(\/removal-impact|\/restore-models)?$/.exec(url.pathname)
       if (!match) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       const restoreModels = match[2] === '/restore-models'
@@ -720,18 +720,13 @@ export function registerSettingsRoutes({
             ? req.method !== 'POST'
             : req.method !== 'POST' && req.method !== 'DELETE'
       ) {
-        writeError(
-          res,
-          405,
-          'method-not-allowed',
-          removalImpact ? '只支持 GET。' : restoreModels ? '只支持 POST。' : '只支持 POST/DELETE。',
-        )
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
         const encodedProvider = match[1]
         if (encodedProvider === undefined) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         if (restoreModels) {

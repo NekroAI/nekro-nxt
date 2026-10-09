@@ -794,7 +794,7 @@ export class ChannelRuntime {
     const failures = outcomes
       .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
       .map((outcome): unknown => outcome.reason)
-    if (failures.length) throw new AggregateError(failures, 'Adapter 连接无法进入安全间隙。')
+    if (failures.length) throw new AggregateError(failures, 'Adapter connections could not quiesce.')
   }
   retractChannelMessage(input: {
     readonly episodeId: EpisodeId

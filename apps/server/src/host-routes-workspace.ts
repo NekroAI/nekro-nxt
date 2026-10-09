@@ -98,13 +98,13 @@ export function registerWorkspaceRoutes({
     const url = new URL(req.url ?? '/', 'http://localhost')
     const match = /^\/api\/agents\/([^/]+)\/extensions\/([^/]+)\/activation(\/config)?$/.exec(url.pathname)
     if (!match) {
-      writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+      writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
       return
     }
     const encodedAgentId = match[1]
     const encodedExtensionId = match[2]
     if (encodedAgentId === undefined || encodedExtensionId === undefined) {
-      writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+      writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
       return
     }
     let params: z.output<typeof HostApiContracts.activateExtension.params>
@@ -113,12 +113,12 @@ export function registerWorkspaceRoutes({
       const extensionId = ExtensionIdSchema.parse(decodeURIComponent(encodedExtensionId))
       params = HostApiContracts.activateExtension.params.parse({ agentId, extensionId })
     } catch {
-      writeError(res, 400, 'invalid-activation-target', '无效的智能体或扩展 ID。')
+      writeError(res, 400, 'invalid-activation-target', 'Invalid agent or extension id.')
       return
     }
     if (match[3] === '/config') {
       if (req.method !== 'PUT') {
-        writeError(res, 405, 'method-not-allowed', '智能体扩展配置只支持 PUT。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -229,7 +229,7 @@ export function registerWorkspaceRoutes({
       }
       return
     }
-    writeError(res, 405, 'method-not-allowed', '只支持 POST/DELETE。')
+    writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
   }
   registerRoute({
     kind: 'prefix',
@@ -238,7 +238,7 @@ export function registerWorkspaceRoutes({
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname === '/api/bindings') {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -279,7 +279,7 @@ export function registerWorkspaceRoutes({
       }
       const match = /^\/api\/bindings\/([^/]+)$/.exec(url.pathname)
       if (!match?.[1] || req.method !== 'DELETE') {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       try {
@@ -316,7 +316,7 @@ export function registerWorkspaceRoutes({
     path: '/api/work-tree-order',
     handler: async (req, res) => {
       if (req.method !== 'PUT') {
-        writeError(res, 405, 'method-not-allowed', '只支持 PUT。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -349,7 +349,7 @@ export function registerWorkspaceRoutes({
     path: '/api/agents',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       let parsed: ReturnType<typeof HostApiContracts.createAgent.parseRequest>
@@ -415,7 +415,7 @@ export function registerWorkspaceRoutes({
         try {
           agentId = AgentIdSchema.parse(decodeURIComponent(revisionsMatch[1] ?? ''))
         } catch {
-          writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+          writeError(res, 400, 'invalid-agent', 'Invalid agent id.')
           return
         }
         const restoreId = revisionsMatch[2]
@@ -433,7 +433,7 @@ export function registerWorkspaceRoutes({
         try {
           agentId = AgentIdSchema.parse(decodeURIComponent(presentationMatch[1] ?? ''))
         } catch {
-          writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+          writeError(res, 400, 'invalid-agent', 'Invalid agent id.')
           return
         }
         await projections.handleAgentRoute(
@@ -447,14 +447,14 @@ export function registerWorkspaceRoutes({
       const deleteMatch = /^\/api\/agents\/([^/]+)$/.exec(url.pathname)
       if (deleteMatch) {
         if (req.method !== 'DELETE') {
-          writeError(res, 405, 'method-not-allowed', '删除智能体只支持 DELETE。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         let agentId: AgentId
         try {
           agentId = AgentIdSchema.parse(decodeURIComponent(deleteMatch[1] ?? ''))
         } catch {
-          writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+          writeError(res, 400, 'invalid-agent', 'Invalid agent id.')
           return
         }
         try {
@@ -490,28 +490,28 @@ export function registerWorkspaceRoutes({
       }
       const match = /^\/api\/agents\/([^/]+)\/(capabilities|revision)$/.exec(url.pathname)
       if (!match) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       const encodedAgentId = match[1]
       if (encodedAgentId === undefined) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       const action = match[2]
       if (action === undefined) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       let agentId: AgentId
       try {
         agentId = AgentIdSchema.parse(decodeURIComponent(encodedAgentId))
       } catch {
-        writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+        writeError(res, 400, 'invalid-agent', 'Invalid agent id.')
         return
       }
       try {
@@ -545,7 +545,7 @@ export function registerWorkspaceRoutes({
           return
         }
         if (action !== 'capabilities') {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         const parsed = HostApiContracts.updateAgentCapabilities.parseRequest(await readJsonBody(req))
@@ -591,7 +591,7 @@ export function registerWorkspaceRoutes({
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname === '/api/channels') {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -621,7 +621,7 @@ export function registerWorkspaceRoutes({
         try {
           channelId = ChannelIdSchema.parse(decodeURIComponent(projectionMatch[1] ?? ''))
         } catch {
-          writeError(res, 400, 'invalid-channel', '无效的频道 ID。')
+          writeError(res, 400, 'invalid-channel', 'Invalid channel id.')
           return
         }
         const action = projectionMatch[2] === 'read' ? 'read' : projectionMatch[2] === 'pending' ? 'pending' : 'stop'
@@ -650,7 +650,7 @@ export function registerWorkspaceRoutes({
         assetMatch?.[1] ??
         channelMatch?.[1]
       if (!rawChannelId) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
 
@@ -658,13 +658,13 @@ export function registerWorkspaceRoutes({
       try {
         typedChannelId = ChannelIdSchema.parse(decodeURIComponent(rawChannelId))
       } catch {
-        writeError(res, 400, 'invalid-channel', '无效的频道 ID。')
+        writeError(res, 400, 'invalid-channel', 'Invalid channel id.')
         return
       }
 
       if (channelMatch) {
         if (req.method !== 'DELETE') {
-          writeError(res, 405, 'method-not-allowed', '删除频道只支持 DELETE。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -689,7 +689,7 @@ export function registerWorkspaceRoutes({
 
       if (runtimeMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -705,7 +705,7 @@ export function registerWorkspaceRoutes({
 
       if (runtimeInputMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         const messageId = decodeURIComponent(runtimeInputMatch[2] ?? '')
@@ -732,7 +732,7 @@ export function registerWorkspaceRoutes({
           return
         }
         if (req.method !== 'PUT') {
-          writeError(res, 405, 'method-not-allowed', '频道说明只支持 GET 与 PUT。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -759,7 +759,7 @@ export function registerWorkspaceRoutes({
 
       if (runtimeContextMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         writeContractJson(
@@ -773,7 +773,7 @@ export function registerWorkspaceRoutes({
 
       if (toolCallMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         const callId = decodeURIComponent(toolCallMatch[2] ?? '')
@@ -793,7 +793,7 @@ export function registerWorkspaceRoutes({
 
       if (contextResetMatch) {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '上下文操作只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -826,19 +826,19 @@ export function registerWorkspaceRoutes({
 
       if (assetMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         const encodedAssetId = assetMatch[2]
         if (encodedAssetId === undefined) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         let assetId: ReturnType<typeof AssetIdSchema.parse>
         try {
           assetId = AssetIdSchema.parse(decodeURIComponent(encodedAssetId))
         } catch {
-          writeError(res, 400, 'invalid-asset', '无效的资源 ID。')
+          writeError(res, 400, 'invalid-asset', 'Invalid asset id.')
           return
         }
         if (!runtime.repository.canAccessAsset(assetId, typedChannelId)) {
@@ -867,7 +867,7 @@ export function registerWorkspaceRoutes({
 
       if (nameMatch) {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -915,7 +915,7 @@ export function registerWorkspaceRoutes({
         return
       }
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET 或 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       let parsed: ReturnType<typeof HostApiContracts.sendChannelMessage.parseRequest>

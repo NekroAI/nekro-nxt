@@ -19,17 +19,17 @@ export class AuthoringApplicationService {
     return this.#runtime.host.stopAuthoringTask(input)
   }
   async restore(input: Parameters<NekroRuntime['host']['restoreAuthoringAttempt']>[0]) {
-    if (this.#disposed) throw new Error('创造服务正在关闭。')
+    if (this.#disposed) throw new Error('NekroNXT 正在关闭，请稍后再试。')
     await this.#runtime.host.restoreAuthoringAttempt(input)
     const task = this.#runtime.repository.getAuthoringTask(input.taskId)
     if (!task) throw new Error('创造任务不存在。')
     return task
   }
   async save(input: SaveInput): Promise<SaveResult> {
-    if (this.#disposed) throw new Error('创造服务正在关闭。')
+    if (this.#disposed) throw new Error('NekroNXT 正在关闭，请稍后再试。')
     const key =
       'taskId' in input ? input.taskId : `${input.agentId}:${input.episodeId}:${input.pluginId}:${input.packageId}`
-    if (this.#saving.has(key)) throw new Error('该候选正在保存，请等待当前操作完成。')
+    if (this.#saving.has(key)) throw new Error('这个候选正在保存，请稍候。')
     const saving = this.#save(input)
       .then(async (result) => {
         // The saved extension asks for its own credentials when enabled; task test credentials end here.
@@ -65,13 +65,13 @@ export class AuthoringApplicationService {
             const attempt = runtime.repository.getAuthoringAttempt(input.attemptId)
             const latestAttempt = task ? runtime.repository.listAuthoringAttempts(task.id).at(-1) : undefined
             if (!task || !attempt || attempt.taskId !== task.id || latestAttempt?.id !== attempt.id) {
-              throw new Error('只能保存该创造任务当前的精确候选。')
+              throw new Error('只能保存这个任务最新的候选。')
             }
             if (task.status !== 'ready' || attempt.state !== 'active' || !attempt.verification) {
-              throw new Error('候选尚未完成真实运行和验证，不能保存为本地扩展。')
+              throw new Error('这个候选还没有试运行成功，暂时不能保存。')
             }
             if (!attempt.runnerPluginId || !attempt.runnerPackageId) {
-              throw new Error('候选缺少当前运行时身份，请重新运行后再保存。')
+              throw new Error('请重新试运行后再保存。')
             }
             return {
               task,
@@ -98,16 +98,16 @@ export class AuthoringApplicationService {
             packageId: input.packageId,
           }
         : (() => {
-            throw new Error('创造任务身份无法解析。')
+            throw new Error('Authoring task identity cannot be resolved.')
           })()
     const episode = runtime.repository.getEpisode(identity.episodeId)
     if (!episode || episode.agentId !== identity.agentId || episode.status !== 'active' || !episode.dshSessionId) {
-      throw new Error('指定会话不是该智能体当前可保存动态 Package 的活动会话。')
+      throw new Error("Session is not the agent's active session.")
     }
     const inventory = runtime.host.dynamicInventory(episode.dshSessionId)
     const row = inventory.find((candidate) => candidate.pluginId === identity.pluginId)
     if (!row?.packages.some((candidate) => candidate.packageId === identity.packageId)) {
-      throw new Error('指定动态 Package 不属于该智能体的活动会话。')
+      throw new Error("Package does not belong to the agent's active session.")
     }
     const latestRun = row.latestRun
     if (
@@ -116,7 +116,7 @@ export class AuthoringApplicationService {
       latestRun?.packageId !== identity.packageId ||
       latestRun.status !== 'running'
     ) {
-      throw new Error('只能保存当前已真实运行成功、且没有审批或版本切换中的精确 Package。')
+      throw new Error('这个候选还没有试运行成功，或者还在等待批准，暂时不能保存。')
     }
     const inspection = runtime.host.inspectDynamicPackage(episode.dshSessionId, identity.pluginId, identity.packageId)
     const authoringSnapshot = await runtime.host.dynamicAuthoringSnapshot(

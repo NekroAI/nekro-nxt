@@ -657,7 +657,7 @@ export class WorkspaceProjections {
           }
           const match = /^\/api\/attention\/([^/]+)\/dismiss$/u.exec(url.pathname)
           if (!match) {
-            writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+            writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
             return
           }
           if (!requireMethod(req, res, 'POST')) return
@@ -696,7 +696,7 @@ export class WorkspaceProjections {
         const url = new URL(req.url ?? '/', 'http://localhost')
         const match = /^\/api\/outbound\/([^/]+)\/resolve$/u.exec(url.pathname)
         if (!match) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         if (!requireMethod(req, res, 'POST')) return

@@ -397,7 +397,7 @@ describe('channel runtime projection', () => {
       ],
     })
     expect(projection.phase).toBe('idle')
-    expect(projection.summary).toBe('智能体未按频道回应协议完成本轮。')
+    expect(projection.summary).toBe('智能体这一轮既没有回复，也没有说明原因。')
     expect(projection.turns[0]).toMatchObject({
       state: 'unreplied',
       responseState: 'protocol-failed',

@@ -120,7 +120,7 @@ describe('Server production entry', () => {
     await writeFile(path.join(dataRoot, 'core.sqlite'), 'not a sqlite database', 'utf8')
 
     await expect(startNekroServer({ dataRoot, distIndex, releaseId: 'release-upgrade-failure-test' })).rejects.toThrow(
-      'Host 升级失败',
+      '升级失败',
     )
     expect(await readFile(path.join(dataRoot, 'core.sqlite'), 'utf8')).toBe('not a sqlite database')
     const journalName = (await readdir(path.join(dataRoot, 'backups'))).find(

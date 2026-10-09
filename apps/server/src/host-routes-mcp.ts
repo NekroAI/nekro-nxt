@@ -28,7 +28,7 @@ export function registerMcpRoutes({
     path: '/api/mcp-servers/test',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -44,7 +44,7 @@ export function registerMcpRoutes({
     path: '/api/mcp-servers',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {

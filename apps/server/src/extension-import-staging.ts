@@ -29,7 +29,7 @@ export class ExtensionImportStaging {
         existingRevision.contentDigest !== parsed.manifest.revision.contentDigest ||
         existingRevision.payloadDigest !== parsed.manifest.revision.payloadDigest)
     ) {
-      throw new Error('相同 Extension/Revision 身份已存在，但内容不同；不会覆盖本地版本。')
+      throw new Error('本机已有同一个版本，但内容不同，没有导入。')
     }
     const token = randomUUID()
     this.#pending.set(token, { parsed, expiresAt: Date.now() + IMPORT_TTL_MS })

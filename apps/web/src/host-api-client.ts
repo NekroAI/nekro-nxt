@@ -36,6 +36,13 @@ export class HostRequestError extends Error {
   }
 }
 
+/**
+ * Server messages written for users are Chinese; anything else is an internal check meant for developers, shown as
+ * a plain failure that still carries the original text for bug reports.
+ */
+const readableFailure = (message: string): string =>
+  /\p{Script=Han}/u.test(message) ? message : `操作失败（${message}）`
+
 /** Owns JSON transport and boundary decoding. Mutations are never automatically retried. */
 export async function callHostApi<Contract extends HostApiContract, Output>(
   contract: Contract & { readonly parseResponse: (input: unknown) => Output },
@@ -62,7 +69,7 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
     } catch (cause) {
       throw new HostRequestError(
         releaseGuard.getSnapshot().mismatch ? 'release-mismatch' : 'network',
-        cause instanceof Error ? cause.message : '尚未确认服务版本，此操作未发送。',
+        cause instanceof Error ? cause.message : '还没连上服务，这次操作没有发出。',
         undefined,
         'rejected',
       )
@@ -119,7 +126,7 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
           ? '服务请求已取消。'
           : cause instanceof Error
             ? cause.message
-            : '无法连接 NekroNXT Host。'
+            : '无法连接服务。'
       throw new HostRequestError(
         kind,
         mutation ? `${message} 操作结果未知，请先刷新确认。` : message,
@@ -144,7 +151,7 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
       }
       throw new HostRequestError(
         'http',
-        error.success ? error.data.error.message : `服务请求失败：${response.status}`,
+        error.success ? readableFailure(error.data.error.message) : `操作失败（服务返回 ${response.status}）。`,
         response.status,
         mutation ? (response.status >= 500 ? 'unknown' : 'rejected') : 'not-applicable',
       )
@@ -166,7 +173,7 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
     } catch (cause) {
       throw new HostRequestError(
         'invalid-response',
-        `NekroNXT Host 返回的数据格式无效：${cause instanceof Error ? cause.message : String(cause)}`,
+        `服务返回的数据无法识别：${cause instanceof Error ? cause.message : String(cause)}`,
         response.status,
         mutation ? 'unknown' : 'not-applicable',
       )

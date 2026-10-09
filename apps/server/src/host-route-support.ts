@@ -67,7 +67,7 @@ export const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
     const declaredLength = Number(req.headers['content-length'])
     if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
       req.resume()
-      reject(new Error(`JSON 请求体超过 ${MAX_JSON_BODY_BYTES} 字节限制。`))
+      reject(new Error(`JSON body exceeds ${MAX_JSON_BODY_BYTES} bytes.`))
       return
     }
     const chunks: Uint8Array[] = []
@@ -79,7 +79,7 @@ export const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
       if (bytes > MAX_JSON_BODY_BYTES) {
         exceeded = true
         chunks.length = 0
-        reject(new Error(`JSON 请求体超过 ${MAX_JSON_BODY_BYTES} 字节限制。`))
+        reject(new Error(`JSON body exceeds ${MAX_JSON_BODY_BYTES} bytes.`))
         return
       }
       chunks.push(chunk)
@@ -107,7 +107,7 @@ export const readBinaryBody = (req: IncomingMessage, maxBytes: number): Promise<
     req.on('data', (chunk: Uint8Array) => {
       bytes += chunk.byteLength
       if (bytes > maxBytes) {
-        reject(new Error(`请求体超过 ${maxBytes} 字节限制。`))
+        reject(new Error(`Request body exceeds ${maxBytes} bytes.`))
         req.destroy()
         return
       }
@@ -618,7 +618,7 @@ export const resolveEpisodeSession = (
 ): string => {
   const episode = runtime.repository.getEpisode(episodeId)
   if (episode?.agentId !== agentId || episode.status !== 'active' || episode.dshSessionId === undefined) {
-    throw new Error('指定 Episode 不是该智能体的活动会话。')
+    throw new Error("Episode is not the agent's active session.")
   }
   return episode.dshSessionId
 }
@@ -630,7 +630,7 @@ export const findDynamicPluginRunId = (runtime: NekroRuntime, dshSessionId: stri
     if (row.activeRun?.pluginRunId === pluginRunId) return row.activeRun.pluginRunId
     if (row.latestRun?.pluginRunId === pluginRunId) return row.latestRun.pluginRunId
   }
-  throw new Error('指定的动态运行不属于该智能体的活动会话。')
+  throw new Error("Dynamic run does not belong to the agent's active session.")
 }
 
 export const normalizeDynamicResolution = (

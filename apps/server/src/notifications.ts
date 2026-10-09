@@ -209,8 +209,8 @@ export class NotificationService {
   async notifyDynamicApproval(input: DynamicApprovalNotification): Promise<'sent' | 'skipped'> {
     const stored = this.#readRecord()?.settings ?? defaultSettings()
     if (!stored.events[DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]) return 'skipped'
-    const title = '扩展预览等待确认'
-    const body = `智能体「${input.agentDisplayName}」生成的扩展「${input.extensionName}」正在等待界面预览确认。${input.purpose ? ` 用途：${input.purpose}` : ''}`
+    const title = '有扩展等你试运行'
+    const body = `「${input.agentDisplayName}」做的「${input.extensionName}」需要你允许运行。${input.purpose ? `用途：${input.purpose}` : ''}`
     let sent = false
     if (stored.system.enabled) {
       this.#publishClientNotification({

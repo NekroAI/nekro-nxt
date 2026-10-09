@@ -148,10 +148,10 @@ function diagnostic(
   provider?: string,
 ): DshHostProfileDiagnostic {
   const reason = {
-    'unknown-entry': '旧设置没有对应的宿主插件入口，原始配置已保留。',
-    'invalid-config': '配置与当前引擎不兼容，已隔离该项；请重新检查模型或供应商配置。',
-    'unavailable-plugin': '当前宿主无法载入此插件，已保留其配置以供修复。',
-    'inactive-plugin': '插件未成功进入运行状态，已停止该实例并保留配置。',
+    'unknown-entry': '旧设置找不到对应的插件，配置已保留。',
+    'invalid-config': '这项配置与当前版本不兼容，已暂停使用，请检查模型或供应商设置。',
+    'unavailable-plugin': '这个插件无法加载，配置已保留。',
+    'inactive-plugin': '插件没能启动，已停止，配置已保留。',
   }[reasonCode]
   return {
     entryId,
@@ -166,7 +166,7 @@ function diagnostic(
 
 /** Prepare before configureLlm. Without paths this only creates an in-memory Loader. */
 export async function prepareDshHostProfile(context: Context, options: DshHostProfileOptions = {}): Promise<void> {
-  if (profiles.has(context)) throw new Error('NXT DSH Host Profile 已准备。')
+  if (profiles.has(context)) throw new Error('NXT DSH host profile is already prepared.')
   if ((options.settingsPath === undefined) !== (options.credentialPath === undefined)) {
     throw new TypeError('DSH settings and credential paths must be configured together.')
   }
@@ -205,10 +205,10 @@ export async function prepareDshHostProfile(context: Context, options: DshHostPr
 /** Claim the real idle phase, retaining new input in DSH's own inbox until the write settles. */
 export function runDshSettingsMaintenance<T>(context: Context, operation: () => Promise<T>): Promise<T> {
   const state = profiles.get(context)
-  if (!state?.active) return Promise.reject(new Error('DSH Host Profile 尚未就绪。'))
+  if (!state?.active) return Promise.reject(new Error('DSH host profile is not ready.'))
   const result = state.settingsTail.then(async () => {
     while (true) {
-      if (!profiles.has(context)) throw new Error('DSH Host Profile 已停止。')
+      if (!profiles.has(context)) throw new Error('DSH host profile has stopped.')
       const agents = context.get('agents')?.list() ?? []
       await Promise.all(agents.map((agent) => agent.whenIdle()))
       const released = deferred()
@@ -265,14 +265,14 @@ export function runDshSettingsMaintenance<T>(context: Context, operation: () => 
           if (!Object.hasOwn(legacy, key)) Reflect.deleteProperty(entry.options, key)
         Object.assign(entry.options, legacy)
         coldReloadRejected = true
-        throw new Error('此配置变更需要重启宿主后生效；当前会话未被重载。')
+        throw new Error('这项修改需要重启 NekroNXT 后生效。')
       })
       try {
-        if (!profiles.has(context)) throw new Error('DSH Host Profile 已停止。')
+        if (!profiles.has(context)) throw new Error('DSH host profile has stopped.')
         assertDshPluginDisposalHealthy(context)
         assertDshProfileMatchesRuntime(context, state)
         const value = await operation()
-        if (coldReloadRejected) throw new Error('配置包含需要重启生效的变更，运行中的会话未被重载。')
+        if (coldReloadRejected) throw new Error('这项修改需要重启 NekroNXT 后生效。')
         assertDshPluginDisposalHealthy(context)
         return value
       } finally {
@@ -307,17 +307,17 @@ function assertDshProfileMatchesRuntime(context: Context, state: ProfileState): 
       )
     })
   ) {
-    throw new Error('磁盘上的 DSH Profile 已变化，请重启宿主后再修改设置；当前会话未被重载。')
+    throw new Error('设置文件在别处被修改过，请重启 NekroNXT 后再改。')
   }
 }
 
 /** Register only NXT's chosen roster. No upstream base bundle or UI is mounted. */
 export function registerDshHostProfileEntry(context: Context, entry: DshHostProfileEntry): void {
   const state = profiles.get(context)
-  if (!state || state.active) throw new Error('DSH Host Profile 不在装配阶段。')
+  if (!state || state.active) throw new Error('DSH host profile is not assembling.')
   if (!/^[a-z][a-z0-9-]*$/u.test(entry.id) || entry.id === 'include')
     throw new TypeError('Invalid NXT profile entry ID.')
-  if (state.entries.has(entry.id)) throw new Error(`DSH Host Profile 入口重复：${entry.id}`)
+  if (state.entries.has(entry.id)) throw new Error(`Duplicate DSH host profile entry: ${entry.id}`)
   state.entries.set(entry.id, { ...entry, config: structuredClone(entry.config ?? {}) })
 }
 
@@ -575,7 +575,7 @@ async function stopEntry(context: Context, id: string): Promise<void> {
 /** Activate after the host has installed its required services. Returns safe compatibility diagnostics. */
 export async function activateDshHostProfile(context: Context): Promise<readonly RuntimeCompatibilityDiagnostic[]> {
   const state = profiles.get(context)
-  if (!state || state.active) throw new Error('DSH Host Profile 不在装配阶段。')
+  if (!state || state.active) throw new Error('DSH host profile is not assembling.')
   state.active = true
   if (state.options.settingsPath === undefined) {
     // No profile, ConfigEditor, credential file or temporary directory in fake-LLM tests.
@@ -599,7 +599,7 @@ export async function activateDshHostProfile(context: Context): Promise<readonly
   for (const spec of state.entries.values()) {
     const entry = [...context.loader.entries()].find((candidate) => candidate.options.id === spec.id)
     if (entry?.disabled) {
-      if (spec.required) throw new Error(`必需 DSH 入口已被禁用：${spec.id}`)
+      if (spec.required) throw new Error(`Required DSH entry is disabled: ${spec.id}`)
       continue
     }
     if (entry?.fiber?.state === FIBER_ACTIVE) {
@@ -612,7 +612,7 @@ export async function activateDshHostProfile(context: Context): Promise<readonly
       )
       continue
     }
-    if (spec.required) throw new Error(`必需 DSH 入口未就绪：${spec.id}`)
+    if (spec.required) throw new Error(`Required DSH entry is not ready: ${spec.id}`)
     state.diagnostics.push(
       diagnostic(spec.id, entry?.fiber ? 'apply' : 'import', entry?.fiber ? 'inactive-plugin' : 'unavailable-plugin'),
     )
@@ -661,7 +661,7 @@ async function repairDshHostProfileEntry(
   const state = profiles.get(context)
   const spec = state?.entries.get(id)
   const profile = context.get('profileContext')
-  if (!state?.active || !spec || !profile) throw new Error('DSH Host Profile 入口不可修复。')
+  if (!state?.active || !spec || !profile) throw new Error('DSH host profile entry cannot be repaired.')
   await validateConfig(await importPlugin(context, spec.name), config)
   if (id === DSH_HOST_PROFILE_ENTRIES.piAi) {
     for (const [provider, value] of Object.entries(objectSchema.parse(config['providers'] ?? {})))
@@ -678,7 +678,7 @@ async function repairDshHostProfileEntry(
     await reconcileProfilePatches(context, readProfilePatches('nekro-nxt', retryProfile), 'nekro-nxt', [id])
     assertDshPluginDisposalHealthy(context)
     const entry = [...context.loader.entries()].find((candidate) => candidate.options.id === id)
-    if (entry?.fiber?.state !== FIBER_ACTIVE) throw new Error('DSH 插件修复后仍未就绪。')
+    if (entry?.fiber?.state !== FIBER_ACTIVE) throw new Error('插件修复后仍然没能启动。')
   } catch (error) {
     await writeAtomic(profile.patchPath, previous)
     context.set('profileContext', profile)
@@ -686,7 +686,7 @@ async function repairDshHostProfileEntry(
       await reconcileProfilePatches(context, readProfilePatches('nekro-nxt', profile), 'nekro-nxt')
       assertDshPluginDisposalHealthy(context)
     } catch (rollbackError) {
-      throw new AggregateError([error, rollbackError], 'DSH 配置修复失败，且旧运行状态未完整恢复。')
+      throw new AggregateError([error, rollbackError], '修复失败，部分功能可能没有恢复，请重启后检查。')
     }
     throw error
   }
@@ -709,7 +709,7 @@ export async function retryDshHostProfileEntry(
   onlyProvider?: string,
 ): Promise<void> {
   const profile = context.get('profileContext')
-  if (!profile) throw new Error('DSH Host Profile 不可修复。')
+  if (!profile) throw new Error('DSH host profile cannot be repaired.')
   await withFileLock(path.join(profile.dir, 'package.json'), () =>
     repairDshHostProfileEntry(context, id, config, onlyProvider),
   )
@@ -724,12 +724,12 @@ export async function retryDshHostProfileCompatibility(context: Context, objectI
       (item.provider ?? (item.entryId === DSH_HOST_PROFILE_ENTRIES.deepSeek ? 'deepseek-official' : item.entryId)) ===
       objectId,
   )
-  if (!state?.active || !profile || !issue) throw new Error('没有可重试的 DSH 配置兼容性诊断。')
+  if (!state?.active || !profile || !issue) throw new Error('No compatibility issue to retry.')
   await withFileLock(path.join(profile.dir, 'package.json'), async () => {
     const row = composeEntries([readProfilePatches('nekro-nxt', { ...profile, overlays: [] })]).find(
       ({ id }) => id === issue.entryId,
     )
-    if (!row) throw new Error('当前宿主没有此设置对应的插件入口。')
+    if (!row) throw new Error('No plugin entry for this setting.')
     let config = objectSchema.parse(row.config ?? {})
     if (issue.provider !== undefined) {
       const providers = objectSchema.parse(config['providers'] ?? {})

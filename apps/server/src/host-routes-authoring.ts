@@ -30,7 +30,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
       const testSecretsMatch = /^\/api\/authoring\/tasks\/([^/]+)\/test-secrets$/.exec(url.pathname)
       try {
         if (decisionMatch) {
-          if (req.method !== 'POST') throw new Error('创造任务审批只支持 POST。')
+          if (req.method !== 'POST') throw new Error('Method not allowed.')
           const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(decisionMatch[1] ?? ''))
           const attemptId = AuthoringAttemptIdSchema.parse(decodeURIComponent(decisionMatch[2] ?? ''))
           const params = HostApiContracts.decideAuthoringAttempt.parseParams({ taskId, attemptId })
@@ -40,7 +40,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           return
         }
         if (restoreMatch) {
-          if (req.method !== 'POST') throw new Error('回到旧候选只支持 POST。')
+          if (req.method !== 'POST') throw new Error('Method not allowed.')
           const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(restoreMatch[1] ?? ''))
           const attemptId = AuthoringAttemptIdSchema.parse(decodeURIComponent(restoreMatch[2] ?? ''))
           const params = HostApiContracts.restoreAuthoringAttempt.parseParams({ taskId, attemptId })
@@ -50,7 +50,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           return
         }
         if (testSecretsMatch) {
-          if (req.method !== 'PUT') throw new Error('测试凭据只支持 PUT。')
+          if (req.method !== 'PUT') throw new Error('Method not allowed.')
           const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(testSecretsMatch[1] ?? ''))
           const params = HostApiContracts.setAuthoringTestSecrets.parseParams({ taskId })
           const body = HostApiContracts.setAuthoringTestSecrets.parseRequest(await readJsonBody(req))
@@ -62,7 +62,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           return
         }
         if (stopMatch) {
-          if (req.method !== 'POST') throw new Error('停止创造任务只支持 POST。')
+          if (req.method !== 'POST') throw new Error('Method not allowed.')
           const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(stopMatch[1] ?? ''))
           const params = HostApiContracts.stopAuthoringTask.parseParams({ taskId })
           const body = HostApiContracts.stopAuthoringTask.parseRequest(await readJsonBody(req))
@@ -71,7 +71,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           return
         }
         if (!taskMatch) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         const taskId = AuthoringTaskIdSchema.parse(decodeURIComponent(taskMatch[1] ?? ''))
@@ -81,7 +81,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           writeContractJson(res, 200, HostApiContracts.deleteAuthoringTask, { deleted })
           return
         }
-        if (req.method !== 'GET') throw new Error('创造任务详情只支持 GET。')
+        if (req.method !== 'GET') throw new Error('Method not allowed.')
         const task = runtime.repository.getAuthoringTask(taskId)
         if (!task) throw new Error('创造任务不存在。')
         const testSecrets = await runtime.authoringTestSecrets.describe(task.id)
@@ -115,24 +115,24 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           url.pathname,
         )
       if (!match) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       const encodedAgentId = match[1]
       const action = match[2]
       if (encodedAgentId === undefined || action === undefined) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       let agentId: AgentId
       try {
         agentId = AgentIdSchema.parse(decodeURIComponent(encodedAgentId))
       } catch {
-        writeError(res, 400, 'invalid-agent', '无效的智能体 ID。')
+        writeError(res, 400, 'invalid-agent', 'Invalid agent id.')
         return
       }
       let body: unknown
@@ -171,14 +171,15 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
             .dynamicInventory(dshSessionId)
             .find((row) => row.latestRun?.approvalRequestId === parsed.requestId)?.latestRun
           if (action === 'approve' && pending === undefined) {
-            throw new Error('指定批准请求不属于该智能体的活动会话。')
+            throw new Error("Approval request does not belong to the agent's active session.")
           }
           if (parsed.pluginRunId !== undefined && pending?.pluginRunId !== parsed.pluginRunId) {
-            throw new Error('批准请求与动态运行不匹配。')
+            throw new Error('Approval request does not match the dynamic run.')
           }
           let resolution: DynamicRunResolution
           if (action === 'approve') {
-            if (pending === undefined) throw new Error('指定批准请求不属于该智能体的活动会话。')
+            if (pending === undefined)
+              throw new Error("Approval request does not belong to the agent's active session.")
             resolution = { ok: true, pluginRunId: pending.pluginRunId }
           } else {
             resolution = { ok: false, reason: 'rejected' }
@@ -322,7 +323,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
         }
         return
       }
-      writeError(res, 501, 'not-implemented', '该动态操作尚未开放。')
+      writeError(res, 501, 'not-implemented', 'Not implemented.')
     },
   })
 
@@ -331,7 +332,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
     path: '/api/extensions/save-from-dynamic',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       let parsed: ReturnType<typeof HostApiContracts.saveExtensionFromDynamic.parseRequest>

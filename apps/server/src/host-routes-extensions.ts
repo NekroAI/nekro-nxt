@@ -72,7 +72,7 @@ const resolvePanelCaller = (
       if (!channel) throw new Error('频道不存在。')
       const agentId = runtime.repository.getBinding(channel.id)?.agentId
       if (requestedAgentId !== undefined && requestedAgentId !== agentId)
-        throw new Error('该智能体不是这个频道的响应者。')
+        throw new Error('这个频道不归这个智能体回复。')
       const ownAdapter =
         adapterKey !== undefined && runtime.repository.getConnection(channel.connectionId)?.adapterKey === adapterKey
       const agentAttached = agentId !== undefined && attached(agentId)
@@ -95,7 +95,7 @@ const resolvePanelCaller = (
       return { surface: 'panel', anchor, connectionId: connection.id }
     }
     case 'extension':
-      if (anchor.id !== extensionId) throw new Error('扩展面板只能调用自己的扩展。')
+      if (anchor.id !== extensionId) throw new Error('A panel can only call its own extension.')
       return { surface: 'panel', anchor }
   }
 }
@@ -127,7 +127,7 @@ export function registerExtensionsRoutes({
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname === '/api/host-ui/page-preferences') {
         if (req.method !== 'PUT') {
-          writeError(res, 405, 'method-not-allowed', '页面入口偏好只支持 PUT。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -142,7 +142,7 @@ export function registerExtensionsRoutes({
       }
       const pageMatch = /^\/api\/host-ui\/pages\/([^/]+)\/(call|diagnostic)$/u.exec(url.pathname)
       if (!pageMatch) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       const page = runtime.repository
@@ -153,7 +153,7 @@ export function registerExtensionsRoutes({
         return
       }
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '页面 Runtime 端点只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       if (pageMatch[2] === 'call') {
@@ -167,7 +167,7 @@ export function registerExtensionsRoutes({
             page.owner.kind === 'extension'
               ? runtime.repository.getExtensionRevision(page.owner.revisionId)?.payloadDigest
               : page.owner.artifactDigest
-          if (!grant || grant.artifactDigest !== artifactDigest) throw new Error('页面权限批准已失效。')
+          if (!grant || grant.artifactDigest !== artifactDigest) throw new Error('页面的权限批准已过期，请重新批准。')
           const permissionByMethod: ReadonlyMap<string, HostUiPermission> = new Map([
             ['agents.list', 'agents.read'],
             ['agents.create', 'agents.manage'],
@@ -262,7 +262,7 @@ export function registerExtensionsRoutes({
               const parsed = HostApiContracts.reviseAgent.parseRequest(request.revision)
               const current = runtime.repository.getAgent(request.agentId)
               if (!current || current.revision.id !== parsed.expectedCurrentRevisionId) {
-                throw new Error('智能体配置已更新。')
+                throw new Error('智能体配置刚被修改，请刷新后重试。')
               }
               await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
               const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
@@ -328,7 +328,8 @@ export function registerExtensionsRoutes({
                 .strict()
                 .parse(input.input)
               const descriptor = runtime.adapters.get(request.adapterKey)?.descriptor
-              if (descriptor?.provisioning !== 'user-created') throw new Error('这个 Adapter 不能创建用户连接。')
+              if (descriptor?.provisioning !== 'user-created')
+                throw new Error('This adapter does not create user connections.')
               const secretKeys = new Set(configSecretKeys(descriptor.configSchema))
               for (const key of Object.keys(request.values)) {
                 if (!secretKeys.has(key)) {
@@ -357,7 +358,8 @@ export function registerExtensionsRoutes({
               const pending = request.credentialToken
                 ? pendingHostUiCredentials.get(request.credentialToken)
                 : undefined
-              if (request.credentialToken && !pending) throw new Error('连接凭据提交不存在或已经使用。')
+              if (request.credentialToken && !pending)
+                throw new Error('Credential submission is missing or already used.')
               if (
                 pending &&
                 (pending.ownerKey !== ownerKey ||
@@ -365,7 +367,7 @@ export function registerExtensionsRoutes({
                   pending.expiresAt < Date.now())
               ) {
                 pendingHostUiCredentials.delete(request.credentialToken!)
-                throw new Error('连接凭据提交已失效。')
+                throw new Error('登录信息已过期，请重新提交。')
               }
               const connection = await runtime.createConnection({
                 adapterKey: request.adapterKey,
@@ -537,7 +539,8 @@ export function registerExtensionsRoutes({
                 })
                 .strict()
                 .parse(input.input)
-              if ((current?.revision ?? 0) !== request.expectedRevision) throw new Error('扩展状态已更新。')
+              if ((current?.revision ?? 0) !== request.expectedRevision)
+                throw new Error('扩展数据刚被修改，请刷新后重试。')
               const next = { ...document }
               if (input.method === 'state.delete') delete next[request.key]
               else next[request.key] = request.value ?? null
@@ -548,7 +551,7 @@ export function registerExtensionsRoutes({
               value = { revision: saved.revision }
             }
           } else {
-            if (page.owner.kind !== 'extension') throw new Error('DSH 页面没有注册自定义 Host RPC。')
+            if (page.owner.kind !== 'extension') throw new Error('DSH pages do not register custom RPC.')
             value = await runtime.extensions.call(page.owner.extensionId, input.method, input.input, {
               surface: 'page',
             })
@@ -592,7 +595,7 @@ export function registerExtensionsRoutes({
       const deleteMatch = /^\/api\/extensions\/([^/]+)$/u.exec(url.pathname)
       if (deleteMatch) {
         if (req.method !== 'DELETE') {
-          writeError(res, 405, 'method-not-allowed', '删除本地扩展只支持 DELETE。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -608,7 +611,7 @@ export function registerExtensionsRoutes({
       }
       if (url.pathname === '/api/extensions/imports/inspect') {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '检查扩展导入包只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -631,7 +634,7 @@ export function registerExtensionsRoutes({
       const importCommitMatch = /^\/api\/extensions\/imports\/([^/]+)\/commit$/u.exec(url.pathname)
       if (importCommitMatch) {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '提交扩展导入只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -673,7 +676,7 @@ export function registerExtensionsRoutes({
       const exportMatch = /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/export$/u.exec(url.pathname)
       if (exportMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '导出扩展版本只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -689,7 +692,7 @@ export function registerExtensionsRoutes({
       const installationConfigMatch = /^\/api\/extensions\/([^/]+)\/installation\/config$/u.exec(url.pathname)
       if (installationConfigMatch) {
         if (req.method !== 'PUT') {
-          writeError(res, 405, 'method-not-allowed', '本机扩展配置只支持 PUT。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -726,7 +729,7 @@ export function registerExtensionsRoutes({
         try {
           extensionId = ExtensionIdSchema.parse(decodeURIComponent(installationMatch[1] ?? ''))
         } catch {
-          writeError(res, 400, 'invalid-extension', '无效的扩展 ID。')
+          writeError(res, 400, 'invalid-extension', 'Invalid extension id.')
           return
         }
         if (req.method === 'PUT') {
@@ -766,7 +769,7 @@ export function registerExtensionsRoutes({
           }
           return
         }
-        writeError(res, 405, 'method-not-allowed', '本机扩展安装只支持 PUT/DELETE。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       const hostUiClientMatch =
@@ -775,7 +778,7 @@ export function registerExtensionsRoutes({
         )
       if (hostUiClientMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '页面 Client Artifact 只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -787,7 +790,7 @@ export function registerExtensionsRoutes({
           if (!revision || revision.extensionId !== extensionId) throw new Error('找不到页面扩展版本。')
           const artifact = await runtime.extensionService.buildRevision(revision)
           if (!artifact.clientEntry || artifact.buildKey !== hostUiClientMatch[3]) {
-            throw new Error('页面 Client buildKey 已过期。')
+            throw new Error('Page client build key is stale.')
           }
           const css = hostUiClientMatch[4] === 'css'
           const source = css
@@ -809,7 +812,7 @@ export function registerExtensionsRoutes({
         /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/icon\/([a-f0-9]{64})\.(svg|png|webp)$/u.exec(url.pathname)
       if (extensionIconMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '扩展图标只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -823,7 +826,8 @@ export function registerExtensionsRoutes({
           }
           const sourceDirectory = runtime.extensionService.revisionSourceDirectory(revision)
           const bytes = await readFile(path.join(sourceDirectory, icon.path))
-          if (createHash('sha256').update(bytes).digest('hex') !== icon.sha256) throw new Error('扩展图标摘要不一致。')
+          if (createHash('sha256').update(bytes).digest('hex') !== icon.sha256)
+            throw new Error('Extension icon digest mismatch.')
           validateExtensionIcon(icon.path, resourceContent(icon.path, bytes))
           res.writeHead(200, {
             'content-type': extensionIconContentType(icon.path),
@@ -842,7 +846,7 @@ export function registerExtensionsRoutes({
         /^\/api\/extensions\/([^/]+)\/revisions\/([^/]+)\/host-ui\/assets\/([a-f0-9]{64})\.svg$/u.exec(url.pathname)
       if (hostUiAssetMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '页面图标只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -868,7 +872,7 @@ export function registerExtensionsRoutes({
           if (!page?.success || page.data.icon.kind !== 'svg') throw new Error('页面图标不存在。')
           const source = await readFile(path.join(sourceDirectory, page.data.icon.path), 'utf8')
           if (createHash('sha256').update(source).digest('hex') !== page.data.icon.sha256) {
-            throw new Error('页面图标摘要不一致。')
+            throw new Error('Page icon digest mismatch.')
           }
           validateHostUiSvg(source)
           res.writeHead(200, {
@@ -886,7 +890,7 @@ export function registerExtensionsRoutes({
           url.pathname,
         )
       if (!match) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       let extensionId: z.output<typeof ExtensionIdSchema>
@@ -895,29 +899,29 @@ export function registerExtensionsRoutes({
         extensionId = ExtensionIdSchema.parse(decodeURIComponent(match[1] ?? ''))
         revisionId = ExtensionRevisionIdSchema.parse(decodeURIComponent(match[2] ?? ''))
       } catch {
-        writeError(res, 400, 'invalid-extension-client-target', '无效的扩展或 Revision ID。')
+        writeError(res, 400, 'invalid-extension-client-target', 'Invalid extension or revision id.')
         return
       }
       const revision = runtime.repository.getExtensionRevision(revisionId)
       if (!revision || revision.extensionId !== extensionId) {
-        writeError(res, 404, 'extension-revision-missing', '找不到指定的扩展 Revision。')
+        writeError(res, 404, 'extension-revision-missing', 'Extension revision not found.')
         return
       }
       const action = match[3]
       if (action?.startsWith('client/')) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', 'Client Artifact 只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         // One current version per machine: only the installed Revision serves its Client.
         if (runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId !== revisionId) {
-          writeError(res, 409, 'stale-client-build', '这个版本不是当前安装到本机的版本。')
+          writeError(res, 409, 'stale-client-build', 'Revision is not the installed one.')
           return
         }
         try {
           const artifact = await runtime.extensionService.buildRevision(revision)
           if (!artifact.clientEntry || artifact.buildKey !== match[4]) {
-            throw new Error('Client buildKey 已过期或该 Revision 没有 Client Artifact。')
+            throw new Error('Client build key is stale or the revision has no client artifact.')
           }
           // The stylesheet is scoped to this build, matching the frame the shell draws around its contributions.
           const css = match[5] === 'css'
@@ -937,14 +941,14 @@ export function registerExtensionsRoutes({
         return
       }
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       if (action === 'call') {
         try {
           const parsed = HostApiContracts.extensionClientCall.parseRequest(await readJsonBody(req))
           if (runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId !== revisionId) {
-            throw new Error('这个版本不是当前安装到本机的版本。')
+            throw new Error('Revision is not the installed one.')
           }
           const caller = resolvePanelCaller(
             runtime,
@@ -964,7 +968,7 @@ export function registerExtensionsRoutes({
         try {
           const parsed = HostApiContracts.extensionClientDiagnostic.parseRequest(await readJsonBody(req))
           const activation = runtime.repository.getActivation(parsed.agentId, extensionId)
-          if (activation?.extensionRevisionId !== revisionId) throw new Error('该 Revision 不是当前 Activation。')
+          if (activation?.extensionRevisionId !== revisionId) throw new Error('Revision is not the current activation.')
           runtime.repository.upsertExtensionClientDiagnostic({
             agentId: parsed.agentId,
             extensionId,
@@ -990,7 +994,7 @@ export function registerExtensionsRoutes({
           const parsed = HostApiContracts.hostExtensionClientDiagnostic.parseRequest(await readJsonBody(req))
           const installation = runtime.repository.getHostInstallation(extensionId)
           if (installation?.extensionRevisionId !== revisionId) {
-            throw new Error('该 Revision 不是当前安装到本机的版本。')
+            throw new Error('Revision is not the installed one.')
           }
           runtime.recordHostClientDiagnostic(extensionId, {
             revisionId,

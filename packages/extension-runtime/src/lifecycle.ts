@@ -604,7 +604,7 @@ export class ExtensionLifecycleCoordinator {
           }
           if (live.attachments.has(activation.agentId)) return false
           if (live.revision.id !== activation.extensionRevisionId) {
-            throw new Error('智能体使用的版本与本机安装的版本不一致。')
+            throw new Error('Agent activation revision differs from the installation.')
           }
           const requirement = agentPermissionRequirement(
             live.manifest,
@@ -774,7 +774,7 @@ export class ExtensionLifecycleCoordinator {
         message: message(restoreError),
         observedAt: this.#timestamp(),
       })
-      throw new AggregateError([originalError, restoreError], '扩展变更失败，且原来的版本无法恢复运行。')
+      throw new AggregateError([originalError, restoreError], '修改扩展失败，原来的版本也没能恢复，请重启后检查。')
     }
   }
 

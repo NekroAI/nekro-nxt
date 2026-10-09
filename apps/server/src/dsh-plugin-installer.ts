@@ -265,7 +265,7 @@ export class DshPluginPackageInstaller {
   inspectRegistry(spec: string, onProgress?: DshPluginInstallProgress): Promise<DshPluginInstallInspection> {
     const normalized = spec.trim()
     if (!normalized || /^(?:https?|git|file|link):/iu.test(normalized)) {
-      return Promise.reject(new Error('只允许 npm registry 包名或版本范围，不允许任意 URL。'))
+      return Promise.reject(new Error('只能填写 npm 包名和版本。'))
     }
     return this.#inspect('registry', normalized, undefined, undefined, onProgress)
   }
@@ -293,13 +293,13 @@ export class DshPluginPackageInstaller {
   ): Promise<DshPluginInstallInspection> {
     await this.initialize()
     if (content.byteLength === 0 || content.byteLength > MAX_TARBALL_BYTES) {
-      throw new Error('DSH 插件 tgz 必须大于 0 且不超过 64 MiB。')
+      throw new Error('插件包是空的，或者超过了 64 MiB。')
     }
     const stagingRoot = path.join(this.#root, 'plugin-staging', `upload-${randomUUID()}`)
     await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
     const tarball = path.join(stagingRoot, 'package.tgz')
     await writeFile(tarball, content, { mode: 0o600 })
-    onProgress?.('download', '上传包已写入受管 staging。')
+    onProgress?.('download', '已收到上传的包。')
     try {
       return await this.#inspect(source, tarball, stagingRoot, expected, onProgress)
     } catch (error) {
@@ -338,12 +338,13 @@ export class DshPluginPackageInstaller {
   ): Promise<DshPluginPackageRecord> {
     await this.#cleanupExpiredInspections()
     const pending = this.#pending.get(token)
-    if (!pending) throw new Error('DSH 插件安装检查已失效，请重新检查。')
+    if (!pending) throw new Error('检查结果已过期，请重新检查。')
     const approved = [...new Set(approvedBuilds)].sort()
     const unexpected = approved.filter((name) => !pending.blockedBuilds.includes(name))
-    if (unexpected.length) throw new Error(`安装脚本批准列表包含未检测到的依赖：${unexpected.join(', ')}`)
+    if (unexpected.length)
+      throw new Error(`Approved build scripts include unknown dependencies: ${unexpected.join(', ')}`)
     if (pending.blockedBuilds.length) {
-      onProgress?.('build-scripts', '正在执行用户批准的依赖构建脚本。')
+      onProgress?.('build-scripts', '正在运行你批准的构建脚本。')
       const allowBuilds = Object.fromEntries(
         Object.entries(pending.buildAllowKeys).flatMap(([name, keys]) =>
           keys.map((key) => [key, approved.includes(name)] as const),
@@ -375,7 +376,7 @@ export class DshPluginPackageInstaller {
       }
     }
     const installedAt = this.#timestamp()
-    onProgress?.('publish', '依赖和入口校验通过，正在原子提交安装事实。')
+    onProgress?.('publish', '正在完成安装。')
     const finalDirectory = this.packageDirectory(pending.packageId)
     await mkdir(path.dirname(finalDirectory), { recursive: true, mode: 0o700 })
     await rename(pending.stagingDirectory, finalDirectory)
@@ -547,11 +548,8 @@ export class DshPluginPackageInstaller {
       JSON.stringify({ name: `nekro-nxt-dsh-plugin-${packageId}`, private: true, version: '0.0.0' }, null, 2) + '\n',
       { mode: 0o600 },
     )
-    onProgress?.(
-      'download',
-      source === 'registry' ? '正在从配置的 npm registry 解析并下载精确版本。' : '正在读取上传包。',
-    )
-    onProgress?.('dependencies', '正在关闭安装脚本并安装生产依赖。')
+    onProgress?.('download', source === 'registry' ? '正在从 npm 下载。' : '正在读取上传的包。')
+    onProgress?.('dependencies', '正在安装依赖。')
     await this.#runPnpm(projectDirectory, [
       'add',
       '--save-prod',
@@ -565,14 +563,14 @@ export class DshPluginPackageInstaller {
       .parse(JSON.parse(await readFile(path.join(projectDirectory, 'package.json'), 'utf8')))
     const packageName = Object.keys(projectManifest.dependencies)[0]
     if (!packageName || Object.keys(projectManifest.dependencies).length !== 1) {
-      throw new Error('DSH 插件安装项目必须且只能包含一个根包。')
+      throw new Error('Plugin install project must have exactly one root package.')
     }
     const packageRoot = await realpath(path.join(projectDirectory, 'node_modules', packageName))
     assertInside(this.#root, packageRoot)
     const manifest = packageManifestSchema.parse(
       JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8')),
     )
-    if (manifest.name !== packageName) throw new Error('DSH 插件安装后的包身份与依赖记录不一致。')
+    if (manifest.name !== packageName) throw new Error('Installed package identity differs from the dependency record.')
     const packageDigest = await hashDirectory(packageRoot)
     const lockfile = await readFile(path.join(projectDirectory, 'pnpm-lock.yaml'))
     const lockfileDigest = dependencyLockDigest(lockfile, manifest.name, manifest.version)
@@ -583,9 +581,9 @@ export class DshPluginPackageInstaller {
       await rm(stagingDirectory, { recursive: true, force: true })
       throw new Error(`相同 DSH 插件已经安装：${manifest.name}@${manifest.version}`)
     }
-    onProgress?.('build-scripts', '正在检查确实被阻止的依赖构建脚本。')
+    onProgress?.('build-scripts', '正在检查需要运行构建脚本的依赖。')
     const { blockedBuilds, buildAllowKeys } = await this.#blockedBuilds(projectDirectory)
-    onProgress?.('validation', '正在校验 npm 身份、Bundle 入口和内容摘要。')
+    onProgress?.('validation', '正在校验插件内容。')
     const entries = this.#inspectEntries(packageRoot, manifest)
     const projectRequire = createRequire(path.join(projectDirectory, 'package.json'))
     for (const entry of entries) {

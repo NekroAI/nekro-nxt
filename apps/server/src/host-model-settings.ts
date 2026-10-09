@@ -34,7 +34,7 @@ import {
 import { z } from 'zod'
 export class LlmProviderRemovalResultUnknown extends Error {
   constructor(cause: unknown) {
-    super('供应商移除已提交，但结果读取失败，请刷新核对。', { cause })
+    super('供应商已移除，但页面没能刷新，请重新打开查看。', { cause })
   }
 }
 
@@ -208,11 +208,11 @@ class DraftLlmCredentialProvider extends CredentialProvider {
   }
 
   set(): Promise<void> {
-    return Promise.reject(new Error('连接测试的临时凭据只读。'))
+    return Promise.reject(new Error('Test credentials are read-only.'))
   }
 
   unset(): Promise<void> {
-    return Promise.reject(new Error('连接测试的临时凭据只读。'))
+    return Promise.reject(new Error('Test credentials are read-only.'))
   }
 
   async readRecord(): Promise<CredentialRecord | undefined> {
@@ -236,7 +236,7 @@ class DraftLlmCredentialProvider extends CredentialProvider {
   ): Promise<CredentialRecord | undefined> {
     void key
     void mutate
-    return Promise.reject(new Error('连接测试的临时凭据不支持授权记录写入。'))
+    return Promise.reject(new Error('Test credentials do not store grants.'))
   }
 
   async deleteRecord(): Promise<void> {
@@ -350,7 +350,7 @@ export class HostModelSettings {
   }
 
   async getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
+    if (!this.#hasLlmSettings) throw new Error('DSH model settings are not enabled.')
     const descriptors = new Map(
       this.#context.settings.describe({ redactSecrets: true }).map((descriptor) => [String(descriptor.ns), descriptor]),
     )
@@ -358,7 +358,7 @@ export class HostModelSettings {
     const providers = await Promise.all(
       this.#context.llm.listConfigurableProviders().map(async (entry): Promise<ConfigurableLlmProviderView> => {
         const descriptor = descriptors.get(entry.settingsNs)
-        if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${entry.settingsNs}`)
+        if (!descriptor) throw new Error(`DSH settings namespace not registered: ${entry.settingsNs}`)
         const rawProfile = readObjectPath(descriptor.value, entry.settingsPath)
         const profile = rawProfile === undefined ? undefined : LlmProviderProfileSchema.parse(rawProfile)
         const configured = rawProfile !== undefined
@@ -497,20 +497,20 @@ export class HostModelSettings {
     expectedRevision: number,
     ops: readonly DshSettingsPathOperation[],
   ): Promise<DshSettingsNamespaceView> {
-    if (!this.#hasLlmSettings) throw new Error('DSH 设置服务未启用。')
+    if (!this.#hasLlmSettings) throw new Error('DSH settings are not enabled.')
     const branded = ns
     const before = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === branded)
-    if (!before) throw new Error(`DSH Settings namespace 不存在：${ns}`)
+    if (!before) throw new Error(`DSH settings namespace not found: ${ns}`)
     if (!isDshSettingsSchemaWireSafe(before.schema)) {
-      throw new Error(`DSH Settings namespace 含有无法安全脱敏的 Schema：${ns}`)
+      throw new Error(`DSH settings namespace has an unredactable schema: ${ns}`)
     }
     await this.#context.settings.mutate(branded, ops, expectedRevision)
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === branded)
-    if (!descriptor) throw new Error(`DSH Settings namespace 在保存后已卸载：${ns}`)
+    if (!descriptor) throw new Error(`DSH settings namespace unloaded after save: ${ns}`)
     return this.#projectDshSettingsDescriptor(descriptor)
   }
 
@@ -527,14 +527,14 @@ export class HostModelSettings {
   }
 
   async setDshCredential(ref: string, value: string): Promise<DshCredentialView> {
-    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
+    if (!this.#hasLlmSettings) throw new Error('DSH credentials are not enabled.')
     const branded = credentialRef(ref)
     await this.#context.credentials.set(branded, value)
     return await this.#context.credentials.describe(branded)
   }
 
   async unsetDshCredential(ref: string): Promise<DshCredentialView> {
-    if (!this.#hasLlmSettings) throw new Error('DSH 凭据服务未启用。')
+    if (!this.#hasLlmSettings) throw new Error('DSH credentials are not enabled.')
     const branded = credentialRef(ref)
     await this.#context.credentials.unset(branded)
     return await this.#context.credentials.describe(branded)
@@ -582,13 +582,13 @@ export class HostModelSettings {
       entry.settingsPath[0] !== 'providers' ||
       entry.settingsPath[1] !== provider
     ) {
-      return '这是宿主固定装载的内置接入。清空设置只会恢复默认值，不能停用，因此不支持移除。'
+      return '内置供应商不能移除。'
     }
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === entry.settingsNs)
     if (readObjectPath(descriptor?.base, entry.settingsPath) !== undefined) {
-      return '此供应商由宿主启动配置启用，移除保存值只会恢复默认配置。请先调整宿主启动配置后再移除。'
+      return '这个供应商由启动参数启用，请先修改启动参数再移除。'
     }
     return ''
   }
@@ -601,7 +601,7 @@ export class HostModelSettings {
   }
 
   async getLlmProviderRemovalImpact(provider: string): Promise<RemovalImpact> {
-    if (!this.providerRemoval) throw new Error('宿主未配置供应商引用检查，不能安全移除。')
+    if (!this.providerRemoval) throw new Error('Provider removal check is not configured.')
     const settings = await this.getLlmProviderSettings()
     return getLlmProviderRemovalImpact(
       this.providerRemoval.repository,
@@ -612,7 +612,7 @@ export class HostModelSettings {
   }
 
   async removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
-    if (!this.providerRemoval) throw new Error('宿主未配置供应商引用检查，不能安全移除。')
+    if (!this.providerRemoval) throw new Error('Provider removal check is not configured.')
     const blockedReason = this.#providerRemovalBlockedReason(provider)
     if (blockedReason) throw new LlmProviderRemovalConflict(blockedReason)
     return this.providerRemoval.run(
@@ -644,8 +644,8 @@ export class HostModelSettings {
   }
 
   async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
-    if (!/^[a-z][a-z0-9-]*$/u.test(input.provider)) throw new Error('Provider ID 必须以小写字母开头。')
+    if (!this.#hasLlmSettings) throw new Error('DSH model settings are not enabled.')
+    if (!/^[a-z][a-z0-9-]*$/u.test(input.provider)) throw new Error('供应商 ID 要以小写字母开头。')
     const directory = this.#context.llm.listConfigurableProviders()
     const entry = directory.find((candidate) => candidate.provider === input.provider)
     const settingsNs = entry?.settingsNs ?? 'llm-pi-ai'
@@ -653,7 +653,7 @@ export class HostModelSettings {
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === settingsNs)
-    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
+    if (!descriptor) throw new Error(`DSH settings namespace not registered: ${settingsNs}`)
     const rawCurrent = readObjectPath(descriptor.value, settingsPath)
     const current = rawCurrent === undefined ? undefined : LlmProviderProfileSchema.parse(rawCurrent)
     const credentialRefName =
@@ -693,10 +693,7 @@ export class HostModelSettings {
           error instanceof Error &&
           /needs an? (?:api|baseURL); the installed catalog does not describe/u.test(error.message)
         ) {
-          throw new Error(
-            '新增的模型不在供应商自带目录中：请在高级设置中填写 API 地址并选择 API 协议。指定后该供应商的全部模型都使用这组设置。',
-            { cause: error },
-          )
+          throw new Error('新加的模型不在供应商自带的列表里，请在高级设置中填写 API 地址并选择协议。', { cause: error })
         }
         throw error
       }
@@ -718,7 +715,7 @@ export class HostModelSettings {
     base: Record<string, unknown> | undefined,
   ): Record<string, unknown>[] {
     const modalityField = MODEL_MODALITY_FIELD[settingsNs]
-    if (modalityField === undefined) throw new Error('此供应商的模型列表不支持在设置中编辑。')
+    if (modalityField === undefined) throw new Error('这个供应商的模型列表不能修改。')
     if (models.length === 0) throw new Error('模型列表至少需要一个模型。')
     const ids = models.map((model) => model.id.trim())
     if (ids.some((id) => id.length === 0)) throw new Error('模型 ID 不能为空。')
@@ -745,14 +742,14 @@ export class HostModelSettings {
 
   /** Drop this host's model-list edits so a built-in provider serves its own catalog again. */
   async restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
+    if (!this.#hasLlmSettings) throw new Error('DSH model settings are not enabled.')
     const entry = this.#context.llm.listConfigurableProviders().find((candidate) => candidate.provider === provider)
     if (!entry) throw new Error(`未知模型供应商：${provider}`)
     if (entry.declared === true) throw new Error('自定义供应商没有可恢复的默认模型列表。')
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === entry.settingsNs)
-    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${entry.settingsNs}`)
+    if (!descriptor) throw new Error(`DSH settings namespace not registered: ${entry.settingsNs}`)
     const userProfile = readObjectPath(descriptor.user, entry.settingsPath)
     const ops: SettingsPathOp[] = (['models', 'modelOverrides'] as const)
       .filter((key) => userProfile?.[key] !== undefined)
@@ -805,7 +802,7 @@ export class HostModelSettings {
       )
       return { provider: input.provider, model: input.model }
     }
-    if (!this.#hasLlmSettings) throw new Error('DSH 模型设置服务未启用。')
+    if (!this.#hasLlmSettings) throw new Error('DSH model settings are not enabled.')
     const directoryEntry = this.#context.llm
       .listConfigurableProviders()
       .find((candidate) => candidate.provider === input.provider)
@@ -813,7 +810,7 @@ export class HostModelSettings {
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
       .find((candidate) => candidate.ns === settingsNs)
-    if (!descriptor) throw new Error(`DSH 模型设置 namespace 未注册：${settingsNs}`)
+    if (!descriptor) throw new Error(`DSH settings namespace not registered: ${settingsNs}`)
     const settingsPath = directoryEntry?.settingsPath ?? ['providers', input.provider]
     const rawCurrent = readObjectPath(descriptor.value, settingsPath)
     const current = rawCurrent === undefined ? {} : LlmProviderProfileSchema.parse(rawCurrent)

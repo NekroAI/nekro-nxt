@@ -22,19 +22,19 @@ export function registerScheduledTaskRoutes({ runtime, registerRoute, broadcast 
       const url = new URL(req.url ?? '/', 'http://localhost')
       const match = /^\/api\/scheduled-tasks\/([^/]+)(?:\/(pause|resume|run))?$/u.exec(url.pathname)
       if (match === null) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       const action = match[2]
       try {
         const taskId = ScheduledTaskIdSchema.parse(decodeURIComponent(match[1] ?? ''))
         if (action === undefined) {
-          if (req.method !== 'DELETE') throw new ScheduledTaskError('定时任务只支持 DELETE。', 'invalid')
+          if (req.method !== 'DELETE') throw new ScheduledTaskError('Method not allowed.', 'invalid')
           runtime.scheduledTasks.delete(admin, taskId)
           writeContractJson(res, 200, HostApiContracts.deleteScheduledTask, { deleted: true })
           return
         }
-        if (req.method !== 'POST') throw new ScheduledTaskError('这个操作只支持 POST。', 'invalid')
+        if (req.method !== 'POST') throw new ScheduledTaskError('Method not allowed.', 'invalid')
         if (action === 'pause') {
           writeContractJson(res, 200, HostApiContracts.pauseScheduledTask, runtime.scheduledTasks.pause(admin, taskId))
         } else if (action === 'resume') {

@@ -195,7 +195,7 @@ describe('WeChat iLink Server driver', () => {
         duplicate = runtime.getConnectionLogin(duplicateStarted.loginId)
         return duplicate.status === 'failed' || duplicate.status === 'confirmed'
       })
-      expect(duplicate).toMatchObject({ status: 'failed', message: '该平台账号已经存在活动连接。' })
+      expect(duplicate).toMatchObject({ status: 'failed', message: '这个平台账号已经添加过了。' })
       expect(
         runtime.core.listConnections().filter((connection) => connection.adapterKey === 'wechat-ilink'),
       ).toHaveLength(1)
@@ -327,7 +327,7 @@ describe('WeChat iLink Server driver', () => {
       })
       expect(mismatched).toMatchObject({
         status: 'failed',
-        message: '扫码账号与原连接账号不一致，未替换凭据。',
+        message: '扫码登录的不是原来的账号，没有替换。',
       })
       expect(runtime.core.listConnectionsByAdapter('wechat-ilink').map((connection) => connection.id)).toEqual([
         connectionId,
@@ -400,7 +400,7 @@ describe('WeChat iLink Server driver', () => {
 
       const reauthentication = await runtime.startConnectionLogin({ adapterKey: 'wechat-ilink', connectionId })
       await expect(runtime.startConnectionLogin({ adapterKey: 'wechat-ilink', connectionId })).rejects.toThrow(
-        '该连接已有进行中的重新认证会话。',
+        '这个账号正在重新登录。',
       )
 
       expect(runtime.cancelConnectionLogin(reauthentication.loginId)).toMatchObject({ status: 'cancelled' })
@@ -513,7 +513,7 @@ describe('WeChat iLink Server driver', () => {
 
     try {
       await expect(runtime.createConnection({ adapterKey: 'wechat-ilink', configuration: {} })).rejects.toThrow(
-        '该连接需要通过扫码登录创建，不能使用通用配置表单。',
+        'This platform requires QR login.',
       )
 
       const response = await fetch(origin + '/api/connections', {
@@ -525,7 +525,7 @@ describe('WeChat iLink Server driver', () => {
       await expect(response.json()).resolves.toMatchObject({
         error: {
           code: 'connection-failed',
-          message: '该连接需要通过扫码登录创建，不能使用通用配置表单。',
+          message: 'This platform requires QR login.',
         },
       })
       expect(runtime.core.listConnections().filter((connection) => connection.adapterKey === 'wechat-ilink')).toEqual(

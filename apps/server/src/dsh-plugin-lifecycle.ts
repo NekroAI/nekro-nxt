@@ -42,7 +42,7 @@ export interface DshPluginCompatibilityFailure {
 
 export class DshPluginQuiescenceError extends Error {
   constructor(cause: unknown) {
-    super('DSH 插件资源未完整静止，不能继续隔离或启动。', { cause })
+    super('DSH plugin resources did not quiesce.', { cause })
   }
 }
 
@@ -262,7 +262,7 @@ export class DshPluginLifecycleCoordinator {
   async inspectConfig(entryId: DshPluginEntryId): Promise<DshPluginConfigInspection> {
     this.#assertActive()
     const entry = this.#requireEntry(entryId)
-    if (!this.#hostLoader) throw new Error('DSH Host Loader 尚未初始化。')
+    if (!this.#hostLoader) throw new Error('DSH host loader is not initialized.')
     const moduleName = this.#resolveModule(entry.packageId, entry.moduleName)
     this.#preflight(entry)
     const imported: unknown = await this.#hostLoader.services.loader.import(moduleName)
@@ -301,7 +301,7 @@ export class DshPluginLifecycleCoordinator {
       try {
         await context.fiber.dispose()
       } catch (disposeError) {
-        throw new AggregateError([error, disposeError], 'DSH Agent Loader 创建失败，且临时 Context 未完整静止。')
+        throw new AggregateError([error, disposeError], 'DSH agent loader failed and its context did not quiesce.')
       }
       throw error
     }
@@ -320,20 +320,20 @@ export class DshPluginLifecycleCoordinator {
       assertConfigContainsNoSecrets(input.config)
       const targetKey = input.target === 'host' ? 'host' : input.agentId
       if (!targetKey || (input.target === 'host' && input.agentId !== undefined)) {
-        throw new Error('DSH 智能体作用域必须提供 agentId，Host 作用域不得提供。')
+        throw new Error('Agent scope needs agentId; host scope must not have one.')
       }
       const existingActivations = this.#repository.listDshPluginActivations(entry.id)
       if (existingActivations.some((activation) => activation.target !== input.target)) {
-        throw new Error('普通 DSH 插件入口切换作用域前必须先关闭全部现有启用关系。')
+        throw new Error('先关闭这个入口在所有地方的启用，再切换。')
       }
       if (entry.selectedScope !== undefined && entry.selectedScope !== input.target && existingActivations.length) {
-        throw new Error('DSH 插件入口当前作用域仍在使用，不能直接切换。')
+        throw new Error('先关闭这个入口在所有地方的启用，再切换。')
       }
       const candidate = { ...entry, selectedScope: input.target, config: input.config }
       const changed = new Map<OwnedLoader, boolean>()
       try {
         if (input.target === 'host') {
-          if (!this.#hostLoader) throw new Error('DSH Host Loader 尚未初始化。')
+          if (!this.#hostLoader) throw new Error('DSH host loader is not initialized.')
           changed.set(this.#hostLoader, this.#hostLoader.loaderIds.has(entry.id))
           await this.#mountOrUpdate(this.#hostLoader, candidate)
         } else {
@@ -346,7 +346,7 @@ export class DshPluginLifecycleCoordinator {
           const sessions = [...agentIds].flatMap((agentId) => this.#listAgentSessions(agentId))
           await Promise.all(sessions.map((session) => session.waitUntilSafe()))
           if (sessions.length === 0) {
-            if (!this.#agentProbeLoader) throw new Error('DSH Agent Probe Loader 尚未初始化。')
+            if (!this.#agentProbeLoader) throw new Error('DSH agent probe loader is not initialized.')
             changed.set(this.#agentProbeLoader, false)
             await this.#mount(this.#agentProbeLoader, candidate)
             await this.#unmount(this.#agentProbeLoader, candidate.id)
@@ -371,7 +371,8 @@ export class DshPluginLifecycleCoordinator {
         const failures = rollback
           .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
           .map((outcome): unknown => outcome.reason)
-        if (failures.length) throw new AggregateError([error, ...failures], 'DSH 插件变更失败，且旧配置未完整恢复。')
+        if (failures.length)
+          throw new AggregateError([error, ...failures], '修改失败，部分功能可能没有恢复，请重启后检查。')
         throw error
       }
       const activation: DshPluginActivationRecord = {
@@ -397,7 +398,8 @@ export class DshPluginLifecycleCoordinator {
         const failures = rollback
           .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
           .map((outcome): unknown => outcome.reason)
-        if (failures.length) throw new AggregateError([error, ...failures], 'DSH 插件提交失败，且旧配置未完整恢复。')
+        if (failures.length)
+          throw new AggregateError([error, ...failures], '修改失败，部分功能可能没有恢复，请重启后检查。')
         throw error
       }
       return activation
@@ -437,7 +439,7 @@ export class DshPluginLifecycleCoordinator {
           .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
           .map((outcome): unknown => outcome.reason)
         if (failures.length) {
-          throw new AggregateError([error, ...failures], 'DSH 插件关闭失败，且已卸载 Session 未完整恢复。')
+          throw new AggregateError([error, ...failures], '关闭失败，部分功能可能没有恢复，请重启后检查。')
         }
         throw error
       }
@@ -449,7 +451,7 @@ export class DshPluginLifecycleCoordinator {
           .filter((outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected')
           .map((outcome): unknown => outcome.reason)
         if (failures.length) {
-          throw new AggregateError([error, ...failures], 'DSH 插件关闭提交失败，且运行时未完整恢复。')
+          throw new AggregateError([error, ...failures], '关闭失败，部分功能可能没有恢复，请重启后检查。')
         }
         throw error
       }
@@ -470,7 +472,7 @@ export class DshPluginLifecycleCoordinator {
     this.#assertActive()
     const entry = this.#requireEntry(entryId)
     const activations = this.#repository.listDshPluginActivations(entryId)
-    if (activations.length === 0) throw new Error('DSH 插件没有保留的启用记录，不能按兼容性重试启用。')
+    if (activations.length === 0) throw new Error('这个插件没有可以重新启用的记录。')
     for (const activation of activations) {
       await this.activate({
         entryId,
@@ -567,7 +569,7 @@ export class DshPluginLifecycleCoordinator {
     await ownedContext.registry.inject(['loader'], (injected) => {
       services = injected
     })
-    if (!services) throw new Error('DSH Loader Service 注入未完成。')
+    if (!services) throw new Error('DSH loader services are not injected.')
     return { context: ownedContext, services, loaderIds: new Map() }
   }
 
@@ -616,8 +618,8 @@ export class DshPluginLifecycleCoordinator {
       reasonCode,
       reason:
         reasonCode === 'incompatible-peers'
-          ? `插件 ${installed.packageName}@${installed.packageVersion} 声明的 DSH 版本与当前宿主不兼容；安装和启用记录已保留。`
-          : '插件的版本兼容声明无效，已隔离且保留安装和启用记录。',
+          ? `插件 ${installed.packageName}@${installed.packageVersion} 不兼容当前版本的 DSH，设置已保留。`
+          : '插件的版本信息无效，已停用，设置已保留。',
       runtimeFingerprint: DSH_RUNTIME_FINGERPRINT,
     }
     const error = new DshPluginCompatibilityError(failure)
@@ -700,7 +702,7 @@ export class DshPluginLifecycleCoordinator {
             reason:
               error instanceof DshPluginCompatibilityError
                 ? error.message
-                : '插件加载或释放失败，请检查此插件的诊断；安装和启用记录已保留。',
+                : '插件加载失败，详情见诊断信息，设置已保留。',
           }),
       retryable: phase !== 'dispose',
       checkedAt: this.#timestamp(),

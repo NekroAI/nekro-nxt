@@ -27,12 +27,12 @@ import { fetchAdapterRemoteBytes } from './adapter-remote-assets.js'
 import type { NekroRuntime } from './bootstrap.js'
 const parseStoredAdapterConfiguration = (value: JsonValue): Readonly<Record<string, string | number | boolean>> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError('连接配置必须是对象。')
+    throw new TypeError('Connection configuration must be an object.')
   }
   const configuration: Record<string, string | number | boolean> = {}
   for (const [key, entry] of Object.entries(value)) {
     if (typeof entry !== 'string' && typeof entry !== 'number' && typeof entry !== 'boolean') {
-      throw new TypeError(`连接配置字段 ${key} 的持久格式无效。`)
+      throw new TypeError(`Stored connection field ${key} is invalid.`)
     }
     configuration[key] = entry
   }
@@ -172,9 +172,9 @@ export class ConnectionApplicationService {
     if (!this.lifecycle().started || this.lifecycle().disposed)
       throw new Error('NekroRuntime is not accepting new Connections.')
     const contribution = this.ports.adapters.get(input.adapterKey)
-    if (contribution?.descriptor.provisioning !== 'user-created') throw new Error('该连接平台不可由用户创建。')
-    if (contribution.descriptor.creation?.mode === 'qr-login')
-      throw new Error('该连接需要通过扫码登录创建，不能使用通用配置表单。')
+    if (contribution?.descriptor.provisioning !== 'user-created')
+      throw new Error('This platform does not support user-created connections.')
+    if (contribution.descriptor.creation?.mode === 'qr-login') throw new Error('This platform requires QR login.')
     const descriptor = contribution.descriptor
     const configurationInput = input.configuration ?? {}
     const credentialsInput = input.credentials ?? {}
@@ -184,10 +184,10 @@ export class ConnectionApplicationService {
     const secretKeys = configSecretKeys(descriptor.configSchema)
     for (const key of Object.keys(configurationInput)) {
       if (!fields.some((field) => field.key === key) || secretKeys.includes(key))
-        throw new TypeError(`连接配置包含未知字段：${key}`)
+        throw new TypeError(`Unknown connection field: ${key}`)
     }
     for (const key of Object.keys(credentialsInput)) {
-      if (!secretKeys.includes(key)) throw new TypeError(`连接凭据包含未知字段：${key}`)
+      if (!secretKeys.includes(key)) throw new TypeError(`Unknown credential field: ${key}`)
     }
     for (const field of fields) {
       if (field.kind !== 'secret') continue
@@ -228,7 +228,7 @@ export class ConnectionApplicationService {
     const connection = this.ports.core.getConnection(connectionId)
     if (!connection) throw new Error('连接不存在。')
     const descriptor = this.ports.adapters.get(connection.adapterKey)?.descriptor
-    if (!descriptor?.aliasEditable) throw new Error('系统托管连接不需要编辑别名。')
+    if (!descriptor?.aliasEditable) throw new Error('System connections have no editable alias.')
     const updated = this.ports.core.updateConnectionAlias(connectionId, alias)
     this.#notifyConnectionChanges()
     return updated
@@ -241,8 +241,8 @@ export class ConnectionApplicationService {
     const connection = this.ports.core.getConnection(connectionId)
     if (!connection) throw new Error('连接不存在。')
     const descriptor = this.ports.adapters.get(connection.adapterKey)?.descriptor
-    if (!descriptor) throw new Error('这个连接的适配器未安装，无法修改活动默认值。')
-    if (new Set(activityKeys).size !== activityKeys.length) throw new Error('连接活动默认值不能包含重复项。')
+    if (!descriptor) throw new Error('这个连接的平台扩展没有安装，暂时不能修改。')
+    if (new Set(activityKeys).size !== activityKeys.length) throw new Error('Duplicate activity keys.')
     for (const activityKey of activityKeys) {
       const definition = descriptor.activities.find((activity) => activity.key === activityKey)
       const capability = this.connectionCapabilities(connectionId)?.activities[activityKey]
@@ -272,7 +272,8 @@ export class ConnectionApplicationService {
     const schema = contribution.descriptor.configSchema
     const secretKeys = configSecretKeys(schema)
     for (const key of Object.keys(configurationPatch)) {
-      if (!Object.hasOwn(schema.dict, key) || secretKeys.includes(key)) throw new Error(`连接配置包含未知字段：${key}`)
+      if (!Object.hasOwn(schema.dict, key) || secretKeys.includes(key))
+        throw new Error(`Unknown connection field: ${key}`)
     }
     // Only declared, non-secret fields are validated and replaced. Undeclared keys stay: Adapters keep private
     // state there (an account id from a login, credential references).
@@ -310,21 +311,22 @@ export class ConnectionApplicationService {
     if (!this.lifecycle().started || this.lifecycle().disposed)
       throw new Error('NekroRuntime is not accepting new Connections.')
     const contribution = this.ports.adapters.get(input.adapterKey)
-    if (contribution?.descriptor.provisioning !== 'user-created') throw new Error('该连接平台不可由用户创建。')
+    if (contribution?.descriptor.provisioning !== 'user-created')
+      throw new Error('This platform does not support user-created connections.')
     const connectionLogin = contribution.connectionLogin
     if (contribution.descriptor.creation?.mode !== 'qr-login' || !connectionLogin) {
-      throw new Error('该连接平台不支持扫码登录。')
+      throw new Error('This platform does not support QR login.')
     }
     if (input.connectionId !== undefined) {
       const existing = this.ports.core.getConnection(input.connectionId)
       if (!existing || existing.adapterKey !== input.adapterKey) throw new Error('要重新认证的连接不存在。')
-      if (!existing.accountKey) throw new Error('原连接没有可核对的账号身份，无法安全重新认证。')
+      if (!existing.accountKey) throw new Error('无法确认原来登录的是哪个账号，请删除后重新添加。')
       const alreadyReauthenticating = [...this.#connectionLoginSessions.values()].some(
         (session) =>
           session.targetConnectionId === input.connectionId &&
           (session.status === 'pending' || session.status === 'scanned'),
       )
-      if (alreadyReauthenticating) throw new Error('该连接已有进行中的重新认证会话。')
+      if (alreadyReauthenticating) throw new Error('这个账号正在重新登录。')
     }
     const loginId = 'connection-login-' + randomUUID()
     const abortController = new AbortController()
@@ -498,7 +500,7 @@ export class ConnectionApplicationService {
     const accountKey = result.accountKey.trim()
     if (!accountKey) throw new Error('扫码登录结果缺少账号身份。')
     const configuration = parseStoredAdapterConfiguration(result.configuration)
-    const duplicateMessage = '该平台账号已经存在活动连接。'
+    const duplicateMessage = '这个平台账号已经添加过了。'
     const findDuplicate = (): ConnectionRecord | undefined =>
       this.ports.core.listConnectionsByAdapter(adapterKey).find((candidate) => candidate.accountKey === accountKey)
     if (findDuplicate()) throw new Error(duplicateMessage)
@@ -517,7 +519,7 @@ export class ConnectionApplicationService {
       if (signal.aborted) throw signal.reason
       await this.mountAdapter(connection.id)
       const diagnostic = this.#adapterDiagnostics.get(connection.id)
-      if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '连接挂载失败。')
+      if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '连接启动失败。')
       if (signal.aborted) throw signal.reason
       return connection
     } catch (error) {
@@ -545,7 +547,7 @@ export class ConnectionApplicationService {
     const current = this.ports.core.getConnection(connectionId)
     if (!current) throw new Error('要重新认证的连接不存在。')
     if (!current.accountKey || current.accountKey !== result.accountKey.trim()) {
-      throw new Error('扫码账号与原连接账号不一致，未替换凭据。')
+      throw new Error('扫码登录的不是原来的账号，没有替换。')
     }
     const configuration = { ...parseStoredAdapterConfiguration(result.configuration) }
     const savedConfiguration = parseStoredAdapterConfiguration(current.config)
@@ -574,7 +576,7 @@ export class ConnectionApplicationService {
       if (this.lifecycle().started) {
         await this.mountAdapter(connectionId)
         const diagnostic = this.#adapterDiagnostics.get(connectionId)
-        if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '重新挂载连接失败。')
+        if (diagnostic?.status === 'failed') throw new Error(diagnostic.message ?? '重新连接失败。')
       }
       if (signal.aborted) throw signal.reason
       await Promise.allSettled(
@@ -605,7 +607,7 @@ export class ConnectionApplicationService {
     options: { readonly deleteChannelData: boolean },
   ): Promise<{ readonly archived: boolean }> {
     if (this.lifecycle().disposed) throw new Error('NekroRuntime is disposed.')
-    if (connectionId === this.ports.internalConnectionId) throw new Error('系统托管连接不能删除。')
+    if (connectionId === this.ports.internalConnectionId) throw new Error('内置频道的连接不能删除。')
     const connection =
       this.ports.core.getConnection(connectionId) ?? this.ports.repository.getArchivedConnection(connectionId)
     if (!connection) throw new Error('连接不存在。')
@@ -653,7 +655,7 @@ export class ConnectionApplicationService {
     const connection = this.ports.core.listConnections().find((candidate) => candidate.id === connectionId)
     if (!connection) throw new Error('Connection does not exist.')
     const descriptor = this.ports.adapters.get(connection.adapterKey)?.descriptor
-    if (!descriptor?.diagnostics[direction]) throw new Error('该连接平台不提供这个测试流程。')
+    if (!descriptor?.diagnostics[direction]) throw new Error('This platform does not provide this test.')
     const runtime = this.#adapterRuntimes.get(connectionId)
     const diagnostic = this.#adapterDiagnostics.get(connectionId)
     if (!runtime || diagnostic?.status !== 'connected') {
@@ -746,7 +748,7 @@ export class ConnectionApplicationService {
         const runtime = this.#adapterRuntimes.get(connectionId)
         await runtime?.stop()
         this.#adapterRuntimes.delete(connectionId)
-        this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的适配器未安装。' })
+        this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的平台扩展没有安装。' })
       }),
     )
     this.#notifyConnectionChanges()
@@ -780,7 +782,7 @@ export class ConnectionApplicationService {
           ),
           ...remountFailures,
         ],
-        '适配器连接未能全部静止；安装状态保持不变。',
+        'Adapter connections did not stop; installation unchanged.',
       )
     }
   }
@@ -801,8 +803,8 @@ export class ConnectionApplicationService {
       this.#adapterDiagnostics.set(connectionId, {
         status: 'stopped',
         message: unavailable
-          ? '这个连接的适配器版本已不可用，请安装新版适配器；频道、消息和凭据引用已保留。'
-          : '这个连接的适配器未安装。',
+          ? '这个平台扩展的版本已不可用，请安装新版。频道和消息都还在。'
+          : '这个连接的平台扩展没有安装。',
       })
       this.#notifyConnectionChanges()
       return
@@ -920,31 +922,31 @@ export class ConnectionApplicationService {
     const resolveOwnedDescriptor = (adapterKey: string) => {
       const connection = this.ports.core.getConnection(connectionId)
       if (!connection || connection.adapterKey !== adapterKey) {
-        return rejectEvent('适配器提交的事件不属于当前连接。')
+        return rejectEvent('Event does not belong to this connection.')
       }
       const descriptor = this.ports.adapters.get(connection.adapterKey)?.descriptor
-      if (!descriptor) return rejectEvent('提交事件的适配器当前未注册。')
+      if (!descriptor) return rejectEvent('Adapter is not registered.')
       return descriptor
     }
     return {
       connectionId,
       now: this.now,
       acceptChannelInbound: async (event) => {
-        if (event.connectionId !== connectionId) return rejectEvent('适配器提交了其他连接的频道事件。')
+        if (event.connectionId !== connectionId) return rejectEvent('Channel event belongs to another connection.')
         const adapterKey = this.ports.core.getConnection(connectionId)?.adapterKey
         if (adapterKey && this.#quiescingAdapterKeys.has(adapterKey)) {
-          throw new Error('适配器正在进入安全间隙，暂不接收新的频道事件。')
+          throw new Error('Adapter is quiescing; event rejected.')
         }
         const descriptor = resolveOwnedDescriptor(event.adapterKey)
         const channel = this.ports.core.getChannel(event.channelId)
         if (!channel || channel.connectionId !== connectionId) {
-          return rejectEvent('适配器提交的频道事件不属于当前连接。')
+          return rejectEvent('Channel event belongs to another connection.')
         }
         if (event.activityKey !== undefined) {
           const activity = descriptor.activities.find((candidate) => candidate.key === event.activityKey)
-          if (activity?.scope !== 'channel') return rejectEvent(`适配器提交了未声明的频道活动：${event.activityKey}`)
+          if (activity?.scope !== 'channel') return rejectEvent(`Undeclared channel activity: ${event.activityKey}`)
           if (activity.channelKinds?.includes(channel.kind) !== true) {
-            return rejectEvent(`频道活动 ${event.activityKey} 不适用于当前频道类型。`)
+            return rejectEvent(`Activity ${event.activityKey} does not apply to this channel kind.`)
           }
         }
         this.#lastInboundByConnection.set(connectionId, {
@@ -955,11 +957,12 @@ export class ConnectionApplicationService {
         return this.ports.channels.acceptChannelInbound(event)
       },
       acceptConnectionInbound: (event) => {
-        if (event.connectionId !== connectionId) return rejectEvent('适配器提交了其他连接的连接活动。')
+        if (event.connectionId !== connectionId)
+          return rejectEvent('Connection activity belongs to another connection.')
         const descriptor = resolveOwnedDescriptor(event.adapterKey)
         const activity = descriptor.activities.find((candidate) => candidate.key === event.activityKey)
         if (activity?.scope !== 'connection') {
-          return rejectEvent(`适配器提交了未声明的连接活动：${event.activityKey}`)
+          return rejectEvent(`Undeclared connection activity: ${event.activityKey}`)
         }
         const commit = this.ports.core.appendConnectionInbound(event)
         if (commit.inserted) this.#notifyConnectionChanges(commit.event)

@@ -304,7 +304,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         body: JSON.stringify({ displayName: '超限智能体', padding: 'x'.repeat(2 * 1024 * 1024) }),
       })
       expect(response.status).toBe(400)
-      expect(await response.text()).toContain('JSON 请求体超过 2097152 字节限制')
+      expect(await response.text()).toContain('JSON body exceeds 2097152 bytes')
       expect(runtime.core.listAgents()).toEqual([])
     } finally {
       api.dispose()

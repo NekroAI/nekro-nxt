@@ -101,7 +101,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           )
           return
         }
-        writeError(res, 405, 'method-not-allowed', '只支持 GET 与 PUT。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
       } catch (error) {
         communityFailure(res, error, 'community-endpoint-invalid')
       }
@@ -113,7 +113,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     path: '/api/community/endpoint/test',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -135,7 +135,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     path: '/api/community/installed',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -153,7 +153,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     path: '/api/community/mine',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -169,7 +169,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     path: COMMUNITY_CALLBACK_PATH,
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -191,7 +191,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     path: '/api/community/status',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       writeContractJson(res, 200, HostApiContracts.getCommunityStatus, await community.status())
@@ -214,7 +214,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           writeContractJson(res, 200, HostApiContracts.communityLogout, await community.logout())
           return
         }
-        writeError(res, 405, 'method-not-allowed', '只支持 POST 与 DELETE。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
       } catch (error) {
         communityFailure(res, error, 'community-login-failed')
       }
@@ -226,7 +226,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     path: '/api/community/publish',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -257,7 +257,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
       try {
         if (url.pathname === '/api/community/extensions') {
           if (req.method !== 'GET') {
-            writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
           const params = HostApiContracts.listCommunityExtensions.parseParams({
@@ -273,7 +273,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
         const extensionMatch = /^\/api\/community\/extensions\/([^/]+)$/u.exec(url.pathname)
         if (extensionMatch) {
           if (req.method !== 'GET') {
-            writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
           const extensionId = ExtensionIdSchema.parse(decodeURIComponent(extensionMatch[1] ?? ''))
@@ -294,13 +294,13 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
             writeContractJson(res, 200, HostApiContracts.requestCommunityReview, { ok: true })
             return
           }
-          writeError(res, 405, 'method-not-allowed', '只支持 GET 与 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         const withdrawMatch = /^\/api\/community\/releases\/([^/]+)\/withdraw$/u.exec(url.pathname)
         if (withdrawMatch) {
           if (req.method !== 'POST') {
-            writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
           const releaseId = HostApiContracts.withdrawCommunityRelease.parseParams({
@@ -313,7 +313,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
         const importMatch = /^\/api\/community\/releases\/([^/]+)\/import$/u.exec(url.pathname)
         if (importMatch) {
           if (req.method !== 'POST') {
-            writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
           const params = HostApiContracts.importCommunityRelease.parseParams({
@@ -330,7 +330,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           writeContractJson(res, 200, HostApiContracts.importCommunityRelease, inspection)
           return
         }
-        writeError(res, 404, 'not-found', '接口不存在。')
+        writeError(res, 404, 'not-found', 'Unknown route.')
       } catch (error) {
         communityFailure(res, error, 'community-request-failed')
       }

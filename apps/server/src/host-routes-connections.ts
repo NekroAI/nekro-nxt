@@ -16,7 +16,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname === '/api/connection-logins') {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -30,7 +30,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
 
       const match = /^\/api\/connection-logins\/([^/]+)$/u.exec(url.pathname)
       if (!match?.[1]) {
-        writeError(res, 404, 'not-found', '未定义路由：' + req.method + ' ' + url.pathname + '。')
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       const loginId = decodeURIComponent(match[1])
@@ -49,7 +49,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
           })
           return
         }
-        writeError(res, 405, 'method-not-allowed', '只支持 GET 或 DELETE。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
       } catch (error) {
         writeError(res, 400, 'connection-login-failed', error instanceof Error ? error.message : String(error))
       }
@@ -61,7 +61,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
     path: '/api/platform-users',
     handler: (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '平台用户目录只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -164,7 +164,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
     path: '/api/connections',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       let parsed: ReturnType<typeof HostApiContracts.createConnection.parseRequest>
@@ -199,7 +199,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       const eventsMatch = /^\/api\/connections\/([^/]+)\/events$/.exec(url.pathname)
       if (eventsMatch) {
         if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', '连接活动只支持 GET。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -214,7 +214,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
             ...(limit === null ? {} : { limit: Number(limit) }),
           })
           if ((params.beforeReceivedAt === undefined) !== (params.beforeId === undefined)) {
-            throw new Error('连接活动游标必须同时包含时间和 ID。')
+            throw new Error('Activity cursor needs both time and id.')
           }
           const records = runtime.core.listConnectionEvents(params.connectionId, {
             limit: params.limit + 1,
@@ -234,19 +234,19 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       const configurationMatch = /^\/api\/connections\/([^/]+)\/configuration$/.exec(url.pathname)
       if (configurationMatch) {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         const encodedConnectionId = configurationMatch[1]
         if (encodedConnectionId === undefined) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         let connectionId: ReturnType<typeof ConnectionIdSchema.parse>
         try {
           connectionId = ConnectionIdSchema.parse(decodeURIComponent(encodedConnectionId))
         } catch {
-          writeError(res, 400, 'invalid-connection', '无效的连接 ID。')
+          writeError(res, 400, 'invalid-connection', 'Invalid connection id.')
           return
         }
         try {
@@ -270,19 +270,19 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       const aliasMatch = /^\/api\/connections\/([^/]+)\/alias$/.exec(url.pathname)
       if (aliasMatch) {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         const encodedConnectionId = aliasMatch[1]
         if (encodedConnectionId === undefined) {
-          writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+          writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
           return
         }
         let connectionId: ReturnType<typeof ConnectionIdSchema.parse>
         try {
           connectionId = ConnectionIdSchema.parse(decodeURIComponent(encodedConnectionId))
         } catch {
-          writeError(res, 400, 'invalid-connection', '无效的连接 ID。')
+          writeError(res, 400, 'invalid-connection', 'Invalid connection id.')
           return
         }
         try {
@@ -301,7 +301,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       const defaultsMatch = /^\/api\/connections\/([^/]+)\/activity-trigger-defaults$/.exec(url.pathname)
       if (defaultsMatch) {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -326,7 +326,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       const restoreMatch = /^\/api\/connections\/([^/]+)\/restore$/.exec(url.pathname)
       if (restoreMatch) {
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -346,7 +346,7 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       const deleteMatch = /^\/api\/connections\/([^/]+)$/.exec(url.pathname)
       if (deleteMatch) {
         if (req.method !== 'DELETE') {
-          writeError(res, 405, 'method-not-allowed', '只支持 DELETE。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         try {
@@ -365,23 +365,23 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
       }
       const match = /^\/api\/connections\/([^/]+)\/test$/.exec(url.pathname)
       if (!match) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       const encodedConnectionId = match[1]
       if (encodedConnectionId === undefined) {
-        writeError(res, 404, 'not-found', `未定义路由：${req.method} ${url.pathname}。`)
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
         return
       }
       let connectionId: ReturnType<typeof ConnectionIdSchema.parse>
       try {
         connectionId = ConnectionIdSchema.parse(decodeURIComponent(encodedConnectionId))
       } catch {
-        writeError(res, 400, 'invalid-connection', '无效的连接 ID。')
+        writeError(res, 400, 'invalid-connection', 'Invalid connection id.')
         return
       }
       let parsed: ReturnType<typeof HostApiContracts.testConnection.parseRequest>

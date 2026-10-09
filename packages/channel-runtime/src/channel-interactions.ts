@@ -254,7 +254,7 @@ export class ChannelInteractions {
         : status === 'partially-succeeded'
           ? '消息只撤回了部分平台投递。'
           : status === 'unknown'
-            ? '平台结果不明确；为避免重复副作用，不会自动重试。'
+            ? '平台没有明确返回结果，可能已经执行了，所以没有自动重试。'
             : '消息撤回失败。',
       outcomes,
     )
@@ -504,7 +504,7 @@ export class ChannelInteractions {
     readonly targetId: string
     readonly args?: JsonValue
   }): Promise<DurableInteractionIntent> {
-    if (!input.clientRequestId.trim()) throw new Error('互动请求必须提供 clientRequestId。')
+    if (!input.clientRequestId.trim()) throw new Error('clientRequestId is required.')
     const now = this.#timestamp()
     const planned: DurableInteractionIntent = {
       id: `interaction:${input.episode.id}:${this.#nextUlid()}`,
@@ -565,7 +565,7 @@ export class ChannelInteractions {
     return {
       intentId: intent.id,
       status: 'unknown',
-      message: '该互动请求已经提交但尚未得到确定结果；不会重复执行。',
+      message: '这个操作已经提交，结果还不确定，不会重复执行。',
     }
   }
 
@@ -594,7 +594,7 @@ export class ChannelInteractions {
         const result: ChannelInteractionResult = {
           intentId: intent.id,
           status: 'unknown',
-          message: 'NekroNXT 重启时该互动仍未得到确定回执；不会自动重试。',
+          message: 'NekroNXT 重启时这个操作还没有结果，没有自动重试。',
         }
         intent = {
           ...intent,

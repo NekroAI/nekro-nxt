@@ -284,7 +284,7 @@ export class NekroRuntime {
         assertKeyAvailable: (adapterKey, extensionId) => {
           const registered = this.adapters.get(adapterKey)
           const owned = this.adapters.getByOwner(`extension:${extensionId}`)
-          if (registered && registered !== owned) throw new Error(`适配器 key 已被占用: ${adapterKey}`)
+          if (registered && registered !== owned) throw new Error(`Adapter key already registered: ${adapterKey}`)
           return Promise.resolve()
         },
       }),
@@ -435,7 +435,7 @@ export class NekroRuntime {
           ChannelIdSchema.parse(binding.channelId),
           AgentIdSchema.parse(binding.agentId),
         )
-        if (episode === undefined) throw new Error('当前频道没有活动会话，暂时不能执行平台动作。')
+        if (episode === undefined) throw new Error('这个频道现在没有进行中的对话，暂时不能执行平台操作。')
         if (!settled.current) throw new Error('Channel Runtime is not ready.')
         return { episode, channels: settled.current }
       }
@@ -575,11 +575,11 @@ export class NekroRuntime {
         },
         adapters: {
           register: (owner, contribution) => {
-            if (!adapterPort.current) return Promise.reject(new Error('适配器注册尚未就绪。'))
+            if (!adapterPort.current) return Promise.reject(new Error('Adapter registry is not ready.'))
             return adapterPort.current.register(owner, contribution)
           },
           mountConnections: (adapterKey) => {
-            if (!adapterPort.current) return Promise.reject(new Error('适配器连接尚未就绪。'))
+            if (!adapterPort.current) return Promise.reject(new Error('Adapter connections are not ready.'))
             return adapterPort.current.mountConnections(adapterKey)
           },
         },
@@ -988,7 +988,7 @@ export class NekroRuntime {
         }
       }
       if (rollbackFailures.length) {
-        throw new AggregateError([error, ...rollbackFailures], '删除本地扩展失败，且原运行状态未完整恢复。')
+        throw new AggregateError([error, ...rollbackFailures], '删除扩展失败，部分功能可能没有恢复，请重启后检查。')
       }
       throw error
     }
@@ -1014,7 +1014,7 @@ export class NekroRuntime {
   async createAgentWithInternalChannel(content: AgentRevisionContent): Promise<AgentEntity> {
     const models = await this.host.listAvailableLlmModels()
     if (!models.some((model) => model.provider === content.model.provider && model.id === content.model.model)) {
-      throw new Error(`模型未在当前 DSH Provider 目录注册：${content.model.provider}/${content.model.model}`)
+      throw new Error(`模型不在供应商的模型列表里：${content.model.provider}/${content.model.model}`)
     }
     const agent = this.core.createAgentWithChannel(content, {
       connectionId: this.internalConnectionId,

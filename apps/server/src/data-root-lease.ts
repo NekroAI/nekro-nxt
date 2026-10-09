@@ -30,7 +30,7 @@ const readOwner = async (filename: string): Promise<z.infer<typeof leaseSchema> 
   try {
     handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
     const info = await handle.stat()
-    if (!info.isFile() || info.nlink !== 1) throw new Error('数据根锁路径冲突。')
+    if (!info.isFile() || info.nlink !== 1) throw new Error('Data root lock path conflict.')
     return leaseSchema.parse(JSON.parse(await handle.readFile('utf8')))
   } catch (error) {
     if (code(error) === 'ENOENT') return undefined
@@ -52,12 +52,12 @@ export async function acquireDataRootLease(dataRoot: string): Promise<() => Prom
     databaseInfo !== undefined &&
     (!databaseInfo.isFile() || databaseInfo.isSymbolicLink() || databaseInfo.nlink !== 1)
   )
-    throw new Error('数据根锁库路径冲突。')
+    throw new Error('Data root lock database path conflict.')
   let unlock: () => void
   try {
     unlock = acquireSqliteFileLease(databasePath)
   } catch (cause) {
-    throw new Error('数据根已由另一个 Host 使用，或锁库无法打开；请先停止旧实例。', { cause })
+    throw new Error('数据目录正被另一个 NekroNXT 使用，请先关闭它。', { cause })
   }
   const filename = path.join(directory, 'host.lock')
   const token = randomUUID()
@@ -66,7 +66,7 @@ export async function acquireDataRootLease(dataRoot: string): Promise<() => Prom
     if (previous !== undefined) {
       // v2 ownership is the OS lock already acquired above; container hostnames and PIDs can be reused.
       if (previous.version === 1 && (previous.hostname !== hostname() || alive(previous.pid)))
-        throw new Error('数据根已由另一个 Host 使用；请先停止旧实例。')
+        throw new Error('数据目录正被另一个 NekroNXT 使用，请先关闭它。')
       // Legacy reclamation had no owner metadata. Never guess that an active old binary has stopped.
       if (
         previous.version === 1 &&
@@ -98,7 +98,7 @@ export async function acquireDataRootLease(dataRoot: string): Promise<() => Prom
     (task ??= (async () => {
       try {
         const current = await readOwner(filename)
-        if (current?.token !== token || current.version !== 2) throw new Error('Host 数据根锁的所有权发生变化。')
+        if (current?.token !== token || current.version !== 2) throw new Error('Data root lock ownership changed.')
         await unlink(filename)
         await syncUpgradeDirectory(directory)
       } finally {

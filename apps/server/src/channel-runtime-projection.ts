@@ -700,9 +700,9 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
               ? `智能体本轮失败：${failedTurn.error.message}`
               : '智能体当前不可用，请检查模型和连接设置。'
             : unrepliedTurn
-              ? '智能体未按频道回应协议完成本轮。'
+              ? '智能体这一轮既没有回复，也没有说明原因。'
               : latest?.responseState === 'finished'
-                ? '智能体已明确结束本轮处理。'
+                ? '智能体这一轮没有回复。'
                 : '智能体当前空闲。'
 
   return {

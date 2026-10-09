@@ -100,7 +100,7 @@ describe('LLM model catalog management', () => {
           expectedRevision: configured.settingsRevision,
           models: [{ id: first.id }, { id: 'synthetic-uncatalogued' }],
         }),
-      ).rejects.toThrow('请在高级设置中填写 API 地址并选择 API 协议')
+      ).rejects.toThrow('请在高级设置中填写 API 地址并选择协议')
       await runtime.host.saveLlmProvider({
         provider: 'opencode-go',
         expectedRevision: configured.settingsRevision,

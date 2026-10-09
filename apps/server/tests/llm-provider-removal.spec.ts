@@ -153,7 +153,7 @@ describe('LLM provider removal', () => {
       declared: false,
     })
     const fixed = await preview('deepseek-official')
-    expect(fixed.blockedReason).toContain('固定装载')
+    expect(fixed.blockedReason).toContain('内置供应商不能移除')
     expect((await remove(fixed.provider, fixed.expectedRevision)).status).toBe(409)
   })
 
@@ -240,7 +240,9 @@ describe('LLM provider removal', () => {
   it('rejects fixed removal without poisoning subsequent primary or auxiliary reference commits', async () => {
     const fixed = await preview('deepseek-official')
     expect((await remove(fixed.provider, fixed.expectedRevision)).status).toBe(409)
-    await expect(runtime.host.removeLlmProvider(fixed.provider, fixed.expectedRevision)).rejects.toThrow('固定装载')
+    await expect(runtime.host.removeLlmProvider(fixed.provider, fixed.expectedRevision)).rejects.toThrow(
+      '内置供应商不能移除',
+    )
     const created = runtime.core.createAgent({
       displayName: '固定接入仍可引用',
       persona: '',
@@ -270,9 +272,9 @@ describe('LLM provider removal', () => {
     runtime = await NekroRuntime.create(options())
     await save('deepseek')
     const before = await runtime.host.getLlmProviderRemovalImpact('deepseek')
-    expect(before.blockedReason).toContain('启动配置')
+    expect(before.blockedReason).toContain('启动参数')
     const settings = await runtime.host.getLlmProviderSettings()
-    await expect(runtime.host.removeLlmProvider('deepseek', before.expectedRevision)).rejects.toThrow('启动配置')
+    await expect(runtime.host.removeLlmProvider('deepseek', before.expectedRevision)).rejects.toThrow('启动参数')
     expect(await runtime.host.getLlmProviderSettings()).toEqual(settings)
     expect(() =>
       runtime.core.createAgent({
@@ -423,7 +425,7 @@ describe('LLM provider removal', () => {
       .mockRejectedValueOnce(new Error('synthetic result read failure'))
     const response = await remove('deepseek', before.expectedRevision)
     expect(response.status).toBe(503)
-    expect(await response.text()).toContain('已提交')
+    expect(await response.text()).toContain('供应商已移除')
     expect(
       (await runtime.host.getLlmProviderSettings()).providers.find((entry) => entry.provider === 'deepseek'),
     ).toMatchObject({ configured: false })

@@ -56,7 +56,7 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
     path: '/api/community/personas',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -81,7 +81,7 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
     path: '/api/community/mine/personas',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -97,7 +97,7 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
     path: '/api/community/personas/publish',
     handler: async (req, res) => {
       if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
       }
       try {
@@ -121,14 +121,14 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
       const match = /^\/api\/community\/personas\/([^/]+)(?:\/(avatar|install))?$/u.exec(url.pathname)
       const parsedId = CommunityPersonaIdSchema.safeParse(decodeURIComponent(match?.[1] ?? ''))
       if (!match || !parsedId.success) {
-        writeError(res, 404, 'not-found', '接口不存在。')
+        writeError(res, 404, 'not-found', 'Unknown route.')
         return
       }
       const personaId = parsedId.data
       try {
         if (match[2] === undefined) {
           if (req.method !== 'GET') {
-            writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
           writeContractJson(res, 200, HostApiContracts.getCommunityPersona, await personas.get(personaId))
@@ -136,7 +136,7 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
         }
         if (match[2] === 'avatar') {
           if (req.method !== 'GET') {
-            writeError(res, 405, 'method-not-allowed', '只支持 GET。')
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
           const version = url.searchParams.get('v')
@@ -153,7 +153,7 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
           return
         }
         if (req.method !== 'POST') {
-          writeError(res, 405, 'method-not-allowed', '只支持 POST。')
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         const input = HostApiContracts.installCommunityPersona.parseRequest(await readJsonBody(req))

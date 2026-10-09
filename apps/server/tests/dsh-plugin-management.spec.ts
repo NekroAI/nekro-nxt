@@ -214,7 +214,7 @@ describe('managed DSH plugin lifecycle', () => {
       const inspection = await runtime.dshPluginInstaller.inspectTarball(await createFixtureTarball(directory))
       expect(await readdir(path.join(directory, 'dsh', 'plugin-staging'))).toHaveLength(1)
       now += 10 * 60_000
-      await expect(runtime.dshPluginInstaller.commit(inspection.token, [])).rejects.toThrow('安装检查已失效')
+      await expect(runtime.dshPluginInstaller.commit(inspection.token, [])).rejects.toThrow('检查结果已过期')
       expect(await readdir(path.join(directory, 'dsh', 'plugin-staging'))).toEqual([])
       expect(runtime.repository.listDshPluginPackages()).toEqual([])
     } finally {

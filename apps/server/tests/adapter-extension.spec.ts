@@ -302,7 +302,7 @@ describe('Host Adapter Extension end-to-end', () => {
         method: 'DELETE',
       })
       expect(failedUninstall.ok).toBe(false)
-      expect(await failedUninstall.text()).toContain('安装状态保持不变')
+      expect(await failedUninstall.text()).toContain('installation unchanged')
       expect(runtime.repository.getHostInstallation(saved.extensionId)).toBeDefined()
       expect(runtime.adapters.get('synthetic-chat')).toBeDefined()
       expect(runtime.adapterConnectionDiagnostic(connection.id)).toMatchObject({ status: 'connected' })
@@ -320,7 +320,7 @@ describe('Host Adapter Extension end-to-end', () => {
       expect(runtime.core.listChannelsByConnection(connection.id)).toHaveLength(1)
       expect(runtime.adapterConnectionDiagnostic(connection.id)).toMatchObject({
         status: 'stopped',
-        message: '这个连接的适配器未安装。',
+        message: '这个连接的平台扩展没有安装。',
       })
 
       const conflicting = runtime.host.defineDynamicPackage(episode.dshSessionId, {

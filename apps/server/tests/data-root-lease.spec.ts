@@ -87,7 +87,7 @@ describe('data-root lifetime lease', () => {
       )
       expect(archives).toHaveLength(1)
       expect(await readFile(path.join(root, 'backups', archives[0]!), 'utf8')).toBe(previousJson)
-      await expect(acquireDataRootLease(root)).rejects.toThrow('另一个 Host')
+      await expect(acquireDataRootLease(root)).rejects.toThrow('另一个 NekroNXT')
     } finally {
       await release()
     }
@@ -98,7 +98,7 @@ describe('data-root lifetime lease', () => {
     const release = await acquireDataRootLease(root)
     const replacement = JSON.stringify(lease(process.pid, 2))
     await writeFile(ownerFile(root), replacement)
-    await expect(release()).rejects.toThrow('所有权发生变化')
+    await expect(release()).rejects.toThrow('ownership changed')
     expect(await readFile(ownerFile(root), 'utf8')).toBe(replacement)
   })
 
@@ -107,7 +107,7 @@ describe('data-root lifetime lease', () => {
     const unmanaged = path.join(root, 'unmanaged.txt')
     await writeFile(unmanaged, 'not a lock')
     await symlink(unmanaged, path.join(root, 'backups', 'host-lease.sqlite'))
-    await expect(acquireDataRootLease(root)).rejects.toThrow('路径冲突')
+    await expect(acquireDataRootLease(root)).rejects.toThrow('path conflict')
     expect(await readFile(unmanaged, 'utf8')).toBe('not a lock')
   })
 
@@ -133,7 +133,7 @@ describe('data-root lifetime lease', () => {
     expect((await once(child, 'message'))[0]).toBe('locked')
     if (child.pid === undefined) throw new Error('fixture child has no PID')
     await writeFile(ownerFile(root), JSON.stringify(lease(child.pid, 2)))
-    await expect(acquireDataRootLease(root)).rejects.toThrow('另一个 Host')
+    await expect(acquireDataRootLease(root)).rejects.toThrow('另一个 NekroNXT')
     const exit = once(child, 'exit')
     child.kill('SIGKILL')
     await exit

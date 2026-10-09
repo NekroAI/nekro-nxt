@@ -90,7 +90,7 @@ export const createNekroHostApi = (
         ...route,
         handler: (req, res) => {
           if (!isReady()) {
-            writeError(res, 503, 'host-upgrading', '宿主正在完成升级检查，请稍后重试。')
+            writeError(res, 503, 'host-upgrading', 'NekroNXT 正在完成升级，请稍后再试。')
             return
           }
           const clientRelease = req.headers['x-nekro-client-release']
@@ -100,7 +100,7 @@ export const createNekroHostApi = (
             typeof clientRelease === 'string' &&
             clientRelease !== productMetadata.releaseId
           ) {
-            writeError(res, 409, 'release-mismatch', '页面版本与当前服务不一致，请保留草稿并刷新页面。')
+            writeError(res, 409, 'release-mismatch', '服务已升级，请刷新页面。')
             return
           }
           const segments = new URL(req.url ?? '/', 'http://localhost').pathname.split('/')
@@ -396,7 +396,7 @@ export const createNekroHostApi = (
     path: '/api',
     handler: (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      writeError(res, 501, 'not-implemented', `API 端点 ${req.method} ${url.pathname} 尚未实现。`)
+      writeError(res, 501, 'not-implemented', `Not implemented: ${req.method} ${url.pathname}`)
     },
   })
 
