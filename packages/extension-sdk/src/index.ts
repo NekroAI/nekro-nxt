@@ -720,8 +720,16 @@ export interface HostUiKit {
 }
 
 export interface ExtensionClientHost {
-  /** Calls a Host RPC of this Revision, or a product method allowed by the declared permissions. */
-  call(method: string, input?: ExtensionJsonValue): Promise<ExtensionJsonValue>
+  /**
+   * Calls an RPC of the extension's host instance, or a product method allowed by the declared permissions. A panel
+   * passes its `anchor` so the handler learns which agent, channel or connection it is shown for; without it the call
+   * comes from the extension itself.
+   */
+  call(
+    method: string,
+    input?: ExtensionJsonValue,
+    options?: { readonly anchor?: ExtensionPanelProps['anchor'] },
+  ): Promise<ExtensionJsonValue>
   subscribe(topic: string, listener: (value: ExtensionJsonValue) => void): () => void
 }
 

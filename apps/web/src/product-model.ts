@@ -8,8 +8,11 @@ import type {
   HostApiResponse,
   AdapterActivityKey,
   ConfigSchemaDocument,
+  ExtensionPanelAnchor,
+  ExtensionPermissionRequirement,
+  ExtensionPermissions,
+  ExtensionProvide,
   ExtensionUiContributions,
-  HostUiPermissionDeclaration,
   JsonValue,
   PromptDocumentV1,
 } from '@nekro-nxt/contracts'
@@ -271,7 +274,8 @@ export interface LocalExtensionSummary {
   readonly name: string
   readonly description: string
   readonly revision: number
-  readonly scope: 'agent' | 'host-adapter' | 'host-ui'
+  /** What the latest saved record provides: agent abilities, pages, an adapter, MCP servers. */
+  readonly provides: readonly ExtensionProvide[]
   /** 扩展包自带的图标：取正在使用的保存记录，没有时取最新一条带图标的记录。 */
   readonly iconUrl?: string
   readonly revisions: readonly {
@@ -282,13 +286,18 @@ export interface LocalExtensionSummary {
     readonly createdAt: number
     /** 从社区安装的保存记录的来源。 */
     readonly source?: CommunitySource
-    readonly scope: 'agent' | 'host-adapter' | 'host-ui'
+    readonly provides: readonly ExtensionProvide[]
+    /** Whether this record can be enabled for agents. */
+    readonly agentLayer: boolean
     readonly contributions: readonly string[]
     readonly clientBuilt: boolean
     readonly buildKey?: string
     /** Panels, tool views and message renderers this Revision contributes to the shell. */
     readonly ui: ExtensionUiContributions
-    readonly configSchema?: ConfigSchemaDocument
+    /** The host instance's configuration form. */
+    readonly hostConfigSchema?: ConfigSchemaDocument
+    /** Each enabled agent's configuration form. */
+    readonly agentConfigSchema?: ConfigSchemaDocument
     readonly pages: HostApiResponse<'snapshot'>['hostUi']['pages']
     readonly verification?: {
       readonly verifiedAt: number
@@ -302,9 +311,11 @@ export interface LocalExtensionSummary {
       readonly renderedPanels: readonly string[]
       readonly renderedToolViews: readonly string[]
       readonly renderedMessageRenderers: readonly string[]
-      readonly permissions?: HostUiPermissionDeclaration
-      readonly permissionDigest?: string
-      readonly permissionApprovalRequired?: boolean
+      readonly permissions?: ExtensionPermissions
+      /** Installing this record on the machine, against the current host grant. */
+      readonly hostPermission?: ExtensionPermissionRequirement
+      /** Enabling this record for an agent that has no grant yet. */
+      readonly agentPermission?: ExtensionPermissionRequirement
     }
   }[]
   readonly createdByAgentId?: string
@@ -347,9 +358,9 @@ export interface LocalExtensionSummary {
     readonly renderedPanels: readonly string[]
     readonly renderedToolViews: readonly string[]
     readonly renderedMessageRenderers: readonly string[]
-    readonly permissions?: HostUiPermissionDeclaration
-    readonly permissionDigest?: string
-    readonly permissionApprovalRequired?: boolean
+    readonly permissions?: ExtensionPermissions
+    readonly hostPermission?: ExtensionPermissionRequirement
+    readonly agentPermission?: ExtensionPermissionRequirement
   }
   readonly clientActivations: readonly {
     readonly agentId: string
@@ -366,7 +377,9 @@ export interface LocalExtensionSummary {
   readonly installation?: {
     readonly revisionId: string
     readonly installedAt: number
+    /** Host configuration without secret fields; `configuredSecrets` lists those the Host stores. */
     readonly config: JsonValue
+    readonly configuredSecrets: readonly string[]
     readonly runtime?: {
       readonly status: 'active' | 'restore-failed' | 'dispose-failed'
       readonly message?: string
@@ -379,9 +392,16 @@ export interface LocalExtensionSummary {
     readonly message?: string
     readonly observedAt: number
   }
-  readonly hostUiPermission?: HostApiResponse<'snapshot'>['extensions'][number]['hostUiPermission']
+  /** Installing the latest record on this machine, against the current host grant. */
+  readonly hostPermission?: ExtensionPermissionRequirement
   /** Latest saved Revision id; not intended for display. */
   readonly revisionId?: string
+}
+
+/** Permission digests the user approved, by layer. */
+export interface ExtensionApprovals {
+  readonly host?: string
+  readonly agent?: string
 }
 
 export interface DynamicApproval {
@@ -604,28 +624,30 @@ export interface ProductState {
     readonly targetExtensionId?: string
   }): Promise<SavedDynamicExtension>
   /**
-   * Enables or disables an agent extension. `permissionDigest` is the user's approval of exactly the permissions
-   * that Revision declares; the Host refuses activation without it when approval is required.
+   * Enables or disables an extension for an agent. The approvals are the user's consent to exactly what the record
+   * declares: `agent` for its agent-layer capabilities, `host` when enabling also installs or switches it on this
+   * machine. The Host refuses the change when an approval it requires is missing.
    */
   setExtensionActive(
     id: string,
     agentId: string,
     enabled: boolean,
     revisionId?: string,
-    permissionDigest?: string,
+    approvals?: ExtensionApprovals,
   ): Promise<void>
   /**
-   * Saves extension configuration: per agent for agent extensions (takes effect at the next safe point), or for the
-   * installation of a Host extension.
+   * Saves extension configuration: one agent's configuration when `agentId` is given (takes effect at the next safe
+   * point), otherwise the host configuration of the installation.
    */
   updateExtensionConfig(input: {
     readonly extensionId: string
     readonly agentId?: string
     readonly config: JsonValue
-    /** Write-only credential drafts of an agent extension; empty drafts keep the stored credential. */
+    /** Write-only credential drafts; empty drafts keep the stored credential. */
     readonly secrets?: Readonly<Record<string, string>>
   }): Promise<void>
-  setHostExtensionInstalled(id: string, revisionId: string | null, permissionDigest?: string): Promise<void>
+  /** Installs (or switches) the extension on this machine; `null` uninstalls it and stops every agent's use. */
+  setHostExtensionInstalled(id: string, revisionId: string | null, approvals?: ExtensionApprovals): Promise<void>
   reportHostExtensionClientDiagnostic(input: {
     readonly extensionId: string
     readonly revisionId: string
@@ -633,9 +655,11 @@ export interface ProductState {
     readonly message?: string
   }): Promise<void>
   callExtensionClient(input: {
-    readonly agentId: string
     readonly extensionId: string
     readonly revisionId: string
+    /** Where the calling panel is shown; the Host checks it and tells the extension. */
+    readonly anchor?: { readonly kind: ExtensionPanelAnchor; readonly id: string }
+    readonly agentId?: string
     readonly method: string
     readonly value?: ExtensionJsonValue
   }): Promise<ExtensionJsonValue>

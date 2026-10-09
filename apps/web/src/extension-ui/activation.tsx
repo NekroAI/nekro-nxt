@@ -1,4 +1,6 @@
+import type { ExtensionPermissionRequirement } from '@nekro-nxt/contracts'
 import { useState, type ReactNode } from 'react'
+import type { ExtensionApprovals } from '../product-model.js'
 import { useProductRuntime, type LocalExtensionSummary, type ProductState } from '../product-runtime.js'
 import { ConfirmDialog, SwitchRow } from '../ui-kit/index.js'
 import { highRiskCapabilities, permissionLines } from './permissions.js'
@@ -9,7 +11,10 @@ interface PendingApproval {
   readonly agentId: string
   readonly agentName: string
   readonly revision: LocalExtensionSummary['revisions'][number]
-  readonly digest: string
+  /** Installing or switching the extension on this machine, when enabling does that and it needs approval. */
+  readonly host?: ExtensionPermissionRequirement
+  /** The agent-layer capabilities, when they need approval. */
+  readonly agent?: ExtensionPermissionRequirement
   readonly resolve: (approved: boolean) => void
 }
 
@@ -64,12 +69,12 @@ export function useExtensionActivation(): {
   const [acceptedRisks, setAcceptedRisks] = useState<ReadonlySet<string>>(new Set())
 
   /** Sends the request and resolves once the store shows its outcome (or after a bounded wait). */
-  const apply = async (input: ActivationRequest, permissionDigest?: string): Promise<void> => {
+  const apply = async (input: ActivationRequest, approvals?: ExtensionApprovals): Promise<void> => {
     const store = product.store
     const before = transitionOf(store.getState(), input)
     await store
       .getState()
-      .setExtensionActive(input.extensionId, input.agentId, input.enabled, input.revisionId, permissionDigest)
+      .setExtensionActive(input.extensionId, input.agentId, input.enabled, input.revisionId, approvals)
     if (reflects(store.getState(), input, before)) return
     await new Promise<void>((resolve) => {
       const finish = () => {
@@ -92,15 +97,17 @@ export function useExtensionActivation(): {
   }): Promise<boolean> => {
     const state = product.store.getState()
     const extension = state.extensions.find((candidate) => candidate.id === input.extensionId)
-    const revisionId = input.revisionId ?? extension?.revisions.at(-1)?.id
+    // One current version per machine: an installed extension is enabled on its installed record.
+    const revisionId = input.revisionId ?? extension?.installation?.revisionId ?? extension?.revisions.at(-1)?.id
     const revision = extension?.revisions.find((candidate) => candidate.id === revisionId)
     const verification = revision?.verification
-    if (!input.enabled || !extension || !revision || !verification?.permissionApprovalRequired) {
+    const installs = extension?.installation?.revisionId !== revisionId
+    const host = installs && verification?.hostPermission?.approvalRequired ? verification.hostPermission : undefined
+    const agent = verification?.agentPermission?.approvalRequired ? verification.agentPermission : undefined
+    if (!input.enabled || !extension || !revision || (host === undefined && agent === undefined)) {
       await apply({ ...input, ...(revisionId === undefined ? {} : { revisionId }) })
       return true
     }
-    const digest = verification.permissionDigest
-    if (!digest) throw new Error('这个扩展版本缺少权限摘要，无法批准。')
     setAcceptedRisks(new Set())
     const approved = await new Promise<boolean>((resolve) =>
       setPending({
@@ -108,14 +115,18 @@ export function useExtensionActivation(): {
         agentId: input.agentId,
         agentName: state.agents.find((agent) => agent.id === input.agentId)?.name ?? '智能体',
         revision,
-        digest,
+        ...(host === undefined ? {} : { host }),
+        ...(agent === undefined ? {} : { agent }),
         resolve,
       }),
     )
     return approved
   }
 
-  const risks = pending === undefined ? [] : highRiskCapabilities(pending.revision.verification?.permissions)
+  const risks =
+    pending === undefined
+      ? []
+      : [...highRiskCapabilities(pending.host?.declaration), ...highRiskCapabilities(pending.agent?.declaration)]
   const dialog = pending ? (
     <ConfirmDialog
       open
@@ -135,17 +146,35 @@ export function useExtensionActivation(): {
             enabled: true,
             revisionId: pending.revision.id,
           },
-          pending.digest,
+          {
+            ...(pending.host === undefined ? {} : { host: pending.host.permissionDigest }),
+            ...(pending.agent === undefined ? {} : { agent: pending.agent.permissionDigest }),
+          },
         )
         pending.resolve(true)
         setPending(undefined)
       }}
     >
-      <ul className={styles.permissions}>
-        {permissionLines(pending.revision.verification?.permissions).map((line) => (
-          <li key={line}>{line}</li>
-        ))}
-      </ul>
+      {pending.host === undefined ? null : (
+        <>
+          <p className={styles.layer}>安装到本机，对整台机器生效：</p>
+          <ul className={styles.permissions}>
+            {permissionLines(pending.host.declaration).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {pending.agent === undefined ? null : (
+        <>
+          {pending.host === undefined ? null : <p className={styles.layer}>只对{pending.agentName}生效：</p>}
+          <ul className={styles.permissions}>
+            {permissionLines(pending.agent.declaration).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </>
+      )}
       {risks.map((risk) => (
         <SwitchRow
           key={risk.key}

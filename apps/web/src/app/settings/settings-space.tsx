@@ -430,7 +430,7 @@ function useAdapterRows() {
     adapter,
     source: extensions.find(
       (extension) =>
-        extension.scope === 'host-adapter' &&
+        extension.provides.includes('adapter') &&
         extension.revisions.some((revision) => revision.contributions.includes(`适配器：${adapter.key}`)),
     ),
     accounts: connections.filter((connection) => connection.adapterKey === adapter.key).length,

@@ -124,26 +124,40 @@ export const sortTasks = <Task extends Pick<AuthoringTask, 'status' | 'updatedAt
   return [...tasks].sort((a, b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt)
 }
 
-export const scopeLabel: Record<LocalExtensionSummary['scope'], string> = {
-  agent: '智能体扩展',
-  'host-adapter': '平台适配器',
-  'host-ui': '页面扩展',
+const PROVIDE_LABEL: Readonly<Record<string, string>> = {
+  agent: '智能体能力',
+  page: '页面',
+  adapter: '平台适配',
+  mcp: 'MCP 服务',
+}
+
+/** What an extension provides, as one short line: 「智能体能力 · 页面」; labels this build does not know are skipped. */
+export const providesLabel = (provides: readonly string[]): string => {
+  const labels = provides.flatMap((item) => (PROVIDE_LABEL[item] === undefined ? [] : [PROVIDE_LABEL[item]]))
+  return labels.length === 0 ? '扩展' : labels.join(' · ')
+}
+
+/** Whether the installed (or else the latest usable) record can be enabled for agents. */
+export const hasAgentLayer = (extension: LocalExtensionSummary): boolean => {
+  const installed = extension.revisions.find((revision) => revision.id === extension.installation?.revisionId)
+  return (
+    (installed ?? extension.revisions.findLast((revision) => revision.format !== 'unavailable'))?.agentLayer === true
+  )
 }
 
 /** One short line describing who uses an extension right now. */
 export const extensionUsage = (extension: LocalExtensionSummary): { readonly label: string; readonly tone: Tone } => {
-  if (extension.scope !== 'agent') {
-    if (!extension.installation) return { label: '未安装', tone: 'neutral' }
-    return extension.installation.runtime && extension.installation.runtime.status !== 'active'
-      ? { label: '运行异常', tone: 'bad' }
-      : { label: '已安装', tone: 'ok' }
+  const broken =
+    (extension.installation?.runtime !== undefined && extension.installation.runtime.status !== 'active') ||
+    extension.activations.some((item) => item.runtime && item.runtime.status !== 'active')
+  if (broken) return { label: '运行异常', tone: 'bad' }
+  if (extension.activations.length > 0) {
+    return { label: `${extension.activations.length} 个智能体使用`, tone: 'ok' }
   }
-  if (extension.activations.some((item) => item.runtime && item.runtime.status !== 'active')) {
-    return { label: '运行异常', tone: 'bad' }
+  if (hasAgentLayer(extension) && !extension.provides.some((item) => item === 'page' || item === 'adapter')) {
+    return { label: '未启用', tone: 'neutral' }
   }
-  return extension.activations.length > 0
-    ? { label: `${extension.activations.length} 个智能体使用`, tone: 'ok' }
-    : { label: '未启用', tone: 'neutral' }
+  return extension.installation ? { label: '已安装', tone: 'ok' } : { label: '未安装', tone: 'neutral' }
 }
 
 // Longest prefix first: `工具视图` must not be read as `工具`.
@@ -183,12 +197,6 @@ export const taskGroup = (task: Pick<AuthoringTask, 'status'>): TaskGroup =>
     : isTaskOpen(task)
       ? 'active'
       : 'ended'
-
-export const EXTENSION_GROUPS: readonly { readonly scope: LocalExtensionSummary['scope']; readonly label: string }[] = [
-  { scope: 'agent', label: '智能体扩展' },
-  { scope: 'host-ui', label: '页面' },
-  { scope: 'host-adapter', label: '适配器' },
-]
 
 const pad = (value: number): string => String(value).padStart(2, '0')
 

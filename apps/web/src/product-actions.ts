@@ -78,7 +78,10 @@ export interface ProductActions {
   'channels.getRuntime': (input: HostApiParams<'getChannelRuntime'>) => Promise<ChannelRuntimeView>
   'extensions.install': (
     input: HostApiParams<'installHostExtension'> &
-      Omit<HostApiRequest<'installHostExtension'>, 'permissionApproval'> & { permissionDigest?: string },
+      Omit<HostApiRequest<'installHostExtension'>, 'permissionApproval' | 'agentPermissionApproval'> & {
+        permissionDigest?: string
+        agentPermissionDigest?: string
+      },
   ) => Promise<HostApiResponse<'installHostExtension'>>
   'extensions.saveFromDynamic': (
     input: RenameDisplayName<HostApiRequest<'saveExtensionFromDynamic'>> & { name: string },

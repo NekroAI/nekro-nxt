@@ -25,7 +25,7 @@ import {
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { PublishDialog } from '../workshop/publish-dialog.js'
-import { scopeLabel } from '../workshop/workshop-model.js'
+import { providesLabel } from '../workshop/workshop-model.js'
 import { errorMessage, openExternal, type CommunityState } from './community-model.js'
 import { MyPersonasSection } from './my-personas.js'
 import styles from './community.module.css'
@@ -138,7 +138,8 @@ export function MineView({ community }: { readonly community: CommunityState }) 
                   {extension.delisted ? <Chip tone="bad">已下架</Chip> : null}
                 </div>
                 <span className={styles.itemMeta}>
-                  {scopeLabel[extension.scope]} · {extension.downloads} 次下载 · {relativeTime(extension.updatedAt)}更新
+                  {providesLabel(extension.provides)} · {extension.downloads} 次下载 ·{' '}
+                  {relativeTime(extension.updatedAt)}更新
                 </span>
                 {extension.delisted && extension.delistedReason ? (
                   <span className={styles.itemMeta}>下架原因：{extension.delistedReason}</span>
@@ -203,7 +204,7 @@ export function MineView({ community }: { readonly community: CommunityState }) 
                 <ExtensionIcon id={extension.id} name={extension.name} iconUrl={extension.iconUrl} size="lg" />
                 <div className={styles.itemBody}>
                   <div className={styles.itemTitle}>{extension.name}</div>
-                  <span className={styles.itemMeta}>{scopeLabel[extension.scope]}</span>
+                  <span className={styles.itemMeta}>{providesLabel(extension.provides)}</span>
                 </div>
                 <div className={styles.itemActions}>
                   <Button size="small" onClick={() => setPublishing(extension)}>

@@ -19,73 +19,47 @@ const hasUi = (ui: ExtensionUiContributions): boolean =>
 
 const ADAPTER_PREFIX = '适配器：'
 
-const rejectingHost: ExtensionClientHost = {
-  call: () => Promise.reject(new Error('适配器扩展的界面不提供自定义 Host RPC。')),
-  subscribe: () => () => undefined,
-}
-
-/** Installed Clients the shell should run: every agent activation and every installed Adapter with UI. */
+/**
+ * Installed Clients the shell should run: one per installed extension with UI, on its installed record. Its panels
+ * and tool views are placed for the agents it is enabled for when rendering, so enabling never remounts it.
+ */
 const desiredClients = (product: ProductRuntime, extensions: readonly LocalExtensionSummary[]): DesiredClient[] =>
   extensions.flatMap((extension): DesiredClient[] => {
-    const base = (revisionId: string, buildKey: string, query: string) => {
-      const path = `/api/extensions/${encodeURIComponent(extension.id)}/revisions/${encodeURIComponent(revisionId)}/client/${buildKey}`
-      return { moduleUrl: `${path}.mjs${query}`, cssUrl: `${path}.css${query}` }
-    }
-    if (extension.scope === 'agent') {
-      return extension.clientActivations.flatMap((activation) => {
-        const revision = extension.revisions.find((candidate) => candidate.id === activation.revisionId)
-        if (!revision || revision.format === 'unavailable' || !hasUi(revision.ui)) return []
-        return [
-          {
-            owner: {
-              kind: 'agent',
-              key: `agent:${activation.agentId}:${extension.id}`,
-              label: extension.name,
-              agentId: activation.agentId,
-              extensionId: extension.id,
-              revisionId: revision.id,
-              styleScope: activation.buildKey,
-            },
-            ...base(revision.id, activation.buildKey, `?agentId=${encodeURIComponent(activation.agentId)}`),
-            declared: revision.ui,
-            permissions: revision.verification?.permissions?.permissions ?? [],
-            host: {
-              call: (method, input) =>
-                product.store.getState().callExtensionClient({
-                  agentId: activation.agentId,
-                  extensionId: extension.id,
-                  revisionId: revision.id,
-                  method,
-                  ...(input === undefined ? {} : { value: input }),
-                }),
-              subscribe: () => () => undefined,
-            },
-          },
-        ]
-      })
-    }
-    if (extension.scope !== 'host-adapter' || !extension.installation) return []
     const installed = extension.installation
+    if (!installed) return []
     const revision = extension.revisions.find((candidate) => candidate.id === installed.revisionId)
-    const adapterKey = revision?.contributions
+    if (!revision?.buildKey || revision.format === 'unavailable' || !hasUi(revision.ui)) return []
+    const buildKey = revision.buildKey
+    const adapterKey = revision.contributions
       .find((entry) => entry.startsWith(ADAPTER_PREFIX))
       ?.slice(ADAPTER_PREFIX.length)
-    if (!revision?.buildKey || revision.format === 'unavailable' || !adapterKey || !hasUi(revision.ui)) return []
+    const path = `/api/extensions/${encodeURIComponent(extension.id)}/revisions/${encodeURIComponent(revision.id)}/client/${buildKey}`
     return [
       {
         owner: {
-          kind: 'adapter',
-          key: `adapter:${extension.id}`,
+          kind: 'extension',
+          key: `extension:${extension.id}`,
           label: extension.name,
-          adapterKey,
           extensionId: extension.id,
           revisionId: revision.id,
-          styleScope: revision.buildKey,
+          ...(adapterKey === undefined ? {} : { adapterKey }),
+          styleScope: buildKey,
         },
-        ...base(revision.id, revision.buildKey, ''),
+        moduleUrl: `${path}.mjs`,
+        cssUrl: `${path}.css`,
         declared: revision.ui,
         permissions: revision.verification?.permissions?.permissions ?? [],
-        host: rejectingHost,
+        host: {
+          call: (method, input, options) =>
+            product.store.getState().callExtensionClient({
+              extensionId: extension.id,
+              revisionId: revision.id,
+              ...(options?.anchor === undefined ? {} : { anchor: options.anchor }),
+              method,
+              ...(input === undefined ? {} : { value: input }),
+            }),
+          subscribe: () => () => undefined,
+        },
       },
     ]
   })
@@ -201,17 +175,7 @@ export class ExtensionUiRuntime {
   async #report(owner: ContributionOwner, status: 'loaded' | 'failed', message?: string): Promise<void> {
     const store = this.#product.store.getState()
     const detail = message === undefined ? {} : { message: message.slice(0, 4096) }
-    if (owner.kind === 'agent') {
-      await store
-        .reportExtensionClientDiagnostic({
-          agentId: owner.agentId,
-          extensionId: owner.extensionId,
-          revisionId: owner.revisionId,
-          status,
-          ...detail,
-        })
-        .catch(() => undefined)
-    } else if (owner.kind === 'adapter') {
+    if (owner.kind === 'extension') {
       await store
         .reportHostExtensionClientDiagnostic({
           extensionId: owner.extensionId,

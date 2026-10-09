@@ -12,28 +12,21 @@ import type {
 import type { ReactNode } from 'react'
 
 /**
- * Who registered a contribution. Placement follows the owner: an agent extension shows on its agent, the channels
- * that agent answers and its own extension page; an adapter extension shows on connections and channels of its
- * Adapter. Dynamic owners are previews of a creation task and follow the same rules for their agent.
+ * Who registered a contribution. An installed extension runs its Client once; its agent and channel panels and tool
+ * views follow the agents it is enabled for (looked up live, so enabling never remounts the Client), its connection,
+ * channel and rich-message contributions follow its own adapter. Dynamic owners are previews of a creation task and
+ * follow the same rules for their agent.
  */
 export type ContributionOwner =
   | {
-      readonly kind: 'agent'
+      readonly kind: 'extension'
       readonly key: string
       readonly label: string
-      readonly agentId: string
       readonly extensionId: string
       readonly revisionId: string
+      /** The adapter this extension registers, if any. */
+      readonly adapterKey?: string
       /** CSS boundary of this Revision's scoped stylesheet. */
-      readonly styleScope: string
-    }
-  | {
-      readonly kind: 'adapter'
-      readonly key: string
-      readonly label: string
-      readonly adapterKey: string
-      readonly extensionId: string
-      readonly revisionId: string
       readonly styleScope: string
     }
   | {
@@ -116,12 +109,6 @@ export class ContributionRegistry {
     if (declared && !declared.panels.some((panel) => panel.id === declaration.id)) {
       throw new Error(`面板 ${declaration.id} 未在扩展声明中出现。`)
     }
-    if (owner.kind === 'agent' && declaration.anchor === 'connection') {
-      throw new Error('智能体扩展不能贡献连接面板。')
-    }
-    if (owner.kind === 'adapter' && declaration.anchor !== 'connection' && declaration.anchor !== 'channel') {
-      throw new Error('适配器扩展只能贡献连接或频道面板。')
-    }
     const key = `${owner.key}\0${declaration.id}`
     if (this.#panels.has(key)) throw new Error(`面板重复注册：${declaration.id}`)
     const entry: PanelEntry = {
@@ -141,7 +128,6 @@ export class ContributionRegistry {
     componentInput: unknown,
     declared?: ExtensionUiContributions,
   ): () => void {
-    if (owner.kind === 'adapter') throw new Error('适配器扩展不能贡献工具视图。')
     if (typeof toolInput !== 'string' || !toolInput.trim() || toolInput.length > 64) {
       throw new TypeError('工具视图必须指定工具名。')
     }
@@ -166,7 +152,6 @@ export class ContributionRegistry {
     componentInput: unknown,
     declared?: ExtensionUiContributions,
   ): () => void {
-    if (owner.kind === 'agent') throw new Error('智能体扩展不能贡献富消息渲染器。')
     const richKind = RichKindSchema.parse(richKindInput)
     if (declared && !declared.messageRenderers.includes(richKind)) {
       throw new Error(`富消息渲染器 ${richKind} 未在扩展声明中出现。`)

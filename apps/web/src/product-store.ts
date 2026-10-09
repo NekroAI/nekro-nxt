@@ -502,7 +502,7 @@ export function createProductStore(
       })
       return { extensionId: result['extensionId'], revisionId: result['revisionId'] }
     },
-    setExtensionActive: async (id, agentId, enabled, selectedRevisionId, permissionDigest) => {
+    setExtensionActive: async (id, agentId, enabled, selectedRevisionId, approvals) => {
       const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
       const targetAgentId = requireValue(agentId, '缺少目标智能体，请刷新页面后重试。')
       const extension = useProductStore.getState().extensions.find((candidate) => candidate.id === extensionId)
@@ -520,7 +520,8 @@ export function createProductStore(
           extensionId,
           agentId: targetAgentId,
           revisionId,
-          ...(permissionDigest === undefined ? {} : { permissionApproval: { permissionDigest } }),
+          ...(approvals?.agent === undefined ? {} : { permissionApproval: { permissionDigest: approvals.agent } }),
+          ...(approvals?.host === undefined ? {} : { hostPermissionApproval: { permissionDigest: approvals.host } }),
         })
         return
       }
@@ -532,7 +533,11 @@ export function createProductStore(
     updateExtensionConfig: async ({ extensionId, agentId, config, secrets }) => {
       const id = requireValue(extensionId, '缺少本地扩展标识，请刷新页面后重试。')
       if (agentId === undefined) {
-        await requireHost().actions['extensions.installationConfig']({ extensionId: id, config })
+        await requireHost().actions['extensions.installationConfig']({
+          extensionId: id,
+          config,
+          ...(secrets === undefined ? {} : { secrets }),
+        })
         return
       }
       await requireHost().actions['extensions.activationConfig']({
@@ -542,7 +547,7 @@ export function createProductStore(
         ...(secrets === undefined ? {} : { secrets }),
       })
     },
-    setHostExtensionInstalled: async (id, revisionId, permissionDigest) => {
+    setHostExtensionInstalled: async (id, revisionId, approvals) => {
       const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
       if (revisionId === null) {
         await requireHost().actions['extensions.uninstall']({ extensionId })
@@ -551,7 +556,8 @@ export function createProductStore(
       await requireHost().actions['extensions.install']({
         extensionId,
         revisionId: requireValue(revisionId, '缺少要安装的扩展版本。'),
-        ...(permissionDigest === undefined ? {} : { permissionDigest }),
+        ...(approvals?.host === undefined ? {} : { permissionDigest: approvals.host }),
+        ...(approvals?.agent === undefined ? {} : { agentPermissionDigest: approvals.agent }),
       })
     },
     reportHostExtensionClientDiagnostic: async ({ extensionId, revisionId, status, message }) => {
@@ -562,9 +568,10 @@ export function createProductStore(
         ...(message === undefined ? {} : { message }),
       })
     },
-    callExtensionClient: async ({ agentId, extensionId, revisionId, method, value }) => {
+    callExtensionClient: async ({ agentId, anchor, extensionId, revisionId, method, value }) => {
       const result = await requireHost().actions['extensions.clientCall']({
-        agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
+        ...(anchor === undefined ? {} : { anchor }),
+        ...(agentId === undefined ? {} : { agentId }),
         extensionId: requireValue(extensionId, '缺少扩展标识，请刷新页面后重试。'),
         revisionId: requireValue(revisionId, '缺少扩展版本，请刷新页面后重试。'),
         method: requireValue(method, '缺少 RPC 方法，请刷新页面后重试。'),

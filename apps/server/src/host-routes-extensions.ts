@@ -87,9 +87,12 @@ const resolvePanelCaller = (
     }
     case 'connection': {
       if (adapterKey === undefined) throw new Error('这个扩展没有适配器，不能提供连接面板。')
-      const connection = runtime.repository.getConnection(ConnectionIdSchema.parse(anchor.id))
-      if (connection && connection.adapterKey !== adapterKey) throw new Error('这个连接不属于该扩展的适配器。')
-      return { surface: 'panel', anchor, ...(connection ? { connectionId: connection.id } : {}) }
+      // While adding an account there is no connection yet; the setup panel is anchored on the adapter key.
+      if (anchor.id === adapterKey) return { surface: 'panel', anchor }
+      const parsed = ConnectionIdSchema.safeParse(anchor.id)
+      const connection = parsed.success ? runtime.repository.getConnection(parsed.data) : undefined
+      if (connection?.adapterKey !== adapterKey) throw new Error('这个连接不属于该扩展的适配器。')
+      return { surface: 'panel', anchor, connectionId: connection.id }
     }
     case 'extension':
       if (anchor.id !== extensionId) throw new Error('扩展面板只能调用自己的扩展。')
@@ -943,7 +946,13 @@ export function registerExtensionsRoutes({
           if (runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId !== revisionId) {
             throw new Error('该保存记录不是当前安装到本机的版本。')
           }
-          const caller = resolvePanelCaller(runtime, extensionId, revisionId, parsed.anchor, parsed.agentId)
+          const caller = resolvePanelCaller(
+            runtime,
+            extensionId,
+            revisionId,
+            parsed.anchor ?? { kind: 'extension', id: extensionId },
+            parsed.agentId,
+          )
           const value = await runtime.extensions.call(extensionId, parsed.method, parsed.input ?? null, caller)
           writeJson(res, 200, HostApiContracts.extensionClientCall.parseResponse({ value }))
         } catch (error) {

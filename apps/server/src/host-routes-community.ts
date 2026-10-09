@@ -262,7 +262,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           }
           const params = HostApiContracts.listCommunityExtensions.parseParams({
             ...(url.searchParams.get('query') ? { query: url.searchParams.get('query') } : {}),
-            ...(url.searchParams.get('scope') ? { scope: url.searchParams.get('scope') } : {}),
+            ...(url.searchParams.get('provides') ? { provides: url.searchParams.get('provides') } : {}),
             ...(url.searchParams.get('official') ? { official: url.searchParams.get('official') } : {}),
             ...(url.searchParams.get('cursor') ? { cursor: url.searchParams.get('cursor') } : {}),
           })

@@ -7,7 +7,7 @@ import {
 import { useEffect, useState, type ReactNode } from 'react'
 import { useHostActions } from '../../product-runtime.js'
 import { Button, Chip, Dialog, Field, Input, toast } from '../../ui-kit/index.js'
-import { SLUG_PATTERN, scopeLabel } from './workshop-model.js'
+import { SLUG_PATTERN, providesLabel } from './workshop-model.js'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
 
@@ -100,7 +100,7 @@ export function ImportDialog({
       {inspection ? (
         <>
           <div>
-            <Chip>{scopeLabel[inspection.scope]}</Chip>
+            <Chip>{providesLabel(inspection.provides)}</Chip>
           </div>
           {note}
           <p>{inspection.idempotent ? '本机已有完全相同的保存记录。' : '导入后不会自动启用。'}</p>

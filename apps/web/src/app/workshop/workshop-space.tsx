@@ -29,7 +29,6 @@ import { ExtensionView } from './extension-view.js'
 import { McpServerDialog } from './mcp-dialog.js'
 import { TaskView } from './task-view.js'
 import {
-  EXTENSION_GROUPS,
   TASK_GROUP_LABEL,
   extensionUsage,
   isTaskOpen,
@@ -191,36 +190,28 @@ export default function WorkshopSpace() {
               一个，或把文件拖到这里。
             </p>
           ) : null}
-          {EXTENSION_GROUPS.map(({ scope, label }) => {
-            const items = visibleExtensions.filter((item) => item.scope === scope)
-            if (items.length === 0) return null
+          {visibleExtensions.map((item) => {
+            const usage = extensionUsage(item)
+            const key = `extension:${item.id}`
+            const latest = item.revisions.at(-1)
             return (
-              <TaskGroupRows key={scope} label={label}>
-                {items.map((item) => {
-                  const usage = extensionUsage(item)
-                  const key = `extension:${item.id}`
-                  const latest = item.revisions.at(-1)
-                  return (
-                    <Link
-                      key={key}
-                      to={`/workshop/extensions/${item.id}`}
-                      className={styles.row}
-                      data-selected={key === selected}
-                      aria-current={key === selected ? 'page' : undefined}
-                    >
-                      <ExtensionIcon id={item.id} name={item.name} iconUrl={item.iconUrl} size="md" />
-                      <span className={styles.rowName}>{item.name}</span>
-                      <span className={styles.rowState}>
-                        <StatusDot tone={usage.tone} />
-                      </span>
-                      <span className={styles.rowSub}>
-                        {usage.label}
-                        {latest ? ` · ${relativeTime(latest.createdAt)}保存` : ''}
-                      </span>
-                    </Link>
-                  )
-                })}
-              </TaskGroupRows>
+              <Link
+                key={key}
+                to={`/workshop/extensions/${item.id}`}
+                className={styles.row}
+                data-selected={key === selected}
+                aria-current={key === selected ? 'page' : undefined}
+              >
+                <ExtensionIcon id={item.id} name={item.name} iconUrl={item.iconUrl} size="md" />
+                <span className={styles.rowName}>{item.name}</span>
+                <span className={styles.rowState}>
+                  <StatusDot tone={usage.tone} />
+                </span>
+                <span className={styles.rowSub}>
+                  {usage.label}
+                  {latest ? ` · ${relativeTime(latest.createdAt)}保存` : ''}
+                </span>
+              </Link>
             )
           })}
           {needle && visibleTasks.length === 0 && visibleExtensions.length === 0 ? (

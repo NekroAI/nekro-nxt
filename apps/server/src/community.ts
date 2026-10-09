@@ -528,13 +528,13 @@ export class CommunityService {
 
   async listExtensions(input: {
     readonly query?: string | undefined
-    readonly scope?: string | undefined
+    readonly provides?: string | undefined
     readonly official?: '1' | undefined
     readonly cursor?: string | undefined
   }): Promise<{ readonly items: CommunityExtensionSummary[]; readonly nextCursor: string | null }> {
     const search = new URLSearchParams({ limit: '30' })
     if (input.query) search.set('q', input.query)
-    if (input.scope) search.set('scope', input.scope)
+    if (input.provides) search.set('provides', input.provides)
     if (input.official) search.set('official', input.official)
     if (input.cursor) search.set('cursor', input.cursor)
     const body = z
@@ -855,7 +855,10 @@ const normalizeSummary = (raw: unknown, pageUrl: (id: string) => string): Record
   const latest = record['latest'] === null || record['latest'] === undefined ? null : asRecord(record['latest'])
   return {
     id: record['id'],
-    scope: record['scope'],
+    // 「提供什么」标签；本机不认识的标签由界面忽略。
+    provides: Array.isArray(record['provides'])
+      ? record['provides'].filter((item): item is string => typeof item === 'string').slice(0, 8)
+      : [],
     displayName: record['displayName'],
     summary: record['summary'],
     tags: record['tags'],

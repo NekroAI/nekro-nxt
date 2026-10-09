@@ -4,3 +4,9 @@
   margin: 0;
   padding-left: var(--s-5);
 }
+
+.layer {
+  margin: var(--s-2) 0 var(--s-1);
+  color: var(--fg-2);
+  font: var(--t-note);
+}

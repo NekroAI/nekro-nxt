@@ -32,17 +32,17 @@ import {
 import { MarkdownDocument } from '../../components/markdown-document.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { openExternal } from './community-model.js'
-import { scopeLabel } from '../workshop/workshop-model.js'
+import { providesLabel } from '../workshop/workshop-model.js'
 import styles from './community.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
-type Scope = '' | 'agent' | 'host-ui' | 'host-adapter'
+type Provides = '' | 'agent' | 'page' | 'adapter' | 'mcp'
 
-const SCOPES: readonly { readonly value: Scope; readonly label: string }[] = [
+const PROVIDES: readonly { readonly value: Provides; readonly label: string }[] = [
   { value: '', label: '全部' },
-  { value: 'agent', label: '智能体扩展' },
-  { value: 'host-ui', label: '页面' },
-  { value: 'host-adapter', label: '平台适配器' },
+  { value: 'agent', label: '智能体能力' },
+  { value: 'page', label: '页面' },
+  { value: 'adapter', label: '平台适配' },
 ]
 
 const LEVEL_LABEL = { normal: '常规', elevated: '需留意', high: '高风险' } as const
@@ -142,7 +142,7 @@ export function CommunityView({
 
 function CommunityCatalog() {
   const [query, setQuery] = useState('')
-  const [scope, setScope] = useState<Scope>('')
+  const [provides, setProvides] = useState<Provides>('')
   const [officialOnly, setOfficialOnly] = useState(false)
   const [items, setItems] = useState<readonly CommunityExtensionSummary[]>()
   const [cursor, setCursor] = useState<string | null>(null)
@@ -157,7 +157,7 @@ function CommunityCatalog() {
         HostApiContracts.listCommunityExtensions,
         {
           ...(query.trim() ? { query: query.trim() } : {}),
-          ...(scope ? { scope } : {}),
+          ...(provides ? { provides } : {}),
           ...(officialOnly ? { official: '1' as const } : {}),
         },
         undefined,
@@ -175,7 +175,7 @@ function CommunityCatalog() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [query, scope, officialOnly])
+  }, [query, provides, officialOnly])
 
   const loadMore = async () => {
     if (!cursor) return
@@ -185,7 +185,7 @@ function CommunityCatalog() {
         HostApiContracts.listCommunityExtensions,
         {
           ...(query.trim() ? { query: query.trim() } : {}),
-          ...(scope ? { scope } : {}),
+          ...(provides ? { provides } : {}),
           ...(officialOnly ? { official: '1' as const } : {}),
           cursor,
         },
@@ -213,7 +213,7 @@ function CommunityCatalog() {
       />
       <div className={styles.communityTools}>
         <SearchField value={query} onChange={setQuery} label="搜索社区扩展" placeholder="搜索名称、介绍或标签" />
-        <Segmented<Scope> label="扩展类型" value={scope} onChange={setScope} options={SCOPES} />
+        <Segmented<Provides> label="提供什么" value={provides} onChange={setProvides} options={PROVIDES} />
         <label className={styles.inlineSwitch} htmlFor="community-official-only">
           <Switch
             id="community-official-only"
@@ -240,7 +240,7 @@ function CommunityCatalog() {
                 <ExtensionIcon id={item.id} name={item.displayName} iconUrl={item.iconUrl} />
                 <span className={styles.communityCardTitle}>
                   <b>{item.displayName}</b>
-                  <span className={styles.faint}>{scopeLabel[item.scope]}</span>
+                  <span className={styles.faint}>{providesLabel(item.provides)}</span>
                 </span>
               </span>
               <span className={styles.communitySummary}>{item.summary || '作者还没有填写介绍。'}</span>
@@ -344,7 +344,7 @@ function CommunityDetail({
         status={label ? <Chip tone={label.tone}>{label.label}</Chip> : undefined}
         meta={
           <>
-            <span>{scopeLabel[detail.scope]}</span>
+            <span>{providesLabel(detail.provides)}</span>
             <span>{communityPublisherLabel(detail.publisher.handle)}</span>
             {latest ? <span>{relativeTime(latest.createdAt)}发布</span> : null}
             <span>{detail.downloads} 次下载</span>

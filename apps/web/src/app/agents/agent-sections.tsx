@@ -41,6 +41,7 @@ import { useProductApi } from '../model/store.js'
 import { agentModelKey } from './agent-create-draft.js'
 import { accessOfLevel, supportsImages, toggleAccess, type AccessCapability, type AgentDraft } from './agent-draft.js'
 import { missingAgentModel, replacementModel } from './model-health.js'
+import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
@@ -481,7 +482,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
   const product = useProductRuntime()
   const go = useGo()
   const extensions = useProductStore((state) => state.extensions)
-  const agentExtensions = extensions.filter((extension) => extension.scope === 'agent')
+  const agentExtensions = extensions.filter(hasAgentLayer)
   const toggle = async (extensionId: string, enabled: boolean, revisionId: string | undefined) => {
     try {
       const changed = await activation.setActive({
@@ -533,7 +534,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
               <Switch
                 label={`为${agent.name}启用${extension.name}`}
                 {...activationSwitchState(extension, agent.id)}
-                onCheckedChange={(checked) => toggle(extension.id, checked, extension.revisions[0]?.id)}
+                onCheckedChange={(checked) => toggle(extension.id, checked, undefined)}
               />
             </PropertyRow>
           ))}

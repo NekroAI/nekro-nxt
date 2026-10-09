@@ -8,22 +8,22 @@ import styles from './config-editor.module.css'
 const asConfigValue = (value: JsonValue | undefined): ConfigValue =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {}
 
-/** The schema of the Revision currently in use, when it declares any configuration. */
+/**
+ * The configuration form of the installed record: one agent's (`agentId`) or the host's. `undefined` when that layer
+ * declares no configuration.
+ */
 export const activeConfigSchema = (
   extension: LocalExtensionSummary,
   agentId?: string,
 ): ConfigSchemaDocument | undefined => {
-  const revisionId =
-    agentId === undefined
-      ? extension.installation?.revisionId
-      : extension.activations.find((activation) => activation.agentId === agentId)?.revisionId
-  const schema = extension.revisions.find((revision) => revision.id === revisionId)?.configSchema
+  const revision = extension.revisions.find((candidate) => candidate.id === extension.installation?.revisionId)
+  const schema = agentId === undefined ? revision?.hostConfigSchema : revision?.agentConfigSchema
   return schema && Object.keys(schema.dict).length > 0 ? schema : undefined
 }
 
 /**
- * Edits the configuration of an enabled agent extension (`agentId`) or an installed Host extension. Agent
- * configuration applies at the next safe point between tool calls; nothing renders when the Revision declares none.
+ * Edits one agent's configuration (`agentId`) or the host configuration of an installed extension. Agent
+ * configuration applies at the next safe point between tool calls; nothing renders when the layer declares none.
  */
 export function ExtensionConfigEditor({
   extension,
@@ -41,12 +41,12 @@ export function ExtensionConfigEditor({
         : extension.activations.find((activation) => activation.agentId === agentId)?.config
     return asConfigValue(stored === undefined ? undefined : parseJsonValue(stored))
   }, [agentId, extension])
-  // Only agent extensions may declare secrets; their stored values never reach the client.
+  // Stored secret values never reach the client; only which ones are set.
   const configuredSecrets = useMemo(
     () =>
       new Set(
         agentId === undefined
-          ? []
+          ? (extension.installation?.configuredSecrets ?? [])
           : (extension.activations.find((activation) => activation.agentId === agentId)?.configuredSecrets ?? []),
       ),
     [agentId, extension],
@@ -68,7 +68,7 @@ export function ExtensionConfigEditor({
   const save = async () => {
     setSubmitted(true)
     if (Object.keys(configIssues(schema, draft)).length > 0) return
-    if (agentId !== undefined && Object.keys(secretIssues(schema, secretDrafts, configuredSecrets)).length > 0) return
+    if (Object.keys(secretIssues(schema, secretDrafts, configuredSecrets)).length > 0) return
     setBusy(true)
     setError('')
     try {
@@ -76,7 +76,7 @@ export function ExtensionConfigEditor({
         extensionId: extension.id,
         ...(agentId === undefined ? {} : { agentId }),
         config: draft,
-        ...(agentId === undefined || Object.keys(typedSecrets).length === 0 ? {} : { secrets: typedSecrets }),
+        ...(Object.keys(typedSecrets).length === 0 ? {} : { secrets: typedSecrets }),
       })
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
@@ -90,9 +90,7 @@ export function ExtensionConfigEditor({
         schema={schema}
         value={draft}
         onChange={setDraft}
-        {...(agentId === undefined
-          ? {}
-          : { secrets: { value: secretDrafts, onChange: setSecretDrafts, configured: configuredSecrets } })}
+        secrets={{ value: secretDrafts, onChange: setSecretDrafts, configured: configuredSecrets }}
         showIssues={submitted}
         disabled={busy}
       />

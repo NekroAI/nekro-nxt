@@ -39,6 +39,7 @@ import {
   ExtensionConfigEditor,
   PanelSlot,
   activeConfigSchema,
+  permissionLines,
   useExtensionActivation,
 } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
@@ -46,10 +47,11 @@ import {
   CONTRIBUTION_PLACE,
   contributionParts,
   extensionUsage,
+  hasAgentLayer,
   mcpParts,
   mcpStatusText,
+  providesLabel,
   recordLabels,
-  scopeLabel,
 } from './workshop-model.js'
 import { PublishDialog } from './publish-dialog.js'
 import styles from './workshop.module.css'
@@ -103,7 +105,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         }
         meta={
           <>
-            <span>{scopeLabel[extension.scope]}</span>
+            <span>{providesLabel(extension.provides)}</span>
             {current?.source ? (
               <Link to={`/community/extensions/${extension.id}`} className={styles.metaLink}>
                 来自社区 {communityPublisherLabel(current.source.publisherHandle)}
@@ -168,11 +170,8 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
       <Overview revision={current} pages={extension.revisions.flatMap((revision) => revision.pages)} />
 
-      {extension.scope === 'agent' ? (
-        <AgentUsage extension={extension} labels={labels} />
-      ) : (
-        <Installation extension={extension} labels={labels} />
-      )}
+      <Installation extension={extension} labels={labels} />
+      {hasAgentLayer(extension) ? <AgentUsage extension={extension} /> : null}
 
       <ExtensionSettings extension={extension} />
 
@@ -214,11 +213,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         }}
       >
         {extension.revisions.length} 份保存记录、源码与验证记录会被永久删除
-        {extension.scope === 'agent'
-          ? `，${extension.activations.length} 个智能体会停止使用。`
-          : extension.scope === 'host-adapter'
-            ? '；连接、频道和消息保留。'
-            : '；页面入口随之移除。'}
+        {removalConsequences(extension)}
       </ConfirmDialog>
     </MainContent>
   )
@@ -229,7 +224,7 @@ function Overview({ revision, pages }: { readonly revision: Revision | undefined
   const navigate = useGo()
   const parts = [
     ...(revision?.contributions ?? []).map((value) => ({ ...contributionParts(value), detail: undefined })),
-    ...mcpParts(revision?.verification?.permissions?.capabilities?.mcp?.servers ?? []),
+    ...mcpParts(revision?.verification?.permissions?.agent?.mcp?.servers ?? []),
   ]
   return (
     <PropertyGroup title="能提供什么">
@@ -275,9 +270,19 @@ function OpenPage({
   )
 }
 
+/** What removing or uninstalling the extension stops, ending with a full stop. */
+const removalConsequences = (extension: LocalExtensionSummary): string => {
+  const parts = [
+    ...(extension.activations.length > 0 ? [`${extension.activations.length} 个智能体会停止使用`] : []),
+    ...(extension.provides.includes('page') ? ['页面入口随之移除'] : []),
+    ...(extension.provides.includes('adapter') ? ['连接、频道和消息保留，重新安装前这些连接无法收发消息'] : []),
+  ]
+  return parts.length === 0 ? '。' : `；${parts.join('；')}。`
+}
+
 /**
- * Configuration and the extension's own panels. Agent extensions are configured per enabled agent; Host extensions
- * once for their installation.
+ * Configuration and the extension's own panels: the host configuration once for this machine, and each enabled
+ * agent's own configuration.
  */
 function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSummary }) {
   const enabledAgents = extension.activations.map((activation) => ({
@@ -285,19 +290,24 @@ function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSu
     name: activation.agentName,
   }))
   const [chosen, setChosen] = useState(enabledAgents[0]?.id ?? '')
-  const agentId =
-    extension.scope === 'agent'
-      ? (enabledAgents.find((agent) => agent.id === chosen)?.id ?? enabledAgents[0]?.id)
-      : undefined
-  if (extension.scope === 'agent' && agentId === undefined) return null
-  const hasConfig = activeConfigSchema(extension, agentId) !== undefined
+  const agentId = enabledAgents.find((agent) => agent.id === chosen)?.id ?? enabledAgents[0]?.id
+  const hostConfig = extension.installation !== undefined && activeConfigSchema(extension) !== undefined
+  const agentConfig = agentId !== undefined && activeConfigSchema(extension, agentId) !== undefined
   return (
     <>
-      {hasConfig ? (
+      {hostConfig ? (
+        <PropertyGroup title="本机配置" tip="对整台机器生效，所有智能体共用。">
+          <div className={styles.config}>
+            <ExtensionConfigEditor key="host" extension={extension} />
+          </div>
+        </PropertyGroup>
+      ) : null}
+      {agentConfig ? (
         <PropertyGroup
-          title="配置"
+          title="智能体配置"
+          tip="每个启用了这个扩展的智能体各有一份。"
           actions={
-            extension.scope === 'agent' && enabledAgents.length > 1 ? (
+            enabledAgents.length > 1 ? (
               <Select
                 aria-label="配置哪个智能体"
                 value={agentId}
@@ -308,39 +318,29 @@ function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSu
           }
         >
           <div className={styles.config}>
-            <ExtensionConfigEditor
-              key={agentId ?? 'host'}
-              extension={extension}
-              {...(agentId === undefined ? {} : { agentId })}
-            />
+            <ExtensionConfigEditor key={agentId} extension={extension} agentId={agentId} />
           </div>
         </PropertyGroup>
       ) : null}
-      {extension.scope === 'agent' && agentId !== undefined ? (
-        <PanelSlot anchor={{ kind: 'extension', id: extension.id }} density="full" agentId={agentId} />
+      {extension.installation ? (
+        <PanelSlot
+          anchor={{ kind: 'extension', id: extension.id }}
+          density="full"
+          {...(agentId === undefined ? {} : { agentId })}
+        />
       ) : null}
     </>
   )
 }
 
-/** Agent-scoped extensions: one row per agent with the saved record it uses and an on/off switch. */
-function AgentUsage({
-  extension,
-  labels,
-}: {
-  readonly extension: LocalExtensionSummary
-  readonly labels: ReadonlyMap<string, string>
-}) {
+/** One row per agent with an on/off switch; every agent uses the record installed on this machine. */
+function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }) {
   const agents = useProductStore((state) => state.agents)
   // Rows with a request in flight; only those rows lock, the rest of the table stays usable.
   const [changing, setChanging] = useState<ReadonlySet<string>>(new Set())
   const activation = useExtensionActivation()
-  const latestUsable = extension.revisions.findLast(usable)
-  const recordOptions = extension.revisions.toReversed().map((item) => ({
-    value: item.id,
-    label: `${labels.get(item.id) ?? ''}${item.id === latestUsable?.id ? ' · 最新' : ''}`,
-    disabled: !usable(item),
-  }))
+  // Enabling an extension that is not on this machine yet installs its latest usable record.
+  const target = extension.installation?.revisionId ?? extension.revisions.findLast(usable)?.id
 
   const transitionFor = (agent: AgentSummary) =>
     extension.activationTransitions?.find((item) => item.agentId === agent.id)
@@ -416,26 +416,6 @@ function AgentUsage({
       },
     },
     {
-      key: 'record',
-      header: '使用的保存记录',
-      width: 'minmax(180px, 1.4fr)',
-      priority: 2,
-      render: (agent) => {
-        const record = extension.activations.find((item) => item.agentId === agent.id)
-        return record ? (
-          <Select
-            aria-label={`${agent.name}使用的保存记录`}
-            value={record.revisionId}
-            disabled={changing.has(agent.id) || transitionFor(agent)?.state === 'waiting'}
-            onValueChange={(value) => void change(agent.id, true, value)}
-            options={recordOptions}
-          />
-        ) : (
-          <span className={styles.faint}>未启用</span>
-        )
-      },
-    },
-    {
       key: 'enabled',
       header: '启用',
       width: '72px',
@@ -447,8 +427,8 @@ function AgentUsage({
             label={`${agent.name}使用「${extension.name}」`}
             checked={enabled}
             pending={changing.has(agent.id) || transitionFor(agent)?.state === 'waiting'}
-            disabled={!enabled && !latestUsable}
-            onCheckedChange={(next) => change(agent.id, next, next ? latestUsable?.id : undefined)}
+            disabled={!enabled && target === undefined}
+            onCheckedChange={(next) => change(agent.id, next, next ? target : undefined)}
           />
         )
       },
@@ -456,7 +436,10 @@ function AgentUsage({
   ]
 
   return (
-    <PropertyGroup title="使用">
+    <PropertyGroup
+      title="智能体"
+      tip="启用后，这个智能体在对话中获得扩展的能力；所有智能体使用本机安装的同一份保存记录。"
+    >
       {activation.dialog}
       <DataTable
         label="使用这个扩展的智能体"
@@ -469,7 +452,10 @@ function AgentUsage({
   )
 }
 
-/** Host-scoped extensions (adapters and pages) are installed once for this machine from a chosen saved record. */
+/**
+ * The extension's single installation on this machine. Switching records moves every agent using it; approvals cover
+ * the machine and, when the new record asks agents for more, those agents too.
+ */
 function Installation({
   extension,
   labels,
@@ -481,28 +467,42 @@ function Installation({
   const installed = extension.installation
   const [choice, setChoice] = useState(installed?.revisionId ?? extension.revisions.findLast(usable)?.id ?? '')
   const [busy, setBusy] = useState(false)
-  const [approve, setApprove] = useState<Revision>()
+  const [approve, setApprove] = useState<{
+    readonly revision: Revision
+    readonly host?: NonNullable<NonNullable<Revision['verification']>['hostPermission']>
+    readonly agent?: NonNullable<NonNullable<Revision['verification']>['agentPermission']>
+  }>()
   const [uninstallOpen, setUninstallOpen] = useState(false)
   const chosen = extension.revisions.find((item) => item.id === choice)
   const chosenInstalled = chosen !== undefined && chosen.id === installed?.revisionId
 
-  const install = async (revision: Revision, digest?: string) => {
+  const install = async (revision: Revision, approvals?: { readonly host?: string; readonly agent?: string }) => {
     setBusy(true)
     try {
-      await api.getState().setHostExtensionInstalled(extension.id, revision.id, digest)
+      await api.getState().setHostExtensionInstalled(extension.id, revision.id, approvals)
       toast(`已安装${labels.get(revision.id) ?? ''}保存的记录`)
     } finally {
       setBusy(false)
     }
   }
   const request = (revision: Revision) => {
-    if (revision.verification?.permissionApprovalRequired && revision.verification.permissionDigest) {
-      setApprove(revision)
+    const host = revision.verification?.hostPermission
+    const agent = revision.verification?.agentPermission
+    const needsHost = host?.approvalRequired === true
+    // Agents move with the installation; a record that asks them for more needs their approval as well.
+    const needsAgent = extension.activations.length > 0 && agent?.approvalRequired === true
+    if (needsHost || needsAgent) {
+      setApprove({
+        revision,
+        ...(needsHost && host !== undefined ? { host } : {}),
+        ...(needsAgent && agent !== undefined ? { agent } : {}),
+      })
       return
     }
     void install(revision).catch(failure)
   }
-  const permissions = approve?.verification?.permissions
+  const onlyAgents =
+    hasAgentLayer(extension) && !extension.provides.some((item) => item === 'page' || item === 'adapter')
 
   return (
     <PropertyGroup title="安装">
@@ -515,7 +515,13 @@ function Installation({
       <PropertyList>
         <PropertyRow
           label="使用的保存记录"
-          description={installed ? `${relativeTime(installed.installedAt)}安装` : '还没有安装到本机'}
+          description={
+            installed
+              ? `${relativeTime(installed.installedAt)}安装`
+              : onlyAgents
+                ? '给智能体启用时会自动安装'
+                : '还没有安装到本机'
+          }
         >
           <Select
             aria-label="保存记录"
@@ -547,19 +553,34 @@ function Installation({
         onOpenChange={(open) => !open && setApprove(undefined)}
         title="批准这份记录申请的权限"
         confirmLabel="批准并安装"
-        onConfirm={() => (approve ? install(approve, approve.verification?.permissionDigest) : undefined)}
+        onConfirm={() =>
+          approve
+            ? install(approve.revision, {
+                ...(approve.host === undefined ? {} : { host: approve.host.permissionDigest }),
+                ...(approve.agent === undefined ? {} : { agent: approve.agent.permissionDigest }),
+              })
+            : undefined
+        }
       >
-        {permissions && (permissions.permissions.length > 0 || permissions.networkOrigins.length > 0) ? (
-          <ul className={styles.permissions}>
-            {permissions.permissions.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-            {permissions.networkOrigins.map((origin) => (
-              <li key={origin}>访问 {origin}</li>
-            ))}
-          </ul>
-        ) : (
-          '这份记录没有申请额外权限。'
+        {approve?.host === undefined ? null : (
+          <>
+            <p className={styles.faint}>对整台机器生效：</p>
+            <ul className={styles.permissions}>
+              {permissionLines(approve.host.declaration).map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {approve?.agent === undefined ? null : (
+          <>
+            <p className={styles.faint}>对正在使用它的 {extension.activations.length} 个智能体生效：</p>
+            <ul className={styles.permissions}>
+              {permissionLines(approve.agent.declaration).map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </>
         )}
       </ConfirmDialog>
       <ConfirmDialog
@@ -573,9 +594,7 @@ function Installation({
           toast('已卸载')
         }}
       >
-        {extension.scope === 'host-adapter'
-          ? '连接、频道和历史保留；重新安装前这些连接无法收发消息。'
-          : '页面入口会被移除。'}
+        {`扩展会停止运行${removalConsequences(extension)}`}
       </ConfirmDialog>
     </PropertyGroup>
   )

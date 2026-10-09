@@ -241,6 +241,8 @@ export const ExtensionPermissionRequirementSchema = z
   })
   .strict()
 
+export type ExtensionPermissionRequirement = z.output<typeof ExtensionPermissionRequirementSchema>
+
 export const ExtensionActivationTransitionSchema = z
   .object({
     agentId: AgentIdSchema,
@@ -3436,8 +3438,9 @@ export const HostApiContracts = {
      */
     request: z
       .object({
-        anchor: z.object({ kind: ExtensionPanelAnchorSchema, id: NonEmptyStringSchema }).strict(),
-        /** The agent the panel is shown for; required for channel panels outside the extension's own adapter. */
+        /** Absent: the call comes from the extension itself, like a page call. */
+        anchor: z.object({ kind: ExtensionPanelAnchorSchema, id: NonEmptyStringSchema }).strict().optional(),
+        /** The agent the panel is shown for; must be the responding agent of an anchored channel. */
         agentId: AgentIdSchema.optional(),
         method: NonEmptyStringSchema,
         input: JsonValueSchema.optional(),

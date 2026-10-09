@@ -13,6 +13,8 @@ export interface PanelAnchor {
 }
 
 interface PlacementContext {
+  /** Whether an installed extension is enabled for an agent; read live from the product state. */
+  readonly attached: (extensionId: string, agentId: string) => boolean
   /** Agent answering the anchored channel. */
   readonly channelAgentId?: string
   readonly channelKind?: 'internal' | 'direct' | 'group'
@@ -33,34 +35,34 @@ export const panelsForAnchor = (
     const { declaration, owner } = entry
     if (declaration.anchor !== anchor.kind || !declaration.densities.includes(density)) return false
     if (filter.role !== undefined && declaration.role !== filter.role) return false
+    const forAgent = (agentId: string | undefined) =>
+      agentId !== undefined &&
+      (owner.kind === 'extension' ? context.attached(owner.extensionId, agentId) : owner.agentId === agentId)
+    const ownAdapter =
+      owner.kind === 'extension' && owner.adapterKey !== undefined && owner.adapterKey === context.adapterKey
     let placed = false
     switch (anchor.kind) {
       case 'agent':
-        placed = owner.kind === 'agent' && owner.agentId === anchor.id
+        placed = forAgent(anchor.id)
         break
       case 'extension':
         placed =
-          owner.kind === 'agent' &&
+          owner.kind === 'extension' &&
           owner.extensionId === anchor.id &&
-          (filter.agentId === undefined || owner.agentId === filter.agentId)
+          (filter.agentId === undefined || forAgent(filter.agentId))
         break
       case 'channel':
-        placed =
-          (owner.kind === 'agent' && owner.agentId === context.channelAgentId) ||
-          (owner.kind === 'adapter' && owner.adapterKey === context.adapterKey)
+        placed = forAgent(context.channelAgentId) || ownAdapter
         if (placed && declaration.when?.channelKinds && context.channelKind) {
           placed = declaration.when.channelKinds.includes(context.channelKind)
         }
         break
       case 'connection':
-        placed = owner.kind === 'adapter' && owner.adapterKey === context.adapterKey
+        placed = ownAdapter
         break
     }
-    if (!placed) return false
-    // One extension enabled for several agents registers the same extension panel once per agent.
-    const identity = anchor.kind === 'extension' ? declaration.id : entry.key
-    if (seen.has(identity)) return false
-    seen.add(identity)
+    if (!placed || seen.has(entry.key)) return false
+    seen.add(entry.key)
     return true
   })
 }
@@ -73,15 +75,28 @@ function usePlacement(anchor: PanelAnchor): PlacementContext {
   const connectionAdapter = useProductStore(
     (state) => state.connections.find((candidate) => candidate.id === connectionId)?.adapterKey,
   )
+  const attached = useAttachedAgents()
   return useMemo(() => {
     // An unknown connection id while adding an account is the Adapter key itself.
     const adapterKey = connectionAdapter ?? (anchor.kind === 'connection' ? anchor.id : undefined)
     return {
+      attached,
       ...(channel?.agentId ? { channelAgentId: channel.agentId } : {}),
       ...(channel ? { channelKind: channel.kind } : {}),
       ...(adapterKey === undefined ? {} : { adapterKey }),
     }
-  }, [anchor.id, anchor.kind, channel, connectionAdapter])
+  }, [anchor.id, anchor.kind, attached, channel, connectionAdapter])
+}
+
+/** Live lookup of which agents each installed extension is enabled for. */
+function useAttachedAgents(): (extensionId: string, agentId: string) => boolean {
+  const extensions = useProductStore((state) => state.extensions)
+  return useMemo(() => {
+    const attached = new Map(
+      extensions.map((extension) => [extension.id, new Set(extension.activations.map(({ agentId }) => agentId))]),
+    )
+    return (extensionId, agentId) => attached.get(extensionId)?.has(agentId) === true
+  }, [extensions])
 }
 
 /**
@@ -156,13 +171,17 @@ export function ToolView({
   readonly registry?: ContributionRegistry
 }): ReactNode {
   const runtime = useExtensionUiRuntime()
+  const attached = useAttachedAgents()
   const source = registry ?? runtime?.registry
   const entry = source
     ?.toolViews()
     .find(
       (candidate) =>
         candidate.tool === call.toolName &&
-        (agentId === undefined || candidate.owner.kind === 'adapter' || candidate.owner.agentId === agentId),
+        (agentId === undefined ||
+          (candidate.owner.kind === 'extension'
+            ? attached(candidate.owner.extensionId, agentId)
+            : candidate.owner.agentId === agentId)),
     )
   if (!entry) return null
   return (
@@ -199,7 +218,7 @@ export function MessageRendererSlot({
     .find(
       (candidate) =>
         candidate.richKind === part.kind &&
-        (candidate.owner.kind !== 'adapter' || candidate.owner.adapterKey === part.adapterKey),
+        (candidate.owner.kind !== 'extension' || candidate.owner.adapterKey === part.adapterKey),
     )
   if (!entry) return fallback
   return (

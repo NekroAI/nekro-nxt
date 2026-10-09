@@ -542,7 +542,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       name: extension.displayName,
       description: extension.description,
       revision: latestRevision?.revisionNumber ?? 0,
-      scope: extension.scope,
+      provides: extension.provides,
       ...(iconUrl === undefined ? {} : { iconUrl }),
       revisions: extension.revisions.map((revision) => ({
         id: revision.id,
@@ -551,12 +551,14 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         ...(revision.iconUrl === undefined ? {} : { iconUrl: revision.iconUrl }),
         createdAt: revision.createdAt,
         ...(revision.source === undefined ? {} : { source: revision.source }),
-        scope: revision.scope,
+        provides: revision.provides,
+        agentLayer: revision.agentLayer,
         contributions: revision.contributions,
         clientBuilt: revision.verification?.clientBuilt ?? false,
         ...(revision.verification === undefined ? {} : { buildKey: revision.verification.buildKey }),
         ui: revision.ui,
-        ...(revision.configSchema === undefined ? {} : { configSchema: revision.configSchema }),
+        ...(revision.hostConfigSchema === undefined ? {} : { hostConfigSchema: revision.hostConfigSchema }),
+        ...(revision.agentConfigSchema === undefined ? {} : { agentConfigSchema: revision.agentConfigSchema }),
         pages: json.hostUi.pages.filter(
           (page) => page.owner.kind === 'extension' && page.owner.revisionId === revision.id,
         ),
@@ -578,12 +580,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
                 ...(revision.verification.permissions === undefined
                   ? {}
                   : { permissions: revision.verification.permissions }),
-                ...(revision.verification.permissionDigest === undefined
+                ...(revision.verification.hostPermission === undefined
                   ? {}
-                  : { permissionDigest: revision.verification.permissionDigest }),
-                ...(revision.verification.permissionApprovalRequired === undefined
+                  : { hostPermission: revision.verification.hostPermission }),
+                ...(revision.verification.agentPermission === undefined
                   ? {}
-                  : { permissionApprovalRequired: revision.verification.permissionApprovalRequired }),
+                  : { agentPermission: revision.verification.agentPermission }),
               },
             }),
       })),
@@ -649,12 +651,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               ...(latestRevision.verification.permissions === undefined
                 ? {}
                 : { permissions: latestRevision.verification.permissions }),
-              ...(latestRevision.verification.permissionDigest === undefined
+              ...(latestRevision.verification.hostPermission === undefined
                 ? {}
-                : { permissionDigest: latestRevision.verification.permissionDigest }),
-              ...(latestRevision.verification.permissionApprovalRequired === undefined
+                : { hostPermission: latestRevision.verification.hostPermission }),
+              ...(latestRevision.verification.agentPermission === undefined
                 ? {}
-                : { permissionApprovalRequired: latestRevision.verification.permissionApprovalRequired }),
+                : { agentPermission: latestRevision.verification.agentPermission }),
             },
           }),
       clientActivations: extension.activations.flatMap((candidate) => {
@@ -682,6 +684,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               revisionId: extension.installation.extensionRevisionId,
               installedAt: extension.installation.installedAt,
               config: extension.installation.config,
+              configuredSecrets: extension.installation.configuredSecrets ?? [],
               ...(extension.installation.runtime === undefined
                 ? {}
                 : {
@@ -707,7 +710,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               observedAt: extension.hostClientDiagnostic.observedAt,
             },
           }),
-      ...(extension.hostUiPermission === undefined ? {} : { hostUiPermission: extension.hostUiPermission }),
+      ...(extension.hostPermission === undefined ? {} : { hostPermission: extension.hostPermission }),
       ...(latestRevision === undefined ? {} : { revisionId: latestRevision.id }),
     }
   })
@@ -1111,13 +1114,16 @@ export class HttpProductHost implements ProductHostPort {
         beforeSourceId,
       ),
     'channels.getRuntime': async ({ channelId }) => this.#loadChannelRuntime(channelId),
-    'extensions.install': async ({ extensionId, permissionDigest, ...body }) =>
+    'extensions.install': async ({ extensionId, permissionDigest, agentPermissionDigest, ...body }) =>
       this.#mutate(
         HostApiContracts.installHostExtension,
         { extensionId },
         {
           ...body,
           ...(permissionDigest === undefined ? {} : { permissionApproval: { permissionDigest } }),
+          ...(agentPermissionDigest === undefined
+            ? {}
+            : { agentPermissionApproval: { permissionDigest: agentPermissionDigest } }),
         },
       ),
     'extensions.saveFromDynamic': async ({ name, ...body }) =>
