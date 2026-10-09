@@ -405,28 +405,207 @@
 }
 
 /* 审查的轻量呈现：一行状态与摘要，展开后显示全部发现。 */
-.reviewLine {
+
+/* —— 审查评级（社区审查标准 v1）—— */
+.ratingCard {
+  display: grid;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-5);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--surface);
+  box-shadow: var(--sh-1);
+}
+
+.ratingTop {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-4) var(--s-7);
+}
+
+.ratingScore {
+  display: grid;
+  justify-items: center;
+  gap: var(--s-1);
+}
+
+.ratingScore div {
+  display: grid;
+  justify-items: center;
+}
+
+.ratingScore b {
+  font-size: var(--fs-3xl);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.ratingScore span,
+.ratingSign {
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.ratingRows {
   display: grid;
   gap: var(--s-2);
-  padding: var(--s-2) var(--s-3);
-  border: 1px solid var(--line);
-  border-radius: var(--r-2);
-  background: var(--surface-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.reviewLineHead {
-  display: flex;
+.ratingRows li {
+  display: grid;
+  grid-template-columns: 2.5em auto minmax(0, 1fr);
   align-items: center;
-  gap: var(--s-2);
-  min-width: 0;
+  gap: var(--s-3);
+  font: var(--t-body);
 }
 
-.reviewLineSummary {
-  flex: 1;
-  min-width: 0;
+.ratingRows li > span:last-child {
   overflow: hidden;
-  color: var(--fg-2);
-  font: var(--t-note);
+  color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stars {
+  display: inline-flex;
+  letter-spacing: 2px;
+  white-space: nowrap;
+}
+
+.starsOn {
+  color: var(--brass);
+}
+
+.starsOff {
+  color: var(--line-3);
+}
+
+.ratingMark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--fg);
+  font: var(--t-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.badgeChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.badgeChips li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-1) var(--s-3) var(--s-1) var(--s-2);
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: var(--t-label);
+}
+
+.badgeChips li::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+  content: '';
+}
+
+.ratingSign {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+.ratingSign > :last-child {
+  margin-left: auto;
+}
+
+.reviewerSeal {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1.5px solid color-mix(in srgb, var(--brass) 70%, transparent);
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--brass) 10%, transparent);
+  color: var(--brass);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ratingPending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  color: var(--fg-2);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
+}
+
+.reviewRecord {
+  display: grid;
+  gap: var(--s-3);
+  padding-top: var(--s-2);
+  color: var(--fg-2);
+  font: var(--t-body);
+}
+
+.reviewRecord p {
+  margin: 0;
+}
+
+.reviewRecordMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.reviewRecordRow {
+  display: grid;
+  gap: var(--s-1);
+}
+
+.reviewRecordRow b {
+  color: var(--fg);
+}
+
+.reviewCap {
+  color: var(--warn);
+  font: var(--t-caption);
+}
+
+@media (max-width: 760px) {
+  .ratingTop {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ratingRows li > span:last-child {
+    display: none;
+  }
+
+  .ratingRows li {
+    grid-template-columns: 2.5em auto;
+  }
 }

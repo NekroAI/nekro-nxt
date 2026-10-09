@@ -1,7 +1,9 @@
 import {
+  COMMUNITY_EXTENSION_SORTS,
   communityPublisherLabel,
   communityReviewLabel,
   HostApiContracts,
+  type CommunityExtensionSort,
   type CommunityExtensionDetail,
   type CommunityExtensionSummary,
   type HostApiResponse,
@@ -15,7 +17,6 @@ import {
   Banner,
   Button,
   Chip,
-  Disclosure,
   EmptyState,
   ExtensionIcon,
   MainContent,
@@ -31,6 +32,7 @@ import {
 } from '../../ui-kit/index.js'
 import { MarkdownDocument } from '../../components/markdown-document.js'
 import { relativeTime } from '../channels/timeline-model.js'
+import { RatingCard, RatingMark } from './community-rating.js'
 import { openExternal } from './community-model.js'
 import { providesLabel } from '../workshop/workshop-model.js'
 import styles from './community.module.css'
@@ -62,75 +64,6 @@ const ReviewChip = ({ status }: { readonly status: CommunityExtensionSummary['la
   return <Chip tone={label.tone}>{label.label}</Chip>
 }
 
-const severityOf = (severity: string): { readonly tone: 'bad' | 'warn'; readonly label: string } =>
-  severity === 'critical'
-    ? { tone: 'bad', label: '严重' }
-    : severity === 'risk'
-      ? { tone: 'bad', label: '风险' }
-      : { tone: 'warn', label: '提醒' }
-
-/**
- * 审查只做轻量呈现：一行状态与摘要，点开再看全部审查发现。审查结论只描述发现，不代表扩展绝对安全。
- */
-function ReviewSummary({
-  review,
-  pageUrl,
-}: {
-  readonly review: NonNullable<CommunityExtensionDetail['review']>
-  readonly pageUrl: string
-}) {
-  const [open, setOpen] = useState(false)
-  const label = communityReviewLabel(review.status)
-  const hasDetail = Boolean(review.summary) || review.highlights.length > 0
-  return (
-    <section className={styles.reviewLine} aria-label="审查">
-      <div className={styles.reviewLineHead}>
-        <Chip tone={label.tone}>{label.label}</Chip>
-        {review.grade ? <Chip>质量 {review.grade}</Chip> : null}
-        <span className={styles.reviewLineSummary}>
-          {review.summary || (review.highlights.length > 0 ? `${review.highlights.length} 条审查发现` : '暂无审查摘要')}
-        </span>
-        {hasDetail ? (
-          <Button
-            size="small"
-            variant="ghost"
-            aria-expanded={open}
-            aria-controls="community-review-detail"
-            onClick={() => setOpen((value) => !value)}
-          >
-            {open ? '收起' : '审查详情'}
-          </Button>
-        ) : null}
-      </div>
-      <Disclosure open={open} id="community-review-detail">
-        <div className={styles.communityReview}>
-          {review.summary ? <p>{review.summary}</p> : null}
-          {review.highlights.map((item, index) => {
-            const severity = severityOf(item.severity)
-            return (
-              <p key={index} className={styles.communityHighlight}>
-                <Chip tone={severity.tone}>{severity.label}</Chip>
-                {item.title}
-              </p>
-            )
-          })}
-          <p className={styles.faint}>审查结论只描述审查发现，不代表扩展绝对安全。</p>
-          <div>
-            <Button
-              size="small"
-              variant="ghost"
-              icon={<ExternalLink size={14} />}
-              onClick={() => openExternal(pageUrl)}
-            >
-              在社区查看完整报告
-            </Button>
-          </div>
-        </div>
-      </Disclosure>
-    </section>
-  )
-}
-
 /** 社区「发现」：扩展目录与详情。安装先下载并校验，再走与本地文件相同的导入确认；导入后不会自动启用。 */
 export function CommunityView({
   extensionId,
@@ -150,6 +83,7 @@ function CommunityCatalog() {
   const [query, setQuery] = useState('')
   const [provides, setProvides] = useState<Provides>('')
   const [officialOnly, setOfficialOnly] = useState(false)
+  const [sort, setSort] = useState<CommunityExtensionSort>('updated')
   const [items, setItems] = useState<readonly CommunityExtensionSummary[]>()
   const [cursor, setCursor] = useState<string | null>(null)
   const [error, setError] = useState<string>()
@@ -165,6 +99,7 @@ function CommunityCatalog() {
           ...(query.trim() ? { query: query.trim() } : {}),
           ...(provides ? { provides } : {}),
           ...(officialOnly ? { official: '1' as const } : {}),
+          ...(sort === 'updated' ? {} : { sort }),
         },
         undefined,
       )
@@ -181,7 +116,7 @@ function CommunityCatalog() {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [query, provides, officialOnly])
+  }, [query, provides, officialOnly, sort])
 
   const loadMore = async () => {
     if (!cursor) return
@@ -193,6 +128,7 @@ function CommunityCatalog() {
           ...(query.trim() ? { query: query.trim() } : {}),
           ...(provides ? { provides } : {}),
           ...(officialOnly ? { official: '1' as const } : {}),
+          ...(sort === 'updated' ? {} : { sort }),
           cursor,
         },
         undefined,
@@ -229,6 +165,12 @@ function CommunityCatalog() {
           />
           只看官方
         </label>
+        <Segmented<CommunityExtensionSort>
+          label="排序"
+          value={sort}
+          onChange={setSort}
+          options={COMMUNITY_EXTENSION_SORTS.map(({ key, label }) => ({ value: key, label }))}
+        />
       </div>
       {error ? (
         <Banner tone="bad">{error}</Banner>
@@ -253,7 +195,7 @@ function CommunityCatalog() {
               <span className={styles.communityCardFoot}>
                 {item.official ? <Chip tone="accent">官方</Chip> : null}
                 <ReviewChip status={item.latest} />
-                {item.latest?.grade ? <Chip>质量 {item.latest.grade}</Chip> : null}
+                <RatingMark rating={item.latest?.rating ?? null} />
                 <span className={styles.faint}>
                   {communityPublisherLabel(item.publisher.handle)} · {relativeTime(item.updatedAt)}更新
                 </span>
@@ -407,7 +349,7 @@ function CommunityDetail({
         )}
       </PropertyGroup>
 
-      {detail.review ? <ReviewSummary review={detail.review} pageUrl={detail.pageUrl} /> : null}
+      {detail.review ? <RatingCard review={detail.review} pageUrl={detail.pageUrl} /> : null}
 
       {latest && latest.permissions.length > 0 ? (
         Object.entries(PERMISSION_LAYERS).map(([layer, { title, description }]) => {

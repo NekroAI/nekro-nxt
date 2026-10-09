@@ -19,7 +19,73 @@ export const COMMUNITY_REVIEW_STATUSES = [
 export const CommunityReviewStatusSchema = z.enum(COMMUNITY_REVIEW_STATUSES)
 export type CommunityReviewStatus = z.output<typeof CommunityReviewStatusSchema>
 
-export const CommunityGradeSchema = z.enum(['A', 'B', 'C', 'D'])
+/** 社区评级的六个维度（审查标准 v1），从正上方顺时针排列成六边形。 */
+export const COMMUNITY_RATING_DIMENSIONS = [
+  'security',
+  'openness',
+  'reliability',
+  'lightweight',
+  'usability',
+  'craft',
+] as const
+export type CommunityRatingDimension = (typeof COMMUNITY_RATING_DIMENSIONS)[number]
+
+export const COMMUNITY_RATING_DIMENSION_LABELS: Readonly<Record<CommunityRatingDimension, string>> = {
+  security: '安全',
+  openness: '开放',
+  reliability: '稳定',
+  lightweight: '轻量',
+  usability: '易用',
+  craft: '工艺',
+}
+
+/** 社区的审查员，评级与审查记录以她署名。 */
+export const COMMUNITY_REVIEWER_NAME = '小澄'
+
+/** 社区判定的达成标签；不认识的标签不显示。扩展页面最多显示 {@link COMMUNITY_RATING_BADGE_LIMIT} 个。 */
+export const COMMUNITY_RATING_BADGES: Readonly<
+  Record<string, { readonly label: string; readonly description: string }>
+> = {
+  'zero-permission': { label: '零权限', description: '没有申请任何权限。' },
+  'least-privilege': { label: '最小权限', description: '声明的每项能力都用得上，安全满星。' },
+  'no-network': { label: '不联网', description: '不访问任何网络。' },
+  'scoped-network': { label: '限定地址联网', description: '只访问指定域名或用户在配置中填写的地址。' },
+  'managed-secrets': { label: '凭据托管', description: '凭据都是配置中的凭据字段，经宿主读取，没有写进源码。' },
+  'readable-source': { label: '源码可读', description: '没有混淆、压缩或内嵌大段编码内容。' },
+  'open-source': { label: '开源', description: '填写了公开的源码仓库。' },
+  'readable-errors': { label: '错误可读', description: '失败时都返回给用户看的说明，稳定满星。' },
+  'stable-context': { label: '上下文稳定', description: '不占上下文，或注入的上下文稳定、不破坏提示缓存。' },
+  'complete-docs': { label: '说明完整', description: '有图标和介绍，易用至少四星。' },
+}
+export const COMMUNITY_RATING_BADGE_LIMIT = 4
+
+/** 一次发布的评级：六维星级、综合评分（各维度平均，保留一位小数）与达成标签。 */
+export const CommunityRatingSchema = z.object({
+  standard: z.string().max(20),
+  score: z.number().min(1).max(5),
+  dimensions: z
+    .array(
+      z.object({
+        key: z.string().max(40),
+        stars: z.number().int().min(1).max(5),
+        headline: z.string().max(200),
+        cap: z.string().max(200).optional(),
+      }),
+    )
+    .max(16),
+  badges: z.array(z.string().max(40)).max(32),
+})
+export type CommunityRating = z.output<typeof CommunityRatingSchema>
+
+/** 市场的排序方式。 */
+export const COMMUNITY_EXTENSION_SORTS = [
+  { key: 'updated', label: '最近更新' },
+  { key: 'score', label: '综合评分' },
+  { key: 'downloads', label: '下载最多' },
+  { key: 'newest', label: '最新上架' },
+] as const
+export type CommunityExtensionSort = (typeof COMMUNITY_EXTENSION_SORTS)[number]['key']
+export const CommunityExtensionSortSchema = z.enum(['updated', 'score', 'downloads', 'newest'])
 
 export const CommunityReleaseIdSchema = z.string().regex(/^rel_[0-9A-Za-z]+$/u)
 
@@ -58,7 +124,8 @@ export type CommunityPermissionItem = z.output<typeof CommunityPermissionItemSch
 export const CommunityReleaseSchema = z.object({
   id: CommunityReleaseIdSchema,
   reviewStatus: CommunityReviewStatusSchema,
-  grade: CommunityGradeSchema.nullable(),
+  /** 审查完成后的评级；尚未审查、审查未完成或旧版社区时为 null。 */
+  rating: CommunityRatingSchema.nullable(),
   permissions: z.array(CommunityPermissionItemSchema).max(64),
   packageSize: z.number().int().nonnegative(),
   requiresSdk: z.number().int().positive().nullable(),
@@ -96,12 +163,18 @@ export type CommunityExtensionSummary = z.output<typeof CommunityExtensionSummar
 export const CommunityExtensionDetailSchema = CommunityExtensionSummarySchema.extend({
   description: z.string().max(20_000),
   sourceUrl: z.string().url().nullable(),
+  /** 公开的审查记录：评级、总评、各维度说明，以及发现与自动检查的标题。 */
   review: z
     .object({
       status: CommunityReviewStatusSchema,
-      grade: CommunityGradeSchema.nullable(),
+      rating: CommunityRatingSchema.nullable(),
       summary: z.string().max(2000).nullable(),
-      highlights: z.array(z.object({ severity: z.string().max(20), title: z.string().max(200) })).max(16),
+      dimensions: z.array(z.object({ key: z.string().max(40), notes: z.string().max(2000) })).max(16),
+      findings: z
+        .array(z.object({ dimension: z.string().max(40), severity: z.string().max(20), title: z.string().max(200) }))
+        .max(64),
+      checks: z.array(z.object({ severity: z.string().max(20), title: z.string().max(200) })).max(64),
+      reviewedAt: z.number().int().nullable(),
     })
     .nullable(),
 })
@@ -177,32 +250,17 @@ export const CommunityMyExtensionSchema = CommunityExtensionSummarySchema.extend
 })
 export type CommunityMyExtension = z.output<typeof CommunityMyExtensionSchema>
 
-export const COMMUNITY_REVIEW_DIMENSIONS = [
-  'security',
-  'transparency',
-  'reliability',
-  'context_cost',
-  'usability',
-  'maintainability',
-  'compliance',
-] as const
-
-export const COMMUNITY_REVIEW_DIMENSION_LABELS: Readonly<Record<(typeof COMMUNITY_REVIEW_DIMENSIONS)[number], string>> =
-  {
-    security: '安全',
-    transparency: '源码透明',
-    reliability: '可靠性',
-    context_cost: '上下文与成本',
-    usability: '可用性',
-    maintainability: '可维护性',
-    compliance: '合规',
-  }
+/** 审查发现可归属的维度：六个评级维度加合规。 */
+export const COMMUNITY_REVIEW_DIMENSION_LABELS: Readonly<Record<string, string>> = {
+  ...COMMUNITY_RATING_DIMENSION_LABELS,
+  compliance: '合规',
+}
 
 /** 作者看到的完整审查报告。 */
 export const CommunityReviewReportSchema = z.object({
   releaseId: CommunityReleaseIdSchema,
   status: CommunityReviewStatusSchema,
-  grade: CommunityGradeSchema.nullable(),
+  rating: CommunityRatingSchema.nullable(),
   deterministic: z.array(
     z.object({
       severity: z.enum(['info', 'warning', 'risk', 'block']),
@@ -216,13 +274,20 @@ export const CommunityReviewReportSchema = z.object({
     .object({
       summary: z.string(),
       verdict: z.string(),
-      grade: CommunityGradeSchema,
+      compliance: z.object({ ok: z.boolean(), notes: z.string() }).nullable(),
       dimensions: z.array(
-        z.object({ key: z.enum(COMMUNITY_REVIEW_DIMENSIONS), grade: CommunityGradeSchema, notes: z.string() }),
+        z.object({
+          key: z.string(),
+          stars: z.number().int().min(1).max(5),
+          headline: z.string(),
+          notes: z.string(),
+          /** 不满五星时拿下一颗星的修改建议。 */
+          nextStar: z.string().optional(),
+        }),
       ),
       findings: z.array(
         z.object({
-          dimension: z.enum(COMMUNITY_REVIEW_DIMENSIONS),
+          dimension: z.string(),
           severity: z.enum(['info', 'suggestion', 'warning', 'risk', 'critical']),
           title: z.string(),
           detail: z.string(),

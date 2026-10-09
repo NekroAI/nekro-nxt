@@ -264,6 +264,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
             ...(url.searchParams.get('query') ? { query: url.searchParams.get('query') } : {}),
             ...(url.searchParams.get('provides') ? { provides: url.searchParams.get('provides') } : {}),
             ...(url.searchParams.get('official') ? { official: url.searchParams.get('official') } : {}),
+            ...(url.searchParams.get('sort') ? { sort: url.searchParams.get('sort') } : {}),
             ...(url.searchParams.get('cursor') ? { cursor: url.searchParams.get('cursor') } : {}),
           })
           writeContractJson(res, 200, HostApiContracts.listCommunityExtensions, await community.listExtensions(params))

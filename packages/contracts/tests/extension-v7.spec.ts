@@ -196,8 +196,13 @@ describe('Extension V7 contracts', () => {
     const latest = {
       id: 'rel_CONTRACTFIXTURE',
       reviewStatus: 'passed',
-      grade: 'A',
-      permissions: [{ key: 'host.storage', level: 'normal', label: '本机存储' }],
+      rating: {
+        standard: 'v1',
+        score: 4.5,
+        dimensions: [{ key: 'security', stars: 5, headline: '权限与用途一致' }],
+        badges: ['least-privilege'],
+      },
+      permissions: [{ key: 'host.storage', level: 'normal', label: '本机存储', layer: 'host' as const }],
       packageSize: 128,
       requiresSdk: 7,
       notes: '',
@@ -218,7 +223,20 @@ describe('Extension V7 contracts', () => {
       pageUrl: 'https://community.example.com/extensions/fixture',
       description: '',
       sourceUrl: null,
-      review: { status: 'passed', grade: 'A', summary: '', highlights: [{ severity: 'info', title: '示例说明' }] },
+      review: {
+        status: 'passed',
+        rating: {
+          standard: 'v1',
+          score: 4.5,
+          dimensions: [{ key: 'security', stars: 5, headline: '权限与用途一致' }],
+          badges: ['least-privilege'],
+        },
+        summary: '',
+        dimensions: [{ key: 'security', notes: '说明' }],
+        findings: [{ dimension: 'security', severity: 'info', title: '示例说明' }],
+        checks: [],
+        reviewedAt: 1,
+      },
     }
     expect(
       CommunityExtensionDetailSchema.parse({
@@ -226,7 +244,7 @@ describe('Extension V7 contracts', () => {
         future: true,
         publisher: { ...publisher, future: true },
         latest: { ...latest, future: true, permissions: [{ ...latest.permissions[0], future: true }] },
-        review: { ...detail.review, future: true, highlights: [{ ...detail.review.highlights[0], future: true }] },
+        review: { ...detail.review, future: true, findings: [{ ...detail.review.findings[0], future: true }] },
       }),
     ).toEqual(detail)
   })

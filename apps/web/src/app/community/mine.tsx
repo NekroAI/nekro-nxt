@@ -28,6 +28,7 @@ import { PublishDialog } from '../workshop/publish-dialog.js'
 import { providesLabel } from '../workshop/workshop-model.js'
 import { errorMessage, openExternal, type CommunityState } from './community-model.js'
 import { MyPersonasSection } from './my-personas.js'
+import { BadgeChips, RatingHexagon, RatingMark, Stars } from './community-rating.js'
 import styles from './community.module.css'
 
 type Release = CommunityMyExtension['releases'][number]
@@ -151,7 +152,7 @@ export function MineView({ community }: { readonly community: CommunityState }) 
                       <li key={release.id} className={styles.release}>
                         <span>{relativeTime(release.createdAt)}发布</span>
                         <Chip tone={label.tone}>{label.label}</Chip>
-                        {release.grade ? <Chip>质量 {release.grade}</Chip> : null}
+                        <RatingMark rating={release.rating} />
                         {release.withdrawn ? <Chip>已撤回</Chip> : null}
                         <Link to={`/community/mine/releases/${release.id}`} className={styles.textLink}>
                           审查报告
@@ -318,7 +319,7 @@ export function ReviewReportView({ releaseId }: { readonly releaseId: string }) 
         status={<Chip tone={label.tone}>{label.label}</Chip>}
         meta={
           <>
-            {report.grade ? <span>质量 {report.grade}</span> : null}
+            {report.rating ? <span>综合评分 {report.rating.score.toFixed(1)}</span> : null}
             {report.finishedAt ? <span>{relativeTime(report.finishedAt)}完成</span> : <span>审查进行中或未完成</span>}
             {report.model ? <span>{report.model}</span> : null}
           </>
@@ -344,22 +345,53 @@ export function ReviewReportView({ releaseId }: { readonly releaseId: string }) 
       ))}
       {report.ai ? (
         <>
-          <PropertyGroup title="总结">
+          {report.rating ? (
+            <PropertyGroup
+              title="评级"
+              description="达成的标准显示在扩展页面上（最多 4 个）；六个维度都拿满 5 星时，六边形描金边。"
+            >
+              <div className={styles.ratingTop}>
+                <div className={styles.ratingScore}>
+                  <RatingHexagon rating={report.rating} size={160} />
+                  <div>
+                    <b>{report.rating.score.toFixed(1)}</b>
+                    <span>综合评分</span>
+                  </div>
+                </div>
+                <BadgeChips badges={report.rating.badges} limit={report.rating.badges.length} />
+              </div>
+            </PropertyGroup>
+          ) : null}
+          <PropertyGroup title="总评">
             <p className={styles.lead}>{report.ai.summary}</p>
             {report.ai.exploitability ? <Banner tone="bad">可被利用的方式：{report.ai.exploitability}</Banner> : null}
           </PropertyGroup>
-          <PropertyGroup title="质量维度">
+          <PropertyGroup title="各维度">
             <div className={styles.dimensions}>
-              {report.ai.dimensions.map((dimension) => (
-                <div key={dimension.key} className={styles.dimension}>
-                  <span className={styles.dimensionHead}>
-                    {COMMUNITY_REVIEW_DIMENSION_LABELS[dimension.key]}
-                    <Chip>{dimension.grade}</Chip>
-                  </span>
-                  <span className={styles.faint}>{dimension.notes}</span>
-                </div>
-              ))}
+              {report.ai.dimensions.map((dimension) => {
+                const rated = report.rating?.dimensions.find(({ key }) => key === dimension.key)
+                const stars = rated?.stars ?? dimension.stars
+                return (
+                  <div key={dimension.key} className={styles.dimension}>
+                    <span className={styles.dimensionHead}>
+                      {COMMUNITY_REVIEW_DIMENSION_LABELS[dimension.key] ?? dimension.key}
+                      <Stars stars={stars} />
+                    </span>
+                    <b>{dimension.headline}</b>
+                    <span className={styles.faint}>{dimension.notes}</span>
+                    {rated?.cap ? <span className={styles.reviewCap}>{rated.cap}</span> : null}
+                    {stars < 5 && dimension.nextStar ? (
+                      <p className={styles.suggestion}>
+                        拿下第 {stars + 1} 颗星：{dimension.nextStar}
+                      </p>
+                    ) : null}
+                  </div>
+                )
+              })}
             </div>
+            {report.ai.compliance && !report.ai.compliance.ok ? (
+              <Banner tone="warn">合规：{report.ai.compliance.notes}</Banner>
+            ) : null}
           </PropertyGroup>
           <PropertyGroup title={`审查建议（${report.ai.findings.length}）`}>
             {report.ai.findings.length === 0 ? (
@@ -371,7 +403,9 @@ export function ReviewReportView({ releaseId }: { readonly releaseId: string }) 
                     <span className={styles.inline}>
                       <Chip tone={AI_SEVERITY[finding.severity].tone}>{AI_SEVERITY[finding.severity].label}</Chip>
                       <b>{finding.title}</b>
-                      <span className={styles.faint}>{COMMUNITY_REVIEW_DIMENSION_LABELS[finding.dimension]}</span>
+                      <span className={styles.faint}>
+                        {COMMUNITY_REVIEW_DIMENSION_LABELS[finding.dimension] ?? finding.dimension}
+                      </span>
                       {location(finding.file, finding.line)}
                     </span>
                     <span>{finding.detail}</span>

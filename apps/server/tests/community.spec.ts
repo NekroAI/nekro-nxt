@@ -42,8 +42,15 @@ const summary = (id: string) => ({
     requiresSdk: 7,
     notes: '',
     reviewStatus: 'passed',
-    grade: 'A',
-    permissions: [{ key: 'network', level: 'normal', label: '访问指定网站', detail: 'api.example.com' }],
+    rating: {
+      standard: 'v1',
+      score: 4.5,
+      dimensions: [{ key: 'security', stars: 5, headline: '权限与用途一致' }],
+      badges: ['least-privilege'],
+    },
+    permissions: [
+      { key: 'network', level: 'normal', label: '访问指定网站', detail: 'api.example.com', layer: 'agent' },
+    ],
     createdAt: 1_790_000_000_000,
     withdrawn: false,
   },
@@ -136,13 +143,18 @@ const createCommunity = () => {
       return Response.json({
         releaseId: 'rel_01demo',
         status: 'passed_with_notes',
-        grade: 'A',
+        rating: {
+          standard: 'v1',
+          score: 4.5,
+          dimensions: [{ key: 'security', stars: 5, headline: '权限与用途一致' }],
+          badges: ['least-privilege'],
+        },
         deterministic: [{ id: 'x', severity: 'warning', title: '网络访问不受限', detail: '说明' }],
         ai: {
           summary: '良好。',
           verdict: 'pass_with_notes',
-          grade: 'A',
-          dimensions: [{ key: 'security', grade: 'A', notes: '良好' }],
+          compliance: { ok: true, notes: '' },
+          dimensions: [{ key: 'security', stars: 4, headline: '权限略宽', notes: '良好', nextStar: '收紧网络范围' }],
           findings: [
             { dimension: 'usability', severity: 'suggestion', title: '补充说明', detail: '细节', suggestion: '建议' },
           ],
@@ -169,7 +181,21 @@ const createCommunity = () => {
         description: '详细介绍',
         sourceUrl: null,
         releases: [],
-        review: { status: 'passed', grade: 'A', summary: '良好。', highlights: [], reviewedAt: 1 },
+        review: {
+          status: 'passed',
+          rating: {
+            standard: 'v1',
+            score: 4.5,
+            dimensions: [{ key: 'security', stars: 5, headline: '权限与用途一致' }],
+            badges: ['least-privilege'],
+          },
+          summary: '良好。',
+          dimensions: [{ key: 'security', notes: '说明' }],
+          findings: [],
+          checks: [{ severity: 'warning', title: '网络访问不受限' }],
+          model: '示例模型',
+          reviewedAt: 1,
+        },
       })
     }
     if (url.pathname === '/api/v1/extensions/ext_MISSING') {
@@ -495,8 +521,25 @@ describe('CommunityService catalog', () => {
     expect(list.items[0]?.latest).not.toHaveProperty('packageSha256')
     expect(community.requests.at(-1)?.url.searchParams.get('q')).toBe('天气')
     expect(community.requests.at(-1)?.url.searchParams.get('provides')).toBe('agent')
+    expect(community.requests.at(-1)?.url.searchParams.has('sort')).toBe(false)
+    await service.listExtensions({ sort: 'score' })
+    expect(community.requests.at(-1)?.url.searchParams.get('sort')).toBe('score')
     const detail = await service.getExtension('ext_01DEMO')
-    expect(detail.review).toEqual({ status: 'passed', grade: 'A', summary: '良好。', highlights: [] })
+    expect(detail.review).toEqual({
+      status: 'passed',
+      rating: {
+        standard: 'v1',
+        score: 4.5,
+        dimensions: [{ key: 'security', stars: 5, headline: '权限与用途一致' }],
+        badges: ['least-privilege'],
+      },
+      summary: '良好。',
+      dimensions: [{ key: 'security', notes: '说明' }],
+      findings: [],
+      checks: [{ severity: 'warning', title: '网络访问不受限' }],
+      reviewedAt: 1,
+    })
+    expect(detail.latest?.permissions[0]?.layer).toBe('agent')
     await expect(service.getExtension('ext_MISSING')).rejects.toMatchObject({
       status: 404,
       message: '扩展不存在或尚未公开。',

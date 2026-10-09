@@ -33,6 +33,7 @@ import { ConfigSchemaDocumentSchema } from './config-schema.js'
 import {
   CommunityExtensionDetailSchema,
   CommunityExtensionSummarySchema,
+  CommunityExtensionSortSchema,
   CommunityListingInputSchema,
   CommunityReleaseIdSchema,
   CommunityReviewStatusSchema,
@@ -2739,6 +2740,8 @@ export const HostApiContracts = {
         provides: ExtensionProvideSchema.optional(),
         /** 只列社区后台认定的官方扩展。 */
         official: z.enum(['1']).optional(),
+        /** 排序方式，默认最近更新；游标只在同一种排序下有效。 */
+        sort: CommunityExtensionSortSchema.optional(),
         cursor: z.string().max(200).optional(),
       })
       .strict(),

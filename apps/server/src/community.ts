@@ -2,6 +2,9 @@ import {
   CommunityAccountSchema,
   CommunityExtensionDetailSchema,
   CommunityExtensionSummarySchema,
+  CommunityRatingSchema,
+  type CommunityExtensionSort,
+  type CommunityRating,
   type CommunityListingInput,
   CommunityMyExtensionSchema,
   CommunityPermissionItemSchema,
@@ -530,12 +533,14 @@ export class CommunityService {
     readonly query?: string | undefined
     readonly provides?: string | undefined
     readonly official?: '1' | undefined
+    readonly sort?: CommunityExtensionSort | undefined
     readonly cursor?: string | undefined
   }): Promise<{ readonly items: CommunityExtensionSummary[]; readonly nextCursor: string | null }> {
     const search = new URLSearchParams({ limit: '30' })
     if (input.query) search.set('q', input.query)
     if (input.provides) search.set('provides', input.provides)
     if (input.official) search.set('official', input.official)
+    if (input.sort) search.set('sort', input.sort)
     if (input.cursor) search.set('cursor', input.cursor)
     const body = z
       .object({ items: z.array(z.unknown()), nextCursor: z.string().nullable() })
@@ -556,11 +561,19 @@ export class CommunityService {
           ? null
           : {
               status: review['status'],
-              grade: review['grade'] ?? null,
+              rating: normalizeRating(review['rating']),
               summary: typeof review['summary'] === 'string' ? review['summary'] : null,
-              highlights: (Array.isArray(review['highlights']) ? review['highlights'] : [])
-                .slice(0, 16)
-                .map((item) => ({ severity: asRecord(item)['severity'], title: asRecord(item)['title'] })),
+              dimensions: records(review['dimensions'], 16).map((item) => ({ key: item['key'], notes: item['notes'] })),
+              findings: records(review['findings'], 64).map((item) => ({
+                dimension: item['dimension'],
+                severity: item['severity'],
+                title: item['title'],
+              })),
+              checks: records(review['checks'], 64).map((item) => ({
+                severity: item['severity'],
+                title: item['title'],
+              })),
+              reviewedAt: typeof review['reviewedAt'] === 'number' ? review['reviewedAt'] : null,
             },
     })
   }
@@ -720,7 +733,7 @@ export class CommunityService {
     return CommunityReviewReportSchema.parse({
       releaseId: raw['releaseId'],
       status: raw['status'],
-      grade: raw['grade'] ?? null,
+      rating: normalizeRating(raw['rating']),
       deterministic: (Array.isArray(raw['deterministic']) ? raw['deterministic'] : []).map((item) => {
         const finding = asRecord(item)
         return {
@@ -737,11 +750,17 @@ export class CommunityService {
           : {
               summary: ai['summary'],
               verdict: ai['verdict'],
-              grade: ai['grade'],
-              dimensions: (Array.isArray(ai['dimensions']) ? ai['dimensions'] : []).map((item) => {
-                const dimension = asRecord(item)
-                return { key: dimension['key'], grade: dimension['grade'], notes: dimension['notes'] }
-              }),
+              compliance:
+                ai['compliance'] === undefined || ai['compliance'] === null
+                  ? null
+                  : { ok: asRecord(ai['compliance'])['ok'], notes: asRecord(ai['compliance'])['notes'] },
+              dimensions: records(ai['dimensions'], 16).map((dimension) => ({
+                key: dimension['key'],
+                stars: dimension['stars'],
+                headline: dimension['headline'],
+                notes: dimension['notes'],
+                ...(typeof dimension['nextStar'] === 'string' ? { nextStar: dimension['nextStar'] } : {}),
+              })),
               findings: (Array.isArray(ai['findings']) ? ai['findings'] : []).map((item) => {
                 const finding = asRecord(item)
                 return {
@@ -821,7 +840,17 @@ const normalizePermission = (raw: unknown): Record<string, unknown> => {
     level: permission['level'],
     label: permission['label'],
     ...(typeof permission['detail'] === 'string' ? { detail: permission['detail'] } : {}),
+    ...(permission['layer'] === 'host' || permission['layer'] === 'agent' ? { layer: permission['layer'] } : {}),
   }
+}
+
+const records = (value: unknown, limit: number): Record<string, unknown>[] =>
+  (Array.isArray(value) ? value : []).slice(0, limit).map(asRecord)
+
+/** 社区的评级；结构不认识（旧版社区没有评级，或将来的标准）时当作没有评级。 */
+const normalizeRating = (raw: unknown): CommunityRating | null => {
+  const parsed = CommunityRatingSchema.safeParse(raw)
+  return parsed.success ? parsed.data : null
 }
 
 const normalizeRelease = (raw: unknown): Record<string, unknown> => {
@@ -829,7 +858,7 @@ const normalizeRelease = (raw: unknown): Record<string, unknown> => {
   return {
     id: release['id'],
     reviewStatus: release['reviewStatus'],
-    grade: release['grade'] ?? null,
+    rating: normalizeRating(release['rating']),
     permissions: (Array.isArray(release['permissions']) ? release['permissions'] : []).map(normalizePermission),
     packageSize: release['packageSize'],
     requiresSdk: release['requiresSdk'] ?? null,

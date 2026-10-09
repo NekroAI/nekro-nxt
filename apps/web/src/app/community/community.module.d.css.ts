@@ -2,7 +2,9 @@ declare const styles: {
   readonly account: string
   readonly avatar: string
   readonly backLink: string
+  readonly badgeChips: string
   readonly cardList: string
+  readonly chevronOpen: string
   readonly communityCard: string
   readonly communityCardFoot: string
   readonly communityCardHead: string
@@ -33,17 +35,29 @@ declare const styles: {
   readonly location: string
   readonly objectGlyph: string
   readonly quietLink: string
+  readonly ratingCard: string
+  readonly ratingMark: string
+  readonly ratingPending: string
+  readonly ratingRows: string
+  readonly ratingScore: string
+  readonly ratingSign: string
+  readonly ratingTop: string
   readonly release: string
   readonly releases: string
-  readonly reviewLine: string
-  readonly reviewLineHead: string
-  readonly reviewLineSummary: string
+  readonly reviewCap: string
+  readonly reviewRecord: string
+  readonly reviewRecordMeta: string
+  readonly reviewRecordRow: string
+  readonly reviewerSeal: string
   readonly row: string
   readonly rowGlyph: string
   readonly rowName: string
   readonly rowState: string
   readonly rowSub: string
   readonly stack: string
+  readonly stars: string
+  readonly starsOff: string
+  readonly starsOn: string
   readonly suggestion: string
   readonly textLink: string
 }
