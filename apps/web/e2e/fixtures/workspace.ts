@@ -27,7 +27,16 @@ export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapsho
   })
   // No channel prompt unless a test registers its own route after this one.
   await page.route('**/api/channels/*/prompt', (route) =>
-    json(route, { document: { version: 1, segments: [] }, locked: false, revision: 0, maxChars: 4000, revisions: [] }),
+    json(route, {
+      instructions: {
+        document: { version: 1, segments: [] },
+        locked: false,
+        revision: 0,
+        maxChars: 4000,
+        revisions: [],
+      },
+      notes: { document: { version: 1, segments: [] }, locked: false, revision: 0, maxChars: 2000, revisions: [] },
+    }),
   )
   await page.route('**/api/channels/*/pending', (route) => {
     const channelId = new URL(route.request().url()).pathname.split('/')[3]

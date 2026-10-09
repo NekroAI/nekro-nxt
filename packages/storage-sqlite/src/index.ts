@@ -38,6 +38,7 @@ export type { InboundHooksRepository, InboundHookDecisionRecord } from './reposi
 export {
   ChannelPromptConflictError,
   type ChannelPromptAuthor,
+  type ChannelPromptKind,
   type ChannelPromptRecord,
   type ChannelPromptRevisionRecord,
   type ChannelPromptsRepository,

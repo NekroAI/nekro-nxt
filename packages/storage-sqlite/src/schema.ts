@@ -1331,22 +1331,28 @@ export const coreSchema = {
   inboundHookDecisions,
 } as const
 
-/** Channel-specific instructions for the agent answering a channel; they follow the channel across rebinding. */
+/**
+ * What the agent answering a channel reads about it; it follows the channel across rebinding. `instructions` are the
+ * admin's (system prompt, agent cannot edit); `notes` are the agent's own (runtime context, editable unless locked).
+ */
 export const channelPrompts = sqliteTable(
   'channel_prompts',
   {
     channelId: text('channel_id')
       .$type<ChannelId>()
-      .primaryKey()
+      .notNull()
       .references(() => channels.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['instructions', 'notes'] }).notNull(),
     document: jsonText<PromptDocumentV1>('document').notNull(),
-    /** The agent may not rewrite a locked prompt. */
+    /** Notes only: the agent may not rewrite them. */
     locked: integer({ mode: 'boolean' }).notNull().default(false),
     revision: integer().notNull(),
     updatedBy: text('updated_by', { enum: ['admin', 'agent'] }).notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.channelId, table.kind] }),
+    check('channel_prompts_kind_ck', sql`${table.kind} IN ('instructions', 'notes')`),
     check('channel_prompts_revision_ck', sql`${table.revision} >= 1`),
     check('channel_prompts_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
   ],
@@ -1360,13 +1366,14 @@ export const channelPromptRevisions = sqliteTable(
       .$type<ChannelId>()
       .notNull()
       .references(() => channels.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['instructions', 'notes'] }).notNull(),
     revision: integer().notNull(),
     document: jsonText<PromptDocumentV1>('document').notNull(),
     updatedBy: text('updated_by', { enum: ['admin', 'agent'] }).notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.channelId, table.revision] }),
+    primaryKey({ columns: [table.channelId, table.kind, table.revision] }),
     check('channel_prompt_revisions_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
   ],
 )

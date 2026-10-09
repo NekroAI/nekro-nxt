@@ -1,6 +1,7 @@
 declare const styles: {
   readonly count: string
   readonly editor: string
+  readonly history: string
   readonly lead: string
   readonly loading: string
   readonly note: string

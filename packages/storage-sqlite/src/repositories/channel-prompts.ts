@@ -7,9 +7,12 @@ import { channelPromptRevisions, channelPrompts } from '../schema.js'
 const KEPT_REVISIONS = 20
 
 export type ChannelPromptAuthor = 'admin' | 'agent'
+/** `instructions`: the admin's, in the system prompt. `notes`: the agent's own, in the runtime context. */
+export type ChannelPromptKind = 'instructions' | 'notes'
 
 export interface ChannelPromptRecord {
   readonly channelId: ChannelId
+  readonly kind: ChannelPromptKind
   readonly document: PromptDocumentV1
   readonly locked: boolean
   readonly revision: number
@@ -32,8 +35,12 @@ export class ChannelPromptConflictError extends Error {
 }
 
 export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
-  const read = (channelId: ChannelId): ChannelPromptRecord | undefined => {
-    const row = database.select().from(channelPrompts).where(eq(channelPrompts.channelId, channelId)).get()
+  const read = (channelId: ChannelId, kind: ChannelPromptKind): ChannelPromptRecord | undefined => {
+    const row = database
+      .select()
+      .from(channelPrompts)
+      .where(and(eq(channelPrompts.channelId, channelId), eq(channelPrompts.kind, kind)))
+      .get()
     return row === undefined ? undefined : { ...row }
   }
   return {
@@ -45,6 +52,7 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
      */
     saveChannelPrompt(input: {
       readonly channelId: ChannelId
+      readonly kind: ChannelPromptKind
       readonly document: PromptDocumentV1
       readonly locked: boolean
       readonly updatedBy: ChannelPromptAuthor
@@ -52,7 +60,11 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
       readonly expectedRevision: number
     }): ChannelPromptRecord {
       return database.transaction((tx) => {
-        const current = tx.select().from(channelPrompts).where(eq(channelPrompts.channelId, input.channelId)).get()
+        const current = tx
+          .select()
+          .from(channelPrompts)
+          .where(and(eq(channelPrompts.channelId, input.channelId), eq(channelPrompts.kind, input.kind)))
+          .get()
         if ((current?.revision ?? 0) !== input.expectedRevision) {
           throw new ChannelPromptConflictError(current === undefined ? undefined : { ...current })
         }
@@ -60,6 +72,7 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
           tx.insert(channelPromptRevisions)
             .values({
               channelId: current.channelId,
+              kind: current.kind,
               revision: current.revision,
               document: current.document,
               updatedBy: current.updatedBy,
@@ -71,6 +84,7 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
             .where(
               and(
                 eq(channelPromptRevisions.channelId, input.channelId),
+                eq(channelPromptRevisions.kind, input.kind),
                 lte(channelPromptRevisions.revision, current.revision - KEPT_REVISIONS),
               ),
             )
@@ -78,6 +92,7 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
         }
         const record: ChannelPromptRecord = {
           channelId: input.channelId,
+          kind: input.kind,
           document: input.document,
           locked: input.locked,
           revision: input.expectedRevision + 1,
@@ -87,7 +102,7 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
         tx.insert(channelPrompts)
           .values(record)
           .onConflictDoUpdate({
-            target: channelPrompts.channelId,
+            target: [channelPrompts.channelId, channelPrompts.kind],
             set: {
               document: record.document,
               locked: record.locked,
@@ -101,7 +116,7 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
       })
     },
 
-    listChannelPromptRevisions(channelId: ChannelId): readonly ChannelPromptRevisionRecord[] {
+    listChannelPromptRevisions(channelId: ChannelId, kind: ChannelPromptKind): readonly ChannelPromptRevisionRecord[] {
       return database
         .select({
           revision: channelPromptRevisions.revision,
@@ -110,7 +125,7 @@ export function createChannelPromptsRepository(database: DrizzleCoreDatabase) {
           updatedAt: channelPromptRevisions.updatedAt,
         })
         .from(channelPromptRevisions)
-        .where(eq(channelPromptRevisions.channelId, channelId))
+        .where(and(eq(channelPromptRevisions.channelId, channelId), eq(channelPromptRevisions.kind, kind)))
         .orderBy(desc(channelPromptRevisions.revision))
         .all()
     },

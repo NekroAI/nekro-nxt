@@ -61,3 +61,15 @@
   font: var(--t-body);
   overflow-wrap: anywhere;
 }
+
+.history {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.history > summary {
+  width: fit-content;
+  color: var(--muted);
+  font: var(--t-note);
+  cursor: pointer;
+}

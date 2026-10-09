@@ -2170,10 +2170,12 @@ describe('DSH Host and internal Channel vertical slice', () => {
     const channelPrompts = new ChannelPrompts(repository, () => 1000)
     channelPrompts.saveByAdmin({
       channelId: channel.id,
+      kind: 'instructions',
       document: promptDocumentFromText('本频道是内部测试频道，回答附带调试数据。'),
       locked: false,
       expectedRevision: 0,
     })
+    channelPrompts.updateNotesByAgent(channel.id, '成员甲喜欢简短的回答。')
     const createHost = (hostModel: ScriptedCommunicationModel) =>
       DshHostRuntime.create({
         sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
@@ -2257,7 +2259,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         'asset_create',
         'asset_inspect',
         'asset_read_text',
-        'channel_prompt_update',
+        'channel_notes_update',
         'conversation_history_read',
         'conversation_history_search',
         'finish_channel_turn',
@@ -2266,7 +2268,16 @@ describe('DSH Host and internal Channel vertical slice', () => {
       ])
       expect(systemText(model.calls[0])).toContain(channel.id)
       expect(systemText(model.calls[0])).toContain('主测试频道')
-      expect(systemText(model.calls[0])).toContain('以下是管理员为本频道写的专属说明')
+      expect(systemText(model.calls[0])).toContain('以下是管理员为本频道写的频道说明')
+      // The agent's notes change often, so they ride in the runtime context, not the cached system prompt.
+      expect(systemText(model.calls[0])).not.toContain('成员甲喜欢简短的回答。')
+      expect(
+        model.calls[0]?.messages.some(
+          (message) =>
+            message.role === 'user' &&
+            message.content.some((block) => block.type === 'text' && block.text.includes('成员甲喜欢简短的回答。')),
+        ),
+      ).toBe(true)
       expect(systemText(model.calls[0])).toContain('本频道是内部测试频道，回答附带调试数据。')
       // The channel's rules sit after the persona and before the channel identity.
       expect(systemText(model.calls[0]).indexOf('你应当简洁、准确地回应频道消息。')).toBeLessThan(

@@ -469,7 +469,7 @@ export const createNxtHostService = (
         const catalog = await backends.platform.catalog(binding.channelId)
         if (!platform.actions.some((entry) => entry.adapter === catalog.adapterKey && entry.action === action)) {
           throw new NxtCapabilityError(
-            `没有声明平台动作 ${catalog.adapterKey}:${action}，请加入 permissions.capabilities.platform.actions。`,
+            `没有声明平台动作 ${catalog.adapterKey}:${action}，请加入 ${layerField(binding)}.platform.actions。`,
           )
         }
         if (!catalog.actions.some(({ name }) => name === action)) {
@@ -484,7 +484,7 @@ export const createNxtHostService = (
         const catalog = await backends.platform.catalog(binding.channelId)
         if (!platform.raw.includes(catalog.adapterKey)) {
           throw new NxtCapabilityError(
-            `没有声明 ${catalog.adapterKey} 的原始接口，请加入 permissions.capabilities.platform.raw。`,
+            `没有声明 ${catalog.adapterKey} 的原始接口，请加入 ${layerField(binding)}.platform.raw。`,
           )
         }
         if (!catalog.raw) throw new NxtCapabilityError('当前频道的平台不支持原始接口透传。')
@@ -496,7 +496,7 @@ export const createNxtHostService = (
         const catalog = await backends.platform.catalog(binding.channelId)
         if (!platform.raw.includes(catalog.adapterKey)) {
           throw new NxtCapabilityError(
-            `读取机器人账号的平台 ID 需要声明 ${catalog.adapterKey} 的原始接口，请加入 permissions.capabilities.platform.raw。`,
+            `读取机器人账号的平台 ID 需要声明 ${catalog.adapterKey} 的原始接口，请加入 ${layerField(binding)}.platform.raw。`,
           )
         }
         return backends.platform.selfPlatformUserId(binding.channelId)
@@ -506,7 +506,7 @@ export const createNxtHostService = (
       async schedule(input) {
         const jobs = requireCapability(binding, 'jobs', 'jobs（定时任务）')
         if (jobs.runtime === undefined) {
-          throw new NxtCapabilityError('运行时创建定时任务需要声明 permissions.capabilities.jobs.runtime.maxActive。')
+          throw new NxtCapabilityError(`运行时创建定时任务需要声明 ${layerField(binding)}.jobs.runtime.maxActive。`)
         }
         const label = typeof input.label === 'string' ? input.label.trim() : ''
         if (label === '' || label.length > 200) throw new NxtCapabilityError('定时任务 label 需要 1–200 个字符。')

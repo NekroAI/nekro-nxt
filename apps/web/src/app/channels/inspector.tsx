@@ -33,7 +33,7 @@ import { triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/iden
 import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { ContextSheet } from './context-sheet.js'
-import { ChannelPromptSheet, promptUpdateNote, type ChannelPromptView } from './channel-prompt-sheet.js'
+import { ChannelPromptSheet, type ChannelPromptView } from './channel-prompt-sheet.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { useProductApi } from '../model/store.js'
 import styles from './channels.module.css'
@@ -54,13 +54,19 @@ const triggerHint: Record<TriggerPolicy, string> = {
 
 const kindLabel: Record<ChannelSummary['kind'], string> = { internal: '内置频道', group: '群聊', direct: '私聊' }
 
-/** What the inspector says about a channel prompt: whether it exists, a glimpse of it, and who changed it last. */
+/** What the inspector says about a channel: a glimpse of the admin's instructions and whether the agent keeps notes. */
 const channelPromptSummary = (view: ChannelPromptView | undefined): string | undefined => {
   if (view === undefined) return undefined
-  const text = promptDocumentPlainText(view.document).replace(/\s+/gu, ' ').trim()
-  if (!text) return '还没有'
-  const glimpse = text.length > 18 ? `${text.slice(0, 17)}…` : text
-  return [glimpse, promptUpdateNote(view), view.locked ? '已锁定' : undefined].filter(Boolean).join(' · ')
+  const text = promptDocumentPlainText(view.instructions.document).replace(/\s+/gu, ' ').trim()
+  const notes = promptDocumentPlainText(view.notes.document).trim().length
+  return (
+    [
+      text ? (text.length > 18 ? `${text.slice(0, 17)}…` : text) : undefined,
+      notes > 0 ? `智能体笔记 ${notes} 字${view.notes.locked ? '（已锁定）' : ''}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(' · ') || '还没有'
+  )
 }
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
@@ -250,7 +256,9 @@ export function ChannelInspector({
               tip="只在这个频道生效的要求，例如群规、语气和称呼；不改变智能体的人设。"
             >
               <Button size="small" onClick={() => setPromptOpen(true)}>
-                {prompt === undefined || prompt.revision === 0 ? '添加' : '编辑'}
+                {prompt === undefined || (prompt.instructions.revision === 0 && prompt.notes.revision === 0)
+                  ? '添加'
+                  : '编辑'}
               </Button>
             </PropertyRow>
           ) : null}

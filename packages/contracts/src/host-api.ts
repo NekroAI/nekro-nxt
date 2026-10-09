@@ -774,11 +774,10 @@ export const ChannelRuntimeContextSchema = z
   })
   .strict()
 
-/** A channel's own instructions for whoever answers it, with recent earlier versions to restore. */
-export const ChannelPromptViewSchema = z
+const ChannelPromptPartSchema = z
   .object({
     document: PromptDocumentV1Schema,
-    /** The agent may not rewrite a locked prompt. */
+    /** Notes only: the agent may not rewrite them. */
     locked: z.boolean(),
     /** 0 before the first save; send it back as `expectedRevision`. */
     revision: z.number().int().nonnegative(),
@@ -796,6 +795,14 @@ export const ChannelPromptViewSchema = z
         .strict(),
     ),
   })
+  .strict()
+
+/**
+ * What the agent answering a channel reads about it, each part with recent earlier versions to restore: the admin's
+ * instructions (system prompt) and the agent's own notes (runtime context).
+ */
+export const ChannelPromptViewSchema = z
+  .object({ instructions: ChannelPromptPartSchema, notes: ChannelPromptPartSchema })
   .strict()
 
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
@@ -2415,7 +2422,9 @@ export const HostApiContracts = {
     params: channelParam,
     request: z
       .object({
+        kind: z.enum(['instructions', 'notes']),
         document: PromptDocumentV1Schema,
+        /** Notes only; ignored for instructions. */
         locked: z.boolean(),
         /** The revision the edit started from; a newer stored revision rejects the save. */
         expectedRevision: z.number().int().nonnegative(),

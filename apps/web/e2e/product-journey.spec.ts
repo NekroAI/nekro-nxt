@@ -1586,21 +1586,26 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       }),
     }),
   )
+  const doc = (text: string) => ({ version: 1 as const, segments: [{ type: 'text' as const, text }] })
   let promptView = HostApiContracts.getChannelPrompt.response.parse({
-    document: { version: 1, segments: [{ type: 'text', text: '本频道只讨论旅程测试。' }] },
-    locked: false,
-    revision: 2,
-    maxChars: 4000,
-    updatedBy: 'agent',
-    updatedAt: 1_725_000_100_000,
-    revisions: [
-      {
-        revision: 1,
-        document: { version: 1, segments: [{ type: 'text', text: '最早的旅程说明。' }] },
-        updatedBy: 'admin',
-        updatedAt: 1_725_000_000_000,
-      },
-    ],
+    instructions: {
+      document: doc('本频道只讨论旅程测试。'),
+      locked: false,
+      revision: 2,
+      maxChars: 4000,
+      updatedBy: 'admin',
+      updatedAt: 1_725_000_100_000,
+      revisions: [{ revision: 1, document: doc('最早的旅程说明。'), updatedBy: 'admin', updatedAt: 1_725_000_000_000 }],
+    },
+    notes: {
+      document: doc('成员甲喜欢简短的回答。'),
+      locked: false,
+      revision: 1,
+      maxChars: 2000,
+      updatedBy: 'agent',
+      updatedAt: 1_725_000_150_000,
+      revisions: [],
+    },
   })
   const promptSaves: unknown[] = []
   await page.route(`**/api/channels/${channelId}/runtime/context`, (route) =>
@@ -1701,13 +1706,17 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     if (route.request().method() === 'PUT') {
       const input = HostApiContracts.updateChannelPrompt.request.parse(route.request().postDataJSON())
       promptSaves.push(input)
+      const part = promptView[input.kind]
       promptView = HostApiContracts.getChannelPrompt.response.parse({
         ...promptView,
-        document: input.document,
-        locked: input.locked,
-        revision: promptView.revision + 1,
-        updatedBy: 'admin',
-        updatedAt: 1_725_000_200_000,
+        [input.kind]: {
+          ...part,
+          document: input.document,
+          locked: input.kind === 'notes' && input.locked,
+          revision: part.revision + 1,
+          updatedBy: 'admin',
+          updatedAt: 1_725_000_200_000,
+        },
       })
     }
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(promptView) })
@@ -1724,27 +1733,33 @@ test('channel context controls and intelligent-agent deletion are guarded and re
 
   await page.goto(`/channels/${channelId}`)
   await expect(inspector.getByText('本频道只讨论旅程测试。', { exact: false })).toBeVisible()
-  await expect(inspector.getByText('智能体于', { exact: false })).toBeVisible()
+  await expect(inspector.getByText('智能体笔记 11 字', { exact: false })).toBeVisible()
   await inspector.getByRole('button', { name: '编辑', exact: true }).click()
   const promptSheet = page.getByRole('dialog', { name: '「上下文旅程频道」的频道说明' })
   const promptEditor = promptSheet.getByRole('textbox', { name: '频道说明' })
   await expect(promptEditor).toContainText('本频道只讨论旅程测试。')
+  await promptSheet.getByText('之前的版本 1').click()
   await promptSheet.getByRole('button', { name: '恢复', exact: true }).click()
   await expect(promptEditor).toContainText('最早的旅程说明。')
   await promptEditor.click()
   await page.keyboard.press('End')
   await page.keyboard.type('回答保持简短。')
-  await promptSheet.getByRole('switch', { name: '锁定频道说明' }).click()
+  const notesField = promptSheet.getByRole('textbox', { name: '智能体笔记' })
+  await expect(notesField).toHaveValue('成员甲喜欢简短的回答。')
+  await notesField.fill('成员甲喜欢简短的回答。不要用表情包。')
+  await promptSheet.getByRole('switch', { name: '锁定智能体笔记' }).click()
   await promptSheet.getByRole('button', { name: '保存', exact: true }).click()
   await expect(promptSheet).toHaveCount(0)
   expect(promptSaves).toEqual([
     {
-      document: { version: 1, segments: [{ type: 'text', text: '最早的旅程说明。回答保持简短。' }] },
-      locked: true,
+      kind: 'instructions',
+      document: doc('最早的旅程说明。回答保持简短。'),
+      locked: false,
       expectedRevision: 2,
     },
+    { kind: 'notes', document: doc('成员甲喜欢简短的回答。不要用表情包。'), locked: true, expectedRevision: 1 },
   ])
-  await expect(inspector.getByText('已锁定', { exact: false })).toBeVisible()
+  await expect(inspector.getByText('（已锁定）', { exact: false })).toBeVisible()
   await inspector.getByRole('button', { name: '查看', exact: true }).click()
   const contextSheet = page.getByRole('dialog', { name: `${agentName}看到的上下文` })
   await expect(contextSheet.getByText('deepseek-v4-flash')).toBeVisible()
