@@ -1733,9 +1733,11 @@ test('channel context controls and intelligent-agent deletion are guarded and re
 
   await page.goto(`/channels/${channelId}`)
   await expect(inspector.getByText('本频道只讨论旅程测试。', { exact: false })).toBeVisible()
-  await expect(inspector.getByText('智能体笔记 11 字', { exact: false })).toBeVisible()
-  await inspector.getByRole('button', { name: '编辑', exact: true }).click()
-  const promptSheet = page.getByRole('dialog', { name: '「上下文旅程频道」的频道说明' })
+  const notesSection = inspector.getByRole('region', { name: '笔记' })
+  await expect(notesSection).toContainText('成员甲喜欢简短的回答。')
+  await expect(notesSection).toContainText('11 字')
+  await inspector.getByRole('button', { name: '编辑', exact: true }).first().click()
+  const promptSheet = page.getByRole('dialog', { name: '「上下文旅程频道」的说明与笔记' })
   const promptEditor = promptSheet.getByRole('textbox', { name: '频道说明' })
   await expect(promptEditor).toContainText('本频道只讨论旅程测试。')
   await promptSheet.getByText('之前的版本 1').click()
@@ -1759,7 +1761,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     },
     { kind: 'notes', document: doc('成员甲喜欢简短的回答。不要用表情包。'), locked: true, expectedRevision: 1 },
   ])
-  await expect(inspector.getByText('（已锁定）', { exact: false })).toBeVisible()
+  await expect(notesSection).toContainText('已锁定')
   await inspector.getByRole('button', { name: '查看', exact: true }).click()
   const contextSheet = page.getByRole('dialog', { name: `${agentName}看到的上下文` })
   await expect(contextSheet.getByText('deepseek-v4-flash')).toBeVisible()

@@ -28,6 +28,7 @@ import {
   StatusDot,
   Switch,
   toast,
+  Tooltip,
 } from '../../ui-kit/index.js'
 import { triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { connectionStatus } from '../model/connection-status.js'
@@ -55,19 +56,11 @@ const triggerHint: Record<TriggerPolicy, string> = {
 
 const kindLabel: Record<ChannelSummary['kind'], string> = { internal: '内置频道', group: '群聊', direct: '私聊' }
 
-/** What the inspector says about a channel: a glimpse of the admin's instructions and whether the agent keeps notes. */
+/** A glimpse of the admin's instructions; the agent's notes show in the memory group. */
 const channelPromptSummary = (view: ChannelPromptView | undefined): string | undefined => {
   if (view === undefined) return undefined
   const text = promptDocumentPlainText(view.instructions.document).replace(/\s+/gu, ' ').trim()
-  const notes = promptDocumentPlainText(view.notes.document).trim().length
-  return (
-    [
-      text ? (text.length > 18 ? `${text.slice(0, 17)}…` : text) : undefined,
-      notes > 0 ? `智能体笔记 ${notes} 字${view.notes.locked ? '（已锁定）' : ''}` : undefined,
-    ]
-      .filter(Boolean)
-      .join(' · ') || '还没有'
-  )
+  return text ? (text.length > 18 ? `${text.slice(0, 17)}…` : text) : '还没有'
 }
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
@@ -93,7 +86,7 @@ export function ChannelInspector({
   const [removing, setRemoving] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
-  const [promptOpen, setPromptOpen] = useState(false)
+  const [promptOpen, setPromptOpen] = useState<false | 'instructions' | 'notes'>(false)
   const [prompt, setPrompt] = useState<ChannelPromptView | undefined>()
   const boundAgentId = channel.bindings[0]?.agentId
   useEffect(() => {
@@ -256,10 +249,8 @@ export function ChannelInspector({
               description={channelPromptSummary(prompt)}
               tip="只在这个频道生效的要求，例如群规、语气和称呼；不改变智能体的人设。"
             >
-              <Button size="small" onClick={() => setPromptOpen(true)}>
-                {prompt === undefined || (prompt.instructions.revision === 0 && prompt.notes.revision === 0)
-                  ? '添加'
-                  : '编辑'}
+              <Button size="small" onClick={() => setPromptOpen('instructions')}>
+                {prompt === undefined || prompt.instructions.revision === 0 ? '添加' : '编辑'}
               </Button>
             </PropertyRow>
           ) : null}
@@ -336,50 +327,65 @@ export function ChannelInspector({
       </PropertyGroup>
 
       {agent ? (
-        <PropertyGroup title="上下文" description={`${agent.name}在这个频道里当前记住的内容`}>
-          {occupancy ? (
+        <PropertyGroup title="记忆" description={`${agent.name}在这个频道里记住的内容`}>
+          {occupancy || runtime?.episodeId ? (
             <div className={styles.contextCard}>
-              <Gauge
-                total={occupancy.projectedTokens}
-                capacity={occupancy.contextWindow}
-                format={formatTokens}
-                segments={
-                  breakdown
-                    ? [
-                        { label: '系统', value: breakdown.systemTokens, color: 'var(--accent)' },
-                        { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
-                        { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
-                        {
-                          label: occupancy.imageCount ? `其他（含 ${occupancy.imageCount} 张图）` : '其他',
-                          value: other,
-                          color: 'var(--faint)',
-                        },
-                      ].filter((segment) => segment.value > 0)
-                    : [{ label: '已用', value: occupancy.projectedTokens, color: 'var(--accent)' }]
-                }
-              />
+              <div className={styles.contextHead}>
+                <span className={styles.contextTitle}>当前会话</span>
+                {runtime?.episodeId ? (
+                  <span className={styles.contextActions}>
+                    <Tooltip content="模型实际收到的系统提示词、工具和对话">
+                      <Button size="small" variant="ghost" onClick={() => setContextOpen(true)}>
+                        查看
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="把较早的对话整理成摘要，腾出空间">
+                      <Button size="small" variant="ghost" onClick={() => setReset('compact')}>
+                        压缩
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content="从空白开始；笔记和聊天记录保留">
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        className={styles.contextDanger}
+                        onClick={() => setReset('clear')}
+                      >
+                        清空
+                      </Button>
+                    </Tooltip>
+                  </span>
+                ) : null}
+              </div>
+              {occupancy ? (
+                <Gauge
+                  total={occupancy.projectedTokens}
+                  capacity={occupancy.contextWindow}
+                  format={formatTokens}
+                  segments={
+                    breakdown
+                      ? [
+                          { label: '系统', value: breakdown.systemTokens, color: 'var(--accent)' },
+                          { label: '工具', value: breakdown.toolsTokens, color: 'var(--brass)' },
+                          { label: '对话', value: breakdown.messageTokens, color: 'var(--ok)' },
+                          {
+                            label: occupancy.imageCount ? `图片等（${occupancy.imageCount} 张）` : '其他',
+                            value: other,
+                            color: 'var(--faint)',
+                          },
+                        ].filter((segment) => segment.value > 0)
+                      : [{ label: '已用', value: occupancy.projectedTokens, color: 'var(--accent)' }]
+                  }
+                />
+              ) : null}
             </div>
           ) : null}
-          {runtime?.episodeId ? (
-            <PropertyList>
-              <PropertyRow label="完整内容" tip="模型实际收到的系统提示词和工具">
-                <Button size="small" onClick={() => setContextOpen(true)}>
-                  查看
-                </Button>
-              </PropertyRow>
-              <PropertyRow label="压缩" tip="把较早的对话整理成摘要，腾出空间">
-                <Button size="small" onClick={() => setReset('compact')}>
-                  压缩
-                </Button>
-              </PropertyRow>
-              <PropertyRow label="清空" tip="从空白开始，聊天记录保留">
-                <Button size="small" variant="danger" onClick={() => setReset('clear')}>
-                  清空
-                </Button>
-              </PropertyRow>
-            </PropertyList>
-          ) : null}
-          <ChannelMemory channelId={channel.id} activities={runtime?.memory} />
+          <ChannelMemory
+            channelId={channel.id}
+            prompt={prompt}
+            activities={runtime?.memory}
+            onEditNotes={() => setPromptOpen('notes')}
+          />
         </PropertyGroup>
       ) : null}
 
@@ -458,8 +464,9 @@ export function ChannelInspector({
 
       <BindDialog intent={intent} onClose={() => setIntent(null)} />
       <ChannelPromptSheet
-        open={promptOpen}
-        onOpenChange={setPromptOpen}
+        open={promptOpen !== false}
+        onOpenChange={(open) => setPromptOpen(open ? promptOpen || 'instructions' : false)}
+        focus={promptOpen || 'instructions'}
         channelId={channel.id}
         channelName={channel.name}
         agentId={agent?.id}

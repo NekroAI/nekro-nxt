@@ -1270,20 +1270,217 @@ button.step:hover {
 }
 
 .contextCard {
+  display: grid;
+  gap: var(--s-3);
   padding: var(--s-3) var(--s-4);
   border: 1px solid var(--line);
   border-radius: var(--r-2);
   background: var(--surface);
 }
 
-.memoryList {
-  display: grid;
+.contextHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control-sm);
+}
+
+.contextTitle {
+  flex: 1;
+  min-width: 0;
+  font: var(--t-title);
+}
+
+.contextActions {
+  display: inline-flex;
+  align-items: center;
   gap: var(--s-1);
+  margin-right: calc(var(--s-2) * -1);
+}
+
+.contextDanger {
+  color: var(--bad);
+}
+
+/* —— 记忆：笔记、最近操作、读取与整理，同一张卡片内以细线分节 —— */
+.memoryCard {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+
+.memorySection {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: var(--s-3) var(--s-4);
+}
+
+.memorySection + .memorySection {
+  border-top: 1px solid var(--line);
+}
+
+.memoryHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control-sm);
+}
+
+.memoryTitle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+  font: var(--t-title);
+}
+
+.memoryLocked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.memoryMeta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font: var(--t-caption);
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memoryHead > button:last-child {
+  margin-right: calc(var(--s-2) * -1);
+}
+
+.memoryNotes {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--fg-2);
+  font: var(--t-note);
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.memoryEmpty {
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
+}
+
+.memoryFeed {
+  display: grid;
+  gap: var(--s-2);
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.memoryFeed li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--fg-2);
+  font: var(--t-note);
+}
+
+.memoryFeed li > svg {
   color: var(--muted);
-  font-size: var(--fs-xs);
+}
+
+.memoryFeed li[data-missed] > svg {
+  color: var(--warn);
+}
+
+.memoryFeedText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memoryFeedTime {
+  color: var(--faint);
+  font: var(--t-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.memorySettingsToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  min-height: var(--row);
+  padding: var(--s-3) var(--s-4);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease);
+}
+
+.memorySettingsToggle:hover {
+  background: var(--hover);
+}
+
+.memorySettingsToggle > svg {
+  flex: none;
+  color: var(--muted);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.memorySettingsToggle > svg[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.memorySettingsSection {
+  gap: 0;
+  padding: 0;
+}
+
+.memorySettings {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-1) var(--s-4) var(--s-4);
+}
+
+.memorySetting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 10.5rem;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.memoryTag {
+  flex: none;
+  padding: 0 var(--s-2);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: var(--t-caption);
+}
+
+.memorySettingLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--fg-2);
+  font: var(--t-label);
+}
+
+.memoryReset {
+  justify-self: start;
+  margin-left: calc(var(--s-2) * -1);
 }
 
 .sourceName {

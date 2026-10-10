@@ -35,8 +35,12 @@ export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapsho
         maxChars: 4000,
         revisions: [],
       },
-      notes: { document: { version: 1, segments: [] }, locked: true, revision: 0, maxChars: 2000, revisions: [] },
+      notes: { document: { version: 1, segments: [] }, locked: false, revision: 0, maxChars: 2000, revisions: [] },
     }),
+  )
+  const contextPolicy = { backlogTextChars: 40_000, backlogImages: 6, idleReviewMinutes: 45 }
+  await page.route('**/api/channels/*/context-policy', (route) =>
+    json(route, { policy: contextPolicy, defaults: contextPolicy, custom: false }),
   )
   await page.route('**/api/channels/*/pending', (route) => {
     const channelId = new URL(route.request().url()).pathname.split('/')[3]

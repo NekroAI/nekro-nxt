@@ -90,6 +90,7 @@ export function ChannelPromptSheet({
   channelId,
   channelName,
   agentId,
+  focus = 'instructions',
   onSaved,
 }: {
   readonly open: boolean
@@ -97,6 +98,8 @@ export function ChannelPromptSheet({
   readonly channelId: string
   readonly channelName: string
   readonly agentId?: string | undefined
+  /** The part to bring into view when the sheet opens. */
+  readonly focus?: 'instructions' | 'notes'
   readonly onSaved: (view: ChannelPromptView) => void
 }) {
   const [view, setView] = useState<ChannelPromptView | undefined>()
@@ -107,6 +110,11 @@ export function ChannelPromptSheet({
   const [locked, setLocked] = useState(false)
   const [saving, setSaving] = useState(false)
   const [reload, setReload] = useState(0)
+  const loaded = view !== undefined
+  useEffect(() => {
+    if (!open || !loaded || focus !== 'notes') return
+    document.getElementById('channel-prompt-notes')?.scrollIntoView({ block: 'start' })
+  }, [open, loaded, focus])
 
   useEffect(() => {
     if (!open) return
@@ -172,7 +180,7 @@ export function ChannelPromptSheet({
     <Sheet
       open={open}
       onOpenChange={onOpenChange}
-      title={`「${channelName}」的频道说明`}
+      title={`「${channelName}」的说明与笔记`}
       footer={
         view ? (
           <>
@@ -222,7 +230,11 @@ export function ChannelPromptSheet({
             />
           </PropertyGroup>
 
-          <PropertyGroup title="智能体笔记" description="智能体自己记下的这个群的约定。解锁后它才能修改。">
+          <PropertyGroup
+            id="channel-prompt-notes"
+            title="智能体笔记"
+            description="智能体自己记下的、需要长期记住的内容。锁定后它不能修改。"
+          >
             <div className={styles.editor}>
               <Textarea
                 aria-label="智能体笔记"

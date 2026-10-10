@@ -10,7 +10,11 @@ declare const styles: {
   readonly chan: string
   readonly chevron: string
   readonly composer: string
+  readonly contextActions: string
   readonly contextCard: string
+  readonly contextDanger: string
+  readonly contextHead: string
+  readonly contextTitle: string
   readonly conv: string
   readonly convInner: string
   readonly day: string
@@ -36,7 +40,24 @@ declare const styles: {
   readonly jump: string
   readonly knob: string
   readonly listCount: string
-  readonly memoryList: string
+  readonly memoryCard: string
+  readonly memoryEmpty: string
+  readonly memoryFeed: string
+  readonly memoryFeedText: string
+  readonly memoryFeedTime: string
+  readonly memoryHead: string
+  readonly memoryLocked: string
+  readonly memoryMeta: string
+  readonly memoryNotes: string
+  readonly memoryReset: string
+  readonly memorySection: string
+  readonly memorySetting: string
+  readonly memorySettingLabel: string
+  readonly memorySettings: string
+  readonly memorySettingsSection: string
+  readonly memorySettingsToggle: string
+  readonly memoryTag: string
+  readonly memoryTitle: string
   readonly meta: string
   readonly mine: string
   readonly msg: string

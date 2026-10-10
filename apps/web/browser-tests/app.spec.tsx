@@ -682,6 +682,10 @@ test.describe('NekroNxt browser projections', () => {
         json: { document: { version: 1, segments: [] }, locked: false, revision: 0, maxChars: 2000, revisions: [] },
       }),
     )
+    await page.route('**/api/channels/*/context-policy', (request) => {
+      const policy = { backlogTextChars: 40_000, backlogImages: 6, idleReviewMinutes: 45 }
+      return request.fulfill({ json: { policy, defaults: policy, custom: false } })
+    })
     await page.route('**/api/dynamic/*/inventory', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ rows: [] }) }),
     )
@@ -1991,7 +1995,7 @@ test.describe('NekroNxt browser projections', () => {
       )
       const inspector = page.getByRole('complementary', { name: '频道信息' })
       await playwrightExpect(inspector.getByText('资料员', { exact: true }).first()).toBeVisible()
-      await playwrightExpect(inspector.getByRole('heading', { name: '上下文' })).toBeVisible()
+      await playwrightExpect(inspector.getByRole('heading', { name: '记忆' })).toBeVisible()
 
       // Without x-ray a turn is a summary: tool chips, no internal reasoning.
       await playwrightExpect(page.getByText('读取文件', { exact: true }).first()).toBeVisible()
