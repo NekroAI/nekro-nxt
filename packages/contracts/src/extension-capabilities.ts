@@ -3,9 +3,10 @@ import { z } from 'zod'
 /**
  * Host capability level this build implements. A Revision that declares `requires.sdk` above it is rejected at
  * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump when a Manifest capability
- * ships; never reuse a level for a different meaning. Level 7 is Manifest V7 (host instance + agent attachments).
+ * ships; never reuse a level for a different meaning. Level 7 is Manifest V7 (host instance + agent attachments); level 8 adds the asset library, image info, tool result
+ * images, the search index and host-layer model calls.
  */
-export const EXTENSION_SDK_LEVEL = 7
+export const EXTENSION_SDK_LEVEL = 8
 
 export const ExtensionRequiresSchema = z.object({ sdk: z.number().int().min(1).max(1000) }).strict()
 export type ExtensionRequires = z.output<typeof ExtensionRequiresSchema>
@@ -150,6 +151,86 @@ export const ExtensionPlatformCapabilitySchema = z
   .strict()
 export type ExtensionPlatformCapability = z.output<typeof ExtensionPlatformCapabilitySchema>
 
+export const EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
+export const EXTENSION_ASSET_LIBRARY_MAX_QUOTA_BYTES = 32 * 1024 * 1024 * 1024
+
+export const ExtensionAssetLibraryCapabilitySchema = z
+  .object({
+    quotaBytes: z
+      .number()
+      .int()
+      .min(1024 * 1024)
+      .max(EXTENSION_ASSET_LIBRARY_MAX_QUOTA_BYTES)
+      .optional(),
+  })
+  .strict()
+export type ExtensionAssetLibraryCapability = z.output<typeof ExtensionAssetLibraryCapabilitySchema>
+
+/**
+ * `write` creates Assets in the current channel; `library` keeps Assets in the extension's own library so they can be
+ * used in any channel later.
+ */
+export const ExtensionAssetsCapabilitySchema = z
+  .object({
+    write: z.literal(true).optional(),
+    library: ExtensionAssetLibraryCapabilitySchema.optional(),
+  })
+  .strict()
+  .refine((value) => value.write !== undefined || value.library !== undefined, 'assets 至少声明 write 或 library。')
+export type ExtensionAssetsCapability = z.output<typeof ExtensionAssetsCapabilitySchema>
+
+const IndexNameSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z][a-z0-9_]{0,31}$/u, '索引、字段和过滤项名称只能使用小写字母、数字和下划线，以字母开头。')
+
+export const EXTENSION_INDEX_MAX_TEXT_FIELDS = 4
+export const EXTENSION_INDEX_MAX_FILTERS = 4
+
+/**
+ * One searchable collection. Text fields are matched by keywords (and vectors when the Host has them enabled); weights
+ * rank keyword matches. Filter fields hold short keyword values, possibly several per document.
+ */
+export const ExtensionIndexCollectionSchema = z
+  .object({
+    name: IndexNameSchema,
+    fields: z
+      .array(z.object({ name: IndexNameSchema, weight: z.number().min(0.1).max(10).default(1) }).strict())
+      .min(1)
+      .max(EXTENSION_INDEX_MAX_TEXT_FIELDS),
+    filters: z.array(IndexNameSchema).max(EXTENSION_INDEX_MAX_FILTERS).default([]),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const names = [...value.fields.map(({ name }) => name), ...value.filters]
+    if (new Set(names).size !== names.length) {
+      context.addIssue({ code: 'custom', message: '同一索引里的字段与过滤项不能重名。' })
+    }
+  })
+export type ExtensionIndexCollection = z.output<typeof ExtensionIndexCollectionSchema>
+
+export const ExtensionIndexCapabilitySchema = z
+  .object({
+    collections: z
+      .array(ExtensionIndexCollectionSchema)
+      .min(1)
+      .max(4)
+      .refine((value) => new Set(value.map(({ name }) => name)).size === value.length, '索引名称不能重复。'),
+  })
+  .strict()
+export type ExtensionIndexCapability = z.output<typeof ExtensionIndexCapabilitySchema>
+
+export const EXTENSION_MODEL_MAX_CALLS_PER_MINUTE = 120
+
+/** Calls to a model the user picks from the Host's configured models, with images allowed; host layer only. */
+export const ExtensionModelsCapabilitySchema = z
+  .object({
+    maxCallsPerMinute: z.number().int().min(1).max(EXTENSION_MODEL_MAX_CALLS_PER_MINUTE),
+    maxOutputTokens: z.number().int().min(64).max(EXTENSION_LLM_MAX_OUTPUT_TOKENS),
+  })
+  .strict()
+export type ExtensionModelsCapability = z.output<typeof ExtensionModelsCapabilitySchema>
+
 /** A header or environment value: literal text, or the current value of a `meta.role: 'secret'` config field. */
 export const ExtensionMcpValueSchema = z.union([
   z.string().max(4096),
@@ -259,10 +340,10 @@ export const ExtensionCapabilitiesSchema = z
   .object({
     network: ExtensionNetworkCapabilitySchema.optional(),
     storage: ExtensionStorageCapabilitySchema.optional(),
-    assets: z
-      .object({ write: z.literal(true) })
-      .strict()
-      .optional(),
+    assets: ExtensionAssetsCapabilitySchema.optional(),
+    index: ExtensionIndexCapabilitySchema.optional(),
+    /** Host layer only; the agent layer uses `llm`, which runs on the agent's own model. */
+    models: ExtensionModelsCapabilitySchema.optional(),
     history: z
       .object({ read: z.literal(true) })
       .strict()
@@ -292,6 +373,11 @@ export const HostLayerCapabilitiesSchema = z
       .object({ quotaBytes: z.number().int().min(1024).max(EXTENSION_STORAGE_MAX_QUOTA_BYTES).optional() })
       .strict()
       .optional(),
+    /** The same library agent attachments use; the host instance lists and imports into it. */
+    assets: z.object({ library: ExtensionAssetLibraryCapabilitySchema }).strict().optional(),
+    /** The same collections agent attachments declare; pages search and maintain them. */
+    index: ExtensionIndexCapabilitySchema.optional(),
+    models: ExtensionModelsCapabilitySchema.optional(),
   })
   .strict()
 export type HostLayerCapabilities = z.output<typeof HostLayerCapabilitiesSchema>
@@ -310,6 +396,9 @@ export const hostLayerAsCapabilities = (host: HostLayerCapabilities | undefined)
                 ...(host.storage.quotaBytes === undefined ? {} : { quotaBytes: host.storage.quotaBytes }),
               },
             }),
+        ...(host.assets === undefined ? {} : { assets: { library: host.assets.library } }),
+        ...(host.index === undefined ? {} : { index: host.index }),
+        ...(host.models === undefined ? {} : { models: host.models }),
       }
 
 const NETWORK_MODE_RANK = { domains: 0, config: 1, unrestricted: 2 } as const
@@ -344,7 +433,16 @@ export const extensionCapabilitiesExpand = (
   if (next === undefined) return false
   if (networkExpands(previous?.network, next.network)) return true
   if (next.storage?.scopes.some((scope) => !(previous?.storage?.scopes ?? []).includes(scope))) return true
-  if (next.assets !== undefined && previous?.assets === undefined) return true
+  if (next.assets?.write !== undefined && previous?.assets?.write === undefined) return true
+  if (next.assets?.library !== undefined && previous?.assets?.library === undefined) return true
+  if (
+    next.models !== undefined &&
+    (previous?.models === undefined ||
+      next.models.maxCallsPerMinute > previous.models.maxCallsPerMinute ||
+      next.models.maxOutputTokens > previous.models.maxOutputTokens)
+  ) {
+    return true
+  }
   if (next.history !== undefined && previous?.history === undefined) return true
   const platformKey = ({ adapter, action }: { readonly adapter: string; readonly action: string }) =>
     `${adapter}:${action}`
@@ -380,6 +478,9 @@ export const extensionCapabilitiesExpand = (
   }
   return false
 }
+
+const formatLibraryQuota = (bytes: number): string =>
+  bytes >= 1024 * 1024 * 1024 ? `${+(bytes / 1024 / 1024 / 1024).toFixed(1)} GB` : `${Math.round(bytes / 1024 / 1024)} MB`
 
 /** Capability risk tiers shown on the approval page (§7 of the capability decision). */
 export type ExtensionCapabilityRisk = 'normal' | 'sensitive' | 'high'
@@ -428,8 +529,32 @@ export const summarizeExtensionCapabilities = (
       label: shared ? '保存数据，并在启用它的智能体之间共享' : '为这个智能体保存数据',
     })
   }
-  if (capabilities.assets !== undefined)
+  if (capabilities.assets?.write !== undefined)
     items.push({ key: 'assets', risk: 'normal', label: '在当前频道生成图片或文件' })
+  if (capabilities.assets?.library !== undefined) {
+    items.push({
+      key: 'assets.library',
+      risk: 'sensitive',
+      label: '把频道里的图片收进扩展资源库，之后可以在其他频道使用',
+      detail: `最多 ${formatLibraryQuota(capabilities.assets.library.quotaBytes ?? EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES)}`,
+    })
+  }
+  if (capabilities.index !== undefined) {
+    items.push({
+      key: 'index',
+      risk: 'normal',
+      label: '建立可搜索的索引',
+      detail: capabilities.index.collections.map(({ name }) => name).join('、'),
+    })
+  }
+  if (capabilities.models !== undefined) {
+    items.push({
+      key: 'models',
+      risk: 'sensitive',
+      label: '使用本机已配置的模型，可以发送图片',
+      detail: `每分钟最多 ${capabilities.models.maxCallsPerMinute} 次，计入所选模型的用量`,
+    })
+  }
   if (capabilities.history !== undefined)
     items.push({ key: 'history', risk: 'normal', label: '读取当前频道的聊天记录' })
   const hook = capabilities.inboundHook

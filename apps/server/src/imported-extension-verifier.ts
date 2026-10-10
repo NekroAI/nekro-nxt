@@ -1,3 +1,5 @@
+import { ExtensionLibrary, memoryLibraryRegistry } from './extension-library.js'
+import { memoryIndexEngine } from './extension-index.js'
 import { AdapterRegistry, type AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
 import {
   configFields,
@@ -546,6 +548,23 @@ const verificationBackends = (capabilities: ExtensionCapabilities | undefined): 
   history: {
     list: () => Promise.resolve({ messages: [] }),
     search: () => Promise.resolve([]),
+  },
+  // Verification has no real pictures: the library is empty and lookups report a missing Asset.
+  library: new ExtensionLibrary({
+    registry: memoryLibraryRegistry(),
+    assets: { getAssetById: () => undefined, canAccessAsset: () => false, grantAssetAccess: () => undefined },
+    assetService: {
+      prepare: () => Promise.reject(new Error('验证时不保存文件。')),
+      blobPath: () => {
+        throw new Error('验证时没有文件。')
+      },
+    },
+    now: () => Date.now(),
+  }),
+  index: memoryIndexEngine(),
+  models: {
+    list: () => Promise.resolve([]),
+    complete: () => Promise.resolve({ text: '验证模型回复' }),
   },
 })
 

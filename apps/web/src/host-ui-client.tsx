@@ -27,6 +27,7 @@ import {
   type HostEventStreamHandlers,
 } from './host-event-stream.js'
 import styles from './host-ui-client.module.css'
+import { createLibraryHost, unavailableLibraryHost } from './extension-ui/library-host.js'
 
 const navigationTone = {
   neutral: 'neutral',
@@ -200,6 +201,7 @@ export class HostUiModuleRuntime {
         call: (method: string, input: ExtensionJsonValue = {}) => this.#call(first, method, input),
         subscribe: (topic: string, listener: (value: ExtensionJsonValue) => void) =>
           this.#subscribe(first, topic, listener),
+        ...(first.owner.kind === 'extension' ? createLibraryHost(first.owner.extensionId) : unavailableLibraryHost),
       },
     }
     // Panels and message renderers of the same build run in the extension UI runtime; this runtime owns pages.

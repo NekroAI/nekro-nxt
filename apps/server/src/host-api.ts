@@ -27,6 +27,7 @@ import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
 import { registerMcpRoutes } from './host-routes-mcp.js'
 import { registerCommunityRoutes } from './host-routes-community.js'
 import { registerConnectionsRoutes } from './host-routes-connections.js'
+import { installedLibraryQuota, registerExtensionLibraryRoutes } from './host-routes-extension-library.js'
 import { registerExtensionsRoutes } from './host-routes-extensions.js'
 import { registerSettingsRoutes } from './host-routes-settings.js'
 import { registerWorkspaceRoutes } from './host-routes-workspace.js'
@@ -307,6 +308,56 @@ export const createNekroHostApi = (
   })
   registerRoute({
     kind: 'exact',
+    path: '/api/settings/retrieval',
+    handler: async (req, res) => {
+      try {
+        if (req.method === 'GET') {
+          writeContractJson(res, 200, HostApiContracts.getRetrievalStatus, runtime.retrieval.status())
+          return
+        }
+        if (req.method === 'PUT') {
+          const parsed = HostApiContracts.updateRetrievalMode.parseRequest(await readJsonBody(req))
+          writeContractJson(res, 200, HostApiContracts.updateRetrievalMode, runtime.retrieval.setMode(parsed.mode))
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+      } catch (error) {
+        writeError(res, 400, 'retrieval-settings-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/retrieval/model/download',
+    handler: (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        writeContractJson(res, 200, HostApiContracts.downloadRetrievalModel, runtime.retrieval.startDownload())
+      } catch (error) {
+        writeError(res, 400, 'retrieval-model-unavailable', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/retrieval/model',
+    handler: async (req, res) => {
+      if (req.method !== 'DELETE') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        writeContractJson(res, 200, HostApiContracts.removeRetrievalModel, await runtime.retrieval.remove())
+      } catch (error) {
+        writeError(res, 400, 'retrieval-model-busy', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
+    kind: 'exact',
     path: '/api/runtimes/code-run-node/download',
     handler: (req, res) => {
       if (req.method !== 'POST') {
@@ -454,6 +505,14 @@ export const createNekroHostApi = (
       readCursor: () => hub.cursor,
       projections,
       extensionImports,
+    }),
+  )
+  disposers.push(
+    registerExtensionLibraryRoutes({
+      registerRoute,
+      repository: runtime.repository,
+      assetService: runtime.assetService,
+      libraryQuota: installedLibraryQuota(runtime.repository),
     }),
   )
   disposers.push(

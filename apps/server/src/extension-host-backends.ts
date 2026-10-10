@@ -133,7 +133,10 @@ export const resolveExtensionSecret = async (
  */
 export const createNxtProductBackends = (
   facts: NxtProductFacts,
-  infrastructure: Pick<NxtServiceBackends, 'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs'> & {
+  infrastructure: Pick<
+    NxtServiceBackends,
+    'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs' | 'library' | 'index' | 'models'
+  > & {
     readonly platform: Omit<NxtServiceBackends['platform'], 'selfPlatformUserId'>
   },
 ): NxtServiceBackends => ({

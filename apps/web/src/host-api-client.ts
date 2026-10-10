@@ -229,6 +229,14 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.checkProductUpdates, {}, undefined, options),
   updateProductUpdateSettings: (request: HostApiRequest<'updateProductUpdateSettings'>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.updateProductUpdateSettings, {}, request, options),
+  getRetrievalStatus: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getRetrievalStatus, {}, undefined, options),
+  updateRetrievalMode: (request: HostApiRequest<'updateRetrievalMode'>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.updateRetrievalMode, {}, request, options),
+  downloadRetrievalModel: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.downloadRetrievalModel, {}, undefined, options),
+  removeRetrievalModel: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.removeRetrievalModel, {}, undefined, options),
   getMessagePacingSettings: (options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getMessagePacingSettings, {}, undefined, options),
   updateMessagePacingSettings: (request: HostApiRequest<'updateMessagePacingSettings'>, options?: HostRequestOptions) =>

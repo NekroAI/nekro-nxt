@@ -89,6 +89,7 @@
     "@deepseek-ai/dsh-web": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-web-search-deepseek": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-working-directory": "0.2.1-alpha.2",
+    "@huggingface/tokenizers": "0.2.0",
     "@joplin/turndown-plugin-gfm": "1.0.67",
     "@modelcontextprotocol/client": "2.0.0",
     "@mozilla/readability": "0.6.0",

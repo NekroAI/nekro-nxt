@@ -1,5 +1,6 @@
 import type { ExtensionUiContributions, HostUiPermission } from '@nekro-nxt/contracts'
 import type { ExtensionClientHost } from '@nekro-nxt/extension-sdk'
+import { createLibraryHost } from './library-host.js'
 import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { useProductRuntime, type LocalExtensionSummary, type ProductRuntime } from '../product-runtime.js'
 import { mountClient, type MountedClient } from './client.js'
@@ -59,6 +60,7 @@ const desiredClients = (product: ProductRuntime, extensions: readonly LocalExten
               ...(input === undefined ? {} : { value: input }),
             }),
           subscribe: () => () => undefined,
+          ...createLibraryHost(extension.id),
         },
       },
     ]

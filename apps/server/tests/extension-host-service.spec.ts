@@ -10,6 +10,8 @@ import {
   type NxtServiceBackends,
   type NxtServiceBinding,
 } from '../src/extension-host-service.js'
+import { memoryIndexEngine } from '../src/extension-index.js'
+import { emptyExtensionLibrary } from './fixtures/unused-nxt-backends.js'
 import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from '../src/extension-secret-config.js'
 
 const callContext: NxtCallContext = {
@@ -74,6 +76,12 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
     members: {
       describe: (_channelId, memberId) =>
         Promise.resolve(memberId === 'mbr_SELF' ? { memberId, self: true as const } : undefined),
+    },
+    library: emptyExtensionLibrary(),
+    index: memoryIndexEngine(),
+    models: {
+      list: () => Promise.resolve([]),
+      complete: () => Promise.reject(new Error('Unexpected model call.')),
     },
     history: {
       list: () => Promise.resolve({ messages: [] }),

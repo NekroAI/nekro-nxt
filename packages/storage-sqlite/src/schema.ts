@@ -40,7 +40,18 @@ import type {
   ExtensionRevisionVerification,
 } from '@nekro-nxt/extension-runtime'
 import { sql } from 'drizzle-orm'
-import { check, foreignKey, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import {
+  blob,
+  check,
+  foreignKey,
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core'
 
 const jsonText = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 
@@ -708,13 +719,13 @@ export const assetChannelGrants = sqliteTable(
       .$type<ChannelId>()
       .notNull()
       .references(() => channels.id, { onDelete: 'restrict' }),
-    source: text('source', { enum: ['agent-tool'] }).notNull(),
+    source: text('source', { enum: ['agent-tool', 'extension-library'] }).notNull(),
     grantedAt: integer('granted_at').notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.assetId, table.channelId] }),
     index('asset_channel_grants_channel_idx').on(table.channelId, table.grantedAt),
-    check('asset_channel_grants_source_ck', sql`${table.source} = 'agent-tool'`),
+    check('asset_channel_grants_source_ck', sql`${table.source} IN ('agent-tool', 'extension-library')`),
     check('asset_channel_grants_granted_at_ck', sql`${table.grantedAt} >= 0`),
   ],
 )
@@ -1408,5 +1419,89 @@ export const channelPromptRevisions = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.channelId, table.kind, table.revision] }),
     check('channel_prompt_revisions_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
+  ],
+)
+
+/**
+ * Assets an extension keeps in its own library (表情包与扩展素材能力 §4.2). A library Asset can be granted to any
+ * channel later; the row also counts toward the extension's library quota.
+ */
+export const extensionLibraryAssets = sqliteTable(
+  'extension_library_assets',
+  {
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .notNull()
+      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+    assetId: text('asset_id')
+      .$type<AssetId>()
+      .notNull()
+      .references(() => assets.id, { onDelete: 'restrict' }),
+    addedAt: integer('added_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.extensionId, table.assetId] }),
+    index('extension_library_assets_added_idx').on(table.extensionId, table.addedAt, table.assetId),
+    check('extension_library_assets_added_at_ck', sql`${table.addedAt} >= 0`),
+  ],
+)
+
+/**
+ * One document of an extension's search index. `id` is the rowid of `extension_index_fts`, a keyword table created by
+ * the migration and kept in step by triggers; `fields` keeps the source text so keywords and vectors can be rebuilt.
+ */
+export const extensionIndexDocuments = sqliteTable(
+  'extension_index_documents',
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .notNull()
+      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+    collection: text().notNull(),
+    documentId: text('document_id').notNull(),
+    fields: jsonText<Readonly<Record<string, string>>>('fields').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('extension_index_documents_key_uq').on(table.extensionId, table.collection, table.documentId),
+    check('extension_index_documents_updated_at_ck', sql`${table.updatedAt} >= 0`),
+  ],
+)
+
+export const extensionIndexFilterValues = sqliteTable(
+  'extension_index_filter_values',
+  {
+    documentRowId: integer('document_row_id')
+      .notNull()
+      .references(() => extensionIndexDocuments.id, { onDelete: 'cascade' }),
+    field: text().notNull(),
+    value: text().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.documentRowId, table.field, table.value] }),
+    index('extension_index_filter_values_lookup_idx').on(table.field, table.value, table.documentRowId),
+  ],
+)
+
+/**
+ * Vectors of one document in one vector space (model, dimensions and text template). Spaces never mix: a query only
+ * compares vectors of the space it was embedded in.
+ */
+export const extensionIndexVectors = sqliteTable(
+  'extension_index_vectors',
+  {
+    documentRowId: integer('document_row_id')
+      .notNull()
+      .references(() => extensionIndexDocuments.id, { onDelete: 'cascade' }),
+    space: text().notNull(),
+    /** int8 components; `scale` restores the original magnitudes. */
+    vector: blob({ mode: 'buffer' }).notNull(),
+    scale: real().notNull(),
+    textDigest: text('text_digest').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.documentRowId, table.space] }),
+    index('extension_index_vectors_space_idx').on(table.space, table.documentRowId),
   ],
 )

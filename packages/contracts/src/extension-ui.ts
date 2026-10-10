@@ -252,6 +252,26 @@ export const ExtensionPermissionsSchema = z
   })
   .strict()
   .superRefine(checkBrowserPermissions)
+  .superRefine((value, context) => {
+    if (value.agent?.models !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agent', 'models'],
+        message: 'models 只能在 permissions.host 中声明；智能体层使用 llm 调用智能体自己的模型。',
+      })
+    }
+    // Both layers read and write the same collections, so a name must mean one definition.
+    for (const collection of value.agent?.index?.collections ?? []) {
+      const host = value.host?.index?.collections.find(({ name }) => name === collection.name)
+      if (host !== undefined && JSON.stringify(host) !== JSON.stringify(collection)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['agent', 'index'],
+          message: `索引 ${collection.name} 在 permissions.host 与 permissions.agent 中的定义不一致。`,
+        })
+      }
+    }
+  })
 
 export type ExtensionPermissions = z.output<typeof ExtensionPermissionsSchema>
 

@@ -26,8 +26,8 @@ const config = {
 }
 
 describe('Extension V7 contracts', () => {
-  it('uses SDK level 7 and separates browser, host and agent permissions', () => {
-    expect(EXTENSION_SDK_LEVEL).toBe(7)
+  it('uses SDK level 8 and separates browser, host and agent permissions', () => {
+    expect(EXTENSION_SDK_LEVEL).toBe(8)
     expect(ExtensionPermissionsSchema.parse({})).toEqual({ permissions: [], networkOrigins: [] })
     expect(hostPermissionDeclaration(permissions)).toEqual({
       permissions: ['agents.read', 'network.request'],
@@ -247,5 +247,30 @@ describe('Extension V7 contracts', () => {
         review: { ...detail.review, future: true, findings: [{ ...detail.review.findings[0], future: true }] },
       }),
     ).toEqual(detail)
+  })
+})
+
+describe('cross-layer permissions', () => {
+  const stickers = { name: 'stickers', fields: [{ name: 'meaning' }] }
+
+  it('keeps host model calls out of the agent layer', () => {
+    expect(() =>
+      ExtensionPermissionsSchema.parse({ agent: { models: { maxCallsPerMinute: 1, maxOutputTokens: 64 } } }),
+    ).toThrow('models 只能在 permissions.host 中声明')
+  })
+
+  it('requires a collection both layers declare to mean the same thing', () => {
+    expect(
+      ExtensionPermissionsSchema.parse({
+        host: { index: { collections: [stickers] } },
+        agent: { index: { collections: [stickers] } },
+      }),
+    ).toMatchObject({ agent: { index: { collections: [{ name: 'stickers' }] } } })
+    expect(() =>
+      ExtensionPermissionsSchema.parse({
+        host: { index: { collections: [stickers] } },
+        agent: { index: { collections: [{ ...stickers, filters: ['scope'] }] } },
+      }),
+    ).toThrow('定义不一致')
   })
 })

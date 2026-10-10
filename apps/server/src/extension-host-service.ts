@@ -2,6 +2,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
 import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
 import {
+  ChannelIdSchema,
+  EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES,
   EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
   EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES,
   JsonValueSchema,
@@ -27,10 +29,15 @@ import type {
   NxtLlmRequest,
   NxtLlmResponse,
   NxtPromptRenderApi,
+  NxtIndexService,
+  NxtModelOption,
+  NxtModelRequest,
   NxtStorageEntry,
   NxtStorageListOptions,
   NxtStorageOptions,
 } from '@nekro-nxt/extension-sdk'
+import { queryLimit, validateIndexDocument, validateIndexFilter, type ExtensionIndexEngine } from './extension-index.js'
+import type { ExtensionLibrary } from './extension-library.js'
 
 /** Service name extensions declare in `inject`. Not a DSH private Service, so isolation never hides it. */
 export const NXT_HOST_SERVICE_NAME = 'nxt'
@@ -126,6 +133,17 @@ export interface NxtServiceBackends {
       options: { readonly limit: number; readonly before?: string },
     ): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
     search(channelId: string, query: string, limit: number): Promise<readonly NxtHistoryMessage[]>
+  }
+  readonly library: ExtensionLibrary
+  readonly index: ExtensionIndexEngine
+  /** Host-configured models for host-layer calls; images are library Assets. */
+  readonly models: {
+    list(): Promise<readonly NxtModelOption[]>
+    complete(
+      binding: NxtServiceBinding,
+      request: NxtModelRequest & { readonly provider: string; readonly modelId: string },
+      maxOutputTokens: number,
+    ): Promise<NxtLlmResponse>
   }
   readonly diagnostic?: (binding: NxtServiceBinding, message: string) => void
 }
@@ -315,6 +333,110 @@ const withTimeout = async <Value>(promise: Promise<Value>, timeoutMs: number, me
   }
 }
 
+/** Runs `work` so a thrown capability error rejects like every other `nxt` call. */
+const settle = <Value>(work: () => Value): Promise<Awaited<Value>> => {
+  try {
+    return Promise.resolve(work())
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)))
+  }
+}
+
+const libraryQuota = (binding: NxtServiceBinding): number => {
+  const library = requireCapability(binding, 'assets', 'assets.library（扩展资源库）').library
+  if (library === undefined) {
+    throw new NxtCapabilityError(`这个扩展没有声明扩展资源库，请在 ${layerField(binding)}.assets 中加入 library。`)
+  }
+  return library.quotaBytes ?? EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES
+}
+
+const channelOf = (binding: NxtServiceBinding) => {
+  const parsed = ChannelIdSchema.safeParse(binding.channelId)
+  if (!parsed.success) throw new NxtCapabilityError('这次调用没有所在的频道。')
+  return parsed.data
+}
+
+const requireWrite = (binding: NxtServiceBinding): void => {
+  if (requireCapability(binding, 'assets', 'assets（生成频道文件）').write === undefined) {
+    throw new NxtCapabilityError(`在当前频道生成文件需要在 ${layerField(binding)}.assets 中声明 write: true。`)
+  }
+}
+
+const indexService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtIndexService => {
+  const collectionOf = (name: string) => {
+    const declared = requireCapability(binding, 'index', 'index（检索索引）').collections.find(
+      (collection) => collection.name === name,
+    )
+    if (declared === undefined) {
+      throw new NxtCapabilityError(`没有声明索引 ${name}，请加入 ${layerField(binding)}.index.collections。`)
+    }
+    return declared
+  }
+  return {
+    upsert: (collection, id, document) =>
+      settle(() => {
+        const declared = collectionOf(collection)
+        backends.index.upsert(binding.ownerKey, declared, id, validateIndexDocument(declared, id, document))
+      }),
+    delete: (collection, id) =>
+      settle(() => {
+        collectionOf(collection)
+        return backends.index.delete(binding.ownerKey, collection, id)
+      }),
+    async query(collection, text, options) {
+      const declared = collectionOf(collection)
+      if (typeof text !== 'string') throw new NxtCapabilityError('检索内容必须是字符串。')
+      return backends.index.query(binding.ownerKey, declared, text, {
+        limit: queryLimit(options?.limit),
+        filter: validateIndexFilter(declared, options?.filter),
+      })
+    },
+    count: (collection) =>
+      settle(() => {
+        collectionOf(collection)
+        return backends.index.count(binding.ownerKey, collection)
+      }),
+  }
+}
+
+/** Host-layer model calls: the caller names one of the Host's configured models by `ref`. */
+const modelService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtHostLayerService['models'] => {
+  const calls: number[] = []
+  return {
+    async list() {
+      requireCapability(binding, 'models', 'models（使用本机配置的模型）')
+      return backends.models.list()
+    },
+    async complete(request) {
+      const models = requireCapability(binding, 'models', 'models（使用本机配置的模型）')
+      const messages: NxtModelRequest['messages'] = request.messages
+      if (messages.length === 0) throw new NxtCapabilityError('models.complete 至少需要一条 messages。')
+      const option = (await backends.models.list()).find(({ ref }) => ref === request.model)
+      if (option === undefined) throw new NxtCapabilityError('找不到这个模型，可能已被移除，请重新选择。')
+      const maxOutputTokens = Math.max(
+        1,
+        Math.min(Math.trunc(request.maxOutputTokens ?? models.maxOutputTokens), models.maxOutputTokens),
+      )
+      for (const message of messages) {
+        for (const part of message.content) {
+          if (part.type === 'image') backends.library.readable(binding.ownerKey, undefined, part.assetId)
+        }
+      }
+      const now = Date.now()
+      while (calls.length > 0 && calls[0]! <= now - 60_000) calls.shift()
+      if (calls.length >= models.maxCallsPerMinute) {
+        throw new NxtCapabilityError(`每分钟最多调用 ${models.maxCallsPerMinute} 次模型，请稍后再试。`)
+      }
+      calls.push(now)
+      return backends.models.complete(
+        binding,
+        { ...request, provider: option.provider, modelId: option.model },
+        maxOutputTokens,
+      )
+    },
+  }
+}
+
 /**
  * One `nxt` instance per (agent, extension owner, Session). `prompt` is optional because verification renders
  * dynamic context directly instead of registering into a live DSH Session.
@@ -416,12 +538,33 @@ export const createNxtHostService = (
       },
     },
     assets: {
-      async create(input) {
-        requireCapability(binding, 'assets', 'assets（生成频道文件）')
+      async create(input, options) {
+        if (options?.library === true) {
+          const quota = libraryQuota(binding)
+          const bytes =
+            input.base64 === undefined
+              ? new TextEncoder().encode(input.text ?? '')
+              : Uint8Array.from(Buffer.from(input.base64, 'base64'))
+          const kept = await backends.library.import(binding.ownerKey, bytes, quota)
+          return { assetId: kept.assetId, byteSize: kept.byteSize, mediaType: kept.mediaType }
+        }
+        requireWrite(binding)
         return backends.createAsset(binding.channelId, input)
       },
+      keep: (assetId) =>
+        settle(() => backends.library.keep(binding.ownerKey, channelOf(binding), assetId, libraryQuota(binding))),
+      release: (assetId) =>
+        settle(() => {
+          libraryQuota(binding)
+          return backends.library.release(binding.ownerKey, assetId)
+        }),
+      attach: (assetId) =>
+        settle(() => {
+          libraryQuota(binding)
+          return backends.library.attach(binding.ownerKey, channelOf(binding), assetId)
+        }),
       async fromUrl(url, options) {
-        requireCapability(binding, 'assets', 'assets（生成频道文件）')
+        requireWrite(binding)
         const response = await fetchWithPolicy(url)
         if (response.status < 200 || response.status >= 300) {
           throw new Error(`下载失败：HTTP ${response.status}`)
@@ -433,6 +576,10 @@ export const createNxtHostService = (
         })
       },
     },
+    image: {
+      info: (assetId) => backends.library.imageInfo(binding.ownerKey, channelOf(binding), assetId),
+    },
+    index: indexService(binding, backends),
     storage,
     context: {
       current: () => backends.callContext(binding),
@@ -631,6 +778,28 @@ export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServ
       html: (html, options) => Promise.resolve(parseHtml(html, options)),
       feed: (xml, options) => Promise.resolve(parseFeed(xml, options)),
     },
+    assets: {
+      list: (options) =>
+        settle(() => {
+          libraryQuota(binding)
+          return backends.library.list(binding.ownerKey, options)
+        }),
+      get: (assetId) =>
+        settle(() => {
+          libraryQuota(binding)
+          return backends.library.get(binding.ownerKey, assetId)
+        }),
+      release: (assetId) =>
+        settle(() => {
+          libraryQuota(binding)
+          return backends.library.release(binding.ownerKey, assetId)
+        }),
+    },
+    image: {
+      info: (assetId) => backends.library.imageInfo(binding.ownerKey, undefined, assetId),
+    },
+    index: indexService(binding, backends),
+    models: modelService(binding, backends),
   }
 }
 
@@ -666,6 +835,12 @@ export const createNxtDynamicFacade = (
   },
   get assets() {
     return resolve().assets
+  },
+  get image() {
+    return resolve().image
+  },
+  get index() {
+    return resolve().index
   },
   get storage() {
     return resolve().storage

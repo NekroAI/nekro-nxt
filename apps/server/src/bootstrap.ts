@@ -81,6 +81,14 @@ import {
   sqliteNxtStorage,
   type NxtProductFacts,
 } from './extension-host-backends.js'
+import { memoryIndexEngine, sqliteIndexEngine } from './extension-index.js'
+import { RetrievalRuntime } from './retrieval-runtime.js'
+import {
+  ExtensionLibrary,
+  memoryLibraryRegistry,
+  sqliteLibraryRegistry,
+  type LibraryRegistry,
+} from './extension-library.js'
 import type { NxtPlatformResult } from '@nekro-nxt/extension-sdk'
 import { createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
 import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type DshHostRuntimeOptions } from './index.js'
@@ -192,6 +200,7 @@ export class NekroRuntime {
   readonly mcpStatus: McpStatusRegistry
   readonly authoringTestSecrets: AuthoringTestSecrets
   readonly codeRunNode: CodeRunNode
+  readonly retrieval: RetrievalRuntime
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -236,6 +245,7 @@ export class NekroRuntime {
     readonly mcpStatus: McpStatusRegistry
     readonly authoringTestSecrets: AuthoringTestSecrets
     readonly codeRunNode: CodeRunNode
+    readonly retrieval: RetrievalRuntime
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -264,6 +274,7 @@ export class NekroRuntime {
     this.#jobScheduler = input.jobScheduler
     this.scheduledTasks = input.scheduledTasks
     this.codeRunNode = input.codeRunNode
+    this.retrieval = input.retrieval
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.authoringTestSecrets = input.authoringTestSecrets
@@ -414,6 +425,42 @@ export class NekroRuntime {
           maxOutputTokens,
         })
       }
+      const nxtModels: NxtServiceBackends['models'] = {
+        list: async () =>
+          hostReference.current === undefined
+            ? []
+            : (await hostReference.current.listAvailableLlmModels()).map((model) => ({
+                ref: `${model.provider}:${model.id}`,
+                provider: model.provider,
+                providerName: model.providerName,
+                model: model.id,
+                name: model.name,
+                vision: model.inputModalities?.includes('image') === true,
+              })),
+        complete: (binding, request, maxOutputTokens) => {
+          if (!hostReference.current) return Promise.reject(new Error('DSH Host is not ready.'))
+          return hostReference.current.completeWithHostModel({
+            extensionName: binding.displayName,
+            provider: request.provider,
+            model: request.modelId,
+            ...(request.system === undefined ? {} : { system: request.system }),
+            messages: request.messages,
+            maxOutputTokens,
+          })
+        },
+      }
+      const retrieval = new RetrievalRuntime({
+        root: path.join(path.dirname(options.coreDatabasePath), 'runtimes'),
+        index: repository.extensionIndex,
+        settings: {
+          get: (key) => repository.getSystemSetting(key),
+          put: (key, value, expectedRevision) => repository.putSystemSetting(key, value, expectedRevision, now()),
+        },
+      })
+      await retrieval.start()
+      const extensionIndex = sqliteIndexEngine(repository.extensionIndex, retrieval, now)
+      const libraryFor = (registry: LibraryRegistry) =>
+        new ExtensionLibrary({ registry, assets: repository, assetService, now })
       const platformCatalog: NxtServiceBackends['platform']['catalog'] = (channelId) => {
         const channel = repository.getChannel(ChannelIdSchema.parse(channelId))
         const connection = channel === undefined ? undefined : repository.getConnection(channel.connectionId)
@@ -532,6 +579,9 @@ export class NekroRuntime {
         activationBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
           complete: nxtComplete,
+          library: libraryFor(sqliteLibraryRegistry(repository.extensionLibrary)),
+          index: extensionIndex,
+          models: nxtModels,
           storage: sqliteNxtStorage(repository, now),
           jobs: sqliteNxtJobs(repository, { now, nextId: nextUlid }),
           platform: {
@@ -563,6 +613,10 @@ export class NekroRuntime {
         dynamicBackends: createNxtProductBackends(nxtFacts, {
           fetch: nxtFetch,
           complete: nxtComplete,
+          // Dynamic runs keep their library and index in memory; pictures and channel grants stay real.
+          library: libraryFor(memoryLibraryRegistry()),
+          index: memoryIndexEngine(),
+          models: nxtModels,
           storage: memoryNxtStorage(now),
           jobs: memoryNxtJobs(),
           platform: {
@@ -852,6 +906,7 @@ export class NekroRuntime {
         jobScheduler,
         scheduledTasks,
         codeRunNode,
+        retrieval,
         channelPrompts,
         mcpStatus,
         authoringTestSecrets,
@@ -1357,6 +1412,7 @@ export class NekroRuntime {
   async #dispose(): Promise<void> {
     this.#disposed = true
     await this.#jobScheduler.dispose()
+    await this.retrieval.dispose()
     await this.authoring.dispose()
     await this.extensionService.dispose()
     const failures: unknown[] = []

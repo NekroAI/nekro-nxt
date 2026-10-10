@@ -9,6 +9,7 @@ import {
   Palette,
   Plug,
   Plus,
+  Search,
   Upload,
 } from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
@@ -33,7 +34,7 @@ import {
   useLlmProviders,
   type ProviderView,
 } from '../../llm-settings.js'
-import type { MessagePacing } from '@nekro-nxt/contracts'
+import type { MessagePacing, RetrievalStatus } from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
 import { providerDisplayName } from '../../provider-labels.js'
 import { useProductRuntime, useProductStore, useUiStateStore } from '../../product-runtime.js'
@@ -75,6 +76,7 @@ const SECTIONS = [
   { key: 'dsh', label: 'DSH 插件', icon: <Blocks size={16} /> },
   { key: 'adapters', label: '平台适配器', icon: <Plug size={16} /> },
   { key: 'chat', label: '聊天', icon: <MessageCircle size={16} /> },
+  { key: 'retrieval', label: '检索', icon: <Search size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
@@ -165,6 +167,7 @@ export default function SettingsSpace() {
           <NarrowNav section={section} />
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
+          {section === 'retrieval' ? <Retrieval /> : null}
           {section === 'notifications' ? <Notifications /> : null}
           {section === 'access' ? (
             <>
@@ -558,6 +561,116 @@ function Chat() {
             <Segmented label="连发间隔" value={pacing} onChange={change} options={PACING_OPTIONS} />
           )}
         </PropertyRow>
+      </PropertyList>
+    </>
+  )
+}
+
+const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
+
+/** Search used by extensions for their own collections, e.g. stickers; semantic search runs a small model locally. */
+function Retrieval() {
+  const [status, setStatus] = useState<RetrievalStatus>()
+  const [busy, setBusy] = useState(false)
+  const fail = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+  const busyNow = status?.builtin.install.state === 'downloading' || status?.vectors.state === 'running'
+  useEffect(() => {
+    const controller = new AbortController()
+    const load = () =>
+      workspaceApi
+        .getRetrievalStatus({ signal: controller.signal })
+        .then(setStatus)
+        .catch(() => undefined)
+    void load()
+    // Progress has no push channel; poll only while a download or an index build is running.
+    const timer = busyNow ? setInterval(() => void load(), 1000) : undefined
+    return () => {
+      controller.abort()
+      if (timer !== undefined) clearInterval(timer)
+    }
+  }, [busyNow])
+  const run = async (action: () => Promise<RetrievalStatus>) => {
+    setBusy(true)
+    try {
+      setStatus(await action())
+    } catch (error) {
+      fail(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (status === undefined) {
+    return (
+      <>
+        <SectionHead title="检索" />
+        <Skeleton width={320} height={28} />
+      </>
+    )
+  }
+  const { builtin, vectors } = status
+  const install = builtin.install
+  const installed = install.state === 'installed'
+  return (
+    <>
+      <SectionHead title="检索" />
+      <PropertyList>
+        <PropertyRow
+          label="语义检索"
+          tip="扩展查找自己保存的资料（比如表情包）时，除了关键词，还按意思找：用「累了」也能找到「加班到崩溃」。模型在本机运行，不会把内容发到别处。"
+        >
+          <Switch
+            label="语义检索"
+            checked={status.mode === 'builtin'}
+            disabled={!installed || busy}
+            onCheckedChange={(checked) =>
+              void run(() => workspaceApi.updateRetrievalMode({ mode: checked ? 'builtin' : 'keyword' }))
+            }
+          />
+        </PropertyRow>
+        <PropertyRow label="语义模型" description={`${builtin.model}，约 ${megabytes(builtin.downloadBytes)}`}>
+          {!builtin.supported ? (
+            <span className={styles.note}>这台设备的系统或处理器暂时不能运行</span>
+          ) : install.state === 'downloading' ? (
+            <span className={styles.note} role="status">
+              正在下载 {megabytes(install.receivedBytes)} / {megabytes(install.totalBytes)}
+            </span>
+          ) : installed ? (
+            <Button
+              size="small"
+              variant="ghost"
+              busy={busy}
+              onClick={() => void run(() => workspaceApi.removeRetrievalModel())}
+            >
+              删除
+            </Button>
+          ) : (
+            <div className={styles.note}>
+              {install.state === 'failed' ? (
+                <span className={styles.noteWarn} role="alert">
+                  {install.error}
+                </span>
+              ) : null}
+              <Button size="small" busy={busy} onClick={() => void run(() => workspaceApi.downloadRetrievalModel())}>
+                {install.state === 'failed' ? '重试' : '下载'}
+              </Button>
+            </div>
+          )}
+        </PropertyRow>
+        {status.mode === 'builtin' ? (
+          <PropertyRow label="语义索引" description="新保存的资料会在几秒内加入">
+            {vectors.error !== undefined ? (
+              <span className={styles.noteWarn} role="alert">
+                {vectors.error}
+              </span>
+            ) : (
+              <span className={styles.note} role="status">
+                {vectors.state === 'ready'
+                  ? `已就绪，共 ${vectors.documents} 条`
+                  : `正在建立 ${vectors.embedded} / ${vectors.documents}`}
+              </span>
+            )}
+          </PropertyRow>
+        ) : null}
       </PropertyList>
     </>
   )

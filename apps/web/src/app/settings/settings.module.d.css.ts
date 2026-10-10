@@ -11,6 +11,8 @@ declare const styles: {
   readonly loading: string
   readonly muted: string
   readonly narrowNav: string
+  readonly note: string
+  readonly noteWarn: string
   readonly notice: string
   readonly providerStatus: string
   readonly row: string

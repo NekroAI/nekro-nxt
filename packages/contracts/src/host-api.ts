@@ -945,6 +945,46 @@ export const DEFAULT_MESSAGE_PACING: MessagePacing = 'normal'
 
 export const MessagePacingSettingsSchema = z.object({ pacing: MessagePacingSchema }).strict()
 
+/** `keyword`: SQLite keyword search only; `builtin`: keywords fused with the built-in semantic model. */
+export const RetrievalModeSchema = z.enum(['keyword', 'builtin'])
+export type RetrievalMode = z.output<typeof RetrievalModeSchema>
+
+/** Search used by extension indexes (表情包与扩展素材能力 §6.4). */
+export const RetrievalStatusSchema = z
+  .object({
+    mode: RetrievalModeSchema,
+    builtin: z
+      .object({
+        model: z.string(),
+        /** False where no inference runtime is published for this system and processor. */
+        supported: z.boolean(),
+        downloadBytes: z.number().int().nonnegative(),
+        install: z.discriminatedUnion('state', [
+          z.object({ state: z.literal('not-installed') }).strict(),
+          z
+            .object({
+              state: z.literal('downloading'),
+              receivedBytes: z.number().int().nonnegative(),
+              totalBytes: z.number().int().nonnegative(),
+            })
+            .strict(),
+          z.object({ state: z.literal('installed') }).strict(),
+          z.object({ state: z.literal('failed'), error: z.string() }).strict(),
+        ]),
+      })
+      .strict(),
+    vectors: z
+      .object({
+        documents: z.number().int().nonnegative(),
+        embedded: z.number().int().nonnegative(),
+        state: z.enum(['idle', 'running', 'ready']),
+        error: z.string().optional(),
+      })
+      .strict(),
+  })
+  .strict()
+export type RetrievalStatus = z.output<typeof RetrievalStatusSchema>
+
 /** What the agent keeps about individual members of one channel; each note comes with that member's messages. */
 export const ChannelMemberNotesViewSchema = z
   .object({
@@ -2657,6 +2697,38 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: MessagePacingSettingsSchema,
     response: MessagePacingSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  getRetrievalStatus: defineContract({
+    method: 'GET',
+    path: '/api/settings/retrieval',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: RetrievalStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateRetrievalMode: defineContract({
+    method: 'PUT',
+    path: '/api/settings/retrieval',
+    params: EmptyParamsSchema,
+    request: z.object({ mode: RetrievalModeSchema }).strict(),
+    response: RetrievalStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  downloadRetrievalModel: defineContract({
+    method: 'POST',
+    path: '/api/settings/retrieval/model/download',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: RetrievalStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  removeRetrievalModel: defineContract({
+    method: 'DELETE',
+    path: '/api/settings/retrieval/model',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: RetrievalStatusSchema,
     error: HostApiErrorSchema,
   }),
   downloadCodeRunNode: defineContract({

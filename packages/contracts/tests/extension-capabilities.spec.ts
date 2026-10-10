@@ -309,3 +309,63 @@ describe('summarizeExtensionCapabilities', () => {
     ).toMatchObject({ risk: 'high', detail: '打开任意链接' })
   })
 })
+
+describe('asset library, search index and host model capabilities', () => {
+  const stickers = {
+    name: 'stickers',
+    fields: [{ name: 'meaning', weight: 2 }, { name: 'caption' }],
+    filters: ['scope'],
+  }
+
+  it('accepts library and index declarations and keeps write separate from the library', () => {
+    const declared = caps({ assets: { library: { quotaBytes: 64 * 1024 * 1024 } }, index: { collections: [stickers] } })
+    expect(declared.index?.collections[0]?.fields[1]).toEqual({ name: 'caption', weight: 1 })
+    expect(() => caps({ assets: {} })).toThrow('assets 至少声明 write 或 library')
+    expect(() =>
+      caps({ index: { collections: [{ name: 'stickers', fields: [{ name: 'scope' }], filters: ['scope'] }] } }),
+    ).toThrow('不能重名')
+    expect(() => caps({ index: { collections: [{ name: 'Stickers', fields: [{ name: 'a' }] }] } })).toThrow()
+  })
+
+  it('treats a new library or larger model allowance as an expansion, unlike a new index', () => {
+    const before = caps({ assets: { write: true } })
+    expect(extensionCapabilitiesExpand(before, caps({ assets: { write: true, library: {} } }))).toBe(true)
+    expect(
+      extensionCapabilitiesExpand(before, caps({ assets: { write: true }, index: { collections: [stickers] } })),
+    ).toBe(false)
+    const models = caps({ models: { maxCallsPerMinute: 10, maxOutputTokens: 512 } })
+    expect(extensionCapabilitiesExpand(models, caps({ models: { maxCallsPerMinute: 20, maxOutputTokens: 512 } }))).toBe(
+      true,
+    )
+    expect(extensionCapabilitiesExpand(models, caps({ models: { maxCallsPerMinute: 5, maxOutputTokens: 256 } }))).toBe(
+      false,
+    )
+  })
+
+  it('describes the new capabilities on the approval page', () => {
+    expect(
+      summarizeExtensionCapabilities(
+        hostLayerAsCapabilities({
+          assets: { library: { quotaBytes: 2 * 1024 * 1024 * 1024 } },
+          index: { collections: [{ ...stickers, fields: [{ name: 'meaning', weight: 2 }], filters: [] }] },
+          models: { maxCallsPerMinute: 30, maxOutputTokens: 1024 },
+        }),
+        { layer: 'host' },
+      ),
+    ).toEqual([
+      {
+        key: 'assets.library',
+        risk: 'sensitive',
+        label: '把频道里的图片收进扩展资源库，之后可以在其他频道使用',
+        detail: '最多 2 GB',
+      },
+      { key: 'index', risk: 'normal', label: '建立可搜索的索引', detail: 'stickers' },
+      {
+        key: 'models',
+        risk: 'sensitive',
+        label: '使用本机已配置的模型，可以发送图片',
+        detail: '每分钟最多 30 次，计入所选模型的用量',
+      },
+    ])
+  })
+})

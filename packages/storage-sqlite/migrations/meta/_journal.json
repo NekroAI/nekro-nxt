@@ -281,6 +281,13 @@
       "when": 1791595364214,
       "tag": "0039_channel_member_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1791658826523,
+      "tag": "0040_extension_library_index",
+      "breakpoints": true
     }
   ]
 }

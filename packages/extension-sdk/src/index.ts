@@ -64,10 +64,14 @@ export type ExtensionToolParameter = Omit<ExtensionJsonSchema, 'required'> & {
   readonly required?: boolean
 }
 
-export interface ExtensionToolResultBlock {
-  readonly type: 'text'
-  readonly text: string
-}
+/**
+ * What the agent sees as the tool result. An image block shows a picture from the extension's asset library or the
+ * current channel; the Host skips pictures the agent can already see and describes them in text for models without
+ * vision.
+ */
+export type ExtensionToolResultBlock =
+  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'image'; readonly assetId: string; readonly label?: string }
 
 export interface ExtensionToolDefinition<
   Args extends ExtensionJsonObject = ExtensionJsonObject,
@@ -188,6 +192,92 @@ export interface NxtAssetRecord {
   readonly assetId: string
   readonly byteSize: number
   readonly mediaType: string
+}
+
+export interface NxtAssetCreateOptions {
+  /** Save into the extension's asset library instead of the current channel; needs `assets.library`. */
+  readonly library?: boolean
+}
+
+export interface NxtImageInfo {
+  readonly mediaType: string
+  readonly width: number
+  readonly height: number
+  /** 1 for still images. */
+  readonly frames: number
+  readonly byteSize: number
+  /** 64-bit difference hash as 16 hex digits; near-identical pictures differ in few bits. */
+  readonly dhash: string
+}
+
+export interface NxtLibraryAsset {
+  readonly assetId: string
+  readonly mediaType: string
+  readonly byteSize: number
+  readonly addedAt: number
+}
+
+/** Values of one document. Text fields are searched; filter fields hold short keywords, possibly several each. */
+export interface NxtIndexDocument {
+  readonly fields: Readonly<Record<string, string>>
+  readonly filters?: Readonly<Record<string, string | readonly string[]>>
+}
+
+export interface NxtIndexCondition {
+  readonly field: string
+  readonly value: string
+}
+
+export interface NxtIndexQueryOptions {
+  /** 1–50, default 10. */
+  readonly limit?: number
+  /** Every group must match; within a group one condition is enough. */
+  readonly filter?: readonly (readonly NxtIndexCondition[])[]
+}
+
+export interface NxtIndexHit {
+  readonly id: string
+  readonly score: number
+}
+
+export interface NxtIndexQueryResult {
+  readonly hits: readonly NxtIndexHit[]
+  /** `hybrid` when vectors took part; `keyword` otherwise. */
+  readonly mode: 'keyword' | 'hybrid'
+  /** Why vectors did not take part although they are enabled, e.g. the model is still downloading. */
+  readonly degraded?: string
+}
+
+export interface NxtIndexService {
+  upsert(collection: string, id: string, document: NxtIndexDocument): Promise<void>
+  delete(collection: string, id: string): Promise<boolean>
+  query(collection: string, text: string, options?: NxtIndexQueryOptions): Promise<NxtIndexQueryResult>
+  count(collection: string): Promise<number>
+}
+
+/** A model configured on this Host, as offered in the model picker. */
+export interface NxtModelOption {
+  /** Pass back as `model` in `models.complete`. */
+  readonly ref: string
+  readonly provider: string
+  readonly providerName: string
+  readonly model: string
+  readonly name: string
+  readonly vision: boolean
+}
+
+export type NxtModelContent =
+  | { readonly type: 'text'; readonly text: string }
+  /** An Asset in the extension's library. */
+  | { readonly type: 'image'; readonly assetId: string }
+
+export interface NxtModelRequest {
+  /** `ref` of a model from `models.list()`. */
+  readonly model: string
+  readonly system?: string
+  readonly messages: readonly { readonly role: 'user' | 'assistant'; readonly content: readonly NxtModelContent[] }[]
+  /** Capped by the declared `maxOutputTokens`. */
+  readonly maxOutputTokens?: number
 }
 
 export type NxtStorageScope = 'agent' | 'channel' | 'member' | 'shared'
@@ -383,11 +473,29 @@ export interface NxtHostService {
     get(key: string): Promise<string | undefined>
   }
   readonly assets: {
-    /** Requires `permissions.agent.assets`. Saves a current-channel Asset (max 8 MiB). */
-    create(input: NxtAssetCreateInput): Promise<NxtAssetRecord>
-    /** Requires `assets` and `network`; downloads through the controlled fetch. */
+    /**
+     * Requires `permissions.agent.assets.write`. Saves a current-channel Asset (max 8 MiB); with `{ library: true }`
+     * saves it into the extension's library instead (needs `assets.library`).
+     */
+    create(input: NxtAssetCreateInput, options?: NxtAssetCreateOptions): Promise<NxtAssetRecord>
+    /** Requires `assets.write` and `network`; downloads through the controlled fetch. */
     fromUrl(url: string, options?: { readonly name?: string }): Promise<NxtAssetRecord>
+    /**
+     * Requires `assets.library`. Keeps an Asset the current channel can see in the extension's library, so it can be
+     * used in other channels later. Keeping the same picture again changes nothing.
+     */
+    keep(assetId: string): Promise<NxtLibraryAsset>
+    /** Removes an Asset from the library; `false` when it was not there. */
+    release(assetId: string): Promise<boolean>
+    /** Makes a library Asset usable in the current channel and returns the `assetId` to send. */
+    attach(assetId: string): Promise<NxtAssetRecord>
   }
+  readonly image: {
+    /** Size, frames and difference hash of a picture the current channel can see or the library holds. */
+    info(assetId: string): Promise<NxtImageInfo>
+  }
+  /** Requires `permissions.agent.index`; the collections are shared with the host instance. */
+  readonly index: NxtIndexService
   readonly storage: {
     get(key: string, options?: NxtStorageOptions): Promise<ExtensionJsonValue | undefined>
     set(key: string, value: ExtensionJsonValue, options?: NxtStorageOptions): Promise<void>
@@ -511,6 +619,28 @@ export interface NxtHostLayerService {
   }
   readonly render: NxtHostService['render']
   readonly parse: NxtHostService['parse']
+  /** Requires `permissions.host.assets.library`; the same library agent attachments use. */
+  readonly assets: {
+    /** Newest first. */
+    list(options?: {
+      readonly limit?: number
+      readonly after?: string
+    }): Promise<{ readonly assets: readonly NxtLibraryAsset[]; readonly next?: string }>
+    get(assetId: string): Promise<NxtLibraryAsset | undefined>
+    release(assetId: string): Promise<boolean>
+  }
+  readonly image: {
+    /** Library Assets only. */
+    info(assetId: string): Promise<NxtImageInfo>
+  }
+  /** Requires `permissions.host.index`. */
+  readonly index: NxtIndexService
+  /** Requires `permissions.host.models`. */
+  readonly models: {
+    /** Models configured on this Host; let the user pick one rather than hard-coding it. */
+    list(): Promise<readonly NxtModelOption[]>
+    complete(request: NxtModelRequest): Promise<NxtLlmResponse>
+  }
 }
 
 export interface ExtensionPluginDefinition<Context = ExtensionHostContext> {
@@ -731,6 +861,29 @@ export interface ExtensionClientHost {
     options?: { readonly anchor?: ExtensionPanelProps['anchor'] },
   ): Promise<ExtensionJsonValue>
   subscribe(topic: string, listener: (value: ExtensionJsonValue) => void): () => void
+  /**
+   * Requires `permissions.host.assets.library`. Uploads pictures, or zip archives of pictures, from a file input or a
+   * drop into the extension's library. Files that are not pictures are skipped with a reason.
+   */
+  upload(
+    files: readonly ExtensionUploadFile[],
+    options?: { readonly onProgress?: (progress: { readonly sentBytes: number; readonly totalBytes: number }) => void },
+  ): Promise<ExtensionUploadResult>
+  /** Address of a library Asset for an `<img>`; `thumbnail` returns a preview at most 256 pixels wide. */
+  assetUrl(assetId: string, options?: { readonly thumbnail?: boolean }): string
+}
+
+/** A browser `File`; only these members are read. */
+export interface ExtensionUploadFile {
+  readonly name: string
+  readonly size: number
+  readonly type: string
+}
+
+export interface ExtensionUploadResult {
+  /** One entry per picture, including pictures found inside zip archives; `existed` when the library had it. */
+  readonly added: readonly (NxtLibraryAsset & { readonly name: string; readonly existed: boolean })[]
+  readonly skipped: readonly { readonly name: string; readonly reason: string }[]
 }
 
 export interface ExtensionClientEnvironment {

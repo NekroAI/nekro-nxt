@@ -16,6 +16,8 @@ import { createAssetsRepository } from './repositories/assets.js'
 import { createDshPluginRepository, type DshPluginRepository } from './repositories/dsh-plugins.js'
 import { createAuthoringRepository } from './repositories/authoring.js'
 import { createExtensionStorageRepository, type ExtensionStorageRepository } from './repositories/extension-storage.js'
+import { createExtensionLibraryRepository, type ExtensionLibraryRepository } from './repositories/extension-library.js'
+import { createExtensionIndexRepository, type ExtensionIndexRepository } from './repositories/extension-index.js'
 import { createExtensionJobsRepository, type ExtensionJobsRepository } from './repositories/extension-jobs.js'
 import { createInboundHooksRepository, type InboundHooksRepository } from './repositories/inbound-hooks.js'
 import {
@@ -42,6 +44,19 @@ export type { DshSessionStorageRetirementInput, DshSessionStorageRetirementRepor
 export type { DshPluginRepository } from './repositories/dsh-plugins.js'
 export type { ExtensionStorageRepository } from './repositories/extension-storage.js'
 export { ExtensionStorageQuotaError } from './repositories/extension-storage.js'
+export {
+  ExtensionLibraryQuotaError,
+  type ExtensionLibraryAssetRecord,
+  type ExtensionLibraryRepository,
+} from './repositories/extension-library.js'
+export {
+  EXTENSION_INDEX_KEYWORD_COLUMNS,
+  type ExtensionIndexCondition,
+  type ExtensionIndexEmbeddingCandidate,
+  type ExtensionIndexKeywordHit,
+  type ExtensionIndexRepository,
+  type ExtensionIndexStoredVector,
+} from './repositories/extension-index.js'
 export type { ExtensionJobsRepository, ExtensionJobRecord } from './repositories/extension-jobs.js'
 export type { InboundHooksRepository, InboundHookDecisionRecord } from './repositories/inbound-hooks.js'
 export {
@@ -108,6 +123,10 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #extensionSources
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
+  /** Assets each extension keeps for use in any channel. */
+  readonly extensionLibrary: ExtensionLibraryRepository
+  /** Extension search collections: documents, keywords, filter values and vectors. */
+  readonly extensionIndex: ExtensionIndexRepository
 
   constructor(
     database: CoreDatabase,
@@ -123,6 +142,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#dshPlugins = createDshPluginRepository(database.db)
     this.#authoring = createAuthoringRepository(database.db)
     this.#extensionStorage = createExtensionStorageRepository(database.db)
+    this.extensionLibrary = createExtensionLibraryRepository(database.db)
+    this.extensionIndex = createExtensionIndexRepository(database.db)
     this.#extensionJobs = createExtensionJobsRepository(database.db)
     this.#inboundHooks = createInboundHooksRepository(database.db)
     this.#channelPrompts = createChannelPromptsRepository(database.db)
