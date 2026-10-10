@@ -17,6 +17,8 @@ docker run -d \
   ghcr.io/nekroai/nekro-nxt:latest
 ```
 
+镜像同时提供 x86_64（amd64）和 ARM64 两种架构，适用于常见的 x86 服务器，也适用于树莓派 4/5、ARM 云服务器和 ARM 架构的 NAS；Docker 会自动拉取与宿主机匹配的版本。
+
 在国内网络下拉取 `ghcr.io` 较慢或失败时，可以把镜像地址换成 Docker Hub 上的同一镜像 `kromiose/nekro-nxt:latest`（正式版同时发布到两处，内容一致，版本说明里列出了镜像摘要可以核对）。
 
 `TZ` 是服务端所在的时区（IANA 名称），决定智能体看到的消息时间和定时任务的默认时区；不设置时容器使用 UTC。请设为频道成员实际所在的时区，否则成员说「下午三点」时，智能体会按 UTC 理解。

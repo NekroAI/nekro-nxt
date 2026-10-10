@@ -12,6 +12,7 @@ import {
   readArtifactIntegrity,
   readProductRelease,
 } from './product-release.mjs'
+import { copyImage, manifestDigest, serverImageDigest } from './lib/server-image.mjs'
 
 export const ROLLING_PREVIEW_TAG = 'preview'
 export const PREVIEW_PLATFORMS = DESKTOP_PLATFORMS
@@ -134,7 +135,7 @@ export function previewReleaseBody(release, repository, distribution, serverDige
     '',
     '## 服务端',
     '',
-    `镜像：\`ghcr.io/${repository.toLowerCase()}:preview\` · [部署说明](https://github.com/${repository}/blob/main/docs/guide/server.md)`,
+    `镜像：\`ghcr.io/${repository.toLowerCase()}:preview\`（amd64 / arm64）· [部署说明](https://github.com/${repository}/blob/main/docs/guide/server.md)`,
     '',
     '## 版本信息',
     '',
@@ -302,16 +303,6 @@ function readRollingTagCommit(repository) {
   throw new Error(`读取滚动预览版 tag 失败：${diagnostic.trim()}`)
 }
 
-function docker(args, allowMissing = false) {
-  const result = spawnSync('docker', args, { cwd: repositoryRoot, encoding: 'utf8' })
-  if (result.error) throw result.error
-  if (result.status !== 0) {
-    if (allowMissing && /manifest unknown|not found/iu.test(result.stderr)) return undefined
-    throw new Error(`docker ${args[0]} failed: ${result.stderr}`)
-  }
-  return result.stdout.trim()
-}
-
 export function assertServerPreviewReceipt(receipt, release, repository) {
   if (
     receipt?.commit !== release.commit ||
@@ -326,8 +317,7 @@ async function recordServerCandidate() {
   const repository = requireRepository()
   const { release } = await readContext()
   const image = previewServerImage(repository, release.commit)
-  const reference = docker(['image', 'inspect', image, '--format', '{{index .RepoDigests 0}}'])
-  const digest = reference?.split('@')[1]
+  const digest = serverImageDigest(image)
   const receipt = { commit: release.commit, releaseId: release.releaseId, image, digest }
   assertServerPreviewReceipt(receipt, release, repository)
   const output = commandOption('--output')
@@ -401,18 +391,13 @@ async function finalizeRollingRelease() {
   const imageRepository = `ghcr.io/${repository.toLowerCase()}`
   const candidateImage = `${imageRepository}@${server.digest}`
   const rollingImage = `${imageRepository}:preview`
-  docker(['pull', candidateImage])
+  if (serverImageDigest(candidateImage) !== server.digest) throw new Error('Server Preview 候选镜像摘要已变化。')
   let previousImage
   if (previousCommit) {
     const recordedDigest = /<!-- nxt-preview-server:(sha256:[a-f0-9]{64}) -->/u.exec(previousRelease.body ?? '')?.[1]
-    if (recordedDigest) previousImage = `${imageRepository}@${recordedDigest}`
-    else {
-      docker(['pull', rollingImage])
-      previousImage = docker(['image', 'inspect', rollingImage, '--format', '{{index .RepoDigests 0}}'])
-    }
-    if (!previousImage || !previousImage.startsWith(imageRepository + '@sha256:'))
-      throw new Error('无法确认旧 Server Preview 的恢复摘要。')
-    docker(['pull', previousImage])
+    previousImage = `${imageRepository}@${recordedDigest ?? manifestDigest(rollingImage)}`
+    // Confirms the rollback target still exists before anything is published.
+    manifestDigest(previousImage)
   }
   let publishing = false
   const expectedSet = new Set(targets.map((target) => target.artifactName))
@@ -444,8 +429,7 @@ async function finalizeRollingRelease() {
     },
     publish: () => {
       publishing = true
-      docker(['tag', candidateImage, rollingImage])
-      docker(['push', rollingImage])
+      copyImage(candidateImage, [rollingImage])
       moveRollingTag(repository, release.commit)
       const current = readRollingRelease(repository)
       runGh([
@@ -468,8 +452,7 @@ async function finalizeRollingRelease() {
       const failures = []
       if (previousImage) {
         try {
-          docker(['tag', previousImage, rollingImage])
-          docker(['push', rollingImage])
+          copyImage(previousImage, [rollingImage])
         } catch (error) {
           failures.push(error)
         }
