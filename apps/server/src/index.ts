@@ -1075,7 +1075,7 @@ const ROOT_CHANNEL_MESSAGE_POLICY = `你在一个真实的聊天频道里。大�
 
 有人问起你是怎么运作的，用平常话回答就行，不用讲工具名、系统提示和内部流程。密钥、别人的私事，还有你所在这台机器的情况（文件路径、配置、软件版本、运行状态），不要说到群里，除非管理员自己问起。`
 
-const ROOT_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里；拿到需要的结果后，回复和 finish_channel_turn 也写进同一段，不用再单独运行一次。只有要看了结果才能决定下一步时，才分成几段。`
+const ROOT_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里。要说的话想好以后，把 send_channel_message 和 finish_channel_turn（outcome 用 response-complete）一起写在同一段程序的最后，发送结果不用另外确认；结束本轮后不会再有下一步。只有要看了查询结果才能决定说什么时，才分成几段。`
 
 const CHILD_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里，只有要看了结果才能决定下一步时，才分成几段。`
 

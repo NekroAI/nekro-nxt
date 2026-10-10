@@ -175,7 +175,7 @@ describe('run_code for agents granted codeRun', () => {
     const scenario = await runScenario({ program: sendTwice, capabilities: { codeRun: true, developmentShell: true } })
     try {
       expect(scenario.model.calls[0]?.tools?.map(({ name }) => name)).toEqual(['run_code'])
-      expect(systemText(scenario.model.calls[0])).toContain('回复和 finish_channel_turn 也写进同一段')
+      expect(systemText(scenario.model.calls[0])).toContain('一起写在同一段程序的最后')
       expect(scenario.sentParts).toEqual([[{ type: 'text', text: '第一条' }], [{ type: 'text', text: '第二条' }]])
       expect(
         scenario.events.filter(
@@ -191,6 +191,31 @@ describe('run_code for agents granted codeRun', () => {
         ['send_channel_message', true, 'sent'],
       ])
       expect(turn?.steps.flatMap((step) => step.tools).filter((tool) => tool.name !== 'run_code')).toEqual([])
+    } finally {
+      await scenario.dispose()
+    }
+  }, 60_000)
+
+  it('ends the turn from the same program that sent the reply', async () => {
+    const scenario = await runScenario({
+      program: `
+await tools.send_channel_message({ target: { type: 'current' }, parts: [{ text: '好的' }] })
+await tools.finish_channel_turn({ outcome: 'response-complete', reason: '已经回复' })
+return 'done'
+`,
+      capabilities: { codeRun: true, developmentShell: true },
+    })
+    try {
+      const program = scenario.projection.turns[0]?.steps
+        .flatMap((step) => step.tools)
+        .find((tool) => tool.name === 'run_code')
+      expect(program?.children?.map((child) => [child.name, child.state])).toEqual([
+        ['send_channel_message', 'succeeded'],
+        ['finish_channel_turn', 'succeeded'],
+      ])
+      // The program ended the turn, so the model is not asked again.
+      expect(scenario.model.calls).toHaveLength(1)
+      expect(scenario.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
     } finally {
       await scenario.dispose()
     }
