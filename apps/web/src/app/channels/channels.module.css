@@ -688,6 +688,17 @@
   max-width: 100%;
 }
 
+/* The calls a script made, under the script. */
+.toolChildren {
+  display: grid;
+  justify-items: start;
+  gap: var(--s-2);
+  max-width: 100%;
+  padding-left: var(--s-3);
+  border-left: 1px solid var(--line);
+  margin-left: var(--s-2);
+}
+
 button.step {
   font: inherit;
   font-size: var(--fs-xs);
@@ -715,7 +726,7 @@ button.step:hover {
   transition: transform var(--dur-2) var(--ease);
 }
 
-.toolStep[data-open] .stepChevron {
+.toolStep[data-open] > .step .stepChevron {
   transform: rotate(90deg);
 }
 

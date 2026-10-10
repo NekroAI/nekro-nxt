@@ -1821,6 +1821,66 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('offers scripts under command access and downloads the Node they need in place', async () => {
+    const capabilityRequests: unknown[] = []
+    const withCommands = {
+      ...browserSnapshot,
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId
+          ? { ...agent, capabilities: { ...agent.capabilities, fileTools: true, developmentShell: true } }
+          : agent,
+      ),
+    }
+    const missing = HostApiContracts.snapshot.response.parse({
+      ...withCommands,
+      capabilityAvailability: {
+        ...withCommands.capabilityAvailability,
+        codeRun: { available: false, download: { version: '24.21.0', state: 'idle' } },
+      },
+    })
+    const ready = HostApiContracts.snapshot.response.parse({
+      ...withCommands,
+      capabilityAvailability: {
+        ...withCommands.capabilityAvailability,
+        codeRun: { available: true, source: 'downloaded', version: '24.21.0' },
+      },
+    })
+    let current = missing
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const toggle = page.getByRole('switch', { name: '用脚本调用工具' })
+        await playwrightExpect(toggle).toBeDisabled()
+        await page.getByRole('button', { name: '下载 Node 24.21.0' }).click()
+        await playwrightExpect(toggle).toBeEnabled()
+        await playwrightExpect(page.getByText('Node 24.21.0，由 NXT 下载')).toBeVisible()
+        await toggle.click()
+        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toEqual({ codeRun: true })
+      },
+      missing,
+      async (page) => {
+        await page.route('**/api/snapshot', (request) => request.fulfill({ json: current }))
+        await page.route('**/api/runtimes/code-run-node/download', (request) => {
+          current = ready
+          return request.fulfill({
+            json: { available: false, download: { version: '24.21.0', state: 'downloading', receivedBytes: 0 } },
+          })
+        })
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            json: {
+              currentRevisionId: browserRevisionId,
+              capabilities: { ...ready.agents[0]!.capabilities, codeRun: true },
+            },
+          })
+        })
+      },
+    )
+  })
+
   test('renders platform accounts with product labels and a masked account', async () => {
     await withProductPage('/wiring', async (page) => {
       // The account node itself; a name match could also hit its channel group's fold toggle.
@@ -2025,6 +2085,114 @@ test.describe('NekroNxt browser projections', () => {
       )
       await playwrightExpect(page.locator('body')).not.toContainText('只属于当前频道')
     })
+  })
+
+  test('lists the calls a script made under the script and counts its messages as replies', async () => {
+    await withProductPage(
+      `/channels/${browserChannelId}`,
+      async (page) => {
+        const script = page.getByRole('button', { name: /^运行脚本：翻上周聊天记录整理活动/u })
+        await playwrightExpect(script).toBeVisible()
+        await playwrightExpect(page.getByText('回复了 2 条', { exact: true })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: /^搜索聊天记录：/u })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: /^发送频道消息：/u })).toHaveCount(2)
+        await script.click()
+        await playwrightExpect(page.getByText('脚本', { exact: true })).toBeVisible()
+        await playwrightExpect(
+          page.getByText("await tools.conversation_history_search({ query: '桌游' })"),
+        ).toBeVisible()
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/channels/*/runtime', (request) =>
+          request.fulfill({
+            json: {
+              cursor: { epoch: 'fixture', sequence: 0 },
+              channelId: browserChannelId,
+              agentId: browserAgentId,
+              phase: 'idle',
+              summary: '智能体当前空闲。',
+              pendingInjectCount: 0,
+              turns: [
+                {
+                  turn: 1,
+                  startedAt: 1_725_000_000_500,
+                  endedAt: 1_725_000_004_000,
+                  state: 'completed',
+                  producedReply: true,
+                  responseState: 'sent',
+                  steps: [
+                    {
+                      step: 1,
+                      tools: [
+                        {
+                          callId: 'call_script',
+                          name: 'run_code',
+                          displayName: '运行脚本',
+                          state: 'succeeded',
+                          inputPreview: '翻上周聊天记录整理活动',
+                          code: "await tools.conversation_history_search({ query: '桌游' })\nreturn 'ok'",
+                          resultPreview: 'ok',
+                          durationMs: 3200,
+                          children: [
+                            {
+                              callId: 'call_script:ptc:1',
+                              name: 'conversation_history_search',
+                              displayName: '搜索聊天记录',
+                              state: 'succeeded',
+                              inputPreview: '{"query":"桌游"}',
+                              durationMs: 400,
+                            },
+                            {
+                              callId: 'call_script:ptc:2',
+                              name: 'send_channel_message',
+                              displayName: '发送频道消息',
+                              state: 'succeeded',
+                              inputPreview: '{"parts":[{"text":"周六下午三点"}]}',
+                              wroteToChannel: true,
+                              deliveryState: 'sent',
+                            },
+                            {
+                              callId: 'call_script:ptc:3',
+                              name: 'send_channel_message',
+                              displayName: '发送频道消息',
+                              state: 'succeeded',
+                              inputPreview: '{"parts":[{"text":"老地方咖啡馆"}]}',
+                              wroteToChannel: true,
+                              deliveryState: 'sent',
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        )
+        await page.route('**/api/channels/*/runtime/tools/**', (request) => {
+          const callId = decodeURIComponent(new URL(request.request().url()).pathname.split('/').at(-1) ?? '')
+          return request.fulfill({
+            json:
+              callId === 'call_script'
+                ? {
+                    callId,
+                    available: true,
+                    name: 'run_code',
+                    input: JSON.stringify({
+                      description: '翻上周聊天记录整理活动',
+                      code: "await tools.conversation_history_search({ query: '桌游' })\nreturn 'ok'",
+                    }),
+                    result: 'ok',
+                    inputTruncated: false,
+                    resultTruncated: false,
+                  }
+                : { callId, available: false, inputTruncated: false, resultTruncated: false },
+          })
+        })
+      },
+    )
   })
 
   test('shows real creation state without displaying package or approval identifiers', async () => {

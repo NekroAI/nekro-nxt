@@ -31,6 +31,7 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-mcp-client',
   '@deepseek-ai/dsh-mcp-resources',
   '@deepseek-ai/dsh-output-retention',
+  '@deepseek-ai/dsh-ptc-runtime-node',
   '@deepseek-ai/dsh-sandbox-local',
   '@deepseek-ai/dsh-sandbox-policy',
   '@deepseek-ai/dsh-scope',

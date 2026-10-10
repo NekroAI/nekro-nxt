@@ -1,6 +1,7 @@
 import type { HostQueryState } from './owned-host-query.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type {
+  CodeRunAvailability,
   CommunitySource,
   ChannelRuntimePhase,
   HostApiParams,
@@ -90,6 +91,7 @@ export interface AgentSummary {
     readonly developmentShell: boolean
     readonly unrestrictedFileAccess: boolean
     readonly scheduledTasks: boolean
+    readonly codeRun: boolean
   }
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
@@ -443,6 +445,8 @@ export interface SavedDynamicExtension {
 
 export interface CapabilityAvailability {
   readonly subagents: { readonly available: boolean }
+  /** Absent until a host reports it; such a host cannot run `run_code`. */
+  readonly codeRun?: CodeRunAvailability | undefined
   readonly webSearch: {
     readonly provider: string
     readonly available: boolean

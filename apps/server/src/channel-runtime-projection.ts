@@ -26,6 +26,7 @@ const PERFORMANCE_RECENT_LIMIT = 12
 const SECRET_KEY = /secret|token|password|authorization|api[_-]?key|credential/iu
 
 const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  run_code: '运行脚本',
   send_channel_message: '发送频道消息',
   finish_channel_turn: '结束本轮处理',
   web_search: '网页搜索',
@@ -82,6 +83,8 @@ export type RuntimeProjectionEvent =
       readonly turn: number
       readonly step: number
       readonly callId: string
+      /** The `run_code` call this one was made from. */
+      readonly parentCallId?: string
       readonly name: string
       readonly arguments: string
       readonly at?: number
@@ -91,6 +94,7 @@ export type RuntimeProjectionEvent =
       readonly turn: number
       readonly step: number
       readonly callId: string
+      readonly parentCallId?: string
       readonly failed: boolean
       readonly at?: number
       readonly resultPreview?: string
@@ -161,6 +165,8 @@ type ProjectedTool = {
   deliveryState?: ChannelDeliveryState
   startedAt?: number
   durationMs?: number
+  code?: string
+  children?: Map<string, ProjectedTool>
 }
 
 type ProjectedStep = {
@@ -346,7 +352,8 @@ export const projectGenerationPerformance = (
       continue
     }
     if (event.type === 'tool/call') {
-      if (event.at !== undefined) pendingTools.set(event.callId, event.at)
+      // A program's own duration already covers the calls it made.
+      if (event.at !== undefined && event.parentCallId === undefined) pendingTools.set(event.callId, event.at)
       continue
     }
     if (event.type === 'tool/result') {
@@ -503,6 +510,45 @@ export const emptyChannelRuntimeProjection = (
   turns: [],
 })
 
+const RUN_CODE_TOOL = 'run_code'
+
+const RunCodeArgumentsSchema = z.object({ description: z.string().optional(), code: z.string().optional() }).loose()
+
+const runCodeArguments = (raw: string): { readonly description?: string; readonly code?: string } | undefined => {
+  try {
+    const parsed = RunCodeArgumentsSchema.safeParse(JSON.parse(raw))
+    if (!parsed.success) return undefined
+    const description = parsed.data.description?.trim()
+    return {
+      ...(description ? { description: previewText(description) } : {}),
+      ...(parsed.data.code === undefined ? {} : { code: parsed.data.code }),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/** The calls a program made sit under it; everything else is listed in its step. */
+const toolsOf = (step: ProjectedStep, parentCallId: string | undefined): Map<string, ProjectedTool> => {
+  if (parentCallId === undefined) return step.tools
+  const parent = step.tools.get(parentCallId)
+  if (parent === undefined) return step.tools
+  parent.children ??= new Map()
+  return parent.children
+}
+
+const toolView = (tool: ProjectedTool) => ({
+  callId: tool.callId,
+  name: tool.name,
+  displayName: tool.displayName,
+  state: tool.state,
+  ...(tool.inputPreview === undefined ? {} : { inputPreview: tool.inputPreview }),
+  ...(tool.resultPreview === undefined ? {} : { resultPreview: tool.resultPreview }),
+  ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
+  ...(tool.deliveryState === undefined ? {} : { deliveryState: tool.deliveryState }),
+  ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+})
+
 export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): ChannelRuntimeProjection => {
   const turns = new Map<number, ProjectedTurn>()
   const cache = projectCacheUsage(input.events)
@@ -588,30 +634,32 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       continue
     }
     if (event.type === 'tool/call') {
-      const step = ensureStep(event.turn, event.step)
-      const inputPreview = previewToolArguments(event.arguments)
-      step.tools.set(event.callId, {
+      const tools = toolsOf(ensureStep(event.turn, event.step), event.parentCallId)
+      const program = event.name === RUN_CODE_TOOL ? runCodeArguments(event.arguments) : undefined
+      const inputPreview = program ? program.description : previewToolArguments(event.arguments)
+      tools.set(event.callId, {
         callId: event.callId,
         name: event.name,
         displayName: toolDisplayName(event.name),
         state: 'running',
         ...(inputPreview === undefined ? {} : { inputPreview }),
+        ...(program?.code === undefined ? {} : { code: program.code }),
         ...(event.name === 'send_channel_message' ? { wroteToChannel: false } : {}),
         ...(event.at === undefined ? {} : { startedAt: event.at }),
       })
       continue
     }
     if (event.type === 'tool/result') {
-      const step = ensureStep(event.turn, event.step)
-      const current = step.tools.get(event.callId)
+      const tools = toolsOf(ensureStep(event.turn, event.step), event.parentCallId)
+      const current = tools.get(event.callId)
       const name = current?.name ?? 'tool'
       const durationMs = elapsedMs(current?.startedAt, event.at)
-      step.tools.set(event.callId, {
+      tools.set(event.callId, {
+        ...current,
         callId: event.callId,
         name,
         displayName: current?.displayName ?? toolDisplayName(name),
         state: event.failed ? 'failed' : 'succeeded',
-        ...(current?.inputPreview === undefined ? {} : { inputPreview: current.inputPreview }),
         ...(event.resultPreview === undefined ? {} : { resultPreview: previewText(event.resultPreview) }),
         ...(name === 'send_channel_message'
           ? {
@@ -623,7 +671,6 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
             }
           : {}),
         ...(event.deliveryState === undefined ? {} : { deliveryState: event.deliveryState }),
-        ...(current?.startedAt === undefined ? {} : { startedAt: current.startedAt }),
         ...(durationMs === undefined ? {} : { durationMs }),
       })
       continue
@@ -664,15 +711,9 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
           return {
             step: step.step,
             tools: [...step.tools.values()].map((tool) => ({
-              callId: tool.callId,
-              name: tool.name,
-              displayName: tool.displayName,
-              state: tool.state,
-              ...(tool.inputPreview === undefined ? {} : { inputPreview: tool.inputPreview }),
-              ...(tool.resultPreview === undefined ? {} : { resultPreview: tool.resultPreview }),
-              ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
-              ...(tool.deliveryState === undefined ? {} : { deliveryState: tool.deliveryState }),
-              ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+              ...toolView(tool),
+              ...(tool.code === undefined ? {} : { code: tool.code }),
+              ...(tool.children === undefined ? {} : { children: [...tool.children.values()].map(toolView) }),
             })),
             ...(step.text || step.reasoning
               ? {

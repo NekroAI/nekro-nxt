@@ -214,6 +214,13 @@ function ToolStep({
           <ToolView call={toolCall(tool, true)} density="card" {...(agentId ? { agentId } : {})} />
         </>
       ) : null}
+      {tool.children?.length ? (
+        <div className={styles.toolChildren}>
+          {tool.children.map((child) => (
+            <ToolStep key={child.callId} tool={child} channelId={channelId} agentId={agentId} />
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -358,7 +365,7 @@ const turnSummary = (turn: RuntimeTurn): string => {
   if (turn.state === 'interrupted') return '被中断'
   if (turn.state === 'max-tokens') return '输出达到上限'
   const sent = turn.steps
-    .flatMap((step) => step.tools)
+    .flatMap((step) => step.tools.flatMap((tool) => [tool, ...(tool.children ?? [])]))
     .filter((tool) => tool.wroteToChannel && tool.deliveryState === 'sent').length
   if (sent) return `回复了 ${sent} 条`
   if (turn.state === 'unreplied' || turn.responseState === 'finished') return '没有回复'

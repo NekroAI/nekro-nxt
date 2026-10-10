@@ -23,6 +23,7 @@ describe('createAgentDraft', () => {
       developmentShell: false,
       unrestrictedFileAccess: false,
       scheduledTasks: true,
+      codeRun: false,
     })
   })
 })

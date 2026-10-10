@@ -70,6 +70,7 @@ import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
 import { ScheduledTasks, type JobFireOutcome } from './scheduled-tasks.js'
+import { CodeRunNode } from './code-run-node.js'
 import { McpStatusRegistry } from './mcp-servers.js'
 import {
   createNxtProductBackends,
@@ -190,6 +191,7 @@ export class NekroRuntime {
   readonly channelPrompts: ChannelPrompts
   readonly mcpStatus: McpStatusRegistry
   readonly authoringTestSecrets: AuthoringTestSecrets
+  readonly codeRunNode: CodeRunNode
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -233,6 +235,7 @@ export class NekroRuntime {
     readonly channelPrompts: ChannelPrompts
     readonly mcpStatus: McpStatusRegistry
     readonly authoringTestSecrets: AuthoringTestSecrets
+    readonly codeRunNode: CodeRunNode
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -260,6 +263,7 @@ export class NekroRuntime {
     this.adapters = input.adapters
     this.#jobScheduler = input.jobScheduler
     this.scheduledTasks = input.scheduledTasks
+    this.codeRunNode = input.codeRunNode
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.authoringTestSecrets = input.authoringTestSecrets
@@ -610,7 +614,14 @@ export class NekroRuntime {
         },
       }
 
+      const codeRunNode = new CodeRunNode({
+        root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'node'),
+        // The desktop app's server runs inside Electron, whose own executable cannot run a program as Node.
+        embedded: process.versions['electron'] !== undefined,
+      })
+      await codeRunNode.prepare()
       const host = await DshHostRuntime.create({
+        codeRunNode: () => codeRunNode.executable(),
         providerRemoval,
         providerTestResults: new LlmProviderTestResults(repository, now),
         sessionDatabasePath: options.sessionDatabasePath,
@@ -840,6 +851,7 @@ export class NekroRuntime {
       const runtime = new NekroRuntime({
         jobScheduler,
         scheduledTasks,
+        codeRunNode,
         channelPrompts,
         mcpStatus,
         authoringTestSecrets,

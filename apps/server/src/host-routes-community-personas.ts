@@ -27,6 +27,7 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
       developmentShell: false,
       unrestrictedFileAccess: false,
       scheduledTasks: true,
+      codeRun: false,
     }),
     createAgent: async (content) => {
       const entity = await runtime.createAgentWithInternalChannel(content)

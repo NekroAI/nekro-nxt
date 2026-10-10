@@ -154,6 +154,7 @@ describe('product store Host mutations', () => {
             developmentShell: false,
             unrestrictedFileAccess: false,
             scheduledTasks: true,
+            codeRun: false,
           },
           imagePolicy: defaultImageUnderstandingPolicy(),
           imageDiagnostics: {

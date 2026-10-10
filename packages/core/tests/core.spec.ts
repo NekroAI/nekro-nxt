@@ -571,8 +571,8 @@ describe('CoreService', () => {
 
   it('accepts only the current strict capability object', () => {
     const current = { ...deniedCapabilities, subagents: true, webSearch: true }
-    // Revisions stored before `scheduledTasks` existed read it as on.
-    expect(parseStoredAgentCapabilityGrants(current)).toEqual({ ...current, scheduledTasks: true })
+    // Revisions stored before `scheduledTasks` and `codeRun` existed read them as on and off.
+    expect(parseStoredAgentCapabilityGrants(current)).toEqual({ ...current, scheduledTasks: true, codeRun: false })
     expect(() => parseStoredAgentCapabilityGrants({ version: 2, grants: current })).toThrow()
     expect(() => parseStoredAgentCapabilityGrants({ ...current, fullFileAccess: false })).toThrow()
   })
@@ -594,6 +594,24 @@ describe('CoreService', () => {
     })
     expect(off.revision.id).not.toBe(first.revision.id)
     expect(off.revision.contentDigest).not.toBe(first.revision.contentDigest)
+  })
+
+  it('keeps the digest of Revisions without codeRun and treats turning it on as new content', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const content = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const first = core.createAgent({ ...content, capabilities: deniedCapabilities })
+    const explicit = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: { ...deniedCapabilities, codeRun: false },
+    })
+    expect(explicit.revision.id).toBe(first.revision.id)
+    const on = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: { ...deniedCapabilities, codeRun: true },
+    })
+    expect(on.revision.contentDigest).not.toBe(first.revision.contentDigest)
   })
 
   it('reuses a semantically equivalent historical Revision even when it has a legacy digest', () => {
@@ -1281,6 +1299,7 @@ describe('CoreService', () => {
       ...deniedCapabilities,
       subagents: true,
       scheduledTasks: true,
+      codeRun: false,
     })
 
     const repository = new MemoryRepository()

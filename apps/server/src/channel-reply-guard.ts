@@ -59,10 +59,29 @@ const successfulToolResult = (event: SessionEvent): { readonly callId: string } 
   return { callId: String(message.toolCallId) }
 }
 
-export const deliveryStateFromToolResult = (event: SessionEvent): ChannelDeliveryState | undefined => {
-  if (event.type !== 'tool/result' || !isRecord(event.data.meta)) return undefined
-  const value = event.data.meta['deliveryState']
+const deliveryStateFromMeta = (meta: unknown): ChannelDeliveryState | undefined => {
+  if (!isRecord(meta)) return undefined
+  const value = meta['deliveryState']
   return value === 'sent' || value === 'partially-sent' || value === 'failed' || value === 'unknown' ? value : undefined
+}
+
+export const deliveryStateFromToolResult = (event: SessionEvent): ChannelDeliveryState | undefined =>
+  event.type === 'tool/result' || event.type === 'tool/ptc-dispatch'
+    ? deliveryStateFromMeta(event.data.meta)
+    : undefined
+
+/** A tool that settled without error, called directly or from a `run_code` program. */
+const settledTool = (
+  event: SessionEvent,
+  toolNames: ReadonlyMap<string, string>,
+): { readonly name: string | undefined; readonly deliveryState: ChannelDeliveryState | undefined } | undefined => {
+  if (event.type === 'tool/ptc-dispatch') {
+    return event.data.isError ? undefined : { name: event.data.name, deliveryState: deliveryStateFromToolResult(event) }
+  }
+  const result = successfulToolResult(event)
+  return result === undefined
+    ? undefined
+    : { name: toolNames.get(result.callId), deliveryState: deliveryStateFromToolResult(event) }
 }
 
 const completedReasonKind = (events: readonly SessionEvent[], turn: number): string | undefined => {
@@ -125,11 +144,10 @@ export const responseObligationState = (
       toolNames.set(String(event.data.callId), event.data.name)
       continue
     }
-    const result = successfulToolResult(event)
-    if (!result) continue
-    const name = toolNames.get(result.callId)
+    const settled = settledTool(event, toolNames)
+    if (!settled) continue
+    const { name, deliveryState } = settled
     if (name === SEND_CHANNEL_MESSAGE_TOOL) {
-      const deliveryState = deliveryStateFromToolResult(event)
       // Missing metadata belongs to older successful tool results and preserves their historical meaning.
       const confirmed = deliveryState === undefined || deliveryState === 'sent' || deliveryState === 'partially-sent'
       if (!confirmed) continue

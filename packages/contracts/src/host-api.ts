@@ -292,6 +292,8 @@ const AgentCapabilitiesSchema = z
     unrestrictedFileAccess: z.boolean(),
     /** Absent in older clients means on. */
     scheduledTasks: z.boolean().default(true),
+    /** Tools are called from one TypeScript program (`run_code`); takes effect only with `developmentShell`. */
+    codeRun: z.boolean().default(false),
   })
   .strict()
 
@@ -386,9 +388,9 @@ const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   validatePersonaDocumentProjection(value, context)
 })
 
-// The default that fills `scheduledTasks` for older clients must not turn it on in a partial update.
+// The defaults that fill `scheduledTasks` and `codeRun` for older clients must not reset them in a partial update.
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
-  .extend({ scheduledTasks: z.boolean().optional() })
+  .extend({ scheduledTasks: z.boolean().optional(), codeRun: z.boolean().optional() })
   .strict()
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), '至少提供一个能力。')
 
@@ -570,17 +572,25 @@ export const ChannelRuntimeUsageSchema = z
   })
   .strict()
 
+const channelRuntimeToolFields = {
+  callId: NonEmptyStringSchema,
+  name: NonEmptyStringSchema,
+  displayName: NonEmptyStringSchema,
+  state: z.enum(['running', 'succeeded', 'failed']),
+  inputPreview: z.string().optional(),
+  resultPreview: z.string().optional(),
+  wroteToChannel: z.boolean().optional(),
+  deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown']).optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+}
+
 export const ChannelRuntimeToolSchema = z
   .object({
-    callId: NonEmptyStringSchema,
-    name: NonEmptyStringSchema,
-    displayName: NonEmptyStringSchema,
-    state: z.enum(['running', 'succeeded', 'failed']),
-    inputPreview: z.string().optional(),
-    resultPreview: z.string().optional(),
-    wroteToChannel: z.boolean().optional(),
-    deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown']).optional(),
-    durationMs: z.number().int().nonnegative().optional(),
+    ...channelRuntimeToolFields,
+    /** Source of a `run_code` program. */
+    code: z.string().optional(),
+    /** Tools a `run_code` program called, in the order they started. */
+    children: z.array(z.object(channelRuntimeToolFields).strict()).optional(),
   })
   .strict()
 
@@ -1233,6 +1243,27 @@ export const ScheduledTaskSchema = z
 
 export type ScheduledTask = z.output<typeof ScheduledTaskSchema>
 
+/** The Node that runs `run_code` programs, and the download the desktop app offers when there is none. */
+export const CodeRunAvailabilitySchema = z
+  .object({
+    available: z.boolean(),
+    source: z.enum(['host', 'system', 'downloaded']).optional(),
+    version: z.string().optional(),
+    download: z
+      .object({
+        version: z.string(),
+        state: z.enum(['idle', 'downloading', 'failed']),
+        receivedBytes: z.number().int().nonnegative().optional(),
+        totalBytes: z.number().int().nonnegative().optional(),
+        error: z.string().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
+export type CodeRunAvailability = z.output<typeof CodeRunAvailabilitySchema>
+
 export const HostSnapshotSchema = z
   .object({
     upgrade: HostUpgradeSummarySchema.optional(),
@@ -1265,6 +1296,8 @@ export const HostSnapshotSchema = z
     capabilityAvailability: z
       .object({
         subagents: z.object({ available: z.boolean() }).strict(),
+        /** Optional in older hosts, which never offer `run_code`. */
+        codeRun: CodeRunAvailabilitySchema.optional(),
         webSearch: z
           .object({
             provider: z.literal('deepseek-official'),
@@ -2615,6 +2648,24 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: MessagePacingSettingsSchema,
     response: MessagePacingSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  downloadCodeRunNode: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/runtimes/code-run-node/download',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CodeRunAvailabilitySchema,
+    error: HostApiErrorSchema,
+  }),
+  removeCodeRunNode: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/runtimes/code-run-node',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CodeRunAvailabilitySchema,
     error: HostApiErrorSchema,
   }),
   getChannelMemberNotes: defineContract({

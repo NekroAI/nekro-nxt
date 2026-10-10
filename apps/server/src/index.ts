@@ -11,6 +11,7 @@ import {
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
 import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
+import { mountCodeRunRuntime } from './code-run.js'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
@@ -433,6 +434,11 @@ export interface DshHostRuntimeOptions {
   }
   /** Absolute workspace used by explicitly granted development capabilities. */
   readonly developmentWorkspaceRoot?: string
+  /**
+   * Node that runs `run_code` programs for agents granted `codeRun`: `{}` is this process's own Node, a path is a
+   * separate executable, `undefined` means none is available and those agents keep ordinary tool calls.
+   */
+  readonly codeRunNode?: () => { readonly executable?: string } | undefined
   readonly configureLlm?: (context: Context) => Promise<void> | void
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
@@ -2891,6 +2897,9 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #resolveAgentRevision: DshHostRuntimeOptions['resolveAgentRevision']
   readonly #resolveAdapterDisplayName: NonNullable<DshHostRuntimeOptions['resolveAdapterDisplayName']>
   readonly #developmentWorkspaceRoot: string | undefined
+  readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
+  readonly #codeRunFallbackDirectory: string
+  #codeRunMount: Promise<boolean> | undefined
   readonly #shutdownInboxRoot: string
   readonly #incompatibleAgents = new Set<AgentId>()
   readonly #modelSettings: HostModelSettings
@@ -2926,6 +2935,8 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#resolveAgentRevision = options.resolveAgentRevision
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
+    this.#codeRunNode = options.codeRunNode
+    this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
     this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
     this.#modelSettings = new HostModelSettings(
       context,
@@ -3786,6 +3797,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       await mountDelegationCapabilities(agentContext, revision)
       await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
+      if (revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())) {
+        agentContext.tools.presentAs('ptc')
+      }
       await this.#dshPluginLifecycle?.mountAgentSession(revision.agentId, sessionId, agentContext)
       await this.#extensionMounts.mountIntoSession(revision.agentId, sessionId, agentContext)
     }
@@ -4204,6 +4218,24 @@ export class DshHostRuntime implements AgentSessionDriver {
         model: input.revision.model.model,
       }
     }
+  }
+
+  /** Mounts the `run_code` runtime the first time an agent needs it; false while no Node is available. */
+  #ensureCodeRun(): Promise<boolean> {
+    if (this.#codeRunMount !== undefined) return this.#codeRunMount
+    const node = this.#codeRunNode?.()
+    if (node === undefined) return Promise.resolve(false)
+    this.#codeRunMount = mountCodeRunRuntime(this.#context, {
+      nodeExecutable: node.executable,
+      fallbackDirectory: this.#codeRunFallbackDirectory,
+    }).then(
+      () => true,
+      (error: unknown) => {
+        this.#codeRunMount = undefined
+        throw error
+      },
+    )
+    return this.#codeRunMount
   }
 
   async cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void> {

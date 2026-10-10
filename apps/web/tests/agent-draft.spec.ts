@@ -26,6 +26,7 @@ const base: AgentDraft = {
     developmentShell: false,
     unrestrictedFileAccess: false,
     scheduledTasks: true,
+    codeRun: false,
   },
 }
 

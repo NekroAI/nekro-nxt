@@ -118,6 +118,7 @@ declare const styles: {
   readonly titleLine: string
   readonly toggle: string
   readonly toggleLabel: string
+  readonly toolChildren: string
   readonly toolStep: string
   readonly turn: string
   readonly turnHead: string

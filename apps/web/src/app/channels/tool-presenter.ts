@@ -4,7 +4,7 @@
  * lenient and every presenter falls back to plain text instead of showing JSON punctuation.
  */
 
-export type ToolKind = 'search' | 'command' | 'fetch' | 'message' | 'finish' | 'other'
+export type ToolKind = 'search' | 'command' | 'fetch' | 'message' | 'finish' | 'script' | 'other'
 
 export const toolKind = (name: string): ToolKind => {
   if (/search/iu.test(name)) return 'search'
@@ -12,6 +12,7 @@ export const toolKind = (name: string): ToolKind => {
   if (/fetch|browse|read_url/iu.test(name)) return 'fetch'
   if (name === 'send_channel_message' || /send.*message/iu.test(name)) return 'message'
   if (name === 'finish_channel_turn') return 'finish'
+  if (name === 'run_code') return 'script'
   return 'other'
 }
 

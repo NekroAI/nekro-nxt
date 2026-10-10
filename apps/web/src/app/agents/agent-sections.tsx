@@ -1,6 +1,6 @@
 import { ExternalLink, Maximize2, MessagesSquare, Minimize2, Plus, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
+import { HostApiContracts, type CodeRunAvailability, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { PanelSlot, useExtensionActivation } from '../../extension-ui/index.js'
@@ -331,6 +331,73 @@ function WebSearchCredential() {
   )
 }
 
+const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
+
+/** Node for `run_code` on a device without one: NXT downloads the pinned release itself and shows its progress. */
+function CodeRunNodeDownload({ availability }: { readonly availability: CodeRunAvailability }) {
+  const api = useProductApi()
+  const [busy, setBusy] = useState(false)
+  const download = availability.download
+  if (download === undefined) return null
+  const start = async () => {
+    setBusy(true)
+    try {
+      await callHostApi(HostApiContracts.downloadCodeRunNode, {}, undefined)
+      await api.getState().refreshHost()
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (download.state === 'downloading') {
+    const received = download.receivedBytes ?? 0
+    return (
+      <span className={styles.note} role="status">
+        正在下载 {megabytes(received)}
+        {download.totalBytes === undefined ? '' : ` / ${megabytes(download.totalBytes)}`}
+      </span>
+    )
+  }
+  const button = (
+    <Button size="small" busy={busy} onClick={() => void start()}>
+      {download.state === 'failed' ? '重试' : `下载 Node ${download.version}`}
+    </Button>
+  )
+  if (download.state !== 'failed') return button
+  return (
+    <div className={styles.note}>
+      <span className={styles.noteWarn} role="alert">
+        {download.error ?? '下载失败。'}
+      </span>
+      {button}
+    </div>
+  )
+}
+
+/** A Node NXT downloaded can be removed again; one that came with the system or the server stays. */
+function CodeRunNodeRemove({ availability }: { readonly availability: CodeRunAvailability }) {
+  const api = useProductApi()
+  const [busy, setBusy] = useState(false)
+  if (availability.source !== 'downloaded') return null
+  const remove = async () => {
+    setBusy(true)
+    try {
+      await callHostApi(HostApiContracts.removeCodeRunNode, {}, undefined)
+      await api.getState().refreshHost()
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Button size="small" busy={busy} onClick={() => void remove()}>
+      删除
+    </Button>
+  )
+}
+
 /**
  * System access on a risk ladder plus the other capabilities. Everything here joins the save bar; granting command
  * execution or full access asks first.
@@ -407,6 +474,35 @@ export function CapabilitiesSection({
             }
           />
         </PropertyRow>
+        {caps.developmentShell ? (
+          <PropertyRow
+            label="用脚本调用工具"
+            description="把多个步骤写成一段脚本一次做完，适合翻大量记录、批量处理文件。开启后，它的所有操作都通过脚本完成。"
+            badge={caps.codeRun && !availability.codeRun?.available ? <Chip tone="warn">待配置</Chip> : undefined}
+          >
+            <Switch
+              label="用脚本调用工具"
+              checked={caps.codeRun}
+              disabled={!availability.codeRun?.available && !caps.codeRun}
+              onCheckedChange={(checked) =>
+                update((current) => ({ ...current, capabilities: { ...current.capabilities, codeRun: checked } }))
+              }
+            />
+          </PropertyRow>
+        ) : null}
+        {caps.developmentShell && availability.codeRun !== undefined ? (
+          availability.codeRun.available ? (
+            availability.codeRun.source === 'downloaded' ? (
+              <PropertyRow label="脚本运行环境" description={`Node ${availability.codeRun.version ?? ''}，由 NXT 下载`}>
+                <CodeRunNodeRemove availability={availability.codeRun} />
+              </PropertyRow>
+            ) : null
+          ) : availability.codeRun.download !== undefined ? (
+            <PropertyRow label="脚本运行环境" description="这台设备没有可用的 Node，下载后即可开启">
+              <CodeRunNodeDownload availability={availability.codeRun} />
+            </PropertyRow>
+          ) : null
+        ) : null}
         <PropertyRow label="子智能体" tip="把任务交给子智能体在后台处理">
           <Switch
             label="子智能体"

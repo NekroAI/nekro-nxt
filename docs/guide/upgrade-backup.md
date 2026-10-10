@@ -22,7 +22,7 @@ NekroNXT 通过完整程序包升级。升级前停止旧实例，保留旧程�
 | JSONL Session、DSH Profile、凭据、插件安装项目 | 复制持久文件，记录大小、校验和与权限 |
 | 附件、扩展源码、Spill、智能体工作区、TLS 文件 | 纳入恢复点；外置工作区只覆盖明确配置且属于现有智能体的子目录 |
 | `dsh/shutdown-inbox/` | 纳入恢复点；它是正常关闭期间的待处理消息 journal，不是缓存 |
-| `extension-cache/`、`dsh/request-images/`、`dsh/pnpm-store/`、`dsh/plugin-staging/`、既有 `backups/` | 排除；前三项可重建，staging 尚未提交，旧备份独立保留；已安装插件及其实际依赖仍备份 |
+| `extension-cache/`、`runtimes/`、`dsh/request-images/`、`dsh/pnpm-store/`、`dsh/plugin-staging/`、既有 `backups/` | 排除；前四项可重建（`runtimes/` 是桌面版下载的脚本运行环境，恢复后可重新下载），staging 尚未提交，旧备份独立保留；已安装插件及其实际依赖仍备份 |
 | SQLite WAL/SHM、Unix socket | 不作为普通文件复制；SQLite 已由 backup API 形成快照 |
 | 符号链接 | 保留链接本身，不跟随到未声明的外部目录 |
 

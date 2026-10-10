@@ -24,6 +24,8 @@ export interface ToolDetailSource {
   readonly resultPreview?: string | undefined
   readonly wroteToChannel?: boolean | undefined
   readonly deliveryState?: string | undefined
+  /** Source of a `run_code` program, shown before the full call has loaded. */
+  readonly code?: string | undefined
 }
 
 /** Full arguments and result, cached per call: a finished call does not change, a running one is read again. */
@@ -215,6 +217,24 @@ export function ToolDetail({
                   ? '没有发出'
                   : '已写入频道'}
           </p>
+        )}
+      </>
+    )
+  } else if (kind === 'script') {
+    const code = typeof args?.['code'] === 'string' ? args['code'] : tool.code
+    const description = typeof args?.['description'] === 'string' ? args['description'] : tool.inputPreview
+    body = (
+      <>
+        {description ? <p className={styles.lead}>{description}</p> : null}
+        {code ? (
+          <Block title="脚本" action={<CopyButton value={code} label="复制脚本" />}>
+            <pre className={styles.code}>{code}</pre>
+          </Block>
+        ) : null}
+        {running ? null : (
+          <Block title="输出" action={resultText ? <CopyButton value={resultText} label="复制输出" /> : undefined}>
+            <Code value={resultText ?? ''} empty="脚本没有输出" />
+          </Block>
         )}
       </>
     )

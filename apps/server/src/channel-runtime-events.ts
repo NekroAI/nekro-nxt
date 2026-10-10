@@ -21,6 +21,8 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'step/end',
   'tool/call',
   'tool/result',
+  'tool/ptc-dispatch-start',
+  'tool/ptc-dispatch',
   'assistant/message',
   'user/message',
   'llm/retry',
@@ -130,6 +132,8 @@ export const normalizeSessionEvents = (
     triggered.add(turn)
     result.push({ type: 'turn/trigger', turn, eventId })
   }
+  // Where each direct call sits, so the calls a `run_code` program makes join that program's step.
+  const toolSteps = new Map<string, { readonly turn: number; readonly step: number }>()
   for (const event of events) {
     const at = event.time
     if (event.type === 'nekro-nxt/memory') {
@@ -191,7 +195,39 @@ export const normalizeSessionEvents = (
       result.push({ type: event.type, turn: event.data.turn, step: event.data.step, at })
       continue
     }
+    if (event.type === 'tool/ptc-dispatch-start') {
+      const parent = toolSteps.get(String(event.data.parentCallId))
+      if (parent === undefined) continue
+      result.push({
+        type: 'tool/call',
+        ...parent,
+        callId: String(event.data.subCallId),
+        parentCallId: String(event.data.parentCallId),
+        name: event.data.name,
+        arguments: JSON.stringify(event.data.arguments ?? {}),
+        at,
+      })
+      continue
+    }
+    if (event.type === 'tool/ptc-dispatch') {
+      const parent = toolSteps.get(String(event.data.parentCallId))
+      if (parent === undefined) continue
+      const resultPreview = textFromBlocks(event.data.content)
+      const deliveryState = deliveryStateFromToolResult(event)
+      result.push({
+        type: 'tool/result',
+        ...parent,
+        callId: String(event.data.subCallId),
+        parentCallId: String(event.data.parentCallId),
+        failed: event.data.isError,
+        at,
+        ...(resultPreview === undefined ? {} : { resultPreview }),
+        ...(deliveryState === undefined ? {} : { deliveryState }),
+      })
+      continue
+    }
     if (event.type === 'tool/call') {
+      toolSteps.set(String(event.data.callId), { turn: event.data.turn, step: event.data.step })
       result.push({
         type: 'tool/call',
         turn: event.data.turn,

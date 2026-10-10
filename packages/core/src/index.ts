@@ -368,6 +368,8 @@ export const AgentCapabilityGrantsSchema = z
     unrestrictedFileAccess: z.boolean().default(false),
     /** Chat-created scheduled tasks; on unless the user turns it off (absent in Revisions before the field). */
     scheduledTasks: z.boolean().default(true),
+    /** Tool calls from one TypeScript program; only takes effect with `developmentShell`. */
+    codeRun: z.boolean().default(false),
   })
   .strict()
   .default({
@@ -378,6 +380,7 @@ export const AgentCapabilityGrantsSchema = z
     developmentShell: false,
     unrestrictedFileAccess: false,
     scheduledTasks: true,
+    codeRun: false,
   })
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
@@ -610,6 +613,7 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     unrestrictedFileAccess: content.capabilities.unrestrictedFileAccess,
     // The default leaves the digest of every earlier Revision unchanged; only turning it off is content.
     ...(content.capabilities.scheduledTasks ? {} : { scheduledTasks: false }),
+    ...(content.capabilities.codeRun ? { codeRun: true } : {}),
   },
   imagePolicy: {
     history: {

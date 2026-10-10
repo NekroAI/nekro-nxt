@@ -582,6 +582,7 @@ export class HostQueries {
       models,
       capabilityAvailability: {
         subagents: { available: true },
+        codeRun: runtime.codeRunNode.status(),
         webSearch,
       },
       connectionAdapters: runtime.listConnectionAdapters(),

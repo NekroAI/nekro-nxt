@@ -305,6 +305,36 @@ export const createNekroHostApi = (
       })
     },
   })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/runtimes/code-run-node/download',
+    handler: (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        writeContractJson(res, 200, HostApiContracts.downloadCodeRunNode, runtime.codeRunNode.startDownload())
+      } catch (error) {
+        writeError(res, 400, 'code-run-node-unavailable', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/runtimes/code-run-node',
+    handler: async (req, res) => {
+      if (req.method !== 'DELETE') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        writeContractJson(res, 200, HostApiContracts.removeCodeRunNode, await runtime.codeRunNode.removeDownloaded())
+      } catch (error) {
+        writeError(res, 400, 'code-run-node-busy', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
   const buildSnapshot = (viewerKey: string) => queries.snapshot(viewerKey)
 
   // GET /api/snapshot
@@ -352,6 +382,9 @@ export const createNekroHostApi = (
     broadcast({ event: 'snapshot-changed', data: { changed: true } })
   })
   const unsubscribeRuntimeStatus = runtime.host.subscribeRuntimeStatus(() => {
+    broadcast({ event: 'snapshot-changed', data: { changed: true } })
+  })
+  const unsubscribeCodeRunNode = runtime.codeRunNode.subscribe(() => {
     broadcast({ event: 'snapshot-changed', data: { changed: true } })
   })
   const unsubscribeChannelRuntime = runtime.host.subscribeChannelRuntime((channelId) => {
@@ -496,6 +529,7 @@ export const createNekroHostApi = (
       pendingFacts.clear()
       unsubscribeConnectionChanges()
       unsubscribeRuntimeStatus()
+      unsubscribeCodeRunNode()
       unsubscribeChannelRuntime()
       unsubscribeDshSettings()
       unsubscribeDshCredentials()

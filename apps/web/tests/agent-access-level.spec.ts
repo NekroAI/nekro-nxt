@@ -15,6 +15,7 @@ const capabilities = (
   webSearch: false,
   dynamicCreation: false,
   scheduledTasks: true,
+  codeRun: false,
   ...access,
 })
 
