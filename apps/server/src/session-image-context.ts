@@ -53,6 +53,8 @@ export interface AssetAccessRepository {
   getAssetById(id: AssetRecord['id']): AssetRecord | undefined
   canAccessAsset(assetId: AssetRecord['id'], channelId: ChannelId): boolean
   grantAssetAccess(grant: AssetChannelGrant): AssetChannelGrant
+  /** Absent in hosts without durable storage; then the agent cannot delete Assets. */
+  revokeUnusedAgentAsset?(assetId: AssetRecord['id'], channelId: ChannelId): 'revoked' | 'in-use' | 'not-granted'
 }
 
 export interface AgentImageDiagnostics {

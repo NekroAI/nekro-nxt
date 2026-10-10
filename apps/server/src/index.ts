@@ -1183,19 +1183,12 @@ export const WORKSPACE_ASSET_MAX_BYTES = 64 * 1024 * 1024
  * Turns a file in the agent's workspace into a channel Asset. The path must stay inside the workspace after symlinks
  * are resolved, so a granted workspace never becomes a way to read the rest of the machine.
  */
-export const createChannelAssetFromWorkspace = async (input: {
-  readonly channelId: ChannelId
+/** Stores a workspace file as a content-addressed Asset without granting any channel; the caller decides who sees it. */
+const importWorkspaceFile = async (input: {
   readonly workspace: string
   readonly path: string
-  readonly assets: AssetAccessRepository
   readonly assetService: AssetService
-  readonly grantedAt?: number
-}): Promise<{
-  readonly assetId: AssetRecord['id']
-  readonly byteSize: number
-  readonly mediaType: string
-  readonly name: string
-}> => {
+}): Promise<{ readonly asset: AssetRecord; readonly name: string }> => {
   const root = await realpath(input.workspace)
   const requested = path.resolve(root, input.path.trim())
   let target: string
@@ -1216,21 +1209,37 @@ export const createChannelAssetFromWorkspace = async (input: {
     )
   }
   const prepared = await input.assetService.prepare({ bytes: createReadStream(target) })
+  return { asset: prepared.asset, name: path.basename(target) }
+}
+
+/**
+ * Turns a file in the agent's workspace into a channel Asset. The path must stay inside the workspace after symlinks
+ * are resolved, so a granted workspace never becomes a way to read the rest of the machine.
+ */
+export const createChannelAssetFromWorkspace = async (input: {
+  readonly channelId: ChannelId
+  readonly workspace: string
+  readonly path: string
+  readonly assets: AssetAccessRepository
+  readonly assetService: AssetService
+  readonly grantedAt?: number
+}): Promise<{
+  readonly assetId: AssetRecord['id']
+  readonly byteSize: number
+  readonly mediaType: string
+  readonly name: string
+}> => {
+  const { asset, name } = await importWorkspaceFile(input)
   const grant = input.assets.grantAssetAccess({
-    assetId: prepared.asset.id,
+    assetId: asset.id,
     channelId: input.channelId,
     source: 'agent-tool',
     grantedAt: input.grantedAt ?? Date.now(),
   })
-  if (grant.assetId !== prepared.asset.id || grant.channelId !== input.channelId) {
-    throw new Error(`asset_create did not persist the current Channel grant for ${prepared.asset.id}.`)
+  if (grant.assetId !== asset.id || grant.channelId !== input.channelId) {
+    throw new Error(`asset_create did not persist the current Channel grant for ${asset.id}.`)
   }
-  return {
-    assetId: prepared.asset.id,
-    byteSize: prepared.asset.byteSize,
-    mediaType: prepared.asset.mediaType,
-    name: path.basename(target),
-  }
+  return { assetId: asset.id, byteSize: asset.byteSize, mediaType: asset.mediaType, name }
 }
 
 export const assetCreateTool = (
@@ -1247,7 +1256,7 @@ export const assetCreateTool = (
         : [
             '把内容保存为当前频道可以发送的资源（图片、文件），返回 assetId，之后用 send_channel_message 发出去。',
             `你工作区里已有的文件（你生成的图片、文档、压缩包）一律用 path，宿主直接读取，最多 ${WORKSPACE_ASSET_MAX_BYTES / 1024 / 1024} MiB。不要把文件转成 base64 再抄进 content：那样要输出成千上万个字，又慢又容易抄错。`,
-            '想看看自己生成的图片，也是先用 path 建成资源，再用 asset_inspect_images 看。',
+            '发出去之前想先看看自己生成的图，用 asset_inspect_images 的 path 直接看，不用先建成资源；建错了的资源可以用 asset_delete 删掉。',
             'content 只用于你直接写出的短文本（encoding=utf8），解码后最多 8 MiB。',
           ].join(''),
     parameters: {
@@ -1311,6 +1320,29 @@ export const assetCreateTool = (
         assetService,
         ...(options.now === undefined ? {} : { grantedAt: options.now() }),
       })
+    },
+  })
+
+/** The agent withdraws a resource it made by mistake, as long as nothing in the channel has used it. */
+export const assetDeleteTool = (channelId: ChannelId, assets: AssetAccessRepository) =>
+  defineTool({
+    name: 'asset_delete',
+    description:
+      '删掉你在当前频道建错了、还没发出去的资源（asset_create 建的）。已经发出去的、或者群友发来的资源删不了。',
+    parameters: {
+      assetId: { type: 'string', required: true },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_arguments, value) => [{ type: 'text', text: value }],
+    },
+    execute: (args) => {
+      const assetId = AssetIdSchema.parse(args.assetId)
+      const outcome = assets.revokeUnusedAgentAsset?.(assetId, channelId)
+      if (outcome === undefined) throw new Error('当前宿主不支持删除资源。')
+      if (outcome === 'in-use') throw new Error(`${assetId} 已经在频道消息里用过了，删不了。`)
+      if (outcome === 'not-granted') throw new Error(`${assetId} 不是你在这个频道建的资源。`)
+      return Promise.resolve(`已删除 ${assetId}，当前频道不能再使用它。`)
     },
   })
 
@@ -2277,10 +2309,15 @@ const assetInspectTool = (
 
 const ImageInspectionItemSchema = z
   .object({
-    assetId: AssetIdSchema,
+    assetId: AssetIdSchema.optional(),
+    /** A workspace file the agent made; it is looked at without becoming a channel Asset. */
+    path: z.string().trim().min(1).max(1000).optional(),
     focus: z.string().trim().min(1).max(1000).optional(),
   })
   .strict()
+  .refine((item) => (item.assetId === undefined) !== (item.path === undefined), {
+    message: '每张图片给 assetId 或 path 其中一个。',
+  })
 
 const ImageInspectionInputSchema = z
   .object({
@@ -2427,6 +2464,9 @@ const parseDelegatedEvidence = (
 const assetInspectImagesTool = (input: {
   readonly channelId: ChannelId
   readonly assets: AssetAccessRepository
+  readonly assetService: AssetService
+  /** Present when the agent has a workspace; images there can be looked at by path. */
+  readonly workspace?: string | undefined
   readonly attachments: NekroAssetAttachmentStore
   readonly llm: LlmRuntime
   readonly supportsImage: boolean
@@ -2441,7 +2481,9 @@ const assetInspectImagesTool = (input: {
   defineTool({
     name: 'asset_inspect_images',
     description:
-      '批量查看当前频道有权访问的图片。一次提交相关图片，可用 question 指定整批问题、用 focus 指定逐图关注点；单图也必须使用数组。',
+      input.workspace === undefined
+        ? '批量查看当前频道有权访问的图片。一次提交相关图片，可用 question 指定整批问题、用 focus 指定逐图关注点；单图也必须使用数组。'
+        : '批量查看图片：当前频道里的图片用 assetId，你工作区里的图片文件用 path（只是看，不会放进频道，适合发出去之前先检查自己生成的图）。一次提交相关图片，可用 question 指定整批问题、用 focus 指定逐图关注点；单图也必须使用数组。',
     parameters: {
       images: {
         type: 'array',
@@ -2450,7 +2492,8 @@ const assetInspectImagesTool = (input: {
           type: 'object',
           additionalProperties: false,
           properties: {
-            assetId: { type: 'string', required: true },
+            assetId: { type: 'string' },
+            ...(input.workspace === undefined ? {} : { path: { type: 'string' } }),
             focus: { type: 'string' },
           },
         },
@@ -2511,14 +2554,33 @@ const assetInspectImagesTool = (input: {
         const firstByDigest = new Map<string, number>()
         const validated: ValidatedInspectionImage[] = []
         for (const [index, item] of parsed.images.entries()) {
-          baseAudit.assetIds.push(item.assetId)
-          if (!input.assets.canAccessAsset(item.assetId, input.channelId)) {
-            throw new ImageInspectionError('asset-forbidden', `图片 ${index + 1} 不属于当前频道。`)
+          let asset: AssetRecord | undefined
+          if (item.path !== undefined) {
+            if (input.workspace === undefined) {
+              throw new ImageInspectionError('asset-forbidden', '你没有工作区，不能按路径查看图片。')
+            }
+            try {
+              asset = (
+                await importWorkspaceFile({
+                  workspace: input.workspace,
+                  path: item.path,
+                  assetService: input.assetService,
+                })
+              ).asset
+            } catch (cause) {
+              throw new ImageInspectionError('asset-missing', cause instanceof Error ? cause.message : String(cause))
+            }
+          } else {
+            const assetId = item.assetId!
+            if (!input.assets.canAccessAsset(assetId, input.channelId)) {
+              throw new ImageInspectionError('asset-forbidden', `图片 ${index + 1} 不属于当前频道。`)
+            }
+            asset = input.assets.getAssetById(assetId)
+            if (!asset) {
+              throw new ImageInspectionError('asset-missing', `图片 ${index + 1} 的 Asset 元数据不可用。`)
+            }
           }
-          const asset = input.assets.getAssetById(item.assetId)
-          if (!asset) {
-            throw new ImageInspectionError('asset-missing', `图片 ${index + 1} 的 Asset 元数据不可用。`)
-          }
+          baseAudit.assetIds.push(asset.id)
           baseAudit.contentDigests.push(asset.contentDigest)
           if (!asset.mediaType.startsWith('image/')) {
             throw new ImageInspectionError('asset-not-image', `Asset ${item.assetId} 不是图片。`)
@@ -2535,7 +2597,7 @@ const assetInspectImagesTool = (input: {
           if (duplicateOf === undefined) firstByDigest.set(asset.contentDigest, index)
           validated.push({
             index,
-            assetId: item.assetId,
+            assetId: asset.id,
             ...(item.focus === undefined ? {} : { focus: item.focus }),
             asset,
             attachment,
@@ -3478,6 +3540,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       agentContext.tools.register(
         assetCreateTool(input.channelId, this.#assets, this.#assetService, { workspace: developmentWorkspace }),
       )
+      if (this.#assets.revokeUnusedAgentAsset !== undefined) {
+        agentContext.tools.register(assetDeleteTool(input.channelId, this.#assets))
+      }
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
@@ -3501,6 +3566,8 @@ export class DshHostRuntime implements AgentSessionDriver {
           assetInspectImagesTool({
             channelId: input.channelId,
             assets: this.#assets,
+            assetService: this.#assetService,
+            workspace: developmentWorkspace,
             attachments: requireNekroAssetAttachmentStore(this.#context.attachments),
             llm: this.#context.llm,
             supportsImage,

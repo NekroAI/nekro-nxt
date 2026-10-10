@@ -214,6 +214,14 @@ describe('model-created channel Assets', () => {
       })
       expect(result).toMatchObject({ status: 'sent' })
       expect(adapterParts).toEqual([{ type: 'file', assetId: created.assetId, name: 'generated.txt' }])
+
+      // The agent can withdraw only what it made here and has not sent.
+      expect(fixture.repository.revokeUnusedAgentAsset(created.assetId, fixture.currentChannel.id)).toBe('in-use')
+      const mistake = await executeAssetCreate(fixture, { encoding: 'utf8', content: 'wrong draft' })
+      expect(fixture.repository.revokeUnusedAgentAsset(mistake.assetId, fixture.otherChannel.id)).toBe('not-granted')
+      expect(fixture.repository.revokeUnusedAgentAsset(mistake.assetId, fixture.currentChannel.id)).toBe('revoked')
+      expect(fixture.repository.canAccessAsset(mistake.assetId, fixture.currentChannel.id)).toBe(false)
+      expect(fixture.repository.revokeUnusedAgentAsset(mistake.assetId, fixture.currentChannel.id)).toBe('not-granted')
     } finally {
       await web.stop()
       fixture.database.close()

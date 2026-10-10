@@ -1,8 +1,8 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { AssetAccessRepository, AssetChannelGrant, AssetRecord } from '@nekro-nxt/core'
-import type { AssetId } from '@nekro-nxt/contracts'
+import type { AssetId, ChannelId } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { assetChannelGrants, assetOccurrences, assets, channelEvents } from '../schema.js'
+import { assetChannelGrants, assetOccurrences, assets, channelEvents, episodes, outboundIntents } from '../schema.js'
 import { AssetChannelGrantRowSchema, AssetRowSchema } from '../row-schemas.js'
 
 const toAsset = (input: typeof assets.$inferSelect): AssetRecord => {
@@ -28,6 +28,7 @@ const toAssetChannelGrant = (input: typeof assetChannelGrants.$inferSelect): Ass
 
 export function createAssetsRepository(database: DrizzleCoreDatabase): AssetAccessRepository & {
   getAssetById(id: AssetId): AssetRecord | undefined
+  revokeUnusedAgentAsset(assetId: AssetId, channelId: ChannelId): 'revoked' | 'in-use' | 'not-granted'
 } {
   return {
     ensureAsset(candidate): AssetRecord {
@@ -53,6 +54,37 @@ export function createAssetsRepository(database: DrizzleCoreDatabase): AssetAcce
         .get()
       if (row === undefined) throw new Error('Asset Channel grant upsert did not produce a row.')
       return toAssetChannelGrant(row)
+    },
+    /**
+     * Withdraws the agent's own grant for an Asset nothing in the channel uses yet: no member message carries it and
+     * the agent has not sent it. The content-addressed blob stays, since other channels or messages may share it.
+     */
+    revokeUnusedAgentAsset(assetId, channelId) {
+      return database.transaction((tx) => {
+        const grant = tx
+          .select({ assetId: assetChannelGrants.assetId })
+          .from(assetChannelGrants)
+          .where(and(eq(assetChannelGrants.assetId, assetId), eq(assetChannelGrants.channelId, channelId)))
+          .get()
+        if (grant === undefined) return 'not-granted'
+        const inbound = tx
+          .select({ assetId: assetOccurrences.assetId })
+          .from(assetOccurrences)
+          .innerJoin(channelEvents, eq(channelEvents.id, assetOccurrences.channelEventId))
+          .where(and(eq(assetOccurrences.assetId, assetId), eq(channelEvents.channelId, channelId)))
+          .get()
+        const outbound = tx
+          .select({ id: outboundIntents.id })
+          .from(outboundIntents)
+          .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+          .where(and(eq(episodes.channelId, channelId), sql`instr(${outboundIntents.parts}, ${assetId}) > 0`))
+          .get()
+        if (inbound !== undefined || outbound !== undefined) return 'in-use'
+        tx.delete(assetChannelGrants)
+          .where(and(eq(assetChannelGrants.assetId, assetId), eq(assetChannelGrants.channelId, channelId)))
+          .run()
+        return 'revoked'
+      })
     },
     canAccessAsset(assetId, channelId): boolean {
       const occurrence = database

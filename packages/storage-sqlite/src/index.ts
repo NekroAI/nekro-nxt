@@ -539,6 +539,9 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#assets.getAssetById(...args)
   readonly canAccessAsset = (...args: Parameters<ReturnType<typeof createAssetsRepository>['canAccessAsset']>) =>
     this.#assets.canAccessAsset(...args)
+  readonly revokeUnusedAgentAsset = (
+    ...args: Parameters<ReturnType<typeof createAssetsRepository>['revokeUnusedAgentAsset']>
+  ) => this.#assets.revokeUnusedAgentAsset(...args)
 
   readonly getExtensionStorageEntry = (...args: Parameters<ExtensionStorageRepository['getExtensionStorageEntry']>) =>
     this.#extensionStorage.getExtensionStorageEntry(...args)
