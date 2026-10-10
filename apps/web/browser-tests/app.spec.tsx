@@ -682,6 +682,9 @@ test.describe('NekroNxt browser projections', () => {
         json: { document: { version: 1, segments: [] }, locked: false, revision: 0, maxChars: 2000, revisions: [] },
       }),
     )
+    await page.route('**/api/channels/*/member-notes', (request) =>
+      request.fulfill({ json: { notes: [], maxChars: 300 } }),
+    )
     await page.route('**/api/channels/*/context-policy', (request) => {
       const policy = { backlogTextChars: 40_000, backlogImages: 6, idleReviewMinutes: 45 }
       return request.fulfill({ json: { policy, defaults: policy, custom: false } })

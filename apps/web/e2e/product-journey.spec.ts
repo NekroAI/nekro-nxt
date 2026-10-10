@@ -1733,7 +1733,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
 
   await page.goto(`/channels/${channelId}`)
   await expect(inspector.getByText('本频道只讨论旅程测试。', { exact: false })).toBeVisible()
-  const notesSection = inspector.getByRole('region', { name: '笔记' })
+  const notesSection = inspector.getByRole('region', { name: '群笔记' })
   await expect(notesSection).toContainText('成员甲喜欢简短的回答。')
   await expect(notesSection).toContainText('11 字')
   await inspector.getByRole('button', { name: '编辑', exact: true }).first().click()
