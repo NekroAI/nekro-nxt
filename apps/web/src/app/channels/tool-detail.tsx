@@ -227,13 +227,13 @@ export function ToolDetail({
       <>
         {description ? <p className={styles.lead}>{description}</p> : null}
         {code ? (
-          <Block title="脚本" action={<CopyButton value={code} label="复制脚本" />}>
+          <Block title="程序" action={<CopyButton value={code} label="复制程序" />}>
             <pre className={styles.code}>{code}</pre>
           </Block>
         ) : null}
         {running ? null : (
           <Block title="输出" action={resultText ? <CopyButton value={resultText} label="复制输出" /> : undefined}>
-            <Code value={resultText ?? ''} empty="脚本没有输出" />
+            <Code value={resultText ?? ''} empty="程序没有输出" />
           </Block>
         )}
       </>

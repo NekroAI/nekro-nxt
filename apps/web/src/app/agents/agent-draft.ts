@@ -84,7 +84,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if (draft.visionKey !== base.visionKey) changes.push('看图模型')
   const patch = capabilityPatch(base, draft)
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')
-  if ('codeRun' in patch) changes.push('用脚本调用工具')
+  if ('codeRun' in patch) changes.push('编排模式')
   for (const key of OTHER_CAPABILITIES) {
     if (key in patch) changes.push(CAPABILITY_LABEL[key])
   }

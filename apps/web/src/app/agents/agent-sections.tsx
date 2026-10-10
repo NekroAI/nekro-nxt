@@ -476,12 +476,12 @@ export function CapabilitiesSection({
         </PropertyRow>
         {caps.developmentShell ? (
           <PropertyRow
-            label="用脚本调用工具"
-            description="把多个步骤写成一段脚本一次做完，适合翻大量记录、批量处理文件。开启后，它的所有操作都通过脚本完成。"
+            label="编排模式（PTC）"
+            description="把多个步骤写成一段程序一次做完，适合翻大量记录、批量处理文件。开启后，智能体的所有操作都通过程序完成。"
             badge={caps.codeRun && !availability.codeRun?.available ? <Chip tone="warn">待配置</Chip> : undefined}
           >
             <Switch
-              label="用脚本调用工具"
+              label="编排模式（PTC）"
               checked={caps.codeRun}
               disabled={!availability.codeRun?.available && !caps.codeRun}
               onCheckedChange={(checked) =>
@@ -493,12 +493,12 @@ export function CapabilitiesSection({
         {caps.developmentShell && availability.codeRun !== undefined ? (
           availability.codeRun.available ? (
             availability.codeRun.source === 'downloaded' ? (
-              <PropertyRow label="脚本运行环境" description={`Node ${availability.codeRun.version ?? ''}，由 NXT 下载`}>
+              <PropertyRow label="编排运行环境" description={`Node ${availability.codeRun.version ?? ''}，由 NXT 下载`}>
                 <CodeRunNodeRemove availability={availability.codeRun} />
               </PropertyRow>
             ) : null
           ) : availability.codeRun.download !== undefined ? (
-            <PropertyRow label="脚本运行环境" description="这台设备没有可用的 Node，下载后即可开启">
+            <PropertyRow label="编排运行环境" description="这台设备没有可用的 Node，下载后即可开启">
               <CodeRunNodeDownload availability={availability.codeRun} />
             </PropertyRow>
           ) : null

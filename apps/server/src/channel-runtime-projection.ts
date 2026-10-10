@@ -26,7 +26,7 @@ const PERFORMANCE_RECENT_LIMIT = 12
 const SECRET_KEY = /secret|token|password|authorization|api[_-]?key|credential/iu
 
 const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
-  run_code: '运行脚本',
+  run_code: '编排执行',
   send_channel_message: '发送频道消息',
   finish_channel_turn: '结束本轮处理',
   web_search: '网页搜索',

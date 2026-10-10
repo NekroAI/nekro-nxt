@@ -1849,7 +1849,7 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
-        const toggle = page.getByRole('switch', { name: '用脚本调用工具' })
+        const toggle = page.getByRole('switch', { name: '编排模式（PTC）' })
         await playwrightExpect(toggle).toBeDisabled()
         await page.getByRole('button', { name: '下载 Node 24.21.0' }).click()
         await playwrightExpect(toggle).toBeEnabled()
@@ -2091,13 +2091,13 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/channels/${browserChannelId}`,
       async (page) => {
-        const script = page.getByRole('button', { name: /^运行脚本：翻上周聊天记录整理活动/u })
+        const script = page.getByRole('button', { name: /^编排执行：翻上周聊天记录整理活动/u })
         await playwrightExpect(script).toBeVisible()
         await playwrightExpect(page.getByText('回复了 2 条', { exact: true })).toBeVisible()
         await playwrightExpect(page.getByRole('button', { name: /^搜索聊天记录：/u })).toBeVisible()
         await playwrightExpect(page.getByRole('button', { name: /^发送频道消息：/u })).toHaveCount(2)
         await script.click()
-        await playwrightExpect(page.getByText('脚本', { exact: true })).toBeVisible()
+        await playwrightExpect(page.getByText('程序', { exact: true })).toBeVisible()
         await playwrightExpect(
           page.getByText("await tools.conversation_history_search({ query: '桌游' })"),
         ).toBeVisible()
@@ -2128,7 +2128,7 @@ test.describe('NekroNxt browser projections', () => {
                         {
                           callId: 'call_script',
                           name: 'run_code',
-                          displayName: '运行脚本',
+                          displayName: '编排执行',
                           state: 'succeeded',
                           inputPreview: '翻上周聊天记录整理活动',
                           code: "await tools.conversation_history_search({ query: '桌游' })\nreturn 'ok'",
