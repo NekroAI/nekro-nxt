@@ -1359,6 +1359,28 @@ export const channelPrompts = sqliteTable(
   ],
 )
 
+/** What the agent keeps about one member of a channel; it comes with that member's messages, only in this channel. */
+export const channelMemberNotes = sqliteTable(
+  'channel_member_notes',
+  {
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    memberId: text('member_id')
+      .$type<ChannelMemberId>()
+      .notNull()
+      .references(() => channelMembers.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    updatedBy: text('updated_by', { enum: ['admin', 'agent'] }).notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.channelId, table.memberId] }),
+    check('channel_member_notes_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
+  ],
+)
+
 /** A channel's own context budget; channels without a row follow the defaults. */
 export const channelContextPolicies = sqliteTable('channel_context_policies', {
   channelId: text('channel_id')

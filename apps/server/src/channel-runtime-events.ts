@@ -95,6 +95,14 @@ const memoryActivity = (data: MemoryEventData, at: number | undefined): ChannelM
       }
     case 'notes-updated':
       return { kind: data.kind, ...time, revision: data.revision, chars: data.chars }
+    case 'member-notes-updated':
+      return {
+        kind: data.kind,
+        ...time,
+        memberId: data.memberId,
+        ...(data.name === undefined ? {} : { name: data.name }),
+        chars: data.chars,
+      }
     case 'idle-review':
       return { kind: data.kind, ...time, quietMinutes: data.quietMinutes }
   }

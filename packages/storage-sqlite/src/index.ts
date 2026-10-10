@@ -19,12 +19,17 @@ import { createExtensionStorageRepository, type ExtensionStorageRepository } fro
 import { createExtensionJobsRepository, type ExtensionJobsRepository } from './repositories/extension-jobs.js'
 import { createInboundHooksRepository, type InboundHooksRepository } from './repositories/inbound-hooks.js'
 import {
+  createChannelMemberNotesRepository,
+  type ChannelMemberNotesRepository,
+} from './repositories/channel-member-notes.js'
+import {
   createChannelContextPoliciesRepository,
   type ChannelContextPoliciesRepository,
 } from './repositories/channel-context-policies.js'
 import { createChannelPromptsRepository, type ChannelPromptsRepository } from './repositories/channel-prompts.js'
 import { createExtensionSourcesRepository } from './repositories/extension-sources.js'
 export type { ExtensionRevisionSourceRecord } from './repositories/extension-sources.js'
+export type { ChannelMemberNoteRecord } from './repositories/channel-member-notes.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 
 export * from './backup.js'
@@ -99,6 +104,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #inboundHooks
   readonly #channelPrompts
   readonly #channelContextPolicies
+  readonly #channelMemberNotes
   readonly #extensionSources
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
@@ -121,6 +127,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#inboundHooks = createInboundHooksRepository(database.db)
     this.#channelPrompts = createChannelPromptsRepository(database.db)
     this.#channelContextPolicies = createChannelContextPoliciesRepository(database.db)
+    this.#channelMemberNotes = createChannelMemberNotesRepository(database.db)
     this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.projections = createProjectionRepository(database.db)
   }
@@ -596,4 +603,10 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly saveChannelContextPolicy = (
     ...args: Parameters<ChannelContextPoliciesRepository['saveChannelContextPolicy']>
   ) => this.#channelContextPolicies.saveChannelContextPolicy(...args)
+  readonly getChannelMemberNote = (...args: Parameters<ChannelMemberNotesRepository['getChannelMemberNote']>) =>
+    this.#channelMemberNotes.getChannelMemberNote(...args)
+  readonly listChannelMemberNotes = (...args: Parameters<ChannelMemberNotesRepository['listChannelMemberNotes']>) =>
+    this.#channelMemberNotes.listChannelMemberNotes(...args)
+  readonly saveChannelMemberNote = (...args: Parameters<ChannelMemberNotesRepository['saveChannelMemberNote']>) =>
+    this.#channelMemberNotes.saveChannelMemberNote(...args)
 }

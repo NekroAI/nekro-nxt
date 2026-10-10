@@ -382,7 +382,9 @@ export function ChannelInspector({
           ) : null}
           <ChannelMemory
             channelId={channel.id}
+            channelName={channel.name}
             prompt={prompt}
+            refreshKey={runtime?.turns.at(-1)?.endedAt}
             activities={runtime?.memory}
             onEditNotes={() => setPromptOpen('notes')}
           />

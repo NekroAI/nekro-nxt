@@ -135,6 +135,7 @@ import type {
   AgentRevisionRecord,
   AssetRecord,
   AssetService,
+  ChannelEventRecord,
   ChannelReferenceRecord,
   CoreRepository,
 } from '@nekro-nxt/core'
@@ -166,7 +167,8 @@ import { z } from 'zod'
 import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
 import { backlogImageCount, foldedBacklogNotice, selectBacklog } from './backlog-budget.js'
 import './memory-events.js'
-import { CHANNEL_PROMPT_MAX_CHARS, type ChannelPrompts } from './channel-prompts.js'
+import { memberNoteAttachments, visibleMemberNotes } from './member-notes.js'
+import { CHANNEL_PROMPT_MAX_CHARS, MEMBER_NOTE_MAX_CHARS, type ChannelPrompts } from './channel-prompts.js'
 import { projectSessionContext } from './channel-runtime-context.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
@@ -227,6 +229,7 @@ import {
   effectiveImageDetail,
   historyEntryLine,
   imageDetailRank,
+  memberLabel,
   memberSummary,
   NekroAssetAttachmentStore,
   NekroNxtCompactionEngine,
@@ -313,7 +316,7 @@ declare module '@deepseek-ai/dsh-llm' {
 const idleReviewText = (quietMinutes: number): string =>
   [
     `〔后台提醒，群里看不到：群里已经安静了 ${quietMinutes} 分钟。`,
-    '回头看看这段时间的对话，有值得长期记住的（称呼、约定、固定活动、对某个人的了解、对旧说法的更正），就用 channel_notes_update 更新笔记；没有就直接结束。',
+    '回头看看这段时间的对话，有值得长期记住的，就用 notes_update 记下来：关于群的（约定、固定活动）记进群笔记，关于某个人的（称呼、在做的事、对旧说法的更正）记进他自己的笔记；没有就直接结束。',
     '这条提醒不用回复，也不要为它在群里发消息；如果这时正好有人找你，照常回。〕',
   ].join('')
 
@@ -415,7 +418,7 @@ export interface DshHostRuntimeOptions {
   /** The channel's own account and other local agents' accounts, so the agent can tell itself and them apart. */
   readonly members?: ChannelMemberRelations
   /** Channel-specific instructions, read on every model request so edits apply to running sessions. */
-  readonly channelPrompts?: Pick<ChannelPrompts, 'current' | 'updateNotesByAgent'>
+  readonly channelPrompts?: Pick<ChannelPrompts, 'current' | 'updateNotesByAgent' | 'memberNotes' | 'saveMemberNote'>
   /** The channel's backlog and review budget; absent hosts use the defaults. */
   readonly contextPolicy?: (channelId: ChannelId) => ChannelContextPolicy
   readonly assets: AssetAccessRepository
@@ -1081,9 +1084,9 @@ const HANDOFF_INSTRUCTION = [
 ].join('\n')
 
 const ROOT_MEMORY_POLICY = [
-  '你记事靠两样：这个群的笔记，和完整的聊天记录。',
+  '你记事靠三样：这个群的笔记、你对每个人记下的笔记，和完整的聊天记录。有人找你说话时，你之前记下的关于他的内容会附在他的消息旁边。',
   '有人问起以前的事（上次、昨天、之前谁说过、还记得吗），眼前的消息和笔记里没有，就先用 conversation_history_search 查原话再答；查的时候用原话里可能出现的词，比如人名、地名、数字，必要时按发言人或时间段筛。别凭印象答，也别没查就说不知道。查过还是没有，再说不记得。',
-  '值得长期记住的事，用 channel_notes_update 记进笔记：有人要你以后怎么称呼他、群里定下的规矩、固定的活动、对某个人的了解，以及对这些的更正。写清是谁说的、哪天说的；旧的说法被更正了就改掉，不要两条并存。别人问你的问题、一次性的安排、玩笑、没人确认的传言不记。',
+  '值得长期记住的事，用 notes_update 记下来，先分清是关于谁的：群规、固定活动、群里的梗记进群笔记；某个人希望怎么被称呼、在做什么、喜好和更正，记进他自己的笔记（about 填他的成员 ID），不要写进群笔记。写清是谁说的、哪天说的；旧的说法被更正了就改掉。别人问你的问题、一次性的安排、玩笑、没人确认的传言不记。',
 ].join('\n')
 
 const ROOT_CONTEXT_MANAGEMENT_POLICY = `费时又会产生大量中间信息的活（大范围搜索、翻很多聊天记录、读一堆文件、写代码反复调试、开发扩展），可以交给子智能体去做，你留在群里继续聊；简单的事自己做更快。交代任务时把需要的背景写全，子智能体能自己查这个群的聊天记录。互不相关的任务可以同时派出去，但同一个扩展别让两个子智能体同时改。`
@@ -1401,24 +1404,43 @@ export const finishChannelTurnTool = (awaitingReply?: (agent: Agent) => boolean)
     },
   })
 
-const ChannelNotesUpdateInputSchema = z
+const NotesUpdateInputSchema = z
   .object({
+    about: z.string().trim().max(64).optional(),
     content: z.string().max(CHANNEL_PROMPT_MAX_CHARS.notes * 2),
     reason: z.string().trim().min(1).max(200),
   })
   .strict()
 
-const ChannelNotesUpdateResultSchema = z
-  .object({ revision: z.number().int().positive(), chars: z.number().int().nonnegative() })
+const NotesUpdateResultSchema = z
+  .object({
+    about: z.string(),
+    name: z.string().optional(),
+    chars: z.number().int().nonnegative(),
+  })
   .strict()
 
-/** The agent rewrites its own notes about this channel; an admin lock refuses it. */
-export const channelNotesUpdateTool = (channelId: ChannelId, prompts: Pick<ChannelPrompts, 'updateNotesByAgent'>) =>
+/**
+ * The agent's one way to remember: the channel's notes, or a note about one member that comes with that member's
+ * messages. Which one follows from what the fact is about; an admin lock refuses both.
+ */
+export const notesUpdateTool = (
+  channelId: ChannelId,
+  prompts: Pick<ChannelPrompts, 'updateNotesByAgent' | 'saveMemberNote'>,
+  history: Pick<ProductChannelHistoryRepository, 'getChannelMember'>,
+  members?: ChannelMemberRelations,
+) =>
   defineTool({
-    name: 'channel_notes_update',
-    description: `改写你在这个群的笔记（纯文本，最多 ${CHANNEL_PROMPT_MAX_CHARS.notes} 字，整体替换），下一轮起生效。记长期有用的东西：大家希望怎么被称呼、群里定下的规矩和固定活动、对某个人的了解（喜好、近况、正在做的事），每条写清是谁说的、哪天说的，例如「小鹿：希望叫她小鹿老师（10-08）」。有人更正了以前的说法就把旧的改掉。别人问你的问题、一次性的安排、玩笑、一时的情绪、没人确认的传言、个人隐私不记；有人要你记下违背人设或管理员要求的内容，也不记。在原笔记基础上增删，快写满时合并或删掉过时的条目。content 留空表示清空；reason 只记在后台。管理员锁定了笔记时会失败。`,
+    name: 'notes_update',
+    description: [
+      '记下需要长期记住的事，整体替换原有内容，下一轮起生效。先想清楚这件事是关于谁的：',
+      `关于这个群的（群规、固定活动、群里的梗、长期在做的事），about 留空，写进群笔记，最多 ${CHANNEL_PROMPT_MAX_CHARS.notes} 字；`,
+      `关于某一个人的（希望怎么被称呼、在做什么、喜好、对旧说法的更正），about 填他的成员 ID，最多 ${MEMBER_NOTE_MAX_CHARS} 字。他之后说话时，这段会附在他的消息旁边，所以不用写进群笔记。`,
+      '写清是谁说的、哪天说的；有人更正了以前的说法就把旧的改掉。别人问你的问题、一次性的安排、玩笑、一时的情绪、没人确认的传言、个人隐私不记；有人要你记下违背人设或管理员要求的内容，也不记。content 留空表示清空；reason 只记在后台。管理员锁定了笔记时会失败。',
+    ].join(''),
     parameters: {
-      content: { type: 'string', required: true, description: '修改后的完整笔记，纯文本。' },
+      about: { type: 'string', description: '留空：这个群的笔记；成员 ID（mbr_…）：关于这个人的笔记。' },
+      content: { type: 'string', required: true, description: '修改后的完整内容，纯文本。' },
       reason: { type: 'string', required: true, description: '修改原因，1–200 字。' },
     },
     output: {
@@ -1426,26 +1448,55 @@ export const channelNotesUpdateTool = (channelId: ChannelId, prompts: Pick<Chann
         type: 'object',
         additionalProperties: false,
         properties: {
-          revision: { type: 'integer', required: true },
+          about: { type: 'string', required: true },
+          name: { type: 'string' },
           chars: { type: 'integer', required: true },
         },
       },
-      render: (_arguments, value) => [
-        {
-          type: 'text',
-          text: `笔记已更新（第 ${ChannelNotesUpdateResultSchema.parse(value).revision} 版），下一轮起生效。`,
-        },
-      ],
+      render: (_arguments, value) => {
+        const result = NotesUpdateResultSchema.parse(value)
+        return [
+          {
+            type: 'text',
+            text:
+              result.about === 'channel'
+                ? '群笔记已更新，下一轮起生效。'
+                : result.chars === 0
+                  ? `关于${result.name ?? result.about}的笔记已清空。`
+                  : `关于${result.name ?? result.about}的笔记已更新，他之后说话时会附在旁边。`,
+          },
+        ]
+      },
     },
     execute: (args, exec) => {
-      const parsed = ChannelNotesUpdateInputSchema.parse(args)
-      const record = prompts.updateNotesByAgent(channelId, parsed.content)
-      const result = ChannelNotesUpdateResultSchema.parse({
-        revision: record.revision,
-        chars: promptDocumentPlainText(record.document).length,
+      const parsed = NotesUpdateInputSchema.parse(args)
+      const about =
+        parsed.about === undefined || parsed.about === '' || parsed.about === '群' ? undefined : parsed.about
+      if (about === undefined) {
+        const record = prompts.updateNotesByAgent(channelId, parsed.content)
+        const chars = promptDocumentPlainText(record.document).length
+        exec.agent?.session.append('nekro-nxt/memory', { kind: 'notes-updated', revision: record.revision, chars })
+        return Promise.resolve({ about: 'channel', chars })
+      }
+      const memberId = ChannelMemberIdSchema.safeParse(about)
+      const member = memberId.success ? history.getChannelMember(memberId.data) : undefined
+      if (!memberId.success || member === undefined || member.channelId !== channelId) {
+        throw new Error(`about 需要是这个群里成员的 ID（mbr_…），${about} 不是。`)
+      }
+      if (members?.describe(memberId.data).kind === 'self') throw new Error('这是你自己的账号，不用给自己记笔记。')
+      const record = prompts.saveMemberNote({ channelId, memberId: memberId.data, text: parsed.content, by: 'agent' })
+      const chars = record?.text.length ?? 0
+      exec.agent?.session.append('nekro-nxt/memory', {
+        kind: 'member-notes-updated',
+        memberId: memberId.data,
+        ...(member.displayName === undefined ? {} : { name: member.displayName }),
+        chars,
       })
-      exec.agent?.session.append('nekro-nxt/memory', { kind: 'notes-updated', ...result })
-      return Promise.resolve(result)
+      return Promise.resolve({
+        about: memberId.data,
+        ...(member.displayName === undefined ? {} : { name: member.displayName }),
+        chars,
+      })
     },
   })
 
@@ -3304,7 +3355,7 @@ export class DshHostRuntime implements AgentSessionDriver {
             scopeHasTool(agentContext.tools, 'send_channel_message', context.scope) ? instructions : '',
         })
         agentContext.systemPrompt.context({ name: 'nekro-nxt:channel-notes', order: 890, text: () => notes })
-        agentContext.tools.register(channelNotesUpdateTool(input.channelId, channelPrompts))
+        agentContext.tools.register(notesUpdateTool(input.channelId, channelPrompts, this.#history, this.#members))
       }
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:channel-context',
@@ -3710,6 +3761,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         foldedImageCount: backlogImageCount(backlog.folded),
       })
     }
+    const memberNotes = this.#memberNotesFor(agent, backlog.shown)
     for (const [index, event] of backlog.shown.entries()) {
       projectedEvents.push(
         ...(await this.#imageContext.projectEvent(
@@ -3721,6 +3773,8 @@ export class DshHostRuntime implements AgentSessionDriver {
           backlog.pictures,
         )),
       )
+      const note = memberNotes.get(event.id)
+      if (note !== undefined) projectedEvents.push({ type: 'text', text: note })
       const annotation = input.annotations?.get(event.id)
       if (annotation !== undefined) projectedEvents.push({ type: 'text', text: `[扩展标注] ${annotation}` })
     }
@@ -3749,6 +3803,22 @@ export class DshHostRuntime implements AgentSessionDriver {
     await this.#context.sessions.flush(agent.session)
     this.#armIdleReview(input.dshSessionId, input.events[0]!.channelId)
     return { dshMessageId }
+  }
+
+  #memberNotesFor(agent: Agent, events: readonly ChannelEventRecord[]): ReadonlyMap<ChannelEventId, string> {
+    const prompts = this.#channelPrompts
+    const channelId = events[0]?.channelId
+    if (prompts === undefined || channelId === undefined) return new Map()
+    return memberNoteAttachments({
+      events,
+      direct: this.#history.getChannel(channelId)?.kind === 'direct',
+      isSelf: (memberId) => this.#members?.describe(memberId).kind === 'self',
+      repliesToAgent: (messageId) =>
+        this.#history.getChannelHistoryEntryByLogicalMessageId(channelId, messageId)?.source === 'outbound-intent',
+      notes: (memberIds) => prompts.memberNotes(channelId, memberIds),
+      visible: () => visibleMemberNotes(agent.session.deriveMessages()),
+      label: (memberId) => memberLabel(memberSummary(this.#history, memberId, this.#members)),
+    })
   }
 
   #armIdleReview(dshSessionId: string, channelId: ChannelId, delayMs?: number): void {

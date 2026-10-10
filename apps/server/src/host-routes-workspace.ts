@@ -2,6 +2,7 @@ import {
   AgentIdSchema,
   AssetIdSchema,
   ChannelIdSchema,
+  ChannelMemberIdSchema,
   DEFAULT_CHANNEL_CONTEXT_POLICY,
   ExtensionIdSchema,
   HostApiContracts,
@@ -31,7 +32,7 @@ import {
   type HostRouteContext,
 } from './host-route-support.js'
 import { ChannelPromptConflictError } from '@nekro-nxt/storage-sqlite'
-import { ChannelPromptError } from './channel-prompts.js'
+import { ChannelPromptError, MEMBER_NOTE_MAX_CHARS } from './channel-prompts.js'
 /**
  * How long an enable or disable request waits for its result. Switching waits for the agent's safe gap, which lasts
  * as long as its current reply; past this window the request answers `pending` and finishes in the background.
@@ -636,6 +637,7 @@ export function registerWorkspaceRoutes({
       const runtimeContextMatch = /^\/api\/channels\/([^/]+)\/runtime\/context$/.exec(url.pathname)
       const promptMatch = /^\/api\/channels\/([^/]+)\/prompt$/.exec(url.pathname)
       const contextPolicyMatch = /^\/api\/channels\/([^/]+)\/context-policy$/.exec(url.pathname)
+      const memberNotesMatch = /^\/api\/channels\/([^/]+)\/member-notes(?:\/([^/]+))?$/.exec(url.pathname)
       const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
@@ -648,6 +650,7 @@ export function registerWorkspaceRoutes({
         runtimeContextMatch?.[1] ??
         promptMatch?.[1] ??
         contextPolicyMatch?.[1] ??
+        memberNotesMatch?.[1] ??
         runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
@@ -722,6 +725,62 @@ export function registerWorkspaceRoutes({
             truncated: false,
           },
         )
+        return
+      }
+
+      if (memberNotesMatch) {
+        if (!runtime.repository.getChannel(typedChannelId)) {
+          writeError(res, 404, 'not-found', '频道不存在或已被删除。')
+          return
+        }
+        const view = () => ({
+          notes: runtime.channelPrompts.memberNotes(typedChannelId).map((note) => {
+            const displayName = runtime.repository.getChannelMember(note.memberId)?.displayName
+            return {
+              memberId: note.memberId,
+              ...(displayName === undefined ? {} : { displayName }),
+              text: note.text,
+              updatedBy: note.updatedBy,
+              updatedAt: note.updatedAt,
+            }
+          }),
+          maxChars: MEMBER_NOTE_MAX_CHARS,
+        })
+        const rawMemberId = memberNotesMatch[2]
+        if (rawMemberId === undefined) {
+          if (req.method !== 'GET') {
+            writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+            return
+          }
+          writeContractJson(res, 200, HostApiContracts.getChannelMemberNotes, view())
+          return
+        }
+        if (req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        const memberId = ChannelMemberIdSchema.safeParse(decodeURIComponent(rawMemberId))
+        const member = memberId.success ? runtime.repository.getChannelMember(memberId.data) : undefined
+        if (!memberId.success || member?.channelId !== typedChannelId) {
+          writeError(res, 404, 'not-found', '这个频道里没有这位成员。')
+          return
+        }
+        const parsed = HostApiContracts.updateChannelMemberNote.parseRequest(await readJsonBody(req))
+        try {
+          runtime.channelPrompts.saveMemberNote({
+            channelId: typedChannelId,
+            memberId: memberId.data,
+            text: parsed.text,
+            by: 'admin',
+          })
+        } catch (error) {
+          if (error instanceof ChannelPromptError) {
+            writeError(res, 400, `channel-prompt-${error.code}`, error.message)
+            return
+          }
+          throw error
+        }
+        writeContractJson(res, 200, HostApiContracts.updateChannelMemberNote, view())
         return
       }
 

@@ -754,6 +754,15 @@ export const ChannelMemoryActivitySchema = z.discriminatedUnion('kind', [
     .strict(),
   z
     .object({
+      kind: z.literal('member-notes-updated'),
+      at: z.number().nonnegative().optional(),
+      memberId: z.string(),
+      name: z.string().optional(),
+      chars: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal('idle-review'),
       at: z.number().nonnegative().optional(),
       quietMinutes: z.number().int().nonnegative(),
@@ -884,6 +893,26 @@ export const ChannelContextPolicyViewSchema = z
   .strict()
 
 export type ChannelContextPolicyView = z.output<typeof ChannelContextPolicyViewSchema>
+
+/** What the agent keeps about individual members of one channel; each note comes with that member's messages. */
+export const ChannelMemberNotesViewSchema = z
+  .object({
+    notes: z.array(
+      z
+        .object({
+          memberId: ChannelMemberIdSchema,
+          displayName: z.string().optional(),
+          text: z.string(),
+          updatedBy: z.enum(['admin', 'agent']),
+          updatedAt: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+    maxChars: z.number().int().positive(),
+  })
+  .strict()
+
+export type ChannelMemberNotesView = z.output<typeof ChannelMemberNotesViewSchema>
 
 export type ChannelRuntimePhase = z.output<typeof ChannelRuntimePhaseSchema>
 export type ChannelRuntimeUsage = z.output<typeof ChannelRuntimeUsageSchema>
@@ -2511,6 +2540,23 @@ export const HostApiContracts = {
       })
       .strict(),
     response: ChannelPromptViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  getChannelMemberNotes: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/member-notes',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: ChannelMemberNotesViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateChannelMemberNote: defineContract({
+    method: 'PUT',
+    path: '/api/channels/:channelId/member-notes/:memberId',
+    params: z.object({ channelId: ChannelIdSchema, memberId: ChannelMemberIdSchema }).strict(),
+    /** An empty text forgets the member. */
+    request: z.object({ text: z.string().max(2000) }).strict(),
+    response: ChannelMemberNotesViewSchema,
     error: HostApiErrorSchema,
   }),
   getChannelContextPolicy: defineContract({

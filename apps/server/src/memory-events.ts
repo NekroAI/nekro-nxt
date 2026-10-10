@@ -16,6 +16,12 @@ export type MemoryEventData =
       readonly until?: number
     }
   | { readonly kind: 'notes-updated'; readonly revision: number; readonly chars: number }
+  | {
+      readonly kind: 'member-notes-updated'
+      readonly memberId: string
+      readonly name?: string
+      readonly chars: number
+    }
   | { readonly kind: 'idle-review'; readonly quietMinutes: number }
 
 declare module '@deepseek-ai/dsh-session/types' {

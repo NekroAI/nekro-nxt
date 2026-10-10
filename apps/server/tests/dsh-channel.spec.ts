@@ -2314,11 +2314,11 @@ describe('DSH Host and internal Channel vertical slice', () => {
         'asset_create',
         'asset_inspect',
         'asset_read_text',
-        'channel_notes_update',
         'conversation_history_read',
         'conversation_history_search',
         'finish_channel_turn',
         'nekro_nxt_channel_context',
+        'notes_update',
         'send_channel_message',
       ])
       expect(systemText(model.calls[0])).toContain(channel.id)

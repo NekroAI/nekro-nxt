@@ -223,6 +223,14 @@ export const workspaceApi = {
     request: HostApiRequest<'updateChannelPrompt'>,
     options?: HostRequestOptions,
   ) => callHostApi(HostApiContracts.updateChannelPrompt, { channelId }, request, options),
+  getChannelMemberNotes: (channelId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getChannelMemberNotes, { channelId }, undefined, options),
+  updateChannelMemberNote: (
+    channelId: string,
+    memberId: string,
+    request: HostApiRequest<'updateChannelMemberNote'>,
+    options?: HostRequestOptions,
+  ) => callHostApi(HostApiContracts.updateChannelMemberNote, { channelId, memberId }, request, options),
   getChannelContextPolicy: (channelId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelContextPolicy, { channelId }, undefined, options),
   updateChannelContextPolicy: (

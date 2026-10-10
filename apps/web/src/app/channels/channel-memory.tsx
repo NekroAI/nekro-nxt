@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ChevronRight, Clock3, Layers, Lock, NotebookPen, Search } from 'lucide-react'
+import { ChevronRight, Clock3, Layers, Lock, NotebookPen, Search, UserPen } from 'lucide-react'
 import {
   promptDocumentPlainText,
   type ChannelContextPolicy,
@@ -9,6 +9,7 @@ import {
 import { workspaceApi } from '../../host-api-client.js'
 import { Button, Disclosure, InfoTip, Pressable, Select, toast } from '../../ui-kit/index.js'
 import styles from './channels.module.css'
+import { MemberNotesSheet, type MemberNotesView } from './member-notes-sheet.js'
 import { relativeTime } from './timeline-model.js'
 
 type PolicyView = HostApiResponse<'getChannelContextPolicy'>
@@ -77,6 +78,7 @@ const policySummary = (policy: ChannelContextPolicy): string =>
 const ACTIVITY_ICON = {
   'history-search': Search,
   'notes-updated': NotebookPen,
+  'member-notes-updated': UserPen,
   'backlog-folded': Layers,
   'idle-review': Clock3,
 } as const
@@ -86,7 +88,11 @@ const activityText = (activity: ChannelMemoryActivity): string => {
     case 'history-search':
       return `检索「${activity.query}」${activity.sender ? `（${activity.sender}）` : ''} · ${activity.hits === 0 ? '无结果' : `${activity.hits} 条结果`}`
     case 'notes-updated':
-      return `更新笔记 · 共 ${activity.chars} 字`
+      return `更新群笔记 · 共 ${activity.chars} 字`
+    case 'member-notes-updated':
+      return activity.chars === 0
+        ? `清空${activity.name ?? '成员'}的笔记`
+        : `更新${activity.name ?? '成员'}的笔记 · 共 ${activity.chars} 字`
     case 'backlog-folded':
       return `读取未读 ${activity.foldedCount + activity.shownCount} 条 · 逐条 ${activity.shownCount} 条`
     case 'idle-review':
@@ -95,6 +101,7 @@ const activityText = (activity: ChannelMemoryActivity): string => {
 }
 
 const RECENT_ACTIVITIES = 5
+const MEMBER_PEEK = 3
 
 /**
  * What the agent keeps about this channel: its notes, what it recently looked up or wrote down, and how much unread
@@ -102,17 +109,33 @@ const RECENT_ACTIVITIES = 5
  */
 export function ChannelMemory({
   channelId,
+  channelName,
   prompt,
   activities,
+  refreshKey,
   onEditNotes,
 }: {
   readonly channelId: string
+  readonly channelName: string
   readonly prompt: PromptView | undefined
   readonly activities: readonly ChannelMemoryActivity[] | undefined
+  /** Changes when a turn ends, since the agent may have written notes during it. */
+  readonly refreshKey: unknown
   readonly onEditNotes: () => void
 }) {
   const [view, setView] = useState<PolicyView | undefined>()
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [members, setMembers] = useState<MemberNotesView | undefined>()
+  const [membersOpen, setMembersOpen] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    workspaceApi
+      .getChannelMemberNotes(channelId, { signal: controller.signal })
+      .then(setMembers)
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [channelId, refreshKey])
+  useEffect(() => setMembers(undefined), [channelId])
   useEffect(() => {
     setView(undefined)
     const controller = new AbortController()
@@ -152,10 +175,10 @@ export function ChannelMemory({
 
   return (
     <div className={styles.memoryCard}>
-      <section className={styles.memorySection} aria-label="笔记">
+      <section className={styles.memorySection} aria-label="群笔记">
         <div className={styles.memoryHead}>
           <span className={styles.memoryTitle}>
-            笔记
+            群笔记
             {notes?.locked ? (
               <span className={styles.memoryLocked}>
                 <Lock size={12} aria-hidden="true" />
@@ -171,9 +194,45 @@ export function ChannelMemory({
         {notesText.length > 0 ? (
           <p className={styles.memoryNotes}>{notesPreview}</p>
         ) : (
-          <p className={styles.memoryEmpty}>还没有内容。聊天中出现需要长期记住的事，智能体会自行记下。</p>
+          <p className={styles.memoryEmpty}>还没有内容。群规、固定活动这类关于整个群的事，智能体会记在这里。</p>
         )}
       </section>
+
+      {members ? (
+        <section className={styles.memorySection} aria-label="成员笔记">
+          <div className={styles.memoryHead}>
+            <span className={styles.memoryTitle}>成员笔记</span>
+            <span className={styles.memoryMeta}>{members.notes.length > 0 ? `${members.notes.length} 人` : ''}</span>
+            {members.notes.length > 0 ? (
+              <Button size="small" variant="ghost" onClick={() => setMembersOpen(true)}>
+                全部
+              </Button>
+            ) : null}
+          </div>
+          {members.notes.length > 0 ? (
+            <ul className={styles.memberPeek}>
+              {members.notes.slice(0, MEMBER_PEEK).map((note) => (
+                <li key={note.memberId}>
+                  <span className={styles.memberPeekName}>{note.displayName ?? '未知成员'}</span>
+                  <span className={styles.memberPeekText}>{note.text}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={styles.memoryEmpty}>
+              有人告诉智能体称呼、近况或喜好时，它会记在这个人名下，之后这个人说话时一并看到。
+            </p>
+          )}
+          <MemberNotesSheet
+            open={membersOpen}
+            onOpenChange={setMembersOpen}
+            channelId={channelId}
+            channelName={channelName}
+            view={members}
+            onChanged={setMembers}
+          />
+        </section>
+      ) : null}
 
       {recent.length > 0 ? (
         <section className={styles.memorySection} aria-label="最近操作">

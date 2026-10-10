@@ -1377,6 +1377,93 @@ button.step:hover {
   font: var(--t-note);
 }
 
+.memberPeek {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memberPeek li {
+  display: grid;
+  grid-template-columns: minmax(3em, auto) minmax(0, 1fr);
+  gap: var(--s-2);
+  font: var(--t-note);
+}
+
+.memberPeekName {
+  color: var(--fg);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.memberPeekText {
+  overflow: hidden;
+  color: var(--fg-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memberNotes {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.memberNoteList {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  list-style: none;
+}
+
+.memberNote {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+}
+
+.memberNote + .memberNote {
+  border-top: 1px solid var(--line);
+}
+
+.memberNoteHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+
+.memberNoteName {
+  flex: none;
+  font: var(--t-title);
+}
+
+.memberNoteText {
+  margin: 0;
+  color: var(--fg-2);
+  font: var(--t-note);
+  white-space: pre-line;
+}
+
+.memberNoteActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-1);
+}
+
+.memberNoteActions > .memoryMeta {
+  margin-right: auto;
+  text-align: left;
+}
+
+.memberNoteActions > .memoryMeta[data-over] {
+  color: var(--bad);
+}
+
 .memoryFeed {
   display: grid;
   gap: var(--s-2);

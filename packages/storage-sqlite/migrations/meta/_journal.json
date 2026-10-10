@@ -274,6 +274,13 @@
       "when": 1791563770272,
       "tag": "0038_channel_context_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1791595364214,
+      "tag": "0039_channel_member_notes",
+      "breakpoints": true
     }
   ]
 }

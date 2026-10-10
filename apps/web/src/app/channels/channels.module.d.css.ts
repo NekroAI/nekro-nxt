@@ -40,6 +40,16 @@ declare const styles: {
   readonly jump: string
   readonly knob: string
   readonly listCount: string
+  readonly memberNote: string
+  readonly memberNoteActions: string
+  readonly memberNoteHead: string
+  readonly memberNoteList: string
+  readonly memberNoteName: string
+  readonly memberNoteText: string
+  readonly memberNotes: string
+  readonly memberPeek: string
+  readonly memberPeekName: string
+  readonly memberPeekText: string
   readonly memoryCard: string
   readonly memoryEmpty: string
   readonly memoryFeed: string

@@ -3,10 +3,12 @@ import {
   promptDocumentFromText,
   promptDocumentPlainText,
   type ChannelId,
+  type ChannelMemberId,
   type ChannelPromptView,
   type PromptDocumentV1,
 } from '@nekro-nxt/contracts'
 import type {
+  ChannelMemberNoteRecord,
   ChannelPromptAuthor,
   ChannelPromptKind,
   ChannelPromptRecord,
@@ -21,6 +23,9 @@ export const CHANNEL_PROMPT_MAX_CHARS: Readonly<Record<ChannelPromptKind, number
   instructions: 4000,
   notes: EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
 }
+
+/** A note about one member travels with each of their messages, so it stays short. */
+export const MEMBER_NOTE_MAX_CHARS = 300
 
 /**
  * Notes are open until an admin locks them. They sit in the runtime context, where an edit appends a short snapshot
@@ -52,6 +57,12 @@ export interface ChannelPromptRepository {
     readonly expectedRevision: number
   }): ChannelPromptRecord
   listChannelPromptRevisions(channelId: ChannelId, kind: ChannelPromptKind): readonly ChannelPromptRevisionRecord[]
+  getChannelMemberNote(channelId: ChannelId, memberId: ChannelMemberId): ChannelMemberNoteRecord | undefined
+  listChannelMemberNotes(
+    channelId: ChannelId,
+    memberIds?: readonly ChannelMemberId[],
+  ): readonly ChannelMemberNoteRecord[]
+  saveChannelMemberNote(record: ChannelMemberNoteRecord): void
 }
 
 const assertLength = (kind: ChannelPromptKind, document: PromptDocumentV1): void => {
@@ -118,6 +129,41 @@ export class ChannelPrompts {
       updatedAt: this.#now(),
     })
     return this.view(input.channelId)
+  }
+
+  /** Notes about the given members, for the messages they appear in; everyone follows the same rule. */
+  memberNotes(channelId: ChannelId, memberIds?: readonly ChannelMemberId[]): readonly ChannelMemberNoteRecord[] {
+    return this.#repository.listChannelMemberNotes(channelId, memberIds)
+  }
+
+  /**
+   * Replaces what is kept about one member; an empty text forgets them. The channel's notes lock covers these too:
+   * an admin who locks the agent's notes locks all of its memory in that channel.
+   */
+  saveMemberNote(input: {
+    readonly channelId: ChannelId
+    readonly memberId: ChannelMemberId
+    readonly text: string
+    readonly by: ChannelPromptAuthor
+  }): ChannelMemberNoteRecord | undefined {
+    if (input.by === 'agent' && notesLocked(this.#repository.getChannelPrompt(input.channelId, 'notes'))) {
+      throw new ChannelPromptError('管理员已锁定本频道的笔记，不能修改。', 'locked')
+    }
+    const text = input.text.trim()
+    if (text.length > MEMBER_NOTE_MAX_CHARS) {
+      throw new ChannelPromptError(`成员笔记最多 ${MEMBER_NOTE_MAX_CHARS} 字，当前 ${text.length} 字。`, 'too-long')
+    }
+    const current = this.#repository.getChannelMemberNote(input.channelId, input.memberId)
+    if (current?.text === text) return current
+    const record: ChannelMemberNoteRecord = {
+      channelId: input.channelId,
+      memberId: input.memberId,
+      text,
+      updatedBy: input.by,
+      updatedAt: this.#now(),
+    }
+    this.#repository.saveChannelMemberNote(record)
+    return text.length === 0 ? undefined : record
   }
 
   /** The agent replaces its whole notes with plain text; an empty text clears them. */

@@ -41,6 +41,7 @@
     "0036_host_ui_page_rail.sql": "47c638ab0474dea919a4c7923b8576c4f71d623f03f99789e6ad676e3e072271",
     "0037_channel_prompt_kinds.sql": "504deae7286dd9bf60b66322825e596eba6da16caafaa7481d512d55b7ff9ba2",
     "0038_channel_context_policies.sql": "d9d7670997880961a13d6f2c2473cc66b7e7fcdc3d974bb11abf8c428c9f29cb",
+    "0039_channel_member_notes.sql": "1c4c921b0f5eeeb5aea2c6a15db3c9bbd9035c7aeb72d08b2a499f8c7e87b096",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -80,6 +81,7 @@
     "meta/0036_snapshot.json": "23e1b3c36c5440a1ffa0268118c9fa572001efa70c449db415e441ac6663be40",
     "meta/0037_snapshot.json": "9491704c29417f87aeacded99017b1350d86771999d183080a89cd9f20ca3371",
     "meta/0038_snapshot.json": "b66734d7cbd6814f515426eec2cc331c930172c69292de7ecfda6830e037e968",
-    "meta/_journal.json": "b30c480af7f8206c6454e0f482dafa256db6671c75049f10f7032e7ade041e1c"
+    "meta/0039_snapshot.json": "49f4612c1aac312f1543810bc491938e9b663a04ae31ea6366d0fb14345e0c55",
+    "meta/_journal.json": "b0f20f3c276fea95af17afc9fe73847981feced28152fb54cfd2971aaaac28f4"
   }
 }

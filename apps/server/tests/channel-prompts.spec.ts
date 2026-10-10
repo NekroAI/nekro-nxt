@@ -1,11 +1,16 @@
-import { PromptDocumentV1Schema, promptDocumentFromText } from '@nekro-nxt/contracts'
+import { ChannelMemberIdSchema, PromptDocumentV1Schema, promptDocumentFromText } from '@nekro-nxt/contracts'
 import { CoreService } from '@nekro-nxt/core'
 import { ChannelPromptConflictError, openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { CHANNEL_PROMPT_MAX_CHARS, ChannelPromptError, ChannelPrompts } from '../src/channel-prompts.ts'
+import {
+  CHANNEL_PROMPT_MAX_CHARS,
+  ChannelPromptError,
+  ChannelPrompts,
+  MEMBER_NOTE_MAX_CHARS,
+} from '../src/channel-prompts.ts'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -23,7 +28,21 @@ const fixture = async () => {
   const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'group-1', kind: 'group' })
   let now = 2000
   const prompts = new ChannelPrompts(repository, () => ++now)
-  return { database, channel, prompts }
+  const member = (platformUserId: string, displayName: string) => {
+    const identity = core.ensurePlatformIdentity({
+      connectionId: connection.id,
+      platformUserId,
+      displayName,
+      observedAt: 1,
+    })
+    return repository.ensureChannelMember({
+      id: ChannelMemberIdSchema.parse(`mbr_${platformUserId}`),
+      channelId: channel.id,
+      platformIdentityId: identity.id,
+      displayName,
+    })
+  }
+  return { database, channel, prompts, member }
 }
 
 const withReference = PromptDocumentV1Schema.parse({
@@ -147,6 +166,51 @@ describe('channel prompts', () => {
       expect(revisions[0]).toBe(25)
       expect(revisions.at(-1)).toBe(6)
       expect(prompts.view(channel.id).instructions.revisions).toEqual([])
+    } finally {
+      database.close()
+    }
+  })
+
+  it('keeps a short note per member, forgets it on an empty text and honours the notes lock', async () => {
+    const { database, channel, prompts, member } = await fixture()
+    try {
+      const guang = member('guang', '林思青')
+      const xiaoman = member('xiaoman', '蒋嘉白')
+      prompts.saveMemberNote({
+        channelId: channel.id,
+        memberId: guang.id,
+        text: ' 希望叫他阿光；在学摄影 ',
+        by: 'agent',
+      })
+      prompts.saveMemberNote({ channelId: channel.id, memberId: xiaoman.id, text: '在学手冲咖啡', by: 'agent' })
+
+      expect(prompts.memberNotes(channel.id, [guang.id]).map(({ text }) => text)).toEqual(['希望叫他阿光；在学摄影'])
+      expect(prompts.memberNotes(channel.id).map(({ memberId }) => memberId)).toEqual([xiaoman.id, guang.id])
+      expect(() =>
+        prompts.saveMemberNote({
+          channelId: channel.id,
+          memberId: guang.id,
+          text: '长'.repeat(MEMBER_NOTE_MAX_CHARS + 1),
+          by: 'agent',
+        }),
+      ).toThrow(ChannelPromptError)
+
+      prompts.saveMemberNote({ channelId: channel.id, memberId: xiaoman.id, text: '', by: 'admin' })
+      expect(prompts.memberNotes(channel.id).map(({ memberId }) => memberId)).toEqual([guang.id])
+
+      prompts.saveByAdmin({
+        channelId: channel.id,
+        kind: 'notes',
+        document: { version: 1, segments: [] },
+        locked: true,
+        expectedRevision: 0,
+      })
+      expect(() =>
+        prompts.saveMemberNote({ channelId: channel.id, memberId: guang.id, text: '改一下', by: 'agent' }),
+      ).toThrow(/锁定/u)
+      expect(
+        prompts.saveMemberNote({ channelId: channel.id, memberId: guang.id, text: '管理员改的', by: 'admin' }),
+      ).toMatchObject({ text: '管理员改的', updatedBy: 'admin' })
     } finally {
       database.close()
     }
