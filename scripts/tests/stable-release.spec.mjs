@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import desktopDistributions from '../../apps/desktop/distributions.json' with { type: 'json' }
 import { DSH_RUNTIME_RELEASE } from '../lib/dsh-release.mjs'
 import { artifactTarget } from '../product-release.mjs'
-import { assertStableReceipt, stableReleaseBody } from '../stable-release-ci.mjs'
+import { assertStableReceipt, dockerHubImage, stableReleaseBody } from '../stable-release-ci.mjs'
 import {
   assertReleaseSource,
   assertRequestedVersion,
@@ -125,6 +125,22 @@ test('stable Release body combines reviewed notes with generated distribution fa
   )
   assert.match(firstReleaseBody, /commits\/v1\.4\.0/u)
   assert.doesNotMatch(firstReleaseBody, /\/compare\//u)
+  assert.doesNotMatch(firstReleaseBody, /Docker Hub/u)
+
+  const mirroredBody = stableReleaseBody(release, 'NekroAI/nekro-nxt', desktopDistributions.stable, '## 主要变化', {
+    mirrorImage: 'docker.io/nekroai/nekro-nxt',
+    imageDigest: `sha256:${'a'.repeat(64)}`,
+  })
+  assert.match(mirroredBody, /Docker Hub 上的同一镜像：`docker\.io\/nekroai\/nekro-nxt:1\.4\.0`/u)
+  assert.match(mirroredBody, new RegExp(`镜像摘要：\`sha256:${'a'.repeat(64)}\``, 'u'))
+})
+
+test('the Docker Hub mirror name is optional and normalized', () => {
+  assert.equal(dockerHubImage(undefined), undefined)
+  assert.equal(dockerHubImage('  '), undefined)
+  assert.equal(dockerHubImage('NekroAI/nekro-nxt'), 'docker.io/nekroai/nekro-nxt')
+  assert.equal(dockerHubImage('docker.io/nekroai/nekro-nxt'), 'docker.io/nekroai/nekro-nxt')
+  assert.throws(() => dockerHubImage('ghcr.io/nekroai/nekro-nxt'), /DOCKERHUB_IMAGE/u)
 })
 
 test('stable publishing is triggered only by an explicit immutable version tag', async () => {

@@ -85,6 +85,10 @@ export function stableReleaseBody(release, repository, distribution, variableNot
     `  ghcr.io/${repository.toLowerCase()}:${release.version}`,
     '```',
     '',
+    ...(history.mirrorImage
+      ? [`拉取 ghcr.io 较慢时，可以改用 Docker Hub 上的同一镜像：\`${history.mirrorImage}:${release.version}\`。`, '']
+      : []),
+    ...(history.imageDigest ? [`镜像摘要：\`${history.imageDigest}\``, ''] : []),
     `[查看服务端部署、远程访问与备份说明](https://github.com/${repository}/blob/main/docs/guide/server.md)`,
     '',
     '## 🚀 开始使用',
@@ -194,20 +198,32 @@ async function publish() {
   const candidateImage = `ghcr.io/${repository.toLowerCase()}:release-${release.commit}`
   const versionImage = `ghcr.io/${repository.toLowerCase()}:${release.version}`
   const latestImage = `ghcr.io/${repository.toLowerCase()}:latest`
+  // Docker Hub carries the same Stable image for networks where ghcr.io is slow; previews stay on ghcr.io only.
+  const mirrorImage = dockerHubImage(process.env['DOCKERHUB_IMAGE'])
+  const mirrorTags = mirrorImage === undefined ? [] : [`${mirrorImage}:${release.version}`, `${mirrorImage}:latest`]
   for (const args of [
     ['pull', candidateImage],
     ['tag', candidateImage, versionImage],
     ['push', versionImage],
     ['tag', candidateImage, latestImage],
     ['push', latestImage],
+    ...mirrorTags.flatMap((image) => [
+      ['tag', candidateImage, image],
+      ['push', image],
+    ]),
   ]) {
     run('docker', args, { stdio: 'inherit' })
   }
+  const imageDigest = publishedDigest(versionImage, mirrorTags[0])
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-stable-release-'))
   try {
     const notesFile = path.join(temporaryRoot, 'release-notes.md')
-    const history = releaseHistory(release, tag)
+    const history = {
+      ...releaseHistory(release, tag),
+      ...(mirrorImage === undefined ? {} : { mirrorImage }),
+      imageDigest,
+    }
     await writeFile(
       notesFile,
       `${stableReleaseBody(release, repository, distribution, variableNotes, history)}\n`,
@@ -236,6 +252,35 @@ async function publish() {
   }
 
   console.log(`NekroNXT ${release.version} 已发布。`)
+}
+
+/** `nekroai/nekro-nxt` or `docker.io/nekroai/nekro-nxt`; an empty value turns the mirror off. */
+export function dockerHubImage(value) {
+  const image = value?.trim().toLowerCase()
+  if (!image) return undefined
+  const name = image.startsWith('docker.io/') ? image.slice('docker.io/'.length) : image
+  if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/u.test(name)) {
+    throw new Error(`DOCKERHUB_IMAGE 需要形如 nekroai/nekro-nxt：${value}`)
+  }
+  return `docker.io/${name}`
+}
+
+/** The pushed manifest digest; a mirror must carry the very same image. */
+function publishedDigest(image, mirror) {
+  const digestOf = (reference) => {
+    const repository = reference.slice(0, reference.lastIndexOf(':'))
+    const digests = JSON.parse(run('docker', ['inspect', '--format', '{{json .RepoDigests}}', reference]))
+    const match = digests.find(
+      (entry) => entry.startsWith(`${repository.replace(/^docker\.io\//u, '')}@`) || entry.startsWith(`${repository}@`),
+    )
+    if (!match) throw new Error(`没有找到 ${reference} 推送后的镜像摘要。`)
+    return match.slice(match.indexOf('@') + 1)
+  }
+  const digest = digestOf(image)
+  if (mirror !== undefined && digestOf(mirror) !== digest) {
+    throw new Error(`Docker Hub 镜像与 ghcr.io 镜像的摘要不一致：${mirror}`)
+  }
+  return digest
 }
 
 async function main() {
