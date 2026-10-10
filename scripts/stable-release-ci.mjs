@@ -10,6 +10,7 @@ import {
   readArtifactIntegrity,
   readProductRelease,
 } from './product-release.mjs'
+import { copyImage, manifestDigest, serverImageDigest } from './lib/server-image.mjs'
 import { parseStableVersion, releaseNotesBody, stableTag } from './stable-release.mjs'
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -84,6 +85,8 @@ export function stableReleaseBody(release, repository, distribution, variableNot
     "  -v '<持久化目录>:/data' \\",
     `  ghcr.io/${repository.toLowerCase()}:${release.version}`,
     '```',
+    '',
+    '镜像同时提供 x86_64（amd64）和 ARM64 两种架构，Docker 会自动拉取与宿主机匹配的版本。',
     '',
     ...(history.mirrorImage
       ? [`拉取 ghcr.io 较慢时，可以改用 Docker Hub 上的同一镜像：\`${history.mirrorImage}:${release.version}\`。`, '']
@@ -201,20 +204,11 @@ async function publish() {
   // Docker Hub carries the same Stable image for networks where ghcr.io is slow; previews stay on ghcr.io only.
   const mirrorImage = dockerHubImage(process.env['DOCKERHUB_IMAGE'])
   const mirrorTags = mirrorImage === undefined ? [] : [`${mirrorImage}:${release.version}`, `${mirrorImage}:latest`]
-  for (const args of [
-    ['pull', candidateImage],
-    ['tag', candidateImage, versionImage],
-    ['push', versionImage],
-    ['tag', candidateImage, latestImage],
-    ['push', latestImage],
-    ...mirrorTags.flatMap((image) => [
-      ['tag', candidateImage, image],
-      ['push', image],
-    ]),
-  ]) {
-    run('docker', args, { stdio: 'inherit' })
-  }
-  const imageDigest = publishedDigest(versionImage, mirrorTags[0])
+  const imageDigest = serverImageDigest(candidateImage)
+  // Copied inside the registries, so every tag carries the candidate's multi-architecture index unchanged.
+  copyImage(candidateImage, [versionImage, latestImage])
+  copyImage(`ghcr.io/${repository.toLowerCase()}@${imageDigest}`, mirrorTags)
+  assertPublishedDigest(imageDigest, [versionImage, latestImage, ...mirrorTags])
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-stable-release-'))
   try {
@@ -265,22 +259,11 @@ export function dockerHubImage(value) {
   return `docker.io/${name}`
 }
 
-/** The pushed manifest digest; a mirror must carry the very same image. */
-function publishedDigest(image, mirror) {
-  const digestOf = (reference) => {
-    const repository = reference.slice(0, reference.lastIndexOf(':'))
-    const digests = JSON.parse(run('docker', ['inspect', '--format', '{{json .RepoDigests}}', reference]))
-    const match = digests.find(
-      (entry) => entry.startsWith(`${repository.replace(/^docker\.io\//u, '')}@`) || entry.startsWith(`${repository}@`),
-    )
-    if (!match) throw new Error(`没有找到 ${reference} 推送后的镜像摘要。`)
-    return match.slice(match.indexOf('@') + 1)
+/** Every published tag, the Docker Hub mirror included, must resolve to the very candidate that was verified. */
+function assertPublishedDigest(digest, references) {
+  for (const reference of references) {
+    if (manifestDigest(reference) !== digest) throw new Error(`${reference} 的镜像摘要与候选镜像不一致。`)
   }
-  const digest = digestOf(image)
-  if (mirror !== undefined && digestOf(mirror) !== digest) {
-    throw new Error(`Docker Hub 镜像与 ghcr.io 镜像的摘要不一致：${mirror}`)
-  }
-  return digest
 }
 
 async function main() {
