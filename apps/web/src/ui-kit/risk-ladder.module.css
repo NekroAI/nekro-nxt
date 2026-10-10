@@ -8,6 +8,18 @@
   display: grid;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.scale[data-dragging='true'],
+.scale[data-dragging='true'] .stop {
+  cursor: grabbing;
+}
+
+.scale[aria-disabled='true'] {
+  cursor: not-allowed;
 }
 
 /* The track runs between the first and last dot centres. */
@@ -39,7 +51,7 @@
   background: transparent;
   color: var(--muted);
   font: var(--t-note);
-  cursor: pointer;
+  cursor: inherit;
 }
 
 .stop:disabled {

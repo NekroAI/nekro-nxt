@@ -1821,6 +1821,84 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('drags along the system-access scale and selects the level where the pointer is released', async () => {
+    await withProductPage(`/agents/${browserAgentId}`, async (page) => {
+      const levels = page.getByRole('radiogroup', { name: '系统访问' })
+      const centre = async (name: string) => {
+        const box = (await levels.getByRole('radio', { name }).boundingBox())!
+        return { x: box.x + box.width / 2, y: box.y + 12 }
+      }
+      const start = await centre('基础权限')
+      const workspace = await centre('工作区读写')
+      const commands = await centre('运行命令')
+      await page.mouse.move(start.x, start.y)
+      await page.mouse.down()
+      await page.mouse.move(commands.x, commands.y, { steps: 8 })
+      // The drag previews the stop under the pointer without asking yet.
+      await playwrightExpect(levels.getByRole('radio', { name: '运行命令' })).toHaveAttribute('aria-checked', 'true')
+      await page.mouse.move(workspace.x, workspace.y, { steps: 4 })
+      await page.mouse.up()
+      await playwrightExpect(levels.getByRole('radio', { name: '工作区读写' })).toHaveAttribute('aria-checked', 'true')
+      await playwrightExpect(page.getByRole('dialog')).toHaveCount(0)
+      await page.mouse.move(workspace.x, workspace.y)
+      await page.mouse.down()
+      await page.mouse.move(commands.x, commands.y, { steps: 4 })
+      await page.mouse.up()
+      await playwrightExpect(page.getByRole('dialog', { name: '允许资料员运行命令？' })).toBeVisible()
+    })
+  })
+
+  test('turns command network off where the host can enforce it and explains where it cannot', async () => {
+    const capabilityRequests: unknown[] = []
+    const withCommands = (networkControl: boolean) =>
+      HostApiContracts.snapshot.response.parse({
+        ...browserSnapshot,
+        agents: browserSnapshot.agents.map((agent) =>
+          agent.id === browserAgentId
+            ? { ...agent, capabilities: { ...agent.capabilities, fileTools: true, developmentShell: true } }
+            : agent,
+        ),
+        capabilityAvailability: {
+          ...browserSnapshot.capabilityAvailability,
+          commandConfinement: { readScope: networkControl, networkControl },
+        },
+      })
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const toggle = page.getByRole('switch', { name: '命令联网' })
+        await playwrightExpect(toggle).toBeChecked()
+        await toggle.click()
+        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toEqual({ commandNetwork: false })
+      },
+      withCommands(true),
+      async (page) => {
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            json: {
+              currentRevisionId: browserRevisionId,
+              capabilities: { ...withCommands(true).agents[0]!.capabilities, commandNetwork: false },
+            },
+          })
+        })
+      },
+    )
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const toggle = page.getByRole('switch', { name: '命令联网' })
+        await playwrightExpect(toggle).toBeDisabled()
+        await playwrightExpect(toggle).toBeChecked()
+        await playwrightExpect(page.getByText('这台设备无法限制命令联网，命令始终可以联网')).toBeVisible()
+        await playwrightExpect(page.getByText('这台设备上，命令仍能读取工作区以外的文件')).toBeVisible()
+      },
+      withCommands(false),
+    )
+  })
+
   test('offers scripts under command access and downloads the Node they need in place', async () => {
     const capabilityRequests: unknown[] = []
     const withCommands = {
