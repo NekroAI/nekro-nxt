@@ -64,7 +64,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
-      # Browser tests resolve workspace packages to source, so they do not wait for a build.
+      # The pages resolve workspace packages to source, but the Playwright specs import their built entries.
+      - run: pnpm build
       - run: pnpm test:browser
 
   journey:
