@@ -64,6 +64,14 @@ test('stable release source must be clean main already proven by the rolling Pre
   assert.throws(() => assertReleaseSource({ ...valid, status: ' M package.json' }), /worktree/u)
   assert.throws(() => assertReleaseSource({ ...valid, remoteMain: 'f'.repeat(40) }), /origin\/main/u)
   assert.throws(() => assertReleaseSource({ ...valid, previewCommit: 'f'.repeat(40) }), /Preview/u)
+  const afterPreview = { ...valid, previewCommit: 'f'.repeat(40) }
+  assert.doesNotThrow(() =>
+    assertReleaseSource({ ...afterPreview, changedSincePreview: ['docs/releases/current.md', 'README.md'] }),
+  )
+  assert.throws(
+    () => assertReleaseSource({ ...afterPreview, changedSincePreview: ['docs/releases/current.md', 'package.json'] }),
+    /Preview/u,
+  )
 })
 
 test('stable receipt binds an installer to the exact Product Release', () => {

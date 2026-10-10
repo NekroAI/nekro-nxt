@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { hasPreviewProductChanges } from './lib/preview-changes.mjs'
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const repository = 'NekroAI/nekro-nxt'
@@ -51,12 +52,17 @@ export function releaseNotesBody(markdown) {
   return body
 }
 
-export function assertReleaseSource({ branch, status, head, remoteMain, previewCommit }) {
+/**
+ * `changedSincePreview` lists the files changed from the Preview commit to `head`, or is undefined when the Preview
+ * commit is not an ancestor of `head`. Commits that touch no product files (release notes, docs, tests) never build a
+ * new Preview, so they must not block the release either.
+ */
+export function assertReleaseSource({ branch, status, head, remoteMain, previewCommit, changedSincePreview }) {
   if (branch !== 'main') throw new Error(`正式发布只能从 main 执行，当前分支是 ${branch || 'detached HEAD'}。`)
   if (typeof status !== 'string' || status.trim() !== '') throw new Error('正式发布要求 Git worktree 干净。')
   if (!/^[a-f0-9]{40}$/u.test(head)) throw new Error(`当前 Git commit 无效：${head}`)
   if (head !== remoteMain) throw new Error('当前提交不是 origin/main 最新提交，请先同步并推送 main。')
-  if (head !== previewCommit) {
+  if (head !== previewCommit && (changedSincePreview === undefined || hasPreviewProductChanges(changedSincePreview))) {
     throw new Error('当前提交尚未通过完整 Preview 发布，请等待 preview Tag 指向当前提交。')
   }
 }
@@ -151,7 +157,12 @@ async function main() {
   const head = output('git', ['rev-parse', 'HEAD'])
   const remoteMain = output('git', ['rev-parse', 'origin/main'])
   const previewCommit = output('git', ['rev-list', '-n', '1', 'refs/tags/preview'])
-  assertReleaseSource({ branch, status, head, remoteMain, previewCommit })
+  const previewIsAncestor =
+    run('git', ['merge-base', '--is-ancestor', previewCommit, head], { allowFailure: true }).status === 0
+  const changedSincePreview = previewIsAncestor
+    ? output('git', ['diff', '--name-only', '-z', previewCommit, head]).split('\0').filter(Boolean)
+    : undefined
+  assertReleaseSource({ branch, status, head, remoteMain, previewCommit, changedSincePreview })
   assertTagAvailable(tag)
 
   console.log(`\n准备发布 NekroNXT ${version}`)
