@@ -9,13 +9,15 @@ import {
 import type { ChannelHistoryEntry, ChannelHistoryFilter } from '@nekro-nxt/channel-runtime'
 import { describe, expect, it } from 'vitest'
 import { readHistoryText, searchHistoryText, type HistoryLookup } from '../src/index.ts'
+import { formatContextTime, parseContextTime } from '../src/scheduled-tasks.ts'
 import type { ChannelMemberRelations } from '../src/session-image-context.ts'
 
 const channelId = ChannelIdSchema.parse('chn_history')
 const acheng = ChannelMemberIdSchema.parse('mbr_acheng')
 const self = ChannelMemberIdSchema.parse('mbr_self')
+// Wall-clock times in the host zone, the way the agent writes them; CI and developer machines differ.
 const at = (hour: number, minute = 0) =>
-  Date.parse(`2026-10-08T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+08:00`)
+  parseContextTime(`2026-10-08 ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`)
 
 const inbound = (id: string, time: number, text: string): ChannelHistoryEntry => ({
   source: 'channel-event',
@@ -76,9 +78,7 @@ describe('conversation history tools', () => {
     const text = tools.search({ query: '生日' })
 
     expect(text.split('\n')).toEqual([
-      expect.stringMatching(
-        /^\[2026-10-08 14:03:00 \+08:00 · msg_1\] 阿澄（mbr_acheng）：我下周三生日，请大家喝奶茶$/u,
-      ),
+      `[${formatContextTime(at(14, 3))} · msg_1] 阿澄（mbr_acheng）：我下周三生日，请大家喝奶茶`,
       '[14:05:00 · msg_2] 你：生日快乐！',
     ])
   })
