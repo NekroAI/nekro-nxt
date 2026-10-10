@@ -1552,10 +1552,10 @@
       "source": "Release preparation and reviewed product captures"
     },
     {
-      "path": "release-images/current/channel-workbench.png",
+      "path": "release-images/current/memory-workbench.png",
       "format": "png",
-      "bytes": 122423,
-      "sha256": "2fdec37b2cea93f063829af82719b050a49700393af12f9c66cb7bfc0cca3828",
+      "bytes": 202170,
+      "sha256": "df04134ea0eeac4c2b33de3923d098fee2f76ddf813b17e21da3fab97ace808f",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "Release-scoped temporary artwork",
