@@ -56,6 +56,9 @@ export function releaseNotesBody(markdown) {
  * `changedSincePreview` lists the files changed from the Preview commit to `head`, or is undefined when the Preview
  * commit is not an ancestor of `head`. Commits that touch no product files (release notes, docs, tests) never build a
  * new Preview, so they must not block the release either.
+ *
+ * @param {{ branch: string, status: string, head: string, remoteMain: string, previewCommit: string,
+ *   changedSincePreview?: readonly string[] | undefined }} source
  */
 export function assertReleaseSource({ branch, status, head, remoteMain, previewCommit, changedSincePreview }) {
   if (branch !== 'main') throw new Error(`正式发布只能从 main 执行，当前分支是 ${branch || 'detached HEAD'}。`)
