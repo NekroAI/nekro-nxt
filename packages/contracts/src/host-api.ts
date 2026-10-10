@@ -894,6 +894,31 @@ export const ChannelContextPolicyViewSchema = z
 
 export type ChannelContextPolicyView = z.output<typeof ChannelContextPolicyViewSchema>
 
+/** Whether a newer release exists on the build's own channel; development builds are never compared. */
+export const ProductUpdateStatusSchema = z
+  .object({
+    channel: z.enum(['stable', 'preview', 'development']),
+    currentVersion: z.string(),
+    /** Short commit of a release build. */
+    currentCommit: z.string().optional(),
+    state: z.enum(['unknown', 'up-to-date', 'available', 'failed', 'unsupported']),
+    latest: z
+      .object({
+        version: z.string(),
+        commit: z.string().optional(),
+        url: z.string().url(),
+        publishedAt: z.number().int().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
+    checkedAt: z.number().int().nonnegative().optional(),
+    error: z.string().optional(),
+    autoCheck: z.boolean(),
+  })
+  .strict()
+
+export type ProductUpdateStatus = z.output<typeof ProductUpdateStatusSchema>
+
 /** What the agent keeps about individual members of one channel; each note comes with that member's messages. */
 export const ChannelMemberNotesViewSchema = z
   .object({
@@ -2541,6 +2566,30 @@ export const HostApiContracts = {
       })
       .strict(),
     response: ChannelPromptViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  getProductUpdates: defineContract({
+    method: 'GET',
+    path: '/api/product/updates',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ProductUpdateStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  checkProductUpdates: defineContract({
+    method: 'POST',
+    path: '/api/product/updates/check',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ProductUpdateStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateProductUpdateSettings: defineContract({
+    method: 'PUT',
+    path: '/api/product/updates/settings',
+    params: EmptyParamsSchema,
+    request: z.object({ autoCheck: z.boolean() }).strict(),
+    response: ProductUpdateStatusSchema,
     error: HostApiErrorSchema,
   }),
   getChannelMemberNotes: defineContract({

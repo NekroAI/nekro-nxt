@@ -223,6 +223,12 @@ export const workspaceApi = {
     request: HostApiRequest<'updateChannelPrompt'>,
     options?: HostRequestOptions,
   ) => callHostApi(HostApiContracts.updateChannelPrompt, { channelId }, request, options),
+  getProductUpdates: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getProductUpdates, {}, undefined, options),
+  checkProductUpdates: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.checkProductUpdates, {}, undefined, options),
+  updateProductUpdateSettings: (request: HostApiRequest<'updateProductUpdateSettings'>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.updateProductUpdateSettings, {}, request, options),
   getChannelMemberNotes: (channelId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelMemberNotes, { channelId }, undefined, options),
   updateChannelMemberNote: (

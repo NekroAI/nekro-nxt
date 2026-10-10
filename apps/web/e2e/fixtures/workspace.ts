@@ -40,6 +40,9 @@ export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapsho
   )
   const contextPolicy = { backlogTextChars: 40_000, backlogImages: 6, idleReviewMinutes: 45 }
   await page.route('**/api/channels/*/member-notes', (route) => json(route, { notes: [], maxChars: 300 }))
+  await page.route('**/api/product/updates', (route) =>
+    json(route, { channel: 'development', currentVersion: 'fixture', state: 'unsupported', autoCheck: true }),
+  )
   await page.route('**/api/channels/*/context-policy', (route) =>
     json(route, { policy: contextPolicy, defaults: contextPolicy, custom: false }),
   )

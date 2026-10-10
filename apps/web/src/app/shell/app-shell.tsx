@@ -28,6 +28,7 @@ import { agentAccent, connectionLabel, isAgentWorking } from '../model/identity.
 import { CommandPalette } from './command-palette.js'
 import { useCurrentCrumb } from './crumb.js'
 import styles from './shell.module.css'
+import { updateLabel, useProductUpdates, versionDescription, versionLabel } from './product-updates.js'
 
 export const SPACES = [
   { path: '/live', label: '概览', icon: Activity },
@@ -230,6 +231,41 @@ function Clock() {
   return <span className={styles.statusClock}>{now.toLocaleTimeString('zh-CN', { hour12: false })}</span>
 }
 
+/** The host's version at the right of the status bar; a newer release turns it into a link to the release page. */
+function VersionStatus() {
+  const navigate = useGo()
+  const { status } = useProductUpdates()
+  if (status === undefined) return null
+  const checked =
+    status.checkedAt === undefined
+      ? ''
+      : ` · ${new Date(status.checkedAt).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 检查`
+  if (status.state === 'available' && status.latest !== undefined) {
+    return (
+      <a
+        className={[styles.statusItem, styles.statusVersion, styles.statusUpdate].join(' ')}
+        href={status.latest.url}
+        target="_blank"
+        rel="noreferrer"
+        title={`当前 ${versionDescription(status)}，最新 ${status.latest.version}。点击查看更新内容${checked}`}
+      >
+        <i className={styles.updateDot} aria-hidden="true" />
+        {updateLabel(status)}
+      </a>
+    )
+  }
+  return (
+    <Pressable
+      type="button"
+      className={[styles.statusItem, styles.statusVersion].join(' ')}
+      title={`${versionDescription(status)}${status.state === 'failed' ? ' · 检查更新失败' : status.state === 'up-to-date' ? ' · 已是最新' : ''}${checked}`}
+      onClick={() => navigate('/settings/about')}
+    >
+      {versionLabel(status)}
+    </Pressable>
+  )
+}
+
 function StatusBar() {
   const navigate = useGo()
   const connections = useProductStore((state) => state.connections)
@@ -277,6 +313,7 @@ function StatusBar() {
           未加密连接
         </Pressable>
       ) : null}
+      <VersionStatus />
       <Clock />
     </footer>
   )

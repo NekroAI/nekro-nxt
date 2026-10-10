@@ -397,8 +397,31 @@ a.instance {
   color: var(--warn);
 }
 
-.statusInsecure + .statusClock {
+.statusInsecure + .statusClock,
+.statusInsecure + .statusVersion,
+.statusVersion + .statusClock {
   margin-left: 0;
+}
+
+.statusVersion {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font: 11px var(--font-mono);
+  text-decoration: none;
+}
+
+.statusUpdate {
+  color: var(--accent);
+  font: inherit;
+  font-weight: 500;
+}
+
+.updateDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
 }
 
 .statusClock {

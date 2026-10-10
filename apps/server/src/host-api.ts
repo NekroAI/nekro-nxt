@@ -12,7 +12,15 @@ import type { NekroRuntime } from './bootstrap.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { ExtensionImportStaging } from './extension-import-staging.js'
 import { assembleChannelRuntime, HostQueries } from './host-queries.js'
-import { projectChannelFact, projectConnectionEvent, writeError, writeJson } from './host-route-support.js'
+import {
+  projectChannelFact,
+  projectConnectionEvent,
+  readJsonBody,
+  writeContractJson,
+  writeError,
+  writeJson,
+} from './host-route-support.js'
+import { ProductUpdates } from './product-updates.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
 import { registerMcpRoutes } from './host-routes-mcp.js'
@@ -218,6 +226,58 @@ export const createNekroHostApi = (
     }),
   )
   const queries = new HostQueries(runtime, () => hub.cursor, productMetadata, projections)
+
+  const productUpdates = new ProductUpdates({
+    releaseId: productMetadata.releaseId,
+    repository: productMetadata.repositoryUrl.replace(/^https:\/\/github\.com\//u, '').replace(/\/$/u, ''),
+    settings: {
+      get: (key) => runtime.repository.getSystemSetting(key),
+      put: (key, value, expectedRevision) => {
+        runtime.repository.putSystemSetting(key, value, expectedRevision, Date.now())
+      },
+    },
+  })
+  productUpdates.start()
+  disposers.push(() => productUpdates.dispose())
+  registerRoute({
+    kind: 'exact',
+    path: '/api/product/updates',
+    handler: (req, res) => {
+      if (req.method !== 'GET') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      writeContractJson(res, 200, HostApiContracts.getProductUpdates, productUpdates.status())
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/product/updates/check',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      writeContractJson(res, 200, HostApiContracts.checkProductUpdates, await productUpdates.check())
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/product/updates/settings',
+    handler: async (req, res) => {
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      const parsed = HostApiContracts.updateProductUpdateSettings.parseRequest(await readJsonBody(req))
+      writeContractJson(
+        res,
+        200,
+        HostApiContracts.updateProductUpdateSettings,
+        productUpdates.setAutoCheck(parsed.autoCheck),
+      )
+    },
+  })
   const buildSnapshot = (viewerKey: string) => queries.snapshot(viewerKey)
 
   // GET /api/snapshot

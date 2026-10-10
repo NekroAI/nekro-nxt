@@ -29,7 +29,10 @@ declare const styles: {
   readonly statusInsecure: string
   readonly statusItem: string
   readonly statusSep: string
+  readonly statusUpdate: string
+  readonly statusVersion: string
   readonly top: string
+  readonly updateDot: string
 }
 
 export default styles

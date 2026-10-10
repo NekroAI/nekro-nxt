@@ -52,6 +52,7 @@ import { useDensity } from '../model/density.js'
 import { useProductApi } from '../model/store.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
+import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
 import styles from './settings.module.css'
 
@@ -727,8 +728,59 @@ function Appearance() {
 
 const compiledVersion = typeof __NEKRO_PRODUCT_VERSION__ === 'string' ? __NEKRO_PRODUCT_VERSION__ : ''
 
+/** Version, whether a newer release exists on this build's channel, and the switch for automatic checks. */
+function ProductUpdateRows({ updates }: { readonly updates: ReturnType<typeof useProductUpdates> }) {
+  const { status, checking, checkNow, setAutoCheck } = updates
+  if (status === undefined) return null
+  const when =
+    status.checkedAt === undefined
+      ? ''
+      : ` · ${new Date(status.checkedAt).toLocaleString('zh-CN', { hour12: false, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} 检查`
+  const stateText =
+    status.state === 'available'
+      ? `有新版本 ${status.latest?.version ?? ''}${status.latest?.publishedAt === undefined ? '' : ` · ${new Date(status.latest.publishedAt).toLocaleDateString('zh-CN')} 发布`}`
+      : status.state === 'up-to-date'
+        ? `已是最新${when}`
+        : status.state === 'failed'
+          ? `检查失败，稍后再试${when}`
+          : status.autoCheck
+            ? '正在检查'
+            : '还没有检查'
+  const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+  return (
+    <>
+      {status.channel === 'development' ? null : (
+        <>
+          <PropertyRow label="更新" description={stateText}>
+            {status.state === 'available' && status.latest !== undefined ? (
+              <a href={status.latest.url} className={styles.link} target="_blank" rel="noreferrer">
+                查看更新内容
+              </a>
+            ) : (
+              <Button size="small" busy={checking} onClick={() => void checkNow().catch(failure)}>
+                检查更新
+              </Button>
+            )}
+          </PropertyRow>
+          <PropertyRow
+            label="自动检查更新"
+            tip={`每 6 小时向 GitHub 查询一次${status.channel === 'preview' ? '预览版' : '正式版'}的最新发布，不发送这台实例的任何信息。`}
+          >
+            <Switch
+              label="自动检查更新"
+              checked={status.autoCheck}
+              onCheckedChange={(checked) => void setAutoCheck(checked).catch(failure)}
+            />
+          </PropertyRow>
+        </>
+      )}
+    </>
+  )
+}
+
 function About() {
   const metadata = useProductStore((state) => state.productMetadata)
+  const updates = useProductUpdates()
   const version = metadata?.version?.trim() || compiledVersion
   const repository = metadata?.repositoryUrl?.trim() || 'https://github.com/NekroAI/nekro-nxt'
   return (
@@ -738,10 +790,17 @@ function About() {
         <img src="/brand/mark.svg" alt="" />
         <div>
           <b>{metadata?.displayName?.trim() || 'NekroNXT'}</b>
-          <span>{version ? `版本 ${version}` : '开发版本'}</span>
+          <span>
+            {updates.status !== undefined && updates.status.channel !== 'development'
+              ? `版本 ${versionDescription(updates.status)}`
+              : version
+                ? `开发版本 · ${version}`
+                : '开发版本'}
+          </span>
         </div>
       </div>
       <PropertyList>
+        <ProductUpdateRows updates={updates} />
         <PropertyRow label="DSH">{metadata?.dshVersion?.trim() || '—'}</PropertyRow>
         <PropertyRow label="Release">{metadata?.releaseId?.trim() || '—'}</PropertyRow>
         <PropertyRow label="许可证">

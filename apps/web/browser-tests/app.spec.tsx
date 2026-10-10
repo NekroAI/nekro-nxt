@@ -387,6 +387,11 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
     }),
   )
   await page.route('**/api/attention', (route) => route.fulfill({ json: { revision: 'fixture', items: [] } }))
+  await page.route('**/api/product/updates', (route) =>
+    route.fulfill({
+      json: { channel: 'development', currentVersion: 'fixture', state: 'unsupported', autoCheck: true },
+    }),
+  )
   await page.route('**/api/activity*', (route) =>
     route.fulfill({ json: { from: 0, to: 7_200_000, bucketMs: 300_000, channels: [] } }),
   )
