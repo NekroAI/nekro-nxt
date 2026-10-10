@@ -3,7 +3,7 @@ import { ChannelRuntime, type AgentSessionDriver } from '@nekro-nxt/channel-runt
 import { AssetService, CoreService } from '@nekro-nxt/core'
 import { AssetIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -11,6 +11,7 @@ import {
   MODEL_ASSET_MAX_BYTES,
   assertChannelAssetAccess,
   createChannelAsset,
+  createChannelAssetFromWorkspace,
   normalizeChannelMessageParts,
 } from '../src/index.ts'
 
@@ -215,6 +216,47 @@ describe('model-created channel Assets', () => {
       expect(adapterParts).toEqual([{ type: 'file', assetId: created.assetId, name: 'generated.txt' }])
     } finally {
       await web.stop()
+      fixture.database.close()
+    }
+  })
+
+  it('turns a file in the agent workspace into a channel Asset without the bytes passing through the model', async () => {
+    const fixture = await createFixture()
+    try {
+      const outside = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-outside-'))
+      directories.push(outside)
+      const workspace = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-workspace-'))
+      directories.push(workspace)
+      await mkdir(path.join(workspace, 'out'))
+      const png = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64',
+      )
+      await writeFile(path.join(workspace, 'out', 'card.png'), png)
+      await writeFile(path.join(outside, 'secret.txt'), '不能被读到')
+      await symlink(path.join(outside, 'secret.txt'), path.join(workspace, 'escape.txt'))
+      const create = (filePath: string) =>
+        createChannelAssetFromWorkspace({
+          channelId: fixture.currentChannel.id,
+          workspace,
+          path: filePath,
+          assets: fixture.repository,
+          assetService: fixture.assetService,
+          grantedAt: 300,
+        })
+
+      const relative = await create('out/card.png')
+      expect(relative).toMatchObject({ byteSize: png.byteLength, mediaType: 'image/png', name: 'card.png' })
+      expect(fixture.repository.canAccessAsset(relative.assetId, fixture.currentChannel.id)).toBe(true)
+      expect(fixture.repository.canAccessAsset(relative.assetId, fixture.otherChannel.id)).toBe(false)
+      await expect(create(path.join(workspace, 'out', 'card.png'))).resolves.toMatchObject({ name: 'card.png' })
+
+      await expect(create('../' + path.basename(outside) + '/secret.txt')).rejects.toThrow('工作区')
+      await expect(create(path.join(outside, 'secret.txt'))).rejects.toThrow('工作区')
+      await expect(create('escape.txt')).rejects.toThrow('工作区')
+      await expect(create('out')).rejects.toThrow('不是文件')
+      await expect(create('missing.png')).rejects.toThrow('找不到')
+    } finally {
       fixture.database.close()
     }
   })

@@ -10,7 +10,8 @@ import {
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
 import type { LlmProviderTestResults } from './llm-provider-test-results.js'
 import { Context, Service } from '@deepseek-ai/cordis'
@@ -1175,24 +1176,95 @@ export const createChannelAsset = async (input: {
   }
 }
 
+/** Files the agent made in its workspace reach the channel without passing through model output. */
+export const WORKSPACE_ASSET_MAX_BYTES = 64 * 1024 * 1024
+
+/**
+ * Turns a file in the agent's workspace into a channel Asset. The path must stay inside the workspace after symlinks
+ * are resolved, so a granted workspace never becomes a way to read the rest of the machine.
+ */
+export const createChannelAssetFromWorkspace = async (input: {
+  readonly channelId: ChannelId
+  readonly workspace: string
+  readonly path: string
+  readonly assets: AssetAccessRepository
+  readonly assetService: AssetService
+  readonly grantedAt?: number
+}): Promise<{
+  readonly assetId: AssetRecord['id']
+  readonly byteSize: number
+  readonly mediaType: string
+  readonly name: string
+}> => {
+  const root = await realpath(input.workspace)
+  const requested = path.resolve(root, input.path.trim())
+  let target: string
+  try {
+    target = await realpath(requested)
+  } catch {
+    throw new Error(`工作区里找不到 ${input.path}。`)
+  }
+  const relative = path.relative(root, target)
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('path 只能指向你工作区里的文件。')
+  }
+  const info = await stat(target)
+  if (!info.isFile()) throw new Error(`${input.path} 不是文件。`)
+  if (info.size > WORKSPACE_ASSET_MAX_BYTES) {
+    throw new Error(
+      `文件有 ${Math.ceil(info.size / 1024 / 1024)} MB，最多 ${WORKSPACE_ASSET_MAX_BYTES / 1024 / 1024} MB。`,
+    )
+  }
+  const prepared = await input.assetService.prepare({ bytes: createReadStream(target) })
+  const grant = input.assets.grantAssetAccess({
+    assetId: prepared.asset.id,
+    channelId: input.channelId,
+    source: 'agent-tool',
+    grantedAt: input.grantedAt ?? Date.now(),
+  })
+  if (grant.assetId !== prepared.asset.id || grant.channelId !== input.channelId) {
+    throw new Error(`asset_create did not persist the current Channel grant for ${prepared.asset.id}.`)
+  }
+  return {
+    assetId: prepared.asset.id,
+    byteSize: prepared.asset.byteSize,
+    mediaType: prepared.asset.mediaType,
+    name: path.basename(target),
+  }
+}
+
 export const assetCreateTool = (
   channelId: ChannelId,
   assets: AssetAccessRepository,
   assetService: AssetService,
-  options: { readonly now?: () => number } = {},
+  options: { readonly now?: () => number; readonly workspace?: string | undefined } = {},
 ) =>
   defineTool({
     name: 'asset_create',
     description:
-      '把你生成的 UTF-8 文本或受限标准 base64 字节保存为当前频道专属 Asset；成功返回 assetId、byteSize 和检测到的 mediaType。只接受内容，不接受路径或 URL；解码后最多 8 MiB。',
+      options.workspace === undefined
+        ? '把你写出的一小段内容保存为当前频道可以发送的资源，返回 assetId。文本用 encoding=utf8；base64 只用于很小的二进制内容。解码后最多 8 MiB。'
+        : [
+            '把内容保存为当前频道可以发送的资源（图片、文件），返回 assetId，之后用 send_channel_message 发出去。',
+            `你工作区里已有的文件（你生成的图片、文档、压缩包）一律用 path，宿主直接读取，最多 ${WORKSPACE_ASSET_MAX_BYTES / 1024 / 1024} MiB。不要把文件转成 base64 再抄进 content：那样要输出成千上万个字，又慢又容易抄错。`,
+            '想看看自己生成的图片，也是先用 path 建成资源，再用 asset_inspect_images 看。',
+            'content 只用于你直接写出的短文本（encoding=utf8），解码后最多 8 MiB。',
+          ].join(''),
     parameters: {
+      ...(options.workspace === undefined
+        ? {}
+        : {
+            path: {
+              type: 'string',
+              description: '工作区里的文件路径，相对工作区或绝对路径都可以。和 content 二选一。',
+            },
+          }),
       encoding: {
         type: 'string',
         enum: ['utf8', 'base64'],
-        required: true,
-        description: 'utf8 表示直接编码文本；base64 表示标准 base64 字节（可省略末尾填充）。',
+        description: '配合 content 使用：utf8 表示直接编码文本；base64 表示标准 base64 字节（可省略末尾填充）。',
       },
-      content: { type: 'string', required: true, description: '要保存的文本或 base64 内容。' },
+      content: { type: 'string', description: '要保存的文本或 base64 内容。' },
     },
     output: {
       schema: {
@@ -1202,16 +1274,35 @@ export const assetCreateTool = (
           assetId: { type: 'string', required: true },
           byteSize: { type: 'integer', required: true },
           mediaType: { type: 'string', required: true },
+          name: { type: 'string' },
         },
       },
       render: (_arguments, value) => [
         {
           type: 'text',
-          text: `已准备当前频道资源 ${value.assetId}（${value.byteSize} bytes，${value.mediaType}）。`,
+          text: `已准备当前频道资源 ${value.assetId}（${value.byteSize} bytes，${value.mediaType}${value.name === undefined ? '' : `，${value.name}`}）。`,
         },
       ],
     },
     async execute(args) {
+      const filePath = 'path' in args && typeof args.path === 'string' ? args.path : undefined
+      if (filePath !== undefined && args.content !== undefined) throw new Error('path 和 content 只能给一个。')
+      if (filePath !== undefined) {
+        if (options.workspace === undefined) throw new Error('你没有工作区，不能按路径读取文件。')
+        return createChannelAssetFromWorkspace({
+          channelId,
+          workspace: options.workspace,
+          path: filePath,
+          assets,
+          assetService,
+          ...(options.now === undefined ? {} : { grantedAt: options.now() }),
+        })
+      }
+      if (args.content === undefined || args.encoding === undefined) {
+        throw new Error(
+          options.workspace === undefined ? '需要 content 和 encoding。' : '需要 path，或者 content 加 encoding。',
+        )
+      }
       return createChannelAsset({
         channelId,
         encoding: args.encoding,
@@ -3384,7 +3475,9 @@ export class DshHostRuntime implements AgentSessionDriver {
         text: imageContextPolicy(supportsImage, auxiliary !== undefined),
       })
       agentContext.tools.register(channelContextTool(input.episodeId, input.channelId, this.#history, this.#members))
-      agentContext.tools.register(assetCreateTool(input.channelId, this.#assets, this.#assetService))
+      agentContext.tools.register(
+        assetCreateTool(input.channelId, this.#assets, this.#assetService, { workspace: developmentWorkspace }),
+      )
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )

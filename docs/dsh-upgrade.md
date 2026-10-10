@@ -67,3 +67,11 @@ Web 只比较当前页面所属实例的 Release。构建时注入与同包 Serv
 - 离线恢复按 manifest 读取外置根，并用显式配置的工作区父目录验证范围，不依赖当前 Core 能否打开；原配置和挂载仍须保留，不能借恢复扩大文件范围。
 - 生产流程在开放 Admission 前准备 HTTP/TLS；准备失败时不会开放运行。开放运行后仍不得擅自回滚数据，恢复点之后的新消息和文件需要单独评估。
 - 通用协调器 checkpoint 已有合成跨版本覆盖；具体所有者和最终产物仍需逐版本验收，不宣称一次测试覆盖未来全部 DSH 升级。
+
+## 6. 当前版本的上游问题与 NXT 侧绕行
+
+升级到新的 DSH 版本时逐条复查；上游修好后删掉对应的绕行代码。
+
+- **DeepSeek 上传索引只接受 `sha256:` 附件编号**（`dsh-llm-deepseek` 0.1.7-rc.2）：任一记录不符就整份作废，每一步都重新上传全部图片。NXT 在 `NekroAssetAttachmentStore.readImageRequest` 中把交给适配器的附件编号换成内容摘要。
+- **`read_image` 无法使用**（`dsh-tool-fs` 0.1.7-rc.2）：工具注册在只注入了 `attachments` 的上下文里，执行时读取 `fs` 抛出 `cannot get property "fs" without inject`。工具是会话内注册的，不能用 `tools.restrict` 隐藏。NXT 侧由 `asset_create` 的 `path` 参数加 `asset_inspect_images` 提供查看工作区图片的途径，工具说明引导模型走这条路。
+- **压缩默认指令面向编程助手**（`dsh-compaction-basic`）：`summarizeWithLlm` 未导出，NXT 在 `NekroNxtCompactionEngine.summarize` 中复刻了调用过程并换成中文群聊模板。升级时核对上游 `summarize` 的配置解析与结束原因处理是否变化。
