@@ -1075,6 +1075,10 @@ const ROOT_CHANNEL_MESSAGE_POLICY = `你在一个真实的聊天频道里。大�
 
 有人问起你是怎么运作的，用平常话回答就行，不用讲工具名、系统提示和内部流程。密钥、别人的私事，还有你所在这台机器的情况（文件路径、配置、软件版本、运行状态），不要说到群里，除非管理员自己问起。`
 
+const ROOT_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里；拿到需要的结果后，回复和 finish_channel_turn 也写进同一段，不用再单独运行一次。只有要看了结果才能决定下一步时，才分成几段。`
+
+const CHILD_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里，只有要看了结果才能决定下一步时，才分成几段。`
+
 const CHILD_CHANNEL_MESSAGE_POLICY = `你是被派来完成一项具体任务的子智能体，不能直接在频道里说话。做完后把完整结果作为最后的回复交回去；中途有重要发现或卡住了，可以用 send_message 告诉派你来的智能体（用委派说明里给的标识）。几件互不相关的事可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。`
 
 /** Conversation text a handoff summary reads; older messages stay reachable through the history tools. */
@@ -3799,6 +3803,14 @@ export class DshHostRuntime implements AgentSessionDriver {
       await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
       if (revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())) {
         agentContext.tools.presentAs('ptc')
+        agentContext.systemPrompt.section({
+          name: 'nekro-nxt:code-run',
+          order: 20.6,
+          text: (context) =>
+            scopeHasTool(agentContext.tools, 'send_channel_message', context.scope)
+              ? ROOT_CODE_RUN_POLICY
+              : CHILD_CODE_RUN_POLICY,
+        })
       }
       await this.#dshPluginLifecycle?.mountAgentSession(revision.agentId, sessionId, agentContext)
       await this.#extensionMounts.mountIntoSession(revision.agentId, sessionId, agentContext)

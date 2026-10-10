@@ -9,6 +9,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DshHostRuntime } from '../src/index.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 
+const systemText = (options: GenerateOptions | undefined): string =>
+  options?.messages
+    .filter((message) => message.role === 'system')
+    .flatMap((message) => message.content)
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n') ?? ''
+
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
@@ -167,6 +175,7 @@ describe('run_code for agents granted codeRun', () => {
     const scenario = await runScenario({ program: sendTwice, capabilities: { codeRun: true, developmentShell: true } })
     try {
       expect(scenario.model.calls[0]?.tools?.map(({ name }) => name)).toEqual(['run_code'])
+      expect(systemText(scenario.model.calls[0])).toContain('回复和 finish_channel_turn 也写进同一段')
       expect(scenario.sentParts).toEqual([[{ type: 'text', text: '第一条' }], [{ type: 'text', text: '第二条' }]])
       expect(
         scenario.events.filter(
@@ -211,6 +220,7 @@ describe('run_code for agents granted codeRun', () => {
         const names = scenario.model.calls[0]?.tools?.map(({ name }) => name) ?? []
         expect(names).toContain('send_channel_message')
         expect(names).not.toContain('run_code')
+        expect(systemText(scenario.model.calls[0])).not.toContain('用 run_code 时')
       } finally {
         await scenario.dispose()
       }
