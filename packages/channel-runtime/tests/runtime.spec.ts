@@ -379,8 +379,16 @@ class MemoryCoreRepository implements CoreRepository {
         candidate.channelId === channelId &&
         candidate.platformMessageId === platformMessageId,
     )
-    return event ? { logicalMessageId: event.logicalMessageId, authoredByAgent: false } : undefined
+    if (event) return { logicalMessageId: event.logicalMessageId, authoredByAgent: false }
+    const outbound = this.agentMessages().find((message) =>
+      message.receipts.some(
+        ({ receipt }) => receipt.status === 'sent' && receipt.platformMessageId === platformMessageId,
+      ),
+    )
+    return outbound ? { logicalMessageId: outbound.intent.logicalMessageId, authoredByAgent: true } : undefined
   }
+  /** What the agent sent, set by the runtime repository so references to agent messages resolve like in SQLite. */
+  agentMessages: () => readonly OutboundSnapshot[] = () => []
   resolveLogicalMessage(
     connectionId: ConnectionId,
     channelId: ChannelId,
@@ -392,7 +400,10 @@ class MemoryCoreRepository implements CoreRepository {
         candidate.channelId === channelId &&
         candidate.logicalMessageId === logicalMessageId,
     )
-    return event ? { logicalMessageId: event.logicalMessageId, authoredByAgent: false } : undefined
+    if (event) return { logicalMessageId: event.logicalMessageId, authoredByAgent: false }
+    return this.agentMessages().some((message) => message.intent.logicalMessageId === logicalMessageId)
+      ? { logicalMessageId, authoredByAgent: true }
+      : undefined
   }
   resolveLogicalMessagePlatformId(
     connectionId: ConnectionId,
@@ -414,7 +425,9 @@ class MemoryRuntimeRepository implements RuntimeRepository {
   readonly outbounds = new Map<OutboundIntentId, OutboundSnapshot>()
   readonly handoffs: EpisodeHandoffRecord[] = []
 
-  constructor(readonly core: MemoryCoreRepository) {}
+  constructor(readonly core: MemoryCoreRepository) {
+    core.agentMessages = () => [...this.outbounds.values()]
+  }
 
   getEpisode(id: EpisodeId) {
     return this.episodes.get(id)
@@ -620,7 +633,10 @@ const setup = async (
   idleRolloverMs?: number | false,
   handoffSummary?: AgentSessionDriver['createHandoffSummary'],
   feedbackInteractions?: AdapterConnectionInteractions,
-  admissionOptions: Pick<ChannelRuntimeOptions, 'deferAdmission' | 'canAdmitAgent' | 'inboundHooks'> = {},
+  admissionOptions: Pick<
+    ChannelRuntimeOptions,
+    'deferAdmission' | 'canAdmitAgent' | 'inboundHooks' | 'activityDirectedAt'
+  > = {},
 ) => {
   const coreRepository = new MemoryCoreRepository()
   const runtimeRepository = new MemoryRuntimeRepository(coreRepository)
@@ -1653,6 +1669,81 @@ describe('ChannelRuntime M1 lane', () => {
       dedupeKey: 'event:poke-observed',
     })
     expect(context.runtimeRepository.admissions).toHaveLength(2)
+  })
+
+  it('wakes the agent only for activities someone else directs at its own account, and caps a burst', async () => {
+    const context = await setup(true, undefined, undefined, undefined, {
+      activityDirectedAt: (_channelId, activityKey) =>
+        activityKey === 'member-poked' ? 'member' : activityKey === 'message-reaction-added' ? 'message' : undefined,
+    })
+    context.core.updateConnectionActivityTriggerDefaults(context.connection.id, [
+      'member-poked',
+      'message-reaction-added',
+    ])
+    context.core.reportConnectionAccount({
+      connectionId: context.connection.id,
+      platformUserId: 'bot',
+      observedAt: 100,
+    })
+    const observe = (platformUserId: string) =>
+      context.core.observeChannelMember({
+        connectionId: context.connection.id,
+        channelId: context.channel.id,
+        platformUserId,
+        observedAt: 100,
+      }).member
+    const self = observe('bot')
+    const alice = observe('alice')
+    const bob = observe('bob')
+    let sequence = 0
+    const activity = (
+      activityKey: 'member-poked' | 'message-reaction-added',
+      sender: typeof alice,
+      extra: { readonly facts?: Readonly<Record<string, string>>; readonly targetPlatformMessageId?: string } = {},
+    ) => {
+      sequence += 1
+      return {
+        ...inbound(context.connection.id, context.channel.id, `activity-${sequence}`),
+        kind: 'control' as const,
+        activityKey,
+        senderMemberId: sender.id,
+        ...extra,
+      }
+    }
+    const admissions = () => [...context.runtimeRepository.admissions.values()].length
+
+    // The account's own poke and a poke between two members stay context.
+    await context.runtime.acceptChannelInbound(activity('member-poked', self, { facts: { targetMemberId: alice.id } }))
+    await context.runtime.acceptChannelInbound(activity('member-poked', alice, { facts: { targetMemberId: bob.id } }))
+    expect(admissions()).toBe(0)
+    await context.runtime.acceptChannelInbound(activity('member-poked', alice, { facts: { targetMemberId: self.id } }))
+    expect(admissions()).toBe(1)
+
+    // A reaction counts only on a message the agent sent, and never when the account reacts itself.
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'agent-platform-1' })
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '在呢' }] })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'member-message'))
+    const before = admissions()
+    await context.runtime.acceptChannelInbound(
+      activity('message-reaction-added', bob, { targetPlatformMessageId: 'platform-member-message' }),
+    )
+    await context.runtime.acceptChannelInbound(
+      activity('message-reaction-added', self, { targetPlatformMessageId: 'agent-platform-1' }),
+    )
+    expect(admissions()).toBe(before)
+    await context.runtime.acceptChannelInbound(
+      activity('message-reaction-added', bob, { targetPlatformMessageId: 'agent-platform-1' }),
+    )
+    expect(admissions()).toBe(before + 1)
+
+    // However it slips through, a burst of activities cannot keep waking the agent.
+    for (let index = 0; index < 4; index += 1) {
+      await context.runtime.acceptChannelInbound(
+        activity('member-poked', alice, { facts: { targetMemberId: self.id } }),
+      )
+    }
+    expect(admissions()).toBe(before + 2)
   })
 
   it('keeps messages of another local agent as context unless it addresses this agent or the binding opts in', async () => {

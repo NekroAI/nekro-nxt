@@ -748,6 +748,12 @@ export class NekroRuntime {
             capability?.state !== 'unsupported'
           )
         },
+        activityDirectedAt: (channelId, activityKey) => {
+          const channel = core.getChannel(channelId)
+          const connection = channel ? core.getConnection(channel.connectionId) : undefined
+          const descriptor = connection ? adapters.get(connection.adapterKey)?.descriptor : undefined
+          return descriptor?.activities.find((activity) => activity.key === activityKey)?.directedAt
+        },
         isActivityTriggerEnabledByDefault: (channelId, activityKey) => {
           const channel = core.getChannel(channelId)
           const connection = channel ? core.getConnection(channel.connectionId) : undefined

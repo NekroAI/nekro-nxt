@@ -21,7 +21,7 @@ import type {
   OutboundIntentId,
   PhysicalDeliveryId,
 } from '@nekro-nxt/contracts'
-import { AdmissionIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
+import { AdmissionIdSchema, ChannelMemberIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
   BindingRecord,
@@ -399,6 +399,8 @@ export interface ChannelRuntimeOptions {
   readonly resolveAdapter: (connectionId: ConnectionId) => AdapterConnectionRuntime | undefined
   readonly isActivityTriggerAllowed?: (channelId: ChannelId, activityKey: string) => boolean
   readonly isActivityTriggerEnabledByDefault?: (channelId: ChannelId, activityKey: string) => boolean
+  /** Activities that act on someone trigger only when that someone is the channel's own account. */
+  readonly activityDirectedAt?: (channelId: ChannelId, activityKey: string) => 'member' | 'message' | undefined
   readonly validateActivityTriggerOverrides?: (
     channelId: ChannelId,
     overrides: Readonly<Record<string, boolean>>,
@@ -469,6 +471,10 @@ export interface RuntimeRecoveryReport {
   readonly unknownDeliveries: number
 }
 
+/** At most this many activities wake the agent in one channel within the window, whatever they are. */
+const ACTIVITY_WAKE_LIMIT = 3
+const ACTIVITY_WAKE_WINDOW_MS = 60_000
+
 const isTriggered = (
   binding: BindingRecord,
   event: ChannelEventRecord,
@@ -529,6 +535,9 @@ export class ChannelRuntime {
   readonly #resolveAdapter: ChannelRuntimeOptions['resolveAdapter']
   readonly #isActivityTriggerAllowed: NonNullable<ChannelRuntimeOptions['isActivityTriggerAllowed']>
   readonly #isActivityTriggerEnabledByDefault: NonNullable<ChannelRuntimeOptions['isActivityTriggerEnabledByDefault']>
+  readonly #activityDirectedAt: NonNullable<ChannelRuntimeOptions['activityDirectedAt']>
+  /** Recent activity events that woke an agent, per channel, for the repeat guard. */
+  readonly #activityWakes = new Map<ChannelId, { readonly eventId: string; readonly at: number }[]>()
   readonly #inboundHooks: InboundHookGate | undefined
   readonly #validateActivityTriggerOverrides: NonNullable<ChannelRuntimeOptions['validateActivityTriggerOverrides']>
   readonly #now: () => number
@@ -554,6 +563,7 @@ export class ChannelRuntime {
     this.#resolveAdapter = options.resolveAdapter
     this.#isActivityTriggerAllowed = options.isActivityTriggerAllowed ?? (() => true)
     this.#isActivityTriggerEnabledByDefault = options.isActivityTriggerEnabledByDefault ?? (() => false)
+    this.#activityDirectedAt = options.activityDirectedAt ?? (() => undefined)
     this.#inboundHooks = options.inboundHooks
     this.#validateActivityTriggerOverrides = options.validateActivityTriggerOverrides ?? (() => undefined)
     this.#now = options.now ?? Date.now
@@ -679,7 +689,45 @@ export class ChannelRuntime {
     if (decision?.hidden === true || decision?.trigger === 'suppress') return false
     if (decision?.trigger === 'force') return binding.triggerPolicy !== 'observe-only'
     if (this.#isObservedLocalAgentMessage(binding, event)) return false
-    return isTriggered(binding, event, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault)
+    if (!isTriggered(binding, event, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault)) {
+      return false
+    }
+    return event.activityKey === undefined || this.#activityWakesAgent(event)
+  }
+
+  /**
+   * An activity wakes the agent only when someone else did it to the agent's own account. What the account does
+   * itself (a reaction, a poke, a recall) comes back from the platform as an activity too; letting it trigger would
+   * loop. A burst of activities is capped so a missed case still cannot loop.
+   */
+  #activityWakesAgent(event: ChannelEventRecord): boolean {
+    const isSelf = (memberId: unknown): boolean => {
+      const parsed = ChannelMemberIdSchema.safeParse(memberId)
+      return parsed.success && this.#core.describeChannelMember(event.channelId, parsed.data)?.kind === 'self'
+    }
+    if (event.senderMemberId !== undefined && isSelf(event.senderMemberId)) return false
+    const directedAt = this.#activityDirectedAt(event.channelId, event.activityKey!)
+    if (directedAt === 'member' && !isSelf(event.facts?.['targetMemberId'])) return false
+    if (directedAt === 'message') {
+      const channel = this.#coreRepository.getChannel(event.channelId)
+      const target =
+        channel === undefined || event.targetLogicalMessageId === undefined
+          ? undefined
+          : this.#coreRepository.resolveLogicalMessage(
+              channel.connectionId,
+              event.channelId,
+              event.targetLogicalMessageId,
+            )
+      if (target?.authoredByAgent !== true) return false
+    }
+    const recent = (this.#activityWakes.get(event.channelId) ?? []).filter(
+      (wake) => wake.at > event.receivedAt - ACTIVITY_WAKE_WINDOW_MS,
+    )
+    if (recent.some((wake) => wake.eventId === event.id)) return true
+    if (recent.length >= ACTIVITY_WAKE_LIMIT) return false
+    recent.push({ eventId: event.id, at: event.receivedAt })
+    this.#activityWakes.set(event.channelId, recent)
+    return true
   }
 
   /**

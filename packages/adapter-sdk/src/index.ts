@@ -312,6 +312,11 @@ export interface AdapterActivityDefinition {
   readonly icon?: HostIconName
   readonly triggerable: boolean
   readonly channelKinds?: readonly AdapterChannelKind[]
+  /**
+   * The activity acts on someone: it triggers only when that someone is the connection's own account (the member it
+   * pokes, or the author of the message it reacts to). Activities among other members stay channel context.
+   */
+  readonly directedAt?: 'member' | 'message'
 }
 
 export interface AdapterCapabilityState {
@@ -736,6 +741,9 @@ const assertAdapterDescriptor = (descriptor: AdapterConnectionDescriptor): void 
     }
     if (typeof activity.triggerable !== 'boolean') {
       throw new TypeError(`Adapter activity triggerable flag is invalid: ${activity.key}`)
+    }
+    if (activity.directedAt !== undefined && activity.directedAt !== 'member' && activity.directedAt !== 'message') {
+      throw new TypeError(`Adapter activity directedAt is invalid: ${activity.key}`)
     }
     if (activity.scope === 'connection') {
       if (activity.triggerable)

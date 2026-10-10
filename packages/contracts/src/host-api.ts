@@ -955,6 +955,7 @@ const AdapterConnectionDescriptorSchema = z
           icon: HostIconNameSchema.optional(),
           triggerable: z.boolean(),
           channelKinds: z.array(z.enum(['internal', 'direct', 'group'])).optional(),
+          directedAt: z.enum(['member', 'message']).optional(),
         })
         .strict(),
     ),
