@@ -10,6 +10,7 @@ permissions:
   contents: read
 
 jobs:
+  # The four quality jobs run side by side; each one needs nothing the others produce.
   quality:
     concurrency:
       group: quality-${{ github.ref }}
@@ -26,11 +27,64 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
       - run: pnpm check
+
+  coverage:
+    concurrency:
+      group: coverage-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - run: pnpm test:coverage
-      - run: pnpm build
+
+  browser:
+    concurrency:
+      group: browser-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
+      # Browser tests resolve workspace packages to source, so they do not wait for a build.
       - run: pnpm test:browser
+
+  journey:
+    concurrency:
+      group: journey-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
+      - run: pnpm build
       - run: pnpm test:journey:built
       - name: Upload product journey failure evidence
         if: failure()
@@ -65,13 +119,13 @@ jobs:
 
   all-checks-passed:
     if: always()
-    needs: [quality, node-compat]
+    needs: [quality, coverage, browser, journey, node-compat]
     runs-on: ubuntu-latest
     steps:
       - name: Require every blocking job
         env:
           RESULTS: ${{ join(needs.*.result, ',') }}
-        run: test "$RESULTS" = "success,success"
+        run: test "$RESULTS" = "success,success,success,success,success"
 
   upgrade-candidates:
     name: Upgrade candidate (${{ matrix.target }})
@@ -119,9 +173,9 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # Preview builds start alongside the checks; only preview-finalize waits for all-checks-passed before publishing.
   preview-prepare:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
-    needs: all-checks-passed
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -244,8 +298,8 @@ jobs:
           retention-days: 1
 
   preview-finalize:
-    if: always() && needs.preview-prepare.outputs.build == 'true' && needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
-    needs: [preview-prepare, preview-desktop, preview-server]
+    if: always() && needs.all-checks-passed.result == 'success' && needs.preview-prepare.outputs.build == 'true' && needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
+    needs: [all-checks-passed, preview-prepare, preview-desktop, preview-server]
     concurrency:
       group: preview-publish
       cancel-in-progress: false
