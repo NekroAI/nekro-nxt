@@ -92,6 +92,8 @@ export interface AgentSummary {
     readonly unrestrictedFileAccess: boolean
     readonly scheduledTasks: boolean
     readonly codeRun: boolean
+    /** Network for commands and `run_code` programs. */
+    readonly commandNetwork: boolean
   }
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
@@ -447,6 +449,8 @@ export interface CapabilityAvailability {
   readonly subagents: { readonly available: boolean }
   /** Absent until a host reports it; such a host cannot run `run_code`. */
   readonly codeRun?: CodeRunAvailability | undefined
+  /** What the host can confine for commands beyond file writes; absent hosts confine writes only. */
+  readonly commandConfinement?: { readonly readScope: boolean; readonly networkControl: boolean } | undefined
   readonly webSearch: {
     readonly provider: string
     readonly available: boolean

@@ -294,6 +294,8 @@ const AgentCapabilitiesSchema = z
     scheduledTasks: z.boolean().default(true),
     /** Tools are called from one TypeScript program (`run_code`); takes effect only with `developmentShell`. */
     codeRun: z.boolean().default(false),
+    /** Network for commands; absent in older clients means on. */
+    commandNetwork: z.boolean().default(true),
   })
   .strict()
 
@@ -388,9 +390,14 @@ const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   validatePersonaDocumentProjection(value, context)
 })
 
-// The defaults that fill `scheduledTasks` and `codeRun` for older clients must not reset them in a partial update.
+// The defaults that fill `scheduledTasks`, `codeRun` and `commandNetwork` for older clients must not reset them in a
+// partial update.
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
-  .extend({ scheduledTasks: z.boolean().optional(), codeRun: z.boolean().optional() })
+  .extend({
+    scheduledTasks: z.boolean().optional(),
+    codeRun: z.boolean().optional(),
+    commandNetwork: z.boolean().optional(),
+  })
   .strict()
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), '至少提供一个能力。')
 
@@ -1298,6 +1305,8 @@ export const HostSnapshotSchema = z
         subagents: z.object({ available: z.boolean() }).strict(),
         /** Optional in older hosts, which never offer `run_code`. */
         codeRun: CodeRunAvailabilitySchema.optional(),
+        /** What this host can confine for commands beyond file writes; optional in older hosts. */
+        commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
         webSearch: z
           .object({
             provider: z.literal('deepseek-official'),

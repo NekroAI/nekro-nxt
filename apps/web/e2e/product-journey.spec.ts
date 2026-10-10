@@ -843,6 +843,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
         unrestrictedFileAccess: false,
         scheduledTasks: true,
         codeRun: false,
+        commandNetwork: true,
       },
       channels: [plan.channelId],
       appearance: {},

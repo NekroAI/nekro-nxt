@@ -16,6 +16,7 @@ const capabilities = (
   dynamicCreation: false,
   scheduledTasks: true,
   codeRun: false,
+  commandNetwork: true,
   ...access,
 })
 
@@ -43,7 +44,7 @@ describe('agent system access presets', () => {
 
   it.each([
     [0, 'Lv.0', '基础权限'],
-    [1, 'Lv.1', '文件读写'],
+    [1, 'Lv.1', '工作区读写'],
     [2, 'Lv.2', '运行命令'],
     [3, 'Lv.3', '完整访问'],
   ] as const)('presents preset %s as %s', (level, code, label) => {

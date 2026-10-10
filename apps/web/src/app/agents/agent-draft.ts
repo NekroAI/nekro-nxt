@@ -43,6 +43,7 @@ const CAPABILITY_KEYS = [
   'unrestrictedFileAccess',
   'scheduledTasks',
   'codeRun',
+  'commandNetwork',
 ] as const satisfies readonly (keyof Capabilities)[]
 const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation', 'scheduledTasks'] as const
 const ACCESS_KEYS = ['fileTools', 'developmentShell', 'unrestrictedFileAccess'] as const
@@ -85,6 +86,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   const patch = capabilityPatch(base, draft)
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')
   if ('codeRun' in patch) changes.push('编排模式')
+  if ('commandNetwork' in patch) changes.push('命令联网')
   for (const key of OTHER_CAPABILITIES) {
     if (key in patch) changes.push(CAPABILITY_LABEL[key])
   }

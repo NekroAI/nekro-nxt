@@ -571,8 +571,13 @@ describe('CoreService', () => {
 
   it('accepts only the current strict capability object', () => {
     const current = { ...deniedCapabilities, subagents: true, webSearch: true }
-    // Revisions stored before `scheduledTasks` and `codeRun` existed read them as on and off.
-    expect(parseStoredAgentCapabilityGrants(current)).toEqual({ ...current, scheduledTasks: true, codeRun: false })
+    // Revisions stored before `scheduledTasks`, `codeRun` and `commandNetwork` existed read them as on, off and on.
+    expect(parseStoredAgentCapabilityGrants(current)).toEqual({
+      ...current,
+      scheduledTasks: true,
+      codeRun: false,
+      commandNetwork: true,
+    })
     expect(() => parseStoredAgentCapabilityGrants({ version: 2, grants: current })).toThrow()
     expect(() => parseStoredAgentCapabilityGrants({ ...current, fullFileAccess: false })).toThrow()
   })
@@ -612,6 +617,24 @@ describe('CoreService', () => {
       capabilities: { ...deniedCapabilities, codeRun: true },
     })
     expect(on.revision.contentDigest).not.toBe(first.revision.contentDigest)
+  })
+
+  it('keeps the digest of Revisions without commandNetwork and treats turning it off as new content', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const content = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const first = core.createAgent({ ...content, capabilities: deniedCapabilities })
+    const explicit = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: { ...deniedCapabilities, commandNetwork: true },
+    })
+    expect(explicit.revision.id).toBe(first.revision.id)
+    const off = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: { ...deniedCapabilities, commandNetwork: false },
+    })
+    expect(off.revision.contentDigest).not.toBe(first.revision.contentDigest)
   })
 
   it('reuses a semantically equivalent historical Revision even when it has a legacy digest', () => {
@@ -1300,6 +1323,7 @@ describe('CoreService', () => {
       subagents: true,
       scheduledTasks: true,
       codeRun: false,
+      commandNetwork: true,
     })
 
     const repository = new MemoryRepository()

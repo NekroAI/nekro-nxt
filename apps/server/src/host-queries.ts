@@ -24,6 +24,7 @@ import { maskExtensionSecrets } from './extension-secret-config.js'
 import { unavailableSessionContext } from './channel-runtime-context.js'
 import type { NekroRuntime } from './bootstrap.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
+import { commandConfinementSupport } from './command-confinement.js'
 import {
   emptyChannelRuntimeProjection,
   findToolCallDetail,
@@ -583,6 +584,7 @@ export class HostQueries {
       capabilityAvailability: {
         subagents: { available: true },
         codeRun: runtime.codeRunNode.status(),
+        commandConfinement: commandConfinementSupport(),
         webSearch,
       },
       connectionAdapters: runtime.listConnectionAdapters(),

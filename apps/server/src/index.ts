@@ -12,6 +12,13 @@ import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
 import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { mountCodeRunRuntime } from './code-run.js'
+import { WorkspaceFileSystem } from './workspace-file-system.js'
+import {
+  createConfinedSandboxProvider,
+  hostCommandConfinement,
+  installRootOf,
+  type CommandConfinement,
+} from './command-confinement.js'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
@@ -41,7 +48,6 @@ import {
   type HostCordisInspectProviderRegistration,
 } from '@deepseek-ai/dsh-cordis-host-runner'
 import * as FsObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
-import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import {
   BlockAssembler,
   createUserMessage,
@@ -55,7 +61,6 @@ import {
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
 import * as LlmRetry from '@deepseek-ai/dsh-llm-retry'
-import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import { WorkingDirectoryService } from '@deepseek-ai/dsh-working-directory'
 import { bindScopeParent, scopeOf } from '@deepseek-ai/dsh-scope'
@@ -2802,6 +2807,7 @@ async function mountDevelopmentCapabilities(
   agentContext: Context,
   revision: AgentRevisionRecord,
   workspaceRoot: string | undefined,
+  confinement: CommandConfinement,
 ): Promise<void> {
   const { developmentShell, fileTools, unrestrictedFileAccess } = revision.capabilities
   if (!developmentShell && !fileTools) return
@@ -2821,7 +2827,7 @@ async function mountDevelopmentCapabilities(
     mode: unrestrictedFileAccess ? 'danger-full-access' : 'workspace-write',
     workspaceRoot,
   })
-  await capabilityContext.plugin(SandboxedFileSystem, { cwd: workspaceRoot })
+  await capabilityContext.plugin(WorkspaceFileSystem, { cwd: workspaceRoot })
   await capabilityContext.plugin(WorkingDirectoryService, { defaultDirectory: workspaceRoot })
   if (fileTools) {
     await capabilityContext.plugin(FsObservationPolicy)
@@ -2830,7 +2836,10 @@ async function mountDevelopmentCapabilities(
 
   if (developmentShell) {
     await capabilityContext.plugin(LocalSubprocessRuntime)
-    await capabilityContext.plugin(LocalSandboxProvider, {})
+    await capabilityContext.plugin(
+      createConfinedSandboxProvider(() => confinement),
+      {},
+    )
     await capabilityContext.plugin(SandboxBashExecutor, { cwd: workspaceRoot })
     await capabilityContext.plugin(ShellEnv, {})
     await capabilityContext.plugin(BashTool, { enableRunInBackground: false })
@@ -2903,6 +2912,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #developmentWorkspaceRoot: string | undefined
   readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
   readonly #codeRunFallbackDirectory: string
+  readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
   #codeRunMount: Promise<boolean> | undefined
   readonly #shutdownInboxRoot: string
   readonly #incompatibleAgents = new Set<AgentId>()
@@ -2941,6 +2951,18 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#codeRunNode = options.codeRunNode
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
+    this.#hostCommandConfinement = hostCommandConfinement({
+      dataRoot: path.dirname(options.sessionDatabasePath),
+      workspaceRoot: options.developmentWorkspaceRoot,
+      installRoot: installRootOf(
+        createRequire(import.meta.url).resolve('@deepseek-ai/dsh-ptc-runtime-node/package.json'),
+      ),
+      // Downloaded Node for `run_code`, and the Node or app bundle running NXT.
+      runtimeRoots: [
+        path.join(path.dirname(options.sessionDatabasePath), 'runtimes'),
+        path.dirname(path.dirname(process.execPath)),
+      ],
+    })
     this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
     this.#modelSettings = new HostModelSettings(
       context,
@@ -3800,7 +3822,12 @@ export class DshHostRuntime implements AgentSessionDriver {
       }
       await mountDelegationCapabilities(agentContext, revision)
       await mountWebCapabilities(agentContext, revision)
-      await mountDevelopmentCapabilities(agentContext, revision, developmentWorkspace)
+      await mountDevelopmentCapabilities(
+        agentContext,
+        revision,
+        developmentWorkspace,
+        this.#commandConfinementOf(revision),
+      )
       if (revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())) {
         agentContext.tools.presentAs('ptc')
         agentContext.systemPrompt.section({
@@ -4232,6 +4259,31 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
+  /** Commands of agents with unrestricted file access keep the program's own reach, network included. */
+  #commandConfinementOf(revision: AgentRevisionRecord): CommandConfinement {
+    if (revision.capabilities.unrestrictedFileAccess) return { hidden: [], readable: [], network: true }
+    return { ...this.#hostCommandConfinement, network: revision.capabilities.commandNetwork }
+  }
+
+  /**
+   * `run_code` serves every agent from one root runtime, so the program takes the confinement of the Session that
+   * called it. A subagent's Session is not registered: it takes the strictest switch among the live Sessions of the
+   * agent whose workspace it runs in, and no network when the workspace belongs to no live agent.
+   */
+  #codeRunConfinement(sessionId: string | undefined, workspaceRoot: string): CommandConfinement {
+    const own = sessionId === undefined ? undefined : this.#sessions.get(sessionId)
+    if (own !== undefined) return this.#commandConfinementOf(own.revision)
+    const workspaces = this.#developmentWorkspaceRoot
+    const related = [...this.#sessions.records()].filter(
+      (record) =>
+        workspaces !== undefined && resolveAgentWorkspace(workspaces, record.revision.agentId) === workspaceRoot,
+    )
+    return {
+      ...this.#hostCommandConfinement,
+      network: related.length > 0 && related.every((record) => this.#commandConfinementOf(record.revision).network),
+    }
+  }
+
   /** Mounts the `run_code` runtime the first time an agent needs it; false while no Node is available. */
   #ensureCodeRun(): Promise<boolean> {
     if (this.#codeRunMount !== undefined) return this.#codeRunMount
@@ -4240,6 +4292,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#codeRunMount = mountCodeRunRuntime(this.#context, {
       nodeExecutable: node.executable,
       fallbackDirectory: this.#codeRunFallbackDirectory,
+      confinement: (policy) => this.#codeRunConfinement(policy.sessionId, policy.workspaceRoot),
     }).then(
       () => true,
       (error: unknown) => {

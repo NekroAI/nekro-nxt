@@ -2,10 +2,12 @@ import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '
 import { AssetService, CoreService } from '@nekro-nxt/core'
 import { AdmissionIdSchema, EpisodeIdSchema, LogicalMessageIdSchema } from '@nekro-nxt/contracts'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { commandConfinementSupport } from '../src/command-confinement.ts'
 import { DshHostRuntime } from '../src/index.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 
@@ -79,12 +81,18 @@ return 'done'
 `
 
 const runScenario = async (input: {
-  readonly program: string
-  readonly capabilities: { readonly codeRun: boolean; readonly developmentShell: boolean }
+  readonly program: string | ((directory: string) => string)
+  readonly capabilities: {
+    readonly codeRun: boolean
+    readonly developmentShell: boolean
+    readonly commandNetwork?: boolean
+  }
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
 }) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-code-run-'))
   temporaryDirectories.push(directory)
+  // Stands in for host data next to the workspaces, such as stored credentials.
+  await writeFile(path.join(directory, 'fixture.secret'), 'fixture-secret')
   const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
   const repository = new SqliteCoreRepository(database)
   const assetService = new AssetService(repository, path.join(directory, 'assets'))
@@ -110,7 +118,7 @@ const runScenario = async (input: {
     dedupeKey: 'code-run-inbound',
   }).event
   const sentParts: unknown[] = []
-  const model = new CodeRunModel(input.program)
+  const model = new CodeRunModel(typeof input.program === 'string' ? input.program : input.program(directory))
   const host = await DshHostRuntime.create({
     sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
     developmentWorkspaceRoot: path.join(directory, 'workspaces'),
@@ -232,6 +240,51 @@ return 'done'
       expect(scenario.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
     } finally {
       await scenario.dispose()
+    }
+  }, 60_000)
+
+  it('keeps programs out of the data root and off the network when the agent has no network', async () => {
+    const server = createServer((socket) => socket.end())
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('The fixture server has no TCP port.')
+    const { port } = address
+    const probe = (directory: string) => `
+const fs = await import('node:fs/promises')
+const net = await import('node:net')
+const read = (file) => fs.readFile(file, 'utf8').then(() => 'open', () => 'denied')
+const connect = () => new Promise((resolve) => {
+  const socket = net.connect(${port}, '127.0.0.1')
+  socket.on('connect', () => { socket.destroy(); resolve('open') })
+  socket.on('error', () => resolve('blocked'))
+})
+await fs.writeFile('own.txt', 'own')
+const text = 'secret:' + await read(${JSON.stringify(path.join(directory, 'fixture.secret'))}) + ' own:' + await read('own.txt') + ' net:' + await connect()
+await tools.send_channel_message({ target: { type: 'current' }, parts: [{ text }] })
+return text
+`
+    const reported = async (commandNetwork: boolean) => {
+      const scenario = await runScenario({
+        program: probe,
+        capabilities: { codeRun: true, developmentShell: true, commandNetwork },
+      })
+      try {
+        return scenario.sentParts
+      } finally {
+        await scenario.dispose()
+      }
+    }
+    const confinement = commandConfinementSupport()
+    try {
+      const closed = await reported(false)
+      const open = await reported(true)
+      const readScope = confinement.readScope ? 'denied' : 'open'
+      expect(closed).toEqual([
+        [{ type: 'text', text: `secret:${readScope} own:open net:${confinement.networkControl ? 'blocked' : 'open'}` }],
+      ])
+      expect(open).toEqual([[{ type: 'text', text: `secret:${readScope} own:open net:open` }]])
+    } finally {
+      server.close()
     }
   }, 60_000)
 

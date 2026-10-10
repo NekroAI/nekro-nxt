@@ -27,6 +27,7 @@ const base: AgentDraft = {
     unrestrictedFileAccess: false,
     scheduledTasks: true,
     codeRun: false,
+    commandNetwork: true,
   },
 }
 

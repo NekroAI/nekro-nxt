@@ -22,10 +22,10 @@ export const AGENT_ACCESS_LEVELS: readonly {
   {
     level: 1,
     code: 'Lv.1',
-    label: '文件读写',
+    label: '工作区读写',
     risk: '受限访问',
     tone: 'info',
-    description: '读取文件，并在工作区里写文件。',
+    description: '读写自己工作区里的文件。',
   },
   {
     level: 2,
@@ -33,7 +33,7 @@ export const AGENT_ACCESS_LEVELS: readonly {
     label: '运行命令',
     risk: '高风险',
     tone: 'warning',
-    description: '读写文件，并在工作区里运行命令。',
+    description: '读写工作区里的文件，并在工作区里运行命令。',
   },
   {
     level: 3,
@@ -67,7 +67,7 @@ export const agentAccessPresentation = (capabilities: AgentSummary['capabilities
   const preset = agentAccessPreset(capabilities)
   if (preset !== 'custom') return agentAccessLevelOption(preset)
   const enabled = [
-    capabilities.fileTools ? '文件读写' : '',
+    capabilities.fileTools ? '工作区读写' : '',
     capabilities.developmentShell ? '运行命令' : '',
     capabilities.unrestrictedFileAccess ? '完整访问' : '',
   ].filter(Boolean)

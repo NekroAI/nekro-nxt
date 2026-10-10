@@ -276,7 +276,7 @@ const ACCESS_STEPS: readonly RiskStep[] = AGENT_ACCESS_LEVELS.map((level) => ({
     level.level === 0
       ? '只能对话，不能读写文件或运行命令'
       : level.level === 1
-        ? '文件读写'
+        ? '工作区读写'
         : level.level === 2
           ? '运行命令'
           : '访问工作区以外的系统文件',
@@ -287,10 +287,50 @@ const ACCESS_SWITCHES: readonly {
   readonly label: string
   readonly description: string
 }[] = [
-  { key: 'fileTools', label: '文件读写', description: '读取文件，并在自己的工作区里写入' },
-  { key: 'developmentShell', label: '运行命令', description: '在工作区里运行命令，需要文件读写' },
-  { key: 'unrestrictedFileAccess', label: '工作区以外的文件', description: '读写工作区以外的文件，需要先开启文件读写' },
+  { key: 'fileTools', label: '工作区读写', description: '读写自己工作区里的文件' },
+  { key: 'developmentShell', label: '运行命令', description: '在工作区里运行命令，需要工作区读写' },
+  {
+    key: 'unrestrictedFileAccess',
+    label: '工作区以外的文件',
+    description: '读写工作区以外的文件，需要先开启工作区读写',
+  },
 ]
+
+/**
+ * Network for commands, shown once commands are allowed. Full access and hosts that cannot cut the network keep it
+ * on, so the switch shows that and stays fixed.
+ */
+function CommandNetworkRow({
+  caps,
+  update,
+}: {
+  readonly caps: AgentDraft['capabilities']
+  readonly update: DraftUpdate
+}) {
+  const confinement = useProductStore((state) => state.capabilityAvailability.commandConfinement)
+  const fixed = caps.unrestrictedFileAccess
+    ? '完整访问下，命令始终可以联网'
+    : confinement?.networkControl
+      ? undefined
+      : '这台设备无法限制命令联网，命令始终可以联网'
+  return (
+    <>
+      <PropertyRow label="命令联网" description={fixed ?? '运行命令和编排程序时访问网络，例如下载数据、安装依赖'}>
+        <Switch
+          label="命令联网"
+          checked={fixed === undefined ? caps.commandNetwork : true}
+          disabled={fixed !== undefined}
+          onCheckedChange={(checked) =>
+            update((current) => ({ ...current, capabilities: { ...current.capabilities, commandNetwork: checked } }))
+          }
+        />
+      </PropertyRow>
+      {!caps.unrestrictedFileAccess && confinement !== undefined && !confinement.readScope ? (
+        <PropertyRow label="读取范围" description="这台设备上，命令仍能读取工作区以外的文件" />
+      ) : null}
+    </>
+  )
+}
 
 /** Web search runs through an external model service; its credential is saved right where the switch is. */
 function WebSearchCredential() {
@@ -474,6 +514,7 @@ export function CapabilitiesSection({
             }
           />
         </PropertyRow>
+        {caps.developmentShell ? <CommandNetworkRow caps={caps} update={update} /> : null}
         {caps.developmentShell ? (
           <PropertyRow
             label="编排模式（PTC）"

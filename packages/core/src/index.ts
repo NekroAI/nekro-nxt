@@ -370,6 +370,8 @@ export const AgentCapabilityGrantsSchema = z
     scheduledTasks: z.boolean().default(true),
     /** Tool calls from one TypeScript program; only takes effect with `developmentShell`. */
     codeRun: z.boolean().default(false),
+    /** Network for commands and `run_code` programs; on unless the user turns it off (absent before the field). */
+    commandNetwork: z.boolean().default(true),
   })
   .strict()
   .default({
@@ -381,6 +383,7 @@ export const AgentCapabilityGrantsSchema = z
     unrestrictedFileAccess: false,
     scheduledTasks: true,
     codeRun: false,
+    commandNetwork: true,
   })
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
@@ -614,6 +617,7 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     // The default leaves the digest of every earlier Revision unchanged; only turning it off is content.
     ...(content.capabilities.scheduledTasks ? {} : { scheduledTasks: false }),
     ...(content.capabilities.codeRun ? { codeRun: true } : {}),
+    ...(content.capabilities.commandNetwork ? {} : { commandNetwork: false }),
   },
   imagePolicy: {
     history: {
