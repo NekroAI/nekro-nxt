@@ -55,9 +55,16 @@ const settled = (node: CodeRunNode) =>
 
 describe.skipIf(process.platform === 'win32')('Node for run_code', () => {
   beforeEach(async () => {
-    // Only `tar` is reachable, so no Node on this machine's PATH answers for the desktop app.
+    // Only `tar` is reachable, so no Node on this machine's PATH answers for the desktop app. GNU tar runs `gzip`
+    // from PATH for `.tar.gz`, so it comes along.
     const bin = await temporary('nekro-nxt-path-')
-    await symlink(execFileSync('sh', ['-c', 'command -v tar']).toString().trim(), path.join(bin, 'tar'))
+    for (const command of ['tar', 'gzip'])
+      await symlink(
+        execFileSync('sh', ['-c', `command -v ${command}`])
+          .toString()
+          .trim(),
+        path.join(bin, command),
+      )
     vi.stubEnv('PATH', bin)
   })
 
