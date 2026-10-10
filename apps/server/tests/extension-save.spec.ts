@@ -7,6 +7,7 @@ import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 
@@ -148,7 +149,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         extensionId: saved.extensionId,
       })
       expect(runtime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
-        dshVersion: '0.1.7-rc.2',
+        dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
         contractVersion: 'nekro-nxt-extension-v5',
         origin: {
           episodeId: episode!.id,
@@ -219,7 +220,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         expect(importedRuntime.repository.getHostInstallation(saved.extensionId)).toBeUndefined()
         expect(importedRuntime.repository.getExtensionRevisionVerification(saved.revisionId)).toMatchObject({
           revisionId: saved.revisionId,
-          dshVersion: '0.1.7-rc.2',
+          dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
           origin: { pluginRunId: 'local-runtime-verification' },
           toolInvocations: [{ name: 'saved_probe', succeeded: true }],
         })

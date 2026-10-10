@@ -6,14 +6,14 @@
 
 唯一机器可读来源是 `src/release.json`，TypeScript 消费者从 `@nekro-nxt/dsh-compat/release` 读取 `DSH_RUNTIME_RELEASE`、`DSH_RUNTIME_FINGERPRINT` 和 `expectedDshPackageVersion()`。当前目标为：
 
-| 项目                     | 值                    | 含义                                 |
-| ------------------------ | --------------------- | ------------------------------------ |
-| DSH                      | `0.1.7-rc.2`          | Host 与 Client 的精确发布族          |
-| Cordis / Loader          | `4.0.4` / `1.0.5`     | 与该发布族配套的公开装配接口         |
-| `sessionCompatibilityId` | `jsonl-v4`            | 会话数据兼容边界，不等于产品 Release |
-| `settingsFormatVersion`  | `2`                   | NXT Host Profile 配置格式            |
-| `extensionRuntimeAbi`    | `nxt-extension-dsh-2` | 扩展运行接口与缓存兼容边界           |
-| `exceptions`             | 空                    | 当前没有保留旧 Client 包例外         |
+| 项目                     | 值                                | 含义                                 |
+| ------------------------ | --------------------------------- | ------------------------------------ |
+| DSH                      | `0.2.1-alpha.2`                   | Host 与 Client 的精确发布族          |
+| Cordis / Loader          | `4.0.5-alpha.1` / `1.0.6-alpha.1` | 与该发布族配套的公开装配接口         |
+| `sessionCompatibilityId` | `jsonl-v4`                        | 会话数据兼容边界，不等于产品 Release |
+| `settingsFormatVersion`  | `2`                               | NXT Host Profile 配置格式            |
+| `extensionRuntimeAbi`    | `nxt-extension-dsh-2`             | 扩展运行接口与缓存兼容边界           |
+| `exceptions`             | 空                                | 当前没有保留旧 Client 包例外         |
 
 运行环境指纹由上述版本、兼容标识及排序后的包矩阵确定性生成，浏览器也可消费；各缓存所有者按需要再计算摘要。普通 Release 或依赖 patch 更新不会仅因版本号变化而重置会话。改变兼容标识时必须同时实现对应所有者的迁移或明确重置路径，不能只改清单。
 

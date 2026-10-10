@@ -219,7 +219,6 @@ class DynamicDelegationModel extends LlmAdapter {
         yield* toolCallChunks('subagent', 'dynamic-delegate', {
           description: '开发动态扩展',
           prompt: '检查当前 Host 契约，创建、运行、检查、停止并修订一个动态 Host Tool。',
-          run_in_background: false,
         })
         return
       }
@@ -406,7 +405,7 @@ class DenylistRecoveryModel extends LlmAdapter {
   }
 }
 
-describe('DSH 0.1.7-rc.2 official capability composition', () => {
+describe('DSH official capability composition', () => {
   it('caps DeepSeek search cost and results while keeping external text inside the tool result', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-web-search-'))
     temporaryDirectories.push(directory)
@@ -771,7 +770,7 @@ describe('DSH 0.1.7-rc.2 official capability composition', () => {
     }
   })
 
-  it('lets a foreground child inspect and revise dynamic Cordis state owned by the root Episode', async () => {
+  it('lets a delegated child inspect and revise dynamic Cordis state owned by the root Episode', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-child-dynamic-'))
     temporaryDirectories.push(directory)
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -844,6 +843,9 @@ describe('DSH 0.1.7-rc.2 official capability composition', () => {
         mode: 'followup',
         replyRequired: true,
       })
+      await host.whenIdle(sessionId)
+      // Delegation returns the child id at once; the child finishes in the background.
+      await vi.waitFor(() => expect(model.childRequests).toHaveLength(9), { timeout: 10_000 })
       await host.whenIdle(sessionId)
 
       expect(model.childRequests).toHaveLength(9)

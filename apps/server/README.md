@@ -1,6 +1,6 @@
 # Server Host
 
-该应用拥有 NekroNXT 的生产 DSH Host roster，并把 DSH Agent Loop 适配到 Channel Runtime。当前 roster 装配 Session、JSONL Persistence、System Prompt、Tool Runtime、Agent Loop、checkpoint、Session compaction、LLM retry、工具结果裁剪、工具超时、Spill、官方 in-process 子智能体、DeepSeek Web Provider、通用 pi-ai 模型路由和官方 DeepSeek 多模态路由；频道通信、历史、Asset、批量图片检查、子智能体控制、网页搜索、文件和 Shell 工具都按智能体 Revision 在根 Session Scope 注册，不照搬 DSH CLI 的全局工具面。Host 使用 DSH 公开 Scope 父链让 foreground/continuable child 加入精确父 Scope；child 自动继承父 Revision 的非沟通工具，频道发送、结束回应义务、撤回、戳一戳和子智能体协调仍由根 Session 独占。
+该应用拥有 NekroNXT 的生产 DSH Host roster，并把 DSH Agent Loop 适配到 Channel Runtime。当前 roster 装配 Session、JSONL Persistence、System Prompt、Tool Runtime、Agent Loop、checkpoint、Session compaction、LLM retry、工具结果裁剪、工具超时、Spill、官方 in-process 子智能体、DeepSeek Web Provider、通用 pi-ai 模型路由和官方 DeepSeek 多模态路由；频道通信、历史、Asset、批量图片检查、子智能体控制、网页搜索、文件和 Shell 工具都按智能体 Revision 在根 Session Scope 注册，不照搬 DSH CLI 的全局工具面。委派立即返回子会话 ID，child 在后台运行，完成后向父 Session 投递完成通知；Host 使用 DSH 公开 Scope 父链让 child 加入精确父 Scope；child 自动继承父 Revision 的非沟通工具，频道发送、结束回应义务、撤回、戳一戳和子智能体协调仍由根 Session 独占。
 
 Session 身份、固定 Revision、频道、Episode 与可选运行资源由 `SessionRegistry` 的同一记录持有。`SessionRuntimeProjection` 读取该记录并拥有运行状态订阅、频道通知合并与计时器释放；`HostModelSettings` 通过 DSH 公开服务处理模型目录、配置、凭据和隔离连接测试。`PersistentExtensionMounts` 拥有持久扩展工厂、Session 挂载和 RPC 注册；同一版本初始化互斥，关闭等待进行中的初始化和卸载，释放失败向调用方上报。创造任务批准、停止的并发检查和状态提交由共享 `DynamicAuthoringService` 执行；HTTP 仅解析契约、调用宿主入口并投影结果，服务的提交通知供各入口共同订阅。`SessionImageContext` 负责图片投影、驻留诊断和压缩后恢复，共用同一 Session 注册表；附件读取继续核对频道访问范围。`DshHostRuntime` 保留对外适配入口，固定包版本与内置设置所有者来自 `dsh-roster.ts`。
 

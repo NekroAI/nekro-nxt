@@ -4,7 +4,7 @@ DSH 仍在预览期。每次升级都使用固定目标版本，在隔离工作�
 
 ## 1. 数据与版本由谁负责
 
-[DSH compatibility](../packages/dsh-compat/README.md) 的 `src/release.json` 是依赖矩阵的唯一来源，当前锁定 `0.1.7-rc.2`。产品 `releaseId` 标识完整程序包；`sessionCompatibilityId`、`settingsFormatVersion`、`extensionRuntimeAbi` 分别判断 Session、设置和扩展边界。`runtimeFingerprint` 将这些信息与包矩阵绑定，参与扩展缓存和兼容诊断身份。
+[DSH compatibility](../packages/dsh-compat/README.md) 的 `src/release.json` 是依赖矩阵的唯一来源，当前锁定 `0.2.1-alpha.2`。产品 `releaseId` 标识完整程序包；`sessionCompatibilityId`、`settingsFormatVersion`、`extensionRuntimeAbi` 分别判断 Session、设置和扩展边界。`runtimeFingerprint` 将这些信息与包矩阵绑定，参与扩展缓存和兼容诊断身份。
 
 | 所有者 | 持久事实 | 升级方式 |
 | --- | --- | --- |
@@ -72,6 +72,7 @@ Web 只比较当前页面所属实例的 Release。构建时注入与同包 Serv
 
 升级到新的 DSH 版本时逐条复查；上游修好后删掉对应的绕行代码。
 
-- **DeepSeek 上传索引只接受 `sha256:` 附件编号**（`dsh-llm-deepseek` 0.1.7-rc.2）：任一记录不符就整份作废，每一步都重新上传全部图片。NXT 在 `NekroAssetAttachmentStore.readImageRequest` 中把交给适配器的附件编号换成内容摘要。
-- **`read_image` 无法使用**（`dsh-tool-fs` 0.1.7-rc.2）：工具注册在只注入了 `attachments` 的上下文里，执行时读取 `fs` 抛出 `cannot get property "fs" without inject`。工具是会话内注册的，不能用 `tools.restrict` 隐藏。NXT 侧由 `asset_create` 的 `path` 参数加 `asset_inspect_images` 提供查看工作区图片的途径，工具说明引导模型走这条路。
+- **DeepSeek 上传索引只接受 `sha256:` 附件编号**（`dsh-llm-deepseek` 0.2.1-alpha.2 仍存在）：任一记录不符就整份作废，每一步都重新上传全部图片。NXT 在 `NekroAssetAttachmentStore.readImageRequest` 中把交给适配器的附件编号换成内容摘要。
+- **`read_image` 无法使用**（`dsh-tool-fs` 0.2.1-alpha.2 仍存在）：工具注册在只注入了 `attachments` 的上下文里，执行时读取 `fs` 抛出 `cannot get property "fs" without inject`。工具是会话内注册的，不能用 `tools.restrict` 隐藏。NXT 侧由 `asset_create` 的 `path` 参数加 `asset_inspect_images` 提供查看工作区图片的途径，工具说明引导模型走这条路。
 - **压缩默认指令面向编程助手**（`dsh-compaction-basic`）：`summarizeWithLlm` 未导出，NXT 在 `NekroNxtCompactionEngine.summarize` 中复刻了调用过程并换成中文群聊模板。升级时核对上游 `summarize` 的配置解析与结束原因处理是否变化。
+- **工作目录服务面向编程场景**（`dsh-working-directory` 0.2.1-alpha.2）：子智能体服务要求根上有 `workingDirectory`，bash、fs、技能工具也依赖它；官方实现会把当前目录写进每个智能体的系统提示词，并在每次组装提示词时检查文件系统。NXT 在根上挂 `NekroNxtSessionWorkingDirectory`，只按会话头的目录回答，不写提示词；开启文件或命令能力的智能体在自己的能力上下文里挂官方实现，它们的工具优先使用这一份。

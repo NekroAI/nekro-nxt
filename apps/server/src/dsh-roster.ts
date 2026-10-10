@@ -65,6 +65,7 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-util-values',
   '@deepseek-ai/dsh-web',
   '@deepseek-ai/dsh-web-search-deepseek',
+  '@deepseek-ai/dsh-working-directory',
 ] as const
 
 export const HOST_DSH_PACKAGE_VERSIONS = z.record(z.enum(HOST_DSH_PACKAGES), z.string()).parse(

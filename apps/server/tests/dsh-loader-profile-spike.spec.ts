@@ -30,7 +30,7 @@ interface PluginInventoryService {
 const isPluginInventoryService = (value: unknown): value is PluginInventoryService =>
   typeof value === 'object' && value !== null && 'list' in value && typeof value.list === 'function'
 
-describe('DSH 0.1.7-rc.2 Loader/Profile compatibility spike', () => {
+describe('DSH Loader/Profile compatibility spike', () => {
   it('loads, updates, inventories, removes, and fully retracts a public Cordis plugin entry', async () => {
     const context = new Context()
     await context.plugin(Loader, { baseUrl: import.meta.url })

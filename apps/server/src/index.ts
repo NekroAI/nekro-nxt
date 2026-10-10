@@ -10,6 +10,7 @@ import {
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
+import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
@@ -55,6 +56,7 @@ import {
 import * as LlmRetry from '@deepseek-ai/dsh-llm-retry'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+import { WorkingDirectoryService } from '@deepseek-ai/dsh-working-directory'
 import { bindScopeParent, scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
@@ -2804,12 +2806,14 @@ async function mountDevelopmentCapabilities(
     .isolate('sandbox')
     .isolate('shell')
     .isolate('shellEnv')
+    .isolate('workingDirectory')
   await capabilityContext.plugin(SandboxPolicyService, {
     mode: unrestrictedFileAccess ? 'danger-full-access' : 'workspace-write',
     workspaceRoot,
   })
+  await capabilityContext.plugin(SandboxedFileSystem, { cwd: workspaceRoot })
+  await capabilityContext.plugin(WorkingDirectoryService, { defaultDirectory: workspaceRoot })
   if (fileTools) {
-    await capabilityContext.plugin(SandboxedFileSystem, { cwd: workspaceRoot })
     await capabilityContext.plugin(FsObservationPolicy)
     await capabilityContext.plugin(FsTool, {})
   }
@@ -2849,8 +2853,6 @@ async function mountDelegationCapabilities(agentContext: Context, revision: Agen
   await agentContext.plugin(ToolSubagent, {
     provider: 'spawn',
     toolName: 'subagent',
-    backgroundMode: 'continuable',
-    enableRunInBackground: true,
     maxDepth: 1,
     agentOptions: { maxTokens: CHILD_MAX_TOKENS },
     toolFilter: { deny: denied },
@@ -3112,6 +3114,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       await context.plugin(SkillRegistry)
       await context.plugin(AgentRegistry)
       await context.plugin(NekroNxtAgentScopeInheritance)
+      await context.plugin(NekroNxtSessionWorkingDirectory, {
+        defaultDirectory: path.join(path.dirname(options.sessionDatabasePath), 'dsh'),
+      })
       registerDshHostProfileEntry(context, {
         id: 'subagent',
         name: '@deepseek-ai/dsh-subagent',
@@ -4208,7 +4213,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     if (!handle) throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
     let drainError: unknown
     try {
-      await this.#context.subagents.drainContinuableDescendants([handle.agent])
+      await this.#context.subagents.drainDescendants([handle.agent])
     } catch (error) {
       drainError = error
     }
@@ -4626,7 +4631,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       failures.push(error)
     }
     try {
-      await this.#context.subagents.drainContinuableDescendants(handles.map((handle) => handle.agent))
+      await this.#context.subagents.drainDescendants(handles.map((handle) => handle.agent))
     } catch (error) {
       failures.push(error)
     }
