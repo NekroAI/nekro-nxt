@@ -919,6 +919,15 @@ export const ProductUpdateStatusSchema = z
 
 export type ProductUpdateStatus = z.output<typeof ProductUpdateStatusSchema>
 
+/** Pause between consecutive messages an agent sends to one channel; longer messages wait a little longer. */
+export const MessagePacingSchema = z.enum(['off', 'fast', 'normal', 'slow'])
+
+export type MessagePacing = z.output<typeof MessagePacingSchema>
+
+export const DEFAULT_MESSAGE_PACING: MessagePacing = 'normal'
+
+export const MessagePacingSettingsSchema = z.object({ pacing: MessagePacingSchema }).strict()
+
 /** What the agent keeps about individual members of one channel; each note comes with that member's messages. */
 export const ChannelMemberNotesViewSchema = z
   .object({
@@ -2590,6 +2599,22 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: z.object({ autoCheck: z.boolean() }).strict(),
     response: ProductUpdateStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  getMessagePacingSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/message-pacing',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: MessagePacingSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateMessagePacingSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/message-pacing',
+    params: EmptyParamsSchema,
+    request: MessagePacingSettingsSchema,
+    response: MessagePacingSettingsSchema,
     error: HostApiErrorSchema,
   }),
   getChannelMemberNotes: defineContract({

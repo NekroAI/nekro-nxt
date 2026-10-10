@@ -87,6 +87,7 @@ import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
 import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
+import { messageGapMs, readMessagePacing } from './message-pacing.js'
 export type { ConnectionTestResult } from './connection-application.js'
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
@@ -732,6 +733,8 @@ export class NekroRuntime {
         now,
         nextUlid,
         idleRolloverMs: options.idleRolloverMs ?? 6 * 60 * 60 * 1000,
+        messageGapMs: (_channelId, parts) =>
+          messageGapMs(readMessagePacing({ get: (key) => repository.getSystemSetting(key) }), parts),
         resolveAdapter: (id): AdapterConnectionRuntime | undefined => adapterRuntimes.get(id),
         isActivityTriggerAllowed: (channelId, activityKey) => {
           const channel = core.getChannel(channelId)

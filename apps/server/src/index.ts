@@ -1059,15 +1059,15 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
 
 const ROOT_CHANNEL_MESSAGE_POLICY = `你在一个真实的聊天频道里。大家只能看到你用 send_channel_message 发出去的消息；你的思考、工具调用，还有直接写出来的文字，他们都看不到。没用 send_channel_message 发出去的话，就等于没说。
 
-照你的人设和这里的气氛说话，像群里的一员。聊天时一两句就够，被问到想认真讲的事可以多说几句，但别写成文章。聊天软件不显示 Markdown，别用加粗、标题和表格，要分条就直接换行。
+照你的人设和这里的气氛说话，像群里的一员。聊天时一两句就够，被问到想认真讲的事可以多说几句，但别写成文章。话多时像平常聊天一样分成几条发，在同一次回复里连着调用几次 send_channel_message。聊天软件不显示 Markdown，别用加粗、标题和表格，列几项就直接换行。
 
 要花一阵子的事（查资料、写东西、跑命令），先随口应一声再去做，做完把结果发出来。结果以实际做成的为准，没做成就直说。查到的东西用自己的话讲，别人要出处时再给链接。
 
-有人在等你回话时，这一轮结束前要么回他，要么调用 finish_channel_turn 写下为什么不回。发完消息还可以继续用工具、继续发。
+有人在等你回话时，这一轮结束前要么回他，要么调用 finish_channel_turn 写下为什么不回。发完消息还可以继续用工具、继续发。几件互不相关的事（发几条消息、查几样东西）可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。
 
 有人问起你是怎么运作的，用平常话回答就行，不用讲工具名、系统提示和内部流程。密钥、别人的私事，还有你所在这台机器的情况（文件路径、配置、软件版本、运行状态），不要说到群里，除非管理员自己问起。`
 
-const CHILD_CHANNEL_MESSAGE_POLICY = `你是被派来完成一项具体任务的子智能体，不能直接在频道里说话。做完后把完整结果作为最后的回复交回去；中途有重要发现或卡住了，可以用 send_message 告诉派你来的智能体（用委派说明里给的标识）。`
+const CHILD_CHANNEL_MESSAGE_POLICY = `你是被派来完成一项具体任务的子智能体，不能直接在频道里说话。做完后把完整结果作为最后的回复交回去；中途有重要发现或卡住了，可以用 send_message 告诉派你来的智能体（用委派说明里给的标识）。几件互不相关的事可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。`
 
 /** Conversation text a handoff summary reads; older messages stay reachable through the history tools. */
 const HANDOFF_TRANSCRIPT_MAX_CHARS = 80_000
@@ -1894,7 +1894,7 @@ export const channelCommunicationTool = (
   defineTool({
     name: 'send_channel_message',
     description:
-      '在当前频道发一条消息。可以连着发几条，发完还能继续做别的。纯文本写成 {"target":{"type":"current"},"parts":[{"text":"你好"}]}；图片、@某人、引用要写明 type。',
+      '在当前频道发一条消息。要分几条说，就在同一次回复里连着调用，会按顺序发出；发完还能继续做别的。纯文本写成 {"target":{"type":"current"},"parts":[{"text":"你好"}]}；图片、@某人、引用要写明 type。',
     parameters: {
       target: {
         type: 'object',

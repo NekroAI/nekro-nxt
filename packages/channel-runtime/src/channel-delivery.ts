@@ -1,5 +1,6 @@
 import type { AdapterConnectionRuntime, AdapterDeliveryReceipt, PhysicalDeliveryRequest } from '@nekro-nxt/adapter-sdk'
-import type { MessagePart, OutboundIntentId } from '@nekro-nxt/contracts'
+import { setTimeout as delay } from 'node:timers/promises'
+import type { ChannelId, MessagePart, OutboundIntentId } from '@nekro-nxt/contracts'
 import { LogicalMessageIdSchema, OutboundIntentIdSchema, PhysicalDeliveryIdSchema } from '@nekro-nxt/contracts'
 import type { CoreRepository } from '@nekro-nxt/core'
 import type {
@@ -33,6 +34,10 @@ const supportsPart = (adapter: AdapterConnectionRuntime, part: MessagePart): boo
       return false
   }
 }
+export interface DeliveryPacing {
+  readonly gapMs: (channelId: ChannelId, parts: readonly MessagePart[]) => number
+  readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
+}
 export class ChannelDelivery {
   readonly #coreRepository: CoreRepository
   readonly #runtimeRepository: RuntimeRepository
@@ -41,6 +46,8 @@ export class ChannelDelivery {
   readonly #timestamp: () => number
   readonly #nextUlid: () => string
   readonly #publishFact: (fact: ChannelFact) => void
+  readonly #pacing: DeliveryPacing
+  readonly #lastSentAt = new Map<ChannelId, number>()
   constructor(
     repository: CoreRepository,
     runtime: RuntimeRepository,
@@ -49,6 +56,7 @@ export class ChannelDelivery {
     timestamp: () => number,
     nextUlid: () => string,
     publish: (fact: ChannelFact) => void,
+    pacing: DeliveryPacing = { gapMs: () => 0 },
   ) {
     this.#coreRepository = repository
     this.#runtimeRepository = runtime
@@ -57,6 +65,7 @@ export class ChannelDelivery {
     this.#timestamp = timestamp
     this.#nextUlid = nextUlid
     this.#publishFact = publish
+    this.#pacing = pacing
   }
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
     const episode = this.#runtimeRepository.getEpisode(input.episodeId)
@@ -78,6 +87,7 @@ export class ChannelDelivery {
       )
       if (existing) return this.#sendResult(existing)
     }
+    await this.#waitForGap(channel.id, input.parts, input.signal)
 
     const intentId = OutboundIntentIdSchema.parse(`out_${this.#nextUlid()}`)
     const logicalMessageId = LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`)
@@ -162,7 +172,21 @@ export class ChannelDelivery {
     this.#runtimeRepository.createOutboundPlan(intent, deliveries)
     this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: intent.id })
     const settled = await this.dispatchOutbound(intent.id, input.signal ?? new AbortController().signal)
+    this.#lastSentAt.set(channel.id, this.#timestamp())
     return this.#sendResult(settled.snapshot)
+  }
+
+  async #waitForGap(
+    channelId: ChannelId,
+    parts: readonly MessagePart[],
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    const lastSentAt = this.#lastSentAt.get(channelId)
+    if (lastSentAt === undefined) return
+    const wait = lastSentAt + this.#pacing.gapMs(channelId, parts) - this.#timestamp()
+    if (wait <= 0) return
+    const sleep = this.#pacing.sleep ?? ((ms: number, abort: AbortSignal) => delay(ms, undefined, { signal: abort }))
+    await sleep(wait, signal ?? new AbortController().signal)
   }
 
   async dispatchOutbound(

@@ -229,6 +229,10 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.checkProductUpdates, {}, undefined, options),
   updateProductUpdateSettings: (request: HostApiRequest<'updateProductUpdateSettings'>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.updateProductUpdateSettings, {}, request, options),
+  getMessagePacingSettings: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getMessagePacingSettings, {}, undefined, options),
+  updateMessagePacingSettings: (request: HostApiRequest<'updateMessagePacingSettings'>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.updateMessagePacingSettings, {}, request, options),
   getChannelMemberNotes: (channelId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelMemberNotes, { channelId }, undefined, options),
   updateChannelMemberNote: (

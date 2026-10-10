@@ -635,7 +635,7 @@ const setup = async (
   feedbackInteractions?: AdapterConnectionInteractions,
   admissionOptions: Pick<
     ChannelRuntimeOptions,
-    'deferAdmission' | 'canAdmitAgent' | 'inboundHooks' | 'activityDirectedAt'
+    'deferAdmission' | 'canAdmitAgent' | 'inboundHooks' | 'activityDirectedAt' | 'messageGapMs' | 'sleep'
   > = {},
 ) => {
   const coreRepository = new MemoryCoreRepository()
@@ -1896,6 +1896,52 @@ describe('ChannelRuntime M1 lane', () => {
     expect(first.status).toBe('partially-sent')
     expect(replay).toEqual(first)
     expect(context.adapter.deliveries).toHaveLength(3)
+  })
+
+  it('waits out the remaining gap before a message that follows another in the same channel', async () => {
+    const sleeps: number[] = []
+    const gapInputs: string[] = []
+    const context = await setup(true, undefined, undefined, undefined, {
+      messageGapMs: (_channelId, parts) => {
+        gapInputs.push(parts.map((part) => (part.type === 'text' ? part.text : part.type)).join(''))
+        return 1000
+      },
+      sleep: (ms) => {
+        sleeps.push(ms)
+        return Promise.resolve()
+      },
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'pacing-seed'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    context.setNow(1_000)
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '第一条' }] })
+    context.setNow(1_400)
+    const second = { episodeId: episode.id, parts: [{ type: 'text' as const, text: '第二条' }], clientRequestId: 'r2' }
+    await context.runtime.sendMessage(second)
+    context.setNow(1_500)
+    await context.runtime.sendMessage(second)
+    context.setNow(5_000)
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '很久以后' }] })
+    expect(sleeps).toEqual([600])
+    expect(gapInputs).toEqual(['第二条', '很久以后'])
+    expect(context.adapter.deliveries).toHaveLength(3)
+  })
+
+  it('stops waiting and sends nothing when the turn is cancelled during the gap', async () => {
+    const context = await setup(true, undefined, undefined, undefined, { messageGapMs: () => 60_000 })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'pacing-abort'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '先说一句' }] })
+    const controller = new AbortController()
+    const pending = context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts: [{ type: 'text', text: '被取消' }],
+      signal: controller.signal,
+    })
+    controller.abort(new Error('turn cancelled'))
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(context.adapter.deliveries).toHaveLength(1)
+    expect(context.runtimeRepository.outbounds.size).toBe(1)
   })
 
   it('batches triggered Channel Events that were persisted before a runtime failure', async () => {

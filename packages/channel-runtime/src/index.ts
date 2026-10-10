@@ -406,6 +406,9 @@ export interface ChannelRuntimeOptions {
     overrides: Readonly<Record<string, boolean>>,
   ) => void
   readonly idleRolloverMs?: number | false
+  /** Pause before a message that follows another one in the same channel, counted from when the earlier one was sent. */
+  readonly messageGapMs?: (channelId: ChannelId, parts: readonly MessagePart[]) => number
+  readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
   readonly adapterState?: AdapterRuntimeStateStore
   readonly inboundHooks?: InboundHookGate
 }
@@ -589,6 +592,7 @@ export class ChannelRuntime {
       () => this.#timestamp(),
       this.#nextUlid,
       (fact) => this.#publishFact(fact),
+      { gapMs: options.messageGapMs ?? (() => 0), ...(options.sleep === undefined ? {} : { sleep: options.sleep }) },
     )
     if (this.#idleRolloverMs !== false && (!Number.isSafeInteger(this.#idleRolloverMs) || this.#idleRolloverMs <= 0)) {
       throw new TypeError('idleRolloverMs must be a positive integer or false.')

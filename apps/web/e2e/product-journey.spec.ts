@@ -185,6 +185,7 @@ test('production bundle keeps every space usable and retired links land on æ¦‚è§
     '/wiring/new',
     '/settings/models',
     '/settings/adapters',
+    '/settings/chat',
     '/settings/dsh',
     '/settings/notifications',
     '/settings/appearance',

@@ -1,4 +1,16 @@
-import { Bell, Blocks, ChevronRight, Cpu, Info, MonitorSmartphone, Palette, Plug, Plus, Upload } from 'lucide-react'
+import {
+  Bell,
+  Blocks,
+  ChevronRight,
+  Cpu,
+  Info,
+  MessageCircle,
+  MonitorSmartphone,
+  Palette,
+  Plug,
+  Plus,
+  Upload,
+} from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -21,6 +33,8 @@ import {
   useLlmProviders,
   type ProviderView,
 } from '../../llm-settings.js'
+import type { MessagePacing } from '@nekro-nxt/contracts'
+import { workspaceApi } from '../../host-api-client.js'
 import { providerDisplayName } from '../../provider-labels.js'
 import { useProductRuntime, useProductStore, useUiStateStore } from '../../product-runtime.js'
 import {
@@ -60,6 +74,7 @@ const SECTIONS = [
   { key: 'models', label: '模型', icon: <Cpu size={16} /> },
   { key: 'dsh', label: 'DSH 插件', icon: <Blocks size={16} /> },
   { key: 'adapters', label: '平台适配器', icon: <Plug size={16} /> },
+  { key: 'chat', label: '聊天', icon: <MessageCircle size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
@@ -149,6 +164,7 @@ export default function SettingsSpace() {
         <MainContent width="readable">
           <NarrowNav section={section} />
           {section === 'adapters' ? <Adapters /> : null}
+          {section === 'chat' ? <Chat /> : null}
           {section === 'notifications' ? <Notifications /> : null}
           {section === 'access' ? (
             <>
@@ -502,6 +518,47 @@ function Adapters() {
         rowKey={({ adapter }) => adapter.key}
         empty="没有已安装的平台适配器"
       />
+    </>
+  )
+}
+
+const PACING_OPTIONS: readonly { readonly value: MessagePacing; readonly label: string }[] = [
+  { value: 'off', label: '不等待' },
+  { value: 'fast', label: '短' },
+  { value: 'normal', label: '适中' },
+  { value: 'slow', label: '长' },
+]
+
+function Chat() {
+  const [pacing, setPacing] = useState<MessagePacing>()
+  useEffect(() => {
+    const controller = new AbortController()
+    workspaceApi
+      .getMessagePacingSettings({ signal: controller.signal })
+      .then((settings) => setPacing(settings.pacing))
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [])
+  const change = (next: MessagePacing) => {
+    const previous = pacing
+    setPacing(next)
+    workspaceApi.updateMessagePacingSettings({ pacing: next }).catch((error: unknown) => {
+      setPacing(previous)
+      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+    })
+  }
+  return (
+    <>
+      <SectionHead title="聊天" />
+      <PropertyList>
+        <PropertyRow label="连发间隔" tip="智能体一次连着发几条消息时，每条之间停一下再发，字多的停得久一些。">
+          {pacing === undefined ? (
+            <Skeleton width={220} height={28} />
+          ) : (
+            <Segmented label="连发间隔" value={pacing} onChange={change} options={PACING_OPTIONS} />
+          )}
+        </PropertyRow>
+      </PropertyList>
     </>
   )
 }

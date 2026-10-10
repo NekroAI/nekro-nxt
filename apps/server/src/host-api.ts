@@ -21,6 +21,7 @@ import {
   writeJson,
 } from './host-route-support.js'
 import { ProductUpdates } from './product-updates.js'
+import { readMessagePacing, writeMessagePacing, type MessagePacingSettingsStore } from './message-pacing.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
 import { registerMcpRoutes } from './host-routes-mcp.js'
@@ -276,6 +277,32 @@ export const createNekroHostApi = (
         HostApiContracts.updateProductUpdateSettings,
         productUpdates.setAutoCheck(parsed.autoCheck),
       )
+    },
+  })
+  const pacingSettings: MessagePacingSettingsStore = {
+    get: (key) => runtime.repository.getSystemSetting(key),
+    put: (key, value, expectedRevision) => {
+      runtime.repository.putSystemSetting(key, value, expectedRevision, Date.now())
+    },
+  }
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/message-pacing',
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        writeContractJson(res, 200, HostApiContracts.getMessagePacingSettings, {
+          pacing: readMessagePacing(pacingSettings),
+        })
+        return
+      }
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      const parsed = HostApiContracts.updateMessagePacingSettings.parseRequest(await readJsonBody(req))
+      writeContractJson(res, 200, HostApiContracts.updateMessagePacingSettings, {
+        pacing: writeMessagePacing(pacingSettings, parsed.pacing),
+      })
     },
   })
   const buildSnapshot = (viewerKey: string) => queries.snapshot(viewerKey)
