@@ -39,7 +39,7 @@ QQ 官方机器人通过 QQ 开放平台的 OpenClaw 入口创建，使用 `AppI
 
 OneBot 11 连接适用于已独立部署的协议端。NekroNXT 作为 WebSocket 客户端连接协议端提供的 Universal WebSocket Server，并使用可选的只写 Access Token 完成认证。SnowLuma、NapCat 和 LLBot 均按 OneBot 11 协议接入。
 
-协议端必须使用数组消息格式。首版支持群聊和私聊的文字、Mention、引用、图片、语音、合并转发和富消息摘要；主动文件、群管理、公告、签到、精华和 raw Action 尚未开放。
+协议端必须使用数组消息格式。智能体可以在群聊和私聊里收发文字、@、引用、图片、语音和文件（文件最大 64 MB，协议端可以在另一台机器上），能读到合并转发和卡片的内容；扩展可以使用表情回应、合并转发、群公告、群管理等平台动作。
 
 按照 [OneBot V11 接入教程](connections/onebot-11.md)配置 SnowLuma、NapCat 或 LLBot，填写 Endpoint，并完成收发测试和频道绑定。各协议端的自动化兼容与真实账号验收状态以 [OneBot 11 Decision](../decisions/implemented/2026-08-26-OneBot11正向WebSocket适配器.md) 为准。
 

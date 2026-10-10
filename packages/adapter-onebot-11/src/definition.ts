@@ -106,6 +106,139 @@ const ONEBOT_11_PLATFORM_ACTIONS = [
       required: ['messageId'],
     },
   },
+  {
+    name: 'remove_essence_message',
+    title: '取消精华',
+    description: '取消消息的精华',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        messageId: { type: 'string' },
+      },
+      required: ['messageId'],
+    },
+  },
+  {
+    name: 'react_to_message',
+    title: '表情回应',
+    description: '用 QQ 表情回应一条消息；emojiId 是 QQ 表情编号',
+    risk: 'low' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        messageId: { type: 'string' },
+        emojiId: { type: 'string' },
+        remove: { type: 'boolean' },
+      },
+      required: ['messageId', 'emojiId'],
+    },
+  },
+  {
+    name: 'send_forward_message',
+    title: '发送合并转发',
+    description: '把多段文字组成一条合并转发消息发到当前频道；每段可以署一个名字',
+    risk: 'low' as const,
+    channelKinds: ['direct', 'group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        nodes: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 50,
+          // Each node needs text; name is optional. Checked by the runtime, since nested schemas stay plain JSON.
+          items: {
+            type: 'object',
+            properties: { name: { type: 'string' }, text: { type: 'string' } },
+          },
+        },
+      },
+      required: ['nodes'],
+    },
+  },
+  {
+    name: 'send_group_notice',
+    title: '发布群公告',
+    description: '在当前群发布一条公告',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        content: { type: 'string' },
+      },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'group_sign_in',
+    title: '群打卡',
+    description: '在当前群打卡',
+    risk: 'low' as const,
+    channelKinds: ['group'] as const,
+    parameters: { type: 'object' as const, properties: {} },
+  },
+  {
+    name: 'mute_all',
+    title: '全员禁言',
+    description: '开启或关闭当前群的全员禁言',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        enable: { type: 'boolean' },
+      },
+      required: ['enable'],
+    },
+  },
+  {
+    name: 'set_group_name',
+    title: '修改群名',
+    description: '修改当前群的名称',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        name: { type: 'string' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'set_member_title',
+    title: '设置头衔',
+    description: '设置成员的专属头衔，需要机器人是群主；title 为空表示取消',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        memberId: { type: 'string' },
+        title: { type: 'string' },
+      },
+      required: ['memberId', 'title'],
+    },
+  },
+  {
+    name: 'set_member_admin',
+    title: '设置管理员',
+    description: '设置或取消成员的管理员身份，需要机器人是群主',
+    risk: 'admin' as const,
+    channelKinds: ['group'] as const,
+    parameters: {
+      type: 'object' as const,
+      properties: {
+        memberId: { type: 'string' },
+        enable: { type: 'boolean' },
+      },
+      required: ['memberId', 'enable'],
+    },
+  },
 ] as const
 
 export const ONEBOT_11_CONNECTION_DEFINITION = defineAdapterConnection({
@@ -291,6 +424,12 @@ export const ONEBOT_11_CAPABILITIES: AdapterOutboundCapabilities = {
   replies: true,
   mixedContent: true,
   proactiveSend: true,
-  files: false,
+  files: true,
   maxAssetBytes: 20 * 1024 * 1024,
 }
+
+/**
+ * Files go to the protocol endpoint as base64 inside the WebSocket frame, since it may run on another machine and
+ * cannot read a local path. This bounds what one frame carries.
+ */
+export const ONEBOT_11_MAX_FILE_BYTES = 64 * 1024 * 1024

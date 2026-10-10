@@ -4,6 +4,7 @@ import type {
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
   AdapterInteractionOutcome,
+  AdapterPhysicalPlan,
   AdapterRuntimeCapabilities,
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
@@ -15,6 +16,7 @@ import {
   ONEBOT_11_ADAPTER_KEY,
   ONEBOT_11_CAPABILITIES,
   ONEBOT_11_CONNECTION_DEFINITION,
+  ONEBOT_11_MAX_FILE_BYTES,
   type OneBot11RuntimeConfig,
 } from './definition.js'
 import {
@@ -113,6 +115,42 @@ const actionOutcome = (error: unknown): AdapterInteractionOutcome => {
 }
 
 /** Protocol-endpoint-neutral OneBot 11 mapping and optional interaction layer. */
+const ForwardNodesSchema = z
+  .array(z.object({ name: z.string().optional(), text: z.string().min(1) }).loose())
+  .min(1)
+  .max(50)
+
+const forwardNodes = (value: unknown): { readonly name?: string; readonly text: string }[] | undefined => {
+  const parsed = ForwardNodesSchema.safeParse(value)
+  if (!parsed.success) return undefined
+  return parsed.data.map(({ name, text }) => ({ text, ...(name?.trim() ? { name: name.trim() } : {}) }))
+}
+
+const FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  'application/pdf': 'pdf',
+  'application/zip': 'zip',
+  'application/json': 'json',
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'text/csv': 'csv',
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'audio/mpeg': 'mp3',
+  'video/mp4': 'mp4',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+}
+
+/** The name the group sees: the one the agent gave, or one made from the asset when it gave none. */
+const fileName = (part: Extract<MessagePart, { type: 'file' }>, mediaType: string): string => {
+  const given = part.name?.trim().replace(/[\\/:*?"<>|\r\n]+/gu, '_')
+  if (given) return given
+  return `${part.assetId.slice(-8)}.${FILE_EXTENSIONS[mediaType.split(';')[0]!.trim()] ?? 'bin'}`
+}
+
 export class OneBot11Runtime implements AdapterConnectionRuntime {
   readonly capabilities: AdapterRuntimeCapabilities
   readonly interactions: AdapterConnectionInteractions
@@ -270,17 +308,138 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
               })
               return { status: 'succeeded', result: parseJsonValue(result) }
             }
-            case 'set_essence_message': {
+            case 'set_essence_message':
+            case 'remove_essence_message': {
               const target = await this.#resolveTarget(input.channelId)
-              if (target?.kind !== 'group') {
-                return { status: 'failed', message: '设为精华只在群聊中可用。' }
+              if (target?.kind !== 'group') return { status: 'failed', message: '精华消息只在群聊中可用。' }
+              const messageId = await this.#platformMessageArg(input.channelId, input.args['messageId'])
+              if (messageId === undefined) return { status: 'failed', message: '找不到这条消息，messageId 无效。' }
+              const result = await this.#requireClient().callOptional(
+                input.action === 'set_essence_message' ? 'set_essence_msg' : 'delete_essence_msg',
+                { message_id: messageId },
+              )
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'react_to_message': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') return { status: 'failed', message: '表情回应只在群聊中可用。' }
+              const messageId = await this.#platformMessageArg(input.channelId, input.args['messageId'])
+              if (messageId === undefined) return { status: 'failed', message: '找不到这条消息，messageId 无效。' }
+              const emojiId = input.args['emojiId']
+              if (typeof emojiId !== 'string' || !/^\d{1,8}$/u.test(emojiId)) {
+                return { status: 'failed', message: 'emojiId 需要是 QQ 表情编号（数字）。' }
               }
-              const messageId = input.args['messageId']
-              if (typeof messageId !== 'string') {
-                return { status: 'failed', message: '缺少或无效的 messageId 参数。' }
-              }
-              const result = await this.#requireClient().callOptional('set_essence_msg', {
+              const result = await this.#requireClient().callOptional('set_msg_emoji_like', {
                 message_id: messageId,
+                emoji_id: emojiId,
+                set: input.args['remove'] !== true,
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'send_forward_message': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (!target) return { status: 'failed', message: '当前频道不是有效的 OneBot 频道。' }
+              const nodes = forwardNodes(input.args['nodes'])
+              if (nodes === undefined) {
+                return { status: 'failed', message: 'nodes 需要是 1-50 段文字，每段有 text，可选 name。' }
+              }
+              const accountId = this.#requireClient().accountId ?? '10000'
+              const result = await this.#requireClient().callOptional(
+                target.kind === 'group' ? 'send_group_forward_msg' : 'send_private_forward_msg',
+                {
+                  ...(target.kind === 'group' ? { group_id: target.id } : { user_id: target.id }),
+                  messages: nodes.map((node) => ({
+                    type: 'node',
+                    data: {
+                      name: node.name ?? '消息',
+                      uin: accountId,
+                      content: [{ type: 'text', data: { text: node.text } }],
+                    },
+                  })),
+                },
+              )
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'send_group_notice': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') return { status: 'failed', message: '群公告只在群聊中可用。' }
+              const content = input.args['content']
+              if (typeof content !== 'string' || content.trim().length === 0) {
+                return { status: 'failed', message: '公告内容不能为空。' }
+              }
+              const result = await this.#requireClient().callOptional('_send_group_notice', {
+                group_id: target.id,
+                content,
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'group_sign_in': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') return { status: 'failed', message: '群打卡只在群聊中可用。' }
+              // Endpoints name this action differently; NapCat and LLBot use set_group_sign, go-cqhttp send_group_sign.
+              try {
+                const result = await this.#requireClient().callOptional('set_group_sign', { group_id: target.id })
+                return { status: 'succeeded', result: parseJsonValue(result) }
+              } catch (error) {
+                if (!(error instanceof OneBotActionError) || error.kind !== 'unsupported') throw error
+                const result = await this.#requireClient().callOptional('send_group_sign', { group_id: target.id })
+                return { status: 'succeeded', result: parseJsonValue(result) }
+              }
+            }
+            case 'mute_all': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') return { status: 'failed', message: '全员禁言只在群聊中可用。' }
+              if (typeof input.args['enable'] !== 'boolean') {
+                return { status: 'failed', message: '缺少或无效的 enable 参数。' }
+              }
+              const result = await this.#requireClient().callOptional('set_group_whole_ban', {
+                group_id: target.id,
+                enable: input.args['enable'],
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'set_group_name': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') return { status: 'failed', message: '修改群名只在群聊中可用。' }
+              const name = input.args['name']
+              if (typeof name !== 'string' || name.trim().length === 0) {
+                return { status: 'failed', message: '群名不能为空。' }
+              }
+              const result = await this.#requireClient().callOptional('set_group_name', {
+                group_id: target.id,
+                group_name: name.trim(),
+              })
+              return { status: 'succeeded', result: parseJsonValue(result) }
+            }
+            case 'set_member_title':
+            case 'set_member_admin': {
+              const target = await this.#resolveTarget(input.channelId)
+              if (target?.kind !== 'group') return { status: 'failed', message: '这个操作只在群聊中可用。' }
+              const memberIdParsed = ChannelMemberIdSchema.safeParse(input.args['memberId'])
+              if (!memberIdParsed.success) return { status: 'failed', message: '缺少或无效的 memberId 参数。' }
+              const platformUserId = await this.#context.members.resolvePlatformUserId(
+                input.channelId,
+                memberIdParsed.data,
+              )
+              if (!platformUserId) return { status: 'failed', message: '当前频道找不到该成员的平台身份。' }
+              if (input.action === 'set_member_title') {
+                const title = input.args['title']
+                if (typeof title !== 'string') return { status: 'failed', message: '缺少或无效的 title 参数。' }
+                const result = await this.#requireClient().callOptional('set_group_special_title', {
+                  group_id: target.id,
+                  user_id: platformUserId,
+                  special_title: title,
+                  duration: -1,
+                })
+                return { status: 'succeeded', result: parseJsonValue(result) }
+              }
+              if (typeof input.args['enable'] !== 'boolean') {
+                return { status: 'failed', message: '缺少或无效的 enable 参数。' }
+              }
+              const result = await this.#requireClient().callOptional('set_group_admin', {
+                group_id: target.id,
+                user_id: platformUserId,
+                enable: input.args['enable'],
               })
               return { status: 'succeeded', result: parseJsonValue(result) }
             }
@@ -348,6 +507,23 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     await client?.stop()
   }
 
+  /** A file is its own platform upload, not a message segment; everything else stays one message, in order. */
+  planOutbound(input: { readonly parts: readonly MessagePart[] }): Promise<readonly AdapterPhysicalPlan[]> {
+    const plans: MessagePart[][] = []
+    let current: MessagePart[] = []
+    for (const part of input.parts) {
+      if (part.type !== 'file') {
+        current.push(part)
+        continue
+      }
+      if (current.length > 0) plans.push(current)
+      current = []
+      plans.push([part])
+    }
+    if (current.length > 0) plans.push(current)
+    return Promise.resolve(plans.map((parts) => ({ parts })))
+  }
+
   async deliver(request: PhysicalDeliveryRequest, signal: AbortSignal): Promise<AdapterDeliveryReceipt> {
     if (signal.aborted) {
       return { status: 'failed', failure: { kind: 'transient', message: '发送在写入 OneBot 前已取消。' } }
@@ -355,6 +531,12 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     try {
       const target = await this.#resolveTarget(request.channelId)
       if (!target) return { status: 'failed', failure: { kind: 'invalid', message: 'OneBot 频道目标无效。' } }
+      const [only] = request.parts
+      if (request.parts.length === 1 && only?.type === 'file') {
+        await this.#uploadFile(request.channelId, target, only)
+        // Uploads answer with a file id at most; there is no message id to reply to or recall.
+        return { status: 'sent' }
+      }
       const segments = await this.#outboundSegments(request)
       const action = target.kind === 'group' ? 'send_group_msg' : 'send_private_msg'
       const privateSource = target.kind === 'private' ? await this.#privateSourceGroup(request.channelId) : undefined
@@ -403,6 +585,46 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     return messageId
   }
 
+  /** Extensions name messages by their logical id; the platform needs its own message id. */
+  async #platformMessageArg(channelId: ChannelId, value: unknown): Promise<string | undefined> {
+    const logical = LogicalMessageIdSchema.safeParse(value)
+    if (!logical.success) return undefined
+    return this.#context.messages.resolvePlatformMessageId(channelId, logical.data)
+  }
+
+  async #uploadFile(
+    channelId: ChannelId,
+    target: { readonly kind: 'group' | 'private'; readonly id: string },
+    part: Extract<MessagePart, { type: 'file' }>,
+  ): Promise<void> {
+    const asset = await this.#context.assets.read({ assetId: part.assetId, channelId })
+    if (asset.byteSize > ONEBOT_11_MAX_FILE_BYTES) {
+      throw new OneBotActionError(
+        `文件有 ${Math.ceil(asset.byteSize / 1024 / 1024)} MB，超过 OneBot 能发送的 ${ONEBOT_11_MAX_FILE_BYTES / 1024 / 1024} MB。`,
+        'invalid',
+        false,
+      )
+    }
+    const action = target.kind === 'group' ? 'upload_group_file' : 'upload_private_file'
+    try {
+      await this.#requireClient().callOptional(
+        action,
+        {
+          ...(target.kind === 'group' ? { group_id: target.id } : { user_id: target.id }),
+          file: `base64://${Buffer.from(asset.bytes).toString('base64')}`,
+          name: fileName(part, asset.mediaType),
+        },
+        // The endpoint receives the whole file before answering; allow about 512 KiB/s on top of a minute.
+        { timeoutMs: 60_000 + Math.ceil(asset.byteSize / (512 * 1024)) * 1000 },
+      )
+    } catch (error) {
+      if (error instanceof OneBotActionError && error.kind === 'unsupported') {
+        throw new OneBotActionError(`协议端不支持上传文件（${action}），文件没有发出去。`, 'unsupported', false)
+      }
+      throw error
+    }
+  }
+
   async #outboundSegments(request: PhysicalDeliveryRequest): Promise<OneBotObject[]> {
     const output: OneBotObject[] = []
     if (request.replyTo !== undefined) {
@@ -445,12 +667,9 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
           break
         }
         case 'file':
+          throw new OneBotActionError('文件需要单独发送。', 'invalid', false)
         case 'rich':
-          throw new OneBotActionError(
-            `这个平台暂时发不了${part.type === 'file' ? '文件' : '这类内容'}，可以把内容直接写在消息里。`,
-            'invalid',
-            false,
-          )
+          throw new OneBotActionError('这个平台暂时发不了这类内容，可以把内容直接写在消息里。', 'invalid', false)
       }
     }
     return output

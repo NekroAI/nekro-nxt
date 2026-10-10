@@ -175,7 +175,8 @@ export class OneBotWebSocketClient {
     this.#publish('stopped')
   }
 
-  call(action: string, params: OneBotObject = {}): Promise<unknown> {
+  /** `timeoutMs` lets a long action, such as uploading a large file, wait longer than an ordinary call. */
+  call(action: string, params: OneBotObject = {}, options: { readonly timeoutMs?: number } = {}): Promise<unknown> {
     const socket = this.#socket
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new OneBotActionError('OneBot WebSocket 尚未连接。', 'transient', false))
@@ -185,7 +186,7 @@ export class OneBotWebSocketClient {
       const timer = setTimeout(() => {
         this.#pending.delete(echo)
         reject(new OneBotActionError(`OneBot Action ${action} 等待回执超时。`, 'unknown', true))
-      }, this.#requestTimeoutMs)
+      }, options.timeoutMs ?? this.#requestTimeoutMs)
       this.#pending.set(echo, { action, resolve, reject, timer })
       socket.send(JSON.stringify({ action, params, echo }), (error) => {
         if (!error) return
@@ -198,12 +199,16 @@ export class OneBotWebSocketClient {
     })
   }
 
-  async callOptional(action: string, params: OneBotObject): Promise<unknown> {
+  async callOptional(
+    action: string,
+    params: OneBotObject,
+    options: { readonly timeoutMs?: number } = {},
+  ): Promise<unknown> {
     if (this.#optionalCapabilities.get(action) === 'unsupported') {
       throw new OneBotActionError(`协议端不支持 ${action}。`, 'unsupported', false)
     }
     try {
-      const result = await this.call(action, params)
+      const result = await this.call(action, params, options)
       this.#optionalCapabilities.set(action, 'available')
       this.#publishCurrent()
       return result

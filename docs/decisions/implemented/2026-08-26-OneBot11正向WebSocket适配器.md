@@ -65,4 +65,13 @@ Action 使用 Connection 前缀和随机 ID 作为 `echo`，响应与事件在�
 
 ## 明确未实现
 
-首版不主动发送文件、任意表情回应、群卡片、AI 语音、公告、签到、精华或群管理操作。群文件通知会尝试通过 `get_group_file_url` 安全导入 Asset，失败时只保存文件名等摘要；需要主动文件发送、卡片发送或管理能力时，应新增受限 Contribution 或独立语义工具，不能开放 raw OneBot Action。
+首版不主动发送文件、任意表情回应、群卡片、AI 语音、公告、签到、精华或群管理操作。群文件通知会尝试通过 `get_group_file_url` 安全导入 Asset，失败时只保存文件名等摘要。
+
+2026-10-10 更新（#15、#18）：
+
+- 出站文件已支持：消息中的 `file` part 拆成独立的物理投递，按会话类型调用 `upload_group_file` / `upload_private_file`，`file` 参数为 `base64://`，不假定协议端与 Host 同机；单文件上限 64 MiB，上传超时随文件大小放宽。上传回执没有消息 ID，投递记为已发送但不能引用或撤回。
+- 群管理与扩展能力按[扩展宿主能力与生态移植](../accepted/2026-10-07-扩展宿主能力与生态移植.md)的类型化平台动作提供，不暴露给智能体的通信工具：`like_member`、`react_to_message`、`send_forward_message`、`group_sign_in`（先试 `set_group_sign`，不支持时用 `send_group_sign`）为低风险；`mute_member`、`mute_all`、`kick_member`、`set_member_card`、`set_member_title`、`set_member_admin`、`set_group_name`、`send_group_notice`、`set_essence_message`、`remove_essence_message` 为管理级。涉及消息的动作接受逻辑消息 ID，由 Adapter 映射为平台消息 ID。
+- 原始 OneBot Action 透传按同一决策开放给扩展，属于高风险能力、需要用户逐项接受；会改变连接本身的 Action 在黑名单中拒绝。上文「不能开放 raw OneBot Action」由此作废。
+- 回应与戳一戳活动只在指向本账号时触发智能体，本账号自己产生的活动一律不触发（#17）。
+
+AI 语音、群卡片发送仍未实现。

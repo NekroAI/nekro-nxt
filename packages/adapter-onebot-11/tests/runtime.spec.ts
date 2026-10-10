@@ -611,6 +611,160 @@ describe('OneBot 11 normalized inbound', () => {
     await runtime.stop()
   })
 
+  it('sends files as uploads carrying the bytes, so the protocol endpoint can run on another machine', async () => {
+    let uploadsSupported = true
+    const protocol = await protocolEndpoint((request) =>
+      !uploadsSupported && String(request['action']).startsWith('upload_')
+        ? { status: 'failed', retcode: 1404, message: 'unsupported' }
+        : undefined,
+    )
+    const fake = createFakeContext()
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: {
+        endpoint: protocol.endpoint,
+        accessTokenCredentialRef: 'credential:onebot',
+        capturePokeEvents: true,
+        captureMessageReactionEvents: false,
+      },
+    })
+    await runtime.start()
+    await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+    const socket = [...protocol.server.clients][0]!
+    socket.send(
+      JSON.stringify({
+        post_type: 'message',
+        message_type: 'group',
+        group_id: 'file-group',
+        user_id: 'file-member',
+        message_id: 'file-anchor',
+        message: [{ type: 'text', data: { text: '发个文件' } }],
+      }),
+    )
+    await waitFor(() => fake.events.length === 1)
+    const channelId = [...fake.channels.values()][0]!
+    const file = { type: 'file' as const, assetId: AssetIdSchema.parse('ast_REPORTFILE'), name: '周报/草稿.pdf' }
+
+    expect(
+      await runtime.planOutbound({
+        parts: [{ type: 'text', text: '给你' }, file, { type: 'text', text: '看完说一声' }],
+      }),
+    ).toEqual([
+      { parts: [{ type: 'text', text: '给你' }] },
+      { parts: [file] },
+      { parts: [{ type: 'text', text: '看完说一声' }] },
+    ])
+
+    const delivery = {
+      deliveryId: PhysicalDeliveryIdSchema.parse('phy_FILE'),
+      logicalMessageId: LogicalMessageIdSchema.parse('msg_FILE'),
+      connectionId: fake.context.connectionId,
+      channelId,
+      parts: [file],
+    }
+    await expect(runtime.deliver(delivery, new AbortController().signal)).resolves.toEqual({ status: 'sent' })
+    expect(protocol.requests.find(({ action }) => action === 'upload_group_file')?.['params']).toEqual({
+      group_id: 'file-group',
+      file: 'base64://AQID',
+      name: '周报_草稿.pdf',
+    })
+
+    uploadsSupported = false
+    const unsupported = await runtime.deliver(delivery, new AbortController().signal)
+    expect(unsupported).toMatchObject({ status: 'failed', failure: { kind: 'permanent' } })
+    expect(JSON.stringify(unsupported)).toContain('不支持上传文件')
+
+    Object.defineProperty(fake.context.assets, 'read', {
+      value: () =>
+        Promise.resolve({ bytes: new Uint8Array(), mediaType: 'application/pdf', byteSize: 65 * 1024 * 1024 }),
+    })
+    const tooLarge = await runtime.deliver(delivery, new AbortController().signal)
+    expect(tooLarge).toMatchObject({ status: 'failed', failure: { kind: 'invalid' } })
+    expect(JSON.stringify(tooLarge)).toContain('64 MB')
+    await runtime.stop()
+  })
+
+  it('maps the typed platform actions onto OneBot calls, with message ids translated and endpoint variants tried', async () => {
+    const protocol = await protocolEndpoint((request) =>
+      request['action'] === 'set_group_sign' ? { status: 'failed', retcode: 1404, message: 'unsupported' } : undefined,
+    )
+    const fake = createFakeContext()
+    Object.defineProperty(fake.context.messages, 'resolvePlatformMessageId', {
+      value: (_channelId: string, logicalMessageId: string) =>
+        Promise.resolve(logicalMessageId === 'msg_KNOWN' ? 'platform-known' : undefined),
+    })
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: {
+        endpoint: protocol.endpoint,
+        accessTokenCredentialRef: 'credential:onebot',
+        capturePokeEvents: true,
+        captureMessageReactionEvents: false,
+      },
+    })
+    await runtime.start()
+    await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+    const socket = [...protocol.server.clients][0]!
+    socket.send(
+      JSON.stringify({
+        post_type: 'message',
+        message_type: 'group',
+        group_id: 'action-group',
+        user_id: 'action-member',
+        message_id: 'action-anchor',
+        message: [{ type: 'text', data: { text: '锚点' } }],
+      }),
+    )
+    await waitFor(() => fake.events.length === 1)
+    const channelId = [...fake.channels.values()][0]!
+    const memberId = [...fake.members.values()][0]!
+    const invoke = (action: string, args: Record<string, unknown>) =>
+      runtime.interactions.invokePlatformAction!({
+        channelId,
+        action,
+        args: z.record(z.string(), z.json()).parse(args),
+        clientRequestId: `action-${action}`,
+      })
+    const params = (action: string) => protocol.requests.findLast((request) => request['action'] === action)?.['params']
+
+    await expect(invoke('set_essence_message', { messageId: 'msg_KNOWN' })).resolves.toMatchObject({
+      status: 'succeeded',
+    })
+    expect(params('set_essence_msg')).toEqual({ message_id: 'platform-known' })
+    await expect(invoke('remove_essence_message', { messageId: 'msg_UNKNOWN' })).resolves.toMatchObject({
+      status: 'failed',
+    })
+    await invoke('react_to_message', { messageId: 'msg_KNOWN', emojiId: '76' })
+    expect(params('set_msg_emoji_like')).toEqual({ message_id: 'platform-known', emoji_id: '76', set: true })
+    await invoke('send_forward_message', { nodes: [{ name: '记录员', text: '第一段' }, { text: '第二段' }] })
+    expect(params('send_group_forward_msg')).toEqual({
+      group_id: 'action-group',
+      messages: [
+        { type: 'node', data: { name: '记录员', uin: '91001', content: [{ type: 'text', data: { text: '第一段' } }] } },
+        { type: 'node', data: { name: '消息', uin: '91001', content: [{ type: 'text', data: { text: '第二段' } }] } },
+      ],
+    })
+    await expect(invoke('send_forward_message', { nodes: [] })).resolves.toMatchObject({ status: 'failed' })
+    await invoke('send_group_notice', { content: '周六停服维护' })
+    expect(params('_send_group_notice')).toEqual({ group_id: 'action-group', content: '周六停服维护' })
+    await expect(invoke('group_sign_in', {})).resolves.toMatchObject({ status: 'succeeded' })
+    expect(params('send_group_sign')).toEqual({ group_id: 'action-group' })
+    await invoke('mute_all', { enable: true })
+    expect(params('set_group_whole_ban')).toEqual({ group_id: 'action-group', enable: true })
+    await invoke('set_group_name', { name: ' 新群名 ' })
+    expect(params('set_group_name')).toEqual({ group_id: 'action-group', group_name: '新群名' })
+    await invoke('set_member_title', { memberId, title: '记录员' })
+    expect(params('set_group_special_title')).toEqual({
+      group_id: 'action-group',
+      user_id: 'action-member',
+      special_title: '记录员',
+      duration: -1,
+    })
+    await invoke('set_member_admin', { memberId, enable: false })
+    expect(params('set_group_admin')).toEqual({ group_id: 'action-group', user_id: 'action-member', enable: false })
+    await runtime.stop()
+  })
+
   it('returns stable failures for invalid outbound targets, unsupported parts and interaction errors', async () => {
     const protocol = await protocolEndpoint((request) => {
       const action = request['action']
@@ -809,7 +963,7 @@ describe('OneBot 11 normalized inbound', () => {
       }),
     ).resolves.toMatchObject({ status: 'succeeded' })
 
-    // Test set_essence_message action
+    // Extensions name messages by logical id; a platform id is not accepted
     await expect(
       runtime.interactions.invokePlatformAction!({
         channelId,
@@ -817,7 +971,7 @@ describe('OneBot 11 normalized inbound', () => {
         args: { messageId: 'test-anchor' },
         clientRequestId: 'essence-1',
       }),
-    ).resolves.toMatchObject({ status: 'succeeded' })
+    ).resolves.toMatchObject({ status: 'failed' })
 
     // Test unknown action
     await expect(
