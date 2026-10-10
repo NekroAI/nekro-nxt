@@ -254,13 +254,13 @@ async function publish() {
   console.log(`NekroNXT ${release.version} 已发布。`)
 }
 
-/** `nekroai/nekro-nxt` or `docker.io/nekroai/nekro-nxt`; an empty value turns the mirror off. */
+/** `kromiose/nekro-nxt` or `docker.io/kromiose/nekro-nxt`; an empty value turns the mirror off. */
 export function dockerHubImage(value) {
   const image = value?.trim().toLowerCase()
   if (!image) return undefined
   const name = image.startsWith('docker.io/') ? image.slice('docker.io/'.length) : image
   if (!/^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/u.test(name)) {
-    throw new Error(`DOCKERHUB_IMAGE 需要形如 nekroai/nekro-nxt：${value}`)
+    throw new Error(`DOCKERHUB_IMAGE 需要形如 kromiose/nekro-nxt：${value}`)
   }
   return `docker.io/${name}`
 }

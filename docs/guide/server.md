@@ -17,7 +17,7 @@ docker run -d \
   ghcr.io/nekroai/nekro-nxt:latest
 ```
 
-在国内网络下拉取 `ghcr.io` 较慢或失败时，可以把镜像地址换成 Docker Hub 上的同一镜像 `nekroai/nekro-nxt:latest`（正式版同时发布到两处，内容一致，版本说明里列出了镜像摘要可以核对）。
+在国内网络下拉取 `ghcr.io` 较慢或失败时，可以把镜像地址换成 Docker Hub 上的同一镜像 `kromiose/nekro-nxt:latest`（正式版同时发布到两处，内容一致，版本说明里列出了镜像摘要可以核对）。
 
 `TZ` 是服务端所在的时区（IANA 名称），决定智能体看到的消息时间和定时任务的默认时区；不设置时容器使用 UTC。请设为频道成员实际所在的时区，否则成员说「下午三点」时，智能体会按 UTC 理解。
 
@@ -87,7 +87,7 @@ docker run -d \
 智能体、会话、扩展、资源、证书和工作区都位于 `/data`。升级时拉取新镜像并替换容器，不要在运行容器内执行 `git pull`：
 
 ```bash
-docker pull ghcr.io/nekroai/nekro-nxt:latest   # 或 docker pull nekroai/nekro-nxt:latest
+docker pull ghcr.io/nekroai/nekro-nxt:latest   # 或 docker pull kromiose/nekro-nxt:latest
 docker stop nekro-nxt
 docker rm nekro-nxt
 ```
