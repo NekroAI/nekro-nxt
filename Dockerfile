@@ -30,6 +30,7 @@ RUN apt-get update \
 COPY --from=build --chown=root:root /release/server /opt/nekro/server
 COPY --from=build --chown=root:root /workspace/apps/web/dist /opt/nekro/web/dist
 COPY --from=build --chown=root:root /workspace/LICENSE /workspace/NOTICE /opt/nekro/
+COPY --chown=root:root docker/entrypoint.sh /opt/nekro/entrypoint.sh
 RUN chmod -R a=rX /opt/nekro
 
 ENV NODE_ENV=production \
@@ -40,10 +41,10 @@ ENV NODE_ENV=production \
   NEKRO_RELEASE_ID=${NEKRO_RELEASE_ID}
 
 WORKDIR /data
-USER nekro
+# The entrypoint gives /data to NEKRO_UID:NEKRO_GID (default 10001, the nekro user) and drops to it.
 EXPOSE 4960
 VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["node", "-e", "require('node:https').get({hostname:'127.0.0.1',port:4960,path:'/health/ready',rejectUnauthorized:false},r=>{const ok=r.statusCode===200;r.resume();r.on('end',()=>process.exit(ok?0:1))}).on('error',()=>process.exit(1))"]
-ENTRYPOINT ["/usr/bin/tini", "--"]
+  CMD ["node", "-e", "require('node:https').get({hostname:'127.0.0.1',port:Number(process.env.NEKRO_PORT||4960),path:'/health/ready',rejectUnauthorized:false},r=>{const ok=r.statusCode===200;r.resume();r.on('end',()=>process.exit(ok?0:1))}).on('error',()=>process.exit(1))"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/nekro/entrypoint.sh"]
 CMD ["node", "/opt/nekro/server/dist/main.mjs"]

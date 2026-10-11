@@ -86,7 +86,9 @@ docker run -d \
 
 ## 数据、升级与备份
 
-智能体、会话、扩展、资源、证书和工作区都位于 `/data`。升级时拉取新镜像并替换容器，不要在运行容器内执行 `git pull`：
+智能体、会话、扩展、资源、证书和工作区都位于 `/data`。容器启动时会把 `/data` 交给运行用户（默认 UID/GID 10001），宿主机目录无需提前设置属主；需要与宿主机其他程序共用文件时，可用 `NEKRO_UID`、`NEKRO_GID` 指定运行用户。
+
+升级时拉取新镜像并替换容器，不要在运行容器内执行 `git pull`：
 
 ```bash
 docker pull ghcr.io/nekroai/nekro-nxt:latest   # 或 docker pull kromiose/nekro-nxt:latest
