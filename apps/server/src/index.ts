@@ -4618,6 +4618,9 @@ export class DshHostRuntime implements AgentSessionDriver {
     if (finish !== 'stop' && finish !== 'max-tokens') {
       throw new Error(`模型调用没有完成：${failure ?? finish ?? '没有返回结果'}`)
     }
+    if (finish === 'max-tokens' && text.trim() === '') {
+      throw new Error('模型用完了输出长度，还没有给出回答。')
+    }
     return {
       text: text.trim(),
       ...(usage === undefined
@@ -4673,12 +4676,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     let usage: TokenUsage | undefined
     let finish: string | undefined
     let failure: string | undefined
+    // Page tasks such as labelling want a short structured answer; with the provider's default reasoning, thinking can
+    // use up the output budget and leave no text. Ask for the least reasoning the model offers.
+    const info = await this.#context.llm.resolveModelInfo(input.provider, input.model).catch(() => undefined)
+    const leastEffort = info?.reasoning?.efforts[0]?.id
     for await (const chunk of this.#context.llm.stream({
       provider: input.provider,
       model: input.model,
       system,
       messages,
       maxTokens: input.maxOutputTokens,
+      ...(leastEffort === undefined ? {} : { reasoningEffort: leastEffort }),
       signal: AbortSignal.timeout(120_000),
     })) {
       if (chunk.type === 'text-delta') text += chunk.text
@@ -4691,6 +4699,9 @@ export class DshHostRuntime implements AgentSessionDriver {
     // `max-tokens` still returns what the model wrote; the caller asked for at most that much.
     if (finish !== 'stop' && finish !== 'max-tokens') {
       throw new Error(`模型调用没有完成：${failure ?? finish ?? '没有返回结果'}`)
+    }
+    if (finish === 'max-tokens' && text.trim() === '') {
+      throw new Error('模型用完了输出长度，还没有给出回答。')
     }
     return {
       text: text.trim(),
