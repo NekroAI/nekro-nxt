@@ -375,7 +375,7 @@ test.describe('workshop', () => {
         .setInputFiles({ name: 'imported.nxt-extension', mimeType: 'application/zip', buffer: Buffer.from('PK') })
       await page.getByRole('dialog').getByRole('button', { name: '导入', exact: true }).click()
       await expect(page).toHaveURL(new RegExp(`/workshop/extensions/${importedId}$`))
-      await expect(page.locator('[aria-current="page"]', { hasText: '刚导入的扩展' })).toBeVisible()
+      await expect(page.locator('a[aria-current="page"]', { hasText: '刚导入的扩展' })).toBeVisible()
     } finally {
       await page.close()
     }
