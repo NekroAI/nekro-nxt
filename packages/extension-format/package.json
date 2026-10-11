@@ -1,6 +1,6 @@
 {
   "name": "@nekro-nxt/extension-format",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "type": "module",
   "description": "NekroNXT 扩展包格式：.nxt-extension 结构校验、扩展清单与内容摘要",
