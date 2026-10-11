@@ -14,6 +14,7 @@
 8. [升级、备份与恢复](guide/upgrade-backup.md)：双通道、数据根和恢复原则；
 9. [常见问题与排障](guide/troubleshooting.md)：安装、Host、模型、连接和扩展问题；
 10. [贡献者入口](guide/contributors.md)：源码开发、架构、测试和文档维护。
+11. [社区反馈](guide/community-feedback.md)：草稿确认、智能体起草、处理进展与隐私控制。
 
 ## 产品与设计
 

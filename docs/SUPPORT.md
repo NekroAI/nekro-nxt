@@ -2,7 +2,7 @@
 
 ## 使用问题
 
-先查看[快速开始](guide/getting-started.md)与[常见问题](guide/troubleshooting.md)。仍无法解决时，使用 GitHub Issue 并提供：
+先查看[快速开始](guide/getting-started.md)与[常见问题](guide/troubleshooting.md)。仍无法解决时，可以在「社区 → 反馈」提交，或请智能体起草后由你确认，操作与隐私说明见[社区反馈](guide/community-feedback.md)。也可以使用 GitHub Issue，并提供：
 
 - NekroNXT 版本、Release ID 或 commit；
 - 桌面版或服务端、操作系统和安装方式；
