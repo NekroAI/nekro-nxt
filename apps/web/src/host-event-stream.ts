@@ -24,6 +24,12 @@ interface OnlineEventTarget {
   removeEventListener(type: 'online', listener: () => void): void
 }
 
+interface VisibilityTarget {
+  readonly visibilityState: string
+  addEventListener(type: 'visibilitychange', listener: () => void): void
+  removeEventListener(type: 'visibilitychange', listener: () => void): void
+}
+
 interface HostEventSource {
   readonly readyState: number
   addEventListener(type: string, listener: (event: Event) => void): void
@@ -35,11 +41,18 @@ export interface HostEventStreamOptions {
   readonly reconnectDelaysMs?: readonly number[] | undefined
   readonly nativeReconnectGraceMs?: number | undefined
   readonly onlineTarget?: OnlineEventTarget | null | undefined
+  /** An open connection that delivers no frame (the Server sends a heartbeat every 15 s) for this long is replaced. */
+  readonly staleAfterMs?: number | undefined
+  /** A page that returns to the foreground after this long without a frame reconnects at once. */
+  readonly resumeAfterMs?: number | undefined
+  readonly visibilityTarget?: VisibilityTarget | null | undefined
 }
 
 const defaultOnlineTarget = (): OnlineEventTarget | null => (typeof window === 'undefined' ? null : window)
+const defaultVisibilityTarget = (): VisibilityTarget | null => (typeof document === 'undefined' ? null : document)
 
 const EVENT_SOURCE_CONNECTING = 0
+const EVENT_SOURCE_OPEN = 1
 
 /**
  * Owns the browser's single Host SSE connection.
@@ -59,9 +72,18 @@ export class HostEventStream {
   readonly #nativeReconnectGraceMs: number
   readonly #onlineTarget: OnlineEventTarget | null
   readonly #onlineListener = (): void => this.reconnectNow()
+  readonly #staleAfterMs: number
+  readonly #resumeAfterMs: number
+  readonly #visibilityTarget: VisibilityTarget | null
+  readonly #visibilityListener = (): void => {
+    if (this.#visibilityTarget?.visibilityState !== 'visible') return
+    if (Date.now() - this.#lastFrameAt >= this.#resumeAfterMs) this.reconnectNow()
+  }
   #source: HostEventSource | undefined
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectAttempt = 0
+  #watchdog: ReturnType<typeof setInterval> | undefined
+  #lastFrameAt = 0
 
   constructor(options: HostEventStreamOptions = {}) {
     this.#createEventSource = options.createEventSource ?? (() => new EventSource('/api/events'))
@@ -72,6 +94,10 @@ export class HostEventStream {
     this.#nativeReconnectGraceMs = options.nativeReconnectGraceMs ?? 5_000
     if (this.#nativeReconnectGraceMs < 0) throw new TypeError('Host SSE native reconnect grace must be non-negative.')
     this.#onlineTarget = options.onlineTarget === undefined ? defaultOnlineTarget() : options.onlineTarget
+    this.#staleAfterMs = options.staleAfterMs ?? 45_000
+    this.#resumeAfterMs = options.resumeAfterMs ?? 20_000
+    this.#visibilityTarget =
+      options.visibilityTarget === undefined ? defaultVisibilityTarget() : options.visibilityTarget
   }
 
   subscribe(handlers: HostEventStreamHandlers): () => void {
@@ -92,11 +118,16 @@ export class HostEventStream {
 
   #start(): void {
     this.#onlineTarget?.addEventListener('online', this.#onlineListener)
+    this.#visibilityTarget?.addEventListener('visibilitychange', this.#visibilityListener)
+    this.#watchdog = setInterval(() => this.#checkStale(), Math.max(1_000, Math.floor(this.#staleAfterMs / 3)))
     this.#connect()
   }
 
   #stop(): void {
     this.#onlineTarget?.removeEventListener('online', this.#onlineListener)
+    this.#visibilityTarget?.removeEventListener('visibilitychange', this.#visibilityListener)
+    if (this.#watchdog !== undefined) clearInterval(this.#watchdog)
+    this.#watchdog = undefined
     this.#clearReconnectTimer()
     this.#source?.close()
     this.#source = undefined
@@ -114,8 +145,13 @@ export class HostEventStream {
       return
     }
     this.#source = source
+    this.#lastFrameAt = Date.now()
+    source.addEventListener('heartbeat', () => {
+      if (source === this.#source) this.#lastFrameAt = Date.now()
+    })
     source.addEventListener('open', (event) => {
       if (source !== this.#source) return
+      this.#lastFrameAt = Date.now()
       this.#clearReconnectTimer()
       this.#reconnectAttempt = 0
       hostReleaseGuard.reconnect()
@@ -133,7 +169,9 @@ export class HostEventStream {
     })
     for (const type of HOST_EVENT_STREAM_EVENTS) {
       source.addEventListener(type, (event) => {
-        if (source === this.#source) this.#publish(type, event)
+        if (source !== this.#source) return
+        this.#lastFrameAt = Date.now()
+        this.#publish(type, event)
       })
     }
   }
@@ -148,6 +186,18 @@ export class HostEventStream {
       this.#reconnectTimer = undefined
       this.#replaceSource()
     }, delay)
+  }
+
+  /**
+   * A connection a proxy or a sleeping network left half-open stays OPEN without delivering anything and never
+   * reports an error; treat a long silence as a failure so the page says so and reconciles after reconnecting.
+   */
+  #checkStale(): void {
+    const source = this.#source
+    if (source === undefined || source.readyState !== EVENT_SOURCE_OPEN) return
+    if (Date.now() - this.#lastFrameAt < this.#staleAfterMs) return
+    this.#publish('error', new Error('Host event stream went silent.'))
+    this.reconnectNow()
   }
 
   #replaceSource(): void {

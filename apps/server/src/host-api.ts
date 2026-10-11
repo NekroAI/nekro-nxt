@@ -417,7 +417,8 @@ export const createNekroHostApi = (
       for (const frame of replay.frames) hub.write(res, frame)
       hub.write(res, renderSse({ event: 'status', data: { ok: true, message: '已连接', replay: replay.status } }))
 
-      const heartbeat = setInterval(() => hub.write(res, `: heartbeat\n\n`), 15_000)
+      // A named event, unlike an SSE comment, reaches the page, so clients can tell a silently stalled connection.
+      const heartbeat = setInterval(() => hub.write(res, 'event: heartbeat\ndata: {}\n\n'), 15_000)
       const onClose = (): void => {
         hub.remove(res)
         clearInterval(heartbeat)

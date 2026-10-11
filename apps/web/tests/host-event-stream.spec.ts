@@ -152,4 +152,75 @@ describe('HostEventStream', () => {
     expect(onlineTarget.listeners.size).toBe(0)
     expect(sources[2]!.closeCount).toBe(1)
   })
+
+  it('replaces an open connection that goes silent and keeps one that receives heartbeats', () => {
+    const sources: StubEventSource[] = []
+    const errors: unknown[] = []
+    const stream = new HostEventStream({
+      createEventSource: () => {
+        const source = new StubEventSource()
+        sources.push(source)
+        return source
+      },
+      staleAfterMs: 45_000,
+      onlineTarget: null,
+      visibilityTarget: null,
+    })
+    const unsubscribe = stream.subscribe({ error: (event) => errors.push(event) })
+    sources[0]!.open()
+    // Heartbeats every 15 s keep the connection.
+    for (let index = 0; index < 6; index += 1) {
+      vi.advanceTimersByTime(15_000)
+      sources[0]!.emit('heartbeat')
+    }
+    expect(sources).toHaveLength(1)
+    expect(errors).toHaveLength(0)
+
+    // Half-open: still OPEN but nothing arrives. The page hears about it and a new connection replaces it.
+    vi.advanceTimersByTime(60_000)
+    expect(errors).toHaveLength(1)
+    expect(sources).toHaveLength(2)
+    expect(sources[0]!.closeCount).toBe(1)
+    unsubscribe()
+  })
+
+  it('reconnects when the page returns to the foreground after a long silence', () => {
+    const sources: StubEventSource[] = []
+    const visibility = {
+      visibilityState: 'hidden',
+      listeners: new Set<() => void>(),
+      addEventListener(_type: 'visibilitychange', listener: () => void) {
+        this.listeners.add(listener)
+      },
+      removeEventListener(_type: 'visibilitychange', listener: () => void) {
+        this.listeners.delete(listener)
+      },
+      show() {
+        this.visibilityState = 'visible'
+        for (const listener of this.listeners) listener()
+      },
+    }
+    const stream = new HostEventStream({
+      createEventSource: () => {
+        const source = new StubEventSource()
+        sources.push(source)
+        return source
+      },
+      staleAfterMs: 10 * 60_000,
+      resumeAfterMs: 20_000,
+      onlineTarget: null,
+      visibilityTarget: visibility,
+    })
+    const unsubscribe = stream.subscribe({ open: () => undefined })
+    sources[0]!.open()
+    vi.advanceTimersByTime(5_000)
+    visibility.show()
+    expect(sources).toHaveLength(1)
+    visibility.visibilityState = 'hidden'
+    vi.advanceTimersByTime(30_000)
+    visibility.show()
+    expect(sources).toHaveLength(2)
+    unsubscribe()
+    expect(visibility.listeners.size).toBe(0)
+  })
 })
