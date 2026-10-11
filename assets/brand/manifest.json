@@ -1552,16 +1552,16 @@
       "source": "Release preparation and reviewed product captures"
     },
     {
-      "path": "release-images/current/memory-workbench.png",
+      "path": "release-images/current/sticker-library.png",
       "format": "png",
-      "bytes": 202170,
-      "sha256": "df04134ea0eeac4c2b33de3923d098fee2f76ddf813b17e21da3fab97ace808f",
+      "bytes": 157408,
+      "sha256": "20ab06658b5c0fdfe6e5920f690622562bb14474f638cb18298441c036c94c72",
       "rightsCategory": "brand-reserved",
       "rights": "Copyright © 2026 NekroAI. All rights reserved.",
       "usage": "Release-scoped temporary artwork",
       "source": "Release preparation and reviewed product captures",
-      "width": 1440,
-      "height": 900,
+      "width": 1360,
+      "height": 860,
       "alpha": false
     },
     {
