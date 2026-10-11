@@ -1,4 +1,4 @@
-import { Compass, PackageCheck, Send, UserRound, UsersRound } from 'lucide-react'
+import { Compass, MessageCircle, PackageCheck, Send, UserRound, UsersRound } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import type { CommunityPermissionItem, CommunityReviewStatus, HostApiResponse } from '@nekro-nxt/contracts'
@@ -7,6 +7,8 @@ import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
 import { CommunityImportNote, ImportDialog } from '../workshop/import-dialog.js'
 import { AccountView } from './account.js'
+import { FeedbackView } from './feedback.js'
+import { feedbackScope, useFeedbackSummary } from './feedback-model.js'
 import { ENVIRONMENT_LABEL, useCommunityStatus } from './community-model.js'
 import { CommunityView } from './discover.js'
 import { InstalledView } from './installed.js'
@@ -30,6 +32,7 @@ type Section =
   | { readonly kind: 'installed' }
   | { readonly kind: 'mine'; readonly releaseId?: string }
   | { readonly kind: 'account' }
+  | { readonly kind: 'feedback' }
 
 const parse = (pathname: string): Section | undefined => {
   if (pathname === '/community' || pathname === '/community/') return { kind: 'discover' }
@@ -43,6 +46,7 @@ const parse = (pathname: string): Section | undefined => {
   const release = /^\/community\/mine\/releases\/([^/]+)\/?$/u.exec(pathname)
   if (release) return { kind: 'mine', releaseId: decodeURIComponent(release[1] ?? '') }
   if (/^\/community\/account\/?$/u.test(pathname)) return { kind: 'account' }
+  if (/^\/community\/feedback\/?$/u.test(pathname)) return { kind: 'feedback' }
   return undefined
 }
 
@@ -52,6 +56,7 @@ const CRUMB: Readonly<Record<Section['kind'], string>> = {
   installed: '已安装',
   mine: '我的发布',
   account: '账号',
+  feedback: '反馈',
 }
 
 /**
@@ -62,6 +67,7 @@ export default function CommunitySpace() {
   const { pathname } = useLocation()
   const navigate = useGo()
   const community = useCommunityStatus()
+  const feedback = useFeedbackSummary()
   const [pending, setPending] = useState<PendingCommunityImport>()
   const wide = useWideLayout()
   const section = parse(pathname)
@@ -112,6 +118,16 @@ export default function CommunitySpace() {
           ) : null,
         )}
         {row('mine', '/community/mine', <Send size={14} />, '我的发布', account ? '发布记录与审查结果' : '登录后查看')}
+        {status?.features?.includes('feedback') || feedback.pendingDrafts > 0 || feedback.unread > 0
+          ? row(
+              'feedback',
+              '/community/feedback',
+              <MessageCircle size={14} />,
+              '反馈',
+              feedback.pendingDrafts ? `${feedback.pendingDrafts} 条等待确认` : '问题、建议与处理进展',
+              feedback.unread ? <span className={styles.count}>{feedback.unread}</span> : undefined,
+            )
+          : null}
         <div className={styles.account}>
           {row(
             'account',
@@ -176,6 +192,8 @@ export default function CommunitySpace() {
         )
       ) : section.kind === 'installed' ? (
         <InstalledView onInspected={setPending} onChecked={() => void community.refresh()} />
+      ) : section.kind === 'feedback' ? (
+        <FeedbackView key={feedbackScope(community)} community={community} />
       ) : section.kind === 'mine' ? (
         section.releaseId ? (
           <ReviewReportView key={section.releaseId} releaseId={section.releaseId} />

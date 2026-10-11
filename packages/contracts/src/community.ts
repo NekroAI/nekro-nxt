@@ -102,6 +102,7 @@ export const CommunityEnvironmentSchema = z.enum(['production', 'staging', 'deve
 export type CommunityEnvironment = z.output<typeof CommunityEnvironmentSchema>
 
 export const CommunityStatusSchema = z.object({
+  features: z.array(z.string()).optional(),
   communityUrl: z.string().url(),
   /** 社区自我声明的环境；连不上或旧版社区时为 null。 */
   environment: CommunityEnvironmentSchema.nullable(),

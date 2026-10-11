@@ -434,11 +434,19 @@ export class CommunityFeedbackService {
   }
 
   async list(refresh = false) {
-    if (refresh) await this.sync()
+    let syncError: string | undefined
+    if (refresh) {
+      try {
+        await this.sync()
+      } catch (error) {
+        syncError = error instanceof Error ? error.message : '暂时无法同步社区反馈。'
+      }
+    }
     const identity = this.#community.feedbackIdentity()
     return {
       drafts: this.#repository.communityFeedback.listDrafts(identity).filter((draft) => draft.state !== 'discarded'),
       items: this.#repository.communityFeedback.listItems(identity),
+      ...(syncError === undefined ? {} : { syncError }),
     }
   }
   lastSent() {
@@ -464,6 +472,7 @@ export class CommunityFeedbackService {
     const identity = this.#community.feedbackIdentity()
     const context = this.#sources.redaction(null)
     let payload = value
+    let method: 'POST' | 'DELETE' = 'POST'
     if (action === 'messages') {
       const input = CommunityFeedbackMessageInputSchema.parse(value)
       payload = { ...input, body: redactFeedbackText(input.body, context) }
@@ -471,25 +480,44 @@ export class CommunityFeedbackService {
       const input = CommunityFeedbackReopenSchema.parse(value)
       payload = { note: redactFeedbackText(input.note, context) }
     } else if (action === 'affected') {
+      const input = z
+        .object({ affected: z.boolean().default(true), consent: z.boolean().default(false) })
+        .strict()
+        .parse(value)
+      if (identity.communityUserId === null) throw new Error('请先登录社区。')
+      if (input.affected) {
+        const current = this.#stored()
+        if (!current.consentedAt && !input.consent) throw new Error('请先阅读并同意反馈说明。')
+        if (!current.consentedAt)
+          this.#writeSettings({ ...current, consentedAt: this.#now(), instanceId: this.#instanceId() })
+      } else method = 'DELETE'
       const diagnostics = this.#sources.diagnostics(null)
-      payload = {
-        diagnostics: {
-          nxtVersion: diagnostics.nxtVersion,
-          hostKind: diagnostics.hostKind,
-          platform: diagnostics.platform,
-          arch: diagnostics.arch,
-        },
-        nxtVersion: diagnostics.nxtVersion,
-      }
+      payload = input.affected
+        ? {
+            diagnostics: {
+              nxtVersion: diagnostics.nxtVersion,
+              hostKind: diagnostics.hostKind,
+              platform: diagnostics.platform,
+              arch: diagnostics.arch,
+            },
+            nxtVersion: diagnostics.nxtVersion,
+          }
+        : {}
     } else if (action === 'confirm-fixed') {
       payload = { clientVersion: this.#sources.diagnostics(null).nxtVersion }
     }
-    const remote = await this.#community.updateFeedback(identity, ref, action, payload)
-    this.#repository.communityFeedback.saveItem({ ...this.#item(identity, remote), unread: false })
+    const remote = await this.#community.updateFeedback(identity, ref, action, payload, method)
+    if (method === 'DELETE' && remote.access !== 'owner') this.#repository.communityFeedback.removeItem(identity, ref)
+    else this.#repository.communityFeedback.saveItem({ ...this.#item(identity, remote), unread: false })
     if (action === 'withdraw' && z.object({ deleteText: z.literal(true) }).safeParse(value).success)
       this.#clearLocalText(identity, ref)
     this.#changed()
     await this.sync().catch(() => undefined)
+    const current = this.#repository.communityFeedback.getItem(identity, ref)
+    if (current?.unread) {
+      this.#repository.communityFeedback.saveItem({ ...current, unread: false })
+      this.#changed()
+    }
     return remote
   }
 

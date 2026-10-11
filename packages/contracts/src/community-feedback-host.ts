@@ -102,7 +102,11 @@ export const CommunityFeedbackSnapshotSchema = z
   })
   .strict()
 export const CommunityFeedbackLocalListSchema = z
-  .object({ drafts: z.array(CommunityFeedbackDraftSchema), items: z.array(CommunityFeedbackItemSchema) })
+  .object({
+    drafts: z.array(CommunityFeedbackDraftSchema),
+    items: z.array(CommunityFeedbackItemSchema),
+    syncError: z.string().optional(),
+  })
   .strict()
 export const CommunityFeedbackPayloadSchema = z
   .object({ payload: CommunityFeedbackCreateSchema, redactions: z.array(z.string()) })

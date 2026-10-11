@@ -12,6 +12,16 @@ export const COMMUNITY_FEEDBACK_STATUSES = [
 ] as const
 export const CommunityFeedbackStatusSchema = z.enum(COMMUNITY_FEEDBACK_STATUSES)
 export type CommunityFeedbackStatus = z.output<typeof CommunityFeedbackStatusSchema>
+export const COMMUNITY_FEEDBACK_STATUS_LABELS: Readonly<Record<CommunityFeedbackStatus, string>> = {
+  new: '新反馈',
+  needs_info: '需要补充',
+  triaged: '已确认',
+  planned: '已计划',
+  fixed: '已修复',
+  duplicate: '重复',
+  wontfix: '不处理',
+  withdrawn: '已撤回',
+}
 export const CommunityFeedbackKindSchema = z.enum(['bug', 'suggestion', 'question'])
 export const CommunityFeedbackIdSchema = z
   .string()

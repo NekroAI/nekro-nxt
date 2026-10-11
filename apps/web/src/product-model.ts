@@ -534,6 +534,7 @@ export interface ProductState {
   readonly capabilityAvailability: CapabilityAvailability
   /** The host's account library; an account takes effect only for agents that grant it. */
   readonly commandAccounts: readonly CommandAccount[]
+  readonly communityFeedback?: HostApiResponse<'snapshot'>['communityFeedback']
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]

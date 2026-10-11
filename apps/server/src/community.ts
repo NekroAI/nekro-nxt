@@ -352,6 +352,7 @@ export class CommunityService {
     return {
       communityUrl: url,
       environment: meta?.environment ?? null,
+      ...(meta?.features.length ? { features: meta.features } : {}),
       account: stored?.account ?? null,
       signedInAt: stored?.signedInAt ?? null,
       updatesAvailable: installed.filter((item) => item.updateAvailable).length,

@@ -1,0 +1,114 @@
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.title {
+  margin: 0;
+  font: var(--t-page);
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+.stack {
+  display: grid;
+  gap: var(--s-4);
+  min-width: 0;
+}
+.form {
+  display: grid;
+  gap: var(--s-4);
+  max-width: var(--reader-width);
+  min-width: 0;
+}
+.row {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font: inherit;
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s-2);
+  align-items: center;
+  padding: var(--s-3);
+  color: var(--fg);
+  text-align: left;
+  border-radius: var(--r-2);
+}
+.row:hover {
+  background: var(--hover);
+}
+.row[data-selected='true']:hover {
+  background: transparent;
+}
+.rowTitle {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--t-title);
+}
+.rowMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+  color: var(--muted);
+  font: var(--t-caption);
+}
+.unread {
+  width: var(--s-2);
+  height: var(--s-2);
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.prose {
+  margin: 0;
+  color: var(--fg-2);
+  font: var(--t-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.muted {
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-note);
+  overflow-wrap: anywhere;
+}
+.payloadToggle {
+  justify-self: start;
+}
+.previewTitle {
+  margin: 0;
+  font: var(--t-title);
+}
+.payload {
+  max-height: 45vh;
+  overflow: auto;
+  margin: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font: var(--t-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.excerpt {
+  margin: 0;
+  padding: var(--s-3) var(--s-4);
+  border-left: 2px solid var(--line);
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

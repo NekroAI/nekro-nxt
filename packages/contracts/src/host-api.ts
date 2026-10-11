@@ -317,7 +317,7 @@ const AgentCapabilitiesSchema = z
 
 export const DynamicClientApprovalPolicySchema = z.enum(['manual', 'automatic'])
 
-export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested'])
+export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested', 'community-feedback-update'])
 export type NotificationEventKey = z.output<typeof NotificationEventKeySchema>
 
 export const NotificationSettingsViewSchema = z
@@ -331,7 +331,12 @@ export const NotificationSettingsViewSchema = z
         deviceKeyConfigured: z.boolean(),
       })
       .strict(),
-    events: z.record(NotificationEventKeySchema, z.boolean()),
+    events: z
+      .object({
+        'dynamic-client-approval-requested': z.boolean(),
+        'community-feedback-update': z.boolean().default(true),
+      })
+      .strict(),
   })
   .strict()
 
@@ -347,7 +352,9 @@ export const UpdateNotificationSettingsRequestSchema = z
         clearDeviceKey: z.boolean().optional(),
       })
       .strict(),
-    events: z.record(NotificationEventKeySchema, z.boolean()),
+    events: z
+      .object({ 'dynamic-client-approval-requested': z.boolean(), 'community-feedback-update': z.boolean().optional() })
+      .strict(),
   })
   .strict()
   .refine((value) => !(value.bark.deviceKey !== undefined && value.bark.clearDeviceKey === true), {
@@ -1179,11 +1186,12 @@ export const AttentionItemSchema = z
       'connection-unhealthy',
       'agent-model-unavailable',
       'agent-vision-unavailable',
+      'community-feedback',
     ]),
     severity: z.enum(['critical', 'warning', 'info']),
     subject: z
       .object({
-        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent']),
+        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent', 'community-feedback']),
         id: NonEmptyStringSchema,
       })
       .strict(),
@@ -1200,7 +1208,14 @@ export const AttentionItemSchema = z
     detail: z.string().max(400),
     action: z
       .object({
-        kind: z.enum(['open-channel', 'resolve-delivery', 'open-authoring-task', 'open-connection', 'open-agent']),
+        kind: z.enum([
+          'open-channel',
+          'resolve-delivery',
+          'open-authoring-task',
+          'open-connection',
+          'open-agent',
+          'open-community-feedback',
+        ]),
         label: z.string().min(1).max(40),
       })
       .strict(),
@@ -3353,7 +3368,7 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/community/feedback/items/:ref/affected',
     params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
-    request: z.object({}).strict(),
+    request: z.object({ affected: z.boolean().default(true), consent: z.boolean().default(false) }).strict(),
     response: CommunityFeedbackSchema,
     error: HostApiErrorSchema,
     invalidatesSnapshot: true,

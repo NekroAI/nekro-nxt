@@ -27,6 +27,7 @@ export interface FeedbackEnvironment {
 }
 
 export const runtimeFeedbackSources = (runtime: NekroRuntime, environment: FeedbackEnvironment): FeedbackSources => ({
+  notify: (input) => runtime.notifications.notifyCommunityFeedback(input),
   redaction: (channelId) => {
     const connections = runtime.core.listConnections()
     return {

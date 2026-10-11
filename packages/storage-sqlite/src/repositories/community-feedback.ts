@@ -85,6 +85,12 @@ export function createCommunityFeedbackRepository(database: DrizzleCoreDatabase)
         })
         .run()
     },
+    removeItem(identity: CommunityFeedbackIdentity, ref: string): void {
+      database
+        .delete(items)
+        .where(and(itemScope(identity), eq(items.ref, ref)))
+        .run()
+    },
     claimSend(
       id: CommunityFeedbackDraftId,
       identity: CommunityFeedbackIdentity,
