@@ -274,7 +274,8 @@ test('the open page recovers when an intermediary returns HTTP 500 for the SSE h
 
   hostAvailable = true
   await expect(page.getByRole('alert').filter({ hasText: '无法连接' })).toHaveCount(0, { timeout: 10_000 })
-  expect(eventAttempts).toBeGreaterThanOrEqual(2)
+  // The snapshot can recover before the stream's next backoff attempt; the stream reconnects on its own.
+  await expect.poll(() => eventAttempts, { timeout: 10_000 }).toBeGreaterThanOrEqual(2)
   await expect
     .poll(() => page.evaluate(() => document.documentElement.dataset['sseRecoveryJourney']))
     .toBe('same-document')
