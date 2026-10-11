@@ -193,7 +193,13 @@ describe('extension asset library', () => {
       library: backends.library,
     })
     const large = await sharp({
-      create: { width: 1400, height: 1400, channels: 3, noise: { type: 'gaussian', mean: 128, sigma: 60 } },
+      create: {
+        width: 1400,
+        height: 1400,
+        channels: 3,
+        background: '#808080',
+        noise: { type: 'gaussian', mean: 128, sigma: 60 },
+      },
     })
       .png()
       .toBuffer()

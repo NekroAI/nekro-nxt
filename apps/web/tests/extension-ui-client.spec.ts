@@ -35,7 +35,12 @@ const owner: ContributionOwner = {
   styleScope: 'c'.repeat(64),
 }
 
-const host = { call: () => Promise.resolve(null), subscribe: () => () => undefined, upload: () => Promise.resolve({ added: [], skipped: [] }), assetUrl: () => '' }
+const host = {
+  call: () => Promise.resolve(null),
+  subscribe: () => () => undefined,
+  upload: () => Promise.resolve({ added: [], skipped: [] }),
+  assetUrl: () => '',
+}
 const declaration: ExtensionPanelDeclaration = { id: 'summary', anchor: 'agent', title: '摘要', densities: ['full'] }
 const declared: ExtensionUiContributions = {
   ...EMPTY_EXTENSION_UI_CONTRIBUTIONS,

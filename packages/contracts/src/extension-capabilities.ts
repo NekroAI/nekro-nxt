@@ -480,7 +480,9 @@ export const extensionCapabilitiesExpand = (
 }
 
 const formatLibraryQuota = (bytes: number): string =>
-  bytes >= 1024 * 1024 * 1024 ? `${+(bytes / 1024 / 1024 / 1024).toFixed(1)} GB` : `${Math.round(bytes / 1024 / 1024)} MB`
+  bytes >= 1024 * 1024 * 1024
+    ? `${+(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
+    : `${Math.round(bytes / 1024 / 1024)} MB`
 
 /** Capability risk tiers shown on the approval page (§7 of the capability decision). */
 export type ExtensionCapabilityRisk = 'normal' | 'sensitive' | 'high'

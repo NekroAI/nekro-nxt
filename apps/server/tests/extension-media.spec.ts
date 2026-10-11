@@ -93,7 +93,7 @@ describe('tool result images', () => {
         return Promise.resolve([])
       },
     })
-    const value: JsonValue = await wrapped.execute({})
+    const value = await wrapped.execute({})
     expect(wrapped.output.render({}, value)).toEqual([{ type: 'text', text: '找到这些：' }])
     expect(asked).toBe(false)
   })
@@ -198,7 +198,7 @@ describe('library uploads', () => {
     const call = async (method: string, url: string, body?: Buffer, name?: string) => {
       const response = await fetch(`${origin}${url}`, {
         method,
-        ...(body === undefined ? {} : { body }),
+        ...(body === undefined ? {} : { body: new Uint8Array(body) }),
         headers: name === undefined ? {} : { 'x-nekro-file-name': encodeURIComponent(name) },
       })
       return {

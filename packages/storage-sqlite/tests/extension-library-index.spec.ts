@@ -71,7 +71,12 @@ describe('extension asset library', () => {
       }),
     ).toThrow(ExtensionLibraryQuotaError)
 
-    repository.extensionLibrary.keepLibraryAsset({ extensionId, assetId: second.asset.id, addedAt: 150, quotaBytes: 1024 })
+    repository.extensionLibrary.keepLibraryAsset({
+      extensionId,
+      assetId: second.asset.id,
+      addedAt: 150,
+      quotaBytes: 1024,
+    })
     const page = repository.extensionLibrary.listLibraryAssets(extensionId, { limit: 1 })
     expect(page.assets.map(({ assetId }) => assetId)).toEqual([second.asset.id])
     expect(page.next).toBeDefined()
@@ -171,7 +176,9 @@ describe('extension search index', () => {
       }),
     ).toEqual([])
     index.putIndexVector({ rowId, space: 'space-1', vector: Buffer.from([1, 2, 3]), scale: 0.5, textDigest: 'd1' })
-    expect(index.listIndexVectors({ extensionId, collection: 'stickers', space: 'space-1', filter: [] })).toHaveLength(1)
+    expect(index.listIndexVectors({ extensionId, collection: 'stickers', space: 'space-1', filter: [] })).toHaveLength(
+      1,
+    )
     expect(index.deleteIndexDocument(extensionId, 'stickers', 'a')).toBe(true)
     expect(keywordRows()).toBe(0)
     expect(index.countIndexVectors('space-1').vectors).toBe(0)
