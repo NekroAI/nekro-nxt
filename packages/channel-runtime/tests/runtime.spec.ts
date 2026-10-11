@@ -1,4 +1,5 @@
 import type {
+  AdapterConnectionRuntime,
   AdapterConnectionContext,
   AdapterConnectionInteractions,
   AdapterChannelInboundEvent,
@@ -1034,6 +1035,104 @@ describe('ChannelRuntime M1 lane', () => {
     expect(calls).toEqual(['start:platform-message-1', 'finish:platform-message-1'])
     expect(context.feedbackOrder[0]).toBe('persist')
     expect(context.adapterStateRows.size).toBe(0)
+  })
+
+  it('reacts once per processing cycle, including injected messages after a reply consumes feedback', async () => {
+    const calls: string[] = []
+    let endTurn!: () => void
+    let idle = new Promise<void>((resolve) => {
+      endTurn = resolve
+    })
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: ({ platformMessageId }) => {
+        calls.push(`start:${platformMessageId}`)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+      finishProcessingFeedback: ({ platformMessageId }) => {
+        calls.push(`finish:${platformMessageId}`)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+    })
+    context.sessionDriver.whenIdle = () => idle
+    const accept = (id: string) =>
+      context.runtime.acceptChannelInbound({
+        ...inbound(context.connection.id, context.channel.id, id),
+        platformMessageId: id,
+      })
+    await accept('first-trigger')
+    context.setSessionStatus('running')
+    await Promise.all([accept('injected-second'), accept('injected-third')])
+    expect(calls).toEqual(['start:first-trigger'])
+    expect(context.admissionCalls.slice(1).map((call) => call.mode)).toEqual(['inject', 'inject'])
+    const planOutbound: NonNullable<AdapterConnectionRuntime['planOutbound']> = ({ parts }) =>
+      Promise.resolve([{ parts, consumesProcessingFeedback: true }])
+    Object.defineProperty(context.adapter, 'planOutbound', { value: planOutbound })
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+    context.adapter.queueReceipt({ status: 'sent', platformMessageId: 'fixture-reply' })
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '虚构回复。' }] })
+    await accept('injected-after-reply')
+    expect(calls).toEqual(['start:first-trigger'])
+    endTurn()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    context.setSessionStatus('idle')
+    idle = Promise.resolve()
+    await accept('next-turn')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(calls).toEqual(['start:first-trigger', 'start:next-turn', 'finish:next-turn'])
+  })
+
+  it('does not attach a previous cycle whose cleanup is still in flight to the next reply', async () => {
+    let endFirst!: () => void
+    let finishCleanup!: () => void
+    let cleanupStarted!: () => void
+    const firstIdle = new Promise<void>((resolve) => {
+      endFirst = resolve
+    })
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      cleanupStarted = resolve
+    })
+    const calls: string[] = []
+    const context = await setup(true, undefined, undefined, {
+      startProcessingFeedback: ({ platformMessageId }) => {
+        calls.push(platformMessageId)
+        return Promise.resolve({ status: 'succeeded' })
+      },
+      finishProcessingFeedback: async () => {
+        cleanupStarted()
+        await cleanup
+        return { status: 'succeeded' }
+      },
+    })
+    context.sessionDriver.whenIdle = () => firstIdle
+    const accept = (id: string) =>
+      context.runtime.acceptChannelInbound({
+        ...inbound(context.connection.id, context.channel.id, id),
+        platformMessageId: id,
+      })
+    await accept('old-cycle')
+    endFirst()
+    await started
+    let endNext!: () => void
+    context.sessionDriver.whenIdle = () =>
+      new Promise<void>((resolve) => {
+        endNext = resolve
+      })
+    await accept('new-cycle')
+    const planOutbound: NonNullable<AdapterConnectionRuntime['planOutbound']> = ({ parts }) =>
+      Promise.resolve([{ parts, consumesProcessingFeedback: true }])
+    Object.defineProperty(context.adapter, 'planOutbound', { value: planOutbound })
+    const episode = context.runtimeRepository.getActiveEpisode(context.channel.id, context.agent.definition.id)!
+    await context.runtime.sendMessage({ episodeId: episode.id, parts: [{ type: 'text', text: '新一轮的回复。' }] })
+    expect(context.adapter.deliveries.at(-1)?.processingFeedback?.platformMessageId).toBe('new-cycle')
+    finishCleanup()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await accept('after-old-cleanup')
+    expect(calls).toEqual(['old-cycle', 'new-cycle'])
+    endNext()
+    await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
   it('cancels delayed feedback retries on shutdown and preserves unresolved leases for recovery', async () => {

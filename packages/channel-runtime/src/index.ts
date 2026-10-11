@@ -1504,7 +1504,7 @@ export class ChannelRuntime {
     if (this.#visibleEvents(binding, candidateEvents).length === 0) return
     const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, event)
     if (!this.#admissionAllowed(binding.agentId)) {
-      if (feedbackLeaseId !== undefined) await this.#feedback.cleanupFeedbackLease(feedbackLeaseId, 'cancelled')
+      if (feedbackLeaseId !== undefined) await this.#feedback.cleanupEpisodeFeedback(episode.id, 'cancelled')
       return
     }
     const existingAdmission = this.#runtimeRepository
@@ -1549,7 +1549,7 @@ export class ChannelRuntime {
         this.#feedback.finishWhenIdle(episode.id, this.#sessionDriver.whenIdle?.(dshSessionId) ?? Promise.resolve())
       }
     } catch (error) {
-      if (feedbackLeaseId !== undefined) await this.#feedback.cleanupFeedbackLease(feedbackLeaseId, 'error')
+      if (feedbackLeaseId !== undefined) await this.#feedback.cleanupEpisodeFeedback(episode.id, 'error')
       throw error
     }
   }

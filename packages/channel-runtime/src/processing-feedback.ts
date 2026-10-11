@@ -79,6 +79,8 @@ export class ProcessingFeedback {
     this.#timestamp = timestamp
   }
   readonly #feedbackLeases = new Map<string, ProcessingFeedbackLease>()
+  // One claim per processing cycle, retained even if delivery consumes its platform feedback early.
+  readonly #feedbackCycles = new Map<EpisodeId, { readonly leaseId: string; idleTracked: boolean }>()
   readonly #feedbackDisabledConnections = new Set<ConnectionId>()
   readonly #feedbackTasks = new Set<Promise<void>>()
   readonly #feedbackCleanups = new Map<string, Promise<void>>()
@@ -94,12 +96,24 @@ export class ProcessingFeedback {
     return this.#feedbackLeases.get(id)
   }
   latestActiveLease(episodeId: EpisodeId): ProcessingFeedbackLease | undefined {
-    return [...this.#feedbackLeases.values()]
-      .filter((lease) => lease.episodeId === episodeId && lease.state === 'active')
-      .sort((left, right) => right.createdAt - left.createdAt)[0]
+    const cycle = this.#feedbackCycles.get(episodeId)
+    const lease = cycle === undefined ? undefined : this.#feedbackLeases.get(cycle.leaseId)
+    return lease?.state === 'active' ? lease : undefined
   }
   finishWhenIdle(episodeId: EpisodeId, idle: Promise<void>): void {
-    this.#trackFeedbackTask(idle.then(() => this.cleanupEpisodeFeedback(episodeId)))
+    const cycle = this.#feedbackCycles.get(episodeId)
+    if (!cycle || cycle.idleTracked) return
+    cycle.idleTracked = true
+    this.#trackFeedbackTask(
+      idle.then(async () => {
+        if (this.#feedbackCycles.get(episodeId) === cycle) this.#feedbackCycles.delete(episodeId)
+        // An older idle observer must never clean up a newer cycle in the same Episode.
+        await this.cleanupFeedbackLease(cycle.leaseId, this.#feedbackEndReasons.get(episodeId) ?? 'idle')
+        if (![...this.#feedbackLeases.values()].some((lease) => lease.episodeId === episodeId)) {
+          this.#feedbackEndReasons.delete(episodeId)
+        }
+      }),
+    )
   }
 
   async recoverProcessingFeedback(): Promise<void> {
@@ -120,6 +134,7 @@ export class ProcessingFeedback {
 
   async stopProcessingFeedback(): Promise<void> {
     this.#stopping = true
+    this.#feedbackCycles.clear()
     for (const [timer, resolve] of this.#retryTimers) {
       clearTimeout(timer)
       resolve()
@@ -143,6 +158,7 @@ export class ProcessingFeedback {
       event.platformMessageId === undefined
     )
       return undefined
+    if (this.#feedbackCycles.has(episode.id)) return undefined
     const channel = this.#coreRepository.getChannel(event.channelId)
     if (!channel || channel.kind !== 'group' || this.#feedbackDisabledConnections.has(channel.connectionId))
       return undefined
@@ -160,33 +176,47 @@ export class ProcessingFeedback {
       createdAt: now,
       updatedAt: now,
     }
+    const cycle = { leaseId: lease.id, idleTracked: false }
+    this.#feedbackCycles.set(episode.id, cycle)
     this.#feedbackLeases.set(lease.id, lease)
-    await this.#persistFeedbackLeases(channel.connectionId)
-    const outcome = await adapter.interactions
-      .startProcessingFeedback({ leaseId: lease.id, channelId: channel.id, platformMessageId: event.platformMessageId })
-      .catch((error: unknown) => ({
-        status: 'failed' as const,
-        message: error instanceof Error ? error.message : String(error),
-      }))
-    if (outcome.status === 'unsupported') {
-      this.#feedbackDisabledConnections.add(channel.connectionId)
-      this.#feedbackLeases.delete(lease.id)
+    try {
       await this.#persistFeedbackLeases(channel.connectionId)
-      return undefined
+      const outcome = await adapter.interactions
+        .startProcessingFeedback({
+          leaseId: lease.id,
+          channelId: channel.id,
+          platformMessageId: event.platformMessageId,
+        })
+        .catch((error: unknown) => ({
+          status: 'failed' as const,
+          message: error instanceof Error ? error.message : String(error),
+        }))
+      if (outcome.status === 'unsupported') {
+        this.#feedbackDisabledConnections.add(channel.connectionId)
+        this.#feedbackLeases.delete(lease.id)
+        if (this.#feedbackCycles.get(episode.id) === cycle) this.#feedbackCycles.delete(episode.id)
+        await this.#persistFeedbackLeases(channel.connectionId)
+        return undefined
+      }
+      this.#feedbackLeases.set(lease.id, {
+        ...lease,
+        state: outcome.status === 'succeeded' ? 'active' : 'cleanup-pending',
+        updatedAt: this.#timestamp(),
+      })
+      await this.#persistFeedbackLeases(channel.connectionId)
+      return lease.id
+    } catch (error) {
+      if (this.#feedbackCycles.get(episode.id) === cycle) this.#feedbackCycles.delete(episode.id)
+      this.#trackFeedbackTask(this.cleanupFeedbackLease(lease.id, 'error'))
+      throw error
     }
-    this.#feedbackLeases.set(lease.id, {
-      ...lease,
-      state: outcome.status === 'succeeded' ? 'active' : 'cleanup-pending',
-      updatedAt: this.#timestamp(),
-    })
-    await this.#persistFeedbackLeases(channel.connectionId)
-    return lease.id
   }
 
   async cleanupEpisodeFeedback(
     episodeId: EpisodeId,
     reason?: 'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery',
   ): Promise<void> {
+    this.#feedbackCycles.delete(episodeId)
     if (reason !== undefined) this.#feedbackEndReasons.set(episodeId, reason)
     const resolvedReason = this.#feedbackEndReasons.get(episodeId) ?? 'idle'
     const leases = [...this.#feedbackLeases.values()].filter((lease) => lease.episodeId === episodeId)
