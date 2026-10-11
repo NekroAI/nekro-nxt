@@ -90,6 +90,8 @@ export const CommunityExtensionSortSchema = z.enum(['updated', 'score', 'downloa
 export const CommunityReleaseIdSchema = z.string().regex(/^rel_[0-9A-Za-z]+$/u)
 
 export const CommunityAccountSchema = z.object({
+  /** Immutable community identity; absent when connected to a community predating feedback support. */
+  id: z.string().min(1).max(100).optional(),
   handle: z.string().min(1).max(80),
   displayName: z.string().max(200),
   avatarUrl: z.string().url().nullable(),
