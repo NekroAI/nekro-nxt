@@ -108,6 +108,17 @@ describe('command confinement', () => {
     expect(readable(path.join(data, 'workspaces', 'agent-b', 'notes.txt'))).toBe(false)
   })
 
+  it('leaves directories DSH grants writable to that grant instead of listing their entries', () => {
+    const { home, workspace, confinement } = fixture()
+    // A writable temporary directory that holds hidden roots, as when the data root sits under /tmp.
+    const scratch = path.join(home, 'scratch')
+    mkdirSync(path.join(scratch, 'short-lived'), { recursive: true })
+    const roots = landlockReadRoots(readRules(confinement, workspace), [home])
+    expect(roots.some((entry) => entry === home || entry.startsWith(`${home}/`))).toBe(false)
+    // Everything outside it is still listed as before.
+    expect(roots.length).toBeGreaterThan(0)
+  })
+
   it('rewrites only the runners it knows', () => {
     const { workspace, confinement } = fixture()
     const policy = { mode: 'workspace-write' as const, workspaceRoot: workspace }

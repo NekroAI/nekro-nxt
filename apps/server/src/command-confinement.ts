@@ -104,11 +104,14 @@ export const bwrapArgs = (
 /**
  * Landlock only allows: the readable set is every directory or file whose narrowest rule allows it, found by
  * walking down only the directories that contain a rule. A symlink is granted only when its target is readable
- * and holds no rule, because Landlock grants the target itself.
+ * and holds no rule, because Landlock grants the target itself. Directories DSH already grants writable (the
+ * workspace and the temporary directories) are skipped: they are readable anyway, and listing a busy `/tmp` would
+ * grant entries that may be gone by the time the launcher opens them, which fails the whole command.
  */
-export const landlockReadRoots = (rules: readonly ReadRule[]): string[] => {
+export const landlockReadRoots = (rules: readonly ReadRule[], writable: readonly string[] = []): string[] => {
   const roots: string[] = []
   const visit = (entry: string) => {
+    if (writable.some((root) => entry === root || isStrictlyWithin(entry, root))) return
     const nested = rules.some((rule) => isStrictlyWithin(rule.path, entry))
     if (!nested) {
       if (readableBy(rules, entry)) roots.push(entry)
@@ -178,11 +181,13 @@ export const extendConfinedArgv = (
   if (runner === 'landlock-run') {
     // DSH grants `--ro /`; every other grant (the writable roots) is kept as is.
     const kept: string[] = []
+    const writable: string[] = []
     for (let index = 0; index < profile.length; index += 2) {
       if (profile[index] === '--ro' && profile[index + 1] === '/') continue
+      if (profile[index] === '--rw') writable.push(profile[index + 1]!)
       kept.push(profile[index]!, profile[index + 1]!)
     }
-    const reads = landlockReadRoots(rules).flatMap((root) => ['--ro', root])
+    const reads = landlockReadRoots(rules, writable).flatMap((root) => ['--ro', root])
     return [argv[0]!, ...reads, ...kept, ...command]
   }
   return [...argv]
