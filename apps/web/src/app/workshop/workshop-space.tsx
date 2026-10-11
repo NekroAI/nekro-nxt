@@ -51,6 +51,9 @@ const parse = (path: string): Route | undefined => {
     : undefined
 }
 
+/** How long an address may point at an item the list does not have yet. */
+const MISSING_ITEM_GRACE_MS = 3000
+
 const matches = (needle: string, ...values: readonly (string | undefined)[]): boolean =>
   !needle || values.some((value) => value?.toLowerCase().includes(needle))
 
@@ -86,9 +89,16 @@ export default function WorkshopSpace() {
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
   useCrumb('工坊', task?.title ?? extension?.name)
+  // An item that was just imported or created reaches the list with the next snapshot, after the address already
+  // points at it; give that snapshot a moment before treating the address as stale.
+  const missing = route !== undefined && !task && !extension && hostStatus === 'ready'
+  useEffect(() => {
+    if (!missing) return undefined
+    const timer = setTimeout(() => navigate('/workshop', { replace: true }), MISSING_ITEM_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, [missing, navigate])
 
   if (pathname.startsWith('/workshop/community')) return <Navigate to="/community" replace />
-  if (route && !task && !extension && hostStatus === 'ready') return <Navigate to="/workshop" replace />
 
   const selected = task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined
   const agentOf = (id: string) => agents.find((item) => item.id === id)

@@ -327,6 +327,60 @@ test.describe('workshop', () => {
     }
   })
 
+  test('selects an imported extension although the list learns about it after the address does', async () => {
+    const importedId = 'ext_imported'
+    const summary = productSnapshot.extensions.find((extension) => extension.id === summaryExtensionId)
+    if (!summary) throw new Error('fixture extension missing')
+    const imported = {
+      ...summary,
+      id: importedId,
+      slug: 'imported-one',
+      displayName: '刚导入的扩展',
+      activations: [],
+    }
+    let committed = false
+    const page = await openWorkshop(productSnapshot)
+    // The snapshot only includes the extension a moment after the commit returns, like a real Host refresh.
+    await page.route('**/api/snapshot', async (route) => {
+      if (committed) await new Promise((resolve) => setTimeout(resolve, 800))
+      await route.fulfill({
+        json: committed
+          ? { ...productSnapshot, extensions: [...productSnapshot.extensions, imported] }
+          : productSnapshot,
+      })
+    })
+    await page.route('**/api/extensions/imports/inspect', (route) =>
+      route.fulfill({
+        json: {
+          token: 'import-token',
+          extensionId: importedId,
+          revisionId: 'xrv_imported',
+          slug: 'imported-one',
+          displayName: '刚导入的扩展',
+          provides: ['agent'],
+          idempotent: false,
+          slugConflict: false,
+        },
+      }),
+    )
+    await page.route('**/api/extensions/imports/import-token/commit', (route) => {
+      committed = true
+      return route.fulfill({ json: { extensionId: importedId, revisionId: 'xrv_imported', idempotent: false } })
+    })
+    try {
+      await expect(page.getByRole('button', { name: '导入扩展' })).toBeVisible()
+      await page
+        .locator('input[type="file"]')
+        .first()
+        .setInputFiles({ name: 'imported.nxt-extension', mimeType: 'application/zip', buffer: Buffer.from('PK') })
+      await page.getByRole('dialog').getByRole('button', { name: '导入', exact: true }).click()
+      await expect(page).toHaveURL(new RegExp(`/workshop/extensions/${importedId}$`))
+      await expect(page.locator('[aria-current="page"]', { hasText: '刚导入的扩展' })).toBeVisible()
+    } finally {
+      await page.close()
+    }
+  })
+
   test('shows the package icon of an extension in the list, its detail and the agent capabilities', async () => {
     const iconPath = `/api/extensions/${summaryExtensionId}/revisions/xrv_summary/icon/${'c'.repeat(64)}.png`
     const snapshot = {
