@@ -23,6 +23,7 @@ import {
   type CommunityStatus,
   type ExtensionId,
   type JsonValue,
+  EXTENSION_SDK_LEVEL,
 } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import { createHash, randomBytes } from 'node:crypto'
@@ -590,7 +591,8 @@ export class CommunityService {
     if (release.packageSize > MAX_PACKAGE_BYTES) throw new CommunityError(400, '扩展包超过 16 MiB，无法导入。')
     const response = await this.#request(
       new URL(`/api/v1/releases/${encodeURIComponent(releaseId)}/package`, this.communityUrl),
-      { headers: { 'x-nxt-install': '1' } },
+      // The community refuses a package this version cannot install and answers with what to do instead.
+      { headers: { 'x-nxt-install': '1', 'x-nxt-sdk': String(EXTENSION_SDK_LEVEL) } },
       PACKAGE_TIMEOUT_MS,
     )
     if (!response.ok) {

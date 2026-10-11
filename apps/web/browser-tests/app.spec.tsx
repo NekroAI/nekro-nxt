@@ -1306,6 +1306,66 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('asks to upgrade NekroNXT instead of installing an extension that needs a newer capability level', async () => {
+    const future = {
+      id: 'ext_communityfuture',
+      provides: ['agent'],
+      displayName: '新能力扩展',
+      summary: '需要更新的 NekroNXT。',
+      tags: [],
+      iconUrl: null,
+      official: true,
+      publisher: { handle: 'nekro-nxt', displayName: 'NekroNXT 官方', avatarUrl: null },
+      latest: {
+        id: 'rel_communityfuture',
+        reviewStatus: 'passed',
+        rating: null,
+        permissions: [],
+        packageSize: 2048,
+        requiresSdk: 999,
+        notes: '',
+        createdAt: 1_790_000_000_000,
+      },
+      downloads: 0,
+      updatedAt: 1_790_000_000_000,
+      pageUrl: 'https://community.example.test/extensions/ext_communityfuture',
+    }
+    await withProductPage(
+      '/community',
+      async (page) => {
+        await page.getByRole('link', { name: /新能力扩展/u }).click()
+        await playwrightExpect(page.getByRole('heading', { name: '新能力扩展' })).toBeVisible()
+        await playwrightExpect(page.locator('body')).toContainText(
+          '这个扩展需要更新版本的 NekroNXT，请先升级后再安装。',
+        )
+        await playwrightExpect(page.getByRole('button', { name: '安装' })).toBeDisabled()
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/community/status', (request) =>
+          request.fulfill({
+            json: {
+              communityUrl: 'https://community.example.test',
+              environment: 'staging',
+              account: null,
+              signedInAt: null,
+              updatesAvailable: 0,
+            },
+          }),
+        )
+        await page.route('**/api/community/extensions?**', (request) =>
+          request.fulfill({ json: { items: [future], nextCursor: null } }),
+        )
+        await page.route('**/api/community/extensions', (request) =>
+          request.fulfill({ json: { items: [future], nextCursor: null } }),
+        )
+        await page.route('**/api/community/extensions/ext_communityfuture', (request) =>
+          request.fulfill({ json: { ...future, description: '', sourceUrl: null, review: null } }),
+        )
+      },
+    )
+  })
+
   const personaSummary = {
     id: 'psn_01LIBRARIAN',
     name: '温柔的图书管理员',

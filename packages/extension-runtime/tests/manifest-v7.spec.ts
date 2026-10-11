@@ -307,6 +307,17 @@ describe('Extension Manifest V7', () => {
     )
   })
 
+  it('asks for an upgrade before validating capabilities a newer NekroNXT added', () => {
+    // A capability this version does not know would otherwise fail strict validation with raw field errors.
+    const manifest = hostManifest({
+      requires: { sdk: EXTENSION_SDK_LEVEL + 1 },
+      permissions: { permissions: [], networkOrigins: [], host: { telepathy: {} } },
+    })
+    expect(() => materializeImportedRevision({ manifest, sources: { host: 'export default {}' } })).toThrow(
+      `这个扩展需要更新版本的 NekroNXT（扩展能力等级 ${EXTENSION_SDK_LEVEL + 1}，当前为 ${EXTENSION_SDK_LEVEL}）。请先升级 NekroNXT。`,
+    )
+  })
+
   it('rejects V6 imports with the actionable legacy-format message and refuses scope on V7', () => {
     expect(() =>
       materializeImportedRevision({

@@ -2,6 +2,7 @@ import {
   COMMUNITY_EXTENSION_SORTS,
   communityPublisherLabel,
   communityReviewLabel,
+  EXTENSION_SDK_LEVEL,
   HostApiContracts,
   type CommunityExtensionSort,
   type CommunityExtensionDetail,
@@ -268,6 +269,7 @@ function CommunityDetail({
   // 源码地址留空时作者端会填入社区扩展页；与「在社区查看」重复时不再单独显示。
   const sourceUrl = detail.sourceUrl && detail.sourceUrl !== detail.pageUrl ? detail.sourceUrl : null
   const label = latest ? communityReviewLabel(latest.reviewStatus) : undefined
+  const needsUpgrade = latest?.requiresSdk != null && latest.requiresSdk > EXTENSION_SDK_LEVEL
   const install = async () => {
     if (!latest) return
     setBusy(true)
@@ -309,7 +311,7 @@ function CommunityDetail({
               在社区查看
             </Button>
             {latest ? (
-              <Button size="small" variant="primary" busy={busy} onClick={() => void install()}>
+              <Button size="small" variant="primary" busy={busy} disabled={needsUpgrade} onClick={() => void install()}>
                 {installed ? '导入这次发布' : '安装'}
               </Button>
             ) : null}
@@ -334,7 +336,11 @@ function CommunityDetail({
         <Banner tone="warn">这次发布还没审查完，风险未知。只安装你信任的作者的扩展。</Banner>
       ) : null}
       {label?.tone === 'warn' ? <Banner tone="bad">审查发现了安全问题，安装前请先看审查记录。</Banner> : null}
-      {installed ? <Banner tone="info">本机已有这个扩展，这次会作为新版本导入，需要时在扩展详情里切换。</Banner> : null}
+      {needsUpgrade ? (
+        <Banner tone="warn">这个扩展需要更新版本的 NekroNXT，请先升级后再安装。</Banner>
+      ) : installed ? (
+        <Banner tone="info">本机已有这个扩展，这次会作为新版本导入，需要时在扩展详情里切换。</Banner>
+      ) : null}
 
       <PropertyGroup title="介绍">
         {detail.description.trim() ? (

@@ -3,6 +3,7 @@ import { strFromU8, unzipSync } from 'fflate'
 import { z } from 'zod'
 import { resourceContent } from './icon.js'
 import {
+  assertCurrentManifestFormat,
   LEGACY_EXTENSION_MESSAGE,
   materializeImportedRevision,
   sha256Hex,
@@ -167,12 +168,15 @@ export const parseExtensionImport = (data: Uint8Array): ParsedExtensionImport =>
   }
   const revisionManifest = files['revision/manifest.json']
   if (!revisionManifest) throw new Error('导入包缺少 Revision Manifest。')
+  const parsedRevisionManifest = parseJsonValue(JSON.parse(strFromU8(revisionManifest)))
+  // Before the import dialog opens: an extension that needs a newer NekroNXT says so up front.
+  assertCurrentManifestFormat(parsedRevisionManifest)
   const host = files['revision/source/host.ts']
   const client = files['revision/source/client.ts']
   if (!host && !client) throw new Error('导入包没有可构建源码。')
   return {
     manifest,
-    revisionManifest: parseJsonValue(JSON.parse(strFromU8(revisionManifest))),
+    revisionManifest: parsedRevisionManifest,
     sources: {
       ...(host === undefined ? {} : { host: strFromU8(host) }),
       ...(client === undefined ? {} : { client: strFromU8(client) }),

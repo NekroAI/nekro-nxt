@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { ExtensionIdSchema, HostApiContracts, type JsonValue } from '@nekro-nxt/contracts'
+import { EXTENSION_SDK_LEVEL, ExtensionIdSchema, HostApiContracts, type JsonValue } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import {
   CommunityError,
@@ -14,6 +14,9 @@ import {
   normalizeReturnOrigin,
 } from '../src/community.js'
 import { LocalCredentialStore } from '../src/credentials.js'
+
+/** Request headers of package downloads, newest last. */
+const packageHeaders: Headers[] = []
 
 const COMMUNITY = 'https://community.example.test'
 const INSTANCE = 'https://nxt.example.test'
@@ -215,7 +218,19 @@ const createCommunity = () => {
         packageSize: packageBytes.byteLength,
       })
     }
-    if (url.pathname.endsWith('/package')) return new Response(packageBytes)
+    if (url.pathname === '/api/v1/releases/rel_01future') {
+      return Response.json({ id: 'rel_01future', packageSha256: 'c'.repeat(64), packageSize: 16 })
+    }
+    if (url.pathname.endsWith('/package')) {
+      packageHeaders.push(new Headers(init.headers))
+      if (url.pathname.includes('rel_01future')) {
+        return Response.json(
+          { error: { code: 'upgrade_required', message: '这个扩展需要更新版本的 NekroNXT，请先升级。' } },
+          { status: 409 },
+        )
+      }
+      return new Response(packageBytes)
+    }
     if (url.pathname === '/api/v1/releases' && init.method === 'POST') {
       if (new Headers(init.headers).get('authorization') !== `Bearer nxtc_at_${issued}`) {
         return Response.json({ error: { code: 'invalid_token', message: '访问令牌无效。' } }, { status: 401 })
@@ -579,6 +594,14 @@ describe('CommunityService catalog', () => {
     const { service } = await createFixture()
     expect(new TextDecoder().decode(await service.downloadRelease('rel_01demo'))).toBe('fictional-package')
     await expect(service.downloadRelease('rel_01tampered')).rejects.toThrow('不一致')
+  })
+
+  it('tells the community its capability level and shows why a package is refused', async () => {
+    const { service } = await createFixture()
+    packageHeaders.length = 0
+    await service.downloadRelease('rel_01demo')
+    expect(packageHeaders[0]?.get('x-nxt-sdk')).toBe(String(EXTENSION_SDK_LEVEL))
+    await expect(service.downloadRelease('rel_01future')).rejects.toThrow('这个扩展需要更新版本的 NekroNXT，请先升级。')
   })
 
   it('reports unreachable communities as readable errors', async () => {

@@ -1,4 +1,5 @@
 import {
+  EXTENSION_SDK_LEVEL,
   ExtensionLayeredConfigSchema,
   ExtensionPermissionsSchema,
   HostPageContributionSchema,
@@ -181,6 +182,21 @@ export const assertCurrentManifestFormat = (manifest: unknown): void => {
   ) {
     throw new Error(LEGACY_EXTENSION_MESSAGE)
   }
+  // Checked before the schema: a newer extension declares capabilities this version cannot parse, and the user should
+  // learn to upgrade rather than read validation errors about them.
+  const sdk = requiredSdk(manifest)
+  if (sdk !== undefined && sdk > EXTENSION_SDK_LEVEL) {
+    throw new Error(
+      `这个扩展需要更新版本的 NekroNXT（扩展能力等级 ${sdk}，当前为 ${EXTENSION_SDK_LEVEL}）。请先升级 NekroNXT。`,
+    )
+  }
+}
+
+const requiredSdk = (manifest: unknown): number | undefined => {
+  if (typeof manifest !== 'object' || manifest === null || !('requires' in manifest)) return undefined
+  const requires: unknown = manifest.requires
+  if (typeof requires !== 'object' || requires === null || !('sdk' in requires)) return undefined
+  return typeof requires.sdk === 'number' ? requires.sdk : undefined
 }
 
 /** 校验导入的清单、源码与资源并计算摘要；与 NekroNXT 保存时的计算完全相同。 */
