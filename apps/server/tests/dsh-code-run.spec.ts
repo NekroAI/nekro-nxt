@@ -178,13 +178,20 @@ const runScenario = async (input: {
   }
 }
 
+/** The tool events of a scenario, so a failure on another machine shows what the program got back. */
+const toolTrace = (events: readonly { readonly type: string }[]): string =>
+  JSON.stringify(events.filter((event) => event.type.startsWith('tool/')).slice(-8)).slice(0, 4000)
+
 describe('run_code for agents granted codeRun', () => {
   it('sends from one program, counts as the reply and shows the calls under the program', async () => {
     const scenario = await runScenario({ program: sendTwice, capabilities: { codeRun: true, developmentShell: true } })
     try {
       expect(scenario.model.calls[0]?.tools?.map(({ name }) => name)).toEqual(['run_code'])
       expect(systemText(scenario.model.calls[0])).toContain('一起写在同一段程序的最后')
-      expect(scenario.sentParts).toEqual([[{ type: 'text', text: '第一条' }], [{ type: 'text', text: '第二条' }]])
+      expect(scenario.sentParts, toolTrace(scenario.events)).toEqual([
+        [{ type: 'text', text: '第一条' }],
+        [{ type: 'text', text: '第二条' }],
+      ])
       expect(
         scenario.events.filter(
           (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
@@ -217,7 +224,10 @@ return 'done'
       const program = scenario.projection.turns[0]?.steps
         .flatMap((step) => step.tools)
         .find((tool) => tool.name === 'run_code')
-      expect(program?.children?.map((child) => [child.name, child.state])).toEqual([
+      expect(
+        program?.children?.map((child) => [child.name, child.state]),
+        toolTrace(scenario.events),
+      ).toEqual([
         ['send_channel_message', 'succeeded'],
         ['finish_channel_turn', 'succeeded'],
       ])
@@ -236,7 +246,7 @@ return 'done'
       codeRunNode: () => ({ executable: process.execPath }),
     })
     try {
-      expect(scenario.sentParts).toHaveLength(2)
+      expect(scenario.sentParts, toolTrace(scenario.events)).toHaveLength(2)
       expect(scenario.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
     } finally {
       await scenario.dispose()
@@ -278,7 +288,10 @@ return text
     try {
       const closed = await reported(false)
       const open = await reported(true)
-      const readScope = confinement.readScope ? 'denied' : 'open'
+      // Landlock can only allow, and DSH grants the system temporary directories writable: this fixture's data root,
+      // made under the temporary directory, stays readable there. A real data root lives outside them.
+      const landlock = process.platform === 'linux' && !confinement.networkControl
+      const readScope = confinement.readScope && !landlock ? 'denied' : 'open'
       expect(closed).toEqual([
         [{ type: 'text', text: `secret:${readScope} own:open net:${confinement.networkControl ? 'blocked' : 'open'}` }],
       ])
