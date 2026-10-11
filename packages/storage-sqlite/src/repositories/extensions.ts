@@ -225,6 +225,13 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
       const row = database.select().from(localExtensions).where(eq(localExtensions.id, id)).get()
       return row === undefined ? undefined : toExtension(row)
     },
+    updateExtensionDetails(id, details): void {
+      database
+        .update(localExtensions)
+        .set({ displayName: details.displayName, description: details.description })
+        .where(eq(localExtensions.id, id))
+        .run()
+    },
     getExtensionBySlug(slug: string): LocalExtension | undefined {
       const row = database.select().from(localExtensions).where(eq(localExtensions.slug, slug)).get()
       return row === undefined ? undefined : toExtension(row)

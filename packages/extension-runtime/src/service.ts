@@ -208,6 +208,14 @@ export class ExtensionService {
       ) {
         throw new Error('相同 Extension/Revision 身份已存在，但内容不同；不会覆盖本地版本。')
       }
+      // Importing the newest Revision again still refreshes the name and description it carries.
+      const newest = this.#repository.nextExtensionRevisionNumber(input.extension.id) - 1
+      if (existingRevision.revisionNumber === newest) {
+        this.#repository.updateExtensionDetails(input.extension.id, {
+          displayName: metadata.displayName,
+          description: metadata.description,
+        })
+      }
       return {
         extension: this.#requireExtension(input.extension.id),
         revision: existingRevision,
@@ -221,13 +229,9 @@ export class ExtensionService {
     if (slugOwner && slugOwner.id !== input.extension.id) throw new Error(`Extension slug already exists: ${slug}`)
     const now = this.#timestamp()
     const extension: LocalExtension = {
-      ...(existingExtension ?? {
-        id: input.extension.id,
-        slug,
-        displayName: metadata.displayName,
-        description: metadata.description,
-        createdAt: now,
-      }),
+      ...(existingExtension ?? { id: input.extension.id, slug, createdAt: now }),
+      displayName: metadata.displayName,
+      description: metadata.description,
       provides: materialized.provides,
     }
     const revision: Revision = {
@@ -267,6 +271,13 @@ export class ExtensionService {
       revision,
       verification,
     })
+    // Saving keeps an existing extension's stored details; the imported package names the extension it updates.
+    if (existingExtension) {
+      this.#repository.updateExtensionDetails(extension.id, {
+        displayName: extension.displayName,
+        description: extension.description,
+      })
+    }
     return { extension, revision, idempotent: false }
   }
 

@@ -680,6 +680,11 @@ class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository
     return [...this.extensions.values()].find((extension) => extension.slug === slug)
   }
 
+  updateExtensionDetails(id: ExtensionId, details: { readonly displayName: string; readonly description: string }) {
+    const extension = this.extensions.get(id)
+    if (extension) this.extensions.set(id, { ...extension, ...details })
+  }
+
   getExtensionRevision(id: ExtensionRevisionId): Revision | undefined {
     return this.revisions.get(id)
   }
@@ -1495,6 +1500,12 @@ describe('Extension import validation', () => {
     expect(imported.idempotent).toBe(false)
     expect(repository.getExtensionRevisionVerification(imported.revision.id)?.dshVersion).toBe('unknown')
     await expect(service.importRevision(input)).resolves.toMatchObject({ idempotent: true })
+    // The package of the newest Revision names the extension, also when it is imported again.
+    await service.importRevision({
+      ...input,
+      extension: { ...input.extension, displayName: '新名字', description: '新简介' },
+    })
+    expect(repository.getExtension(input.extension.id)).toMatchObject({ displayName: '新名字', description: '新简介' })
     await service.dispose()
   })
 

@@ -161,6 +161,8 @@ export interface ExtensionRepository {
   getExtensionRevision(id: ExtensionRevisionId): Revision | undefined
   getExtensionRevisionByPayloadDigest(extensionId: ExtensionId, payloadDigest: string): Revision | undefined
   nextExtensionRevisionNumber(extensionId: ExtensionId): number
+  /** Name and description follow the newest imported Revision's package. */
+  updateExtensionDetails(id: ExtensionId, details: { readonly displayName: string; readonly description: string }): void
 
   /** Atomically inserts a new immutable Revision and its LocalExtension when it is new. */
   saveExtensionRevision(input: {

@@ -447,6 +447,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions.listExtensions(...args)
   readonly getExtension = (...args: Parameters<ExtensionRepository['getExtension']>) =>
     this.#extensions.getExtension(...args)
+  readonly updateExtensionDetails = (...args: Parameters<ExtensionRepository['updateExtensionDetails']>) =>
+    this.#extensions.updateExtensionDetails(...args)
   readonly getExtensionBySlug = (...args: Parameters<ExtensionRepository['getExtensionBySlug']>) =>
     this.#extensions.getExtensionBySlug(...args)
   readonly listExtensionRevisions = (...args: Parameters<ExtensionRepository['listExtensionRevisions']>) =>

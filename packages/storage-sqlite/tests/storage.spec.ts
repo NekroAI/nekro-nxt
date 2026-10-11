@@ -2476,6 +2476,11 @@ describe('Extension and backup', () => {
           createdAt: 2,
         },
       })
+      repository.updateExtensionDetails(extensionId, { displayName: '新页面扩展', description: '新版本的简介' })
+      expect(repository.getExtension(extensionId)).toMatchObject({
+        displayName: '新页面扩展',
+        description: '新版本的简介',
+      })
       let sequence = 0
       const first = repository.replaceHostUiExtensionPages({
         extensionId,
