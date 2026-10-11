@@ -2083,6 +2083,74 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('grants a freshly added account to the agent in the draft and leaves saving to the save bar', async () => {
+    const capabilityRequests: unknown[] = []
+    const accountId = 'acct0002fixture'
+    const added = {
+      id: accountId,
+      service: 'github',
+      login: 'second-fixture',
+      source: 'gh-login',
+      scopes: ['repo'],
+      createdAt: 2,
+      usedBy: [],
+    }
+    const base = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId
+          ? { ...agent, capabilities: { ...agent.capabilities, fileTools: true, developmentShell: true } }
+          : agent,
+      ),
+      capabilityAvailability: {
+        ...browserSnapshot.capabilityAvailability,
+        githubCli: { available: true, source: 'system', version: '2.90.0' },
+      },
+    })
+    let current: typeof base = base
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        await page.getByRole('button', { name: '添加账号' }).click()
+        const dialog = page.getByRole('dialog', { name: '添加 GitHub 账号' })
+        await dialog.getByRole('radio', { name: '使用本机 gh 登录' }).click()
+        await dialog.getByRole('button', { name: '添加' }).click()
+        // The account is selected in the draft, and nothing is granted until the save bar saves it.
+        await playwrightExpect(page.getByRole('combobox', { name: 'GitHub 账号' })).toContainText('second-fixture')
+        const bar = page.getByRole('region', { name: '未保存的修改' })
+        await playwrightExpect(bar).toContainText('账号授权')
+        expect(capabilityRequests).toEqual([])
+        await bar.getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toEqual({ commandAccounts: [{ service: 'github', accountId, usage: [] }] })
+      },
+      base,
+      async (page) => {
+        await page.route('**/api/snapshot', (request) => request.fulfill({ json: current }))
+        await page.route('**/api/settings/command-accounts', async (request) => {
+          if (request.request().method() === 'GET') {
+            await request.fulfill({ json: { accounts: [], localLogins: [{ login: 'second-fixture', active: true }] } })
+            return
+          }
+          current = HostApiContracts.snapshot.response.parse({ ...current, commandAccounts: [added] })
+          await request.fulfill({ json: { accounts: [added], localLogins: [] } })
+        })
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            json: {
+              currentRevisionId: browserRevisionId,
+              capabilities: {
+                ...base.agents[0]!.capabilities,
+                commandAccounts: [{ service: 'github', accountId, usage: [] }],
+              },
+            },
+          })
+        })
+      },
+    )
+  })
+
   test('shows no account controls to an agent that cannot run commands', async () => {
     await withProductPage(`/agents/${browserAgentId}`, async (page) => {
       await playwrightExpect(page.getByRole('combobox', { name: 'GitHub 账号' })).toHaveCount(0)

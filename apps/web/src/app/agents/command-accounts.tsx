@@ -98,7 +98,7 @@ export function AddCommandAccountDialog({
       const known = new Set(existing.map((account) => account.id))
       const added = view.accounts.find((account) => !known.has(account.id))
       await api.getState().refreshHost()
-      toast('账号已添加')
+      toast(onAdded === undefined ? '账号已添加' : '账号已添加，保存后对这个智能体生效')
       reset()
       onOpenChange(false)
       if (added !== undefined) onAdded?.(added.id)
