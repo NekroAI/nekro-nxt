@@ -1106,6 +1106,7 @@ export class DynamicAuthoringRuntime {
     const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
     const inputs = snapshot?.verificationInputs
     const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
+    const usesCodeRun = visibleTools.some((tool) => tool.name === 'run_code')
     const toolInvocations = [] as Array<{ readonly name: string; readonly succeeded: boolean }>
     const permissions: ExtensionPermissions = snapshot?.permissions ?? { permissions: [], networkOrigins: [] }
     const contributions: ExtensionContribution[] = []
@@ -1161,13 +1162,21 @@ export class DynamicAuthoringRuntime {
       const verificationInput = inputs?.tools[name]
       const result = await this.#context.tools.execute({
         callId: ToolCallId(`verify-${packageId}-${name}`),
-        name,
-        arguments: verificationInput ?? {},
+        // PTC permits native tools only as transport subcalls. Keep the regular policy pipeline;
+        // do not change the agent's presentation or invent an opaque parent execution token.
+        name: usesCodeRun ? 'run_code' : name,
+        arguments: usesCodeRun
+          ? {
+              description: `验证扩展工具 ${name}`,
+              code: `return await tools[${JSON.stringify(name)}](${JSON.stringify(verificationInput ?? {})})`,
+            }
+          : (verificationInput ?? {}),
         agent,
         signal: new AbortController().signal,
       })
       if (result.isError) throw new Error(verificationFailure('Tool', name, result.error.message, verificationInput))
-      if (JSON.stringify(result.value).length > 16 * 1024)
+      const value = usesCodeRun ? z.object({ result: JsonValueSchema }).parse(result.value).result : result.value
+      if (JSON.stringify(value).length > 16 * 1024)
         throw new Error(`Dynamic Tool verification exceeded 16 KiB: ${name}`)
       toolInvocations.push({ name, succeeded: true })
       contributions.push({

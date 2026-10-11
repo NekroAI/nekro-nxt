@@ -69,20 +69,21 @@ const createRuntime = async (model = new QuietModel()) => {
     assetRoot: path.join(directory, 'assets'),
     extensionDataRoot: path.join(directory, 'extension-data'),
     extensionCacheRoot: path.join(directory, 'extension-cache'),
+    developmentWorkspaceRoot: path.join(directory, 'workspaces'),
     configureLlm: (context) => {
       context.llm.registerAdapter(['test-provider'], model)
     },
   })
 }
 
-const startAuthoringSession = async (model = new QuietModel()) => {
+const startAuthoringSession = async (model = new QuietModel(), codeRun = false) => {
   const runtime = await createRuntime(model)
   await runtime.start()
   const entity = await runtime.createAgentWithInternalChannel({
     displayName: '创造智能体',
     persona: '',
     model: { provider: 'test-provider', model: 'chat-model' },
-    capabilities: { dynamicCreation: true },
+    capabilities: { dynamicCreation: true, ...(codeRun ? { codeRun: true, developmentShell: true } : {}) },
   })
   await runtime.internalChannel.postMessage({
     channelId: entity.channelId,
@@ -96,6 +97,40 @@ const startAuthoringSession = async (model = new QuietModel()) => {
 }
 
 describe('dynamic authoring closed loop', () => {
+  it('verifies dynamic tools through the PTC transport and retains tool failure handling', async () => {
+    const model = new QuietModel()
+    const { runtime, entity, dshSessionId } = await startAuthoringSession(model, true)
+    try {
+      await runtime.host.whenIdle(dshSessionId)
+      expect(model.requests[0]?.tools?.map((tool) => tool.name)).toEqual(['run_code'])
+      const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'ptcv' },
+        name: '编排验证探针',
+        purpose: '在编排会话里验证候选工具。',
+        code: { host: toolHost('ptc_verification_probe', "return 'verified'") },
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      await expect(
+        runtime.host.verifyDynamicPackage(dshSessionId, defined.pluginId, defined.packageId),
+      ).resolves.toMatchObject({ toolInvocations: [{ name: 'ptc_verification_probe', succeeded: true }] })
+      const failing = runtime.host.defineDynamicPackage(dshSessionId, {
+        plugin: { kind: 'existing', pluginId: defined.pluginId },
+        name: '编排验证失败探针',
+        purpose: '验证失败仍记录失败并停止候选。',
+        code: { host: toolHost('ptc_verification_probe', "throw new Error('fixture verification failure')") },
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, failing.pluginId, failing.packageId, 'update'),
+      ).rejects.toThrow('fixture verification failure')
+      expect(runtime.host.dynamicToolNames(dshSessionId)).not.toContain('ptc_verification_probe')
+      expect(runtime.repository.listAuthoringTasks(entity.agentId).some((task) => task.status === 'failed')).toBe(true)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+
   it('accepts Client CSS beside an Client and rejects it without one', () => {
     const css = '.panel { color: var(--nxt-text); }'
     const candidate = (code: { readonly client?: string }) =>
