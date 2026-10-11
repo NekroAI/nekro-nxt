@@ -96,6 +96,8 @@ import { createNxtHostService, type NxtServiceBackends } from './extension-host-
 import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type DshHostRuntimeOptions } from './index.js'
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
+import { CommunityFeedbackService } from './community-feedback.js'
+import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-runtime.js'
 import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
 import { messageGapMs, readMessagePacing } from './message-pacing.js'
@@ -112,6 +114,7 @@ const JOB_HANDLER_TIMEOUT_MS = 15_000
 const JOB_NOTE_MAX_CHARS = 2000
 
 export interface NekroRuntimeOptions {
+  readonly feedbackEnvironment?: FeedbackEnvironment
   /** Production startup keeps inbound facts durable while migration and recovery settle. */
   readonly deferAdmission?: boolean
   /** Core domain SQLite file path (opened + migrated). */
@@ -171,6 +174,7 @@ const inboundDecision = (record: InboundHookDecisionRecord): InboundHookDecision
 })
 
 export class NekroRuntime {
+  readonly feedback: CommunityFeedbackService
   upgradeBackupId: string | undefined
   readonly repository: SqliteCoreRepository
   readonly compatibility: RuntimeCompatibilityRegistry
@@ -223,6 +227,7 @@ export class NekroRuntime {
   #disposePromise: Promise<void> | undefined
 
   private constructor(input: {
+    readonly feedbackEnvironment?: FeedbackEnvironment | undefined
     readonly database: CoreDatabase
     readonly compatibility: RuntimeCompatibilityRegistry
     readonly repository: SqliteCoreRepository
@@ -290,6 +295,12 @@ export class NekroRuntime {
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.authoringTestSecrets = input.authoringTestSecrets
+    this.feedback = new CommunityFeedbackService(
+      this.repository,
+      this.community,
+      runtimeFeedbackSources(this, input.feedbackEnvironment ?? { hostKind: 'server', releaseId: 'development' }),
+      input.now,
+    )
     this.connections = new ConnectionApplicationService(
       this,
       input.now,
@@ -937,6 +948,7 @@ export class NekroRuntime {
         },
       })
       const runtime = new NekroRuntime({
+        feedbackEnvironment: options.feedbackEnvironment,
         dataRoot: path.dirname(options.coreDatabasePath),
         jobScheduler,
         scheduledTasks,
@@ -973,6 +985,7 @@ export class NekroRuntime {
         adapterRuntimes,
         adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
       })
+      await runtime.feedback.initialize()
       return runtime
     } catch (error) {
       database.close()
@@ -1477,6 +1490,7 @@ export class NekroRuntime {
     const handles = await this.connections.disposeRegistrations()
     for (const outcome of handles) if (outcome.status === 'rejected') failures.push(outcome.reason)
     this.#hostClientDiagnostics.clear()
+    await this.feedback.dispose()
     this.#database.close()
     if (failures.length) throw new AggregateError(failures, 'Nekro Runtime disposal failed.')
   }

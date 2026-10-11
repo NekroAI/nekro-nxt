@@ -31,6 +31,9 @@ import type {
   PlatformIdentityId,
   PromptDocumentV1,
   ServerInstanceId,
+  CommunityFeedbackDraft,
+  CommunityFeedbackDraftId,
+  CommunityFeedbackItem,
 } from '@nekro-nxt/contracts'
 import type { AgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import type {
@@ -1063,6 +1066,61 @@ export const systemSettings = sqliteTable(
   (table) => [check('system_settings_revision_ck', sql`${table.revision} > 0`)],
 )
 
+export const communityFeedbackDrafts = sqliteTable(
+  'community_feedback_drafts',
+  {
+    id: text().$type<CommunityFeedbackDraftId>().primaryKey(),
+    communityUrl: text('community_url').notNull(),
+    communityUserId: text('community_user_id'),
+    agentId: text('agent_id').$type<AgentId>(),
+    channelId: text('channel_id').$type<ChannelId>(),
+    kind: text().$type<CommunityFeedbackDraft['kind']>().notNull(),
+    target: jsonText<CommunityFeedbackDraft['target']>('target').notNull(),
+    title: text().notNull(),
+    body: text().notNull(),
+    excerpt: jsonText<CommunityFeedbackDraft['excerpt']>('excerpt'),
+    excerptSharedWithAuthor: integer('excerpt_shared_with_author', { mode: 'boolean' }).notNull().default(false),
+    diagnostics: jsonText<CommunityFeedbackDraft['diagnostics']>('diagnostics').notNull(),
+    state: text().$type<CommunityFeedbackDraft['state']>().notNull(),
+    requestedBy: text('requested_by').notNull(),
+    auto: integer({ mode: 'boolean' }).notNull().default(false),
+    error: text(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    index('community_feedback_drafts_identity_idx').on(table.communityUrl, table.communityUserId, table.createdAt),
+    check(
+      'community_feedback_drafts_state_ck',
+      sql`${table.state} IN ('awaiting', 'sending', 'sent', 'failed', 'discarded')`,
+    ),
+  ],
+)
+
+export const communityFeedbackItems = sqliteTable(
+  'community_feedback_items',
+  {
+    ref: text().notNull(),
+    communityUrl: text('community_url').notNull(),
+    communityUserId: text('community_user_id').notNull(),
+    channelId: text('channel_id').$type<ChannelId>(),
+    draftId: text('draft_id').$type<CommunityFeedbackDraftId>(),
+    title: text().notNull(),
+    kind: text().$type<CommunityFeedbackItem['kind']>(),
+    target: jsonText<CommunityFeedbackItem['target']>('target'),
+    status: text().$type<CommunityFeedbackItem['status']>().notNull(),
+    fixedIn: text('fixed_in'),
+    unread: integer({ mode: 'boolean' }).notNull().default(false),
+    lastEventSeq: integer('last_event_seq').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.communityUrl, table.communityUserId, table.ref] }),
+    index('community_feedback_items_channel_idx').on(table.communityUrl, table.communityUserId, table.channelId),
+  ],
+)
+
 /** A reset belongs to the source storage identity, never to a product build. */
 export const dshSessionResets = sqliteTable(
   'dsh_session_resets',
@@ -1291,6 +1349,8 @@ export const inboundHookDecisions = sqliteTable(
 )
 
 export const coreSchema = {
+  communityFeedbackDrafts,
+  communityFeedbackItems,
   agentDefinitions,
   agentRevisions,
   agentCurrentRevisions,

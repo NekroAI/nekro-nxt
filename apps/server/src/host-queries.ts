@@ -572,6 +572,7 @@ export class HostQueries {
     }))
     return HostApiContracts.snapshot.parseResponse({
       cursor: this.#cursor(),
+      communityFeedback: runtime.feedback.snapshot(),
       diagnosticsSampledAt,
       upgrade: {
         ...(runtime.upgradeBackupId === undefined ? {} : { backupId: runtime.upgradeBackupId }),

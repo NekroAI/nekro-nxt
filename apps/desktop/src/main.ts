@@ -121,6 +121,7 @@ const forkServer = (
       ...env,
       NEKRO_DATA: dataRoot(),
       NEKRO_RELEASE_ID: productRelease.releaseId,
+      NEKRO_HOST_KIND: 'desktop',
       NEKRO_UPGRADE_RUN_ID: runId,
     },
   })

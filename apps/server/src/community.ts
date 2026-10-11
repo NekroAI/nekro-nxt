@@ -26,6 +26,13 @@ import {
   EXTENSION_SDK_LEVEL,
 } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
+import type { CommunityFeedbackIdentity } from '@nekro-nxt/storage-sqlite'
+import {
+  CommunityFeedbackSchema,
+  CommunityFeedbackListSchema,
+  CommunityFeedbackChangesSchema,
+  type CommunityFeedbackCreate,
+} from '@nekro-nxt/contracts'
 import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import type { LocalCredentialStore } from './credentials.js'
@@ -72,7 +79,12 @@ const LegacyAccountSchema = AccountEntrySchema.extend({ version: z.literal(1), c
 const StoredEndpointSchema = z.object({ version: z.literal(1), url: z.string(), allowInsecure: z.boolean() }).strict()
 
 const MetaSchema = z
-  .object({ name: z.string(), environment: z.enum(['production', 'staging', 'development']), version: z.string() })
+  .object({
+    name: z.string(),
+    environment: z.enum(['production', 'staging', 'development']),
+    version: z.string(),
+    features: z.array(z.string()).default([]),
+  })
   .passthrough()
 type CommunityMeta = z.output<typeof MetaSchema>
 
@@ -81,7 +93,14 @@ const TokenResponseSchema = z.object({
   token_type: z.literal('Bearer'),
   expires_in: z.number().int().positive(),
   refresh_token: z.string().min(1),
-  user: z.object({ handle: z.string(), displayName: z.string(), avatarUrl: z.string().nullable() }).passthrough(),
+  user: z
+    .object({
+      id: z.string().optional(),
+      handle: z.string(),
+      displayName: z.string(),
+      avatarUrl: z.string().nullable(),
+    })
+    .passthrough(),
 })
 
 const OAuthErrorSchema = z.object({ error_description: z.string() }).passthrough()
@@ -167,6 +186,8 @@ export const normalizeReturnOrigin = (raw: string): string => {
 type FetchLike = typeof fetch
 
 interface PendingLogin {
+  readonly communityUrl: string
+  readonly generation: number
   readonly verifier: string
   readonly redirectUri: string
   readonly expiresAt: number
@@ -187,7 +208,8 @@ export class CommunityService {
   #access: { readonly url: string; readonly token: string; readonly expiresAt: number } | undefined
   readonly #meta = new Map<string, { readonly value: CommunityMeta | null; readonly expiresAt: number }>()
   #installed: { readonly url: string; readonly checkedAt: number; readonly items: CommunityInstalledItem[] } | undefined
-  #refreshing: Promise<string> | undefined
+  #authGeneration = 0
+  #refreshing: { readonly generation: number; readonly promise: Promise<string> } | undefined
 
   constructor(
     repository: CommunitySettingsRepository,
@@ -246,6 +268,7 @@ export class CommunityService {
       )
     }
     this.#pending.clear()
+    this.#invalidateAuth()
     this.#installed = undefined
     return this.endpoint()
   }
@@ -345,7 +368,13 @@ export class CommunityService {
     const verifier = base64Url(randomBytes(48))
     const state = base64Url(randomBytes(32))
     const redirectUri = `${normalizeReturnOrigin(returnOrigin)}${COMMUNITY_CALLBACK_PATH}`
-    this.#pending.set(state, { verifier, redirectUri, expiresAt: now + LOGIN_TTL_MS })
+    this.#pending.set(state, {
+      verifier,
+      redirectUri,
+      expiresAt: now + LOGIN_TTL_MS,
+      communityUrl: this.communityUrl,
+      generation: this.#authGeneration,
+    })
     const url = new URL('/oauth/authorize', this.communityUrl)
     url.searchParams.set('response_type', 'code')
     url.searchParams.set('code_challenge_method', 'S256')
@@ -369,39 +398,50 @@ export class CommunityService {
     }
     const code = params.get('code')
     if (!code) throw new CommunityError(400, '社区没有返回授权码。', 'community-login-failed')
-    const tokens = await this.#tokenRequest({
-      grant_type: 'authorization_code',
-      code,
-      code_verifier: pending.verifier,
-      redirect_uri: pending.redirectUri,
-    })
+    const tokens = await this.#tokenRequest(
+      {
+        grant_type: 'authorization_code',
+        code,
+        code_verifier: pending.verifier,
+        redirect_uri: pending.redirectUri,
+      },
+      pending.communityUrl,
+    )
+    this.#assertAuthGeneration(pending.generation)
     const account = CommunityAccountSchema.parse({
+      ...(tokens.user.id === undefined ? {} : { id: tokens.user.id }),
       handle: tokens.user.handle,
       displayName: tokens.user.displayName,
       avatarUrl: tokens.user.avatarUrl,
     })
-    const url = this.communityUrl
+    const url = pending.communityUrl
     const previous = this.#stored(url)
     const reference = await this.#credentials.save(tokens.refresh_token)
     try {
+      this.#assertAuthGeneration(pending.generation)
       this.#writeAccount(url, { account, refreshTokenRef: reference, signedInAt: this.#now() })
+      this.#invalidateAuth()
     } catch (error) {
       await this.#credentials.delete(reference)
       throw error
     }
+    const completedGeneration = this.#authGeneration
     if (previous) await this.#credentials.delete(previous.refreshTokenRef)
+    this.#assertAuthGeneration(completedGeneration)
     this.#access = { url, token: tokens.access_token, expiresAt: this.#now() + tokens.expires_in * 1000 }
     return account
   }
 
   /** 本机退出并尽力在社区撤销授权；社区不可达时仍完成本机退出。 */
   async logout(): Promise<CommunityStatus> {
+    const url = this.communityUrl
     const stored = this.#stored()
-    this.#access = undefined
+    this.#invalidateAuth()
+    this.#pending.clear()
     if (stored) {
       try {
         const refreshToken = await this.#credentials.resolve(stored.refreshTokenRef)
-        await this.#fetch(new URL('/oauth/revoke', this.communityUrl), {
+        await this.#fetch(new URL('/oauth/revoke', url), {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({ token: refreshToken }).toString(),
@@ -410,19 +450,35 @@ export class CommunityService {
       } catch {
         // 撤销是尽力而为；本机凭据仍会删除。
       }
-      await this.#forget(this.communityUrl, stored)
+      await this.#forget(url, stored)
     }
     return this.status()
   }
 
   async #forget(url: string, stored: AccountEntry): Promise<void> {
-    this.#writeAccount(url, null)
+    if (this.#stored(url)?.refreshTokenRef === stored.refreshTokenRef) {
+      this.#writeAccount(url, null)
+      if (this.communityUrl === url) this.#invalidateAuth()
+    }
     await this.#credentials.delete(stored.refreshTokenRef)
-    this.#access = undefined
   }
 
-  async #tokenRequest(form: Record<string, string>): Promise<z.output<typeof TokenResponseSchema>> {
-    const response = await this.#request(new URL('/oauth/token', this.communityUrl), {
+  #invalidateAuth(): void {
+    this.#authGeneration += 1
+    this.#access = undefined
+    this.#refreshing = undefined
+  }
+
+  #assertAuthGeneration(generation: number): void {
+    if (generation !== this.#authGeneration)
+      throw new CommunityError(409, '社区或账号已切换，请重新操作。', 'community-identity-changed')
+  }
+
+  async #tokenRequest(
+    form: Record<string, string>,
+    url = this.communityUrl,
+  ): Promise<z.output<typeof TokenResponseSchema>> {
+    const response = await this.#request(new URL('/oauth/token', url), {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams(form).toString(),
@@ -443,22 +499,32 @@ export class CommunityService {
     if (this.#access && this.#access.url === this.communityUrl && this.#access.expiresAt - 60_000 > this.#now()) {
       return this.#access.token
     }
-    this.#refreshing ??= this.#refresh().finally(() => {
-      this.#refreshing = undefined
-    })
-    return this.#refreshing
+    if (this.#refreshing === undefined) {
+      const generation = this.#authGeneration
+      const promise = this.#refresh().finally(() => {
+        if (this.#refreshing?.generation === generation) this.#refreshing = undefined
+      })
+      this.#refreshing = { generation, promise }
+    }
+    return this.#refreshing.promise
   }
 
   async #refresh(): Promise<string> {
+    const generation = this.#authGeneration
     const url = this.communityUrl
     const stored = this.#stored(url)
     if (!stored) throw new CommunityError(401, '请先在「社区 → 账号」登录社区。', 'community-signed-out')
     const refreshToken = await this.#credentials.resolve(stored.refreshTokenRef)
+    this.#assertAuthGeneration(generation)
     let tokens: z.output<typeof TokenResponseSchema>
     try {
-      tokens = await this.#tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken })
+      tokens = await this.#tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }, url)
     } catch (error) {
-      if (error instanceof CommunityError && error.code === 'community-auth-invalid') {
+      if (
+        generation === this.#authGeneration &&
+        error instanceof CommunityError &&
+        error.code === 'community-auth-invalid'
+      ) {
         await this.#forget(url, stored)
         throw new CommunityError(401, '社区登录已失效，请重新登录。', 'community-signed-out')
       }
@@ -466,8 +532,10 @@ export class CommunityService {
     }
     const reference = await this.#credentials.save(tokens.refresh_token)
     try {
+      this.#assertAuthGeneration(generation)
       this.#writeAccount(url, {
         account: CommunityAccountSchema.parse({
+          ...(tokens.user.id === undefined ? {} : { id: tokens.user.id }),
           handle: tokens.user.handle,
           displayName: tokens.user.displayName,
           avatarUrl: tokens.user.avatarUrl,
@@ -480,6 +548,7 @@ export class CommunityService {
       throw error
     }
     await this.#credentials.delete(stored.refreshTokenRef)
+    this.#assertAuthGeneration(generation)
     this.#access = { url, token: tokens.access_token, expiresAt: this.#now() + tokens.expires_in * 1000 }
     return tokens.access_token
   }
@@ -515,10 +584,13 @@ export class CommunityService {
   }
 
   async #api(path: string, init: RequestInit = {}, authenticated = false): Promise<unknown> {
+    const url = this.communityUrl
+    const generation = this.#authGeneration
     const headers = new Headers(init.headers)
     headers.set('accept', 'application/json')
     if (authenticated) headers.set('authorization', `Bearer ${await this.#accessToken()}`)
-    const response = await this.#request(new URL(path, this.communityUrl), { ...init, headers })
+    this.#assertAuthGeneration(generation)
+    const response = await this.#request(new URL(path, url), { ...init, headers })
     const body = await this.#json(response)
     if (!response.ok) {
       if (response.status === 401 && authenticated) this.#access = undefined
@@ -812,6 +884,107 @@ export class CommunityService {
   /** 同一社区通道上的其他资源（如人设）读取开放接口：沿用地址、登录、超时与出错格式。 */
   async apiJson(path: string, init: RequestInit = {}, authenticated = false): Promise<unknown> {
     return this.#api(path, init, authenticated)
+  }
+
+  feedbackIdentity(): CommunityFeedbackIdentity {
+    return { communityUrl: this.communityUrl, communityUserId: this.#stored()?.account.id ?? null }
+  }
+
+  /** Older saved logins acquire the new immutable ID from /me, without asking the user to log in again. */
+  async ensureFeedbackIdentity(): Promise<CommunityFeedbackIdentity> {
+    const identity = this.feedbackIdentity()
+    if (identity.communityUserId !== null || !this.#stored()) return identity
+    const generation = this.#authGeneration
+    const raw = await this.#api('/api/v1/me', {}, true)
+    this.#assertAuthGeneration(generation)
+    const account = CommunityAccountSchema.parse(raw)
+    if (!account.id)
+      throw new CommunityError(502, '社区没有返回账号标识，请更新社区后重试。', 'community-identity-missing')
+    const stored = this.#stored()
+    if (stored && account.id) this.#writeAccount(identity.communityUrl, { ...stored, account })
+    return this.feedbackIdentity()
+  }
+
+  #assertFeedbackIdentity(identity: CommunityFeedbackIdentity): void {
+    const current = this.feedbackIdentity()
+    if (current.communityUrl !== identity.communityUrl || current.communityUserId !== identity.communityUserId) {
+      throw new CommunityError(409, '社区或账号已切换，请重新操作。', 'community-identity-changed')
+    }
+    if (identity.communityUserId === null)
+      throw new CommunityError(401, '请先登录支持反馈的社区。', 'community-signed-out')
+  }
+
+  async #feedbackRequest(
+    identity: CommunityFeedbackIdentity,
+    pathname: string,
+    init: RequestInit = {},
+  ): Promise<unknown> {
+    this.#assertFeedbackIdentity(identity)
+    const token = await this.#accessToken()
+    this.#assertFeedbackIdentity(identity)
+    const response = await this.#request(new URL(pathname, identity.communityUrl), {
+      ...init,
+      headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    })
+    const body = await this.#json(response)
+    this.#assertFeedbackIdentity(identity)
+    if (!response.ok) {
+      const error = z.object({ error: z.object({ code: z.string(), message: z.string() }) }).safeParse(body)
+      throw new CommunityError(
+        response.status,
+        communityErrorMessage(body, response.status),
+        error.success ? error.data.error.code : 'community-request-failed',
+      )
+    }
+    return body
+  }
+
+  async createFeedback(identity: CommunityFeedbackIdentity, input: CommunityFeedbackCreate) {
+    return CommunityFeedbackSchema.parse(
+      await this.#feedbackRequest(identity, '/api/v1/feedback', { method: 'POST', body: JSON.stringify(input) }),
+    )
+  }
+
+  async listFeedback(identity: CommunityFeedbackIdentity, params = new URLSearchParams(), known = false) {
+    return CommunityFeedbackListSchema.parse(
+      await this.#feedbackRequest(
+        identity,
+        `/api/v1/feedback${known ? '/known' : ''}${params.size ? `?${params}` : ''}`,
+      ),
+    )
+  }
+
+  async getFeedback(identity: CommunityFeedbackIdentity, ref: string) {
+    const feedback = CommunityFeedbackSchema.parse(
+      await this.#feedbackRequest(identity, `/api/v1/feedback/${encodeURIComponent(ref)}`),
+    )
+    if (feedback.ref !== ref)
+      throw new CommunityError(502, '社区返回了不匹配的反馈，请稍后重试。', 'community-feedback-mismatch')
+    return feedback
+  }
+
+  async feedbackChanges(identity: CommunityFeedbackIdentity, cursor?: number) {
+    return CommunityFeedbackChangesSchema.parse(
+      await this.#feedbackRequest(
+        identity,
+        `/api/v1/feedback/changes${cursor === undefined ? '' : `?cursor=${cursor}`}`,
+      ),
+    )
+  }
+
+  async updateFeedback(
+    identity: CommunityFeedbackIdentity,
+    ref: string,
+    action: 'messages' | 'withdraw' | 'reopen' | 'confirm-fixed' | 'affected' | 'supplement',
+    body: unknown,
+    method: 'POST' | 'DELETE' = 'POST',
+  ) {
+    return CommunityFeedbackSchema.parse(
+      await this.#feedbackRequest(identity, `/api/v1/feedback/${encodeURIComponent(ref)}/${action}`, {
+        method,
+        body: JSON.stringify(body),
+      }),
+    )
   }
 
   /** 下载一个社区资源（如人设头像），超过上限即停止。 */
