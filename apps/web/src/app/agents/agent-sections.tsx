@@ -103,7 +103,7 @@ export function ModelSection({
           badge={
             model ? (
               <Chip tone={supportsImages(model) ? 'ok' : 'neutral'}>
-                {supportsImages(model) ? '能看图' : '不能看图'}
+                {supportsImages(model) ? '支持视觉' : '不支持视觉'}
               </Chip>
             ) : undefined
           }
@@ -119,12 +119,12 @@ export function ModelSection({
         </PropertyRow>
         {model && !supportsImages(model) ? (
           <PropertyRow
-            label="看图模型"
+            label="视觉模型"
             description={vision ? '图片先由它描述，再交给主模型' : '不设置时，群里的图片会被跳过'}
           >
             <Select
               className={styles.modelSelect}
-              aria-label="看图模型"
+              aria-label="视觉模型"
               value={vision ? draft.visionKey : ''}
               options={[
                 { value: '', label: '不使用' },

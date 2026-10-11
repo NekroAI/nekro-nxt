@@ -214,7 +214,7 @@ export function ModelListEditor({
     },
     {
       key: 'image',
-      header: '看图',
+      header: '视觉',
       width: '48px',
       align: 'center',
       render: (row) => (
@@ -297,7 +297,7 @@ export function ModelListEditor({
               >
                 {model.id}
                 {model.name && model.name !== model.id ? ` · ${model.name}` : ''}
-                {model.inputModalities?.includes('image') ? ' · 看图' : ''}
+                {model.inputModalities?.includes('image') ? ' · 视觉' : ''}
               </Button>
             ))}
           </div>
@@ -320,7 +320,7 @@ export function ModelListView({ models }: { readonly models: readonly EditableMo
     },
     {
       key: 'image',
-      header: '看图',
+      header: '视觉',
       width: '72px',
       align: 'center',
       render: (model) => (model.inputModalities?.includes('image') ? '支持' : '—'),

@@ -71,7 +71,7 @@ const choicesWith = (field: PolicyField, current: number, defaults: ChannelConte
 const policySummary = (policy: ChannelContextPolicy): string =>
   [
     choiceLabel('backlogTextChars', policy.backlogTextChars),
-    policy.backlogImages === 0 ? '不看图' : `${policy.backlogImages} 张图`,
+    policy.backlogImages === 0 ? '不带图片' : `${policy.backlogImages} 张图`,
     policy.idleReviewMinutes === 0 ? '不自动整理' : choiceLabel('idleReviewMinutes', policy.idleReviewMinutes),
   ].join(' · ')
 

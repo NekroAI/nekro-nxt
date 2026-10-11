@@ -2439,7 +2439,7 @@ const assembleLlmText = async (
               : code === 'ABORTED'
                 ? 'cancelled'
                 : 'auxiliary-failed'
-    throw new ImageInspectionError(stableCode, `辅助图片理解失败（${code}）：${finish.failure.message}`)
+    throw new ImageInspectionError(stableCode, `视觉模型读取图片失败（${code}）：${finish.failure.message}`)
   }
   const text = assembler
     .blocks()
@@ -2447,7 +2447,7 @@ const assembleLlmText = async (
     .map((block) => block.text)
     .join('')
     .trim()
-  if (!text) throw new ImageInspectionError('auxiliary-empty-result', '辅助图片理解模型没有返回文本结果。')
+  if (!text) throw new ImageInspectionError('auxiliary-empty-result', '视觉模型没有返回文字结果。')
   return { text, ...(assembler.usage === undefined ? {} : { usage: assembler.usage }) }
 }
 
@@ -2463,19 +2463,19 @@ const parseDelegatedEvidence = (
   try {
     parsed = DelegatedImageEvidenceSchema.parse(JSON.parse(normalized))
   } catch {
-    throw new ImageInspectionError('auxiliary-invalid-result', '辅助图片理解结果不是有效的结构化证据。')
+    throw new ImageInspectionError('auxiliary-invalid-result', '视觉模型的结果不是有效的结构化证据。')
   }
   if (parsed.images.length !== requested.length) {
-    throw new ImageInspectionError('auxiliary-invalid-result', '辅助图片理解结果的图片数量不匹配。')
+    throw new ImageInspectionError('auxiliary-invalid-result', '视觉模型结果的图片数量不匹配。')
   }
   parsed.images.forEach((image, index) => {
     if (image.index !== index || image.assetId !== requested[index]?.assetId) {
-      throw new ImageInspectionError('auxiliary-invalid-result', '辅助图片理解结果的图片顺序或 Asset ID 不匹配。')
+      throw new ImageInspectionError('auxiliary-invalid-result', '视觉模型结果的图片顺序或 Asset ID 不匹配。')
     }
   })
   const validIndices = new Set(requested.map((_item, index) => index))
   if (parsed.comparisons.some((comparison) => comparison.indices.some((index) => !validIndices.has(index)))) {
-    throw new ImageInspectionError('auxiliary-invalid-result', '辅助图片理解结果引用了批次之外的图片。')
+    throw new ImageInspectionError('auxiliary-invalid-result', '视觉模型结果引用了批次之外的图片。')
   }
   return parsed
 }
@@ -2663,7 +2663,7 @@ const assetInspectImagesTool = (input: {
           return parseJsonValue(result)
         }
         if (!input.auxiliary) {
-          throw new ImageInspectionError('auxiliary-unavailable', '当前智能体没有可用的辅助图片理解模型。')
+          throw new ImageInspectionError('auxiliary-unavailable', '当前智能体没有可用的视觉模型。')
         }
         const cachePayload = JSON.stringify({
           channelId: input.channelId,

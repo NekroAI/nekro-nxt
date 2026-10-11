@@ -444,7 +444,7 @@ export function ModelProviderDetail({
         description={modelsEditable ? undefined : '这个供应商的模型列表不能修改。'}
         tip={
           modelsEditable
-            ? `打开“看图”的模型可以直接理解频道里的图片。${catalogRoute ? '加入目录外的模型时，需要在高级设置中选择 API 协议。' : ''}`
+            ? `打开“视觉”的模型可以直接理解频道里的图片。${catalogRoute ? '加入目录外的模型时，需要在高级设置中选择 API 协议。' : ''}`
             : undefined
         }
         actions={

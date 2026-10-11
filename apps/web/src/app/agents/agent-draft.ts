@@ -82,7 +82,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   const changes: string[] = []
   if (draft.name.trim() !== base.name) changes.push('名称')
   if (draft.modelKey !== base.modelKey) changes.push('主模型')
-  if (draft.visionKey !== base.visionKey) changes.push('看图模型')
+  if (draft.visionKey !== base.visionKey) changes.push('视觉模型')
   const patch = capabilityPatch(base, draft)
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')
   if ('codeRun' in patch) changes.push('编排模式')

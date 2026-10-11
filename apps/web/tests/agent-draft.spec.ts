@@ -84,7 +84,7 @@ describe('agent draft', () => {
       name: '文本',
       inputModalities: ['text'],
     }
-    const vision = { ...text, id: 'vision-model', name: '看图', inputModalities: ['text', 'image'] }
+    const vision = { ...text, id: 'vision-model', name: '视觉模型', inputModalities: ['text', 'image'] }
     expect(imagePolicyFor(policy, vision, undefined).textModel).toEqual({ mode: 'disabled' })
     expect(imagePolicyFor(policy, text, undefined).textModel).toEqual({ mode: 'disabled' })
     expect(imagePolicyFor(policy, text, vision).textModel).toEqual({

@@ -143,7 +143,7 @@ export function LlmProviderRemovalDialog({
                     <li key={`${reference.agentId}:${reference.channelId ?? 'config'}:${reference.role}:${index}`}>
                       <strong>{reference.displayName}</strong>
                       <span className={styles.muted}>
-                        {reference.role === 'primary' ? '主模型' : '看图模型'} · {reference.model}
+                        {reference.role === 'primary' ? '主模型' : '视觉模型'} · {reference.model}
                       </span>
                       <span className={styles.muted}>
                         {reference.scope === 'configuration'

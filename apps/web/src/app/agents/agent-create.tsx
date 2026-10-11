@@ -89,7 +89,7 @@ export function AgentCreate() {
                 badge={
                   model ? (
                     <Chip tone={supportsImages(model) ? 'ok' : 'neutral'}>
-                      {supportsImages(model) ? '能看图' : '不能看图'}
+                      {supportsImages(model) ? '支持视觉' : '不支持视觉'}
                     </Chip>
                   ) : undefined
                 }

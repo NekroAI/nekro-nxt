@@ -632,18 +632,18 @@ export class SessionImageContext {
             route = { mode: 'delegated', provider: selection.provider, model: selection.model }
           } else {
             route = { mode: 'unavailable' }
-            blockers.push('看图模型没有声明支持图片。')
+            blockers.push('视觉模型没有声明支持图片。')
           }
         } catch {
           route = { mode: 'unavailable' }
-          blockers.push('看图模型现在不可用。')
+          blockers.push('视觉模型现在不可用。')
         }
       } else {
         route = { mode: 'unavailable' }
         blockers.push(
           primary.inputModalities === undefined
-            ? '主模型不支持图片，也没有设置看图模型。'
-            : '主模型不支持图片，也没有设置看图模型。',
+            ? '主模型不支持图片，也没有设置视觉模型。'
+            : '主模型不支持图片，也没有设置视觉模型。',
         )
       }
     } catch {

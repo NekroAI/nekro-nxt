@@ -323,7 +323,7 @@ export const assertAuxiliaryImageModel = async (
     (model) => model.provider === auxiliary.model.provider && model.id === auxiliary.model.model,
   )
   if (!selected?.inputModalities?.includes('image')) {
-    throw new Error('辅助图片理解模型必须明确声明支持图片输入。')
+    throw new Error('视觉模型必须明确声明支持图片输入。')
   }
 }
 
