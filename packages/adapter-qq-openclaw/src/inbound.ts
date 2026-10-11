@@ -327,8 +327,13 @@ export const parseQQChatRecordDump = (content: string): QQDecodedRich | undefine
   }
 }
 
+const QQ_UNAVAILABLE_FORWARD = '你的QQ暂不支持查看[转发多条消息]，请期待后续版本。'
+
 const parseQQForward = (content: string | undefined): QQDecodedRich | undefined => {
   if (!content) return undefined
+  if (content.trim() === QQ_UNAVAILABLE_FORWARD) {
+    return { kind: 'forward', summary: '转发的聊天记录（内容不可读取）', title: '转发的聊天记录' }
+  }
   const recordDump = parseQQChatRecordDump(content)
   if (recordDump) return recordDump
   const trimmed = content.trim()
@@ -351,7 +356,7 @@ export const parseQQRichPayload = (
   const dump = content ? parseQQCardDump(content) : undefined
   const rich = dump ?? parseQQEmbed(payload['embed']) ?? parseQQArk(payload['ark']) ?? parseQQForward(content)
   if (!rich) return content === undefined ? {} : { content }
-  const stripContent = dump !== undefined || rich.kind === 'forward'
+  const stripContent = dump !== undefined || rich.kind === 'forward' || content?.trim() === QQ_UNAVAILABLE_FORWARD
   return {
     rich,
     ...(stripContent || content === undefined ? {} : { content }),

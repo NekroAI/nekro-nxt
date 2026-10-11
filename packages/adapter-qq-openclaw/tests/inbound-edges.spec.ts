@@ -193,6 +193,27 @@ describe('QQ inbound mention splitting', () => {
 })
 
 describe('QQ inbound rich payload', () => {
+  it('represents the exact unavailable-forward placeholder as rich content, including direct and group messages', () => {
+    const content = '你的QQ暂不支持查看[转发多条消息]，请期待后续版本。'
+    const expected = { kind: 'forward', title: '转发的聊天记录', summary: '转发的聊天记录（内容不可读取）' }
+    expect(parseQQRichPayload({}, `  ${content}  `)).toEqual({ rich: expected })
+    expect(parseQQRichPayload({}, `有人收到这条提示：${content}`)).toEqual({ content: `有人收到这条提示：${content}` })
+    for (const event of ['GROUP_AT_MESSAGE_CREATE', 'C2C_MESSAGE_CREATE'] as const) {
+      const decoded = decodeQQInboundMessage(
+        event,
+        {
+          id: 'fixture-forward',
+          group_openid: 'fixture-group',
+          author: { member_openid: 'fixture-member', user_openid: 'fixture-member' },
+          content,
+        },
+        { now: () => 100 },
+      )
+      expect(decoded?.rich).toEqual(expected)
+      expect(decoded).not.toHaveProperty('content')
+    }
+  })
+
   it('parses flattened card dumps, embeds, ark kv and forward markers', () => {
     expect(
       parseQQCardDump(
