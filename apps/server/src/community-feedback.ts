@@ -579,15 +579,29 @@ export class CommunityFeedbackService {
     while (more) {
       const page = await this.#community.feedbackChanges(identity, cursor)
       changed ||= page.events.length > 0
-      const latest = new Map<string, number>()
-      for (const event of page.events) latest.set(event.ref, Math.max(latest.get(event.ref) ?? 0, event.seq))
-      for (const [ref, seq] of latest) {
+      const latest = new Map<string, { seq: number; noticeSeq: number }>()
+      for (const event of page.events) {
+        const previous = latest.get(event.ref)
+        // Reporter actions are already visible in the client. Subscriber events omit actorKind but still announce
+        // changes to somebody else's report. Labels, confirmations and other bookkeeping never create a notice.
+        const announce =
+          ['message', 'status_changed', 'fixed_in_set'].includes(event.type) && event.actorKind !== 'user'
+        latest.set(event.ref, {
+          seq: Math.max(previous?.seq ?? 0, event.seq),
+          noticeSeq: Math.max(previous?.noticeSeq ?? 0, announce ? event.seq : 0),
+        })
+      }
+      for (const [ref, { seq, noticeSeq }] of latest) {
         const previous = this.#repository.communityFeedback.getItem(identity, ref)
         const remote = await this.#community.getFeedback(identity, ref)
-        this.#repository.communityFeedback.saveItem(this.#item(identity, remote, undefined, seq))
+        const announce = noticeSeq > (previous?.lastEventSeq ?? 0)
+        this.#repository.communityFeedback.saveItem({
+          ...this.#item(identity, remote, undefined, seq),
+          unread: previous?.unread === true || announce,
+        })
         if (remote.status === 'withdrawn' && remote.title === '已删除' && remote.body === '')
           this.#clearLocalText(identity, ref)
-        if (seq > (previous?.lastEventSeq ?? 0)) notifications.add(ref)
+        if (announce) notifications.add(ref)
       }
       if (page.cursor < cursor || (page.hasMore && page.cursor === cursor))
         throw new Error('Invalid community feedback cursor progression.')

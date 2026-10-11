@@ -12,6 +12,7 @@ import {
   LogicalMessageIdSchema,
   type CommunityFeedback,
   type CommunityFeedbackCreate,
+  type CommunityFeedbackEvent,
 } from '@nekro-nxt/contracts'
 import { CoreService } from '@nekro-nxt/core'
 import { CoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
@@ -114,6 +115,7 @@ const setup = async () => {
   const tokens = new Map<string, { origin: string; userId: string }>()
   const remote = new Map<string, CommunityFeedback>()
   const payloads: CommunityFeedbackCreate[] = []
+  const events: CommunityFeedbackEvent[] = []
   const requests: Array<{ url: string; authorization: string | null }> = []
   const keyFor = (origin: string, id: string, key: string) => JSON.stringify([origin, id, key])
   const fetcher: typeof fetch = async (raw, init = {}) => {
@@ -153,7 +155,14 @@ const setup = async () => {
     if (!identity || identity.origin !== url.origin) throw new Error('Request crossed community identities.')
     if (url.pathname === '/api/v1/me')
       return Response.json({ id: identity.userId, handle: identity.userId, displayName: '虚构账号', avatarUrl: null })
-    if (url.pathname === '/api/v1/feedback/changes') return Response.json({ events: [], cursor: 0, hasMore: false })
+    if (url.pathname === '/api/v1/feedback/changes')
+      return Response.json({
+        events: url.searchParams.has('cursor')
+          ? events.filter((event) => event.seq > Number(url.searchParams.get('cursor')))
+          : [],
+        cursor: events.at(-1)?.seq ?? 0,
+        hasMore: false,
+      })
     if (url.pathname === '/api/v1/feedback' && init.method === 'POST') {
       const payload = CommunityFeedbackCreateSchema.parse(JSON.parse(typeof init.body === 'string' ? init.body : '{}'))
       payloads.push(payload)
@@ -251,6 +260,7 @@ const setup = async () => {
     remote,
     requests,
     notices,
+    events,
     channelA: channelA.id,
     channelB: channelB.id,
     agentId: agent.definition.id,
@@ -318,6 +328,39 @@ describe('feedback redaction', () => {
 })
 
 describe('local community feedback', () => {
+  it('notifies maintainer replies and processing changes, while own actions and metadata stay quiet', async () => {
+    const fixture = await setup()
+    const draft = await fixture.service.createDraft(draftInput(), fixture.automatic)
+    const ref = fixture.service.sentRef(draft.id)!
+    const add = (type: CommunityFeedbackEvent['type'], actorKind?: CommunityFeedbackEvent['actorKind']) => {
+      fixture.events.push({
+        seq: fixture.events.length + 1,
+        ref,
+        type,
+        data: {},
+        createdAt: 1000,
+        ...(actorKind ? { actorKind } : {}),
+      })
+    }
+    for (const type of ['created', 'message', 'status_changed', 'fix_confirmed', 'reopened'] as const) add(type, 'user')
+    add('labeled', 'admin')
+    add('priority_changed', 'admin')
+    await fixture.service.sync()
+    expect(fixture.notices).toEqual([])
+    expect((await fixture.service.list()).items[0]?.unread).toBe(false)
+    add('message', 'admin')
+    add('status_changed', 'author')
+    await fixture.service.sync()
+    expect(fixture.notices).toEqual([{ kind: 'update', ref }])
+    expect((await fixture.service.list()).items[0]?.unread).toBe(true)
+    await fixture.service.detail(ref)
+    add('fixed_in_set') // A subscriber sees only the change, without the other person's identity.
+    await fixture.service.sync()
+    expect(fixture.notices).toHaveLength(2)
+    await fixture.service.sync()
+    expect(fixture.notices).toHaveLength(2)
+  })
+
   it('claims at most five automatic sends when channels submit simultaneously', async () => {
     const fixture = await setup()
     const drafts = await Promise.all(
