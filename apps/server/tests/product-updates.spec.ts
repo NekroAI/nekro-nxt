@@ -50,6 +50,7 @@ describe('product updates', () => {
         tag_name: 'v0.4.1',
         html_url: 'https://github.com/NekroAI/nekro-nxt/releases/tag/v0.4.1',
         published_at: '2026-10-12T08:00:00Z',
+        updated_at: '2026-10-13T08:00:00Z',
       },
     })
     const updates = new ProductUpdates({
@@ -63,7 +64,11 @@ describe('product updates', () => {
       channel: 'stable',
       currentVersion: '0.4.0',
       state: 'available',
-      latest: { version: '0.4.1', url: 'https://github.com/NekroAI/nekro-nxt/releases/tag/v0.4.1' },
+      latest: {
+        version: '0.4.1',
+        url: 'https://github.com/NekroAI/nekro-nxt/releases/tag/v0.4.1',
+        publishedAt: Date.parse('2026-10-12T08:00:00Z'),
+      },
       checkedAt: 1000,
     })
     expect(github.requested).toEqual(['https://api.github.com/repos/NekroAI/nekro-nxt/releases/latest'])
@@ -95,6 +100,29 @@ describe('product updates', () => {
       latest: { version: '0.4.0-20261011-010101utc.gabcdef123456', commit: 'abcdef1' },
     })
   })
+
+  it.each(['2026-10-11T11:51:45Z', null, 'invalid-date'])(
+    'uses the rolling preview update date or omits it: %s',
+    async (updatedAt) => {
+      const github = fakeGitHub({
+        '/releases/tags/preview': {
+          name: 'NekroNXT Preview 0.5.0-20261011-114253utc.g222222222222',
+          body: '<!-- nxt-preview-commit:2222222222222222222222222222222222222222 -->',
+          published_at: '2026-08-23T08:11:31Z',
+          updated_at: updatedAt,
+        },
+      })
+      const updates = new ProductUpdates({
+        releaseId: '0.4.0-20261010-052101utc.g111111111111+111111111111',
+        repository: 'example/fixture',
+        settings: settingsStore(),
+        fetch: github.fetch,
+      })
+      const status = await updates.check()
+      expect(status.state).toBe('available')
+      expect(status.latest?.publishedAt).toBe(updatedAt?.startsWith('2026') ? Date.parse(updatedAt) : undefined)
+    },
+  )
 
   it('reports a failed check without losing a known update, and never checks a development build', async () => {
     let online = true

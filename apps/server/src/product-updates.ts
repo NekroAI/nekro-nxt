@@ -44,6 +44,7 @@ const GitHubReleaseSchema = z
     name: z.string().nullable().optional(),
     html_url: z.string().url().optional(),
     published_at: z.string().nullable().optional(),
+    updated_at: z.string().nullable().optional(),
     body: z.string().nullable().optional(),
   })
   .loose()
@@ -137,7 +138,9 @@ export class ProductUpdates {
     try {
       const release = await this.#release(this.#identity.channel === 'preview' ? 'tags/preview' : 'latest')
       const url = release.html_url ?? `https://github.com/${this.#options.repository}/releases`
-      const publishedAt = typeof release.published_at === 'string' ? Date.parse(release.published_at) : Number.NaN
+      // Preview replaces a rolling release: published_at remains its original publication date.
+      const releaseTime = this.#identity.channel === 'preview' ? release.updated_at : release.published_at
+      const publishedAt = typeof releaseTime === 'string' ? Date.parse(releaseTime) : Number.NaN
       const published = Number.isFinite(publishedAt) ? { publishedAt } : {}
       if (this.#identity.channel === 'preview') {
         const body = release.body ?? ''
