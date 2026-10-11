@@ -22,6 +22,7 @@ declare const styles: {
   readonly railIndicatorReady: string
   readonly railItem: string
   readonly railSpacer: string
+  readonly railSvgIcon: string
   readonly runDot: string
   readonly search: string
   readonly status: string

@@ -286,11 +286,22 @@ a.instance {
   transition: transform var(--dur-2) var(--ease);
 }
 
+.railSvgIcon {
+  width: 20px;
+  height: 20px;
+  background-color: currentColor;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+  transition: transform var(--dur-2) var(--ease);
+}
+
 .railItem:hover {
   color: var(--fg);
 }
 
-.railItem:hover svg {
+.railItem:hover svg,
+.railItem:hover .railSvgIcon {
   transform: translateY(-1px);
 }
 

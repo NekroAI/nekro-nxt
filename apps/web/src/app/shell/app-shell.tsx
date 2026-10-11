@@ -49,6 +49,19 @@ const hostLabel: Record<ProductHostStatus, string> = {
   error: '无法连接',
 }
 
+/** Address of an extension page's own SVG icon, served by the Host after checking its digest. */
+const pageSvgIconUrl = (page: {
+  readonly icon: { readonly kind: string; readonly sha256?: string }
+  readonly owner: { readonly kind: string; readonly extensionId?: string; readonly revisionId?: string }
+}): string | undefined =>
+  page.icon.kind === 'svg' &&
+  page.icon.sha256 &&
+  page.owner.kind === 'extension' &&
+  page.owner.extensionId &&
+  page.owner.revisionId
+    ? `/api/extensions/${encodeURIComponent(page.owner.extensionId)}/revisions/${encodeURIComponent(page.owner.revisionId)}/host-ui/assets/${page.icon.sha256}.svg`
+    : undefined
+
 /** Extension pages that registered a rail entry (`rail` in the page contribution) and are not hidden by the user. */
 function useRailPages() {
   const pages = useProductStore((state) => state.hostUi.pages)
@@ -87,6 +100,7 @@ function Rail() {
       {railPages.length > 0 ? <span className={styles.railDivider} aria-hidden="true" /> : null}
       {railPages.map((page) => {
         const Icon = page.icon.kind === 'host-icon' ? HOST_ICONS[page.icon.name] : AppWindow
+        const svg = pageSvgIconUrl(page)
         return (
           <NavLink
             key={page.pageInstanceId}
@@ -96,7 +110,16 @@ function Rail() {
             title={page.title}
             data-extension-rail=""
           >
-            <Icon aria-hidden="true" strokeWidth={1.7} />
+            {svg === undefined ? (
+              <Icon aria-hidden="true" strokeWidth={1.7} />
+            ) : (
+              // A mask keeps the extension's own icon in the rail's text colour in both themes.
+              <span
+                className={styles.railSvgIcon}
+                style={{ maskImage: `url("${svg}")`, WebkitMaskImage: `url("${svg}")` }}
+                aria-hidden="true"
+              />
+            )}
             <span>{page.title}</span>
           </NavLink>
         )
