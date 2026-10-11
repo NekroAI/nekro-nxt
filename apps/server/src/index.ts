@@ -4598,6 +4598,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     let text = ''
     let usage: TokenUsage | undefined
     let finish: string | undefined
+    let failure: string | undefined
     for await (const chunk of this.#context.llm.stream({
       provider: revision.model.provider,
       model: revision.model.model,
@@ -4608,9 +4609,15 @@ export class DshHostRuntime implements AgentSessionDriver {
     })) {
       if (chunk.type === 'text-delta') text += chunk.text
       if (chunk.type === 'usage') usage = chunk.usage
-      if (chunk.type === 'finish') finish = chunk.reason.kind
+      if (chunk.type === 'finish') {
+        finish = chunk.reason.kind
+        if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') failure = chunk.reason.failure.message
+      }
     }
-    if (finish !== 'stop' && finish !== 'length') throw new Error(`模型调用没有正常完成（${finish ?? '无结果'}）。`)
+    // `max-tokens` still returns what the model wrote; the caller asked for at most that much.
+    if (finish !== 'stop' && finish !== 'max-tokens') {
+      throw new Error(`模型调用没有完成：${failure ?? finish ?? '没有返回结果'}`)
+    }
     return {
       text: text.trim(),
       ...(usage === undefined
@@ -4665,6 +4672,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     let text = ''
     let usage: TokenUsage | undefined
     let finish: string | undefined
+    let failure: string | undefined
     for await (const chunk of this.#context.llm.stream({
       provider: input.provider,
       model: input.model,
@@ -4675,9 +4683,15 @@ export class DshHostRuntime implements AgentSessionDriver {
     })) {
       if (chunk.type === 'text-delta') text += chunk.text
       if (chunk.type === 'usage') usage = chunk.usage
-      if (chunk.type === 'finish') finish = chunk.reason.kind
+      if (chunk.type === 'finish') {
+        finish = chunk.reason.kind
+        if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') failure = chunk.reason.failure.message
+      }
     }
-    if (finish !== 'stop' && finish !== 'length') throw new Error(`模型调用没有正常完成（${finish ?? '无结果'}）。`)
+    // `max-tokens` still returns what the model wrote; the caller asked for at most that much.
+    if (finish !== 'stop' && finish !== 'max-tokens') {
+      throw new Error(`模型调用没有完成：${failure ?? finish ?? '没有返回结果'}`)
+    }
     return {
       text: text.trim(),
       ...(usage === undefined
