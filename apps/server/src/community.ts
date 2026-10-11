@@ -485,8 +485,17 @@ export class CommunityService {
   }
 
   async #request(url: URL, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+    // The community answers with what this version can install: updates it can apply, and a readable refusal for
+    // packages that need a newer NekroNXT.
+    const headers = new Headers(init.headers)
+    headers.set('x-nxt-sdk', String(EXTENSION_SDK_LEVEL))
     try {
-      return await this.#fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) })
+      return await this.#fetch(url, {
+        ...init,
+        headers,
+        redirect: 'error',
+        signal: AbortSignal.timeout(timeoutMs),
+      })
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError'
       throw new CommunityError(502, timedOut ? '连接社区超时，请稍后再试。' : '无法连接社区，请检查网络后再试。')
@@ -591,8 +600,7 @@ export class CommunityService {
     if (release.packageSize > MAX_PACKAGE_BYTES) throw new CommunityError(400, '扩展包超过 16 MiB，无法导入。')
     const response = await this.#request(
       new URL(`/api/v1/releases/${encodeURIComponent(releaseId)}/package`, this.communityUrl),
-      // The community refuses a package this version cannot install and answers with what to do instead.
-      { headers: { 'x-nxt-install': '1', 'x-nxt-sdk': String(EXTENSION_SDK_LEVEL) } },
+      { headers: { 'x-nxt-install': '1' } },
       PACKAGE_TIMEOUT_MS,
     )
     if (!response.ok) {

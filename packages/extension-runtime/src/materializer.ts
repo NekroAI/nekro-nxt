@@ -15,6 +15,8 @@ import {
   ExtensionPermissionsSchema,
   type ExtensionId,
   type ExtensionRevisionId,
+  EXTENSION_SDK_BASE_LEVEL,
+  requiredExtensionSdkLevel,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import type { DynamicPackageSnapshot } from './types.js'
@@ -96,17 +98,22 @@ export function materializeDynamicPackage(input: {
       ? {}
       : { client: wrapClient(parsed.snapshot.clientCode, parsed.snapshot.clientCss?.path) }),
   })
+  const permissions = parsed.snapshot.permissions ?? { permissions: [], networkOrigins: [] }
+  // Agent-written extensions never state a level; record the one their capabilities need so an older NekroNXT that
+  // imports the package asks for an upgrade.
+  const required = requiredExtensionSdkLevel(permissions).level
   const manifest = extensionManifestSchema.parse({
     schemaVersion: 7,
     extensionId: input.extensionId,
     revisionId: input.revisionId,
+    ...(required > EXTENSION_SDK_BASE_LEVEL ? { requires: { sdk: required } } : {}),
     entrypoints: {
       ...('host' in sources ? { host: 'source/host.ts' } : {}),
       ...('client' in sources ? { client: 'source/client.ts' } : {}),
     },
     ...(parsed.snapshot.clientCss === undefined ? {} : { clientCss: parsed.snapshot.clientCss }),
     ...(parsed.snapshot.icon === undefined ? {} : { icon: parsed.snapshot.icon }),
-    permissions: parsed.snapshot.permissions ?? { permissions: [], networkOrigins: [] },
+    permissions,
     ...(parsed.snapshot.config === undefined ? {} : { config: parsed.snapshot.config }),
     contributions,
   })

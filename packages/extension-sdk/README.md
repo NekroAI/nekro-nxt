@@ -70,7 +70,7 @@ Host 入口的 factory 只在本机执行一次（本机实例），参数为 `{
 | `prompt.static` / `dynamic`                                              | `context: [{ name, kind, maxChars }]`                             | 静态段是固定字符串；动态上下文每轮开始渲染一次，只读存储与调用上下文，变化时才追加；保存验证要求两次渲染逐字节一致                                                                                                                                            |
 | `models.list()` / `models.complete(request)`（本机层）                   | `permissions.host.models: { maxCallsPerMinute, maxOutputTokens }` | 调用用户在「设置 → 模型」里配置好的模型完成页面发起的批量任务（例如给导入的图片写描述），由页面让用户选模型；宿主按模型最低的思考强度调用，避免思考占满输出长度；图片只能来自资源库；只能声明在 `permissions.host`                                            |
 
-以上“需要声明”一列除标明本机层的接口外都写在 `permissions.agent`（原 `permissions.capabilities`），`assets`、`index` 也可以写在 `permissions.host` 供本机层使用。`requires: { sdk }` 声明最低宿主能力等级（当前为 `EXTENSION_SDK_LEVEL`），过旧的宿主在导入时提示升级。能力扩大（新增键、网络模式升级或新增域名/字段、新增存储作用域、模型调用上限提高）需要重新批准，存储配额变化不需要。
+以上“需要声明”一列除标明本机层的接口外都写在 `permissions.agent`（原 `permissions.capabilities`），`assets`、`index` 也可以写在 `permissions.host` 供本机层使用。`requires: { sdk }` 声明最低宿主能力等级（当前为 `EXTENSION_SDK_LEVEL`）：用到扩展资源库、检索索引或本机层模型调用时必须声明 8，声明低于实际用到的能力会被拒绝；智能体创建的扩展由宿主自动写入。社区和导入检查按 `EXTENSION_SDK_RELEASES` 显示所需的 NekroNXT 版本，过旧的宿主提示升级。能力扩大（新增键、网络模式升级或新增域名/字段、新增存储作用域、模型调用上限提高）需要重新批准，存储配额变化不需要。
 
 ## 配置
 

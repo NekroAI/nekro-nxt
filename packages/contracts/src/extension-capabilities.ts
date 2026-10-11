@@ -8,6 +8,23 @@ import { z } from 'zod'
  */
 export const EXTENSION_SDK_LEVEL = 8
 
+/**
+ * The first NekroNXT version of each capability level, so users read "needs NekroNXT 0.5.0" rather than a level
+ * number. Add the row for a new level in the change that raises EXTENSION_SDK_LEVEL; a test keeps the two in step.
+ */
+export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly version: string }[] = [
+  { level: 6, version: '0.3.0' },
+  { level: 7, version: '0.4.0' },
+  { level: 8, version: '0.5.0' },
+]
+
+/** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
+export const extensionSdkVersion = (level: number): string | undefined =>
+  EXTENSION_SDK_RELEASES.find((release) => release.level >= level)?.version
+
+/** Manifest V7 itself; extensions that use nothing newer need this level. */
+export const EXTENSION_SDK_BASE_LEVEL = 7
+
 export const ExtensionRequiresSchema = z.object({ sdk: z.number().int().min(1).max(1000) }).strict()
 export type ExtensionRequires = z.output<typeof ExtensionRequiresSchema>
 

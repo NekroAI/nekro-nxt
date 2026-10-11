@@ -13,7 +13,9 @@ import {
   EMPTY_CONFIG_SCHEMA,
   EMPTY_EXTENSION_UI_CONTRIBUTIONS,
   EXTENSION_PROVIDES,
+  EXTENSION_SDK_BASE_LEVEL,
   EXTENSION_SDK_LEVEL,
+  requiredExtensionSdkLevel,
   mcpSecretFields,
   ExtensionRequiresSchema,
   type ConfigSchemaDocument,
@@ -154,11 +156,20 @@ const checkEntrypoints = (
   if (value.clientCss !== undefined && !hasClient) issue('Client CSS 需要 Client 源码。')
 }
 
-const checkRequires = (value: { readonly requires?: { readonly sdk: number } | undefined }, issue: Issue): void => {
+const checkRequires = (
+  value: { readonly requires?: { readonly sdk: number } | undefined; readonly permissions: ExtensionPermissions },
+  issue: Issue,
+): void => {
   if (value.requires !== undefined && value.requires.sdk > EXTENSION_SDK_LEVEL) {
     issue(
       `这个扩展需要扩展能力等级 ${value.requires.sdk}，当前 NekroNXT 只支持到 ${EXTENSION_SDK_LEVEL}，请先升级 NekroNXT。`,
     )
+  }
+  // A declared level below what the capabilities need would let an older NekroNXT accept the package and then fail on
+  // fields it does not know.
+  const needed = requiredExtensionSdkLevel(value.permissions)
+  if (needed.level > (value.requires?.sdk ?? EXTENSION_SDK_BASE_LEVEL)) {
+    issue(`这个扩展用到了${needed.capabilities.join('、')}，需要在清单中声明 requires: { sdk: ${needed.level} }。`)
   }
 }
 

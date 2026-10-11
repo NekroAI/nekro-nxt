@@ -42,6 +42,16 @@ describe('materializeDynamicPackage', () => {
     expect(imported.contentDigest).toBe(saved.contentDigest)
   })
 
+  it('records the capability level an agent-written extension needs', () => {
+    expect(materialize({ hostCode: 'return {}', contributions: [tool] }).manifest).not.toHaveProperty('requires')
+    const library = materialize({
+      hostCode: 'return {}',
+      contributions: [tool],
+      permissions: { permissions: [], networkOrigins: [], agent: { assets: { library: {} } } },
+    })
+    expect(library.manifest.requires).toEqual({ sdk: 8 })
+  })
+
   it('requires source halves used by contributions and a Client for CSS', () => {
     expect(() => materialize({ clientCode: 'return {}', contributions: [adapter, page] })).toThrow('需要 Host 源码')
     expect(() => materialize({ hostCode: 'return {}', contributions: [page] })).toThrow('界面贡献需要 Client 源码')

@@ -3,6 +3,7 @@ import {
   communityPublisherLabel,
   communityReviewLabel,
   EXTENSION_SDK_LEVEL,
+  extensionSdkVersion,
   HostApiContracts,
   type CommunityExtensionSort,
   type CommunityExtensionDetail,
@@ -13,6 +14,7 @@ import { ArrowLeft, Code2, ExternalLink, Store } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { callHostApi } from '../../host-api-client.js'
+import { useGo } from '../model/nav.js'
 import { useProductStore } from '../../product-runtime.js'
 import {
   Banner,
@@ -63,6 +65,23 @@ const ReviewChip = ({ status }: { readonly status: CommunityExtensionSummary['la
   if (!status) return null
   const label = communityReviewLabel(status.reviewStatus)
   return <Chip tone={label.tone}>{label.label}</Chip>
+}
+
+const currentVersion = typeof __NEKRO_PRODUCT_VERSION__ === 'string' ? __NEKRO_PRODUCT_VERSION__ : ''
+
+/**
+ * What a release needs when this NekroNXT is too old for it: the version that first supports it, or an empty string
+ * when even that is newer than this build knows; undefined when it can be installed.
+ */
+const neededVersion = (requiresSdk: number | null | undefined): string | undefined => {
+  if (requiresSdk == null || requiresSdk <= EXTENSION_SDK_LEVEL) return undefined
+  return extensionSdkVersion(requiresSdk) ?? ''
+}
+
+function UpgradeChip({ requiresSdk }: { readonly requiresSdk: number | null | undefined }) {
+  const needs = neededVersion(requiresSdk)
+  if (needs === undefined) return null
+  return <Chip tone="warn">{needs ? `需 NekroNXT ${needs}` : '需更新 NekroNXT'}</Chip>
 }
 
 /** 社区「发现」：扩展目录与详情。安装先下载并校验，再走与本地文件相同的导入确认；导入后不会自动启用。 */
@@ -195,6 +214,7 @@ function CommunityCatalog() {
               <span className={styles.communitySummary}>{item.summary || '作者还没有填写介绍。'}</span>
               <span className={styles.communityCardFoot}>
                 {item.official ? <Chip tone="accent">官方</Chip> : null}
+                <UpgradeChip requiresSdk={item.latest?.requiresSdk} />
                 <ReviewChip status={item.latest} />
                 <RatingMark rating={item.latest?.rating ?? null} />
                 <span className={styles.faint}>
@@ -227,6 +247,7 @@ function CommunityDetail({
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const installed = useProductStore((state) => state.extensions.some((item) => item.id === extensionId))
+  const go = useGo()
 
   useEffect(() => {
     let cancelled = false
@@ -269,7 +290,8 @@ function CommunityDetail({
   // 源码地址留空时作者端会填入社区扩展页；与「在社区查看」重复时不再单独显示。
   const sourceUrl = detail.sourceUrl && detail.sourceUrl !== detail.pageUrl ? detail.sourceUrl : null
   const label = latest ? communityReviewLabel(latest.reviewStatus) : undefined
-  const needsUpgrade = latest?.requiresSdk != null && latest.requiresSdk > EXTENSION_SDK_LEVEL
+  const needs = neededVersion(latest?.requiresSdk)
+  const needsUpgrade = needs !== undefined
   const install = async () => {
     if (!latest) return
     setBusy(true)
@@ -337,7 +359,17 @@ function CommunityDetail({
       ) : null}
       {label?.tone === 'warn' ? <Banner tone="bad">审查发现了安全问题，安装前请先看审查记录。</Banner> : null}
       {needsUpgrade ? (
-        <Banner tone="warn">这个扩展需要更新版本的 NekroNXT，请先升级后再安装。</Banner>
+        <Banner
+          tone="warn"
+          action={
+            <Button size="small" onClick={() => go('/settings/about')}>
+              检查更新
+            </Button>
+          }
+        >
+          {needs ? `需要 NekroNXT ${needs} 或更高版本` : '需要更新版本的 NekroNXT'}
+          {currentVersion ? `，当前为 ${currentVersion}` : ''}。
+        </Banner>
       ) : installed ? (
         <Banner tone="info">本机已有这个扩展，这次会作为新版本导入，需要时在扩展详情里切换。</Banner>
       ) : null}

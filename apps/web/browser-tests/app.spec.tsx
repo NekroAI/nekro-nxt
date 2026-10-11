@@ -1333,11 +1333,13 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       '/community',
       async (page) => {
+        // Visible in the list, before opening the extension.
+        await playwrightExpect(page.getByRole('link', { name: /新能力扩展/u })).toContainText('需更新 NekroNXT')
         await page.getByRole('link', { name: /新能力扩展/u }).click()
         await playwrightExpect(page.getByRole('heading', { name: '新能力扩展' })).toBeVisible()
-        await playwrightExpect(page.locator('body')).toContainText(
-          '这个扩展需要更新版本的 NekroNXT，请先升级后再安装。',
-        )
+        await playwrightExpect(page.getByRole('alert')).toContainText('需要更新版本的 NekroNXT，当前为')
+        await playwrightExpect(page.getByRole('button', { name: '检查更新' })).toBeVisible()
+        await page.screenshot({ path: '.local/browser-test-results/community-upgrade-required.png' })
         await playwrightExpect(page.getByRole('button', { name: '安装' })).toBeDisabled()
       },
       browserSnapshot,

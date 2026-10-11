@@ -6,6 +6,8 @@ import {
   ExtensionLayeredConfigSchema,
   ExtensionPermissionsSchema,
   EXTENSION_SDK_LEVEL,
+  EXTENSION_SDK_RELEASES,
+  extensionSdkVersion,
   HostApiContracts,
   HostPageContributionSchema,
   HostSnapshotSchema,
@@ -28,6 +30,11 @@ const config = {
 describe('Extension V7 contracts', () => {
   it('uses SDK level 8 and separates browser, host and agent permissions', () => {
     expect(EXTENSION_SDK_LEVEL).toBe(8)
+    // Raising the level needs the NekroNXT version that ships it, which is what users are shown.
+    expect(EXTENSION_SDK_RELEASES.at(-1)?.level).toBe(EXTENSION_SDK_LEVEL)
+    expect(extensionSdkVersion(8)).toBe('0.5.0')
+    expect(extensionSdkVersion(7)).toBe('0.4.0')
+    expect(extensionSdkVersion(EXTENSION_SDK_LEVEL + 1)).toBeUndefined()
     expect(ExtensionPermissionsSchema.parse({})).toEqual({ permissions: [], networkOrigins: [] })
     expect(hostPermissionDeclaration(permissions)).toEqual({
       permissions: ['agents.read', 'network.request'],

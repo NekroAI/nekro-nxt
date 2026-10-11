@@ -347,8 +347,18 @@ describe('Extension permissions and configuration', () => {
       ],
       filters: ['sources', 'scope'],
     }
+    const mediaPermissions = {
+      permissions: [],
+      networkOrigins: [],
+      host: { assets: { library: {} } },
+    }
+    // Capabilities newer than Manifest V7 need the level that introduced them.
+    expect(() => extensionManifestSchema.parse(hostManifest({ permissions: mediaPermissions }))).toThrow(
+      '这个扩展用到了扩展资源库，需要在清单中声明 requires: { sdk: 8 }。',
+    )
     const media = extensionManifestSchema.parse(
       hostManifest({
+        requires: { sdk: 8 },
         permissions: {
           permissions: [],
           networkOrigins: [],

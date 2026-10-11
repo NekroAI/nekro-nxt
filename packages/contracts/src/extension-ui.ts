@@ -3,6 +3,7 @@ import {
   ExtensionCapabilitiesSchema,
   HostLayerCapabilitiesSchema,
   hostLayerAsCapabilities,
+  EXTENSION_SDK_BASE_LEVEL,
 } from './extension-capabilities.js'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageInstanceIdSchema } from './domain.js'
 import { ConfigSchemaDocumentSchema } from './config-schema.js'
@@ -538,3 +539,22 @@ export const EXTENSION_DATA_HOOK_PERMISSIONS = {
 } as const satisfies Readonly<Record<string, HostUiPermission>>
 
 export type ExtensionDataHookName = keyof typeof EXTENSION_DATA_HOOK_PERMISSIONS
+
+/**
+ * The capability level a set of permissions needs: Manifest V7 itself, or the level that introduced the newest
+ * capability it declares. Packaging and import compare it with `requires.sdk`, so an extension cannot claim a level
+ * too old for what it uses.
+ */
+export const requiredExtensionSdkLevel = (
+  permissions: ExtensionPermissions | undefined,
+): { readonly level: number; readonly capabilities: readonly string[] } => {
+  const level8 = [
+    permissions?.host?.assets === undefined ? undefined : '扩展资源库',
+    permissions?.agent?.assets?.library === undefined ? undefined : '扩展资源库',
+    permissions?.host?.index === undefined && permissions?.agent?.index === undefined ? undefined : '检索索引',
+    permissions?.host?.models === undefined ? undefined : '本机层模型调用',
+  ].filter((name): name is string => name !== undefined)
+  return level8.length > 0
+    ? { level: 8, capabilities: [...new Set(level8)] }
+    : { level: EXTENSION_SDK_BASE_LEVEL, capabilities: [] }
+}
