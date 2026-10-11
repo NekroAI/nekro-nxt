@@ -95,6 +95,7 @@ export interface AgentSummary {
     readonly codeRun: boolean
     /** Network for commands and `run_code` programs. */
     readonly commandNetwork: boolean
+    readonly communityFeedbackAuto: boolean
     /** Accounts this agent's commands act as; each names an account of the host's library. */
     readonly commandAccounts: CommandAccountGrant[]
   }

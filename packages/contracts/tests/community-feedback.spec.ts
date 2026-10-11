@@ -4,9 +4,17 @@ import {
   CommunityFeedbackCreateSchema,
   CommunityFeedbackDiagnosticsSchema,
   CommunityFeedbackEventDataSchema,
+  HostApiContracts,
 } from '../src/index.js'
 
 describe('community feedback wire contracts', () => {
+  it('does not revoke feedback permission when an older client changes another capability', () => {
+    expect(HostApiContracts.updateAgentCapabilities.parseRequest({ fileTools: true })).toEqual({ fileTools: true })
+    expect(HostApiContracts.updateAgentCapabilities.parseRequest({ communityFeedbackAuto: false })).toEqual({
+      communityFeedbackAuto: false,
+    })
+    expect(() => HostApiContracts.updateAgentCapabilities.parseRequest({})).toThrow()
+  })
   it('reads accounts from both old communities and communities with stable user IDs', () => {
     const old = { handle: 'sample-author', displayName: '示例作者', avatarUrl: null }
     expect(CommunityAccountSchema.parse(old).id).toBeUndefined()

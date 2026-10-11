@@ -713,7 +713,15 @@ export class NekroRuntime {
         now,
       })
       await commandAccounts.prepare()
+      const feedbackPort: { current?: CommunityFeedbackService } = {}
       const host = await DshHostRuntime.create({
+        feedback: {
+          service: () => feedbackPort.current,
+          isAdminClientChannel: (channelId) => {
+            const channel = repository.getChannel(channelId)
+            return channel?.kind === 'internal' && channel.connectionId === internalConnectionId
+          },
+        },
         codeRunNode: () => codeRunNode.executable(),
         commandAccounts: {
           tokenFor: (accountId) => commandAccounts.tokenFor(accountId),
@@ -985,6 +993,7 @@ export class NekroRuntime {
         adapterRuntimes,
         adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
       })
+      feedbackPort.current = runtime.feedback
       await runtime.feedback.initialize()
       return runtime
     } catch (error) {

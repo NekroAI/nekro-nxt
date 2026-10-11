@@ -564,9 +564,12 @@ export class CommunityService {
         ...init,
         headers,
         redirect: 'error',
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: init.signal
+          ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)])
+          : AbortSignal.timeout(timeoutMs),
       })
     } catch (error) {
+      init.signal?.throwIfAborted()
       const timedOut = error instanceof Error && error.name === 'TimeoutError'
       throw new CommunityError(502, timedOut ? '连接社区超时，请稍后再试。' : '无法连接社区，请检查网络后再试。')
     }
@@ -920,8 +923,10 @@ export class CommunityService {
     pathname: string,
     init: RequestInit = {},
   ): Promise<unknown> {
+    init.signal?.throwIfAborted()
     this.#assertFeedbackIdentity(identity)
     const token = await this.#accessToken()
+    init.signal?.throwIfAborted()
     this.#assertFeedbackIdentity(identity)
     const response = await this.#request(new URL(pathname, identity.communityUrl), {
       ...init,
@@ -940,24 +945,34 @@ export class CommunityService {
     return body
   }
 
-  async createFeedback(identity: CommunityFeedbackIdentity, input: CommunityFeedbackCreate) {
+  async createFeedback(identity: CommunityFeedbackIdentity, input: CommunityFeedbackCreate, signal?: AbortSignal) {
     return CommunityFeedbackSchema.parse(
-      await this.#feedbackRequest(identity, '/api/v1/feedback', { method: 'POST', body: JSON.stringify(input) }),
+      await this.#feedbackRequest(identity, '/api/v1/feedback', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        ...(signal ? { signal } : {}),
+      }),
     )
   }
 
-  async listFeedback(identity: CommunityFeedbackIdentity, params = new URLSearchParams(), known = false) {
+  async listFeedback(
+    identity: CommunityFeedbackIdentity,
+    params = new URLSearchParams(),
+    known = false,
+    signal?: AbortSignal,
+  ) {
     return CommunityFeedbackListSchema.parse(
       await this.#feedbackRequest(
         identity,
         `/api/v1/feedback${known ? '/known' : ''}${params.size ? `?${params}` : ''}`,
+        signal ? { signal } : {},
       ),
     )
   }
 
-  async getFeedback(identity: CommunityFeedbackIdentity, ref: string) {
+  async getFeedback(identity: CommunityFeedbackIdentity, ref: string, signal?: AbortSignal) {
     const feedback = CommunityFeedbackSchema.parse(
-      await this.#feedbackRequest(identity, `/api/v1/feedback/${encodeURIComponent(ref)}`),
+      await this.#feedbackRequest(identity, `/api/v1/feedback/${encodeURIComponent(ref)}`, signal ? { signal } : {}),
     )
     if (feedback.ref !== ref)
       throw new CommunityError(502, '社区返回了不匹配的反馈，请稍后重试。', 'community-feedback-mismatch')

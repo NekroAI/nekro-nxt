@@ -58,6 +58,7 @@ export interface FeedbackDraftContext {
   readonly channelId: ChannelId | null
   readonly requestedBy: string
   readonly automatic?: boolean
+  readonly signal?: AbortSignal
 }
 export interface FeedbackSources {
   readonly redaction: (channelId: ChannelId | null) => FeedbackRedactionContext
@@ -209,11 +210,13 @@ export class CommunityFeedbackService {
     context: FeedbackDraftContext = { agentId: null, channelId: null, requestedBy: 'admin-console' },
   ): Promise<CommunityFeedbackDraft> {
     this.#assertActive()
+    context.signal?.throwIfAborted()
     const value = CommunityFeedbackDraftInputSchema.parse(input)
     if (context.agentId !== null) {
       await this.getSettings()
       if (!this.enabled()) throw new Error('社区反馈工具尚未开启。')
     }
+    context.signal?.throwIfAborted()
     const identity = this.#community.feedbackIdentity()
     const redaction = this.#sources.redaction(context.channelId)
     const excerpt = (value.conversationRefs ?? []).map((messageId) => {
@@ -258,7 +261,7 @@ export class CommunityFeedbackService {
       context.requestedBy === 'admin-console' &&
       this.#sources.canAutoSubmit?.(context.agentId, context.channelId) === true
     ) {
-      return this.sendDraft(draft.id, { automatic: true })
+      return this.sendDraft(draft.id, { automatic: true, ...(context.signal ? { signal: context.signal } : {}) })
     }
     await this.#notify({ kind: 'draft' })
     return draft
@@ -319,7 +322,7 @@ export class CommunityFeedbackService {
 
   async sendDraft(
     id: CommunityFeedbackDraftId,
-    options: { readonly automatic?: boolean; readonly consent?: boolean } = {},
+    options: { readonly automatic?: boolean; readonly consent?: boolean; readonly signal?: AbortSignal } = {},
   ): Promise<CommunityFeedbackDraft> {
     this.#assertActive()
     this.#draft(id)
@@ -334,9 +337,11 @@ export class CommunityFeedbackService {
 
   async #send(
     id: CommunityFeedbackDraftId,
-    options: { readonly automatic?: boolean; readonly consent?: boolean },
+    options: { readonly automatic?: boolean; readonly consent?: boolean; readonly signal?: AbortSignal },
   ): Promise<CommunityFeedbackDraft> {
+    options.signal?.throwIfAborted()
     const settings = await this.getSettings()
+    options.signal?.throwIfAborted()
     if (!settings.supported) throw new Error('当前社区不支持反馈。')
     if (!settings.signedIn) throw new Error('请先登录社区。')
     const identity = this.#community.feedbackIdentity()
@@ -373,7 +378,7 @@ export class CommunityFeedbackService {
     }
     this.#changed()
     try {
-      const response = await this.#community.createFeedback(identity, payload)
+      const response = await this.#community.createFeedback(identity, payload, options.signal)
       const item = this.#item(identity, response, { channelId: draft.channelId, draftId: draft.id })
       this.#repository.communityFeedback.commitSent(
         id,
@@ -452,6 +457,13 @@ export class CommunityFeedbackService {
   lastSent() {
     const record = this.#repository.getSystemSetting(storedKey('lastSent', this.#community.feedbackIdentity()))
     return record ? StoredLastPayloadSchema.parse(record.value).value : null
+  }
+
+  sentRef(id: CommunityFeedbackDraftId): string | undefined {
+    this.#draft(id)
+    return this.#repository.communityFeedback
+      .listItems(this.#community.feedbackIdentity())
+      .find((item) => item.draftId === id)?.ref
   }
 
   async detail(ref: string): Promise<CommunityFeedback> {
@@ -592,19 +604,22 @@ export class CommunityFeedbackService {
     channelId: ChannelId,
     query: string,
     extensionId?: string,
+    signal?: AbortSignal,
   ): Promise<CommunityFeedbackSummary[]> {
+    signal?.throwIfAborted()
     await this.getSettings()
+    signal?.throwIfAborted()
     if (!this.enabled()) throw new Error('社区反馈工具尚未开启。')
     const identity = this.#community.feedbackIdentity()
     const params = new URLSearchParams({ q: query, limit: '50' })
     if (extensionId) params.set('extensionId', extensionId)
-    const publicItems = await this.#community.listFeedback(identity, params, true)
+    const publicItems = await this.#community.listFeedback(identity, params, true, signal)
     const own = this.#repository.communityFeedback
       .listItems(identity)
       .filter((item) => item.channelId === channelId && item.title.includes(query))
     const results = new Map(publicItems.items.map((item) => [item.ref, item]))
     for (const item of own) {
-      const detail = await this.#community.getFeedback(identity, item.ref)
+      const detail = await this.#community.getFeedback(identity, item.ref, signal)
       if (!extensionId || (detail.target !== 'nxt' && detail.target?.extensionId === extensionId))
         results.set(item.ref, {
           id: detail.id,
@@ -618,8 +633,10 @@ export class CommunityFeedbackService {
     return [...results.values()]
   }
 
-  async statusForChannel(channelId: ChannelId, ref?: string): Promise<CommunityFeedback[]> {
+  async statusForChannel(channelId: ChannelId, ref?: string, signal?: AbortSignal): Promise<CommunityFeedback[]> {
+    signal?.throwIfAborted()
     await this.getSettings()
+    signal?.throwIfAborted()
     if (!this.enabled()) throw new Error('社区反馈工具尚未开启。')
     const identity = this.#community.feedbackIdentity()
     const items = this.#repository.communityFeedback
@@ -627,7 +644,7 @@ export class CommunityFeedbackService {
       .filter((item) => item.channelId === channelId && (!ref || item.ref === ref))
       .slice(0, 10)
     if (ref && items.length === 0) throw new Error('当前频道没有这条反馈。')
-    return Promise.all(items.map((item) => this.#community.getFeedback(identity, item.ref)))
+    return Promise.all(items.map((item) => this.#community.getFeedback(identity, item.ref, signal)))
   }
 
   async dispose(): Promise<void> {

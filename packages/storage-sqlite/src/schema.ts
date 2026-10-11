@@ -35,7 +35,7 @@ import type {
   CommunityFeedbackDraftId,
   CommunityFeedbackItem,
 } from '@nekro-nxt/contracts'
-import type { AgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
+import type { StoredAgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import type {
   AuthoringAttemptFailure,
   AuthoringHalfState,
@@ -79,7 +79,7 @@ export const agentRevisions = sqliteTable(
     modelProvider: text('model_provider').notNull(),
     modelId: text('model_id').notNull(),
     reasoningEffort: text('reasoning_effort'),
-    capabilities: jsonText<AgentCapabilityGrants>('capabilities').notNull(),
+    capabilities: jsonText<StoredAgentCapabilityGrants>('capabilities').notNull(),
     imagePolicy: jsonText<ImageUnderstandingPolicy>('image_policy').notNull(),
     dynamicClientApprovalPolicy: text('dynamic_client_approval_policy', { enum: ['manual', 'automatic'] })
       .notNull()

@@ -1458,7 +1458,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(snapshot.notificationSettings).toEqual({
         system: { enabled: true },
         bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-        events: { 'dynamic-client-approval-requested': true },
+        events: { 'dynamic-client-approval-requested': true, 'community-feedback-update': true },
       })
 
       const connected = HostApiContracts.listClientNotifications.parseResponse(

@@ -297,6 +297,9 @@ export function registerExtensionsRoutes({
                   ? {}
                   : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
                 ...(parsed.scheduledTasks === undefined ? {} : { scheduledTasks: parsed.scheduledTasks }),
+                ...(parsed.communityFeedbackAuto === undefined
+                  ? {}
+                  : { communityFeedbackAuto: parsed.communityFeedbackAuto }),
                 ...(parsed.codeRun === undefined ? {} : { codeRun: parsed.codeRun }),
                 ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
                 ...(parsed.commandAccounts === undefined

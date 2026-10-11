@@ -28,6 +28,9 @@ export interface FeedbackEnvironment {
 
 export const runtimeFeedbackSources = (runtime: NekroRuntime, environment: FeedbackEnvironment): FeedbackSources => ({
   notify: (input) => runtime.notifications.notifyCommunityFeedback(input),
+  canAutoSubmit: (agentId, channelId) =>
+    runtime.repository.getAgent(agentId)?.revision.capabilities.communityFeedbackAuto === true &&
+    runtime.repository.getBinding(channelId)?.agentId === agentId,
   redaction: (channelId) => {
     const connections = runtime.core.listConnections()
     return {
@@ -157,7 +160,7 @@ export const runtimeFeedbackSources = (runtime: NekroRuntime, environment: Feedb
               scheduledTasks: grants.scheduledTasks,
               codeRun: grants.codeRun,
               commandNetwork: grants.commandNetwork,
-              communityFeedbackAuto: false,
+              communityFeedbackAuto: grants.communityFeedbackAuto,
             },
           }
         : {}),

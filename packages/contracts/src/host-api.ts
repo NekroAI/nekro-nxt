@@ -310,6 +310,7 @@ const AgentCapabilitiesSchema = z
     codeRun: z.boolean().default(false),
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
+    communityFeedbackAuto: z.boolean().default(false),
     /** Accounts this agent's commands may act as; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
   })
@@ -413,13 +414,14 @@ const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   validatePersonaDocumentProjection(value, context)
 })
 
-// The defaults that fill `scheduledTasks`, `codeRun`, `commandNetwork` and `commandAccounts` for older clients must not
+// Defaults that fill capabilities for older clients must not
 // reset them in a partial update.
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
   .extend({
     scheduledTasks: z.boolean().optional(),
     codeRun: z.boolean().optional(),
     commandNetwork: z.boolean().optional(),
+    communityFeedbackAuto: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
   })
   .strict()

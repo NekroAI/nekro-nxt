@@ -46,6 +46,7 @@ const CAPABILITY_KEYS = [
   'scheduledTasks',
   'codeRun',
   'commandNetwork',
+  'communityFeedbackAuto',
 ] as const satisfies readonly (keyof Capabilities)[]
 type BooleanCapability = (typeof CAPABILITY_KEYS)[number]
 const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation', 'scheduledTasks'] as const
@@ -97,6 +98,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if ('codeRun' in patch) changes.push('编排模式')
   if ('commandNetwork' in patch) changes.push('命令联网')
   if ('commandAccounts' in patch) changes.push('账号授权')
+  if ('communityFeedbackAuto' in patch) changes.push('免确认提交反馈')
   for (const key of OTHER_CAPABILITIES) {
     if (key in patch) changes.push(CAPABILITY_LABEL[key])
   }

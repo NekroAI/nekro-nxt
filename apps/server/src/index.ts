@@ -12,6 +12,13 @@ import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
 import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { mountCodeRunRuntime } from './code-run.js'
+import {
+  COMMUNITY_FEEDBACK_PROMPT,
+  FeedbackTurnOrigin,
+  feedbackAdmissionOrigin,
+  mountFeedbackTools,
+} from './feedback-tools.js'
+import type { CommunityFeedbackService } from './community-feedback.js'
 import { WorkspaceFileSystem } from './workspace-file-system.js'
 import {
   commandAccountEnvironment,
@@ -435,6 +442,10 @@ export interface DshHostRuntimeOptions {
   readonly members?: ChannelMemberRelations
   /** Channel-specific instructions, read on every model request so edits apply to running sessions. */
   readonly channelPrompts?: Pick<ChannelPrompts, 'current' | 'updateNotesByAgent' | 'memberNotes' | 'saveMemberNote'>
+  readonly feedback?: {
+    readonly service: () => CommunityFeedbackService | undefined
+    readonly isAdminClientChannel: (channelId: ChannelId) => boolean
+  }
   /** The channel's backlog and review budget; absent hosts use the defaults. */
   readonly contextPolicy?: (channelId: ChannelId) => ChannelContextPolicy
   readonly assets: AssetAccessRepository
@@ -2912,6 +2923,8 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #history: ProductChannelHistoryRepository
   readonly #members: ChannelMemberRelations | undefined
   readonly #channelPrompts: DshHostRuntimeOptions['channelPrompts']
+  readonly #feedback: DshHostRuntimeOptions['feedback']
+  readonly #feedbackTurns = new Map<string, FeedbackTurnOrigin>()
   readonly #contextPolicy: (channelId: ChannelId) => ChannelContextPolicy
   readonly #imageContext: SessionImageContext
   readonly #dynamic: DynamicAuthoringRuntime
@@ -2954,6 +2967,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#history = options.history
     this.#members = options.members
     this.#channelPrompts = options.channelPrompts
+    this.#feedback = options.feedback
     this.#contextPolicy = options.contextPolicy ?? (() => DEFAULT_CHANNEL_CONTEXT_POLICY)
     this.#assets = options.assets
     this.#assetService = options.assetService
@@ -3521,6 +3535,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       readonly hasClient: boolean
     }> = []
     const setup = async (agentContext: Context): Promise<void> => {
+      const feedbackOrigin = new FeedbackTurnOrigin()
       agentContext.effect(() => {
         const record = this.#sessions.register({
           sessionId,
@@ -3528,8 +3543,43 @@ export class DshHostRuntime implements AgentSessionDriver {
           channelId: input.channelId,
           episodeId: input.episodeId,
         })
-        return () => this.#sessions.remove(sessionId, record)
+        this.#feedbackTurns.set(sessionId, feedbackOrigin)
+        return () => {
+          this.#sessions.remove(sessionId, record)
+          this.#feedbackTurns.delete(sessionId)
+        }
       }, 'nekro-nxt: product Agent ownership')
+      const feedbackTools = mountFeedbackTools(agentContext.tools, {
+        service: () => this.#feedback?.service(),
+        agentId: revision.agentId,
+        channelId: input.channelId,
+        rootSessionId: sessionId,
+        autoGranted: revision.capabilities.communityFeedbackAuto,
+        origin: feedbackOrigin,
+      })
+      agentContext.effect(() => feedbackTools.dispose, 'nekro-nxt: community feedback tools')
+      agentContext.on('system-prompt/assemble', async (_assembly, context, next) => {
+        // DSH assembles tools before agent/pre-step. Reassemble once after changing the owned registrations.
+        if (feedbackTools.refresh()) return agentContext.systemPrompt.assemble(context)
+        return next()
+      })
+      agentContext.on('agent/pre-step', async ({ agent, turn, messages }, next) => {
+        if (agent.id === sessionId) {
+          feedbackOrigin.begin(turn, messages)
+        }
+        return next()
+      })
+      agentContext.on('agent/inbox/discarded', ({ agent, message }) => {
+        if (agent.id === sessionId) feedbackOrigin.discard(message.id)
+      })
+      agentContext.systemPrompt.section({
+        name: 'nekro-nxt:community-feedback',
+        order: 22,
+        text: (context) =>
+          this.#feedback?.service()?.enabled() && scopeHasTool(agentContext.tools, 'feedback_draft', context.scope)
+            ? COMMUNITY_FEEDBACK_PROMPT
+            : '',
+      })
       const compilePersona = () =>
         compilePersonaDocument({
           document: revision.personaDocument,
@@ -4063,8 +4113,19 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#channelReplyGuard.rememberAdmission(agent, input.admissionId, input.replyRequired)
     if (input.mode === 'inject') agent.inject(message)
     else {
+      const channelId = input.events[0]!.channelId
+      const origin = this.#feedbackTurns.get(input.dshSessionId)
+      origin?.rememberWake(
+        dshMessageId,
+        feedbackAdmissionOrigin(channelId, this.#feedback?.isAdminClientChannel(channelId) === true, input.events),
+      )
       this.#sessions.get(input.dshSessionId)?.dynamic?.runner.beginOrdinaryTurn()
-      agent.followup(message)
+      try {
+        agent.followup(message)
+      } catch (error) {
+        origin?.discard(dshMessageId)
+        throw error
+      }
     }
     if (imageStats.imageCount > 0 || imageStats.skippedCount > 0) {
       agent.session.append('nekro-nxt/image-admission', {
