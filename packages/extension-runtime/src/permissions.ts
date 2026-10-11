@@ -40,6 +40,17 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
           },
         }),
     ...(capabilities.assets === undefined ? {} : { assets: capabilities.assets }),
+    ...(capabilities.index === undefined
+      ? {}
+      : {
+          index: {
+            // Field order is meaningful (it decides keyword columns); collections and filters are not.
+            collections: [...capabilities.index.collections]
+              .sort((left, right) => left.name.localeCompare(right.name))
+              .map((collection) => ({ ...collection, filters: sorted(collection.filters) })),
+          },
+        }),
+    ...(capabilities.models === undefined ? {} : { models: capabilities.models }),
     ...(capabilities.history === undefined ? {} : { history: capabilities.history }),
     ...(capabilities.llm === undefined ? {} : { llm: capabilities.llm }),
     ...(capabilities.platform === undefined

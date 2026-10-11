@@ -327,6 +327,41 @@ describe('Extension permissions and configuration', () => {
   }
   const base = extensionManifestSchema.parse(hostManifest({ permissions }))
 
+  it('keeps the asset library, search index and model calls in what each layer approves', () => {
+    const stickers = {
+      name: 'stickers',
+      fields: [
+        { name: 'meaning', weight: 2 },
+        { name: 'caption', weight: 1 },
+      ],
+      filters: ['sources', 'scope'],
+    }
+    const media = extensionManifestSchema.parse(
+      hostManifest({
+        permissions: {
+          permissions: [],
+          networkOrigins: [],
+          host: {
+            assets: { library: {} },
+            index: { collections: [stickers] },
+            models: { maxCallsPerMinute: 30, maxOutputTokens: 512 },
+          },
+          agent: { assets: { library: {} }, index: { collections: [stickers] } },
+        },
+      }),
+    )
+    const collection = { ...stickers, filters: ['scope', 'sources'] }
+    expect(hostPermissionRequirement(media, undefined).declaration.capabilities).toEqual({
+      assets: { library: {} },
+      index: { collections: [collection] },
+      models: { maxCallsPerMinute: 30, maxOutputTokens: 512 },
+    })
+    expect(agentPermissionRequirement(media, undefined).declaration.capabilities).toEqual({
+      assets: { library: {} },
+      index: { collections: [collection] },
+    })
+  })
+
   it('approves each layer separately and requires reapproval only for expansion of that layer', () => {
     const firstHost = hostPermissionRequirement(base, undefined)
     const firstAgent = agentPermissionRequirement(base, undefined)

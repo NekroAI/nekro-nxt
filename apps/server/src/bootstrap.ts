@@ -426,17 +426,26 @@ export class NekroRuntime {
         })
       }
       const nxtModels: NxtServiceBackends['models'] = {
-        list: async () =>
-          hostReference.current === undefined
-            ? []
-            : (await hostReference.current.listAvailableLlmModels()).map((model) => ({
-                ref: `${model.provider}:${model.id}`,
-                provider: model.provider,
-                providerName: model.providerName,
-                model: model.id,
-                name: model.name,
-                vision: model.inputModalities?.includes('image') === true,
-              })),
+        list: async () => {
+          const host = hostReference.current
+          if (host === undefined) return []
+          // Only providers that can actually answer: active and, when they take a key, with one set.
+          const usable = new Set(
+            (await host.getLlmProviderSettings()).providers
+              .filter((provider) => provider.active && provider.credential?.configured !== false)
+              .map((provider) => provider.provider),
+          )
+          return (await host.listAvailableLlmModels())
+            .filter((model) => usable.has(model.provider))
+            .map((model) => ({
+              ref: `${model.provider}:${model.id}`,
+              provider: model.provider,
+              providerName: model.providerName,
+              model: model.id,
+              name: model.name,
+              vision: model.inputModalities?.includes('image') === true,
+            }))
+        },
         complete: (binding, request, maxOutputTokens) => {
           if (!hostReference.current) return Promise.reject(new Error('DSH Host is not ready.'))
           return hostReference.current.completeWithHostModel({
