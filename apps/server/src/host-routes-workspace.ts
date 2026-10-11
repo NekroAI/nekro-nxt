@@ -31,6 +31,7 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
+import { knownCommandAccounts } from './host-routes-command-accounts.js'
 import { ChannelPromptConflictError } from '@nekro-nxt/storage-sqlite'
 import { ChannelPromptError, MEMBER_NOTE_MAX_CHARS } from './channel-prompts.js'
 /**
@@ -564,6 +565,10 @@ export function registerWorkspaceRoutes({
             : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
           ...(parsed.scheduledTasks === undefined ? {} : { scheduledTasks: parsed.scheduledTasks }),
           ...(parsed.codeRun === undefined ? {} : { codeRun: parsed.codeRun }),
+          ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
+          ...(parsed.commandAccounts === undefined
+            ? {}
+            : { commandAccounts: knownCommandAccounts(runtime, parsed.commandAccounts) }),
         }
         const updated = runtime.core.reviseAgent(agentId, revision.id, {
           displayName: revision.displayName,

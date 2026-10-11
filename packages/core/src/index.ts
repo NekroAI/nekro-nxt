@@ -358,6 +358,22 @@ export interface CoreServiceOptions {
   readonly nextUlid?: () => string
 }
 
+/** What the user wants an account used for. Told to the agent only; the token's own permissions are the limit. */
+export const COMMAND_ACCOUNT_USAGES = ['read', 'issues', 'pull-requests', 'push'] as const
+export const CommandAccountUsageSchema = z.enum(COMMAND_ACCOUNT_USAGES)
+
+/** One account the agent's commands may act as. The account itself lives in the host's account library. */
+export const CommandAccountGrantSchema = z
+  .object({
+    service: z.literal('github'),
+    accountId: z.string().trim().min(1).max(64),
+    /** Empty gives the agent no hint about use. */
+    usage: z.array(CommandAccountUsageSchema).max(4).default([]),
+  })
+  .strict()
+
+export type CommandAccountGrant = z.infer<typeof CommandAccountGrantSchema>
+
 export const AgentCapabilityGrantsSchema = z
   .object({
     subagents: z.boolean().default(false),
@@ -372,6 +388,14 @@ export const AgentCapabilityGrantsSchema = z
     codeRun: z.boolean().default(false),
     /** Network for commands and `run_code` programs; on unless the user turns it off (absent before the field). */
     commandNetwork: z.boolean().default(true),
+    /** Accounts commands may act as; empty unless the user grants one to this agent (absent before the field). */
+    commandAccounts: z
+      .array(CommandAccountGrantSchema)
+      .max(8)
+      .refine((grants) => new Set(grants.map((grant) => grant.service)).size === grants.length, {
+        message: '每个服务只能授权一个账号。',
+      })
+      .default([]),
   })
   .strict()
   .default({
@@ -384,6 +408,7 @@ export const AgentCapabilityGrantsSchema = z
     scheduledTasks: true,
     codeRun: false,
     commandNetwork: true,
+    commandAccounts: [],
   })
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
@@ -618,6 +643,17 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     ...(content.capabilities.scheduledTasks ? {} : { scheduledTasks: false }),
     ...(content.capabilities.codeRun ? { codeRun: true } : {}),
     ...(content.capabilities.commandNetwork ? {} : { commandNetwork: false }),
+    ...(content.capabilities.commandAccounts.length === 0
+      ? {}
+      : {
+          commandAccounts: [...content.capabilities.commandAccounts]
+            .map((grant) => ({
+              service: grant.service,
+              accountId: grant.accountId,
+              ...(grant.usage.length === 0 ? {} : { usage: [...grant.usage].sort() }),
+            }))
+            .sort((left, right) => left.service.localeCompare(right.service)),
+        }),
   },
   imagePolicy: {
     history: {

@@ -836,6 +836,86 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
+  it('keeps command network and account grants through the capabilities API, and rejects unknown accounts', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-accounts-api-'))
+    temporaryDirectories.push(directory)
+    // GitHub answers for one fictional token; every other request, the test's own included, goes out as usual.
+    const realFetch = globalThis.fetch
+    const githubStub: typeof fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (!url.startsWith('https://api.github.com/')) return realFetch(input, init)
+      const accepted = new Headers(init?.headers).get('authorization') === 'Bearer tok-fixture'
+      return Promise.resolve(new Response(JSON.stringify({ login: 'octo-fixture' }), { status: accepted ? 200 : 401 }))
+    }
+    globalThis.fetch = githubStub
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    const seeded = runtime.core.createAgentWithChannel(
+      { displayName: '账号智能体', persona: '', model: { provider: 'test-provider', model: 'chat-model' } },
+      { connectionId: runtime.internalConnectionId, kind: 'internal', triggerPolicy: 'always' },
+    )
+    const agentId = seeded.definition.id
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    const post = (body: unknown) =>
+      fetch(`${origin}/api/agents/${agentId}/capabilities`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    try {
+      const network = HostApiContracts.updateAgentCapabilities.parseResponse(
+        await (await post({ commandNetwork: false })).json(),
+      )
+      expect(network.capabilities.commandNetwork).toBe(false)
+      expect(runtime.repository.getAgent(agentId)?.revision.capabilities.commandNetwork).toBe(false)
+
+      const unknown = await post({ commandAccounts: [{ service: 'github', accountId: 'nope' }] })
+      expect(unknown.ok).toBe(false)
+      expect(runtime.repository.getAgent(agentId)?.revision.capabilities.commandAccounts).toEqual([])
+
+      // The account library: a token GitHub accepts becomes an account, granted to one agent and shown as used.
+      const added = await fetch(`${origin}/api/settings/command-accounts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ source: 'token', service: 'github', token: 'tok-fixture' }),
+      })
+      expect(added.ok).toBe(true)
+      const [account] = HostApiContracts.addCommandAccount.parseResponse(await added.json()).accounts
+      expect(account).toMatchObject({ login: 'octo-fixture', source: 'token', usedBy: [] })
+
+      const granted = HostApiContracts.updateAgentCapabilities.parseResponse(
+        await (
+          await post({ commandAccounts: [{ service: 'github', accountId: account!.id, usage: ['issues'] }] })
+        ).json(),
+      )
+      expect(granted.capabilities.commandAccounts).toEqual([
+        { service: 'github', accountId: account!.id, usage: ['issues'] },
+      ])
+      const listed = HostApiContracts.getCommandAccounts.parseResponse(
+        await (await fetch(`${origin}/api/settings/command-accounts`)).json(),
+      )
+      expect(listed.accounts[0]?.usedBy).toEqual([agentId])
+      expect(JSON.stringify(listed)).not.toContain('tok-fixture')
+
+      const removed = await fetch(`${origin}/api/settings/command-accounts/${account!.id}`, { method: 'DELETE' })
+      expect([removed.status, await removed.clone().text()]).toEqual([200, expect.any(String)])
+      expect(runtime.commandAccounts.tokenFor(account!.id)).toBeUndefined()
+    } finally {
+      globalThis.fetch = realFetch
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
   it('resets channel context with optimistic concurrency and tombstones an intelligent-agent', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-context-api-'))
     temporaryDirectories.push(directory)

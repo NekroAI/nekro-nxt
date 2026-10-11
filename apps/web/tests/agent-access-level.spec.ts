@@ -17,6 +17,7 @@ const capabilities = (
   scheduledTasks: true,
   codeRun: false,
   commandNetwork: true,
+  commandAccounts: [],
   ...access,
 })
 

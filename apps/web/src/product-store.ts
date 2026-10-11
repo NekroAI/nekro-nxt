@@ -69,6 +69,7 @@ export function createProductStore(
     dynamic: [],
     authoringTasks: [],
     scheduledTasks: [],
+    commandAccounts: [],
     notificationSettings: {
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },

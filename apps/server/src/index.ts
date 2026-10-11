@@ -14,6 +14,12 @@ import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { mountCodeRunRuntime } from './code-run.js'
 import { WorkspaceFileSystem } from './workspace-file-system.js'
 import {
+  commandAccountEnvironment,
+  commandAccountPrompt,
+  createEnvForwardingExecutor,
+  type CommandAccountSources,
+} from './command-account-env.js'
+import {
   createConfinedSandboxProvider,
   hostCommandConfinement,
   installRootOf,
@@ -27,7 +33,6 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-agent-loop'
 import { type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import {
   type CordisDynamicRunMode,
@@ -446,6 +451,8 @@ export interface DshHostRuntimeOptions {
    * separate executable, `undefined` means none is available and those agents keep ordinary tool calls.
    */
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
+  /** Where commands get the accounts an agent was granted, and whether the GitHub CLI is there to use them. */
+  readonly commandAccounts?: CommandAccountSources
   readonly configureLlm?: (context: Context) => Promise<void> | void
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
@@ -2810,6 +2817,7 @@ async function mountDevelopmentCapabilities(
   revision: AgentRevisionRecord,
   workspaceRoot: string | undefined,
   confinement: CommandConfinement,
+  commandEnvironment: () => Readonly<Record<string, string>>,
 ): Promise<void> {
   const { developmentShell, fileTools, unrestrictedFileAccess } = revision.capabilities
   if (!developmentShell && !fileTools) return
@@ -2842,7 +2850,7 @@ async function mountDevelopmentCapabilities(
       createConfinedSandboxProvider(() => confinement),
       {},
     )
-    await capabilityContext.plugin(SandboxBashExecutor, { cwd: workspaceRoot })
+    await capabilityContext.plugin(createEnvForwardingExecutor(commandEnvironment), { cwd: workspaceRoot })
     await capabilityContext.plugin(ShellEnv, {})
     await capabilityContext.plugin(BashTool, { enableRunInBackground: false })
   }
@@ -2913,6 +2921,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #resolveAdapterDisplayName: NonNullable<DshHostRuntimeOptions['resolveAdapterDisplayName']>
   readonly #developmentWorkspaceRoot: string | undefined
   readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
+  readonly #commandAccounts: CommandAccountSources | undefined
   readonly #codeRunFallbackDirectory: string
   readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
   #codeRunMount: Promise<boolean> | undefined
@@ -2952,6 +2961,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#codeRunNode = options.codeRunNode
+    this.#commandAccounts = options.commandAccounts
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
     this.#hostCommandConfinement = hostCommandConfinement({
       dataRoot: path.dirname(options.sessionDatabasePath),
@@ -3862,7 +3872,16 @@ export class DshHostRuntime implements AgentSessionDriver {
         revision,
         developmentWorkspace,
         this.#commandConfinementOf(revision),
+        () => this.#commandEnvironmentOf(revision),
       )
+      const accountPrompt = this.#commandAccountPromptOf(revision)
+      if (accountPrompt !== undefined) {
+        agentContext.systemPrompt.section({
+          name: 'nekro-nxt:command-accounts',
+          order: 20.7,
+          text: () => this.#commandAccountPromptOf(revision) ?? '',
+        })
+      }
       if (revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())) {
         agentContext.tools.presentAs('ptc')
         agentContext.systemPrompt.section({
@@ -4292,6 +4311,17 @@ export class DshHostRuntime implements AgentSessionDriver {
         model: input.revision.model.model,
       }
     }
+  }
+
+  /** The variables that give one agent's commands the accounts it was granted. */
+  #commandEnvironmentOf(revision: AgentRevisionRecord): Record<string, string> {
+    if (this.#commandAccounts === undefined) return {}
+    return commandAccountEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+  }
+
+  #commandAccountPromptOf(revision: AgentRevisionRecord): string | undefined {
+    if (this.#commandAccounts === undefined || !revision.capabilities.developmentShell) return undefined
+    return commandAccountPrompt(revision.capabilities.commandAccounts, this.#commandAccounts)
   }
 
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */

@@ -25,6 +25,7 @@ describe('createAgentDraft', () => {
       scheduledTasks: true,
       codeRun: false,
       commandNetwork: true,
+      commandAccounts: [],
     })
   })
 })

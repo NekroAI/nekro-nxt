@@ -6,6 +6,8 @@ import { agentModelKey } from './agent-create-draft.js'
 export type Capabilities = AgentSummary['capabilities']
 export type AccessCapability = 'fileTools' | 'developmentShell' | 'unrestrictedFileAccess'
 
+export type DraftUpdate = (update: (draft: AgentDraft) => AgentDraft) => void
+
 /**
  * The editable configuration of one agent. Every field here is saved together through the save bar; channel
  * triggers and extensions apply immediately and are not part of it.
@@ -45,6 +47,7 @@ const CAPABILITY_KEYS = [
   'codeRun',
   'commandNetwork',
 ] as const satisfies readonly (keyof Capabilities)[]
+type BooleanCapability = (typeof CAPABILITY_KEYS)[number]
 const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation', 'scheduledTasks'] as const
 const ACCESS_KEYS = ['fileTools', 'developmentShell', 'unrestrictedFileAccess'] as const
 
@@ -54,6 +57,9 @@ const CAPABILITY_LABEL: Record<(typeof OTHER_CAPABILITIES)[number], string> = {
   dynamicCreation: '动态创造',
   scheduledTasks: '定时任务',
 }
+
+const sameGrants = (left: Capabilities['commandAccounts'], right: Capabilities['commandAccounts']) =>
+  JSON.stringify(left) === JSON.stringify(right)
 
 const sameDocument = (left: PromptDocumentV1, right: PromptDocumentV1) => JSON.stringify(left) === JSON.stringify(right)
 
@@ -66,9 +72,12 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
 
 /** Capabilities that differ from the saved ones, as the partial patch the Host expects. */
 export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Capabilities> => {
-  const patch: Partial<Record<keyof Capabilities, boolean>> = {}
+  const patch: Partial<Record<BooleanCapability, boolean>> & { commandAccounts?: Capabilities['commandAccounts'] } = {}
   for (const key of CAPABILITY_KEYS) {
     if (draft.capabilities[key] !== base.capabilities[key]) patch[key] = draft.capabilities[key]
+  }
+  if (!sameGrants(base.capabilities.commandAccounts, draft.capabilities.commandAccounts)) {
+    patch.commandAccounts = draft.capabilities.commandAccounts
   }
   // System access is one level: send all three switches together so the request states the whole level.
   if (ACCESS_KEYS.some((key) => key in patch)) {
@@ -87,6 +96,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')
   if ('codeRun' in patch) changes.push('编排模式')
   if ('commandNetwork' in patch) changes.push('命令联网')
+  if ('commandAccounts' in patch) changes.push('账号授权')
   for (const key of OTHER_CAPABILITIES) {
     if (key in patch) changes.push(CAPABILITY_LABEL[key])
   }

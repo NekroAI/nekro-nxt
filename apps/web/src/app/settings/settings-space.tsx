@@ -11,6 +11,7 @@ import {
   Plus,
   Search,
   Upload,
+  UserRoundKey,
 } from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -69,6 +70,7 @@ import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
 import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
+import { AccountsSection } from './accounts-section.js'
 import styles from './settings.module.css'
 
 const SECTIONS = [
@@ -77,6 +79,7 @@ const SECTIONS = [
   { key: 'adapters', label: '平台适配器', icon: <Plug size={16} /> },
   { key: 'chat', label: '聊天', icon: <MessageCircle size={16} /> },
   { key: 'retrieval', label: '检索', icon: <Search size={16} /> },
+  { key: 'accounts', label: '账号与服务', icon: <UserRoundKey size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
@@ -168,6 +171,12 @@ export default function SettingsSpace() {
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
           {section === 'retrieval' ? <Retrieval /> : null}
+          {section === 'accounts' ? (
+            <>
+              <SectionHead title="账号与服务" />
+              <AccountsSection />
+            </>
+          ) : null}
           {section === 'notifications' ? <Notifications /> : null}
           {section === 'access' ? (
             <>

@@ -156,6 +156,7 @@ describe('product store Host mutations', () => {
             scheduledTasks: true,
             codeRun: false,
             commandNetwork: true,
+            commandAccounts: [],
           },
           imagePolicy: defaultImageUnderstandingPolicy(),
           imageDiagnostics: {

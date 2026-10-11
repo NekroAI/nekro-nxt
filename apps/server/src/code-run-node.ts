@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
-import { access, mkdir, open, rename, rm, stat } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { access, mkdir, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { downloadAndUnpack } from './runtime-download.js'
 
 const run = promisify(execFile)
 
@@ -149,43 +150,16 @@ export class CodeRunNode {
     this.#setDownload({ version: this.#release.version, state: 'downloading', receivedBytes: 0 })
     try {
       await mkdir(staging, { recursive: true })
-      const archive = path.join(staging, artifact.file)
-      const url = `${this.#release.baseUrl}/${artifact.file}`
-      const response = await (this.#options.fetch ?? fetch)(url)
-      if (!response.ok || response.body === null) throw new Error(`下载失败（HTTP ${response.status}）。`)
-      const total = Number(response.headers.get('content-length') ?? 0) || undefined
-      const hash = createHash('sha256')
-      let received = 0
-      let reported = 0
-      const reader = response.body.getReader()
-      const file = await open(archive, 'w')
-      try {
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          hash.update(value)
-          await file.write(value)
-          received += value.length
-          // Report about every 2 MB so the page moves without flooding it.
-          if (received - reported >= 2 * 1024 * 1024) {
-            reported = received
-            this.#setDownload({
-              version: this.#release.version,
-              state: 'downloading',
-              receivedBytes: received,
-              ...(total === undefined ? {} : { totalBytes: total }),
-            })
-          }
-        }
-      } finally {
-        await file.close()
-      }
-      if (hash.digest('hex') !== artifact.sha256) throw new Error('下载的文件校验不通过，已丢弃。')
       const extracted = path.join(staging, 'extracted')
-      await mkdir(extracted)
-      // macOS, Linux and Windows 10+ all ship a `tar` that reads both .tar.gz and .zip.
-      await run('tar', ['-xf', archive, '-C', extracted])
-      await rm(archive)
+      await downloadAndUnpack({
+        url: `${this.#release.baseUrl}/${artifact.file}`,
+        sha256: artifact.sha256,
+        archive: path.join(staging, artifact.file),
+        destination: extracted,
+        ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+        onProgress: (progress) =>
+          this.#setDownload({ version: this.#release.version, state: 'downloading', ...progress }),
+      })
       await rm(versionRoot, { recursive: true, force: true })
       await rename(extracted, versionRoot)
       const executable = await this.#downloadedExecutable()

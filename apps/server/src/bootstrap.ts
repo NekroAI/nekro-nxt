@@ -62,6 +62,8 @@ import { createProductionAdapterTransport } from './adapter-transport.js'
 import { AuthoringApplicationService } from './authoring-application.js'
 import { ConnectionApplicationService } from './connection-application.js'
 import { LocalCredentialStore } from './credentials.js'
+import { CommandAccountService } from './command-accounts.js'
+import { GithubCli } from './github-cli.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 import type { PersistentAdapterPort } from './persistent-extension-mounts.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
@@ -202,6 +204,8 @@ export class NekroRuntime {
   readonly mcpStatus: McpStatusRegistry
   readonly authoringTestSecrets: AuthoringTestSecrets
   readonly codeRunNode: CodeRunNode
+  readonly githubCli: GithubCli
+  readonly commandAccounts: CommandAccountService
   readonly retrieval: RetrievalRuntime
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
@@ -248,6 +252,8 @@ export class NekroRuntime {
     readonly mcpStatus: McpStatusRegistry
     readonly authoringTestSecrets: AuthoringTestSecrets
     readonly codeRunNode: CodeRunNode
+    readonly githubCli: GithubCli
+    readonly commandAccounts: CommandAccountService
     readonly retrieval: RetrievalRuntime
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
@@ -278,6 +284,8 @@ export class NekroRuntime {
     this.#jobScheduler = input.jobScheduler
     this.scheduledTasks = input.scheduledTasks
     this.codeRunNode = input.codeRunNode
+    this.githubCli = input.githubCli
+    this.commandAccounts = input.commandAccounts
     this.retrieval = input.retrieval
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
@@ -687,8 +695,21 @@ export class NekroRuntime {
         embedded: process.versions['electron'] !== undefined,
       })
       await codeRunNode.prepare()
+      const githubCli = new GithubCli({ root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'gh') })
+      await githubCli.prepare()
+      const commandAccounts = new CommandAccountService(repository, credentials, {
+        githubCli: () => githubCli.executable(),
+        now,
+      })
+      await commandAccounts.prepare()
       const host = await DshHostRuntime.create({
         codeRunNode: () => codeRunNode.executable(),
+        commandAccounts: {
+          tokenFor: (accountId) => commandAccounts.tokenFor(accountId),
+          loginOf: (accountId) => commandAccounts.loginOf(accountId),
+          githubCliDirectory: () => githubCli.directoryForPath(),
+          githubCliAvailable: () => githubCli.executable() !== undefined,
+        },
         providerRemoval,
         providerTestResults: new LlmProviderTestResults(repository, now),
         sessionDatabasePath: options.sessionDatabasePath,
@@ -920,6 +941,8 @@ export class NekroRuntime {
         jobScheduler,
         scheduledTasks,
         codeRunNode,
+        githubCli,
+        commandAccounts,
         retrieval,
         channelPrompts,
         mcpStatus,

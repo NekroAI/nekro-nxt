@@ -24,6 +24,7 @@ import {
 import { ProductUpdates } from './product-updates.js'
 import { readMessagePacing, writeMessagePacing, type MessagePacingSettingsStore } from './message-pacing.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
+import { registerCommandAccountRoutes } from './host-routes-command-accounts.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
 import { registerMcpRoutes } from './host-routes-mcp.js'
 import { registerCommunityRoutes } from './host-routes-community.js'
@@ -593,6 +594,17 @@ export const createNekroHostApi = (
   )
   disposers.push(
     registerCommunityRoutes({
+      runtime,
+      registerRoute,
+      broadcast,
+      broadcastExtensionsChanged,
+      readCursor: () => hub.cursor,
+      projections,
+      extensionImports,
+    }),
+  )
+  disposers.push(
+    registerCommandAccountRoutes({
       runtime,
       registerRoute,
       broadcast,

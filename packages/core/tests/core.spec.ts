@@ -571,15 +571,76 @@ describe('CoreService', () => {
 
   it('accepts only the current strict capability object', () => {
     const current = { ...deniedCapabilities, subagents: true, webSearch: true }
-    // Revisions stored before `scheduledTasks`, `codeRun` and `commandNetwork` existed read them as on, off and on.
+    // Revisions stored before `scheduledTasks`, `codeRun`, `commandNetwork` and `commandAccounts` existed read them as
+    // on, off, on and none.
     expect(parseStoredAgentCapabilityGrants(current)).toEqual({
       ...current,
       scheduledTasks: true,
       codeRun: false,
       commandNetwork: true,
+      commandAccounts: [],
     })
     expect(() => parseStoredAgentCapabilityGrants({ version: 2, grants: current })).toThrow()
     expect(() => parseStoredAgentCapabilityGrants({ ...current, fullFileAccess: false })).toThrow()
+  })
+
+  it('keeps the digest without command accounts and treats a grant, or its usage hint, as new content', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const content = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const first = core.createAgent({ ...content, capabilities: deniedCapabilities })
+    const explicitNone = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: { ...deniedCapabilities, commandAccounts: [] },
+    })
+    expect(explicitNone.revision.id).toBe(first.revision.id)
+    const granted = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...content,
+      capabilities: {
+        ...deniedCapabilities,
+        commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: [] }],
+      },
+    })
+    expect(granted.revision.contentDigest).not.toBe(first.revision.contentDigest)
+    const hinted = core.reviseAgent(first.definition.id, granted.revision.id, {
+      ...content,
+      capabilities: {
+        ...deniedCapabilities,
+        commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: ['issues'] }],
+      },
+    })
+    expect(hinted.revision.contentDigest).not.toBe(granted.revision.contentDigest)
+    // The order of usage hints is not content.
+    const reordered = core.reviseAgent(first.definition.id, hinted.revision.id, {
+      ...content,
+      capabilities: {
+        ...deniedCapabilities,
+        commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: ['push', 'issues'] }],
+      },
+    })
+    const sorted = core.reviseAgent(first.definition.id, reordered.revision.id, {
+      ...content,
+      capabilities: {
+        ...deniedCapabilities,
+        commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: ['issues', 'push'] }],
+      },
+    })
+    expect(sorted.revision.id).toBe(reordered.revision.id)
+  })
+
+  it('allows one account per service', () => {
+    expect(() =>
+      parseAgentCapabilityGrants({
+        commandAccounts: [
+          { service: 'github', accountId: 'a' },
+          { service: 'github', accountId: 'b' },
+        ],
+      }),
+    ).toThrow('每个服务只能授权一个账号')
+    expect(
+      parseAgentCapabilityGrants({ commandAccounts: [{ service: 'github', accountId: 'a' }] }).commandAccounts,
+    ).toEqual([{ service: 'github', accountId: 'a', usage: [] }])
   })
 
   it('keeps the digest of Revisions without scheduledTasks and treats turning it off as new content', () => {
@@ -1324,6 +1385,7 @@ describe('CoreService', () => {
       scheduledTasks: true,
       codeRun: false,
       commandNetwork: true,
+      commandAccounts: [],
     })
 
     const repository = new MemoryRepository()

@@ -154,6 +154,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   dynamic: [],
   authoringTasks: [],
   scheduledTasks: [],
+  commandAccounts: [],
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
@@ -790,6 +791,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     })),
     authoringTasks: json.authoringTasks,
     scheduledTasks: json.scheduledTasks,
+    commandAccounts: json.commandAccounts ?? [],
     notificationSettings: json.notificationSettings,
     diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }

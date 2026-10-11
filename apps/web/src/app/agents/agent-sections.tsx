@@ -1,6 +1,6 @@
 import { ExternalLink, Maximize2, MessagesSquare, Minimize2, Plus, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { HostApiContracts, type CodeRunAvailability, type PromptDocumentV1 } from '@nekro-nxt/contracts'
+import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { PanelSlot, useExtensionActivation } from '../../extension-ui/index.js'
@@ -39,7 +39,16 @@ import { isTriggerPolicy, triggerLabel } from '../model/identity.js'
 import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
 import { agentModelKey } from './agent-create-draft.js'
-import { accessOfLevel, supportsImages, toggleAccess, type AccessCapability, type AgentDraft } from './agent-draft.js'
+import {
+  accessOfLevel,
+  supportsImages,
+  toggleAccess,
+  type AccessCapability,
+  type AgentDraft,
+  type DraftUpdate,
+} from './agent-draft.js'
+import { CommandAccountRows } from './command-accounts.js'
+import { CodeRunNodeDownload, CodeRunNodeRemove } from './runtime-download.js'
 import { missingAgentModel, replacementModel } from './model-health.js'
 import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
@@ -47,7 +56,7 @@ import styles from './agents.module.css'
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 const modelLabel = (model: ModelSummary) => `${model.providerName} · ${model.name}`
 
-export type DraftUpdate = (update: (draft: AgentDraft) => AgentDraft) => void
+export type { DraftUpdate } from './agent-draft.js'
 
 /** Main model and, when it cannot read images, a helper model that describes them. */
 export function ModelSection({
@@ -371,73 +380,6 @@ function WebSearchCredential() {
   )
 }
 
-const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
-
-/** Node for `run_code` on a device without one: NXT downloads the pinned release itself and shows its progress. */
-function CodeRunNodeDownload({ availability }: { readonly availability: CodeRunAvailability }) {
-  const api = useProductApi()
-  const [busy, setBusy] = useState(false)
-  const download = availability.download
-  if (download === undefined) return null
-  const start = async () => {
-    setBusy(true)
-    try {
-      await callHostApi(HostApiContracts.downloadCodeRunNode, {}, undefined)
-      await api.getState().refreshHost()
-    } catch (error) {
-      failure(error)
-    } finally {
-      setBusy(false)
-    }
-  }
-  if (download.state === 'downloading') {
-    const received = download.receivedBytes ?? 0
-    return (
-      <span className={styles.note} role="status">
-        正在下载 {megabytes(received)}
-        {download.totalBytes === undefined ? '' : ` / ${megabytes(download.totalBytes)}`}
-      </span>
-    )
-  }
-  const button = (
-    <Button size="small" busy={busy} onClick={() => void start()}>
-      {download.state === 'failed' ? '重试' : `下载 Node ${download.version}`}
-    </Button>
-  )
-  if (download.state !== 'failed') return button
-  return (
-    <div className={styles.note}>
-      <span className={styles.noteWarn} role="alert">
-        {download.error ?? '下载失败。'}
-      </span>
-      {button}
-    </div>
-  )
-}
-
-/** A Node NXT downloaded can be removed again; one that came with the system or the server stays. */
-function CodeRunNodeRemove({ availability }: { readonly availability: CodeRunAvailability }) {
-  const api = useProductApi()
-  const [busy, setBusy] = useState(false)
-  if (availability.source !== 'downloaded') return null
-  const remove = async () => {
-    setBusy(true)
-    try {
-      await callHostApi(HostApiContracts.removeCodeRunNode, {}, undefined)
-      await api.getState().refreshHost()
-    } catch (error) {
-      failure(error)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <Button size="small" busy={busy} onClick={() => void remove()}>
-      删除
-    </Button>
-  )
-}
-
 /**
  * System access on a risk ladder plus the other capabilities. Everything here joins the save bar; granting command
  * execution or full access asks first.
@@ -515,6 +457,9 @@ export function CapabilitiesSection({
           />
         </PropertyRow>
         {caps.developmentShell ? <CommandNetworkRow caps={caps} update={update} /> : null}
+        {caps.developmentShell && !caps.unrestrictedFileAccess ? (
+          <CommandAccountRows agent={agent} caps={caps} update={update} />
+        ) : null}
         {caps.developmentShell ? (
           <PropertyRow
             label="编排模式（PTC）"

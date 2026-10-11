@@ -28,6 +28,7 @@ const base: AgentDraft = {
     scheduledTasks: true,
     codeRun: false,
     commandNetwork: true,
+    commandAccounts: [],
   },
 }
 
@@ -106,5 +107,31 @@ describe('earlier configurations', () => {
     expect(changeSummary({ changedFields: ['persona', 'model'] }, false)).toBe('改了设定、模型')
     expect(changeSummary({ changedFields: [] }, true)).toBe('创建时的配置')
     expect(changeSummary({ changedFields: [] }, false)).toBe('内容与上一次相同')
+  })
+
+  it('sends command accounts as one patch and lists them as account grants', () => {
+    const granted: AgentDraft = {
+      ...base,
+      capabilities: {
+        ...base.capabilities,
+        commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: ['issues'] }],
+      },
+    }
+    expect(capabilityPatch(base, base)).toEqual({})
+    expect(capabilityPatch(base, granted)).toEqual({
+      commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: ['issues'] }],
+    })
+    expect(draftChanges(base, granted)).toEqual(['账号授权'])
+    const hinted: AgentDraft = {
+      ...granted,
+      capabilities: {
+        ...granted.capabilities,
+        commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: ['issues', 'push'] }],
+      },
+    }
+    expect(capabilityPatch(granted, hinted)).toEqual({
+      commandAccounts: [{ service: 'github', accountId: 'acct-a', usage: ['issues', 'push'] }],
+    })
+    expect(capabilityPatch(granted, base)).toEqual({ commandAccounts: [] })
   })
 })

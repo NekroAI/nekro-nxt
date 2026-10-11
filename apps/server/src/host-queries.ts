@@ -20,6 +20,7 @@ import {
   type DynamicAuthoringTask,
   type ExtensionActivationTransition,
 } from '@nekro-nxt/extension-runtime'
+import { accountUsage } from './host-routes-command-accounts.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
 import { unavailableSessionContext } from './channel-runtime-context.js'
 import type { NekroRuntime } from './bootstrap.js'
@@ -584,11 +585,13 @@ export class HostQueries {
       capabilityAvailability: {
         subagents: { available: true },
         codeRun: runtime.codeRunNode.status(),
+        githubCli: runtime.githubCli.status(),
         commandConfinement: commandConfinementSupport(),
         webSearch,
       },
       connectionAdapters: runtime.listConnectionAdapters(),
       notificationSettings,
+      commandAccounts: runtime.commandAccounts.list(accountUsage(agentCommits)),
       agents,
       channels: channelProjection,
       messages,

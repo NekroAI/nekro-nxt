@@ -2021,6 +2021,74 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('grants one GitHub account to one agent, with a usage hint, and offers gh where it is missing', async () => {
+    const capabilityRequests: unknown[] = []
+    const accountId = 'acct0001fixture'
+    const account = {
+      id: accountId,
+      service: 'github',
+      login: 'octo-fixture',
+      source: 'token',
+      scopes: ['repo', 'read:org'],
+      createdAt: 1,
+      usedBy: [],
+    }
+    const withAccounts = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      commandAccounts: [account],
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId
+          ? { ...agent, capabilities: { ...agent.capabilities, fileTools: true, developmentShell: true } }
+          : agent,
+      ),
+      capabilityAvailability: {
+        ...browserSnapshot.capabilityAvailability,
+        githubCli: { available: false, download: { version: '2.102.0', state: 'idle' } },
+      },
+    })
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        // Nothing is granted until the user picks an account on this agent.
+        await playwrightExpect(page.getByText('账号权限')).toHaveCount(0)
+        await page.getByRole('combobox', { name: 'GitHub 账号' }).click()
+        await page.getByRole('option', { name: 'octo-fixture' }).click()
+        await playwrightExpect(page.getByText('repo、read:org')).toBeVisible()
+        await playwrightExpect(page.getByText('不限制它能做的事')).toBeVisible()
+        await page.getByRole('button', { name: '处理 issue' }).click()
+        await playwrightExpect(page.getByRole('button', { name: '下载 GitHub CLI 2.102.0' })).toBeVisible()
+        await page.getByText('GitHub 账号', { exact: true }).first().scrollIntoViewIfNeeded()
+        await page.screenshot({ path: '.local/browser-test-results/agent-command-accounts.png' })
+        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toEqual({
+          commandAccounts: [{ service: 'github', accountId, usage: ['issues'] }],
+        })
+      },
+      withAccounts,
+      async (page) => {
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            json: {
+              currentRevisionId: browserRevisionId,
+              capabilities: {
+                ...withAccounts.agents[0]!.capabilities,
+                commandAccounts: [{ service: 'github', accountId, usage: ['issues'] }],
+              },
+            },
+          })
+        })
+      },
+    )
+  })
+
+  test('shows no account controls to an agent that cannot run commands', async () => {
+    await withProductPage(`/agents/${browserAgentId}`, async (page) => {
+      await playwrightExpect(page.getByRole('combobox', { name: 'GitHub 账号' })).toHaveCount(0)
+    })
+  })
+
   test('renders platform accounts with product labels and a masked account', async () => {
     await withProductPage('/wiring', async (page) => {
       // The account node itself; a name match could also hit its channel group's fold toggle.

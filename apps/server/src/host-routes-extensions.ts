@@ -40,6 +40,7 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
+import { knownCommandAccounts } from './host-routes-command-accounts.js'
 import { performHostUiNetworkRequest } from './host-ui-network.js'
 import { activationManifest } from './host-queries.js'
 import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from './extension-secret-config.js'
@@ -297,6 +298,10 @@ export function registerExtensionsRoutes({
                   : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
                 ...(parsed.scheduledTasks === undefined ? {} : { scheduledTasks: parsed.scheduledTasks }),
                 ...(parsed.codeRun === undefined ? {} : { codeRun: parsed.codeRun }),
+                ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
+                ...(parsed.commandAccounts === undefined
+                  ? {}
+                  : { commandAccounts: knownCommandAccounts(runtime, parsed.commandAccounts) }),
               }
               const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
                 displayName: current.revision.displayName,

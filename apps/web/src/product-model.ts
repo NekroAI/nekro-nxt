@@ -2,6 +2,7 @@ import type { HostQueryState } from './owned-host-query.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type {
   CodeRunAvailability,
+  GithubCliAvailability,
   CommunitySource,
   ChannelRuntimePhase,
   HostApiParams,
@@ -94,6 +95,8 @@ export interface AgentSummary {
     readonly codeRun: boolean
     /** Network for commands and `run_code` programs. */
     readonly commandNetwork: boolean
+    /** Accounts this agent's commands act as; each names an account of the host's library. */
+    readonly commandAccounts: CommandAccountGrant[]
   }
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
@@ -445,8 +448,20 @@ export interface SavedDynamicExtension {
   readonly revisionId: string
 }
 
+export type CommandAccount = HostApiResponse<'getCommandAccounts'>['accounts'][number]
+export type CommandAccountUsage = 'read' | 'issues' | 'pull-requests' | 'push'
+
+export interface CommandAccountGrant {
+  readonly service: CommandAccount['service']
+  readonly accountId: string
+  /** Guidance told to the agent; the token's own permissions are the only limit. */
+  readonly usage: CommandAccountUsage[]
+}
+
 export interface CapabilityAvailability {
   readonly subagents: { readonly available: boolean }
+  /** Absent until a host reports it; such a host offers no command accounts. */
+  readonly githubCli?: GithubCliAvailability | undefined
   /** Absent until a host reports it; such a host cannot run `run_code`. */
   readonly codeRun?: CodeRunAvailability | undefined
   /** What the host can confine for commands beyond file writes; absent hosts confine writes only. */
@@ -517,6 +532,8 @@ export interface ProductState {
   readonly productMetadata: ProductMetadataView | undefined
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
   readonly capabilityAvailability: CapabilityAvailability
+  /** The host's account library; an account takes effect only for agents that grant it. */
+  readonly commandAccounts: readonly CommandAccount[]
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]

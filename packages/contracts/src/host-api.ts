@@ -282,6 +282,20 @@ export const ImageUnderstandingPolicyApiSchema = z
   })
   .strict()
 
+export const CommandAccountServiceSchema = z.enum(['github'])
+export type CommandAccountService = z.output<typeof CommandAccountServiceSchema>
+
+export const CommandAccountUsageSchema = z.enum(['read', 'issues', 'pull-requests', 'push'])
+
+const CommandAccountGrantSchema = z
+  .object({
+    service: CommandAccountServiceSchema,
+    accountId: NonEmptyStringSchema.max(64),
+    /** Told to the agent as guidance, not enforced; empty gives no hint. */
+    usage: z.array(CommandAccountUsageSchema).max(4).default([]),
+  })
+  .strict()
+
 const AgentCapabilitiesSchema = z
   .object({
     subagents: z.boolean(),
@@ -296,6 +310,8 @@ const AgentCapabilitiesSchema = z
     codeRun: z.boolean().default(false),
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
+    /** Accounts this agent's commands may act as; absent in older clients means none. */
+    commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
   })
   .strict()
 
@@ -390,13 +406,14 @@ const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   validatePersonaDocumentProjection(value, context)
 })
 
-// The defaults that fill `scheduledTasks`, `codeRun` and `commandNetwork` for older clients must not reset them in a
-// partial update.
+// The defaults that fill `scheduledTasks`, `codeRun`, `commandNetwork` and `commandAccounts` for older clients must not
+// reset them in a partial update.
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
   .extend({
     scheduledTasks: z.boolean().optional(),
     codeRun: z.boolean().optional(),
     commandNetwork: z.boolean().optional(),
+    commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
   })
   .strict()
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), '至少提供一个能力。')
@@ -1328,6 +1345,58 @@ export const CodeRunAvailabilitySchema = z
 
 export type CodeRunAvailability = z.output<typeof CodeRunAvailabilitySchema>
 
+/** The GitHub CLI commands call: found on this machine, or downloaded by NekroNXT where it can. */
+export const GithubCliAvailabilitySchema = CodeRunAvailabilitySchema
+export type GithubCliAvailability = z.output<typeof GithubCliAvailabilitySchema>
+
+/**
+ * One account in the host's library. The library only keeps accounts; an account takes effect only for the agents
+ * whose capabilities grant it, which `usedBy` lists.
+ */
+export const CommandAccountSchema = z
+  .object({
+    id: NonEmptyStringSchema.max(64),
+    service: CommandAccountServiceSchema,
+    /** The account name on the service. */
+    login: NonEmptyStringSchema,
+    source: z.enum(['token', 'gh-login']),
+    /** Token scopes where the service reports them (classic tokens); absent for fine-grained tokens. */
+    scopes: z.array(z.string()).optional(),
+    createdAt: z.number().int().nonnegative(),
+    usedBy: z.array(AgentIdSchema),
+  })
+  .strict()
+
+export type CommandAccount = z.output<typeof CommandAccountSchema>
+
+/** A login the local `gh` holds, offered as a quick way to add an account. */
+export const LocalGithubLoginSchema = z.object({ login: NonEmptyStringSchema, active: z.boolean() }).strict()
+
+export const CommandAccountsViewSchema = z
+  .object({
+    accounts: z.array(CommandAccountSchema),
+    /** Logins found in the local GitHub CLI; empty when it is missing or not logged in. */
+    localLogins: z.array(LocalGithubLoginSchema),
+  })
+  .strict()
+
+export type CommandAccountsView = z.output<typeof CommandAccountsViewSchema>
+
+export const AddCommandAccountRequestSchema = z.discriminatedUnion('source', [
+  z
+    .object({ source: z.literal('token'), service: CommandAccountServiceSchema, token: NonEmptyStringSchema.max(512) })
+    .strict(),
+  z
+    .object({
+      source: z.literal('gh-login'),
+      service: CommandAccountServiceSchema,
+      login: NonEmptyStringSchema.max(128),
+    })
+    .strict(),
+])
+
+export type AddCommandAccountRequest = z.output<typeof AddCommandAccountRequestSchema>
+
 export const HostSnapshotSchema = z
   .object({
     upgrade: HostUpgradeSummarySchema.optional(),
@@ -1362,6 +1431,8 @@ export const HostSnapshotSchema = z
         subagents: z.object({ available: z.boolean() }).strict(),
         /** Optional in older hosts, which never offer `run_code`. */
         codeRun: CodeRunAvailabilitySchema.optional(),
+        /** Optional in older hosts, which never offer command accounts. */
+        githubCli: GithubCliAvailabilitySchema.optional(),
         /** What this host can confine for commands beyond file writes; optional in older hosts. */
         commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
         webSearch: z
@@ -1379,6 +1450,8 @@ export const HostSnapshotSchema = z
       .strict(),
     connectionAdapters: z.array(AdapterConnectionDescriptorSchema),
     notificationSettings: NotificationSettingsViewSchema,
+    /** Optional in older hosts, which have no account library. */
+    commandAccounts: z.array(CommandAccountSchema).optional(),
     agents: z.array(
       z
         .object({
@@ -2782,6 +2855,59 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: CodeRunAvailabilitySchema,
+    error: HostApiErrorSchema,
+  }),
+  downloadGithubCli: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/runtimes/github-cli/download',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: GithubCliAvailabilitySchema,
+    error: HostApiErrorSchema,
+  }),
+  removeGithubCli: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/runtimes/github-cli',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: GithubCliAvailabilitySchema,
+    error: HostApiErrorSchema,
+  }),
+  getCommandAccounts: defineContract({
+    method: 'GET',
+    path: '/api/settings/command-accounts',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommandAccountsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  addCommandAccount: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/settings/command-accounts',
+    params: EmptyParamsSchema,
+    request: AddCommandAccountRequestSchema,
+    response: CommandAccountsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  replaceCommandAccountToken: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/settings/command-accounts/:accountId',
+    params: z.object({ accountId: NonEmptyStringSchema.max(64) }).strict(),
+    request: AddCommandAccountRequestSchema,
+    response: CommandAccountsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  removeCommandAccount: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/settings/command-accounts/:accountId',
+    params: z.object({ accountId: NonEmptyStringSchema.max(64) }).strict(),
+    request: NoRequestBodySchema,
+    response: CommandAccountsViewSchema,
     error: HostApiErrorSchema,
   }),
   getChannelMemberNotes: defineContract({

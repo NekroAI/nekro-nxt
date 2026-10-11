@@ -145,7 +145,7 @@ test.describe('settings space', () => {
     try {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
-      await expect(list.getByRole('link')).toHaveCount(8)
+      await expect(list.getByRole('link')).toHaveCount(9)
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
       const overview = page.getByRole('table', { name: '模型供应商' })
       await expect(overview).toContainText('示例供应商甲')
@@ -389,7 +389,7 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(9)
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(10)
       const table = page.getByRole('table', { name: '已登录设备' })
       await expect(table).toContainText('浏览器 · Chrome · macOS')
       await expect(table).toContainText('此设备')
@@ -409,6 +409,70 @@ test.describe('settings space', () => {
       await page.getByRole('dialog', { name: '退出这台设备的登录？' }).getByRole('button', { name: '退出登录' }).click()
       await expect.poll(() => calls).toContain('logout')
       await expect(page).toHaveURL(/\/login$/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('keeps GitHub accounts, shows who uses them and removes one after a confirmation', async () => {
+    const agentId = productSnapshot.agents[0]!.id
+    let accounts = [
+      {
+        id: 'acct0001fixture',
+        service: 'github',
+        login: 'octo-fixture',
+        source: 'token',
+        scopes: ['repo'],
+        createdAt: 1,
+        usedBy: [agentId],
+      },
+      {
+        id: 'acct0002fixture',
+        service: 'github',
+        login: 'second-fixture',
+        source: 'gh-login',
+        createdAt: 2,
+        usedBy: [],
+      },
+    ]
+    const calls: string[] = []
+    const { page, errors } = await open('/settings/accounts', {
+      before: async (target) => {
+        const snapshot = () => ({
+          ...productSnapshot,
+          commandAccounts: accounts,
+          capabilityAvailability: {
+            ...productSnapshot.capabilityAvailability,
+            githubCli: { available: true, source: 'system', version: '2.90.0' },
+          },
+        })
+        await target.route('**/api/snapshot', (request) => request.fulfill({ json: snapshot() }))
+        await target.route('**/api/settings/command-accounts/*', async (request) => {
+          const id = new URL(request.request().url()).pathname.split('/').at(-1)
+          calls.push(`${request.request().method()} ${id}`)
+          accounts = accounts.filter((account) => account.id !== id)
+          await request.fulfill({ json: { accounts, localLogins: [] } })
+        })
+      },
+    })
+    try {
+      const table = page.getByRole('table', { name: 'GitHub 账号' })
+      await expect(table).toContainText('octo-fixture')
+      await expect(table).toContainText('repo')
+      await expect(table).toContainText(productSnapshot.agents[0]!.displayName)
+      await expect(table).toContainText('由 GitHub 上这个 token 的设置决定')
+      await expect(page.getByText('2.90.0，来自这台设备')).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/settings-accounts.png' })
+
+      await table
+        .getByRole('row', { name: /octo-fixture/u })
+        .getByRole('button', { name: '移除' })
+        .click()
+      const dialog = page.getByRole('dialog', { name: '移除 octo-fixture？' })
+      await expect(dialog).toContainText(`${productSnapshot.agents[0]!.displayName} 的命令会立刻失去这个账号`)
+      await dialog.getByRole('button', { name: '移除' }).click()
+      await expect.poll(() => calls).toEqual(['DELETE acct0001fixture'])
       expect(errors).toEqual([])
     } finally {
       await page.close()
