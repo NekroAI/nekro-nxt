@@ -181,6 +181,8 @@ export class NekroRuntime {
   readonly internalConnectionId: ConnectionId
   /** Parent of every agent workspace (`<root>/<agentId>/`). */
   readonly workspaceRoot: string
+  /** Directory of the Core database: the Host's data root. */
+  readonly dataRoot: string
   readonly extensionService: ExtensionService
   /** Install, enable, switch and remove Extensions (one host instance plus agent attachments each). */
   readonly extensions: ExtensionLifecycleCoordinator
@@ -227,6 +229,7 @@ export class NekroRuntime {
     readonly channels: ChannelRuntime
     readonly internalConnectionId: ConnectionId
     readonly workspaceRoot: string
+    readonly dataRoot: string
     readonly extensionService: ExtensionService
     readonly extensionBuilder: ExtensionBuilder
     readonly adapterPort: { current?: PersistentAdapterPort }
@@ -260,6 +263,7 @@ export class NekroRuntime {
     this.channels = input.channels
     this.internalConnectionId = input.internalConnectionId
     this.workspaceRoot = input.workspaceRoot
+    this.dataRoot = input.dataRoot
     this.extensionService = input.extensionService
     this.credentials = input.credentials
     this.notifications = input.notifications
@@ -912,6 +916,7 @@ export class NekroRuntime {
         },
       })
       const runtime = new NekroRuntime({
+        dataRoot: path.dirname(options.coreDatabasePath),
         jobScheduler,
         scheduledTasks,
         codeRunNode,

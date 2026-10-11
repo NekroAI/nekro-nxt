@@ -89,6 +89,57 @@ test.describe('settings space', () => {
     return { page, errors }
   }
 
+  test('chooses where restore points go before an upgrade, or turns them off', async () => {
+    const requests: unknown[] = []
+    let settings = {
+      mode: 'data',
+      directory: null as string | null,
+      locked: false,
+      keep: 2,
+      usage: { count: 2, bytes: 16 * 1024 * 1024 * 1024 },
+    }
+    const { page, errors } = await open('/settings/about', {
+      before: async (target) => {
+        await target.route('**/api/settings/upgrade-backup', async (request) => {
+          if (request.request().method() === 'PUT') {
+            const body: unknown = request.request().postDataJSON()
+            const text = (name: 'mode' | 'directory'): string | null => {
+              if (body === null || typeof body !== 'object') return null
+              const value: unknown = Object.entries(body).find(([key]) => key === name)?.[1]
+              return typeof value === 'string' ? value : null
+            }
+            requests.push(body)
+            settings = {
+              ...settings,
+              mode: text('mode') ?? '',
+              directory: text('directory'),
+              usage: { count: 0, bytes: 0 },
+            }
+          }
+          await request.fulfill({ json: settings })
+        })
+      },
+    })
+    try {
+      const row = page.getByText('升级前备份', { exact: true }).locator('..').locator('..')
+      await expect(page.getByText('已保留 2 份，共 16.0 GB；保留最近 2 份')).toBeVisible()
+      await page.getByRole('combobox', { name: '升级前备份' }).click()
+      await page.getByRole('option', { name: '保存到其他位置' }).click()
+      await page.getByRole('textbox', { name: '备份位置' }).fill('/mnt/example-backups')
+      await page.getByRole('button', { name: '保存', exact: true }).click()
+      await expect.poll(() => requests).toEqual([{ mode: 'directory', directory: '/mnt/example-backups' }])
+      await page.getByRole('combobox', { name: '升级前备份' }).click()
+      await page.getByRole('option', { name: '不备份' }).click()
+      await expect(page.getByText('升级时不备份')).toBeVisible()
+      expect(requests.at(-1)).toEqual({ mode: 'off' })
+      await expect(row).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/settings-upgrade-backup.png' })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('lists sections one level deep, overviews providers and opens one in the main area', async () => {
     const { page, errors } = await open('/settings/models')
     try {

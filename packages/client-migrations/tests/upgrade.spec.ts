@@ -143,4 +143,17 @@ describe('reusable Host upgrade steps', () => {
     expect(await host.run()).toEqual({ phase: 'recovery', errorSummary: 'data root occupied' })
     expect(events).toEqual([])
   })
+
+  it('migrates without a restore point when backups are turned off', async () => {
+    const { journal, events } = checkpointJournal()
+    const host = new HostUpgradeCoordinator({
+      lock: { acquire: () => Promise.resolve(() => Promise.resolve()) },
+      preflight: () => Promise.resolve(),
+      createBackup: () => Promise.resolve(undefined),
+      steps: [{ id: 'storage', run: () => Promise.resolve() }],
+      journal,
+    })
+    expect(await host.run()).toEqual({ phase: 'ready' })
+    expect(events).toEqual(['begin:storage', 'complete:storage'])
+  })
 })

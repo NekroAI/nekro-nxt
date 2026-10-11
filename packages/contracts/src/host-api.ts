@@ -985,6 +985,23 @@ export const RetrievalStatusSchema = z
   .strict()
 export type RetrievalStatus = z.output<typeof RetrievalStatusSchema>
 
+/** Where the Host keeps restore points it takes before an upgrade, or none. */
+export const UpgradeBackupModeSchema = z.enum(['data', 'directory', 'off'])
+export const UpgradeBackupSettingsSchema = z
+  .object({
+    mode: UpgradeBackupModeSchema,
+    /** The chosen directory when `mode` is `directory`. */
+    directory: z.string().nullable(),
+    /** Set through the server's environment; the settings page cannot change it. */
+    locked: z.boolean(),
+    /** Restore points kept; older ones are removed after an upgrade succeeds. */
+    keep: z.number().int().positive(),
+    /** Restore points currently in the chosen place. */
+    usage: z.object({ count: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }).strict(),
+  })
+  .strict()
+export type UpgradeBackupSettings = z.output<typeof UpgradeBackupSettingsSchema>
+
 /** What the agent keeps about individual members of one channel; each note comes with that member's messages. */
 export const ChannelMemberNotesViewSchema = z
   .object({
@@ -2697,6 +2714,24 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: MessagePacingSettingsSchema,
     response: MessagePacingSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  getUpgradeBackupSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/upgrade-backup',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: UpgradeBackupSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateUpgradeBackupSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/upgrade-backup',
+    params: EmptyParamsSchema,
+    request: z
+      .object({ mode: UpgradeBackupModeSchema, directory: z.string().trim().min(1).max(1024).optional() })
+      .strict(),
+    response: UpgradeBackupSettingsSchema,
     error: HostApiErrorSchema,
   }),
   getRetrievalStatus: defineContract({

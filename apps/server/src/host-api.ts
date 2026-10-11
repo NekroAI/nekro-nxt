@@ -7,6 +7,7 @@ import {
   type ChannelId,
   type HostSnapshotMessage,
   type HostSseEvent,
+  type UpgradeBackupSettings,
 } from '@nekro-nxt/contracts'
 import type { NekroRuntime } from './bootstrap.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
@@ -32,6 +33,13 @@ import { registerExtensionsRoutes } from './host-routes-extensions.js'
 import { registerSettingsRoutes } from './host-routes-settings.js'
 import { registerWorkspaceRoutes } from './host-routes-workspace.js'
 import { PRODUCT_VERSION } from './product-version.js'
+import { UPGRADE_BACKUP_KEEP, upgradeBackupUsage } from './upgrade-backup.js'
+import {
+  assertWritableBackupStore,
+  readUpgradeBackupPolicy,
+  upgradeBackupStore,
+  writeUpgradeBackupPolicy,
+} from './upgrade-backup-policy.js'
 import { viewerKeyFromRequest } from './viewer.js'
 import { WorkspaceProjections } from './workspace-projections.js'
 import {
@@ -304,6 +312,50 @@ export const createNekroHostApi = (
       writeContractJson(res, 200, HostApiContracts.updateMessagePacingSettings, {
         pacing: writeMessagePacing(pacingSettings, parsed.pacing),
       })
+    },
+  })
+  const upgradeBackupSettings = async (): Promise<UpgradeBackupSettings> => {
+    const { policy, source } = await readUpgradeBackupPolicy(runtime.dataRoot)
+    const store = upgradeBackupStore(policy)
+    return {
+      mode: policy.mode,
+      directory: store ?? null,
+      locked: source === 'environment',
+      keep: UPGRADE_BACKUP_KEEP,
+      usage: await upgradeBackupUsage({
+        dataRoot: runtime.dataRoot,
+        ...(store === undefined ? {} : { storeDirectory: store }),
+      }),
+    }
+  }
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/upgrade-backup',
+    handler: async (req, res) => {
+      try {
+        if (req.method === 'GET') {
+          writeContractJson(res, 200, HostApiContracts.getUpgradeBackupSettings, await upgradeBackupSettings())
+          return
+        }
+        if (req.method === 'PUT') {
+          const parsed = HostApiContracts.updateUpgradeBackupSettings.parseRequest(await readJsonBody(req))
+          if ((await readUpgradeBackupPolicy(runtime.dataRoot)).source === 'environment') {
+            throw new Error('备份方式由服务端环境变量设置，需要在部署配置中修改。')
+          }
+          if (parsed.mode === 'directory') {
+            if (parsed.directory === undefined) throw new Error('请填写备份位置。')
+            await assertWritableBackupStore(runtime.dataRoot, parsed.directory)
+            await writeUpgradeBackupPolicy(runtime.dataRoot, { mode: 'directory', directory: parsed.directory })
+          } else {
+            await writeUpgradeBackupPolicy(runtime.dataRoot, { mode: parsed.mode })
+          }
+          writeContractJson(res, 200, HostApiContracts.updateUpgradeBackupSettings, await upgradeBackupSettings())
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+      } catch (error) {
+        writeError(res, 400, 'upgrade-backup-settings-failed', error instanceof Error ? error.message : String(error))
+      }
     },
   })
   registerRoute({

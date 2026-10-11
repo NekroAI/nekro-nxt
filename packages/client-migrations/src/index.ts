@@ -178,7 +178,8 @@ export interface HostUpgradeLock {
 export interface HostUpgradeCoordinatorOptions {
   readonly lock: HostUpgradeLock
   readonly preflight: () => Promise<void>
-  readonly createBackup: () => Promise<{ readonly id: string }>
+  /** Resolves undefined when the operator turned restore points off. */
+  readonly createBackup: () => Promise<{ readonly id: string } | undefined>
   readonly steps: readonly UpgradeStep[]
   readonly journal: UpgradeJournal
   readonly signal?: AbortSignal
@@ -222,13 +223,13 @@ export class HostUpgradeCoordinator {
       await this.#options.preflight()
       this.#publish({ phase: 'backup' })
       const backup = await this.#options.createBackup()
-      backupId = backup.id
-      this.#publish({ phase: 'migrating', backupId })
+      backupId = backup?.id
+      this.#publish({ phase: 'migrating', ...(backupId === undefined ? {} : { backupId }) })
       const journal: UpgradeJournal = {
         begin: async (id) => {
           this.#publish({
             phase: this.#options.steps.find((step) => step.id === id)?.phase ?? 'migrating',
-            backupId: backup.id,
+            ...(backupId === undefined ? {} : { backupId }),
             currentStepId: id,
           })
           await this.#options.journal.begin(id)
@@ -244,7 +245,7 @@ export class HostUpgradeCoordinator {
       }
       await runUpgradePlan(this.#options.steps, journal, this.#options.signal)
       this.#options.signal?.throwIfAborted()
-      this.#publish({ phase: 'ready', backupId })
+      this.#publish({ phase: 'ready', ...(backupId === undefined ? {} : { backupId }) })
       return this.#status
     } catch (error) {
       this.#publish({

@@ -1,7 +1,8 @@
 import { configureDshLlmProviders } from './dsh-host-profile.js'
 import { DSH_RUNTIME_FINGERPRINT, DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import { acquireDataRootLease } from './data-root-lease.js'
-import { createUpgradeBackup, restoreUpgradeBackup, writeUpgradeJson } from './upgrade-backup.js'
+import { createUpgradeBackup, pruneUpgradeBackups, restoreUpgradeBackup, writeUpgradeJson } from './upgrade-backup.js'
+import { readUpgradeBackupPolicy, upgradeBackupStore } from './upgrade-backup-policy.js'
 import { createUpgradeProgress, markUpgradeProgressFailure } from './upgrade-progress.js'
 /**
  * NekroNxt Server executable entry — assembles the domain runtime (NekroRuntime),
@@ -462,6 +463,8 @@ const createRuntimeThroughUpgradeCoordinator = async (
   let runtime: NekroRuntime | undefined
   let sourceRuntimeFingerprint: string | undefined
   const journal = await createServerUpgradeJournal(backupRoot, releaseId, () => backupId)
+  const { policy: backupPolicy } = await readUpgradeBackupPolicy(dataRoot)
+  const storeDirectory = upgradeBackupStore(backupPolicy)
   const progress = createUpgradeProgress(dataRoot, releaseId)
   await progress.update({ phase: 'preflight' })
   const coordinator = new HostUpgradeCoordinator({
@@ -492,9 +495,11 @@ const createRuntimeThroughUpgradeCoordinator = async (
       }
     },
     createBackup: async () => {
+      if (backupPolicy.mode === 'off') return undefined
       const externalRoots = externalWorkspaceBackupRoots(dataRoot, options.developmentWorkspaceRoot)
       const backup = await createUpgradeBackup({
         dataRoot,
+        ...(storeDirectory === undefined ? {} : { storeDirectory }),
         releaseId,
         runtimeFingerprint: DSH_RUNTIME_FINGERPRINT,
         ...(sourceRuntimeFingerprint === undefined ? {} : { sourceRuntimeFingerprint }),
@@ -558,6 +563,12 @@ const createRuntimeThroughUpgradeCoordinator = async (
     throw new Error(`升级失败：${summary}`)
   }
   await journal.finish('ready')
+  if (backupPolicy.mode !== 'off') {
+    // Restore points add up to the whole data root each; keep only the most recent ones.
+    await pruneUpgradeBackups({ dataRoot, ...(storeDirectory === undefined ? {} : { storeDirectory }) }).catch(
+      (error: unknown) => console.error('[nekro-nxt] 清理旧的升级前备份失败：', error),
+    )
+  }
   await writeUpgradeJson(path.join(dataRoot, 'dsh', 'runtime-identity.json'), {
     format: 'nxt.runtime-identity',
     version: 1,
@@ -871,8 +882,10 @@ if (isEntryPoint()) {
         if (!backupId) throw new Error('--restore-upgrade 需要恢复点 ID。')
         const release = await acquireDataRootLease(resolveRoot(dataRoot))
         try {
+          const store = upgradeBackupStore((await readUpgradeBackupPolicy(resolveRoot(dataRoot))).policy)
           await restoreUpgradeBackup({
             dataRoot: resolveRoot(dataRoot),
+            ...(store === undefined ? {} : { storeDirectory: store }),
             backupId,
             ...(developmentWorkspaceRoot === undefined ? {} : { externalWorkspaceRoot: developmentWorkspaceRoot }),
           })

@@ -218,3 +218,15 @@
   color: var(--warn);
   font: var(--t-note);
 }
+
+.inlineForm {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.inlineForm > :first-child {
+  min-width: 0;
+  flex: 1;
+}

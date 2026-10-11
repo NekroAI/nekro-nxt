@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   createUpgradeBackup,
+  pruneUpgradeBackups,
   restoreUpgradeBackup,
+  upgradeBackupUsage,
   verifyUpgradeBackup,
   writeUpgradeJson,
 } from '../src/upgrade-backup.js'
@@ -148,6 +150,51 @@ describe('complete upgrade recovery points', () => {
     expect(await readFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt'), 'utf8')).toBe(
       'before upgrade',
     )
+  })
+})
+
+describe('restore points kept elsewhere and pruned', () => {
+  it('keeps restore points in a chosen directory and restores from there', async () => {
+    const options = await fixture()
+    const store = await mkdtemp(path.join(tmpdir(), 'nxt-upgrade-store-'))
+    directories.push(store)
+    const manifest = await createUpgradeBackup({ ...options, storeDirectory: store })
+    await verifyUpgradeBackup(path.join(store, manifest.backupId))
+    await expect(
+      readFile(path.join(options.dataRoot, 'backups', manifest.backupId, 'manifest.json')),
+    ).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+    expect(await upgradeBackupUsage({ dataRoot: options.dataRoot, storeDirectory: store })).toMatchObject({ count: 1 })
+    await writeFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt'), 'failed new generation')
+    await restoreUpgradeBackup({ dataRoot: options.dataRoot, storeDirectory: store, backupId: manifest.backupId })
+    expect(await readFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt'), 'utf8')).toBe(
+      'before upgrade',
+    )
+  })
+
+  it('refuses a directory inside the data root, which every restore point copies', async () => {
+    const options = await fixture()
+    await expect(
+      createUpgradeBackup({ ...options, storeDirectory: path.join(options.dataRoot, 'my-backups') }),
+    ).rejects.toThrow('备份位置不能在数据目录里。')
+  })
+
+  it('keeps only the newest restore points after an upgrade', async () => {
+    const options = await fixture()
+    let now = 1_000
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => (now += 1_000))
+    try {
+      const ids: string[] = []
+      for (const release of ['fixture@1', 'fixture@2', 'fixture@3']) {
+        ids.push((await createUpgradeBackup({ ...options, releaseId: release })).backupId)
+      }
+      expect(await pruneUpgradeBackups({ dataRoot: options.dataRoot, keep: 2 })).toEqual([ids[0]])
+      expect(await upgradeBackupUsage({ dataRoot: options.dataRoot })).toMatchObject({ count: 2 })
+      await verifyUpgradeBackup(path.join(options.dataRoot, 'backups', ids[2]!))
+    } finally {
+      clock.mockRestore()
+    }
   })
 })
 

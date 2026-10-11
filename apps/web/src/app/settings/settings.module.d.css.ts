@@ -7,6 +7,7 @@ declare const styles: {
   readonly faint: string
   readonly head: string
   readonly headActions: string
+  readonly inlineForm: string
   readonly link: string
   readonly loading: string
   readonly muted: string

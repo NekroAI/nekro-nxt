@@ -229,6 +229,10 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.checkProductUpdates, {}, undefined, options),
   updateProductUpdateSettings: (request: HostApiRequest<'updateProductUpdateSettings'>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.updateProductUpdateSettings, {}, request, options),
+  getUpgradeBackupSettings: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getUpgradeBackupSettings, {}, undefined, options),
+  updateUpgradeBackupSettings: (request: HostApiRequest<'updateUpgradeBackupSettings'>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.updateUpgradeBackupSettings, {}, request, options),
   getRetrievalStatus: (options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getRetrievalStatus, {}, undefined, options),
   updateRetrievalMode: (request: HostApiRequest<'updateRetrievalMode'>, options?: HostRequestOptions) =>

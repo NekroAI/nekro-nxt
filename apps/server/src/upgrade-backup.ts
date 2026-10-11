@@ -57,6 +57,11 @@ export interface UpgradeBackupOptions {
   /** A stable owner migration ID; retries across product rebuilds can reuse the same verified point. */
   readonly migrationId?: string
   readonly externalRoots?: readonly { readonly key: string; readonly target: string }[]
+  /**
+   * Where restore points are kept, e.g. an external disk; defaults to `backups/` in the data root. Journals, the
+   * restore staging area and locks stay in the data root, which a restore renames into.
+   */
+  readonly storeDirectory?: string
   readonly signal?: AbortSignal
   readonly onProgress?: (completed: number, total: number) => void
 }
@@ -118,6 +123,20 @@ export const prepareUpgradeBackupDirectory = async (dataRoot: string): Promise<s
   if ((await realDirectory(directory)) !== directory) throw new Error('备份目录身份发生变化。')
   await syncUpgradeDirectory(root)
   return directory
+}
+
+/**
+ * The directory restore points live in: `backups/` in the data root, or a directory the operator chose. A chosen
+ * directory may not lie inside the data root, which every restore point copies.
+ */
+export const prepareUpgradeBackupStore = async (dataRoot: string, storeDirectory?: string): Promise<string> => {
+  if (storeDirectory === undefined) return prepareUpgradeBackupDirectory(dataRoot)
+  if (!path.isAbsolute(storeDirectory)) throw new Error('备份位置必须是绝对路径。')
+  await mkdir(storeDirectory, { recursive: true, mode: 0o700 })
+  const store = await realDirectory(storeDirectory)
+  const data = await realDirectory(dataRoot)
+  if (store === data || store.startsWith(`${data}${path.sep}`)) throw new Error('备份位置不能在数据目录里。')
+  return store
 }
 
 /** Same-directory temporary, file flush, atomic publish and parent-directory flush. */
@@ -398,6 +417,7 @@ export async function verifyUpgradeBackup(directory: string): Promise<UpgradeBac
 export async function createUpgradeBackup(options: UpgradeBackupOptions): Promise<UpgradeBackupManifest> {
   options.signal?.throwIfAborted()
   const backupRoot = await prepareUpgradeBackupDirectory(options.dataRoot)
+  const store = await prepareUpgradeBackupStore(options.dataRoot, options.storeDirectory)
   const roots = await rootsFor(options)
   let backupId = `runtime-${digest(JSON.stringify([options.migrationId ?? options.releaseId, options.runtimeFingerprint, roots])).slice(0, 32)}`
   const assertIdentity = (existing: UpgradeBackupManifest): void => {
@@ -414,7 +434,7 @@ export async function createUpgradeBackup(options: UpgradeBackupOptions): Promis
   // so reinstalling the same release captures data written by the old program afterwards.
   while (true) {
     options.signal?.throwIfAborted()
-    const directory = path.join(backupRoot, backupId)
+    const directory = path.join(store, backupId)
     const journalPath = path.join(backupRoot, `restore-${backupId}.json`)
     if (await exists(journalPath)) {
       const journal = restoreJournalSchema.parse(await readCheckedJson(journalPath))
@@ -435,12 +455,12 @@ export async function createUpgradeBackup(options: UpgradeBackupOptions): Promis
     assertIdentity(existing)
     return existing
   }
-  const destination = path.join(backupRoot, backupId)
+  const destination = path.join(store, backupId)
   const initial = await inventory(roots, true)
   const entries = initial.entries.map((entry) => ({ ...entry }))
   const total =
     entries.filter(({ kind }) => kind === 'file').reduce((sum, entry) => sum + entry.size, 0) + initial.sqliteWalBytes
-  await requireSpace(backupRoot, total)
+  await requireSpace(store, total)
   const staging = `${destination}.staging-${randomUUID()}`
   await mkdir(staging, { mode: 0o700 })
   let completed = 0
@@ -522,7 +542,7 @@ export async function createUpgradeBackup(options: UpgradeBackupOptions): Promis
     options.signal?.throwIfAborted()
     if (await exists(destination)) throw new Error('恢复点发布路径冲突。')
     await rename(staging, destination)
-    await syncUpgradeDirectory(backupRoot)
+    await syncUpgradeDirectory(store)
     options.onProgress?.(total, total)
     return manifest
   } finally {
@@ -618,7 +638,7 @@ const renamePreserving = async (source: string, target: string): Promise<void> =
 
 export interface RestoreUpgradeBackupOptions extends Pick<
   UpgradeBackupOptions,
-  'dataRoot' | 'externalRoots' | 'signal'
+  'dataRoot' | 'externalRoots' | 'signal' | 'storeDirectory'
 > {
   readonly backupId: string
   /** Configured allowlist parent, for retries after Core has already been displaced. */
@@ -631,7 +651,7 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
   options.signal?.throwIfAborted()
   const backupId = backupIdSchema.parse(options.backupId)
   const backupRoot = await prepareUpgradeBackupDirectory(options.dataRoot)
-  const directory = path.join(backupRoot, backupId)
+  const directory = path.join(await prepareUpgradeBackupStore(options.dataRoot, options.storeDirectory), backupId)
   const manifest = await verifyUpgradeBackup(directory)
   if (manifest.backupId !== backupId) throw new Error('恢复点身份与路径不匹配。')
   let externalRoots = options.externalRoots
@@ -875,4 +895,72 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
   await writeUpgradeJson(journalPath, journal)
   await checkpoint('complete')
   return manifest
+}
+
+/** Restore points kept after a successful upgrade; older ones are removed. */
+export const UPGRADE_BACKUP_KEEP = 2
+
+/**
+ * Removes all but the newest `keep` restore points in the store. A point whose restore has started but not finished
+ * is never removed, and nothing that is not a published restore point (staging, unrelated files) is touched.
+ */
+export async function pruneUpgradeBackups(options: {
+  readonly dataRoot: string
+  readonly storeDirectory?: string
+  readonly keep?: number
+}): Promise<readonly string[]> {
+  const backupRoot = await prepareUpgradeBackupDirectory(options.dataRoot)
+  const store = await prepareUpgradeBackupStore(options.dataRoot, options.storeDirectory)
+  const points: { readonly id: string; readonly createdAt: number }[] = []
+  for (const entry of await readdir(store, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !backupIdSchema.safeParse(entry.name).success) continue
+    const journal = path.join(backupRoot, `restore-${entry.name}.json`)
+    if (await exists(journal)) {
+      const parsed = restoreJournalSchema.safeParse(await readCheckedJson(journal).catch(() => undefined))
+      if (!parsed.success || parsed.data.phase !== 'complete') continue
+    }
+    try {
+      const manifest = UpgradeBackupManifestSchema.parse(
+        await readCheckedJson(path.join(store, entry.name, 'manifest.json')),
+      )
+      points.push({ id: entry.name, createdAt: manifest.createdAt })
+    } catch {
+      // Not a complete restore point; leave it for the operator.
+    }
+  }
+  const removed = points
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(options.keep ?? UPGRADE_BACKUP_KEEP)
+    .map(({ id }) => id)
+  for (const id of removed) await rm(path.join(store, id), { recursive: true, force: true })
+  if (removed.length > 0) await syncUpgradeDirectory(store)
+  return removed
+}
+
+/** Restore points in the store with their total size, for the settings page. */
+export async function upgradeBackupUsage(options: {
+  readonly dataRoot: string
+  readonly storeDirectory?: string
+}): Promise<{ readonly count: number; readonly bytes: number }> {
+  let store: string
+  try {
+    store = await prepareUpgradeBackupStore(options.dataRoot, options.storeDirectory)
+  } catch {
+    return { count: 0, bytes: 0 }
+  }
+  let count = 0
+  let bytes = 0
+  for (const entry of await readdir(store, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !backupIdSchema.safeParse(entry.name).success) continue
+    try {
+      const manifest = UpgradeBackupManifestSchema.parse(
+        await readCheckedJson(path.join(store, entry.name, 'manifest.json')),
+      )
+      count += 1
+      bytes += manifest.entries.reduce((sum, item) => sum + item.size, 0)
+    } catch {
+      // Incomplete points are not counted.
+    }
+  }
+  return { count, bytes }
 }

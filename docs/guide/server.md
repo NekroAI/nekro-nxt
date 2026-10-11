@@ -96,4 +96,4 @@ docker stop nekro-nxt
 docker rm nekro-nxt
 ```
 
-随后重新执行“启动容器”中的命令，继续挂载原持久化目录。升级前先备份完整 `/data`；详细恢复原则见[升级、备份与恢复](upgrade-backup.md)。
+随后重新执行“启动容器”中的命令，继续挂载原持久化目录。升级前先备份完整 `/data`；详细恢复原则见[升级、备份与恢复](upgrade-backup.md)。新版本启动时会先在 `/data/backups/` 生成恢复点，可以用 `NEKRO_UPGRADE_BACKUP_DIR` 改到另一个挂载的目录，或用 `NEKRO_UPGRADE_BACKUP=off` 关闭。
