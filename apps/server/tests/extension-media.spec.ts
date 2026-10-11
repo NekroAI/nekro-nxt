@@ -210,7 +210,7 @@ describe('library uploads', () => {
     return { repository, call }
   }
 
-  it('imports pictures from an archive, skips the rest and deduplicates by content', async () => {
+  it('imports pictures from an archive by content, skips the rest and deduplicates', async () => {
     const { repository, call } = await setup()
     const red = await picture('#ff0000')
     const archive = Buffer.from(
@@ -218,6 +218,8 @@ describe('library uploads', () => {
         'set/red.png': red,
         'set/again/red-copy.png': red,
         'set/blue.png': await picture('#0000ff'),
+        // Exported collections may carry pictures under any name.
+        'set/green.null': await picture('#00ff00'),
         'set/readme.txt': new TextEncoder().encode('说明'),
         'set/fake.png': new TextEncoder().encode('not a picture'),
         '__MACOSX/set/._red.png': new TextEncoder().encode('metadata'),
@@ -231,11 +233,12 @@ describe('library uploads', () => {
     expect(result.added.map(({ name }) => name).sort()).toEqual([
       'set/again/red-copy.png',
       'set/blue.png',
+      'set/green.null',
       'set/red.png',
     ])
     expect(result.added.filter(({ existed }) => existed)).toHaveLength(1)
     expect(result.skipped.map(({ name }) => name).sort()).toEqual(['set/fake.png', 'set/readme.txt'])
-    expect(repository.extensionLibrary.libraryUsage(extensionId).count).toBe(2)
+    expect(repository.extensionLibrary.libraryUsage(extensionId).count).toBe(3)
 
     const thumbnail = await call(
       'GET',

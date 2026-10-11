@@ -18,7 +18,6 @@ export const LIBRARY_UPLOAD_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 /** One request; a large collection can be sent as several archives. */
 const LIBRARY_UPLOAD_MAX_REQUEST_BYTES = 4 * 1024 * 1024 * 1024
 const ACCEPTED_FORMATS = new Set(['png', 'jpeg', 'gif', 'webp'])
-const IMAGE_NAME = /\.(png|jpe?g|gif|webp)$/iu
 const THUMBNAIL_CACHE_LIMIT = 600
 
 type Added = NxtLibraryAsset & { readonly name: string; readonly existed: boolean }
@@ -115,10 +114,7 @@ export function registerExtensionLibraryRoutes({
     const unzip = new Unzip((file) => {
       const name = file.name
       if (name.endsWith('/') || baseName(name).startsWith('.') || name.startsWith('__MACOSX/')) return
-      if (!IMAGE_NAME.test(name)) {
-        skipped.push({ name, reason: '不是图片文件' })
-        return
-      }
+      // Judged by content, not the extension: collections exported from other programs often have odd names.
       if (file.originalSize !== undefined && file.originalSize > LIBRARY_UPLOAD_MAX_IMAGE_BYTES) {
         skipped.push({ name, reason: `超过 ${LIBRARY_UPLOAD_MAX_IMAGE_BYTES / 1024 / 1024} MB` })
         return
