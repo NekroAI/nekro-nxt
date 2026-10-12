@@ -130,6 +130,9 @@ export interface ChannelRecord {
   readonly platformChannelId: string
   readonly kind: 'internal' | 'direct' | 'group'
   readonly displayName?: string
+  readonly localDisplayName?: string
+  readonly platformDisplayName?: string
+  readonly preferredProcessingFeedback?: 'auto' | 'off'
   /** Set only for the built-in Channel atomically created with this intelligent-agent. */
   readonly autoCreatedForAgentId?: AgentId
   readonly createdAt: number
@@ -301,7 +304,7 @@ export interface CoreRepository {
   createChannel(record: ChannelRecord): void
   ensureChannel(record: ChannelRecord): ChannelRecord
   tombstoneChannel(id: ChannelId, deletedAt: number): void
-  updateChannelDisplayName(id: ChannelId, displayName: string): void
+  updateChannelDisplayName(id: ChannelId, displayName: string, source?: 'local' | 'platform'): void
   getChannel(id: ChannelId): ChannelRecord | undefined
   getChannelByPlatformId(connectionId: ConnectionId, platformChannelId: string): ChannelRecord | undefined
   listChannelIdsByConnection(connectionId: ConnectionId): readonly ChannelId[]
@@ -1126,7 +1129,7 @@ export class CoreService {
       createdAt: this.#timestamp(),
     }
     this.#repository.createChannel(record)
-    return record
+    return this.#repository.getChannel(record.id)!
   }
 
   /** Removes a Channel from active product state while preserving its immutable facts. */
@@ -1156,12 +1159,18 @@ export class CoreService {
     })
   }
 
-  updateChannelDisplayName(channelId: ChannelId, displayName: string): ChannelRecord {
-    const parsed = z.string().trim().min(1).max(120).parse(displayName)
+  updateChannelDisplayName(
+    channelId: ChannelId,
+    displayName: string,
+    source: 'local' | 'platform' = 'local',
+  ): ChannelRecord {
+    const parsed = z.string().trim().max(120).parse(displayName)
     const current = this.#repository.getChannel(channelId)
     if (!current) throw new Error(`Unknown channel: ${channelId}`)
-    this.#repository.updateChannelDisplayName(channelId, parsed)
-    return { ...current, displayName: parsed }
+    if (!parsed && (source === 'platform' || current.kind === 'internal' || !current.platformDisplayName))
+      throw new Error('还没有可用的平台名称，请填写频道名称。')
+    this.#repository.updateChannelDisplayName(channelId, parsed, source)
+    return this.#repository.getChannel(channelId)!
   }
 
   observeChannelMember(input: {
@@ -1345,7 +1354,8 @@ export class CoreService {
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
-      processingFeedback: parsed.processingFeedback,
+      processingFeedback:
+        input.processingFeedback ?? this.#repository.getChannel(input.channelId)?.preferredProcessingFeedback ?? 'auto',
       localAgentMessages: parsed.localAgentMessages,
       activityTriggerOverrides: parsed.activityTriggerOverrides,
       boundAt: this.#timestamp(),
@@ -1368,7 +1378,8 @@ export class CoreService {
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
-      processingFeedback: parsed.processingFeedback,
+      processingFeedback:
+        input.processingFeedback ?? this.#repository.getChannel(input.channelId)?.preferredProcessingFeedback ?? 'auto',
       localAgentMessages: parsed.localAgentMessages,
       activityTriggerOverrides: parsed.activityTriggerOverrides,
       boundAt: this.#timestamp(),

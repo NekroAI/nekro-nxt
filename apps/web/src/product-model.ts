@@ -118,6 +118,8 @@ export interface ChannelSummary {
   readonly id: string
   readonly connectionId: string
   readonly name: string
+  readonly customName?: string
+  readonly platformName?: string
   readonly kind: 'internal' | 'group' | 'direct'
   readonly connectionName: string
   readonly agentId: string

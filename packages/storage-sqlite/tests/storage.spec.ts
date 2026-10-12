@@ -186,6 +186,9 @@ describe('Core SQLite baseline', () => {
   it('upgrades migration 24 with referenced Admissions without dropping their event links', async () => {
     const filename = path.join(await temporaryDirectory(), 'core.sqlite')
     await createDatabaseAtMigration(filename, 24)
+    // Current fixture writers need these columns; remove them again before exercising the historical upgrade.
+    mutateSqlite(filename, 'ALTER TABLE channels ADD platform_display_name text')
+    mutateSqlite(filename, "ALTER TABLE channels ADD preferred_processing_feedback text NOT NULL DEFAULT 'auto'")
     const old = openCoreDatabase(filename)
     const repository = new SqliteCoreRepository(old)
     let sequence = 0
@@ -218,6 +221,8 @@ describe('Core SQLite baseline', () => {
       createdAt: 101,
     })
     old.close()
+    mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN platform_display_name')
+    mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN preferred_processing_feedback')
     const migrated = await openMigratedCoreDatabase(filename)
     try {
       const current = new SqliteCoreRepository(migrated)
@@ -249,6 +254,8 @@ describe('Core SQLite baseline', () => {
   it('upgrades migration 31 bindings to observe other local agents without dropping rows that reference them', async () => {
     const filename = path.join(await temporaryDirectory(), 'core.sqlite')
     await createDatabaseAtMigration(filename, 31)
+    mutateSqlite(filename, 'ALTER TABLE channels ADD platform_display_name text')
+    mutateSqlite(filename, "ALTER TABLE channels ADD preferred_processing_feedback text NOT NULL DEFAULT 'auto'")
     const old = openCoreDatabase(filename)
     const repository = new SqliteCoreRepository(old)
     let sequence = 0
@@ -258,6 +265,8 @@ describe('Core SQLite baseline', () => {
     const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'group-1', kind: 'group' })
     const event = appendTextEvent(core, connection.id, channel.id, 'bound-inbound', '旧绑定的消息', 100)
     old.close()
+    mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN platform_display_name')
+    mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN preferred_processing_feedback')
     mutateSqlite(
       filename,
       `INSERT INTO channel_bindings (channel_id, agent_id, trigger_policy, processing_feedback, bound_at)
@@ -279,6 +288,7 @@ describe('Core SQLite baseline', () => {
         processingFeedback: 'off',
         localAgentMessages: 'observe',
       })
+      expect(new SqliteCoreRepository(migrated).getChannel(channel.id)?.preferredProcessingFeedback).toBe('off')
     } finally {
       migrated.close()
     }
@@ -1159,6 +1169,66 @@ describe('Core SQLite baseline', () => {
       const order = { agentIds: [firstAgent.definition.id], channelIdsByAgent: {}, unboundChannelIds: [first.id] }
       expect(repository.putWorkTreeOrder(order)).toEqual(order)
       expect(repository.getWorkTreeOrder()).toEqual(order)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('keeps local channel names and processing feedback preferences across platform updates and rebindings', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const channel = core.ensureChannel({
+        connectionId: connection.id,
+        platformChannelId: 'group:preferences',
+        kind: 'group',
+        displayName: '平台初始名称',
+        observedAt: 10,
+      })
+      expect(channel.displayName).toBe('平台初始名称')
+      core.updateChannelDisplayName(channel.id, '我的备注')
+      core.updateChannelDisplayName(channel.id, '平台新名称', 'platform')
+      expect(repository.getChannel(channel.id)).toMatchObject({
+        displayName: '我的备注',
+        localDisplayName: '我的备注',
+        platformDisplayName: '平台新名称',
+      })
+      core.ensureChannel({
+        connectionId: connection.id,
+        platformChannelId: 'group:preferences',
+        kind: 'group',
+        displayName: '平台再次改名',
+        observedAt: 11,
+      })
+      expect(core.updateChannelDisplayName(channel.id, '').displayName).toBe('平台再次改名')
+      expect(repository.getChannel(channel.id)?.localDisplayName).toBeUndefined()
+      const first = createAgent(core)
+      const second = createAgent(core)
+      core.createBinding({
+        channelId: channel.id,
+        agentId: first.definition.id,
+        triggerPolicy: 'always',
+        processingFeedback: 'off',
+      })
+      expect(
+        core.replaceBinding({ channelId: channel.id, agentId: second.definition.id, triggerPolicy: 'always' })
+          .processingFeedback,
+      ).toBe('off')
+      repository.clearBinding(channel.id)
+      expect(
+        core.createBinding({ channelId: channel.id, agentId: first.definition.id, triggerPolicy: 'always' })
+          .processingFeedback,
+      ).toBe('off')
+      core.replaceBinding({
+        channelId: channel.id,
+        agentId: first.definition.id,
+        triggerPolicy: 'always',
+        processingFeedback: 'auto',
+      })
+      repository.clearBinding(channel.id)
+      expect(
+        core.createBinding({ channelId: channel.id, agentId: second.definition.id, triggerPolicy: 'always' })
+          .processingFeedback,
+      ).toBe('auto')
     } finally {
       database.close()
     }

@@ -42,6 +42,32 @@ const createTransport = (fetchImplementation: typeof fetch, secret = 'private-se
   })
 
 describe('QQ OpenClaw HTTP transport', () => {
+  it.each([200, 400, 403])(
+    'recognizes the group info whitelist error with HTTP %s without changing authentication behavior',
+    async (status) => {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit | undefined }> = []
+      const transport = createTransport(
+        sequenceFetch(
+          [
+            () => json({ access_token: 'token-fixture', expires_in: 7200 }),
+            () => json({ code: 11253, message: 'fixture private server text' }, status),
+            () => json({ group_openid: 'group/fixture', group_name: '虚构群名' }),
+          ],
+          calls,
+        ),
+      )
+      await expect(transport.getGroupInfo('group/fixture', new AbortController().signal)).resolves.toEqual({
+        status: 'unsupported',
+      })
+      await expect(transport.getGroupInfo('group/fixture', new AbortController().signal)).resolves.toEqual({
+        status: 'available',
+        name: '虚构群名',
+      })
+      expect(calls[1]?.url).toBe('https://api.test/v2/groups/group%2Ffixture/info')
+      expect(calls[1]?.init?.method).toBe('GET')
+    },
+  )
+
   it('refreshes once after 401 without exposing the credential in API requests', async () => {
     const calls: Array<{ readonly url: string; readonly init: RequestInit | undefined }> = []
     const transport = createTransport(

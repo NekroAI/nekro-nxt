@@ -1518,6 +1518,8 @@ export const HostSnapshotSchema = z
           platformChannelId: NonEmptyStringSchema,
           kind: z.enum(['internal', 'group', 'direct']),
           displayName: z.string().optional(),
+          localDisplayName: z.string().optional(),
+          platformDisplayName: z.string().optional(),
           boundAgentId: AgentIdSchema.optional(),
           runtimePhase: ChannelRuntimePhaseSchema.default('idle'),
           activity: ChannelActivitySummarySchema.default({ unreadCount: 0, unreadCapped: false }),
@@ -2665,7 +2667,8 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/channels/:channelId/display-name',
     params: channelParam,
-    request: z.object({ displayName: z.string().trim().min(1).max(120) }).strict(),
+    /** Empty selects the known platform name for an external channel. */
+    request: z.object({ displayName: z.string().trim().max(120) }).strict(),
     response: z.object({ channelId: ChannelIdSchema, displayName: z.string().trim().min(1).max(120) }).strict(),
     error: HostApiErrorSchema,
   }),

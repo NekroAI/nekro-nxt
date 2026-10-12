@@ -196,6 +196,24 @@ export function ChannelInspector({
               }
             }}
           />
+          {channel.kind !== 'internal' && channel.platformName && channel.customName ? (
+            <Button
+              size="small"
+              variant="ghost"
+              onClick={() => {
+                void api
+                  .getState()
+                  .renameChannel(channel.id, '')
+                  .then(() => toast('已使用平台名称'))
+                  .catch(failure)
+              }}
+            >
+              使用平台名称
+            </Button>
+          ) : null}
+          {channel.kind !== 'internal' && channel.platformName && channel.customName ? (
+            <span className={styles.paneMeta}>平台名称：{channel.platformName}</span>
+          ) : null}
           <span className={styles.paneMeta}>
             {channel.kind === 'internal'
               ? kindLabel.internal

@@ -154,6 +154,10 @@ export const channels = sqliteTable(
     platformChannelId: text('platform_channel_id').notNull(),
     kind: text({ enum: ['internal', 'direct', 'group'] }).notNull(),
     displayName: text('display_name'),
+    platformDisplayName: text('platform_display_name'),
+    preferredProcessingFeedback: text('preferred_processing_feedback', { enum: ['auto', 'off'] })
+      .notNull()
+      .default('auto'),
     autoCreatedForAgentId: text('auto_created_for_agent_id').$type<AgentId>(),
     createdAt: integer('created_at').notNull(),
     deletedAt: integer('deleted_at'),

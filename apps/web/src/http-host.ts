@@ -432,6 +432,8 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
   const channels: ChannelSummary[] = json.channels.map((channel) => ({
     id: channel.id,
     connectionId: channel.connectionId,
+    ...(channel.localDisplayName === undefined ? {} : { customName: channel.localDisplayName }),
+    ...(channel.platformDisplayName === undefined ? {} : { platformName: channel.platformDisplayName }),
     name: nonEmptyLabel(
       channel.displayName,
       channel.kind === 'internal' ? '未命名内置频道' : channel.kind === 'group' ? '未命名群聊' : '未命名私聊',

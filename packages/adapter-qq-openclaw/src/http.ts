@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { QQGatewayAccess } from './gateway.js'
 import type { QQOpenClawTransport, QQTarget, QQTransportReceipt } from './index.js'
 import { QQTransportError } from './transport-error.js'
+import type { QQGroupInfoResult } from './group-info.js'
 
 export interface QQCredentialResolver {
   resolve(reference: string): Promise<string>
@@ -98,6 +99,23 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     const url = string(response['url'])
     if (!url) throw new QQTransportError('transient', 'QQ gateway response omitted its URL.')
     return url
+  }
+
+  async getGroupInfo(groupId: string, signal: AbortSignal): Promise<QQGroupInfoResult> {
+    const response = await this.#requestJson(
+      'GET',
+      targetPath({ kind: 'group', openId: groupId }, 'info'),
+      undefined,
+      signal,
+      false,
+      true,
+      true,
+    )
+    if (integer(response['code']) === 11253) return { status: 'unsupported' }
+    const name = string(response['group_name'])
+    if (!name || string(response['group_openid']) !== groupId)
+      throw new QQTransportError('permanent', 'QQ group information is unavailable or belongs to another group.')
+    return { status: 'available', name: name.slice(0, 120) }
   }
 
   async sendText(input: {
@@ -236,6 +254,7 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     signal: AbortSignal,
     submissionRisk: boolean,
     retryAuthentication = true,
+    allowGroupPermissionDenial = false,
   ): Promise<JsonObject> {
     const token = await this.#accessToken(signal, false)
     let response: Response
@@ -258,9 +277,15 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     if (response.status === 401 && retryAuthentication) {
       this.#token = undefined
       await this.#accessToken(signal, true)
-      return this.#requestJson(method, path, body, signal, submissionRisk, false)
+      return this.#requestJson(method, path, body, signal, submissionRisk, false, allowGroupPermissionDenial)
     }
-    if (!response.ok) throw this.#httpError(response, submissionRisk)
+    if (!response.ok) {
+      if (allowGroupPermissionDenial && response.status >= 400 && response.status < 500 && response.status !== 429) {
+        const denied = await this.#json(response)
+        if (integer(denied['code']) === 11253) return denied
+      }
+      throw this.#httpError(response, submissionRisk)
+    }
     return this.#json(response)
   }
 

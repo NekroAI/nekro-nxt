@@ -969,21 +969,30 @@ export class ConnectionApplicationService {
         return Promise.resolve({ connectionEventId: commit.event.id, inserted: commit.inserted })
       },
       channels: {
-        ensure: (input) =>
-          Promise.resolve(
-            this.ports.core.ensureChannel({
-              connectionId,
-              platformChannelId: input.platformChannelId,
-              kind: input.kind,
-              ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-              observedAt: input.observedAt,
-            }).id,
-          ),
+        ensure: (input) => {
+          const previous = this.ports.core.getChannelByPlatformId(connectionId, input.platformChannelId)
+          const channel = this.ports.core.ensureChannel({
+            connectionId,
+            platformChannelId: input.platformChannelId,
+            kind: input.kind,
+            ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+            observedAt: input.observedAt,
+          })
+          if (
+            !previous ||
+            previous.platformDisplayName !== channel.platformDisplayName ||
+            previous.kind !== channel.kind
+          )
+            this.#notifyConnectionChanges()
+          return Promise.resolve(channel.id)
+        },
         updateDisplayName: (channelId, displayName) => {
           const channel = this.ports.core.getChannel(channelId)
           if (channel?.connectionId !== connectionId)
             throw new Error('Adapter cannot update another Connection channel.')
-          this.ports.core.updateChannelDisplayName(channelId, displayName)
+          if (channel.platformDisplayName === displayName.trim()) return Promise.resolve()
+          this.ports.core.updateChannelDisplayName(channelId, displayName, 'platform')
+          this.#notifyConnectionChanges()
           return Promise.resolve()
         },
         resolvePlatformChannelId: (channelId) => {

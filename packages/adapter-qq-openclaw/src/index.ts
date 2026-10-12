@@ -22,6 +22,7 @@ import { LogicalMessageIdSchema } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import { splitQQContentAtoms } from './inbound.js'
 import { isQQTransportError } from './transport-error.js'
+import { QQGroupInfoSync, type QQGroupInfoResult } from './group-info.js'
 
 export * from './gateway.js'
 export * from './http.js'
@@ -256,6 +257,7 @@ export interface QQTransportReceipt {
 }
 
 export interface QQOpenClawTransport {
+  getGroupInfo?(groupId: string, signal: AbortSignal): Promise<QQGroupInfoResult>
   start(): Promise<void>
   stop(): Promise<void>
   sendText(input: {
@@ -395,6 +397,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
   readonly #onQuoteDiagnostic: ((diagnostic: QQQuoteDiagnostic) => void) | undefined
   readonly #transport: QQOpenClawTransport
   readonly #replyBudget = new QQReplyBudget()
+  readonly #groupInfo: QQGroupInfoSync | undefined
   #running = false
 
   constructor(
@@ -415,6 +418,13 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     this.#inbound = dependencies.inbound
     this.#onQuoteDiagnostic = dependencies.onQuoteDiagnostic
     this.#transport = dependencies.transport
+    this.#groupInfo =
+      context.channels && context.state && dependencies.transport.getGroupInfo
+        ? new QQGroupInfoSync(
+            { channels: context.channels, state: context.state, now: context.now },
+            dependencies.transport.getGroupInfo.bind(dependencies.transport),
+          )
+        : undefined
     this.capabilities = {
       outbound: {
         ...QQ_OPENCLAW_CAPABILITIES,
@@ -430,10 +440,12 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     if (this.#running) throw new Error('QQ OpenClaw Connection is already running.')
     await this.#transport.start()
     this.#running = true
+    this.#groupInfo?.start()
   }
 
   stop = async (): Promise<void> => {
     this.#running = false
+    await this.#groupInfo?.stop()
     await this.#transport.stop()
   }
 
@@ -733,6 +745,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       },
       ...(assetOccurrences.length === 0 ? {} : { assetOccurrences }),
     })
+    if (message.target.kind === 'group') this.#groupInfo?.schedule(message.target.openId, channelId)
     return commit
   }
 

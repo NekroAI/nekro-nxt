@@ -345,7 +345,8 @@ export function createProductStore(
     renameChannel: async (channelId, displayName) => {
       await requireHost().actions['channels.rename']({
         channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
-        displayName: requireValue(displayName, '请输入频道名称。'),
+        // Empty explicitly selects the known platform name; the host rejects it for other channels.
+        displayName: displayName.trim(),
       })
     },
     setCapability: async (agentId, capability, enabled) => {

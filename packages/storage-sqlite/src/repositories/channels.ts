@@ -123,12 +123,16 @@ const toConnectionEvent = (input: typeof connectionEvents.$inferSelect): Connect
 
 const toChannel = (input: typeof channels.$inferSelect): ChannelRecord => {
   const row = ChannelRowSchema.parse(input)
+  const displayName = row.displayName ?? row.platformDisplayName
   return {
     id: row.id,
     connectionId: row.connectionId,
     platformChannelId: row.platformChannelId,
     kind: row.kind,
-    ...(row.displayName === null ? {} : { displayName: row.displayName }),
+    ...(displayName === null ? {} : { displayName }),
+    ...(row.displayName === null ? {} : { localDisplayName: row.displayName }),
+    ...(row.platformDisplayName === null ? {} : { platformDisplayName: row.platformDisplayName }),
+    ...(row.preferredProcessingFeedback === 'off' ? { preferredProcessingFeedback: 'off' as const } : {}),
     ...(row.autoCreatedForAgentId === null ? {} : { autoCreatedForAgentId: row.autoCreatedForAgentId }),
     createdAt: row.createdAt,
   }
@@ -440,15 +444,26 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
       database.insert(channels).values(record).run()
     },
     ensureChannel(record): ChannelRecord {
+      const displayName = record.displayName
       database
         .insert(channels)
-        .values(record)
+        .values({
+          id: record.id,
+          connectionId: record.connectionId,
+          platformChannelId: record.platformChannelId,
+          kind: record.kind,
+          createdAt: record.createdAt,
+          ...(record.autoCreatedForAgentId === undefined
+            ? {}
+            : { autoCreatedForAgentId: record.autoCreatedForAgentId }),
+          ...(displayName === undefined ? {} : { platformDisplayName: displayName }),
+        })
         .onConflictDoUpdate({
           target: [channels.connectionId, channels.platformChannelId],
           set:
-            record.displayName === undefined
+            displayName === undefined
               ? { kind: record.kind, deletedAt: null }
-              : { kind: record.kind, displayName: record.displayName, deletedAt: null },
+              : { kind: record.kind, platformDisplayName: displayName, deletedAt: null },
         })
         .run()
       const stored = database
@@ -494,11 +509,11 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         { behavior: 'immediate' },
       )
     },
-    updateChannelDisplayName(id, displayName): void {
+    updateChannelDisplayName(id, displayName, source = 'local'): void {
       if (
         database
           .update(channels)
-          .set({ displayName })
+          .set(source === 'platform' ? { platformDisplayName: displayName } : { displayName: displayName || null })
           .where(and(eq(channels.id, id), isNull(channels.deletedAt)))
           .run().changes !== 1
       ) {
@@ -695,22 +710,29 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
       const activityTriggerSuppressions = Object.entries(record.activityTriggerOverrides)
         .filter(([, enabled]) => !enabled)
         .map(([key]) => key)
-      database
-        .insert(channelBindings)
-        .values({ ...record, activityTriggerOverridesEnabled, activityTriggerSuppressions })
-        .onConflictDoUpdate({
-          target: channelBindings.channelId,
-          set: {
-            agentId: record.agentId,
-            triggerPolicy: record.triggerPolicy,
-            processingFeedback: record.processingFeedback,
-            localAgentMessages: record.localAgentMessages,
-            activityTriggerOverridesEnabled,
-            activityTriggerSuppressions,
-            boundAt: record.boundAt,
-          },
-        })
-        .run()
+      database.transaction((database) => {
+        database
+          .insert(channelBindings)
+          .values({ ...record, activityTriggerOverridesEnabled, activityTriggerSuppressions })
+          .onConflictDoUpdate({
+            target: channelBindings.channelId,
+            set: {
+              agentId: record.agentId,
+              triggerPolicy: record.triggerPolicy,
+              processingFeedback: record.processingFeedback,
+              localAgentMessages: record.localAgentMessages,
+              activityTriggerOverridesEnabled,
+              activityTriggerSuppressions,
+              boundAt: record.boundAt,
+            },
+          })
+          .run()
+        database
+          .update(channels)
+          .set({ preferredProcessingFeedback: record.processingFeedback })
+          .where(eq(channels.id, record.channelId))
+          .run()
+      })
       return record
     },
     clearBinding(channelId): void {

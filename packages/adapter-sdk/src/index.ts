@@ -151,12 +151,14 @@ export interface AdapterIdentityDirectory {
 
 /** Restricted Host-owned channel directory. It never exposes Core repositories. */
 export interface AdapterChannelDirectory {
+  /** Observed platform names never overwrite the user's local channel name. */
   ensure(input: {
     readonly platformChannelId: string
     readonly kind: 'direct' | 'group'
     readonly displayName?: string
     readonly observedAt: number
   }): Promise<ChannelId>
+  /** Update platform metadata; a local name can remain the effective display name. */
   updateDisplayName(channelId: ChannelId, displayName: string): Promise<void>
   resolvePlatformChannelId(channelId: ChannelId): Promise<string | undefined>
   resolveKind(channelId: ChannelId): Promise<'direct' | 'group' | undefined>

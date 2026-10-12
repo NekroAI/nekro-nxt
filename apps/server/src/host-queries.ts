@@ -497,6 +497,8 @@ export class HostQueries {
         platformChannelId: channel.platformChannelId,
         kind: channel.kind,
         ...(channel.displayName === undefined ? {} : { displayName: channel.displayName }),
+        ...(channel.localDisplayName === undefined ? {} : { localDisplayName: channel.localDisplayName }),
+        ...(channel.platformDisplayName === undefined ? {} : { platformDisplayName: channel.platformDisplayName }),
         ...(boundAgentId === undefined ? {} : { boundAgentId }),
         runtimePhase: runtimeByChannel.get(channel.id)?.phase ?? 'idle',
         ...localAgentIdsOf(runtime, channel.id),
