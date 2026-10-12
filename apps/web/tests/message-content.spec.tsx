@@ -153,6 +153,28 @@ describe('MessageContent', () => {
     expect(markup).not.toContain('=== 消息')
   })
 
+  it('preserves the forwarded node count and truncation summary when one node contains several content items', () => {
+    const markup = renderToStaticMarkup(
+      <MessageContent
+        message={message([
+          {
+            type: 'rich',
+            adapterKey: 'fixture-forward',
+            kind: 'forward',
+            summary: '合并转发消息（1 个节点，部分内容未展开）。',
+            items: [
+              { text: '正文' },
+              { imageUrl: '/api/channels/chn_markdown/assets/ast_image', imageName: '转发图片' },
+              { text: '表情（编号 14）' },
+            ],
+          },
+        ])}
+      />,
+    )
+    expect(markup).toContain('合并转发消息（1 个节点，部分内容未展开）。')
+    expect(markup).not.toContain('3 条')
+  })
+
   it('renders a host fallback card for rich parts', () => {
     const markup = renderToStaticMarkup(
       <MessageContent

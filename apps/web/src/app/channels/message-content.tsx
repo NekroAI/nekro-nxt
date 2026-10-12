@@ -87,8 +87,8 @@ function HostRichCard({
     <>
       {part.kind === 'forward' ? (
         <p className={contentStyles.richSource}>
-          {part.title ?? '聊天记录'}
-          {items.length > 0 ? ` · ${items.length} 条` : ''}
+          {part.title ?? (items.length > 0 ? part.summary : '聊天记录')}
+          {part.title !== undefined && items.length > 0 ? ` · ${items.length} 条` : ''}
         </p>
       ) : part.source ? (
         <p className={contentStyles.richSource}>{part.source}</p>

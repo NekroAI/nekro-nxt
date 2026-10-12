@@ -9,7 +9,12 @@ import type {
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
 import type { AssetId, ChannelId, ChannelMemberId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
-import { ChannelMemberIdSchema, LogicalMessageIdSchema, parseJsonValue } from '@nekro-nxt/contracts'
+import {
+  ChannelMemberIdSchema,
+  LogicalMessageIdSchema,
+  messagePartAssetIds,
+  parseJsonValue,
+} from '@nekro-nxt/contracts'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
@@ -31,6 +36,8 @@ const MAX_ASSET_BYTES = 20 * 1024 * 1024
 const FEEDBACK_EMOJI_ID = '212'
 const FORWARD_NODE_LIMIT = 50
 const FORWARD_JSON_LIMIT = 64 * 1024
+// Match the host's per-message image admission bound; nested records share the allowance.
+const FORWARD_IMAGE_LIMIT = 20
 
 export interface OneBot11RuntimeOptions {
   readonly context: AdapterConnectionHostContext
@@ -42,6 +49,13 @@ export interface OneBot11RuntimeOptions {
 }
 
 type Segment = { readonly type: string; readonly data: OneBotObject }
+type ForwardBudget = {
+  remaining: number
+  images: number
+  bytes: number
+  full: boolean
+  truncated: boolean
+}
 
 const textValue = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 const numberValue = (value: unknown): number | undefined =>
@@ -823,41 +837,41 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
           })
         continue
       }
-      if (item.type === 'image' || item.type === 'record') {
+      if (item.type === 'image' || item.type === 'mface' || item.type === 'record') {
+        const isImage = item.type !== 'record'
         const url = textValue(item.data['url'])
         if (!url) {
           parts.push({
             type: 'rich',
             adapterKey: ONEBOT_11_ADAPTER_KEY,
             kind: item.type,
-            summary: item.type === 'image' ? '图片暂时不可下载。' : '语音暂时不可下载。',
+            summary: isImage ? '图片暂时不可下载。' : '语音暂时不可下载。',
           })
           continue
         }
         try {
           const asset = await this.#downloadAsset(url)
           const partIndex = parts.length
-          parts.push(
-            item.type === 'image'
-              ? { type: 'image', assetId: asset.assetId }
-              : { type: 'audio', assetId: asset.assetId },
-          )
+          parts.push(isImage ? { type: 'image', assetId: asset.assetId } : { type: 'audio', assetId: asset.assetId })
           assetOccurrences.push({ partIndex, assetId: asset.assetId })
         } catch {
           parts.push({
             type: 'rich',
             adapterKey: ONEBOT_11_ADAPTER_KEY,
             kind: item.type,
-            summary: item.type === 'image' ? '图片下载失败。' : '语音下载失败。',
+            summary: isImage ? '图片下载失败。' : '语音下载失败。',
           })
         }
         continue
       }
       if (item.type === 'forward') {
-        parts.push(await this.#forwardPart(item.data))
+        const part = await this.#forwardPart(item.data)
+        const partIndex = parts.length
+        parts.push(part)
+        for (const assetId of new Set(messagePartAssetIds(part))) assetOccurrences.push({ partIndex, assetId })
         continue
       }
-      if (['json', 'xml', 'markdown', 'keyboard', 'mface', 'file'].includes(item.type)) {
+      if (['json', 'xml', 'markdown', 'keyboard', 'face', 'file'].includes(item.type)) {
         parts.push({
           type: 'rich',
           adapterKey: ONEBOT_11_ADAPTER_KEY,
@@ -888,22 +902,20 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     if (!id)
       return { type: 'rich', adapterKey: ONEBOT_11_ADAPTER_KEY, kind: 'forward', summary: '收到一条合并转发消息。' }
     try {
-      const budget = { remaining: FORWARD_NODE_LIMIT, truncated: false }
+      const budget: ForwardBudget = {
+        remaining: FORWARD_NODE_LIMIT,
+        images: 0,
+        bytes: 32,
+        full: false,
+        truncated: false,
+      }
       const items = await this.#forwardItems(id, 0, budget)
       const extension = { items, truncated: budget.truncated }
-      if (Buffer.byteLength(JSON.stringify(extension), 'utf8') > FORWARD_JSON_LIMIT) {
-        return {
-          type: 'rich',
-          adapterKey: ONEBOT_11_ADAPTER_KEY,
-          kind: 'forward',
-          summary: `合并转发消息（${FORWARD_NODE_LIMIT - budget.remaining} 个节点，内容过大，仅保留摘要）。`,
-        }
-      }
       return {
         type: 'rich',
         adapterKey: ONEBOT_11_ADAPTER_KEY,
         kind: 'forward',
-        summary: `合并转发消息（${FORWARD_NODE_LIMIT - budget.remaining} 个节点）。`,
+        summary: `合并转发消息（${FORWARD_NODE_LIMIT - budget.remaining} 个节点${budget.truncated ? '，部分内容未展开' : ''}）。`,
         extension: extension as JsonValue,
       }
     } catch {
@@ -911,48 +923,108 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     }
   }
 
-  async #forwardItems(
-    id: string,
-    depth: number,
-    budget: { remaining: number; truncated: boolean },
-  ): Promise<JsonValue[]> {
+  async #forwardItems(id: string, depth: number, budget: ForwardBudget): Promise<JsonValue[]> {
     const response = oneBotObject(await this.#requireClient().call('get_forward_msg', { id }))
     const messages = Array.isArray(response?.['messages']) ? response['messages'] : []
     const items: JsonValue[] = []
+    const append = (item: JsonValue): void => {
+      const bytes = Buffer.byteLength(JSON.stringify(item), 'utf8') + 1
+      if (budget.bytes + bytes > FORWARD_JSON_LIMIT) {
+        budget.full = true
+        budget.truncated = true
+        return
+      }
+      budget.bytes += bytes
+      items.push(item)
+    }
     for (const node of messages) {
-      if (budget.remaining <= 0) {
+      if (budget.remaining <= 0 || budget.full) {
         budget.truncated = true
         break
       }
       budget.remaining -= 1
       const object = oneBotObject(node)
+      const senderInfo = oneBotObject(object?.['sender'])
+      const sender = compactNoticeText(senderInfo?.['card']) ?? compactNoticeText(senderInfo?.['nickname'])
+      const identity = sender === undefined ? {} : { sender }
       const segments = Array.isArray(object?.['content'])
         ? object['content'].map(segment).filter((item): item is Segment => item !== undefined)
         : []
-      const text = segments
-        .filter((item) => item.type === 'text')
-        .map((item) => textValue(item.data['text']) ?? '')
-        .join('')
-        .slice(0, 500)
-      const nestedIds = segments.flatMap((item) =>
-        item.type === 'forward' && oneBotStringId(item.data['id']) ? [oneBotStringId(item.data['id'])!] : [],
-      )
-      const nested: JsonValue[] = []
-      if (nestedIds.length > 0) {
-        if (depth >= 2) budget.truncated = true
-        else {
-          for (const nestedId of nestedIds) nested.push(...(await this.#forwardItems(nestedId, depth + 1, budget)))
+      let remainingText = 500
+      if (segments.length === 0) append({ ...identity, text: '转发节点没有可显示内容。' })
+      for (const item of segments) {
+        if (budget.full) break
+        if (item.type === 'text') {
+          const raw = textValue(item.data['text']) ?? ''
+          const text = raw.slice(0, remainingText)
+          remainingText -= text.length
+          if (text.length < raw.length) budget.truncated = true
+          if (text) append({ ...identity, text })
+        } else if (item.type === 'image' || item.type === 'mface') {
+          const url = textValue(item.data['url'])
+          if (!url) append({ ...identity, text: '图片暂时不可下载。' })
+          else if (budget.images >= FORWARD_IMAGE_LIMIT) {
+            budget.truncated = true
+            append({ ...identity, text: '图片未展开（已达图片数量上限）。' })
+          } else {
+            budget.images += 1
+            try {
+              const asset = await this.#downloadAsset(url)
+              if (!asset.mediaType.startsWith('image/')) throw new Error('Forward image has a non-image media type.')
+              append({
+                ...identity,
+                imageAssetId: asset.assetId,
+                imageName: item.type === 'mface' ? '表情图片' : '转发图片',
+              })
+            } catch {
+              append({ ...identity, text: '图片下载失败。' })
+            }
+          }
+        } else if (item.type === 'forward') {
+          const nestedId = oneBotStringId(item.data['id'])
+          if (!nestedId || depth >= 2 || budget.remaining <= 0) {
+            budget.truncated = true
+            append({ ...identity, text: '嵌套转发未展开。' })
+          } else {
+            append({ ...identity, text: '嵌套合并转发：' })
+            if (!budget.full) {
+              try {
+                // Flat items are shared by the web renderer and model context; nested items would be invisible.
+                items.push(...(await this.#forwardItems(nestedId, depth + 1, budget)))
+              } catch {
+                append({ ...identity, text: '嵌套转发暂时无法展开。' })
+              }
+            }
+          }
+        } else if (['json', 'xml', 'markdown', 'keyboard'].includes(item.type)) {
+          append({ ...identity, card: { summary: this.#richSummary(item.type, item.data) } })
+        } else {
+          const text =
+            item.type === 'face'
+              ? this.#richSummary(item.type, item.data)
+              : item.type === 'file'
+                ? `文件：${compactNoticeText(item.data['name']) ?? '未命名文件'}（未展开）`
+                : item.type === 'record'
+                  ? '语音（未展开）'
+                  : item.type === 'video'
+                    ? '视频（未展开）'
+                    : item.type === 'at'
+                      ? '提及成员（转发内容）'
+                      : item.type === 'reply'
+                        ? '引用消息（未展开）'
+                        : `${item.type.slice(0, 64)} 消息段（未展开）`
+          append({ ...identity, text })
         }
       }
-      items.push({
-        text: text || (nested.length > 0 ? '嵌套合并转发' : '非文本转发节点'),
-        ...(nested.length === 0 ? {} : { items: nested }),
-      })
     }
     return items
   }
 
   #richSummary(type: string, data: OneBotObject): string {
+    if (type === 'face') {
+      const id = oneBotStringId(data['id'])?.slice(0, 64)
+      return id === undefined ? '表情（编号未知）' : `表情（编号 ${id}）`
+    }
     const raw = textValue(data['data']) ?? textValue(data['content']) ?? textValue(data['text'])
     if (type === 'file') return `文件：${textValue(data['name']) ?? '未命名文件'}`
     if (raw) {

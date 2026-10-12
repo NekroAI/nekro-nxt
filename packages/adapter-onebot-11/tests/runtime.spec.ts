@@ -2,7 +2,15 @@ import { WebSocketServer, type RawData } from 'ws'
 import { readFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { AssetIdSchema, ChannelIdSchema, LogicalMessageIdSchema, PhysicalDeliveryIdSchema } from '@nekro-nxt/contracts'
+import {
+  AssetIdSchema,
+  ChannelIdSchema,
+  LogicalMessageIdSchema,
+  PhysicalDeliveryIdSchema,
+  messagePartAssetIds,
+  richPartContextText,
+  MessagePartSchema,
+} from '@nekro-nxt/contracts'
 import { OneBot11Runtime } from '../src/runtime.ts'
 import { createFakeContext, waitFor } from './helpers.ts'
 
@@ -65,6 +73,199 @@ const protocolEndpoint = async (
 }
 
 describe('OneBot 11 normalized inbound', () => {
+  it('retains forwarded images, cards, face identifiers and nested content without treating quoted mentions as triggers', async () => {
+    const protocol = await protocolEndpoint((request) =>
+      request['action'] === 'get_forward_msg'
+        ? {
+            status: 'ok',
+            retcode: 0,
+            data: {
+              messages: [
+                {
+                  sender: { nickname: '虚构成员' },
+                  content:
+                    request['params'] && RequestSchema.parse(request['params'])['id'] === 'nested'
+                      ? [
+                          { type: 'text', data: { text: '嵌套正文' } },
+                          { type: 'image', data: { url: 'https://media.example.test/nested.png' } },
+                        ]
+                      : [
+                          { type: 'text', data: { text: '转发正文' } },
+                          { type: 'image', data: { url: 'https://media.example.test/first.png' } },
+                          { type: 'mface', data: { url: 'https://media.example.test/sticker.png' } },
+                          { type: 'face', data: { id: '14' } },
+                          { type: 'json', data: { data: '{"prompt":"虚构卡片"}' } },
+                          { type: 'file', data: { name: '资料.txt', url: 'https://media.example.test/private-file' } },
+                          { type: 'record', data: { url: 'https://media.example.test/private-audio' } },
+                          { type: 'at', data: { qq: '91001' } },
+                          { type: 'forward', data: { id: 'nested' } },
+                        ],
+                },
+              ],
+            },
+          }
+        : undefined,
+    )
+    const fake = createFakeContext()
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+    })
+    try {
+      await runtime.start()
+      await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+      ;[...protocol.server.clients][0]!.send(
+        JSON.stringify({
+          post_type: 'message',
+          message_type: 'group',
+          group_id: '70001',
+          user_id: '80001',
+          message_id: 'forward-fixture',
+          message: [
+            { type: 'text', data: { text: '看看这条记录' } },
+            { type: 'forward', data: { id: 'root' } },
+            { type: 'face', data: { id: '14' } },
+          ],
+        }),
+      )
+      await waitFor(() => fake.events.length === 1)
+      const event = fake.events[0]!
+      const part = MessagePartSchema.parse(event.parts[1])
+      if (part.type !== 'rich') throw new Error('Expected forwarded content')
+      expect(messagePartAssetIds(part)).toEqual(['ast_TEST1', 'ast_TEST1', 'ast_TEST1'])
+      expect(event.assetOccurrences).toEqual([{ partIndex: 1, assetId: 'ast_TEST1' }])
+      expect(richPartContextText(part)).toContain('嵌套正文')
+      expect(richPartContextText(part)).toContain('表情（编号 14）')
+      expect(richPartContextText(part)).toContain('虚构卡片')
+      expect(richPartContextText(part)).toContain('文件：资料.txt（未展开）')
+      expect(richPartContextText(part)).toContain('语音（未展开）')
+      expect(richPartContextText(part)).toContain('虚构成员')
+      expect(JSON.stringify(part)).not.toContain('https://media.example.test')
+      expect(event.facts).toBeUndefined()
+      expect(event.parts[2]).toMatchObject({ type: 'rich', kind: 'face', summary: '表情（编号 14）' })
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  it('keeps useful forwarded content when images or nested requests fail and limits image downloads', async () => {
+    const protocol = await protocolEndpoint((request) =>
+      request['action'] === 'get_forward_msg'
+        ? RequestSchema.parse(request['params'])['id'] === 'failed'
+          ? { status: 'failed', retcode: 100, wording: 'fixture failure' }
+          : {
+              status: 'ok',
+              retcode: 0,
+              data: {
+                messages: [
+                  {
+                    content: [
+                      { type: 'image', data: {} },
+                      { type: 'image', data: { url: 'https://media.example.test/failed' } },
+                      { type: 'forward', data: { id: 'failed' } },
+                      ...Array.from({ length: 22 }, (_, i) => ({
+                        type: 'image',
+                        data: { url: `https://media.example.test/${i}.png` },
+                      })),
+                      { type: 'text', data: { text: '下载失败后仍保留的正文' } },
+                    ],
+                  },
+                ],
+              },
+            }
+        : undefined,
+    )
+    const fake = createFakeContext()
+    const urls: string[] = []
+    Object.defineProperty(fake.context.assets, 'fetchRemoteBytes', {
+      value: ({ url }: { url: string }) => {
+        urls.push(url)
+        return url.endsWith('/failed')
+          ? Promise.reject(new Error('fixture failure'))
+          : Promise.resolve({ bytes: new Uint8Array([4, 5, 6]), declaredMediaType: 'image/png' })
+      },
+    })
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+    })
+    try {
+      await runtime.start()
+      await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+      ;[...protocol.server.clients][0]!.send(
+        JSON.stringify({
+          post_type: 'message',
+          message_type: 'group',
+          group_id: '70001',
+          user_id: '80001',
+          message_id: 'failed-forward-fixture',
+          message: [{ type: 'forward', data: { id: 'root' } }],
+        }),
+      )
+      await waitFor(() => fake.events.length === 1)
+      const part = MessagePartSchema.parse(fake.events[0]!.parts[0])
+      if (part.type !== 'rich') throw new Error('Expected forwarded content')
+      expect(urls).toHaveLength(20)
+      expect(richPartContextText(part)).toContain('图片下载失败')
+      expect(richPartContextText(part)).toContain('嵌套转发暂时无法展开')
+      expect(richPartContextText(part)).toContain('图片暂时不可下载')
+      expect(richPartContextText(part)).toContain('图片未展开（已达图片数量上限）')
+      expect(richPartContextText(part)).toContain('下载失败后仍保留的正文')
+      expect(part.extension).toMatchObject({ truncated: true })
+      expect(fake.events[0]?.assetOccurrences).toEqual([{ partIndex: 0, assetId: 'ast_TEST1' }])
+    } finally {
+      await runtime.stop()
+    }
+  })
+
+  it.each(['界', 'a'])('retains a bounded prefix for %s text at the forward byte or node limit', async (letter) => {
+    const protocol = await protocolEndpoint((request) =>
+      request['action'] === 'get_forward_msg'
+        ? {
+            status: 'ok',
+            retcode: 0,
+            data: {
+              messages: Array.from({ length: 80 }, (_, i) => ({
+                content: [
+                  { type: 'text', data: { text: `节点${i}：${letter.repeat(500)}` } },
+                  { type: 'forward', data: { id: 'recursive' } },
+                ],
+              })),
+            },
+          }
+        : undefined,
+    )
+    const fake = createFakeContext()
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+    })
+    try {
+      await runtime.start()
+      await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+      ;[...protocol.server.clients][0]!.send(
+        JSON.stringify({
+          post_type: 'message',
+          message_type: 'private',
+          user_id: '80001',
+          message_id: 'bounded-forward-fixture',
+          message: [{ type: 'forward', data: { id: 'root' } }],
+        }),
+      )
+      await waitFor(() => fake.events.length === 1)
+      const part = MessagePartSchema.parse(fake.events[0]!.parts[0])
+      if (part.type !== 'rich') throw new Error('Expected forwarded content')
+      expect(part.extension).toMatchObject({ truncated: true })
+      expect(Buffer.byteLength(JSON.stringify(part.extension), 'utf8')).toBeLessThanOrEqual(64 * 1024)
+      expect(richPartContextText(part)).toContain('节点0')
+      expect(protocol.requests.filter((request) => request['action'] === 'get_forward_msg')).toHaveLength(3)
+      expect(part.summary).toContain('部分内容未展开')
+      if (letter === 'a') expect(part.summary).toContain('50 个节点')
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   it('maps array messages and keeps poke while ordinary reactions are off by default', async () => {
     const protocol = await protocolEndpoint()
     const fake = createFakeContext()
