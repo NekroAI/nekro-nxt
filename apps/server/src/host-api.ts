@@ -68,6 +68,8 @@ export {
  */
 
 export interface NekroHostApi {
+  /** Probe core storage and, after a failed snapshot, verify that the workspace can load again. */
+  checkReadiness(forceSnapshot?: boolean): Promise<boolean>
   /** The actual listening port (OS-assigned when configured as 0). */
   readonly port: number
   dispose(): void
@@ -439,7 +441,44 @@ export const createNekroHostApi = (
       }
     },
   })
-  const buildSnapshot = (viewerKey: string) => queries.snapshot(viewerKey)
+  let snapshotSequence = 0
+  let settledSnapshot = 0
+  let needsSnapshotProbe = true
+  let healthProbe: Promise<boolean> | undefined
+  const buildSnapshot = async (viewerKey: string) => {
+    const sequence = ++snapshotSequence
+    try {
+      const snapshot = await queries.snapshot(viewerKey)
+      if (sequence >= settledSnapshot) {
+        settledSnapshot = sequence
+        needsSnapshotProbe = false
+      }
+      return snapshot
+    } catch (error) {
+      if (sequence >= settledSnapshot) {
+        settledSnapshot = sequence
+        needsSnapshotProbe = true
+      }
+      throw error
+    }
+  }
+  const checkReadiness = (forceSnapshot = false): Promise<boolean> =>
+    (healthProbe ??= (async () => {
+      try {
+        // These reads stay local. Model catalogs and platform connections are not health dependencies.
+        runtime.core.listConnections()
+        runtime.core.listAgents()
+        runtime.repository.probeReadiness(forceSnapshot || needsSnapshotProbe)
+        if (forceSnapshot || needsSnapshotProbe) await buildSnapshot('health-probe')
+        return true
+      } catch {
+        settledSnapshot = ++snapshotSequence
+        needsSnapshotProbe = true
+        return false
+      }
+    })().finally(() => {
+      healthProbe = undefined
+    }))
 
   // GET /api/snapshot
   registerRoute({
@@ -645,6 +684,7 @@ export const createNekroHostApi = (
   })
 
   return {
+    checkReadiness,
     get port() {
       return webServer.port
     },

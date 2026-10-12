@@ -26,6 +26,7 @@ const progressSchema = z.object({
   runId: z.string().min(1),
   pid: z.number().int().positive(),
   updatedAt: z.number().finite().nonnegative(),
+  automaticRetryAllowed: z.boolean().optional(),
   status: statusSchema,
 })
 interface Writer {
@@ -48,6 +49,23 @@ const readProgress = async (filename: string): Promise<z.infer<typeof progressSc
     throw error
   } finally {
     await handle?.close()
+  }
+}
+
+/** A repeated launch of the same failed release needs an explicit operator retry. */
+export async function pendingUpgradeRecovery(
+  dataRoot: string,
+  releaseId: string,
+): Promise<HostUpgradeStatus | undefined> {
+  const previous = await readProgress(filenameFor(dataRoot))
+  if (previous?.releaseId !== releaseId || previous.status.phase !== 'recovery' || previous.automaticRetryAllowed)
+    return undefined
+  const status = previous.status
+  return {
+    phase: 'recovery',
+    ...(status.backupId === undefined ? {} : { backupId: status.backupId }),
+    ...(status.currentStepId === undefined ? {} : { currentStepId: status.currentStepId }),
+    ...(status.errorSummary === undefined ? {} : { errorSummary: status.errorSummary }),
   }
 }
 const enqueue = (writer: Writer, operation: () => Promise<void>): Promise<void> => {
@@ -139,11 +157,30 @@ export function createUpgradeProgress(dataRoot: string, releaseId: string) {
   }
 }
 
+/** The executable owns the root lease even when failure happens before the migration coordinator exists. */
+export async function recordStartupFailure(
+  dataRoot: string,
+  releaseId: string,
+  errorSummary: string,
+  automaticRetryAllowed = false,
+): Promise<void> {
+  if (writers.get(filenameFor(dataRoot))?.releaseId !== releaseId) {
+    const progress = createUpgradeProgress(dataRoot, releaseId)
+    try {
+      await progress.update({ phase: 'recovery', errorSummary: errorSummary.slice(0, 512) })
+    } finally {
+      await progress.close()
+    }
+  }
+  await markUpgradeProgressFailure(dataRoot, releaseId, errorSummary, automaticRetryAllowed)
+}
+
 /** Call before releasing the root lease, including when Web startup fails after Runtime readiness. */
 export async function markUpgradeProgressFailure(
   dataRoot: string,
   releaseId: string,
   errorSummary: string,
+  automaticRetryAllowed = false,
 ): Promise<void> {
   const filename = filenameFor(dataRoot)
   const writer = writers.get(filename)
@@ -161,6 +198,7 @@ export async function markUpgradeProgressFailure(
       return
     await writeUpgradeJson(filename, {
       ...current,
+      automaticRetryAllowed,
       updatedAt: Date.now(),
       status: { ...current.status, phase: 'recovery', errorSummary: errorSummary.slice(0, 512) },
     })

@@ -498,9 +498,16 @@ export function CapabilitiesSection({
         </PropertyRow>
         <PropertyRow
           label="网页搜索"
-          description={availability.webSearch.available ? undefined : '需要 DeepSeek API 密钥，每次搜索另计模型费用'}
+          description={
+            availability.webSearch.unavailableReason ??
+            (availability.webSearch.available ? undefined : '需要 DeepSeek API 密钥，每次搜索另计模型费用')
+          }
           tip={availability.webSearch.available ? '查询公开网页，结果来自外部服务' : undefined}
-          badge={caps.webSearch && !availability.webSearch.available ? <Chip tone="warn">待配置</Chip> : undefined}
+          badge={
+            caps.webSearch && !availability.webSearch.available ? (
+              <Chip tone="warn">{availability.webSearch.unavailableReason ? '暂不可用' : '待配置'}</Chip>
+            ) : undefined
+          }
         >
           <Switch
             label="网页搜索"
@@ -509,7 +516,7 @@ export function CapabilitiesSection({
             onCheckedChange={(checked) => setCapability('webSearch', checked)}
           />
         </PropertyRow>
-        {availability.webSearch.available ? null : (
+        {availability.webSearch.available || availability.webSearch.unavailableReason ? null : (
           <PropertyRow label="搜索凭据" tip="保存后即可开启网页搜索">
             <WebSearchCredential />
           </PropertyRow>

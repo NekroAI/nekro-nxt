@@ -15,13 +15,11 @@ import {
 import type { SqliteHostSecurityRepository } from '@nekro-nxt/storage-sqlite'
 import { X509Certificate, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { createServer as createHttpServer, request as httpRequest } from 'node:http'
-import type { ClientRequest, Server as HttpServer, IncomingMessage, ServerResponse } from 'node:http'
-import { createServer, type Server as HttpsServer } from 'node:https'
-import { createServer as createNetServer, type Server as NetServer } from 'node:net'
+import { request as httpRequest } from 'node:http'
+import type { ClientRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
 import { managementLoginPage } from './management-login-page.js'
-import type { Duplex } from 'node:stream'
+import { startHttpListener } from './http-listener.js'
 import path from 'node:path'
 import { generate } from 'selfsigned'
 import { VIEWER_HEADER } from './viewer.js'
@@ -202,9 +200,9 @@ const wantsPage = (request: IncomingMessage, pathname: string): boolean =>
 const methodIsSafe = (method: string | undefined): boolean =>
   method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
 
-const loadOrCreateCertificate = async (
+export const loadOrCreateCertificate = async (
   dataRoot: string,
-  instanceId: ServerInstanceId,
+  instanceId: ServerInstanceId | 'recovery',
 ): Promise<{ readonly key: string; readonly cert: string; readonly spkiSha256: string }> => {
   const tlsRoot = path.join(dataRoot, 'host', 'tls')
   const keyPath = path.join(tlsRoot, 'server-key.pem')
@@ -293,7 +291,6 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
   const challengeRequests = new Map<string, number[]>()
   const lastActivityWrite = new Map<ManagementDeviceId, number>()
   const upstreamRequests = new Set<ClientRequest>()
-  const sockets = new Set<Duplex>()
   let stopping = false
   let stopPromise: Promise<void> | undefined
 
@@ -685,34 +682,14 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     })
   }
 
-  const tlsServer: HttpsServer = createServer({ key: certificate.key, cert: certificate.cert }, handle)
-  const plainServer: HttpServer = createHttpServer(handle)
-  /**
-   * One port serves both: a TLS ClientHello always starts with record type 0x16, plain HTTP never does. Desktop and
-   * `https://` keep the pinned certificate; `http://` works for browsers on a LAN or behind a reverse proxy.
-   */
-  const listener: NetServer = createNetServer((socket) => {
-    sockets.add(socket)
-    socket.once('close', () => sockets.delete(socket))
-    socket.once('data', (chunk: Buffer) => {
-      socket.pause()
-      socket.unshift(chunk)
-      ;(chunk[0] === 0x16 ? tlsServer : plainServer).emit('connection', socket)
-      process.nextTick(() => socket.resume())
-    })
+  const listener = await startHttpListener({
+    host: options.host,
+    port: options.port,
+    handler: handle,
+    tls: certificate,
   })
-
-  await new Promise<void>((resolve, reject) => {
-    listener.once('error', reject)
-    listener.listen(options.port, options.host, () => {
-      listener.off('error', reject)
-      resolve()
-    })
-  })
-  const address = listener.address()
-  if (address === null || typeof address === 'string') throw new Error('安全入口未获得有效监听端口。')
   return {
-    port: address.port,
+    port: listener.port,
     instanceId,
     spkiSha256: certificate.spkiSha256,
     stop: () => {
@@ -720,23 +697,9 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       stopping = true
       stopPromise = (async () => {
         for (const upstream of upstreamRequests) upstream.destroy(new Error('Management Edge 正在关闭。'))
-        tlsServer.closeIdleConnections()
-        plainServer.closeIdleConnections()
-        const closed = new Promise<void>((resolve, reject) =>
-          listener.close((error) => (error ? reject(error) : resolve())),
-        )
-        const timeout = setTimeout(() => {
-          for (const socket of sockets) socket.destroy()
-          tlsServer.closeAllConnections()
-          plainServer.closeAllConnections()
-        }, 5_000)
-        timeout.unref()
         try {
-          await closed
+          await listener.stop()
         } finally {
-          clearTimeout(timeout)
-          for (const socket of sockets) socket.destroy()
-          sockets.clear()
           upstreamRequests.clear()
         }
       })()

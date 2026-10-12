@@ -105,6 +105,7 @@ const emptyWorkTreeOrder = (): WorkTreeOrderRecord => ({
 })
 
 export class SqliteCoreRepository implements CurrentRepository {
+  readonly #database: CoreDatabase
   readonly #db
   readonly #agents
   readonly #channels
@@ -132,6 +133,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     database: CoreDatabase,
     readonly beforeModelReferenceCommit?: (revision: AgentRevisionRecord) => void,
   ) {
+    this.#database = database
     this.#db = database.db
     this.#agents = createAgentsRepository(database.db)
     this.#channels = createChannelsRepository(database.db)
@@ -182,6 +184,10 @@ export class SqliteCoreRepository implements CurrentRepository {
       })
       .run()
     return order
+  }
+
+  probeReadiness(force = false): void {
+    this.#database.probeReadiness(force)
   }
 
   getSystemSetting(key: string): SystemSettingRecord | undefined {

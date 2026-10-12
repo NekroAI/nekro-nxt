@@ -186,6 +186,8 @@ export async function waitForHostReady(options: WaitForHostOptions): Promise<voi
       options.signal.throwIfAborted()
     }
     if (record(body) && body['status'] === 'ready' && body['releaseId'] === identity.releaseId) return
+    if (record(body) && body['status'] === 'recovery' && body['releaseId'] === identity.releaseId)
+      throw new Error('本地服务启动未完成，请查看诊断后重试或恢复备份。')
     await delay(200, options.signal)
   }
 }

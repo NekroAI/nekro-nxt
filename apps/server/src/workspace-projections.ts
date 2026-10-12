@@ -1,3 +1,4 @@
+import { optionalProjection, unavailableImageDiagnostics } from './auxiliary-projections.js'
 import {
   activityDurationMs,
   AgentIdSchema,
@@ -507,28 +508,34 @@ export class WorkspaceProjections {
       })
     }
 
-    const models = await runtime.host.listAvailableLlmModels()
+    const models = await optionalProjection(() => runtime.host.listAvailableLlmModels(), undefined)
     for (const commit of runtime.core.listAgents()) {
       const agentId = commit.definition.id
       const name = commit.revision.displayName
-      const available = models.some(
+      const available = models?.some(
         (model) => model.provider === commit.revision.model.provider && model.id === commit.revision.model.model,
       )
       if (!available) {
         items.push({
           id: `agent-model:${agentId}:${commit.revision.id}`,
           kind: 'agent-model-unavailable',
-          severity: 'critical',
+          severity: models === undefined ? 'warning' : 'critical',
           subject: { kind: 'agent', id: agentId },
           related: { agentId },
           title: name,
-          detail: `主模型 ${commit.revision.model.provider}/${commit.revision.model.model} 当前不可用，${name}无法回复。`,
-          action: { kind: 'open-agent', label: '选择模型' },
+          detail:
+            models === undefined
+              ? '模型列表暂时无法读取，请稍后重试。'
+              : `主模型 ${commit.revision.model.provider}/${commit.revision.model.model} 当前不可用，${name}无法回复。`,
+          action: { kind: 'open-agent', label: models === undefined ? '查看智能体' : '选择模型' },
           occurredAt: commit.revision.createdAt,
         })
         continue
       }
-      const diagnostics = await runtime.host.getAgentImageDiagnostics(commit.revision)
+      const diagnostics = await optionalProjection(
+        () => runtime.host.getAgentImageDiagnostics(commit.revision),
+        unavailableImageDiagnostics,
+      )
       if (diagnostics.route.mode === 'unavailable') {
         items.push({
           id: `agent-vision:${agentId}:${commit.revision.id}`,

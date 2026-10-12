@@ -140,6 +140,7 @@ const forkServer = (
   }
 }
 
+let retryUpgradeOnce = false
 const startProductHost = async (release: ProductRelease): Promise<string> => {
   const port = await reserveLoopbackPort()
   if (cancelled || quitting) throw new Error('启动已取消。')
@@ -153,8 +154,10 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
     origin,
     spawnHost: () => {
       const runId = randomUUID()
+      const args = retryUpgradeOnce ? ['--retry-upgrade'] : []
+      retryUpgradeOnce = false
       const { child, supervised } = forkServer(
-        [],
+        args,
         {
           NEKRO_DIST_INDEX: webDistIndex(),
           NEKRO_HOST: LOOPBACK_HOST,
@@ -308,6 +311,7 @@ const onStartupAction = async (action: StartupAction): Promise<void> => {
     return
   }
   if (action === 'retry') {
+    retryUpgradeOnce = true
     beginStartup()
     return
   }

@@ -26,6 +26,7 @@ import { unavailableSessionContext } from './channel-runtime-context.js'
 import type { NekroRuntime } from './bootstrap.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
 import { commandConfinementSupport } from './command-confinement.js'
+import { optionalProjection, unavailableImageDiagnostics } from './auxiliary-projections.js'
 import {
   emptyChannelRuntimeProjection,
   findToolCallDetail,
@@ -408,11 +409,23 @@ export class HostQueries {
       Promise.all(
         runtime.core.listAgents().map(async (commit) => ({
           revisionId: commit.revision.id,
-          value: await runtime.host.getAgentImageDiagnostics(commit.revision),
+          value: await optionalProjection(
+            () => runtime.host.getAgentImageDiagnostics(commit.revision),
+            unavailableImageDiagnostics,
+          ),
         })),
       ),
-      runtime.host.getWebSearchCapabilityStatus(),
-      runtime.host.listAvailableLlmModels(),
+      optionalProjection(() => runtime.host.getWebSearchCapabilityStatus(), {
+        provider: 'deepseek-official' as const,
+        available: false,
+        credentialConfigured: false,
+        credentialReference: 'DEEPSEEK_API_KEY',
+        maxUsesPerCall: 2,
+        maxResultsPerCall: 5,
+        timeoutMs: 60_000,
+        unavailableReason: '检索状态暂时不可用，请稍后重试。',
+      }),
+      optionalProjection(() => runtime.host.listAvailableLlmModels(), []),
       runtime.notifications.getSettings(),
     ])
     const diagnosticsSampledAt = Date.now()

@@ -144,6 +144,7 @@ export interface LlmProviderSettingsView {
 }
 
 export interface WebSearchCapabilityStatus {
+  readonly unavailableReason?: string
   readonly provider: 'deepseek-official'
   readonly available: boolean
   readonly credentialConfigured: boolean

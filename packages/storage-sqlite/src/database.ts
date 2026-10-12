@@ -5,7 +5,7 @@ import { readMigrationFiles } from 'drizzle-orm/migrator'
 import { integer, sqliteTable } from 'drizzle-orm/sqlite-core'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { coreSchema } from './schema.js'
+import { coreSchema, systemSettings } from './schema.js'
 
 type NativeDatabase = InstanceType<typeof BetterSqlite3>
 export type DrizzleCoreDatabase = BetterSQLite3Database<typeof coreSchema>
@@ -46,6 +46,7 @@ const foreignKeyViolationSchema = z.array(
 export class CoreDatabase {
   readonly db: DrizzleCoreDatabase
   readonly #native: NativeDatabase
+  #lastReadinessWrite: number | undefined
 
   constructor(filename: string) {
     this.#native = new BetterSqlite3(filename)
@@ -116,6 +117,29 @@ export class CoreDatabase {
 
   pragma(name: 'foreign_keys' | 'journal_mode' | 'busy_timeout'): unknown {
     return this.#native.pragma(name, { simple: true })
+  }
+
+  /** Test a real commit without changing user settings; cache success to avoid a write on every health request. */
+  probeReadiness(force = false): void {
+    const now = performance.now()
+    if (!force && this.#lastReadinessWrite !== undefined && now - this.#lastReadinessWrite < 30_000) return
+    // A health probe must not freeze the event loop waiting five seconds for another writer.
+    const previousTimeout = z.number().parse(this.#native.pragma('busy_timeout', { simple: true }))
+    this.#native.pragma('busy_timeout = 0')
+    try {
+      const updatedAt = Date.now()
+      this.db
+        .insert(systemSettings)
+        .values({ key: 'host/readiness-probe', value: {}, revision: 1, updatedAt })
+        .onConflictDoUpdate({ target: systemSettings.key, set: { updatedAt } })
+        .run()
+      this.#lastReadinessWrite = now
+    } catch (error) {
+      this.#lastReadinessWrite = undefined
+      throw error
+    } finally {
+      this.#native.pragma(`busy_timeout = ${previousTimeout}`)
+    }
   }
 
   backup(destination: string): Promise<void> {

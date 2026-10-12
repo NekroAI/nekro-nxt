@@ -3,7 +3,8 @@ import { DSH_RUNTIME_FINGERPRINT, DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-com
 import { acquireDataRootLease } from './data-root-lease.js'
 import { createUpgradeBackup, pruneUpgradeBackups, restoreUpgradeBackup, writeUpgradeJson } from './upgrade-backup.js'
 import { readUpgradeBackupPolicy, upgradeBackupStore } from './upgrade-backup-policy.js'
-import { createUpgradeProgress, markUpgradeProgressFailure } from './upgrade-progress.js'
+import { createUpgradeProgress, recordStartupFailure, pendingUpgradeRecovery } from './upgrade-progress.js'
+import { startRecoveryServer } from './server-recovery.js'
 /**
  * NekroNxt Server executable entry — assembles the domain runtime (NekroRuntime),
  * mounts the DSH WebServer seam as the single HTTP/SSE host, and serves the Web
@@ -582,6 +583,10 @@ const createRuntimeThroughUpgradeCoordinator = async (
 }
 
 export interface StartServerOptions {
+  /** Executable hosts retain a read-only recovery listener after a quiescent startup failure. */
+  readonly serveRecovery?: boolean
+  /** Explicit retry chosen by an operator; never inherited by an automatic restart. */
+  readonly retryUpgrade?: boolean
   /** Root of the durable data directory (core.sqlite / sessions.sqlite / assets / extension-*). */
   readonly dataRoot: string
   /**
@@ -605,6 +610,7 @@ export interface StartServerOptions {
 }
 
 export interface NekroServerHandle {
+  readonly recovery?: boolean
   readonly port: number
   readonly secure: boolean
   stop(): Promise<void>
@@ -627,6 +633,7 @@ const startLeasedServer = async (
   await mkdir(dataRoot, { recursive: true, mode: 0o700 })
   await mkdir(developmentWorkspaceRoot, { recursive: true, mode: 0o700 })
   let ready = false
+  let checkWorkspaceReadiness: (() => Promise<boolean>) | undefined
   let network: NekroServerHandle | undefined
   await createRuntimeThroughUpgradeCoordinator(
     dataRoot,
@@ -656,6 +663,7 @@ const startLeasedServer = async (
   )
   options.signal?.throwIfAborted()
   if (!network) throw new Error('Host network was not prepared.')
+  if (!(await checkWorkspaceReadiness?.())) throw new Error('核心工作区数据暂时无法读取，启动未完成。')
   ready = true
   return network
 
@@ -716,18 +724,23 @@ const startLeasedServer = async (
       () => ready,
     )
     webContext.effect(() => () => api.dispose(), 'nekro-nxt: product HTTP API')
+    checkWorkspaceReadiness = () => api.checkReadiness(true)
     const registerHealthRoute = (routePath: '/health/live' | '/health/ready', status: 'live' | 'ready'): (() => void) =>
       webContext.webServer.register({
         kind: 'exact',
         path: routePath,
-        handler: (request, response) => {
+        handler: async (request, response) => {
           if (request.method !== 'GET' && request.method !== 'HEAD') {
             response.writeHead(405, { allow: 'GET, HEAD', 'cache-control': 'no-store' })
             response.end()
             return
           }
-          const available = status === 'live' || ready
-          const body = JSON.stringify({ status: available ? status : 'starting', releaseId })
+          const available = status === 'live' || (ready && (await api.checkReadiness()))
+          const body = JSON.stringify({
+            status: available ? status : ready ? 'degraded' : 'starting',
+            releaseId,
+            ...(!available && ready ? { reason: 'core-unavailable' } : {}),
+          })
           response.writeHead(available ? 200 : 503, {
             'content-type': 'application/json; charset=utf-8',
             'cache-control': 'no-store',
@@ -802,6 +815,7 @@ const startLeasedServer = async (
     const stop = async (): Promise<void> => {
       if (stopped) return
       stopped = true
+      ready = false
       await managementEdge?.stop()
       disposeLoopbackDescriptor?.()
       disposeReady()
@@ -821,19 +835,30 @@ const startLeasedServer = async (
 export const startNekroServer = async (options: StartServerOptions): Promise<NekroServerHandle> => {
   const requestedHost = options.host ?? '127.0.0.1'
   parseManagementKey(options.managementKey, !isLoopbackListenHost(requestedHost))
+  const recoveryHost = parseListenHost(requestedHost)
   const release = await acquireDataRootLease(resolveRoot(options.dataRoot))
   const owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle } = {}
   try {
+    if (options.serveRecovery && !options.retryUpgrade) {
+      const pending = await pendingUpgradeRecovery(resolveRoot(options.dataRoot), parseReleaseId(options.releaseId))
+      if (pending !== undefined) {
+        const progress = createUpgradeProgress(resolveRoot(options.dataRoot), parseReleaseId(options.releaseId))
+        await progress.update(pending)
+        await progress.close()
+        throw new Error(pending.errorSummary ?? '上次启动未完成，请修复原因后显式重试。')
+      }
+    }
     const server = await startLeasedServer(options, owner)
     options.signal?.throwIfAborted()
     let stopping: Promise<void> | undefined
     return { ...server, stop: () => (stopping ??= server.stop().then(() => release())) }
   } catch (error) {
     let progressFailure: unknown
-    await markUpgradeProgressFailure(
+    await recordStartupFailure(
       resolveRoot(options.dataRoot),
       parseReleaseId(options.releaseId),
       error instanceof Error ? error.message.slice(0, 512) : '启动失败。',
+      options.signal?.aborted === true,
     ).catch((failure: unknown) => {
       progressFailure = failure
     })
@@ -842,6 +867,32 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
       .map((result): unknown => result.reason)
     if (failures.length) throw new AggregateError([error, ...failures], 'Host 启动失败且资源未静止，数据根锁保持占用。')
+    if (options.serveRecovery && !options.signal?.aborted) {
+      try {
+        const server = await startRecoveryServer({
+          host: recoveryHost,
+          port: options.port ?? 0,
+          dataRoot: resolveRoot(options.dataRoot),
+          releaseId: parseReleaseId(options.releaseId),
+          secure: parseManagementKey(options.managementKey) !== undefined,
+        })
+        if (options.signal?.aborted) {
+          await server.stop()
+          options.signal.throwIfAborted()
+        }
+        console.error(
+          '[nekro-nxt] 启动未完成，已进入只读恢复状态：',
+          error instanceof Error ? error.message : '启动失败。',
+        )
+        if (progressFailure !== undefined) console.error('[nekro-nxt] 启动诊断文件未能保存，请检查数据目录。')
+        let stopping: Promise<void> | undefined
+        return { ...server, stop: () => (stopping ??= server.stop().then(() => release())) }
+      } catch (recoveryError) {
+        await release()
+        options.signal?.throwIfAborted()
+        throw new AggregateError([error, recoveryError], 'Recovery listener failed to start.')
+      }
+    }
     await release()
     if (progressFailure !== undefined)
       throw new AggregateError([error, progressFailure], 'Host 启动失败，诊断写入也未完成。')
@@ -935,6 +986,8 @@ if (isEntryPoint()) {
       process.on('SIGTERM', cancelStartup)
       process.on('SIGINT', cancelStartup)
       const handle = await startNekroServer({
+        serveRecovery: true,
+        retryUpgrade: process.argv.includes('--retry-upgrade'),
         signal: startup.signal,
         dataRoot,
         distIndex,
@@ -950,12 +1003,25 @@ if (isEntryPoint()) {
       })
       process.removeListener('SIGTERM', cancelStartup)
       process.removeListener('SIGINT', cancelStartup)
-      console.log(
-        handle.secure
-          ? `[nekro-nxt] Server ${releaseId} 已监听 https://${host}:${handle.port}（同一端口也接受 http://，浏览器访问需输入管理密钥登录）`
-          : `[nekro-nxt] Server ${releaseId} 已监听 http://${host}:${handle.port}`,
+      // Desktop uses cooperative cancellation on Windows, including while a recovery page is being served.
+      startup.signal.addEventListener(
+        'abort',
+        () => {
+          void handle.stop().then(
+            () => process.exit(0),
+            () => process.exit(1),
+          )
+        },
+        { once: true },
       )
-      if (llmProviderRoutes.length > 0) {
+      console.log(
+        handle.recovery
+          ? `[nekro-nxt] 恢复页面已监听 ${handle.secure ? 'https' : 'http'}://${host}:${handle.port}。修复原因后可使用 --retry-upgrade 重试。`
+          : handle.secure
+            ? `[nekro-nxt] Server ${releaseId} 已监听 https://${host}:${handle.port}（同一端口也接受 http://，浏览器访问需输入管理密钥登录）`
+            : `[nekro-nxt] Server ${releaseId} 已监听 http://${host}:${handle.port}`,
+      )
+      if (!handle.recovery && llmProviderRoutes.length > 0) {
         console.log(`[nekro-nxt] DSH 模型供应商已启用：${llmProviderRoutes.join(', ')}`)
       }
       const onSignal = (signal: NodeJS.Signals): void => {

@@ -1,5 +1,5 @@
 import BetterSqlite3 from 'better-sqlite3'
-import { count, eq } from 'drizzle-orm'
+import { count, eq, sql } from 'drizzle-orm'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
@@ -1159,6 +1159,27 @@ describe('Core SQLite baseline', () => {
       const order = { agentIds: [firstAgent.definition.id], channelIdsByAgent: {}, unboundChannelIds: [first.id] }
       expect(repository.putWorkTreeOrder(order)).toEqual(order)
       expect(repository.getWorkTreeOrder()).toEqual(order)
+    } finally {
+      database.close()
+    }
+  })
+
+  it('detects a read-only core while reads still succeed and preserves user settings', async () => {
+    const { database, repository } = await createFixture()
+    try {
+      repository.putSystemSetting('fixture-setting', { enabled: true }, undefined, 100)
+      repository.probeReadiness(true)
+      database.db.run(sql`PRAGMA query_only = ON`)
+      expect(repository.listConnectionIdsByAdapter()).toHaveLength(1)
+      expect(() => repository.probeReadiness(true)).toThrow(/readonly/iu)
+      database.db.run(sql`PRAGMA query_only = OFF`)
+      repository.probeReadiness()
+      expect(repository.getSystemSetting('fixture-setting')).toMatchObject({
+        value: { enabled: true },
+        revision: 1,
+        updatedAt: 100,
+      })
+      expect(database.pragma('busy_timeout')).toBe(5000)
     } finally {
       database.close()
     }

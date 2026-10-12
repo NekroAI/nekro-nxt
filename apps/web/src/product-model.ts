@@ -467,6 +467,7 @@ export interface CapabilityAvailability {
   /** What the host can confine for commands beyond file writes; absent hosts confine writes only. */
   readonly commandConfinement?: { readonly readScope: boolean; readonly networkControl: boolean } | undefined
   readonly webSearch: {
+    readonly unavailableReason?: string | undefined
     readonly provider: string
     readonly available: boolean
     readonly credentialConfigured: boolean

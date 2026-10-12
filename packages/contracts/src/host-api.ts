@@ -1437,6 +1437,7 @@ export const HostSnapshotSchema = z
         commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
         webSearch: z
           .object({
+            unavailableReason: z.string().optional(),
             provider: z.literal('deepseek-official'),
             available: z.boolean(),
             credentialConfigured: z.boolean(),
