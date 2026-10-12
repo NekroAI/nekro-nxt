@@ -252,7 +252,11 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
         try {
           const params = HostApiContracts.updateConnectionConfiguration.parseParams({ connectionId })
           const body = HostApiContracts.updateConnectionConfiguration.parseRequest(await readJsonBody(req))
-          const updated = await runtime.updateConnectionConfiguration(params.connectionId, body.configuration)
+          const updated = await runtime.updateConnectionConfiguration(
+            params.connectionId,
+            body.configuration,
+            body.credentials,
+          )
           writeContractJson(res, 200, HostApiContracts.updateConnectionConfiguration, {
             connectionId: updated.id,
             configuration: body.configuration,

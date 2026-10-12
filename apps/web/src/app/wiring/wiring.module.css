@@ -725,6 +725,11 @@
   gap: var(--s-2);
 }
 
+.credentialField {
+  display: grid;
+  gap: var(--s-3);
+}
+
 .qr {
   display: grid;
   justify-items: center;

@@ -73,6 +73,7 @@ interface ConnectionLoginSession {
 export class ConnectionApplicationService {
   readonly #loginCleanupTimers = new Set<ReturnType<typeof setTimeout>>()
   readonly #connectionLoginSessions = new Map<string, ConnectionLoginSession>()
+  readonly #connectionChanges = new Map<ConnectionId, Promise<unknown>>()
   readonly #adapterHandles: RegisteredAdapterHandle[] = []
   readonly #adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
   readonly #quiescingAdapterKeys = new Set<string>()
@@ -125,6 +126,7 @@ export class ConnectionApplicationService {
       session.abortController.abort(new Error('Host disposed.'))
     await Promise.allSettled([...this.#connectionLoginSessions.values()].map((session) => session.done))
     this.#connectionLoginSessions.clear()
+    await Promise.allSettled(this.#connectionChanges.values())
     for (const timer of this.#loginCleanupTimers) clearTimeout(timer)
     this.#loginCleanupTimers.clear()
     return Promise.allSettled([...this.#adapterRuntimes.values()].map((runtime) => runtime.stop()))
@@ -141,6 +143,12 @@ export class ConnectionApplicationService {
   async waitUntilSafe(adapterKey: string) {
     this.#quiescingAdapterKeys.add(adapterKey)
     try {
+      await Promise.allSettled(
+        this.ports.repository.listConnectionIdsByAdapter(adapterKey).flatMap((id) => {
+          const pending = this.#connectionChanges.get(id)
+          return pending ? [pending] : []
+        }),
+      )
       await this.ports.channels.waitUntilConnectionsSafe(this.ports.repository.listConnectionIdsByAdapter(adapterKey))
     } catch (error) {
       this.#quiescingAdapterKeys.delete(adapterKey)
@@ -262,15 +270,62 @@ export class ConnectionApplicationService {
   async updateConnectionConfiguration(
     connectionId: ConnectionId,
     configurationPatch: Readonly<Record<string, unknown>>,
+    credentialsPatch: Readonly<Record<string, string | null>> = {},
+  ): Promise<ConnectionRecord> {
+    return this.#editConnection(connectionId, () =>
+      this.#saveConnectionConfiguration(connectionId, configurationPatch, credentialsPatch),
+    )
+  }
+
+  async #editConnection<T>(connectionId: ConnectionId, edit: () => Promise<T>): Promise<T> {
+    if (this.lifecycle().disposed) throw new Error('NekroRuntime is disposed.')
+    const previous = this.#connectionChanges.get(connectionId) ?? Promise.resolve()
+    const pending = previous.catch(() => undefined).then(edit)
+    this.#connectionChanges.set(connectionId, pending)
+    try {
+      return await pending
+    } finally {
+      if (this.#connectionChanges.get(connectionId) === pending) this.#connectionChanges.delete(connectionId)
+    }
+  }
+
+  async #saveConnectionConfiguration(
+    connectionId: ConnectionId,
+    configurationPatch: Readonly<Record<string, unknown>>,
+    credentialsPatch: Readonly<Record<string, string | null>>,
   ): Promise<ConnectionRecord> {
     if (this.lifecycle().disposed) throw new Error('NekroRuntime is disposed.')
     const connection = this.ports.core.getConnection(connectionId)
     if (!connection) throw new Error('连接不存在。')
     const contribution = this.ports.adapters.get(connection.adapterKey)
     if (!contribution) throw new Error('这个连接的适配器未安装，无法修改配置。')
+    if (contribution.descriptor.provisioning !== 'user-created') throw new Error('内置连接不能修改这些设置。')
+    if (this.#quiescingAdapterKeys.has(connection.adapterKey)) throw new Error('平台扩展正在更新，请稍后重试。')
+    if (
+      [...this.#connectionLoginSessions.values()].some(
+        (session) =>
+          session.targetConnectionId === connectionId && (session.status === 'pending' || session.status === 'scanned'),
+      )
+    )
+      throw new Error('这个账号正在重新登录，请完成后再修改设置。')
     const storedConfig = { ...parseStoredAdapterConfiguration(connection.config) }
     const schema = contribution.descriptor.configSchema
     const secretKeys = configSecretKeys(schema)
+    const secretFields = configFields(schema).filter((field) => field.kind === 'secret')
+    for (const [key, value] of Object.entries(credentialsPatch)) {
+      const field = secretFields.find((item) => item.key === key)
+      if (!field) throw new Error(`Unknown credential field: ${key}`)
+      if (value === null && field.required) throw new Error(`${field.title}不能为空。`)
+      if (value !== null && (typeof value !== 'string' || !value.trim())) throw new Error(`请填写${field.title}。`)
+    }
+    for (const field of secretFields) {
+      if (
+        field.required &&
+        credentialsPatch[field.key] === undefined &&
+        connection.credentialRefs[field.key] === undefined
+      )
+        throw new Error(`请填写${field.title}。`)
+    }
     for (const key of Object.keys(configurationPatch)) {
       if (!Object.hasOwn(schema.dict, key) || secretKeys.includes(key))
         throw new Error(`Unknown connection field: ${key}`)
@@ -292,13 +347,42 @@ export class ConnectionApplicationService {
       ),
     )
     Object.assign(storedConfig, nextConfig)
-    const updated = this.ports.core.updateConnectionConfig(connectionId, storedConfig)
     const mounted = this.#adapterRuntimes.get(connectionId)
-    if (mounted) {
-      await mounted.stop()
-      this.#adapterRuntimes.delete(connectionId)
-      if (this.lifecycle().started) await this.mountAdapter(connectionId)
+    const credentialRefs = { ...connection.credentialRefs }
+    const staged: string[] = []
+    let stopped = false
+    let updated: ConnectionRecord
+    try {
+      for (const [key, value] of Object.entries(credentialsPatch)) {
+        if (value === null) delete credentialRefs[key]
+        else {
+          const reference = await this.ports.credentials.save(value)
+          staged.push(reference)
+          credentialRefs[key] = reference
+        }
+      }
+      if (this.lifecycle().disposed) throw new Error('NekroRuntime is disposed.')
+      if (mounted) {
+        await mounted.stop()
+        stopped = true
+        this.#adapterRuntimes.delete(connectionId)
+      }
+      if (this.lifecycle().disposed) throw new Error('NekroRuntime is disposed.')
+      // Configuration and references are committed in one row. New credential files become owned here.
+      updated = this.ports.core.updateConnectionProvisioning(connectionId, { config: storedConfig, credentialRefs })
+    } catch (error) {
+      await Promise.allSettled(staged.map((reference) => this.ports.credentials.delete(reference)))
+      if (stopped && this.lifecycle().started && !this.lifecycle().disposed) await this.mountAdapter(connectionId)
+      throw new Error('连接设置未保存，请稍后重试。', { cause: error })
     }
+    if (this.lifecycle().started && !this.lifecycle().disposed) await this.mountAdapter(connectionId)
+    // Connection failures are reported by diagnostics; committed settings remain editable for correction.
+    const retained = new Set(Object.values(credentialRefs))
+    await Promise.allSettled(
+      Object.values(connection.credentialRefs)
+        .filter((reference) => !retained.has(reference))
+        .map((reference) => this.ports.credentials.delete(reference)),
+    )
     this.#notifyConnectionChanges()
     return updated
   }
@@ -318,6 +402,7 @@ export class ConnectionApplicationService {
       throw new Error('This platform does not support QR login.')
     }
     if (input.connectionId !== undefined) {
+      if (this.#connectionChanges.has(input.connectionId)) throw new Error('连接设置正在保存，请稍后重试。')
       const existing = this.ports.core.getConnection(input.connectionId)
       if (!existing || existing.adapterKey !== input.adapterKey) throw new Error('要重新认证的连接不存在。')
       if (!existing.accountKey) throw new Error('无法确认原来登录的是哪个账号，请删除后重新添加。')
@@ -603,6 +688,13 @@ export class ConnectionApplicationService {
   }
 
   async deleteConnection(
+    connectionId: ConnectionId,
+    options: { readonly deleteChannelData: boolean },
+  ): Promise<{ readonly archived: boolean }> {
+    return this.#editConnection(connectionId, () => this.#deleteConnection(connectionId, options))
+  }
+
+  async #deleteConnection(
     connectionId: ConnectionId,
     options: { readonly deleteChannelData: boolean },
   ): Promise<{ readonly archived: boolean }> {

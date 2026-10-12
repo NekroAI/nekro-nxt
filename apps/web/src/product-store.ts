@@ -192,10 +192,11 @@ export function createProductStore(
         activityKeys: [...activityKeys],
       })
     },
-    updateConnectionConfiguration: async (connectionId, configuration) => {
+    updateConnectionConfiguration: async (connectionId, configuration, credentials) => {
       await requireHost().actions['connections.updateConfiguration']({
         connectionId: requireValue(connectionId, '缺少连接标识，请刷新页面后重试。'),
         configuration,
+        ...(credentials === undefined ? {} : { credentials }),
       })
     },
     deleteConnection: async (connectionId, deleteChannelData) => {

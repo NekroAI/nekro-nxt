@@ -1555,6 +1555,7 @@ export const HostSnapshotSchema = z
           adapterKey: NonEmptyStringSchema,
           alias: ConnectionAliasOutputSchema.optional(),
           activityTriggerDefaults: z.array(AdapterActivityKeySchema).default([]),
+          configuredSecrets: z.array(z.string()).optional(),
           status: z
             .object({
               state: z.enum(['stopped', 'connecting', 'connected', 'reconnecting', 'failed']),
@@ -3064,7 +3065,13 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/connections/:connectionId/configuration',
     params: connectionParam,
-    request: z.object({ configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])) }).strict(),
+    request: z
+      .object({
+        configuration: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+        /** Omitted keys keep their value; null explicitly clears an optional credential. */
+        credentials: z.record(z.string().min(1), z.string().min(1).max(16_384).nullable()).optional(),
+      })
+      .strict(),
     response: z
       .object({
         connectionId: ConnectionIdSchema,

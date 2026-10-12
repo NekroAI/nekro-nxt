@@ -2,12 +2,14 @@ import { WebSocketServer } from 'ws'
 import { z } from 'zod'
 
 /** A local synthetic protocol peer for production journeys; never connects to a real account. */
-export async function createOneBotProtocolFixture() {
+export async function createOneBotProtocolFixture(options: { readonly accountId?: string } = {}) {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' })
   await new Promise<void>((resolve) => server.once('listening', resolve))
   const address = server.address()
   if (!address || typeof address === 'string') throw new Error('Fixture listener has no port')
-  server.on('connection', (socket) =>
+  const authorizations: Array<string | undefined> = []
+  server.on('connection', (socket, request) => {
+    authorizations.push(request.headers.authorization)
     socket.on('message', (raw) => {
       const text = Array.isArray(raw)
         ? Buffer.concat(raw).toString('utf8')
@@ -22,17 +24,18 @@ export async function createOneBotProtocolFixture() {
           echo: body.echo,
           data:
             body.action === 'get_login_info'
-              ? { user_id: '91999' }
+              ? { user_id: options.accountId ?? '91999' }
               : body.action === 'get_version_info'
                 ? { app_name: 'SyntheticFixture', protocol_version: 'v11' }
                 : {},
         }),
       )
-    }),
-  )
+    })
+  })
   let count = 0
   return {
     endpoint: `ws://127.0.0.1:${address.port}`,
+    authorizations,
     emit(group: string, name: string) {
       for (const socket of server.clients)
         socket.send(

@@ -576,6 +576,12 @@ export class HostQueries {
         ...(tests?.receive === undefined ? {} : { receiveTest: tests.receive }),
         ...(tests?.send === undefined ? {} : { sendTest: tests.send }),
         configuration,
+        configuredSecrets:
+          descriptor === undefined
+            ? []
+            : configFields(descriptor.configSchema)
+                .filter((field) => field.kind === 'secret' && connection.credentialRefs[field.key] !== undefined)
+                .map((field) => field.key),
       }
     })
     const archivedConnections = runtime.core.listArchivedConnections().map((connection) => ({

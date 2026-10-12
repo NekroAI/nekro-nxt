@@ -11,6 +11,7 @@ declare const styles: {
   readonly compactRow: string
   readonly compactText: string
   readonly configForm: string
+  readonly credentialField: string
   readonly danger: string
   readonly dragging: string
   readonly formActions: string

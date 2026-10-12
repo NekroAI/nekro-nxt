@@ -245,6 +245,7 @@ export interface ChannelHistoryState {
 
 export interface ConnectionSummary {
   readonly configuration?: Readonly<Record<string, string | number | boolean>>
+  readonly configuredSecrets?: readonly string[]
   readonly id: string
   /** Optional user-facing name; the Adapter name remains the platform identity. */
   readonly alias?: string
@@ -609,6 +610,7 @@ export interface ProductState {
   updateConnectionConfiguration(
     connectionId: string,
     configuration: Readonly<Record<string, string | number | boolean>>,
+    credentials?: Readonly<Record<string, string | null>>,
   ): Promise<void>
   deleteConnection(connectionId: string, deleteChannelData: boolean): Promise<void>
   restoreConnection(connectionId: string): Promise<void>

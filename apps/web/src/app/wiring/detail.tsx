@@ -225,6 +225,12 @@ function ConnectionDetail({
         </PropertyGroup>
       ) : null}
 
+      {connection.userManaged && descriptor && configFields(descriptor.configSchema).length > 0 ? (
+        <Button size="small" onClick={() => go(`/wiring/connections/${connection.id}/edit`)}>
+          编辑连接设置
+        </Button>
+      ) : null}
+
       {connection.userManaged && settings.length > 0 ? (
         <PropertyGroup title="连接设置">
           <PropertyList>

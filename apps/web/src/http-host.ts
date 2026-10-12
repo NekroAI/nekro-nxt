@@ -513,6 +513,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         ? {}
         : { processingFeedbackCapability: connection.status.processingFeedback }),
       ...(connection.configuration === undefined ? {} : { configuration: connection.configuration }),
+      ...(connection.configuredSecrets === undefined ? {} : { configuredSecrets: connection.configuredSecrets }),
       channels: connection.channelCount ?? 0,
       knownChannels: (connection.knownChannels ?? []).map((channel) => ({
         ...channel,

@@ -17,6 +17,7 @@ import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
 import { ConnectionCreate } from './connection-create.js'
+import { ConnectionEdit } from './connection-edit.js'
 import { WiringDetail } from './detail.js'
 import { PatchBay, type WiringSelection } from './patch-bay.js'
 import styles from './wiring.module.css'
@@ -138,6 +139,7 @@ export default function WiringSpace() {
             : undefined,
   )
   if (creating) return <ConnectionCreate />
+  if (rest.endsWith('/edit') && crumb?.userManaged) return <ConnectionEdit key={crumb.id} connection={crumb} />
   return (
     <WorkbenchPage
       narrowPane={selected ? 'detail' : 'main'}
