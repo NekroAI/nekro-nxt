@@ -1,9 +1,11 @@
 import { formatContextTime } from './scheduled-tasks.js'
 import { sessionEvents } from './session-event-history.js'
+import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
 import type { DshHostRuntimeOptions } from './index.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore, {
+  AttachmentError,
   AttachmentId,
   type ImageAttachmentRef,
   type ImageRequestTarget,
@@ -95,8 +97,9 @@ export const nekroImageAttachmentId = (
 ): ReturnType<typeof AttachmentId> => AttachmentId(`nxt-asset:${assetId}:${detail}`)
 
 export const parseNekroImageAttachmentId = (
-  attachmentId: string,
+  attachmentId: unknown,
 ): { readonly assetId: AssetId; readonly detail?: EffectiveImageDetail } | undefined => {
+  if (typeof attachmentId !== 'string') return undefined
   if (!attachmentId.startsWith('nxt-asset:')) {
     const legacy = AssetIdSchema.safeParse(attachmentId)
     return legacy.success ? { assetId: legacy.data } : undefined
@@ -106,6 +109,17 @@ export const parseNekroImageAttachmentId = (
   const assetId = AssetIdSchema.safeParse(attachmentId.slice('nxt-asset:'.length, separator))
   if (!assetId.success || (detail !== 'low' && detail !== 'auto')) return undefined
   return { assetId: assetId.data, detail }
+}
+
+const requireNekroImageReference = (input: unknown) => {
+  try {
+    const ref = parseDshImageAttachmentRef(input)
+    const decoded = parseNekroImageAttachmentId(ref.attachmentId)
+    if (decoded) return { ref, decoded }
+  } catch {
+    // Historical or extension-provided references can violate the current TypeScript contract.
+  }
+  throw new AttachmentError('Image attachment reference is missing or invalid.', 'INVALID_ATTACHMENT_REF')
 }
 
 export class NekroAssetAttachmentStore extends AttachmentStore {
@@ -166,10 +180,9 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
     }
   }
 
-  async readImage(ref: ImageAttachmentRef, signal?: AbortSignal): Promise<StoredImageAttachment> {
+  async readImage(input: unknown, signal?: AbortSignal): Promise<StoredImageAttachment> {
     signal?.throwIfAborted()
-    const decoded = parseNekroImageAttachmentId(ref.attachmentId)
-    if (!decoded) throw new Error(`Attachment ID is not a NekroNxt Asset reference: ${ref.attachmentId}`)
+    const { ref, decoded } = requireNekroImageReference(input)
     const asset = this.assets.getAssetById(decoded.assetId)
     if (!asset) throw new Error(`Attachment Asset is unavailable: ${ref.attachmentId}`)
     const data = new Uint8Array(await readFile(this.assetService.blobPath(asset), { signal }))
@@ -181,12 +194,12 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
   }
 
   override async readImageRequest(
-    ref: ImageAttachmentRef,
+    input: unknown,
     policy: ImageRequestTarget,
     signal?: AbortSignal,
   ): Promise<RequestImageAttachment> {
-    const decoded = parseNekroImageAttachmentId(ref.attachmentId)
-    if (!decoded) throw new Error(`Attachment ID is not a NekroNxt Asset reference: ${ref.attachmentId}`)
+    signal?.throwIfAborted()
+    const { ref, decoded } = requireNekroImageReference(input)
     const effectivePolicy =
       decoded.detail === 'low'
         ? { ...policy, width: Math.min(policy.width, 512), height: Math.min(policy.height, 512) }
@@ -378,7 +391,7 @@ export const effectiveImageDetail = (detail: 'low' | 'auto' | 'high'): Effective
 export const imageDetailRank = (detail: EffectiveImageDetail): number => (detail === 'low' ? 0 : 1)
 
 export const collectVisibleImageResidency = (
-  agent: Agent,
+  agent: Pick<Agent, 'session'>,
   assets: Pick<AssetAccessRepository, 'getAssetById'>,
   baselineDetail: 'low' | 'auto' | 'high' = 'auto',
 ): Map<string, EffectiveImageDetail> => {
@@ -387,7 +400,7 @@ export const collectVisibleImageResidency = (
   const visit = (blocks: readonly ContentBlock[]): void => {
     for (const block of blocks) {
       if (block.type === 'image') {
-        const parsed = parseNekroImageAttachmentId(block.attachment.attachmentId)
+        const parsed = parseNekroImageAttachmentId(block.attachment?.attachmentId)
         if (!parsed) continue
         const asset = assets.getAssetById(parsed.assetId)
         const detail = parsed.detail ?? baseline
