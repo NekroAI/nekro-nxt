@@ -493,15 +493,24 @@
 .compactText {
   display: grid;
   min-width: 0;
+  padding: var(--s-2) 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1099px) {
   .patch {
     display: none;
   }
 
   .compact {
-    display: block;
+    display: grid;
+    align-content: start;
+    gap: var(--s-5);
   }
 }
 

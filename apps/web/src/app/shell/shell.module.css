@@ -226,6 +226,8 @@ a.instance {
   grid-row: 2;
   flex-direction: column;
   align-items: center;
+  min-height: 0;
+  overflow: auto;
   gap: calc(var(--s-1) / 2);
   padding: var(--s-3) 0;
   border-right: 1px solid var(--line);

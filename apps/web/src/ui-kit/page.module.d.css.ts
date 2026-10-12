@@ -15,6 +15,7 @@ declare const styles: {
   readonly mainScroll: string
   readonly master: string
   readonly masterInner: string
+  readonly narrowBack: string
   readonly pageActions: string
   readonly pageHead: string
   readonly pageTitle: string

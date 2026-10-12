@@ -66,8 +66,7 @@ export default function WorkshopSpace() {
   const extensions = useProductStore((state) => state.extensions)
   const agents = useProductStore((state) => state.agents)
   const requested = parse(pathname)
-  // Opening the space without an item shows the first open task (or extension) in this same frame; the address
-  // follows afterwards. A <Navigate> here would render an empty canvas for a frame first.
+  // Wide screens can preview the first object; on narrow screens the base route remains the collection list.
   const fallback: Route | undefined =
     requested || hostStatus === 'initializing'
       ? undefined
@@ -77,10 +76,6 @@ export default function WorkshopSpace() {
           return extensions[0] ? { kind: 'extension', id: extensions[0].id } : undefined
         })()
   const route = requested ?? fallback
-  useEffect(() => {
-    if (fallback)
-      navigate(`/workshop/${fallback.kind === 'task' ? 'tasks' : 'extensions'}/${fallback.id}`, { replace: true })
-  }, [navigate, fallback?.kind, fallback?.id])
   const [query, setQuery] = useState('')
   const [dragging, setDragging] = useState(false)
   const [dropped, setDropped] = useState<File>()
@@ -229,7 +224,11 @@ export default function WorkshopSpace() {
   )
 
   return (
-    <WorkbenchPage list={list}>
+    <WorkbenchPage
+      list={list}
+      narrowPane={requested ? 'main' : 'list'}
+      back={{ label: '返回工坊列表', onBack: () => navigate('/workshop') }}
+    >
       <ImportFlow input={importer} dropped={dropped} onImported={(id) => navigate(`/workshop/extensions/${id}`)} />
       <McpServerDialog
         open={addingMcp}

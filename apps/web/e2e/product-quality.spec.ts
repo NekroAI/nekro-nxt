@@ -3,6 +3,7 @@ import { installWorkspaceRoutes } from './fixtures/workspace.js'
 import { expect, test, type Page, type TestInfo } from '@playwright/test'
 import { AxeBuilder } from '@axe-core/playwright'
 import {
+  configSchema,
   AuthoringAttemptIdSchema,
   AuthoringTaskIdSchema,
   ExtensionIdSchema,
@@ -1154,3 +1155,74 @@ test('model settings edit a fixed catalog with vision models and restore its def
   await expect(table.getByRole('row')).toHaveCount(3)
   expect(failures, failures.join('\n')).toEqual([])
 })
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`mobile workshop switches extensions and saves their configuration in ${theme}`, async ({ page }, testInfo) => {
+    const failures = installRuntimeFailureGate(page)
+    const base = productSnapshot.extensions[0]!
+    let snapshot = HostApiContracts.snapshot.parseResponse({
+      ...productSnapshot,
+      authoringTasks: [],
+      extensions: ['甲', '乙'].map((name, index) => ({
+        ...base,
+        id: `ext_mobile${index}`,
+        slug: `mobile-${index}`,
+        displayName: `虚构配置${name}`,
+        provides: ['agent'],
+        activations: [],
+        revisions: [
+          {
+            ...base.revisions[0],
+            id: `xrv_mobile${index}`,
+            provides: ['agent'],
+            agentLayer: true,
+            hostConfigSchema: configSchema.object({ note: configSchema.string('备注') }),
+          },
+        ],
+        installation: {
+          extensionRevisionId: `xrv_mobile${index}`,
+          installedAt: 1,
+          config: { note: `虚构备注${name}` },
+        },
+      })),
+    })
+    await installProductRoutes(page, () => snapshot)
+    const saves: string[] = []
+    await page.route('**/api/extensions/*/installation/config', async (route) => {
+      const id = new URL(route.request().url()).pathname.split('/')[3]!
+      const body = HostApiContracts.updateHostExtensionConfig.parseRequest(route.request().postDataJSON())
+      snapshot = {
+        ...snapshot,
+        extensions: snapshot.extensions.map((extension) =>
+          extension.id === id
+            ? { ...extension, installation: { ...extension.installation!, config: body.config } }
+            : extension,
+        ),
+      }
+      saves.push(id)
+      await route.fulfill({ json: { config: body.config } })
+    })
+    await page.setViewportSize({ width: theme === 'light' ? 390 : 844, height: theme === 'light' ? 844 : 390 })
+    await page.addInitScript((value) => localStorage.setItem('nekro-nxt.theme', value), theme)
+    await page.goto('/workshop')
+    for (const [index, name] of ['甲', '乙'].entries()) {
+      await page.getByRole('link', { name: new RegExp(`虚构配置${name}`, 'u') }).click()
+      await expect(page.getByRole('heading', { name: `虚构配置${name}`, exact: true })).toBeVisible()
+      await page.getByLabel('备注', { exact: true }).fill(`更新备注${name}`)
+      await page.getByRole('button', { name: '保存配置', exact: true }).click()
+      await expect.poll(() => saves).toContain(`ext_mobile${index}`)
+      await page.screenshot({ path: testInfo.outputPath(`workshop-edit-${theme}-${index}.png`) })
+      await page.getByRole('button', { name: '返回工坊列表', exact: true }).click()
+      await expect(page.getByRole('link', { name: /虚构配置甲/u })).toBeVisible()
+      await expect(page.getByRole('link', { name: /虚构配置乙/u })).toBeVisible()
+    }
+    await page.screenshot({ path: testInfo.outputPath(`workshop-list-${theme}.png`) })
+    await page.getByRole('link', { name: /虚构配置甲/u }).click()
+    await page.reload()
+    await expect(page.getByLabel('备注', { exact: true })).toHaveValue('更新备注甲')
+    await page.goBack()
+    await expect(page.getByRole('link', { name: /虚构配置乙/u })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    expect(failures).toEqual([])
+  })
+}

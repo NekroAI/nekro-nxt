@@ -2,7 +2,17 @@ import { Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { connectionDisplayName, useProductStore } from '../../product-runtime.js'
-import { Button, MainContent, PropertyList, SearchField, Segmented, Select, WorkbenchPage } from '../../ui-kit/index.js'
+import {
+  Button,
+  MainContent,
+  Pressable,
+  PropertyGroup,
+  PropertyList,
+  SearchField,
+  Segmented,
+  Select,
+  WorkbenchPage,
+} from '../../ui-kit/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
@@ -21,41 +31,74 @@ const parseSelection = (rest: string): WiringSelection | undefined => {
 }
 
 /** Narrow windows: the same binding relation as a list with one picker per channel. */
-function CompactBindings() {
+function CompactBindings({ query, freeOnly }: { readonly query: string; readonly freeOnly: boolean }) {
   const channels = useProductStore((state) => state.channels)
   const agents = useProductStore((state) => state.agents)
   const connections = useProductStore((state) => state.connections)
   const [intent, setIntent] = useState<BindIntent | null>(null)
+  const go = useGo()
+  const needle = query.trim().toLowerCase()
+  const matches = (name: string) => name.toLowerCase().includes(needle)
   return (
     <div className={styles.compact}>
-      <PropertyList>
-        {channels.map((channel) => {
-          const connection = connections.find((item) => item.id === channel.connectionId)
-          return (
-            <div key={channel.id} className={styles.compactRow}>
-              <div className={styles.compactText}>
-                <span className={styles.listName}>{channel.name}</span>
-                <span className={styles.listMeta}>
-                  {connection ? connectionDisplayName(connection) : channel.connectionName}
-                </span>
-              </div>
-              <Select
-                aria-label={`${channel.name} 的响应智能体`}
-                value={channel.agentId}
-                options={[
-                  { value: '', label: '未接线' },
-                  ...agents.map((agent) => ({ value: agent.id, label: agent.name })),
-                ]}
-                onValueChange={(value) => {
-                  const agentId = value
-                  if (!agentId) setIntent({ kind: 'unbind', channelId: channel.id })
-                  else setIntent({ kind: channel.agentId ? 'replace' : 'bind', channelId: channel.id, agentId })
-                }}
-              />
-            </div>
-          )
-        })}
-      </PropertyList>
+      <PropertyGroup title="平台账号">
+        <PropertyList>
+          {connections
+            .filter((connection) => matches(connectionDisplayName(connection)))
+            .map((connection) => (
+              <Pressable
+                className={styles.listRow}
+                key={connection.id}
+                onClick={() => go(`/wiring/connections/${connection.id}`)}
+              >
+                {connectionDisplayName(connection)}
+              </Pressable>
+            ))}
+        </PropertyList>
+      </PropertyGroup>
+      <PropertyGroup title="频道">
+        <PropertyList>
+          {channels
+            .filter((channel) => (!freeOnly || !channel.agentId) && matches(channel.name))
+            .map((channel) => {
+              const connection = connections.find((item) => item.id === channel.connectionId)
+              return (
+                <div key={channel.id} className={styles.compactRow}>
+                  <Pressable className={styles.compactText} onClick={() => go(`/wiring/channels/${channel.id}`)}>
+                    <span className={styles.listName}>{channel.name}</span>
+                    <span className={styles.listMeta}>
+                      {connection ? connectionDisplayName(connection) : channel.connectionName}
+                    </span>
+                  </Pressable>
+                  <Select
+                    aria-label={`${channel.name} 的响应智能体`}
+                    value={channel.agentId}
+                    options={[
+                      { value: '', label: '未接线' },
+                      ...agents.map((agent) => ({ value: agent.id, label: agent.name })),
+                    ]}
+                    onValueChange={(value) => {
+                      const agentId = value
+                      if (!agentId) setIntent({ kind: 'unbind', channelId: channel.id })
+                      else setIntent({ kind: channel.agentId ? 'replace' : 'bind', channelId: channel.id, agentId })
+                    }}
+                  />
+                </div>
+              )
+            })}
+        </PropertyList>
+      </PropertyGroup>
+      <PropertyGroup title="智能体">
+        <PropertyList>
+          {agents
+            .filter((agent) => matches(agent.name))
+            .map((agent) => (
+              <Pressable className={styles.listRow} key={agent.id} onClick={() => go(`/wiring/agents/${agent.id}`)}>
+                {agent.name}
+              </Pressable>
+            ))}
+        </PropertyList>
+      </PropertyGroup>
       <BindDialog intent={intent} onClose={() => setIntent(null)} />
     </div>
   )
@@ -72,9 +115,15 @@ export default function WiringSpace() {
   const filter = useMemo(() => ({ query, freeOnly: scope === 'free' }), [query, scope])
   const creating = rest === 'new' || rest.startsWith('new/')
   const parsed = parseSelection(rest)
-  const fallback = connections.find((connection) => connection.userManaged) ?? connections[0]
-  const selected: WiringSelection | undefined =
-    parsed ?? (fallback ? { kind: 'connection', id: fallback.id } : undefined)
+  const selected =
+    parsed &&
+    (parsed.kind === 'connection'
+      ? connections.some((item) => item.id === parsed.id)
+      : parsed.kind === 'channel'
+        ? channels.some((item) => item.id === parsed.id)
+        : agents.some((item) => item.id === parsed.id))
+      ? parsed
+      : undefined
   const crumb = selected?.kind === 'connection' ? connections.find((item) => item.id === selected.id) : undefined
   useCrumb(
     '接线',
@@ -90,7 +139,10 @@ export default function WiringSpace() {
   )
   if (creating) return <ConnectionCreate />
   return (
-    <WorkbenchPage detail={<WiringDetail selected={selected} />}>
+    <WorkbenchPage
+      narrowPane={selected ? 'detail' : 'main'}
+      detail={selected ? <WiringDetail selected={selected} onClose={() => go('/wiring')} /> : undefined}
+    >
       <MainContent width="full" fill>
         <header className={styles.head}>
           <h1 className={styles.title}>接线</h1>
@@ -113,7 +165,7 @@ export default function WiringSpace() {
         </header>
         <div className={styles.board}>
           <PatchBay selected={selected} filter={filter} />
-          <CompactBindings />
+          <CompactBindings query={query} freeOnly={scope === 'free'} />
         </div>
       </MainContent>
     </WorkbenchPage>

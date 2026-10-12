@@ -14,8 +14,19 @@
 }
 
 .extensionCanvas {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.extensionCanvas > :last-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.navigationBack {
+  display: none;
 }
 
 @media (max-width: 760px) {
@@ -23,7 +34,14 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .extensionNavigation {
+  .extensionPage[data-navigation='false'] .extensionNavigation,
+  .extensionPage[data-navigation='true'] .extensionCanvas {
     display: none;
+  }
+
+  .navigationBack {
+    display: block;
+    padding: var(--s-2) var(--s-4);
+    border-bottom: 1px solid var(--line);
   }
 }

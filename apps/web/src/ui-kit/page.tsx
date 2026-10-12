@@ -58,10 +58,15 @@ export function BoardPage({ children }: { readonly children: ReactNode }) {
 export function WorkbenchPage({
   list,
   detail,
+  narrowPane,
+  back,
   children,
 }: {
   readonly list?: ReactNode
   readonly detail?: ReactNode
+  /** Explicit navigation for spaces that replace their list with an object on narrow screens. */
+  readonly narrowPane?: 'list' | 'main' | 'detail'
+  readonly back?: { readonly label: string; readonly onBack: () => void }
   readonly children: ReactNode
 }) {
   return (
@@ -70,9 +75,19 @@ export function WorkbenchPage({
       data-layout="workbench"
       data-list={list ? '' : undefined}
       data-detail={detail ? '' : undefined}
+      data-narrow-pane={narrowPane}
     >
       {list}
-      <div className={styles.main}>{children}</div>
+      <div className={styles.main}>
+        {back ? (
+          <div className={styles.narrowBack}>
+            <Button variant="ghost" size="small" icon={<ChevronLeft size={15} />} onClick={back.onBack}>
+              {back.label}
+            </Button>
+          </div>
+        ) : null}
+        {children}
+      </div>
       {detail}
     </div>
   )

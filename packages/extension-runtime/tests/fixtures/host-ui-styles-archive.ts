@@ -5,10 +5,13 @@ import { materializeDynamicPackage } from '../../src/materializer.js'
 import { stylesSnapshot } from './host-ui-styles.js'
 
 /** A real transferable revision made from the same body used by the runtime regression. */
-export function createStylesArchive(suffix: string) {
+export function createStylesArchive(
+  suffix: string,
+  snapshot: Parameters<typeof materializeDynamicPackage>[0]['snapshot'] = stylesSnapshot,
+) {
   const extensionId = ExtensionIdSchema.parse(`ext_STYLES${suffix}`)
   const revisionId = ExtensionRevisionIdSchema.parse(`xrv_STYLES${suffix}`)
-  const revision = materializeDynamicPackage({ extensionId, revisionId, snapshot: stylesSnapshot })
+  const revision = materializeDynamicPackage({ extensionId, revisionId, snapshot })
   const files: Record<string, Uint8Array> = {
     'revision/manifest.json': strToU8(JSON.stringify(revision.manifest)),
     'revision/source/client.ts': strToU8(revision.sources.client!),
@@ -23,8 +26,8 @@ export function createStylesArchive(suffix: string) {
       extension: {
         id: extensionId,
         slug: `styles-probe-${suffix.toLowerCase()}`,
-        displayName: stylesSnapshot.name,
-        description: stylesSnapshot.purpose,
+        displayName: snapshot.name,
+        description: snapshot.purpose,
         createdAt: 1,
       },
       revision: {

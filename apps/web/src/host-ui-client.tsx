@@ -517,7 +517,13 @@ function MountedPageCanvas({ page, wildcard }: { readonly page: HostUiPageEntry;
   )
 }
 
-export function HostUiObjectPane({ page }: { readonly page: HostUiPageEntry }) {
+export function HostUiObjectPane({
+  page,
+  onNavigate,
+}: {
+  readonly page: HostUiPageEntry
+  readonly onNavigate?: (() => void) | undefined
+}) {
   const runtime = useRuntime(page)
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.snapshot, runtime.snapshot)
   useEffect(() => void runtime.ensureLoaded().catch(() => undefined), [runtime])
@@ -537,7 +543,7 @@ export function HostUiObjectPane({ page }: { readonly page: HostUiPageEntry }) {
         <Spinner />
       </div>
     )
-  return <HostUiNavigation page={page} provider={registration.navigation} />
+  return <HostUiNavigation page={page} provider={registration.navigation} onNavigate={onNavigate} />
 }
 
 type HostUiNavigationState =
@@ -555,9 +561,11 @@ export const readHostUiNavigation = (provider: HostUiNavigationProvider): HostUi
 function HostUiNavigation({
   page,
   provider,
+  onNavigate,
 }: {
   readonly page: HostUiPageEntry
   readonly provider: HostUiNavigationProvider
+  readonly onNavigate?: (() => void) | undefined
 }) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -615,6 +623,7 @@ function HostUiNavigation({
               onClick={() => {
                 const relative = toRelativePath(item.path)
                 void navigate(`${page.routeBase}${relative ? `/${relative}` : ''}`)
+                onNavigate?.()
               }}
             >
               <span>

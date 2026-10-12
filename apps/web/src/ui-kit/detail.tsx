@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Copy, Pencil, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Copy, Pencil, X } from 'lucide-react'
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Input } from './form.js'
 import { IconButton, Pressable } from './primitives.js'
@@ -56,12 +56,14 @@ export function DetailPane({
   children,
   footer,
   onClose,
+  backLabel,
   label,
 }: {
   readonly header: ReactNode
   readonly children: ReactNode
   readonly footer?: ReactNode
   readonly onClose?: () => void
+  readonly backLabel?: string
   readonly label: string
 }) {
   return (
@@ -71,8 +73,8 @@ export function DetailPane({
           <HeadingLevel.Provider value={2}>{header}</HeadingLevel.Provider>
         </div>
         {onClose ? (
-          <IconButton label="关闭详情" size="small" onClick={onClose}>
-            <X size={16} />
+          <IconButton label={backLabel ?? '关闭详情'} size="small" onClick={onClose}>
+            {backLabel ? <ChevronLeft size={16} /> : <X size={16} />}
           </IconButton>
         ) : null}
       </div>

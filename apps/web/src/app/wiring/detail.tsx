@@ -81,7 +81,13 @@ function MemberList({ connectionId }: { readonly connectionId: string }) {
   )
 }
 
-function ConnectionDetail({ connection }: { readonly connection: ConnectionSummary }) {
+function ConnectionDetail({
+  connection,
+  onClose,
+}: {
+  readonly connection: ConnectionSummary
+  readonly onClose: () => void
+}) {
   const api = useProductApi()
   const go = useGo()
   const descriptors = useProductStore((state) => state.connectionAdapters)
@@ -165,6 +171,8 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
 
   return (
     <DetailPane
+      onClose={onClose}
+      backLabel="返回接线列表"
       label="详情"
       header={
         <ObjectHeader
@@ -377,7 +385,7 @@ function ConnectionDetail({ connection }: { readonly connection: ConnectionSumma
   )
 }
 
-function ChannelDetail({ channelId }: { readonly channelId: string }) {
+function ChannelDetail({ channelId, onClose }: { readonly channelId: string; readonly onClose: () => void }) {
   const go = useGo()
   const channel = useProductStore((state) => state.channels.find((item) => item.id === channelId))
   const agents = useProductStore((state) => state.agents)
@@ -390,6 +398,8 @@ function ChannelDetail({ channelId }: { readonly channelId: string }) {
   const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
   return (
     <DetailPane
+      onClose={onClose}
+      backLabel="返回接线列表"
       label="详情"
       header={
         <ObjectHeader
@@ -447,7 +457,7 @@ function ChannelDetail({ channelId }: { readonly channelId: string }) {
   )
 }
 
-function AgentDetail({ agentId }: { readonly agentId: string }) {
+function AgentDetail({ agentId, onClose }: { readonly agentId: string; readonly onClose: () => void }) {
   const go = useGo()
   const agent = useProductStore((state) => state.agents.find((item) => item.id === agentId))
   const channels = useProductStore((state) => state.channels)
@@ -456,6 +466,8 @@ function AgentDetail({ agentId }: { readonly agentId: string }) {
   const phase = agentPhase[agent.state]
   return (
     <DetailPane
+      onClose={onClose}
+      backLabel="返回接线列表"
       label="详情"
       header={
         <ObjectHeader
@@ -501,12 +513,18 @@ function AgentDetail({ agentId }: { readonly agentId: string }) {
   )
 }
 
-export function WiringDetail({ selected }: { readonly selected: WiringSelection | undefined }) {
+export function WiringDetail({
+  selected,
+  onClose,
+}: {
+  readonly selected: WiringSelection | undefined
+  readonly onClose: () => void
+}) {
   const connection = useProductStore((state) =>
     selected?.kind === 'connection' ? state.connections.find((item) => item.id === selected.id) : undefined,
   )
-  if (connection) return <ConnectionDetail key={connection.id} connection={connection} />
-  if (selected?.kind === 'channel') return <ChannelDetail key={selected.id} channelId={selected.id} />
-  if (selected?.kind === 'agent') return <AgentDetail key={selected.id} agentId={selected.id} />
+  if (connection) return <ConnectionDetail key={connection.id} connection={connection} onClose={onClose} />
+  if (selected?.kind === 'channel') return <ChannelDetail key={selected.id} channelId={selected.id} onClose={onClose} />
+  if (selected?.kind === 'agent') return <AgentDetail key={selected.id} agentId={selected.id} onClose={onClose} />
   return null
 }

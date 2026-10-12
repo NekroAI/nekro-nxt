@@ -89,3 +89,65 @@ test('materialized Host UI styles survive durable save, installation and refresh
     expect(deleted.ok(), await deleted.text()).toBe(true)
   }
 })
+
+test('mobile extension page navigation remains reachable after selection, reload and return', async ({
+  page,
+  request,
+}, testInfo) => {
+  const definition = {
+    kind: 'host-page' as const,
+    entryId: 'navigation-probe',
+    title: '虚构导航页面',
+    icon: { kind: 'host-icon' as const, name: 'layout-dashboard' as const },
+    objectPane: 'navigation' as const,
+    startPath: '',
+  }
+  const fixture = createStylesArchive(randomUUID().replaceAll('-', ''), {
+    name: '虚构导航页面',
+    purpose: '验证手机页面的导航与返回。',
+    permissions: { permissions: [], networkOrigins: [] },
+    contributions: [definition],
+    clientCode: `return { inject: ['pages', 'ui'], apply(ctx) { return ctx.pages.register({ page: ${JSON.stringify(definition)}, navigation: { getSnapshot: () => ({ revision: 0, groups: [{ id: 'main', items: [{ id: 'first', label: '虚构页面甲', path: 'first' }, { id: 'second', label: '虚构页面乙', path: 'second' }] }] }), subscribe: () => () => undefined } }, ({ relativePath }) => React.createElement(ctx.ui.Section, {}, React.createElement('h2', {}, '虚构详情 ' + relativePath))) } }`,
+  })
+  const inspection = HostApiContracts.inspectExtensionImport.parseResponse(
+    await (
+      await request.post('/api/extensions/imports/inspect', {
+        data: Buffer.from(fixture.archive),
+        headers: { 'content-type': 'application/octet-stream' },
+      })
+    ).json(),
+  )
+  expect((await request.post(`/api/extensions/imports/${inspection.token}/commit`, { data: {} })).ok()).toBe(true)
+  expect(
+    (
+      await request.put(`/api/extensions/${fixture.extensionId}/installation`, {
+        data: { revisionId: fixture.revisionId },
+      })
+    ).ok(),
+  ).toBe(true)
+  const failures: string[] = []
+  page.on('pageerror', (error) => failures.push(error.message))
+  try {
+    const snapshot = HostApiContracts.snapshot.parseResponse(await (await request.get('/api/snapshot')).json())
+    const entry = snapshot.hostUi.pages.find(
+      (item) => item.owner.kind === 'extension' && item.owner.extensionId === fixture.extensionId,
+    )!
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(entry.routeBase)
+    await page.getByRole('button', { name: '虚构页面甲', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '虚构详情 first', exact: true })).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole('heading', { name: '虚构详情 first', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '返回列表', exact: true }).click()
+    await expect(page.getByRole('button', { name: '虚构页面乙', exact: true })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('extension-navigation-mobile.png') })
+    await page.getByRole('button', { name: '虚构页面乙', exact: true }).click()
+    await expect(page.getByRole('heading', { name: '虚构详情 second', exact: true })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    expect(failures).toEqual([])
+  } finally {
+    await page.goto('about:blank')
+    expect((await request.delete(`/api/extensions/${fixture.extensionId}/installation`)).ok()).toBe(true)
+    expect((await request.delete(`/api/extensions/${fixture.extensionId}`)).ok()).toBe(true)
+  }
+})
