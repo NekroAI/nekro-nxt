@@ -5,6 +5,7 @@ import {
   LogicalMessageIdSchema,
   messagePartAssetId,
   messagePartAssetIds,
+  messagePartImageAssetIds,
   messagePartsSearchText,
   NonEmptyMessagePartsSchema,
   parseMessageParts,
@@ -12,6 +13,32 @@ import {
 } from '../src/index.ts'
 
 describe('MessagePart boundary', () => {
+  it('authorizes forwarded files and recordings without treating them as pictures', () => {
+    const [part] = parseMessageParts([
+      {
+        type: 'rich',
+        adapterKey: 'fixture',
+        kind: 'forward',
+        summary: '虚构转发',
+        extension: {
+          items: [
+            { imageAssetId: 'ast_image' },
+            { audioAssetId: 'ast_voice' },
+            { fileAssetId: 'ast_file', fileName: '资料.txt', fileMediaType: 'text/plain' },
+            { fileAssetId: 'ast_video', fileName: '短片.webm', fileMediaType: 'video/webm' },
+            { audioAssetId: 'invalid-id' },
+          ],
+        },
+      },
+    ])
+    if (!part || part.type !== 'rich') throw new Error('Fixture is not a rich part')
+    expect(messagePartAssetIds(part)).toEqual(['ast_image', 'ast_voice', 'ast_file', 'ast_video'])
+    expect(messagePartImageAssetIds(part)).toEqual(['ast_image'])
+    expect(richPartContextText(part)).toContain('[语音 ast_voice]')
+    expect(richPartContextText(part)).toContain('[文件 ast_file：资料.txt]')
+    expect(richPartContextText(part)).toContain('[视频 ast_video：短片.webm]')
+  })
+
   it('preserves ordered structured content', () => {
     expect(
       parseMessageParts([

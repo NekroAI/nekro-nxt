@@ -145,6 +145,28 @@ function HostRichCard({
               />
             </Pressable>
           ) : null}
+          {item.audioUrl ? (
+            <Pressable
+              className={contentStyles.fileTrigger}
+              onClick={() => onPreview({ name: '转发语音', url: item.audioUrl!, kind: 'audio' })}
+            >
+              <Headphones size={15} aria-hidden="true" /> 播放语音
+            </Pressable>
+          ) : null}
+          {item.fileUrl ? (
+            <Pressable
+              className={contentStyles.fileTrigger}
+              onClick={() =>
+                onPreview({
+                  name: item.fileName ?? '转发文件',
+                  url: item.fileUrl!,
+                  kind: item.fileMediaType?.startsWith('video/') ? 'video' : detectResourceKind(item.fileName ?? ''),
+                })
+              }
+            >
+              <File size={15} aria-hidden="true" /> {item.fileName ?? '转发文件'}
+            </Pressable>
+          ) : null}
         </div>
       ))}
       {previewLines ? <pre className={contentStyles.forwardPreview}>{previewLines}</pre> : null}

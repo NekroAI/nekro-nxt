@@ -287,19 +287,24 @@ export function parseMessageParts(input: unknown): MessagePart[] {
   return MessagePartsSchema.parse(input)
 }
 
-const collectRichAssetIds = (value: JsonValue | undefined, into: AssetId[]): void => {
+const collectRichAssetIds = (value: JsonValue | undefined, into: AssetId[], imagesOnly = false): void => {
   if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'number') return
   if (typeof value === 'string') return
   if (Array.isArray(value)) {
-    for (const item of value) collectRichAssetIds(item, into)
+    for (const item of value) collectRichAssetIds(item, into, imagesOnly)
     return
   }
   for (const [key, child] of Object.entries(value)) {
-    if ((key === 'imageAssetId' || key === 'previewAssetId') && typeof child === 'string') {
+    if (
+      (key === 'imageAssetId' ||
+        key === 'previewAssetId' ||
+        (!imagesOnly && (key === 'audioAssetId' || key === 'fileAssetId'))) &&
+      typeof child === 'string'
+    ) {
       const parsed = AssetIdSchema.safeParse(child)
       if (parsed.success) into.push(parsed.data)
     } else {
-      collectRichAssetIds(child, into)
+      collectRichAssetIds(child, into, imagesOnly)
     }
   }
 }
@@ -314,6 +319,15 @@ export const messagePartAssetIds = (part: MessagePart): readonly AssetId[] => {
 }
 
 export const messagePartAssetId = (part: MessagePart): AssetId | undefined => messagePartAssetIds(part)[0]
+
+/** Only actual pictures enter visual context; forwarded files and recordings retain their own media kind. */
+export const messagePartImageAssetIds = (part: MessagePart): readonly AssetId[] => {
+  if (part.type === 'image') return [part.assetId]
+  if (part.type !== 'rich') return []
+  const ids: AssetId[] = part.previewAssetId ? [part.previewAssetId] : []
+  collectRichAssetIds(part.extension, ids, true)
+  return ids
+}
 
 const asJsonRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> | undefined =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
@@ -332,7 +346,12 @@ const richItemLine = (value: JsonValue): string | undefined => {
         : undefined
   const imageName = typeof item['imageName'] === 'string' ? item['imageName'] : undefined
   const imageText = typeof item['imageAssetId'] === 'string' ? `[图片${imageName ? ` ${imageName}` : ''}]` : undefined
-  const body = [text, cardSummary ? `[卡片] ${cardSummary}` : undefined, imageText]
+  const audioText = typeof item['audioAssetId'] === 'string' ? `[语音 ${item['audioAssetId']}]` : undefined
+  const fileText =
+    typeof item['fileAssetId'] === 'string'
+      ? `[${typeof item['fileMediaType'] === 'string' && item['fileMediaType'].startsWith('video/') ? '视频' : '文件'} ${item['fileAssetId']}${typeof item['fileName'] === 'string' ? `：${item['fileName']}` : ''}]`
+      : undefined
+  const body = [text, cardSummary ? `[卡片] ${cardSummary}` : undefined, imageText, audioText, fileText]
     .filter((part): part is string => Boolean(part && part.length > 0))
     .join(' ')
   if (!sender && !body) return undefined

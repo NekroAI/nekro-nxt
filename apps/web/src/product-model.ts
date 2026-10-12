@@ -194,6 +194,10 @@ export type ConversationPart =
         }
         readonly imageUrl?: string
         readonly imageName?: string
+        readonly audioUrl?: string
+        readonly fileUrl?: string
+        readonly fileName?: string
+        readonly fileMediaType?: string
       }[]
     }
   | { readonly type: 'unsupported'; readonly label: string }

@@ -30,6 +30,7 @@ import { isAdminConsoleOutbound, type ChannelHistoryEntry } from '@nekro-nxt/cha
 import {
   AssetIdSchema,
   messagePartAssetIds,
+  messagePartImageAssetIds,
   richPartContextText,
   type AssetId,
   type ChannelId,
@@ -1019,7 +1020,7 @@ export class SessionImageContext {
           const context = richPartContextText(part)
           const label = part.kind === 'forward' ? '收到转发' : '收到卡片'
           blocks.push({ type: 'text', text: `${label}：${context.includes('\n') ? `\n${context}` : context}` })
-          for (const assetId of messagePartAssetIds(part)) {
+          for (const assetId of messagePartImageAssetIds(part)) {
             blocks.push({ type: 'text', text: `卡片图片资源 ${assetId}` })
             await attachImage(assetId)
           }

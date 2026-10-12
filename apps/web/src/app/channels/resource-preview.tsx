@@ -98,6 +98,28 @@ function TextPreview({ url, name }: { readonly url: string; readonly name: strin
   return <pre className={styles.textPreview}>{text}</pre>
 }
 
+function MediaPreview({
+  kind,
+  url,
+  name,
+}: {
+  readonly kind: 'audio' | 'video'
+  readonly url: string
+  readonly name: string
+}) {
+  const [failed, setFailed] = useState(false)
+  return (
+    <>
+      {kind === 'audio' ? (
+        <audio className={styles.media} aria-label={name} controls src={url} onError={() => setFailed(true)} />
+      ) : (
+        <video className={styles.media} aria-label={name} controls src={url} onError={() => setFailed(true)} />
+      )}
+      {failed ? <p className={styles.status}>浏览器无法播放此文件，可以下载后查看。</p> : null}
+    </>
+  )
+}
+
 export function ResourcePreviewDialog({
   open,
   resource,
@@ -123,17 +145,10 @@ export function ResourcePreviewDialog({
         </a>
       }
     >
-      <div className={styles.body}>
+      <div className={styles.body} data-kind={kind}>
         {kind === 'image' ? <img className={styles.image} src={resource.url} alt={title} /> : null}
-        {kind === 'audio' ? (
-          <audio className={styles.media} controls src={resource.url}>
-            你的浏览器不支持音频播放。
-          </audio>
-        ) : null}
-        {kind === 'video' ? (
-          <video className={styles.media} controls src={resource.url}>
-            你的浏览器不支持视频播放。
-          </video>
+        {kind === 'audio' || kind === 'video' ? (
+          <MediaPreview key={resource.url} kind={kind} url={resource.url} name={title} />
         ) : null}
         {kind === 'pdf' ? <iframe className={styles.frame} title={title} src={resource.url} /> : null}
         {kind === 'text' ? <TextPreview url={resource.url} name={title} /> : null}

@@ -37,7 +37,7 @@ const FEEDBACK_EMOJI_ID = '212'
 const FORWARD_NODE_LIMIT = 50
 const FORWARD_JSON_LIMIT = 64 * 1024
 // Match the host's per-message image admission bound; nested records share the allowance.
-const FORWARD_IMAGE_LIMIT = 20
+const FORWARD_MEDIA_LIMIT = 20
 
 export interface OneBot11RuntimeOptions {
   readonly context: AdapterConnectionHostContext
@@ -960,24 +960,39 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
           remainingText -= text.length
           if (text.length < raw.length) budget.truncated = true
           if (text) append({ ...identity, text })
-        } else if (item.type === 'image' || item.type === 'mface') {
+        } else if (['image', 'mface', 'record', 'file', 'video'].includes(item.type)) {
+          const isImage = item.type === 'image' || item.type === 'mface'
+          const label = isImage ? '图片' : item.type === 'record' ? '语音' : item.type === 'video' ? '视频' : '文件'
           const url = textValue(item.data['url'])
-          if (!url) append({ ...identity, text: '图片暂时不可下载。' })
-          else if (budget.images >= FORWARD_IMAGE_LIMIT) {
+          const name = compactNoticeText(item.data['name']) ?? (item.type === 'video' ? '转发视频' : '转发文件')
+          if (!url) append({ ...identity, text: `${label}${item.type === 'file' ? `：${name}` : ''}暂时不可下载。` })
+          else if (budget.images >= FORWARD_MEDIA_LIMIT) {
             budget.truncated = true
-            append({ ...identity, text: '图片未展开（已达图片数量上限）。' })
+            append({ ...identity, text: `${label}未展开（已达附件数量上限）。` })
           } else {
             budget.images += 1
             try {
               const asset = await this.#downloadAsset(url)
-              if (!asset.mediaType.startsWith('image/')) throw new Error('Forward image has a non-image media type.')
-              append({
-                ...identity,
-                imageAssetId: asset.assetId,
-                imageName: item.type === 'mface' ? '表情图片' : '转发图片',
-              })
+              if (isImage && !asset.mediaType.startsWith('image/'))
+                throw new Error('Forward image has a non-image media type.')
+              append(
+                isImage
+                  ? {
+                      ...identity,
+                      imageAssetId: asset.assetId,
+                      imageName: item.type === 'mface' ? '表情图片' : '转发图片',
+                    }
+                  : item.type === 'record'
+                    ? { ...identity, audioAssetId: asset.assetId }
+                    : {
+                        ...identity,
+                        fileAssetId: asset.assetId,
+                        fileName: name,
+                        fileMediaType: asset.mediaType,
+                      },
+              )
             } catch {
-              append({ ...identity, text: '图片下载失败。' })
+              append({ ...identity, text: `${label}下载失败。` })
             }
           }
         } else if (item.type === 'forward') {

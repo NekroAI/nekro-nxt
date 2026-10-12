@@ -5,6 +5,11 @@
   animation: bodyIn var(--dur-2) var(--ease) both;
 }
 
+.body[data-kind='audio'],
+.body[data-kind='audio'] .media {
+  min-height: 0;
+}
+
 @keyframes bodyIn {
   from {
     opacity: 0;

@@ -298,6 +298,14 @@ const projectConversationMessage = (
                   imageUrl: assetUrl(imageAssetId),
                   imageName: typeof item['imageName'] === 'string' ? item['imageName'] : '图片',
                 }),
+            ...(typeof item['audioAssetId'] === 'string' ? { audioUrl: assetUrl(item['audioAssetId']) } : {}),
+            ...(typeof item['fileAssetId'] === 'string'
+              ? {
+                  fileUrl: assetUrl(item['fileAssetId']),
+                  fileName: typeof item['fileName'] === 'string' ? item['fileName'] : '转发文件',
+                  ...(typeof item['fileMediaType'] === 'string' ? { fileMediaType: item['fileMediaType'] } : {}),
+                }
+              : {}),
           },
         ]
       })
