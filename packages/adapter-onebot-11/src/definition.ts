@@ -405,7 +405,7 @@ export const ONEBOT_11_CONNECTION_DEFINITION = defineAdapterConnection({
   configSchema: configSchema.object({
     endpoint: configSchema.string('WebSocket Endpoint', {
       required: true,
-      hint: '协议端提供的正向 Universal WebSocket 地址，保留完整路径。',
+      hint: '填写协议端配置的正向 Universal WebSocket 地址和完整路径，例如 ws://host:3001/ws；路径以协议端配置为准。',
     }),
     accessToken: configSchema.secret('Access Token', { hint: '可选。以 Authorization: Bearer 头发送。' }),
     capturePokeEvents: configSchema.boolean('记录戳一戳事件', { default: true, advanced: true }),

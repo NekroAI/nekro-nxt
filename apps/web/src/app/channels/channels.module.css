@@ -787,6 +787,10 @@ button.step:hover {
   color: var(--ok);
 }
 
+.stepWarn svg {
+  color: var(--warn);
+}
+
 .stepFail {
   border-color: color-mix(in srgb, var(--bad) 40%, transparent);
   color: var(--bad);

@@ -40,6 +40,58 @@ const serve = async (onConnection: (socket: WebSocket, authorization: string | u
 }
 
 describe('OneBot forward WebSocket transport', () => {
+  it.each([true, false])(
+    'waits for account confirmation before admitting early events (same account: %s)',
+    async (sameAccount) => {
+      const endpoint = await serve((socket) => {
+        socket.send(
+          JSON.stringify({
+            post_type: 'message',
+            message_type: 'group',
+            message: [{ type: 'text', data: { text: '虚构的握手前消息' } }],
+          }),
+        )
+        socket.on('message', (raw) => {
+          const request = decodeRequest(raw)
+          socket.send(
+            JSON.stringify({
+              status: 'ok',
+              retcode: 0,
+              echo: request['echo'],
+              data: request['action'] === 'get_login_info' ? { user_id: sameAccount ? '90001' : '90002' } : {},
+            }),
+          )
+        })
+      })
+      const fake = createFakeContext()
+      fake.states.set('onebot-11/account-lock', { selfId: '90001' })
+      const events: unknown[] = []
+      const client = new OneBotWebSocketClient({
+        context: fake.context,
+        endpoint,
+        onEvent: (event) => {
+          events.push(event)
+          expect(client.connected).toBe(true)
+          return Promise.resolve()
+        },
+        reconnectDelaysMs: [5],
+      })
+      try {
+        await client.start()
+        if (sameAccount) await waitFor(() => events.length === 1)
+        else
+          await waitFor(() =>
+            fake.diagnostics.some((item) => item.status === 'failed' && item.message?.includes('另一个账号')),
+          )
+        await client.stop()
+        expect(events).toHaveLength(sameAccount ? 1 : 0)
+        expect(fake.accountReports).toEqual(sameAccount ? ['90001'] : [])
+      } finally {
+        await client.stop()
+      }
+    },
+  )
+
   it('uses Bearer Authorization and correlates out-of-order replies by echo', async () => {
     const requests: Record<string, unknown>[] = []
     let authorization: string | undefined

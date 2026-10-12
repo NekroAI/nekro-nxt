@@ -1,4 +1,5 @@
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
+import { renderChannelMessageResult } from './channel-message-result.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
 import {
   prepareDshHostProfile,
@@ -1975,7 +1976,7 @@ export const channelCommunicationTool = (
       render: (_arguments, value) => [
         {
           type: 'text',
-          text: `消息 ${value.logicalMessageId}：${value.status}`,
+          text: renderChannelMessageResult(value),
         },
       ],
       presentationMeta: (_arguments, value) => ({

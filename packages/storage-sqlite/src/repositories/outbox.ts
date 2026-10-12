@@ -69,6 +69,7 @@ const receiptFromRow = (
     case 'failed':
       return AdapterDeliveryReceiptSchema.parse({
         status: 'failed',
+        ...(row.diagnostic === null ? {} : { diagnostic: row.diagnostic }),
         failure: {
           kind: row.failureKind,
           message: row.resultMessage,
@@ -76,7 +77,11 @@ const receiptFromRow = (
         },
       })
     case 'unknown':
-      return AdapterDeliveryReceiptSchema.parse({ status: 'unknown', message: row.resultMessage })
+      return AdapterDeliveryReceiptSchema.parse({
+        status: 'unknown',
+        message: row.resultMessage,
+        ...(row.diagnostic === null ? {} : { diagnostic: row.diagnostic }),
+      })
   }
 }
 
@@ -215,11 +220,17 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
             ? {
                 state: 'failed' as const,
                 failureKind: parsed.failure.kind,
+                diagnostic: parsed.diagnostic ?? null,
                 resultMessage: parsed.failure.message,
                 retryAfterMs: parsed.failure.retryAfterMs ?? null,
                 completedAt,
               }
-            : { state: 'unknown' as const, resultMessage: parsed.message, completedAt }
+            : {
+                state: 'unknown' as const,
+                resultMessage: parsed.message,
+                diagnostic: parsed.diagnostic ?? null,
+                completedAt,
+              }
       if (
         database
           .update(physicalDeliveries)

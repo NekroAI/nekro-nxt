@@ -220,6 +220,10 @@ export const PhysicalDeliveryRowSchema = createSelectSchema(physicalDeliveries, 
   parts: MessagePartsSchema,
   adapterContext: JsonValueSchema.nullable(),
   capabilityOutcomes: jsonObjectSchema.nullable(),
+  diagnostic: z
+    .object({ action: z.string().max(120).optional(), retcode: z.number().int().safe().optional() })
+    .strict()
+    .nullable(),
 })
 export const AssetRowSchema = createSelectSchema(assets, { id: AssetIdSchema })
 export const AssetOccurrenceRowSchema = createSelectSchema(assetOccurrences, {

@@ -1225,4 +1225,96 @@ for (const theme of ['light', 'dark'] as const) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(failures).toEqual([])
   })
+
+  test(`failed send details preserve rejection, partial and unknown delivery in ${theme}`, async ({
+    page,
+  }, testInfo) => {
+    const failures = installRuntimeFailureGate(page)
+    await installProductRoutes(page)
+    const states = ['failed', 'partially-sent', 'unknown'] as const
+    const result = (state: (typeof states)[number]) =>
+      JSON.stringify({
+        status: state,
+        issues: [
+          {
+            status: state === 'unknown' ? 'unknown' : 'failed',
+            message: state === 'unknown' ? '等待平台回执超时。' : '虚构平台拒绝发送，请检查频道权限。',
+            ...(state === 'unknown' ? {} : { kind: 'authentication', retcode: 1401 }),
+            action: 'send_group_msg',
+          },
+        ],
+      })
+    await page.route(`**/api/channels/${targetChannelId}/runtime`, (route) =>
+      route.fulfill({
+        json: {
+          cursor: { epoch: 'fixture', sequence: 0 },
+          channelId: targetChannelId,
+          agentId: targetAgentId,
+          episodeId: targetEpisodeId,
+          phase: 'idle',
+          summary: '智能体当前空闲。',
+          pendingInjectCount: 0,
+          turns: [
+            {
+              turn: 1,
+              state: 'completed',
+              producedReply: false,
+              responseState: 'protocol-failed',
+              triggerEventId: visibleEventId,
+              inputs: [],
+              steps: states.map((state, index) => ({
+                step: index + 1,
+                tools: [
+                  {
+                    callId: `call_delivery${index}`,
+                    name: 'send_channel_message',
+                    displayName: '发送频道消息',
+                    state: 'succeeded',
+                    deliveryState: state,
+                    inputPreview: JSON.stringify({ parts: [{ type: 'text', text: `虚构发送${index}` }] }),
+                    resultPreview: result(state),
+                  },
+                ],
+              })),
+            },
+          ],
+        },
+      }),
+    )
+    await page.route(`**/api/channels/${targetChannelId}/runtime/tools/*`, (route) => {
+      const index = Number(new URL(route.request().url()).pathname.slice(-1))
+      return route.fulfill({
+        json: {
+          callId: `call_delivery${index}`,
+          name: 'send_channel_message',
+          available: true,
+          input: JSON.stringify({ parts: [{ type: 'text', text: `虚构发送${index}` }] }),
+          result: result(states[index]!),
+          inputTruncated: false,
+          resultTruncated: false,
+        },
+      })
+    })
+    await page.setViewportSize({ width: theme === 'light' ? 1440 : 1100, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.addInitScript((value) => localStorage.setItem('nekro-nxt.theme', value), theme)
+    await page.goto(`/channels/${targetChannelId}`)
+    await page.getByRole('button', { name: /透视/u }).click()
+    await expect(page.getByText('未送达', { exact: true })).toBeVisible()
+    await expect(page.getByText('送达待确认', { exact: true })).toBeVisible()
+    await expect(page.getByText('成功', { exact: true })).toHaveCount(0)
+    await expect(page.getByText('没有发出', { exact: true })).toBeVisible()
+    await expect(page.getByText('部分内容已送达频道', { exact: true })).toBeVisible()
+    await expect(page.getByText('送达结果未确认，请先查看频道中的消息。', { exact: true })).toBeVisible()
+    await expect(page.getByText('虚构平台拒绝发送，请检查频道权限。', { exact: true })).toHaveCount(2)
+    await page.getByRole('button', { name: '诊断信息', exact: true }).first().click()
+    await expect(page.getByText('1401', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('send_group_msg', { exact: true }).first()).toBeVisible()
+    await page.getByText('1401', { exact: true }).first().scrollIntoViewIfNeeded()
+    await expect(page.getByText('1401', { exact: true }).first()).toBeInViewport()
+    await expect(page.getByText('authentication', { exact: true }).first()).toBeInViewport()
+    await expect(page.getByText('send_group_msg', { exact: true }).first()).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath(`send-diagnostics-${theme}.png`), animations: 'disabled' })
+    expect(failures).toEqual([])
+  })
 }

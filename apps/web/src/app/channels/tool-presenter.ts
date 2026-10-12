@@ -4,6 +4,18 @@
  * lenient and every presenter falls back to plain text instead of showing JSON punctuation.
  */
 
+import { MessageDeliverySummarySchema } from '@nekro-nxt/contracts'
+
+export const messageDeliverySummary = (text: string | undefined) => {
+  if (!text) return undefined
+  try {
+    const parsed = MessageDeliverySummarySchema.safeParse(JSON.parse(text))
+    return parsed.success ? parsed.data : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export type ToolKind = 'search' | 'command' | 'fetch' | 'message' | 'finish' | 'script' | 'other'
 
 export const toolKind = (name: string): ToolKind => {

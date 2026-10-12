@@ -665,6 +665,7 @@ export const physicalDeliveries = sqliteTable(
     state: text({ enum: ['planned', 'sending', 'sent', 'failed', 'unknown'] }).notNull(),
     platformMessageId: text('platform_message_id'),
     capabilityOutcomes: jsonText<Readonly<Record<string, JsonValue>>>('capability_outcomes'),
+    diagnostic: jsonText<{ readonly action?: string | undefined; readonly retcode?: number | undefined }>('diagnostic'),
     failureKind: text('failure_kind', {
       enum: ['transient', 'permanent', 'rate-limited', 'authentication', 'invalid'],
     }).$type<AdapterFailureKind>(),

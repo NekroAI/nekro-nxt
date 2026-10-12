@@ -3,6 +3,7 @@ import type {
   AdapterFailureKind,
   AdapterOptionalCapabilityStatus,
 } from '@nekro-nxt/adapter-sdk'
+import { redactAdapterDiagnosticText } from '@nekro-nxt/adapter-sdk'
 import type { JsonValue } from '@nekro-nxt/contracts'
 import { randomUUID } from 'node:crypto'
 import WebSocket, { type RawData } from 'ws'
@@ -20,6 +21,7 @@ export class OneBotActionError extends Error {
     readonly kind: AdapterFailureKind | 'unsupported' | 'unknown',
     readonly submitted: boolean,
     readonly retcode?: number,
+    readonly action?: string,
   ) {
     super(message)
     this.name = 'OneBotActionError'
@@ -60,8 +62,9 @@ const stringId = (value: unknown): string | undefined => {
   return undefined
 }
 
-const responseFailure = (input: OneBotObject): OneBotActionError => {
-  const retcode = typeof input['retcode'] === 'number' ? input['retcode'] : undefined
+const responseFailure = (input: OneBotObject, action: string, secret?: string): OneBotActionError => {
+  const retcode =
+    typeof input['retcode'] === 'number' && Number.isSafeInteger(input['retcode']) ? input['retcode'] : undefined
   const wording = [input['message'], input['wording']]
     .filter((value): value is string => typeof value === 'string')
     .join(' ')
@@ -82,10 +85,11 @@ const responseFailure = (input: OneBotObject): OneBotActionError => {
             ? 'permanent'
             : 'transient'
   return new OneBotActionError(
-    wording || `OneBot Action 失败（retcode ${retcode ?? 'unknown'}）。`,
+    redactAdapterDiagnosticText(wording || '协议端拒绝了这次请求。', secret ? [secret] : []),
     kind,
     true,
     retcode,
+    action,
   )
 }
 
@@ -109,6 +113,7 @@ export class OneBotWebSocketClient {
   #terminalAccountChange = false
   #selfId: string | undefined
   #version: OneBotObject | undefined
+  #initialization: Promise<boolean> = Promise.resolve(false)
 
   constructor(options: OneBotWebSocketClientOptions) {
     const endpoint = new URL(options.endpoint)
@@ -170,6 +175,7 @@ export class OneBotWebSocketClient {
         if (socket.readyState === WebSocket.CLOSED) finish()
       })
     }
+    await this.#initialization
     await this.#eventQueue
     this.#selfId = undefined
     this.#publish('stopped')
@@ -179,13 +185,23 @@ export class OneBotWebSocketClient {
   call(action: string, params: OneBotObject = {}, options: { readonly timeoutMs?: number } = {}): Promise<unknown> {
     const socket = this.#socket
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new OneBotActionError('OneBot WebSocket 尚未连接。', 'transient', false))
+      return Promise.reject(
+        new OneBotActionError('平台连接尚未连通，请检查连接状态。', 'transient', false, undefined, action),
+      )
     }
     const echo = `${this.#context.connectionId}:${randomUUID()}`
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(echo)
-        reject(new OneBotActionError(`OneBot Action ${action} 等待回执超时。`, 'unknown', true))
+        reject(
+          new OneBotActionError(
+            '等待平台回执超时，消息可能已经送达，请先确认频道中的消息。',
+            'unknown',
+            true,
+            undefined,
+            action,
+          ),
+        )
       }, options.timeoutMs ?? this.#requestTimeoutMs)
       this.#pending.set(echo, { action, resolve, reject, timer })
       socket.send(JSON.stringify({ action, params, echo }), (error) => {
@@ -194,7 +210,7 @@ export class OneBotWebSocketClient {
         if (!pending) return
         clearTimeout(pending.timer)
         this.#pending.delete(echo)
-        reject(new OneBotActionError(`OneBot Action ${action} 写入失败。`, 'transient', false))
+        reject(new OneBotActionError('发送请求写入失败，请检查连接状态。', 'transient', false, undefined, action))
       })
     })
   }
@@ -205,7 +221,7 @@ export class OneBotWebSocketClient {
     options: { readonly timeoutMs?: number } = {},
   ): Promise<unknown> {
     if (this.#optionalCapabilities.get(action) === 'unsupported') {
-      throw new OneBotActionError(`协议端不支持 ${action}。`, 'unsupported', false)
+      throw new OneBotActionError('协议端不支持这项操作。', 'unsupported', false, undefined, action)
     }
     try {
       const result = await this.call(action, params, options)
@@ -230,48 +246,59 @@ export class OneBotWebSocketClient {
       perMessageDeflate: false,
     })
     this.#socket = socket
-    socket.on('open', () => void this.#initialize(generation, socket))
-    socket.on('message', (data, isBinary) => this.#receive(generation, data, isBinary))
+    let ready = Promise.resolve(false)
+    socket.on('open', () => {
+      ready = this.#initialize(generation, socket)
+      this.#initialization = ready
+    })
+    socket.on('message', (data, isBinary) => this.#receive(generation, data, isBinary, ready))
     socket.on('error', () => {
       // close owns diagnostics and reconnect scheduling.
     })
     socket.on('close', (_code, reason) => this.#closed(generation, socket, reason.toString()))
   }
 
-  async #initialize(generation: number, socket: WebSocket): Promise<void> {
-    if (generation !== this.#connectGeneration || socket !== this.#socket || this.#stopping) return
+  async #initialize(generation: number, socket: WebSocket): Promise<boolean> {
+    const current = () => generation === this.#connectGeneration && socket === this.#socket && !this.#stopping
+    if (!current()) return false
     try {
       const login = objectValue(await this.call('get_login_info'))
       const version = objectValue(await this.call('get_version_info'))
       const selfId = stringId(login?.['user_id'])
       if (!selfId) throw new OneBotActionError('get_login_info 未返回有效 user_id。', 'invalid', true)
       const locked = objectValue(await this.#context.state.load(ACCOUNT_STATE_KEY))
+      if (!current()) return false
       const lockedSelfId = stringId(locked?.['selfId'])
       if (lockedSelfId !== undefined && lockedSelfId !== selfId) {
         this.#terminalAccountChange = true
-        this.#publish('failed', 'Endpoint 连接到了另一个账号；为避免频道归属混淆，已拒绝继续运行。', selfId, version)
+        this.#publish('failed', '连接到了另一个账号。请恢复原账号的连接地址。', selfId, version)
         socket.close(1008, 'account changed')
-        return
+        return false
       }
       if (lockedSelfId === undefined) await this.#context.state.save(ACCOUNT_STATE_KEY, { selfId })
+      if (!current()) return false
       const nickname = typeof login?.['nickname'] === 'string' ? login['nickname'].trim() : ''
       await this.#context.account.report({
         platformUserId: selfId,
         ...(nickname ? { displayName: nickname.slice(0, 120) } : {}),
         observedAt: this.#context.now(),
       })
+      if (!current()) return false
       this.#selfId = selfId
       this.#version = version
       this.#reconnectAttempt = 0
       this.#publish('connected', undefined, selfId, version)
+      return true
     } catch (error) {
+      if (!current()) return false
       const message = error instanceof Error ? error.message : String(error)
       this.#publish('failed', message)
       socket.close(1011, 'initialization failed')
+      return false
     }
   }
 
-  #receive(generation: number, data: RawData, isBinary: boolean): void {
+  #receive(generation: number, data: RawData, isBinary: boolean, ready: Promise<boolean>): void {
     if (generation !== this.#connectGeneration || this.#stopping) return
     if (isBinary) {
       this.#publish('failed', '协议端发送了二进制帧；OneBot 11 连接只接受 JSON 文本。')
@@ -297,11 +324,13 @@ export class OneBotWebSocketClient {
       const retcode = object['retcode']
       if ((status === 'ok' || status === undefined) && (retcode === 0 || retcode === undefined)) {
         pending.resolve(object['data'])
-      } else pending.reject(responseFailure(object))
+      } else pending.reject(responseFailure(object, pending.action, this.#accessToken))
       return
     }
     this.#eventQueue = this.#eventQueue
-      .then(() => this.#onEvent(object))
+      .then(async () => {
+        if (await ready) await this.#onEvent(object)
+      })
       .catch((error: unknown) => this.#publishCurrent(error instanceof Error ? error.message : String(error)))
   }
 
@@ -324,7 +353,9 @@ export class OneBotWebSocketClient {
   #rejectPending(message: string): void {
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timer)
-      pending.reject(new OneBotActionError(`${message}（${pending.action}）`, 'unknown', true))
+      pending.reject(
+        new OneBotActionError(redactAdapterDiagnosticText(message), 'unknown', true, undefined, pending.action),
+      )
     }
     this.#pending.clear()
   }

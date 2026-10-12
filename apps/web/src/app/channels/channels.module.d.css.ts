@@ -106,6 +106,7 @@ declare const styles: {
   readonly stepOk: string
   readonly stepRun: string
   readonly stepTime: string
+  readonly stepWarn: string
   readonly steps: string
   readonly strike: string
   readonly subline: string

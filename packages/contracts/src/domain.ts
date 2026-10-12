@@ -1,5 +1,26 @@
 import { z } from 'zod'
 
+/** Rendered send-tool result consumed by both the agent and the product detail view. */
+export const MessageDeliverySummarySchema = z
+  .object({
+    status: z.enum(['sent', 'partially-sent', 'failed', 'unknown']),
+    issues: z
+      .array(
+        z
+          .object({
+            status: z.enum(['failed', 'unknown']),
+            message: z.string().max(1000),
+            kind: z.enum(['transient', 'permanent', 'rate-limited', 'authentication', 'invalid']).optional(),
+            action: z.string().max(120).optional(),
+            retcode: z.number().int().safe().optional(),
+          })
+          .strict(),
+      )
+      .max(20),
+    omittedIssues: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
 const brandedId = <Prefix extends string, Brand extends string>(prefix: Prefix, brand: Brand) =>
   z
     .string()

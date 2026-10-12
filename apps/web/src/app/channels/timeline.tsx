@@ -173,9 +173,22 @@ function Elapsed({ since }: { readonly since: number }) {
 }
 
 const toolState = (tool: RuntimeTool) => {
-  if (tool.state === 'running') return { className: styles.stepRun, icon: <Spinner /> }
-  if (tool.state === 'succeeded') return { className: styles.stepOk, icon: <Check /> }
-  return { className: styles.stepFail, icon: <X /> }
+  if (tool.state === 'running')
+    return { className: styles.stepRun, icon: <Spinner />, tone: 'accent' as const, label: '运行中' }
+  if (tool.deliveryState === 'unknown' || tool.deliveryState === 'partially-sent')
+    return {
+      className: styles.stepWarn,
+      icon: <CircleAlert />,
+      tone: 'warn' as const,
+      label: tool.deliveryState === 'unknown' ? '送达待确认' : '部分送达',
+    }
+  if (tool.deliveryState === 'failed')
+    return { className: styles.stepFail, icon: <X />, tone: 'bad' as const, label: '未送达' }
+  if (tool.deliveryState === 'sent')
+    return { className: styles.stepOk, icon: <Check />, tone: 'ok' as const, label: '已送达' }
+  if (tool.state === 'succeeded')
+    return { className: styles.stepOk, icon: <Check />, tone: 'ok' as const, label: '成功' }
+  return { className: styles.stepFail, icon: <X />, tone: 'bad' as const, label: '失败' }
 }
 
 /** One step: a readable summary that opens to what the tool was asked and what it returned. */
@@ -246,6 +259,7 @@ function ToolCard({
   readonly agentId: string | undefined
   readonly channelId: string | undefined
 }) {
+  const state = toolState(tool)
   return (
     <div className={styles.card} style={cssVars({ '--i': index })}>
       <div className={styles.cardHead}>
@@ -255,19 +269,9 @@ function ToolCard({
           <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span>
         ) : null}
         <span className={styles.cardState}>
-          {tool.state === 'running' ? (
-            <Chip tone="accent" dot>
-              运行中
-            </Chip>
-          ) : tool.state === 'succeeded' ? (
-            <Chip tone="ok" dot>
-              成功
-            </Chip>
-          ) : (
-            <Chip tone="bad" dot>
-              失败
-            </Chip>
-          )}
+          <Chip tone={state.tone} dot>
+            {state.label}
+          </Chip>
         </span>
       </div>
       <ToolDetail tool={tool} channelId={channelId} bare />

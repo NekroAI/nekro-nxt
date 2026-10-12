@@ -73,6 +73,64 @@ const protocolEndpoint = async (
 }
 
 describe('OneBot 11 normalized inbound', () => {
+  it('keeps action and retcode on a rejected send while removing credentials and private addresses', async () => {
+    const protocol = await protocolEndpoint((request) =>
+      request['action'] === 'send_group_msg'
+        ? {
+            status: 'failed',
+            retcode: 1401,
+            message: 'Permission denied: test-token at https://example.test/private?token=synthetic',
+          }
+        : undefined,
+    )
+    const fake = createFakeContext()
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: {
+        endpoint: protocol.endpoint,
+        accessTokenCredentialRef: 'fixture-token-ref',
+        capturePokeEvents: true,
+        captureMessageReactionEvents: false,
+      },
+    })
+    try {
+      await runtime.start()
+      await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+      ;[...protocol.server.clients][0]!.send(
+        JSON.stringify({
+          post_type: 'message',
+          message_type: 'group',
+          group_id: 'synthetic-room',
+          user_id: 'synthetic-member',
+          message_id: 'synthetic-anchor',
+          message: [{ type: 'text', data: { text: '虚构内容' } }],
+        }),
+      )
+      await waitFor(() => fake.events.length === 1)
+      const channelId = [...fake.channels.values()][0]!
+      const result = await runtime.deliver(
+        {
+          deliveryId: PhysicalDeliveryIdSchema.parse('phy_DIAGNOSTIC'),
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_DIAGNOSTIC'),
+          connectionId: fake.context.connectionId,
+          channelId,
+          parts: [{ type: 'text', text: '虚构回复' }],
+        },
+        new AbortController().signal,
+      )
+      expect(result).toMatchObject({
+        status: 'failed',
+        failure: { kind: 'authentication' },
+        diagnostic: { action: 'send_group_msg', retcode: 1401 },
+      })
+      expect(JSON.stringify(result)).toContain('Permission denied')
+      expect(JSON.stringify(result)).not.toContain('test-token')
+      expect(JSON.stringify(result)).not.toContain('example.test')
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   it('retains forwarded images, cards, face identifiers and nested content without treating quoted mentions as triggers', async () => {
     const protocol = await protocolEndpoint((request) =>
       request['action'] === 'get_forward_msg'

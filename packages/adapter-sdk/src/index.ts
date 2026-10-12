@@ -538,6 +538,15 @@ export interface PhysicalDeliveryRequest {
 
 export type AdapterFailureKind = 'transient' | 'permanent' | 'rate-limited' | 'authentication' | 'invalid'
 
+export { redactAdapterDiagnosticText } from './diagnostics.js'
+
+const DeliveryDiagnosticSchema = z
+  .object({
+    action: z.string().min(1).max(120).optional(),
+    retcode: z.number().int().safe().optional(),
+  })
+  .strict()
+
 export const AdapterDeliveryReceiptSchema = z.discriminatedUnion('status', [
   z
     .object({
@@ -549,6 +558,7 @@ export const AdapterDeliveryReceiptSchema = z.discriminatedUnion('status', [
   z
     .object({
       status: z.literal('failed'),
+      diagnostic: DeliveryDiagnosticSchema.optional(),
       failure: z
         .object({
           kind: z.enum(['transient', 'permanent', 'rate-limited', 'authentication', 'invalid']),
@@ -558,7 +568,9 @@ export const AdapterDeliveryReceiptSchema = z.discriminatedUnion('status', [
         .strict(),
     })
     .strict(),
-  z.object({ status: z.literal('unknown'), message: z.string() }).strict(),
+  z
+    .object({ status: z.literal('unknown'), message: z.string(), diagnostic: DeliveryDiagnosticSchema.optional() })
+    .strict(),
 ])
 
 export type AdapterDeliveryReceipt = z.infer<typeof AdapterDeliveryReceiptSchema>

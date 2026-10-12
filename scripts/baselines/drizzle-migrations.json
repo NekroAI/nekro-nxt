@@ -44,6 +44,7 @@
     "0039_channel_member_notes.sql": "1c4c921b0f5eeeb5aea2c6a15db3c9bbd9035c7aeb72d08b2a499f8c7e87b096",
     "0040_extension_library_index.sql": "25b731f5909f504d9dd590d3b50abd5aab6c52417e54e04b1326cc03f2ebdaa6",
     "0041_channel_name_preferences.sql": "2d9b1460b38e81a87bd3d677856a85089dcdbcdb04cbb039c419d064afec5bc9",
+    "0042_delivery_diagnostics.sql": "cc2ba25c47f0af379097bb26f1edc4ff8a799c4947f7f8051d06f545543a8aba",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -86,6 +87,7 @@
     "meta/0039_snapshot.json": "49f4612c1aac312f1543810bc491938e9b663a04ae31ea6366d0fb14345e0c55",
     "meta/0040_snapshot.json": "05212fd102f3862c9b895ece2b80c6484b486af3ac5c28c0745227780667f9da",
     "meta/0041_snapshot.json": "6b0367a14137a17d9e16433f15f32b634cf793a3b1a15ff72faa1ea4516a4808",
-    "meta/_journal.json": "7ca619eccfec1fc7a7df4049a0a580110759ac3c0a87b2b19914ddd949ee29dc"
+    "meta/0042_snapshot.json": "31fc0fe4d5f69913ea36474f17251b9d21bb3ad909620937eba4b65b91501fff",
+    "meta/_journal.json": "a72ddd25d820c44714429a796da062cdd2f6c2615ed1aaa0ec42f6fd1bb21095"
   }
 }

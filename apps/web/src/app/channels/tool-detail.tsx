@@ -2,12 +2,13 @@ import { Check, Copy, ExternalLink } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
-import { Button, IconButton, Spinner, toast } from '../../ui-kit/index.js'
+import { Button, Diagnostics, IconButton, Spinner, toast } from '../../ui-kit/index.js'
 import styles from './tool-detail.module.css'
 import {
   commandOutput,
   finishOutcome,
   messageText,
+  messageDeliverySummary,
   readArguments,
   searchQueries,
   searchSources,
@@ -200,6 +201,8 @@ export function ToolDetail({
     )
   } else if (kind === 'message') {
     const message = messageText(args, inputText)
+    const delivery = messageDeliverySummary(resultText)
+    const state = tool.deliveryState ?? delivery?.status ?? (tool.state === 'failed' ? 'failed' : undefined)
     body = (
       <>
         {message ? (
@@ -209,15 +212,40 @@ export function ToolDetail({
         ) : null}
         {running ? null : (
           <p className={styles.lead}>
-            {tool.deliveryState === 'sent'
+            {state === 'sent'
               ? '已送达频道'
-              : tool.deliveryState === 'unknown'
-                ? '送达结果未确认'
-                : tool.state === 'failed'
-                  ? '没有发出'
-                  : '已写入频道'}
+              : state === 'unknown'
+                ? '送达结果未确认，请先查看频道中的消息。'
+                : state === 'partially-sent'
+                  ? '部分内容已送达频道'
+                  : state === 'failed'
+                    ? '没有发出'
+                    : '已写入频道'}
           </p>
         )}
+        {!running &&
+          delivery?.issues.map((issue, index) => (
+            <Block key={index} title={issue.status === 'unknown' ? '未确认原因' : '失败原因'}>
+              <p className={styles.prose}>{issue.message}</p>
+              {issue.kind || issue.action || issue.retcode !== undefined ? (
+                <Diagnostics
+                  items={[
+                    ...(issue.kind ? [{ label: '分类', value: issue.kind }] : []),
+                    ...(issue.action ? [{ label: 'Action', value: issue.action }] : []),
+                    ...(issue.retcode === undefined ? [] : [{ label: 'retcode', value: String(issue.retcode) }]),
+                  ]}
+                />
+              ) : null}
+            </Block>
+          ))}
+        {!running && delivery?.omittedIssues ? (
+          <p className={styles.empty}>另有 {delivery.omittedIssues} 条未送达记录。</p>
+        ) : null}
+        {!running && !delivery && resultText && state !== 'sent' ? (
+          <Diagnostics>
+            <Code value={resultText} />
+          </Diagnostics>
+        ) : null}
       </>
     )
   } else if (kind === 'script') {

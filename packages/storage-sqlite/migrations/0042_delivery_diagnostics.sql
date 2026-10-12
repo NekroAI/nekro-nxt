@@ -1,0 +1,1 @@
+ALTER TABLE `physical_deliveries` ADD `diagnostic` text;

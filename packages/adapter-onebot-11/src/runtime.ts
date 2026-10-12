@@ -8,6 +8,7 @@ import type {
   AdapterRuntimeCapabilities,
   PhysicalDeliveryRequest,
 } from '@nekro-nxt/adapter-sdk'
+import { redactAdapterDiagnosticText } from '@nekro-nxt/adapter-sdk'
 import type { AssetId, ChannelId, ChannelMemberId, JsonValue, MessagePart } from '@nekro-nxt/contracts'
 import {
   ChannelMemberIdSchema,
@@ -569,15 +570,23 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
       return { status: 'sent', platformMessageId }
     } catch (error) {
       if (error instanceof OneBotActionError) {
+        const diagnostic = {
+          ...(error.action === undefined ? {} : { action: redactAdapterDiagnosticText(error.action).slice(0, 120) }),
+          ...(error.retcode === undefined ? {} : { retcode: error.retcode }),
+        }
+        const message = redactAdapterDiagnosticText(error.message)
         if (error.kind === 'unknown' || (error.submitted && signal.aborted)) {
-          return { status: 'unknown', message: error.message }
+          return { status: 'unknown', message, diagnostic }
         }
         const kind = error.kind === 'unsupported' ? 'permanent' : error.kind
-        return { status: 'failed', failure: { kind, message: error.message } }
+        return { status: 'failed', failure: { kind, message }, diagnostic }
       }
       return {
         status: 'failed',
-        failure: { kind: 'transient', message: error instanceof Error ? error.message : String(error) },
+        failure: {
+          kind: 'transient',
+          message: redactAdapterDiagnosticText(error instanceof Error ? error.message : String(error)),
+        },
       }
     }
   }

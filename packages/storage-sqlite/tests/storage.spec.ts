@@ -2106,7 +2106,7 @@ describe('relations, admissions and outbox', () => {
   })
 
   it('persists sent, failed, unknown, and partially-sent deliveries with recovery guards', async () => {
-    const { database, repository, core, connection } = await createFixture()
+    const { directory, database, repository, core, connection } = await createFixture()
     try {
       const agent = createAgent(core)
       const channel = core.createChannel({
@@ -2168,12 +2168,20 @@ describe('relations, admissions and outbox', () => {
       expect(repository.getOutbound(failedIntentId).receipts).toEqual([])
       repository.recordDeliveryReceipt(
         failedDeliveryId,
-        { status: 'failed', failure: { kind: 'transient', message: 'try again', retryAfterMs: 250 } },
+        {
+          status: 'failed',
+          failure: { kind: 'transient', message: 'try again', retryAfterMs: 250 },
+          diagnostic: { action: 'send_group_msg', retcode: 1408 },
+        },
         4,
       )
       expect(repository.getOutbound(failedIntentId).deliveries[0]).toMatchObject({
         state: 'failed',
-        receipt: { status: 'failed', failure: { kind: 'transient', message: 'try again', retryAfterMs: 250 } },
+        receipt: {
+          status: 'failed',
+          failure: { kind: 'transient', message: 'try again', retryAfterMs: 250 },
+          diagnostic: { action: 'send_group_msg', retcode: 1408 },
+        },
         completedAt: 4,
       })
       repository.completeOutboundIntent(failedIntentId, 'failed')
@@ -2199,9 +2207,13 @@ describe('relations, admissions and outbox', () => {
       )
       repository.markIntentSending(unknownIntentId)
       repository.markDeliverySending(unknownDeliveryId)
-      repository.recordDeliveryReceipt(unknownDeliveryId, { status: 'unknown', message: '结果未知' }, 6)
+      repository.recordDeliveryReceipt(
+        unknownDeliveryId,
+        { status: 'unknown', message: '结果未知', diagnostic: { action: 'send_private_msg' } },
+        6,
+      )
       expect(repository.getOutbound(unknownIntentId).receipts[0]).toMatchObject({
-        receipt: { status: 'unknown', message: '结果未知' },
+        receipt: { status: 'unknown', message: '结果未知', diagnostic: { action: 'send_private_msg' } },
         completedAt: 6,
       })
       repository.completeOutboundIntent(unknownIntentId, 'unknown')
@@ -2368,6 +2380,19 @@ describe('relations, admissions and outbox', () => {
       expect(repository.searchChannelHistory(channel.id, 'partial needle')).toHaveLength(1)
       expect(repository.searchChannelHistory(channel.id, '   ')).toEqual([])
       expect(() => repository.searchChannelHistory(channel.id, 'needle', { limit: 101 })).toThrow('History limit')
+      const reopened = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+      try {
+        const persisted = new SqliteCoreRepository(reopened)
+        expect(persisted.getOutbound(failedIntentId).receipts[0]?.receipt).toMatchObject({
+          diagnostic: { action: 'send_group_msg', retcode: 1408 },
+        })
+        expect(persisted.getOutbound(unknownIntentId).receipts[0]?.receipt).toMatchObject({
+          status: 'unknown',
+          diagnostic: { action: 'send_private_msg' },
+        })
+      } finally {
+        reopened.close()
+      }
     } finally {
       database.close()
     }

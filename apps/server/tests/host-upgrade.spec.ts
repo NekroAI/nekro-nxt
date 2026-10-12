@@ -137,6 +137,7 @@ const createLegacyFixture = async () => {
     legacy.exec(
       "ALTER TABLE channels ADD COLUMN platform_display_name text; ALTER TABLE channels ADD COLUMN preferred_processing_feedback text NOT NULL DEFAULT 'auto'",
     )
+    legacy.exec('ALTER TABLE physical_deliveries ADD COLUMN diagnostic text')
     expect(legacy.prepare('PRAGMA foreign_key_check').all()).toEqual([])
     legacy.exec('COMMIT')
   } finally {
@@ -279,6 +280,7 @@ const createLegacyFixture = async () => {
     legacyChannels.exec(
       'ALTER TABLE channels DROP COLUMN platform_display_name; ALTER TABLE channels DROP COLUMN preferred_processing_feedback',
     )
+    legacyChannels.exec('ALTER TABLE physical_deliveries DROP COLUMN diagnostic')
   } finally {
     legacyChannels.close()
   }
