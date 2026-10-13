@@ -39,6 +39,36 @@ export const MessageRow = memo(function MessageRow({
     role: message.role,
     ...(message.origin ? { origin: message.origin } : {}),
   })
+  if (message.command !== undefined) {
+    const command = message.command
+    const statuses = {
+      pending: '等待执行',
+      running: '执行中',
+      succeeded: '执行成功',
+      failed: '命令执行失败',
+      uncertain: '执行结果不确定',
+    }
+    const deliveryFailed =
+      command.replyError !== undefined ||
+      message.delivery === '失败' ||
+      message.delivery === '结果未知' ||
+      message.delivery === '部分发送'
+    return (
+      <div className={styles.commandResult} data-message-id={message.id} aria-label="命令记录">
+        <div>
+          <b>{message.origin === 'command' ? '命令结果' : '命令'}</b> · {command.identity.displayName} ·{' '}
+          {statuses[command.status]}
+        </div>
+        <MessageContent message={message} variant="system-event" />
+        {command.status === 'failed' && message.origin !== 'command' ? <p role="alert">{command.error}</p> : null}
+        {deliveryFailed ? (
+          <p role="status">
+            {command.status === 'succeeded' ? '执行成功，但回复投递失败或未确认。' : '回复投递失败或未确认。'}
+          </p>
+        ) : null}
+      </div>
+    )
+  }
   if (message.scheduledTask !== undefined) {
     const task = message.scheduledTask
     return (

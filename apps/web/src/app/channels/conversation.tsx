@@ -1,3 +1,4 @@
+import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { ArrowDown, ArrowRight, ChevronDown, Eye, MessageSquareDashed, PanelRight, Plug } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { EMPTY_CHANNEL_DRAFT } from '../../channel-drafts.js'
@@ -59,16 +60,54 @@ function Composer({
   const draft = state.text
   const sending = state.pending !== undefined
   const setDraft = (text: string) => ui.getState().setChannelDraft(channel.id, text)
+  const commandRequest = useRef<{ channelId: string; revision: number; id: string } | undefined>(undefined)
   const composing = useRef(false)
   const input = useRef<HTMLTextAreaElement>(null)
   const external = channel.kind !== 'internal'
-  const blocked = !agent
-    ? '还没有智能体响应这个频道'
-    : connection && connectionStatus(connection).health === 'attention'
-      ? `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`
-      : external && connection && !connection.proactiveSend
-        ? `${connectionDisplayName(connection)} 不支持主动发送`
-        : ''
+  const [commands, setCommands] = useState<CommandCatalog['commands']>([])
+  const [commandError, setCommandError] = useState('')
+  const [selected, setSelected] = useState(0)
+  const [commandFocus, setCommandFocus] = useState(0)
+  const commandMode = draft.trimStart().startsWith('/') && !draft.trimStart().startsWith('//')
+  const commandQuery = draft.trimStart().slice(1)
+  const completing = commandMode && !/\s/u.test(commandQuery)
+  const suggestions = commands.filter(
+    (command) =>
+      command.available &&
+      (command.fullName.startsWith(commandQuery) ||
+        command.definition.name.startsWith(commandQuery) ||
+        command.definition.aliases.some((alias) => alias.startsWith(commandQuery))),
+  )
+  const currentCommand = commands.find((command) => command.fullName === commandQuery.split(/\s/u)[0])
+  useEffect(() => {
+    if (!commandMode) return
+    const controller = new AbortController()
+    setCommandError('')
+    void commandApi
+      .list(channel.id, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) setCommands(result.commands)
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setCommandError(error instanceof Error ? error.message : '读取命令失败。')
+      })
+    return () => controller.abort()
+  }, [channel.id, commandMode, commandFocus])
+  useEffect(() => setSelected(0), [commandQuery, channel.id])
+  const choose = (index: number) => {
+    const command = suggestions[index]
+    if (command) setDraft('/' + command.fullName + ' ')
+    input.current?.focus()
+  }
+  const blocked = commandMode
+    ? ''
+    : !agent
+      ? '还没有智能体响应这个频道'
+      : connection && connectionStatus(connection).health === 'attention'
+        ? `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`
+        : external && connection && !connection.proactiveSend
+          ? `${connectionDisplayName(connection)} 不支持主动发送`
+          : ''
 
   useLayoutEffect(() => {
     const element = input.current
@@ -84,7 +123,12 @@ function Composer({
     if (!token) return
     let success = false
     try {
-      await api.getState().sendMessage(channel.id, token.text)
+      if (commandMode) {
+        if (commandRequest.current?.channelId !== channel.id || commandRequest.current.revision !== token.revision)
+          commandRequest.current = { channelId: channel.id, revision: token.revision, id: crypto.randomUUID() }
+        await commandApi.execute(channel.id, token.text, commandRequest.current.id)
+        commandRequest.current = undefined
+      } else await api.getState().sendMessage(channel.id, token.text)
       success = true
     } catch (error) {
       toast(`${error instanceof Error ? error.message : String(error)}，草稿已保留`, { tone: 'bad' })
@@ -94,6 +138,18 @@ function Composer({
     }
   }
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (completing && suggestions.length && !composing.current && !event.nativeEvent.isComposing) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSelected((index) => (index + (event.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length)
+        return
+      }
+      if (event.key === 'Tab' || event.key === 'Enter') {
+        event.preventDefault()
+        choose(selected)
+        return
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing) {
       event.preventDefault()
       void send()
@@ -108,39 +164,72 @@ function Composer({
         void send()
       }}
     >
-      {blocked ? (
-        <span className={styles.blocked}>{blocked}</span>
-      ) : (
-        <>
-          {external && connection ? (
-            <span className={styles.as} title="以这个机器人账号发出，群成员可见">
-              <Plug aria-hidden="true" />
-              {connectionDisplayName(connection)}
-            </span>
-          ) : null}
-          <Textarea
-            bare
-            ref={input}
-            className={styles.input}
-            rows={1}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={onKeyDown}
-            onCompositionStart={() => (composing.current = true)}
-            onCompositionEnd={() => (composing.current = false)}
-            placeholder={external ? `发到 ${channel.name}` : `给 ${agent?.name ?? '智能体'} 发消息`}
-            aria-label="消息"
-          />
-        </>
-      )}
-      <Pressable
-        type="submit"
-        className={styles.send}
-        disabled={Boolean(blocked) || !draft.trim() || sending}
-        aria-label="发送"
-      >
-        <ArrowRight aria-hidden="true" />
-      </Pressable>
+      {blocked ? <span className={styles.blocked}>{blocked}；仍可输入 /help 或 /status</span> : null}
+      {commandError ? <span role="alert">{commandError}</span> : null}
+      {completing && suggestions.length ? (
+        <div className={styles.commandSuggestions} role="listbox" id={`commands-${channel.id}`} aria-label="可用命令">
+          {suggestions.map((command, index) => (
+            <Pressable
+              type="button"
+              role="option"
+              key={command.fullName}
+              id={`command-${channel.id}-${index}`}
+              aria-selected={selected === index}
+              className={styles.commandOption}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => choose(index)}
+            >
+              <b>/{command.fullName}</b> · {command.definition.description}
+            </Pressable>
+          ))}
+        </div>
+      ) : null}
+      {commandMode && currentCommand ? (
+        <span role="status" className={styles.commandHint}>
+          用法：{currentCommand.usage}
+        </span>
+      ) : null}
+      <div className={styles.composerLine}>
+        {commandMode ? (
+          <span className={styles.as}>执行当前频道命令</span>
+        ) : external && connection ? (
+          <span className={styles.as} title="以这个机器人账号发出，群成员可见">
+            <Plug aria-hidden="true" />
+            {connectionDisplayName(connection)}
+          </span>
+        ) : null}
+        <Textarea
+          bare
+          ref={input}
+          className={styles.input}
+          rows={1}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={onKeyDown}
+          onFocus={() => {
+            if (commandMode) setCommandFocus((n) => n + 1)
+          }}
+          onCompositionStart={() => (composing.current = true)}
+          onCompositionEnd={() => (composing.current = false)}
+          placeholder={
+            external
+              ? `发到 ${channel.name}，或输入 / 执行命令`
+              : `给 ${agent?.name ?? '智能体'} 发消息，或输入 / 执行命令`
+          }
+          aria-label="消息"
+          aria-autocomplete="list"
+          aria-controls={completing ? `commands-${channel.id}` : undefined}
+          aria-activedescendant={completing && suggestions.length ? `command-${channel.id}-${selected}` : undefined}
+        />
+        <Pressable
+          type="submit"
+          className={styles.send}
+          disabled={Boolean(blocked) || !draft.trim() || sending}
+          aria-label="发送"
+        >
+          <ArrowRight aria-hidden="true" />
+        </Pressable>
+      </div>
     </form>
   )
 }

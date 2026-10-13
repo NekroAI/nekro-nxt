@@ -9,7 +9,12 @@ declare const styles: {
   readonly cardState: string
   readonly chan: string
   readonly chevron: string
+  readonly commandHint: string
+  readonly commandOption: string
+  readonly commandResult: string
+  readonly commandSuggestions: string
   readonly composer: string
+  readonly composerLine: string
   readonly contextActions: string
   readonly contextCard: string
   readonly contextDanger: string

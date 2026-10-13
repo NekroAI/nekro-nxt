@@ -1,3 +1,4 @@
+import { CommandsSection } from './commands-section.js'
 import {
   Bell,
   Blocks,
@@ -80,6 +81,7 @@ const SECTIONS = [
   { key: 'chat', label: '聊天', icon: <MessageCircle size={16} /> },
   { key: 'retrieval', label: '检索', icon: <Search size={16} /> },
   { key: 'accounts', label: '账号与服务', icon: <UserRoundKey size={16} /> },
+  { key: 'commands', label: '命令', icon: <Blocks size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
@@ -168,6 +170,7 @@ export default function SettingsSpace() {
         // Every settings section shares one readable width and the same left edge (05 §6.1).
         <MainContent width="readable">
           <NarrowNav section={section} />
+          {section === 'commands' ? <CommandsSection /> : null}
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
           {section === 'retrieval' ? <Retrieval /> : null}

@@ -10,6 +10,9 @@ type Snapshot = HostApiResponse<'snapshot'>
  */
 export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapshot): Promise<void> {
   const json = (route: Route, value: unknown) => route.fulfill({ json: value })
+  await page.route('**/api/commands', (route) => json(route, { commands: [], problems: [] }))
+  await page.route('**/api/commands?*', (route) => json(route, { commands: [], problems: [] }))
+  await page.route('**/api/commands/members/*', (route) => json(route, { members: [] }))
   await page.route('**/api/attention', (route) => json(route, { revision: 'fixture', items: [] }))
   await page.route('**/api/attention/*/dismiss', (route) => json(route, { dismissed: true, revision: 'fixture' }))
   await page.route('**/api/activity?*', (route) => {

@@ -1,3 +1,4 @@
+import { CommandsSection } from '../settings/commands-section.js'
 import { useGo } from '../model/nav.js'
 import { PanelSlot } from '../../extension-ui/index.js'
 import { ArrowUpRight, Cable, ChevronRight, Trash2 } from 'lucide-react'
@@ -440,6 +441,7 @@ export function ChannelInspector({
       <PanelSlot anchor={{ kind: 'channel', id: channel.id }} density="compact" />
       {agent ? <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="compact" /> : null}
 
+      <CommandsSection key={channel.id} channelId={channel.id} />
       <PropertyGroup title="来源">
         <PropertyList>
           {connection && channel.kind !== 'internal' ? (
