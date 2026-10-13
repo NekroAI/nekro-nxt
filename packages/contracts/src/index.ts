@@ -7,3 +7,5 @@ export * from './runtime-compatibility.js'
 export * from './extension-capabilities.js'
 export * from './community.js'
 export * from './community-personas.js'
+
+export * from './commands.js'
