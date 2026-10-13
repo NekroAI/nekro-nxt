@@ -2,13 +2,18 @@ import { ChannelIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { readJsonBody, writeContractJson, writeError, type HostRouteContext } from './host-route-support.js'
 import { viewerKeyFromRequest } from './viewer.js'
 
-/** Management edge authenticates the viewer; identity is never accepted in request JSON. */
-export function registerCommandRoutes({ runtime, registerRoute }: HostRouteContext): void {
+/**
+ * Mount ONLY on the management Host: authenticated edge upstream or trusted local console.
+ * viewerKeyFromRequest identifies an already trusted viewer; it does not authenticate a request.
+ * Never register these routes on a public/adapter-facing Host API or accept identity in JSON.
+ */
+export function registerManagementCommandRoutes({ runtime, registerRoute }: HostRouteContext): void {
   registerRoute({
     kind: 'prefix',
     path: '/api/commands',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      const viewerId = viewerKeyFromRequest(req)
       try {
         if (req.method === 'GET' && url.pathname === '/api/commands') {
           const value = url.searchParams.get('channelId')
@@ -24,7 +29,7 @@ export function registerCommandRoutes({ runtime, registerRoute }: HostRouteConte
                 ]
           })
           writeContractJson(res, 200, HostApiContracts.listCommands, {
-            commands: runtime.commands.catalog(channelId),
+            commands: runtime.commands.catalog(channelId, { source: 'web', displayName: 'Web 管理员', viewerId }),
             problems,
           })
           return
@@ -35,7 +40,7 @@ export function registerCommandRoutes({ runtime, registerRoute }: HostRouteConte
             res,
             200,
             HostApiContracts.executeCommand,
-            await runtime.commands.executeWeb(body.channelId, body.text, body.requestId, viewerKeyFromRequest(req)),
+            await runtime.commands.executeWeb(body.channelId, body.text, body.requestId, viewerId),
           )
           return
         }

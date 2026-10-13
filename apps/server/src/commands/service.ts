@@ -22,7 +22,8 @@ import {
   type PlatformIdentityId,
 } from '@nekro-nxt/contracts'
 import type { CommandGate, ChannelRuntime } from '@nekro-nxt/channel-runtime'
-import type { ChannelEventRecord, CoreService } from '@nekro-nxt/core'
+import type { AdapterChannelInboundEvent } from '@nekro-nxt/adapter-sdk'
+import type { AppendChannelEventCommit, ChannelEventRecord, CoreService } from '@nekro-nxt/core'
 import type { SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 
 export interface RegisteredCommand {
@@ -43,21 +44,32 @@ interface CommandServiceOptions {
   readonly now: () => number
 }
 const reply = (text: string): CommandResult => ({ parts: [{ type: 'text', text }] })
+class SilentCommandError extends Error {}
+interface QueuedCommand {
+  readonly record: CommandExecutionRecord
+  readonly resolve: (record: CommandExecutionRecord) => void
+  readonly reject: (error: unknown) => void
+}
 /** Host-owned command executor, shared by trusted Web requests and platform facts. */
 export class CommandService implements CommandGate {
   readonly #o: CommandServiceOptions
   readonly #inFlight = new Map<string, Promise<CommandExecutionRecord>>()
   readonly #controllers = new Set<AbortController>()
+  readonly #queue = new Map<string, QueuedCommand>()
+  readonly #activeChannels = new Set<ChannelId>()
+  readonly #cutoff: string
+  #scheduled: NodeJS.Immediate | undefined
+  #opened = false
   #disposed = false
   #ready: boolean
   constructor(options: CommandServiceOptions) {
     this.#o = options
     this.#ready = options.deferExecution !== true
+    this.#cutoff = options.repository.commands.cutoff()
     options.repository.commands.recover(options.now())
   }
   #recognize(event: ChannelEventRecord) {
-    if (event.kind !== 'message-created' || event.id <= this.#o.repository.commands.cutoff())
-      return { kind: 'chat' } as const
+    if (event.kind !== 'message-created' || event.id <= this.#cutoff) return { kind: 'chat' } as const
     return recognizeCommand(event.parts, this.#o.botMemberId(event))
   }
   excludes(event: ChannelEventRecord): boolean {
@@ -67,20 +79,26 @@ export class CommandService implements CommandGate {
     const result = this.#recognize(event)
     return result.kind === 'escaped' ? { ...event, parts: result.parts } : event
   }
-  async handle(event: ChannelEventRecord): Promise<boolean> {
+  commitInbound(event: AdapterChannelInboundEvent): AppendChannelEventCommit {
+    if (this.#disposed) throw new Error('命令服务已停止。')
+    const { commit, record } = this.#o.repository.commands.transaction(() => {
+      const commit = this.#o.core.appendInbound(event)
+      return { commit, record: this.#capture(commit.event) }
+    })
+    if (record) this.#background(record)
+    return commit
+  }
+  #capture(event: ChannelEventRecord): CommandExecutionRecord | undefined {
     const existing = this.#o.repository.commands.forEvent(event.id)
-    if (existing) {
-      await this.#execute(existing)
-      return true
-    }
+    if (existing) return existing
     const detected = this.#recognize(event)
-    if (detected.kind !== 'command') return false
+    if (detected.kind !== 'command') return undefined
     const channel = this.#channel(event.channelId)
     const identity =
       event.senderMemberId === undefined
         ? undefined
         : this.#o.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, event.senderMemberId)
-    const record = this.#o.repository.commands.insert({
+    return this.#o.repository.commands.insert({
       id: `cmd_${randomUUID()}`,
       channelId: channel.id,
       source: 'platform',
@@ -96,8 +114,6 @@ export class CommandService implements CommandGate {
         displayName: identity?.displayName ?? '平台用户',
       },
     })
-    await this.#execute(record)
-    return true
   }
   async executeWeb(
     channelId: ChannelId,
@@ -105,6 +121,7 @@ export class CommandService implements CommandGate {
     requestId: string,
     viewerId: string,
   ): Promise<CommandExecutionRecord> {
+    if (this.#disposed) throw new Error('命令服务已停止。')
     const existing = this.#o.repository.commands.find(channelId, 'web', requestId)
     if (existing) {
       if (existing.rawText !== text || existing.identity.viewerId !== viewerId)
@@ -115,26 +132,29 @@ export class CommandService implements CommandGate {
     const connection = this.#o.repository.getConnection(channel.connectionId)
     if (!connection) throw new Error('频道连接不存在。')
     if (recognizeCommand([{ type: 'text', text }]).kind !== 'command') throw new Error('请输入以 / 开头的命令。')
-    const event = this.#o.core.appendInbound({
-      connectionId: channel.connectionId,
-      channelId,
-      adapterKey: connection.adapterKey,
-      kind: 'message-created',
-      parts: [{ type: 'text', text }],
-      platformTimestamp: this.#o.now(),
-      receivedAt: this.#o.now(),
-      dedupeKey: `web-command:${requestId}`,
-    }).event
-    const record = this.#o.repository.commands.insert({
-      id: `cmd_${randomUUID()}`,
-      channelId,
-      source: 'web',
-      requestId,
-      eventId: event.id,
-      rawText: text,
-      status: 'pending',
-      createdAt: this.#o.now(),
-      identity: { source: 'web', displayName: 'Web 管理员', viewerId },
+    const { event, record } = this.#o.repository.commands.transaction(() => {
+      const event = this.#o.core.appendInbound({
+        connectionId: channel.connectionId,
+        channelId,
+        adapterKey: connection.adapterKey,
+        kind: 'message-created',
+        parts: [{ type: 'text', text }],
+        platformTimestamp: this.#o.now(),
+        receivedAt: this.#o.now(),
+        dedupeKey: `web-command:${requestId}`,
+      }).event
+      const record = this.#o.repository.commands.insert({
+        id: `cmd_${randomUUID()}`,
+        channelId,
+        source: 'web',
+        requestId,
+        eventId: event.id,
+        rawText: text,
+        status: 'pending',
+        createdAt: this.#o.now(),
+        identity: { source: 'web', displayName: 'Web 管理员', viewerId },
+      })
+      return { event, record }
     })
     this.#o.channels().publishInboundFact(event)
     return this.#execute(record)
@@ -220,26 +240,28 @@ export class CommandService implements CommandGate {
             ]
       })
   }
-  async open(): Promise<void> {
+  open(): void {
     if (this.#disposed) throw new Error('命令服务已停止。')
+    if (this.#opened) return
+    this.#opened = true
     this.#ready = true
-    await this.recover()
+    this.recover()
   }
-  async recover(): Promise<void> {
-    let after = this.#o.repository.commands.cutoff()
-    for (;;) {
-      const ids = this.#o.repository.commands.eligibleEvents(after)
-      if (!ids.length) break
-      for (const id of ids) {
-        const event = this.#o.repository.getChannelEvent(id)
-        if (event) await this.handle(event)
-      }
-      after = ids.at(-1)!
-    }
-    for (const record of this.#o.repository.commands.unfinished()) await this.#execute(record)
+  recover(): void {
+    for (const record of this.#o.repository.commands.unfinished()) this.#background(record)
+  }
+  async idle(): Promise<void> {
+    while (this.#inFlight.size) await Promise.allSettled(this.#inFlight.values())
   }
   async dispose(): Promise<void> {
     this.#disposed = true
+    if (this.#scheduled) clearImmediate(this.#scheduled)
+    this.#scheduled = undefined
+    for (const [id, task] of this.#queue) {
+      this.#inFlight.delete(id)
+      task.resolve(task.record)
+    }
+    this.#queue.clear()
     for (const c of this.#controllers) c.abort()
     await Promise.allSettled(this.#inFlight.values())
   }
@@ -249,6 +271,7 @@ export class CommandService implements CommandGate {
     return channel
   }
   #authorized(channelId: ChannelId | undefined, identity: CommandExecutionIdentity): boolean {
+    // Web identities are created only by the trusted management Host routes, never from inbound facts/JSON.
     if (identity.source === 'web') return true
     if (channelId === undefined || identity.connectionId === undefined || identity.platformUserId === undefined)
       return false
@@ -297,15 +320,46 @@ export class CommandService implements CommandGate {
     )
     if (matches.length > 1)
       throw new Error(`命令名称冲突，请使用完整名称：${matches.map((c) => '/' + c.fullName).join('、')}`)
-    if (!matches[0]) throw new Error(`未知命令：/${name}。输入 /help 查看可用命令。`)
+    if (!matches[0]) throw new SilentCommandError(`未知命令：/${name}。输入 /help 查看可用命令。`)
     return matches[0]
   }
   #execute(record: CommandExecutionRecord): Promise<CommandExecutionRecord> {
     const pending = this.#inFlight.get(record.id)
     if (pending) return pending
-    const task = this.#run(record).finally(() => this.#inFlight.delete(record.id))
+    if (this.#disposed || !this.#ready) return Promise.resolve(record)
+    const task = new Promise<CommandExecutionRecord>((resolve, reject) => {
+      this.#queue.set(record.id, { record, resolve, reject })
+    })
     this.#inFlight.set(record.id, task)
+    this.#schedule()
     return task
+  }
+  #background(record: CommandExecutionRecord): void {
+    void this.#execute(record).catch(() => {
+      // Handler/transport failures are persisted by #run; this catches storage failures without losing the inbox.
+      console.warn(`[nekro-nxt] 命令 ${record.id} 后台执行中断，持久记录将在重启时恢复。`)
+    })
+  }
+  #schedule(): void {
+    if (this.#scheduled || this.#disposed || !this.#ready || !this.#queue.size) return
+    // Yield the inbound commit to its transport before invoking any extension or planning a reply.
+    this.#scheduled = setImmediate(() => {
+      this.#scheduled = undefined
+      for (const [id, task] of this.#queue) {
+        if (this.#activeChannels.size >= 4) break
+        const channelId = task.record.channelId
+        if (this.#activeChannels.has(channelId)) continue
+        this.#queue.delete(id)
+        this.#activeChannels.add(channelId)
+        void this.#run(task.record)
+          .then(task.resolve, task.reject)
+          .finally(() => {
+            this.#inFlight.delete(id)
+            this.#activeChannels.delete(channelId)
+            this.#schedule()
+          })
+      }
+    })
   }
   async #run(initial: CommandExecutionRecord): Promise<CommandExecutionRecord> {
     const store = this.#o.repository.commands
@@ -330,6 +384,7 @@ export class CommandService implements CommandGate {
           ...(binding === undefined ? {} : { agentId: binding.agentId }),
           ...(revision === undefined ? {} : { agentRevisionId: revision.id }),
         })
+        this.#publish(record)
         const guard = (management = false) => {
           controller.signal.throwIfAborted()
           const current = this.#o.repository.getBinding(record.channelId)
@@ -342,7 +397,7 @@ export class CommandService implements CommandGate {
             (policy.permission === 'channel-admin' || management) &&
             !this.#authorized(record.channelId, record.identity)
           )
-            throw new Error('无权执行此命令，需要此频道的命令管理授权。')
+            throw new SilentCommandError('无权执行此命令，需要此频道的命令管理授权。')
           if (!binding && !['help', 'status'].includes(command!.fullName)) throw new Error('请先为频道绑定智能体。')
         }
         guard()
@@ -376,7 +431,8 @@ export class CommandService implements CommandGate {
         if (command.extensionRevisionId !== undefined) {
           try {
             result = await command.invoke(context)
-          } catch {
+          } catch (error) {
+            if (error instanceof SilentCommandError) throw error
             throw new Error(controller.signal.aborted ? '命令已取消。' : '扩展命令执行失败，请检查扩展状态。')
           }
         } else
@@ -387,7 +443,7 @@ export class CommandService implements CommandGate {
               if (typeof target === 'string') {
                 const found = this.#resolve(target.replace(/^\//u, ''), record.channelId)
                 const entry = available.find((c) => c.fullName === found.fullName)
-                if (!entry) throw new Error('该命令不可用或无权查看。')
+                if (!entry) throw new SilentCommandError('该命令不可用或无权查看。')
                 result = reply(
                   [
                     entry.usage,
@@ -458,6 +514,7 @@ export class CommandService implements CommandGate {
           status: 'failed',
           error: detail,
           result: reply(detail),
+          ...(record.source === 'platform' && error instanceof SilentCommandError ? { replySuppressed: true } : {}),
           completedAt: this.#o.now(),
         })
       } finally {
@@ -465,9 +522,16 @@ export class CommandService implements CommandGate {
       }
     }
     if (record.status === 'running' || record.status === 'pending') return record
+    if (record.replySuppressed) {
+      this.#publish(record)
+      return record
+    }
     const existing = store.reply(record.id)
     if (existing) {
-      if (record.replyIntentId !== existing.id) record = store.update({ ...record, replyIntentId: existing.id })
+      if (record.replyIntentId !== existing.id) {
+        record = store.update({ ...record, replyIntentId: existing.id })
+        this.#publish(record)
+      }
       return record
     }
     if (record.replyError !== undefined) return record
@@ -484,10 +548,13 @@ export class CommandService implements CommandGate {
     } catch {
       record = store.update({ ...record, replyError: '命令结果已记录，但回复未能投递。' })
     }
+    this.#publish(record)
+    return record
+  }
+  #publish(record: CommandExecutionRecord): void {
     if (record.eventId) {
       const event = this.#o.repository.getChannelEvent(record.eventId)
       if (event) this.#o.channels().publishInboundFact(event)
     }
-    return record
   }
 }

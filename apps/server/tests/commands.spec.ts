@@ -8,6 +8,13 @@ import { CommandService, type RegisteredCommand } from '../src/commands/service.
 import { CommandRegistrations } from '../src/commands/registrations.js'
 
 const cleanups: Array<() => Promise<void>> = []
+const deferred = () => {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
@@ -78,7 +85,7 @@ async function setup(deferExecution = false) {
     idleRolloverMs: false,
     resolveAdapter: () => adapter,
     commands: {
-      handle: (event) => commandReference.current!.handle(event),
+      commitInbound: (event) => commandReference.current!.commitInbound(event),
       excludes: (event) => commandReference.current!.excludes(event),
       project: (event) => commandReference.current!.project(event),
     },
@@ -133,10 +140,140 @@ async function setup(deferExecution = false) {
     admissions,
     hook,
     extensions,
-    inbound,
+    acceptInbound: inbound,
+    inbound: async (...args: Parameters<typeof inbound>) => {
+      const commit = await inbound(...args)
+      await commands.idle()
+      return commit
+    },
   }
 }
 describe('unified commands', () => {
+  it('commits the next message on a sequential connection while a command handler is waiting', async () => {
+    const f = await setup()
+    const entered = deferred()
+    const held = deferred()
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'slow', description: '慢命令' }),
+      fullName: 'ext_slow:slow',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_SLOW'),
+      invoke: async () => {
+        entered.resolve()
+        await held.promise
+        return { parts: [{ type: 'text', text: '完成' }] }
+      },
+    })
+    const connection = f.acceptInbound('/slow').then(() => f.acceptInbound('后续普通消息'))
+    try {
+      await entered.promise
+      await vi.waitFor(() => expect(f.admissions).toHaveLength(1))
+      expect(f.repository.listChannelHistory(f.channel.id)).toHaveLength(2)
+      expect(f.adapter.deliveries).toHaveLength(0)
+    } finally {
+      held.resolve()
+      await connection
+    }
+  })
+  it('rolls back the inbound fact when saving its command execution fails', async () => {
+    const f = await setup()
+    vi.spyOn(f.repository.commands, 'insert').mockImplementationOnce(() => {
+      throw new Error('模拟执行记录写入失败')
+    })
+    await expect(f.inbound('/status')).rejects.toThrow('模拟执行记录写入失败')
+    expect(f.repository.listChannelHistory(f.channel.id)).toEqual([])
+    expect(f.adapter.deliveries).toEqual([])
+    const retry = await f.inbound('/status')
+    expect(f.repository.commands.forEvent(retry.channelEventId)?.status).toBe('succeeded')
+  })
+  it('commits sequential inbound messages without waiting for a command receipt', async () => {
+    const f = await setup()
+    const entered = deferred()
+    const held = deferred()
+    const send = f.runtime.sendCommandReply.bind(f.runtime)
+    vi.spyOn(f.runtime, 'sendCommandReply').mockImplementationOnce(async (input) => {
+      entered.resolve()
+      await held.promise
+      return send(input)
+    })
+    const connection = f.acceptInbound('/status').then(() => f.acceptInbound('回执前的消息'))
+    try {
+      await entered.promise
+      await connection
+      expect(f.admissions).toHaveLength(1)
+      expect(f.adapter.deliveries).toEqual([])
+    } finally {
+      held.resolve()
+      await f.commands.idle()
+    }
+  })
+  it('serializes commands per channel and deduplicates them without blocking another channel', async () => {
+    const f = await setup()
+    const entered = deferred()
+    const held = deferred()
+    const invoke = vi.fn(async () => {
+      entered.resolve()
+      await held.promise
+      return { parts: [{ type: 'text' as const, text: '完成' }] }
+    })
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'slow', description: '慢命令' }),
+      fullName: 'ext_slow:slow',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_SLOW'),
+      invoke,
+    })
+    const first = await f.acceptInbound('/slow', 'first')
+    const duplicate = await f.acceptInbound('/slow', 'first')
+    const second = await f.acceptInbound('/slow', 'second')
+    try {
+      await entered.promise
+      expect(first.channelEventId).toBe(duplicate.channelEventId)
+      expect(invoke).toHaveBeenCalledOnce()
+      expect(f.repository.commands.forEvent(second.channelEventId)?.status).toBe('pending')
+      const other = f.core.createChannel({ connectionId: f.connection.id, platformChannelId: 'other', kind: 'group' })
+      expect((await f.commands.executeWeb(other.id, '/status', 'other', 'local')).status).toBe('succeeded')
+      expect(invoke).toHaveBeenCalledOnce()
+    } finally {
+      held.resolve()
+      await f.commands.idle()
+    }
+    expect(invoke).toHaveBeenCalledTimes(2)
+  })
+  it('leaves queued work durable when shutdown cancels an active handler', async () => {
+    const f = await setup()
+    const entered = deferred()
+    const invoke = vi.fn(async ({ signal }: Parameters<RegisteredCommand['invoke']>[0]) => {
+      entered.resolve()
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+      throw new Error('已取消')
+    })
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'wait', description: '等待取消' }),
+      fullName: 'ext_wait:wait',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_WAIT'),
+      invoke,
+    })
+    await f.acceptInbound('/wait')
+    const queued = await f.acceptInbound('/wait')
+    await entered.promise
+    await f.commands.dispose()
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(f.repository.commands.forEvent(queued.channelEventId)?.status).toBe('pending')
+    expect(f.repository.commands.unfinished().map((record) => record.eventId)).toEqual([queued.channelEventId])
+  })
+  it('does not read historical channel events when opening command recovery', async () => {
+    const f = await setup()
+    await f.inbound('普通历史消息')
+    const read = vi.spyOn(f.repository, 'getChannelEvent')
+    const unfinished = vi.spyOn(f.repository.commands, 'unfinished')
+    f.commands.open()
+    f.commands.open()
+    await f.commands.idle()
+    expect(read).not.toHaveBeenCalled()
+    expect(unfinished).toHaveBeenCalledOnce()
+  })
   it('stores help, unknown and denied commands without model admission or ordinary hooks', async () => {
     const f = await setup()
     await f.inbound('/help')
@@ -145,7 +282,8 @@ describe('unified commands', () => {
     expect(f.createSession).not.toHaveBeenCalled()
     expect(f.hook).not.toHaveBeenCalled()
     const history = f.repository.listChannelHistory(f.channel.id)
-    expect(history).toHaveLength(6)
+    expect(history).toHaveLength(4)
+    expect(f.adapter.deliveries).toHaveLength(1)
     expect(history.filter((e) => e.source === 'outbound-intent').every((e) => e.commandExecutionId !== undefined)).toBe(
       true,
     )
@@ -154,8 +292,15 @@ describe('unified commands', () => {
         .unfinished()
         .map((r) => r.status)
         .sort(),
-    ).toEqual(['failed', 'failed', 'succeeded'])
+    ).toEqual([])
     expect(JSON.stringify(f.adapter.deliveries[0]?.parts)).not.toContain('/reset')
+    for (const entry of history.filter((entry) => entry.source === 'channel-event')) {
+      const record = f.repository.commands.forEvent(entry.sourceId)!
+      if (record.status === 'failed') expect(record.replySuppressed).toBe(true)
+    }
+    f.commands.recover()
+    await f.commands.idle()
+    expect(f.adapter.deliveries).toHaveLength(1)
     await f.inbound('普通消息')
     expect(f.admissions[0]?.events.map((e) => e.parts)).toEqual([[{ type: 'text', text: '普通消息' }]])
   })
@@ -201,6 +346,7 @@ describe('unified commands', () => {
       receivedAt: 1000,
       dedupeKey: 'other-connection',
     })
+    await f.commands.idle()
     expect(f.repository.commands.forEvent(rejected.channelEventId)?.error).toContain('无权执行')
     expect(f.repository.getBinding(otherChannel.id)?.triggerPolicy).toBe('always')
     f.commands.grant(f.channel.id, f.member.identity.id, false)
@@ -217,7 +363,8 @@ describe('unified commands', () => {
     await expect(f.commands.executeWeb(f.channel.id, '/on', 'web-one', 'local')).rejects.toThrow('请求 ID')
     expect(record.status).toBe('succeeded')
     expect(f.adapter.deliveries).toHaveLength(2)
-    await f.commands.recover()
+    f.commands.recover()
+    await f.commands.idle()
     expect(f.adapter.deliveries).toHaveLength(2)
   })
   it('includes usage for malformed quotes without invoking the model', async () => {
@@ -270,9 +417,63 @@ describe('unified commands', () => {
     const record = f.repository.commands.forEvent(first.channelEventId)!
     f.repository.commands.update({ ...record, status: 'running' })
     f.repository.commands.recover(2000)
-    await f.commands.recover()
+    f.commands.recover()
+    await f.commands.idle()
     expect(f.repository.commands.get(record.id)?.status).toBe('uncertain')
     expect(f.adapter.deliveries).toHaveLength(1)
+  })
+  it('reconciles a persisted reply intent without another delivery after a lost execution update', async () => {
+    const f = await setup()
+    const commit = await f.inbound('/status')
+    const record = f.repository.commands.forEvent(commit.channelEventId)!
+    const { replyIntentId, ...beforeIntentUpdate } = record
+    expect(replyIntentId).toBeDefined()
+    f.repository.commands.update(beforeIntentUpdate)
+    expect(f.repository.commands.unfinished()).toHaveLength(1)
+    f.commands.recover()
+    await f.commands.idle()
+    expect(f.repository.commands.get(record.id)?.replyIntentId).toBe(replyIntentId)
+    expect(f.repository.commands.unfinished()).toEqual([])
+    expect(f.adapter.deliveries).toHaveLength(1)
+  })
+  it('rolls back a Web fact if its execution cannot be persisted', async () => {
+    const f = await setup()
+    vi.spyOn(f.repository.commands, 'insert').mockImplementationOnce(() => {
+      throw new Error('写入失败')
+    })
+    await expect(f.commands.executeWeb(f.channel.id, '/status', 'atomic-web', 'local')).rejects.toThrow('写入失败')
+    expect(f.repository.listChannelHistory(f.channel.id)).toEqual([])
+    expect((await f.commands.executeWeb(f.channel.id, '/status', 'atomic-web', 'local')).status).toBe('succeeded')
+  })
+  it('recovers only pending executions and missing replies, without re-invoking completed handlers', async () => {
+    const f = await setup(true)
+    const pending = await f.inbound('/help')
+    const completed = await f.inbound('/status')
+    const interrupted = await f.inbound('/stop')
+    const failedDelivery = await f.inbound('/status')
+    const done = f.repository.commands.forEvent(completed.channelEventId)!
+    f.repository.commands.update({
+      ...done,
+      status: 'succeeded',
+      result: { parts: [{ type: 'text', text: '已保存结果' }] },
+    })
+    const running = f.repository.commands.forEvent(interrupted.channelEventId)!
+    f.repository.commands.update({ ...running, status: 'running' })
+    f.repository.commands.recover(2000)
+    const failed = f.repository.commands.forEvent(failedDelivery.channelEventId)!
+    f.repository.commands.update({ ...failed, status: 'succeeded', replyError: '无法规划回复' })
+    expect(f.repository.commands.unfinished().map((r) => r.eventId)).toEqual([
+      pending.channelEventId,
+      completed.channelEventId,
+      interrupted.channelEventId,
+    ])
+    f.commands.open()
+    await f.commands.idle()
+    expect(f.adapter.deliveries).toHaveLength(3)
+    expect(JSON.stringify(f.adapter.deliveries[1]?.parts)).toContain('已保存结果')
+    expect(f.repository.commands.forEvent(interrupted.channelEventId)?.status).toBe('uncertain')
+    expect(f.interruptTurn).not.toHaveBeenCalled()
+    expect(f.repository.commands.unfinished()).toEqual([])
   })
   it('keeps host capabilities authorized against the private identity when an extension attempts to change it', async () => {
     const f = await setup()
@@ -422,7 +623,7 @@ it('rejects stale bound capabilities and keeps ordinary messages while an extens
   })
   const command = f.commands.executeWeb(f.channel.id, '/slow', 'slow-one', 'local')
   await entering
-  await f.inbound('仍然入库并准入')
+  await f.acceptInbound('仍然入库并准入')
   const next = f.core.createAgent({
     displayName: '另一个智能体',
     persona: '',
@@ -452,7 +653,8 @@ it('holds startup commands until extension activations have been restored', asyn
     extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_READY'),
     invoke: () => ({ parts: [{ type: 'text', text: '已恢复' }] }),
   })
-  await f.commands.open()
+  f.commands.open()
+  await f.commands.idle()
   expect(f.repository.commands.forEvent(commit.channelEventId)?.status).toBe('succeeded')
   expect(f.adapter.deliveries).toHaveLength(1)
 })

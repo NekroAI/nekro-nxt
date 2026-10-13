@@ -24,6 +24,7 @@ import type {
 import { AdmissionIdSchema, ChannelMemberIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
+  AppendChannelEventCommit,
   BindingRecord,
   ChannelEventRecord,
   CoreRepository,
@@ -393,9 +394,9 @@ const jobDetail = (job: ExtensionJobFiring): string => {
 export const isExtensionJobEvent = (event: Pick<ChannelEventRecord, 'facts'>): boolean =>
   event.facts?.['extensionJob'] !== undefined
 
-/** Command gate runs after fact commit and before hooks or model admission. */
+/** Command gate commits facts and execution records together, before hooks or model admission. */
 export interface CommandGate {
-  handle(event: ChannelEventRecord): Promise<boolean>
+  commitInbound(event: AdapterChannelInboundEvent): AppendChannelEventCommit
   /** Synchronous classification also excludes not-yet-processed commands from backlog/recovery. */
   excludes(event: ChannelEventRecord): boolean
   project(event: ChannelEventRecord): ChannelEventRecord
@@ -615,9 +616,8 @@ export class ChannelRuntime {
   }
 
   async acceptChannelInbound(event: AdapterChannelInboundEvent): Promise<InboundCommitResult> {
-    const commit = this.#core.appendInbound(event)
-    // Retry classification even for a duplicate: a crash may have followed the fact commit.
-    if (this.#commands !== undefined && (await this.#commands.handle(commit.event))) {
+    const commit = this.#commands?.commitInbound(event) ?? this.#core.appendInbound(event)
+    if (this.#commands?.excludes(commit.event)) {
       this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: commit.event.id })
       return { channelEventId: commit.event.id, inserted: commit.inserted }
     }

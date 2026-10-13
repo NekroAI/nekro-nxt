@@ -662,12 +662,14 @@ export const commandExecutions = sqliteTable(
       .$type<ChannelEventId>()
       .references(() => channelEvents.id, { onDelete: 'restrict' }),
     status: text({ enum: ['pending', 'running', 'succeeded', 'failed', 'uncertain'] }).notNull(),
+    needsRecovery: integer('needs_recovery', { mode: 'boolean' }).notNull().default(true),
     record: jsonText<CommandExecutionRecord>('record').notNull(),
   },
   (table) => [
     uniqueIndex('command_execution_request_uq').on(table.channelId, table.source, table.requestId),
     uniqueIndex('command_execution_event_uq').on(table.eventId),
     index('command_execution_status_idx').on(table.status),
+    index('command_execution_recovery_idx').on(table.needsRecovery, table.id),
   ],
 )
 export const commandResponsePolicies = sqliteTable('command_response_policies', {

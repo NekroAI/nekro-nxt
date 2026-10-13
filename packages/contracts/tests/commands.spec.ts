@@ -29,6 +29,16 @@ describe('command parsing', () => {
   it.each(['"未闭合', 'a\\'])('rejects incomplete token syntax %s', (text) =>
     expect(() => tokenizeCommand(text)).toThrow(),
   )
+  it('escapes inside single quotes and requires equals syntax for option values beginning with --', () => {
+    expect(tokenizeCommand(String.raw`'a\ b' 'it\'s'`)).toEqual(['a b', "it's"])
+    const option = CommandDefinitionSchema.parse({
+      name: 'echo',
+      description: '选项边界',
+      parameters: [{ name: 'value', kind: 'option', type: 'string' }],
+    })
+    expect(() => parseCommandArguments(option, tokenizeCommand('--value "--literal"'))).toThrow('缺少值')
+    expect(parseCommandArguments(option, tokenizeCommand('--value=--literal'))).toEqual({ value: '--literal' })
+  })
   it.each(
     [
       [],
@@ -59,6 +69,26 @@ describe('command parsing', () => {
         { type: 'text', text: '/help' },
       ]),
     ).toEqual({ kind: 'chat' })
+    expect(
+      recognizeCommand(
+        [
+          { type: 'mention', memberId: ChannelMemberIdSchema.parse('mbr_OTHER') },
+          { type: 'text', text: ' /stop' },
+        ],
+        bot,
+      ),
+    ).toEqual({ kind: 'chat' })
+    expect(
+      recognizeCommand(
+        [
+          { type: 'mention', memberId: bot },
+          { type: 'mention', memberId: ChannelMemberIdSchema.parse('mbr_OTHER') },
+          { type: 'text', text: ' /stop' },
+        ],
+        bot,
+      ),
+    ).toEqual({ kind: 'chat' })
+    expect(recognizeCommand([{ type: 'text', text: '@别人 /stop' }], bot)).toEqual({ kind: 'chat' })
     expect(recognizeCommand([{ type: 'text', text: '```\n/help\n```' }])).toEqual({ kind: 'chat' })
     expect(recognizeCommand([{ type: 'text', text: '//help' }])).toEqual({
       kind: 'escaped',

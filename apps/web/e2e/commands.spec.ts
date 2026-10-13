@@ -91,8 +91,13 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect(page.getByLabel('消息', { exact: true })).toBeVisible()
     await expect(page.getByLabel('命令记录').filter({ hasText: '智能体：未绑定' }).first()).toBeVisible()
     // Platform group administrator is still unauthorized until explicitly granted here.
+    const beforeDenied = platform.sent.length
     platform.send('/off')
     await expect(page.getByText(/无权执行此命令/).first()).toBeVisible()
+    expect(platform.sent).toHaveLength(beforeDenied)
+    platform.send('/不存在的命令')
+    await expect(page.getByText(/未知命令：\/不存在的命令/).first()).toBeVisible()
+    expect(platform.sent).toHaveLength(beforeDenied)
     await page.screenshot({ path: testInfo.outputPath('unauthorized.png'), fullPage: true })
     const inspector = page.getByRole('button', { name: '频道信息' })
     if ((await inspector.count()) && (await inspector.getAttribute('aria-pressed')) !== 'true') await inspector.click()

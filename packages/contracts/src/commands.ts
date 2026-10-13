@@ -116,6 +116,7 @@ export const CommandExecutionRecordSchema = z
     error: z.string().optional(),
     replyIntentId: OutboundIntentIdSchema.optional(),
     replyError: z.string().optional(),
+    replySuppressed: z.boolean().optional(),
     createdAt: z.number().int().nonnegative(),
     completedAt: z.number().int().nonnegative().optional(),
   })

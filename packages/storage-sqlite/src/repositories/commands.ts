@@ -1,6 +1,5 @@
-import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import {
-  ChannelEventIdSchema,
   CommandExecutionRecordSchema,
   CommandPolicySchema,
   type ChannelEventId,
@@ -12,7 +11,6 @@ import {
 import type { BindingRecord } from '@nekro-nxt/core'
 import type { DrizzleCoreDatabase } from '../database.js'
 import {
-  channelEvents,
   commandSystem,
   commandExecutions,
   commandGrants,
@@ -22,6 +20,10 @@ import {
 } from '../schema.js'
 
 export function createCommandRepository(db: DrizzleCoreDatabase) {
+  const needsRecovery = (record: CommandExecutionRecord): boolean =>
+    record.status === 'pending' ||
+    record.status === 'running' ||
+    (record.replyIntentId === undefined && record.replyError === undefined && record.replySuppressed !== true)
   const get = (id: string): CommandExecutionRecord | undefined => {
     const row = db.select().from(commandExecutions).where(eq(commandExecutions.id, id)).get()
     return row === undefined ? undefined : CommandExecutionRecordSchema.parse(row.record)
@@ -31,7 +33,12 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
     if (
       db
         .update(commandExecutions)
-        .set({ record: parsed, status: parsed.status, eventId: parsed.eventId ?? null })
+        .set({
+          record: parsed,
+          status: parsed.status,
+          eventId: parsed.eventId ?? null,
+          needsRecovery: needsRecovery(parsed),
+        })
         .where(eq(commandExecutions.id, parsed.id))
         .run().changes !== 1
     )
@@ -41,18 +48,12 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
   return {
     get,
     update,
+    /** Fact and execution must commit together; callbacks must remain synchronous. */
+    transaction<T>(operation: () => T): T {
+      return db.transaction(operation)
+    },
     cutoff(): string {
       return db.select().from(commandSystem).where(eq(commandSystem.id, 1)).get()?.cutoffEventId ?? ''
-    },
-    eligibleEvents(after: string, limit = 500): readonly ChannelEventId[] {
-      return db
-        .select({ id: channelEvents.id })
-        .from(channelEvents)
-        .where(after === '' ? undefined : gt(channelEvents.id, ChannelEventIdSchema.parse(after)))
-        .orderBy(asc(channelEvents.id))
-        .limit(limit)
-        .all()
-        .map((row) => row.id)
     },
     find(
       channelId: ChannelId,
@@ -86,6 +87,7 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
           requestId: parsed.requestId,
           eventId: parsed.eventId ?? null,
           status: parsed.status,
+          needsRecovery: needsRecovery(parsed),
           record: parsed,
         })
         .onConflictDoNothing()
@@ -100,7 +102,7 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
       return (
         db
           .update(commandExecutions)
-          .set({ status: 'running', record: { ...record, status: 'running' } })
+          .set({ status: 'running', needsRecovery: true, record: { ...record, status: 'running' } })
           .where(and(eq(commandExecutions.id, id), eq(commandExecutions.status, 'pending')))
           .run().changes === 1
       )
@@ -121,7 +123,12 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
       return db
         .select()
         .from(commandExecutions)
-        .where(inArray(commandExecutions.status, ['pending', 'uncertain', 'succeeded', 'failed']))
+        .where(eq(commandExecutions.needsRecovery, true))
+        .orderBy(
+          sql`json_extract(${commandExecutions.record}, '$.createdAt')`,
+          asc(commandExecutions.eventId),
+          asc(commandExecutions.id),
+        )
         .all()
         .map((row) => CommandExecutionRecordSchema.parse(row.record))
     },

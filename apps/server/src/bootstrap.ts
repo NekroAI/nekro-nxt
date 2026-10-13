@@ -860,7 +860,7 @@ export class NekroRuntime {
       const channels = new ChannelRuntime(core, repository, repository, host, {
         inboundHooks,
         commands: {
-          handle: (event) => commandReference.current?.handle(event) ?? Promise.resolve(false),
+          commitInbound: (event) => commandReference.current?.commitInbound(event) ?? core.appendInbound(event),
           excludes: (event) => commandReference.current?.excludes(event) ?? false,
           project: (event) => commandReference.current?.project(event) ?? event,
         },
@@ -1247,15 +1247,15 @@ export class NekroRuntime {
     await this.checkAgentCompatibility()
     await this.channels.recoverProcessingFeedback()
     await this.extensions.restoreAttachments()
-    await this.commands.open()
     await this.channels.recover()
     if (options.openAdmission !== false) await this.openAdmission()
   }
 
   /** Opens Channel Admission and then starts scheduled jobs, so missed occurrences fire once, late. */
   async openAdmission(): Promise<void> {
-    await this.commands.open()
     await this.channels.openAdmission()
+    // Finish Outbox recovery before queued commands can create new reply intents.
+    this.commands.open()
     this.#jobScheduler.start()
   }
 
