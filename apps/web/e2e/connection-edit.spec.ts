@@ -74,9 +74,12 @@ for (const theme of ['light', 'dark'] as const) {
       await page.getByRole('option', { name: '清除', exact: true }).click()
       await expect(page.getByRole('link', { name: /服务状态/u })).toBeInViewport({ ratio: 1 })
       await page.screenshot({ path: testInfo.outputPath(`connection-edit-${theme}.png`), animations: 'disabled' })
+      const handshakesBeforeClear = second.authorizations.length
       await page.getByRole('button', { name: '保存设置', exact: true }).click()
+      // A previous connected snapshot can arrive before this save completes; wait for its new handshake first.
+      await expect.poll(() => second.authorizations.length).toBeGreaterThan(handshakesBeforeClear)
+      await expect.poll(() => second.authorizations.at(-1)).toBeUndefined()
       await expect.poll(async () => (await connection())?.status.state).toBe('connected')
-      expect(second.authorizations.at(-1)).toBeUndefined()
       expect((await connection())?.configuredSecrets).toEqual([])
       expect((await snapshot()).channels.find((item) => item.connectionId === id)?.id).toBe(channelId)
       // The workspace event cursor advances when connections change; message facts stay the same.
