@@ -162,7 +162,9 @@ export class WorkspaceProjections {
         author: truncate(
           admin
             ? '管理员'
-            : (this.#runtime.repository.getAgentRevision(outbound.agentRevisionId)?.displayName ?? '智能体'),
+            : outbound.agentRevisionId === undefined
+              ? '命令结果'
+              : (this.#runtime.repository.getAgentRevision(outbound.agentRevisionId)?.displayName ?? '智能体'),
           120,
         ),
         preview: previewMessageParts(this.#runtime, outbound.parts),

@@ -1,3 +1,5 @@
+import { recognizeCommand } from '@nekro-nxt/contracts'
+import { viewerKeyFromRequest } from './viewer.js'
 import {
   AgentIdSchema,
   AssetIdSchema,
@@ -1027,6 +1029,24 @@ export function registerWorkspaceRoutes({
           writeError(res, 404, 'not-found', '频道不存在。')
           return
         }
+        const command = recognizeCommand(parsed.parts)
+        if (command.kind === 'command') {
+          if (parsed.clientEventId === undefined) {
+            writeError(res, 400, 'command-request-id-required', '执行命令需要客户端请求 ID，以避免重复操作。')
+            return
+          }
+          const result = await runtime.commands.executeWeb(
+            typedChannelId,
+            command.text,
+            parsed.clientEventId,
+            viewerKeyFromRequest(req),
+          )
+          writeContractJson(res, 200, HostApiContracts.sendChannelMessage, {
+            inserted: true,
+            ...(result.eventId === undefined ? {} : { channelEventId: result.eventId }),
+          })
+          return
+        }
         if (channel.kind === 'internal') {
           const result = await runtime.internalChannel.postMessage({
             channelId: typedChannelId,
@@ -1056,7 +1076,7 @@ export function registerWorkspaceRoutes({
         }
         await runtime.channels.sendAdminConsoleMessage({
           channelId: typedChannelId,
-          parts: parsed.parts,
+          parts: command.kind === 'escaped' ? command.parts : parsed.parts,
           ...(parsed.clientEventId === undefined ? {} : { clientRequestId: parsed.clientEventId }),
         })
         writeJson(

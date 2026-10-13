@@ -210,8 +210,9 @@ export const AdmissionEventRowSchema = createSelectSchema(admissionEvents, {
 export const OutboundIntentRowSchema = createSelectSchema(outboundIntents, {
   id: OutboundIntentIdSchema,
   logicalMessageId: LogicalMessageIdSchema,
-  episodeId: EpisodeIdSchema,
-  agentRevisionId: AgentRevisionIdSchema,
+  episodeId: EpisodeIdSchema.nullable(),
+  agentRevisionId: AgentRevisionIdSchema.nullable(),
+  channelId: ChannelIdSchema.nullable(),
   parts: MessagePartsSchema,
 })
 export const PhysicalDeliveryRowSchema = createSelectSchema(physicalDeliveries, {

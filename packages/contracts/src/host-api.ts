@@ -1,3 +1,4 @@
+import { CommandCatalogEntrySchema, CommandExecutionRecordSchema, CommandPolicySchema } from './commands.js'
 import { z } from 'zod'
 import { McpServerFormSchema } from './extension-capabilities.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
@@ -482,7 +483,8 @@ export const HostSnapshotMessageSchema = z
       })
       .strict()
       .optional(),
-    origin: z.enum(['admin-console']).optional(),
+    origin: z.enum(['admin-console', 'command']).optional(),
+    command: CommandExecutionRecordSchema.optional(),
     /** What the agent's inbound hooks decided for this message, when anything differs from the default. */
     inboundHook: z
       .object({
@@ -2310,6 +2312,80 @@ const encodeBinaryUpload = (input: z.output<typeof BinaryUploadRequestSchema>) =
 })
 
 export const HostApiContracts = {
+  listCommands: defineContract({
+    method: 'GET',
+    path: '/api/commands',
+    params: z.object({ channelId: ChannelIdSchema.optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ commands: z.array(CommandCatalogEntrySchema), problems: z.array(z.string()) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  executeCommand: defineContract({
+    method: 'POST',
+    path: '/api/commands/execute',
+    params: EmptyParamsSchema,
+    request: z
+      .object({ channelId: ChannelIdSchema, text: z.string().min(1).max(16000), requestId: z.string().min(1).max(200) })
+      .strict(),
+    response: CommandExecutionRecordSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  getCommandExecution: defineContract({
+    method: 'GET',
+    path: '/api/commands/executions/:executionId',
+    params: z.object({ executionId: z.string().min(1) }).strict(),
+    request: NoRequestBodySchema,
+    response: CommandExecutionRecordSchema,
+    error: HostApiErrorSchema,
+  }),
+  setCommandPolicy: defineContract({
+    method: 'PUT',
+    path: '/api/commands/policy',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        scope: z.union([z.literal('global'), ChannelIdSchema]),
+        name: z.string().min(1),
+        policy: CommandPolicySchema,
+      })
+      .strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  listCommandMembers: defineContract({
+    method: 'GET',
+    path: '/api/commands/members/:channelId',
+    params: z.object({ channelId: ChannelIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        members: z.array(
+          z
+            .object({
+              identityId: PlatformIdentityIdSchema,
+              displayName: z.string(),
+              platformUserId: z.string(),
+              authorized: z.boolean(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  setCommandGrant: defineContract({
+    method: 'PUT',
+    path: '/api/commands/grants',
+    params: EmptyParamsSchema,
+    request: z
+      .object({ channelId: ChannelIdSchema, identityId: PlatformIdentityIdSchema, enabled: z.boolean() })
+      .strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
   retryRuntimeCompatibility: defineContract({
     method: 'POST',
     path: '/api/runtime/compatibility/retry',

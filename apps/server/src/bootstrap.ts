@@ -1,3 +1,4 @@
+import { CommandService } from './commands/service.js'
 import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
 import type { DshSessionStorageRetirementReport, InboundHookDecisionRecord } from '@nekro-nxt/storage-sqlite'
 import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
@@ -180,6 +181,7 @@ export class NekroRuntime {
   readonly authoring: AuthoringApplicationService
   readonly host: DshHostRuntime
   readonly channels: ChannelRuntime
+  readonly commands: CommandService
   readonly internalConnectionId: ConnectionId
   /** Parent of every agent workspace (`<root>/<agentId>/`). */
   readonly workspaceRoot: string
@@ -224,6 +226,7 @@ export class NekroRuntime {
 
   private constructor(input: {
     readonly database: CoreDatabase
+    readonly deferCommandExecution: boolean
     readonly compatibility: RuntimeCompatibilityRegistry
     readonly repository: SqliteCoreRepository
     readonly hostSecurity: SqliteHostSecurityRepository
@@ -267,6 +270,34 @@ export class NekroRuntime {
     this.host = input.host
     this.authoring = new AuthoringApplicationService(this)
     this.channels = input.channels
+    this.commands = new CommandService({
+      deferExecution: input.deferCommandExecution,
+      repository: this.repository,
+      core: this.core,
+      channels: () => this.channels,
+      now: input.now,
+      running: (id) => this.host.sessionStatus(id) === 'running',
+      extensions: (agentId) =>
+        this.host.commandHandlers(agentId).map((command) => ({
+          definition: command.definition,
+          invoke: command.invoke,
+          fullName: `${command.revision.extensionId}:${command.definition.name}`,
+          source:
+            this.repository.getExtension(command.revision.extensionId)?.displayName ?? command.revision.extensionId,
+          extensionRevisionId: command.revision.id,
+        })),
+      botMemberId: (event) => {
+        const channel = this.repository.getChannel(event.channelId)
+        if (!channel) return undefined
+        const account =
+          this.connections.adapterConnectionDiagnostic(channel.connectionId)?.accountReference ??
+          this.repository.getConnection(channel.connectionId)?.accountKey
+        const part = event.parts.find((part) => part.type !== 'text' || part.text.trim() !== '')
+        if (account === undefined || part?.type !== 'mention') return undefined
+        const identity = this.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, part.memberId)
+        return identity?.platformUserId === account ? part.memberId : undefined
+      },
+    })
     this.internalConnectionId = input.internalConnectionId
     this.workspaceRoot = input.workspaceRoot
     this.dataRoot = input.dataRoot
@@ -825,8 +856,14 @@ export class NekroRuntime {
         },
         now,
       })
+      const commandReference: { current?: CommandService } = {}
       const channels = new ChannelRuntime(core, repository, repository, host, {
         inboundHooks,
+        commands: {
+          handle: (event) => commandReference.current?.handle(event) ?? Promise.resolve(false),
+          excludes: (event) => commandReference.current?.excludes(event) ?? false,
+          project: (event) => commandReference.current?.project(event) ?? event,
+        },
         deferAdmission: options.deferAdmission ?? false,
         canAdmitAgent: (agentId) => host.canRunAgent(agentId),
         now,
@@ -938,6 +975,7 @@ export class NekroRuntime {
       })
       const runtime = new NekroRuntime({
         dataRoot: path.dirname(options.coreDatabasePath),
+        deferCommandExecution: options.deferAdmission === true,
         jobScheduler,
         scheduledTasks,
         codeRunNode,
@@ -973,6 +1011,7 @@ export class NekroRuntime {
         adapterRuntimes,
         adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
       })
+      commandReference.current = runtime.commands
       return runtime
     } catch (error) {
       database.close()
@@ -1207,13 +1246,15 @@ export class NekroRuntime {
     }
     await this.checkAgentCompatibility()
     await this.channels.recoverProcessingFeedback()
-    await this.channels.recover()
     await this.extensions.restoreAttachments()
+    await this.commands.open()
+    await this.channels.recover()
     if (options.openAdmission !== false) await this.openAdmission()
   }
 
   /** Opens Channel Admission and then starts scheduled jobs, so missed occurrences fire once, late. */
   async openAdmission(): Promise<void> {
+    await this.commands.open()
     await this.channels.openAdmission()
     this.#jobScheduler.start()
   }
@@ -1450,6 +1491,7 @@ export class NekroRuntime {
     this.#disposed = true
     await this.#jobScheduler.dispose()
     await this.retrieval.dispose()
+    await this.commands.dispose()
     await this.authoring.dispose()
     await this.extensionService.dispose()
     const failures: unknown[] = []

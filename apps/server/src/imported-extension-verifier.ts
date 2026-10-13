@@ -1,3 +1,5 @@
+import { CommandRegistrations } from './commands/registrations.js'
+import { CommandDefinitionSchema, ChannelIdSchema, parseCommandArguments } from '@nekro-nxt/contracts'
 import { ExtensionLibrary, memoryLibraryRegistry } from './extension-library.js'
 import { memoryIndexEngine } from './extension-index.js'
 import { AdapterRegistry, type AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
@@ -612,6 +614,7 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
   )
   const declaredAdapter = manifestAdapter(manifest)
   const handlers = new Map<string, ExtensionRpcHandler>()
+  const commands = new CommandRegistrations()
   const tools = new Map<string, ExtensionToolDefinition>()
   const toolInvocations: Array<{ name: string; succeeded: boolean }> = []
   let disposePlugin: (() => void | Promise<void>) | undefined
@@ -625,6 +628,7 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       const definition = await factory(undefined, [
         {
           harness: {
+            registerCommand: commands.register,
             defineTool: (tool: ExtensionToolDefinition) => tool,
             registerTool: (_context: unknown, tool: ExtensionToolDefinition) => {
               if (tools.has(tool.name)) throw new Error(`重复工具：${tool.name}`)
@@ -665,6 +669,9 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
           nxt: hostNxt,
         },
       ])
+      commands.seal(
+        manifest.contributions.filter((c) => c.kind === 'command').map((c) => CommandDefinitionSchema.strip().parse(c)),
+      )
       if (definition !== undefined && definition !== null && hasAgentLayer(manifest)) {
         disposePlugin = await runPluginApply(definition, {
           tools: {
@@ -696,6 +703,27 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       if (contribution.kind === 'rpc' && contribution.verificationInput !== undefined) {
         rpcInputs.set(contribution.method, contribution.verificationInput)
       }
+    }
+    for (const command of commands.list()) {
+      const tokens = command.definition.parameters.flatMap((p) => {
+        if (!p.required || p.default !== undefined) return []
+        const value = String(
+          p.choices?.[0] ??
+            (p.type === 'string' ? '示例'.repeat(Math.max(1, p.min ?? 1)) : p.type === 'boolean' ? true : (p.min ?? 1)),
+        )
+        return p.kind === 'option' ? ['--' + p.name, value] : [value]
+      })
+      await command.invoke({
+        channelId: ChannelIdSchema.parse('chn_VERIFY'),
+        identity: { source: 'web', displayName: '验证管理员' },
+        arguments: parseCommandArguments(command.definition, tokens),
+        signal: new AbortController().signal,
+        host: {
+          status: () => ({ bound: true, responseMode: '验证', running: false }),
+          stop: () => Promise.resolve(),
+          reset: () => Promise.resolve(),
+        },
+      })
     }
     for (const tool of tools.values()) {
       JsonValueSchema.parse(await tool.execute(toolInputs.get(tool.name) ?? {}))
@@ -748,6 +776,7 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       ...(adapter === undefined ? {} : { adapter }),
     }
   } finally {
+    await commands.dispose()
     await disposePlugin?.()
     for (const registered of registeredAdapters) await registered.dispose()
     tools.clear()

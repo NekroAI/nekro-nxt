@@ -107,8 +107,11 @@ export interface ChannelFact {
 export interface OutboundIntentRecord {
   readonly id: OutboundIntentId
   readonly logicalMessageId: LogicalMessageId
-  readonly agentRevisionId: AgentRevisionId
-  readonly episodeId: EpisodeId
+  readonly agentRevisionId?: AgentRevisionId
+  readonly episodeId?: EpisodeId
+  /** Commands have their own durable source and never require an Episode. */
+  readonly channelId?: ChannelId
+  readonly commandExecutionId?: string
   readonly sourceTurnId?: string
   readonly parts: readonly MessagePart[]
   readonly replyTo?: string
@@ -168,6 +171,7 @@ export type ChannelHistoryEntry =
       readonly parts: readonly MessagePart[]
       readonly state: OutboundState
       readonly sourceTurnId?: string
+      readonly commandExecutionId?: string
     }
 
 export const isConsoleAnchorHistory = (entry: ChannelHistoryEntry): boolean =>
@@ -389,6 +393,14 @@ const jobDetail = (job: ExtensionJobFiring): string => {
 export const isExtensionJobEvent = (event: Pick<ChannelEventRecord, 'facts'>): boolean =>
   event.facts?.['extensionJob'] !== undefined
 
+/** Command gate runs after fact commit and before hooks or model admission. */
+export interface CommandGate {
+  handle(event: ChannelEventRecord): Promise<boolean>
+  /** Synchronous classification also excludes not-yet-processed commands from backlog/recovery. */
+  excludes(event: ChannelEventRecord): boolean
+  project(event: ChannelEventRecord): ChannelEventRecord
+}
+
 export interface ChannelRuntimeOptions {
   /** Persist inbound facts while Host restores required services and optional extensions. */
   readonly deferAdmission?: boolean
@@ -410,6 +422,7 @@ export interface ChannelRuntimeOptions {
   readonly messageGapMs?: (channelId: ChannelId, parts: readonly MessagePart[]) => number
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
   readonly adapterState?: AdapterRuntimeStateStore
+  readonly commands?: CommandGate
   readonly inboundHooks?: InboundHookGate
 }
 
@@ -541,6 +554,7 @@ export class ChannelRuntime {
   readonly #activityDirectedAt: NonNullable<ChannelRuntimeOptions['activityDirectedAt']>
   /** Recent activity events that woke an agent, per channel, for the repeat guard. */
   readonly #activityWakes = new Map<ChannelId, { readonly eventId: string; readonly at: number }[]>()
+  readonly #commands: CommandGate | undefined
   readonly #inboundHooks: InboundHookGate | undefined
   readonly #validateActivityTriggerOverrides: NonNullable<ChannelRuntimeOptions['validateActivityTriggerOverrides']>
   readonly #now: () => number
@@ -567,6 +581,7 @@ export class ChannelRuntime {
     this.#isActivityTriggerAllowed = options.isActivityTriggerAllowed ?? (() => true)
     this.#isActivityTriggerEnabledByDefault = options.isActivityTriggerEnabledByDefault ?? (() => false)
     this.#activityDirectedAt = options.activityDirectedAt ?? (() => undefined)
+    this.#commands = options.commands
     this.#inboundHooks = options.inboundHooks
     this.#validateActivityTriggerOverrides = options.validateActivityTriggerOverrides ?? (() => undefined)
     this.#now = options.now ?? Date.now
@@ -601,6 +616,11 @@ export class ChannelRuntime {
 
   async acceptChannelInbound(event: AdapterChannelInboundEvent): Promise<InboundCommitResult> {
     const commit = this.#core.appendInbound(event)
+    // Retry classification even for a duplicate: a crash may have followed the fact commit.
+    if (this.#commands !== undefined && (await this.#commands.handle(commit.event))) {
+      this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: commit.event.id })
+      return { channelEventId: commit.event.id, inserted: commit.inserted }
+    }
     if (commit.inserted) {
       this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: commit.event.id })
       const bindings = this.#coreRepository
@@ -666,6 +686,8 @@ export class ChannelRuntime {
 
   async #decideInboundHooks(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
     const hooks = this.#inboundHooks
+    if (this.#commands?.excludes(event)) return
+    event = this.#commands?.project(event) ?? event
     if (hooks === undefined || event.kind !== 'message-created' || isExtensionJobEvent(event)) return
     if (!hooks.covers(binding.agentId) || hooks.stored(event.id, binding.agentId) !== undefined) return
     await hooks.decide({
@@ -688,6 +710,7 @@ export class ChannelRuntime {
 
   /** Product trigger rule: binding policy, then a stored hook decision, then scheduled jobs that always wake. */
   #triggered(binding: BindingRecord, event: ChannelEventRecord): boolean {
+    if (this.#commands?.excludes(event)) return false
     if (isExtensionJobEvent(event)) return binding.triggerPolicy !== 'observe-only'
     const decision = this.#hookDecision(binding, event)
     if (decision?.hidden === true || decision?.trigger === 'suppress') return false
@@ -750,7 +773,9 @@ export class ChannelRuntime {
   }
 
   #visibleEvents(binding: BindingRecord, events: readonly ChannelEventRecord[]): readonly ChannelEventRecord[] {
-    return events.filter((event) => this.#hookDecision(binding, event)?.hidden !== true)
+    return events
+      .filter((event) => !this.#commands?.excludes(event) && this.#hookDecision(binding, event)?.hidden !== true)
+      .map((event) => this.#commands?.project(event) ?? event)
   }
 
   #annotations(binding: BindingRecord, events: readonly ChannelEventRecord[]): ReadonlyMap<ChannelEventId, string> {
@@ -901,6 +926,30 @@ export class ChannelRuntime {
   subscribeFacts(listener: (fact: ChannelFact) => void): () => void {
     this.#factListeners.add(listener)
     return () => this.#factListeners.delete(listener)
+  }
+
+  publishInboundFact(event: ChannelEventRecord): void {
+    this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: event.id })
+  }
+
+  sendCommandReply(input: Parameters<ChannelDelivery['sendCommandReply']>[0]): Promise<SendMessageResult> {
+    return this.#delivery.sendCommandReply(input)
+  }
+
+  /** Uses the same lane as rebinding and admissions, retaining the binding generation. */
+  async updateCommandResponsePolicy(
+    binding: BindingRecord,
+    guard: () => void,
+    resolve: (current: BindingRecord) => BindingRecord['triggerPolicy'],
+  ): Promise<void> {
+    await this.#withLane(binding.channelId, binding.agentId, () => {
+      guard()
+      const current = this.#coreRepository.getBinding(binding.channelId)
+      if (!current || current.agentId !== binding.agentId || current.boundAt !== binding.boundAt)
+        throw new Error('频道绑定已变化，请重新执行命令。')
+      this.#coreRepository.replaceBinding({ ...current, triggerPolicy: resolve(current) })
+      return Promise.resolve()
+    })
   }
 
   async replaceBinding(input: {
@@ -1148,7 +1197,7 @@ export class ChannelRuntime {
           const result = await this.#sessionDriver.admit({
             dshSessionId,
             admissionId: admission.id,
-            events: visible.length > 0 ? visible : events,
+            events: visible,
             mode: admission.mode,
             replyRequired: current !== undefined && this.#replyRequired(current, visible),
             ...(annotations.size === 0 ? {} : { annotations }),
@@ -1201,14 +1250,19 @@ export class ChannelRuntime {
   async stopCurrentTurn(
     channelId: ChannelId,
     expectedEpisodeId?: EpisodeId,
+    guard?: () => void,
   ): Promise<{
     readonly result: 'stopped' | 'idle'
     readonly episodeId?: EpisodeId
     readonly retainedPending: number
   }> {
     const binding = this.#coreRepository.getBinding(channelId)
-    if (!binding) return { result: 'idle', retainedPending: 0 }
+    if (!binding) {
+      guard?.()
+      return { result: 'idle', retainedPending: 0 }
+    }
     return this.#withLane(channelId, binding.agentId, async () => {
+      guard?.()
       const episode = this.#runtimeRepository.getActiveEpisode(channelId, binding.agentId)
       if (expectedEpisodeId !== undefined && episode?.id !== expectedEpisodeId) {
         throw new ChannelStopConflictError('频道上下文已发生变化，请刷新后重试。')
@@ -1236,9 +1290,12 @@ export class ChannelRuntime {
   /** Fails before any state change when the Outbound cannot be dispatched again now. */
   assertOutboundDispatchable(id: OutboundIntentId): void {
     const snapshot = this.#runtimeRepository.getOutbound(id)
-    const episode = this.#runtimeRepository.getEpisode(snapshot.intent.episodeId)
-    if (!episode) throw new Error('这条消息所属的会话已不存在。')
-    const channel = this.#coreRepository.getChannel(episode.channelId)
+    const episode =
+      snapshot.intent.episodeId === undefined
+        ? undefined
+        : this.#runtimeRepository.getEpisode(snapshot.intent.episodeId)
+    const channelId = snapshot.intent.channelId ?? episode?.channelId
+    const channel = channelId === undefined ? undefined : this.#coreRepository.getChannel(channelId)
     if (!channel) throw new Error('这条消息所属的频道已不存在。')
     if (!this.#resolveAdapter(channel.connectionId)) throw new Error('平台连接当前未运行，暂时无法重新发送。')
   }
@@ -1250,8 +1307,10 @@ export class ChannelRuntime {
 
   /** Re-announces an Outbound so clients refresh its projection after an administrator resolution. */
   publishOutboundFact(id: OutboundIntentId): void {
-    const episode = this.#runtimeRepository.getEpisode(this.#runtimeRepository.getOutbound(id).intent.episodeId)
-    if (episode) this.#publishFact({ channelId: episode.channelId, kind: 'outbound', sourceId: id })
+    const intent = this.#runtimeRepository.getOutbound(id).intent
+    const episode = intent.episodeId === undefined ? undefined : this.#runtimeRepository.getEpisode(intent.episodeId)
+    const channelId = intent.channelId ?? episode?.channelId
+    if (channelId) this.#publishFact({ channelId, kind: 'outbound', sourceId: id })
   }
 
   /** Admitted input waiting in the bound Agent's live Session, in DSH consumption order. */
@@ -1289,10 +1348,11 @@ export class ChannelRuntime {
    * opens a compacted handoff Episode. Channel facts remain durable and future
    * admissions wait behind this lane boundary.
    */
-  async resetEpisode(episodeId: EpisodeId, mode: ContextResetMode): Promise<ContextResetResult> {
+  async resetEpisode(episodeId: EpisodeId, mode: ContextResetMode, guard?: () => void): Promise<ContextResetResult> {
     const initial = this.#runtimeRepository.getEpisode(episodeId)
     if (!initial) throw new Error(`Unknown Episode: ${episodeId}`)
     return this.#withLane(initial.channelId, initial.agentId, async () => {
+      guard?.()
       const episode = this.#runtimeRepository.getEpisode(episodeId)
       if (!episode || episode.status !== 'active' || !episode.dshSessionId) {
         throw new Error(`Episode is not active: ${episodeId}`)
@@ -1484,7 +1544,7 @@ export class ChannelRuntime {
     event: ChannelEventRecord,
     backlog?: readonly ChannelEventRecord[],
   ): Promise<void> {
-    if (!this.#admissionAllowed(binding.agentId)) return
+    if (!this.#admissionAllowed(binding.agentId) || this.#commands?.excludes(event)) return
     const currentBinding = this.#coreRepository.getBinding(binding.channelId)
     if (!currentBinding || currentBinding.agentId !== binding.agentId || currentBinding.boundAt !== binding.boundAt)
       return
@@ -1499,7 +1559,9 @@ export class ChannelRuntime {
     const dshSessionId = episode.dshSessionId
     if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
     if (!this.#admissionAllowed(binding.agentId)) return
-    const candidateEvents = backlog ?? this.#candidateTriggeredEvents(binding, event)
+    const candidateEvents = (backlog ?? this.#candidateTriggeredEvents(binding, event)).filter(
+      (candidate) => !this.#commands?.excludes(candidate),
+    )
     // Hidden facts still advance the Admission cursor with visible ones, but never form an Admission on their own.
     if (this.#visibleEvents(binding, candidateEvents).length === 0) return
     const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, event)
@@ -1537,7 +1599,7 @@ export class ChannelRuntime {
       const result = await this.#sessionDriver.admit({
         dshSessionId,
         admissionId: admission.id,
-        events: visible.length > 0 ? visible : admitted,
+        events: visible,
         mode: admission.mode,
         replyRequired: this.#replyRequired(binding, visible),
         ...(annotations.size === 0 ? {} : { annotations }),

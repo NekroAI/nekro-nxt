@@ -242,26 +242,30 @@ const createLegacyFixture = async () => {
   })
   const outboundId = OutboundIntentIdSchema.parse('out_UPGRADELEGACY')
   const deliveryId = PhysicalDeliveryIdSchema.parse('phy_UPGRADELEGACY')
-  repository.createOutboundPlan(
-    {
-      id: outboundId,
-      logicalMessageId: LogicalMessageIdSchema.parse('msg_UPGRADELEGACY'),
-      agentRevisionId: agent.revision.id,
-      episodeId,
-      parts: [{ type: 'text', text: '升级前已经成功投递。' }],
-      state: 'planned',
-      createdAt: 1001,
-    },
-    [
-      {
-        id: deliveryId,
-        intentId: outboundId,
-        sequence: 0,
-        parts: [{ type: 'text', text: '升级前已经成功投递。' }],
-        state: 'planned',
-      },
-    ],
-  )
+  // Seed the legacy Outbox shape directly; the current repository targets the migrated source columns.
+  const legacyOutbox = new DatabaseSync(path.join(dataRoot, 'core.sqlite'))
+  try {
+    const parts = JSON.stringify([{ type: 'text', text: '升级前已经成功投递。' }])
+    legacyOutbox
+      .prepare(
+        'INSERT INTO outbound_intents (id, logical_message_id, agent_revision_id, episode_id, parts, search_text, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        outboundId,
+        LogicalMessageIdSchema.parse('msg_UPGRADELEGACY'),
+        agent.revision.id,
+        episodeId,
+        parts,
+        '升级前已经成功投递。',
+        'planned',
+        1001,
+      )
+    legacyOutbox
+      .prepare('INSERT INTO physical_deliveries (id, intent_id, sequence, parts, state) VALUES (?, ?, ?, ?, ?)')
+      .run(deliveryId, outboundId, 0, parts, 'planned')
+  } finally {
+    legacyOutbox.close()
+  }
   repository.markIntentSending(outboundId)
   repository.markDeliverySending(deliveryId)
   repository.recordDeliveryReceipt(deliveryId, { status: 'sent', platformMessageId: 'synthetic-legacy-delivery' }, 1002)

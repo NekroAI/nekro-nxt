@@ -1,0 +1,458 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CoreService } from '@nekro-nxt/core'
+import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
+import { ChannelRuntime, type AgentSessionDriver } from '@nekro-nxt/channel-runtime'
+import { FakeAdapterConnection } from '@nekro-nxt/test-harness'
+import { CommandDefinitionSchema, ExtensionRevisionIdSchema, type MessagePart } from '@nekro-nxt/contracts'
+import { CommandService, type RegisteredCommand } from '../src/commands/service.js'
+import { CommandRegistrations } from '../src/commands/registrations.js'
+
+const cleanups: Array<() => Promise<void>> = []
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
+})
+async function setup(deferExecution = false) {
+  const database = await openMigratedCoreDatabase(':memory:')
+  const repository = new SqliteCoreRepository(database)
+  let sequence = 0,
+    time = 1000
+  const now = () => ++time
+  const core = new CoreService(repository, { now, nextUlid: () => String(++sequence).padStart(8, '0') })
+  const agent = core.createAgent({
+    displayName: '示例智能体',
+    persona: '',
+    model: { provider: 'fixture', model: 'fixture' },
+  })
+  const connection = core.createConnection({ adapterKey: 'fake', config: {} })
+  const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'group-one', kind: 'group' })
+  core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+  const member = core.observeChannelMember({
+    connectionId: connection.id,
+    channelId: channel.id,
+    observedAt: 1000,
+    platformUserId: 'user-one',
+    displayName: '示例成员',
+  })
+  const bot = core.observeChannelMember({
+    connectionId: connection.id,
+    channelId: channel.id,
+    observedAt: 1000,
+    platformUserId: 'bot-one',
+  })
+  let running = false
+  const admissions: Parameters<AgentSessionDriver['admit']>[0][] = []
+  const driver: AgentSessionDriver = {
+    createSession: vi.fn(({ episodeId }) => Promise.resolve('session-' + episodeId)),
+    applyCompatibleRevision: () => Promise.resolve(),
+    sessionStatus: () => (running ? 'running' : 'idle'),
+    whenIdle: () => Promise.resolve(),
+    findAdmissionMessage: () => undefined,
+    createHandoffSummary: () => Promise.resolve({ summary: '摘要', provider: 'fixture', model: 'fixture' }),
+    cancelSession: vi.fn(() => {
+      running = false
+      return Promise.resolve()
+    }),
+    interruptTurn: vi.fn(() => {
+      running = false
+      return Promise.resolve({ interrupted: true, retainedPending: 0 })
+    }),
+    listPendingAdmissions: () => [],
+    admit: (input) => {
+      admissions.push(input)
+      running = true
+      return Promise.resolve({ dshMessageId: 'dsh-' + input.admissionId })
+    },
+    notifyConsoleOutbound: () => Promise.resolve(),
+  }
+  const commandReference: { current?: CommandService } = {}
+  const adapter = new FakeAdapterConnection({
+    connectionId: connection.id,
+    now,
+    acceptChannelInbound: () => Promise.reject(new Error('direct test')),
+  })
+  await adapter.start()
+  const hook = vi.fn(() => Promise.resolve({ trigger: 'default' as const, hidden: false }))
+  const runtime = new ChannelRuntime(core, repository, repository, driver, {
+    now,
+    nextUlid: () => String(++sequence).padStart(8, '0'),
+    idleRolloverMs: false,
+    resolveAdapter: () => adapter,
+    commands: {
+      handle: (event) => commandReference.current!.handle(event),
+      excludes: (event) => commandReference.current!.excludes(event),
+      project: (event) => commandReference.current!.project(event),
+    },
+    inboundHooks: { covers: () => true, decide: hook, stored: () => undefined },
+  })
+  const extensions: RegisteredCommand[] = []
+  const commands = new CommandService({
+    deferExecution,
+    repository,
+    core,
+    channels: () => runtime,
+    extensions: () => extensions,
+    running: () => running,
+    botMemberId: () => bot.member.id,
+    now,
+  })
+  commandReference.current = commands
+  const createSession = vi.spyOn(driver, 'createSession')
+  const interruptTurn = vi.spyOn(driver, 'interruptTurn')
+  cleanups.push(async () => {
+    await commands.dispose()
+    await runtime.dispose()
+    await adapter.stop()
+    database.close()
+  })
+  const inbound = (text: string, key = String(++sequence), parts?: readonly MessagePart[]) =>
+    runtime.acceptChannelInbound({
+      connectionId: connection.id,
+      channelId: channel.id,
+      adapterKey: 'fake',
+      kind: 'message-created',
+      senderMemberId: member.member.id,
+      parts: parts === undefined ? [{ type: 'text', text }] : [...parts],
+      platformTimestamp: now(),
+      receivedAt: now(),
+      dedupeKey: key,
+    })
+  return {
+    repository,
+    core,
+    agent,
+    connection,
+    channel,
+    member,
+    bot,
+    commands,
+    runtime,
+    driver,
+    createSession,
+    interruptTurn,
+    adapter,
+    admissions,
+    hook,
+    extensions,
+    inbound,
+  }
+}
+describe('unified commands', () => {
+  it('stores help, unknown and denied commands without model admission or ordinary hooks', async () => {
+    const f = await setup()
+    await f.inbound('/help')
+    await f.inbound('/unknown')
+    await f.inbound('/reset')
+    expect(f.createSession).not.toHaveBeenCalled()
+    expect(f.hook).not.toHaveBeenCalled()
+    const history = f.repository.listChannelHistory(f.channel.id)
+    expect(history).toHaveLength(6)
+    expect(history.filter((e) => e.source === 'outbound-intent').every((e) => e.commandExecutionId !== undefined)).toBe(
+      true,
+    )
+    expect(
+      f.repository.commands
+        .unfinished()
+        .map((r) => r.status)
+        .sort(),
+    ).toEqual(['failed', 'failed', 'succeeded'])
+    expect(JSON.stringify(f.adapter.deliveries[0]?.parts)).not.toContain('/reset')
+    await f.inbound('普通消息')
+    expect(f.admissions[0]?.events.map((e) => e.parts)).toEqual([[{ type: 'text', text: '普通消息' }]])
+  })
+  it('stops during a running turn, resets without creating a receipt Session and permits on while off', async () => {
+    const f = await setup()
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    await f.inbound('开始')
+    await f.inbound('/stop')
+    expect(f.interruptTurn).toHaveBeenCalledOnce()
+    await f.inbound('/reset')
+    expect(f.repository.getActiveEpisode(f.channel.id, f.agent.definition.id)).toBeUndefined()
+    expect(f.createSession).toHaveBeenCalledOnce()
+    await f.inbound('/off')
+    expect(f.repository.getBinding(f.channel.id)?.triggerPolicy).toBe('observe-only')
+    await f.inbound('/off')
+    await f.inbound('/on')
+    expect(f.repository.getBinding(f.channel.id)?.triggerPolicy).toBe('always')
+    expect(f.createSession).toHaveBeenCalledOnce()
+  })
+  it('isolates grants across channels and connections, and rechecks revoked grants', async () => {
+    const f = await setup()
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    const other = f.core.createConnection({ adapterKey: 'fake', config: {} })
+    const otherChannel = f.core.createChannel({ connectionId: other.id, platformChannelId: 'other', kind: 'group' })
+    const otherMember = f.core.observeChannelMember({
+      connectionId: other.id,
+      channelId: otherChannel.id,
+      observedAt: 1000,
+      platformUserId: 'user-one',
+    })
+    expect(() => f.commands.grant(f.channel.id, otherMember.identity.id, true)).toThrow()
+    expect(f.repository.commands.hasGrant(otherChannel.id, other.id, 'user-one')).toBe(false)
+    f.core.createBinding({ channelId: otherChannel.id, agentId: f.agent.definition.id, triggerPolicy: 'always' })
+    const rejected = await f.runtime.acceptChannelInbound({
+      connectionId: other.id,
+      channelId: otherChannel.id,
+      adapterKey: 'fake',
+      kind: 'message-created',
+      senderMemberId: otherMember.member.id,
+      parts: [{ type: 'text', text: '/off' }],
+      facts: { role: 'admin', source: 'web' },
+      platformTimestamp: 1000,
+      receivedAt: 1000,
+      dedupeKey: 'other-connection',
+    })
+    expect(f.repository.commands.forEvent(rejected.channelEventId)?.error).toContain('无权执行')
+    expect(f.repository.getBinding(otherChannel.id)?.triggerPolicy).toBe('always')
+    f.commands.grant(f.channel.id, f.member.identity.id, false)
+    await f.inbound('/off')
+    expect(f.repository.getBinding(f.channel.id)?.triggerPolicy).toBe('always')
+  })
+  it('deduplicates concurrent platform and Web requests, rejects changed content, and preserves unknown receipts', async () => {
+    const f = await setup()
+    f.adapter.queueReceipt({ status: 'unknown', message: '测试未知结果' })
+    await Promise.all([f.inbound('/status', 'duplicate'), f.inbound('/status', 'duplicate')])
+    expect(f.adapter.deliveries).toHaveLength(1)
+    const record = await f.commands.executeWeb(f.channel.id, '/off', 'web-one', 'local')
+    await f.commands.executeWeb(f.channel.id, '/off', 'web-one', 'local')
+    await expect(f.commands.executeWeb(f.channel.id, '/on', 'web-one', 'local')).rejects.toThrow('请求 ID')
+    expect(record.status).toBe('succeeded')
+    expect(f.adapter.deliveries).toHaveLength(2)
+    await f.commands.recover()
+    expect(f.adapter.deliveries).toHaveLength(2)
+  })
+  it('includes usage for malformed quotes without invoking the model', async () => {
+    const f = await setup()
+    const result = await f.commands.executeWeb(f.channel.id, '/help "未闭合', 'bad-quote', 'local')
+    expect(result.status).toBe('failed')
+    expect(result.error).toContain('引号或转义未闭合')
+    expect(result.error).toContain('用法：/help')
+    expect(f.createSession).not.toHaveBeenCalled()
+  })
+  it('supports leading bot mentions, escaping and unbound help/status without losing ordinary messages', async () => {
+    const f = await setup()
+    await f.inbound('', undefined, [
+      { type: 'mention', memberId: f.bot.member.id },
+      { type: 'text', text: ' /help' },
+    ])
+    expect(f.admissions).toHaveLength(0)
+    await f.inbound('//hello')
+    expect(f.admissions[0]?.events[0]?.parts).toEqual([{ type: 'text', text: '/hello' }])
+    await f.runtime.clearBinding(f.channel.id)
+    await f.commands.executeWeb(f.channel.id, '/help', 'unbound-help', 'local')
+    const rejected = await f.commands.executeWeb(f.channel.id, '/reset', 'unbound-reset', 'local')
+    expect(rejected.error).toContain('绑定智能体')
+  })
+  it('uses stable extension names, denies ambiguity and enforces permission floors', async () => {
+    const f = await setup()
+    const definition = CommandDefinitionSchema.parse({ name: 'echo', aliases: ['e'], description: '示例' })
+    f.extensions.push(
+      ...['alpha', 'beta'].map((id) => ({
+        definition,
+        fullName: `ext_${id}:echo`,
+        source: id,
+        extensionRevisionId: ExtensionRevisionIdSchema.parse(`xrv_${id}`),
+        invoke: () => ({ parts: [{ type: 'text' as const, text: id }] }),
+      })),
+    )
+    const conflict = await f.commands.executeWeb(f.channel.id, '/e', 'conflict', 'local')
+    expect(conflict.error).toContain('/ext_alpha:echo')
+    const success = await f.commands.executeWeb(f.channel.id, '/ext_alpha:echo', 'full', 'local')
+    expect(success.result?.parts).toEqual([{ type: 'text', text: 'alpha' }])
+    expect(() => f.commands.setPolicy('global', 'reset', { permission: 'public' })).toThrow()
+    f.commands.setPolicy('global', 'status', { enabled: false })
+    f.commands.setPolicy(f.channel.id, 'status', { enabled: true })
+    expect(f.commands.catalog(f.channel.id).find((c) => c.fullName === 'status')?.available).toBe(true)
+    expect(() => f.commands.setPolicy('global', 'help', { enabled: false })).toThrow()
+  })
+  it('does not replay a handler after an interrupted execution', async () => {
+    const f = await setup()
+    const first = await f.inbound('/help')
+    const record = f.repository.commands.forEvent(first.channelEventId)!
+    f.repository.commands.update({ ...record, status: 'running' })
+    f.repository.commands.recover(2000)
+    await f.commands.recover()
+    expect(f.repository.commands.get(record.id)?.status).toBe('uncertain')
+    expect(f.adapter.deliveries).toHaveLength(1)
+  })
+  it('keeps host capabilities authorized against the private identity when an extension attempts to change it', async () => {
+    const f = await setup()
+    let frozen = false
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'capability', description: '权限边界测试' }),
+      fullName: 'ext_capability:capability',
+      source: '权限测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_CAPABILITY'),
+      invoke: async (context) => {
+        frozen = Object.isFrozen(context.identity)
+        try {
+          Object.assign(context.identity, { source: 'web' })
+        } catch {
+          /* The public identity is immutable; the capability must still check its private copy. */
+        }
+        await context.host.stop()
+        return { parts: [{ type: 'text', text: '不应执行' }] }
+      },
+    })
+    await f.inbound('启动轮次')
+    const inbound = await f.inbound('/capability')
+    expect(frozen).toBe(true)
+    expect(f.repository.commands.forEvent(inbound.channelEventId)?.identity.source).toBe('platform')
+    expect(f.repository.commands.forEvent(inbound.channelEventId)?.status).toBe('failed')
+    expect(f.interruptTurn).not.toHaveBeenCalled()
+  })
+})
+it('extension command disposal blocks new work, aborts and waits for cleanup', async () => {
+  const activation = new CommandRegistrations()
+  const definition = CommandDefinitionSchema.parse({ name: 'wait', description: '等待' })
+  let cleaned = false
+  activation.register(definition, async (context) => {
+    await new Promise<void>((resolve) => context.signal.addEventListener('abort', () => resolve(), { once: true }))
+    await Promise.resolve()
+    cleaned = true
+    return { parts: [{ type: 'text', text: '已清理' }] }
+  })
+  activation.seal([definition])
+  const f = await setup()
+  const invoke = activation.list()[0]!.invoke
+  const pending = invoke({
+    channelId: f.channel.id,
+    identity: { source: 'web', displayName: '测试管理员' },
+    arguments: {},
+    signal: new AbortController().signal,
+    host: {
+      status: () => ({ bound: true, running: false }),
+      stop: () => Promise.resolve(),
+      reset: () => Promise.resolve(),
+    },
+  })
+  await Promise.resolve()
+  await activation.dispose()
+  expect(cleaned).toBe(true)
+  expect(activation.list()).toEqual([])
+  await pending
+})
+
+it('isolates attachment cancellation while sharing host registration revocation', async () => {
+  const registrations = new CommandRegistrations()
+  const definition = CommandDefinitionSchema.parse({ name: 'wait', description: '等待取消' })
+  const signals: AbortSignal[] = []
+  const unregister = registrations.register(definition, async ({ signal }) => {
+    signals.push(signal)
+    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+    return { parts: [{ type: 'text', text: '已取消' }] }
+  })
+  registrations.seal([definition])
+  const first = registrations.fork()
+  const second = registrations.fork()
+  const f = await setup()
+  const context = {
+    channelId: f.channel.id,
+    identity: { source: 'web' as const, displayName: '测试管理员' },
+    arguments: {},
+    signal: new AbortController().signal,
+    host: {
+      status: () => ({ bound: true, running: false }),
+      stop: () => Promise.resolve(),
+      reset: () => Promise.resolve(),
+    },
+  }
+  const pending = [first.list()[0]!.invoke(context), second.list()[0]!.invoke(context)]
+  await Promise.resolve()
+  await first.dispose()
+  expect(signals.map((signal) => signal.aborted)).toEqual([true, false])
+  expect(second.list()).toHaveLength(1)
+  const stale = second.list()[0]!.invoke
+  unregister()
+  expect(second.list()).toEqual([])
+  await expect(stale(context)).rejects.toThrow('停用')
+  await second.dispose()
+  await Promise.all(pending)
+  await registrations.dispose()
+})
+
+it('rechecks a revoked grant after waiting for the model admission lane', async () => {
+  const f = await setup()
+  f.commands.grant(f.channel.id, f.member.identity.id, true)
+  let release!: () => void
+  let entered!: () => void
+  const entering = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  vi.spyOn(f.driver, 'admit').mockImplementationOnce(async () => {
+    entered()
+    await held
+    return { dshMessageId: 'held' }
+  })
+  const message = f.inbound('普通消息占用边界')
+  await entering
+  const command = f.inbound('/off')
+  f.commands.grant(f.channel.id, f.member.identity.id, false)
+  release()
+  await message
+  const commit = await command
+  expect(f.repository.commands.forEvent(commit.channelEventId)?.status).toBe('failed')
+  expect(f.repository.getBinding(f.channel.id)?.triggerPolicy).toBe('always')
+})
+
+it('rejects stale bound capabilities and keeps ordinary messages while an extension command waits', async () => {
+  const f = await setup()
+  let release!: () => void
+  let entered!: () => void
+  const entering = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const definition = CommandDefinitionSchema.parse({ name: 'slow', description: '并发测试' })
+  f.extensions.push({
+    definition,
+    source: '并发测试',
+    fullName: 'ext_concurrent:slow',
+    extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_CONCURRENT'),
+    invoke: async (context) => {
+      entered()
+      await held
+      await context.host.stop()
+      return { parts: [{ type: 'text', text: '完成' }] }
+    },
+  })
+  const command = f.commands.executeWeb(f.channel.id, '/slow', 'slow-one', 'local')
+  await entering
+  await f.inbound('仍然入库并准入')
+  const next = f.core.createAgent({
+    displayName: '另一个智能体',
+    persona: '',
+    model: { provider: 'fixture', model: 'fixture' },
+  })
+  await f.runtime.replaceBinding({ channelId: f.channel.id, agentId: next.definition.id, triggerPolicy: 'always' })
+  release()
+  expect((await command).status).toBe('failed')
+  expect(
+    f.admissions
+      .flatMap((a) => a.events)
+      .some((e) => e.parts.some((p) => p.type === 'text' && p.text === '仍然入库并准入')),
+  ).toBe(true)
+  expect(f.interruptTurn).not.toHaveBeenCalled()
+})
+
+it('holds startup commands until extension activations have been restored', async () => {
+  const f = await setup(true)
+  const commit = await f.inbound('/ready')
+  expect(f.repository.commands.forEvent(commit.channelEventId)?.status).toBe('pending')
+  expect(f.adapter.deliveries).toHaveLength(0)
+  expect(f.admissions).toHaveLength(0)
+  f.extensions.push({
+    definition: CommandDefinitionSchema.parse({ name: 'ready', description: '启动恢复测试' }),
+    fullName: 'ext_ready:ready',
+    source: '恢复测试',
+    extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_READY'),
+    invoke: () => ({ parts: [{ type: 'text', text: '已恢复' }] }),
+  })
+  await f.commands.open()
+  expect(f.repository.commands.forEvent(commit.channelEventId)?.status).toBe('succeeded')
+  expect(f.adapter.deliveries).toHaveLength(1)
+})

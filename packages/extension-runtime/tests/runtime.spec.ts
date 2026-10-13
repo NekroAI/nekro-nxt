@@ -1909,6 +1909,7 @@ class FakeRuntimeHost implements ExtensionRuntimeHost {
   readonly failLoad = new Set<ExtensionRevisionId>()
   readonly failAttach = new Set<string>()
   readonly occupiedAdapterKeys = new Set<string>()
+  withCommands = false
   safeGate: Promise<void> | undefined
 
   load(input: Parameters<ExtensionRuntimeHost['load']>[0]): Promise<LoadedExtension> {
@@ -1925,6 +1926,16 @@ class FakeRuntimeHost implements ExtensionRuntimeHost {
         if (this.failAttach.has(key)) return Promise.reject(new Error(`Attach failed: ${agent}`))
         this.attached.set(key, config)
         return Promise.resolve({
+          ...(this.withCommands
+            ? {
+                pauseCommands: () => {
+                  this.events.push(`pause:${agent}`)
+                  return Promise.resolve(() => {
+                    this.events.push(`resume:${agent}`)
+                  })
+                },
+              }
+            : {}),
           dispose: () => {
             this.events.push(`detach:${agent}:${revision.id}`)
             this.attached.delete(key)
@@ -2034,6 +2045,29 @@ const lifecycleFixture = (
 }
 
 describe('Extension lifecycle', () => {
+  it('pauses command calls before the safe gap and resumes them if disabling fails', async () => {
+    const { repository, host, extension, first, coordinator } = lifecycleFixture()
+    const agent = agentId('commandPause')
+    host.withCommands = true
+    await coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: first.id })
+    host.events.length = 0
+    let rejectGate!: (error: Error) => void
+    host.safeGate = new Promise<void>((_resolve, reject) => {
+      rejectGate = reject
+    })
+    const disabling = coordinator.disable(agent, extension.id)
+    await expect.poll(() => host.events.includes(`safe:${agent}`)).toBe(true)
+    const failed = expect(disabling).rejects.toThrow('synthetic safe gap failure')
+    rejectGate(new Error('synthetic safe gap failure'))
+    await failed
+    expect(host.events).toEqual([`pause:${agent}`, `safe:${agent}`, `resume:${agent}`])
+    expect(repository.getActivation(agent, extension.id)).toBeDefined()
+    expect(host.attached.has(`${agent}\0${first.id}`)).toBe(true)
+    host.safeGate = undefined
+    await coordinator.disable(agent, extension.id)
+    expect(repository.getActivation(agent, extension.id)).toBeUndefined()
+  })
+
   it('installs on first enable, runs the factory once and attaches each agent on the installed record', async () => {
     const { repository, host, extension, first, coordinator } = lifecycleFixture()
     const one = agentId('lifecycleOne')

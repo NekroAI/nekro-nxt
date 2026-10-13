@@ -4588,6 +4588,10 @@ export class DshHostRuntime implements AgentSessionDriver {
   }
 
   /** Activation-level inbound hooks of one agent's enabled extensions. */
+  commandHandlers(agentId: AgentId) {
+    return this.#extensionMounts.commandHandlers(agentId)
+  }
+
   jobHandler(agentId: AgentId, extensionId: Revision['extensionId']) {
     return this.#extensionMounts.jobHandler(agentId, extensionId)
   }

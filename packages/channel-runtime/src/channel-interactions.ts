@@ -175,7 +175,10 @@ export class ChannelInteractions {
     if (existing) return this.#interactionResult(existing)
     const outbound = this.#runtimeRepository.findOutboundByLogicalMessageId(channel.id, input.logicalMessageId)
     if (!outbound) throw new Error('当前频道找不到这条智能体消息。')
-    const sourceEpisode = this.#runtimeRepository.getEpisode(outbound.intent.episodeId)
+    const sourceEpisode =
+      outbound.intent.episodeId === undefined
+        ? undefined
+        : this.#runtimeRepository.getEpisode(outbound.intent.episodeId)
     if (!sourceEpisode || sourceEpisode.channelId !== channel.id || sourceEpisode.agentId !== episode.agentId) {
       throw new Error('只能撤回当前频道中该智能体自己发送的消息。')
     }

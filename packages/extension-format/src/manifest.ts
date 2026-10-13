@@ -1,4 +1,5 @@
 import {
+  CommandDefinitionSchema,
   ExtensionIdSchema,
   ExtensionLayeredConfigSchema,
   ExtensionPermissionsSchema,
@@ -72,6 +73,15 @@ export const toolContributionSchema = z
   })
   .strict()
 
+export const commandContributionSchema = z
+  .object({ kind: z.literal('command'), ...CommandDefinitionSchema.shape })
+  .strict()
+  .superRefine((value, ctx) => {
+    const parsed = CommandDefinitionSchema.strip().safeParse(value)
+    if (!parsed.success)
+      for (const issue of parsed.error.issues) ctx.addIssue({ code: 'custom', message: issue.message })
+  })
+
 export const rpcContributionSchema = z
   .object({ kind: z.literal('rpc'), method: z.string(), verificationInput: verificationInputSchema.optional() })
   .strict()
@@ -87,6 +97,7 @@ export const adapterContributionSchema = z
 
 export const extensionManifestContributionSchema = z.union([
   toolContributionSchema,
+  commandContributionSchema,
   rpcContributionSchema,
   PanelContributionSchema,
   ToolViewContributionSchema,
@@ -101,6 +112,7 @@ type Contribution = z.output<typeof extensionManifestContributionSchema>
 /** Contribution kinds that belong to an agent attachment (扩展形态统一 §4); everything else belongs to the host instance. */
 export const contributionLayer = (contribution: Contribution): 'agent' | 'host' => {
   switch (contribution.kind) {
+    case 'command':
     case 'tool':
     case 'tool-view':
       return 'agent'
@@ -147,7 +159,7 @@ const checkEntrypoints = (
   const needsClient = value.contributions.some(({ kind }) =>
     ['panel', 'tool-view', 'message-renderer', 'host-page'].includes(kind),
   )
-  const needsHost = value.contributions.some(({ kind }) => ['tool', 'rpc', 'adapter'].includes(kind))
+  const needsHost = value.contributions.some(({ kind }) => ['tool', 'rpc', 'adapter', 'command'].includes(kind))
   const hasClient = 'client' in value.entrypoints
   const hasHost = 'host' in value.entrypoints
   if (needsClient && !hasClient) issue('界面贡献需要 Client 源码。')
@@ -233,6 +245,12 @@ export const extensionManifestSchema = z
   .superRefine((value, context) => {
     const issue: Issue = (message) => context.addIssue({ code: 'custom', message })
     if (value.contributions.length === 0 && !hasAgentLayer(value)) issue('扩展至少要提供一项内容。')
+    const commands = value.contributions.filter((entry) => entry.kind === 'command')
+    if (commands.length && (value.requires?.sdk ?? 0) < 9) issue('命令扩展需要声明 requires.sdk >= 9。')
+    const commandNames = commands.flatMap((command) => [command.name, ...command.aliases])
+    if (new Set(commandNames).size !== commandNames.length) issue('扩展内的命令名称和别名不能重复。')
+    if (commandNames.some((name) => ['help', 'status', 'stop', 'reset', 'compact', 'off', 'on'].includes(name)))
+      issue('内置命令名称保留，扩展不能覆盖。')
     checkContributions(value.contributions, issue)
     checkEntrypoints(value, issue)
     checkRequires(value, issue)

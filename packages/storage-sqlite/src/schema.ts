@@ -1,5 +1,7 @@
 import type { AdapterFailureKind } from '@nekro-nxt/adapter-sdk'
 import type {
+  CommandExecutionRecord,
+  CommandPolicy,
   AgentId,
   AgentRevisionId,
   AuthoringAttemptId,
@@ -618,6 +620,66 @@ export const admissionEvents = sqliteTable(
   ],
 )
 
+export const commandSystem = sqliteTable('command_system', {
+  id: integer().primaryKey(),
+  cutoffEventId: text('cutoff_event_id').notNull(),
+})
+export const commandPolicies = sqliteTable(
+  'command_policies',
+  {
+    scope: text().notNull(),
+    commandName: text('command_name').notNull(),
+    policy: jsonText<CommandPolicy>('policy').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.scope, table.commandName] })],
+)
+export const commandGrants = sqliteTable(
+  'command_grants',
+  {
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    connectionId: text('connection_id')
+      .$type<ConnectionId>()
+      .notNull()
+      .references(() => connections.id, { onDelete: 'cascade' }),
+    platformUserId: text('platform_user_id').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.channelId, table.connectionId, table.platformUserId] })],
+)
+export const commandExecutions = sqliteTable(
+  'command_executions',
+  {
+    id: text().primaryKey(),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'restrict' }),
+    source: text({ enum: ['web', 'platform'] }).notNull(),
+    requestId: text('request_id').notNull(),
+    eventId: text('event_id')
+      .$type<ChannelEventId>()
+      .references(() => channelEvents.id, { onDelete: 'restrict' }),
+    status: text({ enum: ['pending', 'running', 'succeeded', 'failed', 'uncertain'] }).notNull(),
+    record: jsonText<CommandExecutionRecord>('record').notNull(),
+  },
+  (table) => [
+    uniqueIndex('command_execution_request_uq').on(table.channelId, table.source, table.requestId),
+    uniqueIndex('command_execution_event_uq').on(table.eventId),
+    index('command_execution_status_idx').on(table.status),
+  ],
+)
+export const commandResponsePolicies = sqliteTable('command_response_policies', {
+  channelId: text('channel_id')
+    .$type<ChannelId>()
+    .primaryKey()
+    .references(() => channels.id, { onDelete: 'cascade' }),
+  agentId: text('agent_id').$type<AgentId>().notNull(),
+  boundAt: integer('bound_at').notNull(),
+  policy: text({ enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'] }).notNull(),
+})
+
 export const outboundIntents = sqliteTable(
   'outbound_intents',
   {
@@ -625,12 +687,14 @@ export const outboundIntents = sqliteTable(
     logicalMessageId: text('logical_message_id').$type<LogicalMessageId>().notNull().unique(),
     episodeId: text('episode_id')
       .$type<EpisodeId>()
-      .notNull()
       .references(() => episodes.id, { onDelete: 'restrict' }),
     agentRevisionId: text('agent_revision_id')
       .$type<AgentRevisionId>()
-      .notNull()
       .references(() => agentRevisions.id, { onDelete: 'restrict' }),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .references(() => channels.id, { onDelete: 'restrict' }),
+    commandExecutionId: text('command_execution_id').references(() => commandExecutions.id, { onDelete: 'restrict' }),
     sourceTurnId: text('source_turn_id'),
     parts: jsonText<readonly MessagePart[]>('parts').notNull(),
     searchText: text('search_text').notNull(),
@@ -640,6 +704,12 @@ export const outboundIntents = sqliteTable(
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
+    uniqueIndex('outbound_intents_command_uq').on(table.commandExecutionId),
+    index('outbound_intents_channel_history_idx').on(table.channelId, table.createdAt),
+    check(
+      'outbound_intents_source_ck',
+      sql`(${table.episodeId} IS NOT NULL AND ${table.agentRevisionId} IS NOT NULL AND ${table.commandExecutionId} IS NULL) OR (${table.episodeId} IS NULL AND ${table.agentRevisionId} IS NULL AND ${table.commandExecutionId} IS NOT NULL AND ${table.channelId} IS NOT NULL)`,
+    ),
     uniqueIndex('outbound_intents_client_request_uq').on(table.episodeId, table.clientRequestId),
     index('outbound_intents_recovery_idx').on(table.state, table.createdAt),
     index('outbound_intents_episode_history_idx').on(table.episodeId, table.createdAt),
@@ -1296,6 +1366,11 @@ export const inboundHookDecisions = sqliteTable(
 )
 
 export const coreSchema = {
+  commandSystem,
+  commandPolicies,
+  commandGrants,
+  commandExecutions,
+  commandResponsePolicies,
   agentDefinitions,
   agentRevisions,
   agentCurrentRevisions,

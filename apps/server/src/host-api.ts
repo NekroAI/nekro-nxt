@@ -1,3 +1,4 @@
+import { registerCommandRoutes } from './host-routes-commands.js'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { type ChannelFact } from '@nekro-nxt/channel-runtime'
 import {
@@ -664,6 +665,16 @@ export const createNekroHostApi = (
       extensionImports,
     }),
   )
+
+  registerCommandRoutes({
+    runtime,
+    registerRoute,
+    broadcast,
+    broadcastExtensionsChanged,
+    readCursor: () => hub.cursor,
+    projections,
+    extensionImports,
+  })
 
   projections.registerRoutes({ registerRoute })
   disposers.push(

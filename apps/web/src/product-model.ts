@@ -216,7 +216,8 @@ export interface ConversationMessage {
   readonly delivery?: DeliveryState
   /** Administrator resolution of an unsettled delivery (retry or confirmed as delivered). */
   readonly deliveryResolution?: 'retry' | 'confirm-delivered'
-  readonly origin?: 'admin-console'
+  readonly origin?: 'admin-console' | 'command'
+  readonly command?: NonNullable<HostApiResponse<'snapshot'>['messages'][number]['command']>
   /** The sender is another agent on this host, speaking through its own account in the same group. */
   readonly localAgentId?: string
   /** What the agent's inbound hooks decided, when it differs from the default. */

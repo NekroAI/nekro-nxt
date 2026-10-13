@@ -24,6 +24,7 @@ export default defineConfig({
       include: [
         'packages/*/src/**/*.ts',
         'apps/server/src/bootstrap.ts',
+        'apps/server/src/commands/*.ts',
         'apps/server/src/connection-application.ts',
         'apps/server/src/channel-message-result.ts',
         'apps/server/src/dsh-plugin-installer.ts',

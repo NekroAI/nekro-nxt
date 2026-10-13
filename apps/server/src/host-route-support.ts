@@ -418,13 +418,18 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
       entry.senderMemberId === undefined ? undefined : runtime.repository.getChannelMember(entry.senderMemberId)
     const scheduledTask = scheduledTaskFact(entry.facts)
     const inboundHook = scheduledTask === undefined ? inboundHookFact(runtime, entry) : undefined
+    const command = runtime.repository.commands.forEvent(entry.sourceId)
     return {
       id: entry.sourceId,
       channelId: entry.channelId,
       role: entry.activityKey === undefined && scheduledTask === undefined ? 'member' : 'system',
+      ...(command === undefined ? {} : { command }),
       ...(scheduledTask === undefined ? {} : { scheduledTask }),
       ...(inboundHook === undefined ? {} : { inboundHook }),
-      parts,
+      parts:
+        command?.replyError !== undefined && command.replyIntentId === undefined && command.result !== undefined
+          ? [...parts, { type: 'text', text: '\n命令结果：\n' }, ...decorateMessageParts(runtime, command.result.parts)]
+          : parts,
       ...(entry.senderMemberId === undefined
         ? {}
         : {
@@ -440,13 +445,16 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
       occurredAt: entry.occurredAt,
     }
   }
+  const command =
+    entry.commandExecutionId === undefined ? undefined : runtime.repository.commands.get(entry.commandExecutionId)
   const resolution = runtime.repository.projections.getLatestOutboundResolution(
     OutboundIntentIdSchema.parse(entry.sourceId),
   )
   return {
     id: entry.sourceId,
     channelId: entry.channelId,
-    role: 'agent',
+    role: command === undefined ? 'agent' : 'system',
+    ...(command === undefined ? {} : { command, origin: 'command' as const }),
     parts,
     occurredAt: entry.occurredAt,
     deliveryState: entry.state,
@@ -484,6 +492,9 @@ export const projectChannelFact = (runtime: NekroRuntime, fact: ChannelFact): Ho
       source: 'outbound-intent',
       sourceId: outbound.intent.id,
       logicalMessageId: outbound.intent.logicalMessageId,
+      ...(outbound.intent.commandExecutionId === undefined
+        ? {}
+        : { commandExecutionId: outbound.intent.commandExecutionId }),
       channelId: fact.channelId,
       occurredAt: outbound.intent.createdAt,
       parts: outbound.intent.parts,

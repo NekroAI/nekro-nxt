@@ -31,6 +31,8 @@ import {
   connectionEvents,
   episodes,
   outboundIntents,
+  commandExecutions,
+  commandPolicies,
   physicalDeliveries,
   platformIdentities,
   workTreeOrder,
@@ -363,6 +365,9 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
             tx.delete(outboundIntents).where(inArray(outboundIntents.episodeId, episodeIds)).run()
             tx.delete(episodes).where(inArray(episodes.id, episodeIds)).run()
           }
+          tx.delete(outboundIntents).where(inArray(outboundIntents.channelId, channelIds)).run()
+          tx.delete(commandExecutions).where(inArray(commandExecutions.channelId, channelIds)).run()
+          tx.delete(commandPolicies).where(inArray(commandPolicies.scope, channelIds)).run()
           tx.delete(assetChannelGrants).where(inArray(assetChannelGrants.channelId, channelIds)).run()
           tx.delete(channelEvents).where(inArray(channelEvents.channelId, channelIds)).run()
           tx.delete(channelBindings).where(inArray(channelBindings.channelId, channelIds)).run()
@@ -813,8 +818,13 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
         .select({ logicalMessageId: outboundIntents.logicalMessageId })
         .from(physicalDeliveries)
         .innerJoin(outboundIntents, eq(outboundIntents.id, physicalDeliveries.intentId))
-        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-        .where(and(eq(episodes.channelId, channelId), eq(physicalDeliveries.platformMessageId, platformMessageId)))
+        .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(
+          and(
+            or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)),
+            eq(physicalDeliveries.platformMessageId, platformMessageId),
+          ),
+        )
         .get()
       return outbound === undefined ? undefined : { logicalMessageId: outbound.logicalMessageId, authoredByAgent: true }
     },
@@ -830,8 +840,13 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
       const outbound = database
         .select({ logicalMessageId: outboundIntents.logicalMessageId })
         .from(outboundIntents)
-        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-        .where(and(eq(episodes.channelId, channelId), eq(outboundIntents.logicalMessageId, logicalMessageId)))
+        .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(
+          and(
+            or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)),
+            eq(outboundIntents.logicalMessageId, logicalMessageId),
+          ),
+        )
         .get()
       return outbound === undefined ? undefined : { logicalMessageId: outbound.logicalMessageId, authoredByAgent: true }
     },
@@ -849,8 +864,13 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
           .select({ platformMessageId: physicalDeliveries.platformMessageId })
           .from(physicalDeliveries)
           .innerJoin(outboundIntents, eq(outboundIntents.id, physicalDeliveries.intentId))
-          .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-          .where(and(eq(episodes.channelId, channelId), eq(outboundIntents.logicalMessageId, logicalMessageId)))
+          .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+          .where(
+            and(
+              or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)),
+              eq(outboundIntents.logicalMessageId, logicalMessageId),
+            ),
+          )
           .orderBy(asc(physicalDeliveries.sequence))
           .get()?.platformMessageId ?? undefined
       )
