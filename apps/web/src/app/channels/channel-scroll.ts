@@ -61,6 +61,8 @@ export const useStickToBottom = (key: string, enabled: boolean) => {
   const jumpToBottom = useCallback(() => {
     const element = ref.current
     if (!element) return
+    // An explicit jump supersedes the position saved by an earlier history request.
+    prependRef.current = null
     write(element, element.scrollHeight)
     commitPosition(element, true)
   }, [commitPosition])
