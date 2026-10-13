@@ -313,7 +313,7 @@ export const historyPartsText = (
         case 'quote':
           return `[引用 ${part.messageId}]`
         case 'rich':
-          return `[${part.kind === 'forward' ? '转发' : '卡片'}] ${richPartContextText(part)}`
+          return `[${part.kind === 'forward' ? '转发' : part.kind === 'quote-preview' ? '引用预览' : '卡片'}] ${richPartContextText(part)}`
       }
     })
     .join('')
@@ -1018,7 +1018,12 @@ export class SessionImageContext {
         }
         case 'rich': {
           const context = richPartContextText(part)
-          const label = part.kind === 'forward' ? '收到转发' : '收到卡片'
+          const label =
+            part.kind === 'forward'
+              ? '收到转发'
+              : part.kind === 'quote-preview'
+                ? '收到引用预览（来自平台的引用内容）'
+                : '收到卡片'
           blocks.push({ type: 'text', text: `${label}：${context.includes('\n') ? `\n${context}` : context}` })
           for (const assetId of messagePartImageAssetIds(part)) {
             blocks.push({ type: 'text', text: `卡片图片资源 ${assetId}` })

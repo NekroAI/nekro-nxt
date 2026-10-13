@@ -27,6 +27,29 @@ describe('message perspective', () => {
 })
 
 describe('MessageContent', () => {
+  it('separates an unavailable original quote from the current utterance and escapes platform preview text', () => {
+    const markup = renderToStaticMarkup(
+      <MessageContent
+        message={message([
+          { type: 'text', text: '当前正文' },
+          {
+            type: 'rich',
+            adapterKey: 'qq-openclaw',
+            kind: 'quote-preview',
+            title: '引用消息',
+            summary: '原消息未记录，以下为平台提供的引用预览。',
+            items: [{ sender: '虚构成员', text: '<script>fictional()</script> 引用正文' }],
+          },
+        ])}
+      />,
+    )
+    expect(markup).toContain('当前正文')
+    expect(markup).toContain('原消息未记录')
+    expect(markup).toContain('虚构成员')
+    expect(markup).toContain('&lt;script&gt;fictional()&lt;/script&gt; 引用正文')
+    expect(markup).not.toContain('<script>')
+  })
+
   it('renders GFM safely and preserves structured part order', () => {
     const markup = renderToStaticMarkup(
       <MessageContent

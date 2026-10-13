@@ -23,6 +23,7 @@ import { z } from 'zod'
 import { splitQQContentAtoms } from './inbound.js'
 import { isQQTransportError } from './transport-error.js'
 import { QQGroupInfoSync, type QQGroupInfoResult } from './group-info.js'
+import { QQQuoteIndex } from './quote-index.js'
 
 export * from './gateway.js'
 export * from './http.js'
@@ -152,8 +153,8 @@ export interface QQInboundAttachment {
 }
 
 export type QQQuoteDiagnostic = {
-  readonly reason: 'reference-field-missing' | 'platform-reference-unresolved'
-  readonly eventType: QQNormalizedInboundMessage['eventType']
+  readonly reason: 'reference-field-missing' | 'platform-reference-unresolved' | 'reference-index-save-failed'
+  readonly eventType?: QQNormalizedInboundMessage['eventType']
   readonly targetKind: QQTarget['kind']
 }
 
@@ -205,6 +206,8 @@ export interface QQInboundBridge {
 export interface QQNormalizedInboundMessage {
   readonly eventType: 'C2C_MESSAGE_CREATE' | 'GROUP_AT_MESSAGE_CREATE' | 'GROUP_MESSAGE_CREATE'
   readonly platformMessageId: string
+  readonly referenceIndex?: string
+  readonly quotePreview?: NonNullable<QQNormalizedInboundMessage['rich']>
   readonly target: QQTarget
   readonly targetDisplayName?: string
   readonly senderOpenId: string
@@ -265,6 +268,7 @@ export interface QQOpenClawTransport {
     readonly markdown: boolean
     readonly content: string
     readonly replyMessageId?: string
+    readonly referenceIndex?: string
     readonly messageSequence?: number
     readonly signal: AbortSignal
   }): Promise<QQTransportReceipt>
@@ -279,6 +283,7 @@ export interface QQOpenClawTransport {
     readonly target: QQTarget
     readonly fileInfo: string
     readonly replyMessageId?: string
+    readonly referenceIndex?: string
     readonly messageSequence?: number
     readonly signal: AbortSignal
   }): Promise<QQTransportReceipt>
@@ -345,17 +350,23 @@ export function splitQQMarkdownAtoms(atoms: readonly TextAtom[], limit: number):
 export class QQReplyBudget {
   readonly #entries = new Map<
     string,
-    { expiresAt: number; remaining: number; nextSequence: number; reservations: Set<number> }
+    { channelId?: ChannelId; expiresAt: number; remaining: number; nextSequence: number; reservations: Set<number> }
   >()
 
-  observe(messageId: string, expiresAt: number, remaining: number): void {
+  observe(messageId: string, expiresAt: number, remaining: number, channelId?: ChannelId): void {
     const existing = this.#entries.get(messageId)
     if (existing) {
       existing.expiresAt = Math.max(existing.expiresAt, expiresAt)
       existing.remaining = Math.min(existing.remaining, remaining)
       return
     }
-    this.#entries.set(messageId, { expiresAt, remaining, nextSequence: 1, reservations: new Set() })
+    this.#entries.set(messageId, {
+      ...(channelId === undefined ? {} : { channelId }),
+      expiresAt,
+      remaining,
+      nextSequence: 1,
+      reservations: new Set(),
+    })
   }
 
   reserve(
@@ -381,6 +392,22 @@ export class QQReplyBudget {
     this.#entries.get(reservation.messageId)?.reservations.delete(reservation.sequence)
   }
 
+  select(channelId: ChannelId, preferred: string | undefined, now: number, count: number): string | undefined {
+    for (const [id, entry] of this.#entries) if (entry.expiresAt <= now) this.#entries.delete(id)
+    if (preferred) {
+      const entry = this.#entries.get(preferred)
+      if (
+        entry &&
+        (entry.channelId === undefined || entry.channelId === channelId) &&
+        this.available(preferred, now) >= count
+      )
+        return preferred
+    }
+    return [...this.#entries]
+      .reverse()
+      .find(([id, entry]) => entry.channelId === channelId && this.available(id, now) >= count)?.[0]
+  }
+
   available(messageId: string, now: number): number {
     const entry = this.#entries.get(messageId)
     return !entry || entry.expiresAt <= now ? 0 : Math.max(0, entry.remaining - entry.reservations.size)
@@ -397,6 +424,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
   readonly #onQuoteDiagnostic: ((diagnostic: QQQuoteDiagnostic) => void) | undefined
   readonly #transport: QQOpenClawTransport
   readonly #replyBudget = new QQReplyBudget()
+  readonly #quotes: QQQuoteIndex
   readonly #groupInfo: QQGroupInfoSync | undefined
   #running = false
 
@@ -413,6 +441,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
   ) {
     this.#context = context
     this.#config = QQOpenClawConfigSchema.parse(config)
+    this.#quotes = new QQQuoteIndex(this.#config.appId, context.state)
     this.#directory = dependencies.directory
     this.#assets = dependencies.assets
     this.#inbound = dependencies.inbound
@@ -500,24 +529,46 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         }
       }
     }
-    if (replyPlatformMessageId === undefined) return groups.map((parts) => ({ parts }))
-    const available = this.#replyBudget.available(replyPlatformMessageId, this.#context.now())
-    const replyMode = available >= groups.length ? 'passive' : 'proactive'
+    const referenceIndex =
+      replyPlatformMessageId === undefined
+        ? undefined
+        : await this.#quotes.refIndex(input.channelId, replyPlatformMessageId)
+    if (replyPlatformMessageId !== undefined && referenceIndex === undefined) {
+      throw new Error('这条消息的 QQ 引用信息不可用，请取消引用后发送。')
+    }
+    const passiveMessageId = this.#replyBudget.select(
+      input.channelId,
+      replyPlatformMessageId,
+      this.#context.now(),
+      groups.length,
+    )
+    if (
+      replyPlatformMessageId === undefined &&
+      passiveMessageId === undefined &&
+      this.#replyBudget.select(input.channelId, undefined, this.#context.now(), 1) === undefined
+    )
+      return groups.map((parts) => ({ parts }))
+    const replyMode = passiveMessageId === undefined ? 'proactive' : 'passive'
     if (replyMode === 'proactive' && !this.#config.proactiveSend) {
       throw new Error('QQ passive reply quota cannot cover the complete PhysicalDelivery group.')
     }
-    const adapterContext = { replyPlatformMessageId, replyMode } satisfies JsonValue
+    const adapterContext = {
+      replyMode,
+      ...(passiveMessageId === undefined ? {} : { replyPlatformMessageId: passiveMessageId }),
+      ...(referenceIndex === undefined ? {} : { referenceIndex }),
+    } satisfies JsonValue
     return groups.map((parts) => ({ parts, adapterContext }))
   }
 
   observeReplyContext(
     messageId: string,
-    input: { readonly expiresAt?: number; readonly remainingReplies?: number },
+    input: { readonly expiresAt?: number; readonly remainingReplies?: number; readonly channelId?: ChannelId },
   ): void {
     this.#replyBudget.observe(
       messageId,
       input.expiresAt ?? this.#context.now() + this.#config.passiveReplyTtlMs,
       input.remainingReplies ?? this.#config.passiveReplyLimit,
+      input.channelId,
     )
   }
 
@@ -596,15 +647,32 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         mentionedBot = true
       parts.push({ type: 'mention', memberId })
     }
-    if (message.rich) {
+    const quote = message.platformReference
+      ? await inbound.resolveQuote({
+          connectionId: this.#context.connectionId,
+          target: message.target,
+          platformReference:
+            (await this.#quotes.messageId(channelId, message.platformReference)) ?? message.platformReference,
+        })
+      : undefined
+    const unresolvedPreview =
+      !quote && (message.platformReference || message.quoteDiagnosticReason || message.quotePreview)
+        ? (message.quotePreview ?? {
+            kind: 'quote-preview',
+            title: '引用消息',
+            summary: '原消息未记录，平台未提供引用内容。',
+          })
+        : undefined
+    let nextAttachmentIndex = (message.attachments?.length ?? 0) + 1_000
+    for (const rich of [message.rich, unresolvedPreview]) {
+      if (!rich) continue
       let previewAssetId: AssetId | undefined
-      let nextAttachmentIndex = (message.attachments?.length ?? 0) + 1_000
       const importUrl = async (url: string, fileName: string | undefined, mediaType: string | undefined) => {
         try {
           const imported = await inbound.importAttachment({
             url,
             ...(fileName === undefined ? {} : { fileName }),
-            mediaType: mediaType ?? 'image/jpeg',
+            ...(mediaType === undefined ? {} : { mediaType }),
             connectionId: this.#context.connectionId,
             channelId,
             platformMessageId: message.platformMessageId,
@@ -618,25 +686,26 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
           return undefined
         }
       }
-      if (message.rich.previewUrl) {
-        const imported = await importUrl(message.rich.previewUrl, 'preview', 'image/jpeg')
+      if (rich.previewUrl) {
+        const imported = await importUrl(rich.previewUrl, 'preview', 'image/jpeg')
         previewAssetId = imported?.assetId
       }
       const richPartIndex = parts.length
       if (previewAssetId) assetOccurrences.push({ partIndex: richPartIndex, assetId: previewAssetId })
       const items = []
-      for (const item of message.rich.items ?? []) {
+      for (const item of rich.items ?? []) {
         let cardPreviewId: AssetId | undefined
         if (item.card?.previewUrl) {
           const imported = await importUrl(item.card.previewUrl, 'card-preview', 'image/jpeg')
           cardPreviewId = imported?.assetId
           if (cardPreviewId) assetOccurrences.push({ partIndex: richPartIndex, assetId: cardPreviewId })
         }
-        let imageAssetId: AssetId | undefined
+        let attachment:
+          { readonly assetId: AssetId; readonly mediaType: string; readonly fileName?: string } | undefined
         if (item.attachmentUrl) {
           const imported = await importUrl(item.attachmentUrl, item.attachmentName, item.attachmentMediaType)
-          imageAssetId = imported?.assetId
-          if (imageAssetId) assetOccurrences.push({ partIndex: richPartIndex, assetId: imageAssetId })
+          attachment = imported
+          if (attachment) assetOccurrences.push({ partIndex: richPartIndex, assetId: attachment.assetId })
         }
         items.push({
           ...(item.sender === undefined ? {} : { sender: item.sender }),
@@ -653,20 +722,33 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
                   ...(cardPreviewId === undefined ? {} : { previewAssetId: cardPreviewId }),
                 },
               }),
-          ...(imageAssetId === undefined ? {} : { imageAssetId }),
-          ...(item.attachmentName === undefined ? {} : { imageName: item.attachmentName }),
+          ...(attachment === undefined
+            ? item.attachmentUrl
+              ? { text: [item.text, '附件未能读取'].filter(Boolean).join('\n') }
+              : {}
+            : attachment.mediaType.startsWith('image/')
+              ? {
+                  imageAssetId: attachment.assetId,
+                  ...(attachment.fileName === undefined ? {} : { imageName: attachment.fileName }),
+                }
+              : attachment.mediaType.startsWith('audio/')
+                ? { audioAssetId: attachment.assetId }
+                : {
+                    fileAssetId: attachment.assetId,
+                    fileMediaType: attachment.mediaType,
+                    ...(attachment.fileName === undefined ? {} : { fileName: attachment.fileName }),
+                  }),
         })
       }
-      const extension =
-        items.length > 0 ? { items } : message.rich.extension === undefined ? undefined : { ...message.rich.extension }
+      const extension = items.length > 0 ? { items } : rich.extension === undefined ? undefined : { ...rich.extension }
       parts.push({
         type: 'rich',
         adapterKey: QQ_OPENCLAW_ADAPTER_KEY,
-        kind: message.rich.kind,
-        summary: message.rich.summary,
-        ...(message.rich.title === undefined ? {} : { title: message.rich.title }),
-        ...(message.rich.source === undefined ? {} : { source: message.rich.source }),
-        ...(message.rich.targetUrl === undefined ? {} : { targetUrl: message.rich.targetUrl }),
+        kind: rich.kind,
+        summary: rich.summary,
+        ...(rich.title === undefined ? {} : { title: rich.title }),
+        ...(rich.source === undefined ? {} : { source: rich.source }),
+        ...(rich.targetUrl === undefined ? {} : { targetUrl: rich.targetUrl }),
         ...(previewAssetId === undefined ? {} : { previewAssetId }),
         ...(extension === undefined ? {} : { extension }),
       })
@@ -699,11 +781,6 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       }
     }
     if (message.platformReference) {
-      const quote = await inbound.resolveQuote({
-        connectionId: this.#context.connectionId,
-        target: message.target,
-        platformReference: message.platformReference,
-      })
       if (quote) {
         parts.push({ type: 'quote', messageId: quote.messageId })
         replyToBot = quote.authoredByAgent
@@ -722,9 +799,13 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       })
     }
     this.observeReplyContext(message.platformMessageId, {
+      channelId,
       ...(message.replyExpiresAt === undefined ? {} : { expiresAt: message.replyExpiresAt }),
       ...(message.remainingReplies === undefined ? {} : { remainingReplies: message.remainingReplies }),
     })
+    // Admission can start responding during the commit callback; indexes must already be available then.
+    if (message.referenceIndex)
+      await this.#quotes.remember(channelId, message.platformMessageId, message.referenceIndex)
     const commit = await this.#context.acceptChannelInbound({
       connectionId: this.#context.connectionId,
       channelId,
@@ -765,13 +846,28 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     const plannedReply = adapterContext?.['replyPlatformMessageId']
     const plannedReplyMode = adapterContext?.['replyMode']
     const replyMessageId = typeof plannedReply === 'string' ? plannedReply : request.replyTo
+    const referenceIndex = adapterContext?.['referenceIndex']
+    const passiveId = this.#replyBudget.select(request.channelId, replyMessageId, this.#context.now(), 1)
     const passive =
-      plannedReplyMode === 'proactive' ? undefined : this.#replyBudget.reserve(replyMessageId, this.#context.now())
+      plannedReplyMode === 'proactive' ? undefined : this.#replyBudget.reserve(passiveId, this.#context.now())
     if (!passive && (plannedReplyMode === 'passive' || !this.#config.proactiveSend)) {
       return { status: 'failed', failure: { kind: 'permanent', message: '被动回复上下文不可用，且主动发送未启用。' } }
     }
     try {
-      const receipt = await this.#deliverParts(request, target, passive, signal)
+      const receipt = await this.#deliverParts(
+        request,
+        target,
+        passive,
+        typeof referenceIndex === 'string' ? referenceIndex : undefined,
+        signal,
+      )
+      if (receipt.refIndex) {
+        try {
+          await this.#quotes.remember(request.channelId, receipt.platformMessageId, receipt.refIndex)
+        } catch {
+          this.#onQuoteDiagnostic?.({ reason: 'reference-index-save-failed', targetKind: target.kind })
+        }
+      }
       if (passive) this.#replyBudget.commit(passive)
       return { status: 'sent', platformMessageId: receipt.platformMessageId }
     } catch (error) {
@@ -806,6 +902,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     request: PhysicalDeliveryRequest,
     target: QQTarget,
     passive: { readonly messageId: string; readonly sequence: number } | undefined,
+    referenceIndex: string | undefined,
     signal: AbortSignal,
   ): Promise<QQTransportReceipt> {
     if (request.parts.every((part) => part.type === 'text' || part.type === 'mention')) {
@@ -832,6 +929,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
         markdown: this.#config.markdown,
         content: chunks[0] ?? '',
         ...(passive === undefined ? {} : { replyMessageId: passive.messageId, messageSequence: passive.sequence }),
+        ...(referenceIndex === undefined ? {} : { referenceIndex }),
         signal,
       })
     }
@@ -855,6 +953,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       target,
       fileInfo: uploaded.fileInfo,
       ...(passive === undefined ? {} : { replyMessageId: passive.messageId, messageSequence: passive.sequence }),
+      ...(referenceIndex === undefined ? {} : { referenceIndex }),
       signal,
     })
   }

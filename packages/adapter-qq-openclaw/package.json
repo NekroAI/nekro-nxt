@@ -24,6 +24,8 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@nekro-nxt/core": "workspace:*",
+    "@nekro-nxt/storage-sqlite": "workspace:*",
     "@nekro-nxt/test-harness": "workspace:*",
     "@types/ws": "8.18.1"
   },

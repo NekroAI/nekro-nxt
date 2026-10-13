@@ -56,7 +56,7 @@ describe('QQ OpenClaw Host contribution', () => {
         resolvePlatformMessageId: (
           _channelId: Parameters<typeof fixture.context.messages.resolvePlatformMessageId>[0],
           logicalMessageId: string,
-        ) => Promise.resolve(logicalMessageId === 'msg_DIRECTREPLY' ? 'platform-direct-reply' : undefined),
+        ) => Promise.resolve(logicalMessageId === 'msg_DIRECTREPLY' ? 'fixture-direct-message' : undefined),
       },
       assets: {
         ...fixture.context.assets,
@@ -119,6 +119,7 @@ describe('QQ OpenClaw Host contribution', () => {
           s: 3,
           d: {
             id: 'fixture-direct-message',
+            message_scene: { ext: ['msg_idx=REFIDX_fixture_direct'] },
             author: { user_openid: 'fixture-direct-user' },
             content: '私聊消息',
             message_type: 103,
@@ -165,7 +166,7 @@ describe('QQ OpenClaw Host contribution', () => {
     expect(fixture.events[2]?.parts.some(({ type }) => type === 'quote')).toBe(false)
     expect(fixture.states.size).toBeGreaterThan(0)
     expect(fixture.diagnostics.some(({ status }) => status === 'connected')).toBe(true)
-    expect(fixture.diagnostics.some(({ message }) => message?.includes('reference-field-missing'))).toBe(true)
+    expect(fixture.diagnostics.some(({ details }) => details?.['quoteReason'] === 'reference-field-missing')).toBe(true)
 
     const channelId = ChannelIdSchema.parse(fixture.channels.get('group:fixture-group'))
     const plans = await runtime.planOutbound({

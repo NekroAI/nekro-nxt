@@ -8,6 +8,7 @@
 
 - 支持 C2C 与群频道；文本、结构化 Mention、图片、文件、音频和引用入库；视频作为普通 file；
 - Mention 只接受 `memberId`。Adapter 解析同一 Connection 的 OpenID，Markdown 输出 `<@openid>`，不把 `@昵称` 当发送协议；入站按原文位置把 `<@openid>` / `@展示名` 切成 `mention` part，机器人账号 Mention 同样入库，并继续报告 `mentionedBot`；
+- 引用索引由 QQ 适配器在连接状态中保存最近 4096 条观测到的 `raw.id ↔ msg_idx/ref_idx` 对，按应用和频道隔离；不转换 `TMP`、`REFIDX` 或 `ROBOT1.0` 前缀，不保存 `auth_token`。发送中的 `msg_id` 是被动回复凭证，`message_reference.message_id` 是引用索引；引用旧消息可使用同频道较新的有效凭证。未知原消息保留为 `quote-preview` 富内容，不伪造 `quote.messageId`；
 - 身份拆成 Connection 范围内的 `PlatformIdentity` 与频道内 `ChannelMember`；
 - Adapter 只报告 `mentionedBot`、`replyToBot` 等平台事实；是否触发由 Binding 策略决定：`always`、`mentioned-or-replied`、`command`、`observe-only`；
 - 有有效被动回复额度时优先被动回复，否则按 Connection 配置降级主动发送；部分成功与未知结果不能标成已发送；

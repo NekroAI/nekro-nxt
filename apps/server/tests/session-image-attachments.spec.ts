@@ -6,11 +6,14 @@ import { AttachmentId } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { AssetService } from '@nekro-nxt/core'
+import { ChannelIdSchema } from '@nekro-nxt/contracts'
+import { SessionRegistry } from '../src/session-registry.ts'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   collectVisibleImageResidency,
+  SessionImageContext,
   NekroAssetAttachmentStore,
   parseNekroImageAttachmentId,
 } from '../src/session-image-context.ts'
@@ -19,6 +22,40 @@ const roots: string[] = []
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+describe('quote preview context', () => {
+  it('labels platform-provided quote text separately from the current utterance', async () => {
+    const database = await openMigratedCoreDatabase(':memory:')
+    try {
+      const repository = new SqliteCoreRepository(database)
+      const projection = new SessionImageContext(new Context(), new SessionRegistry(), repository, repository)
+      const blocks = await projection.projectMessageParts(
+        SessionId('fixture-quote'),
+        ChannelIdSchema.parse('chn_QUOTE'),
+        [
+          { type: 'text', text: '当前发言' },
+          {
+            type: 'rich',
+            adapterKey: 'qq-openclaw',
+            kind: 'quote-preview',
+            title: '引用消息',
+            summary: '原消息未记录，以下为平台提供的引用预览。',
+            extension: { items: [{ sender: '虚构成员', text: '引用正文' }] },
+          },
+        ],
+        new Set(),
+      )
+      expect(blocks[0]).toEqual({ type: 'text', text: '当前发言' })
+      const quoted = blocks[1]
+      expect(quoted?.type).toBe('text')
+      const text = quoted?.type === 'text' ? quoted.text : ''
+      expect(text).toContain('收到引用预览（来自平台的引用内容）')
+      expect(text).toContain('虚构成员：引用正文')
+    } finally {
+      database.close()
+    }
+  })
 })
 
 describe('NekroAssetAttachmentStore', () => {

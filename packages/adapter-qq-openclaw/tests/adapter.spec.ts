@@ -238,7 +238,18 @@ describe('QQ OpenClaw Adapter', () => {
   it('maps normalized Quote IDs to a private PhysicalDelivery context before commit', async () => {
     const sent: unknown[] = []
     const adapter = new QQOpenClawConnection(
-      context,
+      {
+        ...context,
+        state: {
+          load: () =>
+            Promise.resolve({
+              appId: 'app',
+              entries: [{ channelId, messageId: 'qq-inbound', refIndex: 'REFIDX_fixture_inbound' }],
+            }),
+          save: () => Promise.resolve(),
+          clear: () => Promise.resolve(),
+        },
+      },
       {
         appId: 'app',
         clientSecretCredentialRef: 'credential:qq',
@@ -283,7 +294,11 @@ describe('QQ OpenClaw Adapter', () => {
     })
     expect(plan).toEqual({
       parts: [{ type: 'text', text: '引用回复' }],
-      adapterContext: { replyPlatformMessageId: 'qq-inbound', replyMode: 'passive' },
+      adapterContext: {
+        replyPlatformMessageId: 'qq-inbound',
+        referenceIndex: 'REFIDX_fixture_inbound',
+        replyMode: 'passive',
+      },
     })
     await expect(
       adapter.deliver(
