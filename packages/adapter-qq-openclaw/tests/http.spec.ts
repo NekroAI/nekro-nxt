@@ -42,6 +42,37 @@ const createTransport = (fetchImplementation: typeof fetch, secret = 'private-se
   })
 
 describe('QQ OpenClaw HTTP transport', () => {
+  it.each(['group', 'c2c'] as const)(
+    'sends independent quote indexes and passive credentials for %s text and media',
+    async (kind) => {
+      const calls: Array<{ readonly url: string; readonly init: RequestInit | undefined }> = []
+      const transport = createTransport(
+        sequenceFetch(
+          [
+            () => json({ access_token: 'fictional-token', expires_in: 7200 }),
+            () => json({ id: 'ROBOT1.0_text', ext_info: { ref_idx: 'REFIDX_text' } }),
+            () => json({ id: 'ROBOT1.0_media', ext_info: { ref_idx: 'REFIDX_media' } }),
+          ],
+          calls,
+        ),
+      )
+      const common = {
+        target: { kind, openId: 'fictional-target' },
+        replyMessageId: 'ROBOT1.0_recent',
+        referenceIndex: 'REFIDX_old',
+        signal: new AbortController().signal,
+      }
+      await transport.sendText({ ...common, markdown: false, content: '虚构回复', messageSequence: 1 })
+      await transport.sendMedia({ ...common, fileInfo: 'fictional-upload', messageSequence: 2 })
+      for (const call of calls.slice(1))
+        expect(parseJsonObject(bodyText(call.init?.body))).toMatchObject({
+          msg_id: 'ROBOT1.0_recent',
+          message_reference: { message_id: 'REFIDX_old' },
+        })
+      expect(parseJsonObject(bodyText(calls[2]?.init?.body))).toMatchObject({ msg_type: 7, msg_seq: 2 })
+    },
+  )
+
   it.each([200, 400, 403])(
     'recognizes the group info whitelist error with HTTP %s without changing authentication behavior',
     async (status) => {

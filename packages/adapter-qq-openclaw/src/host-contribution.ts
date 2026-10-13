@@ -31,7 +31,9 @@ const targetFromPlatformChannelId = (value: string): QQTarget | undefined => {
   return (kind === 'c2c' || kind === 'group') && openId ? { kind, openId } : undefined
 }
 
-const createDirectory = (context: AdapterConnectionHostContext): QQIdentityDirectory & QQInboundBridge => ({
+export const createQQIdentityDirectory = (
+  context: AdapterConnectionHostContext,
+): QQIdentityDirectory & QQInboundBridge => ({
   ensureTarget: (input) =>
     context.channels.ensure({
       platformChannelId: platformChannelId(input.target),
@@ -233,7 +235,7 @@ export const createQQOpenClawHostContribution = (): AdapterHostContributionV2 =>
       fetch: fetchImpl,
       now: context.now,
     })
-    const directory = createDirectory(context)
+    const directory = createQQIdentityDirectory(context)
     return Promise.resolve(
       new QQOpenClawRuntime({
         context,
@@ -250,7 +252,12 @@ export const createQQOpenClawHostContribution = (): AdapterHostContributionV2 =>
         onQuoteDiagnostic: (diagnostic) =>
           context.diagnostics.publish({
             status: 'connected',
-            message: `引用未解析：${diagnostic.reason}`,
+            message: {
+              'reference-field-missing': '引用消息缺少定位信息，已保留可用预览。',
+              'platform-reference-unresolved': '原消息未记录，已保留可用引用预览。',
+              'reference-index-save-failed': '消息已发送，但引用信息未能保存。',
+            }[diagnostic.reason],
+            details: { quoteReason: diagnostic.reason },
             credentialConfigured: true,
             proactiveSend: configuration.proactiveSend,
           }),

@@ -88,18 +88,25 @@ const parseAttachments = (value: unknown): readonly QQInboundAttachment[] => {
 
 const parseReference = (
   raw: UnknownRecord,
-): { readonly messageId?: string; readonly reference?: string; readonly referenceFieldMissing?: boolean } => {
+): {
+  readonly messageId?: string
+  readonly refIndex?: string
+  readonly reference?: string
+  readonly referenceFieldMissing?: boolean
+} => {
   const scene = record(raw['message_scene'])
   const ext = parseExt(scene['ext'])
   const elements = records(raw['msg_elements'])
   const firstElementIndex = text(elements[0]?.['msg_idx'])
-  const messageId = text(ext['msg_idx'], ext['msgIdx'], firstElementIndex, raw['id'])
+  const refIndex = text(ext['msg_idx'], ext['msgIdx'])
+  const messageId = text(raw['id'], refIndex)
   const extReference = text(ext['ref_msg_idx'], ext['refMsgIdx'], ext['ref_idx'], ext['refIdx'])
   const rawMessageType = raw['message_type']
   const messageType = typeof rawMessageType === 'number' ? rawMessageType : Number(rawMessageType)
   const reference = messageType === 103 && firstElementIndex ? firstElementIndex : extReference
   return {
     ...(messageId === undefined ? {} : { messageId }),
+    ...(refIndex === undefined ? {} : { refIndex }),
     ...(reference === undefined ? {} : { reference }),
     ...(messageType === 103 && reference === undefined ? { referenceFieldMissing: true } : {}),
   }
@@ -370,6 +377,78 @@ const normalizeQQContent = (value: unknown): string | undefined => {
   return normalized || undefined
 }
 
+/** Quoted content stays separate from the current utterance and never contributes Mention facts. */
+const parseQQQuotePreview = (value: unknown): QQDecodedRich => {
+  const items: QQForwardItem[] = []
+  let visited = 0
+  let characters = 0
+  let truncated = false
+  const visit = (value: unknown, depth: number): void => {
+    for (const element of records(value)) {
+      if (depth > 4 || visited >= 32 || items.length >= 64 || characters >= 16000) {
+        truncated = true
+        break
+      }
+      visited += 1
+      const rawContent = normalizeQQContent(element['content'])
+      const content = rawContent?.slice(0, Math.min(4000, 16000 - characters))
+      characters += content?.length ?? 0
+      if (rawContent && rawContent !== content) truncated = true
+      let ark = element['ark_data'] ?? element['ark']
+      if (typeof ark === 'string') {
+        try {
+          ark = JSON.parse(ark) as unknown
+        } catch {
+          ark = undefined
+        }
+      }
+      const decoded = parseQQRichPayload({ ...element, ark }, content)
+      const previewText = decoded.content ?? decoded.rich?.extension?.['preview']
+      const sender = displayName(record(element['author']))?.slice(0, 120)
+      const prefix = sender === undefined ? {} : { sender }
+      if (decoded.content || decoded.rich) {
+        items.push({
+          ...prefix,
+          ...(previewText === undefined ? {} : { text: previewText }),
+          ...(decoded.rich === undefined ? {} : { card: decoded.rich }),
+        })
+        for (const item of decoded.rich?.items ?? []) {
+          if (items.length >= 64) {
+            truncated = true
+            break
+          }
+          items.push(item)
+        }
+      }
+      for (const attachment of parseAttachments(element['attachments'])) {
+        if (items.length >= 64) {
+          truncated = true
+          break
+        }
+        items.push({
+          ...prefix,
+          attachmentUrl: attachment.url,
+          ...(attachment.fileName === undefined ? {} : { attachmentName: attachment.fileName }),
+          ...(attachment.mediaType === undefined ? {} : { attachmentMediaType: attachment.mediaType }),
+        })
+      }
+      visit(element['msg_elements'], depth + 1)
+    }
+  }
+  visit(value, 0)
+  return {
+    kind: 'quote-preview',
+    title: '引用消息',
+    summary:
+      items.length === 0
+        ? '原消息未记录，平台未提供引用内容。'
+        : truncated
+          ? '原消息未记录，以下为部分引用预览。'
+          : '原消息未记录，以下为平台提供的引用预览。',
+    ...(items.length === 0 ? {} : { items }),
+  }
+}
+
 type QQDecodedMention = {
   readonly openId: string
   readonly displayName?: string
@@ -489,6 +568,10 @@ export const decodeQQInboundMessage = (
   const reference = parseReference(raw)
   const platformMessageId = required(text(raw['id'], reference.messageId), 'message ID')
   const now = options.now?.() ?? Date.now()
+  const quotePreview =
+    Number(raw['message_type']) === 103 || reference.reference !== undefined
+      ? parseQQQuotePreview(raw['msg_elements'])
+      : undefined
 
   if (typedEvent === 'C2C_MESSAGE_CREATE') {
     const senderOpenId = required(
@@ -501,6 +584,8 @@ export const decodeQQInboundMessage = (
     return {
       eventType: typedEvent,
       platformMessageId,
+      ...(reference.refIndex === undefined ? {} : { referenceIndex: reference.refIndex }),
+      ...(quotePreview === undefined ? {} : { quotePreview }),
       target: { kind: 'c2c', openId: senderOpenId },
       senderOpenId,
       ...(senderDisplayName === undefined ? {} : { senderDisplayName }),
@@ -523,6 +608,8 @@ export const decodeQQInboundMessage = (
   return {
     eventType: typedEvent,
     platformMessageId,
+    ...(reference.refIndex === undefined ? {} : { referenceIndex: reference.refIndex }),
+    ...(quotePreview === undefined ? {} : { quotePreview }),
     target: { kind: 'group', openId: groupOpenId },
     ...(targetDisplayName === undefined ? {} : { targetDisplayName }),
     senderOpenId,

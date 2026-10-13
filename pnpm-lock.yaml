@@ -582,6 +582,12 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@nekro-nxt/core':
+        specifier: workspace:*
+        version: link:../core
+      '@nekro-nxt/storage-sqlite':
+        specifier: workspace:*
+        version: link:../storage-sqlite
       '@nekro-nxt/test-harness':
         specifier: workspace:*
         version: link:../test-harness

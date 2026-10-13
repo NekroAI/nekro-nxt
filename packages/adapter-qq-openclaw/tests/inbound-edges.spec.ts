@@ -123,12 +123,12 @@ describe('QQ inbound malformed and media boundaries', () => {
     expect(c2c({ id: 'missing-reference', author: { id: 'user' }, message_type: 103 })).toMatchObject({
       quoteDiagnosticReason: 'reference-field-missing',
     })
-    expect(
+    expect(() =>
       decodeQQInboundMessage('C2C_MESSAGE_CREATE', {
         author: { id: 'user' },
         msg_elements: [{ msg_idx: 'from-element' }],
       }),
-    ).toMatchObject({ platformMessageId: 'from-element' })
+    ).toThrow('message ID is required')
   })
 
   it('rejects malformed supported events at the first missing identity boundary', () => {

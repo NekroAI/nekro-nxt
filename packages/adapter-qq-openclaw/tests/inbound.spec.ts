@@ -22,6 +22,8 @@ describe('QQ inbound event decoder', () => {
     ).toEqual({
       eventType: 'C2C_MESSAGE_CREATE',
       platformMessageId: 'qq-c2c-1',
+      referenceIndex: 'idx-1',
+      quotePreview: { kind: 'quote-preview', title: '引用消息', summary: '原消息未记录，平台未提供引用内容。' },
       target: { kind: 'c2c', openId: 'user-openid' },
       senderOpenId: 'user-openid',
       senderDisplayName: '小青',

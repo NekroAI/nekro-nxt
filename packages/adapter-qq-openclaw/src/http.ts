@@ -123,6 +123,7 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     readonly markdown: boolean
     readonly content: string
     readonly replyMessageId?: string
+    readonly referenceIndex?: string
     readonly messageSequence?: number
     readonly signal: AbortSignal
   }): Promise<QQTransportReceipt> {
@@ -130,6 +131,7 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
       ? { msg_type: 2, markdown: { content: input.content } }
       : { msg_type: 0, content: input.content }
     if (input.replyMessageId) body['msg_id'] = input.replyMessageId
+    if (input.referenceIndex) body['message_reference'] = { message_id: input.referenceIndex }
     if (input.messageSequence !== undefined) body['msg_seq'] = input.messageSequence
     return this.#messageReceipt(
       await this.#requestJson('POST', targetPath(input.target, 'messages'), body, input.signal, true),
@@ -200,11 +202,13 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     readonly target: QQTarget
     readonly fileInfo: string
     readonly replyMessageId?: string
+    readonly referenceIndex?: string
     readonly messageSequence?: number
     readonly signal: AbortSignal
   }): Promise<QQTransportReceipt> {
     const body: Record<string, unknown> = { msg_type: 7, media: { file_info: input.fileInfo } }
     if (input.replyMessageId) body['msg_id'] = input.replyMessageId
+    if (input.referenceIndex) body['message_reference'] = { message_id: input.referenceIndex }
     if (input.messageSequence !== undefined) body['msg_seq'] = input.messageSequence
     return this.#messageReceipt(
       await this.#requestJson('POST', targetPath(input.target, 'messages'), body, input.signal, true),

@@ -263,15 +263,16 @@ describe('QQ OpenClaw connection boundaries', () => {
       parts: [
         { type: 'mention', memberId: 'mbr_bot' },
         { type: 'mention', memberId: 'mbr_member' },
+        { type: 'rich', kind: 'quote-preview', summary: '原消息未记录，平台未提供引用内容。' },
         { type: 'image', assetId: 'ast_image', alt: 'image.png' },
         { type: 'audio', assetId: 'ast_audio' },
         { type: 'file', assetId: 'ast_file', name: 'doc.pdf' },
       ],
       facts: { mentionedBot: true, replyToBot: false, targetKind: 'c2c' },
       assetOccurrences: [
-        { partIndex: 2, assetId: 'ast_image' },
-        { partIndex: 3, assetId: 'ast_audio' },
-        { partIndex: 4, assetId: 'ast_file' },
+        { partIndex: 3, assetId: 'ast_image' },
+        { partIndex: 4, assetId: 'ast_audio' },
+        { partIndex: 5, assetId: 'ast_file' },
       ],
     })
     expect(quoteDiagnostics).toEqual([
@@ -311,7 +312,7 @@ describe('QQ OpenClaw connection boundaries', () => {
       mentions: [{ openId: 'bot', bot: true }],
       platformTimestamp: 400,
     })
-    expect(accepted[1]?.parts).toEqual([{ type: 'text', text: '该消息包含暂不支持显示的内容。' }])
+    expect(accepted[1]?.parts).toEqual([expect.objectContaining({ type: 'rich', kind: 'quote-preview' })])
     expect(accepted[2]?.parts).toEqual([{ type: 'text', text: '该消息包含暂不支持显示的内容。' }])
     expect(accepted[3]?.parts).toEqual([{ type: 'mention', memberId: 'mbr_bot' }])
     await adapter.stop()
