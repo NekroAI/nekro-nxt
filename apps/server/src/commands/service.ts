@@ -31,6 +31,7 @@ export interface RegisteredCommand {
   readonly fullName: string
   readonly source: string
   readonly extensionRevisionId?: ExtensionRevisionId
+  readonly unavailableReason?: string
   readonly invoke: CommandHandler
 }
 interface CommandServiceOptions {
@@ -182,10 +183,12 @@ export class CommandService implements CommandGate {
         fullName: command.fullName,
         source: command.source,
         ...(command.extensionRevisionId === undefined ? {} : { extensionRevisionId: command.extensionRevisionId }),
+        ...(command.unavailableReason === undefined ? {} : { unavailableReason: command.unavailableReason }),
         enabled,
         permission,
         available:
           enabled &&
+          command.unavailableReason === undefined &&
           (permission === 'public' || this.#authorized(channelId, identity)) &&
           (bound || ['help', 'status'].includes(command.fullName)),
         usage: commandUsage(command.definition, command.fullName),
@@ -398,6 +401,7 @@ export class CommandService implements CommandGate {
             !this.#authorized(record.channelId, record.identity)
           )
             throw new SilentCommandError('无权执行此命令，需要此频道的命令管理授权。')
+          if (policy.unavailableReason !== undefined) throw new Error(policy.unavailableReason)
           if (!binding && !['help', 'status'].includes(command!.fullName)) throw new Error('请先为频道绑定智能体。')
         }
         guard()

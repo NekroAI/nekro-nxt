@@ -411,6 +411,41 @@ describe('unified commands', () => {
     expect(f.commands.catalog(f.channel.id).find((c) => c.fullName === 'status')?.available).toBe(true)
     expect(() => f.commands.setPolicy('global', 'help', { enabled: false })).toThrow()
   })
+  it('reports a paused command to authorized callers and keeps unauthorized platform calls silent', async () => {
+    const f = await setup()
+    const invoke = vi.fn(() => ({ parts: [{ type: 'text' as const, text: 'should not run' }] }))
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({
+        name: 'paused',
+        description: '暂停命令',
+        minimumPermission: 'channel-admin',
+      }),
+      fullName: 'ext_PAUSED:paused',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_PAUSED'),
+      unavailableReason: '命令所属扩展暂时不可用，请稍后重试。',
+      invoke,
+    })
+    const commit = await f.inbound('/paused')
+    const denied = f.repository.commands.forEvent(commit.channelEventId)
+    expect(denied).toMatchObject({
+      status: 'failed',
+      replySuppressed: true,
+    })
+    expect(denied?.error).toContain('无权执行')
+    expect(f.adapter.deliveries).toHaveLength(0)
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    const authorized = await f.inbound('/ext_PAUSED:paused')
+    const paused = f.repository.commands.forEvent(authorized.channelEventId)
+    expect(paused).toMatchObject({
+      status: 'failed',
+      commandName: 'ext_PAUSED:paused',
+    })
+    expect(paused?.error).toContain('暂时不可用')
+    expect(f.adapter.deliveries).toHaveLength(1)
+    expect(invoke).not.toHaveBeenCalled()
+    expect(f.admissions).toHaveLength(0)
+  })
   it('does not replay a handler after an interrupted execution', async () => {
     const f = await setup()
     const first = await f.inbound('/help')

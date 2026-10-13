@@ -145,6 +145,7 @@ export const CommandCatalogEntrySchema = z
     permission: CommandPermissionSchema,
     usage: z.string(),
     available: z.boolean(),
+    unavailableReason: z.string().optional(),
     globalPolicy: CommandPolicySchema.optional(),
     channelPolicy: CommandPolicySchema.optional(),
   })

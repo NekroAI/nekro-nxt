@@ -1,4 +1,4 @@
-import { CommandService } from './commands/service.js'
+import { CommandService, type RegisteredCommand } from './commands/service.js'
 import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
 import type { DshSessionStorageRetirementReport, InboundHookDecisionRecord } from '@nekro-nxt/storage-sqlite'
 import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
@@ -17,6 +17,7 @@ import { ChannelRuntime, type ExtensionJobFiring, type InboundHookDecision } fro
 import {
   AgentIdSchema,
   ChannelIdSchema,
+  CommandDefinitionSchema,
   ConnectionIdSchema,
   hostLayerAsCapabilities,
   parseJsonValue,
@@ -277,15 +278,7 @@ export class NekroRuntime {
       channels: () => this.channels,
       now: input.now,
       running: (id) => this.host.sessionStatus(id) === 'running',
-      extensions: (agentId) =>
-        this.host.commandHandlers(agentId).map((command) => ({
-          definition: command.definition,
-          invoke: command.invoke,
-          fullName: `${command.revision.extensionId}:${command.definition.name}`,
-          source:
-            this.repository.getExtension(command.revision.extensionId)?.displayName ?? command.revision.extensionId,
-          extensionRevisionId: command.revision.id,
-        })),
+      extensions: (agentId) => this.#extensionCommands(agentId),
       botMemberId: (event) => {
         const channel = this.repository.getChannel(event.channelId)
         if (!channel) return undefined
@@ -350,6 +343,46 @@ export class NekroRuntime {
       }),
       { now: this.#now, compatibility: this.compatibility },
     )
+  }
+
+  #extensionCommands(agentId: AgentId): readonly RegisteredCommand[] {
+    const activations = this.repository.listActivations(agentId)
+    const revisions = new Map(activations.map((activation) => [activation.extensionId, activation.extensionRevisionId]))
+    const commands = new Map<string, RegisteredCommand>()
+    for (const command of this.host.commandHandlers(agentId)) {
+      if (revisions.get(command.revision.extensionId) !== command.revision.id) continue
+      const fullName = `${command.revision.extensionId}:${command.definition.name}`
+      commands.set(fullName, {
+        definition: command.definition,
+        invoke: command.invoke,
+        fullName,
+        source: this.repository.getExtension(command.revision.extensionId)?.displayName ?? command.revision.extensionId,
+        extensionRevisionId: command.revision.id,
+      })
+    }
+    // Committed activations retain command identity while safe-gap waiting, detaching or restoring.
+    // Only a live attachment supplies an invocable handler; disabling removes the activation.
+    for (const activation of activations) {
+      const revision = this.repository.getExtensionRevision(activation.extensionRevisionId)
+      const manifest = revision === undefined ? undefined : this.extensionService.revisionManifest(revision)
+      for (const contribution of manifest?.contributions ?? []) {
+        if (contribution.kind !== 'command') continue
+        const fullName = `${activation.extensionId}:${contribution.name}`
+        if (commands.has(fullName)) continue
+        const unavailableReason = '命令所属扩展暂时不可用，请稍后重试。'
+        commands.set(fullName, {
+          definition: CommandDefinitionSchema.strip().parse(contribution),
+          fullName,
+          source: this.repository.getExtension(activation.extensionId)?.displayName ?? activation.extensionId,
+          extensionRevisionId: activation.extensionRevisionId,
+          unavailableReason,
+          invoke: () => {
+            throw new Error(unavailableReason)
+          },
+        })
+      }
+    }
+    return [...commands.values()]
   }
 
   static async create(options: NekroRuntimeOptions): Promise<NekroRuntime> {

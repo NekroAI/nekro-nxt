@@ -31,6 +31,7 @@ describe('Extension V7 contracts', () => {
   it('supports SDK level 9 without inventing an unreleased product version', () => {
     expect(EXTENSION_SDK_LEVEL).toBe(9)
     // Release labels describe shipped products; the new command capability has no release version yet.
+    // Before shipping SDK 9, add its approved version and restore equality (docs/09, section 5).
     expect(EXTENSION_SDK_RELEASES.at(-1)?.level).toBeLessThanOrEqual(EXTENSION_SDK_LEVEL)
     expect(extensionSdkVersion(9)).toBeUndefined()
     expect(extensionSdkVersion(8)).toBe('0.5.0')

@@ -1437,7 +1437,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
       '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
       '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
-      '显式斜杠命令使用 SDK 9 的 command Contribution 和 factory 级 harness.registerCommand(definition, handler)，源码包导入时会执行隔离验证；不能把命令放进 Session apply 或用 onInbound 模拟。参数来自 context.arguments，媒体仅引用当前频道授权的 assetId，监听 context.signal 清理。模型不直接调用聊天命令。',
+      '显式斜杠命令使用 SDK 9 的 command Contribution 和 factory 级 harness.registerCommand(definition, handler)，源码包导入时会执行隔离验证；工坊动态创造暂不支持命令贡献，请使用本地源码包导入命令扩展。不能把命令放进 Session apply 或用 onInbound 模拟。参数来自 context.arguments，媒体仅引用当前频道授权的 assetId，监听 context.signal 清理。模型不直接调用聊天命令。',
       '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息；定时检查类需求在 onJob 里先检查，没有新内容就返回 { wake: false }。',
     ],
   },

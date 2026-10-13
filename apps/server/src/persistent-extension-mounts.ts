@@ -102,6 +102,7 @@ export interface PersistentAdapterPort {
 
 interface Attachment {
   commands: CommandRegistrations
+  commandsReady: boolean
   readonly agentId: AgentId
   readonly config: JsonValue
   readonly fibers: Map<string, Fiber>
@@ -208,7 +209,7 @@ export class PersistentExtensionMounts {
       .filter((instance) => instance.active)
       .flatMap((instance) => {
         const attachment = instance.attachments.get(agentId)
-        return attachment?.active === true
+        return attachment?.active === true && attachment.commandsReady
           ? attachment.commands.list().map((command) => ({ ...command, agentId, revision: instance.revision }))
           : []
       })
@@ -451,6 +452,7 @@ export class PersistentExtensionMounts {
     if (instance.attachments.has(agentId)) throw new Error('这个扩展已经挂载给该智能体。')
     const attachment: Attachment = {
       commands: instance.commands.fork(),
+      commandsReady: false,
       agentId,
       config,
       fibers: new Map(),
@@ -464,6 +466,7 @@ export class PersistentExtensionMounts {
           .filter(([sessionId]) => this.#sessions.get(sessionId)?.revision.agentId === agentId)
           .map(([sessionId, handle]) => this.#mountInSession(instance, attachment, sessionId, handle.agent.ctx)),
       )
+      attachment.commandsReady = true
     } catch (error) {
       try {
         await this.#detach(instance, attachment)
@@ -474,9 +477,13 @@ export class PersistentExtensionMounts {
     }
     return {
       pauseCommands: async () => {
+        attachment.commandsReady = false
         await attachment.commands.dispose()
         return () => {
-          if (attachment.active && instance.active) attachment.commands = instance.commands.fork()
+          if (attachment.active && instance.active) {
+            attachment.commands = instance.commands.fork()
+            attachment.commandsReady = true
+          }
         }
       },
       dispose: () => this.#detach(instance, attachment),
@@ -564,6 +571,7 @@ export class PersistentExtensionMounts {
   async #detach(instance: Instance, attachment: Attachment): Promise<void> {
     if (!attachment.active) return
     attachment.active = false
+    attachment.commandsReady = false
     if (instance.attachments.get(attachment.agentId) === attachment) instance.attachments.delete(attachment.agentId)
     await attachment.commands.dispose()
     await Promise.allSettled([...attachment.mounting.values()])
