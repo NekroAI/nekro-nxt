@@ -104,6 +104,28 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect(page.getByRole('switch', { name: '授权 示例成员' })).toBeVisible()
     await page.getByRole('switch', { name: '授权 示例成员' }).click()
     await expect(page.getByRole('switch', { name: '授权 示例成员' })).toBeChecked()
+    // A previously saved weaker channel override must never look like the effective permission.
+    expect(
+      (
+        await request.put('/api/commands/policy', {
+          data: { scope: channel.id, name: 'status', policy: { permission: 'public' } },
+        })
+      ).ok(),
+    ).toBe(true)
+    expect(
+      (
+        await request.put('/api/commands/policy', {
+          data: { scope: 'global', name: 'status', policy: { permission: 'channel-admin' } },
+        })
+      ).ok(),
+    ).toBe(true)
+    await page.reload()
+    await expect(page.getByText('生效权限：频道管理（全局设置要求）')).toBeVisible()
+    await expect(page.getByText(/此前保存的普通用户覆盖不生效/)).toBeVisible()
+    await page.getByRole('combobox', { name: 'status 权限', exact: true }).click()
+    await expect(page.getByRole('option', { name: '普通用户', exact: true })).toBeDisabled()
+    await page.screenshot({ path: testInfo.outputPath('permission-floor.png'), fullPage: true })
+    await page.keyboard.press('Escape')
     platform.send('/on')
     await expect
       .poll(async () => {
@@ -136,6 +158,42 @@ test('production command journey: authorization, completion, denial, delivery fa
     expect(activation.ok()).toBe(true)
     await page.goto(`/channels/${channel.id}`)
     const input = page.getByLabel('消息', { exact: true })
+    const echoUsage = page.getByLabel('频道命令设置').locator('code').filter({ hasText: ':echo' })
+    await expect(echoUsage).toBeVisible()
+    const inspectorLayout = await echoUsage.evaluate((usage) => {
+      const controls = usage.parentElement!
+      const row = controls.parentElement!.parentElement!
+      const description = row.firstElementChild!
+      const section = row.closest('section[aria-label="频道命令设置"]')!
+      return {
+        descriptionWidth: description.getBoundingClientRect().width,
+        stacked: description.getBoundingClientRect().bottom <= controls.getBoundingClientRect().top,
+        fits: section.scrollWidth <= section.clientWidth,
+      }
+    })
+    expect(inspectorLayout.descriptionWidth).toBeGreaterThan(200)
+    expect(inspectorLayout.stacked).toBe(true)
+    expect(inspectorLayout.fits).toBe(true)
+    await echoUsage.scrollIntoViewIfNeeded()
+    await page.screenshot({ path: testInfo.outputPath('inspector-layout.png'), fullPage: true })
+    await input.fill('/')
+    const options = page.getByRole('option')
+    await expect(options).toHaveCount(8)
+    for (let i = 0; i < 7; i++) await input.press('ArrowDown')
+    const selectedVisible = () =>
+      page.getByRole('listbox', { name: '可用命令' }).evaluate((list) => {
+        const option = list.querySelector('[aria-selected="true"]')!.getBoundingClientRect()
+        const viewport = list.getBoundingClientRect()
+        return {
+          visible: option.top >= viewport.top - 1 && option.bottom <= viewport.bottom + 1,
+          scrollTop: list.scrollTop,
+        }
+      })
+    await expect.poll(selectedVisible).toMatchObject({ visible: true })
+    expect((await selectedVisible()).scrollTop).toBeGreaterThan(0)
+    await page.screenshot({ path: testInfo.outputPath('keyboard-completion.png'), fullPage: true })
+    await input.press('ArrowDown')
+    await expect.poll(selectedVisible).toMatchObject({ visible: true })
     await input.fill('/echo')
     await expect(page.getByRole('option', { name: /echo/ })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('suggestions.png'), fullPage: true })
@@ -147,6 +205,13 @@ test('production command journey: authorization, completion, denial, delivery fa
     const before = platform.sent.length
     await input.press('Enter')
     await expect(page.getByLabel('命令记录').filter({ hasText: '你好 世界\n你好 世界' }).first()).toBeVisible()
+    const resultBody = page
+      .getByLabel('命令记录')
+      .filter({ hasText: '你好 世界\n你好 世界' })
+      .first()
+      .locator('[data-system-event-content]')
+    await expect(resultBody).toHaveCSS('white-space', 'pre-wrap')
+    expect(await resultBody.innerText()).toBe('你好 世界\n你好 世界')
     expect(JSON.stringify(platform.sent.slice(before))).not.toContain('/ext_COMMANDDEMO:echo')
     platform.failDelivery(true)
     await input.fill('/status ')
@@ -154,6 +219,40 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect(page.getByText('执行成功，但回复投递失败或未确认。').first()).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('delivery-failed.png'), fullPage: true })
     platform.failDelivery(false)
+    const failedReply = page
+      .getByLabel('命令记录')
+      .filter({ has: page.getByRole('button', { name: '重发', exact: true }) })
+    const replyId = await failedReply.getAttribute('data-message-id')
+    const beforeRetry = platform.sent.length
+    let reexecutions = 0
+    page.on('request', (outgoing) => {
+      if (outgoing.url().endsWith('/api/commands/execute')) reexecutions++
+    })
+    const retried = page.waitForResponse((response) => response.url().endsWith(`/api/outbound/${replyId}/resolve`))
+    await failedReply.getByRole('button', { name: '重发', exact: true }).click()
+    expect((await retried).ok()).toBe(true)
+    await expect.poll(() => platform.sent.length).toBe(beforeRetry + 1)
+    await expect(
+      page.locator(`[data-message-id="${replyId}"]`).getByRole('button', { name: '重发', exact: true }),
+    ).toHaveCount(0)
+    expect(reexecutions).toBe(0)
+    platform.unknownDelivery(true)
+    await input.fill('/status ')
+    await input.press('Enter')
+    const unknownReply = page
+      .getByLabel('命令记录')
+      .filter({ has: page.getByRole('button', { name: '已送达', exact: true }) })
+    await expect(unknownReply).toBeVisible()
+    const unknownId = await unknownReply.getAttribute('data-message-id')
+    const beforeConfirm = platform.sent.length
+    platform.unknownDelivery(false)
+    const confirmed = page.waitForResponse((response) => response.url().endsWith(`/api/outbound/${unknownId}/resolve`))
+    await unknownReply.getByRole('button', { name: '已送达', exact: true }).click()
+    expect((await confirmed).ok()).toBe(true)
+    await expect(
+      page.locator(`[data-message-id="${unknownId}"]`).getByRole('button', { name: '重发', exact: true }),
+    ).toHaveCount(0)
+    expect(platform.sent).toHaveLength(beforeConfirm)
     await page.setViewportSize({ width: 1100, height: 720 })
     await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
     await page.evaluate(() => localStorage.setItem('nekro-nxt.theme', 'dark'))
@@ -173,7 +272,13 @@ test('production command journey: authorization, completion, denial, delivery fa
       .filter({ has: page.locator(`a[href="/agents/${agent.agentId}"]`) })
       .getByRole('switch')
     await expect(disable.first()).toBeVisible()
+    const disabled = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'DELETE' &&
+        response.url().endsWith(`/api/agents/${agent.agentId}/extensions/${imported.extensionId}/activation`),
+    )
     await disable.first().click()
+    expect((await disabled).ok()).toBe(true)
     await expect(disable.first()).not.toBeChecked()
     await page.goto(`/channels/${channel.id}`)
     await input.fill('/echo')

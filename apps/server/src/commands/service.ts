@@ -207,6 +207,12 @@ export class CommandService implements CommandGate {
       throw new Error('帮助命令必须始终对普通用户可用。')
     if (command.definition.minimumPermission === 'channel-admin' && policy.permission === 'public')
       throw new Error('不能降低命令声明的最低权限。')
+    if (
+      scope !== 'global' &&
+      policy.permission === 'public' &&
+      this.#o.repository.commands.policy('global', name)?.permission === 'channel-admin'
+    )
+      throw new Error('此命令的全局权限为频道管理，频道不能改为普通用户。')
     this.#o.repository.commands.setPolicy(scope, name, policy)
   }
   grant(channelId: ChannelId, identityId: PlatformIdentityId, enabled: boolean): void {
@@ -355,12 +361,14 @@ export class CommandService implements CommandGate {
         this.#queue.delete(id)
         this.#activeChannels.add(channelId)
         void this.#run(task.record)
-          .then(task.resolve, task.reject)
           .finally(() => {
-            this.#inFlight.delete(id)
+            // Only business operations share the channel queue; a slow receipt must not delay /stop.
             this.#activeChannels.delete(channelId)
             this.#schedule()
           })
+          .then((record) => this.#deliverReply(record))
+          .then(task.resolve, task.reject)
+          .finally(() => this.#inFlight.delete(id))
       }
     })
   }
@@ -525,6 +533,12 @@ export class CommandService implements CommandGate {
         this.#controllers.delete(controller)
       }
     }
+    this.#publish(record)
+    return record
+  }
+  async #deliverReply(initial: CommandExecutionRecord): Promise<CommandExecutionRecord> {
+    const store = this.#o.repository.commands
+    let record = store.get(initial.id) ?? initial
     if (record.status === 'running' || record.status === 'pending') return record
     if (record.replySuppressed) {
       this.#publish(record)
@@ -547,6 +561,7 @@ export class CommandService implements CommandGate {
         ...(record.eventId === undefined ? {} : { eventId: record.eventId }),
         onPlanned: (id) => {
           record = store.update({ ...record, replyIntentId: id })
+          this.#publish(record)
         },
       })
     } catch {

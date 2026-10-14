@@ -63,6 +63,7 @@ function Composer({
   const commandRequest = useRef<{ channelId: string; revision: number; id: string } | undefined>(undefined)
   const composing = useRef(false)
   const input = useRef<HTMLTextAreaElement>(null)
+  const commandList = useRef<HTMLDivElement>(null)
   const external = channel.kind !== 'internal'
   const [commands, setCommands] = useState<CommandCatalog['commands']>([])
   const [commandError, setCommandError] = useState('')
@@ -94,6 +95,15 @@ function Composer({
     return () => controller.abort()
   }, [channel.id, commandMode, commandFocus])
   useEffect(() => setSelected(0), [commandQuery, channel.id])
+  useLayoutEffect(() => {
+    const list = commandList.current
+    const option = list?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!list || !option) return
+    const viewport = list.getBoundingClientRect()
+    const bounds = option.getBoundingClientRect()
+    if (bounds.top < viewport.top) list.scrollTop -= viewport.top - bounds.top
+    else if (bounds.bottom > viewport.bottom) list.scrollTop += bounds.bottom - viewport.bottom
+  }, [selected, completing, commandQuery, commands])
   const choose = (index: number) => {
     const command = suggestions[index]
     if (command) setDraft('/' + command.fullName + ' ')
@@ -167,7 +177,13 @@ function Composer({
       {blocked ? <span className={styles.blocked}>{blocked}；仍可输入 /help 或 /status</span> : null}
       {commandError ? <span role="alert">{commandError}</span> : null}
       {completing && suggestions.length ? (
-        <div className={styles.commandSuggestions} role="listbox" id={`commands-${channel.id}`} aria-label="可用命令">
+        <div
+          ref={commandList}
+          className={styles.commandSuggestions}
+          role="listbox"
+          id={`commands-${channel.id}`}
+          aria-label="可用命令"
+        >
           {suggestions.map((command, index) => (
             <Pressable
               type="button"

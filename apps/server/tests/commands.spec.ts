@@ -207,6 +207,32 @@ describe('unified commands', () => {
       await f.commands.idle()
     }
   })
+  it('executes stop and deduplicates the first command while its reply is still waiting', async () => {
+    const f = await setup()
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    await f.inbound('开始工作')
+    const entered = deferred()
+    const held = deferred()
+    const send = f.runtime.sendCommandReply.bind(f.runtime)
+    const delivery = vi.spyOn(f.runtime, 'sendCommandReply').mockImplementationOnce(async (input) => {
+      entered.resolve()
+      await held.promise
+      return send(input)
+    })
+    await f.acceptInbound('/status', 'slow-receipt')
+    try {
+      await entered.promise
+      await f.acceptInbound('/status', 'slow-receipt')
+      const stop = await f.acceptInbound('/stop')
+      await vi.waitFor(() => expect(f.interruptTurn).toHaveBeenCalledOnce())
+      expect(f.repository.commands.forEvent(stop.channelEventId)?.status).toBe('succeeded')
+      expect(delivery).toHaveBeenCalledTimes(2)
+    } finally {
+      held.resolve()
+      await f.commands.idle()
+    }
+    expect(delivery).toHaveBeenCalledTimes(2)
+  })
   it('serializes commands per channel and deduplicates them without blocking another channel', async () => {
     const f = await setup()
     const entered = deferred()
@@ -410,6 +436,11 @@ describe('unified commands', () => {
     f.commands.setPolicy(f.channel.id, 'status', { enabled: true })
     expect(f.commands.catalog(f.channel.id).find((c) => c.fullName === 'status')?.available).toBe(true)
     expect(() => f.commands.setPolicy('global', 'help', { enabled: false })).toThrow()
+    f.commands.setPolicy(f.channel.id, 'status', { permission: 'public' })
+    f.commands.setPolicy('global', 'status', { permission: 'channel-admin' })
+    expect(f.commands.catalog(f.channel.id).find((c) => c.fullName === 'status')?.permission).toBe('channel-admin')
+    expect(() => f.commands.setPolicy(f.channel.id, 'status', { permission: 'public' })).toThrow('全局权限')
+    f.commands.setPolicy(f.channel.id, 'status', {})
   })
   it('reports a paused command to authorized callers and keeps unauthorized platform calls silent', async () => {
     const f = await setup()

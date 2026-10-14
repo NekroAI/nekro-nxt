@@ -1607,6 +1607,18 @@ button.step:hover {
   display: grid;
   gap: var(--s-2);
 }
+.commandContent {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.commandDelivery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--bad);
+  font: var(--t-note);
+}
 .commandSuggestions {
   width: 100%;
   min-width: 0;

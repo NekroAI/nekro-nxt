@@ -10,6 +10,7 @@ export async function startCommandPlatform() {
   let socket: WebSocket | undefined
   let messageId = 100
   let failDelivery = false
+  let unknownDelivery = false
   const sent: unknown[] = []
   server.on('connection', (client) => {
     socket = client
@@ -49,7 +50,7 @@ export async function startCommandPlatform() {
         case 'send_group_msg':
         case 'send_private_msg':
           sent.push(request.params)
-          data = { message_id: ++messageId }
+          data = unknownDelivery ? {} : { message_id: ++messageId }
           break
       }
       const failed = failDelivery && request.action.startsWith('send_')
@@ -69,6 +70,9 @@ export async function startCommandPlatform() {
     sent,
     failDelivery: (value: boolean) => {
       failDelivery = value
+    },
+    unknownDelivery: (value: boolean) => {
+      unknownDelivery = value
     },
     connected: () => socket !== undefined,
     send: (text: string, mentionBot = false) => {

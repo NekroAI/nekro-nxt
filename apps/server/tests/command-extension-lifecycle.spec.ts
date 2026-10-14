@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { materializeImportedRevision } from '@nekro-nxt/extension-format'
-import { ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
+import { CommandDefinitionSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { projectHistoryEntry } from '../src/host-route-support.js'
 
@@ -17,6 +17,56 @@ const deferred = () => {
 
 // Uses the installable example, real builder, verifier, activation and persisted command service.
 describe('command extension installation lifecycle', () => {
+  it('imports a command whose required string accepts two or three code points', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-command-constraints-'))
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extensions'),
+      extensionCacheRoot: path.join(directory, 'cache'),
+    })
+    try {
+      await runtime.start()
+      const definition = CommandDefinitionSchema.parse({
+        name: 'greet',
+        description: '问候',
+        parameters: [{ name: 'name', kind: 'positional', type: 'string', required: true, min: 2, max: 3 }],
+      })
+      const content = materializeImportedRevision({
+        manifest: {
+          schemaVersion: 7,
+          requires: { sdk: 9 },
+          extensionId: 'ext_CONSTRAINED',
+          revisionId: 'xrv_CONSTRAINED',
+          entrypoints: { host: 'source/host.ts' },
+          permissions: { permissions: [], networkOrigins: [] },
+          contributions: [{ kind: 'command', ...definition }],
+        },
+        sources: {
+          host: `export default ({ harness }) => {
+          harness.registerCommand(${JSON.stringify(definition)}, (context) => ({ parts: [{ type: 'text', text: String(context.arguments.name) }] }))
+          return { apply() {} }
+        }`,
+        },
+      })
+      await expect(
+        runtime.extensionService.importRevision({
+          extension: { id: content.manifest.extensionId, slug: 'constrained', displayName: '问候', description: '' },
+          revision: {
+            id: content.manifest.revisionId,
+            contentDigest: content.contentDigest,
+            payloadDigest: content.payloadDigest,
+          },
+          manifest: content.manifest,
+          sources: content.sources,
+        }),
+      ).resolves.toMatchObject({ extension: { id: 'ext_CONSTRAINED' } })
+    } finally {
+      await runtime.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
   it('imports, enables without Session, updates immutable handlers, disables and deletes', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nxt-command-lifecycle-'))
     const runtime = await NekroRuntime.create({

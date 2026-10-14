@@ -1,5 +1,6 @@
 import { CommandRegistrations } from './commands/registrations.js'
-import { CommandDefinitionSchema, ChannelIdSchema, parseCommandArguments } from '@nekro-nxt/contracts'
+import { CommandDefinitionSchema, ChannelIdSchema } from '@nekro-nxt/contracts'
+import { commandVerificationArguments } from './commands/verification.js'
 import { ExtensionLibrary, memoryLibraryRegistry } from './extension-library.js'
 import { memoryIndexEngine } from './extension-index.js'
 import { AdapterRegistry, type AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
@@ -705,18 +706,10 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       }
     }
     for (const command of commands.list()) {
-      const tokens = command.definition.parameters.flatMap((p) => {
-        if (!p.required || p.default !== undefined) return []
-        const value = String(
-          p.choices?.[0] ??
-            (p.type === 'string' ? '示例'.repeat(Math.max(1, p.min ?? 1)) : p.type === 'boolean' ? true : (p.min ?? 1)),
-        )
-        return p.kind === 'option' ? ['--' + p.name, value] : [value]
-      })
       await command.invoke({
         channelId: ChannelIdSchema.parse('chn_VERIFY'),
         identity: { source: 'web', displayName: '验证管理员' },
-        arguments: parseCommandArguments(command.definition, tokens),
+        arguments: commandVerificationArguments(command.definition),
         signal: new AbortController().signal,
         host: {
           status: () => ({ bound: true, responseMode: '验证', running: false }),

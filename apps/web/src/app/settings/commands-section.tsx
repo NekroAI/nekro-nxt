@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { Button, Chip, PropertyGroup, PropertyList, PropertyRow, Select, Switch } from '../../ui-kit/index.js'
 import { useProductStore } from '../../product-runtime.js'
+import styles from './commands-section.module.css'
 
 type Members = Awaited<ReturnType<typeof commandApi.members>>['members']
 export function CommandsSection({ channelId }: { readonly channelId?: string }) {
@@ -47,7 +48,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
       <PropertyGroup
         title={channelId ? '命令覆盖' : '命令'}
         description={
-          channelId ? '频道设置优先于全局；管理权限不能低于命令的最低要求。' : '统一管理聊天命令。帮助始终可用。'
+          channelId ? '启用状态可覆盖全局；权限不能低于命令要求或全局设置。' : '统一管理聊天命令。帮助始终可用。'
         }
       >
         {error ? (
@@ -67,20 +68,41 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
         <PropertyList>
           {catalog?.commands.map((command) => {
             const policy = channelId ? command.channelPolicy : command.globalPolicy
+            const globalRestriction = Boolean(channelId && command.globalPolicy?.permission === 'channel-admin')
+            const restricted = command.definition.minimumPermission === 'channel-admin' || globalRestriction
+            const permissionOverride = restricted && policy?.permission === 'public' ? undefined : policy?.permission
+            const permissionSource =
+              command.definition.minimumPermission === 'channel-admin'
+                ? '命令最低要求'
+                : globalRestriction
+                  ? '全局设置要求'
+                  : policy?.permission !== undefined
+                    ? channelId
+                      ? '频道设置'
+                      : '全局设置'
+                    : channelId && command.globalPolicy?.permission !== undefined
+                      ? '全局设置'
+                      : '命令默认值'
             const save = (next: NonNullable<typeof policy>) =>
               void mutate(() => commandApi.policy(channelId ?? 'global', command.fullName, { ...policy, ...next }))
             return (
               <PropertyRow
                 key={command.fullName}
-                label={`/${command.fullName}`}
+                label={<span className={styles.name}>/{command.fullName}</span>}
                 description={`${command.source} · ${command.definition.description}`}
+                layout="stacked"
               >
-                <div>
-                  <code>{command.usage}</code>
+                <div className={styles.controls}>
+                  <code className={styles.usage}>{command.usage}</code>
                   <p>
-                    默认权限：{command.definition.minimumPermission === 'public' ? '普通用户' : '频道管理'}{' '}
+                    生效权限：{command.permission === 'public' ? '普通用户' : '频道管理'}（{permissionSource}）{' '}
                     <Chip>{command.enabled ? '启用' : '停用'}</Chip>
                   </p>
+                  {globalRestriction ? (
+                    <p>
+                      频道不能降低全局权限。{policy?.permission === 'public' ? '此前保存的普通用户覆盖不生效。' : ''}
+                    </p>
+                  ) : null}
                   {channelId ? (
                     <Select
                       aria-label={`${command.fullName} 启用覆盖`}
@@ -90,7 +112,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
                         const enabled = value === 'inherit' ? {} : { enabled: value === 'true' }
                         void mutate(() =>
                           commandApi.policy(channelId, command.fullName, {
-                            ...(policy?.permission ? { permission: policy.permission } : {}),
+                            ...(permissionOverride ? { permission: permissionOverride } : {}),
                             ...enabled,
                           }),
                         )
@@ -114,7 +136,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
                     disabled={
                       busy || command.fullName === 'help' || command.definition.minimumPermission === 'channel-admin'
                     }
-                    value={policy?.permission ?? 'inherit'}
+                    value={permissionOverride ?? 'inherit'}
                     onValueChange={(value) => {
                       const permission =
                         value === 'inherit'
@@ -128,8 +150,8 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
                       )
                     }}
                     options={[
-                      { value: 'inherit', label: '跟随默认权限' },
-                      { value: 'public', label: '普通用户' },
+                      { value: 'inherit', label: channelId ? '跟随全局与命令要求' : '跟随命令默认权限' },
+                      { value: 'public', label: '普通用户', disabled: restricted },
                       { value: 'channel-admin', label: '频道管理' },
                     ]}
                   />
