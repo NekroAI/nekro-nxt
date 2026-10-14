@@ -60,7 +60,7 @@ const setup = (platform: NodeJS.Platform) => {
     quit,
     createTray,
   })
-  lifecycle.attach(window)
+  lifecycle.attach(window as unknown as Parameters<DesktopWindowLifecycle['attach']>[0])
   return { lifecycle, window, quit, tray, createTray }
 }
 
@@ -68,7 +68,7 @@ describe('Desktop window lifecycle', () => {
   it.each([
     ['darwin', 'macOS hides on close and has no tray'],
     ['win32', 'Windows hides on close and creates a tray'],
-  ] as const)('%s %s', (platform) => {
+  ] as const)('%s %s', (platform, _description) => {
     const { window, quit, createTray } = setup(platform)
     let prevented = false
     window.listeners.get('close')?.({ preventDefault: () => (prevented = true) })

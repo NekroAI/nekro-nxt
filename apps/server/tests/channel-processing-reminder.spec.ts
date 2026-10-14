@@ -88,16 +88,22 @@ describe('channel processing reminder runtime', () => {
       receivedAt: now,
       dedupeKey: 'processing-reminder.test',
     }).event
-    const toolStarted = Promise.withResolvers<void>()
-    const releaseTool = Promise.withResolvers<void>()
+    let resolveToolStarted!: () => void
+    const toolStarted = new Promise<void>((resolve) => {
+      resolveToolStarted = resolve
+    })
+    let releaseTool!: () => void
+    const releaseToolPromise = new Promise<void>((resolve) => {
+      releaseTool = resolve
+    })
     let toolReturned = false
     const model = new DelayedFailedSendModel()
     const host = await DshHostRuntime.create({
       sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
       communication: {
         sendMessage: async () => {
-          toolStarted.resolve()
-          await releaseTool.promise
+          resolveToolStarted()
+          await releaseToolPromise
           toolReturned = true
           return {
             logicalMessageId: LogicalMessageIdSchema.parse('msg_PROCESSING_FAILED'),
@@ -110,7 +116,9 @@ describe('channel processing reminder runtime', () => {
       assets: repository,
       assetService,
       resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
-      configureLlm: (context) => context.llm.registerAdapter(['test-provider'], model),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], model)
+      },
     })
     const sessionId = await host.createSession({
       episodeId: EpisodeIdSchema.parse('eps_PROCESSINGREMINDER'),
@@ -126,9 +134,9 @@ describe('channel processing reminder runtime', () => {
         mode: 'followup',
         replyRequired: false,
       })
-      await toolStarted.promise
+      await toolStarted
       now += 60_000
-      releaseTool.resolve()
+      releaseTool()
       await host.whenIdle(sessionId)
 
       expect(toolReturned).toBe(true)
