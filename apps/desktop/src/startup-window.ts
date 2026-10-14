@@ -53,7 +53,6 @@ export class HostStartupWindow {
 
   async load(): Promise<void> {
     await this.window.loadURL(this.#url)
-    this.window.show()
   }
 
   update(state: StartupViewState): void {

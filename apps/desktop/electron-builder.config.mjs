@@ -81,6 +81,7 @@ const config = {
     'instance-overlay.css',
     'instance-overlay.js',
     'product-release.json',
+    'tray/*.ico',
     'package.json',
   ],
   extraResources: [

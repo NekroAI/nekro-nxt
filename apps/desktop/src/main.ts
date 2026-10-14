@@ -25,6 +25,8 @@ import {
   type StartupViewState,
 } from './host-startup.js'
 import { HostStartupWindow } from './startup-window.js'
+import { DesktopWindowLifecycle, type WindowTrayActions } from './window-lifecycle.js'
+import { createWindowsTray } from './windows-tray.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
 
@@ -41,6 +43,7 @@ let stoppingHost: Promise<void> | undefined
 let cancelled = false
 let quitting = false
 let shutdownTask: Promise<void> | undefined
+let windowLifecycle: DesktopWindowLifecycle | undefined
 
 const productReleasePath = (): string => resolveProductReleasePath(import.meta.url)
 
@@ -255,10 +258,7 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
 
 app.on('second-instance', () => {
-  const window = mainWindow ?? startupWindow?.window
-  if (window?.isMinimized()) window.restore()
-  window?.show()
-  window?.focus()
+  windowLifecycle?.show()
 })
 
 const launchProduct = async (): Promise<void> => {
@@ -280,6 +280,8 @@ const launchProduct = async (): Promise<void> => {
     instanceManager = manager
     detachLocalHostLifecycle = localHostLifecycle.subscribe((status) => manager.commitLocalHostStatus(status))
     mainWindow = manager.window
+    windowLifecycle?.attach(mainWindow)
+    windowLifecycle?.showWhenReady()
     mainWindow.on('closed', () => {
       detachLocalHostLifecycle?.()
       detachLocalHostLifecycle = undefined
@@ -350,18 +352,20 @@ const onStartupAction = async (action: StartupAction): Promise<void> => {
 void app
   .whenReady()
   .then(async () => {
-    if (!gotLock) return
+    if (!gotLock || quitting) return
     app.setAppUserModelId(desktopDistribution.appId)
-    startupWindow = new HostStartupWindow(startupState, onStartupAction)
-    startupWindow.window.on('close', (event) => {
-      if (startupState.mode === 'restoring' || startupState.mode === 'cancelling') {
-        event.preventDefault()
-        return
-      }
-      event.preventDefault()
-      app.quit()
+    windowLifecycle = new DesktopWindowLifecycle({
+      platform: process.platform,
+      isQuitting: () => quitting,
+      quit: () => app.quit(),
+      createTray: (actions: WindowTrayActions) =>
+        createWindowsTray(productRelease.channel, desktopDistribution.productName, actions),
     })
+    startupWindow = new HostStartupWindow(startupState, onStartupAction)
+    windowLifecycle.attach(startupWindow.window)
     await startupWindow.load()
+    if (quitting) return
+    windowLifecycle.showWhenReady()
     beginStartup()
   })
   .catch((error: unknown) => {
@@ -370,15 +374,7 @@ void app
   })
 
 app.on('activate', () => {
-  if (mainWindow !== undefined) {
-    mainWindow.show()
-    return
-  }
-  if (startupWindow !== undefined) {
-    startupWindow.window.show()
-    return
-  }
-  app.quit()
+  windowLifecycle?.show()
 })
 
 app.on('window-all-closed', () => {
@@ -390,6 +386,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (shutdownTask !== undefined) return
   quitting = true
+  windowLifecycle?.dispose()
   cancelled = true
   if (startupState.mode !== 'restoring' && startupState.mode !== 'restored')
     publishStartup({ ...startupState, mode: 'cancelling' })
