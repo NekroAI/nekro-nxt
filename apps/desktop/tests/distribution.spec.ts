@@ -191,6 +191,33 @@ describe('Desktop product distribution', () => {
     }
   })
 
+  it('edits Windows executable resources while leaving code signing disabled', async () => {
+    for (const channel of ['stable', 'preview']) {
+      const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']
+      process.env['NEKRO_DESKTOP_CHANNEL'] = channel
+      try {
+        const configUrl = new URL(`../electron-builder.config.mjs?win-resources-${channel}`, import.meta.url).href
+        const configModule: unknown = await import(configUrl)
+        if (typeof configModule !== 'object' || configModule === null || !('default' in configModule)) {
+          throw new TypeError('electron-builder 配置缺少默认导出')
+        }
+        const config: unknown = configModule.default
+        if (typeof config !== 'object' || config === null || !('win' in config)) {
+          throw new TypeError('electron-builder 配置缺少 win 设置')
+        }
+        expect(config.win).toMatchObject({
+          icon: 'icon.ico',
+          signAndEditExecutable: true,
+          signExecutable: false,
+          target: [{ target: 'nsis', arch: ['x64'] }],
+        })
+      } finally {
+        if (previousChannel === undefined) delete process.env['NEKRO_DESKTOP_CHANNEL']
+        else process.env['NEKRO_DESKTOP_CHANNEL'] = previousChannel
+      }
+    }
+  })
+
   it('keeps one stable product identity and one data root outside the installation', () => {
     const stable = getDesktopDistribution('stable')
     const preview = getDesktopDistribution('preview')
