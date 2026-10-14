@@ -14,12 +14,17 @@ declare module '@deepseek-ai/dsh-llm' {
       readonly kind: 'nekro-nxt-console-outbound'
       readonly logicalMessageId: string
     }
+    'nekro-nxt-channel-processing-reminder': {
+      readonly kind: 'nekro-nxt-channel-processing-reminder'
+      readonly turn: number
+    }
   }
 }
 
 export const SEND_CHANNEL_MESSAGE_TOOL = 'send_channel_message'
 export const FINISH_CHANNEL_TURN_TOOL = 'finish_channel_turn'
 export const MAX_RESPONSE_CORRECTIONS = 2
+export const CHANNEL_PROCESSING_REMINDER_THRESHOLD_MS = 60_000
 
 export type ChannelDeliveryState = 'sent' | 'partially-sent' | 'failed' | 'unknown'
 export type ChannelResponseState = 'not-required' | 'pending' | 'sent' | 'finished' | 'protocol-failed' | 'interrupted'
@@ -83,6 +88,69 @@ const settledTool = (
     ? undefined
     : { name: toolNames.get(result.callId), deliveryState: deliveryStateFromToolResult(event) }
 }
+
+const returnedTool = (event: SessionEvent): boolean =>
+  event.type === 'tool/result' || event.type === 'tool/ptc-dispatch'
+
+const turnHasChannelAdmission = (events: readonly SessionEvent[], turn: number): boolean =>
+  currentTurnEvents(events, turn).some(
+    (event) => event.type === 'user/message' && channelAdmissionId(event.data) !== undefined,
+  )
+
+const lastReturnedToolTime = (events: readonly SessionEvent[], turn: number): number | undefined => {
+  let latestToolIndex = -1
+  let latestAssistantIndex = -1
+  const turnEvents = currentTurnEvents(events, turn)
+  for (const [index, event] of turnEvents.entries()) {
+    if (event.type === 'assistant/message') latestAssistantIndex = index
+    if (returnedTool(event)) latestToolIndex = index
+  }
+  if (latestToolIndex <= latestAssistantIndex) return undefined
+  return turnEvents[latestToolIndex]?.time
+}
+
+const turnStartedAt = (events: readonly SessionEvent[], turn: number): number | undefined => {
+  const event = currentTurnEvents(events, turn).find(
+    (candidate) => candidate.type === 'turn/start' && candidate.data.turn === turn,
+  )
+  return event?.time
+}
+
+export const shouldInjectChannelProcessingReminder = (options: {
+  readonly events: readonly SessionEvent[]
+  readonly turn: number
+  readonly producedReply: boolean
+  readonly hasReminder: boolean
+}): boolean => {
+  const { events, turn, producedReply, hasReminder } = options
+  const startedAt = turnStartedAt(events, turn)
+  const returnedAt = lastReturnedToolTime(events, turn)
+  return (
+    turnHasChannelAdmission(events, turn) &&
+    !producedReply &&
+    !hasReminder &&
+    startedAt !== undefined &&
+    returnedAt !== undefined &&
+    returnedAt - startedAt >= CHANNEL_PROCESSING_REMINDER_THRESHOLD_MS
+  )
+}
+
+const processingReminder = (turn: number): UserMessage =>
+  createUserMessage({
+    content: [
+      {
+        type: 'text',
+        text: [
+          '〔提醒〕这条消息已经处理超过 60 秒了。',
+          '如果还需要继续处理，可以先用 send_channel_message 告诉频道目前的进展，再继续使用工具。',
+        ].join('\n'),
+      },
+    ],
+    source: {
+      kind: 'nekro-nxt-channel-processing-reminder',
+      turn,
+    },
+  })
 
 const completedReasonKind = (events: readonly SessionEvent[], turn: number): string | undefined => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -233,6 +301,25 @@ const withReminder = (
   return [...messages, responseReminder(turn)]
 }
 
+const withProcessingReminder = (
+  agent: Agent,
+  turn: number,
+  messages: readonly UserMessage[],
+  replyRequired: ReplyRequiredResolver,
+  correctionCount: CorrectionCountResolver,
+): readonly UserMessage[] => {
+  const events = sessionEvents(agent.session)
+  const before = responseObligationState(events, turn, [], replyRequired, correctionCount)
+  const hasReminder =
+    messages.some((message) => message.source.kind === 'nekro-nxt-channel-processing-reminder') ||
+    currentTurnEvents(events, turn).some(
+      (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-processing-reminder',
+    )
+  if (!shouldInjectChannelProcessingReminder({ events, turn, producedReply: before.producedReply, hasReminder }))
+    return messages
+  return [...messages, processingReminder(turn)]
+}
+
 export interface ChannelReplyGuardController {
   rememberAdmission(agent: Agent, admissionId: string, replyRequired: boolean): void
   responseState(agent: Agent, turn: number): ResponseObligationState
@@ -261,25 +348,24 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
     }
   const offPreStep = context.on('agent/pre-step', async ({ agent, turn, step }, next): Promise<PreStepDecision> => {
     const decision = await next()
-    if (
-      decision.kind === 'reject' ||
-      step <= 1 ||
-      !previousStepAttemptedToStop(sessionEvents(agent.session), turn, step - 1)
-    ) {
-      return decision
-    }
-    return {
-      ...decision,
-      messages: [
+    if (decision.kind === 'reject') return decision
+    let messages: UserMessage[] = decision.messages
+    if (step > 1 && previousStepAttemptedToStop(sessionEvents(agent.session), turn, step - 1)) {
+      messages = [
         ...withReminder(
           agent,
           turn,
-          decision.messages,
+          messages,
           resolverFor(agent),
           correctionResolverFor(agent),
           recordCorrectionFor(agent),
         ),
-      ],
+      ]
+    }
+    messages = [...withProcessingReminder(agent, turn, messages, resolverFor(agent), correctionResolverFor(agent))]
+    return {
+      ...decision,
+      messages,
     }
   })
   const offStopping = context.on('agent/turn-stopping', ({ agent, turn, signal }) => {
