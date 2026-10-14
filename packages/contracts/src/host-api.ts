@@ -1813,6 +1813,8 @@ export const HostSnapshotSchema = z
 const MessageInputPartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().trim().min(1) }).strict(),
   z.object({ type: z.literal('mention'), memberId: ChannelMemberIdSchema }).strict(),
+  z.object({ type: z.literal('image'), assetId: AssetIdSchema, alt: z.string().trim().max(500).optional() }).strict(),
+  z.object({ type: z.literal('file'), assetId: AssetIdSchema, name: z.string().trim().max(255).optional() }).strict(),
 ])
 
 const SendChannelMessageRequestSchema = z
@@ -2661,6 +2663,31 @@ export const HostApiContracts = {
         outboundIntentId: OutboundIntentIdSchema.optional(),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  uploadChannelAsset: defineContract({
+    method: 'POST',
+    path: '/api/channels/:channelId/assets',
+    params: channelParam,
+    request: BinaryUploadRequestSchema,
+    encodeRequest: encodeBinaryUpload,
+    response: z
+      .object({
+        assetId: AssetIdSchema,
+        mediaType: z.string().min(1),
+        byteSize: z.number().int().positive(),
+        fileName: z.string().min(1).max(255),
+        partType: z.enum(['image', 'file']),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  deleteChannelAsset: defineContract({
+    method: 'DELETE',
+    path: '/api/channels/:channelId/assets/:assetId',
+    params: z.object({ channelId: ChannelIdSchema, assetId: AssetIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ assetId: AssetIdSchema, revoked: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   renameChannel: defineContract({

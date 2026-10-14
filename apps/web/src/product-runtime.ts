@@ -63,7 +63,9 @@ export function ProductRuntimeProvider({ runtime, children }: { runtime: Product
       saveChannelDraftRecovery(runtime.uiStore.getState().channelDrafts)
       setUnsavedDraftOwner(
         owner,
-        Object.values(runtime.uiStore.getState().channelDrafts).some((draft) => Boolean(draft.text.trim())),
+        Object.values(runtime.uiStore.getState().channelDrafts).some(
+          (draft) => Boolean(draft.text.trim()) || (draft.attachments?.length ?? 0) > 0,
+        ),
       )
     }
     update()

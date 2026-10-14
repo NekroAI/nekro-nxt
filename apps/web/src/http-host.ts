@@ -1116,8 +1116,14 @@ export class HttpProductHost implements ProductHostPort {
       this.#mutate(HostApiContracts.deactivateExtension, { agentId, extensionId }, undefined),
     'extensions.clientDiagnostic': async ({ extensionId, revisionId, ...body }) =>
       this.#call(HostApiContracts.extensionClientDiagnostic, { extensionId, revisionId }, body),
-    'channels.sendMessage': async ({ channelId, body }) =>
-      this.#mutate(HostApiContracts.sendChannelMessage, { channelId }, { parts: [{ type: 'text', text: body }] }),
+    'channels.sendMessage': async ({ channelId, body, parts }) =>
+      this.#mutate(
+        HostApiContracts.sendChannelMessage,
+        { channelId },
+        {
+          parts: parts ?? [{ type: 'text', text: body ?? '' }],
+        },
+      ),
     'channels.listMessages': async ({ channelId, mode = 'initial', limit, beforeOccurredAt, beforeSourceId }) =>
       this.#loadChannelMessages(
         channelId,

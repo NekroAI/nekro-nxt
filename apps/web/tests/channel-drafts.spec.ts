@@ -33,4 +33,17 @@ describe('runtime-owned channel drafts', () => {
     expect(store.getState().channelDrafts['a']?.text).toBe('')
     expect(createUiStateStore().getState().channelDrafts).toEqual({})
   })
+
+  it('keeps attachments scoped to the channel and retains them after a failed send', () => {
+    const store = createUiStateStore()
+    const actions = store.getState()
+    const attachment = { assetId: 'ast_demo', name: '截图.png', mediaType: 'image/png', partType: 'image' as const }
+    actions.setChannelAttachments('a', [attachment])
+    actions.setChannelDraft('b', '另一个频道')
+    const sent = actions.beginChannelSend('a')!
+    expect(sent.attachments).toEqual([attachment])
+    actions.finishChannelSend('a', sent.revision, sent.request, false)
+    expect(store.getState().channelDrafts['a']?.attachments).toEqual([attachment])
+    expect(store.getState().channelDrafts['b']?.attachments).toBeUndefined()
+  })
 })

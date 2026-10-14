@@ -1,6 +1,8 @@
 declare const styles: {
   readonly adminTag: string
   readonly as: string
+  readonly attachment: string
+  readonly attachments: string
   readonly blocked: string
   readonly bubble: string
   readonly card: string

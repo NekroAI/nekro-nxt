@@ -233,6 +233,7 @@ export const AssetOccurrenceRowSchema = createSelectSchema(assetOccurrences, {
 export const AssetChannelGrantRowSchema = createSelectSchema(assetChannelGrants, {
   assetId: AssetIdSchema,
   channelId: ChannelIdSchema,
+  source: z.enum(['agent-tool', 'extension-library', 'browser-composer']),
 })
 export const LocalExtensionRowSchema = createSelectSchema(localExtensions, {
   id: ExtensionIdSchema,

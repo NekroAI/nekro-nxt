@@ -26,6 +26,7 @@ import {
   assertAuxiliaryImageModel,
   buildSnapshotMessage,
   readJsonBody,
+  readBinaryBody,
   writeContractJson,
   writeError,
   writeJson,
@@ -648,6 +649,7 @@ export function registerWorkspaceRoutes({
       const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
+      const assetUploadMatch = /^\/api\/channels\/([^/]+)\/assets$/.exec(url.pathname)
       const channelMatch = /^\/api\/channels\/([^/]+)$/.exec(url.pathname)
       const rawChannelId =
         messageMatch?.[1] ??
@@ -661,6 +663,7 @@ export function registerWorkspaceRoutes({
         runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
+        assetUploadMatch?.[1] ??
         channelMatch?.[1]
       if (!rawChannelId) {
         writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
@@ -921,10 +924,6 @@ export function registerWorkspaceRoutes({
       }
 
       if (assetMatch) {
-        if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
-          return
-        }
         const encodedAssetId = assetMatch[2]
         if (encodedAssetId === undefined) {
           writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
@@ -935,6 +934,21 @@ export function registerWorkspaceRoutes({
           assetId = AssetIdSchema.parse(decodeURIComponent(encodedAssetId))
         } catch {
           writeError(res, 400, 'invalid-asset', 'Invalid asset id.')
+          return
+        }
+        if (req.method === 'DELETE') {
+          const outcome = runtime.repository.revokeUnusedAgentAsset?.(assetId, typedChannelId)
+          if (outcome === 'revoked') {
+            writeContractJson(res, 200, HostApiContracts.deleteChannelAsset, { assetId, revoked: true })
+          } else if (outcome === 'in-use') {
+            writeError(res, 409, 'asset-in-use', '这个资源已经用于频道消息，不能移除。')
+          } else {
+            writeError(res, 404, 'asset-not-found', '当前频道没有这份待发送资源。')
+          }
+          return
+        }
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         if (!runtime.repository.canAccessAsset(assetId, typedChannelId)) {
@@ -957,6 +971,51 @@ export function registerWorkspaceRoutes({
           res.end(bytes)
         } catch (error) {
           writeError(res, 500, 'asset-read-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+
+      if (assetUploadMatch) {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        try {
+          const channel = runtime.repository.getChannel(typedChannelId)
+          if (!channel) throw new Error('频道不存在。')
+          const fileName =
+            String(req.headers['x-file-name'] ?? '附件')
+              .trim()
+              .slice(0, 255) || '附件'
+          const declaredMediaType = String(req.headers['content-type'] ?? '').split(';', 1)[0]
+          const bytes = await readBinaryBody(req, 64 * 1024 * 1024)
+          if (bytes.byteLength === 0) throw new Error('附件不能为空。')
+          const prepared = await runtime.assetService.prepare({
+            bytes,
+            ...(declaredMediaType ? { declaredMediaType } : {}),
+          })
+          const partType = prepared.asset.mediaType.startsWith('image/') ? 'image' : 'file'
+          if (channel.kind !== 'internal') {
+            const outbound = runtime.connectionCapabilities(channel.connectionId)?.outbound
+            if (outbound === undefined || outbound[partType === 'image' ? 'images' : 'files'] !== true) {
+              throw new Error(`当前频道连接不支持${partType === 'image' ? '图片' : '文件'}发送。`)
+            }
+          }
+          runtime.repository.grantAssetAccess({
+            assetId: prepared.asset.id,
+            channelId: typedChannelId,
+            source: 'browser-composer',
+            grantedAt: Date.now(),
+          })
+          writeJson(res, 200, {
+            assetId: prepared.asset.id,
+            mediaType: prepared.asset.mediaType,
+            byteSize: prepared.asset.byteSize,
+            fileName,
+            partType,
+          })
+        } catch (error) {
+          writeError(res, 400, 'asset-upload-failed', error instanceof Error ? error.message : String(error))
         }
         return
       }
@@ -1027,6 +1086,14 @@ export function registerWorkspaceRoutes({
           writeError(res, 404, 'not-found', '频道不存在。')
           return
         }
+        for (const [index, part] of parsed.parts.entries()) {
+          if (
+            (part.type === 'image' || part.type === 'file') &&
+            !runtime.repository.canAccessAsset(part.assetId, typedChannelId)
+          ) {
+            throw new Error(`第 ${index + 1} 个附件无法在当前频道使用。`)
+          }
+        }
         if (channel.kind === 'internal') {
           const result = await runtime.internalChannel.postMessage({
             channelId: typedChannelId,
@@ -1054,11 +1121,14 @@ export function registerWorkspaceRoutes({
           writeError(res, 400, 'proactive-send-disabled', '这个平台连接不允许主动发言。请在连接配置中打开主动发送。')
           return
         }
-        await runtime.channels.sendAdminConsoleMessage({
+        const result = await runtime.channels.sendAdminConsoleMessage({
           channelId: typedChannelId,
           parts: parsed.parts,
           ...(parsed.clientEventId === undefined ? {} : { clientRequestId: parsed.clientEventId }),
         })
+        if (result.status === 'failed' || result.status === 'unknown') {
+          throw new Error(result.status === 'failed' ? '消息发送失败，草稿已保留。' : '消息发送结果未知，草稿已保留。')
+        }
         writeJson(
           res,
           200,

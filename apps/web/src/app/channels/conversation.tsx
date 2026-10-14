@@ -1,4 +1,14 @@
-import { ArrowDown, ArrowRight, ChevronDown, Eye, MessageSquareDashed, PanelRight, Plug } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowRight,
+  ChevronDown,
+  Eye,
+  FilePlus2,
+  MessageSquareDashed,
+  PanelRight,
+  Plug,
+  X,
+} from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { EMPTY_CHANNEL_DRAFT } from '../../channel-drafts.js'
 import { workspaceApi } from '../../host-api-client.js'
@@ -57,8 +67,22 @@ function Composer({
   // Drafts live in the shared UI store: one per channel, kept across channel switches and restored after a reload.
   const state = useUiStateStore((current) => current.channelDrafts[channel.id] ?? EMPTY_CHANNEL_DRAFT)
   const draft = state.text
+  const attachments = state.attachments ?? []
   const sending = state.pending !== undefined
   const setDraft = (text: string) => ui.getState().setChannelDraft(channel.id, text)
+  const removeAttachment = async (assetId: string) => {
+    try {
+      await workspaceApi.deleteChannelAsset(channel.id, assetId)
+      ui.getState().setChannelAttachments(
+        channel.id,
+        (ui.getState().channelDrafts[channel.id]?.attachments ?? []).filter(
+          (attachment) => attachment.assetId !== assetId,
+        ),
+      )
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+    }
+  }
   const composing = useRef(false)
   const input = useRef<HTMLTextAreaElement>(null)
   const external = channel.kind !== 'internal'
@@ -84,13 +108,37 @@ function Composer({
     if (!token) return
     let success = false
     try {
-      await api.getState().sendMessage(channel.id, token.text)
+      await api.getState().sendMessage(channel.id, token.text, token.attachments)
       success = true
     } catch (error) {
       toast(`${error instanceof Error ? error.message : String(error)}，草稿已保留`, { tone: 'bad' })
     } finally {
       ui.getState().finishChannelSend(channel.id, token.revision, token.request, success)
       input.current?.focus()
+    }
+  }
+  const addFiles = async (files: readonly File[]) => {
+    if (blocked || sending) return
+    for (const file of files) {
+      try {
+        const uploaded = await workspaceApi.uploadChannelAsset(
+          channel.id,
+          new Uint8Array(await file.arrayBuffer()),
+          file.name,
+        )
+        const current = ui.getState().channelDrafts[channel.id]?.attachments ?? []
+        ui.getState().setChannelAttachments(channel.id, [
+          ...current,
+          {
+            assetId: uploaded.assetId,
+            name: uploaded.fileName,
+            mediaType: uploaded.mediaType,
+            partType: uploaded.partType,
+          },
+        ])
+      } catch (error) {
+        toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+      }
     }
   }
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -125,18 +173,54 @@ function Composer({
             rows={1}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onPaste={(event) => {
+              const files = [...event.clipboardData.files]
+              if (files.length > 0) {
+                event.preventDefault()
+                void addFiles(files)
+              }
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault()
+              void addFiles([...event.dataTransfer.files])
+            }}
             onKeyDown={onKeyDown}
             onCompositionStart={() => (composing.current = true)}
             onCompositionEnd={() => (composing.current = false)}
             placeholder={external ? `发到 ${channel.name}` : `给 ${agent?.name ?? '智能体'} 发消息`}
             aria-label="消息"
           />
+          {attachments.length > 0 ? (
+            <div className={styles.attachments} aria-label="待发送附件">
+              {attachments.map((attachment) => (
+                <div className={styles.attachment} key={attachment.assetId}>
+                  {attachment.partType === 'image' ? (
+                    <img
+                      src={`/api/channels/${encodeURIComponent(channel.id)}/assets/${encodeURIComponent(attachment.assetId)}`}
+                      alt={attachment.name}
+                    />
+                  ) : (
+                    <FilePlus2 aria-hidden="true" />
+                  )}
+                  <span title={attachment.name}>{attachment.name}</span>
+                  <Pressable
+                    type="button"
+                    aria-label={`移除${attachment.name}`}
+                    onClick={() => void removeAttachment(attachment.assetId)}
+                  >
+                    <X aria-hidden="true" />
+                  </Pressable>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </>
       )}
       <Pressable
         type="submit"
         className={styles.send}
-        disabled={Boolean(blocked) || !draft.trim() || sending}
+        disabled={Boolean(blocked) || (!draft.trim() && attachments.length === 0) || sending}
         aria-label="发送"
       >
         <ArrowRight aria-hidden="true" />

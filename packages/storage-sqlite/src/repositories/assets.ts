@@ -21,7 +21,7 @@ const toAssetChannelGrant = (input: typeof assetChannelGrants.$inferSelect): Ass
   return {
     assetId: row.assetId,
     channelId: row.channelId,
-    source: row.source,
+    source: row.source as AssetChannelGrant['source'],
     grantedAt: row.grantedAt,
   }
 }

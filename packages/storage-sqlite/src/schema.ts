@@ -724,13 +724,16 @@ export const assetChannelGrants = sqliteTable(
       .$type<ChannelId>()
       .notNull()
       .references(() => channels.id, { onDelete: 'restrict' }),
-    source: text('source', { enum: ['agent-tool', 'extension-library'] }).notNull(),
+    source: text('source', { enum: ['agent-tool', 'extension-library', 'browser-composer'] }).notNull(),
     grantedAt: integer('granted_at').notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.assetId, table.channelId] }),
     index('asset_channel_grants_channel_idx').on(table.channelId, table.grantedAt),
-    check('asset_channel_grants_source_ck', sql`${table.source} IN ('agent-tool', 'extension-library')`),
+    check(
+      'asset_channel_grants_source_ck',
+      sql`${table.source} IN ('agent-tool', 'extension-library', 'browser-composer')`,
+    ),
     check('asset_channel_grants_granted_at_ck', sql`${table.grantedAt} >= 0`),
   ],
 )

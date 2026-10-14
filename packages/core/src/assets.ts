@@ -23,7 +23,7 @@ export interface AssetChannelGrant {
   readonly assetId: AssetId
   readonly channelId: ChannelId
   /** The product operation that owns this grant. This is intentionally not a user/member identity. */
-  readonly source: 'agent-tool' | 'extension-library'
+  readonly source: 'agent-tool' | 'extension-library' | 'browser-composer'
   readonly grantedAt: number
 }
 
@@ -148,7 +148,7 @@ export class AssetService {
         id: AssetIdSchema.parse(`ast_${this.#nextUlid()}`),
         contentDigest,
         byteSize,
-        mediaType: detected?.mime ?? 'application/octet-stream',
+        mediaType: detected?.mime ?? input.declaredMediaType ?? 'application/octet-stream',
         createdAt: this.#timestamp(),
       }
       const asset = this.#repository.ensureAsset(candidate)
