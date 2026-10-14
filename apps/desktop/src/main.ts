@@ -122,6 +122,9 @@ const forkServer = (
     env: {
       ...process.env,
       ...env,
+      // The packaged Server runs inside Electron's utility process. DSH's local runner starts
+      // children with process.execPath, so it must inherit Node mode instead of opening Electron.
+      ELECTRON_RUN_AS_NODE: '1',
       NEKRO_DATA: dataRoot(),
       NEKRO_RELEASE_ID: productRelease.releaseId,
       NEKRO_UPGRADE_RUN_ID: runId,
