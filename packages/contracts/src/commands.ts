@@ -16,7 +16,11 @@ import {
 
 export const COMMAND_DEFAULT_TIMEOUT_SECONDS = 60
 export const COMMAND_MAX_TIMEOUT_SECONDS = 600
-export const CommandPermissionSchema = z.enum(['public', 'channel-admin'])
+/**
+ * Who may run a command. `channel-admin` is granted per channel; `admin` is an instance administrator (the signed-in
+ * console or a platform account listed in Settings → Administrators) and also holds every channel's `channel-admin`.
+ */
+export const CommandPermissionSchema = z.enum(['public', 'channel-admin', 'admin'])
 export type CommandPermission = z.output<typeof CommandPermissionSchema>
 const nameSchema = z
   .string()

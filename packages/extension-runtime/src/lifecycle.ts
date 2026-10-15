@@ -68,6 +68,42 @@ export interface LoadedExtension {
   releaseAdapter?(): Promise<void>
   /** Disposes the host instance; attachments are disposed by the coordinator first. */
   dispose(): Promise<void>
+  /** Runs the factory's `harness.migrateData` handler; absent when the factory registered none. */
+  migrateData?(from: number, to: number): Promise<void>
+}
+
+/**
+ * Data version bookkeeping and copies of an extension's data, so a switch can migrate the data and put it back when
+ * the switch fails. Provided by the Server; without it switches leave data as they always have.
+ */
+export interface ExtensionDataPort {
+  /** Data version the stored data has; 1 when none was ever recorded. */
+  dataVersion(extensionId: ExtensionId): number
+  setDataVersion(extensionId: ExtensionId, version: number): void
+  /** Whether the extension has stored anything at all. */
+  hasData(extensionId: ExtensionId): boolean
+  /** Copies the extension's data and returns the copy's id. */
+  snapshot(input: {
+    readonly extensionId: ExtensionId
+    readonly fromRevisionId: ExtensionRevisionId
+    readonly toRevisionId: ExtensionRevisionId
+    readonly dataVersion: number
+  }): string
+  /** Replaces the extension's data with a copy. */
+  restore(snapshotId: string): void
+}
+
+/** The switch would hand data in a newer shape to code that only knows an older one. */
+export class ExtensionDataDowngradeError extends Error {
+  override readonly name = 'ExtensionDataDowngradeError'
+  constructor(
+    readonly current: number,
+    readonly target: number,
+  ) {
+    super(
+      `本机数据已经是第 ${current} 版格式，这个版本只认识第 ${target} 版。请先恢复切换前的数据快照，或选择数据版本相同的版本。`,
+    )
+  }
 }
 
 /** What the Server composition root provides: running factories, Sessions, adapters and safe gaps. */
@@ -125,6 +161,7 @@ export class ExtensionLifecycleCoordinator {
   readonly #builder: ArtifactBuilder
   readonly #host: ExtensionRuntimeHost
   readonly #compatibility: ExtensionCompatibilityPort | undefined
+  readonly #data: ExtensionDataPort | undefined
   readonly #now: () => number
   readonly #live = new Map<ExtensionId, LiveExtension>()
   readonly #diagnostics = new Map<ExtensionId, ExtensionRuntimeDiagnostic>()
@@ -139,7 +176,11 @@ export class ExtensionLifecycleCoordinator {
     service: RevisionSourceResolver,
     builder: ArtifactBuilder,
     host: ExtensionRuntimeHost,
-    options: { readonly now?: () => number; readonly compatibility?: ExtensionCompatibilityPort } = {},
+    options: {
+      readonly now?: () => number
+      readonly compatibility?: ExtensionCompatibilityPort
+      readonly data?: ExtensionDataPort
+    } = {},
   ) {
     this.#repository = repository
     this.#service = service
@@ -147,6 +188,7 @@ export class ExtensionLifecycleCoordinator {
     this.#host = host
     this.#now = options.now ?? Date.now
     this.#compatibility = options.compatibility
+    this.#data = options.data
   }
 
   // —— Requirements ——
@@ -199,6 +241,8 @@ export class ExtensionLifecycleCoordinator {
     readonly config?: JsonValue
     readonly permissionApproval?: { readonly permissionDigest: string }
     readonly agentPermissionApproval?: { readonly permissionDigest: string }
+    /** Data copy to put back before switching to a Revision with an older data version. */
+    readonly restoreDataSnapshotId?: string
   }): Promise<HostInstallation> {
     return this.#exclusive(input.extensionId, () => this.#install(input))
   }
@@ -251,12 +295,47 @@ export class ExtensionLifecycleCoordinator {
     const adapterKey = manifestAdapter(manifest)?.key
     if (adapterKey !== undefined) await this.#host.assertAdapterKeyAvailable(adapterKey, input.extensionId)
     const previous = live === undefined ? undefined : this.#snapshot(live)
+    const switching = existing !== undefined && existing.extensionRevisionId !== revision.id
+    const dataTarget = manifest.dataVersion ?? 1
+    const dataCurrent = this.#data?.dataVersion(input.extensionId) ?? dataTarget
+    if (this.#data && dataTarget < dataCurrent && input.restoreDataSnapshotId === undefined) {
+      throw new ExtensionDataDowngradeError(dataCurrent, dataTarget)
+    }
 
     await this.#stop(input.extensionId, live)
+    // A copy of the data as the previous version left it: the way back for this switch and for a later rollback.
+    let dataSnapshot: string | undefined
     let next: LiveExtension
     try {
-      next = await this.#start({ revision, manifest, artifact, config, attachments })
+      if (this.#data && (switching || dataTarget > dataCurrent) && this.#data.hasData(input.extensionId)) {
+        dataSnapshot = this.#data.snapshot({
+          extensionId: input.extensionId,
+          fromRevisionId: existing?.extensionRevisionId ?? revision.id,
+          toRevisionId: revision.id,
+          dataVersion: dataCurrent,
+        })
+      }
+      if (this.#data && input.restoreDataSnapshotId !== undefined) this.#data.restore(input.restoreDataSnapshotId)
+      const from = input.restoreDataSnapshotId === undefined ? dataCurrent : (this.#data?.dataVersion(input.extensionId) ?? dataCurrent)
+      next = await this.#start({
+        revision,
+        manifest,
+        artifact,
+        config,
+        attachments,
+        beforeAttach: async (loaded) => {
+          if (!this.#data || dataTarget <= from) return
+          if (loaded.migrateData === undefined) {
+            if (this.#data.hasData(input.extensionId)) {
+              throw new Error(`这个版本把数据格式从第 ${from} 版升到第 ${dataTarget} 版，但没有提供数据迁移。`)
+            }
+            return
+          }
+          await loaded.migrateData(from, dataTarget)
+        },
+      })
     } catch (error) {
+      if (dataSnapshot !== undefined) this.#data?.restore(dataSnapshot)
       await this.#restore(input.extensionId, previous, error)
       throw error
     }
@@ -289,9 +368,11 @@ export class ExtensionLifecycleCoordinator {
       })
     } catch (error) {
       await this.#stop(input.extensionId, next).catch(() => undefined)
+      if (dataSnapshot !== undefined) this.#data?.restore(dataSnapshot)
       await this.#restore(input.extensionId, previous, error)
       throw error
     }
+    this.#data?.setDataVersion(input.extensionId, dataTarget)
     this.#live.set(input.extensionId, next)
     this.#diagnostics.set(input.extensionId, { status: 'active', observedAt: this.#timestamp() })
     this.#compatibility?.record(this.#instanceIdentity(installation), {
@@ -687,8 +768,18 @@ export class ExtensionLifecycleCoordinator {
     readonly artifact: ExtensionBuildArtifact
     readonly config: JsonValue
     readonly attachments: readonly { readonly agentId: AgentId; readonly config: JsonValue }[]
+    /** Runs after the host instance loaded and before any agent attaches, such as a data migration. */
+    readonly beforeAttach?: (loaded: LoadedExtension) => Promise<void>
   }): Promise<LiveExtension> {
     const loaded = await this.#host.load(input)
+    if (input.beforeAttach) {
+      try {
+        await input.beforeAttach(loaded)
+      } catch (error) {
+        await loaded.dispose().catch(() => undefined)
+        throw error
+      }
+    }
     const live: LiveExtension = {
       revision: input.revision,
       manifest: input.manifest,

@@ -179,11 +179,13 @@ export class CommandExecutor {
           .find((candidate) => candidate.fullName === invoked.fullName)
         if (!entry) throw new Error('命令所属扩展已停用。')
         if (!entry.enabled) throw new Error('此命令已禁用。')
-        if (
-          (entry.permission === 'channel-admin' || management) &&
-          !this.#o.directory.authorized(record.channelId, record.identity)
-        )
-          throw new UnauthorizedCommandError('无权执行此命令，需要管理员在 NekroNXT 中授予此频道的命令管理权限。')
+        const required = management && entry.permission === 'public' ? 'channel-admin' : entry.permission
+        if (!this.#o.directory.authorized(record.channelId, record.identity, required))
+          throw new UnauthorizedCommandError(
+            required === 'admin'
+              ? '无权执行此命令，只有 NekroNXT 管理员可以使用。'
+              : '无权执行此命令，需要管理员在 NekroNXT 中授予此频道的命令管理权限。',
+          )
         if (entry.unavailableReason !== undefined) throw new Error(entry.unavailableReason)
         if (!binding && !['help', 'status'].includes(invoked.fullName)) throw new Error('请先为频道绑定智能体。')
       }

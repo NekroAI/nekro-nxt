@@ -36,6 +36,7 @@ import type {
   NxtCallContext,
   NxtInboundHandler,
   NxtJobHandler,
+  NxtDataMigrationHandler,
   NxtInboundMessage,
 } from '@nekro-nxt/extension-sdk'
 import { createFakeAdapterHostContext } from '@nekro-nxt/test-harness'
@@ -620,6 +621,7 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
   const toolInvocations: Array<{ name: string; succeeded: boolean }> = []
   let disposePlugin: (() => void | Promise<void>) | undefined
   let inbound: NxtInboundHandler | undefined
+  let migration: NxtDataMigrationHandler | undefined
   let adapterContribution: AdapterHostContributionV2 | undefined
   const registry = new AdapterRegistry()
   const registeredAdapters: Array<{ dispose(): Promise<void> }> = []
@@ -662,6 +664,13 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
               inbound = handler
               return () => undefined
             },
+            // Run once below against empty storage: a migration must at least not fail on no data.
+            migrateData: (handler: NxtDataMigrationHandler) => {
+              if (typeof handler !== 'function') throw new TypeError('harness.migrateData 需要一个处理函数。')
+              if (migration !== undefined) throw new Error('一个扩展只能注册一个数据迁移。')
+              migration = handler
+              return () => undefined
+            },
             // Recorded only: a due-job handler acts on real jobs, and verification has none.
             onJob: (handler: NxtJobHandler) => {
               if (agentCapabilities?.jobs === undefined) {
@@ -679,6 +688,18 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       commands.seal(
         manifest.contributions.filter((c) => c.kind === 'command').map((c) => CommandDefinitionSchema.strip().parse(c)),
       )
+      if (migration !== undefined) {
+        const target = manifest.dataVersion ?? 1
+        await migration({
+          from: Math.max(1, target - 1),
+          to: target,
+          storage: {
+            list: () => Promise.resolve({ entries: [] }),
+            set: () => Promise.resolve(),
+            delete: () => Promise.resolve(false),
+          },
+        })
+      }
       if (definition !== undefined && definition !== null && hasAgentLayer(manifest)) {
         disposePlugin = await runPluginApply(definition, {
           logger: extensionLogger(

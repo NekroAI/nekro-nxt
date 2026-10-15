@@ -405,9 +405,22 @@ export const dynamicAuthoringTasks = sqliteTable(
   {
     id: text().$type<AuthoringTaskId>().primaryKey(),
     agentId: text('agent_id').$type<AgentId>().notNull(),
+    /** Channel and Episode the task currently runs in; continuing it in a later conversation moves both. */
     channelId: text('channel_id').$type<ChannelId>().notNull(),
     episodeId: text('episode_id').$type<EpisodeId>().notNull(),
+    /** Channel of the message that started the task; owns `initiating_event_id`. */
+    originChannelId: text('origin_channel_id').$type<ChannelId>().notNull(),
     initiatingEventId: text('initiating_event_id').$type<ChannelEventId>().notNull(),
+    /** `create` builds a new extension; `revise` changes `target_extension_id` starting from `base_revision_id`. */
+    kind: text({ enum: ['create', 'revise'] })
+      .notNull()
+      .default('create'),
+    targetExtensionId: text('target_extension_id').$type<ExtensionId>(),
+    baseRevisionId: text('base_revision_id').$type<ExtensionRevisionId>(),
+    /** Another Revision handed to the agent as reference, for example local changes to carry over in a merge. */
+    referenceRevisionId: text('reference_revision_id').$type<ExtensionRevisionId>(),
+    /** Why a paused task stopped; cleared when it continues. */
+    pausedReason: text('paused_reason'),
     pluginKey: text('plugin_key').notNull(),
     title: text().notNull(),
     requirementSummary: text('requirement_summary').notNull(),
@@ -422,6 +435,7 @@ export const dynamicAuthoringTasks = sqliteTable(
         'interrupted',
         'stopped',
         'completed',
+        'paused',
       ],
     }).notNull(),
     approvalPolicy: text('approval_policy', { enum: ['risk-stable', 'fully-automatic'] }).notNull(),
@@ -439,9 +453,10 @@ export const dynamicAuthoringTasks = sqliteTable(
       columns: [table.episodeId, table.channelId, table.agentId],
       foreignColumns: [episodes.id, episodes.channelId, episodes.agentId],
     }).onDelete('restrict'),
+    index('dynamic_authoring_tasks_target_idx').on(table.targetExtensionId, table.status),
     foreignKey({
       name: 'dynamic_authoring_tasks_initiating_event_fk',
-      columns: [table.initiatingEventId, table.channelId],
+      columns: [table.initiatingEventId, table.originChannelId],
       foreignColumns: [channelEvents.id, channelEvents.channelId],
     }).onDelete('restrict'),
     check('dynamic_authoring_tasks_revision_ck', sql`${table.revision} > 0`),
@@ -520,6 +535,8 @@ export const dynamicAuthoringEvents = sqliteTable(
         'task-interrupted',
         'task-stopped',
         'task-completed',
+        'task-paused',
+        'task-resumed',
       ],
     }).notNull(),
     attemptId: text('attempt_id').$type<AuthoringAttemptId>(),
@@ -841,6 +858,9 @@ export const localExtensions = sqliteTable('local_extensions', {
   createdByAgentId: text('created_by_agent_id')
     .$type<AgentId>()
     .references(() => agentDefinitions.id, { onDelete: 'restrict' }),
+  /** The Revision of another extension this one was branched from; set once when the branch is created. */
+  branchOfExtensionId: text('branch_of_extension_id').$type<ExtensionId>(),
+  branchOfRevisionId: text('branch_of_revision_id').$type<ExtensionRevisionId>(),
   createdAt: integer('created_at').notNull(),
 })
 
@@ -855,6 +875,17 @@ export const extensionRevisions = sqliteTable(
     revisionNumber: integer('revision_number').notNull(),
     contentDigest: text('content_digest').notNull(),
     payloadDigest: text('payload_digest').notNull(),
+    /** Revision this one was made from on the same line; it may not exist on this machine. */
+    parentRevisionId: text('parent_revision_id').$type<ExtensionRevisionId>(),
+    /** Earlier Revisions of the line, newest first, as the Manifest lineage records them. */
+    ancestry: jsonText<readonly ExtensionRevisionId[]>('ancestry').notNull().default([]),
+    /** How the Revision reached this machine. */
+    origin: text({ enum: ['authored', 'file', 'community', 'branch'] })
+      .notNull()
+      .default('file'),
+    /** Creation task that saved it, when it was authored here. */
+    authoringTaskId: text('authoring_task_id').$type<AuthoringTaskId>(),
+    dataVersion: integer('data_version').notNull().default(1),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
@@ -875,22 +906,127 @@ export const extensionRevisionVerifications = sqliteTable('extension_revision_ve
   evidence: jsonText<ExtensionRevisionVerification>('evidence').notNull(),
 })
 
-/** Where an imported Revision came from. Only community installs record a source; local saves and file imports do not. */
-export const extensionRevisionSources = sqliteTable(
-  'extension_revision_sources',
+/**
+ * The community release a Revision corresponds to: written when it is installed from the community and when it is
+ * published from here, so the machine knows which public version each local one is.
+ */
+export const extensionRevisionReleases = sqliteTable(
+  'extension_revision_releases',
   {
     revisionId: text('revision_id')
       .$type<ExtensionRevisionId>()
-      .primaryKey()
+      .notNull()
       .references(() => extensionRevisions.id, { onDelete: 'cascade' }),
     extensionId: text('extension_id').$type<ExtensionId>().notNull(),
-    kind: text('kind', { enum: ['community'] }).notNull(),
     communityUrl: text('community_url').notNull(),
     releaseId: text('release_id').notNull(),
+    releaseNumber: integer('release_number'),
     publisherHandle: text('publisher_handle').notNull(),
-    installedAt: integer('installed_at').notNull(),
+    via: text({ enum: ['install', 'publish'] }).notNull(),
+    recordedAt: integer('recorded_at').notNull(),
   },
-  (table) => [index('extension_revision_sources_extension_idx').on(table.extensionId)],
+  (table) => [
+    primaryKey({ columns: [table.revisionId, table.communityUrl] }),
+    index('extension_revision_releases_extension_idx').on(table.extensionId, table.communityUrl),
+  ],
+)
+
+/** This machine's relation to an extension line on one community: may publish it (`owner`) or only follow it. */
+export const extensionCommunityLinks = sqliteTable(
+  'extension_community_links',
+  {
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .notNull()
+      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+    communityUrl: text('community_url').notNull(),
+    role: text({ enum: ['owner', 'subscriber'] }).notNull(),
+    /** A community release the user chose to keep their local changes over; it is not offered again. */
+    dismissedReleaseId: text('dismissed_release_id'),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.extensionId, table.communityUrl] })],
+)
+
+/** Shape version of the data an extension currently stores on this machine. */
+export const extensionDataStates = sqliteTable('extension_data_states', {
+  extensionId: text('extension_id')
+    .$type<ExtensionId>()
+    .primaryKey()
+    .references(() => localExtensions.id, { onDelete: 'cascade' }),
+  dataVersion: integer('data_version').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+/**
+ * A copy of one extension's data taken before a version switch or an explicit migration, so the change can be undone.
+ * Library assets are content-addressed and only referenced here.
+ */
+export const extensionDataSnapshots = sqliteTable(
+  'extension_data_snapshots',
+  {
+    id: text().primaryKey(),
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .notNull()
+      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+    reason: text({ enum: ['switch', 'migration', 'manual'] }).notNull(),
+    label: text().notNull(),
+    dataVersion: integer('data_version').notNull(),
+    payload: blob({ mode: 'buffer' }).notNull(),
+    byteSize: integer('byte_size').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('extension_data_snapshots_extension_idx').on(table.extensionId, table.createdAt)],
+)
+
+/** Platform accounts that are instance administrators; the signed-in console is always one as well. */
+export const instanceAdministrators = sqliteTable(
+  'instance_administrators',
+  {
+    connectionId: text('connection_id')
+      .$type<ConnectionId>()
+      .notNull()
+      .references(() => connections.id, { onDelete: 'cascade' }),
+    platformUserId: text('platform_user_id').notNull(),
+    /** Name shown when the account was added; the user directory has the current one. */
+    label: text().notNull(),
+    addedVia: text('added_via', { enum: ['console', 'claim'] }).notNull(),
+    addedAt: integer('added_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.connectionId, table.platformUserId] })],
+)
+
+/**
+ * An extension action an agent asked for that an administrator must confirm with `/ext approve <number>` or in the
+ * console. The number is short so it can be typed in chat.
+ */
+export const extensionRequests = sqliteTable(
+  'extension_requests',
+  {
+    number: integer().primaryKey({ autoIncrement: true }),
+    kind: text().notNull(),
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    extensionId: text('extension_id').$type<ExtensionId>(),
+    summary: text().notNull(),
+    payload: jsonText<JsonValue>('payload').notNull(),
+    status: text({ enum: ['pending', 'approved', 'rejected', 'expired', 'completed', 'failed'] }).notNull(),
+    result: jsonText<JsonValue>('result'),
+    decidedBy: text('decided_by'),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    decidedAt: integer('decided_at'),
+  },
+  (table) => [
+    index('extension_requests_status_idx').on(table.status, table.createdAt),
+    index('extension_requests_agent_idx').on(table.agentId, table.status),
+  ],
 )
 
 export const hostExtensionInstallations = sqliteTable(
@@ -1479,7 +1615,12 @@ export const coreSchema = {
   localExtensions,
   extensionRevisions,
   extensionRevisionVerifications,
-  extensionRevisionSources,
+  extensionRevisionReleases,
+  extensionCommunityLinks,
+  extensionDataStates,
+  extensionDataSnapshots,
+  instanceAdministrators,
+  extensionRequests,
   hostExtensionInstallations,
   hostUiPageEntries,
   hostUiPagePreferences,

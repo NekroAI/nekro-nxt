@@ -14,6 +14,7 @@ import {
   EMPTY_CONFIG_SCHEMA,
   EMPTY_EXTENSION_UI_CONTRIBUTIONS,
   EXTENSION_PROVIDES,
+  EXTENSION_GOVERNANCE_SDK_LEVEL,
   EXTENSION_SDK_BASE_LEVEL,
   EXTENSION_SDK_LEVEL,
   requiredExtensionSdkLevel,
@@ -224,6 +225,34 @@ const checkConfig = (
   }
 }
 
+/** At most this many ancestors travel with a Revision; older ones are dropped, newest first. */
+export const EXTENSION_LINEAGE_MAX_ANCESTRY = 256
+
+/**
+ * Where a Revision comes from. `parent` is the Revision it was made from on the same extension line (null for the
+ * first one); `ancestry` lists the line's earlier Revisions newest first, starting with `parent`. `branchOf` names the
+ * Revision of another extension this line was branched from and stays the same on every later Revision of the branch.
+ * Revision ids are global, so two machines and the community reach the same conclusion from these ids alone.
+ */
+export const extensionLineageSchema = z
+  .object({
+    parent: ExtensionRevisionIdSchema.nullable(),
+    ancestry: z.array(ExtensionRevisionIdSchema).max(EXTENSION_LINEAGE_MAX_ANCESTRY),
+    branchOf: z.object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }).strict().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const issue = (message: string) => context.addIssue({ code: 'custom', message })
+    if (value.parent === null ? value.ancestry.length > 0 : value.ancestry[0] !== value.parent) {
+      issue('版本谱系的祖先列表必须从父版本开始。')
+    }
+    if (new Set(value.ancestry).size !== value.ancestry.length) issue('版本谱系的祖先列表不能重复。')
+  })
+export type ExtensionLineage = z.output<typeof extensionLineageSchema>
+
+/** Version of the shape of the data an extension stores; a Revision that raises it migrates older data first. */
+export const extensionDataVersionSchema = z.number().int().min(1).max(1_000_000)
+
 /**
  * Manifest V7（扩展形态统一）。一个扩展 = 一个本机实例 + 可选的智能体挂载；贡献的归属由种类决定，不再声明 scope。
  */
@@ -240,11 +269,26 @@ export const extensionManifestSchema = z
     contributions: z.array(extensionManifestContributionSchema).max(96),
     permissions: ExtensionPermissionsSchema.default({ permissions: [], networkOrigins: [] }),
     config: ExtensionLayeredConfigSchema.optional(),
+    /** Version lineage; written by NekroNXT when it saves or branches, never by the extension author. */
+    lineage: extensionLineageSchema.optional(),
+    /** Shape version of the stored data; absent means 1. */
+    dataVersion: extensionDataVersionSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
     const issue: Issue = (message) => context.addIssue({ code: 'custom', message })
     if (value.contributions.length === 0 && !hasAgentLayer(value)) issue('扩展至少要提供一项内容。')
+    if (value.lineage !== undefined && value.lineage.ancestry.includes(value.revisionId)) {
+      issue('版本谱系不能把自己列为祖先。')
+    }
+    if (
+      (value.lineage !== undefined ||
+        value.dataVersion !== undefined ||
+        value.contributions.some((entry) => entry.kind === 'command' && entry.minimumPermission === 'admin')) &&
+      (value.requires?.sdk ?? 0) < EXTENSION_GOVERNANCE_SDK_LEVEL
+    ) {
+      issue(`版本谱系、数据版本与管理员命令需要声明 requires.sdk >= ${EXTENSION_GOVERNANCE_SDK_LEVEL}。`)
+    }
     const commands = value.contributions.filter((entry) => entry.kind === 'command')
     if (commands.length && (value.requires?.sdk ?? 0) < 9) issue('命令扩展需要声明 requires.sdk >= 9。')
     const commandNames = commands.flatMap((command) => [command.name, ...command.aliases])

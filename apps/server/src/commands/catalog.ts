@@ -5,6 +5,7 @@ import {
   type ChannelId,
   type CommandCatalogEntry,
   type CommandExecutionIdentity,
+  type CommandPermission,
   type CommandPolicy,
   type PlatformIdentityId,
 } from '@nekro-nxt/contracts'
@@ -18,6 +19,21 @@ export interface CommandDirectoryOptions {
 }
 
 export class UnknownCommandError extends Error {}
+
+const PERMISSION_ORDER: readonly CommandPermission[] = ['public', 'channel-admin', 'admin']
+const rank = (permission: CommandPermission): number => PERMISSION_ORDER.indexOf(permission)
+const PERMISSION_LABEL: Record<CommandPermission, string> = {
+  public: '普通用户',
+  'channel-admin': '频道管理',
+  admin: '管理员',
+}
+
+/** The strictest of the declared minimum and any tightening policy. */
+const strictest = (...permissions: readonly (CommandPermission | undefined)[]): CommandPermission =>
+  permissions.reduce<CommandPermission>(
+    (current, next) => (next !== undefined && rank(next) > rank(current) ? next : current),
+    'public',
+  )
 
 const WEB_ADMIN: CommandExecutionIdentity = { source: 'web', displayName: 'Web 管理员' }
 
@@ -73,9 +89,24 @@ export class CommandDirectory {
     }
   }
 
-  authorized(channelId: ChannelId | undefined, identity: CommandExecutionIdentity): boolean {
-    // Web identities are created only by the trusted management Host routes, never from inbound facts or JSON.
+  /**
+   * Instance administrators: the signed-in console and the platform accounts listed in Settings → Administrators.
+   * Web identities are created only by the trusted management Host routes, never from inbound facts or JSON.
+   */
+  administrator(identity: CommandExecutionIdentity): boolean {
     if (identity.source === 'web') return true
+    if (identity.connectionId === undefined || identity.platformUserId === undefined) return false
+    return this.#o.repository.isInstanceAdministrator(identity.connectionId, identity.platformUserId)
+  }
+
+  /** Whether `identity` holds `level` in the channel; administrators hold every channel's management. */
+  authorized(
+    channelId: ChannelId | undefined,
+    identity: CommandExecutionIdentity,
+    level: CommandPermission = 'channel-admin',
+  ): boolean {
+    if (level === 'public' || this.administrator(identity)) return true
+    if (level === 'admin') return false
     if (channelId === undefined || identity.connectionId === undefined || identity.platformUserId === undefined)
       return false
     const channel = this.#o.repository.getChannel(channelId)
@@ -91,12 +122,11 @@ export class CommandDirectory {
     return this.registered(channelId).map((command) => {
       const globalPolicy = store.policy('global', command.fullName)
       const channelPolicy = channelId === undefined ? undefined : store.policy(channelId, command.fullName)
-      const permission =
-        command.definition.minimumPermission === 'channel-admin' ||
-        globalPolicy?.permission === 'channel-admin' ||
-        channelPolicy?.permission === 'channel-admin'
-          ? 'channel-admin'
-          : 'public'
+      const permission = strictest(
+        command.definition.minimumPermission,
+        globalPolicy?.permission,
+        channelPolicy?.permission,
+      )
       const enabled =
         command.fullName === 'help' ||
         (channelPolicy?.enabled ?? globalPolicy?.enabled ?? command.definition.enabledByDefault)
@@ -112,7 +142,7 @@ export class CommandDirectory {
         available:
           enabled &&
           command.unavailableReason === undefined &&
-          (permission === 'public' || this.authorized(channelId, identity)) &&
+          this.authorized(channelId, identity, permission) &&
           (bound || ['help', 'status'].includes(command.fullName)),
         usage: commandUsage(command.definition, command.fullName),
         ...(globalPolicy === undefined ? {} : { globalPolicy }),
@@ -126,16 +156,18 @@ export class CommandDirectory {
     if (channelId !== undefined) this.#channel(channelId)
     const command = this.registered(channelId).find((entry) => entry.fullName === name)
     if (!command) throw new Error('命令未注册，请检查扩展加载状态。')
-    if (name === 'help' && (policy.enabled === false || policy.permission === 'channel-admin'))
+    if (name === 'help' && (policy.enabled === false || (policy.permission ?? 'public') !== 'public'))
       throw new Error('帮助命令必须始终对普通用户可用。')
-    if (command.definition.minimumPermission === 'channel-admin' && policy.permission === 'public')
+    if (policy.permission !== undefined && rank(policy.permission) < rank(command.definition.minimumPermission))
       throw new Error('不能降低命令声明的最低权限。')
+    const globalPermission = this.#o.repository.commands.policy('global', name)?.permission
     if (
       scope !== 'global' &&
-      policy.permission === 'public' &&
-      this.#o.repository.commands.policy('global', name)?.permission === 'channel-admin'
+      policy.permission !== undefined &&
+      globalPermission !== undefined &&
+      rank(policy.permission) < rank(globalPermission)
     )
-      throw new Error('此命令的全局权限为频道管理，频道不能改为普通用户。')
+      throw new Error(`此命令的全局权限为${PERMISSION_LABEL[globalPermission]}，频道不能放宽。`)
     this.#o.repository.commands.setPolicy(scope, name, policy)
   }
 

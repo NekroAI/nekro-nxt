@@ -33,7 +33,17 @@ import {
 } from './repositories/channel-context-policies.js'
 import { createChannelPromptsRepository, type ChannelPromptsRepository } from './repositories/channel-prompts.js'
 import { createExtensionSourcesRepository } from './repositories/extension-sources.js'
-export type { ExtensionRevisionSourceRecord } from './repositories/extension-sources.js'
+export type {
+  ExtensionRevisionReleaseRecord,
+  ExtensionCommunityLinkRecord,
+} from './repositories/extension-sources.js'
+import { createExtensionGovernanceRepository } from './repositories/extension-governance.js'
+export type {
+  ExtensionDataSnapshotSummary,
+  ExtensionRequestRecord,
+  ExtensionRequestStatus,
+  InstanceAdministratorRecord,
+} from './repositories/extension-governance.js'
 export type { ChannelMemberNoteRecord } from './repositories/channel-member-notes.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 import {
@@ -132,6 +142,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #channelContextPolicies
   readonly #channelMemberNotes
   readonly #extensionSources
+  readonly #governance
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
   /** Assets each extension keeps for use in any channel. */
@@ -164,6 +175,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channelContextPolicies = createChannelContextPoliciesRepository(database.db)
     this.#channelMemberNotes = createChannelMemberNotesRepository(database.db)
     this.#extensionSources = createExtensionSourcesRepository(database.db)
+    this.#governance = createExtensionGovernanceRepository(database.db)
     this.projections = createProjectionRepository(database.db)
   }
 
@@ -444,6 +456,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#authoring.getAuthoringTask(...args)
   readonly getAuthoringTaskByPlugin = (...args: Parameters<AuthoringRepository['getAuthoringTaskByPlugin']>) =>
     this.#authoring.getAuthoringTaskByPlugin(...args)
+  readonly getOpenRevisionTask = (...args: Parameters<AuthoringRepository['getOpenRevisionTask']>) =>
+    this.#authoring.getOpenRevisionTask(...args)
   readonly listAuthoringAttempts = (...args: Parameters<AuthoringRepository['listAuthoringAttempts']>) =>
     this.#authoring.listAuthoringAttempts(...args)
   readonly getAuthoringAttempt = (...args: Parameters<AuthoringRepository['getAuthoringAttempt']>) =>
@@ -628,13 +642,52 @@ export class SqliteCoreRepository implements CurrentRepository {
   ) => this.#extensionJobs.deleteFinishedExtensionJobs(...args)
   readonly listAllExtensionJobs = () => this.#extensionJobs.listAllExtensionJobs()
 
-  readonly getExtensionRevisionSource = (
-    ...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['getExtensionRevisionSource']>
-  ) => this.#extensionSources.getExtensionRevisionSource(...args)
-  readonly recordExtensionRevisionSource = (
-    ...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['recordExtensionRevisionSource']>
-  ) => this.#extensionSources.recordExtensionRevisionSource(...args)
-  readonly listExtensionRevisionSources = () => this.#extensionSources.listExtensionRevisionSources()
+  readonly listExtensionRevisionReleases = (...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['listExtensionRevisionReleases']>) =>
+    this.#extensionSources.listExtensionRevisionReleases(...args)
+  readonly getExtensionRevisionRelease = (...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['getExtensionRevisionRelease']>) =>
+    this.#extensionSources.getExtensionRevisionRelease(...args)
+  readonly recordExtensionRevisionRelease = (...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['recordExtensionRevisionRelease']>) =>
+    this.#extensionSources.recordExtensionRevisionRelease(...args)
+  readonly listExtensionCommunityLinks = (...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['listExtensionCommunityLinks']>) =>
+    this.#extensionSources.listExtensionCommunityLinks(...args)
+  readonly getExtensionCommunityLink = (...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['getExtensionCommunityLink']>) =>
+    this.#extensionSources.getExtensionCommunityLink(...args)
+  readonly upsertExtensionCommunityLink = (...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['upsertExtensionCommunityLink']>) =>
+    this.#extensionSources.upsertExtensionCommunityLink(...args)
+  readonly dismissExtensionCommunityRelease = (...args: Parameters<ReturnType<typeof createExtensionSourcesRepository>['dismissExtensionCommunityRelease']>) =>
+    this.#extensionSources.dismissExtensionCommunityRelease(...args)
+  readonly listInstanceAdministrators = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['listInstanceAdministrators']>) =>
+    this.#governance.listInstanceAdministrators(...args)
+  readonly isInstanceAdministrator = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['isInstanceAdministrator']>) =>
+    this.#governance.isInstanceAdministrator(...args)
+  readonly addInstanceAdministrator = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['addInstanceAdministrator']>) =>
+    this.#governance.addInstanceAdministrator(...args)
+  readonly removeInstanceAdministrator = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['removeInstanceAdministrator']>) =>
+    this.#governance.removeInstanceAdministrator(...args)
+  readonly createExtensionRequest = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['createExtensionRequest']>) =>
+    this.#governance.createExtensionRequest(...args)
+  readonly getExtensionRequest = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['getExtensionRequest']>) =>
+    this.#governance.getExtensionRequest(...args)
+  readonly listExtensionRequests = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['listExtensionRequests']>) =>
+    this.#governance.listExtensionRequests(...args)
+  readonly updateExtensionRequest = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['updateExtensionRequest']>) =>
+    this.#governance.updateExtensionRequest(...args)
+  readonly expireExtensionRequests = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['expireExtensionRequests']>) =>
+    this.#governance.expireExtensionRequests(...args)
+  readonly getExtensionDataVersion = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['getExtensionDataVersion']>) =>
+    this.#governance.getExtensionDataVersion(...args)
+  readonly setExtensionDataVersion = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['setExtensionDataVersion']>) =>
+    this.#governance.setExtensionDataVersion(...args)
+  readonly readExtensionDataset = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['readExtensionDataset']>) =>
+    this.#governance.readExtensionDataset(...args)
+  readonly writeExtensionDataset = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['writeExtensionDataset']>) =>
+    this.#governance.writeExtensionDataset(...args)
+  readonly createExtensionDataSnapshot = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['createExtensionDataSnapshot']>) =>
+    this.#governance.createExtensionDataSnapshot(...args)
+  readonly listExtensionDataSnapshots = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['listExtensionDataSnapshots']>) =>
+    this.#governance.listExtensionDataSnapshots(...args)
+  readonly getExtensionDataSnapshotPayload = (...args: Parameters<ReturnType<typeof createExtensionGovernanceRepository>['getExtensionDataSnapshotPayload']>) =>
+    this.#governance.getExtensionDataSnapshotPayload(...args)
   readonly getInboundHookDecision = (...args: Parameters<InboundHooksRepository['getInboundHookDecision']>) =>
     this.#inboundHooks.getInboundHookDecision(...args)
   readonly saveInboundHookDecision = (...args: Parameters<InboundHooksRepository['saveInboundHookDecision']>) =>

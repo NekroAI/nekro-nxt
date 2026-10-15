@@ -657,6 +657,36 @@ export interface NxtHostLayerService {
   }
 }
 
+/** One stored value as a data migration sees it: every owner and partition of the extension. */
+export interface NxtMigrationEntry {
+  /** `shared` (the host partition) or the id of the agent that owns the value. */
+  readonly owner: string
+  /** Opaque storage partition (scope, channel or member); keep it as it is when rewriting a value. */
+  readonly partition: string
+  readonly key: string
+  readonly value: ExtensionJsonValue
+}
+
+export interface NxtDataMigration {
+  /** Data version the stored data has now. */
+  readonly from: number
+  /** Data version this Revision declares. */
+  readonly to: number
+  readonly storage: {
+    /** Every stored entry of the extension in stable order; page with `after`. */
+    list(options?: {
+      readonly owner?: string
+      readonly prefix?: string
+      readonly limit?: number
+      readonly after?: string
+    }): Promise<{ readonly entries: readonly NxtMigrationEntry[]; readonly next?: string }>
+    set(entry: Pick<NxtMigrationEntry, 'owner' | 'partition' | 'key'>, value: ExtensionJsonValue): Promise<void>
+    delete(entry: Pick<NxtMigrationEntry, 'owner' | 'partition' | 'key'>): Promise<boolean>
+  }
+}
+
+export type NxtDataMigrationHandler = (migration: NxtDataMigration) => Promise<void>
+
 export interface ExtensionPluginDefinition<Context = ExtensionHostContext> {
   readonly inject?: readonly string[]
   apply(context: Context): void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
@@ -694,6 +724,13 @@ export interface ExtensionHostEnvironment {
      * wakes the agent.
      */
     onJob?(handler: NxtJobHandler): () => void
+    /**
+     * SDK 10. Extensions whose Manifest raises `dataVersion` register one migration during factory evaluation. When the
+     * user switches to this version, NekroNXT copies the stored data, runs the handler with the old and new version,
+     * and only then attaches agents; a failure puts back the copy and the previous version. It must be safe to run
+     * again on data it already migrated.
+     */
+    migrateData?(handler: NxtDataMigrationHandler): () => void
     /**
      * The host instance's configuration (`config.host`). Each agent's configuration is `ctx.config()` inside the
      * attachment. Dynamic runs have no saved configuration and get the schema defaults.

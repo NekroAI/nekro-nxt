@@ -10,3 +10,4 @@ export * from '@nekro-nxt/extension-format'
 
 export type { ExtensionCompatibilityPort, ExtensionCompatibilityIdentity } from './compatibility.js'
 export * from './permissions.js'
+export * from './data.js'

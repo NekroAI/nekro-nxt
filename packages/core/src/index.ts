@@ -398,6 +398,14 @@ export const AgentCapabilityGrantsSchema = z
     commandNetwork: z.boolean().default(true),
     /** Only administrator-initiated channel turns may send feedback without confirmation. */
     communityFeedbackAuto: z.boolean().default(false),
+    /**
+     * How far the agent may take extension work on its own: `manual` stops at a verified candidate; `confirm` lets it
+     * save, enable and switch after an administrator confirms in chat; `autonomous` lets it do so itself while the
+     * extension needs only normal permissions.
+     */
+    extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).default('manual'),
+    /** Whose messages may start or change extension work: every channel member, or administrators only. */
+    extensionRequesters: z.enum(['everyone', 'admins']).default('everyone'),
     /** Accounts commands may act as; empty unless the user grants one to this agent (absent before the field). */
     commandAccounts: z
       .array(CommandAccountGrantSchema)
@@ -419,18 +427,30 @@ export const AgentCapabilityGrantsSchema = z
     codeRun: false,
     commandNetwork: true,
     communityFeedbackAuto: false,
+    extensionAutonomy: 'manual',
+    extensionRequesters: 'everyone',
     commandAccounts: [],
   })
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
 
 /** Default-off additions are absent from persisted capabilities so older readers keep accepting unchanged agents. */
-export type StoredAgentCapabilityGrants = Omit<AgentCapabilityGrants, 'communityFeedbackAuto'> & {
+export type StoredAgentCapabilityGrants = Omit<
+  AgentCapabilityGrants,
+  'communityFeedbackAuto' | 'extensionAutonomy' | 'extensionRequesters'
+> & {
   readonly communityFeedbackAuto?: boolean
+  readonly extensionAutonomy?: AgentCapabilityGrants['extensionAutonomy']
+  readonly extensionRequesters?: AgentCapabilityGrants['extensionRequesters']
 }
 export const storedAgentCapabilityGrants = (capabilities: AgentCapabilityGrants): StoredAgentCapabilityGrants => {
-  const { communityFeedbackAuto, ...existing } = capabilities
-  return communityFeedbackAuto ? { ...existing, communityFeedbackAuto: true } : existing
+  const { communityFeedbackAuto, extensionAutonomy, extensionRequesters, ...existing } = capabilities
+  return {
+    ...existing,
+    ...(communityFeedbackAuto ? { communityFeedbackAuto: true } : {}),
+    ...(extensionAutonomy === 'manual' ? {} : { extensionAutonomy }),
+    ...(extensionRequesters === 'everyone' ? {} : { extensionRequesters }),
+  }
 }
 
 const AgentModelSelectionSchema = z
@@ -664,6 +684,12 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     ...(content.capabilities.codeRun ? { codeRun: true } : {}),
     ...(content.capabilities.commandNetwork ? {} : { commandNetwork: false }),
     ...(content.capabilities.communityFeedbackAuto ? { communityFeedbackAuto: true } : {}),
+    ...(content.capabilities.extensionAutonomy === 'manual'
+      ? {}
+      : { extensionAutonomy: content.capabilities.extensionAutonomy }),
+    ...(content.capabilities.extensionRequesters === 'everyone'
+      ? {}
+      : { extensionRequesters: content.capabilities.extensionRequesters }),
     ...(content.capabilities.commandAccounts.length === 0
       ? {}
       : {

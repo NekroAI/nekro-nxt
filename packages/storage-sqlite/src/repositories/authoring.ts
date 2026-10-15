@@ -1,4 +1,4 @@
-import type { AgentId, AuthoringAttemptId, AuthoringTaskId, EpisodeId } from '@nekro-nxt/contracts'
+import type { AgentId, AuthoringAttemptId, AuthoringTaskId, EpisodeId, ExtensionId } from '@nekro-nxt/contracts'
 import type {
   AuthoringRepository,
   DynamicAuthoringAttempt,
@@ -21,7 +21,13 @@ const toTask = (input: typeof dynamicAuthoringTasks.$inferSelect): DynamicAuthor
     agentId: row.agentId,
     channelId: row.channelId,
     episodeId: row.episodeId,
+    originChannelId: row.originChannelId,
     initiatingEventId: row.initiatingEventId,
+    kind: row.kind,
+    ...(row.targetExtensionId === null ? {} : { targetExtensionId: row.targetExtensionId }),
+    ...(row.baseRevisionId === null ? {} : { baseRevisionId: row.baseRevisionId }),
+    ...(row.referenceRevisionId === null ? {} : { referenceRevisionId: row.referenceRevisionId }),
+    ...(row.pausedReason === null ? {} : { pausedReason: row.pausedReason }),
     pluginKey: row.pluginKey,
     title: row.title,
     requirementSummary: row.requirementSummary,
@@ -93,7 +99,13 @@ const taskValues = (task: DynamicAuthoringTask): typeof dynamicAuthoringTasks.$i
   agentId: task.agentId,
   channelId: task.channelId,
   episodeId: task.episodeId,
+  originChannelId: task.originChannelId,
   initiatingEventId: task.initiatingEventId,
+  kind: task.kind,
+  targetExtensionId: task.targetExtensionId ?? null,
+  baseRevisionId: task.baseRevisionId ?? null,
+  referenceRevisionId: task.referenceRevisionId ?? null,
+  pausedReason: task.pausedReason ?? null,
   pluginKey: task.pluginKey,
   title: task.title,
   requirementSummary: task.requirementSummary,
@@ -163,7 +175,7 @@ export const createAuthoringRepository = (database: DrizzleCoreDatabase): Author
     return database
       .select()
       .from(dynamicAuthoringTasks)
-      .where(notInArray(dynamicAuthoringTasks.status, ['interrupted', 'stopped', 'completed']))
+      .where(notInArray(dynamicAuthoringTasks.status, ['interrupted', 'stopped', 'completed', 'paused']))
       .orderBy(asc(dynamicAuthoringTasks.createdAt))
       .all()
       .map(toTask)
@@ -177,6 +189,21 @@ export const createAuthoringRepository = (database: DrizzleCoreDatabase): Author
       .select()
       .from(dynamicAuthoringTasks)
       .where(and(eq(dynamicAuthoringTasks.episodeId, episodeId), eq(dynamicAuthoringTasks.pluginKey, pluginKey)))
+      .get()
+    return row === undefined ? undefined : toTask(row)
+  },
+  getOpenRevisionTask(extensionId: ExtensionId): DynamicAuthoringTask | undefined {
+    const row = database
+      .select()
+      .from(dynamicAuthoringTasks)
+      .where(
+        and(
+          eq(dynamicAuthoringTasks.targetExtensionId, extensionId),
+          eq(dynamicAuthoringTasks.kind, 'revise'),
+          notInArray(dynamicAuthoringTasks.status, ['interrupted', 'stopped', 'completed']),
+        ),
+      )
+      .orderBy(desc(dynamicAuthoringTasks.updatedAt))
       .get()
     return row === undefined ? undefined : toTask(row)
   },
@@ -242,7 +269,7 @@ export const createAuthoringRepository = (database: DrizzleCoreDatabase): Author
   deleteAuthoringTask(id: AuthoringTaskId): void {
     const task = database.select().from(dynamicAuthoringTasks).where(eq(dynamicAuthoringTasks.id, id)).get()
     if (task === undefined) return
-    if (!['interrupted', 'stopped', 'completed'].includes(task.status)) {
+    if (!['interrupted', 'stopped', 'completed', 'paused'].includes(task.status)) {
       throw new Error('Running Authoring Task must stop before deletion.')
     }
     database.delete(dynamicAuthoringTasks).where(eq(dynamicAuthoringTasks.id, id)).run()

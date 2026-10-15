@@ -48,6 +48,8 @@
     "0043_browser_composer_asset_grants.sql": "5953d25c5742afd65ee28b4b0e9a3a8c175fb026587254a13dc8f3bce684d6d6",
     "0044_community_feedback.sql": "14957238cca7ed2606560701ce05bdedbc44520b349fd9e2c0e44997ce24e30f",
     "0045_commands.sql": "9a7f20d20d2e33ebf5184708421b12d70f02317659578a2712c7c39920d22188",
+    "0046_extension_governance.sql": "3ace7e4c60dd8a1e28fd262bb5ede368c9400fac7ebf7ce7893e1eb7f6ffba4d",
+    "0047_drop_extension_revision_sources.sql": "a2ead2e85a6042d4e05c24c27b9a1af8c77ee15f00a5008237e8505987c69209",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -93,6 +95,8 @@
     "meta/0042_snapshot.json": "31fc0fe4d5f69913ea36474f17251b9d21bb3ad909620937eba4b65b91501fff",
     "meta/0044_snapshot.json": "bc837207fe63b01698f85216f80acbfd679d7cf7dcfcb2cfc75130e5ca123388",
     "meta/0045_snapshot.json": "1f8cf69638e26ad4e4198273b34a84bec15762a483747ba528af42ae44205b6e",
-    "meta/_journal.json": "805a1dbb6a002c769faa11c54e42d0ba74664f5d84a13ca43d0b14fe9c5a9f6c"
+    "meta/0046_snapshot.json": "ff4ae241fbb8a74db4ada077fb209549ae1ed6f1aedc8f727231f55a36712da4",
+    "meta/0047_snapshot.json": "912634f4efc62179f57a2871a05485700cb64920ba40ee19b9462d49d16ddfc8",
+    "meta/_journal.json": "de8770b789ec9e13f36d9e36ba597f87deef031e61f637354a6f880cd4458088"
   }
 }

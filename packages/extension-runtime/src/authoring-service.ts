@@ -10,6 +10,8 @@ import {
   type ChannelEventId,
   type ChannelId,
   type EpisodeId,
+  type ExtensionId,
+  type ExtensionRevisionId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { canonicalJson } from '@nekro-nxt/core'
@@ -24,6 +26,7 @@ import {
   toolVerificationInputSchema,
   verificationInputSchema,
 } from '@nekro-nxt/extension-format'
+import { AUTHORING_TASK_SETTLED_STATUSES } from './authoring.js'
 import type {
   AuthoringApprovalPolicy,
   AuthoringAttemptFailure,
@@ -74,6 +77,8 @@ const SnapshotSchema = z
       })
       .strict()
       .optional(),
+    dataVersion: z.number().int().min(1).max(1_000_000).optional(),
+    codeFormat: z.enum(['body', 'module']).optional(),
   })
   .strict()
 
@@ -93,6 +98,8 @@ const parseSnapshot = (input: unknown): DynamicAuthoringSnapshot => {
     contributions: parsed.contributions,
     ...(parsed.config === undefined ? {} : { config: parsed.config }),
     ...(parsed.verificationInputs === undefined ? {} : { verificationInputs: parsed.verificationInputs }),
+    ...(parsed.dataVersion === undefined ? {} : { dataVersion: parsed.dataVersion }),
+    ...(parsed.codeFormat === undefined || parsed.codeFormat === 'body' ? {} : { codeFormat: parsed.codeFormat }),
   }
 }
 
@@ -230,6 +237,12 @@ export interface RecordAuthoringDefinitionInput {
   readonly pluginKey: string
   readonly runnerPackageId: string
   readonly snapshot: DynamicAuthoringSnapshot
+  /** Present when the define starts a revise task: the extension it changes and the Revision it starts from. */
+  readonly revise?: {
+    readonly targetExtensionId: ExtensionId
+    readonly baseRevisionId: ExtensionRevisionId
+    readonly referenceRevisionId?: ExtensionRevisionId
+  }
 }
 
 export interface SyncAuthoringAttemptInput {
@@ -333,7 +346,18 @@ export class DynamicAuthoringService {
         agentId: AgentIdSchema.parse(input.agentId),
         channelId: input.channelId,
         episodeId: input.episodeId,
+        originChannelId: input.channelId,
         initiatingEventId: input.initiatingEventId,
+        kind: input.revise === undefined ? 'create' : 'revise',
+        ...(input.revise === undefined
+          ? {}
+          : {
+              targetExtensionId: input.revise.targetExtensionId,
+              baseRevisionId: input.revise.baseRevisionId,
+              ...(input.revise.referenceRevisionId === undefined
+                ? {}
+                : { referenceRevisionId: input.revise.referenceRevisionId }),
+            }),
         pluginKey: input.pluginKey,
         title: parsedSnapshot.name,
         requirementSummary: parsedSnapshot.purpose,
@@ -579,6 +603,106 @@ export class DynamicAuthoringService {
         kind: 'phase-changed',
         attemptId: currentAttempt.id,
         payload: { phase: 'restore-defined', shouldRun: input.shouldRun },
+        createdAt: now,
+      },
+    })
+    this.#publish({ taskId: current.id, agentId: current.agentId })
+  }
+
+  /**
+   * The conversation the task ran in ended. The task keeps its candidates and waits to be continued in a later
+   * conversation instead of staying half-run forever.
+   */
+  pauseTask(task: DynamicAuthoringTask, reason: string): void {
+    const current = this.#repository.getAuthoringTask(task.id)
+    if (!current || AUTHORING_TASK_SETTLED_STATUSES.includes(current.status)) return
+    const now = this.#now()
+    this.#repository.updateAuthoringTask({
+      task: { ...current, status: 'paused', pausedReason: reason, revision: current.revision + 1, updatedAt: now },
+      expectedRevision: current.revision,
+      event: {
+        taskId: current.id,
+        sequence: current.revision + 1,
+        kind: 'task-paused',
+        payload: { reason },
+        createdAt: now,
+      },
+    })
+    this.#publish({ taskId: current.id, agentId: current.agentId })
+  }
+
+  /** Paused tasks of an Episode that is ending; they are paused rather than interrupted. */
+  pauseTasksOfEpisode(episodeId: EpisodeId, reason: string): number {
+    const tasks = this.#repository.listRecoverableAuthoringTasks().filter((task) => task.episodeId === episodeId)
+    for (const task of tasks) this.pauseTask(task, reason)
+    return tasks.length
+  }
+
+  /**
+   * Moves a paused (or interrupted) task into another conversation of the same agent: the latest candidate was
+   * defined again there under a new runner identity and becomes the task's live Package.
+   */
+  resumeTask(input: {
+    readonly taskId: DynamicAuthoringTask['id']
+    readonly channelId: ChannelId
+    readonly episodeId: EpisodeId
+    readonly pluginKey: string
+    readonly runnerPackageId: string
+  }): DynamicAuthoringTask {
+    const current = this.#repository.getAuthoringTask(input.taskId)
+    if (!current) throw new Error('创造任务不存在。')
+    if (current.status === 'completed' || current.status === 'stopped') throw new Error('这个任务已经结束。')
+    const attempt = this.#repository.listAuthoringAttempts(current.id).at(-1)
+    if (!attempt) throw new Error('这个任务还没有候选。')
+    const now = this.#now()
+    const { pausedReason: _reason, ...rest } = current
+    const task: DynamicAuthoringTask = {
+      ...rest,
+      channelId: input.channelId,
+      episodeId: input.episodeId,
+      pluginKey: input.pluginKey,
+      status: 'repairing',
+      revision: current.revision + 1,
+      updatedAt: now,
+    }
+    this.#repository.updateAuthoringAttempt({
+      task,
+      expectedRevision: current.revision,
+      attempt: {
+        ...stableAttemptFields(attempt),
+        state: 'drafting',
+        host: attempt.host.status === 'absent' ? EMPTY_HALF : { status: 'pending', waitingFor: [] },
+        client: attempt.client.status === 'absent' ? EMPTY_HALF : { status: 'pending', waitingFor: [] },
+        runnerPluginId: input.pluginKey,
+        runnerPackageId: input.runnerPackageId,
+      },
+      event: {
+        taskId: current.id,
+        sequence: current.revision + 1,
+        kind: 'task-resumed',
+        attemptId: attempt.id,
+        payload: { episodeId: input.episodeId, channelId: input.channelId },
+        createdAt: now,
+      },
+    })
+    this.#publish({ taskId: current.id, agentId: current.agentId })
+    return task
+  }
+
+  /** Archives a task that was paused for too long or that the user gave up; it keeps its history. */
+  archiveTask(task: DynamicAuthoringTask, reason: string): void {
+    const current = this.#repository.getAuthoringTask(task.id)
+    if (!current || ['stopped', 'completed'].includes(current.status)) return
+    const now = this.#now()
+    const { pausedReason: _reason, ...rest } = current
+    this.#repository.updateAuthoringTask({
+      task: { ...rest, status: 'stopped', revision: current.revision + 1, updatedAt: now },
+      expectedRevision: current.revision,
+      event: {
+        taskId: current.id,
+        sequence: current.revision + 1,
+        kind: 'task-stopped',
+        payload: { reason },
         createdAt: now,
       },
     })

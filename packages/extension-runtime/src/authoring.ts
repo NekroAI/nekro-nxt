@@ -15,6 +15,8 @@ import type {
   ChannelEventId,
   ChannelId,
   EpisodeId,
+  ExtensionId,
+  ExtensionRevisionId,
   HostPageContribution,
   HostUiKitComponentName,
   HostUiPageGeometryEvidence,
@@ -33,6 +35,15 @@ export type AuthoringTaskStatus =
   | 'interrupted'
   | 'stopped'
   | 'completed'
+  | 'paused'
+
+/** Task states that hold no runtime and need nothing more from the agent. */
+export const AUTHORING_TASK_SETTLED_STATUSES: readonly AuthoringTaskStatus[] = [
+  'interrupted',
+  'stopped',
+  'completed',
+  'paused',
+]
 
 export type AuthoringApprovalPolicy = 'risk-stable' | 'fully-automatic'
 
@@ -90,9 +101,20 @@ export interface DynamicAuthoringVerification {
 export interface DynamicAuthoringTask {
   readonly id: AuthoringTaskId
   readonly agentId: AgentId
+  /** Channel and Episode the task runs in now; continuing it in a later conversation moves both. */
   readonly channelId: ChannelId
   readonly episodeId: EpisodeId
+  /** Channel of the message that started the task. */
+  readonly originChannelId: ChannelId
   readonly initiatingEventId: ChannelEventId
+  /** `create` builds a new extension; `revise` changes `targetExtensionId` starting from `baseRevisionId`. */
+  readonly kind: 'create' | 'revise'
+  readonly targetExtensionId?: ExtensionId
+  readonly baseRevisionId?: ExtensionRevisionId
+  /** Another Revision handed to the agent as reference, such as local changes to carry into a merge. */
+  readonly referenceRevisionId?: ExtensionRevisionId
+  /** Why the task is paused; present only while it is. */
+  readonly pausedReason?: string
   readonly pluginKey: string
   readonly title: string
   readonly requirementSummary: string
@@ -142,6 +164,8 @@ export interface DynamicAuthoringEvent {
     | 'task-interrupted'
     | 'task-stopped'
     | 'task-completed'
+    | 'task-paused'
+    | 'task-resumed'
   readonly attemptId?: AuthoringAttemptId
   readonly payload: JsonValue
   readonly createdAt: number
@@ -152,6 +176,8 @@ export interface AuthoringRepository {
   listRecoverableAuthoringTasks(): readonly DynamicAuthoringTask[]
   getAuthoringTask(id: AuthoringTaskId): DynamicAuthoringTask | undefined
   getAuthoringTaskByPlugin(episodeId: EpisodeId, pluginKey: string): DynamicAuthoringTask | undefined
+  /** The unfinished revise task of an extension, if any; there is at most one. */
+  getOpenRevisionTask(extensionId: ExtensionId): DynamicAuthoringTask | undefined
   listAuthoringAttempts(taskId?: AuthoringTaskId): readonly DynamicAuthoringAttempt[]
   getAuthoringAttempt(id: AuthoringAttemptId): DynamicAuthoringAttempt | undefined
   listAuthoringEvents(taskId: AuthoringTaskId): readonly DynamicAuthoringEvent[]
@@ -194,6 +220,10 @@ export interface DynamicAuthoringSnapshot {
   readonly config?: ExtensionLayeredConfig
   /** Representative inputs the Host uses to really call each Tool and RPC during verification. */
   readonly verificationInputs?: DynamicAuthoringVerificationInputs
+  /** Shape version of the stored data this candidate reads and writes; absent means 1. */
+  readonly dataVersion?: number
+  /** `module` when `code` holds whole modules (a revise task of an imported extension) rather than factory bodies. */
+  readonly codeFormat?: 'body' | 'module'
 }
 
 export interface DynamicAuthoringVerificationInputs {
@@ -265,6 +295,8 @@ export const DynamicAuthoringEventSchema = z
       'task-interrupted',
       'task-stopped',
       'task-completed',
+      'task-paused',
+      'task-resumed',
     ]),
     attemptId: AuthoringAttemptIdSchema.optional(),
     payload: JsonValueSchema,

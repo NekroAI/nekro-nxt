@@ -14,6 +14,7 @@ import {
   clientCssSchema,
   extensionEntrypointsSchema,
   extensionManifestContributionSchema,
+  extensionDataVersionSchema,
   extensionManifestSchema,
   extensionProvides,
   type ExtensionManifest,
@@ -60,6 +61,7 @@ const payloadDigestInputSchema = z
         config: ExtensionLayeredConfigSchema.optional(),
         clientCss: clientCssSchema.optional(),
         icon: extensionIconSchema.optional(),
+        dataVersion: extensionDataVersionSchema.optional(),
       })
       .strict(),
     sources: revisionSourcesSchema,
@@ -99,6 +101,7 @@ export const revisionDigests = (
     ...(manifest.config === undefined ? {} : { config: manifest.config }),
     ...(manifest.clientCss ? { clientCss: manifest.clientCss } : {}),
     ...(manifest.icon ? { icon: manifest.icon } : {}),
+    ...(manifest.dataVersion === undefined ? {} : { dataVersion: manifest.dataVersion }),
   }
   const payloadDigestInput = canonicalJson(
     JsonValueSchema.parse(payloadDigestInputSchema.parse({ manifest: payloadManifest, sources, resources })),
@@ -136,7 +139,7 @@ export const expectedRevisionResources = (manifest: {
 export const validateRevisionResources = (
   manifest: Parameters<typeof expectedRevisionResources>[0],
   resources: Readonly<Record<string, string>>,
-  label: '导入扩展' | '动态扩展',
+  label: '导入扩展' | '动态扩展' | '扩展分支',
 ): void => {
   const expected = expectedRevisionResources(manifest)
   const subject = label === '导入扩展' ? '导入扩展的' : '动态扩展'

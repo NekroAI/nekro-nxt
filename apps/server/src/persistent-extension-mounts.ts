@@ -27,6 +27,8 @@ import {
   type NxtHostService,
   type NxtInboundHandler,
   type NxtJobHandler,
+  type NxtDataMigration,
+  type NxtDataMigrationHandler,
 } from '@nekro-nxt/extension-sdk'
 import { createHash, randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
@@ -193,6 +195,7 @@ export class PersistentExtensionMounts {
   readonly #adapters: PersistentAdapterPort | undefined
   readonly #logs: HostLogSink | undefined
   readonly #logName: ((revision: Revision) => string) | undefined
+  readonly #migrationStorage: ((revision: Revision) => NxtDataMigration['storage']) | undefined
 
   constructor(
     sessions: SessionRegistry<unknown>,
@@ -204,9 +207,12 @@ export class PersistentExtensionMounts {
       readonly mcp?: PersistentMcpMount
       readonly adapters?: PersistentAdapterPort
       readonly toolImages?: PersistentToolImagesFactory
+      /** Storage a `harness.migrateData` handler rewrites during a version switch. */
+      readonly migrationStorage?: (revision: Revision) => NxtDataMigration['storage']
     } = {},
   ) {
     this.#sessions = sessions
+    this.#migrationStorage = options.migrationStorage
     this.#logs = options.logs
     this.#logName = options.logName
     this.#toolImages = options.toolImages
@@ -325,6 +331,7 @@ export class PersistentExtensionMounts {
     const expectedAdapter = manifestAdapter(manifest)
     let inbound: NxtInboundHandler | undefined
     let job: NxtJobHandler | undefined
+    let migration: NxtDataMigrationHandler | undefined
     let plugin: ExtensionPluginDefinition | undefined
     let adapter: AdapterHostContributionV2 | undefined
     if (artifact.hostEntry) {
@@ -385,6 +392,15 @@ export class PersistentExtensionMounts {
               job = handler
               return () => {
                 job = undefined
+              }
+            },
+            migrateData: (handler: NxtDataMigrationHandler) => {
+              whileFactoryOpen('harness.migrateData')
+              if (typeof handler !== 'function') throw new TypeError('harness.migrateData 需要一个处理函数。')
+              if (migration !== undefined) throw new Error('一个扩展只能注册一个数据迁移。')
+              migration = handler
+              return () => {
+                migration = undefined
               }
             },
             config: () => config,
@@ -451,6 +467,19 @@ export class PersistentExtensionMounts {
       ...(expectedAdapter === undefined ? {} : { adapterKey: expectedAdapter.key }),
       attach: (agentId, agentConfig) => this.#attach(instance, agentId, agentConfig),
       call: (method, value, caller) => this.#call(instance, method, value, caller),
+      ...(migration === undefined
+        ? {}
+        : {
+            migrateData: async (from: number, to: number) => {
+              const storage = this.#migrationStorage?.(revision)
+              if (!storage) throw new Error('当前宿主不能迁移扩展数据。')
+              logger?.info(`正在把数据从第 ${from} 版迁移到第 ${to} 版。`)
+              const handler = migration!
+              const run = () => handler({ from, to, storage })
+              await (this.#logs ? withLogOwner({ sink: this.#logs, source, scope }, run) : run())
+              logger?.info('数据迁移完成。')
+            },
+          }),
       ...(registered === undefined
         ? {}
         : {

@@ -58,9 +58,38 @@ const toExtension = (input: typeof localExtensions.$inferSelect): LocalExtension
     displayName: row.displayName,
     description: row.description,
     ...(row.createdByAgentId === null ? {} : { createdByAgentId: row.createdByAgentId }),
+    ...(row.branchOfExtensionId === null || row.branchOfRevisionId === null
+      ? {}
+      : { branchOf: { extensionId: row.branchOfExtensionId, revisionId: row.branchOfRevisionId } }),
     createdAt: row.createdAt,
   }
 }
+
+const extensionValues = (extension: LocalExtension): typeof localExtensions.$inferInsert => ({
+  id: extension.id,
+  provides: extension.provides,
+  slug: extension.slug,
+  displayName: extension.displayName,
+  description: extension.description,
+  createdByAgentId: extension.createdByAgentId ?? null,
+  branchOfExtensionId: extension.branchOf?.extensionId ?? null,
+  branchOfRevisionId: extension.branchOf?.revisionId ?? null,
+  createdAt: extension.createdAt,
+})
+
+const revisionValues = (revision: Revision): typeof extensionRevisions.$inferInsert => ({
+  id: revision.id,
+  extensionId: revision.extensionId,
+  revisionNumber: revision.revisionNumber,
+  contentDigest: revision.contentDigest,
+  payloadDigest: revision.payloadDigest,
+  parentRevisionId: revision.parentRevisionId ?? null,
+  ancestry: revision.ancestry,
+  origin: revision.origin,
+  authoringTaskId: revision.authoringTaskId ?? null,
+  dataVersion: revision.dataVersion,
+  createdAt: revision.createdAt,
+})
 
 const toRevision = (input: typeof extensionRevisions.$inferSelect): Revision => {
   const row = ExtensionRevisionRowSchema.parse(input)
@@ -70,6 +99,11 @@ const toRevision = (input: typeof extensionRevisions.$inferSelect): Revision => 
     revisionNumber: row.revisionNumber,
     contentDigest: row.contentDigest,
     payloadDigest: row.payloadDigest,
+    ...(row.parentRevisionId === null ? {} : { parentRevisionId: row.parentRevisionId }),
+    ancestry: row.ancestry,
+    origin: row.origin,
+    ...(row.authoringTaskId === null ? {} : { authoringTaskId: row.authoringTaskId }),
+    dataVersion: row.dataVersion,
     createdAt: row.createdAt,
   }
 }
@@ -270,10 +304,10 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
       database.transaction(
         (tx) => {
           tx.insert(localExtensions)
-            .values(extension)
+            .values(extensionValues(extension))
             .onConflictDoUpdate({ target: localExtensions.id, set: { provides: extension.provides } })
             .run()
-          tx.insert(extensionRevisions).values(revision).run()
+          tx.insert(extensionRevisions).values(revisionValues(revision)).run()
           if (verification) {
             tx.insert(extensionRevisionVerifications)
               .values({ revisionId: revision.id, verifiedAt: verification.verifiedAt, evidence: verification })

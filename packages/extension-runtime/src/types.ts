@@ -1,6 +1,7 @@
 import type { ExtensionIcon, ExtensionManifestContribution } from '@nekro-nxt/extension-format'
 import type {
   AgentId,
+  AuthoringTaskId,
   DshPluginEntryId,
   ExtensionId,
   ExtensionRevisionId,
@@ -24,8 +25,13 @@ export interface LocalExtension {
   readonly displayName: string
   readonly description: string
   readonly createdByAgentId?: AgentId
+  /** The Revision of another extension this one was branched from. */
+  readonly branchOf?: { readonly extensionId: ExtensionId; readonly revisionId: ExtensionRevisionId }
   readonly createdAt: number
 }
+
+/** How a Revision reached this machine. */
+export type RevisionOrigin = 'authored' | 'file' | 'community' | 'branch'
 
 export interface Revision {
   readonly id: ExtensionRevisionId
@@ -34,6 +40,14 @@ export interface Revision {
   readonly contentDigest: string
   /** Stable digest of normalized code and contributions; excludes local Revision identities. */
   readonly payloadDigest: string
+  /** Revision this one was made from on the same line; it may not exist on this machine. */
+  readonly parentRevisionId?: ExtensionRevisionId
+  /** Earlier Revisions of the line, newest first. */
+  readonly ancestry: readonly ExtensionRevisionId[]
+  readonly origin: RevisionOrigin
+  readonly authoringTaskId?: AuthoringTaskId
+  /** Shape version of the data this Revision reads and writes. */
+  readonly dataVersion: number
   readonly createdAt: number
 }
 
@@ -62,6 +76,13 @@ export interface DynamicPackageSnapshot {
   readonly clientCss?: { readonly path: string; readonly sha256: string }
   /** Extension icon; its resource text is base64 for PNG / WebP and source for SVG. */
   readonly icon?: ExtensionIcon
+  /** Shape version of the stored data; raising it requires a `migrateData` handler. */
+  readonly dataVersion?: number
+  /**
+   * `body` (default): host and client code are factory bodies the save wrapper completes. `module`: they are whole
+   * modules (as imported or hand-written extensions are) and are stored unchanged.
+   */
+  readonly codeFormat?: 'body' | 'module'
 }
 
 export type ExtensionContribution = ExtensionManifestContribution

@@ -1,15 +1,28 @@
 import { readFileSync } from 'node:fs'
+import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   assertRevisionMatchesTransfer,
   extensionManifestSchema,
+  lineageAfter,
+  lineageOfBranch,
   manifestAdapter,
+  resourceContent,
+  type ExtensionLineage,
   type ExtensionManifest,
+  type LineageNode,
 } from '@nekro-nxt/extension-format'
-import { ExtensionIdSchema, ExtensionRevisionIdSchema, type AgentId, type ExtensionId } from '@nekro-nxt/contracts'
+import {
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+  type AgentId,
+  type AuthoringTaskId,
+  type ExtensionId,
+  type ExtensionRevisionId,
+} from '@nekro-nxt/contracts'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
-import { materializeDynamicPackage, materializeImportedRevision } from './materializer.js'
+import { materializeDynamicPackage, materializeImportedRevision, rematerializeRevision } from './materializer.js'
 import type { ExtensionBuilder } from './builder.js'
 import type { ExtensionSourceStore } from './source-store.js'
 import type {
@@ -20,7 +33,15 @@ import type {
   ExtensionRevisionVerification,
   LocalExtension,
   Revision,
+  RevisionOrigin,
 } from './types.js'
+
+/** Code, resources and Manifest of a stored Revision, read back from its immutable directory. */
+export interface StoredRevisionContent {
+  readonly manifest: ExtensionManifest
+  readonly sources: { readonly host?: string; readonly client?: string }
+  readonly resources: Readonly<Record<string, string>>
+}
 
 export interface ImportedRevisionVerificationInput {
   readonly extension: LocalExtension
@@ -80,7 +101,13 @@ export class ExtensionService {
     readonly displayName: string
     readonly description: string
     readonly extensionId?: ExtensionId
+    /**
+     * Revision the new one is made from when it joins an existing extension; defaults to the newest Revision of that
+     * extension. Ignored for a new extension.
+     */
+    readonly parentRevisionId?: ExtensionRevisionId
     readonly createdByAgentId?: AgentId
+    readonly authoringTaskId?: AuthoringTaskId
     readonly verification?: Omit<
       ExtensionRevisionVerification,
       'revisionId' | 'verifiedAt' | 'hostBuild' | 'clientBuild'
@@ -99,10 +126,14 @@ export class ExtensionService {
     const now = this.#timestamp()
     const extensionId = existing?.id ?? ExtensionIdSchema.parse(`ext_${this.#nextUlid()}`)
     const revisionId = ExtensionRevisionIdSchema.parse(`xrv_${this.#nextUlid()}`)
+    const lineage: ExtensionLineage = existing
+      ? lineageAfter(this.#lineageNode(this.#parentFor(existing.id, input.parentRevisionId)))
+      : { parent: null, ancestry: [] }
     const materialized = materializeDynamicPackage({
       extensionId,
       revisionId,
       snapshot: input.snapshot,
+      lineage,
     })
     if (existing) this.#assertAdapterKeyKept(existing.id, materialized.manifest)
     const duplicate = this.#repository.getExtensionRevisionByPayloadDigest(extensionId, materialized.payloadDigest)
@@ -119,11 +150,14 @@ export class ExtensionService {
       provides: materialized.provides,
     }
     const revision: Revision = {
+      ...this.#revisionFields(materialized.manifest),
       id: revisionId,
       extensionId,
       revisionNumber: this.#repository.nextExtensionRevisionNumber(extensionId),
       contentDigest: materialized.contentDigest,
       payloadDigest: materialized.payloadDigest,
+      origin: 'authored',
+      ...(input.authoringTaskId === undefined ? {} : { authoringTaskId: input.authoringTaskId }),
       createdAt: now,
     }
 
@@ -189,6 +223,8 @@ export class ExtensionService {
     readonly resources?: Readonly<Record<string, string>>
     readonly localSlug?: string
     readonly dshVersion?: string
+    /** `community` for a community install; a file import otherwise. */
+    readonly origin?: Extract<RevisionOrigin, 'file' | 'community'>
   }): Promise<{ readonly extension: LocalExtension; readonly revision: Revision; readonly idempotent: boolean }> {
     if (this.#closing) throw new Error('扩展服务正在关闭。')
     const slug = slugSchema.parse(input.localSlug ?? input.extension.slug)
@@ -228,18 +264,32 @@ export class ExtensionService {
     const slugOwner = this.#repository.getExtensionBySlug(slug)
     if (slugOwner && slugOwner.id !== input.extension.id) throw new Error(`Extension slug already exists: ${slug}`)
     const now = this.#timestamp()
+    const branchOf = materialized.manifest.lineage?.branchOf
     const extension: LocalExtension = {
-      ...(existingExtension ?? { id: input.extension.id, slug, createdAt: now }),
+      ...(existingExtension ?? {
+        id: input.extension.id,
+        slug,
+        createdAt: now,
+        ...(branchOf === undefined ? {} : { branchOf }),
+      }),
       displayName: metadata.displayName,
       description: metadata.description,
       provides: materialized.provides,
     }
+    // A package written before lineage existed is treated as the next version of what this machine already has.
+    const newest = existingExtension ? this.#repository.listExtensionRevisions(existingExtension.id).at(-1) : undefined
+    const inferred =
+      materialized.manifest.lineage === undefined && newest !== undefined
+        ? lineageAfter(this.#lineageNode(newest))
+        : undefined
     const revision: Revision = {
+      ...this.#revisionFields(materialized.manifest, inferred),
       id: input.revision.id,
       extensionId: extension.id,
       revisionNumber: this.#repository.nextExtensionRevisionNumber(extension.id),
       contentDigest: materialized.contentDigest,
       payloadDigest: materialized.payloadDigest,
+      origin: input.origin ?? 'file',
       createdAt: now,
     }
     await this.#sources.publish(extension.id, revision.id, materialized)
@@ -300,6 +350,160 @@ export class ExtensionService {
 
   revisionFormat(revision: Revision): 'current' | 'unavailable' {
     return this.revisionManifest(revision) === undefined ? 'unavailable' : 'current'
+  }
+
+  /**
+   * Saves a copy of `source` as the first Revision of a new extension that records where it was branched from. The
+   * branch runs the same import verification as any other new Revision, under its own identity.
+   */
+  async createBranch(input: {
+    readonly source: Revision
+    readonly slug: string
+    readonly displayName: string
+    readonly description: string
+    readonly createdByAgentId?: AgentId
+    readonly dshVersion?: string
+  }): Promise<{ readonly extension: LocalExtension; readonly revision: Revision }> {
+    if (this.#closing) throw new Error('扩展服务正在关闭。')
+    const slug = slugSchema.parse(input.slug)
+    const metadata = textSchema.parse({ displayName: input.displayName, description: input.description })
+    if (this.#repository.getExtensionBySlug(slug)) throw new Error(`Extension slug already exists: ${slug}`)
+    const content = await this.readRevisionContent(input.source)
+    const now = this.#timestamp()
+    const extensionId = ExtensionIdSchema.parse(`ext_${this.#nextUlid()}`)
+    const revisionId = ExtensionRevisionIdSchema.parse(`xrv_${this.#nextUlid()}`)
+    const materialized = rematerializeRevision({
+      content,
+      extensionId,
+      revisionId,
+      lineage: lineageOfBranch({ extensionId: input.source.extensionId, revisionId: input.source.id }),
+    })
+    const extension: LocalExtension = {
+      id: extensionId,
+      slug,
+      displayName: metadata.displayName,
+      description: metadata.description,
+      provides: materialized.provides,
+      ...(input.createdByAgentId === undefined ? {} : { createdByAgentId: input.createdByAgentId }),
+      branchOf: { extensionId: input.source.extensionId, revisionId: input.source.id },
+      createdAt: now,
+    }
+    const revision: Revision = {
+      ...this.#revisionFields(materialized.manifest),
+      id: revisionId,
+      extensionId,
+      revisionNumber: 1,
+      contentDigest: materialized.contentDigest,
+      payloadDigest: materialized.payloadDigest,
+      origin: 'branch',
+      createdAt: now,
+    }
+    await this.#sources.publish(extensionId, revisionId, materialized)
+    if (!this.#builder) throw new Error('创建分支需要配置本机构建器。')
+    const artifact = await this.#builder.build({
+      extensionId,
+      revisionId,
+      contentDigest: revision.contentDigest,
+      sourceDirectory: this.#sources.revisionSourceDirectory(extensionId, revisionId),
+    })
+    if (!this.#importVerifier) throw new Error('创建分支需要配置本机 Runtime 验证器。')
+    const verified = await this.#importVerifier({
+      extension,
+      revision,
+      materialized,
+      artifact,
+      dshVersion: input.dshVersion ?? 'unknown',
+    })
+    this.#repository.saveExtensionRevision({
+      extension,
+      revision,
+      verification: {
+        ...verified,
+        revisionId,
+        dshVersion: input.dshVersion ?? 'unknown',
+        verifiedAt: now,
+        hostBuild: { built: artifact.hostEntry !== undefined, buildKey: artifact.buildKey },
+        clientBuild: { built: artifact.clientEntry !== undefined, buildKey: artifact.buildKey },
+      },
+    })
+    return { extension, revision }
+  }
+
+  /** Manifest, normalized sources and resources of a stored Revision. */
+  async readRevisionContent(revision: Revision): Promise<StoredRevisionContent> {
+    const directory = this.revisionSourceDirectory(revision)
+    const manifest = extensionManifestSchema.parse(JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8')))
+    const readOptional = async (file: string): Promise<string | undefined> => {
+      try {
+        return await readFile(path.join(directory, 'source', file), 'utf8')
+      } catch {
+        return undefined
+      }
+    }
+    const [host, client] = await Promise.all([readOptional('host.ts'), readOptional('client.ts')])
+    const resources: Record<string, string> = {}
+    const walk = async (relative: string): Promise<void> => {
+      let entries
+      try {
+        entries = await readdir(path.join(directory, relative), { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        const child = path.posix.join(relative, entry.name)
+        if (entry.isDirectory()) await walk(child)
+        else resources[child] = resourceContent(child, await readFile(path.join(directory, child)))
+      }
+    }
+    await walk('assets')
+    return {
+      manifest,
+      sources: { ...(host === undefined ? {} : { host }), ...(client === undefined ? {} : { client }) },
+      resources,
+    }
+  }
+
+  /** Lineage of a stored Revision: its Manifest's when it carries one, the database record otherwise. */
+  lineageNode(revision: Revision): LineageNode {
+    return this.#lineageNode(revision)
+  }
+
+  #lineageNode(revision: Revision): LineageNode {
+    const manifest = this.revisionManifest(revision)
+    if (manifest?.lineage !== undefined) return { revisionId: revision.id, lineage: manifest.lineage }
+    const extension = this.#repository.getExtension(revision.extensionId)
+    return {
+      revisionId: revision.id,
+      lineage: {
+        parent: revision.parentRevisionId ?? null,
+        ancestry: [...revision.ancestry],
+        ...(extension?.branchOf === undefined ? {} : { branchOf: extension.branchOf }),
+      },
+    }
+  }
+
+  #parentFor(extensionId: ExtensionId, parentRevisionId: ExtensionRevisionId | undefined): Revision {
+    if (parentRevisionId !== undefined) {
+      const parent = this.#repository.getExtensionRevision(parentRevisionId)
+      if (parent?.extensionId !== extensionId) throw new Error('基线版本不属于这个扩展。')
+      return parent
+    }
+    const newest = this.#repository.listExtensionRevisions(extensionId).at(-1)
+    if (newest === undefined) throw new Error(`Extension has no Revision: ${extensionId}`)
+    return newest
+  }
+
+  /** Lineage and data version columns of a Revision, from its Manifest or an inferred lineage. */
+  #revisionFields(
+    manifest: ExtensionManifest,
+    inferred?: ExtensionLineage,
+  ): Pick<Revision, 'ancestry' | 'dataVersion'> & { parentRevisionId?: ExtensionRevisionId } {
+    const lineage = manifest.lineage ?? inferred
+    return {
+      ...(lineage?.parent ? { parentRevisionId: lineage.parent } : {}),
+      ancestry: lineage?.ancestry ?? [],
+      dataVersion: manifest.dataVersion ?? 1,
+    }
   }
 
   dispose(): Promise<void> {

@@ -175,7 +175,11 @@ export const DynamicAuthoringTaskRowSchema = createSelectSchema(dynamicAuthoring
   agentId: AgentIdSchema,
   channelId: ChannelIdSchema,
   episodeId: EpisodeIdSchema,
+  originChannelId: ChannelIdSchema,
   initiatingEventId: ChannelEventIdSchema,
+  targetExtensionId: ExtensionIdSchema.nullable(),
+  baseRevisionId: ExtensionRevisionIdSchema.nullable(),
+  referenceRevisionId: ExtensionRevisionIdSchema.nullable(),
 })
 export const DynamicAuthoringAttemptRowSchema = createSelectSchema(dynamicAuthoringAttempts, {
   id: AuthoringAttemptIdSchema,
@@ -240,10 +244,15 @@ export const LocalExtensionRowSchema = createSelectSchema(localExtensions, {
   id: ExtensionIdSchema,
   provides: z.array(z.enum(['agent', 'page', 'adapter', 'mcp'])),
   createdByAgentId: AgentIdSchema.nullable(),
+  branchOfExtensionId: ExtensionIdSchema.nullable(),
+  branchOfRevisionId: ExtensionRevisionIdSchema.nullable(),
 })
 export const ExtensionRevisionRowSchema = createSelectSchema(extensionRevisions, {
   id: ExtensionRevisionIdSchema,
   extensionId: ExtensionIdSchema,
+  parentRevisionId: ExtensionRevisionIdSchema.nullable(),
+  ancestry: z.array(ExtensionRevisionIdSchema),
+  authoringTaskId: AuthoringTaskIdSchema.nullable(),
 })
 export const ExtensionRevisionVerificationRowSchema = createSelectSchema(extensionRevisionVerifications, {
   revisionId: ExtensionRevisionIdSchema,
