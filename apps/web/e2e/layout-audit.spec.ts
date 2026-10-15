@@ -13,7 +13,7 @@ import {
 
 /**
  * Layout audit (Decision 2026-10-06 §9). Visits every space and key sub-page with realistic-volume fictional data
- * at four desktop widths in both themes, and records layout defects that screenshots at one size miss.
+ * at four desktop widths and a 390px phone width (05 §6.2) in both themes, and records layout defects that screenshots at one size miss.
  * Every finding fails the run (R5); NEKRO_LAYOUT_AUDIT_REPORT=1 only writes the report, for exploring a large change.
  */
 
@@ -40,7 +40,7 @@ const PAGES = [
   { name: '设置·关于', path: '/settings/about' },
 ] as const
 
-const WIDTHS = [1100, 1280, 1440, 1920] as const
+const WIDTHS = [390, 1100, 1280, 1440, 1920] as const
 const THEMES = ['light', 'dark'] as const
 
 /** Ordered by how badly each defect breaks the page. */
@@ -263,7 +263,10 @@ for (const theme of THEMES) {
   for (const width of WIDTHS) {
     test(`layout audit · ${width}px · ${theme === 'light' ? '浅色' : '深色'}`, async ({ browser }, testInfo) => {
       test.setTimeout(240_000)
-      const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme })
+      const context = await browser.newContext({
+        viewport: { width, height: width < 760 ? 844 : 900 },
+        colorScheme: theme,
+      })
       await context.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
       const page = await context.newPage()
       await installSnapshotHealthRoutes(page, largeSnapshot)

@@ -30,6 +30,7 @@ import {
   Textarea,
   Timeline,
   toast,
+  PageHeader,
 } from '../../ui-kit/index.js'
 import { FeedbackPrivacy } from '../settings/feedback-section.js'
 import { relativeTime } from '../channels/timeline-model.js'
@@ -86,17 +87,19 @@ export function FeedbackView({ community }: { readonly community: CommunityState
     }
   }
   const head = (
-    <div className={styles.head}>
-      <h1 className={styles.title}>反馈</h1>
-      <div className={styles.actions}>
-        <Button size="small" icon={<RefreshCw size={14} />} busy={list.loading} onClick={() => void refresh()}>
-          刷新
-        </Button>
-        <Button size="small" variant="primary" icon={<Plus size={14} />} onClick={() => setParams({ new: '1' })}>
-          新建反馈
-        </Button>
-      </div>
-    </div>
+    <PageHeader
+      title="反馈"
+      actions={
+        <>
+          <Button size="small" icon={<RefreshCw size={14} />} busy={list.loading} onClick={() => void refresh()}>
+            刷新
+          </Button>
+          <Button size="small" icon={<Plus size={14} />} onClick={() => setParams({ new: '1' })}>
+            新建反馈
+          </Button>
+        </>
+      }
+    />
   )
   const renderItems = (title: string, items: typeof open) =>
     items.length ? (

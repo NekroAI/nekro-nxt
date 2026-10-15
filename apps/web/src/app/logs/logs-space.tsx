@@ -42,6 +42,7 @@ import {
   Switch,
   ToggleChip,
   Menu,
+  PageHeader,
   WorkbenchPage,
   toast,
   cssVars,
@@ -645,30 +646,37 @@ export default function LogsSpace() {
     >
       <MainContent width="full" fill contained>
         <div className={styles.workspace}>
-          <header className={styles.header}>
-            <div>
-              <h1>日志</h1>
-              <p>
+          <PageHeader
+            title="日志"
+            subtitle={
+              <>
                 {currentName
                   ? `${currentName}${currentStatus ? ` · ${currentStatus}` : ''}`
                   : '观察系统与扩展的运行过程'}
-              </p>
-              {currentVersion ? <p>版本 · {currentVersion}</p> : null}
-              {objectPath ? <Link to={objectPath}>打开配置</Link> : null}
-            </div>
-            <div className={styles.actions}>
-              <Button
-                size="small"
-                icon={<ListFilter size={15} />}
-                onClick={() => (narrow ? setAdvanced(!advanced) : setShowSources(!showSources))}
-              >
-                {narrow ? '筛选' : showSources ? '收起来源' : '显示来源'}
-              </Button>
-              <Link to="/settings/logs" className={styles.settingsLink} aria-label="日志保存设置">
-                <Settings size={17} />
-              </Link>
-            </div>
-          </header>
+                {currentVersion ? ` · 版本 ${currentVersion}` : ''}
+                {objectPath ? (
+                  <>
+                    {' · '}
+                    <Link to={objectPath}>打开配置</Link>
+                  </>
+                ) : null}
+              </>
+            }
+            actions={
+              <>
+                <Button
+                  size="small"
+                  icon={<ListFilter size={15} />}
+                  onClick={() => (narrow ? setAdvanced(!advanced) : setShowSources(!showSources))}
+                >
+                  {narrow ? '筛选' : showSources ? '收起来源' : '显示来源'}
+                </Button>
+                <Link to="/settings/logs" className={styles.settingsLink} aria-label="日志保存设置">
+                  <Settings size={17} />
+                </Link>
+              </>
+            }
+          />
           <div className={styles.toolbar}>
             <Input
               aria-label="搜索日志"

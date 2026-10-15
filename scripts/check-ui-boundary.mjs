@@ -7,6 +7,15 @@ const root = process.cwd()
 const webSourceRoot = 'apps/web/src'
 const uiKitRoot = `${webSourceRoot}/ui-kit/`
 const nativeControlTags = new Set(['button', 'select', 'input', 'textarea'])
+/**
+ * Page titles come from PageHeader or ObjectHeader (05 §6.1). The conversation header and the host page that frames an
+ * extension's own page draw theirs directly.
+ */
+const pageTitleAllowed = new Set([
+  'apps/web/src/app/channels/conversation.tsx',
+  'apps/web/src/host-ui-client.tsx',
+  'apps/web/src/extension-ui/ui-kit.tsx',
+])
 
 async function filesUnder(relativeDirectory) {
   const entries = await readdir(path.join(root, relativeDirectory), { withFileTypes: true })
@@ -79,6 +88,9 @@ function inspectSource(relativePath, source) {
       if (nativeControlTags.has(tagName) && !hiddenSubmit(tagName, node.attributes)) {
         addFinding(node, `native-control:${tagName}`, `业务代码不得直接使用原生 <${tagName}>；请使用 ui-kit。`)
       }
+      if (tagName === 'h1' && !pageTitleAllowed.has(relativePath)) {
+        addFinding(node, 'page-title', '页面标题请使用 ui-kit 的 PageHeader 或 ObjectHeader。')
+      }
     }
     ts.forEachChild(node, visit)
   }
@@ -91,7 +103,7 @@ function runSelfTest() {
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion } from 'motion/react'
 export function Fixture() {
-  return <><button /><select /><input type="submit" hidden /></>
+  return <><button /><select /><input type="submit" hidden /><h1>标题</h1></>
 }`
   const uiKit = `import * as Dialog from '@radix-ui/react-dialog'; import { motion } from 'motion/react'; export const Control = () => <button />`
   const findings = inspectSource('apps/web/src/fixture.tsx', business)
@@ -102,10 +114,13 @@ export function Fixture() {
       [3, 'motion-import'],
       [5, 'native-control:button'],
       [5, 'native-control:select'],
+      [5, 'page-title'],
     ],
   )
   assert.deepEqual(inspectSource('apps/web/src/ui-kit/fixture.tsx', uiKit), [])
-  console.log('UI boundary self-test passed (Radix/Motion/native controls rejected; ui-kit and hidden submit allowed).')
+  console.log(
+    'UI boundary self-test passed (Radix/Motion/native controls and bare page titles rejected; ui-kit and hidden submit allowed).',
+  )
 }
 
 /**

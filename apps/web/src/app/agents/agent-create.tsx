@@ -14,6 +14,7 @@ import {
   PropertyRow,
   Select,
   toast,
+  PageHeader,
 } from '../../ui-kit/index.js'
 import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
@@ -67,7 +68,7 @@ export function AgentCreate() {
           void create()
         }}
       >
-        <h1 className={styles.createTitle}>新建智能体</h1>
+        <PageHeader title="新建智能体" />
 
         <PropertyGroup title="基本信息">
           <PropertyList>
