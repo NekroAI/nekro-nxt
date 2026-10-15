@@ -6,6 +6,10 @@ Desktop 自带本地 `nxt.product-release`，并可保存多个远程服务实�
 
 每次 Desktop 运行只为本地 Host 分配一次 loopback 端口。Host 就绪后若异常退出，主进程按 `500ms → 1s → 2s → 5s → 5s` 有界退避在同一端口启动替代进程；60 秒滚动窗口内最多发起 5 次恢复。应用退出会取消退避和就绪探测，终止当前 Host，并等待子进程退出。
 
+关闭窗口按平台惯例处理：macOS 隐藏窗口并保留 Dock 图标，Dock 激活或再次启动时恢复；Windows 隐藏窗口并进入托盘，托盘菜单只有“显示窗口”和“退出”；Linux 关闭窗口即退出。窗口隐藏时本地 Host 继续运行，只有显式退出才停止。启动窗口隐藏后进入产品窗口的交接不会重新显示窗口。
+
+显式退出先请求 Host 协作取消，并给已经就绪的 Host 15 秒；超时后强制终止该子进程并继续等待真实退出，再 5 秒仍未退出时提示检查系统进程。仍在启动、升级或备份恢复的进程不套用强杀，避免打断文件操作：15 秒后只显示“正在等待本地数据操作安全结束”，完成后继续退出。
+
 本地服务启动前显示安装包内的独立启动窗口。普通启动限时 60 秒；升级期间读取 `data/backups/upgrade-progress.json`，只有与本次 `NEKRO_UPGRADE_RUN_ID`、子进程 PID、产品 Release 全部一致的版本 1 进度才延长期限。连续 60 秒没有有效心跳视为失败，连续 120 秒只有心跳而没有阶段、步骤或计数变化时显示停滞提示，仍允许继续等待。最终就绪仍要求 HTTP `/health/ready` 的 Release 匹配，进度文件本身不能开放产品窗口。
 
 启动窗口的安全取消在 POSIX 通过 `utilityProcess.kill()` 发送 SIGTERM；Windows 通过 `process.parentPort` 发送 `{ format: 'nxt.host-control', version: 1, action: 'cancel', runId }`，由 Server 在同一安全边界取消。Desktop 等待子进程真正退出后才开放重试或恢复，不进行强制 kill。失败页提供当前阶段、步骤、备份身份与错误诊断，只有本次可信进度包含有效恢复点时才提供“恢复升级前备份”。恢复使用同一个安装包内 Server 入口及 `--restore-upgrade <backupId>`，无需外部 Node 或 pnpm；只有退出码 0 才显示成功，成功页只允许退出并提示改用匹配的旧版程序。关闭应用时会等待已开始的恢复完成，不自动重新启动或再次迁移。启动页的本地 IPC 单独核对主 frame、WebContents 和精确安装包 URL，不改变 management/chrome protocol。
@@ -62,4 +66,4 @@ pnpm desktop:preview --platform mac
 
 组件与 Trusted Fallback 的真实 DOM 测试位于 browser-tests，使用根 pnpm test:browser；纯错误映射与静态结构测试保留在 Vitest。自动 Preview 的平台任务只保存候选产物，全部平台成功后由串行最终任务校验 receipt 并发布。
 
-`tests/host-startup.spec.ts` 用假时钟覆盖超过 60 秒的迁移、失联与过期进度、子进程退出和离线恢复结果；`electron-tests/startup-recovery.spec.ts` 在已构建的 Desktop/Contracts 上启动真实 Electron，并以临时数据根和合成 Server 入口验证安全取消、重试、诊断及恢复。它不读取或写入常驻用户数据。运行前先构建 Contracts 与 Desktop，再执行 `pnpm --filter @nekro-nxt/desktop test:electron`；Linux 无显示环境使用 Xvfb。原生 Electron 测试单独运行，不混入 headless Chromium 的 `test:browser`。
+`tests/host-startup.spec.ts` 用假时钟覆盖超过 60 秒的迁移、失联与过期进度、子进程退出和离线恢复结果；`electron-tests/startup-recovery.spec.ts` 在已构建的 Desktop/Contracts 上启动真实 Electron，并以临时数据根和合成 Server 入口验证安全取消、重试、诊断及恢复。`electron-tests/window-lifecycle.spec.ts` 用同样的合成 Host 验证关窗隐藏、Dock 激活恢复、启动窗口隐藏后不被交接重新显示，以及显式退出会停止 Host；它不读取或写入常驻用户数据。运行前先构建 Contracts 与 Desktop，再执行 `pnpm --filter @nekro-nxt/desktop test:electron`；Linux 无显示环境使用 Xvfb。原生 Electron 测试单独运行，不混入 headless Chromium 的 `test:browser`。
