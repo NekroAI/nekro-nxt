@@ -143,7 +143,7 @@ export class CommandDirectory {
           enabled &&
           command.unavailableReason === undefined &&
           this.authorized(channelId, identity, permission) &&
-          (bound || ['help', 'status'].includes(command.fullName)),
+          (bound || ['help', 'status', 'admin'].includes(command.fullName)),
         usage: commandUsage(command.definition, command.fullName),
         ...(globalPolicy === undefined ? {} : { globalPolicy }),
         ...(channelPolicy === undefined ? {} : { channelPolicy }),

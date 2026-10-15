@@ -1,3 +1,4 @@
+import { handleGovernanceAuthoringRoute } from './host-routes-governance.js'
 import {
   AgentIdSchema,
   AuthoringAttemptIdSchema,
@@ -23,6 +24,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
     path: '/api/authoring/tasks',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      if (await handleGovernanceAuthoringRoute(runtime, req, res, url)) return
       const decisionMatch = /^\/api\/authoring\/tasks\/([^/]+)\/attempts\/([^/]+)\/decision$/.exec(url.pathname)
       const stopMatch = /^\/api\/authoring\/tasks\/([^/]+)\/stop$/.exec(url.pathname)
       const restoreMatch = /^\/api\/authoring\/tasks\/([^/]+)\/attempts\/([^/]+)\/restore$/.exec(url.pathname)

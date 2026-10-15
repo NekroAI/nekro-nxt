@@ -103,6 +103,8 @@ import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type D
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
 import { ExtensionActionService } from './extension-governance/actions.js'
+import { ExtensionCommandPort } from './extension-governance/commands.js'
+import { ExtensionGovernanceTools } from './extension-governance/tool-port.js'
 import { AdministratorService } from './extension-governance/administrators.js'
 import { CommunitySyncService } from './extension-governance/community-sync.js'
 import { ExtensionDataService } from './extension-governance/data-service.js'
@@ -123,6 +125,9 @@ export type { ConnectionTestResult } from './connection-application.js'
 /** Due-job handlers decide quickly; a slow one wakes the agent as if it had no handler. */
 const JOB_HANDLER_TIMEOUT_MS = 15_000
 const JOB_NOTE_MAX_CHARS = 2000
+
+/** Paused creation tasks nobody continued for this long are archived. */
+const AUTHORING_PAUSE_ARCHIVE_MS = 30 * 24 * 60 * 60 * 1000
 
 export interface NekroRuntimeOptions {
   readonly logs?: HostLogService
@@ -248,6 +253,7 @@ export class NekroRuntime {
     }
   >()
   readonly #agents = new Map<AgentId, AgentEntity>()
+  #commandGovernance: ExtensionCommandPort | undefined
   readonly #unsubscribeDynamicApproval: () => void
   #started = false
   #disposed = false
@@ -315,6 +321,7 @@ export class NekroRuntime {
       now: input.now,
       running: (id) => this.host.sessionStatus(id) === 'running',
       extensions: (agentId) => this.#extensionCommands(agentId),
+      governance: () => this.#commandGovernance,
       botMemberId: (event) => {
         const channel = this.repository.getChannel(event.channelId)
         if (!channel) return undefined
@@ -466,6 +473,7 @@ export class NekroRuntime {
     })
     this.extensionActions = new ExtensionActionService(this)
     this.extensionRequests = new ExtensionRequestService(this, this.#now)
+    this.#commandGovernance = new ExtensionCommandPort(this)
   }
 
   #extensionCommands(agentId: AgentId): readonly RegisteredCommand[] {
@@ -922,6 +930,7 @@ export class NekroRuntime {
       })
       await commandAccounts.prepare()
       const feedbackPort: { current?: CommunityFeedbackService } = {}
+      const governancePort: { current?: ExtensionGovernanceTools } = {}
       const host = await DshHostRuntime.create({
         ...(options.logs === undefined ? {} : { logs: options.logs }),
         feedback: {
@@ -982,6 +991,7 @@ export class NekroRuntime {
             const episode = repository.getEpisode(episodeId)
             return episode?.lastAdmittedEventId ?? episode?.openedAtEventId
           },
+          governance: () => governancePort.current,
         },
         ...(options.llmSettingsPath === undefined ? {} : { llmSettingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { llmCredentialPath: options.llmCredentialPath }),
@@ -1238,6 +1248,7 @@ export class NekroRuntime {
       })
       commandReference.current = runtime.commands
       feedbackPort.current = runtime.feedback
+      governancePort.current = new ExtensionGovernanceTools(runtime)
       await runtime.feedback.initialize()
       return runtime
     } catch (error) {
@@ -1257,6 +1268,27 @@ export class NekroRuntime {
     }
     if (!this.connections.localChannel(this.internalConnectionId)) {
       throw new Error('The internal Channel Adapter did not provide a localChannel port.')
+    }
+    this.sweepAuthoringTasks()
+  }
+
+  /**
+   * Creation tasks whose conversation already ended become paused, so they can be continued later; tasks paused for
+   * thirty days without anyone continuing them are archived with their history.
+   */
+  sweepAuthoringTasks(): void {
+    const service = this.host.authoringService()
+    if (!service) return
+    const now = this.#now()
+    for (const task of this.repository.listAuthoringTasks()) {
+      if (task.status === 'paused') {
+        if (now - task.updatedAt > AUTHORING_PAUSE_ARCHIVE_MS) service.archiveTask(task, '暂停超过 30 天没有继续，已归档。')
+        continue
+      }
+      if (['completed', 'stopped', 'interrupted'].includes(task.status)) continue
+      if (this.repository.getEpisode(task.episodeId)?.status !== 'active') {
+        service.pauseTask(task, '所在的对话已经结束。')
+      }
     }
   }
 

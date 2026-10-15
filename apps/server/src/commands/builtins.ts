@@ -99,6 +99,60 @@ const BUILTIN_HANDLERS: readonly Omit<RegisteredCommand, 'fullName' | 'source'>[
       )
     },
   },
+  {
+    definition: define({
+      name: 'ext',
+      description:
+        '查看和管理当前智能体的扩展：不带参数列出扩展、进行中的任务和待确认请求；管理员可以确认请求、启停、回退和切换版本',
+      parameters: [
+        {
+          name: '操作',
+          kind: 'positional',
+          type: 'string',
+          description: 'info、approve、reject、enable、disable、rollback、use、save、continue、update、publish',
+        },
+        { name: '对象', kind: 'positional', type: 'string', description: '请求编号、扩展名称或任务名称' },
+        { name: '值', kind: 'positional', type: 'string', description: '版本号（如 v2）或拒绝原因' },
+      ],
+      examples: ['/ext', '/ext approve 12', '/ext rollback 用户屏蔽', '/ext use 用户屏蔽 v2'],
+    }),
+    invoke: async (context, host) => {
+      if (!host.governance) throw new Error('这台 NekroNXT 没有开启扩展管理。')
+      const text = (name: string) => (typeof context.arguments[name] === 'string' ? context.arguments[name] : undefined)
+      const subcommand = text('操作')
+      const target = text('对象')
+      const value = text('值')
+      return textResult(
+        await host.governance.ext({
+          ...(subcommand === undefined ? {} : { subcommand }),
+          ...(target === undefined ? {} : { target }),
+          ...(value === undefined ? {} : { value }),
+        }),
+      )
+    },
+  },
+  {
+    definition: define({
+      name: 'admin',
+      description: '认领或查看 NekroNXT 管理员：用设置里生成的认领码把自己的账号设为管理员',
+      parameters: [
+        { name: '操作', kind: 'positional', type: 'string', description: 'claim、list' },
+        { name: '值', kind: 'positional', type: 'string', description: '认领码' },
+      ],
+      examples: ['/admin claim 482913', '/admin list'],
+    }),
+    invoke: async (context, host) => {
+      if (!host.governance) throw new Error('这台 NekroNXT 没有开启管理员设置。')
+      const action = typeof context.arguments['操作'] === 'string' ? context.arguments['操作'] : undefined
+      const value = typeof context.arguments['值'] === 'string' ? context.arguments['值'] : undefined
+      return textResult(
+        await host.governance.admin({
+          ...(action === undefined ? {} : { action }),
+          ...(value === undefined ? {} : { value }),
+        }),
+      )
+    },
+  },
 ]
 
 export const BUILTIN_COMMANDS: readonly RegisteredCommand[] = BUILTIN_HANDLERS.map((entry) => ({

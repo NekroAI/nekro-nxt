@@ -1,4 +1,5 @@
 import type {
+  AgentId,
   ChannelId,
   CommandDefinition,
   CommandExecutionRecord,
@@ -15,6 +16,32 @@ export interface CommandRunCapabilities {
   /** Pauses the channel; also stops the current turn. */
   pause(): Promise<{ readonly changed: boolean; readonly stopped: boolean }>
   resume(): Promise<{ readonly changed: boolean }>
+  /** `/ext` and `/admin`; absent on hosts without extension governance. */
+  readonly governance?: CommandGovernanceCall
+}
+
+/** What `/ext` and `/admin` need from the host, bound to one execution's channel and caller. */
+export interface CommandGovernanceCall {
+  /** Whether the caller is an instance administrator (the console, or a listed platform account). */
+  readonly administrator: boolean
+  ext(input: { readonly subcommand?: string; readonly target?: string; readonly value?: string }): Promise<string>
+  admin(input: { readonly action?: string; readonly value?: string }): Promise<string>
+}
+
+/** Host side of `/ext` and `/admin`, given the channel, its agent and who runs the command. */
+export interface CommandGovernancePort {
+  ext(
+    input: { readonly subcommand?: string; readonly target?: string; readonly value?: string },
+    context: CommandGovernanceContext,
+  ): Promise<string>
+  admin(input: { readonly action?: string; readonly value?: string }, context: CommandGovernanceContext): Promise<string>
+}
+
+export interface CommandGovernanceContext {
+  readonly channelId: ChannelId
+  readonly agentId?: AgentId
+  readonly identity: CommandExecutionRecord['identity']
+  readonly administrator: boolean
 }
 
 export interface RegisteredCommand {

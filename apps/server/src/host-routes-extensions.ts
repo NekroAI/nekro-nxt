@@ -44,6 +44,7 @@ import {
 import { knownCommandAccounts } from './host-routes-command-accounts.js'
 import { performHostUiNetworkRequest } from './host-ui-network.js'
 import { activationManifest } from './host-queries.js'
+import { handleGovernanceExtensionRoute } from './host-routes-governance.js'
 import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from './extension-secret-config.js'
 
 /**
@@ -604,6 +605,7 @@ export function registerExtensionsRoutes({
     path: '/api/extensions',
     handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      if (await handleGovernanceExtensionRoute({ runtime, broadcastExtensionsChanged }, req, res, url)) return
       const deleteMatch = /^\/api\/extensions\/([^/]+)$/u.exec(url.pathname)
       if (deleteMatch) {
         if (req.method !== 'DELETE') {

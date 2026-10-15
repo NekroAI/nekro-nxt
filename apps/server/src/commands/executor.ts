@@ -17,6 +17,7 @@ import { mutateRecord, type CommandReplies } from './replies.js'
 import {
   UnauthorizedCommandError,
   textResult,
+  type CommandGovernancePort,
   type CommandObserver,
   type CommandRunCapabilities,
   type RegisteredCommand,
@@ -35,6 +36,7 @@ export interface CommandExecutorOptions {
   readonly publish: (record: CommandExecutionRecord) => void
   readonly observer?: CommandObserver
   readonly deferExecution?: boolean
+  readonly governance?: () => CommandGovernancePort | undefined
 }
 
 interface QueuedCommand {
@@ -187,7 +189,7 @@ export class CommandExecutor {
               : '无权执行此命令，需要管理员在 NekroNXT 中授予此频道的命令管理权限。',
           )
         if (entry.unavailableReason !== undefined) throw new Error(entry.unavailableReason)
-        if (!binding && !['help', 'status'].includes(invoked.fullName)) throw new Error('请先为频道绑定智能体。')
+        if (!binding && !['help', 'status', 'admin'].includes(invoked.fullName)) throw new Error('请先为频道绑定智能体。')
       }
       guard()
       const args = parseCommandArguments(command.definition, tokenizeCommand(argumentText))
@@ -382,6 +384,26 @@ export class CommandExecutor {
           guard: () => guard(true),
         })
         return { changed: outcome.changed }
+      },
+      ...this.#governance(record),
+    }
+  }
+
+  #governance(record: CommandExecutionRecord): Pick<CommandRunCapabilities, 'governance'> {
+    const port = this.#o.governance?.()
+    if (!port) return {}
+    const binding = this.#o.repository.getBinding(record.channelId)
+    const context = {
+      channelId: record.channelId,
+      ...(binding === undefined ? {} : { agentId: binding.agentId }),
+      identity: record.identity,
+      administrator: this.#o.directory.administrator(record.identity),
+    }
+    return {
+      governance: {
+        administrator: context.administrator,
+        ext: (input) => port.ext(input, context),
+        admin: (input) => port.admin(input, context),
       },
     }
   }

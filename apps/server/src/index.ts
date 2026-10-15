@@ -1,4 +1,6 @@
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
+import { extensionAgentTools, type ReviseIntent } from './extension-governance/agent-tools.js'
+import type { ExtensionGovernanceToolPort } from './extension-governance/tool-port.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { renderChannelMessageResult } from './channel-message-result.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
@@ -121,6 +123,7 @@ import {
   DshPluginEntryIdSchema,
   ChannelMemberIdSchema,
   DEFAULT_CHANNEL_CONTEXT_POLICY,
+  CommandDefinitionSchema,
   ExtensionLayeredConfigSchema,
   HostPageContributionSchema,
   ExtensionPermissionsSchema,
@@ -462,6 +465,8 @@ export interface DshHostRuntimeOptions {
   readonly authoring?: {
     readonly service: DynamicAuthoringService
     readonly resolveInitiatingEvent: (episodeId: EpisodeId) => ChannelEventId | undefined
+    /** Extension governance behind the agent's list, revise, continue and action tools. */
+    readonly governance?: () => ExtensionGovernanceToolPort | undefined
   }
   /** Absolute workspace used by explicitly granted development capabilities. */
   readonly developmentWorkspaceRoot?: string
@@ -903,6 +908,9 @@ const DynamicAuthoringFacadeInputSchema = z
       .optional(),
     iconPath: z.enum(EXTENSION_ICON_PATHS).optional(),
     pages: z.array(HostPageContributionSchema).max(8).default([]),
+    commands: z.array(CommandDefinitionSchema).max(16).default([]),
+    dataVersion: z.number().int().min(1).max(1_000_000).optional(),
+    codeFormat: z.enum(['body', 'module']).optional(),
     permissions: ExtensionPermissionsSchema.default({ permissions: [], networkOrigins: [] }),
     config: ExtensionLayeredConfigSchema.optional(),
     verification: z
@@ -956,13 +964,22 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
     ...(clientCss === undefined ? {} : { clientCss }),
     ...(icon === undefined ? {} : { icon }),
     permissions: parsed.permissions,
-    contributions: parsed.pages.map((page) => JsonValueSchema.parse(page)),
+    contributions: [
+      ...parsed.pages.map((page) => JsonValueSchema.parse(page)),
+      ...parsed.commands.map((command) => JsonValueSchema.parse({ kind: 'command', ...command })),
+    ],
     ...(parsed.config === undefined ? {} : { config: parsed.config }),
     ...(parsed.verification === undefined ? {} : { verificationInputs: parsed.verification }),
+    ...(parsed.dataVersion === undefined ? {} : { dataVersion: parsed.dataVersion }),
+    ...(parsed.codeFormat === 'module' ? { codeFormat: 'module' as const } : {}),
   })
 }
 
-const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessionId: string) =>
+const nekroNxtExtensionDefineTool = (
+  runner: NekroNxtDynamicCordisRunner,
+  sessionId: string,
+  guard: () => void = () => undefined,
+) =>
   defineTool({
     name: 'nekro_nxt_extension_define',
     description:
@@ -1040,6 +1057,23 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
         items: { type: 'json' },
         description: '0–8 个符合 HostPageContribution 的完整页面声明；entryId 和相对路径必须稳定。',
       },
+      commands: {
+        type: 'array',
+        items: { type: 'json' },
+        description:
+          '聊天命令声明：{ name, description, aliases?, parameters?, examples?, minimumPermission?(public | channel-admin | admin) }。Host 要在 factory 顶层用 harness.registerCommand(声明, 处理函数) 注册同名命令；试运行会用示例参数真实执行一次。',
+      },
+      dataVersion: {
+        type: 'number',
+        description:
+          '扩展存储数据的格式版本，从 1 开始。改了已保存记录的结构时加 1，并在 factory 顶层用 harness.migrateData 把旧数据迁到新格式。',
+      },
+      codeFormat: {
+        type: 'string',
+        enum: ['body', 'module'],
+        description:
+          'body（默认）：code 是函数体。module：code 是完整模块源码，修改导入或手写的扩展时 nekro_nxt_extension_revise 会告诉你用这个。',
+      },
       permissions: {
         type: 'object',
         additionalProperties: false,
@@ -1093,6 +1127,7 @@ const nekroNxtExtensionDefineTool = (runner: NekroNxtDynamicCordisRunner, sessio
       presentationMeta: (_args, value) => ({ pluginId: value.pluginId, packageId: value.packageId }),
     },
     async execute(args) {
+      guard()
       const definition = authoringDefinitionFromFacade(args)
       return Promise.resolve(runner.defineAuthoringPackage(sessionId, definition))
     },
@@ -3864,12 +3899,16 @@ export class DshHostRuntime implements AgentSessionDriver {
             return resolveOwner(caller)
           },
         })
+        // Set by nekro_nxt_extension_revise for the one define that starts a revise task.
+        let reviseIntent: ReviseIntent | undefined
         if (this.#authoring) {
           runner.configureAuthoringLedger({
             definition: async (_request, receipt, snapshot) => {
               const initiatingEventId = this.#authoring?.resolveInitiatingEvent(input.episodeId)
               if (!initiatingEventId) throw new Error('动态创造任务缺少发起消息。')
+              const revise = reviseIntent
               await this.#authoring?.service.recordDefinition({
+                ...(revise === undefined ? {} : { revise }),
                 agentId: revision.agentId,
                 channelId: input.channelId,
                 episodeId: input.episodeId,
@@ -3966,7 +4005,28 @@ export class DshHostRuntime implements AgentSessionDriver {
         )
         await dynamicContext.plugin(CordisTool)
         mountDynamicCordisTools(dynamicContext, runner)
-        agentContext.tools.register(nekroNxtExtensionDefineTool(runner, sessionId))
+        const governance = this.#authoring?.governance
+        const requesterGuard = () => {
+          const verdict = governance?.()?.requesterAllowed(revision.agentId, input.episodeId)
+          if (verdict !== undefined && !verdict.allowed) throw new Error(verdict.reason)
+        }
+        agentContext.tools.register(nekroNxtExtensionDefineTool(runner, sessionId, requesterGuard))
+        if (governance !== undefined) {
+          for (const tool of extensionAgentTools({
+            port: governance,
+            authoring: this.#authoring?.service,
+            agentId: revision.agentId,
+            channelId: input.channelId,
+            episodeId: input.episodeId,
+            sessionId,
+            define: (definition) => runner.defineAuthoringPackage(sessionId, definition),
+            restore: (snapshot) => runner.restoreAuthoringPackage(sessionId, snapshot),
+            setReviseIntent: (intent) => {
+              reviseIntent = intent
+            },
+          }))
+            agentContext.tools.register(tool)
+        }
         dynamicContext.effect(() => {
           if (this.#sessions.get(sessionId)?.dynamic !== undefined) {
             throw new Error(`Dynamic creation is already mounted for DSH Session: ${sessionId}`)
@@ -4497,6 +4557,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#assertActive()
     const sessionId = SessionId(dshSessionId)
     const handle = this.#sessions.get(sessionId)?.handle
+    const episodeId = this.#sessions.get(sessionId)?.episodeId
     if (!handle) throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
     let drainError: unknown
     try {
@@ -4514,6 +4575,8 @@ export class DshHostRuntime implements AgentSessionDriver {
       disposeError = error
     } finally {
       this.#sessions.remove(sessionId)
+      // Creation tasks of the closed conversation wait to be continued in a later one instead of staying half-run.
+      if (episodeId !== undefined) this.#authoring?.service.pauseTasksOfEpisode(episodeId, '所在的对话已经结束。')
     }
     if (drainError !== undefined && disposeError !== undefined) {
       throw new AggregateError([drainError, disposeError], `DSH Session teardown failed: ${dshSessionId}`)
@@ -4584,6 +4647,11 @@ export class DshHostRuntime implements AgentSessionDriver {
   /** Tells the agent about a host event, such as how an extension request it filed ended. */
   notifyAgent(input: Parameters<DynamicAuthoringRuntime['notifyAgent']>[0]): boolean {
     return this.#dynamic.notifyAgent(input)
+  }
+
+  /** The creation task ledger; undefined when dynamic creation is not composed into this host. */
+  authoringService(): DynamicAuthoringService | undefined {
+    return this.#authoring?.service
   }
 
   /** The persisted source of one authoring attempt, whether or not its conversation is live. */

@@ -1,5 +1,9 @@
 /** Host RPC a dynamic candidate with an inbound hook exposes only to the Host verifier; never saved or shown. */
 export const INBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_inbound_probe_v1'
+/** Verifier-only RPC that runs one registered chat command with sample arguments. */
+export const COMMAND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_command_probe_v1'
+/** Verifier-only RPC that runs the registered data migration against empty storage. */
+export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
 
 /**
  * Wraps a dynamic candidate's Host half so it runs with the same factory contract as a saved Revision (扩展形态统一
@@ -13,7 +17,8 @@ export const INBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_inbound_probe_v1'
  * The saved Revision keeps the original source.
  */
 export const wrapDynamicHostSource = (source: string, options: { readonly inbound: boolean }): string => `
-const __nxtFactory = { handler: undefined, job: undefined, nxt: undefined, host: undefined, factoryOpen: true }
+const __nxtFactory = { handler: undefined, job: undefined, migration: undefined, nxt: undefined, host: undefined, factoryOpen: true }
+const __nxtCommands = new Map()
 const __nxtLogs = []
 let __nxtLogger
 const logger = Object.fromEntries(['debug', 'info', 'warn', 'error'].map(level => [level, (message, details) => {
@@ -38,6 +43,54 @@ harness.onJob = (handler) => {
   __nxtFactory.job = handler
   return () => { __nxtFactory.job = undefined }
 }
+harness.registerCommand = (definition, handler) => {
+  if (!__nxtFactory.factoryOpen) {
+    throw new Error('harness.registerCommand 必须在 factory 阶段（Host 源码顶层、return 之前）注册。')
+  }
+  const name = definition && typeof definition.name === 'string' ? definition.name : ''
+  if (!name) throw new TypeError('harness.registerCommand 需要带 name 的命令定义。')
+  if (typeof handler !== 'function') throw new TypeError('harness.registerCommand 需要一个处理函数。')
+  if (__nxtCommands.has(name)) throw new Error('命令重复注册：' + name)
+  __nxtCommands.set(name, handler)
+  return () => { __nxtCommands.delete(name) }
+}
+harness.migrateData = (handler) => {
+  if (!__nxtFactory.factoryOpen) {
+    throw new Error('harness.migrateData 必须在 factory 阶段（Host 源码顶层、return 之前）注册。')
+  }
+  if (typeof handler !== 'function') throw new TypeError('harness.migrateData 需要一个处理函数。')
+  if (__nxtFactory.migration !== undefined) throw new Error('一个扩展只能注册一个数据迁移。')
+  __nxtFactory.migration = handler
+  return () => { __nxtFactory.migration = undefined }
+}
+harness.handle('${COMMAND_DYNAMIC_PROBE_METHOD}', async (input) => {
+  const handler = __nxtCommands.get(input && input.name)
+  if (handler === undefined) throw new Error('声明了命令 /' + (input && input.name) + '，但 Host 没有用 harness.registerCommand 注册它。')
+  const replies = []
+  const signal = { aborted: false, reason: undefined, throwIfAborted() {}, addEventListener() {}, removeEventListener() {} }
+  const result = await handler({
+    channelId: 'chn_PREVIEW',
+    identity: { source: 'web', displayName: '预览管理员' },
+    arguments: (input && input.arguments) || {},
+    signal,
+    reply: (value) => { replies.push(value) },
+    host: {
+      status: () => ({ bound: true, responseMode: '预览', running: false }),
+      stop: async () => ({ stopped: false }),
+      reset: async () => undefined,
+    },
+  })
+  return JSON.parse(JSON.stringify({ result: result === undefined ? null : result, replies, registered: [...__nxtCommands.keys()] }))
+})
+harness.handle('${MIGRATION_DYNAMIC_PROBE_METHOD}', async (input) => {
+  if (__nxtFactory.migration === undefined) return { registered: false }
+  await __nxtFactory.migration({
+    from: (input && input.from) || 1,
+    to: (input && input.to) || 1,
+    storage: { list: async () => ({ entries: [] }), set: async () => undefined, delete: async () => false },
+  })
+  return { registered: true }
+})
 const nxt = new Proxy({}, {
   get(_target, key) {
     const host = __nxtFactory.host
@@ -65,7 +118,7 @@ ${
   return decision === undefined ? null : JSON.parse(JSON.stringify(decision))
 })`
 }
-const __nxtPlugin = (() => {
+const __nxtPlugin = await (async () => {
 ${source}
 })()
 __nxtFactory.factoryOpen = false

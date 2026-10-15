@@ -30,6 +30,8 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import { extensionManifestContributionSchema } from '@nekro-nxt/extension-format'
 import {
+  CommandDefinitionSchema,
+  CommandResultSchema,
   ExtensionLayeredConfigSchema,
   ExtensionPermissionsSchema,
   HostPageContributionSchema,
@@ -71,7 +73,24 @@ import {
   isLegacyAdapterDynamicHostSource,
   wrapAdapterDynamicHostSource,
 } from './adapter-dynamic-harness.js'
-import { INBOUND_DYNAMIC_PROBE_METHOD, wrapDynamicHostSource } from './inbound-dynamic-harness.js'
+import {
+  COMMAND_DYNAMIC_PROBE_METHOD,
+  INBOUND_DYNAMIC_PROBE_METHOD,
+  MIGRATION_DYNAMIC_PROBE_METHOD,
+  wrapDynamicHostSource,
+} from './inbound-dynamic-harness.js'
+import { commandVerificationArguments } from './commands/verification.js'
+import { moduleToFactoryBody } from '@nekro-nxt/extension-runtime'
+
+/** Names of built-in chat commands; extension commands may not take them. */
+const RESERVED_COMMAND_NAMES = new Set(['help', 'status', 'stop', 'reset', 'compact', 'pause', 'resume', 'off', 'on', 'ext', 'admin'])
+
+/** Verifier-only RPC methods the dynamic wrapper adds; never part of a candidate's interface. */
+const PRIVATE_DYNAMIC_METHODS = new Set([
+  INBOUND_DYNAMIC_PROBE_METHOD,
+  COMMAND_DYNAMIC_PROBE_METHOD,
+  MIGRATION_DYNAMIC_PROBE_METHOD,
+])
 import { z } from 'zod'
 
 const InboundProbeDecisionSchema = z
@@ -111,6 +130,26 @@ export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDe
   readonly contributions: readonly JsonValue[]
   readonly config?: DynamicAuthoringSnapshot['config']
   readonly verificationInputs?: DynamicAuthoringSnapshot['verificationInputs']
+  /** Shape version of the data the candidate stores; raising it needs `harness.migrateData`. */
+  readonly dataVersion?: number
+  /** `module`: `code` holds whole modules (a revise task of an imported extension) instead of factory bodies. */
+  readonly codeFormat?: 'body' | 'module'
+}
+
+/** The code a dynamic run executes: whole modules become factory bodies, and the Client gets its scoped CSS. */
+const runnableCode = (input: DynamicAuthoringPackageDefinitionInput): { readonly host?: string; readonly client?: string } => {
+  const modules = input.codeFormat === 'module'
+  const host = input.code.host === undefined ? undefined : modules ? moduleToFactoryBody(input.code.host, 'host') : input.code.host
+  const client = dynamicPreviewClientCode({
+    ...input,
+    code: {
+      ...(host === undefined ? {} : { host }),
+      ...(input.code.client === undefined
+        ? {}
+        : { client: modules ? moduleToFactoryBody(input.code.client, 'client') : input.code.client }),
+    },
+  })
+  return { ...(host === undefined ? {} : { host }), ...(client === undefined ? {} : { client }) }
 }
 
 export interface DynamicAuthoringPolicyState {
@@ -176,8 +215,15 @@ export const preflightNekroNxtAuthoringDefinition = (
   const contributions = input.contributions.map((contribution) =>
     extensionManifestContributionSchema.parse(contribution),
   )
-  if (contributions.some((contribution) => contribution.kind === 'command')) {
-    throw new Error('工坊动态创造暂不支持命令贡献，请使用本地源码包导入命令扩展。')
+  const commandNames = contributions.flatMap((contribution) =>
+    contribution.kind === 'command' ? [contribution.name, ...contribution.aliases] : [],
+  )
+  if (new Set(commandNames).size !== commandNames.length) throw new Error('动态扩展预检失败：命令名称和别名不能重复。')
+  if (commandNames.some((name) => RESERVED_COMMAND_NAMES.has(name))) {
+    throw new Error('动态扩展预检失败：内置命令名称保留，扩展不能使用。')
+  }
+  if (commandNames.length > 0 && input.code.host === undefined) {
+    throw new Error('动态扩展预检失败：命令需要 Host 源码注册。')
   }
   // Tools, panels and pages may be declared together; the page rules below apply to the host-page entries only.
   const pages = contributions
@@ -382,7 +428,6 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
 
   defineAuthoringPackage(sessionId: string, input: DynamicAuthoringPackageDefinitionInput): DynamicCordisDefineReceipt {
     const parsed = preflightNekroNxtAuthoringDefinition(input)
-    const previewClient = dynamicPreviewClientCode(parsed)
     const request: DynamicCordisDefineRequest = {
       sessionId: SessionId(sessionId),
       plugin:
@@ -391,10 +436,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
           : { kind: 'existing', pluginId: CordisDynamicPluginId(parsed.plugin.pluginId) },
       name: parsed.name,
       purpose: parsed.purpose,
-      code: {
-        ...(parsed.code.host === undefined ? {} : { host: parsed.code.host }),
-        ...(previewClient === undefined ? {} : { client: previewClient }),
-      },
+      code: runnableCode(parsed),
     }
     this.definingAuthoringSnapshot = {
       name: parsed.name,
@@ -407,6 +449,8 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       contributions: parsed.contributions,
       ...(parsed.config === undefined ? {} : { config: parsed.config }),
       ...(parsed.verificationInputs === undefined ? {} : { verificationInputs: parsed.verificationInputs }),
+      ...(parsed.dataVersion === undefined ? {} : { dataVersion: parsed.dataVersion }),
+      ...(parsed.codeFormat === 'module' ? { codeFormat: 'module' as const } : {}),
     }
     try {
       return this.define(request)
@@ -416,7 +460,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   }
 
   restoreAuthoringPackage(sessionId: string, snapshot: DynamicAuthoringSnapshot): DynamicCordisDefineReceipt {
-    preflightNekroNxtAuthoringDefinition({
+    const definition: DynamicAuthoringPackageDefinitionInput = {
       plugin: { kind: 'new', idPrefix: 'rest' },
       name: snapshot.name,
       purpose: snapshot.purpose,
@@ -427,21 +471,11 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       permissions: snapshot.permissions,
       contributions: snapshot.contributions,
       ...(snapshot.config === undefined ? {} : { config: snapshot.config }),
-    })
-    const previewClient = dynamicPreviewClientCode({
-      plugin: { kind: 'new', idPrefix: 'rest' },
-      name: snapshot.name,
-      purpose: snapshot.purpose,
-      code: snapshot.code,
-      resources: snapshot.resources,
-      ...(snapshot.clientCss === undefined ? {} : { clientCss: snapshot.clientCss }),
-      permissions: snapshot.permissions,
-      contributions: snapshot.contributions,
-    })
-    const code = {
-      ...(snapshot.code.host === undefined ? {} : { host: snapshot.code.host }),
-      ...(previewClient === undefined ? {} : { client: previewClient }),
+      ...(snapshot.dataVersion === undefined ? {} : { dataVersion: snapshot.dataVersion }),
+      ...(snapshot.codeFormat === undefined ? {} : { codeFormat: snapshot.codeFormat }),
     }
+    preflightNekroNxtAuthoringDefinition(definition)
+    const code = runnableCode(definition)
     this.suppressAuthoringPersistence = true
     this.definingAuthoringSnapshot = snapshot
     try {
@@ -526,7 +560,11 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       )
       if (registersAdapter) this.adapterPackages.add(receipt.packageId)
       if (declaresInbound && snapshot !== undefined) this.inboundPackages.add(receipt.packageId)
-      if (host !== undefined && wrappedHost !== host) this.originalHostByPackage.set(receipt.packageId, host)
+      // Inspection shows the source the agent wrote: the module itself when it submitted a whole module.
+      const authoredHost = snapshot?.codeFormat === 'module' ? snapshot.code.host : host
+      if (authoredHost !== undefined && wrappedHost !== authoredHost) {
+        this.originalHostByPackage.set(receipt.packageId, authoredHost)
+      }
       this.declarationsByPackage.set(receipt.packageId, {
         permissions: snapshot?.permissions ?? { permissions: [], networkOrigins: [] },
         config: snapshot?.config,
@@ -649,7 +687,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const clientRpcEvidence = this.clientRpcMethodsByPackage.get(packageId)
     const clientRpcMethods =
       clientRpcEvidence?.pluginRunId === row.activeRun.pluginRunId ? clientRpcEvidence.methods : new Set<string>()
-    const publicHandlers = row.activeRun.handlers.filter((method) => method !== INBOUND_DYNAMIC_PROBE_METHOD)
+    const publicHandlers = row.activeRun.handlers.filter((method) => !PRIVATE_DYNAMIC_METHODS.has(method))
     const clientCallableHandlers = this.isAdapterPackage(packageId)
       ? publicHandlers.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
       : publicHandlers
@@ -1192,7 +1230,7 @@ export class DynamicAuthoringRuntime {
       })
     }
     const rpcMethods = evidence.rpcMethods.filter(
-      (method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD && method !== INBOUND_DYNAMIC_PROBE_METHOD,
+      (method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD && !PRIVATE_DYNAMIC_METHODS.has(method),
     )
     for (const method of rpcMethods) {
       const verificationInput = inputs?.rpc[method]
@@ -1214,6 +1252,25 @@ export class DynamicAuthoringRuntime {
       if (decision.data?.trigger === 'force' && declared?.mayForceTrigger !== true) {
         throw new Error('入站处理函数返回了 force，但没有声明 mayForceTrigger。')
       }
+    }
+    for (const contribution of snapshot?.contributions ?? []) {
+      const declared = extensionManifestContributionSchema.safeParse(contribution)
+      if (!declared.success || declared.data.kind !== 'command') continue
+      const definition = CommandDefinitionSchema.strip().parse(declared.data)
+      const probe = await invoke(COMMAND_DYNAMIC_PROBE_METHOD, {
+        name: definition.name,
+        arguments: commandVerificationArguments(definition),
+      })
+      if (!probe.ok) throw new Error(`命令 /${definition.name} 验证失败：${probe.message}`)
+      const result = z.object({ result: JsonValueSchema }).passthrough().parse(probe.value).result
+      if (result !== null && !CommandResultSchema.safeParse(result).success) {
+        throw new Error(`命令 /${definition.name} 的返回值应是 { parts: [...] }。`)
+      }
+      contributions.push(declared.data)
+    }
+    if (snapshot?.dataVersion !== undefined && snapshot.dataVersion > 1) {
+      const probe = await invoke(MIGRATION_DYNAMIC_PROBE_METHOD, { from: snapshot.dataVersion - 1, to: snapshot.dataVersion })
+      if (!probe.ok) throw new Error(`数据迁移验证失败：${probe.message}`)
     }
     if (adapter === undefined && evidence.renderedPanels.some((panel) => panel.anchor === 'connection')) {
       throw new Error('连接面板需要扩展同时注册适配器。')

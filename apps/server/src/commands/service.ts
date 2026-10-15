@@ -19,7 +19,7 @@ import { CommandDirectory } from './catalog.js'
 import { CommandExecutor } from './executor.js'
 import { CommandRateLimiter, type CommandAdmission } from './rate-limit.js'
 import { CommandReplies } from './replies.js'
-import type { CommandObserver, RegisteredCommand } from './types.js'
+import type { CommandGovernancePort, CommandObserver, RegisteredCommand } from './types.js'
 
 export type { CommandObserver, RegisteredCommand } from './types.js'
 
@@ -34,6 +34,8 @@ export interface CommandServiceOptions {
   readonly now: () => number
   /** Diagnostics: settled executions, undelivered replies and (at most once a minute per channel) rate limiting. */
   readonly observer?: CommandObserver
+  /** Extension governance behind `/ext` and `/admin`. */
+  readonly governance?: () => CommandGovernancePort | undefined
 }
 
 const LIMIT_REPORT_INTERVAL_MS = 60_000
@@ -82,6 +84,7 @@ export class CommandService implements CommandGate {
       publish,
       ...(options.observer === undefined ? {} : { observer: options.observer }),
       ...(options.deferExecution === undefined ? {} : { deferExecution: options.deferExecution }),
+      ...(options.governance === undefined ? {} : { governance: options.governance }),
     })
     options.repository.commands.recover(options.now())
   }

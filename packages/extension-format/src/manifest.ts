@@ -295,7 +295,7 @@ export const extensionManifestSchema = z
     if (new Set(commandNames).size !== commandNames.length) issue('扩展内的命令名称和别名不能重复。')
     if (
       commandNames.some((name) =>
-        ['help', 'status', 'stop', 'reset', 'compact', 'pause', 'resume', 'off', 'on'].includes(name),
+        ['help', 'status', 'stop', 'reset', 'compact', 'pause', 'resume', 'off', 'on', 'ext', 'admin'].includes(name),
       )
     )
       issue('内置命令名称保留，扩展不能覆盖。')

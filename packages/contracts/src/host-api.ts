@@ -140,6 +140,7 @@ const AuthoringTaskStatusSchema = z.enum([
   'interrupted',
   'stopped',
   'completed',
+  'paused',
 ])
 
 const AuthoringAttemptStateSchema = z.enum([
@@ -198,6 +199,15 @@ const AuthoringTaskSummarySchema = z
     title: z.string(),
     requirementSummary: z.string(),
     status: AuthoringTaskStatusSchema,
+    /** `create` builds a new extension; `revise` changes `targetExtensionId` starting from `baseRevisionId`. */
+    kind: z.enum(['create', 'revise']).default('create'),
+    targetExtensionId: ExtensionIdSchema.optional(),
+    baseRevisionId: ExtensionRevisionIdSchema.optional(),
+    referenceRevisionId: ExtensionRevisionIdSchema.optional(),
+    /** Why the task is paused; it continues when the agent picks it up in a later conversation. */
+    pausedReason: z.string().optional(),
+    /** The conversation the task runs in is live, so its candidate can be previewed directly. */
+    live: z.boolean().default(false),
     approvalPolicy: z.enum(['risk-stable', 'fully-automatic']),
     approvedRiskDigest: z
       .string()
@@ -2345,6 +2355,139 @@ const connectionParam = z.object({ connectionId: ConnectionIdSchema }).strict()
 const agentExtensionParam = z.object({ agentId: AgentIdSchema, extensionId: ExtensionIdSchema }).strict()
 
 const PermissionApprovalSchema = z.object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()
+
+/** One version of one line in the lineage view of an extension family. */
+export const ExtensionLineageNodeSchema = z
+  .object({
+    revisionId: ExtensionRevisionIdSchema,
+    extensionId: ExtensionIdSchema,
+    label: z.string(),
+    parentRevisionId: ExtensionRevisionIdSchema.optional(),
+    origin: z.enum(['authored', 'file', 'community', 'branch']),
+    createdAt: z.number().int().nonnegative(),
+    current: z.boolean(),
+    releaseNumbers: z.array(z.number().int().positive()),
+  })
+  .strict()
+
+/** Every line of the family an extension belongs to: the original and every branch of a branch on this machine. */
+export const ExtensionLineageSchema = z
+  .object({
+    lines: z.array(
+      z
+        .object({
+          extensionId: ExtensionIdSchema,
+          displayName: z.string(),
+          branchOf: z.object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }).strict().optional(),
+          nodes: z.array(ExtensionLineageNodeSchema),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
+const DataChangeCountSchema = z
+  .object({
+    added: z.number().int().nonnegative(),
+    overwritten: z.number().int().nonnegative(),
+    removed: z.number().int().nonnegative(),
+    unchanged: z.number().int().nonnegative(),
+  })
+  .strict()
+
+/** Where a data migration takes data from. */
+export const ExtensionDataSourceSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('extension'), extensionId: ExtensionIdSchema }).strict(),
+  z.object({ kind: z.literal('snapshot'), snapshotId: z.string().min(1).max(80) }).strict(),
+  z.object({ kind: z.literal('package'), token: z.string().min(1).max(80) }).strict(),
+])
+
+export const ExtensionDataMigrationInputSchema = z
+  .object({
+    source: ExtensionDataSourceSchema,
+    mode: z.enum(['overwrite', 'replace']),
+    /** Storage of a source agent goes to the mapped agent here; unmapped agents are skipped. */
+    agentMap: z.record(z.string(), AgentIdSchema).optional(),
+  })
+  .strict()
+
+export const ExtensionDataPreviewSchema = z
+  .object({
+    diff: z.object({ storage: DataChangeCountSchema, index: DataChangeCountSchema, library: DataChangeCountSchema }).strict(),
+    destructive: z.boolean(),
+    sourceDataVersion: z.number().int().positive(),
+    targetDataVersion: z.number().int().positive(),
+    needsMigration: z.boolean(),
+  })
+  .strict()
+
+export const ExtensionDataStateSchema = z
+  .object({
+    dataVersion: z.number().int().positive(),
+    counts: z
+      .object({ storage: z.number().int().nonnegative(), index: z.number().int().nonnegative(), library: z.number().int().nonnegative() })
+      .strict(),
+    snapshots: z.array(
+      z
+        .object({
+          id: z.string(),
+          reason: z.enum(['switch', 'migration', 'manual']),
+          label: z.string(),
+          dataVersion: z.number().int().positive(),
+          byteSize: z.number().int().nonnegative(),
+          createdAt: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+
+export const ExtensionDataPackageInspectionSchema = z
+  .object({
+    token: z.string(),
+    extensionId: z.string(),
+    displayName: z.string(),
+    dataVersion: z.number().int().positive(),
+    exportedAt: z.number().int().nonnegative(),
+    agents: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
+    counts: z
+      .object({ storage: z.number().int().nonnegative(), index: z.number().int().nonnegative(), library: z.number().int().nonnegative() })
+      .strict(),
+  })
+  .strict()
+
+/** An extension action an agent asked an administrator to confirm, or one it took on its own. */
+export const ExtensionRequestSchema = z
+  .object({
+    number: z.number().int().positive(),
+    kind: z.string(),
+    agentId: AgentIdSchema,
+    channelId: ChannelIdSchema.nullable(),
+    extensionId: ExtensionIdSchema.nullable(),
+    summary: z.string(),
+    status: z.enum(['pending', 'approved', 'rejected', 'expired', 'completed', 'failed']),
+    autonomous: z.boolean(),
+    resultMessage: z.string().nullable(),
+    decidedBy: z.string().nullable(),
+    createdAt: z.number().int().nonnegative(),
+    expiresAt: z.number().int().nonnegative(),
+    decidedAt: z.number().int().nonnegative().nullable(),
+  })
+  .strict()
+export type ExtensionRequestView = z.output<typeof ExtensionRequestSchema>
+
+export const AdministratorSchema = z
+  .object({
+    connectionId: ConnectionIdSchema,
+    connectionName: z.string(),
+    platformUserId: z.string(),
+    identityId: PlatformIdentityIdSchema.optional(),
+    displayName: z.string(),
+    addedVia: z.enum(['console', 'claim']),
+    addedAt: z.number().int().nonnegative(),
+  })
+  .strict()
+
 const extensionParam = z.object({ extensionId: ExtensionIdSchema }).strict()
 const dshPluginPackageParam = z.object({ packageId: DshPluginPackageIdSchema }).strict()
 const dshPluginEntryParam = z.object({ entryId: DshPluginEntryIdSchema }).strict()
@@ -4703,6 +4846,175 @@ export const HostApiContracts = {
     params: extensionParam,
     request: NoRequestBodySchema,
     response: z.object({ deleted: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getExtensionLineage: defineContract({
+    method: 'GET',
+    path: '/api/extensions/:extensionId/lineage',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    response: ExtensionLineageSchema,
+    error: HostApiErrorSchema,
+  }),
+  branchExtension: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extensions/:extensionId/branch',
+    params: extensionParam,
+    request: z
+      .object({
+        revisionId: ExtensionRevisionIdSchema,
+        name: z.string().trim().min(1).max(80),
+        slug: z
+          .string()
+          .trim()
+          .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u)
+          .optional(),
+        copyData: z.boolean(),
+      })
+      .strict(),
+    response: z.object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  rollbackExtension: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extensions/:extensionId/rollback',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    response: z.object({ message: z.string() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getExtensionData: defineContract({
+    method: 'GET',
+    path: '/api/extensions/:extensionId/data',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    response: ExtensionDataStateSchema,
+    error: HostApiErrorSchema,
+  }),
+  previewExtensionDataMigration: defineContract({
+    timeoutMs: 60_000,
+    method: 'POST',
+    path: '/api/extensions/:extensionId/data/preview',
+    params: extensionParam,
+    request: ExtensionDataMigrationInputSchema,
+    response: ExtensionDataPreviewSchema,
+    error: HostApiErrorSchema,
+  }),
+  migrateExtensionData: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extensions/:extensionId/data/migrate',
+    params: extensionParam,
+    request: ExtensionDataMigrationInputSchema,
+    response: z.object({ snapshotId: z.string(), preview: ExtensionDataPreviewSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  createExtensionDataSnapshot: defineContract({
+    method: 'POST',
+    path: '/api/extensions/:extensionId/data/snapshots',
+    params: extensionParam,
+    request: z.object({ label: z.string().trim().min(1).max(80) }).strict(),
+    response: z.object({ snapshotId: z.string() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  inspectExtensionDataPackage: defineContract({
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extensions/data/inspect',
+    params: EmptyParamsSchema,
+    request: BinaryUploadRequestSchema,
+    encodeRequest: encodeBinaryUpload,
+    response: ExtensionDataPackageInspectionSchema,
+    error: HostApiErrorSchema,
+  }),
+  listExtensionRequests: defineContract({
+    method: 'GET',
+    path: '/api/extension-requests',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ requests: z.array(ExtensionRequestSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  approveExtensionRequest: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extension-requests/:number/approve',
+    params: z.object({ number: z.coerce.number().int().positive() }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ message: z.string() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  rejectExtensionRequest: defineContract({
+    method: 'POST',
+    path: '/api/extension-requests/:number/reject',
+    params: z.object({ number: z.coerce.number().int().positive() }).strict(),
+    request: z.object({ reason: z.string().trim().max(500).optional() }).strict(),
+    response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  listAdministrators: defineContract({
+    method: 'GET',
+    path: '/api/administrators',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ administrators: z.array(AdministratorSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  addAdministrator: defineContract({
+    method: 'POST',
+    path: '/api/administrators',
+    params: EmptyParamsSchema,
+    request: z.object({ identityId: PlatformIdentityIdSchema }).strict(),
+    response: AdministratorSchema,
+    error: HostApiErrorSchema,
+  }),
+  removeAdministrator: defineContract({
+    method: 'POST',
+    path: '/api/administrators/remove',
+    params: EmptyParamsSchema,
+    request: z.object({ connectionId: ConnectionIdSchema, platformUserId: z.string().min(1) }).strict(),
+    response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  createAdministratorClaimCode: defineContract({
+    method: 'POST',
+    path: '/api/administrators/claim-code',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ code: z.string(), expiresAt: z.number().int().nonnegative() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  dismissCommunityRelease: defineContract({
+    method: 'POST',
+    path: '/api/community/sync/:extensionId/dismiss',
+    params: extensionParam,
+    request: z.object({ releaseId: CommunityReleaseIdSchema.nullable() }).strict(),
+    response: z.object({ ok: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  updateFromCommunity: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/community/sync/:extensionId/update',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    response: z.object({ message: z.string() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  archiveAuthoringTask: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/authoring/tasks/:taskId/archive',
+    params: z.object({ taskId: AuthoringTaskIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ ok: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
 } as const
