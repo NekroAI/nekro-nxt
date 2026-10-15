@@ -86,6 +86,8 @@ export interface ExtensionActionResult {
   readonly message: string
   readonly extensionId?: ExtensionId
   readonly revisionId?: ExtensionRevisionId
+  /** Community release a publish created; its review result is reported back to the channel later. */
+  readonly releaseId?: string
 }
 
 const OUTWARD: readonly ExtensionAction['kind'][] = ['community-publish', 'community-withdraw']
@@ -316,11 +318,12 @@ export class ExtensionActionService {
     revisionId: ExtensionRevisionId | undefined,
     notes: string,
   ): Promise<ExtensionActionResult> {
-    const { revision } = await this.publishRevision({ extensionId, revisionId, notes })
+    const { revision, releaseId } = await this.publishRevision({ extensionId, revisionId, notes })
     return {
       message: `已把「${this.#extensionName(extensionId)}」${this.#label(revision)} 发布到社区，审查结果出来后会再通知。`,
       extensionId,
       revisionId: revision.id,
+      releaseId,
     }
   }
 

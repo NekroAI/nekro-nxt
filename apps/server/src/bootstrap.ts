@@ -129,6 +129,8 @@ const JOB_NOTE_MAX_CHARS = 2000
 
 /** Paused creation tasks nobody continued for this long are archived. */
 const AUTHORING_PAUSE_ARCHIVE_MS = 30 * 24 * 60 * 60 * 1000
+/** Community reviews take minutes; the agent hears the result within a few minutes of it settling. */
+const EXTENSION_REVIEW_POLL_MS = 3 * 60 * 1000
 
 export interface NekroRuntimeOptions {
   readonly logs?: HostLogService
@@ -257,6 +259,7 @@ export class NekroRuntime {
   #commandGovernance: ExtensionCommandPort | undefined
   readonly #unsubscribeDynamicApproval: () => void
   #started = false
+  #reviewWatch: ReturnType<typeof setInterval> | undefined
   #disposed = false
   #disposePromise: Promise<void> | undefined
 
@@ -1272,6 +1275,12 @@ export class NekroRuntime {
       throw new Error('The internal Channel Adapter did not provide a localChannel port.')
     }
     this.sweepAuthoringTasks()
+    this.#reviewWatch = setInterval(() => {
+      void this.extensionRequests.watchReviews().catch((error: unknown) => {
+        console.error('[nekro-nxt] 社区审查结果检查失败：', error)
+      })
+    }, EXTENSION_REVIEW_POLL_MS)
+    this.#reviewWatch.unref()
   }
 
   /**
@@ -1749,6 +1758,7 @@ export class NekroRuntime {
   }
 
   async #dispose(): Promise<void> {
+    if (this.#reviewWatch !== undefined) clearInterval(this.#reviewWatch)
     this.#disposed = true
     await this.#jobScheduler.dispose()
     await this.retrieval.dispose()

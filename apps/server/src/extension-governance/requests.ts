@@ -1,4 +1,4 @@
-import type { AgentId, ChannelId, ExtensionId, JsonValue } from '@nekro-nxt/contracts'
+import type { AgentId, ChannelId, CommunityReviewStatus, ExtensionId, JsonValue } from '@nekro-nxt/contracts'
 import type { ExtensionRequestRecord } from '@nekro-nxt/storage-sqlite'
 import type { NekroRuntime } from '../bootstrap.js'
 import type {
@@ -10,6 +10,32 @@ import type {
 
 /** Requests wait a day for an administrator; after that the agent has to ask again. */
 export const EXTENSION_REQUEST_TTL_MS = 24 * 60 * 60 * 1000
+
+/** Community review results are followed for three days after a publish; later results are only on the community. */
+export const EXTENSION_REVIEW_WATCH_MS = 3 * 24 * 60 * 60 * 1000
+
+const REVIEW_SETTLED: Readonly<Partial<Record<CommunityReviewStatus, string>>> = {
+  passed: '审查通过',
+  passed_with_notes: '审查通过，审查员留了建议',
+  flagged: '审查发现风险，等社区复审',
+  risk_confirmed: '审查确认有风险，安装时会提示',
+  held: '被暂停公开，等社区复审',
+  rejected: '没有通过审查',
+  incomplete: '审查没能完成',
+}
+
+/** What a finished request keeps: the outcome message and, for a publish, the release whose review is followed. */
+interface RequestResult {
+  readonly message: string
+  readonly releaseId?: string
+  /** `waiting` until the review settles, then the review status that was reported. */
+  readonly review?: 'waiting' | CommunityReviewStatus
+}
+
+const resultOf = (result: ExtensionActionResult): RequestResult => ({
+  message: result.message,
+  ...(result.releaseId === undefined ? {} : { releaseId: result.releaseId, review: 'waiting' as const }),
+})
 
 /** Who decided a request: the console, or an administrator's platform account in chat. */
 export type ExtensionRequestDecider = { readonly kind: 'console' } | { readonly kind: 'administrator'; readonly label: string }
@@ -107,7 +133,7 @@ export class ExtensionRequestService {
       number: record.number,
       from: 'pending',
       status: 'completed',
-      result: { message: input.result.message } as JsonValue,
+      result: resultOf(input.result) as unknown as JsonValue,
       decidedBy: this.#agentName(input.actor.agentId),
       decidedAt: now,
     })
@@ -139,7 +165,7 @@ export class ExtensionRequestService {
         number,
         from: 'approved',
         status: 'completed',
-        result: { message: result.message } as JsonValue,
+        result: resultOf(result) as unknown as JsonValue,
       })
       this.#notice(record.channelId ?? undefined, `ext-request:${number}:done`, `请求 #${number} 已由${label}同意：${result.message}`)
       this.#tellAgent(record, 'done', `〔系统通知〕扩展请求 #${number}（${record.summary}）已由${label}同意并完成：${result.message}`)
@@ -178,6 +204,53 @@ export class ExtensionRequestService {
     this.#notice(record.channelId ?? undefined, `ext-request:${number}:rejected`, `请求 #${number} 已被${label}拒绝${reason ? `：${reason}` : '。'}`)
     this.#tellAgent(record, 'rejected', `〔系统通知〕扩展请求 #${number}（${record.summary}）被${label}拒绝${reason ? `：${reason}` : '。'}不要再自行重试同一个请求。`)
     this.#runtime.publishExtensionRequestChange?.()
+  }
+
+  /**
+   * Reports community review results of releases agents published from a channel: once a review settles, the channel
+   * gets a notice and the agent is told, so nobody has to open the community to learn how it went.
+   */
+  async watchReviews(): Promise<void> {
+    const since = this.#now() - EXTENSION_REVIEW_WATCH_MS
+    const watched = this.#runtime.repository
+      .listExtensionRequests({ status: 'completed', limit: 200 })
+      .filter((record) => record.kind === 'community-publish' && record.createdAt >= since)
+      .flatMap((record) => {
+        const result = record.result as unknown as RequestResult | null
+        return result?.review === 'waiting' && result.releaseId !== undefined ? [{ record, result, releaseId: result.releaseId }] : []
+      })
+    for (const { record, result, releaseId } of watched) {
+      let status: CommunityReviewStatus
+      let reportUrl: string
+      try {
+        const report = await this.#runtime.community.review(releaseId)
+        status = report.status
+        reportUrl = report.reportUrl
+      } catch {
+        continue
+      }
+      const outcome = REVIEW_SETTLED[status]
+      if (outcome === undefined) continue
+      if (
+        !this.#runtime.repository.updateExtensionRequest({
+          number: record.number,
+          from: 'completed',
+          status: 'completed',
+          result: { ...result, review: status } as unknown as JsonValue,
+        })
+      ) {
+        continue
+      }
+      const extension = record.extensionId === null ? undefined : this.#runtime.repository.getExtension(record.extensionId)
+      const name = extension ? `「${extension.displayName}」` : '扩展'
+      this.#notice(record.channelId ?? undefined, `ext-request:${record.number}:review`, `${name}的社区发布${outcome}。审查报告：${reportUrl}`)
+      this.#tellAgent(
+        record,
+        'review',
+        `〔系统通知〕你发布到社区的${name}${outcome}。${status === 'passed' ? '' : `审查报告在 ${reportUrl}，按里面的意见决定要不要修改后重新发布。`}`,
+      )
+      this.#runtime.publishExtensionRequestChange?.()
+    }
   }
 
   expire(): void {
@@ -219,7 +292,7 @@ export class ExtensionRequestService {
       })
   }
 
-  #tellAgent(record: ExtensionRequestRecord, outcome: 'done' | 'failed' | 'rejected', text: string): void {
+  #tellAgent(record: ExtensionRequestRecord, outcome: 'done' | 'failed' | 'rejected' | 'review', text: string): void {
     this.#runtime.host.notifyAgent({
       agentId: record.agentId,
       ...(record.channelId === null ? {} : { channelId: record.channelId }),
