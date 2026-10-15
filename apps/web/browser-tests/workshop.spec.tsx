@@ -573,7 +573,7 @@ test.describe('workshop', () => {
     try {
       await expect(page.getByText('让智能体为你做新能力')).toBeVisible()
       const list = page.getByRole('complementary', { name: '工坊' })
-      await expect(list.getByText('还没有创造任务')).toBeVisible()
+      await expect(list.getByText('没有进行中的创造任务')).toBeVisible()
       await expect(list.getByText(/还没有扩展/u)).toBeVisible()
       await expect(page.locator('main').getByRole('button', { name: '资料员', exact: true })).toBeVisible()
       await page.getByRole('button', { name: /让智能体多一项本领/u }).click()
