@@ -1,4 +1,4 @@
-import type { AgentId, ChannelId } from '@nekro-nxt/contracts'
+import type { AgentId, ChannelId, ConnectionId } from '@nekro-nxt/contracts'
 import type { BindingRecord, CoreRepository, CoreService } from '@nekro-nxt/core'
 import type { ChannelMemberRelations } from './session-image-context.js'
 
@@ -7,9 +7,13 @@ import type { ChannelMemberRelations } from './session-image-context.js'
  * this host that answer the same platform channel through another connection.
  */
 export const channelMemberRelations = (
-  core: Pick<CoreService, 'describeChannelMember' | 'ensureSelfChannelMember' | 'localAccountMembers'>,
-  repository: Pick<CoreRepository, 'getChannelMember' | 'getBinding'> & {
+  core: Pick<
+    CoreService,
+    'describeChannelMember' | 'ensureSelfChannelMember' | 'localAccountMembers' | 'resolveChannelMemberIdentity'
+  >,
+  repository: Pick<CoreRepository, 'getChannelMember' | 'getBinding' | 'getChannel'> & {
     getAgent(agentId: AgentId): { readonly revision: { readonly displayName: string } } | undefined
+    isInstanceAdministrator?(connectionId: ConnectionId, platformUserId: string): boolean
   },
   now: () => number = Date.now,
 ): ChannelMemberRelations => {
@@ -20,7 +24,16 @@ export const channelMemberRelations = (
       const member = repository.getChannelMember(memberId)
       const relation = member === undefined ? undefined : core.describeChannelMember(member.channelId, memberId)
       if (relation?.kind === 'self') return { kind: 'self' }
-      if (relation?.kind !== 'local-account') return { kind: 'member' }
+      if (relation?.kind !== 'local-account') {
+        const channel = member === undefined ? undefined : repository.getChannel(member.channelId)
+        const identity =
+          channel === undefined ? undefined : core.resolveChannelMemberIdentity(channel.connectionId, channel.id, memberId)
+        return channel !== undefined &&
+          identity !== undefined &&
+          repository.isInstanceAdministrator?.(channel.connectionId, identity.platformUserId) === true
+          ? { kind: 'administrator' }
+          : { kind: 'member' }
+      }
       const name = relation.channelId === undefined ? undefined : agentName(repository.getBinding(relation.channelId))
       return { kind: 'local-agent', ...(name === undefined ? {} : { agentName: name }) }
     },

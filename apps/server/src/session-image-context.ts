@@ -229,6 +229,8 @@ export type ProductChannelHistoryRepository = DshHostRuntimeOptions['history']
 export type ChannelMemberRelation =
   | { readonly kind: 'self' }
   | { readonly kind: 'local-agent'; readonly agentName?: string }
+  /** A platform account listed as a NekroNXT administrator; a host fact, never inferred from what members say. */
+  | { readonly kind: 'administrator' }
   | { readonly kind: 'member' }
 
 /** Host knowledge of the channel's own account and other local agents' accounts; absent hosts show plain members. */
@@ -274,6 +276,7 @@ export const memberLabel = (member: MemberSummary): string => {
     const owner = relation.agentName === undefined ? '本机另一个账号' : `智能体「${relation.agentName}」的账号`
     return `${name}（${owner}，${member.memberId}）`
   }
+  if (relation?.kind === 'administrator') return `${name}（NekroNXT 管理员，${member.memberId}）`
   return `${name}（${member.memberId}）`
 }
 
