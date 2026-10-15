@@ -2,7 +2,7 @@ import { sessionEvents } from './session-event-history.js'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -89,50 +89,102 @@ const settledTool = (
     : { name: toolNames.get(result.callId), deliveryState: deliveryStateFromToolResult(event) }
 }
 
-const returnedTool = (event: SessionEvent): boolean =>
-  event.type === 'tool/result' || event.type === 'tool/ptc-dispatch'
+const targetsCurrentChannel = (args: unknown): boolean =>
+  isRecord(args) && isRecord(args['target']) && args['target']['type'] === 'current'
 
-const turnHasChannelAdmission = (events: readonly SessionEvent[], turn: number): boolean =>
-  currentTurnEvents(events, turn).some(
-    (event) => event.type === 'user/message' && channelAdmissionId(event.data) !== undefined,
-  )
-
-const lastReturnedToolTime = (events: readonly SessionEvent[], turn: number): number | undefined => {
-  let latestToolIndex = -1
-  let latestAssistantIndex = -1
-  const turnEvents = currentTurnEvents(events, turn)
-  for (const [index, event] of turnEvents.entries()) {
-    if (event.type === 'assistant/message') latestAssistantIndex = index
-    if (returnedTool(event)) latestToolIndex = index
+const parseCallArguments = (args: string): unknown => {
+  try {
+    return JSON.parse(args)
+  } catch {
+    return undefined
   }
-  if (latestToolIndex <= latestAssistantIndex) return undefined
-  return turnEvents[latestToolIndex]?.time
 }
 
-const turnStartedAt = (events: readonly SessionEvent[], turn: number): number | undefined => {
-  const event = currentTurnEvents(events, turn).find(
-    (candidate) => candidate.type === 'turn/start' && candidate.data.turn === turn,
-  )
-  return event?.time
-}
+/** Disposable projection of committed events, bounded to one turn and its in-flight root calls. */
+export class ChannelProcessingReminderProjection {
+  #seq = -1
+  #turn: number | undefined
+  #startedAt = 0
+  #hasAdmission = false
+  #sent = false
+  #reminded = false
+  #returnedAt: number | undefined
+  #lastAssistant: { readonly step: number; readonly stopped: boolean } | undefined
+  readonly #calls = new Map<string, { readonly name: string; readonly args: unknown }>()
 
-export const shouldInjectChannelProcessingReminder = (options: {
-  readonly events: readonly SessionEvent[]
-  readonly turn: number
-  readonly producedReply: boolean
-  readonly hasReminder: boolean
-}): boolean => {
-  const { events, turn, producedReply, hasReminder } = options
-  const startedAt = turnStartedAt(events, turn)
-  const returnedAt = lastReturnedToolTime(events, turn)
-  return (
-    turnHasChannelAdmission(events, turn) &&
-    !producedReply &&
-    !hasReminder &&
-    startedAt !== undefined &&
-    returnedAt !== undefined &&
-    returnedAt - startedAt >= CHANNEL_PROCESSING_REMINDER_THRESHOLD_MS
-  )
+  append(event: SessionEvent): void {
+    if (event.seq <= this.#seq) return
+    this.#seq = event.seq
+    if (event.type === 'turn/start') {
+      this.#turn = event.data.turn
+      this.#startedAt = event.time
+      this.#hasAdmission = false
+      this.#sent = false
+      this.#reminded = false
+      this.#returnedAt = undefined
+      this.#lastAssistant = undefined
+      this.#calls.clear()
+      return
+    }
+    if (this.#turn === undefined) return
+    if (event.type === 'turn/end' && event.data.turn === this.#turn) {
+      this.#turn = undefined
+      this.#calls.clear()
+    } else if (event.type === 'user/message') {
+      if (channelAdmissionId(event.data) !== undefined) this.#hasAdmission = true
+      if (event.data.source.kind === 'nekro-nxt-channel-processing-reminder' && event.data.source.turn === this.#turn)
+        this.#reminded = true
+    } else if (event.type === 'assistant/message' && event.data.turn === this.#turn) {
+      this.#returnedAt = undefined
+      this.#lastAssistant = {
+        step: event.data.step,
+        stopped: !event.data.message.content.some((block) => block.type === 'tool-call'),
+      }
+    } else if (event.type === 'tool/call' && event.data.turn === this.#turn) {
+      this.#calls.set(String(event.data.callId), {
+        name: event.data.name,
+        args: parseCallArguments(event.data.arguments),
+      })
+    } else if (event.type === 'tool/ptc-dispatch') {
+      // A nested result is not a model boundary. The root may still be running (or ultimately fail).
+      if (!this.#calls.has(String(event.data.rootCallId))) return
+      if (!event.data.isError && event.data.error === undefined) {
+        this.#recordSend(event.data.name, event.data.arguments, deliveryStateFromToolResult(event))
+      }
+    } else if (event.type === 'tool/result' && event.data.turn === this.#turn) {
+      const callId = String(event.data.message.toolCallId)
+      const call = this.#calls.get(callId)
+      if (call === undefined) return
+      this.#calls.delete(callId)
+      this.#returnedAt = event.time
+      if (successfulToolResult(event)) this.#recordSend(call.name, call.args, deliveryStateFromToolResult(event))
+    }
+  }
+
+  #recordSend(name: string, args: unknown, delivery: ChannelDeliveryState | undefined): void {
+    if (
+      name === SEND_CHANNEL_MESSAGE_TOOL &&
+      targetsCurrentChannel(args) &&
+      (delivery === 'sent' || delivery === 'partially-sent')
+    )
+      this.#sent = true
+  }
+
+  previousStepAttemptedToStop(turn: number, step: number): boolean {
+    return this.#turn === turn && this.#lastAssistant?.step === step && this.#lastAssistant.stopped
+  }
+
+  shouldRemind(turn: number): boolean {
+    return (
+      this.#turn === turn &&
+      this.#hasAdmission &&
+      !this.#sent &&
+      !this.#reminded &&
+      this.#calls.size === 0 &&
+      this.#returnedAt !== undefined &&
+      this.#returnedAt - this.#startedAt >= CHANNEL_PROCESSING_REMINDER_THRESHOLD_MS
+    )
+  }
 }
 
 const processingReminder = (turn: number): UserMessage =>
@@ -141,8 +193,9 @@ const processingReminder = (turn: number): UserMessage =>
       {
         type: 'text',
         text: [
-          '〔提醒〕这条消息已经处理超过 60 秒了。',
+          '〔提醒〕这一轮已经处理了至少 60 秒，频道里还没有收到你的回复。',
           '如果还需要继续处理，可以先用 send_channel_message 告诉频道目前的进展，再继续使用工具。',
+          '如果发送结果是 unknown，先确认是否已经送达，不要重复发送。',
         ].join('\n'),
       },
     ],
@@ -247,16 +300,6 @@ export const responseObligationState = (
   return { ...state, responseState: 'interrupted' }
 }
 
-const previousStepAttemptedToStop = (events: readonly SessionEvent[], turn: number, step: number): boolean => {
-  const assistant = currentTurnEvents(events, turn).findLast(
-    (event) => event.type === 'assistant/message' && event.data.turn === turn && event.data.step === step,
-  )
-  return (
-    assistant?.type === 'assistant/message' &&
-    !assistant.data.message.content.some((block) => block.type === 'tool-call')
-  )
-}
-
 const responseReminder = (turn: number): UserMessage =>
   createUserMessage({
     content: [
@@ -301,25 +344,6 @@ const withReminder = (
   return [...messages, responseReminder(turn)]
 }
 
-const withProcessingReminder = (
-  agent: Agent,
-  turn: number,
-  messages: readonly UserMessage[],
-  replyRequired: ReplyRequiredResolver,
-  correctionCount: CorrectionCountResolver,
-): readonly UserMessage[] => {
-  const events = sessionEvents(agent.session)
-  const before = responseObligationState(events, turn, [], replyRequired, correctionCount)
-  const hasReminder =
-    messages.some((message) => message.source.kind === 'nekro-nxt-channel-processing-reminder') ||
-    currentTurnEvents(events, turn).some(
-      (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-processing-reminder',
-    )
-  if (!shouldInjectChannelProcessingReminder({ events, turn, producedReply: before.producedReply, hasReminder }))
-    return messages
-  return [...messages, processingReminder(turn)]
-}
-
 export interface ChannelReplyGuardController {
   rememberAdmission(agent: Agent, admissionId: string, replyRequired: boolean): void
   responseState(agent: Agent, turn: number): ResponseObligationState
@@ -329,6 +353,18 @@ export interface ChannelReplyGuardController {
 }
 
 export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardController => {
+  let processingBySession = new WeakMap<Session, ChannelProcessingReminderProjection>()
+  const processingFor = (session: Session): ChannelProcessingReminderProjection => {
+    let projection = processingBySession.get(session)
+    if (projection === undefined) {
+      projection = new ChannelProcessingReminderProjection()
+      for (const event of sessionEvents(session)) projection.append(event)
+      processingBySession.set(session, projection)
+    }
+    return projection
+  }
+  const offEvent = context.on('session/event', (session, event) => processingBySession.get(session)?.append(event))
+  const offSessionDisposed = context.on('session/disposed', (session) => processingBySession.delete(session))
   const admissionsByAgent = new WeakMap<Agent, Map<string, boolean>>()
   const correctionsByAgent = new WeakMap<Agent, Map<string, number>>()
   const resolverFor =
@@ -349,8 +385,9 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
   const offPreStep = context.on('agent/pre-step', async ({ agent, turn, step }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject') return decision
+    const processing = processingFor(agent.session)
     let messages: UserMessage[] = decision.messages
-    if (step > 1 && previousStepAttemptedToStop(sessionEvents(agent.session), turn, step - 1)) {
+    if (step > 1 && processing.previousStepAttemptedToStop(turn, step - 1)) {
       messages = [
         ...withReminder(
           agent,
@@ -362,7 +399,13 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
         ),
       ]
     }
-    messages = [...withProcessingReminder(agent, turn, messages, resolverFor(agent), correctionResolverFor(agent))]
+    if (
+      processing.shouldRemind(turn) &&
+      !messages.some(
+        (message) => message.source.kind === 'nekro-nxt-channel-processing-reminder' && message.source.turn === turn,
+      )
+    )
+      messages = [...messages, processingReminder(turn)]
     return {
       ...decision,
       messages,
@@ -411,6 +454,9 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
     dispose() {
       offPreStep()
       offStopping()
+      offEvent()
+      offSessionDisposed()
+      processingBySession = new WeakMap()
     },
   }
 }
