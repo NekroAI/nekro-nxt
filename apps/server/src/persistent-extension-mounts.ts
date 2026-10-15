@@ -196,6 +196,11 @@ export class PersistentExtensionMounts {
   readonly #logs: HostLogSink | undefined
   readonly #logName: ((revision: Revision) => string) | undefined
   readonly #migrationStorage: ((revision: Revision) => NxtDataMigration['storage']) | undefined
+  /**
+   * Extensions a revise candidate stands in for, per Session: the candidate registers the same tools, so the saved
+   * version stays out of that Session until the candidate stops or the Session ends.
+   */
+  readonly #yielded = new Map<string, Set<Revision['extensionId']>>()
 
   constructor(
     sessions: SessionRegistry<unknown>,
@@ -592,6 +597,38 @@ export class PersistentExtensionMounts {
     }
   }
 
+  /** Takes the extension's attachment out of one Session while a revise candidate of it runs there. */
+  async yieldInSession(sessionId: string, extensionId: Revision['extensionId']): Promise<void> {
+    for (const known of [...this.#yielded.keys()]) {
+      if (this.#sessions.get(known) === undefined) this.#yielded.delete(known)
+    }
+    const yielded = this.#yielded.get(sessionId) ?? new Set()
+    yielded.add(extensionId)
+    this.#yielded.set(sessionId, yielded)
+    const instance = this.#instances.get(extensionId)
+    if (!instance) return
+    for (const attachment of instance.attachments.values()) {
+      await attachment.mounting.get(sessionId)
+      const fiber = attachment.fibers.get(sessionId)
+      if (fiber === undefined) continue
+      attachment.fibers.delete(sessionId)
+      await fiber.dispose()
+    }
+  }
+
+  /** Puts the attachment back into the Session once the revise candidate is gone. */
+  async resumeInSession(sessionId: string, extensionId: Revision['extensionId']): Promise<void> {
+    const yielded = this.#yielded.get(sessionId)
+    if (!yielded?.delete(extensionId)) return
+    if (yielded.size === 0) this.#yielded.delete(sessionId)
+    const record = this.#sessions.get(sessionId)
+    const handle = [...this.#sessions.handles()].find(([id]) => id === sessionId)?.[1]
+    const instance = this.#instances.get(extensionId)
+    if (record === undefined || handle === undefined || !instance?.active) return
+    const attachment = instance.attachments.get(record.revision.agentId)
+    if (attachment?.active === true) await this.#mountInSession(instance, attachment, sessionId, handle.agent.ctx)
+  }
+
   /** Mounts every attachment of the agent into a Session that just started. */
   async mountIntoSession(agentId: AgentId, sessionId: string, agentContext: Context): Promise<void> {
     for (const instance of this.#instances.values()) {
@@ -609,6 +646,7 @@ export class PersistentExtensionMounts {
     agentContext: Context,
   ): Promise<void> {
     if (!attachment.active || attachment.fibers.has(sessionId)) return
+    if (this.#yielded.get(sessionId)?.has(instance.revision.extensionId) === true) return
     const inFlight = attachment.mounting.get(sessionId)
     if (inFlight) return inFlight
     const mounting = (async () => {

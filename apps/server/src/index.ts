@@ -3925,6 +3925,18 @@ export class DshHostRuntime implements AgentSessionDriver {
                 snapshot,
               })
             },
+            beforeRun: (pluginId) => {
+              const task = this.#authoring?.service.taskForRunner(input.episodeId, pluginId)
+              return task?.kind === 'revise' && task.targetExtensionId !== undefined
+                ? this.#extensionMounts.yieldInSession(sessionId, task.targetExtensionId)
+                : undefined
+            },
+            released: async (pluginId) => {
+              const task = this.#authoring?.service.taskForRunner(input.episodeId, pluginId)
+              if (task?.kind === 'revise' && task.targetExtensionId !== undefined) {
+                await this.#extensionMounts.resumeInSession(sessionId, task.targetExtensionId)
+              }
+            },
             run: async (pluginId, packageId) => {
               const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
               // Runs come from the Agent's own cordis_run (the result is already in its tool output) or from

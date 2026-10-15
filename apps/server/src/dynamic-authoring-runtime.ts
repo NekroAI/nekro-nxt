@@ -354,6 +354,8 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     | undefined
   private onAuthoringRun:
     ((pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>) | undefined
+  private onBeforeAuthoringRun: ((pluginId: string) => Promise<void> | undefined) | undefined
+  private onAuthoringReleased: ((pluginId: string) => Promise<void>) | undefined
   private rootSessionId: SessionId | undefined
   private ownerResolver: ((agent: Agent) => Agent) | undefined
   private sessionOwnerResolver: ((sessionId: SessionId) => Agent) | undefined
@@ -421,9 +423,15 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       snapshot: DynamicAuthoringSnapshot,
     ) => Promise<void>
     readonly run: (pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>
+    /** Before a candidate starts: a revise candidate takes over the saved version's tools in this Session. */
+    readonly beforeRun?: (pluginId: string) => Promise<void> | undefined
+    /** After a candidate stopped or was undefined: the saved version may come back. */
+    readonly released?: (pluginId: string) => Promise<void>
   }): void {
     this.onAuthoringDefinition = callbacks.definition
     this.onAuthoringRun = callbacks.run
+    this.onBeforeAuthoringRun = callbacks.beforeRun
+    this.onAuthoringReleased = callbacks.released
   }
 
   defineAuthoringPackage(sessionId: string, input: DynamicAuthoringPackageDefinitionInput): DynamicCordisDefineReceipt {
@@ -623,6 +631,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const owner = this.resolveDynamicAuthoringOwner(agent)
     this.assertWritable('run')
     await this.authoringPersistenceByPackage.get(packageId)
+    // Only a revise candidate has something to wait for; other runs start in the same tick as before.
+    const yielding = this.onBeforeAuthoringRun?.(pluginId)
+    if (yielding !== undefined) await yielding
     this.runningPackageId = packageId
     const tools = this.runtimeContext.get('tools')
     const before = this.toolBaseline(owner, pluginId, tools)
@@ -803,6 +814,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.originalHostByPackage.delete(pkg.packageId)
       }
     }
+    if (result.ok) await this.onAuthoringReleased?.(pluginId)
     const state = this.requireState()
     if (result.ok && state.primaryPluginId === pluginId) {
       // Releasing the Plugin slot must not reset the repair budget; otherwise undefine + define escapes the breaker.
@@ -830,8 +842,10 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     return super.reference(this.resolveDynamicAuthoringOwner(agent), pluginId)
   }
 
-  override stop(agent: Agent, pluginId: CordisDynamicPluginIdType): Promise<DynamicCordisStopResponse> {
-    return super.stop(this.resolveDynamicAuthoringOwner(agent), pluginId)
+  override async stop(agent: Agent, pluginId: CordisDynamicPluginIdType): Promise<DynamicCordisStopResponse> {
+    const result = await super.stop(this.resolveDynamicAuthoringOwner(agent), pluginId)
+    if (result.ok) await this.onAuthoringReleased?.(pluginId)
+    return result
   }
 
   /**
