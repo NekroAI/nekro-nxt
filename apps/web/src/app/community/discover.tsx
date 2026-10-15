@@ -1,6 +1,5 @@
 import {
   COMMUNITY_EXTENSION_SORTS,
-  communityPublisherLabel,
   communityReviewLabel,
   EXTENSION_SDK_LEVEL,
   extensionSdkVersion,
@@ -8,6 +7,7 @@ import {
   type CommunityExtensionSort,
   type CommunityExtensionDetail,
   type CommunityExtensionSummary,
+  type CommunityReviewStatus,
   type HostApiResponse,
 } from '@nekro-nxt/contracts'
 import { ArrowLeft, Code2, ExternalLink, Store } from 'lucide-react'
@@ -24,19 +24,21 @@ import {
   ExtensionIcon,
   MainContent,
   ObjectHeader,
+  PageHeader,
   PropertyGroup,
   PropertyList,
   PropertyRow,
   SearchField,
-  Segmented,
-  Switch,
+  Select,
   Skeleton,
+  TabStrip,
+  ToggleChip,
   toast,
 } from '../../ui-kit/index.js'
 import { MarkdownDocument } from '../../components/markdown-document.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { RatingCard, RatingMark } from './community-rating.js'
-import { openExternal } from './community-model.js'
+import { openExternal, publisherName } from './community-model.js'
 import { providesLabel } from '../workshop/workshop-model.js'
 import styles from './community.module.css'
 
@@ -61,10 +63,21 @@ const PERMISSION_LAYERS = {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+/** The card keeps to four review words (interaction model §2.6); notes and details stay on the detail page. */
+const CARD_REVIEW: Partial<
+  Record<CommunityReviewStatus, { readonly tone: 'ok' | 'warn' | 'bad'; readonly label: string }>
+> = {
+  passed: { tone: 'ok', label: '已审查' },
+  passed_with_notes: { tone: 'ok', label: '已审查' },
+  flagged: { tone: 'warn', label: '待复审' },
+  risk_confirmed: { tone: 'bad', label: '有风险' },
+  held: { tone: 'bad', label: '有风险' },
+  rejected: { tone: 'bad', label: '有风险' },
+}
+
 const ReviewChip = ({ status }: { readonly status: CommunityExtensionSummary['latest'] }) => {
-  if (!status) return null
-  const label = communityReviewLabel(status.reviewStatus)
-  return <Chip tone={label.tone}>{label.label}</Chip>
+  const label = status ? CARD_REVIEW[status.reviewStatus] : undefined
+  return label ? <Chip tone={label.tone}>{label.label}</Chip> : null
 }
 
 const currentVersion = typeof __NEKRO_PRODUCT_VERSION__ === 'string' ? __NEKRO_PRODUCT_VERSION__ : ''
@@ -164,31 +177,21 @@ function CommunityCatalog() {
 
   return (
     <MainContent width="full">
-      <ObjectHeader
-        visual={
-          <span className={styles.objectGlyph}>
-            <Store size={18} />
-          </span>
-        }
-        title="发现"
-        meta={<span>由社区作者发布，均经过自动审查</span>}
-      />
+      <PageHeader title="发现" subtitle="由社区作者发布，均经过自动审查" />
+      <TabStrip<Provides> label="提供什么" value={provides} onChange={setProvides} options={PROVIDES} />
       <div className={styles.communityTools}>
         <SearchField value={query} onChange={setQuery} label="搜索社区扩展" placeholder="搜索名称、介绍或标签" />
-        <Segmented<Provides> label="提供什么" value={provides} onChange={setProvides} options={PROVIDES} />
-        <label className={styles.inlineSwitch} htmlFor="community-official-only">
-          <Switch
-            id="community-official-only"
-            checked={officialOnly}
-            onCheckedChange={setOfficialOnly}
-            label="只看官方扩展"
-          />
+        <ToggleChip pressed={officialOnly} onPressedChange={setOfficialOnly}>
           只看官方
-        </label>
-        <Segmented<CommunityExtensionSort>
-          label="排序"
+        </ToggleChip>
+        <Select
+          aria-label="排序"
+          className={styles.sortSelect}
           value={sort}
-          onChange={setSort}
+          onValueChange={(value) => {
+            const next = COMMUNITY_EXTENSION_SORTS.find((item) => item.key === value)
+            if (next) setSort(next.key)
+          }}
           options={COMMUNITY_EXTENSION_SORTS.map(({ key, label }) => ({ value: key, label }))}
         />
       </div>
@@ -218,7 +221,7 @@ function CommunityCatalog() {
                 <ReviewChip status={item.latest} />
                 <RatingMark rating={item.latest?.rating ?? null} />
                 <span className={styles.faint}>
-                  {communityPublisherLabel(item.publisher.handle)} · {relativeTime(item.updatedAt)}更新
+                  {publisherName(item.publisher)} · {relativeTime(item.updatedAt)}更新
                 </span>
               </span>
             </Link>
@@ -317,7 +320,7 @@ function CommunityDetail({
         meta={
           <>
             <span>{providesLabel(detail.provides)}</span>
-            <span>{communityPublisherLabel(detail.publisher.handle)}</span>
+            <span>{publisherName(detail.publisher)}</span>
             {latest ? <span>{relativeTime(latest.createdAt)}发布</span> : null}
             <span>{detail.downloads} 次下载</span>
             {detail.branchOf ? (

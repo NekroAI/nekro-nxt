@@ -30,6 +30,15 @@
   grid-row: 1 / span 2;
 }
 
+/* Rows without a status line take the height of a one-line row (05 §4.2). */
+.row:not(:has(.rowSub)) {
+  min-height: var(--row);
+}
+
+.row:not(:has(.rowSub)) > :first-child {
+  grid-row: auto;
+}
+
 .rowGlyph {
   display: grid;
   place-items: center;
@@ -600,4 +609,8 @@
   .ratingRows li {
     grid-template-columns: 2.5em auto;
   }
+}
+
+.sortSelect {
+  width: 128px;
 }

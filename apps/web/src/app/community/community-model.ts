@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { HostApiContracts, type CommunityEnvironment, type CommunityStatus } from '@nekro-nxt/contracts'
+import {
+  COMMUNITY_OFFICIAL_HANDLE,
+  communityPublisherLabel,
+  HostApiContracts,
+  type CommunityEnvironment,
+  type CommunityStatus,
+} from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 
 const LOGIN_WAIT_MS = 10 * 60_000
@@ -80,3 +86,9 @@ export const ENVIRONMENT_LABEL: Readonly<Record<CommunityEnvironment, string>> =
 export type CommunityState = ReturnType<typeof useCommunityStatus>
 
 export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
+/** Who published something, as people know them: the official account, a display name, or the handle. */
+export const publisherName = (account: { readonly handle: string; readonly displayName: string }): string =>
+  account.handle === COMMUNITY_OFFICIAL_HANDLE
+    ? communityPublisherLabel(account.handle)
+    : account.displayName.trim() || `@${account.handle}`

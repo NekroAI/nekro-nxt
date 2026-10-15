@@ -19,6 +19,7 @@ import {
   ExtensionIcon,
   MainContent,
   ObjectHeader,
+  PageHeader,
   PropertyGroup,
   Skeleton,
   toast,
@@ -113,14 +114,8 @@ export function MineView({ community }: { readonly community: CommunityState }) 
 
   return (
     <MainContent>
-      <ObjectHeader
-        visual={
-          <span className={styles.objectGlyph}>
-            <Send size={20} />
-          </span>
-        }
+      <PageHeader
         title="我的发布"
-        meta={<span>{account ? `@${account.handle}` : ''}</span>}
         actions={
           <Button size="small" icon={<RefreshCw size={14} />} busy={loading} onClick={() => void load()}>
             刷新

@@ -89,7 +89,7 @@ export default function CommunitySpace() {
       <span className={styles.rowGlyph}>{icon}</span>
       <span className={styles.rowName}>{name}</span>
       {state ? <span className={styles.rowState}>{state}</span> : null}
-      <span className={styles.rowSub}>{sub}</span>
+      {sub ? <span className={styles.rowSub}>{sub}</span> : null}
     </Link>
   )
 
@@ -104,16 +104,16 @@ export default function CommunitySpace() {
       }
     >
       <SelectionList selectedKey={selected}>
-        {row('discover', '/community', <Compass size={14} />, '发现', '浏览、搜索与安装社区扩展')}
-        {row('personas', '/community/personas', <UsersRound size={14} />, '人设', '安装社区作者分享的人设')}
-        {row('mine', '/community/mine', <Send size={14} />, '我的发布', account ? '发布记录与审查结果' : '登录后查看')}
+        {row('discover', '/community', <Compass size={14} />, '发现', undefined)}
+        {row('personas', '/community/personas', <UsersRound size={14} />, '人设', undefined)}
+        {row('mine', '/community/mine', <Send size={14} />, '我的发布', account ? undefined : '登录后查看')}
         {status?.features?.includes('feedback') || feedback.pendingDrafts > 0 || feedback.unread > 0
           ? row(
               'feedback',
               '/community/feedback',
               <MessageCircle size={14} />,
               '反馈',
-              feedback.pendingDrafts ? `${feedback.pendingDrafts} 条等待确认` : '问题、建议与处理进展',
+              feedback.pendingDrafts ? `${feedback.pendingDrafts} 条等待确认` : undefined,
               feedback.unread ? <span className={styles.count}>{feedback.unread}</span> : undefined,
             )
           : null}

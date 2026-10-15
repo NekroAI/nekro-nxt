@@ -54,6 +54,7 @@ declare const styles: {
   readonly rowName: string
   readonly rowState: string
   readonly rowSub: string
+  readonly sortSelect: string
   readonly stack: string
   readonly stars: string
   readonly starsOff: string

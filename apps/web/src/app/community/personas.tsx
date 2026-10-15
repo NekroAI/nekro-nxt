@@ -1,4 +1,4 @@
-import { communityPublisherLabel, HostApiContracts, type CommunityPersonaSummary } from '@nekro-nxt/contracts'
+import { HostApiContracts, type CommunityPersonaSummary } from '@nekro-nxt/contracts'
 import { ArrowLeft, ExternalLink, UsersRound, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -14,6 +14,7 @@ import {
   MainContent,
   ObjectHeader,
   ObjectTile,
+  PageHeader,
   Pressable,
   PropertyGroup,
   SearchField,
@@ -21,7 +22,7 @@ import {
   toast,
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
-import { errorMessage, openExternal } from './community-model.js'
+import { errorMessage, openExternal, publisherName } from './community-model.js'
 import { PersonaInstallDialog } from './persona-install-dialog.js'
 import { usePersonaDetail } from './persona-model.js'
 import styles from './personas.module.css'
@@ -112,14 +113,9 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
 
   return (
     <MainContent width="full">
-      <ObjectHeader
-        visual={
-          <span className={styles.glyph}>
-            <UsersRound size={18} />
-          </span>
-        }
+      <PageHeader
         title="人设"
-        meta={
+        subtitle={
           <span className={styles.metaWithTip}>
             社区作者分享的智能体人设
             <InfoTip label="人设">人设包含名称、头像和设定。可以用它新建智能体，或替换现有智能体的设定。</InfoTip>
@@ -170,9 +166,7 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
                 <PersonaAvatar id={item.id} name={item.name} url={item.avatarUrl} />
                 <span className={styles.cardTitle}>
                   <b>{item.name}</b>
-                  <span className={styles.faint}>
-                    {item.official ? '官方' : communityPublisherLabel(item.publisher.handle)}
-                  </span>
+                  <span className={styles.faint}>{item.official ? '官方' : publisherName(item.publisher)}</span>
                 </span>
               </span>
               <span className={styles.cardSummary}>{item.summary || '作者还没有填写简介。'}</span>
@@ -242,7 +236,7 @@ export function PersonaDetail({
       status={detail.official ? <Chip tone="accent">官方</Chip> : undefined}
       meta={
         <>
-          <span>{communityPublisherLabel(detail.publisher.handle)}</span>
+          <span>{publisherName(detail.publisher)}</span>
           <span>{detail.installs} 次安装</span>
           <span>{relativeTime(detail.revision.createdAt)}更新</span>
         </>
