@@ -92,10 +92,14 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect(page.getByLabel('命令记录').filter({ hasText: '智能体：未绑定' }).first()).toBeVisible()
     // Platform group administrator is still unauthorized until explicitly granted here.
     const beforeDenied = platform.sent.length
-    platform.send('/off')
+    // An unaddressed command in a group is ordinary chat, not a failed command.
+    platform.send('/status')
+    await page.waitForTimeout(300)
+    expect(platform.sent).toHaveLength(beforeDenied)
+    platform.send('/pause', true)
     await expect(page.getByText(/无权执行此命令/).first()).toBeVisible()
     expect(platform.sent).toHaveLength(beforeDenied)
-    platform.send('/不存在的命令')
+    platform.send('/不存在的命令', true)
     await expect(page.getByText(/未知命令：\/不存在的命令/).first()).toBeVisible()
     expect(platform.sent).toHaveLength(beforeDenied)
     await page.screenshot({ path: testInfo.outputPath('unauthorized.png'), fullPage: true })
@@ -126,13 +130,16 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect(page.getByRole('option', { name: '普通用户', exact: true })).toBeDisabled()
     await page.screenshot({ path: testInfo.outputPath('permission-floor.png'), fullPage: true })
     await page.keyboard.press('Escape')
-    platform.send('/on')
-    await expect
-      .poll(async () => {
-        const next = HostApiContracts.snapshot.parseResponse(await (await request.get('/api/snapshot')).json())
-        return next.channels.find((c) => c.id === channel.id)?.bindings[0]?.triggerPolicy
-      })
-      .toBe('mentioned-or-replied')
+    const bindingOf = async () => {
+      const next = HostApiContracts.snapshot.parseResponse(await (await request.get('/api/snapshot')).json())
+      return next.channels.find((c) => c.id === channel.id)?.bindings[0]
+    }
+    platform.send('/pause', true)
+    await expect.poll(async () => (await bindingOf())?.paused).toBe(true)
+    // Pausing never rewrites the response rule.
+    expect((await bindingOf())?.triggerPolicy).toBe('observe-only')
+    platform.send('/resume', true)
+    await expect.poll(async () => (await bindingOf())?.paused).toBe(false)
     await page.goto('/settings/commands')
     await expect(page.getByRole('heading', { name: '聊天命令', exact: true })).toBeVisible()
     await expect(page.getByRole('switch', { name: '启用 help' })).toBeDisabled()
@@ -211,11 +218,14 @@ test('production command journey: authorization, completion, denial, delivery fa
       .first()
       .locator('[data-system-event-content]')
     await expect(resultBody).toHaveCSS('white-space', 'pre-wrap')
-    expect(await resultBody.innerText()).toBe('你好 世界\n你好 世界')
+    expect(await resultBody.innerText()).toContain('你好 世界\n你好 世界')
+    await expect(
+      page.getByLabel('命令记录').filter({ hasText: '只在控制台显示，没有发送到频道' }).first(),
+    ).toBeVisible()
     expect(JSON.stringify(platform.sent.slice(before))).not.toContain('/ext_COMMANDDEMO:echo')
+    // Platform members always get their answer in the conversation, so delivery failures come from them.
     platform.failDelivery(true)
-    await input.fill('/status ')
-    await input.press('Enter')
+    platform.send('/status', true)
     await expect(page.getByText('执行成功，但回复投递失败或未确认。').first()).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('delivery-failed.png'), fullPage: true })
     platform.failDelivery(false)
@@ -237,8 +247,7 @@ test('production command journey: authorization, completion, denial, delivery fa
     ).toHaveCount(0)
     expect(reexecutions).toBe(0)
     platform.unknownDelivery(true)
-    await input.fill('/status ')
-    await input.press('Enter')
+    platform.send('/status', true)
     const unknownReply = page
       .getByLabel('命令记录')
       .filter({ has: page.getByRole('button', { name: '已送达', exact: true }) })

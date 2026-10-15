@@ -340,7 +340,7 @@ export function Composer({
       <div className={styles.composerRow}>
         {commandMode ? (
           <span className={styles.as}>执行当前频道命令</span>
-        ) : external && connection && !blocked ? (
+        ) : external && connection ? (
           <span className={styles.as} title="以这个机器人账号发出，群成员可见">
             <Plug aria-hidden="true" />
             {connectionDisplayName(connection)}
