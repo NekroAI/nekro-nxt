@@ -3,6 +3,7 @@ export {
   IconButton,
   Pressable,
   Chip,
+  ToggleChip,
   StatusDot,
   Kbd,
   Spinner,
@@ -63,7 +64,7 @@ export {
   type GaugeSegment,
 } from './layout.js'
 export { cssVars } from './css-vars.js'
-export { ReaderPage, BoardPage, WorkbenchPage, ListPane, MainContent, MasterDetail } from './page.js'
+export { PageHeader, ReaderPage, BoardPage, WorkbenchPage, ListPane, MainContent, MasterDetail } from './page.js'
 export {
   ObjectHeader,
   DetailPane,
@@ -73,6 +74,9 @@ export {
   KeyValueCopy,
   Diagnostics,
   InlineEdit,
+  Stats,
+  DangerZone,
+  type StatItem,
 } from './detail.js'
 export { DataTable, SearchField, Toolbar, SaveBar, type Column } from './data.js'
 export { RiskLadder, type RiskStep } from './risk-ladder.js'

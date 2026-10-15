@@ -19,6 +19,30 @@ import styles from './page.module.css'
  *   position. Clicking an item never jumps away from the list when there is room to keep it.
  */
 
+/**
+ * Header of a view page (05 §6.1): the title, an optional one-line subtitle and at most two actions. Object pages use
+ * `ObjectHeader`; search, filters and statistics go below the header, never on the title line.
+ */
+export function PageHeader({
+  title,
+  subtitle,
+  actions,
+}: {
+  readonly title: ReactNode
+  readonly subtitle?: ReactNode
+  readonly actions?: ReactNode
+}) {
+  return (
+    <header className={styles.pageHead}>
+      <div className={styles.pageHeading}>
+        <h1 className={styles.pageTitle}>{title}</h1>
+        {subtitle ? <p className={styles.pageSubtitle}>{subtitle}</p> : null}
+      </div>
+      {actions ? <div className={styles.pageActions}>{actions}</div> : null}
+    </header>
+  )
+}
+
 /** Standalone forms without a collection list (e.g. adding an account): one centred column. */
 export function ReaderPage({
   title,
@@ -32,10 +56,7 @@ export function ReaderPage({
   return (
     <div className={styles.scroll} data-layout="reader">
       <div className={styles.reader}>
-        <header className={styles.pageHead}>
-          <h1 className={styles.pageTitle}>{title}</h1>
-          {actions ? <div className={styles.pageActions}>{actions}</div> : null}
-        </header>
+        <PageHeader title={title} actions={actions} />
         {children}
       </div>
     </div>

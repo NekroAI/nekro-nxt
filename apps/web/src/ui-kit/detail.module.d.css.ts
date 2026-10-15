@@ -37,6 +37,10 @@ declare const styles: {
   readonly rowLabelLine: string
   readonly rowText: string
   readonly stacked: string
+  readonly stat: string
+  readonly statLabel: string
+  readonly statValue: string
+  readonly stats: string
   readonly title: string
   readonly titleRow: string
   readonly visual: string

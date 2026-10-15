@@ -1,7 +1,7 @@
 .segmented {
   position: relative;
-  display: grid;
-  grid-auto-columns: minmax(0, 1fr);
+  display: inline-grid;
+  grid-auto-columns: auto;
   grid-auto-flow: column;
   padding: calc(var(--s-1) / 2);
   border-radius: 10px;

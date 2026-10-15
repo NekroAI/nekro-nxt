@@ -103,6 +103,31 @@ export function Chip({
   )
 }
 
+/** A filter that can be switched on and off on its own (05 §7.2): a chip that stays pressed. */
+export function ToggleChip({
+  pressed,
+  onPressedChange,
+  icon,
+  children,
+}: {
+  readonly pressed: boolean
+  readonly onPressedChange: (pressed: boolean) => void
+  readonly icon?: ReactNode
+  readonly children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      className={cx(styles.chip, styles.toggleChip)}
+      onClick={() => onPressedChange(!pressed)}
+    >
+      {icon}
+      {children}
+    </button>
+  )
+}
+
 export function StatusDot({
   tone = 'neutral',
   pulse = false,

@@ -16,11 +16,13 @@ declare const styles: {
   readonly instanceState: string
   readonly main: string
   readonly rail: string
+  readonly railDesktopOnly: string
   readonly railDivider: string
   readonly railExtension: string
   readonly railIndicator: string
   readonly railIndicatorReady: string
   readonly railItem: string
+  readonly railMobileOnly: string
   readonly railSpacer: string
   readonly railSvgIcon: string
   readonly runDot: string

@@ -118,7 +118,7 @@
   grid-row: 1;
   grid-column: 2;
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -133,7 +133,7 @@
   border-radius: 9px;
   background: var(--accent-fill);
   color: var(--on-accent-fill);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   line-height: 18px;
   text-align: center;
@@ -218,7 +218,7 @@
   gap: var(--s-2);
   min-width: 0;
   margin: 0;
-  font-size: 18px;
+  font-size: var(--fs-xl);
   font-weight: 650;
 }
 
@@ -374,7 +374,7 @@
   gap: var(--s-4);
   margin: var(--s-3) 0 var(--s-2);
   color: var(--faint);
-  font: 600 11px var(--font-mono);
+  font: 600 var(--fs-xs) var(--font-mono);
   letter-spacing: 0.12em;
 }
 
@@ -423,7 +423,7 @@
 
 .time {
   color: var(--faint);
-  font: 11px var(--font-mono);
+  font: var(--fs-xs) var(--font-mono);
 }
 
 .adminTag {
@@ -431,7 +431,7 @@
   border-radius: 5px;
   background: var(--inset);
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 
 .delivered {
@@ -748,7 +748,7 @@ button.step:hover {
 .stepTime {
   flex: none;
   color: var(--faint);
-  font: 11px var(--font-mono);
+  font: var(--fs-xs) var(--font-mono);
 }
 
 .stepRun {
@@ -879,7 +879,7 @@ button.step:hover {
   border-radius: 6px;
   background: color-mix(in srgb, var(--turn-accent) 14%, transparent);
   color: var(--turn-accent);
-  font: 600 11px var(--font-mono);
+  font: 600 var(--fs-xs) var(--font-mono);
 }
 
 .cardState {
@@ -922,7 +922,7 @@ button.step:hover {
   flex-wrap: wrap;
   gap: var(--s-4);
   color: var(--faint);
-  font: 11px var(--font-mono);
+  font: var(--fs-xs) var(--font-mono);
 }
 
 /* —— 输入区 —— */

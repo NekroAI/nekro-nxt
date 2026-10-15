@@ -17,7 +17,7 @@
   margin-bottom: calc(var(--s-1) / 2);
   padding: 0;
   color: var(--muted, var(--muted));
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 650;
   letter-spacing: 0.04em;
 }
@@ -41,7 +41,7 @@
   background: transparent;
   color: var(--muted, var(--muted));
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
 }
 
@@ -66,11 +66,11 @@
 .hint {
   margin: 0;
   color: var(--muted, var(--muted));
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .issue {
   margin: 0;
   color: var(--bad, var(--bad));
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }

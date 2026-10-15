@@ -121,6 +121,10 @@ function unscopedSelectors(css) {
   return output
 }
 
+/** Font sizes come from `--t-*` roles or `--fs-*` steps; a pixel line-height after `/` is allowed. */
+const FONT_PROPERTY = /^(font|font-size)$/u
+const PIXEL_SIZE = /\b\d+(\.\d+)?px\b/u
+
 export function inspectCss(relativePath, css) {
   const findings = []
   if (relativePath.endsWith('.module.css'))
@@ -133,6 +137,8 @@ export function inspectCss(relativePath, css) {
       if (!(property === 'white-space' || property === 'content'))
         findings.push({ file: relativePath, line, rule: 'color', text: `${property}: ${value}` })
     }
+    if (!tokensFile && FONT_PROPERTY.test(property) && PIXEL_SIZE.test(value.replace(/\/\s*[\d.]+px/gu, '')))
+      findings.push({ file: relativePath, line, rule: 'font', text: `${property}: ${value}` })
     if (SPACING_PROPERTY.test(property)) {
       const invalid = components(value).filter((part) => !validSpacing(part))
       if (invalid.length > 0)
@@ -162,6 +168,7 @@ function runSelfTest() {
 /* .e { color: white; } */
 .f { box-shadow: 0 0 0 1px white; padding: var(--s-1) var(--s-3); }
 .g { column-gap: 6px; --local: #000; }
+.h { font-size: 13px; font: 600 var(--fs-xs) / 16px var(--font-mono); font: 11px var(--font-mono); }
 `
   assert.deepEqual(
     inspectCss('apps/web/src/app/fixture.module.css', fixture).map(({ line, rule }) => [line, rule]),
@@ -171,6 +178,8 @@ function runSelfTest() {
       [5, 'color'],
       [7, 'color'],
       [8, 'spacing'],
+      [9, 'font'],
+      [9, 'font'],
     ],
   )
   assert.deepEqual(inspectCss('apps/web/src/ui-kit/tokens.css', '.x { color: #000; }'), [])
@@ -190,7 +199,9 @@ function runSelfTest() {
   )
   assert.equal(validSpacing('calc(var(--s-4) + 2px)'), false)
   assert.equal(validSpacing('calc(var(--s-4) * 2)'), true)
-  console.log('CSS token self-test passed (colors, spacing shorthands, calc over Tokens, comments and tokens.css).')
+  console.log(
+    'CSS token self-test passed (colors, spacing shorthands, font sizes, calc over Tokens, comments and tokens.css).',
+  )
 }
 
 if (process.argv.includes('--self-test')) {
@@ -205,7 +216,7 @@ if (process.argv.includes('--self-test')) {
     console.log(`CSS token check passed (${files.length} CSS Module files).`)
   } else {
     const lines = findings.map(({ file, line, rule, text }) => `${file}:${line} [${rule}] ${text}`)
-    const summary = `CSS token check: ${findings.length} findings in ${new Set(findings.map((f) => f.file)).size} files (color ${byRule('color')}, spacing ${byRule('spacing')}, scope ${byRule('scope')}).`
+    const summary = `CSS token check: ${findings.length} findings in ${new Set(findings.map((f) => f.file)).size} files (color ${byRule('color')}, spacing ${byRule('spacing')}, font ${byRule('font')}, scope ${byRule('scope')}).`
     if (strict) {
       console.error(['组件样式必须只使用 Token：', ...lines, summary].join('\n'))
       process.exitCode = 1

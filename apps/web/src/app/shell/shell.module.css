@@ -38,7 +38,7 @@
   align-items: center;
   gap: var(--s-2);
   color: var(--fg);
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-weight: 650;
   white-space: nowrap;
 }
@@ -213,7 +213,7 @@ a.instance {
   background: var(--bad-fill);
   box-shadow: 0 0 0 2px var(--side);
   color: var(--on-bad-fill);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   line-height: 16px;
   text-align: center;
@@ -275,8 +275,11 @@ a.instance {
   gap: var(--s-1);
   width: 58px;
   padding: var(--s-2) 0 var(--s-2);
+  border: 0;
   border-radius: 12px;
+  background: transparent;
   color: var(--muted);
+  cursor: pointer;
   font-size: var(--fs-xs);
   text-decoration: none;
   transition: color var(--dur-2);
@@ -314,6 +317,16 @@ a.instance {
 
 .railSpacer {
   flex: 1;
+}
+
+.railMobileOnly {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .railMobileOnly {
+    display: flex;
+  }
 }
 
 /* Extension pages that registered a rail entry; long titles are cut to the rail width. */
@@ -420,7 +433,7 @@ a.instance {
   flex: none;
   margin-left: auto;
   color: var(--faint);
-  font: 11px var(--font-mono);
+  font: var(--fs-xs) var(--font-mono);
   text-decoration: none;
 }
 
@@ -441,7 +454,7 @@ a.instance {
   flex: none;
   margin-left: auto;
   color: var(--faint);
-  font: 11px var(--font-mono);
+  font: var(--fs-xs) var(--font-mono);
   letter-spacing: 0.06em;
 }
 
@@ -505,8 +518,9 @@ a.instance {
     width: auto;
   }
 
-  /* The bottom bar has room for the built-in spaces only; extension pages stay in the command palette and workshop. */
+  /* The bottom bar keeps four spaces and “更多” (05 §6.2); everything else opens from “更多”. */
   .railExtension,
+  .railDesktopOnly,
   .railSpacer,
   .railDivider,
   .status,

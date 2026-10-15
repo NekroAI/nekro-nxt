@@ -54,7 +54,7 @@
 }
 
 .stat b {
-  font-size: 28px;
+  font-size: var(--fs-2xl);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   letter-spacing: -0.03em;
@@ -80,7 +80,7 @@
 
 .sectionTitle {
   margin: 0 0 var(--s-3);
-  font-size: 15px;
+  font-size: var(--fs-lg);
   font-weight: 650;
 }
 

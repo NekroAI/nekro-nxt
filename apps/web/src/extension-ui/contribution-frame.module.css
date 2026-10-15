@@ -39,7 +39,7 @@
 
 .title {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -48,7 +48,7 @@
 .source {
   overflow: hidden;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -78,7 +78,7 @@
   align-items: center;
   gap: var(--s-2);
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .retry {
@@ -89,7 +89,7 @@
   background: transparent;
   color: var(--fg);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 

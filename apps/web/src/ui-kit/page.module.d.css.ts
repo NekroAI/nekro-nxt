@@ -18,6 +18,8 @@ declare const styles: {
   readonly narrowBack: string
   readonly pageActions: string
   readonly pageHead: string
+  readonly pageHeading: string
+  readonly pageSubtitle: string
   readonly pageTitle: string
   readonly readable: string
   readonly reader: string

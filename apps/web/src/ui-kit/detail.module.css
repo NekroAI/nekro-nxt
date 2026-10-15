@@ -260,6 +260,28 @@
   min-width: 0;
 }
 
+.rowControl[data-width] {
+  justify-content: flex-start;
+}
+
+.rowControl[data-width] > * {
+  flex: 0 1 auto;
+}
+
+.rowControl[data-width='sm'] > :first-child {
+  width: var(--field-sm);
+  max-width: 100%;
+}
+
+.rowControl[data-width='md'] > :first-child {
+  width: var(--field);
+  max-width: 100%;
+}
+
+.row:not(.stacked) > .rowControl[data-width] {
+  justify-content: flex-end;
+}
+
 /* Narrow windows: a wide control (select and buttons) wraps under its label instead of squeezing it. */
 @media (max-width: 760px) {
   .row:not(.stacked) {
@@ -404,4 +426,38 @@
 
 .inlineForm > * {
   flex: 1;
+}
+
+/* —— 统计数字 —— */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-8);
+  margin: 0;
+}
+
+.stat {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+}
+
+.statLabel {
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.statValue {
+  margin: 0;
+  color: var(--fg);
+  font: 600 var(--fs-xl) / 1.2 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat[data-tone='bad'] .statValue {
+  color: var(--bad);
+}
+
+.stat[data-tone='warn'] .statValue {
+  color: var(--warn);
 }

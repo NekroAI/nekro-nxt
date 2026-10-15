@@ -7,6 +7,7 @@ import {
   Cable,
   LockOpen,
   MessagesSquare,
+  MoreHorizontal,
   Search,
   Server,
   Settings,
@@ -16,12 +17,12 @@ import {
   Wrench,
 } from 'lucide-react'
 import { browserInstanceName, isUnencryptedRemoteConnection } from '../../management-access.js'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
 import { HOST_ICONS } from '../../extension-ui/icons.js'
 import { useProductStore, type ProductHostStatus } from '../../product-runtime.js'
-import { Kbd, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
+import { Kbd, Menu, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
 import { AttentionList } from '../attention/attention-list.js'
 import { useAttention } from '../model/attention.js'
 import { connectionStatus } from '../model/connection-status.js'
@@ -71,15 +72,88 @@ function useRailPages() {
     .sort((a, b) => (a.rail?.order ?? 0) - (b.rail?.order ?? 0) || a.sortOrder - b.sortOrder)
 }
 
+type RailPage = ReturnType<typeof useRailPages>[number]
+
+const NARROW = '(max-width: 760px)'
+/** Spaces that stay in the bottom bar on a phone (05 §6.2); the rest open from its “更多”. */
+const MOBILE_SPACES = new Set<string>(['/live', '/channels', '/agents', '/workshop'])
+
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(NARROW).matches)
+  useEffect(() => {
+    if (!window.matchMedia) return
+    const query = window.matchMedia(NARROW)
+    const sync = () => setNarrow(query.matches)
+    query.addEventListener('change', sync)
+    return () => query.removeEventListener('change', sync)
+  }, [])
+  return narrow
+}
+
+/**
+ * How many extension pages fit between the built-in spaces and the bottom group (05 §6). The rail measures its own
+ * free height; when not every page fits, one slot goes to “更多”.
+ */
+function useRailFit(ref: React.RefObject<HTMLElement | null>, count: number): number {
+  const [fit, setFit] = useState(count)
+  useLayoutEffect(() => {
+    const rail = ref.current
+    if (!rail) return
+    const measure = () => {
+      const item = rail.querySelector<HTMLElement>('[data-rail-space]')
+      const spacer = rail.querySelector<HTMLElement>('[data-rail-spacer]')
+      if (!item || !spacer) return
+      const step = item.offsetHeight + 2
+      const shown = rail.querySelectorAll('[data-extension-rail]').length
+      const more = rail.querySelector('[data-rail-overflow]') ? 1 : 0
+      // Free height if no extension page (and no “更多”) were shown.
+      const free = spacer.offsetHeight + (shown + more) * step
+      const all = Math.floor(free / step)
+      setFit(all >= count ? count : Math.max(0, all - 1))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(rail)
+    return () => observer.disconnect()
+  }, [ref, count])
+  return Math.min(fit, count)
+}
+
+function RailPageIcon({ page }: { readonly page: RailPage }) {
+  const Icon = page.icon.kind === 'host-icon' ? HOST_ICONS[page.icon.name] : AppWindow
+  const svg = pageSvgIconUrl(page)
+  return svg === undefined ? (
+    <Icon aria-hidden="true" strokeWidth={1.7} />
+  ) : (
+    // A mask keeps the extension's own icon in the rail's text colour in both themes.
+    <span
+      className={styles.railSvgIcon}
+      style={{ maskImage: `url("${svg}")`, WebkitMaskImage: `url("${svg}")` }}
+      aria-hidden="true"
+    />
+  )
+}
+
+const pagePath = (page: RailPage) => `${page.routeBase}${page.startPath ? `/${page.startPath}` : ''}`
+
 function Rail() {
   const location = useLocation()
+  const go = useGo()
+  const narrow = useNarrow()
   const railPages = useRailPages()
   const activePage = railPages.find(
     (page) => location.pathname === page.routeBase || location.pathname.startsWith(`${page.routeBase}/`),
   )
   const space = activePage?.routeBase ?? spaceOf(location.pathname)
   const ref = useRef<HTMLElement>(null)
-  const { geometry, ready } = useIndicator(ref, '[aria-current="page"]', space)
+  const fit = useRailFit(ref, railPages.length)
+  const shown = railPages.slice(0, fit)
+  const overflow = railPages.slice(fit)
+  // The “更多” that holds the current page carries the selection, so the indicator always has one target.
+  const mobileMore = narrow && !MOBILE_SPACES.has(space)
+  const desktopMore = !narrow && overflow.some((page) => page.routeBase === space)
+  const { geometry, ready } = useIndicator(ref, '[aria-current="page"]', `${space}:${narrow}:${fit}`)
+  const current = (path: string) => (space === path ? 'page' : undefined)
   return (
     <nav ref={ref} className={styles.rail} aria-label="主导航">
       <span
@@ -93,47 +167,110 @@ function Rail() {
         aria-hidden="true"
       />
       {SPACES.map(({ path, label, icon: Icon }) => (
-        <NavLink key={path} to={path} className={styles.railItem} aria-current={space === path ? 'page' : undefined}>
+        <NavLink
+          key={path}
+          to={path}
+          className={[styles.railItem, MOBILE_SPACES.has(path) ? '' : styles.railDesktopOnly].join(' ')}
+          aria-current={narrow && !MOBILE_SPACES.has(path) ? undefined : current(path)}
+          data-rail-space=""
+        >
           <Icon aria-hidden="true" strokeWidth={1.7} />
           <span>{label}</span>
         </NavLink>
       ))}
       {railPages.length > 0 ? <span className={styles.railDivider} aria-hidden="true" /> : null}
-      {railPages.map((page) => {
-        const Icon = page.icon.kind === 'host-icon' ? HOST_ICONS[page.icon.name] : AppWindow
-        const svg = pageSvgIconUrl(page)
-        return (
-          <NavLink
-            key={page.pageInstanceId}
-            to={`${page.routeBase}${page.startPath ? `/${page.startPath}` : ''}`}
-            className={[styles.railItem, styles.railExtension].join(' ')}
-            aria-current={space === page.routeBase ? 'page' : undefined}
-            title={page.title}
-            data-extension-rail=""
-          >
-            {svg === undefined ? (
-              <Icon aria-hidden="true" strokeWidth={1.7} />
-            ) : (
-              // A mask keeps the extension's own icon in the rail's text colour in both themes.
-              <span
-                className={styles.railSvgIcon}
-                style={{ maskImage: `url("${svg}")`, WebkitMaskImage: `url("${svg}")` }}
-                aria-hidden="true"
-              />
-            )}
-            <span>{page.title}</span>
-          </NavLink>
-        )
-      })}
-      <span className={styles.railSpacer} />
-      <NavLink to="/logs" className={styles.railItem} aria-current={space === '/logs' ? 'page' : undefined}>
+      {shown.map((page) => (
+        <NavLink
+          key={page.pageInstanceId}
+          to={pagePath(page)}
+          className={[styles.railItem, styles.railExtension].join(' ')}
+          aria-current={narrow ? undefined : current(page.routeBase)}
+          title={page.title}
+          data-extension-rail=""
+        >
+          <RailPageIcon page={page} />
+          <span>{page.title}</span>
+        </NavLink>
+      ))}
+      {overflow.length > 0 ? (
+        <Menu
+          label="更多扩展页面"
+          align="start"
+          trigger={
+            <Pressable
+              className={[styles.railItem, styles.railExtension].join(' ')}
+              aria-current={desktopMore ? 'page' : undefined}
+              data-rail-overflow=""
+            >
+              <MoreHorizontal aria-hidden="true" strokeWidth={1.7} />
+              <span>更多</span>
+            </Pressable>
+          }
+          items={overflow.map((page) => ({
+            key: page.pageInstanceId,
+            label: page.title,
+            icon: <RailPageIcon page={page} />,
+            onSelect: () => go(pagePath(page)),
+          }))}
+        />
+      ) : null}
+      <span className={styles.railSpacer} data-rail-spacer="" />
+      <NavLink
+        to="/logs"
+        className={[styles.railItem, styles.railDesktopOnly].join(' ')}
+        aria-current={narrow ? undefined : current('/logs')}
+      >
         <ScrollText aria-hidden="true" strokeWidth={1.7} />
         <span>日志</span>
       </NavLink>
-      <NavLink to="/settings" className={styles.railItem} aria-current={space === '/settings' ? 'page' : undefined}>
+      <NavLink
+        to="/settings"
+        className={[styles.railItem, styles.railDesktopOnly].join(' ')}
+        aria-current={narrow ? undefined : current('/settings')}
+      >
         <Settings aria-hidden="true" strokeWidth={1.7} />
         <span>设置</span>
       </NavLink>
+      <Menu
+        label="更多"
+        trigger={
+          <Pressable
+            className={[styles.railItem, styles.railMobileOnly].join(' ')}
+            aria-current={mobileMore ? 'page' : undefined}
+          >
+            <MoreHorizontal aria-hidden="true" strokeWidth={1.7} />
+            <span>更多</span>
+          </Pressable>
+        }
+        items={[
+          ...SPACES.filter(({ path }) => !MOBILE_SPACES.has(path)).map(({ path, label, icon: Icon }) => ({
+            key: path,
+            label,
+            icon: <Icon size={16} aria-hidden="true" />,
+            onSelect: () => go(path),
+          })),
+          ...(railPages.length > 0 ? [{ heading: '扩展页面' } as const] : []),
+          ...railPages.map((page) => ({
+            key: page.pageInstanceId,
+            label: page.title,
+            icon: <RailPageIcon page={page} />,
+            onSelect: () => go(pagePath(page)),
+          })),
+          'separator' as const,
+          {
+            key: '/logs',
+            label: '日志',
+            icon: <ScrollText size={16} aria-hidden="true" />,
+            onSelect: () => go('/logs'),
+          },
+          {
+            key: '/settings',
+            label: '设置',
+            icon: <Settings size={16} aria-hidden="true" />,
+            onSelect: () => go('/settings'),
+          },
+        ]}
+      />
     </nav>
   )
 }

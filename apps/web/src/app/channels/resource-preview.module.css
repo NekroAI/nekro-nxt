@@ -48,7 +48,7 @@
   background: var(--surface-2);
   color: var(--fg);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 18px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -60,7 +60,7 @@
   gap: var(--s-2);
   margin: 0;
   color: var(--fg-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
 }
 
@@ -69,7 +69,7 @@
   align-items: center;
   gap: var(--s-2);
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 620;
   text-decoration: none;
 }

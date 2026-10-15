@@ -70,7 +70,7 @@
   margin: 0;
   overflow-wrap: anywhere;
   color: var(--fg);
-  font-size: 18px;
+  font: var(--t-section);
   font-weight: 650;
   line-height: 1.4;
 }

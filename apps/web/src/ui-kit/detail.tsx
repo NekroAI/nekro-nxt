@@ -136,7 +136,10 @@ export function PropertyRow({
   layout = 'inline',
   htmlFor,
   badge,
+  width,
 }: {
+  /** Width of a single-line control (05 §4.2): `sm` for selects and short values, `md` for names and addresses. */
+  readonly width?: 'sm' | 'md'
   readonly label: ReactNode
   /** Always visible under the label: keep it to what changes the user's decision every time. */
   readonly description?: ReactNode
@@ -160,8 +163,52 @@ export function PropertyRow({
         </span>
         {description ? <div className={styles.rowDescription}>{description}</div> : null}
       </div>
-      {children !== undefined ? <div className={styles.rowControl}>{children}</div> : null}
+      {children !== undefined ? (
+        <div className={styles.rowControl} data-width={width}>
+          {children}
+        </div>
+      ) : null}
     </div>
+  )
+}
+
+/** One figure of a `Stats` row: label above, number below in tabular figures (05 §7.1). */
+export interface StatItem {
+  readonly key: string
+  readonly label: ReactNode
+  readonly value: ReactNode
+  readonly tone?: 'neutral' | 'bad' | 'warn'
+}
+
+/** A row of figures with equal spacing, placed under the page header. */
+export function Stats({ items, label }: { readonly items: readonly StatItem[]; readonly label?: string }) {
+  return (
+    <dl className={styles.stats} aria-label={label}>
+      {items.map((item) => (
+        <div key={item.key} className={styles.stat} data-tone={item.tone === 'neutral' ? undefined : item.tone}>
+          <dt className={styles.statLabel}>{item.label}</dt>
+          <dd className={styles.statValue}>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+/**
+ * Destructive actions of a detail page, kept at its end (05 §10): each row states the consequence and offers one
+ * danger button. Pass `PropertyRow`s as children.
+ */
+export function DangerZone({
+  children,
+  title = '危险操作',
+}: {
+  readonly children: ReactNode
+  readonly title?: string
+}) {
+  return (
+    <PropertyGroup title={title}>
+      <PropertyList>{children}</PropertyList>
+    </PropertyGroup>
   )
 }
 

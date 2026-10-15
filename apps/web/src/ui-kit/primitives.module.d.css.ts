@@ -15,6 +15,7 @@ declare const styles: {
   readonly primary: string
   readonly small: string
   readonly spinner: string
+  readonly toggleChip: string
   readonly warn: string
 }
 

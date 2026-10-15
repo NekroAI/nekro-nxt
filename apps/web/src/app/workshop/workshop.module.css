@@ -200,7 +200,7 @@
   place-items: center;
   border: 2px solid var(--line-3);
   border-radius: 50%;
-  font: 700 10px / 1 var(--font-sans);
+  font: 700 var(--fs-2xs) / 1 var(--font-sans);
 }
 
 .phase[data-state='done'] {
@@ -347,7 +347,7 @@
   border-radius: 50%;
   background: var(--surface);
   color: var(--muted);
-  font: 600 11px / 1 var(--font-mono);
+  font: 600 var(--fs-xs) / 1 var(--font-mono);
 }
 
 .attempt[data-current='true'] .attemptKey {

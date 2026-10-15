@@ -22,12 +22,12 @@
   flex: 1;
   margin: 0;
   color: var(--fg);
-  font-size: 17px;
+  font-size: var(--fs-lg);
   font-weight: 650;
 }
 
 .sectionTitle.small {
-  font-size: 15px;
+  font-size: var(--fs-md);
 }
 
 .banner {
@@ -193,7 +193,7 @@
   border: 2px solid var(--line-2);
   border-radius: 50%;
   background: var(--surface);
-  font: 600 11px var(--font-mono);
+  font: 600 var(--fs-xs) var(--font-mono);
   transition:
     background var(--dur-2),
     border-color var(--dur-2),
