@@ -113,6 +113,7 @@ export interface OutboundIntentRecord {
   /** Commands have their own durable source and never require an Episode. */
   readonly channelId?: ChannelId
   readonly commandExecutionId?: string
+  readonly commandOrdinal?: number
   readonly sourceTurnId?: string
   readonly parts: readonly MessagePart[]
   readonly replyTo?: string

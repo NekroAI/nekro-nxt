@@ -419,6 +419,11 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
     const scheduledTask = scheduledTaskFact(entry.facts)
     const inboundHook = scheduledTask === undefined ? inboundHookFact(runtime, entry) : undefined
     const command = runtime.repository.commands.forEvent(entry.sourceId)
+    // Replies that never reached the platform (kept in the console on purpose, or never planned) show here.
+    const localReplies =
+      command?.replies.filter(
+        (reply) => reply.intentId === undefined && (command.replyLocal === true || reply.error !== undefined),
+      ) ?? []
     return {
       id: entry.sourceId,
       channelId: entry.channelId,
@@ -427,8 +432,15 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
       ...(scheduledTask === undefined ? {} : { scheduledTask }),
       ...(inboundHook === undefined ? {} : { inboundHook }),
       parts:
-        command?.replyError !== undefined && command.replyIntentId === undefined && command.result !== undefined
-          ? [...parts, { type: 'text', text: '\n命令结果：\n' }, ...decorateMessageParts(runtime, command.result.parts)]
+        localReplies.length > 0
+          ? [
+              ...parts,
+              { type: 'text', text: '\n命令结果：\n' },
+              ...localReplies.flatMap((reply, index) => [
+                ...(index === 0 ? [] : [{ type: 'text' as const, text: '\n' }]),
+                ...decorateMessageParts(runtime, reply.parts),
+              ]),
+            ]
           : parts,
       ...(entry.senderMemberId === undefined
         ? {}

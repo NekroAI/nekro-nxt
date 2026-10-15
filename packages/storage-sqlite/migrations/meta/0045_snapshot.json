@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0bf1d051-17c9-4175-955c-cc4a5654e4f5",
+  "id": "ed6ab898-dbb8-45e3-aa56-a41f9d1f586e",
   "prevId": "7be0dd0c-19aa-411e-af1d-68b6e56b331a",
   "tables": {
     "admission_events": {
@@ -1908,6 +1908,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "command_name": {
+          "name": "command_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "status": {
           "name": "status",
           "type": "text",
@@ -1922,6 +1929,20 @@
           "notNull": true,
           "autoincrement": false,
           "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "completed_at": {
+          "name": "completed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "record": {
           "name": "record",
@@ -1948,18 +1969,20 @@
           ],
           "isUnique": true
         },
-        "command_execution_status_idx": {
-          "name": "command_execution_status_idx",
-          "columns": [
-            "status"
-          ],
-          "isUnique": false
-        },
         "command_execution_recovery_idx": {
           "name": "command_execution_recovery_idx",
           "columns": [
             "needs_recovery",
+            "created_at",
             "id"
+          ],
+          "isUnique": false
+        },
+        "command_execution_channel_idx": {
+          "name": "command_execution_channel_idx",
+          "columns": [
+            "channel_id",
+            "created_at"
           ],
           "isUnique": false
         }
@@ -5696,6 +5719,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "command_ordinal": {
+          "name": "command_ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "source_turn_id": {
           "name": "source_turn_id",
           "type": "text",
@@ -5757,7 +5787,8 @@
         "outbound_intents_command_uq": {
           "name": "outbound_intents_command_uq",
           "columns": [
-            "command_execution_id"
+            "command_execution_id",
+            "command_ordinal"
           ],
           "isUnique": true
         },
@@ -5853,7 +5884,7 @@
       "checkConstraints": {
         "outbound_intents_source_ck": {
           "name": "outbound_intents_source_ck",
-          "value": "(\"outbound_intents\".\"episode_id\" IS NOT NULL AND \"outbound_intents\".\"agent_revision_id\" IS NOT NULL AND \"outbound_intents\".\"command_execution_id\" IS NULL) OR (\"outbound_intents\".\"episode_id\" IS NULL AND \"outbound_intents\".\"agent_revision_id\" IS NULL AND \"outbound_intents\".\"command_execution_id\" IS NOT NULL AND \"outbound_intents\".\"channel_id\" IS NOT NULL)"
+          "value": "(\"outbound_intents\".\"episode_id\" IS NOT NULL AND \"outbound_intents\".\"agent_revision_id\" IS NOT NULL AND \"outbound_intents\".\"command_execution_id\" IS NULL AND \"outbound_intents\".\"command_ordinal\" IS NULL) OR (\"outbound_intents\".\"episode_id\" IS NULL AND \"outbound_intents\".\"agent_revision_id\" IS NULL AND \"outbound_intents\".\"command_execution_id\" IS NOT NULL AND \"outbound_intents\".\"command_ordinal\" IS NOT NULL AND \"outbound_intents\".\"channel_id\" IS NOT NULL)"
         },
         "outbound_intents_state_ck": {
           "name": "outbound_intents_state_ck",

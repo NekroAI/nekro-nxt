@@ -46,6 +46,7 @@ export const toIntent = (input: typeof outboundIntents.$inferSelect): OutboundIn
     ...(row.episodeId === null ? {} : { episodeId: row.episodeId }),
     ...(row.channelId === null ? {} : { channelId: row.channelId }),
     ...(row.commandExecutionId === null ? {} : { commandExecutionId: row.commandExecutionId }),
+    ...(row.commandOrdinal === null ? {} : { commandOrdinal: row.commandOrdinal }),
     ...(row.sourceTurnId === null ? {} : { sourceTurnId: row.sourceTurnId }),
     parts: row.parts,
     ...(row.replyTo === null ? {} : { replyTo: row.replyTo }),

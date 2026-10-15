@@ -1,41 +1,28 @@
-import { BUILTIN_DEFINITIONS, RESPONSE_MODE_LABELS } from './built-ins.js'
-import { CommandRateLimiter, type CommandAdmission } from './rate-limit.js'
 import { randomUUID } from 'node:crypto'
 import {
-  ChannelIdSchema,
-  CommandResultSchema,
-  commandUsage,
-  parseCommandArguments,
   recognizeCommand,
-  tokenizeCommand,
   type AgentId,
   type ChannelId,
   type ChannelMemberId,
   type CommandCatalogEntry,
-  type CommandDefinition,
-  type CommandExecutionContext,
   type CommandExecutionIdentity,
   type CommandExecutionRecord,
-  type CommandHandler,
   type CommandPolicy,
-  type CommandResult,
-  type ExtensionRevisionId,
   type PlatformIdentityId,
 } from '@nekro-nxt/contracts'
-import type { CommandGate, ChannelRuntime } from '@nekro-nxt/channel-runtime'
+import type { ChannelRuntime, CommandGate } from '@nekro-nxt/channel-runtime'
 import type { AdapterChannelInboundEvent } from '@nekro-nxt/adapter-sdk'
 import type { AppendChannelEventCommit, ChannelEventRecord, CoreService } from '@nekro-nxt/core'
 import type { SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
+import { CommandDirectory } from './catalog.js'
+import { CommandExecutor } from './executor.js'
+import { CommandRateLimiter, type CommandAdmission } from './rate-limit.js'
+import { CommandReplies } from './replies.js'
+import type { RegisteredCommand } from './types.js'
 
-export interface RegisteredCommand {
-  readonly definition: CommandDefinition
-  readonly fullName: string
-  readonly source: string
-  readonly extensionRevisionId?: ExtensionRevisionId
-  readonly unavailableReason?: string
-  readonly invoke: CommandHandler
-}
-interface CommandServiceOptions {
+export type { RegisteredCommand } from './types.js'
+
+export interface CommandServiceOptions {
   readonly deferExecution?: boolean
   readonly repository: SqliteCoreRepository
   readonly core: CoreService
@@ -51,74 +38,86 @@ interface CommandServiceOptions {
     readonly reason: Exclude<CommandAdmission, 'allowed'>
   }) => void
 }
-const reply = (text: string): CommandResult => ({ parts: [{ type: 'text', text }] })
-class SilentCommandError extends Error {}
-interface QueuedCommand {
-  readonly record: CommandExecutionRecord
-  readonly resolve: (record: CommandExecutionRecord) => void
-  readonly reject: (error: unknown) => void
-}
-/** Host-owned command executor, shared by trusted Web requests and platform facts. */
+
+const LIMIT_REPORT_INTERVAL_MS = 60_000
+
+/**
+ * Host-owned command service shared by trusted Web requests and platform facts. It owns the inbound gate (what is a
+ * command, what is stored with it); the directory, executor and reply delivery do the rest.
+ */
 export class CommandService implements CommandGate {
   readonly #o: CommandServiceOptions
-  readonly #inFlight = new Map<string, Promise<CommandExecutionRecord>>()
-  readonly #controllers = new Set<AbortController>()
-  readonly #queue = new Map<string, QueuedCommand>()
-  readonly #activeChannels = new Set<ChannelId>()
+  readonly #directory: CommandDirectory
+  readonly #replies: CommandReplies
+  readonly #executor: CommandExecutor
   readonly #cutoff: string
   readonly #limiter: CommandRateLimiter
   readonly #limited = new Map<ChannelId, { dropped: number; reportedAt: number }>()
-  #scheduled: NodeJS.Immediate | undefined
   #opened = false
   #disposed = false
-  #ready: boolean
+
   constructor(options: CommandServiceOptions) {
     this.#o = options
-    this.#ready = options.deferExecution !== true
     this.#limiter = new CommandRateLimiter(options.now)
     this.#cutoff = options.repository.commands.cutoff()
+    this.#directory = new CommandDirectory({
+      repository: options.repository,
+      extensions: options.extensions,
+    })
+    const publish = (record: CommandExecutionRecord): void => {
+      if (record.eventId === undefined) return
+      const event = options.repository.getChannelEvent(record.eventId)
+      if (event) options.channels().publishInboundFact(event)
+    }
+    this.#replies = new CommandReplies({ repository: options.repository, channels: options.channels, publish })
+    this.#executor = new CommandExecutor({
+      repository: options.repository,
+      directory: this.#directory,
+      replies: this.#replies,
+      channels: options.channels,
+      running: options.running,
+      now: options.now,
+      publish,
+      ...(options.deferExecution === undefined ? {} : { deferExecution: options.deferExecution }),
+    })
     options.repository.commands.recover(options.now())
   }
+
+  // --- inbound gate ------------------------------------------------------------------------------------------
+
   #recognize(event: ChannelEventRecord) {
     if (event.kind !== 'message-created' || event.id <= this.#cutoff) return { kind: 'chat' } as const
     return recognizeCommand(event.parts, this.#o.botMemberId(event), {
       requireMention: this.#requiresMention(event.channelId),
     })
   }
+
   /** External groups may hold several bots; there a command must address this account unless the admin opted in. */
   #requiresMention(channelId: ChannelId): boolean {
     return (
       this.#o.repository.getChannel(channelId)?.kind === 'group' && !this.#o.repository.commands.bareCommands(channelId)
     )
   }
-  channelSettings(channelId: ChannelId) {
-    const channel = this.#channel(channelId)
-    return {
-      kind: channel.kind,
-      requiresMention: this.#requiresMention(channelId),
-      bareCommands: this.#o.repository.commands.bareCommands(channelId),
-    }
-  }
-  setBareCommands(channelId: ChannelId, enabled: boolean): void {
-    if (this.#channel(channelId).kind !== 'group') throw new Error('只有外部群聊需要设置是否允许不带提及的命令。')
-    this.#o.repository.commands.setBareCommands(channelId, enabled)
-  }
+
   excludes(event: ChannelEventRecord): boolean {
     return this.#o.repository.commands.forEvent(event.id) !== undefined || this.#recognize(event).kind === 'command'
   }
+
   project(event: ChannelEventRecord): ChannelEventRecord {
     const result = this.#recognize(event)
     return result.kind === 'escaped' ? { ...event, parts: result.parts } : event
   }
+
   commitInbound(event: AdapterChannelInboundEvent): AppendChannelEventCommit {
     if (this.#disposed) throw new Error('命令服务已停止。')
     const { commit, record } = this.#o.repository.commands.transaction(() => {
       const commit = this.#o.core.appendInbound(event)
       return { commit, record: this.#capture(commit.event) }
     })
-    if (record) this.#background(record)
+    if (record) this.#executor.background(record)
     return commit
   }
+
   #capture(event: ChannelEventRecord): CommandExecutionRecord | undefined {
     const existing = this.#o.repository.commands.forEvent(event.id)
     if (existing) return existing
@@ -143,6 +142,7 @@ export class CommandService implements CommandGate {
       eventId: event.id,
       rawText: detected.text,
       status: 'pending',
+      replies: [],
       createdAt: this.#o.now(),
       identity: {
         source: 'platform',
@@ -152,17 +152,21 @@ export class CommandService implements CommandGate {
       },
     })
   }
+
   #noteLimited(channelId: ChannelId, reason: Exclude<CommandAdmission, 'allowed'>): void {
     const now = this.#o.now()
     const entry = this.#limited.get(channelId) ?? { dropped: 0, reportedAt: Number.NEGATIVE_INFINITY }
     entry.dropped += 1
-    if (now - entry.reportedAt >= 60_000) {
+    if (now - entry.reportedAt >= LIMIT_REPORT_INTERVAL_MS) {
       this.#o.onRateLimited?.({ channelId, dropped: entry.dropped, reason })
       entry.dropped = 0
       entry.reportedAt = now
     }
     this.#limited.set(channelId, entry)
   }
+
+  // --- web execution -----------------------------------------------------------------------------------------
+
   async executeWeb(
     channelId: ChannelId,
     text: string,
@@ -174,7 +178,7 @@ export class CommandService implements CommandGate {
     if (existing) {
       if (existing.rawText !== text || existing.identity.viewerId !== viewerId)
         throw new Error('请求 ID 已用于其他命令。')
-      return this.#execute(existing)
+      return this.#executor.execute(existing)
     }
     const channel = this.#channel(channelId)
     const connection = this.#o.repository.getConnection(channel.connectionId)
@@ -199,437 +203,75 @@ export class CommandService implements CommandGate {
         eventId: event.id,
         rawText: text,
         status: 'pending',
+        replies: [],
         createdAt: this.#o.now(),
         identity: { source: 'web', displayName: 'Web 管理员', viewerId },
       })
       return { event, record }
     })
     this.#o.channels().publishInboundFact(event)
-    return this.#execute(record)
+    return this.#executor.execute(record)
   }
-  catalog(
-    channelId?: ChannelId,
-    identity: CommandExecutionIdentity = { source: 'web', displayName: 'Web 管理员' },
-  ): readonly CommandCatalogEntry[] {
-    return this.#registered(channelId).map((command) => {
-      const globalPolicy = this.#o.repository.commands.policy('global', command.fullName)
-      const channelPolicy =
-        channelId === undefined ? undefined : this.#o.repository.commands.policy(channelId, command.fullName)
-      const permission =
-        command.definition.minimumPermission === 'channel-admin' ||
-        globalPolicy?.permission === 'channel-admin' ||
-        channelPolicy?.permission === 'channel-admin'
-          ? 'channel-admin'
-          : 'public'
-      const enabled =
-        command.fullName === 'help' ||
-        (channelPolicy?.enabled ?? globalPolicy?.enabled ?? command.definition.enabledByDefault)
-      const bound = channelId !== undefined && this.#o.repository.getBinding(channelId) !== undefined
-      return {
-        definition: command.definition,
-        fullName: command.fullName,
-        source: command.source,
-        ...(command.extensionRevisionId === undefined ? {} : { extensionRevisionId: command.extensionRevisionId }),
-        ...(command.unavailableReason === undefined ? {} : { unavailableReason: command.unavailableReason }),
-        enabled,
-        permission,
-        available:
-          enabled &&
-          command.unavailableReason === undefined &&
-          (permission === 'public' || this.#authorized(channelId, identity)) &&
-          (bound || ['help', 'status'].includes(command.fullName)),
-        usage: commandUsage(command.definition, command.fullName),
-        ...(globalPolicy === undefined ? {} : { globalPolicy }),
-        ...(channelPolicy === undefined ? {} : { channelPolicy }),
-      }
-    })
+
+  // --- catalog, policies, grants -----------------------------------------------------------------------------
+
+  catalog(channelId?: ChannelId, identity?: CommandExecutionIdentity): readonly CommandCatalogEntry[] {
+    return this.#directory.entries(channelId, identity)
   }
+
   setPolicy(scope: string, name: string, policy: CommandPolicy): void {
-    if (scope !== 'global') this.#channel(ChannelIdSchema.parse(scope))
-    const command = this.#registered(scope === 'global' ? undefined : ChannelIdSchema.parse(scope)).find(
-      (c) => c.fullName === name,
-    )
-    if (!command) throw new Error('命令未注册，请检查扩展加载状态。')
-    if (name === 'help' && (policy.enabled === false || policy.permission === 'channel-admin'))
-      throw new Error('帮助命令必须始终对普通用户可用。')
-    if (command.definition.minimumPermission === 'channel-admin' && policy.permission === 'public')
-      throw new Error('不能降低命令声明的最低权限。')
-    if (
-      scope !== 'global' &&
-      policy.permission === 'public' &&
-      this.#o.repository.commands.policy('global', name)?.permission === 'channel-admin'
-    )
-      throw new Error('此命令的全局权限为频道管理，频道不能改为普通用户。')
-    this.#o.repository.commands.setPolicy(scope, name, policy)
+    this.#directory.setPolicy(scope, name, policy)
   }
+
   grant(channelId: ChannelId, identityId: PlatformIdentityId, enabled: boolean): void {
-    const channel = this.#channel(channelId)
-    const identity = this.#o.repository.getPlatformIdentity(identityId)
-    const member = this.#o.repository.getChannelMemberByIdentity(channelId, identityId)
-    if (!identity || identity.connectionId !== channel.connectionId || !member)
-      throw new Error('只能授权此连接、此频道中已存在的成员。')
-    if (enabled) this.#o.repository.commands.grant(channelId, channel.connectionId, identity.platformUserId)
-    else this.#o.repository.commands.revoke(channelId, channel.connectionId, identity.platformUserId)
+    this.#directory.grant(channelId, identityId, enabled)
   }
+
   members(channelId: ChannelId) {
-    const channel = this.#channel(channelId)
-    return this.#o.repository
-      .listPlatformUsers()
-      .filter(
-        (user) => user.connection.id === channel.connectionId && user.activeChannels.some((c) => c.id === channelId),
-      )
-      .flatMap((user) => {
-        const identity = this.#o.repository.getPlatformIdentity(user.identityId)
-        return identity === undefined
-          ? []
-          : [
-              {
-                identityId: identity.id,
-                displayName: identity.displayName ?? identity.platformUserId,
-                platformUserId: identity.platformUserId,
-                authorized: this.#o.repository.commands.hasGrant(
-                  channelId,
-                  channel.connectionId,
-                  identity.platformUserId,
-                ),
-              },
-            ]
-      })
+    return this.#directory.members(channelId)
   }
+
+  channelSettings(channelId: ChannelId) {
+    const channel = this.#channel(channelId)
+    return {
+      kind: channel.kind,
+      requiresMention: this.#requiresMention(channelId),
+      bareCommands: this.#o.repository.commands.bareCommands(channelId),
+    }
+  }
+
+  setBareCommands(channelId: ChannelId, enabled: boolean): void {
+    if (this.#channel(channelId).kind !== 'group') throw new Error('只有外部群聊需要设置是否允许不带提及的命令。')
+    this.#o.repository.commands.setBareCommands(channelId, enabled)
+  }
+
+  // --- lifecycle ---------------------------------------------------------------------------------------------
+
+  /** Opens execution after the Host restored its services, and resumes unfinished work once. */
   open(): void {
     if (this.#disposed) throw new Error('命令服务已停止。')
     if (this.#opened) return
     this.#opened = true
-    this.#ready = true
+    this.#executor.open()
     this.recover()
   }
+
   recover(): void {
-    for (const record of this.#o.repository.commands.unfinished()) this.#background(record)
+    for (const record of this.#o.repository.commands.unfinished()) this.#executor.background(record)
   }
-  async idle(): Promise<void> {
-    while (this.#inFlight.size) await Promise.allSettled(this.#inFlight.values())
+
+  idle(): Promise<void> {
+    return this.#executor.idle()
   }
+
   async dispose(): Promise<void> {
     this.#disposed = true
-    if (this.#scheduled) clearImmediate(this.#scheduled)
-    this.#scheduled = undefined
-    for (const [id, task] of this.#queue) {
-      this.#inFlight.delete(id)
-      task.resolve(task.record)
-    }
-    this.#queue.clear()
-    for (const c of this.#controllers) c.abort()
-    await Promise.allSettled(this.#inFlight.values())
+    await this.#executor.dispose()
   }
+
   #channel(id: ChannelId) {
     const channel = this.#o.repository.getChannel(id)
     if (!channel) throw new Error('频道不存在。')
     return channel
-  }
-  #authorized(channelId: ChannelId | undefined, identity: CommandExecutionIdentity): boolean {
-    // Web identities are created only by the trusted management Host routes, never from inbound facts/JSON.
-    if (identity.source === 'web') return true
-    if (channelId === undefined || identity.connectionId === undefined || identity.platformUserId === undefined)
-      return false
-    const channel = this.#o.repository.getChannel(channelId)
-    return (
-      channel?.connectionId === identity.connectionId &&
-      this.#o.repository.commands.hasGrant(channelId, identity.connectionId, identity.platformUserId)
-    )
-  }
-  #status(channelId: ChannelId) {
-    const binding = this.#o.repository.getBinding(channelId)
-    const episode = binding === undefined ? undefined : this.#o.repository.getActiveEpisode(channelId, binding.agentId)
-    return {
-      bound: binding !== undefined,
-      ...(binding === undefined
-        ? {}
-        : { responseMode: RESPONSE_MODE_LABELS[binding.triggerPolicy], paused: binding.paused }),
-      running: episode?.dshSessionId !== undefined && this.#o.running(episode.dshSessionId),
-    }
-  }
-  #registered(channelId?: ChannelId): readonly RegisteredCommand[] {
-    const builtins: RegisteredCommand[] = BUILTIN_DEFINITIONS.map((definition) => ({
-      definition,
-      fullName: definition.name,
-      source: '内置',
-      invoke: () => reply(''),
-    }))
-    const ids =
-      channelId === undefined
-        ? this.#o.repository.listAgents().map((a) => a.definition.id)
-        : [this.#o.repository.getBinding(channelId)?.agentId].filter((id): id is AgentId => id !== undefined)
-    const extensions = new Map<string, RegisteredCommand>()
-    for (const id of ids) for (const c of this.#o.extensions(id)) extensions.set(c.fullName, c)
-    return [...builtins, ...extensions.values()]
-  }
-  #resolve(name: string, channelId: ChannelId): RegisteredCommand {
-    const all = this.#registered(channelId)
-    const builtin = all.find(
-      (c) => c.extensionRevisionId === undefined && (c.definition.name === name || c.definition.aliases.includes(name)),
-    )
-    if (builtin) return builtin
-    const matches = all.filter(
-      (c) =>
-        c.fullName === name ||
-        c.definition.name === name ||
-        c.definition.aliases.includes(name) ||
-        c.definition.aliases.some((alias) => c.fullName.slice(0, c.fullName.lastIndexOf(':') + 1) + alias === name),
-    )
-    if (matches.length > 1)
-      throw new Error(`命令名称冲突，请使用完整名称：${matches.map((c) => '/' + c.fullName).join('、')}`)
-    if (!matches[0]) throw new SilentCommandError(`未知命令：/${name}。输入 /help 查看可用命令。`)
-    return matches[0]
-  }
-  #execute(record: CommandExecutionRecord): Promise<CommandExecutionRecord> {
-    const pending = this.#inFlight.get(record.id)
-    if (pending) return pending
-    if (this.#disposed || !this.#ready) return Promise.resolve(record)
-    const task = new Promise<CommandExecutionRecord>((resolve, reject) => {
-      this.#queue.set(record.id, { record, resolve, reject })
-    })
-    this.#inFlight.set(record.id, task)
-    this.#schedule()
-    return task
-  }
-  #background(record: CommandExecutionRecord): void {
-    void this.#execute(record).catch(() => {
-      // Handler/transport failures are persisted by #run; this catches storage failures without losing the inbox.
-      console.warn(`[nekro-nxt] 命令 ${record.id} 后台执行中断，持久记录将在重启时恢复。`)
-    })
-  }
-  #schedule(): void {
-    if (this.#scheduled || this.#disposed || !this.#ready || !this.#queue.size) return
-    // Yield the inbound commit to its transport before invoking any extension or planning a reply.
-    this.#scheduled = setImmediate(() => {
-      this.#scheduled = undefined
-      for (const [id, task] of this.#queue) {
-        if (this.#activeChannels.size >= 4) break
-        const channelId = task.record.channelId
-        if (this.#activeChannels.has(channelId)) continue
-        this.#queue.delete(id)
-        this.#activeChannels.add(channelId)
-        void this.#run(task.record)
-          .finally(() => {
-            // Only business operations share the channel queue; a slow receipt must not delay /stop.
-            this.#activeChannels.delete(channelId)
-            this.#schedule()
-          })
-          .then((record) => this.#deliverReply(record))
-          .then(task.resolve, task.reject)
-          .finally(() => this.#inFlight.delete(id))
-      }
-    })
-  }
-  async #run(initial: CommandExecutionRecord): Promise<CommandExecutionRecord> {
-    const store = this.#o.repository.commands
-    let record = store.get(initial.id) ?? initial
-    if (record.status === 'pending' && (this.#disposed || !this.#ready)) return record
-    if (record.status === 'pending' && store.claim(record.id)) {
-      record = store.get(record.id)!
-      const controller = new AbortController()
-      this.#controllers.add(controller)
-      let command: RegisteredCommand | undefined
-      try {
-        if (record.rawText.length > 16000) throw new Error('命令文本过长，最多支持 16000 字符。')
-        const [, name = '', argumentText = ''] = /^(\S+)([\s\S]*)$/u.exec(record.rawText.trimStart().slice(1)) ?? []
-        command = this.#resolve(name, record.channelId)
-        const binding = this.#o.repository.getBinding(record.channelId)
-        const revision = binding === undefined ? undefined : this.#o.repository.getAgent(binding.agentId)?.revision
-        record = store.update({
-          ...record,
-          commandName: command.fullName,
-          commandVersion: command.extensionRevisionId ?? 'builtin:1',
-          ...(command.extensionRevisionId === undefined ? {} : { extensionRevisionId: command.extensionRevisionId }),
-          ...(binding === undefined ? {} : { agentId: binding.agentId }),
-          ...(revision === undefined ? {} : { agentRevisionId: revision.id }),
-        })
-        if (
-          record.source === 'web' &&
-          this.#channel(record.channelId).kind !== 'internal' &&
-          command.definition.webReply !== 'channel'
-        )
-          record = store.update({ ...record, replyLocal: true, replySuppressed: true })
-        this.#publish(record)
-        const guard = (management = false) => {
-          controller.signal.throwIfAborted()
-          const current = this.#o.repository.getBinding(record.channelId)
-          if (current?.agentId !== binding?.agentId || current?.boundAt !== binding?.boundAt)
-            throw new Error('频道绑定已变化，请重新执行命令。')
-          const policy = this.catalog(record.channelId, record.identity).find((c) => c.fullName === command!.fullName)
-          if (!policy) throw new Error('命令所属扩展已停用。')
-          if (!policy.enabled) throw new Error('此命令已禁用。')
-          if (
-            (policy.permission === 'channel-admin' || management) &&
-            !this.#authorized(record.channelId, record.identity)
-          )
-            throw new SilentCommandError('无权执行此命令，需要此频道的命令管理授权。')
-          if (policy.unavailableReason !== undefined) throw new Error(policy.unavailableReason)
-          if (!binding && !['help', 'status'].includes(command!.fullName)) throw new Error('请先为频道绑定智能体。')
-        }
-        guard()
-        const args = parseCommandArguments(command.definition, tokenizeCommand(argumentText))
-        const stop = async () => {
-          guard(true)
-          const outcome = await this.#o.channels().stopCurrentTurn(record.channelId, undefined, () => guard(true))
-          return { stopped: outcome.result === 'stopped' }
-        }
-        const reset = async (mode: 'clear' | 'compact') => {
-          guard(true)
-          const episode =
-            binding === undefined ? undefined : this.#o.repository.getActiveEpisode(record.channelId, binding.agentId)
-          if (episode) await this.#o.channels().resetEpisode(episode.id, mode, () => guard(true))
-        }
-        const context: CommandExecutionContext = {
-          channelId: record.channelId,
-          ...(binding === undefined ? {} : { agentId: binding.agentId }),
-          identity: Object.freeze({ ...record.identity }),
-          arguments: args,
-          signal: controller.signal,
-          host: {
-            status: () => {
-              guard()
-              return this.#status(record.channelId)
-            },
-            stop,
-            reset,
-          },
-        }
-        let result: CommandResult
-        if (command.extensionRevisionId !== undefined) {
-          try {
-            result = await command.invoke(context)
-          } catch (error) {
-            if (error instanceof SilentCommandError) throw error
-            throw new Error(controller.signal.aborted ? '命令已取消。' : '扩展命令执行失败，请检查扩展状态。')
-          }
-        } else
-          switch (command.fullName) {
-            case 'help': {
-              const target = args['命令']
-              const available = this.catalog(record.channelId, record.identity).filter((c) => c.available)
-              if (typeof target === 'string') {
-                const found = this.#resolve(target.replace(/^\//u, ''), record.channelId)
-                const entry = available.find((c) => c.fullName === found.fullName)
-                if (!entry) throw new SilentCommandError('该命令不可用或无权查看。')
-                result = reply(
-                  [
-                    entry.usage,
-                    entry.definition.description,
-                    ...entry.definition.parameters.map((p) => `${p.name}：${p.description ?? p.type}`),
-                    ...entry.definition.examples,
-                  ].join('\n'),
-                )
-              } else result = reply(available.map((c) => `${c.usage} — ${c.definition.description}`).join('\n'))
-              break
-            }
-            case 'status': {
-              const status = this.#status(record.channelId)
-              result = reply(
-                `频道：${this.#channel(record.channelId).displayName ?? '当前频道'}\n智能体：${revision?.displayName ?? '未绑定'}\n响应模式：${status.responseMode ?? '未绑定'}\n暂停状态：${status.paused === true ? '已暂停' : '未暂停'}\n运行状态：${status.running ? '运行中' : '空闲'}`,
-              )
-              break
-            }
-            case 'stop': {
-              const outcome = await stop()
-              result = reply(
-                outcome.stopped ? '当前轮次已停止，上下文已保留；之后的新消息仍会触发回应。' : '当前没有运行中的任务。',
-              )
-              break
-            }
-            case 'reset':
-              await reset('clear')
-              result = reply('当前上下文已清空，聊天历史已保留。')
-              break
-            case 'compact':
-              await reset('compact')
-              result = reply('当前上下文已压缩。')
-              break
-            case 'pause':
-            case 'resume': {
-              const pausing = command.fullName === 'pause'
-              const outcome = await this.#o
-                .channels()
-                .setPaused(record.channelId, pausing, { boundAt: binding!.boundAt, guard: () => guard(true) })
-              result = reply(
-                pausing
-                  ? outcome.changed
-                    ? `已暂停当前频道的自动响应${outcome.stopped ? '，并停止了当前轮次' : ''}。响应规则不变，输入 /resume 恢复。`
-                    : '当前频道已处于暂停状态。'
-                  : outcome.changed
-                    ? '已恢复当前频道的自动响应，按当前响应规则回应；之前停止的任务不会重跑。'
-                    : '当前频道没有暂停。',
-              )
-              break
-            }
-            default:
-              throw new Error('未实现的内置命令。')
-          }
-        result = CommandResultSchema.parse(result)
-        for (const part of result.parts)
-          if (
-            (part.type === 'image' || part.type === 'file') &&
-            !this.#o.repository.canAccessAsset(part.assetId, record.channelId)
-          )
-            throw new Error('命令结果引用了当前频道无权访问的资源。')
-        record = store.update({ ...record, status: 'succeeded', result, completedAt: this.#o.now() })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '命令执行失败。'
-        const detail =
-          message + (command === undefined ? '' : `\n用法：${commandUsage(command.definition, command.fullName)}`)
-        record = store.update({
-          ...record,
-          status: 'failed',
-          error: detail,
-          result: reply(detail),
-          ...(record.source === 'platform' && error instanceof SilentCommandError ? { replySuppressed: true } : {}),
-          completedAt: this.#o.now(),
-        })
-      } finally {
-        this.#controllers.delete(controller)
-      }
-    }
-    this.#publish(record)
-    return record
-  }
-  async #deliverReply(initial: CommandExecutionRecord): Promise<CommandExecutionRecord> {
-    const store = this.#o.repository.commands
-    let record = store.get(initial.id) ?? initial
-    if (record.status === 'running' || record.status === 'pending') return record
-    if (record.replySuppressed) {
-      this.#publish(record)
-      return record
-    }
-    const existing = store.reply(record.id)
-    if (existing) {
-      if (record.replyIntentId !== existing.id) {
-        record = store.update({ ...record, replyIntentId: existing.id })
-        this.#publish(record)
-      }
-      return record
-    }
-    if (record.replyError !== undefined) return record
-    try {
-      await this.#o.channels().sendCommandReply({
-        channelId: record.channelId,
-        executionId: record.id,
-        parts: record.result?.parts ?? reply(record.error ?? '结果不确定。').parts,
-        ...(record.eventId === undefined ? {} : { eventId: record.eventId }),
-        onPlanned: (id) => {
-          record = store.update({ ...record, replyIntentId: id })
-          this.#publish(record)
-        },
-      })
-    } catch {
-      record = store.update({ ...record, replyError: '命令结果已记录，但回复未能投递。' })
-    }
-    this.#publish(record)
-    return record
-  }
-  #publish(record: CommandExecutionRecord): void {
-    if (record.eventId) {
-      const event = this.#o.repository.getChannelEvent(record.eventId)
-      if (event) this.#o.channels().publishInboundFact(event)
-    }
   }
 }

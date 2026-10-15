@@ -1,4 +1,5 @@
 import { createCommandRepository, type CommandRepository } from './repositories/commands.js'
+export { COMMAND_EXECUTION_RETAIN } from './repositories/commands.js'
 export type { CommandRepository } from './repositories/commands.js'
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
 import type { AgentRevisionRecord, ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'

@@ -191,8 +191,8 @@ describe('command extension installation lifecycle', () => {
       const delivery = vi.spyOn(runtime.channels, 'sendCommandReply').mockRejectedValueOnce(new Error('offline'))
       const offline = await runtime.commands.executeWeb(channel.id, '/echo 离线结果', 'offline', 'local')
       expect(offline.status).toBe('succeeded')
-      expect(offline.replyIntentId).toBeUndefined()
-      expect(offline.replyError).toBeDefined()
+      expect(offline.replies.at(-1)?.intentId).toBeUndefined()
+      expect(offline.replies.at(-1)?.error).toBeDefined()
       const entry = runtime.repository
         .listChannelHistory(channel.id)
         .find((entry) => entry.sourceId === offline.eventId)!

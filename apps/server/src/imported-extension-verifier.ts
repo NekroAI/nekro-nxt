@@ -723,6 +723,8 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
         identity: { source: 'web', displayName: '验证管理员' },
         arguments: commandVerificationArguments(command.definition),
         signal: new AbortController().signal,
+        // Progress replies of a verified command are accepted and discarded.
+        reply: () => undefined,
         host: {
           status: () => ({ bound: true, responseMode: '验证', running: false }),
           stop: () => Promise.resolve({ stopped: false }),

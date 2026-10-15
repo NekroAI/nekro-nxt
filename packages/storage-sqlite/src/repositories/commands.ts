@@ -1,7 +1,8 @@
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import {
   CommandExecutionRecordSchema,
   CommandPolicySchema,
+  undeliveredCommandReplies,
   type ChannelEventId,
   type ChannelId,
   type CommandExecutionRecord,
@@ -18,11 +19,21 @@ import {
   outboundIntents,
 } from '../schema.js'
 
+/** Completed executions kept in full per channel; older ones are reduced to their searchable columns. */
+export const COMMAND_EXECUTION_RETAIN = 500
+
 export function createCommandRepository(db: DrizzleCoreDatabase) {
   const needsRecovery = (record: CommandExecutionRecord): boolean =>
-    record.status === 'pending' ||
-    record.status === 'running' ||
-    (record.replyIntentId === undefined && record.replyError === undefined && record.replySuppressed !== true)
+    record.status === 'pending' || record.status === 'running' || undeliveredCommandReplies(record).length > 0
+  const columns = (record: CommandExecutionRecord) => ({
+    commandName: record.commandName ?? null,
+    status: record.status,
+    eventId: record.eventId ?? null,
+    needsRecovery: needsRecovery(record),
+    createdAt: record.createdAt,
+    completedAt: record.completedAt ?? null,
+    record,
+  })
   const get = (id: string): CommandExecutionRecord | undefined => {
     const row = db.select().from(commandExecutions).where(eq(commandExecutions.id, id)).get()
     return row === undefined ? undefined : CommandExecutionRecordSchema.parse(row.record)
@@ -30,16 +41,7 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
   const update = (record: CommandExecutionRecord): CommandExecutionRecord => {
     const parsed = CommandExecutionRecordSchema.parse(record)
     if (
-      db
-        .update(commandExecutions)
-        .set({
-          record: parsed,
-          status: parsed.status,
-          eventId: parsed.eventId ?? null,
-          needsRecovery: needsRecovery(parsed),
-        })
-        .where(eq(commandExecutions.id, parsed.id))
-        .run().changes !== 1
+      db.update(commandExecutions).set(columns(parsed)).where(eq(commandExecutions.id, parsed.id)).run().changes !== 1
     )
       throw new Error('命令执行记录不存在。')
     return parsed
@@ -84,10 +86,7 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
           channelId: parsed.channelId,
           source: parsed.source,
           requestId: parsed.requestId,
-          eventId: parsed.eventId ?? null,
-          status: parsed.status,
-          needsRecovery: needsRecovery(parsed),
-          record: parsed,
+          ...columns(parsed),
         })
         .onConflictDoNothing()
         .run()
@@ -109,13 +108,19 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
     recover(at: number): void {
       db.transaction(() => {
         const rows = db.select().from(commandExecutions).where(eq(commandExecutions.status, 'running')).all()
-        for (const row of rows)
+        for (const row of rows) {
+          const record = CommandExecutionRecordSchema.parse(row.record)
+          const error = '宿主在执行期间停止，结果不确定；请检查实际状态后决定下一步。'
+          const progress = record.replies.filter((reply) => reply.kind === 'progress')
           update({
-            ...CommandExecutionRecordSchema.parse(row.record),
+            ...record,
             status: 'uncertain',
-            error: '宿主在执行期间停止，结果不确定；请检查实际状态后决定下一步。',
+            error,
             completedAt: at,
+            // The administrator is told the outcome is unknown; the handler is never run again.
+            replies: [...progress, { ordinal: progress.length, kind: 'final', parts: [{ type: 'text', text: error }] }],
           })
+        }
       })
     },
     unfinished(): readonly CommandExecutionRecord[] {
@@ -123,20 +128,42 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
         .select()
         .from(commandExecutions)
         .where(eq(commandExecutions.needsRecovery, true))
-        .orderBy(
-          sql`json_extract(${commandExecutions.record}, '$.createdAt')`,
-          asc(commandExecutions.eventId),
-          asc(commandExecutions.id),
-        )
+        .orderBy(asc(commandExecutions.createdAt), asc(commandExecutions.eventId), asc(commandExecutions.id))
         .all()
         .map((row) => CommandExecutionRecordSchema.parse(row.record))
     },
-    reply(id: string) {
+    /** The Outbound already planned for this reply, if any; planning is unique per (execution, ordinal). */
+    reply(id: string, ordinal: number) {
       return db
         .select({ id: outboundIntents.id, state: outboundIntents.state })
         .from(outboundIntents)
-        .where(eq(outboundIntents.commandExecutionId, id))
+        .where(and(eq(outboundIntents.commandExecutionId, id), eq(outboundIntents.commandOrdinal, ordinal)))
         .get()
+    },
+    /**
+     * Keeps the newest COMMAND_EXECUTION_RETAIN settled executions of a channel in full and drops the arguments,
+     * results and reply bodies of older ones. Rows stay: events and Outbounds reference them.
+     */
+    compact(channelId: ChannelId): number {
+      const stale = db
+        .select({ id: commandExecutions.id, record: commandExecutions.record })
+        .from(commandExecutions)
+        .where(and(eq(commandExecutions.channelId, channelId), eq(commandExecutions.needsRecovery, false)))
+        .orderBy(desc(commandExecutions.createdAt), desc(commandExecutions.id))
+        .limit(1000)
+        .offset(COMMAND_EXECUTION_RETAIN)
+        .all()
+      let compacted = 0
+      for (const row of stale) {
+        const { result: _result, ...record } = CommandExecutionRecordSchema.parse(row.record)
+        if (record.rawText === '' && _result === undefined && record.replies.length === 0) continue
+        db.update(commandExecutions)
+          .set({ record: { ...record, rawText: '', replies: [] } })
+          .where(eq(commandExecutions.id, row.id))
+          .run()
+        compacted += 1
+      }
+      return compacted
     },
     policy(scope: string, name: string): CommandPolicy | undefined {
       const row = db

@@ -105,6 +105,20 @@ export const CommandResultSchema = z
   })
   .strict()
 export type CommandResult = z.output<typeof CommandResultSchema>
+/** An execution may send a few progress replies before its final result. */
+export const COMMAND_MAX_PROGRESS_REPLIES = 5
+export const CommandReplySchema = z
+  .object({
+    /** Position within the execution; the final result always has the highest ordinal. */
+    ordinal: z.number().int().nonnegative(),
+    kind: z.enum(['progress', 'final']),
+    parts: CommandResultSchema.shape.parts,
+    /** Set once the reply has an Outbound; absent with `error` means planning failed. */
+    intentId: OutboundIntentIdSchema.optional(),
+    error: z.string().optional(),
+  })
+  .strict()
+export type CommandReply = z.output<typeof CommandReplySchema>
 export const CommandExecutionRecordSchema = z
   .object({
     id: z.string().min(1),
@@ -122,8 +136,12 @@ export const CommandExecutionRecordSchema = z
     status: z.enum(['pending', 'running', 'succeeded', 'failed', 'uncertain']),
     result: CommandResultSchema.optional(),
     error: z.string().optional(),
-    replyIntentId: OutboundIntentIdSchema.optional(),
-    replyError: z.string().optional(),
+    /** Replies in send order. A platform command's replies go to its conversation; see `replyLocal`. */
+    replies: z
+      .array(CommandReplySchema)
+      .max(COMMAND_MAX_PROGRESS_REPLIES + 1)
+      .default([]),
+    /** No reply is sent on purpose (unauthorized or unknown platform command, or console-local result). */
     replySuppressed: z.boolean().optional(),
     /** The result was kept in the console on purpose and never sent to the platform. */
     replyLocal: z.boolean().optional(),
@@ -132,12 +150,22 @@ export const CommandExecutionRecordSchema = z
   })
   .strict()
 export type CommandExecutionRecord = z.output<typeof CommandExecutionRecordSchema>
+/** Replies that still need an Outbound or a recorded failure. */
+export const undeliveredCommandReplies = (record: CommandExecutionRecord): readonly CommandReply[] =>
+  record.replySuppressed === true
+    ? []
+    : record.replies.filter((reply) => reply.intentId === undefined && reply.error === undefined)
 export interface CommandExecutionContext {
   readonly channelId: ChannelId
   readonly agentId?: AgentId
   readonly identity: CommandExecutionIdentity
   readonly arguments: Readonly<Record<string, string | number | boolean>>
   readonly signal: AbortSignal
+  /**
+   * Sends a progress reply now; the handler's return value is the final result. At most
+   * COMMAND_MAX_PROGRESS_REPLIES per execution, delivered in order without making the handler wait for receipts.
+   */
+  readonly reply: (result: CommandResult) => void
   readonly host: {
     status(): {
       readonly bound: boolean

@@ -509,6 +509,90 @@ describe('unified commands', () => {
     // The over-limit messages are commands, so they still never reach the model.
     expect(f.admissions).toHaveLength(0)
   })
+  it('sends progress replies in order before the final result and never replays them', async () => {
+    const f = await setup()
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'slow', description: '分步输出' }),
+      fullName: 'ext_SLOW:slow',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_SLOW'),
+      invoke: (context) => {
+        context.reply({ parts: [{ type: 'text', text: '第一步' }] })
+        context.reply({ parts: [{ type: 'text', text: '第二步' }] })
+        return { parts: [{ type: 'text', text: '全部完成' }] }
+      },
+    })
+    const commit = await f.inbound('/slow')
+    await f.commands.idle()
+    const record = f.repository.commands.forEvent(commit.channelEventId)!
+    expect(record.status).toBe('succeeded')
+    expect(record.replies.map((reply) => [reply.ordinal, reply.kind])).toEqual([
+      [0, 'progress'],
+      [1, 'progress'],
+      [2, 'final'],
+    ])
+    expect(record.replies.every((reply) => reply.intentId !== undefined)).toBe(true)
+    const texts = f.adapter.deliveries.map((delivery) => JSON.stringify(delivery))
+    expect(texts).toHaveLength(3)
+    expect(texts[0]).toContain('第一步')
+    expect(texts[1]).toContain('第二步')
+    expect(texts[2]).toContain('全部完成')
+    f.commands.recover()
+    await f.commands.idle()
+    expect(f.adapter.deliveries).toHaveLength(3)
+  })
+  it('caps progress replies per execution and still reports the failure as the final reply', async () => {
+    const f = await setup()
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'chatty', description: '过多输出' }),
+      fullName: 'ext_CHAT:chatty',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_CHAT'),
+      invoke: (context) => {
+        for (let index = 0; index < 8; index += 1) context.reply({ parts: [{ type: 'text', text: `步骤 ${index}` }] })
+        return { parts: [{ type: 'text', text: '不会到达' }] }
+      },
+    })
+    const commit = await f.inbound('/chatty')
+    await f.commands.idle()
+    const record = f.repository.commands.forEvent(commit.channelEventId)!
+    expect(record.status).toBe('failed')
+    expect(record.replies.filter((reply) => reply.kind === 'progress')).toHaveLength(5)
+    expect(record.replies.at(-1)?.kind).toBe('final')
+    expect(f.adapter.deliveries).toHaveLength(6)
+  })
+  it('announces slow built-ins before they finish', async () => {
+    const f = await setup()
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    await f.inbound('开始')
+    const commit = await f.inbound('/compact')
+    await f.commands.idle()
+    const record = f.repository.commands.forEvent(commit.channelEventId)!
+    expect(record.replies.map((reply) => reply.kind)).toEqual(['progress', 'final'])
+    expect(JSON.stringify(f.adapter.deliveries[0])).toContain('正在整理')
+  })
+  it('delivers progress replies that were saved but not sent after a restart, once', async () => {
+    const f = await setup(true)
+    const commit = await f.inbound('/status')
+    const record = f.repository.commands.forEvent(commit.channelEventId)!
+    f.repository.commands.update({
+      ...record,
+      status: 'succeeded',
+      result: { parts: [{ type: 'text', text: '完成' }] },
+      replies: [
+        { ordinal: 0, kind: 'progress', parts: [{ type: 'text', text: '进行中' }] },
+        { ordinal: 1, kind: 'final', parts: [{ type: 'text', text: '完成' }] },
+      ],
+    })
+    f.commands.open()
+    await f.commands.idle()
+    const after = f.repository.commands.get(record.id)!
+    expect(after.replies.map((reply) => reply.intentId !== undefined)).toEqual([true, true])
+    expect(f.adapter.deliveries).toHaveLength(2)
+    f.commands.recover()
+    await f.commands.idle()
+    expect(f.adapter.deliveries).toHaveLength(2)
+  })
   it('uses stable extension names, denies ambiguity and enforces permission floors', async () => {
     const f = await setup()
     const definition = CommandDefinitionSchema.parse({ name: 'echo', aliases: ['e'], description: '示例' })
@@ -586,13 +670,17 @@ describe('unified commands', () => {
     const f = await setup()
     const commit = await f.inbound('/status')
     const record = f.repository.commands.forEvent(commit.channelEventId)!
-    const { replyIntentId, ...beforeIntentUpdate } = record
+    const replyIntentId = record.replies[0]?.intentId
     expect(replyIntentId).toBeDefined()
-    f.repository.commands.update(beforeIntentUpdate)
+    // Simulate a crash after the Outbound was planned but before the association was saved.
+    f.repository.commands.update({
+      ...record,
+      replies: record.replies.map((reply) => ({ ordinal: reply.ordinal, kind: reply.kind, parts: reply.parts })),
+    })
     expect(f.repository.commands.unfinished()).toHaveLength(1)
     f.commands.recover()
     await f.commands.idle()
-    expect(f.repository.commands.get(record.id)?.replyIntentId).toBe(replyIntentId)
+    expect(f.repository.commands.get(record.id)?.replies[0]?.intentId).toBe(replyIntentId)
     expect(f.repository.commands.unfinished()).toEqual([])
     expect(f.adapter.deliveries).toHaveLength(1)
   })
@@ -616,12 +704,17 @@ describe('unified commands', () => {
       ...done,
       status: 'succeeded',
       result: { parts: [{ type: 'text', text: '已保存结果' }] },
+      replies: [{ ordinal: 0, kind: 'final', parts: [{ type: 'text', text: '已保存结果' }] }],
     })
     const running = f.repository.commands.forEvent(interrupted.channelEventId)!
     f.repository.commands.update({ ...running, status: 'running' })
     f.repository.commands.recover(2000)
     const failed = f.repository.commands.forEvent(failedDelivery.channelEventId)!
-    f.repository.commands.update({ ...failed, status: 'succeeded', replyError: '无法规划回复' })
+    f.repository.commands.update({
+      ...failed,
+      status: 'succeeded',
+      replies: [{ ordinal: 0, kind: 'final', parts: [{ type: 'text', text: '无法规划' }], error: '无法规划回复' }],
+    })
     expect(f.repository.commands.unfinished().map((r) => r.eventId)).toEqual([
       pending.channelEventId,
       completed.channelEventId,
@@ -680,6 +773,7 @@ it('extension command disposal blocks new work, aborts and waits for cleanup', a
     identity: { source: 'web', displayName: '测试管理员' },
     arguments: {},
     signal: new AbortController().signal,
+    reply: () => undefined,
     host: {
       status: () => ({ bound: true, running: false }),
       stop: () => Promise.resolve({ stopped: false }),
@@ -711,6 +805,7 @@ it('isolates attachment cancellation while sharing host registration revocation'
     identity: { source: 'web' as const, displayName: '测试管理员' },
     arguments: {},
     signal: new AbortController().signal,
+    reply: () => undefined,
     host: {
       status: () => ({ bound: true, running: false }),
       stop: () => Promise.resolve({ stopped: false }),

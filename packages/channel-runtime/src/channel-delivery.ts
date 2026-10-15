@@ -86,6 +86,8 @@ export class ChannelDelivery {
   sendCommandReply(input: {
     readonly channelId: ChannelId
     readonly executionId: string
+    /** Position within the execution's replies; (execution, ordinal) is planned at most once. */
+    readonly ordinal: number
     readonly parts: readonly MessagePart[]
     readonly eventId?: ChannelEventId
     /** Persist reply association synchronously with the plan before dispatch starts. */
@@ -107,6 +109,7 @@ export class ChannelDelivery {
     episode?: EpisodeRecord,
     command?: {
       readonly executionId: string
+      readonly ordinal: number
       readonly eventId?: ChannelEventId
       readonly onPlanned: (id: OutboundIntentId) => void
     },
@@ -181,7 +184,9 @@ export class ChannelDelivery {
       id: intentId,
       logicalMessageId,
       ...(episode === undefined ? {} : { agentRevisionId: episode.agentRevisionId, episodeId: episode.id }),
-      ...(command === undefined ? {} : { channelId, commandExecutionId: command.executionId }),
+      ...(command === undefined
+        ? {}
+        : { channelId, commandExecutionId: command.executionId, commandOrdinal: command.ordinal }),
       ...(input.sourceTurnId === undefined ? {} : { sourceTurnId: input.sourceTurnId }),
       parts: input.parts,
       ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),

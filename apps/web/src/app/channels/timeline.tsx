@@ -72,7 +72,8 @@ export const MessageRow = memo(function MessageRow({
       uncertain: '执行结果不确定',
     }
     const deliveryFailed =
-      (command.replyError !== undefined && command.replyIntentId === undefined) || isUnconfirmed(message)
+      command.replies.some((reply) => reply.error !== undefined && reply.intentId === undefined) ||
+      isUnconfirmed(message)
     return (
       <div className={styles.commandResult} data-message-id={message.id} aria-label="命令记录">
         <div>

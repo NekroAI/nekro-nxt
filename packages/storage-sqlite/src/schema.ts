@@ -674,15 +674,20 @@ export const commandExecutions = sqliteTable(
     eventId: text('event_id')
       .$type<ChannelEventId>()
       .references(() => channelEvents.id, { onDelete: 'restrict' }),
+    /** Full name once the command resolved; empty for unknown commands. */
+    commandName: text('command_name'),
     status: text({ enum: ['pending', 'running', 'succeeded', 'failed', 'uncertain'] }).notNull(),
     needsRecovery: integer('needs_recovery', { mode: 'boolean' }).notNull().default(true),
+    createdAt: integer('created_at').notNull(),
+    completedAt: integer('completed_at'),
+    /** Arguments, identity, result and replies; every field used to filter or order lives in a column. */
     record: jsonText<CommandExecutionRecord>('record').notNull(),
   },
   (table) => [
     uniqueIndex('command_execution_request_uq').on(table.channelId, table.source, table.requestId),
     uniqueIndex('command_execution_event_uq').on(table.eventId),
-    index('command_execution_status_idx').on(table.status),
-    index('command_execution_recovery_idx').on(table.needsRecovery, table.id),
+    index('command_execution_recovery_idx').on(table.needsRecovery, table.createdAt, table.id),
+    index('command_execution_channel_idx').on(table.channelId, table.createdAt),
   ],
 )
 export const outboundIntents = sqliteTable(
@@ -700,6 +705,8 @@ export const outboundIntents = sqliteTable(
       .$type<ChannelId>()
       .references(() => channels.id, { onDelete: 'restrict' }),
     commandExecutionId: text('command_execution_id').references(() => commandExecutions.id, { onDelete: 'restrict' }),
+    /** Position of this reply within its command execution. */
+    commandOrdinal: integer('command_ordinal'),
     sourceTurnId: text('source_turn_id'),
     parts: jsonText<readonly MessagePart[]>('parts').notNull(),
     searchText: text('search_text').notNull(),
@@ -709,11 +716,11 @@ export const outboundIntents = sqliteTable(
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
-    uniqueIndex('outbound_intents_command_uq').on(table.commandExecutionId),
+    uniqueIndex('outbound_intents_command_uq').on(table.commandExecutionId, table.commandOrdinal),
     index('outbound_intents_channel_history_idx').on(table.channelId, table.createdAt),
     check(
       'outbound_intents_source_ck',
-      sql`(${table.episodeId} IS NOT NULL AND ${table.agentRevisionId} IS NOT NULL AND ${table.commandExecutionId} IS NULL) OR (${table.episodeId} IS NULL AND ${table.agentRevisionId} IS NULL AND ${table.commandExecutionId} IS NOT NULL AND ${table.channelId} IS NOT NULL)`,
+      sql`(${table.episodeId} IS NOT NULL AND ${table.agentRevisionId} IS NOT NULL AND ${table.commandExecutionId} IS NULL AND ${table.commandOrdinal} IS NULL) OR (${table.episodeId} IS NULL AND ${table.agentRevisionId} IS NULL AND ${table.commandExecutionId} IS NOT NULL AND ${table.commandOrdinal} IS NOT NULL AND ${table.channelId} IS NOT NULL)`,
     ),
     uniqueIndex('outbound_intents_client_request_uq').on(table.episodeId, table.clientRequestId),
     index('outbound_intents_recovery_idx').on(table.state, table.createdAt),
