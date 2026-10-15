@@ -2417,6 +2417,8 @@ export const ExtensionDataMigrationInputSchema = z
     mode: z.enum(['overwrite', 'replace']),
     /** Storage of a source agent goes to the mapped agent here; unmapped agents are skipped. */
     agentMap: z.record(z.string(), AgentIdSchema).optional(),
+    /** Also move the host and agent configuration (never credentials) the same way. */
+    includeConfig: z.boolean().optional(),
   })
   .strict()
 
@@ -2427,6 +2429,14 @@ export const ExtensionDataPreviewSchema = z
     sourceDataVersion: z.number().int().positive(),
     targetDataVersion: z.number().int().positive(),
     needsMigration: z.boolean(),
+    /** Configuration fields that would change, when configuration moves too. */
+    config: z
+      .object({
+        hostFields: z.array(z.string()),
+        agents: z.array(z.object({ agentId: AgentIdSchema, fields: z.array(z.string()) }).strict()),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -4658,6 +4668,8 @@ export const HostApiContracts = {
         permissionApproval: PermissionApprovalSchema.optional(),
         /** Approval of expanded agent-layer capabilities for the agents that move to this Revision. */
         agentPermissionApproval: PermissionApprovalSchema.optional(),
+        /** Data copy to put back first, when the target Revision only reads an older data version. */
+        restoreDataSnapshotId: z.string().min(1).max(80).optional(),
       })
       .strict(),
     response: z

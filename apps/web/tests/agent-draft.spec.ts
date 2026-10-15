@@ -30,6 +30,8 @@ const base: AgentDraft = {
     commandNetwork: true,
     communityFeedbackAuto: false,
     commandAccounts: [],
+    extensionAutonomy: 'manual',
+    extensionRequesters: 'everyone',
   },
 }
 

@@ -567,7 +567,12 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         format: revision.format ?? 'current',
         ...(revision.iconUrl === undefined ? {} : { iconUrl: revision.iconUrl }),
         createdAt: revision.createdAt,
-        ...(revision.source === undefined ? {} : { source: revision.source }),
+        versionLabel: revision.versionLabel,
+        ...(revision.parentRevisionId === undefined ? {} : { parentRevisionId: revision.parentRevisionId }),
+        origin: revision.origin,
+        ...(revision.authoringTaskId === undefined ? {} : { authoringTaskId: revision.authoringTaskId }),
+        dataVersion: revision.dataVersion,
+        releases: revision.releases,
         provides: revision.provides,
         agentLayer: revision.agentLayer,
         contributions: revision.contributions,
@@ -614,6 +619,10 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               json.agents.find((agent) => agent.id === extension.createdByAgentId)?.displayName,
               '已删除的智能体',
             ),
+      ...(extension.branchOf === undefined ? {} : { branchOf: extension.branchOf }),
+      dataVersion: extension.dataVersion,
+      ...(extension.openRevisionTaskId === undefined ? {} : { openRevisionTaskId: extension.openRevisionTaskId }),
+      communityLinks: extension.communityLinks,
       activations: extension.activations.map((candidate) => {
         const activeRevision = extension.revisions.find((revision) => revision.id === candidate.extensionRevisionId)
         return {

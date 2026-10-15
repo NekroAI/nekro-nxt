@@ -237,7 +237,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展，可给 name、slug）。',
       'enable / disable：给你自己启用或停用。switch：切到指定版本。rollback：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
-      'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）。总要管理员确认。',
+      'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）；includeConfig 连同配置一起迁移（凭据不迁移）。总要管理员确认。',
       'publish：把当前版本发布到社区（notes 写更新说明）。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId）。withdraw：撤回一次发布（releaseId）。发布和撤回总要管理员确认。',
     ].join('\n'),
     parameters: {
@@ -254,6 +254,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       copyData: { type: 'boolean', description: 'branch 时是否复制原扩展的数据。' },
       source: { type: 'string', description: 'migrate_data 的来源扩展名称或编号。' },
       mode: { type: 'string', enum: ['overwrite', 'replace'], description: 'migrate_data 的方式。' },
+      includeConfig: { type: 'boolean', description: 'migrate_data 时是否连同配置一起迁移（凭据不迁移）。' },
       notes: { type: 'string', description: 'publish 的更新说明。' },
       communityExtensionId: { type: 'string', description: 'install 的社区扩展编号。' },
       releaseId: { type: 'string', description: 'withdraw 的发布编号。' },
@@ -271,6 +272,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           copyData: z.boolean().optional(),
           source: z.string().optional(),
           mode: z.enum(['overwrite', 'replace']).optional(),
+          includeConfig: z.boolean().optional(),
           notes: z.string().max(2000).optional(),
           communityExtensionId: z.string().optional(),
           releaseId: z.string().optional(),
@@ -329,6 +331,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
             targetExtensionId: extension().id,
             source: { kind: 'extension', extensionId: port.resolveExtension(context.agentId, input.source).id },
             mode: input.mode ?? 'overwrite',
+            ...(input.includeConfig === true ? { includeConfig: true } : {}),
           }
           break
         }

@@ -490,27 +490,10 @@ export function createProductStore(
       await requireHost().actions[`scheduledTasks.${action}`]({ taskId: id })
       return true
     },
-    saveDynamicExtension: async ({
-      taskId,
-      attemptId,
-      agentId,
-      episodeId,
-      pluginId,
-      packageId,
-      name,
-      slug,
-      description,
-      targetExtensionId,
-    }) => {
+    saveDynamicExtension: async ({ taskId, attemptId, name, slug, description, targetExtensionId }) => {
       const result = await requireHost().actions['extensions.saveFromDynamic']({
-        ...(taskId !== undefined && attemptId !== undefined
-          ? { taskId, attemptId }
-          : {
-              agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
-              episodeId: requireValue(episodeId, '缺少 Episode 标识，请刷新页面后重试。'),
-              pluginId: requireValue(pluginId, '缺少 Plugin 标识，请刷新页面后重试。'),
-              packageId: requireValue(packageId, '缺少 Package 标识，请刷新页面后重试。'),
-            }),
+        taskId,
+        attemptId,
         name: requireValue(name, '请输入本地扩展名称。'),
         slug: requireValue(slug, '请输入本地扩展标识。'),
         description,
@@ -574,6 +557,9 @@ export function createProductStore(
         revisionId: requireValue(revisionId, '缺少要安装的扩展版本。'),
         ...(approvals?.host === undefined ? {} : { permissionDigest: approvals.host }),
         ...(approvals?.agent === undefined ? {} : { agentPermissionDigest: approvals.agent }),
+        ...(approvals?.restoreDataSnapshotId === undefined
+          ? {}
+          : { restoreDataSnapshotId: approvals.restoreDataSnapshotId }),
       })
     },
     reportHostExtensionClientDiagnostic: async ({ extensionId, revisionId, status, message }) => {

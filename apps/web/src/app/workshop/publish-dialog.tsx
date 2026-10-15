@@ -89,11 +89,14 @@ export function PublishDialog({
   revision,
   open,
   onOpenChange,
+  onBranch,
 }: {
   readonly extension: LocalExtensionSummary
   readonly revision: Revision | undefined
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
+  /** Starts a branch of `revision`, for an extension someone else publishes. */
+  readonly onBranch?: () => void
 }) {
   const community = useCommunityStatus(open)
   const [notes, setNotes] = useState('')
@@ -106,6 +109,15 @@ export function PublishDialog({
     if (open) setPublished(undefined)
   }, [open])
   const account = community.status?.account ?? null
+  const communityUrl = community.status?.communityUrl
+  // Someone else's line: this machine only follows it on this community and may not publish new versions of it.
+  const following =
+    communityUrl !== undefined &&
+    extension.communityLinks.some((link) => link.communityUrl === communityUrl && link.role === 'subscriber')
+  const previous = extension.revisions
+    .flatMap((item) => item.releases.filter((release) => release.communityUrl === communityUrl))
+    .filter((release) => release.number !== null)
+    .sort((left, right) => (right.number ?? 0) - (left.number ?? 0))[0]
 
   // 已发布过的扩展带出社区上的条目信息，供作者修改；首次发布用本机描述作为一句话简介的起点。
   useEffect(() => {
@@ -204,7 +216,7 @@ export function PublishDialog({
         }
       >
         <p>
-          <Chip tone={label.tone}>{label.label}</Chip>
+          <Chip tone={label.tone}>{label.label}</Chip> 发布 #{published.releaseNumber}
         </p>
         <p>
           {published.reviewStatus === 'rejected'
@@ -234,14 +246,28 @@ export function PublishDialog({
             <Button onClick={close} disabled={busy}>
               取消
             </Button>
-            <Button
-              variant="primary"
-              busy={busy}
-              disabled={!revision || !listingLoaded || invalid}
-              onClick={() => void publish()}
-            >
-              发布
-            </Button>
+            {following ? (
+              onBranch ? (
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    onOpenChange(false)
+                    onBranch()
+                  }}
+                >
+                  从这个版本分支
+                </Button>
+              ) : null
+            ) : (
+              <Button
+                variant="primary"
+                busy={busy}
+                disabled={!revision || !listingLoaded || invalid}
+                onClick={() => void publish()}
+              >
+                发布
+              </Button>
+            )}
           </>
         ) : (
           <>
@@ -255,10 +281,18 @@ export function PublishDialog({
     >
       {community.status === undefined ? (
         <p>正在读取社区账号…</p>
+      ) : account && following ? (
+        <>
+          <p>
+            「{extension.name}」是从社区安装的、由别人发布的扩展，你不能直接发布它的新版本。想分享你的修改，先从这个版本分支出一个自己的扩展，再发布分支；社区上会标明它分支自哪里。
+          </p>
+        </>
       ) : account ? (
         <>
           <p>
-            以 @{account.handle} 发布{revision ? `${relativeTime(revision.createdAt)}的版本` : '最新版本'}
+            以 @{account.handle} 发布 {revision?.versionLabel ?? '最新版本'}
+            {revision ? `（${relativeTime(revision.createdAt)}保存）` : ''}
+            {previous?.number ? `，接在社区发布 #${previous.number} 之后` : '，这是它在社区上的第一次发布'}
             。所有人都能看到并安装它。
           </p>
           <Field label="一句话简介" hint="显示在社区列表的卡片上。">

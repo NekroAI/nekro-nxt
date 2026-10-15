@@ -763,6 +763,9 @@ export function registerExtensionsRoutes({
               ...(parsed.agentPermissionApproval === undefined
                 ? {}
                 : { agentPermissionApproval: parsed.agentPermissionApproval }),
+              ...(parsed.restoreDataSnapshotId === undefined
+                ? {}
+                : { restoreDataSnapshotId: parsed.restoreDataSnapshotId }),
             })
             const manifest = activationManifest(runtime, installation.extensionRevisionId)
             writeContractJson(res, 200, HostApiContracts.installHostExtension, {

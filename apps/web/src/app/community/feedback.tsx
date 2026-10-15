@@ -244,7 +244,9 @@ function FeedbackDraftForm({
   const [consent, setConsent] = useState(false)
   const extensions = useProductStore((state) => state.extensions)
   const published = extensions.filter((extension) =>
-    extension.revisions.some((revision) => revision.source?.communityUrl === community.status?.communityUrl),
+    extension.revisions.some((revision) =>
+      revision.releases.some((release) => release.communityUrl === community.status?.communityUrl),
+    ),
   )
   const dirty =
     record === undefined ||

@@ -1,11 +1,11 @@
 import { useGo } from '../model/nav.js'
-import { ArrowUpRight, Check, CircleStop, MoreHorizontal, Package, RotateCcw, Save, Trash2 } from 'lucide-react'
+import { Archive, ArrowUpRight, Check, CircleStop, MoreHorizontal, Package, RotateCcw, Save, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { DynamicClientSlots } from '../../dynamic-client-coordinator.js'
 import { callHostApi } from '../../host-api-client.js'
-import { useProductStore } from '../../product-runtime.js'
+import { useProductRuntime, useProductStore } from '../../product-runtime.js'
 import {
   AgentAvatar,
   Banner,
@@ -74,7 +74,10 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
     state.dynamic.find((item) => item.agentId === task.agentId && item.episodeId === task.episodeId),
   )
   const extensions = useProductStore((state) => state.extensions)
+  const ui = useProductRuntime().uiStore
   const detail = useTaskDetail(task)
+  const target = task.kind === 'revise' ? extensions.find((item) => item.id === task.targetExtensionId) : undefined
+  const baseLabel = target?.revisions.find((item) => item.id === task.baseRevisionId)?.versionLabel
   const extensionId = savedExtensionId(detail)
   const saved = extensions.find((item) => item.id === extensionId)
   const enabledForAgent = saved?.activations.some((item) => item.agentId === task.agentId) ?? false
@@ -90,6 +93,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const [saveOpen, setSaveOpen] = useState(false)
   const [stopOpen, setStopOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(false)
 
   const run = async (kind: Exclude<typeof busy, ''>, action: () => Promise<unknown>, done?: string) => {
     if (busy) return
@@ -132,6 +136,17 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
                 {agent.name}
               </Link>
             ) : null}
+            {task.kind === 'revise' ? (
+              target ? (
+                <Link to={`/workshop/extensions/${target.id}`} className={styles.metaLink}>
+                  修改「{target.name}」{baseLabel ? ` ${baseLabel}` : ''}
+                </Link>
+              ) : (
+                <span>修改已删除的扩展</span>
+              )
+            ) : (
+              <span>新建扩展</span>
+            )}
             <span>{relativeTime(task.createdAt)}开始</span>
           </>
         }
@@ -155,7 +170,14 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
                 </Button>
               }
               items={[
-                open
+                task.status === 'paused'
+                  ? {
+                      key: 'archive',
+                      label: '归档任务',
+                      icon: <Archive size={14} />,
+                      onSelect: () => setArchiveOpen(true),
+                    }
+                  : open
                   ? {
                       key: 'stop',
                       label: '停止任务',
@@ -187,6 +209,8 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
                 </p>
               ) : candidate.client.status === 'absent' ? (
                 <p className={styles.quiet}>这个候选只有服务端能力，没有界面。</p>
+              ) : !task.live ? (
+                <p className={styles.quiet}>所在的对话已经结束，没有实时预览。让智能体继续这个任务后可以再看。</p>
               ) : (
                 <DynamicClientSlots agentId={task.agentId} episodeId={task.episodeId} />
               )}
@@ -224,6 +248,14 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
                 )
               }
               onOpenExtension={() => saved && navigate(`/workshop/extensions/${saved.id}`)}
+              onContinue={
+                channel
+                  ? () => {
+                      ui.getState().setChannelDraft(channel.id, `继续创造任务「${task.title}」，把它做完。`)
+                      navigate(`/channels/${channel.id}`)
+                    }
+                  : undefined
+              }
             />
           </PropertyGroup>
 
@@ -242,14 +274,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
         </div>
       </div>
 
-      <SaveDialog
-        open={saveOpen}
-        onOpenChange={setSaveOpen}
-        task={task}
-        agentName={agent?.name ?? '智能体'}
-        pluginId={dynamicItem?.pluginId ?? ''}
-        packageId={dynamicItem?.packageId ?? ''}
-      />
+      <SaveDialog open={saveOpen} onOpenChange={setSaveOpen} task={task} agentName={agent?.name ?? '智能体'} />
       <ConfirmDialog
         open={stopOpen}
         onOpenChange={setStopOpen}
@@ -259,6 +284,18 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
         onConfirm={() => api.getState().stopAuthoringTask(task.id, task.revision)}
       >
         正在运行的候选会停止；已经保存的扩展不受影响。
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={archiveOpen}
+        onOpenChange={setArchiveOpen}
+        title={`归档「${task.title}」？`}
+        confirmLabel="归档"
+        onConfirm={async () => {
+          await callHostApi(HostApiContracts.archiveAuthoringTask, { taskId: task.id }, undefined)
+          toast('已归档')
+        }}
+      >
+        归档后任务不再出现在工坊列表里，候选源码保留在任务记录中；已经保存的扩展不受影响。
       </ConfirmDialog>
       <ConfirmDialog
         open={deleteOpen}
@@ -315,6 +352,8 @@ function NextAction(props: {
   readonly onRestore: () => void
   readonly onEnable: () => void
   readonly onOpenExtension: () => void
+  /** Opens the task's channel with a request for the agent to continue; absent when the channel is gone. */
+  readonly onContinue: (() => void) | undefined
 }) {
   const { task, busy } = props
   const candidate = task.candidateAttempt
@@ -386,6 +425,26 @@ function NextAction(props: {
       </div>
     )
   }
+  if (task.status === 'paused') {
+    const verified = candidate?.state === 'active'
+    return (
+      <div className={styles.action} data-tone="warn">
+        <div className={styles.actionText}>
+          <b>任务已暂停</b>
+          <span>
+            {task.pausedReason ?? '所在的对话已经结束。'}
+            {verified ? '最新候选已经通过验证，可以直接保存。' : '在频道里让智能体继续，它会接着做完。'}
+          </span>
+        </div>
+        {props.onContinue ? <Button onClick={props.onContinue}>去频道继续</Button> : null}
+        {verified ? (
+          <Button variant="primary" icon={<Save size={14} />} onClick={props.onSave}>
+            {task.kind === 'revise' ? '保存为新版本' : '保存为扩展'}
+          </Button>
+        ) : null}
+      </div>
+    )
+  }
   if (task.status === 'ready') {
     return (
       <div className={styles.action} data-tone="ok">
@@ -394,7 +453,7 @@ function NextAction(props: {
           <span>{props.settling ? `${props.agentName}正在收尾，完成后即可保存` : '确认预览效果后保存为本地扩展'}</span>
         </div>
         <Button variant="primary" icon={<Save size={14} />} disabled={props.settling} onClick={props.onSave}>
-          保存为扩展
+          {task.kind === 'revise' ? '保存为新版本' : '保存为扩展'}
         </Button>
       </div>
     )

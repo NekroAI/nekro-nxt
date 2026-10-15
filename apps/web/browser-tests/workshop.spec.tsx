@@ -163,6 +163,8 @@ test.describe('workshop', () => {
       agentId: targetAgentId,
       channelId: targetChannelId,
       episodeId: targetEpisodeId,
+      kind: 'create' as const,
+      live: true,
       title: '天气查询',
       requirementSummary: '按城市查询实时天气。',
       status: 'running' as const,

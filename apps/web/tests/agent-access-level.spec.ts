@@ -19,6 +19,8 @@ const capabilities = (
   commandNetwork: true,
   communityFeedbackAuto: false,
   commandAccounts: [],
+  extensionAutonomy: 'manual',
+  extensionRequesters: 'everyone',
   ...access,
 })
 

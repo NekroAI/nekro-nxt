@@ -158,6 +158,8 @@ describe('product store Host mutations', () => {
             commandNetwork: true,
             communityFeedbackAuto: false,
             commandAccounts: [],
+            extensionAutonomy: 'manual',
+            extensionRequesters: 'everyone',
           },
           imagePolicy: defaultImageUnderstandingPolicy(),
           imageDiagnostics: {
@@ -173,6 +175,8 @@ describe('product store Host mutations', () => {
         {
           id: extensionId,
           slug: 'test-extension',
+          dataVersion: 1,
+          communityLinks: [],
           name: '测试扩展',
           description: '',
           revision: 1,
@@ -263,6 +267,8 @@ describe('product store Host mutations', () => {
           agentId,
           channelId,
           episodeId,
+          kind: 'create' as const,
+          live: true,
           title: '审批并发探针',
           requirementSummary: '验证同一候选的修订推进可以自动恢复。',
           status: 'awaiting-approval',
@@ -309,6 +315,8 @@ describe('product store Host mutations', () => {
         {
           id: extensionId,
           slug: 'shared-extension',
+          dataVersion: 1,
+          communityLinks: [],
           name: '共享扩展',
           description: '',
           revision: 2,
@@ -353,6 +361,8 @@ describe('product store Host mutations', () => {
           {
             id: extensionId,
             slug: 'layered-extension',
+            dataVersion: 1,
+            communityLinks: [],
             name: '分层扩展',
             description: '',
             revision: 1,
@@ -463,6 +473,8 @@ describe('product store Host mutations', () => {
         {
           id: extensionId,
           slug: 'missing-revision-extension',
+          dataVersion: 1,
+          communityLinks: [],
           name: '缺少版本的扩展',
           description: '',
           revision: 1,

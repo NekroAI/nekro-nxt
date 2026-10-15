@@ -78,6 +78,8 @@ export const taskStatus = (task: Pick<AuthoringTask, 'status'>): { readonly labe
       return { label: '需要处理', tone: 'bad' }
     case 'stopped':
       return { label: '已停止', tone: 'neutral' }
+    case 'paused':
+      return { label: '已暂停', tone: 'warn' }
     case 'repairing':
       return { label: '正在修复', tone: 'accent' }
     case 'running':

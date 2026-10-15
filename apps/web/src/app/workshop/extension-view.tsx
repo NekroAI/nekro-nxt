@@ -1,17 +1,19 @@
 import { useGo } from '../model/nav.js'
 import { LogsButton } from '../logs/logs-button.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
-import { ChevronRight, Download, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Download, GitBranch, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { communityPublisherLabel, HostApiContracts } from '@nekro-nxt/contracts'
+import { communityPublisherLabel, HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import {
   useHostActions,
+  useProductRuntime,
   useProductStore,
   type AgentSummary,
   type LocalExtensionSummary,
 } from '../../product-runtime.js'
+import type { ExtensionApprovals } from '../../product-model.js'
 import {
   AgentAvatar,
   Banner,
@@ -20,17 +22,19 @@ import {
   ConfirmDialog,
   DataTable,
   Diagnostics,
-  Disclosure,
+  Dialog,
   ExtensionIcon,
+  Field,
+  Input,
   MainContent,
   Menu,
   ObjectHeader,
   PropertyGroup,
   PropertyList,
   PropertyRow,
-  Pressable,
   Select,
   Switch,
+  SwitchRow,
   toast,
   type Column,
 } from '../../ui-kit/index.js'
@@ -48,14 +52,17 @@ import {
 import { useProductApi } from '../model/store.js'
 import {
   CONTRIBUTION_PLACE,
+  SLUG_PATTERN,
   contributionParts,
   extensionUsage,
   hasAgentLayer,
   mcpParts,
   mcpStatusText,
+  proposeSlug,
   providesLabel,
-  recordLabels,
 } from './workshop-model.js'
+import { ExtensionData } from './extension-data.js'
+import { LineageView } from './lineage-view.js'
 import { PublishDialog } from './publish-dialog.js'
 import styles from './workshop.module.css'
 
@@ -80,7 +87,7 @@ const download = async (extension: LocalExtensionSummary, revision: Revision) =>
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/zip' }))
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `${extension.slug}-${fileStamp(revision.createdAt)}.nxt-extension`
+  anchor.download = `${extension.slug}-${revision.versionLabel.replace('·', '-')}-${fileStamp(revision.createdAt)}.nxt-extension`
   anchor.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
@@ -88,13 +95,22 @@ const download = async (extension: LocalExtensionSummary, revision: Revision) =>
 export function ExtensionView({ extension }: { readonly extension: LocalExtensionSummary }) {
   const navigate = useGo()
   const hostActions = useHostActions()
+  const agents = useProductStore((state) => state.agents)
+  const ui = useProductRuntime().uiStore
   const usage = extensionUsage(extension)
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [publishOpen, setPublishOpen] = useState(false)
-  const labels = useMemo(() => recordLabels(extension.revisions), [extension.revisions])
+  const [publishing, setPublishing] = useState<Revision>()
+  const [branching, setBranching] = useState<Revision>()
+  const switching = useVersionSwitch(extension)
   const latest = extension.revisions.at(-1)
-  const current = extension.revisions.findLast(usable) ?? latest
+  const installed = extension.revisions.find((item) => item.id === extension.installation?.revisionId)
+  const current = installed ?? extension.revisions.findLast(usable) ?? latest
   const unsupported = extension.revisions.filter((item) => !usable(item)).length
+  const communityRelease = current?.releases.find((release) => release.via === 'install')
+  // Revising goes through an agent that can create: the one that made it, or else the first one with a channel.
+  const reviser =
+    agents.find((agent) => agent.id === extension.createdByAgentId && agent.capabilities.dynamicCreation && agent.channels[0]) ??
+    agents.find((agent) => agent.capabilities.dynamicCreation && agent.channels[0] !== undefined)
 
   return (
     <MainContent>
@@ -109,9 +125,14 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         meta={
           <>
             <span>{providesLabel(extension.provides)}</span>
-            {current?.source ? (
+            {current ? <span>{current.versionLabel}</span> : null}
+            {extension.branchOf ? (
+              <Link to={`/workshop/extensions/${extension.branchOf.extensionId}`} className={styles.metaLink}>
+                分支自{extension.branchOf.displayName ? `「${extension.branchOf.displayName}」` : '另一个扩展'}
+              </Link>
+            ) : communityRelease ? (
               <Link to={`/community/extensions/${extension.id}`} className={styles.metaLink}>
-                来自社区 {communityPublisherLabel(current.source.publisherHandle)}
+                来自社区 {communityPublisherLabel(communityRelease.publisherHandle)}
               </Link>
             ) : (
               <span>{extension.createdByAgent ? `由${extension.createdByAgent}创造` : '本地导入'}</span>
@@ -134,7 +155,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                   ? [
                       {
                         key: 'export',
-                        label: '导出最新版本',
+                        label: `导出 ${current.versionLabel}`,
                         icon: <Download size={14} />,
                         onSelect: () => void download(extension, current).catch(failure),
                       },
@@ -144,7 +165,13 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                               key: 'publish',
                               label: '发布到社区',
                               icon: <Share2 size={14} />,
-                              onSelect: () => setPublishOpen(true),
+                              onSelect: () => setPublishing(current),
+                            },
+                            {
+                              key: 'branch',
+                              label: '创建分支',
+                              icon: <GitBranch size={14} />,
+                              onSelect: () => setBranching(current),
                             },
                           ]
                         : []),
@@ -162,9 +189,29 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
           </>
         }
       />
-      <PublishDialog extension={extension} revision={current} open={publishOpen} onOpenChange={setPublishOpen} />
+      <PublishDialog
+        extension={extension}
+        revision={publishing}
+        open={publishing !== undefined}
+        onOpenChange={(open) => !open && setPublishing(undefined)}
+        onBranch={() => publishing && setBranching(publishing)}
+      />
+      <BranchDialog extension={extension} revision={branching} onClose={() => setBranching(undefined)} />
+      {switching.dialog}
       {extension.description ? <p className={styles.lead}>{extension.description}</p> : null}
       <CompatibilityNotices extensionId={extension.id} />
+      {extension.openRevisionTaskId ? (
+        <Banner
+          tone="info"
+          action={
+            <Button size="small" onClick={() => navigate(`/workshop/tasks/${extension.openRevisionTaskId}`)}>
+              查看任务
+            </Button>
+          }
+        >
+          有一个修改这个扩展的任务还没完成，保存后会成为它的下一个版本。
+        </Banner>
+      ) : null}
       {unsupported > 0 ? (
         <Banner tone="warn">
           {unsupported === extension.revisions.length
@@ -175,31 +222,45 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 
       <Overview revision={current} pages={extension.revisions.flatMap((revision) => revision.pages)} />
 
-      <Installation extension={extension} labels={labels} />
+      <Installation extension={extension} switching={switching} />
       {hasAgentLayer(extension) ? <AgentUsage extension={extension} /> : null}
 
       <ExtensionSettings extension={extension} />
 
-      <PropertyGroup title="版本">
-        <div className={styles.records}>
-          {extension.revisions.toReversed().map((revision) => (
-            <RecordRow
-              key={revision.id}
-              extension={extension}
-              revision={revision}
-              label={labels.get(revision.id) ?? ''}
-              latest={revision.id === latest?.id}
-            />
-          ))}
-        </div>
+      <PropertyGroup
+        title="谱系"
+        tip="每次保存都是一个新版本，接在它修改的版本之后；分支是从某个版本另起的扩展，分支还可以再分支。实心点是正在使用的版本，#n 是社区发布编号。"
+      >
+        <LineageView
+          extension={extension}
+          actions={{
+            onSwitch: (revision) => switching.request(revision),
+            onBranch: (revision) => setBranching(revision),
+            onPublish: (revision) => setPublishing(revision),
+            onExport: (revision) => void download(extension, revision).catch(failure),
+            onRevise:
+              reviser?.channels[0] === undefined
+                ? undefined
+                : (revision) => {
+                    const channelId = reviser.channels[0]!
+                    ui.getState().setChannelDraft(
+                      channelId,
+                      `在「${extension.name}」的 ${revision.versionLabel} 基础上修改：`,
+                    )
+                    navigate(`/channels/${channelId}`)
+                  },
+          }}
+        />
       </PropertyGroup>
+
+      <ExtensionData extension={extension} />
 
       <Diagnostics
         items={[
           { label: '扩展 ID', value: extension.id },
           { label: '本地标识', value: extension.slug },
           ...extension.revisions.toReversed().map((revision) => ({
-            label: `${labels.get(revision.id) ?? ''} 版本`,
+            label: `${revision.versionLabel} 版本`,
             value: `${revision.id}（第 ${revision.revision} 个）`,
           })),
         ]}
@@ -217,10 +278,110 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
           navigate('/workshop', { replace: true })
         }}
       >
-        {extension.revisions.length} 个版本、源码与验证记录会被永久删除
+        {extension.revisions.length} 个版本、源码、数据与验证记录会被永久删除
         {removalConsequences(extension)}
       </ConfirmDialog>
     </MainContent>
+  )
+}
+
+/** Creates a new extension from one version; the data of the original can come along. */
+function BranchDialog({
+  extension,
+  revision,
+  onClose,
+}: {
+  readonly extension: LocalExtensionSummary
+  readonly revision: Revision | undefined
+  readonly onClose: () => void
+}) {
+  const navigate = useGo()
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [slugEdited, setSlugEdited] = useState(false)
+  const [copyData, setCopyData] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    if (!revision) return
+    const proposed = `${extension.name}（分支）`
+    setName(proposed)
+    setSlug(proposeSlug(`${extension.slug}-branch`))
+    setSlugEdited(false)
+    setCopyData(true)
+    setError('')
+  }, [revision])
+  const valid = name.trim() !== '' && SLUG_PATTERN.test(slug)
+  const create = async () => {
+    if (!revision) return
+    setBusy(true)
+    setError('')
+    try {
+      const result = await callHostApi(
+        HostApiContracts.branchExtension,
+        { extensionId: extension.id },
+        { revisionId: revision.id, name: name.trim(), slug, copyData },
+      )
+      toast(`已创建分支「${name.trim()}」`)
+      onClose()
+      navigate(`/workshop/extensions/${result.extensionId}`)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      open={revision !== undefined}
+      onOpenChange={(open) => !open && !busy && onClose()}
+      title={`从 ${revision?.versionLabel ?? ''} 创建分支`}
+      actions={
+        <>
+          <Button onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button variant="primary" busy={busy} disabled={!valid} onClick={() => void create()}>
+            创建分支
+          </Button>
+        </>
+      }
+    >
+      <p style={{ margin: 0 }}>
+        分支是一个新扩展，代码和「{extension.name}」{revision?.versionLabel} 完全相同，之后各自修改、互不影响。它会记住自己分支自哪里，发布到社区时也会标明。
+      </p>
+      <Field label="名称">
+        <Input
+          value={name}
+          maxLength={80}
+          onChange={(event) => {
+            setName(event.target.value)
+            if (!slugEdited) setSlug(proposeSlug(event.target.value))
+          }}
+        />
+      </Field>
+      <Field label="标识" error={SLUG_PATTERN.test(slug) ? undefined : '小写字母、数字和连字符，3–64 位'}>
+        <Input
+          value={slug}
+          spellCheck={false}
+          onChange={(event) => {
+            setSlugEdited(true)
+            setSlug(event.target.value.trim())
+          }}
+        />
+      </Field>
+      <SwitchRow
+        title="复制现有数据"
+        description="把原扩展积累的记录、索引和素材复制一份给分支；之后两边的数据分开保存。"
+        checked={copyData}
+        onCheckedChange={setCopyData}
+      />
+      {error ? (
+        <p role="alert" style={{ margin: 0, color: 'var(--bad)' }}>
+          {error}
+        </p>
+      ) : null}
+    </Dialog>
   )
 }
 
@@ -463,41 +624,37 @@ function AgentUsage({ extension }: { readonly extension: LocalExtensionSummary }
   )
 }
 
-/**
- * The extension's single installation on this machine. Switching records moves every agent using it; approvals cover
- * the machine and, when the new record asks agents for more, those agents too.
- */
-function Installation({
-  extension,
-  labels,
-}: {
-  readonly extension: LocalExtensionSummary
-  readonly labels: ReadonlyMap<string, string>
-}) {
-  const api = useProductApi()
-  const installed = extension.installation
-  const [choice, setChoice] = useState(installed?.revisionId ?? extension.revisions.findLast(usable)?.id ?? '')
-  const [busy, setBusy] = useState(false)
-  const [approve, setApprove] = useState<{
-    readonly revision: Revision
-    readonly host?: NonNullable<NonNullable<Revision['verification']>['hostPermission']>
-    readonly agent?: NonNullable<NonNullable<Revision['verification']>['agentPermission']>
-  }>()
-  const [acceptedRisks, setAcceptedRisks] = useState<ReadonlySet<string>>(new Set())
-  const [uninstallOpen, setUninstallOpen] = useState(false)
-  const chosen = extension.revisions.find((item) => item.id === choice)
-  const chosenInstalled = chosen !== undefined && chosen.id === installed?.revisionId
+type Approval = {
+  readonly revision: Revision
+  readonly host?: NonNullable<NonNullable<Revision['verification']>['hostPermission']>
+  readonly agent?: NonNullable<NonNullable<Revision['verification']>['agentPermission']>
+  readonly restoreDataSnapshotId?: string
+}
 
-  const install = async (revision: Revision, approvals?: { readonly host?: string; readonly agent?: string }) => {
+type DataSnapshots = HostApiResponse<'getExtensionData'>['snapshots']
+
+/**
+ * Switching the one installed version: approvals of what the new version asks for (the machine and, when it asks
+ * agents for more, those agents too), and a data snapshot to put back when the target only reads an older data format.
+ */
+function useVersionSwitch(extension: LocalExtensionSummary) {
+  const api = useProductApi()
+  const [busy, setBusy] = useState(false)
+  const [approve, setApprove] = useState<Approval>()
+  const [acceptedRisks, setAcceptedRisks] = useState<ReadonlySet<string>>(new Set())
+  const [restoring, setRestoring] = useState<{ readonly revision: Revision; readonly snapshots: DataSnapshots }>()
+  const [restoreChoice, setRestoreChoice] = useState('')
+
+  const install = async (revision: Revision, approvals?: ExtensionApprovals) => {
     setBusy(true)
     try {
       await api.getState().setHostExtensionInstalled(extension.id, revision.id, approvals)
-      toast(`已安装${labels.get(revision.id) ?? ''}的版本`)
+      toast(extension.installation ? `已切换到 ${revision.versionLabel}` : `已安装 ${revision.versionLabel}`)
     } finally {
       setBusy(false)
     }
   }
-  const request = (revision: Revision) => {
+  const proceed = (revision: Revision, restoreDataSnapshotId?: string) => {
     const host = revision.verification?.hostPermission
     const agent = revision.verification?.agentPermission
     const needsHost = host?.approvalRequired === true
@@ -509,11 +666,117 @@ function Installation({
         revision,
         ...(needsHost && host !== undefined ? { host } : {}),
         ...(needsAgent && agent !== undefined ? { agent } : {}),
+        ...(restoreDataSnapshotId === undefined ? {} : { restoreDataSnapshotId }),
       })
       return
     }
-    void install(revision).catch(failure)
+    void install(revision, restoreDataSnapshotId === undefined ? undefined : { restoreDataSnapshotId }).catch(failure)
   }
+  const request = (revision: Revision) => {
+    if (extension.installation && revision.dataVersion < extension.dataVersion) {
+      void callHostApi(HostApiContracts.getExtensionData, { extensionId: extension.id }, undefined)
+        .then((state) => {
+          const snapshots = state.snapshots.filter((snapshot) => snapshot.dataVersion <= revision.dataVersion)
+          setRestoreChoice(snapshots[0]?.id ?? '')
+          setRestoring({ revision, snapshots })
+        })
+        .catch(failure)
+      return
+    }
+    proceed(revision)
+  }
+  const rollback = async () => {
+    setBusy(true)
+    try {
+      const result = await callHostApi(HostApiContracts.rollbackExtension, { extensionId: extension.id }, undefined)
+      toast(result.message)
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const dialog = (
+    <>
+      <ConfirmDialog
+        open={approve !== undefined}
+        onOpenChange={(open) => !open && setApprove(undefined)}
+        title="批准这个版本申请的权限"
+        confirmLabel="批准并安装"
+        confirmDisabled={approvalRiskKeys(approve?.host, approve?.agent).some((key) => !acceptedRisks.has(key))}
+        onConfirm={() =>
+          approve
+            ? install(approve.revision, {
+                ...(approve.host === undefined ? {} : { host: approve.host.permissionDigest }),
+                ...(approve.agent === undefined ? {} : { agent: approve.agent.permissionDigest }),
+                ...(approve.restoreDataSnapshotId === undefined
+                  ? {}
+                  : { restoreDataSnapshotId: approve.restoreDataSnapshotId }),
+              })
+            : undefined
+        }
+      >
+        <PermissionApprovalList
+          host={approve?.host}
+          agent={approve?.agent}
+          hostTitle="对整台机器生效："
+          agentTitle={`对正在使用它的 ${extension.activations.length} 个智能体生效：`}
+          accepted={acceptedRisks}
+          onAcceptedChange={setAcceptedRisks}
+          {...(approve === undefined ? {} : { fieldTitle: configFieldTitles(approve.revision) })}
+        />
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={restoring !== undefined}
+        onOpenChange={(open) => !open && setRestoring(undefined)}
+        title={`切换到 ${restoring?.revision.versionLabel ?? ''} 需要恢复旧数据`}
+        confirmLabel="恢复并切换"
+        danger
+        confirmDisabled={restoreChoice === ''}
+        onConfirm={() => {
+          if (!restoring) return
+          setRestoring(undefined)
+          proceed(restoring.revision, restoreChoice)
+        }}
+      >
+        本机数据已经是第 {extension.dataVersion} 版格式，{restoring?.revision.versionLabel} 只认识第{' '}
+        {restoring?.revision.dataVersion} 版。切换时要先把数据恢复成一份旧格式的快照；快照之后写入的数据会丢失，切换前的数据会再留一份快照。
+        {restoring && restoring.snapshots.length > 0 ? (
+          <Field label="恢复哪份快照">
+            <Select
+              aria-label="恢复哪份快照"
+              value={restoreChoice}
+              onValueChange={setRestoreChoice}
+              options={restoring.snapshots.map((snapshot) => ({
+                value: snapshot.id,
+                label: `${relativeTime(snapshot.createdAt)} · ${snapshot.label} · 第 ${snapshot.dataVersion} 版格式`,
+              }))}
+            />
+          </Field>
+        ) : (
+          <Banner tone="bad">没有可用的旧格式快照，无法切换到这个版本。</Banner>
+        )}
+      </ConfirmDialog>
+    </>
+  )
+  return { request, rollback, busy, dialog }
+}
+
+/** The extension's single installation on this machine; switching moves every agent using it. */
+function Installation({
+  extension,
+  switching,
+}: {
+  readonly extension: LocalExtensionSummary
+  readonly switching: ReturnType<typeof useVersionSwitch>
+}) {
+  const api = useProductApi()
+  const installed = extension.installation
+  const [choice, setChoice] = useState(installed?.revisionId ?? extension.revisions.findLast(usable)?.id ?? '')
+  const [uninstallOpen, setUninstallOpen] = useState(false)
+  const chosen = extension.revisions.find((item) => item.id === choice)
+  const chosenInstalled = chosen !== undefined && chosen.id === installed?.revisionId
   const onlyAgents =
     hasAgentLayer(extension) && !extension.provides.some((item) => item === 'page' || item === 'adapter')
 
@@ -531,8 +794,8 @@ function Installation({
           description={
             installed
               ? installed.revisionId === extension.revisions.findLast(usable)?.id
-                ? '已是最新版本'
-                : '有更新的版本，可以切换'
+                ? '已是最新保存的版本'
+                : '有更新保存的版本，可以切换'
               : onlyAgents
                 ? '给智能体启用时会自动安装'
                 : '还没有安装到本机'
@@ -544,50 +807,30 @@ function Installation({
             onValueChange={(value) => setChoice(value)}
             options={extension.revisions.toReversed().map((item) => ({
               value: item.id,
-              label: `${labels.get(item.id) ?? ''}${item.id === installed?.revisionId ? ' · 已安装' : ''}`,
+              label: `${item.versionLabel} · ${relativeTime(item.createdAt)}${item.id === installed?.revisionId ? ' · 已安装' : ''}`,
               disabled: !usable(item),
             }))}
           />
           <Button
             variant="primary"
-            busy={busy}
+            busy={switching.busy}
             disabled={!chosen || chosenInstalled}
-            onClick={() => chosen && request(chosen)}
+            onClick={() => chosen && switching.request(chosen)}
           >
             {installed ? '切换到这个版本' : '安装'}
           </Button>
+          {installed && extension.revisions.length > 1 ? (
+            <Button disabled={switching.busy} onClick={() => void switching.rollback()}>
+              回到上一个版本
+            </Button>
+          ) : null}
           {installed ? (
-            <Button variant="danger" disabled={busy} onClick={() => setUninstallOpen(true)}>
+            <Button variant="danger" disabled={switching.busy} onClick={() => setUninstallOpen(true)}>
               卸载
             </Button>
           ) : null}
         </PropertyRow>
       </PropertyList>
-      <ConfirmDialog
-        open={approve !== undefined}
-        onOpenChange={(open) => !open && setApprove(undefined)}
-        title="批准这个版本申请的权限"
-        confirmLabel="批准并安装"
-        confirmDisabled={approvalRiskKeys(approve?.host, approve?.agent).some((key) => !acceptedRisks.has(key))}
-        onConfirm={() =>
-          approve
-            ? install(approve.revision, {
-                ...(approve.host === undefined ? {} : { host: approve.host.permissionDigest }),
-                ...(approve.agent === undefined ? {} : { agent: approve.agent.permissionDigest }),
-              })
-            : undefined
-        }
-      >
-        <PermissionApprovalList
-          host={approve?.host}
-          agent={approve?.agent}
-          hostTitle="对整台机器生效："
-          agentTitle={`对正在使用它的 ${extension.activations.length} 个智能体生效：`}
-          accepted={acceptedRisks}
-          onAcceptedChange={setAcceptedRisks}
-          {...(approve === undefined ? {} : { fieldTitle: configFieldTitles(approve.revision) })}
-        />
-      </ConfirmDialog>
       <ConfirmDialog
         open={uninstallOpen}
         onOpenChange={setUninstallOpen}
@@ -599,91 +842,8 @@ function Installation({
           toast('已卸载')
         }}
       >
-        {`扩展会停止运行${removalConsequences(extension)}`}
+        {`扩展会停止运行，数据保留${removalConsequences(extension)}`}
       </ConfirmDialog>
     </PropertyGroup>
-  )
-}
-
-function RecordRow({
-  extension,
-  revision,
-  label,
-  latest,
-}: {
-  readonly extension: LocalExtensionSummary
-  readonly revision: Revision
-  readonly label: string
-  readonly latest: boolean
-}) {
-  const [open, setOpen] = useState(latest)
-  const [busy, setBusy] = useState(false)
-  const verification = revision.verification
-  const users = extension.activations.filter((item) => item.revisionId === revision.id)
-  const installed = extension.installation?.revisionId === revision.id
-  const id = `record-${revision.id}`
-  return (
-    <div className={styles.record} data-open={open}>
-      <Pressable className={styles.recordHead} aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
-        <ChevronRight size={14} className={styles.chevron} data-open={open} />
-        <b>{label}</b>
-        {latest ? <Chip tone="accent">最新</Chip> : null}
-        {installed ? <Chip tone="ok">已安装</Chip> : null}
-        {users.length > 0 ? <Chip tone="ok">{users.map((item) => item.agentName).join('、')} 在用</Chip> : null}
-        {!usable(revision) ? <Chip tone="warn">格式不受支持</Chip> : null}
-        <span className={styles.grow} />
-        {open ? null : <span className={styles.recordCount}>{revision.contributions.length} 项内容</span>}
-      </Pressable>
-      <Disclosure open={open} id={id}>
-        <div className={styles.recordBody}>
-          {revision.contributions.length > 0 ? (
-            <ul className={styles.contributions}>
-              {revision.contributions.map((item) => {
-                const part = contributionParts(item)
-                return (
-                  <li key={item}>
-                    <span>{part.kind}</span>
-                    {part.name}
-                  </li>
-                )
-              })}
-            </ul>
-          ) : null}
-          <div className={styles.recordFoot}>
-            {verification ? (
-              <dl className={styles.facts}>
-                <div>
-                  <dt>验证</dt>
-                  <dd>已通过</dd>
-                </div>
-                <div>
-                  <dt>工具调用</dt>
-                  <dd>{verification.toolInvocationCount > 0 ? `${verification.toolInvocationCount} 次通过` : '无'}</dd>
-                </div>
-                <div>
-                  <dt>界面</dt>
-                  <dd>{verification.clientBuilt ? '已渲染' : '无'}</dd>
-                </div>
-              </dl>
-            ) : (
-              <p className={styles.faint}>本机没有这个版本的验证结果。</p>
-            )}
-            <Button
-              size="small"
-              icon={<Download size={14} />}
-              busy={busy}
-              onClick={() => {
-                setBusy(true)
-                void download(extension, revision)
-                  .catch(failure)
-                  .finally(() => setBusy(false))
-              }}
-            >
-              导出
-            </Button>
-          </div>
-        </div>
-      </Disclosure>
-    </div>
   )
 }

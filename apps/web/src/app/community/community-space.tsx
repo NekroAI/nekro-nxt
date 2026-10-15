@@ -1,4 +1,4 @@
-import { Compass, MessageCircle, PackageCheck, Send, UserRound, UsersRound } from 'lucide-react'
+import { Compass, MessageCircle, Repeat2, Send, UserRound, UsersRound } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import type { CommunityPermissionItem, CommunityReviewStatus, HostApiResponse } from '@nekro-nxt/contracts'
@@ -11,7 +11,7 @@ import { FeedbackView } from './feedback.js'
 import { feedbackScope, useFeedbackSummary } from './feedback-model.js'
 import { ENVIRONMENT_LABEL, useCommunityStatus } from './community-model.js'
 import { CommunityView } from './discover.js'
-import { InstalledView } from './installed.js'
+import { SyncView } from './sync.js'
 import { MineView, ReviewReportView } from './mine.js'
 import { useWideLayout } from './persona-model.js'
 import { PersonaCatalog, PersonaDetail } from './personas.js'
@@ -29,7 +29,7 @@ export interface PendingCommunityImport {
 type Section =
   | { readonly kind: 'discover'; readonly extensionId?: string }
   | { readonly kind: 'personas'; readonly personaId?: string }
-  | { readonly kind: 'installed' }
+  | { readonly kind: 'sync' }
   | { readonly kind: 'mine'; readonly releaseId?: string }
   | { readonly kind: 'account' }
   | { readonly kind: 'feedback' }
@@ -41,7 +41,7 @@ const parse = (pathname: string): Section | undefined => {
   if (/^\/community\/personas\/?$/u.test(pathname)) return { kind: 'personas' }
   const persona = /^\/community\/personas\/([^/]+)\/?$/u.exec(pathname)
   if (persona) return { kind: 'personas', personaId: decodeURIComponent(persona[1] ?? '') }
-  if (/^\/community\/installed\/?$/u.test(pathname)) return { kind: 'installed' }
+  if (/^\/community\/(sync|installed)\/?$/u.test(pathname)) return { kind: 'sync' }
   if (/^\/community\/mine\/?$/u.test(pathname)) return { kind: 'mine' }
   const release = /^\/community\/mine\/releases\/([^/]+)\/?$/u.exec(pathname)
   if (release) return { kind: 'mine', releaseId: decodeURIComponent(release[1] ?? '') }
@@ -53,7 +53,7 @@ const parse = (pathname: string): Section | undefined => {
 const CRUMB: Readonly<Record<Section['kind'], string>> = {
   discover: '发现',
   personas: '人设',
-  installed: '已安装',
+  sync: '同步',
   mine: '我的发布',
   account: '账号',
   feedback: '反馈',
@@ -108,11 +108,11 @@ export default function CommunitySpace() {
         {row('discover', '/community', <Compass size={14} />, '发现', '浏览、搜索与安装社区扩展')}
         {row('personas', '/community/personas', <UsersRound size={14} />, '人设', '安装社区作者分享的人设')}
         {row(
-          'installed',
-          '/community/installed',
-          <PackageCheck size={14} />,
-          '已安装',
-          status && status.updatesAvailable > 0 ? `${status.updatesAvailable} 个扩展有新发布` : '来自社区的扩展与更新',
+          'sync',
+          '/community/sync',
+          <Repeat2 size={14} />,
+          '同步',
+          status && status.updatesAvailable > 0 ? `${status.updatesAvailable} 个扩展需要处理` : '安装和发布的扩展与社区是否一致',
           status && status.updatesAvailable > 0 ? (
             <span className={styles.count}>{status.updatesAvailable}</span>
           ) : null,
@@ -190,8 +190,8 @@ export default function CommunitySpace() {
         ) : (
           <PersonaCatalog selectedId={section.personaId} />
         )
-      ) : section.kind === 'installed' ? (
-        <InstalledView onInspected={setPending} onChecked={() => void community.refresh()} />
+      ) : section.kind === 'sync' ? (
+        <SyncView onChecked={() => void community.refresh()} />
       ) : section.kind === 'feedback' ? (
         <FeedbackView key={feedbackScope(community)} community={community} />
       ) : section.kind === 'mine' ? (

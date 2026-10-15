@@ -3,6 +3,7 @@ import { FULL_DATA_SCOPE } from '@nekro-nxt/extension-runtime'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { NekroRuntime } from './bootstrap.js'
 import { lineageGraph } from './extension-governance/versions.js'
+import { ExtensionConfigMigration } from './extension-governance/config-migration.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
 import { activationManifest } from './host-queries.js'
 import {
@@ -123,13 +124,27 @@ export async function handleGovernanceExtensionRoute(
         scope: FULL_DATA_SCOPE,
         ...(input.agentMap === undefined ? {} : { agentMap: input.agentMap }),
       }
+      const configPlan = {
+        source: input.source,
+        targetExtensionId: extensionId,
+        mode: input.mode,
+        ...(input.agentMap === undefined ? {} : { agentMap: input.agentMap }),
+      }
+      const configMigration = new ExtensionConfigMigration(runtime)
       if (route === 'data/preview') {
-        writeContractJson(res, 200, HostApiContracts.previewExtensionDataMigration, runtime.extensionData.preview(plan))
+        writeContractJson(res, 200, HostApiContracts.previewExtensionDataMigration, {
+          ...runtime.extensionData.preview(plan),
+          ...(input.includeConfig === true ? { config: configMigration.preview(configPlan) } : {}),
+        })
         return true
       }
       const result = await runtime.extensions.withStopped(extensionId, () => runtime.extensionData.migrate(plan))
+      const config = input.includeConfig === true ? await configMigration.apply(configPlan) : undefined
       if (input.source.kind === 'package') runtime.extensionData.discardPackage(input.source.token)
-      writeContractJson(res, 200, HostApiContracts.migrateExtensionData, result)
+      writeContractJson(res, 200, HostApiContracts.migrateExtensionData, {
+        ...result,
+        preview: { ...result.preview, ...(config === undefined ? {} : { config }) },
+      })
       broadcastExtensionsChanged()
       return true
     }

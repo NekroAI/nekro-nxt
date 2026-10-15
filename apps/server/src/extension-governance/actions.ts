@@ -21,6 +21,7 @@ import {
 import type { NekroRuntime } from '../bootstrap.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../dsh-version.js'
 import { createExtensionRevisionExport } from '../host-route-support.js'
+import { ExtensionConfigMigration } from './config-migration.js'
 import { extensionVersions } from './versions.js'
 
 /** Who asks for an extension action. Console and administrators act for themselves; agents are bound by autonomy. */
@@ -56,6 +57,8 @@ export type ExtensionAction =
         | { readonly kind: 'extension'; readonly extensionId: ExtensionId }
         | { readonly kind: 'snapshot'; readonly snapshotId: string }
       readonly mode: ExtensionDataMigrationMode
+      /** Also move the host and agent configuration; credentials never move. */
+      readonly includeConfig?: boolean
     }
   | {
       readonly kind: 'community-publish'
@@ -228,9 +231,21 @@ export class ExtensionActionService {
             scope: { owners: 'all', index: true, library: true },
           }),
         )
+        const config =
+          action.includeConfig === true
+            ? await new ExtensionConfigMigration(runtime).apply({
+                source: action.source,
+                targetExtensionId: action.targetExtensionId,
+                mode: action.mode,
+              })
+            : undefined
         const { storage, index, library } = result.preview.diff
+        const configNote =
+          config === undefined
+            ? ''
+            : `；配置改了 ${config.hostFields.length + config.agents.reduce((sum, entry) => sum + entry.fields.length, 0)} 项（凭据不迁移）`
         return {
-          message: `已把数据迁移到「${this.#extensionName(action.targetExtensionId)}」：记录新增 ${storage.added}、覆盖 ${storage.overwritten}、删除 ${storage.removed}；索引 ${index.added + index.overwritten} 条；素材 ${library.added} 个。迁移前的数据已留快照，可以恢复。`,
+          message: `已把数据迁移到「${this.#extensionName(action.targetExtensionId)}」：记录新增 ${storage.added}、覆盖 ${storage.overwritten}、删除 ${storage.removed}；索引 ${index.added + index.overwritten} 条；素材 ${library.added} 个${configNote}。迁移前的数据已留快照，可以恢复。`,
           extensionId: action.targetExtensionId,
         }
       }

@@ -3,7 +3,6 @@ import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type {
   CodeRunAvailability,
   GithubCliAvailability,
-  CommunitySource,
   ChannelRuntimePhase,
   HostApiParams,
   HostApiRequest,
@@ -307,8 +306,21 @@ export interface LocalExtensionSummary {
     readonly format?: 'current' | 'unavailable'
     readonly iconUrl?: string
     readonly createdAt: number
-    /** 从社区安装的版本的来源。 */
-    readonly source?: CommunitySource
+    /** Version number from the lineage: `v3`, or `v3·2` for a second save of the same generation. */
+    readonly versionLabel: string
+    readonly parentRevisionId?: string
+    /** How the version got here: made by an agent, imported from a file, installed from the community, or branched. */
+    readonly origin: 'authored' | 'file' | 'community' | 'branch'
+    readonly authoringTaskId?: string
+    readonly dataVersion: number
+    /** Community releases this version is, installed or published from here. */
+    readonly releases: readonly {
+      readonly communityUrl: string
+      readonly releaseId: string
+      readonly number: number | null
+      readonly publisherHandle: string
+      readonly via: 'install' | 'publish'
+    }[]
     readonly provides: readonly ExtensionProvide[]
     /** Whether this record can be enabled for agents. */
     readonly agentLayer: boolean
@@ -343,6 +355,15 @@ export interface LocalExtensionSummary {
   }[]
   readonly createdByAgentId?: string
   readonly createdByAgent: string
+  /** The version of another extension this one was branched from. */
+  readonly branchOf?: {
+    readonly extensionId: string
+    readonly revisionId: string
+    readonly displayName?: string | undefined
+  }
+  readonly dataVersion: number
+  readonly openRevisionTaskId?: string
+  readonly communityLinks: readonly { readonly communityUrl: string; readonly role: 'owner' | 'subscriber' }[]
   readonly activations: readonly {
     readonly agentId: string
     readonly agentName: string
@@ -425,6 +446,8 @@ export interface LocalExtensionSummary {
 export interface ExtensionApprovals {
   readonly host?: string
   readonly agent?: string
+  /** Installing only: data copy to put back first, for a version that reads an older data format. */
+  readonly restoreDataSnapshotId?: string
 }
 
 export interface DynamicApproval {
@@ -662,12 +685,8 @@ export interface ProductState {
   /** Resolves `false` only when a run let the agent sleep because the owning extension decided so. */
   scheduledTaskAction(taskId: string, action: 'pause' | 'resume' | 'run' | 'delete'): Promise<boolean>
   saveDynamicExtension(input: {
-    readonly taskId?: string
-    readonly attemptId?: string
-    readonly agentId: string
-    readonly episodeId: string
-    readonly pluginId: string
-    readonly packageId: string
+    readonly taskId: string
+    readonly attemptId: string
     readonly name: string
     readonly slug: string
     readonly description: string

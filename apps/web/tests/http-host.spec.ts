@@ -3,6 +3,8 @@ import {
   AgentIdSchema,
   AgentRevisionIdSchema,
   AssetIdSchema,
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
   ChannelEventIdSchema,
   ChannelIdSchema,
   ChannelMemberIdSchema,
@@ -1498,10 +1500,8 @@ describe('HttpProductHost', () => {
     await flush()
 
     const result = await host.actions['extensions.saveFromDynamic']({
-      agentId: webAgentId,
-      episodeId: webEpisodeId,
-      pluginId: 'plugin-save',
-      packageId: 'package-save',
+      taskId: AuthoringTaskIdSchema.parse('aut_SAVEPROBE'),
+      attemptId: AuthoringAttemptIdSchema.parse('aua_SAVEPROBE'),
       name: '保存探针',
       slug: 'saved-probe',
     })
@@ -1513,11 +1513,8 @@ describe('HttpProductHost', () => {
     const saveBody = saveCall?.init?.body
     if (typeof saveBody !== 'string') throw new TypeError('save extension request body must be JSON text.')
     const body = HostApiContracts.saveExtensionFromDynamic.request.parse(JSON.parse(saveBody))
-    if (!('agentId' in body)) throw new TypeError('legacy dynamic identity was expected in this request.')
-    expect(body.agentId).toBe(webAgentId)
-    expect(body.episodeId).toBe(webEpisodeId)
-    expect(body.pluginId).toBe('plugin-save')
-    expect(body.packageId).toBe('package-save')
+    expect(body.taskId).toBe('aut_SAVEPROBE')
+    expect(body.attemptId).toBe('aua_SAVEPROBE')
     expect(body.slug).toBe('saved-probe')
     expect(body.displayName).toBe('保存探针')
     unsubscribe()
