@@ -1,6 +1,7 @@
 declare const styles: {
   readonly adminTag: string
   readonly as: string
+  readonly attach: string
   readonly attachment: string
   readonly attachmentAction: string
   readonly attachmentError: string
@@ -19,7 +20,6 @@ declare const styles: {
   readonly composer: string
   readonly composerDragging: string
   readonly composerRow: string
-  readonly composerTools: string
   readonly contextActions: string
   readonly contextCard: string
   readonly contextDanger: string

@@ -689,6 +689,103 @@ test('the composer sends with Enter, keeps Shift+Enter for a new line and binds 
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('composer attachments upload, fail, retry, remove and send as ordered parts', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const ids = new Map<string, string>()
+  const uploads: string[] = []
+  const removed: string[] = []
+  const sent: unknown[] = []
+  let failNextText = true
+  await page.route('**/api/channels/*/assets', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const fileName = decodeURIComponent(route.request().headers()['x-file-name'] ?? '')
+    uploads.push(fileName)
+    if (fileName === '说明.txt' && failNextText) {
+      failNextText = false
+      return route.fulfill({
+        status: 400,
+        json: { error: { code: 'invalid-request', message: '虚构上传失败，请重试。' } },
+      })
+    }
+    const image = fileName.endsWith('.png')
+    const assetId = `ast_01M4YR1WNMD7Q8NBM7P2B0GAR${image ? 'A' : 'B'}`
+    ids.set(fileName, assetId)
+    return route.fulfill({
+      json: {
+        assetId,
+        mediaType: image ? 'image/png' : 'text/plain',
+        byteSize: image ? png.byteLength : 12,
+        fileName,
+        partType: image ? 'image' : 'file',
+      },
+    })
+  })
+  await page.route('**/api/channels/*/assets/*', async (route) => {
+    if (route.request().method() === 'DELETE') {
+      const assetId = new URL(route.request().url()).pathname.split('/').pop()!
+      removed.push(assetId)
+      return route.fulfill({ json: { assetId, revoked: true } })
+    }
+    return route.fulfill({ body: png, contentType: 'image/png' })
+  })
+  await page.route('**/api/channels/*/messages', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    sent.push(route.request().postDataJSON())
+    return route.fulfill({ json: { inserted: true } })
+  })
+  await page.goto(`/channels/${targetChannelId}`)
+  const send = page.getByRole('button', { name: '发送', exact: true })
+  await expect(send).toBeDisabled()
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles([{ name: '截图.png', mimeType: 'image/png', buffer: png }])
+  await page
+    .locator('input[type="file"]')
+    .nth(1)
+    .setInputFiles([{ name: '说明.txt', mimeType: 'text/plain', buffer: Buffer.from('虚构说明内容。') }])
+  const list = page.getByRole('list', { name: '待发送附件' })
+  await expect(list.getByRole('listitem', { name: '截图.png' })).toContainText('B')
+  const failed = list.getByRole('listitem', { name: '说明.txt' })
+  await expect(failed).toContainText('上传失败')
+  await expect(failed).toContainText('虚构上传失败，请重试。')
+  // An incomplete attachment blocks sending; nothing was posted yet.
+  await expect(send).toBeDisabled()
+  expect(sent).toEqual([])
+  await failed.getByRole('button', { name: '重试上传说明.txt' }).click()
+  await expect(failed).not.toContainText('上传失败')
+  await expect(send).toBeEnabled()
+  // Removing revokes only the unsent draft grant.
+  await list.getByRole('listitem', { name: '截图.png' }).getByRole('button', { name: '移除截图.png' }).click()
+  await expect(list.getByRole('listitem', { name: '截图.png' })).toHaveCount(0)
+  expect(removed).toEqual([ids.get('截图.png')])
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles([{ name: '截图.png', mimeType: 'image/png', buffer: png }])
+  await expect(list.getByRole('listitem', { name: '截图.png' })).toBeVisible()
+  await page.getByRole('textbox', { name: '消息' }).fill('附带说明')
+  await send.click()
+  await expect.poll(() => sent.length).toBe(1)
+  expect(sent[0]).toMatchObject({
+    parts: [
+      { type: 'text', text: '附带说明' },
+      { type: 'file', assetId: ids.get('说明.txt'), name: '说明.txt' },
+      { type: 'image', assetId: ids.get('截图.png') },
+    ],
+  })
+  await expect(page.getByRole('list', { name: '待发送附件' })).toHaveCount(0)
+  expect(uploads).toEqual(['截图.png', '说明.txt', '说明.txt', '截图.png'])
+  // The single rejected upload is the injected failure; every other browser error is a hard failure.
+  const unexpected = failures.filter((item) => !item.includes('status of 400'))
+  expect(unexpected, unexpected.join('\n')).toEqual([])
+})
+
 test('long history stays above a growing multiline composer and an empty channel says so', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)

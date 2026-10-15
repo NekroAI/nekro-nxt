@@ -253,22 +253,13 @@ export function Composer({
               onKeyDown={onKeyDown}
               onCompositionStart={() => (composing.current = true)}
               onCompositionEnd={() => (composing.current = false)}
-              placeholder={external ? `发到 ${channel.name}` : `给 ${agent?.name ?? '智能体'} 发消息`}
+              placeholder={
+                dragging ? '松开以添加附件' : external ? `发到 ${channel.name}` : `给 ${agent?.name ?? '智能体'} 发消息`
+              }
               aria-label="消息"
             />
           </>
         )}
-        <Pressable
-          type="submit"
-          className={styles.send}
-          disabled={Boolean(blocked) || (!draft.trim() && !attachments.length) || sending || incomplete}
-          aria-label="发送"
-          title={incomplete ? '请完成上传或移除未完成的附件' : '发送'}
-        >
-          <ArrowRight aria-hidden="true" />
-        </Pressable>
-      </div>
-      <div className={styles.composerTools}>
         <FileChooser
           ref={imagePicker}
           accept="image/*"
@@ -282,15 +273,35 @@ export function Composer({
           disabled={Boolean(blocked) || sending}
           onFiles={(files) => addFiles(files)}
         />
-        <Pressable type="button" disabled={Boolean(blocked) || sending} onClick={() => imagePicker.current?.click()}>
+        <Pressable
+          type="button"
+          className={styles.attach}
+          disabled={Boolean(blocked) || sending}
+          aria-label="添加图片"
+          title="添加图片（也可粘贴或拖入，合计不超过 64 MiB）"
+          onClick={() => imagePicker.current?.click()}
+        >
           <ImagePlus aria-hidden="true" />
-          添加图片
         </Pressable>
-        <Pressable type="button" disabled={Boolean(blocked) || sending} onClick={() => filePicker.current?.click()}>
+        <Pressable
+          type="button"
+          className={styles.attach}
+          disabled={Boolean(blocked) || sending}
+          aria-label="添加文件"
+          title="添加文件（也可粘贴或拖入，合计不超过 64 MiB）"
+          onClick={() => filePicker.current?.click()}
+        >
           <FilePlus2 aria-hidden="true" />
-          添加文件
         </Pressable>
-        <span>{dragging ? '松开以添加附件' : '可粘贴或拖入 · 合计不超过 64 MiB'}</span>
+        <Pressable
+          type="submit"
+          className={styles.send}
+          disabled={Boolean(blocked) || (!draft.trim() && !attachments.length) || sending || incomplete}
+          aria-label="发送"
+          title={incomplete ? '请完成上传或移除未完成的附件' : '发送'}
+        >
+          <ArrowRight aria-hidden="true" />
+        </Pressable>
       </div>
     </form>
   )
