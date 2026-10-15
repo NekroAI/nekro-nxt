@@ -14,6 +14,7 @@ import {
   type ProductRelease,
 } from './distribution.js'
 import { HostSupervisor, type SupervisedHostProcess } from './host-supervisor.js'
+import { waitForHostShutdown, type HostStopWaitReason } from './host-shutdown.js'
 import { DesktopInstanceManager } from './instance-manager.js'
 import { LocalHostLifecycleRelay } from './local-host-state.js'
 import {
@@ -29,6 +30,23 @@ import { DesktopWindowLifecycle, type WindowTrayActions } from './window-lifecyc
 import { createWindowsTray } from './windows-tray.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
+
+const showHostStopWaiting = (reason: HostStopWaitReason, signal: AbortSignal): void => {
+  app.focus({ steal: true })
+  void dialog
+    .showMessageBox({
+      type: 'warning',
+      title: 'NekroNXT 尚未退出',
+      message: reason === 'protected-operation' ? '正在等待本地数据操作安全结束' : '本地服务尚未停止',
+      detail:
+        reason === 'protected-operation'
+          ? '启动、升级或备份恢复仍未结束。完成后会继续退出，请勿强制关闭或同时打开另一份本地数据。'
+          : '已尝试终止本地服务，但尚未收到退出确认。请检查系统进程状态；服务停止后会继续退出。',
+      buttons: ['继续等待'],
+      signal,
+    })
+    .catch((error: unknown) => console.error('[desktop] 无法显示退出等待提示。', error))
+}
 
 let mainWindow: BrowserWindow | undefined
 let hostSupervisor: HostSupervisor | undefined
@@ -142,6 +160,15 @@ const forkServer = (
         child.postMessage({ format: 'nxt.host-control', version: 1, action: 'cancel', runId })
         return true
       },
+      forceKill: () => {
+        const pid = child.pid
+        if (pid === undefined) return
+        if (process.platform === 'win32') {
+          if (!child.kill()) throw new Error('无法终止本地 Host。')
+        } else {
+          process.kill(pid, 'SIGKILL')
+        }
+      },
     },
   }
 }
@@ -158,6 +185,7 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
   }
   const supervisor = new HostSupervisor({
     origin,
+    onStopWaiting: showHostStopWaiting,
     spawnHost: () => {
       const runId = randomUUID()
       const args = retryUpgradeOnce ? ['--retry-upgrade'] : []
@@ -399,7 +427,7 @@ app.on('before-quit', (event) => {
   shutdownTask = (async () => {
     await stopProductHost()
     await startupTask
-    await restoreTask
+    if (restoreTask !== undefined) await waitForHostShutdown({ exited: restoreTask, onWaiting: showHostStopWaiting })
   })().finally(() => {
     shutdownTask = undefined
     startupWindow?.window.destroy()

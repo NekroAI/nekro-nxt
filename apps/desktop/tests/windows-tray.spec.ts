@@ -1,21 +1,29 @@
 import { describe, expect, it, vi } from 'vitest'
 
+interface MenuItem {
+  readonly label: string
+  readonly click: () => void
+}
+
+const created = vi.hoisted((): { icon: string; tooltip: string; menu: readonly MenuItem[] }[] => [])
+
 vi.mock('electron', () => {
   class FakeTray {
     readonly icon: string
     tooltip = ''
-    menu: unknown
+    menu: readonly MenuItem[] = []
     listeners = new Map<string, () => void>()
 
     constructor(icon: string) {
       this.icon = icon
+      created.push(this)
     }
 
     setToolTip(value: string): void {
       this.tooltip = value
     }
 
-    setContextMenu(value: unknown): void {
+    setContextMenu(value: readonly MenuItem[]): void {
       this.menu = value
     }
 
@@ -25,7 +33,7 @@ vi.mock('electron', () => {
   }
 
   return {
-    Menu: { buildFromTemplate: (template: unknown) => template },
+    Menu: { buildFromTemplate: (template: readonly MenuItem[]) => template },
     Tray: FakeTray,
   }
 })
@@ -36,11 +44,9 @@ describe('Windows tray', () => {
   it('exposes only show and quit actions', () => {
     const show = vi.fn()
     const quit = vi.fn()
-    const tray = createWindowsTray('preview', 'NekroNXT Preview', { show, quit }) as unknown as {
-      readonly icon: string
-      readonly tooltip: string
-      readonly menu: readonly { label: string; click: () => void }[]
-    }
+    createWindowsTray('preview', 'NekroNXT Preview', { show, quit })
+    const tray = created[0]
+    if (!tray) throw new Error('Tray was not created')
 
     expect(tray.icon).toContain('/tray/preview.ico')
     expect(tray.tooltip).toBe('NekroNXT Preview')

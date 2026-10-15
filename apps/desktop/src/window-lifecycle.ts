@@ -1,9 +1,18 @@
-import type { BrowserWindow, Event } from 'electron'
+import type { Event } from 'electron'
 
-type ManagedWindow = Pick<
-  BrowserWindow,
-  'isDestroyed' | 'isMinimized' | 'restore' | 'show' | 'hide' | 'focus' | 'on' | 'once' | 'removeListener'
->
+/** The BrowserWindow surface this lifecycle uses, narrow enough for real-behavior fakes. */
+interface ManagedWindow {
+  isDestroyed(): boolean
+  isMinimized(): boolean
+  restore(): void
+  show(): void
+  hide(): void
+  focus(): void
+  on(event: 'close', listener: (event: Event) => void): unknown
+  once(event: 'closed', listener: () => void): unknown
+  removeListener(event: 'close', listener: (event: Event) => void): unknown
+  removeListener(event: 'closed', listener: () => void): unknown
+}
 
 export interface DesktopWindowLifecycleOptions {
   readonly platform: NodeJS.Platform
@@ -23,6 +32,8 @@ export class DesktopWindowLifecycle {
   #window: ManagedWindow | undefined
   #hidden = false
   #tray: { destroy(): void } | undefined
+  #detachWindow: (() => void) | undefined
+  #disposed = false
 
   constructor(input: DesktopWindowLifecycleOptions) {
     this.#input = input
@@ -32,6 +43,8 @@ export class DesktopWindowLifecycle {
   }
 
   attach(window: ManagedWindow): void {
+    if (this.#disposed) return
+    this.#detachWindow?.()
     this.#window = window
     const onClose = (event: Event): void => {
       if (this.#input.isQuitting()) return
@@ -44,11 +57,18 @@ export class DesktopWindowLifecycle {
         this.#input.quit()
       }
     }
-    window.on('close', onClose)
-    window.once('closed', () => {
+    const detach = (): void => {
       window.removeListener('close', onClose)
-      if (this.#window === window) this.#window = undefined
-    })
+      window.removeListener('closed', onClosed)
+      if (this.#window === window) {
+        this.#window = undefined
+        this.#detachWindow = undefined
+      }
+    }
+    const onClosed = (): void => detach()
+    this.#detachWindow = detach
+    window.on('close', onClose)
+    window.once('closed', onClosed)
   }
 
   showWhenReady(): void {
@@ -57,7 +77,7 @@ export class DesktopWindowLifecycle {
 
   show(): void {
     const window = this.#window
-    if (this.#input.isQuitting() || window === undefined || window.isDestroyed()) return
+    if (this.#disposed || this.#input.isQuitting() || window === undefined || window.isDestroyed()) return
     this.#hidden = false
     if (window.isMinimized()) window.restore()
     window.show()
@@ -65,6 +85,9 @@ export class DesktopWindowLifecycle {
   }
 
   dispose(): void {
+    if (this.#disposed) return
+    this.#disposed = true
+    this.#detachWindow?.()
     this.#tray?.destroy()
     this.#tray = undefined
   }

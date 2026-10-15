@@ -1,6 +1,9 @@
+import { waitForHostShutdown, type HostStopWaitReason } from './host-shutdown.js'
+
 export interface SupervisedHostProcess {
   once(event: 'exit', listener: (code: number) => void): unknown
   kill(): boolean
+  forceKill?(): void
 }
 
 export interface HostRestartNotice {
@@ -21,9 +24,11 @@ export interface HostSupervisorOptions {
   readonly onRestarting?: (notice: HostRestartNotice) => void
   readonly onRecovered?: (attempt: number) => void
   readonly onFatal?: (error: Error) => void
+  readonly onStopWaiting?: (reason: HostStopWaitReason, signal: AbortSignal) => void
 }
 
 interface HostLaunch {
+  ready: boolean
   readonly process: SupervisedHostProcess
   readonly exited: Promise<{ readonly code: number }>
   hasExited(): boolean
@@ -62,6 +67,8 @@ export class HostSupervisor {
   #lifecycle: AbortController | undefined
   #current: HostLaunch | undefined
   #supervision: Promise<void> | undefined
+  #stopping: Promise<void> | undefined
+  readonly #terminations = new WeakMap<HostLaunch, Promise<void>>()
 
   constructor(options: HostSupervisorOptions) {
     const restartDelaysMs = options.restartDelaysMs ?? DEFAULT_RESTART_DELAYS_MS
@@ -103,11 +110,12 @@ export class HostSupervisor {
       this.#current = launch
       await this.#waitUntilReady(launch, lifecycle.signal)
       lifecycle.signal.throwIfAborted()
+      launch.ready = true
     } catch (cause) {
       const failed = this.#current
-      this.#current = undefined
       lifecycle.abort({ kind: 'startup-failed' })
       if (failed !== undefined) await this.#terminate(failed)
+      if (this.#current === failed) this.#current = undefined
       this.#lifecycle = undefined
       throw errorFrom(cause, 'Desktop Host failed to start.')
     }
@@ -115,15 +123,21 @@ export class HostSupervisor {
   }
 
   async stop(): Promise<void> {
+    if (this.#stopping !== undefined) return this.#stopping
     const lifecycle = this.#lifecycle
     if (lifecycle === undefined) return
-    this.#lifecycle = undefined
     lifecycle.abort({ kind: 'desktop-stopping' })
     const current = this.#current
-    this.#current = undefined
-    if (current !== undefined) await this.#terminate(current)
-    await this.#supervision
-    this.#supervision = undefined
+    this.#stopping = (async () => {
+      if (current !== undefined) await this.#terminate(current)
+      await this.#supervision
+    })().finally(() => {
+      if (this.#current === current) this.#current = undefined
+      this.#lifecycle = undefined
+      this.#supervision = undefined
+      this.#stopping = undefined
+    })
+    return this.#stopping
   }
 
   #launch(): HostLaunch {
@@ -138,7 +152,7 @@ export class HostSupervisor {
       exited = true
       resolveExit({ code })
     })
-    return { process, exited: exitPromise, hasExited: () => exited }
+    return { process, exited: exitPromise, hasExited: () => exited, ready: false }
   }
 
   async #waitUntilReady(launch: HostLaunch, lifecycleSignal: AbortSignal): Promise<void> {
@@ -184,13 +198,14 @@ export class HostSupervisor {
           this.#current = candidate
           await this.#waitUntilReady(candidate, signal)
           signal.throwIfAborted()
+          candidate.ready = true
           active = candidate
           this.#options.onRecovered?.(restart.attempt)
           break
         } catch (cause) {
           const failed = this.#current
-          this.#current = undefined
           if (failed !== undefined) await this.#terminate(failed)
+          if (this.#current === failed) this.#current = undefined
           failure = errorFrom(cause, 'Desktop Host restart failed.')
         }
       }
@@ -216,7 +231,9 @@ export class HostSupervisor {
     return { attempt, delayMs, cause }
   }
 
-  async #terminate(launch: HostLaunch): Promise<void> {
+  #terminate(launch: HostLaunch): Promise<void> {
+    const pending = this.#terminations.get(launch)
+    if (pending !== undefined) return pending
     if (!launch.hasExited()) {
       try {
         launch.process.kill()
@@ -224,6 +241,18 @@ export class HostSupervisor {
         // The process can cross the exit boundary between hasExited() and kill().
       }
     }
-    await launch.exited
+    const termination = waitForHostShutdown({
+      exited: launch.exited,
+      ...(launch.ready && launch.process.forceKill !== undefined
+        ? {
+            forceTerminate: () => {
+              if (!launch.hasExited()) launch.process.forceKill?.()
+            },
+          }
+        : {}),
+      onWaiting: (reason, signal) => this.#options.onStopWaiting?.(reason, signal),
+    })
+    this.#terminations.set(launch, termination)
+    return termination
   }
 }
