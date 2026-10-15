@@ -4063,6 +4063,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       }
       if (revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())) {
         agentContext.tools.presentAs('ptc')
+        // The tools service builds the run_code transport once, bound to the context that first lists a ptc scope.
+        // List it from the agent's own context now, before extension contexts (which hide sandboxPolicy) can.
+        agentContext.tools.schemas(scopeOf(agentContext))
         agentContext.systemPrompt.section({
           name: 'nekro-nxt:code-run',
           order: 20.6,
