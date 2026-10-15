@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { LlmAdapter, ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
@@ -20,7 +21,46 @@ afterEach(async () => {
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
 })
 
-const createRuntime = async () => {
+/** Calls the scripted tools one per model request, then ends the turn. */
+class ScriptedModel extends LlmAdapter {
+  #step = 0
+  constructor(readonly script: readonly { readonly name: string; readonly args: unknown }[]) {
+    super()
+  }
+  override providerInfo(provider: string) {
+    return { id: provider, name: 'scripted model' }
+  }
+  override listModels(provider: string) {
+    return Promise.resolve([{ provider, id: 'chat-model', name: 'chat', inputModalities: ['text'] as const }])
+  }
+  override resolveModel(provider: string, model: string) {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      inputModalities: ['text'] as const,
+      context: { contextWindow: 128_000 },
+    })
+  }
+  override async *stream(): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    const call = this.script[this.#step++]
+    if (call) {
+      const id = ToolCallId(`scripted-${this.#step}`)
+      const text = JSON.stringify(call.args)
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index: 0, id, name: call.name, argumentsDelta: text }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: call.name, arguments: text } }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: '好了。' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+const createRuntime = async (model?: LlmAdapter) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nxt-governance-'))
   directories.push(directory)
   const runtime = await NekroRuntime.create({
@@ -29,6 +69,15 @@ const createRuntime = async () => {
     assetRoot: path.join(directory, 'assets'),
     extensionDataRoot: path.join(directory, 'extensions'),
     extensionCacheRoot: path.join(directory, 'cache'),
+    ...(model === undefined
+      ? {}
+      : {
+          configureLlm: (
+            context: Parameters<NonNullable<Parameters<typeof NekroRuntime.create>[0]['configureLlm']>>[0],
+          ) => {
+            context.llm.registerAdapter(['test-provider'], model)
+          },
+        }),
   })
   await runtime.start()
   return runtime
@@ -190,6 +239,45 @@ describe('extension lines', () => {
       expect(
         lineageGraph(runtime.repository, runtime.extensionService, extensionId).map((line) => line.extensionId),
       ).toEqual([extensionId, branch!.id, nested.extensionId])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+})
+
+describe('revise tasks', () => {
+  it('records a revise from the agent tool and runs its candidate beside the enabled version', async () => {
+    const model = new ScriptedModel([{ name: 'nekro_nxt_extension_revise', args: { extension: '治理探针' } }])
+    const runtime = await createRuntime(model)
+    try {
+      const { extensionId, v1 } = await importBoth(runtime)
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '修改智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await runtime.extensions.install({ extensionId, revisionId: v1.id })
+      await runtime.extensionActions.perform(
+        { kind: 'enable', extensionId, agentId: entity.agentId },
+        { kind: 'console' },
+      )
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'revise-request',
+        parts: [{ type: 'text', text: '把治理探针改一下。' }],
+      })
+      await expect
+        .poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.kind, NOTICE_POLL)
+        .toBe('revise')
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      expect(task).toMatchObject({ targetExtensionId: extensionId, baseRevisionId: v1.id })
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      const episode = runtime.repository.getEpisode(task.episodeId)!
+      // The candidate registers gov_probe like the enabled version; it takes over that tool in this conversation.
+      await expect(
+        runtime.host.runDynamicPackage(episode.dshSessionId!, task.pluginKey, attempt.runnerPackageId!, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
     } finally {
       await runtime.dispose()
     }

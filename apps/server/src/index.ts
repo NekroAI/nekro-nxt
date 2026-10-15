@@ -3906,12 +3906,15 @@ export class DshHostRuntime implements AgentSessionDriver {
         })
         // Set by nekro_nxt_extension_revise for the one define that starts a revise task.
         let reviseIntent: ReviseIntent | undefined
+        // The ledger write runs after define returns; the intent travels with the package it was defined for.
+        const reviseByPackage = new Map<string, ReviseIntent>()
         if (this.#authoring) {
           runner.configureAuthoringLedger({
             definition: async (_request, receipt, snapshot) => {
               const initiatingEventId = this.#authoring?.resolveInitiatingEvent(input.episodeId)
               if (!initiatingEventId) throw new Error('动态创造任务缺少发起消息。')
-              const revise = reviseIntent
+              const revise = reviseByPackage.get(receipt.packageId)
+              reviseByPackage.delete(receipt.packageId)
               await this.#authoring?.service.recordDefinition({
                 ...(revise === undefined ? {} : { revise }),
                 agentId: revision.agentId,
@@ -4036,7 +4039,12 @@ export class DshHostRuntime implements AgentSessionDriver {
             channelId: input.channelId,
             episodeId: input.episodeId,
             sessionId,
-            define: (definition) => runner.defineAuthoringPackage(sessionId, definition),
+            define: (definition) => {
+              const intent = reviseIntent
+              const receipt = runner.defineAuthoringPackage(sessionId, definition)
+              if (intent !== undefined) reviseByPackage.set(receipt.packageId, intent)
+              return receipt
+            },
             restore: (snapshot) => runner.restoreAuthoringPackage(sessionId, snapshot),
             setReviseIntent: (intent) => {
               reviseIntent = intent
