@@ -224,7 +224,7 @@ function AddAdministratorDialog({
           {candidates.map((candidate) => (
             <li key={candidate.identityId}>
               <MemberAvatar name={candidate.displayName ?? '?'} size="sm" />
-              <span>
+              <span className={styles.pickInfo}>
                 <b>{candidate.displayName ?? '未命名'}</b>
                 <small>
                   {candidate.connection.displayName}

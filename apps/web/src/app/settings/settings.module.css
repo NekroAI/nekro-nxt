@@ -259,7 +259,7 @@
   border-top: 1px solid var(--line);
 }
 
-.pickList li > span {
+.pickInfo {
   display: grid;
   flex: 1;
   min-width: 0;

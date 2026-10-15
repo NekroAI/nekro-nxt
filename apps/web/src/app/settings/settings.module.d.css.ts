@@ -16,6 +16,7 @@ declare const styles: {
   readonly note: string
   readonly noteWarn: string
   readonly notice: string
+  readonly pickInfo: string
   readonly pickList: string
   readonly providerStatus: string
   readonly row: string
