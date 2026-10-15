@@ -1,11 +1,54 @@
-import { readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { verifySubprocessRuntime } from '../../../scripts/lib/runtime-subprocess-smoke.mjs'
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 describe('Desktop runtime dependencies', () => {
+  it('executes the real DSH subprocess service with the Desktop Electron executable', async () => {
+    const require = createRequire(new URL('../package.json', import.meta.url))
+    const electron: unknown = require('electron')
+    if (typeof electron !== 'string') throw new Error('Electron executable path is unavailable.')
+    await verifySubprocessRuntime(electron, fileURLToPath(new URL('../../server', import.meta.url)))
+  }, 35_000)
+
+  it('rejects a final packaged tree without DSH before starting its Server', async () => {
+    const resources = await mkdtemp(path.join(tmpdir(), 'nxt-final-runtime-'))
+    try {
+      await mkdir(path.join(resources, 'server-runtime', 'dist'), { recursive: true })
+      await mkdir(path.join(resources, 'web-dist'))
+      await writeFile(path.join(resources, 'web-dist', 'index.html'), '<!doctype html>')
+      await writeFile(
+        path.join(resources, 'server-runtime', 'dist', 'main.mjs'),
+        'throw new Error("server-must-not-start")',
+      )
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL('../scripts/verify-packaged-server-runtime.mjs', import.meta.url)),
+          '--executable',
+          process.execPath,
+          '--resources',
+          resources,
+        ],
+        { encoding: 'utf8', timeout: 12_000 },
+      )
+      expect(result.error).toBeUndefined()
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain('Packaged subprocess smoke failed')
+      expect(result.stderr).toContain('stderr (last 8192 bytes)')
+      expect(result.stderr).toContain('ERR_MODULE_NOT_FOUND')
+      expect(result.stderr).not.toContain('server-must-not-start')
+    } finally {
+      await rm(resources, { recursive: true, force: true })
+    }
+  })
+
   it('pins the approved aged Electron release with the WebContentsView hit-test fix', async () => {
     const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
     const repositoryRoot = path.resolve(desktopRoot, '../..')
