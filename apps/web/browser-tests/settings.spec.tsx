@@ -147,7 +147,7 @@ test.describe('settings space', () => {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
       await expect(list.getByRole('link')).toHaveCount(12)
-      await expect(list.getByRole('link', { name: '命令', exact: true })).toBeVisible()
+      await expect(list.getByRole('link', { name: '聊天命令', exact: true })).toBeVisible()
       await expect(list.getByRole('link', { name: '日志保存' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
       const overview = page.getByRole('table', { name: '模型供应商' })

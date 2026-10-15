@@ -595,8 +595,8 @@ describe('unified commands', () => {
     expect(f.adapter.deliveries).toHaveLength(2)
   })
   it('tells observers about settled commands, undelivered replies and rate limiting without content', async () => {
-    const settled = vi.fn()
-    const rateLimited = vi.fn()
+    const settled = vi.fn<NonNullable<CommandObserver['settled']>>()
+    const rateLimited = vi.fn<NonNullable<CommandObserver['rateLimited']>>()
     const f = await setup(false, true, { settled, rateLimited })
     for (let index = 0; index < 12; index += 1) await f.inbound('/status 机密参数', `obs-${index}`)
     await f.commands.idle()

@@ -46,7 +46,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
   return (
     <section aria-label={channelId ? '频道命令设置' : '命令设置'}>
       <PropertyGroup
-        title={channelId ? '命令覆盖' : '命令'}
+        title={channelId ? '聊天命令覆盖' : '聊天命令'}
         description={
           channelId ? '启用状态可覆盖全局；权限不能低于命令要求或全局设置。' : '统一管理聊天命令。帮助始终可用。'
         }

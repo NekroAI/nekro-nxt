@@ -134,7 +134,7 @@ test('production command journey: authorization, completion, denial, delivery fa
       })
       .toBe('mentioned-or-replied')
     await page.goto('/settings/commands')
-    await expect(page.getByRole('heading', { name: '命令', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '聊天命令', exact: true })).toBeVisible()
     await expect(page.getByRole('switch', { name: '启用 help' })).toBeDisabled()
     await page.screenshot({ path: testInfo.outputPath('settings.png'), fullPage: true })
     const root = path.resolve(import.meta.dirname, '../../..')
