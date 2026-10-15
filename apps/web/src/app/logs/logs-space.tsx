@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowDown,
+  Bug,
   ChevronDown,
   ChevronRight,
   Download,
@@ -39,6 +40,8 @@ import {
   Select,
   Sheet,
   Switch,
+  ToggleChip,
+  Menu,
   WorkbenchPage,
   toast,
   cssVars,
@@ -110,11 +113,10 @@ export default function LogsSpace() {
   const [collapsedKinds, setCollapsedKinds] = useState<ReadonlySet<string>>(new Set(['dsh-plugin']))
   const [showSources, setShowSources] = useState(true)
   const [advanced, setAdvanced] = useState(false)
-  const [compact, setCompact] = useState(false)
+  const [compact, setCompact] = useState(true)
   const [narrow, setNarrow] = useState(window.innerWidth < 1100)
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [viewport, setViewport] = useState({ top: 0, height: 500 })
-  const [duration, setDuration] = useState<5 | 15 | 30>(15)
   const [busy, setBusy] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [preferenceKey, setPreferenceKey] = useState<string>()
@@ -393,7 +395,7 @@ export default function LogsSpace() {
     else delete scope[key]
     update({ ...query, scope })
   }
-  const debug = async () => {
+  const debug = async (duration: 5 | 15 | 30) => {
     setBusy(true)
     try {
       await logsApi.debug(debugSource, duration)
@@ -698,7 +700,7 @@ export default function LogsSpace() {
             <Button size="small" variant="ghost" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
               更多筛选
             </Button>
-            <Button size="small" onClick={() => update({ ...query, levels: ['warn', 'error'] })}>
+            <Button size="small" variant="ghost" onClick={() => update({ ...query, levels: ['warn', 'error'] })}>
               仅异常
             </Button>
             <Button
@@ -715,21 +717,19 @@ export default function LogsSpace() {
           </div>
           <div className={styles.levels}>
             {LEVELS.map((level) => (
-              <Button
+              <ToggleChip
                 key={level}
-                size="small"
-                variant={(query.levels ?? LEVELS).includes(level) ? 'default' : 'ghost'}
-                aria-pressed={(query.levels ?? LEVELS).includes(level)}
-                onClick={() => {
+                pressed={(query.levels ?? LEVELS).includes(level)}
+                onPressedChange={(pressed) => {
                   const current = query.levels ?? LEVELS
                   update({
                     ...query,
-                    levels: current.includes(level) ? current.filter((value) => value !== level) : [...current, level],
+                    levels: pressed ? [...current, level] : current.filter((value) => value !== level),
                   })
                 }}
               >
-                {LEVEL[level]} <span className={styles.levelCode}>{level.toUpperCase()}</span>
-              </Button>
+                {LEVEL[level]}
+              </ToggleChip>
             ))}
             <span className={styles.spacer} />
             <span className={styles.density}>
@@ -815,8 +815,8 @@ export default function LogsSpace() {
               <EmptyState icon={<ScrollText />} title="当前条件下没有日志">
                 <p>调整筛选条件，或等待新的运行记录。</p>
                 {query.levels?.includes('debug') ? (
-                  <Button busy={busy} onClick={() => void debug()}>
-                    开启临时调试
+                  <Button busy={busy} onClick={() => void debug(15)}>
+                    开启临时调试（15 分钟）
                   </Button>
                 ) : null}
               </EmptyState>
@@ -911,15 +911,20 @@ export default function LogsSpace() {
           </div>
           <footer className={styles.footer}>
             <div className={styles.actions}>
-              <Select
-                aria-label="调试采集时长"
-                value={String(duration)}
-                options={[5, 15, 30].map((value) => ({ value: String(value), label: `${value} 分钟` }))}
-                onValueChange={(value) => setDuration(value === '5' ? 5 : value === '30' ? 30 : 15)}
+              <Menu
+                label="调试采集时长"
+                align="start"
+                trigger={
+                  <Button size="small" busy={busy} icon={<Bug size={14} />}>
+                    {debugSource ? '调试此来源' : '全局临时调试'}
+                  </Button>
+                }
+                items={([5, 15, 30] as const).map((minutes) => ({
+                  key: String(minutes),
+                  label: `采集 ${minutes} 分钟`,
+                  onSelect: () => void debug(minutes),
+                }))}
               />
-              <Button size="small" busy={busy} onClick={() => void debug()}>
-                {debugSource ? '调试此来源' : '全局临时调试'}
-              </Button>
             </div>
             <div className={styles.actions}>
               <Button

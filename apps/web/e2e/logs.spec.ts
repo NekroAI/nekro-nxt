@@ -119,6 +119,7 @@ test('production log journey: history, details, repeats, export, live pause, set
   await page.getByRole('button', { name: /新增 \d+ 条/u }).click()
   await expect(page.getByRole('gridcell', { name: /虚构实时追加记录/u })).toBeVisible()
   await page.getByRole('button', { name: '全局临时调试', exact: true }).click()
+  await page.getByRole('menuitem', { name: '采集 15 分钟' }).click()
   await expect(page.getByRole('button', { name: '结束调试' })).toBeVisible()
   await page.getByRole('button', { name: '结束调试' }).click()
   await expect(page.getByRole('button', { name: '结束调试' })).toHaveCount(0)

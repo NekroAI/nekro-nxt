@@ -50,11 +50,6 @@
   font-size: var(--fs-xs);
   color: var(--muted);
 }
-.levelCode {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-}
 .spacer {
   flex: 1;
 }
@@ -290,9 +285,6 @@
   }
   .toolbar > input {
     min-width: 140px;
-  }
-  .levelCode {
-    display: none;
   }
 }
 .workspace {

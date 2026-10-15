@@ -10,7 +10,6 @@ declare const styles: {
   readonly hint: string
   readonly inlineLink: string
   readonly level: string
-  readonly levelCode: string
   readonly levels: string
   readonly listHead: string
   readonly logArea: string
