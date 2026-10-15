@@ -17,7 +17,7 @@ const node = (
     current: extra.current ?? false,
     releaseNumbers: [],
     ...(extra.parentRevisionId === undefined ? {} : { parentRevisionId: extra.parentRevisionId }),
-  }) as LineageLine['nodes'][number]
+  }) as unknown as LineageLine['nodes'][number]
 
 const where = (layout: ReturnType<typeof layoutLineage>, revisionId: string) => {
   const entry = layout.nodes.find((item) => item.node.revisionId === revisionId)

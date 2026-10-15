@@ -300,6 +300,9 @@ export const productSnapshot = HostApiContracts.snapshot.response.parse({
         {
           id: summaryRevisionId,
           revisionNumber: 2,
+          versionLabel: 'v2',
+          origin: 'authored',
+          dataVersion: 1,
           createdAt: 1_725_000_000_000,
           provides: ['agent'],
           agentLayer: true,

@@ -57,7 +57,7 @@ import styles from './agents.module.css'
 
 /** What each extension autonomy level lets the agent do without opening the console. */
 const EXTENSION_AUTONOMY_HINT: Record<'manual' | 'confirm' | 'autonomous', string> = {
-  manual: '只开发和试运行；保存、启用、切换版本都在工坊里操作。',
+  manual: '只开发和试运行；保存、启用等操作都由你在工坊里完成。',
   confirm:
     '保存、启用、切换等每一步都在频道里发出请求，管理员发送 /ext approve 编号 同意后完成。高风险权限仍要在后台批准。',
   autonomous:

@@ -1,4 +1,3 @@
-import { recordLabels } from '../src/app/workshop/workshop-model.js'
 import { fixtureReleaseId, installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
   AgentIdSchema,
@@ -257,6 +256,9 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
         {
           id: browserExtensionPreviousRevisionId,
           revisionNumber: 2,
+          versionLabel: 'v2',
+          origin: 'authored',
+          dataVersion: 1,
           createdAt: 1_724_000_000_000,
           provides: ['agent'],
           agentLayer: true,
@@ -278,6 +280,9 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
         {
           id: browserExtensionRevisionId,
           revisionNumber: 3,
+          versionLabel: 'v3',
+          origin: 'authored',
+          dataVersion: 1,
           createdAt: 1_725_000_000_000,
           provides: ['agent'],
           agentLayer: true,
@@ -720,6 +725,11 @@ test.describe('NekroNxt browser projections', () => {
             : memberDirectory,
       })
     })
+    // Extension pages read their lineage and data on their own; tests that look at them override these.
+    await page.route('**/api/extensions/*/lineage', (request) => request.fulfill({ json: { lines: [] } }))
+    await page.route('**/api/extensions/*/data', (request) =>
+      request.fulfill({ json: { dataVersion: 1, counts: { storage: 0, index: 0, library: 0 }, snapshots: [] } }),
+    )
     await setup?.(page)
     try {
       await page.goto(`${baseUrl}${route}`)
@@ -1018,26 +1028,68 @@ test.describe('NekroNxt browser projections', () => {
     })
   })
 
-  test('renders extension data with save-time records instead of technical identifiers', async () => {
-    await withProductPage(`/workshop/extensions/${browserExtensionId}`, async (page) => {
-      await playwrightExpect(page.getByRole('heading', { name: '文档复核' })).toBeVisible()
-      await playwrightExpect(page.getByText('1 个智能体使用', { exact: true }).first()).toBeVisible()
-      await playwrightExpect(page.getByRole('listitem').filter({ hasText: 'document_review' })).toBeVisible()
-      // Saved records are labelled by save time, never by an internal r-number.
-      const olderRecord = recordLabels([{ id: 'older', createdAt: 1_724_000_000_000 }]).get('older') ?? ''
-      await page.getByRole('button', { name: new RegExp(`^${olderRecord}`, 'u') }).click()
-      await playwrightExpect(page.getByRole('listitem').filter({ hasText: 'legacy_review' })).toBeVisible()
-      await playwrightExpect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
-      await playwrightExpect(page.locator('main')).not.toContainText('Revision')
-      // Internal identifiers stay in the collapsed diagnostics until asked for.
-      await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeHidden()
-      await page.getByRole('button', { name: '诊断信息' }).click()
-      await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeVisible()
-      await page.getByRole('button', { name: '更多' }).click()
-      await playwrightExpect(page.getByRole('menuitem', { name: '删除扩展' })).toBeVisible()
-      await page.keyboard.press('Escape')
-      await playwrightExpect(page.getByRole('button', { name: '导入扩展' })).toBeVisible()
-    })
+  test('renders extension versions on its lineage instead of technical identifiers', async () => {
+    const lineage = {
+      lines: [
+        {
+          extensionId: browserExtensionId,
+          displayName: '文档复核',
+          nodes: [
+            {
+              revisionId: browserExtensionPreviousRevisionId,
+              extensionId: browserExtensionId,
+              label: 'v2',
+              origin: 'authored',
+              createdAt: 1_724_000_000_000,
+              current: false,
+              releaseNumbers: [],
+            },
+            {
+              revisionId: browserExtensionRevisionId,
+              extensionId: browserExtensionId,
+              label: 'v3',
+              parentRevisionId: browserExtensionPreviousRevisionId,
+              origin: 'authored',
+              createdAt: 1_725_000_000_000,
+              current: true,
+              releaseNumbers: [2],
+            },
+          ],
+        },
+      ],
+    }
+    await withProductPage(
+      `/workshop/extensions/${browserExtensionId}`,
+      async (page) => {
+        await playwrightExpect(page.getByRole('heading', { name: '文档复核' })).toBeVisible()
+        await playwrightExpect(page.getByText('1 个智能体使用', { exact: true }).first()).toBeVisible()
+        await playwrightExpect(page.getByText('document_review', { exact: true })).toBeVisible()
+        // Versions are numbered by their place on the lineage, never by an internal r-number.
+        const current = page.getByRole('button', { name: 'v3，正在使用，社区发布 #2' })
+        await playwrightExpect(current).toBeVisible()
+        await page.getByRole('button', { name: 'v2', exact: true }).click()
+        await playwrightExpect(page.getByRole('button', { name: '安装这个版本' })).toBeVisible()
+        await page.screenshot({ path: '.local/browser-test-results/lineage.png', fullPage: true })
+        await playwrightExpect(page.getByText('第 1 版', { exact: true }).first()).toBeVisible()
+        await playwrightExpect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
+        await playwrightExpect(page.locator('main')).not.toContainText('Revision')
+        // Internal identifiers stay in the collapsed diagnostics until asked for.
+        await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeHidden()
+        await page.getByRole('button', { name: '诊断信息' }).click()
+        await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeVisible()
+        await page.getByRole('button', { name: '更多' }).first().click()
+        await playwrightExpect(page.getByRole('menuitem', { name: '删除扩展' })).toBeVisible()
+        await page.keyboard.press('Escape')
+        await playwrightExpect(page.getByRole('button', { name: '导入扩展' })).toBeVisible()
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route(`**/api/extensions/${browserExtensionId}/lineage`, (request) => request.fulfill({ json: lineage }))
+        await page.route(`**/api/extensions/${browserExtensionId}/data`, (request) =>
+          request.fulfill({ json: { dataVersion: 1, counts: { storage: 3, index: 0, library: 0 }, snapshots: [] } }),
+        )
+      },
+    )
   })
 
   test('keeps Host UI content inside Host-owned page insets for navigation and full-width modes', async () => {

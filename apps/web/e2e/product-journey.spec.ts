@@ -453,6 +453,9 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   const revision = (id: ExtensionRevisionId, revisionNumber: number, createdAt: number) => ({
     id,
     revisionNumber,
+    versionLabel: `v${revisionNumber}`,
+    origin: 'authored' as const,
+    dataVersion: 1,
     createdAt,
     provides: ['adapter' as const],
     agentLayer: false,

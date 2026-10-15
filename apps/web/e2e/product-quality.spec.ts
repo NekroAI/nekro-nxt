@@ -381,6 +381,9 @@ const authoringSnapshot = (status: 'ready' | 'repairing' | 'completed'): Snapsho
                 {
                   id: savedRevisionId,
                   revisionNumber: 1,
+                  versionLabel: 'v1',
+                  origin: 'authored',
+                  dataVersion: 1,
                   createdAt: 1_725_000_006_000,
                   provides: ['agent'],
                   agentLayer: true,

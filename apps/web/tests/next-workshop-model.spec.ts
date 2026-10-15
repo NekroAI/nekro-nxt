@@ -3,7 +3,6 @@ import {
   contributionParts,
   extensionUsage,
   lifecyclePosition,
-  recordLabels,
   taskGroup,
   proposeSlug,
   SLUG_PATTERN,
@@ -87,19 +86,6 @@ describe('workshop list and records', () => {
     expect(taskGroup({ status: 'paused' })).toBe('paused')
     expect(taskGroup({ status: 'completed' })).toBe('ended')
     expect(taskGroup({ status: 'interrupted' })).toBe('ended')
-  })
-
-  it('labels saved records by save time and adds seconds only when minutes collide', () => {
-    const base = new Date(2026, 9, 1, 14, 20, 5).getTime()
-    const labels = recordLabels([
-      { id: 'a', createdAt: base },
-      { id: 'b', createdAt: base + 20_000 },
-      { id: 'c', createdAt: base + 3_600_000 },
-    ])
-    expect(labels.get('a')).toBe('10月1日 14:20:05')
-    expect(labels.get('b')).toBe('10月1日 14:20:25')
-    expect(labels.get('c')).toBe('10月1日 15:20')
-    expect([...labels.values()].some((label) => /\br\d/u.test(label))).toBe(false)
   })
 })
 

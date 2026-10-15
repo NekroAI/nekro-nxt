@@ -224,34 +224,6 @@ export const taskGroup = (task: Pick<AuthoringTask, 'status'>): TaskGroup =>
         ? 'active'
         : 'ended'
 
-const pad = (value: number): string => String(value).padStart(2, '0')
-
-const minuteLabel = (time: number): string => {
-  const date = new Date(time)
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-/**
- * Saved records are told apart by when they were saved, never by their internal number. Records saved within the
- * same minute also show seconds.
- */
-export const recordLabels = (
-  records: readonly { readonly id: string; readonly createdAt: number }[],
-): ReadonlyMap<string, string> => {
-  const counts = new Map<string, number>()
-  for (const record of records)
-    counts.set(minuteLabel(record.createdAt), (counts.get(minuteLabel(record.createdAt)) ?? 0) + 1)
-  return new Map(
-    records.map((record) => {
-      const label = minuteLabel(record.createdAt)
-      return [
-        record.id,
-        (counts.get(label) ?? 0) > 1 ? `${label}:${pad(new Date(record.createdAt).getSeconds())}` : label,
-      ]
-    }),
-  )
-}
-
 /** What a contribution kind gives the user and where it appears. */
 export const CONTRIBUTION_PLACE: Record<string, string> = {
   工具: '智能体在对话中调用',
