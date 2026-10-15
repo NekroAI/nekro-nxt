@@ -365,7 +365,8 @@ const projectConversationMessage = (
     resources,
     ...(delivery === undefined ? {} : { delivery }),
     ...(message.deliveryResolution === undefined ? {} : { deliveryResolution: message.deliveryResolution.action }),
-    ...(message.origin === 'admin-console' ? { origin: 'admin-console' as const } : {}),
+    ...(message.origin === undefined ? {} : { origin: message.origin }),
+    ...(message.command === undefined ? {} : { command: message.command }),
     ...(message.sender?.localAgentId === undefined ? {} : { localAgentId: message.sender.localAgentId }),
     ...(message.scheduledTask === undefined ? {} : { scheduledTask: { ...message.scheduledTask } }),
     ...(message.inboundHook === undefined ? {} : { inboundHook: message.inboundHook }),
@@ -456,12 +457,13 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         : channel.bindings[0]?.triggerPolicy === 'observe-only'
           ? '仅观察'
           : channel.bindings[0]?.triggerPolicy === 'command'
-            ? '收到命令时'
+            ? '平台命令事件'
             : '始终响应',
     bindings: channel.bindings.map((binding) => ({
       id: `${binding.channelId}:${binding.agentId}:${binding.boundAt}`,
       agentId: binding.agentId,
       triggerPolicy: binding.triggerPolicy,
+      paused: binding.paused,
       processingFeedback: binding.processingFeedback,
       localAgentMessages: binding.localAgentMessages ?? 'observe',
       activityTriggerOverrides: binding.activityTriggerOverrides,
@@ -1054,6 +1056,8 @@ export class HttpProductHost implements ProductHostPort {
     'agents.delete': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.deleteAgent, { agentId }, body),
     'channels.resetContext': async ({ channelId, ...body }) =>
       this.#mutate(HostApiContracts.resetChannelContext, { channelId }, body),
+    'channels.setPaused': async ({ channelId, ...body }) =>
+      this.#mutate(HostApiContracts.setChannelPaused, { channelId }, body),
     'channels.delete': async ({ channelId, ...body }) =>
       this.#mutate(HostApiContracts.deleteChannel, { channelId }, body),
     'channels.rename': async ({ channelId, ...body }) =>

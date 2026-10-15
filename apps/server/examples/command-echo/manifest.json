@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 7,
+  "requires": {
+    "sdk": 9
+  },
+  "extensionId": "ext_COMMANDDEMO",
+  "revisionId": "xrv_COMMANDDEMO1",
+  "entrypoints": {
+    "host": "source/host.ts"
+  },
+  "permissions": {
+    "permissions": [],
+    "networkOrigins": []
+  },
+  "contributions": [
+    {
+      "kind": "command",
+      "name": "echo",
+      "aliases": ["回声"],
+      "description": "回显文本，验证命令扩展无需模型会话即可运行。",
+      "minimumPermission": "public",
+      "enabledByDefault": true,
+      "parameters": [
+        {
+          "name": "text",
+          "kind": "positional",
+          "type": "string",
+          "required": true,
+          "min": 1,
+          "max": 200
+        },
+        {
+          "name": "count",
+          "kind": "option",
+          "type": "integer",
+          "default": 1,
+          "min": 1,
+          "max": 3
+        }
+      ],
+      "examples": ["/echo \"你好 世界\" --count 2"]
+    }
+  ]
+}

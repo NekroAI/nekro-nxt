@@ -1,12 +1,13 @@
 import type { AdapterConnectionRuntime, AdapterDeliveryReceipt, PhysicalDeliveryRequest } from '@nekro-nxt/adapter-sdk'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { ChannelId, MessagePart, OutboundIntentId } from '@nekro-nxt/contracts'
+import type { ChannelId, ChannelEventId, MessagePart, OutboundIntentId } from '@nekro-nxt/contracts'
 import { LogicalMessageIdSchema, OutboundIntentIdSchema, PhysicalDeliveryIdSchema } from '@nekro-nxt/contracts'
 import type { CoreRepository } from '@nekro-nxt/core'
 import type {
   ChannelFact,
   ChannelRuntimeOptions,
   DeliveryReceiptRecord,
+  EpisodeRecord,
   OutboundIntentRecord,
   OutboundSnapshot,
   OutboundState,
@@ -70,15 +71,6 @@ export class ChannelDelivery {
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
     const episode = this.#runtimeRepository.getEpisode(input.episodeId)
     if (!episode || episode.status !== 'active') throw new Error(`Unknown or inactive Episode: ${input.episodeId}`)
-    const channel = this.#coreRepository.getChannel(episode.channelId)
-    if (!channel) throw new Error(`Episode channel no longer exists: ${episode.channelId}`)
-    const adapter = this.#resolveAdapter(channel.connectionId)
-    if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
-    if (input.parts.length === 0) throw new Error('send_channel_message requires at least one content part.')
-    for (const part of input.parts) {
-      if (!supportsPart(adapter, part)) throw new Error(`Adapter does not support message part: ${part.type}`)
-    }
-
     if (input.clientRequestId !== undefined) {
       const existing = this.#runtimeRepository.findOutboundByClientRequest(
         episode.agentId,
@@ -87,15 +79,59 @@ export class ChannelDelivery {
       )
       if (existing) return this.#sendResult(existing)
     }
+    return this.#planAndSend(input, episode.channelId, episode)
+  }
+
+  /** Uses the same Outbox and Adapter receipts without opening a model Session. */
+  sendCommandReply(input: {
+    readonly channelId: ChannelId
+    readonly executionId: string
+    /** Position within the execution's replies; (execution, ordinal) is planned at most once. */
+    readonly ordinal: number
+    readonly parts: readonly MessagePart[]
+    readonly eventId?: ChannelEventId
+    /** Persist reply association synchronously with the plan before dispatch starts. */
+    readonly onPlanned: (id: OutboundIntentId) => void
+    readonly signal?: AbortSignal
+  }): Promise<SendMessageResult> {
+    return this.#planAndSend(input, input.channelId, undefined, input)
+  }
+
+  async #planAndSend(
+    input: {
+      readonly parts: readonly MessagePart[]
+      readonly replyTo?: string
+      readonly sourceTurnId?: string
+      readonly clientRequestId?: string
+      readonly signal?: AbortSignal
+    },
+    channelId: ChannelId,
+    episode?: EpisodeRecord,
+    command?: {
+      readonly executionId: string
+      readonly ordinal: number
+      readonly eventId?: ChannelEventId
+      readonly onPlanned: (id: OutboundIntentId) => void
+    },
+  ): Promise<SendMessageResult> {
+    const channel = this.#coreRepository.getChannel(channelId)
+    if (!channel)
+      throw new Error(`${episode === undefined ? 'Outbound' : 'Episode'} channel no longer exists: ${channelId}`)
+    const adapter = this.#resolveAdapter(channel.connectionId)
+    if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
+    if (input.parts.length === 0) throw new Error('Outbound requires at least one content part.')
+    for (const part of input.parts) {
+      if (!supportsPart(adapter, part)) throw new Error(`Adapter does not support message part: ${part.type}`)
+    }
     await this.#waitForGap(channel.id, input.parts, input.signal)
 
     const intentId = OutboundIntentIdSchema.parse(`out_${this.#nextUlid()}`)
     const logicalMessageId = LogicalMessageIdSchema.parse(`msg_${this.#nextUlid()}`)
     const originEvent =
-      episode.lastAdmittedEventId === undefined
+      (command?.eventId ?? episode?.lastAdmittedEventId) === undefined
         ? undefined
-        : this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId)
-    const activeFeedback = this.#feedback.latestActiveLease(episode.id)
+        : this.#coreRepository.getChannelEvent((command?.eventId ?? episode?.lastAdmittedEventId)!)
+    const activeFeedback = episode === undefined ? undefined : this.#feedback.latestActiveLease(episode.id)
     const plans = adapter.planOutbound
       ? await adapter.planOutbound({
           connectionId: channel.connectionId,
@@ -147,8 +183,10 @@ export class ChannelDelivery {
     const intent: OutboundIntentRecord = {
       id: intentId,
       logicalMessageId,
-      agentRevisionId: episode.agentRevisionId,
-      episodeId: episode.id,
+      ...(episode === undefined ? {} : { agentRevisionId: episode.agentRevisionId, episodeId: episode.id }),
+      ...(command === undefined
+        ? {}
+        : { channelId, commandExecutionId: command.executionId, commandOrdinal: command.ordinal }),
       ...(input.sourceTurnId === undefined ? {} : { sourceTurnId: input.sourceTurnId }),
       parts: input.parts,
       ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
@@ -170,6 +208,7 @@ export class ChannelDelivery {
       }),
     )
     this.#runtimeRepository.createOutboundPlan(intent, deliveries)
+    command?.onPlanned(intent.id)
     this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: intent.id })
     const settled = await this.dispatchOutbound(intent.id, input.signal ?? new AbortController().signal)
     this.#lastSentAt.set(channel.id, this.#timestamp())
@@ -194,10 +233,13 @@ export class ChannelDelivery {
     signal: AbortSignal,
   ): Promise<{ readonly snapshot: OutboundSnapshot; readonly unknownDeliveries: number }> {
     let snapshot = this.#runtimeRepository.getOutbound(id)
-    const episode = this.#runtimeRepository.getEpisode(snapshot.intent.episodeId)
-    if (!episode) throw new Error(`Outbound Episode no longer exists: ${snapshot.intent.episodeId}`)
-    const channel = this.#coreRepository.getChannel(episode.channelId)
-    if (!channel) throw new Error(`Outbound channel no longer exists: ${episode.channelId}`)
+    const episode =
+      snapshot.intent.episodeId === undefined
+        ? undefined
+        : this.#runtimeRepository.getEpisode(snapshot.intent.episodeId)
+    const channelId = snapshot.intent.channelId ?? episode?.channelId
+    const channel = channelId === undefined ? undefined : this.#coreRepository.getChannel(channelId)
+    if (!channel) throw new Error('Outbound channel no longer exists.')
     const adapter = this.#resolveAdapter(channel.connectionId)
     if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
     if (snapshot.intent.state === 'planned') {

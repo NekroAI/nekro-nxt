@@ -1,3 +1,6 @@
+import { createCommandRepository, type CommandRepository } from './repositories/commands.js'
+export { COMMAND_EXECUTION_RETAIN } from './repositories/commands.js'
+export type { CommandRepository } from './repositories/commands.js'
 import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
 import type { AgentRevisionRecord, ChannelReferenceRecord, CoreRepository } from '@nekro-nxt/core'
 import type { AgentRevisionId, ChannelId, JsonValue } from '@nekro-nxt/contracts'
@@ -111,6 +114,7 @@ const emptyWorkTreeOrder = (): WorkTreeOrderRecord => ({
 
 export class SqliteCoreRepository implements CurrentRepository {
   readonly #database: CoreDatabase
+  readonly commands: CommandRepository
   readonly communityFeedback: CommunityFeedbackRepository
   readonly #db
   readonly #agents
@@ -140,6 +144,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     readonly beforeModelReferenceCommit?: (revision: AgentRevisionRecord) => void,
   ) {
     this.#database = database
+    this.commands = createCommandRepository(database.db)
     this.#db = database.db
     this.communityFeedback = createCommunityFeedbackRepository(database.db)
     this.#agents = createAgentsRepository(database.db)

@@ -1,5 +1,5 @@
 import { createHistoryRepository } from './history.js'
-import { and, asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, or } from 'drizzle-orm'
 import type { AdapterDeliveryReceipt } from '@nekro-nxt/adapter-sdk'
 import { AdapterDeliveryReceiptSchema } from '@nekro-nxt/adapter-sdk'
 import {
@@ -42,8 +42,11 @@ export const toIntent = (input: typeof outboundIntents.$inferSelect): OutboundIn
   return {
     id: row.id,
     logicalMessageId: row.logicalMessageId,
-    agentRevisionId: row.agentRevisionId,
-    episodeId: row.episodeId,
+    ...(row.agentRevisionId === null ? {} : { agentRevisionId: row.agentRevisionId }),
+    ...(row.episodeId === null ? {} : { episodeId: row.episodeId }),
+    ...(row.channelId === null ? {} : { channelId: row.channelId }),
+    ...(row.commandExecutionId === null ? {} : { commandExecutionId: row.commandExecutionId }),
+    ...(row.commandOrdinal === null ? {} : { commandOrdinal: row.commandOrdinal }),
     ...(row.sourceTurnId === null ? {} : { sourceTurnId: row.sourceTurnId }),
     parts: row.parts,
     ...(row.replyTo === null ? {} : { replyTo: row.replyTo }),
@@ -136,11 +139,11 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
       const row = database
         .select({ id: outboundIntents.id })
         .from(outboundIntents)
-        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
         .where(
           and(
             eq(episodes.agentId, agentId),
-            eq(episodes.channelId, channelId),
+            or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)),
             eq(outboundIntents.clientRequestId, clientRequestId),
           ),
         )
@@ -151,8 +154,13 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
       const row = database
         .select({ id: outboundIntents.id })
         .from(outboundIntents)
-        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-        .where(and(eq(episodes.channelId, channelId), eq(outboundIntents.logicalMessageId, logicalMessageId)))
+        .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(
+          and(
+            or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)),
+            eq(outboundIntents.logicalMessageId, logicalMessageId),
+          ),
+        )
         .get()
       return row === undefined ? undefined : getOutbound(row.id)
     },
@@ -265,8 +273,13 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
       const outboundCandidate = database
         .select({ intent: outboundIntents, channelId: episodes.channelId })
         .from(outboundIntents)
-        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-        .where(and(eq(episodes.channelId, channelId), eq(outboundIntents.logicalMessageId, logicalMessageId)))
+        .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(
+          and(
+            or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)),
+            eq(outboundIntents.logicalMessageId, logicalMessageId),
+          ),
+        )
         .get()
       if (outboundCandidate !== undefined) {
         const intent = OutboundIntentRowSchema.parse(outboundCandidate.intent)
@@ -274,7 +287,8 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
           source: 'outbound-intent',
           sourceId: intent.id,
           logicalMessageId: intent.logicalMessageId,
-          channelId: outboundCandidate.channelId,
+          channelId,
+          ...(intent.commandExecutionId === null ? {} : { commandExecutionId: intent.commandExecutionId }),
           occurredAt: intent.createdAt,
           parts: intent.parts,
           state: intent.state,

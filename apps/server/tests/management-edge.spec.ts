@@ -105,6 +105,18 @@ describe('automatic TLS management edge', () => {
         transport: 'auto-tls-pinned-v1',
       })
       expect((await request(edge.port, '/api/private')).status).toBe(401)
+      for (const [pathname, method] of [
+        ['/api/commands', 'GET'],
+        ['/api/commands/execute', 'POST'],
+        ['/api/commands/policy', 'PUT'],
+        ['/api/commands/grants', 'PUT'],
+        ['/api/commands/members/ch_FIXTURE', 'GET'],
+        ['/api/commands/executions/cmd_fixture', 'GET'],
+      ]) {
+        expect(
+          (await request(edge.port, pathname!, { method: method!, viewer: 'device:nxt_device_SPOOFED' })).status,
+        ).toBe(401)
+      }
       expect((await request(edge.port, '/health/ready')).status).toBe(200)
       const challengeResponse = await request(edge.port, '/api/management/pairing/challenge', {
         method: 'POST',
@@ -165,6 +177,8 @@ describe('automatic TLS management edge', () => {
       expect(Array.isArray(cookies)).toBe(true)
       const cookie = Array.isArray(cookies) ? cookies.map((value) => value.split(';')[0]).join('; ') : ''
       const csrf = ManagementSessionResponseSchema.parse(session.json).csrfToken
+      expect((await request(edge.port, '/api/commands', { cookie })).status).toBe(200)
+      expect((await request(edge.port, '/api/commands/execute', { method: 'POST', body: {}, cookie })).status).toBe(403)
       const viewed = await request(edge.port, '/api/private', { cookie, viewer: 'device:nxt_device_SPOOFED' })
       expect(viewed.status).toBe(200)
       // The edge replaces any client-claimed viewer with the authenticated device.

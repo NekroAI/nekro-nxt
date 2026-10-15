@@ -29,6 +29,8 @@
 
 ## 消息、频道与运行轨迹
 
+- [统一命令执行与独立回复](implemented/2026-10-12-统一命令执行与独立回复.md)：命令门禁、授权与无 Episode 回复。
+
 - Channel Runtime、Episode、Admission 与 Outbox：[Channel Runtime 与会话组织](implemented/2026-08-15-Channel-Runtime与会话组织.md)。
 - 用户可见发送的唯一出口：[统一使用通信工具发送用户消息](implemented/2026-08-15-统一使用通信工具发送用户消息.md)。
 - Asset、内容寻址和图片理解：[内容寻址资源与图片理解](implemented/2026-08-16-内容寻址资源与图片理解.md)。

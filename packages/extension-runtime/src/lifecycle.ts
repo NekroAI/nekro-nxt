@@ -50,6 +50,8 @@ export type ExtensionCaller =
   | { readonly surface: 'verification' }
 
 export interface MountedAttachment {
+  /** Cancel command calls before waiting for a Session safe gap; return a rollback/resume function. */
+  pauseCommands?(): Promise<() => void>
   dispose(): Promise<void>
 }
 
@@ -394,7 +396,7 @@ export class ExtensionLifecycleCoordinator {
         ? carryExtensionConfig(manifest, 'agent', previous?.config)
         : resolveExtensionConfig(manifest, 'agent', input.config)
     const current = live.attachments.get(input.agentId)
-    await this.#host.waitUntilAgentSafe(input.agentId)
+    await this.#waitForAttachment(input.agentId, current?.mounted)
     if (current) {
       await current.mounted.dispose()
       live.attachments.delete(input.agentId)
@@ -463,7 +465,7 @@ export class ExtensionLifecycleCoordinator {
         const live = this.#live.get(extensionId)
         const current = live?.attachments.get(agentId)
         if (live && current) {
-          await this.#host.waitUntilAgentSafe(agentId)
+          await this.#waitForAttachment(agentId, current.mounted)
           try {
             await current.mounted.dispose()
           } catch (error) {
@@ -713,6 +715,16 @@ export class ExtensionLifecycleCoordinator {
     return live
   }
 
+  async #waitForAttachment(agentId: AgentId, attachment: MountedAttachment | undefined): Promise<void> {
+    const resume = await attachment?.pauseCommands?.()
+    try {
+      await this.#host.waitUntilAgentSafe(agentId)
+    } catch (error) {
+      resume?.()
+      throw error
+    }
+  }
+
   /** Stops attachments at each agent's safe gap, then the host instance at its adapter's safe gap. */
   async #stop(extensionId: ExtensionId, live: LiveExtension | undefined, waitForSafeGap = true): Promise<void> {
     if (!live) return
@@ -735,7 +747,7 @@ export class ExtensionLifecycleCoordinator {
     const failures: unknown[] = []
     for (const [agentId, attachment] of [...live.attachments]) {
       try {
-        if (waitForSafeGap) await this.#host.waitUntilAgentSafe(agentId)
+        if (waitForSafeGap) await this.#waitForAttachment(agentId, attachment.mounted)
         await attachment.mounted.dispose()
       } catch (error) {
         failures.push(error)

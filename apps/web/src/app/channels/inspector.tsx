@@ -1,3 +1,4 @@
+import { CommandsSection } from '../settings/commands-section.js'
 import { useGo } from '../model/nav.js'
 import { PanelSlot } from '../../extension-ui/index.js'
 import { ArrowUpRight, Cable, ChevronRight, Trash2 } from 'lucide-react'
@@ -50,8 +51,8 @@ const INSPECTOR_TASKS = 3
 const triggerHint: Record<TriggerPolicy, string> = {
   always: '频道里的每条消息都会交给它处理',
   'mentioned-or-replied': '有人 @它或回复它的消息时',
-  command: '收到平台识别的命令时',
-  'observe-only': '只记录消息，不回复',
+  command: '平台上报原生命令事件时（不是这里的聊天命令）',
+  'observe-only': '长期只记录消息、不回复；临时停一下请用暂停回应',
 }
 
 const kindLabel: Record<ChannelSummary['kind'], string> = { internal: '内置频道', group: '群聊', direct: '私聊' }
@@ -162,6 +163,14 @@ export function ChannelInspector({
       failure(error)
     }
   }
+  const changePaused = async (paused: boolean) => {
+    try {
+      await api.getState().setChannelPaused(channel.id, paused)
+      toast(paused ? '已暂停这个频道的自动回应' : '已恢复自动回应')
+    } catch (error) {
+      failure(error)
+    }
+  }
   const changeTrigger = async (triggerPolicy: TriggerPolicy) => {
     if (!agent) return
     try {
@@ -258,6 +267,19 @@ export function ChannelInspector({
                 value={binding.triggerPolicy}
                 options={TRIGGERS.map((value) => ({ value, label: triggerLabel[value] ?? value }))}
                 onValueChange={(value) => isTriggerPolicy(value) && void changeTrigger(value)}
+              />
+            </PropertyRow>
+          ) : null}
+          {agent && binding ? (
+            <PropertyRow
+              label="暂停回应"
+              description={binding.paused ? '暂停中：不会自动回应，上面的规则保留' : undefined}
+              tip="临时停止这个频道的所有自动回应：消息、平台事件、定时任务和扩展唤醒都不再触发，并停止当前轮次；上面的「何时回复」不变，恢复后不重跑已停止的任务。长期只看不回请把「何时回复」设为仅观察。也可在频道里输入 /pause、/resume。"
+            >
+              <Switch
+                label="暂停回应"
+                checked={binding.paused}
+                onCheckedChange={(checked) => void changePaused(checked)}
               />
             </PropertyRow>
           ) : null}
@@ -440,6 +462,7 @@ export function ChannelInspector({
       <PanelSlot anchor={{ kind: 'channel', id: channel.id }} density="compact" />
       {agent ? <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="compact" /> : null}
 
+      <CommandsSection key={channel.id} channelId={channel.id} />
       <PropertyGroup title="来源">
         <PropertyList>
           {connection && channel.kind !== 'internal' ? (

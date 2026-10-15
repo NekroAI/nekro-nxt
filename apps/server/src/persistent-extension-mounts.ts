@@ -1,3 +1,5 @@
+import { CommandRegistrations } from './commands/registrations.js'
+import { CommandDefinitionSchema } from '@nekro-nxt/contracts'
 import type { Context } from '@deepseek-ai/cordis'
 import { type Fiber } from '@deepseek-ai/cordis'
 import type { ToolRuntime } from '@deepseek-ai/dsh-tools'
@@ -103,6 +105,8 @@ export interface PersistentAdapterPort {
 }
 
 interface Attachment {
+  commands: CommandRegistrations
+  commandsReady: boolean
   readonly agentId: AgentId
   readonly config: JsonValue
   readonly fibers: Map<string, Fiber>
@@ -111,6 +115,7 @@ interface Attachment {
 }
 
 interface Instance {
+  readonly commands: CommandRegistrations
   readonly sdk: number
   readonly logger?: HostLogWriter
   readonly revision: Revision
@@ -211,6 +216,17 @@ export class PersistentExtensionMounts {
     this.#adapters = options.adapters
   }
 
+  commandHandlers(agentId: AgentId) {
+    return [...this.#instances.values()]
+      .filter((instance) => instance.active)
+      .flatMap((instance) => {
+        const attachment = instance.attachments.get(agentId)
+        return attachment?.active === true && attachment.commandsReady
+          ? attachment.commands.list().map((command) => ({ ...command, agentId, revision: instance.revision }))
+          : []
+      })
+  }
+
   /** Due-job handler of an Extension attached to the agent, if it registered one. */
   jobHandler(
     agentId: AgentId,
@@ -295,6 +311,7 @@ export class PersistentExtensionMounts {
     readonly config: JsonValue
   }): Promise<LoadedExtension> {
     const { revision, manifest, artifact, config } = input
+    const commands = new CommandRegistrations()
     const source = {
       kind: 'extension' as const,
       id: revision.extensionId,
@@ -327,6 +344,7 @@ export class PersistentExtensionMounts {
         factoryResult = await factory({
           logger: extensionLogger(this.#logs, source, scope, manifest.requires?.sdk ?? 7),
           harness: {
+            registerCommand: commands.register,
             defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
               options: ExtensionToolDefinition<Args, Output>,
             ): ExtensionToolDefinition<Args, Output> => {
@@ -392,6 +410,10 @@ export class PersistentExtensionMounts {
       }
     }
 
+    commands.seal(
+      manifest.contributions.filter((c) => c.kind === 'command').map((c) => CommandDefinitionSchema.strip().parse(c)),
+    )
+
     let registered: { dispose(): Promise<void> } | undefined
     if (expectedAdapter !== undefined) {
       if (adapter === undefined) throw new Error('扩展清单声明了适配器，但 Host factory 没有注册适配器。')
@@ -411,6 +433,7 @@ export class PersistentExtensionMounts {
     }
 
     const instance: Instance = {
+      commands,
       sdk: manifest.requires?.sdk ?? 7,
       ...((manifest.requires?.sdk ?? 7) >= 9 && logger !== undefined ? { logger } : {}),
       revision,
@@ -448,6 +471,7 @@ export class PersistentExtensionMounts {
             failures.push(error)
           }
         }
+        await commands.dispose()
         handlers.clear()
         try {
           await registered?.dispose()
@@ -499,7 +523,15 @@ export class PersistentExtensionMounts {
   async #attach(instance: Instance, agentId: AgentId, config: JsonValue): Promise<MountedAttachment> {
     if (!instance.active) throw new Error('这个扩展当前没有在本机运行。')
     if (instance.attachments.has(agentId)) throw new Error('这个扩展已经挂载给该智能体。')
-    const attachment: Attachment = { agentId, config, fibers: new Map(), mounting: new Map(), active: true }
+    const attachment: Attachment = {
+      commands: instance.commands.fork(),
+      commandsReady: false,
+      agentId,
+      config,
+      fibers: new Map(),
+      mounting: new Map(),
+      active: true,
+    }
     instance.attachments.set(agentId, attachment)
     try {
       await Promise.all(
@@ -507,6 +539,7 @@ export class PersistentExtensionMounts {
           .filter(([sessionId]) => this.#sessions.get(sessionId)?.revision.agentId === agentId)
           .map(([sessionId, handle]) => this.#mountInSession(instance, attachment, sessionId, handle.agent.ctx)),
       )
+      attachment.commandsReady = true
     } catch (error) {
       try {
         await this.#detach(instance, attachment)
@@ -515,7 +548,19 @@ export class PersistentExtensionMounts {
       }
       throw error
     }
-    return { dispose: () => this.#detach(instance, attachment) }
+    return {
+      pauseCommands: async () => {
+        attachment.commandsReady = false
+        await attachment.commands.dispose()
+        return () => {
+          if (attachment.active && instance.active) {
+            attachment.commands = instance.commands.fork()
+            attachment.commandsReady = true
+          }
+        }
+      },
+      dispose: () => this.#detach(instance, attachment),
+    }
   }
 
   /** Mounts every attachment of the agent into a Session that just started. */
@@ -634,7 +679,9 @@ export class PersistentExtensionMounts {
   async #detach(instance: Instance, attachment: Attachment): Promise<void> {
     if (!attachment.active) return
     attachment.active = false
+    attachment.commandsReady = false
     if (instance.attachments.get(attachment.agentId) === attachment) instance.attachments.delete(attachment.agentId)
+    await attachment.commands.dispose()
     await Promise.allSettled([...attachment.mounting.values()])
     const fibers = [...attachment.fibers.values()]
     attachment.fibers.clear()

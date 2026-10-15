@@ -1,3 +1,4 @@
+import { CommandCatalogEntrySchema, CommandExecutionRecordSchema, CommandPolicySchema } from './commands.js'
 import { z } from 'zod'
 import {
   hostLogDebugLeaseSchema,
@@ -500,7 +501,8 @@ export const HostSnapshotMessageSchema = z
       })
       .strict()
       .optional(),
-    origin: z.enum(['admin-console']).optional(),
+    origin: z.enum(['admin-console', 'command']).optional(),
+    command: CommandExecutionRecordSchema.optional(),
     /** What the agent's inbound hooks decided for this message, when anything differs from the default. */
     inboundHook: z
       .object({
@@ -1560,6 +1562,8 @@ export const HostSnapshotSchema = z
                 channelId: ChannelIdSchema,
                 agentId: AgentIdSchema,
                 triggerPolicy: TriggerPolicySchema,
+                /** Channel pause, independent of the response rule. */
+                paused: z.boolean().default(false),
                 processingFeedback: z.enum(['auto', 'off']).default('auto'),
                 /** Absent means `observe`. */
                 localAgentMessages: z.enum(['observe', 'trigger']).optional(),
@@ -2353,6 +2357,114 @@ const encodeBinaryUpload = (input: z.output<typeof BinaryUploadRequestSchema>) =
 })
 
 export const HostApiContracts = {
+  listCommands: defineContract({
+    method: 'GET',
+    path: '/api/commands',
+    params: z.object({ channelId: ChannelIdSchema.optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        commands: z.array(CommandCatalogEntrySchema),
+        problems: z.array(z.string()),
+        /** Host-wide behavior: whether platform members without a grant are told so. */
+        settings: z.object({ unauthorizedFeedback: z.boolean() }).strict(),
+        /** Present when a channel was requested. */
+        channel: z
+          .object({
+            kind: z.enum(['internal', 'direct', 'group']),
+            /** The channel is an external group where commands must address the account. */
+            requiresMention: z.boolean(),
+            bareCommands: z.boolean(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  executeCommand: defineContract({
+    method: 'POST',
+    path: '/api/commands/execute',
+    params: EmptyParamsSchema,
+    request: z
+      .object({ channelId: ChannelIdSchema, text: z.string().min(1).max(16000), requestId: z.string().min(1).max(200) })
+      .strict(),
+    response: CommandExecutionRecordSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  getCommandExecution: defineContract({
+    method: 'GET',
+    path: '/api/commands/executions/:executionId',
+    params: z.object({ executionId: z.string().min(1) }).strict(),
+    request: NoRequestBodySchema,
+    response: CommandExecutionRecordSchema,
+    error: HostApiErrorSchema,
+  }),
+  setCommandPolicy: defineContract({
+    method: 'PUT',
+    path: '/api/commands/policy',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        scope: z.union([z.literal('global'), ChannelIdSchema]),
+        name: z.string().min(1),
+        policy: CommandPolicySchema,
+      })
+      .strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  listCommandMembers: defineContract({
+    method: 'GET',
+    path: '/api/commands/members/:channelId',
+    params: z.object({ channelId: ChannelIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        members: z.array(
+          z
+            .object({
+              identityId: PlatformIdentityIdSchema,
+              displayName: z.string(),
+              platformUserId: z.string(),
+              authorized: z.boolean(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  setCommandSettings: defineContract({
+    method: 'PUT',
+    path: '/api/commands/settings',
+    params: EmptyParamsSchema,
+    request: z.object({ unauthorizedFeedback: z.boolean() }).strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  setCommandChannelSettings: defineContract({
+    method: 'PUT',
+    path: '/api/commands/channel-settings',
+    params: EmptyParamsSchema,
+    request: z.object({ channelId: ChannelIdSchema, bareCommands: z.boolean() }).strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  setCommandGrant: defineContract({
+    method: 'PUT',
+    path: '/api/commands/grants',
+    params: EmptyParamsSchema,
+    request: z
+      .object({ channelId: ChannelIdSchema, identityId: PlatformIdentityIdSchema, enabled: z.boolean() })
+      .strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
   queryLogs: defineContract({
     method: 'GET',
     path: '/api/logs',
@@ -2709,6 +2821,7 @@ export const HostApiContracts = {
         channelId: ChannelIdSchema,
         agentId: AgentIdSchema,
         triggerPolicy: TriggerPolicySchema,
+        paused: z.boolean().default(false),
         processingFeedback: z.enum(['auto', 'off']).default('auto'),
         localAgentMessages: z.enum(['observe', 'trigger']).optional(),
         activityTriggerOverrides: ActivityTriggerOverridesSchema.default({}),
@@ -4482,6 +4595,15 @@ export const HostApiContracts = {
       })
       .strict(),
     error: HostApiErrorSchema,
+  }),
+  setChannelPaused: defineContract({
+    method: 'POST',
+    path: '/api/channels/:channelId/pause',
+    params: channelParam,
+    request: z.object({ paused: z.boolean() }).strict(),
+    response: z.object({ paused: z.boolean(), changed: z.boolean(), stopped: z.boolean() }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
   }),
   resolveOutbound: defineContract({
     method: 'POST',

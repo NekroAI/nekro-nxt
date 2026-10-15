@@ -1720,3 +1720,53 @@ button.step:hover {
   align-items: center;
   gap: var(--s-1);
 }
+
+.commandResult {
+  padding: var(--s-3);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface);
+  display: grid;
+  gap: var(--s-2);
+}
+.commandContent {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.commandDelivery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+  color: var(--bad);
+  font: var(--t-note);
+}
+.commandSuggestions {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: var(--s-1);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--s-2);
+}
+.commandOption {
+  text-align: left;
+  padding: var(--s-2);
+  border-radius: 8px;
+}
+.commandOption[aria-selected='true'] {
+  background: var(--hover);
+}
+
+.commandHint {
+  color: var(--fg-2);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.commandOption {
+  color: var(--fg);
+  border: 0;
+  background: transparent;
+  overflow-wrap: anywhere;
+}

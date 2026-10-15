@@ -187,6 +187,7 @@ export const projectExtensions = (runtime: NekroRuntime) => {
             verification === undefined
               ? []
               : [
+                  ...(manifest?.contributions.filter((c) => c.kind === 'command').map((c) => `命令：/${c.name}`) ?? []),
                   ...verification.toolInvocations.map(({ name }) => `工具：${name}`),
                   ...verification.rpcMethods.map((method) => `RPC：${method}`),
                   ...verification.renderedPanels.map((panel) => `面板：${panel}`),
@@ -507,6 +508,7 @@ export class HostQueries {
           channelId: binding.channelId,
           agentId: binding.agentId,
           triggerPolicy: binding.triggerPolicy,
+          paused: binding.paused,
           processingFeedback: binding.processingFeedback,
           localAgentMessages: binding.localAgentMessages,
           activityTriggerOverrides: binding.activityTriggerOverrides,

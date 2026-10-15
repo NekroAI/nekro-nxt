@@ -27,6 +27,24 @@ const manifest = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+it('requires SDK 9 and a host entry for agent command contributions', () => {
+  const contribution = { kind: 'command', name: 'echo', aliases: ['回声'], description: '回显输入' }
+  const commandManifest = manifest({ requires: { sdk: 9 }, contributions: [contribution] })
+  expect(extensionManifestSchema.parse(commandManifest).contributions[0]).toMatchObject(contribution)
+  expect(extensionManifestSchema.safeParse({ ...commandManifest, requires: { sdk: 8 } }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...commandManifest, requires: undefined }).success).toBe(false)
+  expect(
+    extensionManifestSchema.safeParse({ ...commandManifest, entrypoints: { client: 'source/client.ts' } }).success,
+  ).toBe(false)
+  expect(
+    extensionManifestSchema.safeParse({ ...commandManifest, contributions: [contribution, contribution] }).success,
+  ).toBe(false)
+  expect(
+    extensionManifestSchema.safeParse({ ...commandManifest, contributions: [{ ...contribution, aliases: ['help'] }] })
+      .success,
+  ).toBe(false)
+})
+
 const buildPackage = (
   options: {
     readonly manifest?: Record<string, unknown>

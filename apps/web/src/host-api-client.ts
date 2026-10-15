@@ -212,6 +212,8 @@ export const workspaceApi = {
       expectedEpisodeId === undefined ? {} : { expectedEpisodeId },
       options,
     ),
+  setChannelPaused: (channelId: string, paused: boolean, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.setChannelPaused, { channelId }, { paused }, options),
   resolveOutbound: (outboundId: string, action: 'retry' | 'confirm-delivered', options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.resolveOutbound, { outboundId }, { action }, options),
   getChannelToolCall: (channelId: string, callId: string, options?: HostRequestOptions) =>

@@ -387,6 +387,9 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
     }),
   )
   await page.route('**/api/attention', (route) => route.fulfill({ json: { revision: 'fixture', items: [] } }))
+  await page.route('**/api/commands', (route) => route.fulfill({ json: { commands: [], problems: [] } }))
+  await page.route('**/api/commands?*', (route) => route.fulfill({ json: { commands: [], problems: [] } }))
+  await page.route('**/api/commands/members/*', (route) => route.fulfill({ json: { members: [] } }))
   await page.route('**/api/product/updates', (route) =>
     route.fulfill({
       json: { channel: 'development', currentVersion: 'fixture', state: 'unsupported', autoCheck: true },
@@ -2335,7 +2338,7 @@ test.describe('NekroNxt browser projections', () => {
       await playwrightExpect(page.locator('body')).not.toContainText('不能混入当前频道')
       await playwrightExpect(page.getByRole('textbox', { name: '消息' })).toHaveAttribute(
         'placeholder',
-        '给 资料员 发消息',
+        '给 资料员 发消息，或输入 / 执行命令',
       )
       const inspector = page.getByRole('complementary', { name: '频道信息' })
       await playwrightExpect(inspector.getByText('资料员', { exact: true }).first()).toBeVisible()
@@ -2357,7 +2360,7 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(`/channels/${emptyChannelId}`, async (page) => {
       await playwrightExpect(page.getByRole('textbox', { name: '消息' })).toHaveAttribute(
         'placeholder',
-        '给 资料员 发消息',
+        '给 资料员 发消息，或输入 / 执行命令',
       )
       await playwrightExpect(page.locator('body')).not.toContainText('只属于当前频道')
     })

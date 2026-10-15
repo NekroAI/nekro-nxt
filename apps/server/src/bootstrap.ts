@@ -1,3 +1,5 @@
+import { CommandService, type RegisteredCommand } from './commands/service.js'
+import { commandLogObserver } from './commands/logging.js'
 import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
 import type { HostLogService } from './logs/service.js'
 import type { DshSessionStorageRetirementReport, InboundHookDecisionRecord } from '@nekro-nxt/storage-sqlite'
@@ -18,6 +20,7 @@ import { isAdminConsoleOutbound } from '@nekro-nxt/channel-runtime'
 import {
   AgentIdSchema,
   ChannelIdSchema,
+  CommandDefinitionSchema,
   ConnectionIdSchema,
   hostLayerAsCapabilities,
   parseJsonValue,
@@ -190,6 +193,7 @@ export class NekroRuntime {
   readonly authoring: AuthoringApplicationService
   readonly host: DshHostRuntime
   readonly channels: ChannelRuntime
+  readonly commands: CommandService
   readonly internalConnectionId: ConnectionId
   /** Parent of every agent workspace (`<root>/<agentId>/`). */
   readonly workspaceRoot: string
@@ -236,6 +240,7 @@ export class NekroRuntime {
     readonly logs?: HostLogService
     readonly feedbackEnvironment?: FeedbackEnvironment | undefined
     readonly database: CoreDatabase
+    readonly deferCommandExecution: boolean
     readonly compatibility: RuntimeCompatibilityRegistry
     readonly repository: SqliteCoreRepository
     readonly hostSecurity: SqliteHostSecurityRepository
@@ -280,6 +285,31 @@ export class NekroRuntime {
     this.host = input.host
     this.authoring = new AuthoringApplicationService(this)
     this.channels = input.channels
+    this.commands = new CommandService({
+      deferExecution: input.deferCommandExecution,
+      repository: this.repository,
+      core: this.core,
+      channels: () => this.channels,
+      ...(input.logs === undefined
+        ? {}
+        : {
+            observer: commandLogObserver(input.logs, (channelId) => this.repository.getChannel(channelId)?.displayName),
+          }),
+      now: input.now,
+      running: (id) => this.host.sessionStatus(id) === 'running',
+      extensions: (agentId) => this.#extensionCommands(agentId),
+      botMemberId: (event) => {
+        const channel = this.repository.getChannel(event.channelId)
+        if (!channel) return undefined
+        const account =
+          this.connections.adapterConnectionDiagnostic(channel.connectionId)?.accountReference ??
+          this.repository.getConnection(channel.connectionId)?.accountKey
+        const part = event.parts.find((part) => part.type !== 'text' || part.text.trim() !== '')
+        if (account === undefined || part?.type !== 'mention') return undefined
+        const identity = this.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, part.memberId)
+        return identity?.platformUserId === account ? part.memberId : undefined
+      },
+    })
     if (input.logs) {
       const observed = new Map<string, string>()
       this.#unsubscribeLogFacts = this.channels.subscribeFacts((fact) => {
@@ -292,7 +322,10 @@ export class NekroRuntime {
           if (observed.size >= 1000) observed.delete(observed.keys().next().value!)
           observed.set(intent.id, signature)
           const admin = isAdminConsoleOutbound(intent.sourceTurnId)
-          const agentId = admin ? undefined : this.repository.getAgentRevision(intent.agentRevisionId)?.agentId
+          const agentId =
+            admin || intent.agentRevisionId === undefined
+              ? undefined
+              : this.repository.getAgentRevision(intent.agentRevisionId)?.agentId
           const channel = this.core.getChannel(fact.channelId)
           const connectionId = channel?.connectionId
           const summary = {
@@ -328,7 +361,7 @@ export class NekroRuntime {
               ...(connectionId ? { connectionId } : {}),
             },
             details: {
-              actor: admin ? 'admin' : 'agent',
+              actor: admin ? 'admin' : intent.commandExecutionId === undefined ? 'agent' : 'command',
               state: intent.state,
               delivered,
               total: deliveries.length,
@@ -398,6 +431,46 @@ export class NekroRuntime {
       }),
       { now: this.#now, compatibility: this.compatibility },
     )
+  }
+
+  #extensionCommands(agentId: AgentId): readonly RegisteredCommand[] {
+    const activations = this.repository.listActivations(agentId)
+    const revisions = new Map(activations.map((activation) => [activation.extensionId, activation.extensionRevisionId]))
+    const commands = new Map<string, RegisteredCommand>()
+    for (const command of this.host.commandHandlers(agentId)) {
+      if (revisions.get(command.revision.extensionId) !== command.revision.id) continue
+      const fullName = `${command.revision.extensionId}:${command.definition.name}`
+      commands.set(fullName, {
+        definition: command.definition,
+        invoke: command.invoke,
+        fullName,
+        source: this.repository.getExtension(command.revision.extensionId)?.displayName ?? command.revision.extensionId,
+        extensionRevisionId: command.revision.id,
+      })
+    }
+    // Committed activations retain command identity while safe-gap waiting, detaching or restoring.
+    // Only a live attachment supplies an invocable handler; disabling removes the activation.
+    for (const activation of activations) {
+      const revision = this.repository.getExtensionRevision(activation.extensionRevisionId)
+      const manifest = revision === undefined ? undefined : this.extensionService.revisionManifest(revision)
+      for (const contribution of manifest?.contributions ?? []) {
+        if (contribution.kind !== 'command') continue
+        const fullName = `${activation.extensionId}:${contribution.name}`
+        if (commands.has(fullName)) continue
+        const unavailableReason = '命令所属扩展暂时不可用，请稍后重试。'
+        commands.set(fullName, {
+          definition: CommandDefinitionSchema.strip().parse(contribution),
+          fullName,
+          source: this.repository.getExtension(activation.extensionId)?.displayName ?? activation.extensionId,
+          extensionRevisionId: activation.extensionRevisionId,
+          unavailableReason,
+          invoke: () => {
+            throw new Error(unavailableReason)
+          },
+        })
+      }
+    }
+    return [...commands.values()]
   }
 
   static async create(options: NekroRuntimeOptions): Promise<NekroRuntime> {
@@ -945,8 +1018,14 @@ export class NekroRuntime {
         },
         now,
       })
+      const commandReference: { current?: CommandService } = {}
       const channels = new ChannelRuntime(core, repository, repository, host, {
         inboundHooks,
+        commands: {
+          commitInbound: (event) => commandReference.current?.commitInbound(event) ?? core.appendInbound(event),
+          excludes: (event) => commandReference.current?.excludes(event) ?? false,
+          project: (event) => commandReference.current?.project(event) ?? event,
+        },
         deferAdmission: options.deferAdmission ?? false,
         canAdmitAgent: (agentId) => host.canRunAgent(agentId),
         now,
@@ -1086,6 +1165,7 @@ export class NekroRuntime {
         ...(options.logs === undefined ? {} : { logs: options.logs }),
         feedbackEnvironment: options.feedbackEnvironment,
         dataRoot: path.dirname(options.coreDatabasePath),
+        deferCommandExecution: options.deferAdmission === true,
         jobScheduler,
         scheduledTasks,
         codeRunNode,
@@ -1121,6 +1201,7 @@ export class NekroRuntime {
         adapterRuntimes,
         adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
       })
+      commandReference.current = runtime.commands
       feedbackPort.current = runtime.feedback
       await runtime.feedback.initialize()
       return runtime
@@ -1357,14 +1438,16 @@ export class NekroRuntime {
     }
     await this.checkAgentCompatibility()
     await this.channels.recoverProcessingFeedback()
-    await this.channels.recover()
     await this.extensions.restoreAttachments()
+    await this.channels.recover()
     if (options.openAdmission !== false) await this.openAdmission()
   }
 
   /** Opens Channel Admission and then starts scheduled jobs, so missed occurrences fire once, late. */
   async openAdmission(): Promise<void> {
     await this.channels.openAdmission()
+    // Finish Outbox recovery before queued commands can create new reply intents.
+    this.commands.open()
     this.#jobScheduler.start()
   }
 
@@ -1600,6 +1683,7 @@ export class NekroRuntime {
     this.#disposed = true
     await this.#jobScheduler.dispose()
     await this.retrieval.dispose()
+    await this.commands.dispose()
     await this.authoring.dispose()
     await this.extensionService.dispose()
     const failures: unknown[] = []

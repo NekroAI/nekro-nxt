@@ -546,7 +546,7 @@ class MemoryRuntimeRepository implements RuntimeRepository {
   }
   findOutboundByClientRequest(agentId: AgentId, channelId: ChannelId, clientRequestId: string) {
     return [...this.outbounds.values()].find(({ intent }) => {
-      const episode = this.episodes.get(intent.episodeId)
+      const episode = intent.episodeId === undefined ? undefined : this.episodes.get(intent.episodeId)
       return (
         episode?.agentId === agentId && episode.channelId === channelId && intent.clientRequestId === clientRequestId
       )
@@ -557,7 +557,7 @@ class MemoryRuntimeRepository implements RuntimeRepository {
     logicalMessageId: ReturnType<typeof LogicalMessageIdSchema.parse>,
   ) {
     return [...this.outbounds.values()].find(({ intent }) => {
-      const episode = this.episodes.get(intent.episodeId)
+      const episode = intent.episodeId === undefined ? undefined : this.episodes.get(intent.episodeId)
       return episode?.channelId === channelId && intent.logicalMessageId === logicalMessageId
     })
   }
@@ -2241,6 +2241,7 @@ describe('ChannelRuntime M1 lane', () => {
       channelId: ChannelIdSchema.parse('chn_trigger'),
       agentId: AgentIdSchema.parse('agt_trigger'),
       triggerPolicy,
+      paused: false,
       processingFeedback: 'auto',
       localAgentMessages: 'observe',
       activityTriggerOverrides: {},

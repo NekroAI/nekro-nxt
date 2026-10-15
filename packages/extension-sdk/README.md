@@ -117,3 +117,7 @@ ctx.effect(() => disposeTool()) // 错误：effect 现在执行，Tool 随即被
 ```
 
 面板、工具视图、富消息渲染器和页面遵循同一规则：按 Authoring Reference 直接注册。Host RPC、适配器、入站钩子与定时任务处理属于本机实例，必须在 factory 中注册（返回智能体挂载插件之前）。RPC 处理函数签名为 `(input, caller)`；浏览器 RPC 请求不处于 DSH Agent Loop initiator 中，handler 不得依赖 `ctx.agents.currentInitiator()` 获取产品智能体身份，改用 `caller`。没有智能体挂载的扩展（只有页面或适配器）的 factory 可以不返回插件。
+
+## 聊天命令（SDK 9）
+
+Manifest V7 增加 command Contribution，Host factory 使用 `harness.registerCommand(definition, handler)`。处理器获得验证后的 arguments、identity、channelId、signal、`reply`（过程回复，每次执行最多 5 条）和受权限约束的 host 能力，返回终态文本/图片/文件结果；需要在控制台执行时也发送到外部频道的命令声明 `consoleReply: 'channel'`；执行时限默认 60 秒，可用 `timeoutSeconds` 声明（最长 600 秒），超时会收到取消信号。注册属于扩展本机实例，执行与取消按智能体挂载隔离，禁止在 Session apply 中注册；卸载须响应 signal 并完成清理。完整契约见[命令系统](../../docs/10-命令系统.md)，可安装源码与打包方法见[回声示例](../../apps/server/examples/command-echo/README.md)。

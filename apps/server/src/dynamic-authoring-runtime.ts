@@ -173,9 +173,14 @@ export const preflightNekroNxtAuthoringDefinition = (
   const resourceEntries = Object.entries(input.resources)
   const resourcePaths = new Set(resourceEntries.map(([resourcePath]) => resourcePath))
   if (resourcePaths.size !== resourceEntries.length) throw new Error('动态页面预检失败：资源路径不能重复。')
+  const contributions = input.contributions.map((contribution) =>
+    extensionManifestContributionSchema.parse(contribution),
+  )
+  if (contributions.some((contribution) => contribution.kind === 'command')) {
+    throw new Error('工坊动态创造暂不支持命令贡献，请使用本地源码包导入命令扩展。')
+  }
   // Tools, panels and pages may be declared together; the page rules below apply to the host-page entries only.
-  const pages = input.contributions
-    .map((contribution) => extensionManifestContributionSchema.parse(contribution))
+  const pages = contributions
     .filter((contribution) => contribution.kind === 'host-page')
     .map((contribution) => HostPageContributionSchema.parse(contribution))
   if (pages.length > 8) throw new Error('动态页面预检失败：一个 Revision 最多声明 8 个页面入口。')

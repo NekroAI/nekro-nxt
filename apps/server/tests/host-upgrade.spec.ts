@@ -133,6 +133,7 @@ const createLegacyFixture = async () => {
     // The fixture writes rows with today's repository, which also writes binding columns added after migration 24;
     // migration 32 rebuilds the table and resets the column to its default either way.
     legacy.exec("ALTER TABLE channel_bindings ADD COLUMN local_agent_messages text NOT NULL DEFAULT 'observe'")
+    legacy.exec('ALTER TABLE channel_bindings ADD COLUMN paused integer NOT NULL DEFAULT 0')
     // Fixture writers use today's schema; remove these fields before the actual upgrade below.
     legacy.exec(
       "ALTER TABLE channels ADD COLUMN platform_display_name text; ALTER TABLE channels ADD COLUMN preferred_processing_feedback text NOT NULL DEFAULT 'auto'",
@@ -242,26 +243,30 @@ const createLegacyFixture = async () => {
   })
   const outboundId = OutboundIntentIdSchema.parse('out_UPGRADELEGACY')
   const deliveryId = PhysicalDeliveryIdSchema.parse('phy_UPGRADELEGACY')
-  repository.createOutboundPlan(
-    {
-      id: outboundId,
-      logicalMessageId: LogicalMessageIdSchema.parse('msg_UPGRADELEGACY'),
-      agentRevisionId: agent.revision.id,
-      episodeId,
-      parts: [{ type: 'text', text: '升级前已经成功投递。' }],
-      state: 'planned',
-      createdAt: 1001,
-    },
-    [
-      {
-        id: deliveryId,
-        intentId: outboundId,
-        sequence: 0,
-        parts: [{ type: 'text', text: '升级前已经成功投递。' }],
-        state: 'planned',
-      },
-    ],
-  )
+  // Seed the legacy Outbox shape directly; the current repository targets the migrated source columns.
+  const legacyOutbox = new DatabaseSync(path.join(dataRoot, 'core.sqlite'))
+  try {
+    const parts = JSON.stringify([{ type: 'text', text: '升级前已经成功投递。' }])
+    legacyOutbox
+      .prepare(
+        'INSERT INTO outbound_intents (id, logical_message_id, agent_revision_id, episode_id, parts, search_text, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(
+        outboundId,
+        LogicalMessageIdSchema.parse('msg_UPGRADELEGACY'),
+        agent.revision.id,
+        episodeId,
+        parts,
+        '升级前已经成功投递。',
+        'planned',
+        1001,
+      )
+    legacyOutbox
+      .prepare('INSERT INTO physical_deliveries (id, intent_id, sequence, parts, state) VALUES (?, ?, ?, ?, ?)')
+      .run(deliveryId, outboundId, 0, parts, 'planned')
+  } finally {
+    legacyOutbox.close()
+  }
   repository.markIntentSending(outboundId)
   repository.markDeliverySending(deliveryId)
   repository.recordDeliveryReceipt(deliveryId, { status: 'sent', platformMessageId: 'synthetic-legacy-delivery' }, 1002)
@@ -281,6 +286,7 @@ const createLegacyFixture = async () => {
       'ALTER TABLE channels DROP COLUMN platform_display_name; ALTER TABLE channels DROP COLUMN preferred_processing_feedback',
     )
     legacyChannels.exec('ALTER TABLE physical_deliveries DROP COLUMN diagnostic')
+    legacyChannels.exec('ALTER TABLE channel_bindings DROP COLUMN paused')
   } finally {
     legacyChannels.close()
   }

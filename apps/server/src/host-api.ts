@@ -1,3 +1,4 @@
+import { registerManagementCommandRoutes } from './host-routes-commands.js'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { type ChannelFact } from '@nekro-nxt/channel-runtime'
 import {
@@ -712,6 +713,18 @@ export const createNekroHostApi = (
       extensionImports,
     }),
   )
+
+  // Management-only routes: main.ts keeps this Host behind the authenticated edge or trusted loopback.
+  // Viewer headers identify the administrator; they are not an authentication mechanism for a public API.
+  registerManagementCommandRoutes({
+    runtime,
+    registerRoute,
+    broadcast,
+    broadcastExtensionsChanged,
+    readCursor: () => hub.cursor,
+    projections,
+    extensionImports,
+  })
 
   projections.registerRoutes({ registerRoute })
   disposers.push(

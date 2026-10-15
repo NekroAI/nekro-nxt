@@ -85,6 +85,6 @@ export const isTriggerPolicy = (value: string): value is TriggerPolicy => TRIGGE
 export const triggerLabel: Record<string, string> = {
   always: '每条消息',
   'mentioned-or-replied': '被提及时',
-  command: '命令触发',
+  command: '平台命令事件',
   'observe-only': '仅观察',
 }

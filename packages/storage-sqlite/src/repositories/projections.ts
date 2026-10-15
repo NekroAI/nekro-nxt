@@ -166,8 +166,8 @@ export function createProjectionRepository(database: DrizzleCoreDatabase) {
       const row = database
         .select({ intent: outboundIntents })
         .from(outboundIntents)
-        .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
-        .where(eq(episodes.channelId, channelId))
+        .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+        .where(or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)))
         .orderBy(desc(outboundIntents.createdAt), desc(outboundIntents.id))
         .get()
       return row === undefined ? undefined : toIntent(row.intent)

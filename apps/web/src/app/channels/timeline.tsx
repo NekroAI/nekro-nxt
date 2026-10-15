@@ -16,6 +16,29 @@ type RuntimeStep = RuntimeTurn['steps'][number]
 type RuntimeTool = RuntimeStep['tools'][number]
 type RuntimeInput = NonNullable<RuntimeTurn['inputs']>[number]
 
+function DeliveryActions({
+  message,
+  onResolve,
+}: {
+  readonly message: ConversationMessage
+  readonly onResolve: ((messageId: string, action: 'retry' | 'confirm-delivered') => void) | undefined
+}) {
+  if (message.deliveryResolution === 'retry') return <span>已重新发送</span>
+  if (!onResolve || !message.id.startsWith('out_')) return null
+  return (
+    <>
+      <Button size="small" variant="ghost" onClick={() => onResolve(message.id, 'retry')}>
+        重发
+      </Button>
+      {message.delivery !== '失败' ? (
+        <Button size="small" variant="ghost" onClick={() => onResolve(message.id, 'confirm-delivered')}>
+          已送达
+        </Button>
+      ) : null}
+    </>
+  )
+}
+
 export const MessageRow = memo(function MessageRow({
   message,
   channelKind,
@@ -39,6 +62,48 @@ export const MessageRow = memo(function MessageRow({
     role: message.role,
     ...(message.origin ? { origin: message.origin } : {}),
   })
+  if (message.command !== undefined) {
+    const command = message.command
+    const statuses = {
+      pending: '等待执行',
+      running: '执行中',
+      succeeded: '执行成功',
+      failed: '命令执行失败',
+      uncertain: '执行结果不确定',
+    }
+    const deliveryFailed =
+      command.replies.some((reply) => reply.error !== undefined && reply.intentId === undefined) ||
+      isUnconfirmed(message)
+    return (
+      <div className={styles.commandResult} data-message-id={message.id} aria-label="命令记录">
+        <div>
+          <b>{message.origin === 'command' ? '命令结果' : '命令'}</b> · {command.identity.displayName} ·{' '}
+          {statuses[command.status]}
+        </div>
+        <div className={styles.commandContent}>
+          <MessageContent message={message} variant="system-event" />
+        </div>
+        {command.status === 'failed' && message.origin !== 'command' ? (
+          <p className={styles.commandContent} role="alert">
+            {command.error}
+          </p>
+        ) : null}
+        {command.replyLocal === true ? (
+          <p className={styles.commandContent} role="status">
+            只在控制台显示，没有发送到频道。
+          </p>
+        ) : null}
+        {deliveryFailed ? (
+          <div className={styles.commandDelivery} role="status">
+            <span>
+              {command.status === 'succeeded' ? '执行成功，但回复投递失败或未确认。' : '回复投递失败或未确认。'}
+            </span>
+            <DeliveryActions message={message} onResolve={onResolve} />
+          </div>
+        ) : null}
+      </div>
+    )
+  }
   if (message.scheduledTask !== undefined) {
     const task = message.scheduledTask
     return (
@@ -108,20 +173,7 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.unsentBar} role="status">
           <CircleAlert aria-hidden="true" />
           {message.delivery === '部分发送' ? '部分送达' : message.delivery === '失败' ? '发送失败' : '未确认送达'}
-          {onResolve && message.id.startsWith('out_') && message.deliveryResolution !== 'retry' ? (
-            <>
-              <Button size="small" variant="ghost" onClick={() => onResolve(message.id, 'retry')}>
-                重发
-              </Button>
-              {message.delivery !== '失败' ? (
-                <Button size="small" variant="ghost" onClick={() => onResolve(message.id, 'confirm-delivered')}>
-                  已送达
-                </Button>
-              ) : null}
-            </>
-          ) : message.deliveryResolution === 'retry' ? (
-            <span>已重新发送</span>
-          ) : null}
+          <DeliveryActions message={message} onResolve={onResolve} />
         </div>
       ) : message.delivery === '发送中' ? (
         <div className={styles.notice}>发送中…</div>

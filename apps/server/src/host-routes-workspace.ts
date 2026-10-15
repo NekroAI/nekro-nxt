@@ -1,3 +1,5 @@
+import { recognizeCommand } from '@nekro-nxt/contracts'
+import { viewerKeyFromRequest } from './viewer.js'
 import { expireComposerAssets, uploadComposerAsset, validateComposerAssets } from './channel-composer-assets.js'
 import {
   AgentIdSchema,
@@ -628,7 +630,7 @@ export function registerWorkspaceRoutes({
         }
         return
       }
-      const projectionMatch = /^\/api\/channels\/([^/]+)\/(read|pending|stop)$/u.exec(url.pathname)
+      const projectionMatch = /^\/api\/channels\/([^/]+)\/(read|pending|stop|pause)$/u.exec(url.pathname)
       if (projectionMatch) {
         let channelId: ChannelId
         try {
@@ -637,7 +639,14 @@ export function registerWorkspaceRoutes({
           writeError(res, 400, 'invalid-channel', 'Invalid channel id.')
           return
         }
-        const action = projectionMatch[2] === 'read' ? 'read' : projectionMatch[2] === 'pending' ? 'pending' : 'stop'
+        const action =
+          projectionMatch[2] === 'read'
+            ? 'read'
+            : projectionMatch[2] === 'pending'
+              ? 'pending'
+              : projectionMatch[2] === 'pause'
+                ? 'pause'
+                : 'stop'
         await projections.handleChannelRoute(req, res, channelId, action)
         return
       }
@@ -1058,6 +1067,24 @@ export function registerWorkspaceRoutes({
           writeError(res, 404, 'not-found', '频道不存在。')
           return
         }
+        const command = recognizeCommand(parsed.parts)
+        if (command.kind === 'command') {
+          if (parsed.clientEventId === undefined) {
+            writeError(res, 400, 'command-request-id-required', '执行命令需要客户端请求 ID，以避免重复操作。')
+            return
+          }
+          const result = await runtime.commands.executeWeb(
+            typedChannelId,
+            command.text,
+            parsed.clientEventId,
+            viewerKeyFromRequest(req),
+          )
+          writeContractJson(res, 200, HostApiContracts.sendChannelMessage, {
+            inserted: true,
+            ...(result.eventId === undefined ? {} : { channelEventId: result.eventId }),
+          })
+          return
+        }
         validateComposerAssets(runtime, typedChannelId, parsed.parts)
         if (channel.kind === 'internal') {
           const result = await runtime.internalChannel.postMessage({
@@ -1088,7 +1115,7 @@ export function registerWorkspaceRoutes({
         }
         const result = await runtime.channels.sendAdminConsoleMessage({
           channelId: typedChannelId,
-          parts: parsed.parts,
+          parts: command.kind === 'escaped' ? command.parts : parsed.parts,
           ...(parsed.clientEventId === undefined ? {} : { clientRequestId: parsed.clientEventId }),
         })
         if (result.status === 'failed' || result.status === 'unknown') {

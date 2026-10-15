@@ -26,6 +26,7 @@ it('rejects duplicate live instances and retains RPC after disabling an attachme
       `export default async ({ harness }) => {
       await new Promise(resolve => setTimeout(resolve, 20))
       harness.handle('echo', input => input)
+      harness.registerCommand({ name: 'echo', description: '回声' }, () => ({ parts: [{ type: 'text', text: 'ok' }] }))
       return { apply() {} }
     }`,
     )
@@ -34,14 +35,29 @@ it('rejects duplicate live instances and retains RPC after disabling an attachme
       schemaVersion: 7,
       extensionId: revision.extensionId,
       revisionId: revision.id,
+      requires: { sdk: 9 },
       entrypoints: { host: 'source/host.ts' },
-      contributions: [{ kind: 'rpc', method: 'echo' }],
+      contributions: [
+        { kind: 'rpc', method: 'echo' },
+        { kind: 'command', name: 'echo', description: '回声' },
+      ],
     })
     const input = { revision, manifest, artifact, config: {} }
     const mounting = mounts.load(input)
     const loaded = await mounting
     await expect(mounts.load(input)).rejects.toThrow('已经在本机运行')
-    const attachment = await loaded.attach(agentId, {})
+    const attaching = loaded.attach(agentId, {})
+    expect(mounts.commandHandlers(agentId)).toHaveLength(0)
+    const attachment = await attaching
+    expect(mounts.commandHandlers(agentId)).toHaveLength(1)
+    const otherAgentId = AgentIdSchema.parse('agt_OTHER')
+    const otherAttachment = await loaded.attach(otherAgentId, {})
+    const resume = await attachment.pauseCommands!()
+    expect(mounts.commandHandlers(agentId)).toHaveLength(0)
+    expect(mounts.commandHandlers(otherAgentId)).toHaveLength(1)
+    resume()
+    expect(mounts.commandHandlers(agentId)).toHaveLength(1)
+    await otherAttachment.dispose()
     await expect(loaded.call('echo', 'fixture', { surface: 'verification' })).resolves.toBe('fixture')
     await attachment.dispose()
     await expect(loaded.call('echo', 'still installed', { surface: 'verification' })).resolves.toBe('still installed')

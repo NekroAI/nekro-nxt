@@ -166,7 +166,9 @@ export class WorkspaceProjections {
         author: truncate(
           admin
             ? '管理员'
-            : (this.#runtime.repository.getAgentRevision(outbound.agentRevisionId)?.displayName ?? '智能体'),
+            : outbound.agentRevisionId === undefined
+              ? '命令结果'
+              : (this.#runtime.repository.getAgentRevision(outbound.agentRevisionId)?.displayName ?? '智能体'),
           120,
         ),
         preview: previewMessageParts(this.#runtime, outbound.parts),
@@ -617,12 +619,12 @@ export class WorkspaceProjections {
 
   // ---------------------------------------------------------------- routes
 
-  /** `/api/channels/:channelId/(read|pending|stop)` delegated from the Channel route family. */
+  /** `/api/channels/:channelId/(read|pending|stop|pause)` delegated from the Channel route family. */
   async handleChannelRoute(
     req: IncomingMessage,
     res: ServerResponse,
     channelId: ChannelId,
-    action: 'read' | 'pending' | 'stop',
+    action: 'read' | 'pending' | 'stop' | 'pause',
   ): Promise<void> {
     try {
       if (action === 'pending') {
@@ -637,6 +639,19 @@ export class WorkspaceProjections {
           channelId,
           activity: this.markRead(viewerKeyFromRequest(req), channelId, body.upTo),
         })
+        return
+      }
+      if (action === 'pause') {
+        const body = HostApiContracts.setChannelPaused.parseRequest(await readJsonBody(req))
+        if (this.#runtime.repository.getChannel(channelId) === undefined)
+          throw new NotFoundError('频道不存在或已被删除。')
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.setChannelPaused,
+          await this.#runtime.channels.setPaused(channelId, body.paused),
+        )
+        this.scheduleAttentionCheck()
         return
       }
       const body = HostApiContracts.stopChannelTask.parseRequest((await readJsonBody(req)) ?? {})

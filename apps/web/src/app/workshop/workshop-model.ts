@@ -238,6 +238,7 @@ export const recordLabels = (
 /** What a contribution kind gives the user and where it appears. */
 export const CONTRIBUTION_PLACE: Record<string, string> = {
   工具: '智能体在对话中调用',
+  命令: '在绑定频道通过斜杠命令执行，无需模型会话',
   工具视图: '在频道时间线里展示工具调用',
   面板: '出现在智能体页或频道检查器',
   页面: '独立页面，安装后也可以从顶栏「搜索」（⌘K）打开',

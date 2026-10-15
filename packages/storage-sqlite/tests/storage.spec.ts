@@ -51,6 +51,7 @@ import {
 } from '../src/index.ts'
 
 const directories: string[] = []
+
 const migrationsDirectory = fileURLToPath(new URL('../migrations/', import.meta.url))
 const temporaryDirectory = async (): Promise<string> => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-storage-'))
@@ -198,7 +199,7 @@ describe('Core SQLite baseline', () => {
   })
 
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(52)
+    expect(Object.keys(coreSchema)).toHaveLength(58)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -1430,6 +1431,7 @@ describe('Core SQLite baseline', () => {
         channelId: channel.id,
         agentId: agent.definition.id,
         triggerPolicy: 'always',
+        paused: false,
         processingFeedback: 'auto',
         localAgentMessages: 'observe',
         activityTriggerOverrides: {},
@@ -3575,4 +3577,78 @@ describe('Extension and backup', () => {
       database.close()
     }
   })
+})
+
+it('upgrades pre-command data with a durable cutoff and preserves existing outbox receipts', async () => {
+  const directory = await temporaryDirectory()
+  const filename = path.join(directory, 'pre-command.sqlite')
+  await createDatabaseAtMigration(filename, 42)
+  const old = openCoreDatabase(filename)
+  const repository = new SqliteCoreRepository(old)
+  let seq = 0
+  const core = new CoreService(repository, { now: () => 1000, nextUlid: () => String(++seq).padStart(8, '0') })
+  const agent = core.createAgent({
+    displayName: '迁移示例',
+    persona: '',
+    model: { provider: 'fixture', model: 'fixture' },
+  })
+  const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+  const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'fixture-group', kind: 'group' })
+  const event = appendTextEvent(core, connection.id, channel.id, 'old-slash', '/off', 1000)
+  const episodeId = EpisodeIdSchema.parse('eps_MIGRATE')
+  repository.createEpisode({
+    id: episodeId,
+    channelId: channel.id,
+    agentId: agent.definition.id,
+    agentRevisionId: agent.revision.id,
+    status: 'opening',
+    openedAtEventId: event.id,
+    createdAt: 1000,
+  })
+  old.close()
+  const native = new BetterSqlite3(filename)
+  native
+    .prepare(
+      'INSERT INTO outbound_intents (id,logical_message_id,episode_id,agent_revision_id,parts,search_text,state,created_at) VALUES (?,?,?,?,?,?,?,?)',
+    )
+    .run(
+      'out_MIGRATE',
+      'msg_MIGRATE',
+      episodeId,
+      agent.revision.id,
+      JSON.stringify([{ type: 'text', text: '已有回复' }]),
+      '已有回复',
+      'sent',
+      1000,
+    )
+  native
+    .prepare(
+      'INSERT INTO physical_deliveries (id,intent_id,sequence,parts,state,platform_message_id,completed_at) VALUES (?,?,?,?,?,?,?)',
+    )
+    .run(
+      'phy_MIGRATE',
+      'out_MIGRATE',
+      0,
+      JSON.stringify([{ type: 'text', text: '已有回复' }]),
+      'sent',
+      'fixture-delivery',
+      1000,
+    )
+  native.close()
+  const upgraded = await openMigratedCoreDatabase(filename)
+  try {
+    const next = new SqliteCoreRepository(upgraded)
+    expect(next.commands.cutoff()).toBe(event.id)
+    expect(next.commands.unfinished()).toEqual([])
+    expect(next.getOutbound(OutboundIntentIdSchema.parse('out_MIGRATE')).receipts[0]?.receipt).toEqual({
+      status: 'sent',
+      platformMessageId: 'fixture-delivery',
+    })
+    expect(next.listChannelHistory(channel.id)).toHaveLength(2)
+    expect(upgraded.pragma('foreign_keys')).toBe(1)
+    upgraded.migrate()
+    expect(next.commands.cutoff()).toBe(event.id)
+  } finally {
+    upgraded.close()
+  }
 })

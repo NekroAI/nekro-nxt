@@ -130,6 +130,8 @@ export interface ChannelSummary {
     readonly id: string
     readonly agentId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+    /** Channel pause, independent of the response rule. */
+    readonly paused: boolean
     readonly processingFeedback: 'auto' | 'off'
     readonly localAgentMessages: 'observe' | 'trigger'
     readonly activityTriggerOverrides: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
@@ -217,7 +219,8 @@ export interface ConversationMessage {
   readonly delivery?: DeliveryState
   /** Administrator resolution of an unsettled delivery (retry or confirmed as delivered). */
   readonly deliveryResolution?: 'retry' | 'confirm-delivered'
-  readonly origin?: 'admin-console'
+  readonly origin?: 'admin-console' | 'command'
+  readonly command?: NonNullable<HostApiResponse<'snapshot'>['messages'][number]['command']>
   /** The sender is another agent on this host, speaking through its own account in the same group. */
   readonly localAgentId?: string
   /** What the agent's inbound hooks decided, when it differs from the default. */
@@ -633,6 +636,8 @@ export interface ProductState {
   clearBinding(channelId: string): Promise<void>
   deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
   resetChannelContext(channelId: string, episodeId: string, mode: 'clear' | 'compact'): Promise<void>
+  /** Pauses or resumes every automatic response in the channel; the response rule is kept. */
+  setChannelPaused(channelId: string, paused: boolean): Promise<void>
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
   sendMessage(
     channelId: string,

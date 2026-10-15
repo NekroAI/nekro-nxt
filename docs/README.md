@@ -33,6 +33,8 @@
 
 ## 架构与协议
 
+- [命令系统](10-命令系统.md)：显式命令、频道授权、独立回复与扩展 SDK；
+
 - [消息内容与投递协议](03-消息内容与投递协议.md)：消息块、通信工具、Asset 和投递边界；
 - [接线与 Server 宿主设计](08-接线与Server宿主设计.md)：Server、Web、HTTP、SSE 和静态入口；
 - [Decision 路由](decisions/README.md)：跨包契约和实现决定；

@@ -1,5 +1,6 @@
 import { ArrowRight, FilePlus2, ImagePlus, Plug, RotateCcw, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { EMPTY_CHANNEL_DRAFT, isReadyAttachment, type ChannelAttachment } from '../../channel-drafts.js'
 import {
   connectionDisplayName,
@@ -137,13 +138,66 @@ export function Composer({
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const external = channel.kind !== 'internal'
-  const blocked = !agent
-    ? '还没有智能体响应这个频道'
-    : connection && connectionStatus(connection).health === 'attention'
-      ? `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`
-      : external && connection && !connection.proactiveSend
-        ? `${connectionDisplayName(connection)} 不支持主动发送`
-        : ''
+  const commandRequest = useRef<{ channelId: string; revision: number; id: string } | undefined>(undefined)
+  const commandList = useRef<HTMLDivElement>(null)
+  const [commands, setCommands] = useState<CommandCatalog['commands']>([])
+  const [commandError, setCommandError] = useState('')
+  const [selected, setSelected] = useState(0)
+  const [commandFocus, setCommandFocus] = useState(0)
+  const [commandChannel, setCommandChannel] = useState<CommandCatalog['channel']>()
+  const trimmed = draft.trimStart()
+  const commandMode = trimmed.startsWith('/') && !trimmed.startsWith('//') && attachments.length === 0
+  const commandQuery = trimmed.slice(1)
+  const completing = commandMode && !/\s/u.test(commandQuery)
+  const suggestions = commands.filter(
+    (command) =>
+      command.available &&
+      (command.fullName.startsWith(commandQuery) ||
+        command.definition.name.startsWith(commandQuery) ||
+        command.definition.aliases.some((alias) => alias.startsWith(commandQuery))),
+  )
+  const currentCommand = commands.find((command) => command.fullName === commandQuery.split(/\s/u)[0])
+  useEffect(() => {
+    if (!commandMode) return
+    const controller = new AbortController()
+    setCommandError('')
+    void commandApi
+      .list(channel.id, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) {
+          setCommands(result.commands)
+          setCommandChannel(result.channel)
+        }
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setCommandError(error instanceof Error ? error.message : '读取命令失败。')
+      })
+    return () => controller.abort()
+  }, [channel.id, commandMode, commandFocus])
+  useEffect(() => setSelected(0), [commandQuery, channel.id])
+  useLayoutEffect(() => {
+    const list = commandList.current
+    const option = list?.querySelector<HTMLElement>('[aria-selected="true"]')
+    if (!list || !option) return
+    const viewport = list.getBoundingClientRect()
+    const bounds = option.getBoundingClientRect()
+    if (bounds.top < viewport.top) list.scrollTop -= viewport.top - bounds.top
+    else if (bounds.bottom > viewport.bottom) list.scrollTop += bounds.bottom - viewport.bottom
+  }, [selected, completing, commandQuery, commands])
+  const choose = (index: number) => {
+    const command = suggestions[index]
+    if (command) ui.getState().setChannelDraft(channel.id, '/' + command.fullName + ' ')
+    input.current?.focus()
+  }
+  const blocked = commandMode
+    ? ''
+    : !agent
+      ? '还没有智能体响应这个频道'
+      : connection && connectionStatus(connection).health === 'attention'
+        ? `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`
+        : external && connection && !connection.proactiveSend
+          ? `${connectionDisplayName(connection)} 不支持主动发送`
+          : ''
   useLayoutEffect(() => {
     const element = input.current
     if (!element) return
@@ -156,7 +210,12 @@ export function Composer({
     if (!token) return
     let success = false
     try {
-      await api.getState().sendMessage(channel.id, token.text, token.attachments)
+      if (commandMode) {
+        if (commandRequest.current?.channelId !== channel.id || commandRequest.current.revision !== token.revision)
+          commandRequest.current = { channelId: channel.id, revision: token.revision, id: crypto.randomUUID() }
+        await commandApi.execute(channel.id, token.text, commandRequest.current.id)
+        commandRequest.current = undefined
+      } else await api.getState().sendMessage(channel.id, token.text, token.attachments)
       success = true
     } catch (error) {
       toast(`${error instanceof Error ? error.message : String(error)}，草稿已保留`, { tone: 'bad' })
@@ -174,6 +233,18 @@ export function Composer({
     }
   }
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (completing && suggestions.length && !composing.current && !event.nativeEvent.isComposing) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSelected((index) => (index + (event.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length)
+        return
+      }
+      if (event.key === 'Tab' || event.key === 'Enter') {
+        event.preventDefault()
+        choose(selected)
+        return
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing) {
       event.preventDefault()
       void send()
@@ -225,41 +296,88 @@ export function Composer({
           </span>
         </>
       ) : null}
+      {blocked ? <span className={styles.blocked}>{blocked}；仍可输入 /help 或 /status</span> : null}
+      {commandError ? <span role="alert">{commandError}</span> : null}
+      {completing && suggestions.length ? (
+        <div
+          ref={commandList}
+          className={styles.commandSuggestions}
+          role="listbox"
+          id={`commands-${channel.id}`}
+          aria-label="可用命令"
+        >
+          {suggestions.map((command, index) => (
+            <Pressable
+              type="button"
+              role="option"
+              key={command.fullName}
+              id={`command-${channel.id}-${index}`}
+              aria-selected={selected === index}
+              className={styles.commandOption}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => choose(index)}
+            >
+              <b>/{command.fullName}</b> · {command.definition.description}
+            </Pressable>
+          ))}
+        </div>
+      ) : null}
+      {commandMode && currentCommand ? (
+        <span role="status" className={styles.commandHint}>
+          用法：{currentCommand.usage}
+          {external
+            ? currentCommand.definition.consoleReply === 'channel'
+              ? ' · 结果也会发送到频道'
+              : ' · 只在这里显示，不发送到频道'
+            : ''}
+        </span>
+      ) : null}
+      {commandMode && !currentCommand && external ? (
+        <span role="status" className={styles.commandHint}>
+          在这里执行的命令不会发送到频道{commandChannel?.requiresMention ? '；群成员需要先 @机器人' : ''}
+        </span>
+      ) : null}
       <div className={styles.composerRow}>
-        {blocked ? (
-          <span className={styles.blocked}>{blocked}</span>
-        ) : (
-          <>
-            {external && connection ? (
-              <span className={styles.as} title="以这个机器人账号发出，群成员可见">
-                <Plug aria-hidden="true" />
-                {connectionDisplayName(connection)}
-              </span>
-            ) : null}
-            <Textarea
-              bare
-              ref={input}
-              className={styles.input}
-              rows={1}
-              value={draft}
-              onChange={(event) => ui.getState().setChannelDraft(channel.id, event.target.value)}
-              onPaste={(event) => {
-                const files = [...event.clipboardData.files]
-                if (files.length) {
-                  event.preventDefault()
-                  addFiles(files)
-                }
-              }}
-              onKeyDown={onKeyDown}
-              onCompositionStart={() => (composing.current = true)}
-              onCompositionEnd={() => (composing.current = false)}
-              placeholder={
-                dragging ? '松开以添加附件' : external ? `发到 ${channel.name}` : `给 ${agent?.name ?? '智能体'} 发消息`
-              }
-              aria-label="消息"
-            />
-          </>
-        )}
+        {commandMode ? (
+          <span className={styles.as}>执行当前频道命令</span>
+        ) : external && connection ? (
+          <span className={styles.as} title="以这个机器人账号发出，群成员可见">
+            <Plug aria-hidden="true" />
+            {connectionDisplayName(connection)}
+          </span>
+        ) : null}
+        <Textarea
+          bare
+          ref={input}
+          className={styles.input}
+          rows={1}
+          value={draft}
+          onChange={(event) => ui.getState().setChannelDraft(channel.id, event.target.value)}
+          onPaste={(event) => {
+            const files = [...event.clipboardData.files]
+            if (files.length) {
+              event.preventDefault()
+              addFiles(files)
+            }
+          }}
+          onKeyDown={onKeyDown}
+          onFocus={() => {
+            if (commandMode) setCommandFocus((n) => n + 1)
+          }}
+          onCompositionStart={() => (composing.current = true)}
+          onCompositionEnd={() => (composing.current = false)}
+          placeholder={
+            dragging
+              ? '松开以添加附件'
+              : external
+                ? `发到 ${channel.name}，或输入 / 执行命令`
+                : `给 ${agent?.name ?? '智能体'} 发消息，或输入 / 执行命令`
+          }
+          aria-label="消息"
+          aria-autocomplete="list"
+          aria-controls={completing ? `commands-${channel.id}` : undefined}
+          aria-activedescendant={completing && suggestions.length ? `command-${channel.id}-${selected}` : undefined}
+        />
         <FileChooser
           ref={imagePicker}
           accept="image/*"

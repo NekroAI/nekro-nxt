@@ -58,6 +58,7 @@ const fixture = async () => {
     agentId: agent.definition.id,
     boundAt: 10,
     triggerPolicy: 'always' as const,
+    paused: false,
     processingFeedback: 'off' as const,
     localAgentMessages: 'observe' as const,
     activityTriggerOverrides: {},

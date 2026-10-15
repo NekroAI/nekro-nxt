@@ -64,6 +64,7 @@ const outboundEntry = (input: typeof outboundIntents.$inferSelect, channelId: Ch
     occurredAt: row.createdAt,
     parts: row.parts,
     state: row.state,
+    ...(row.commandExecutionId === null ? {} : { commandExecutionId: row.commandExecutionId }),
     ...(row.sourceTurnId === null ? {} : { sourceTurnId: row.sourceTurnId }),
   }
 }
@@ -135,10 +136,10 @@ export function createHistoryRepository(
         : database
             .select({ intent: outboundIntents })
             .from(outboundIntents)
-            .innerJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
+            .leftJoin(episodes, eq(episodes.id, outboundIntents.episodeId))
             .where(
               and(
-                eq(episodes.channelId, channelId),
+                or(eq(episodes.channelId, channelId), eq(outboundIntents.channelId, channelId)),
                 episodeId === undefined ? undefined : eq(episodes.id, episodeId),
                 timeRange(outboundIntents.createdAt, filter),
                 beforeCursor(outboundIntents.createdAt, outboundIntents.id, before),

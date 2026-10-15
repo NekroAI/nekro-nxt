@@ -174,6 +174,29 @@ describe('dynamic authoring closed loop', () => {
     ).not.toThrow()
   })
 
+  it('rejects command contributions before creating a dynamic candidate', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    try {
+      const input = {
+        plugin: { kind: 'new' as const, idPrefix: 'cmd' },
+        name: '动态命令',
+        purpose: '验证未支持的命令贡献不会静默通过。',
+        code: { host: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [{ kind: 'command', name: 'echo', description: '回声' }],
+      }
+      const tasks = runtime.repository.listAuthoringTasks(entity.agentId)
+      expect(() => preflightNekroNxtAuthoringDefinition(input)).toThrow('请使用本地源码包导入命令扩展')
+      expect(() => runtime.host.defineDynamicAuthoringPackage(dshSessionId, input)).toThrow(
+        '请使用本地源码包导入命令扩展',
+      )
+      expect(runtime.repository.listAuthoringTasks(entity.agentId)).toEqual(tasks)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('accepts an extension icon without Client source and checks its digest and pixels', () => {
     const png = new Uint8Array(40)
     png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52])

@@ -1,0 +1,362 @@
+import { z } from 'zod'
+import {
+  AgentIdSchema,
+  AgentRevisionIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  ConnectionIdSchema,
+  ExtensionRevisionIdSchema,
+  MessagePartSchema,
+  OutboundIntentIdSchema,
+  type AgentId,
+  type ChannelId,
+  type ChannelMemberId,
+  type MessagePart,
+} from './domain.js'
+
+export const COMMAND_DEFAULT_TIMEOUT_SECONDS = 60
+export const COMMAND_MAX_TIMEOUT_SECONDS = 600
+export const CommandPermissionSchema = z.enum(['public', 'channel-admin'])
+export type CommandPermission = z.output<typeof CommandPermissionSchema>
+const nameSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[\p{L}\p{N}_-]+$/u)
+const scalarSchema = z.union([z.string(), z.number().finite(), z.boolean()])
+export const CommandParameterSchema = z
+  .object({
+    name: nameSchema,
+    description: z.string().max(500).optional(),
+    kind: z.enum(['positional', 'option']),
+    type: z.enum(['string', 'number', 'integer', 'boolean']),
+    required: z.boolean().optional(),
+    default: scalarSchema.optional(),
+    choices: z.array(scalarSchema).min(1).max(100).optional(),
+    min: z.number().finite().optional(),
+    max: z.number().finite().optional(),
+  })
+  .strict()
+export const CommandDefinitionSchema = z
+  .object({
+    name: nameSchema,
+    aliases: z.array(nameSchema).max(16).default([]),
+    description: z.string().min(1).max(1000),
+    parameters: z.array(CommandParameterSchema).max(32).default([]),
+    examples: z.array(z.string().max(2000)).max(16).default([]),
+    minimumPermission: CommandPermissionSchema.default('public'),
+    enabledByDefault: z.boolean().default(true),
+    /**
+     * Where the result goes when an administrator runs the command from the console (Web or Desktop) in an external
+     * channel. `local` (default) shows it in the console only; `channel` also sends it through the bot account, and
+     * the console labels the command accordingly. Platform-originated commands always reply in their conversation.
+     */
+    consoleReply: z.enum(['local', 'channel']).default('local'),
+    /**
+     * How long an extension handler may run before it is cancelled and recorded as timed out, so a stuck handler
+     * cannot hold the channel's command queue. Built-in commands ignore it.
+     */
+    timeoutSeconds: z.number().int().min(1).max(COMMAND_MAX_TIMEOUT_SECONDS).default(COMMAND_DEFAULT_TIMEOUT_SECONDS),
+  })
+  .strict()
+  .superRefine((definition, ctx) => {
+    const names = [definition.name, ...definition.aliases]
+    if (new Set(names).size !== names.length) ctx.addIssue({ code: 'custom', message: '命令名称和别名不能重复。' })
+    if (new Set(definition.parameters.map((p) => p.name)).size !== definition.parameters.length)
+      ctx.addIssue({ code: 'custom', message: '参数名称不能重复。' })
+    let optional = false
+    for (const p of definition.parameters) {
+      if (p.min !== undefined && p.max !== undefined && p.min > p.max)
+        ctx.addIssue({ code: 'custom', message: `参数 ${p.name} 的范围无效。` })
+      if (p.kind === 'positional') {
+        if (optional && p.required) ctx.addIssue({ code: 'custom', message: '必填位置参数必须在可选参数之前。' })
+        if (!p.required || p.default !== undefined) optional = true
+      }
+      if (p.default !== undefined) {
+        try {
+          if (validateValue(p, String(p.default)) !== p.default) throw new Error('默认值类型不匹配。')
+        } catch {
+          ctx.addIssue({ code: 'custom', message: `参数 ${p.name} 的默认值无效。` })
+        }
+      }
+    }
+  })
+export type CommandDefinition = z.output<typeof CommandDefinitionSchema>
+/** What an extension author writes: defaults are optional. */
+export type CommandDefinitionInput = z.input<typeof CommandDefinitionSchema>
+export const CommandPolicySchema = z
+  .object({ enabled: z.boolean().optional(), permission: CommandPermissionSchema.optional() })
+  .strict()
+export type CommandPolicy = z.output<typeof CommandPolicySchema>
+export const CommandExecutionIdentitySchema = z
+  .object({
+    source: z.enum(['web', 'platform']),
+    connectionId: ConnectionIdSchema.optional(),
+    platformUserId: z.string().optional(),
+    displayName: z.string(),
+    viewerId: z.string().optional(),
+  })
+  .strict()
+export type CommandExecutionIdentity = z.output<typeof CommandExecutionIdentitySchema>
+export const CommandResultSchema = z
+  .object({
+    parts: z
+      .array(MessagePartSchema)
+      .min(1)
+      .max(32)
+      .refine(
+        (parts) => parts.every((p) => ['text', 'image', 'file'].includes(p.type)),
+        '命令结果仅支持文本、图片和文件。',
+      ),
+    summary: z.string().max(2000).optional(),
+  })
+  .strict()
+export type CommandResult = z.output<typeof CommandResultSchema>
+/** An execution may send a few progress replies before its final result. */
+export const COMMAND_MAX_PROGRESS_REPLIES = 5
+export const CommandReplySchema = z
+  .object({
+    /** Position within the execution; the final result always has the highest ordinal. */
+    ordinal: z.number().int().nonnegative(),
+    kind: z.enum(['progress', 'final']),
+    parts: CommandResultSchema.shape.parts,
+    /** Set once the reply has an Outbound; absent with `error` means planning failed. */
+    intentId: OutboundIntentIdSchema.optional(),
+    error: z.string().optional(),
+  })
+  .strict()
+export type CommandReply = z.output<typeof CommandReplySchema>
+export const CommandExecutionRecordSchema = z
+  .object({
+    id: z.string().min(1),
+    channelId: ChannelIdSchema,
+    source: z.enum(['web', 'platform']),
+    requestId: z.string().min(1).max(200),
+    eventId: ChannelEventIdSchema.optional(),
+    rawText: z.string(),
+    identity: CommandExecutionIdentitySchema,
+    commandName: z.string().optional(),
+    commandVersion: z.string().optional(),
+    extensionRevisionId: ExtensionRevisionIdSchema.optional(),
+    agentId: AgentIdSchema.optional(),
+    agentRevisionId: AgentRevisionIdSchema.optional(),
+    status: z.enum(['pending', 'running', 'succeeded', 'failed', 'uncertain']),
+    result: CommandResultSchema.optional(),
+    error: z.string().optional(),
+    /** Replies in send order. A platform command's replies go to its conversation; see `replyLocal`. */
+    replies: z
+      .array(CommandReplySchema)
+      .max(COMMAND_MAX_PROGRESS_REPLIES + 1)
+      .default([]),
+    /** No reply is sent on purpose (unauthorized or unknown platform command, or console-local result). */
+    replySuppressed: z.boolean().optional(),
+    /** The result was kept in the console on purpose and never sent to the platform. */
+    replyLocal: z.boolean().optional(),
+    createdAt: z.number().int().nonnegative(),
+    completedAt: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+export type CommandExecutionRecord = z.output<typeof CommandExecutionRecordSchema>
+/** Replies that still need an Outbound or a recorded failure. */
+export const undeliveredCommandReplies = (record: CommandExecutionRecord): readonly CommandReply[] =>
+  record.replySuppressed === true
+    ? []
+    : record.replies.filter((reply) => reply.intentId === undefined && reply.error === undefined)
+export interface CommandExecutionContext {
+  readonly channelId: ChannelId
+  readonly agentId?: AgentId
+  readonly identity: CommandExecutionIdentity
+  readonly arguments: Readonly<Record<string, string | number | boolean>>
+  readonly signal: AbortSignal
+  /**
+   * Sends a progress reply now; the handler's return value is the final result. At most
+   * COMMAND_MAX_PROGRESS_REPLIES per execution, delivered in order without making the handler wait for receipts.
+   */
+  readonly reply: (result: CommandResult) => void
+  readonly host: {
+    status(): {
+      readonly bound: boolean
+      readonly responseMode?: string
+      readonly paused?: boolean
+      readonly running: boolean
+    }
+    /** Resolves with `stopped: false` when nothing was running. */
+    stop(): Promise<{ readonly stopped: boolean }>
+    reset(mode: 'clear' | 'compact'): Promise<void>
+  }
+}
+export type CommandHandler = (context: CommandExecutionContext) => CommandResult | Promise<CommandResult>
+export const CommandCatalogEntrySchema = z
+  .object({
+    definition: CommandDefinitionSchema,
+    fullName: z.string(),
+    source: z.string(),
+    extensionRevisionId: ExtensionRevisionIdSchema.optional(),
+    enabled: z.boolean(),
+    permission: CommandPermissionSchema,
+    usage: z.string(),
+    available: z.boolean(),
+    unavailableReason: z.string().optional(),
+    globalPolicy: CommandPolicySchema.optional(),
+    channelPolicy: CommandPolicySchema.optional(),
+  })
+  .strict()
+export type CommandCatalogEntry = z.output<typeof CommandCatalogEntrySchema>
+
+/** Shell-like quoting without evaluation or interpolation. */
+export function tokenizeCommand(text: string): string[] {
+  const tokens: string[] = []
+  let value = '',
+    quote = '',
+    escaped = false,
+    started = false
+  for (const char of text) {
+    if (escaped) {
+      value += char
+      escaped = false
+      started = true
+      continue
+    }
+    if (char === '\\') {
+      escaped = true
+      started = true
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = ''
+      else value += char
+      continue
+    }
+    if (char === '"' || char === "'") {
+      quote = char
+      started = true
+      continue
+    }
+    if (/\s/u.test(char)) {
+      if (started) tokens.push(value)
+      value = ''
+      started = false
+      continue
+    }
+    value += char
+    started = true
+  }
+  if (escaped || quote) throw new Error('引号或转义未闭合。')
+  if (started) tokens.push(value)
+  return tokens
+}
+function validateValue(p: z.output<typeof CommandParameterSchema>, raw: string): string | number | boolean {
+  let value: string | number | boolean = raw
+  if (p.type === 'boolean') {
+    if (!['true', 'false'].includes(raw)) throw new Error(`参数 ${p.name} 必须为 true 或 false。`)
+    value = raw === 'true'
+  } else if (p.type !== 'string') {
+    value = Number(raw)
+    if (raw.trim() === '' || !Number.isFinite(value) || (p.type === 'integer' && !Number.isSafeInteger(value)))
+      throw new Error(`参数 ${p.name} 必须为${p.type === 'integer' ? '整数' : '数字'}。`)
+  }
+  const size = typeof value === 'string' ? [...value].length : typeof value === 'number' ? value : undefined
+  if (size !== undefined && ((p.min !== undefined && size < p.min) || (p.max !== undefined && size > p.max)))
+    throw new Error(`参数 ${p.name} 超出允许范围。`)
+  if (p.choices !== undefined && !p.choices.includes(value))
+    throw new Error(`参数 ${p.name} 必须为：${p.choices.join('、')}。`)
+  return value
+}
+export function parseCommandArguments(
+  definition: CommandDefinition,
+  tokens: readonly string[],
+): Readonly<Record<string, string | number | boolean>> {
+  const args = new Map<string, string | number | boolean>()
+  const positions = definition.parameters.filter((p) => p.kind === 'positional')
+  let index = 0,
+    options = true
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!
+    if (options && token === '--') {
+      options = false
+      continue
+    }
+    let p: CommandDefinition['parameters'][number] | undefined,
+      raw = token
+    if (options && token.startsWith('--')) {
+      const equal = token.indexOf('=')
+      const key = token.slice(2, equal < 0 ? undefined : equal)
+      p = definition.parameters.find((p) => p.kind === 'option' && p.name === key)
+      if (!p) throw new Error(`未知选项：--${key}`)
+      if (equal >= 0) raw = token.slice(equal + 1)
+      else if (p.type === 'boolean' && (tokens[i + 1] === undefined || !['true', 'false'].includes(tokens[i + 1]!)))
+        raw = 'true'
+      else {
+        const next = tokens[++i]
+        if (next === undefined || next.startsWith('--')) throw new Error(`选项 --${key} 缺少值。`)
+        raw = next
+      }
+    } else {
+      p = positions[index++]
+      if (!p) throw new Error(`多余参数：${token}`)
+    }
+    if (args.has(p.name)) throw new Error(`重复参数：${p.name}`)
+    args.set(p.name, validateValue(p, raw))
+  }
+  for (const p of definition.parameters) {
+    if (args.has(p.name)) continue
+    if (p.default !== undefined) args.set(p.name, p.default)
+    else if (p.required) throw new Error(`缺少参数：${p.kind === 'option' ? '--' : ''}${p.name}`)
+  }
+  return Object.fromEntries(args)
+}
+export function commandUsage(definition: CommandDefinition, name = definition.name): string {
+  return (
+    '/' +
+    name +
+    definition.parameters
+      .map((p) => {
+        const value =
+          p.kind === 'option' ? `--${p.name} ${p.type === 'boolean' ? '[true|false]' : `<${p.name}>`}` : `<${p.name}>`
+        return ' ' + (p.required ? value : `[${value}]`)
+      })
+      .join('')
+  )
+}
+export type CommandRecognition =
+  | { readonly kind: 'command'; readonly text: string }
+  | { readonly kind: 'escaped'; readonly parts: readonly MessagePart[] }
+  | { readonly kind: 'chat' }
+export interface CommandRecognitionOptions {
+  /** External groups: only text addressed to this account is a command. */
+  readonly requireMention?: boolean
+  /**
+   * The platform itself says this message mentions the account (QQ's @ events, WeCom group callbacks), even when the
+   * mention is not a leading mention part. Such adapters may also leave a leading `@name` as plain text.
+   */
+  readonly addressed?: boolean
+}
+export function recognizeCommand(
+  parts: readonly MessagePart[],
+  botMemberId?: ChannelMemberId,
+  options: CommandRecognitionOptions = {},
+): CommandRecognition {
+  let input = parts
+  while (input.length > 1 && input[0]?.type === 'text' && input[0].text.trim() === '') input = input.slice(1)
+  let addressed = options.addressed === true
+  let mentionPart = false
+  if (input[0]?.type === 'mention') {
+    // A leading mention of someone else addresses them, never this account.
+    if (botMemberId === undefined || input[0].memberId !== botMemberId) return { kind: 'chat' }
+    input = input.slice(1)
+    addressed = true
+    mentionPart = true
+  }
+  if (options.requireMention === true && !addressed) return { kind: 'chat' }
+  if (input.length === 0 || input.some((p) => p.type !== 'text')) return { kind: 'chat' }
+  let text = input
+    .map((p) => (p.type === 'text' ? p.text : ''))
+    .join('')
+    .trimStart()
+  if (options.addressed === true && !mentionPart) text = text.replace(/^@\S+\s+/u, '')
+  if (text.startsWith('//')) return { kind: 'escaped', parts: [{ type: 'text', text: text.slice(1) }] }
+  if (!text.startsWith('/')) return { kind: 'chat' }
+  return { kind: 'command', text }
+}
+/** The command name a recognized text invokes (`/name args` → `name`). */
+export const commandNameOf = (text: string): string => /^\/(\S*)/u.exec(text.trimStart())?.[1] ?? ''
