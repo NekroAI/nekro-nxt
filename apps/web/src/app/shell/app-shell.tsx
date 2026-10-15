@@ -24,6 +24,7 @@ import { HOST_ICONS } from '../../extension-ui/icons.js'
 import { useProductStore, type ProductHostStatus } from '../../product-runtime.js'
 import { Kbd, Menu, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
 import { AttentionList } from '../attention/attention-list.js'
+import { bellStore, useBell } from '../attention/bell.js'
 import { useAttention } from '../model/attention.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentAccent, connectionLabel, isAgentWorking } from '../model/identity.js'
@@ -286,9 +287,9 @@ const desktopStatusLabel: Record<DesktopInstanceStatus, string> = {
 
 function TopBar({ onSearch }: { readonly onSearch: () => void }) {
   const crumb = useCurrentCrumb()
-  const location = useLocation()
   const attention = useAttention()
-  const [bellOpen, setBellOpen] = useState(false)
+  const bell = useBell()
+  const setBellOpen = bellStore.setOpen
   const desktop = useDesktopInstance()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const hostStatus = useProductStore((state) => state.host.status)
@@ -359,7 +360,7 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
       </Pressable>
       <Popover
         label="需要关注"
-        open={bellOpen}
+        open={bell.open}
         onOpenChange={setBellOpen}
         className={styles.bellPanel}
         trigger={
@@ -375,13 +376,13 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
       >
         <div className={styles.bellHead}>
           <b>需要关注</b>
-          {location.pathname !== '/live' ? (
-            <Link to="/live" className={styles.bellMore} onClick={() => setBellOpen(false)}>
-              打开概览
-            </Link>
-          ) : null}
         </div>
-        <AttentionList compact onAction={() => setBellOpen(false)} />
+        <AttentionList
+          compact
+          focus={bell.focus}
+          onClearFocus={bellStore.clearFocus}
+          onAction={() => setBellOpen(false)}
+        />
       </Popover>
     </header>
   )

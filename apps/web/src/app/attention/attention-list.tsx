@@ -1,54 +1,77 @@
-import { Bot, CheckCircle2, MessageCircle, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
+import { Bot, CheckCircle2, ChevronRight, MessageCircle, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
 import { useMemo } from 'react'
 import { useProductRuntime } from '../../product-runtime.js'
-import { Button, IconButton } from '../../ui-kit/index.js'
+import { Button, IconButton, Pressable } from '../../ui-kit/index.js'
 import { attentionSource, useAttention, type AttentionItem } from '../model/attention.js'
 import { useGo } from '../model/nav.js'
+import { openBell } from './bell.js'
 import styles from './attention-list.module.css'
 
-/** Three or more items of the same agent-level kind collapse into one row so a single cause does not drown the rest. */
-function groupAttention(items: readonly AttentionItem[]): readonly AttentionItem[] {
-  const groupable = new Set<AttentionItem['kind']>([
+/** One row of the list: a single item, or several items of one cause shown together. */
+export interface AttentionGroup extends AttentionItem {
+  /** Stable key of the row; opening the bell on it shows its items one by one. */
+  readonly key: string
+  readonly ids: readonly string[]
+}
+
+/** How several items of one kind from the same place read in one row. */
+const SOURCE_NOUN: Partial<Record<AttentionItem['kind'], string>> = {
+  'delivery-failed': '条消息发送失败',
+  'delivery-unconfirmed': '条消息未确认送达',
+  'turn-failed': '次回复失败',
+  'authoring-approval': '个请求等待确认',
+  'connection-unhealthy': '个连接问题',
+}
+
+/**
+ * Collapses repeats so a single cause does not drown the rest: three or more agent-level items of one kind become one
+ * row, and two or more items of one kind from the same place (one channel's failed deliveries) become one row.
+ */
+export function groupAttention(items: readonly AttentionItem[]): readonly AttentionGroup[] {
+  const agentLevel = new Set<AttentionItem['kind']>([
     'agent-model-unavailable',
     'agent-vision-unavailable',
     'delivery-unconfirmed',
   ])
-  const counts = new Map<AttentionItem['kind'], number>()
-  for (const item of items) if (groupable.has(item.kind)) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1)
-  const emitted = new Set<AttentionItem['kind']>()
-  const result: AttentionItem[] = []
+  const keyOf = (item: AttentionItem) => {
+    const kindCount = items.filter((other) => other.kind === item.kind).length
+    if (agentLevel.has(item.kind) && kindCount >= 3) return `kind:${item.kind}`
+    const placeCount = items.filter((other) => other.kind === item.kind && other.href === item.href).length
+    return placeCount >= 2 ? `place:${item.kind}:${item.href}` : `item:${item.id}`
+  }
+  const groups = new Map<string, AttentionItem[]>()
   for (const item of items) {
-    const count = counts.get(item.kind) ?? 0
-    if (count < 3) {
-      result.push(item)
-      continue
-    }
-    if (emitted.has(item.kind)) continue
-    emitted.add(item.kind)
-    const summary =
-      item.kind === 'agent-model-unavailable'
-        ? {
-            title: `${count} 个智能体无法回复`,
-            detail: '它们的主模型当前不可用',
-            actionLabel: '查看智能体',
-            href: '/agents',
-          }
-        : item.kind === 'agent-vision-unavailable'
+    const key = keyOf(item)
+    groups.set(key, [...(groups.get(key) ?? []), item])
+  }
+  return [...groups.entries()].map(([key, members]) => {
+    const first = members[0]!
+    const ids = members.map((item) => item.id)
+    if (members.length === 1) return { ...first, key, ids }
+    const count = members.length
+    if (key.startsWith('kind:'))
+      return {
+        ...first,
+        key,
+        ids,
+        ...(first.kind === 'agent-model-unavailable'
           ? {
-              title: `${count} 个智能体看不懂图片`,
-              detail: '群里的图片会被跳过',
+              title: `${count} 个智能体无法回复`,
+              detail: '它们的主模型当前不可用',
               actionLabel: '查看智能体',
               href: '/agents',
             }
-          : {
-              title: `${count} 条消息未确认送达`,
-              detail: '可以在对应频道里重发或确认',
-              actionLabel: '查看',
-              href: item.href,
-            }
-    result.push({ ...item, id: `group:${item.kind}`, ...summary })
-  }
-  return result
+          : first.kind === 'agent-vision-unavailable'
+            ? {
+                title: `${count} 个智能体看不懂图片`,
+                detail: '群里的图片会被跳过',
+                actionLabel: '查看智能体',
+                href: '/agents',
+              }
+            : { title: `${count} 条消息未确认送达`, detail: '可以在对应频道里重发或确认', actionLabel: '查看' }),
+      }
+    return { ...first, key, ids, detail: `${count} ${SOURCE_NOUN[first.kind] ?? '项需要处理'}` }
+  })
 }
 
 const SEVERITY_RANK: Record<AttentionItem['severity'], number> = { bad: 0, warn: 1, info: 2 }
@@ -61,24 +84,36 @@ const attentionIcon = (item: AttentionItem) => {
   return <TriangleAlert />
 }
 
-/** Attention items ranked by severity, with their action and dismissal. Shared by the overview and the bell. */
+/** Attention items ranked by severity, with their action and dismissal. Lives in the bell (05 §7.2). */
 export function AttentionList({
   compact = false,
+  focus,
+  onClearFocus,
   onAction,
 }: {
   /** Popover density: the action stays, detail text wraps under the title. */
   readonly compact?: boolean
+  /** Key of one group to show item by item. */
+  readonly focus?: string | undefined
+  readonly onClearFocus?: () => void
   /** Called after an item's action navigates, e.g. to close the surrounding popover. */
   readonly onAction?: () => void
 }) {
   const navigate = useGo()
   const runtime = useProductRuntime()
   const rawAttention = useAttention()
-  const attention = useMemo(
+  const groups = useMemo(
     () => [...groupAttention(rawAttention)].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
     [rawAttention],
   )
-  if (attention.length === 0)
+  const focused = focus === undefined ? undefined : groups.find((group) => group.key === focus)
+  // A focused group lists its own items; when it is gone (all handled) the full list comes back.
+  const rows: readonly AttentionGroup[] = focused
+    ? rawAttention
+        .filter((item) => focused.ids.includes(item.id))
+        .map((item) => ({ ...item, key: `item:${item.id}`, ids: [item.id] }))
+    : groups
+  if (rows.length === 0)
     return (
       <div className={styles.calm}>
         <CheckCircle2 aria-hidden="true" />
@@ -87,9 +122,18 @@ export function AttentionList({
     )
   return (
     <div className={[styles.list, compact ? styles.compact : ''].join(' ')}>
-      {attention.map((item) => (
-        <div key={item.id} className={[styles.row, styles[item.severity]].join(' ')}>
-          <span className={styles.bar} />
+      {focused ? (
+        <div className={styles.focusHead}>
+          <span>
+            {focused.title} · {focused.detail}
+          </span>
+          <Button size="small" variant="ghost" onClick={onClearFocus}>
+            显示全部
+          </Button>
+        </div>
+      ) : null}
+      {rows.map((item) => (
+        <div key={item.key} className={[styles.row, styles[item.severity]].join(' ')}>
           <span className={styles.icon}>{attentionIcon(item)}</span>
           <div className={styles.text}>
             <div className={styles.what}>{item.title}</div>
@@ -97,7 +141,6 @@ export function AttentionList({
           </div>
           <Button
             size="small"
-            variant={item.severity === 'bad' ? 'primary' : 'default'}
             onClick={() => {
               navigate(item.href)
               onAction?.()
@@ -109,15 +152,49 @@ export function AttentionList({
             label="忽略"
             size="small"
             onClick={() => {
-              const ids = item.id.startsWith('group:')
-                ? rawAttention.filter((entry) => entry.kind === item.kind).map((entry) => entry.id)
-                : [item.id]
-              for (const id of ids) void attentionSource(runtime).dismiss(id)
+              for (const id of item.ids) void attentionSource(runtime).dismiss(id)
             }}
           >
             <X size={14} />
           </IconButton>
         </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The overview's read-only summary (interaction model §4): one row per cause; a row opens the bell on its items,
+ * where they are handled.
+ */
+export function AttentionSummary() {
+  const rawAttention = useAttention()
+  const groups = useMemo(
+    () => [...groupAttention(rawAttention)].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity]),
+    [rawAttention],
+  )
+  if (groups.length === 0)
+    return (
+      <div className={styles.calm}>
+        <CheckCircle2 aria-hidden="true" />
+        现在没有需要处理的事情
+      </div>
+    )
+  return (
+    <div className={styles.list}>
+      {groups.map((group) => (
+        <Pressable
+          key={group.key}
+          className={[styles.row, styles.summaryRow, styles[group.severity]].join(' ')}
+          onClick={() => openBell(group.ids.length > 1 ? group.key : undefined)}
+        >
+          <span className={styles.icon}>{attentionIcon(group)}</span>
+          <span className={styles.text}>
+            <span className={styles.what}>{group.title}</span>
+            <span className={styles.why}>{group.detail}</span>
+          </span>
+          <ChevronRight className={styles.chevron} aria-hidden="true" />
+        </Pressable>
       ))}
     </div>
   )

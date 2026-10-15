@@ -17,57 +17,8 @@
 }
 
 .head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--s-6);
-}
-
-.head h1 {
-  flex: 1;
-  margin: 0;
-  font: var(--t-page);
-  letter-spacing: -0.01em;
-}
-
-.stats {
-  display: flex;
-  gap: var(--s-7);
-}
-
-.stat {
   display: grid;
-  justify-items: start;
-  gap: var(--s-1);
-  padding: var(--s-1) var(--s-2);
-  border: 0;
-  border-radius: var(--r-1);
-  background: transparent;
-  color: var(--fg);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--dur-1);
-}
-
-.stat:hover {
-  background: var(--hover);
-}
-
-.stat b {
-  font-size: var(--fs-2xl);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1;
-}
-
-.stat span {
-  color: var(--muted);
-  font-size: var(--fs-xs);
-}
-
-.hot b {
-  color: var(--bad);
+  gap: var(--s-5);
 }
 
 .placeholder {

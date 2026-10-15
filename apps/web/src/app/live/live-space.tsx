@@ -1,4 +1,3 @@
-import { useGo } from '../model/nav.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -10,9 +9,19 @@ import {
   useProductStore,
   type ChannelSummary,
 } from '../../product-runtime.js'
-import { AgentAvatar, BoardPage, Chip, MemberAvatar, Panel, Sparkline, cssVars, Pressable } from '../../ui-kit/index.js'
+import {
+  AgentAvatar,
+  BoardPage,
+  Chip,
+  MemberAvatar,
+  PageHeader,
+  Panel,
+  Sparkline,
+  Stats,
+  cssVars,
+} from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
-import { AttentionList } from '../attention/attention-list.js'
+import { AttentionSummary } from '../attention/attention-list.js'
 import { useAttention } from '../model/attention.js'
 import { agentHue, agentPhase, channelHue, distinctChannelHues, isAgentWorking } from '../model/identity.js'
 import { useCrumb } from '../shell/crumb.js'
@@ -98,7 +107,6 @@ function useRelativeTimeTick() {
 
 export default function LiveSpace() {
   useCrumb('概览')
-  const navigate = useGo()
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)
@@ -128,7 +136,6 @@ export default function LiveSpace() {
     .sort((left, right) => (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0))
     .slice(0, 12)
 
-  const firstWorking = working[0]
   const fresh = useFreshChannels(channels)
   useRelativeTimeTick()
   return (
@@ -137,29 +144,20 @@ export default function LiveSpace() {
         <CompatibilityNotices showContextReset />
         <section style={cssVars({ '--i': 0 })}>
           <div className={styles.head}>
-            <h1>概览</h1>
-            <div className={styles.stats}>
-              <Pressable
-                className={styles.stat}
-                onClick={() =>
-                  navigate(working.length === 1 && firstWorking ? `/agents/${firstWorking.id}` : '/agents')
-                }
-              >
-                <b>{working.length}</b>
-                <span>正在工作</span>
-              </Pressable>
-              <Pressable
-                className={[styles.stat, attention.some((item) => item.severity === 'bad') ? styles.hot : ''].join(' ')}
-                onClick={() => document.getElementById('live-attention')?.scrollIntoView({ behavior: 'smooth' })}
-              >
-                <b>{attention.length}</b>
-                <span>需要关注</span>
-              </Pressable>
-              <Pressable className={styles.stat} onClick={() => navigate('/channels')}>
-                <b>{totalMessages}</b>
-                <span>{option.label}消息</span>
-              </Pressable>
-            </div>
+            <PageHeader title="概览" />
+            <Stats
+              label="概况"
+              items={[
+                { key: 'working', label: '正在工作', value: working.length },
+                {
+                  key: 'attention',
+                  label: '需要关注',
+                  value: attention.length,
+                  tone: attention.some((item) => item.severity === 'bad') ? 'bad' : 'neutral',
+                },
+                { key: 'messages', label: `${option.label}消息`, value: totalMessages },
+              ]}
+            />
           </div>
           <div className={styles.tideWrap}>
             {activity ? (
@@ -173,7 +171,7 @@ export default function LiveSpace() {
         <section style={cssVars({ '--i': 1 })} id="live-attention">
           <h2 className={styles.sectionTitle}>需要关注</h2>
           <Panel className={styles.attention}>
-            <AttentionList />
+            <AttentionSummary />
           </Panel>
         </section>
 

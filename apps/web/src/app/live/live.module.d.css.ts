@@ -10,14 +10,12 @@ declare const styles: {
   readonly chips: string
   readonly enter: string
   readonly head: string
-  readonly hot: string
   readonly inner: string
   readonly placeholder: string
   readonly preview: string
   readonly quiet: string
   readonly sectionTitle: string
   readonly spark: string
-  readonly stat: string
   readonly stats: string
   readonly tideWrap: string
   readonly who: string
