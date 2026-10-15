@@ -4,7 +4,7 @@ import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/stora
 import { ChannelRuntime, type AgentSessionDriver } from '@nekro-nxt/channel-runtime'
 import { FakeAdapterConnection } from '@nekro-nxt/test-harness'
 import { CommandDefinitionSchema, ExtensionRevisionIdSchema, type MessagePart } from '@nekro-nxt/contracts'
-import { CommandService, type RegisteredCommand } from '../src/commands/service.js'
+import { CommandService, type CommandObserver, type RegisteredCommand } from '../src/commands/service.js'
 import { CommandRegistrations } from '../src/commands/registrations.js'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -18,7 +18,7 @@ const deferred = () => {
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
-async function setup(deferExecution = false, bareCommands = true) {
+async function setup(deferExecution = false, bareCommands = true, observer?: CommandObserver) {
   const database = await openMigratedCoreDatabase(':memory:')
   const repository = new SqliteCoreRepository(database)
   let sequence = 0,
@@ -102,6 +102,7 @@ async function setup(deferExecution = false, bareCommands = true) {
     running: () => running,
     botMemberId: () => bot.member.id,
     now,
+    ...(observer === undefined ? {} : { observer }),
   })
   commandReference.current = commands
   const createSession = vi.spyOn(driver, 'createSession')
@@ -592,6 +593,19 @@ describe('unified commands', () => {
     f.commands.recover()
     await f.commands.idle()
     expect(f.adapter.deliveries).toHaveLength(2)
+  })
+  it('tells observers about settled commands, undelivered replies and rate limiting without content', async () => {
+    const settled = vi.fn()
+    const rateLimited = vi.fn()
+    const f = await setup(false, true, { settled, rateLimited })
+    for (let index = 0; index < 12; index += 1) await f.inbound('/status 机密参数', `obs-${index}`)
+    await f.commands.idle()
+    expect(settled).toHaveBeenCalled()
+    const last = settled.mock.calls.at(-1)?.[0]
+    expect(last).toMatchObject({ commandName: 'status' })
+    // Failed argument parsing keeps the raw text in storage but observers are only given records, not content logs.
+    expect(rateLimited).toHaveBeenCalledOnce()
+    expect(rateLimited.mock.calls[0]?.[0]).toMatchObject({ dropped: 1 })
   })
   it('uses stable extension names, denies ambiguity and enforces permission floors', async () => {
     const f = await setup()

@@ -18,9 +18,9 @@ import { CommandDirectory } from './catalog.js'
 import { CommandExecutor } from './executor.js'
 import { CommandRateLimiter, type CommandAdmission } from './rate-limit.js'
 import { CommandReplies } from './replies.js'
-import type { RegisteredCommand } from './types.js'
+import type { CommandObserver, RegisteredCommand } from './types.js'
 
-export type { RegisteredCommand } from './types.js'
+export type { CommandObserver, RegisteredCommand } from './types.js'
 
 export interface CommandServiceOptions {
   readonly deferExecution?: boolean
@@ -31,12 +31,8 @@ export interface CommandServiceOptions {
   readonly running: (sessionId: string) => boolean
   readonly botMemberId: (event: ChannelEventRecord) => ChannelMemberId | undefined
   readonly now: () => number
-  /** Told, at most once per minute per channel, how many platform commands were dropped by the rate limit. */
-  readonly onRateLimited?: (report: {
-    readonly channelId: ChannelId
-    readonly dropped: number
-    readonly reason: Exclude<CommandAdmission, 'allowed'>
-  }) => void
+  /** Diagnostics: settled executions, undelivered replies and (at most once a minute per channel) rate limiting. */
+  readonly observer?: CommandObserver
 }
 
 const LIMIT_REPORT_INTERVAL_MS = 60_000
@@ -69,7 +65,12 @@ export class CommandService implements CommandGate {
       const event = options.repository.getChannelEvent(record.eventId)
       if (event) options.channels().publishInboundFact(event)
     }
-    this.#replies = new CommandReplies({ repository: options.repository, channels: options.channels, publish })
+    this.#replies = new CommandReplies({
+      repository: options.repository,
+      channels: options.channels,
+      publish,
+      ...(options.observer === undefined ? {} : { observer: options.observer }),
+    })
     this.#executor = new CommandExecutor({
       repository: options.repository,
       directory: this.#directory,
@@ -78,6 +79,7 @@ export class CommandService implements CommandGate {
       running: options.running,
       now: options.now,
       publish,
+      ...(options.observer === undefined ? {} : { observer: options.observer }),
       ...(options.deferExecution === undefined ? {} : { deferExecution: options.deferExecution }),
     })
     options.repository.commands.recover(options.now())
@@ -158,7 +160,11 @@ export class CommandService implements CommandGate {
     const entry = this.#limited.get(channelId) ?? { dropped: 0, reportedAt: Number.NEGATIVE_INFINITY }
     entry.dropped += 1
     if (now - entry.reportedAt >= LIMIT_REPORT_INTERVAL_MS) {
-      this.#o.onRateLimited?.({ channelId, dropped: entry.dropped, reason })
+      try {
+        this.#o.observer?.rateLimited?.({ channelId, dropped: entry.dropped, reason })
+      } catch {
+        // Diagnostics cannot affect the gate.
+      }
       entry.dropped = 0
       entry.reportedAt = now
     }

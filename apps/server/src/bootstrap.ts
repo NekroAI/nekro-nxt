@@ -1,4 +1,5 @@
 import { CommandService, type RegisteredCommand } from './commands/service.js'
+import { commandLogObserver } from './commands/logging.js'
 import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
 import type { HostLogService } from './logs/service.js'
 import type { DshSessionStorageRetirementReport, InboundHookDecisionRecord } from '@nekro-nxt/storage-sqlite'
@@ -289,6 +290,11 @@ export class NekroRuntime {
       repository: this.repository,
       core: this.core,
       channels: () => this.channels,
+      ...(input.logs === undefined
+        ? {}
+        : {
+            observer: commandLogObserver(input.logs, (channelId) => this.repository.getChannel(channelId)?.displayName),
+          }),
       now: input.now,
       running: (id) => this.host.sessionStatus(id) === 'running',
       extensions: (agentId) => this.#extensionCommands(agentId),

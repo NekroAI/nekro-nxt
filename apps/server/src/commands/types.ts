@@ -1,5 +1,7 @@
 import type {
+  ChannelId,
   CommandDefinition,
+  CommandExecutionRecord,
   CommandExecutionContext,
   CommandResult,
   ExtensionRevisionId,
@@ -26,6 +28,13 @@ export interface RegisteredCommand {
     context: CommandExecutionContext,
     host: CommandRunCapabilities,
   ) => CommandResult | Promise<CommandResult>
+}
+
+/** Diagnostics only: observers must not change execution or delivery outcomes, and never see arguments. */
+export interface CommandObserver {
+  settled?(record: CommandExecutionRecord): void
+  replyNotDelivered?(record: CommandExecutionRecord, ordinal: number): void
+  rateLimited?(report: { readonly channelId: ChannelId; readonly dropped: number; readonly reason: string }): void
 }
 
 /** A refusal the platform must not hear about (unknown or unauthorized): recorded, never answered. */

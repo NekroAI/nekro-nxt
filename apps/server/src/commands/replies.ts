@@ -1,6 +1,7 @@
 import { undeliveredCommandReplies, type CommandExecutionRecord, type CommandReply } from '@nekro-nxt/contracts'
 import type { ChannelRuntime } from '@nekro-nxt/channel-runtime'
 import type { SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
+import type { CommandObserver } from './types.js'
 
 export const REPLY_NOT_DELIVERED = '命令结果已记录，但回复未能投递。'
 
@@ -8,6 +9,7 @@ export interface CommandRepliesOptions {
   readonly repository: SqliteCoreRepository
   readonly channels: () => ChannelRuntime
   readonly publish: (record: CommandExecutionRecord) => void
+  readonly observer?: CommandObserver
 }
 
 /** Read-modify-write on a record without an await in between, so concurrent writers cannot lose each other's changes. */
@@ -80,8 +82,15 @@ export class CommandReplies {
         // Delivery failures are on the Outbound; only a reply that never got one is marked here.
       }
       const settled = store.get(executionId)?.replies.find((reply) => reply.ordinal === next.ordinal)
-      if (settled !== undefined && settled.intentId === undefined && settled.error === undefined)
+      if (settled !== undefined && settled.intentId === undefined && settled.error === undefined) {
         this.#patch(executionId, next.ordinal, { error: REPLY_NOT_DELIVERED })
+        try {
+          const failed = store.get(executionId)
+          if (failed) this.#o.observer?.replyNotDelivered?.(failed, next.ordinal)
+        } catch {
+          // Diagnostics cannot affect delivery.
+        }
+      }
     }
   }
 

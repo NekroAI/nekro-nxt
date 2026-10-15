@@ -14,7 +14,13 @@ import type { SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { RESPONSE_MODE_LABELS } from './builtins.js'
 import type { CommandDirectory } from './catalog.js'
 import { mutateRecord, type CommandReplies } from './replies.js'
-import { SilentCommandError, textResult, type CommandRunCapabilities, type RegisteredCommand } from './types.js'
+import {
+  SilentCommandError,
+  textResult,
+  type CommandObserver,
+  type CommandRunCapabilities,
+  type RegisteredCommand,
+} from './types.js'
 
 export const COMMAND_MAX_RAW_TEXT = 16_000
 const MAX_PARALLEL_CHANNELS = 4
@@ -27,6 +33,7 @@ export interface CommandExecutorOptions {
   readonly running: (sessionId: string) => boolean
   readonly now: () => number
   readonly publish: (record: CommandExecutionRecord) => void
+  readonly observer?: CommandObserver
   readonly deferExecution?: boolean
 }
 
@@ -270,6 +277,11 @@ export class CommandExecutor {
       this.#o.repository.commands.compact(settled.channelId)
     } catch {
       // Compaction is housekeeping; it must never turn a finished command into a failure.
+    }
+    try {
+      this.#o.observer?.settled?.(settled)
+    } catch {
+      // Diagnostics cannot affect the result.
     }
     return settled
   }
