@@ -394,7 +394,7 @@ export class ExtensionRequestService {
 
   #undoHint(action: ExtensionAction): string {
     return action.kind === 'switch' || action.kind === 'community-update'
-      ? '。如需撤销，管理员发送 /ext revert 扩展名。'
+      ? '如需撤销，管理员发送 /ext revert 扩展名。'
       : ''
   }
 
