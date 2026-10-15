@@ -320,6 +320,16 @@ function CommunityDetail({
             <span>{communityPublisherLabel(detail.publisher.handle)}</span>
             {latest ? <span>{relativeTime(latest.createdAt)}发布</span> : null}
             <span>{detail.downloads} 次下载</span>
+            {detail.branchOf ? (
+              detail.branchOf.displayName ? (
+                <Link to={`/community/extensions/${detail.branchOf.extensionId}`}>
+                  分支自「{detail.branchOf.displayName}」
+                </Link>
+              ) : (
+                <span>分支自一个未公开的扩展</span>
+              )
+            ) : null}
+            {detail.branchCount ? <span>{detail.branchCount} 个分支</span> : null}
           </>
         }
         actions={

@@ -166,14 +166,15 @@ export const CommunityExtensionSummarySchema = z.object({
   downloads: z.number().int().nonnegative(),
   updatedAt: z.number().int(),
   pageUrl: z.string().url(),
-  /** The public extension this one is a branch of; null when it is an original line or the community is older. */
+  /**
+   * The extension and version this one is a branch of; null for an original line or an older community. Without a
+   * displayName the origin is not public on the community.
+   */
   branchOf: z
     .object({
       extensionId: ExtensionIdSchema,
-      releaseId: CommunityReleaseIdSchema.nullable(),
-      displayName: z.string().max(200),
-      publisherHandle: z.string().max(80),
-      delisted: z.boolean(),
+      revisionId: ExtensionRevisionIdSchema.nullable(),
+      displayName: z.string().max(200).nullable(),
     })
     .nullable()
     .optional(),

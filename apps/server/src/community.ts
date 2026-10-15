@@ -1075,10 +1075,8 @@ const normalizeBranchOf = (raw: unknown): Record<string, unknown> | null => {
   if (typeof record['extensionId'] !== 'string') return null
   return {
     extensionId: record['extensionId'],
-    releaseId: typeof record['releaseId'] === 'string' ? record['releaseId'] : null,
-    displayName: typeof record['displayName'] === 'string' ? record['displayName'] : '',
-    publisherHandle: typeof record['publisherHandle'] === 'string' ? record['publisherHandle'] : '',
-    delisted: record['delisted'] === true,
+    revisionId: typeof record['revisionId'] === 'string' ? record['revisionId'] : null,
+    displayName: typeof record['displayName'] === 'string' ? record['displayName'] : null,
   }
 }
 
