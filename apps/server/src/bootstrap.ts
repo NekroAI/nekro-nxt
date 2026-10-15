@@ -110,6 +110,7 @@ import { CommunitySyncService } from './extension-governance/community-sync.js'
 import { ExtensionDataService } from './extension-governance/data-service.js'
 import { ExtensionRequestService } from './extension-governance/requests.js'
 import { createMigrationStorage } from './extension-data-migration.js'
+import { commandBotMember } from './commands/bot-member.js'
 import { CommunityFeedbackService } from './community-feedback.js'
 import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-runtime.js'
 import { channelMemberRelations } from './channel-member-relations.js'
@@ -326,17 +327,14 @@ export class NekroRuntime {
       running: (id) => this.host.sessionStatus(id) === 'running',
       extensions: (agentId) => this.#extensionCommands(agentId),
       governance: () => this.#commandGovernance,
-      botMemberId: (event) => {
-        const channel = this.repository.getChannel(event.channelId)
-        if (!channel) return undefined
-        const account =
-          this.connections.adapterConnectionDiagnostic(channel.connectionId)?.accountReference ??
-          this.repository.getConnection(channel.connectionId)?.accountKey
-        const part = event.parts.find((part) => part.type !== 'text' || part.text.trim() !== '')
-        if (account === undefined || part?.type !== 'mention') return undefined
-        const identity = this.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, part.memberId)
-        return identity?.platformUserId === account ? part.memberId : undefined
-      },
+      botMemberId: (event) =>
+        commandBotMember(event, {
+          core: this.core,
+          channel: (channelId) => this.repository.getChannel(channelId),
+          account: (connectionId) =>
+            this.connections.adapterConnectionDiagnostic(connectionId)?.accountReference ??
+            this.repository.getConnection(connectionId)?.accountKey,
+        }),
     })
     if (input.logs) {
       const observed = new Map<string, string>()
