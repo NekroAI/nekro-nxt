@@ -97,6 +97,21 @@ export class ChannelDelivery {
     return this.#planAndSend(input, input.channelId, undefined, input)
   }
 
+  /**
+   * Posts a host notice, such as an extension request asking an administrator to confirm, through the same Outbox.
+   * `noticeKey` is unique: a notice is planned at most once even if the caller retries.
+   */
+  sendHostNotice(input: {
+    readonly channelId: ChannelId
+    readonly noticeKey: string
+    readonly parts: readonly MessagePart[]
+    readonly signal?: AbortSignal
+  }): Promise<SendMessageResult> {
+    const existing = this.#runtimeRepository.findOutboundByNoticeKey?.(input.noticeKey)
+    if (existing) return Promise.resolve(this.#sendResult(existing))
+    return this.#planAndSend(input, input.channelId, undefined, undefined, input.noticeKey)
+  }
+
   async #planAndSend(
     input: {
       readonly parts: readonly MessagePart[]
@@ -113,6 +128,7 @@ export class ChannelDelivery {
       readonly eventId?: ChannelEventId
       readonly onPlanned: (id: OutboundIntentId) => void
     },
+    noticeKey?: string,
   ): Promise<SendMessageResult> {
     const channel = this.#coreRepository.getChannel(channelId)
     if (!channel)
@@ -187,6 +203,7 @@ export class ChannelDelivery {
       ...(command === undefined
         ? {}
         : { channelId, commandExecutionId: command.executionId, commandOrdinal: command.ordinal }),
+      ...(noticeKey === undefined ? {} : { channelId, noticeKey }),
       ...(input.sourceTurnId === undefined ? {} : { sourceTurnId: input.sourceTurnId }),
       parts: input.parts,
       ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),

@@ -96,6 +96,14 @@ export interface DynamicAuthoringVerification {
   readonly navigationChecks: readonly string[]
   readonly resourceChecks: readonly string[]
   readonly stoppedCleanly: boolean
+  /**
+   * What the run really registered (tools with descriptions, RPC, panels, pages, adapter), in the shape a saved
+   * Manifest records. Kept so the candidate can be saved after its conversation ended.
+   */
+  readonly contributions?: readonly JsonValue[] | undefined
+  /** Adapter evidence of a platform candidate. */
+  readonly adapter?: JsonValue | undefined
+  readonly pluginRunId?: string | undefined
 }
 
 export interface DynamicAuthoringTask {
@@ -274,6 +282,9 @@ export const DynamicAuthoringVerificationSchema = z
     navigationChecks: z.array(z.string()),
     resourceChecks: z.array(z.string()),
     stoppedCleanly: z.boolean(),
+    contributions: z.array(JsonValueSchema).optional(),
+    adapter: JsonValueSchema.optional(),
+    pluginRunId: z.string().optional(),
   })
   // Unknown keys from attempts recorded before contract v4 are dropped instead of failing the task ledger.
   .strip()

@@ -337,6 +337,13 @@
       "when": 1792058997105,
       "tag": "0047_drop_extension_revision_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1792059852170,
+      "tag": "0048_host_notices",
+      "breakpoints": true
     }
   ]
 }

@@ -16,10 +16,8 @@ import {
   type CommunityEndpoint,
   type CommunityExtensionDetail,
   type CommunityExtensionSummary,
-  type CommunityInstalledItem,
   type CommunityMyExtension,
   type CommunityReviewReport,
-  type CommunitySource,
   type CommunityStatus,
   type ExtensionId,
   type JsonValue,
@@ -197,6 +195,16 @@ interface PendingLogin {
  * NekroNXT 实例与社区之间的唯一通道：登录（授权码 + PKCE）、令牌轮换、公开目录代理、扩展包下载与发布。
  * 刷新令牌保存在本机凭据存储，账号资料与凭据引用保存在系统设置；访问令牌只在内存中。
  */
+/** What the community says about one extension line this machine follows or publishes. */
+export interface CommunityUpdateCheck {
+  readonly found: boolean
+  readonly delisted: boolean
+  readonly delistedReason: string | null
+  readonly releaseWithdrawn: boolean
+  readonly latest: z.output<typeof CommunityReleaseSchema> | null
+  readonly addedPermissions: z.output<typeof CommunityPermissionItemSchema>[]
+}
+
 export class CommunityService {
   readonly #environmentUrl: string | null
   readonly #repository: CommunitySettingsRepository
@@ -207,7 +215,8 @@ export class CommunityService {
   readonly #pending = new Map<string, PendingLogin>()
   #access: { readonly url: string; readonly token: string; readonly expiresAt: number } | undefined
   readonly #meta = new Map<string, { readonly value: CommunityMeta | null; readonly expiresAt: number }>()
-  #installed: { readonly url: string; readonly checkedAt: number; readonly items: CommunityInstalledItem[] } | undefined
+  /** Extensions with something to do after the last sync check, for the navigation badge; per community address. */
+  #attention: { readonly url: string; readonly count: number } | undefined
   #authGeneration = 0
   #refreshing: { readonly generation: number; readonly promise: Promise<string> } | undefined
 
@@ -269,7 +278,7 @@ export class CommunityService {
     }
     this.#pending.clear()
     this.#invalidateAuth()
-    this.#installed = undefined
+    this.#attention = undefined
     return this.endpoint()
   }
 
@@ -348,14 +357,13 @@ export class CommunityService {
     const url = this.communityUrl
     const stored = this.#stored(url)
     const meta = await this.meta()
-    const installed = this.#installed?.url === url ? this.#installed.items : []
     return {
       communityUrl: url,
       environment: meta?.environment ?? null,
       ...(meta?.features.length ? { features: meta.features } : {}),
       account: stored?.account ?? null,
       signedInAt: stored?.signedInAt ?? null,
-      updatesAvailable: installed.filter((item) => item.updateAvailable).length,
+      updatesAvailable: this.#attention?.url === url ? this.#attention.count : 0,
     }
   }
 
@@ -702,6 +710,7 @@ export class CommunityService {
     readonly listing?: CommunityListingInput | undefined
   }): Promise<{
     readonly releaseId: string
+    readonly releaseNumber: number
     readonly reviewStatus: z.output<typeof CommunityReviewStatusSchema>
     readonly pageUrl: string
     readonly reportUrl: string
@@ -727,6 +736,7 @@ export class CommunityService {
       .parse(await this.#api('/api/v1/releases', { method: 'POST', body: form }, true))
     return {
       releaseId: body.release.id,
+      releaseNumber: body.release.number,
       reviewStatus: body.release.reviewStatus,
       pageUrl: this.#extensionPage(body.extension.id),
       reportUrl: new URL(`/me/releases/${encodeURIComponent(body.release.id)}`, this.communityUrl).toString(),
@@ -735,62 +745,46 @@ export class CommunityService {
   }
 
   /**
-   * 已安装扩展的更新检查。每个扩展取最近一次从社区导入的来源；来源与当前社区地址不同的只列出，不检查。
-   * 结果缓存到下次检查，供状态中的可更新数量使用。
+   * Newest public release of each extension, with withdrawal and delisting state and the permissions it adds over
+   * the release the machine knows. `releaseId` is optional: a line this machine published may not have one yet.
    */
-  async installed(
-    sources: readonly {
-      readonly extensionId: ExtensionId
-      readonly displayName: string
-      readonly revisionId: string
-      readonly source: CommunitySource
-    }[],
-  ): Promise<{ readonly checkedAt: number; readonly items: CommunityInstalledItem[] }> {
-    const url = this.communityUrl
-    const checkable = sources.filter((entry) => entry.source.communityUrl === url)
-    const remote = new Map<string, Record<string, unknown>>()
-    if (checkable.length > 0) {
-      const body = z.object({ items: z.array(z.record(z.string(), z.unknown())) }).parse(
-        await this.#api('/api/v1/updates', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            items: checkable.map((entry) => ({ extensionId: entry.extensionId, releaseId: entry.source.releaseId })),
-          }),
+  async checkUpdates(
+    items: readonly { readonly extensionId: ExtensionId; readonly releaseId?: string; readonly revisionId?: string }[],
+  ): Promise<ReadonlyMap<string, CommunityUpdateCheck>> {
+    const result = new Map<string, CommunityUpdateCheck>()
+    if (items.length === 0) return result
+    const body = z.object({ items: z.array(z.record(z.string(), z.unknown())) }).parse(
+      await this.#api('/api/v1/updates', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          items: items.map((item) => ({
+            extensionId: item.extensionId,
+            ...(item.releaseId === undefined ? {} : { releaseId: item.releaseId }),
+            ...(item.revisionId === undefined ? {} : { revisionId: item.revisionId }),
+          })),
         }),
-      )
-      for (const item of body.items) remote.set(`${String(item['extensionId'])}:${String(item['releaseId'])}`, item)
-    }
-    const items = sources.map((entry): CommunityInstalledItem => {
-      const sameCommunity = entry.source.communityUrl === url
-      const found = sameCommunity ? remote.get(`${entry.extensionId}:${entry.source.releaseId}`) : undefined
-      const latest = found?.['latest'] ? CommunityReleaseSchema.parse(normalizeRelease(found['latest'])) : null
-      return {
-        extensionId: entry.extensionId,
-        displayName: entry.displayName,
-        revisionId: entry.revisionId,
-        source: entry.source,
-        sameCommunity,
-        found: found?.['found'] === true,
-        delisted: found?.['delisted'] === true,
-        delistedReason: typeof found?.['delistedReason'] === 'string' ? found['delistedReason'] : null,
-        releaseWithdrawn: found?.['releaseWithdrawn'] === true,
+      }),
+    )
+    for (const item of body.items) {
+      const latest = item['latest'] ? CommunityReleaseSchema.parse(normalizeRelease(item['latest'])) : null
+      result.set(String(item['extensionId']), {
+        found: item['found'] === true,
+        delisted: item['delisted'] === true,
+        delistedReason: typeof item['delistedReason'] === 'string' ? item['delistedReason'] : null,
+        releaseWithdrawn: item['releaseWithdrawn'] === true,
         latest,
-        updateAvailable: latest !== null && latest.id !== entry.source.releaseId,
-        addedPermissions: (Array.isArray(found?.['addedPermissions']) ? found['addedPermissions'] : []).map((item) =>
-          CommunityPermissionItemSchema.parse(normalizePermission(item)),
+        addedPermissions: (Array.isArray(item['addedPermissions']) ? item['addedPermissions'] : []).map((entry) =>
+          CommunityPermissionItemSchema.parse(normalizePermission(entry)),
         ),
-      }
-    })
-    const checkedAt = this.#now()
-    this.#installed = { url, checkedAt, items }
-    return { checkedAt, items }
+      })
+    }
+    return result
   }
 
-  cachedInstalled(): { readonly checkedAt: number; readonly items: CommunityInstalledItem[] } | undefined {
-    const cached = this.#installed
-    // 缓存里的社区地址只用于判断是否仍属当前社区，不随响应返回。
-    return cached?.url === this.communityUrl ? { checkedAt: cached.checkedAt, items: cached.items } : undefined
+  /** How many extensions need attention after the last sync check (navigation badge). */
+  setAttention(count: number): void {
+    this.#attention = { url: this.communityUrl, count }
   }
 
   async publisherOf(extensionId: string): Promise<string> {
@@ -1063,6 +1057,28 @@ const normalizeRelease = (raw: unknown): Record<string, unknown> => {
     requiresSdk: release['requiresSdk'] ?? null,
     notes: release['notes'] ?? '',
     createdAt: release['createdAt'],
+    ...(typeof release['number'] === 'number' ? { number: release['number'] } : {}),
+    ...(typeof release['revisionId'] === 'string' ? { revisionId: release['revisionId'] } : {}),
+    ...(typeof release['parentRevisionId'] === 'string' || release['parentRevisionId'] === null
+      ? { parentRevisionId: release['parentRevisionId'] }
+      : {}),
+    ...(Array.isArray(release['ancestry'])
+      ? { ancestry: release['ancestry'].filter((id): id is string => typeof id === 'string').slice(0, 256) }
+      : {}),
+  }
+}
+
+/** A branch origin as the community reports it; anything unreadable counts as no origin. */
+const normalizeBranchOf = (raw: unknown): Record<string, unknown> | null => {
+  if (raw === null || raw === undefined) return null
+  const record = asRecord(raw)
+  if (typeof record['extensionId'] !== 'string') return null
+  return {
+    extensionId: record['extensionId'],
+    releaseId: typeof record['releaseId'] === 'string' ? record['releaseId'] : null,
+    displayName: typeof record['displayName'] === 'string' ? record['displayName'] : '',
+    publisherHandle: typeof record['publisherHandle'] === 'string' ? record['publisherHandle'] : '',
+    delisted: record['delisted'] === true,
   }
 }
 
@@ -1103,5 +1119,7 @@ const normalizeSummary = (raw: unknown, pageUrl: (id: string) => string): Record
     downloads: record['downloads'],
     updatedAt: record['updatedAt'],
     pageUrl: typeof record['id'] === 'string' ? pageUrl(record['id']) : '',
+    branchOf: normalizeBranchOf(record['branchOf']),
+    ...(typeof record['branchCount'] === 'number' ? { branchCount: record['branchCount'] } : {}),
   }
 }

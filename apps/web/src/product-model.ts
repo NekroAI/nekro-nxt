@@ -219,8 +219,10 @@ export interface ConversationMessage {
   readonly delivery?: DeliveryState
   /** Administrator resolution of an unsettled delivery (retry or confirmed as delivered). */
   readonly deliveryResolution?: 'retry' | 'confirm-delivered'
-  readonly origin?: 'admin-console' | 'command'
+  readonly origin?: 'admin-console' | 'command' | 'extension-notice'
   readonly command?: NonNullable<HostApiResponse<'snapshot'>['messages'][number]['command']>
+  /** A host notice about extension work: a request to confirm, or what an action did. */
+  readonly extensionNotice?: { readonly requestNumber?: number | undefined }
   /** The sender is another agent on this host, speaking through its own account in the same group. */
   readonly localAgentId?: string
   /** What the agent's inbound hooks decided, when it differs from the default. */

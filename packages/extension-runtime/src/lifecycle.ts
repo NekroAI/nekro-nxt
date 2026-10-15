@@ -383,6 +383,35 @@ export class ExtensionLifecycleCoordinator {
     return installation
   }
 
+  /**
+   * Runs `operation` while the extension is stopped at its safe gaps, then starts the installed Revision again (which
+   * migrates data whose version the operation lowered). Used to rewrite an extension's data without racing it.
+   */
+  async withStopped<T>(extensionId: ExtensionId, operation: () => Promise<T> | T): Promise<T> {
+    return this.#exclusive(extensionId, async () => {
+      this.#assertAvailable()
+      const live = this.#live.get(extensionId)
+      const installation = this.#repository.getHostInstallation(extensionId)
+      await this.#stop(extensionId, live)
+      let result: T
+      try {
+        result = await operation()
+      } finally {
+        if (live && installation) {
+          await this.#install({ extensionId, revisionId: installation.extensionRevisionId }).catch(async (error) => {
+            this.#diagnostics.set(extensionId, {
+              status: 'restore-failed',
+              message: message(error),
+              observedAt: this.#timestamp(),
+            })
+            throw error
+          })
+        }
+      }
+      return result
+    })
+  }
+
   /** Applies a new host configuration by reloading the host instance and re-attaching its agents. */
   async updateHostConfig(extensionId: ExtensionId, value: JsonValue): Promise<HostInstallation> {
     const installation = this.#repository.getHostInstallation(extensionId)

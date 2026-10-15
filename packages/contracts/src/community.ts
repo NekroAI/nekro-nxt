@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ExtensionIdSchema } from './domain.js'
+import { ExtensionIdSchema, ExtensionRevisionIdSchema } from './domain.js'
 
 /**
  * NekroNXT 社区在本机的投影。Host 代理社区开放接口并把结果归一到这些结构；社区新增的字段在 Host 处丢弃，
@@ -134,6 +134,12 @@ export const CommunityReleaseSchema = z.object({
   requiresSdk: z.number().int().positive().nullable(),
   notes: z.string().max(2000),
   createdAt: z.number().int(),
+  /** Release number on the community line; absent from older communities. */
+  number: z.number().int().positive().optional(),
+  /** Revision the release contains and its lineage, so NekroNXT can tell fast-forward from divergence. */
+  revisionId: ExtensionRevisionIdSchema.optional(),
+  parentRevisionId: ExtensionRevisionIdSchema.nullable().optional(),
+  ancestry: z.array(ExtensionRevisionIdSchema).max(256).optional(),
 })
 export type CommunityRelease = z.output<typeof CommunityReleaseSchema>
 
@@ -160,6 +166,19 @@ export const CommunityExtensionSummarySchema = z.object({
   downloads: z.number().int().nonnegative(),
   updatedAt: z.number().int(),
   pageUrl: z.string().url(),
+  /** The public extension this one is a branch of; null when it is an original line or the community is older. */
+  branchOf: z
+    .object({
+      extensionId: ExtensionIdSchema,
+      releaseId: CommunityReleaseIdSchema.nullable(),
+      displayName: z.string().max(200),
+      publisherHandle: z.string().max(80),
+      delisted: z.boolean(),
+    })
+    .nullable()
+    .optional(),
+  /** Public branches made from this extension. */
+  branchCount: z.number().int().nonnegative().optional(),
 })
 export type CommunityExtensionSummary = z.output<typeof CommunityExtensionSummarySchema>
 
@@ -222,6 +241,38 @@ export const CommunitySourceSchema = z.object({
   installedAt: z.number().int().nonnegative(),
 })
 export type CommunitySource = z.output<typeof CommunitySourceSchema>
+
+/**
+ * How this machine's current version of one extension relates to the community's newest public release, with the
+ * action that relation calls for. `role` says whether this machine may publish the line or only follows it.
+ */
+export const CommunitySyncItemSchema = z.object({
+  extensionId: ExtensionIdSchema,
+  displayName: z.string(),
+  communityUrl: z.string().url(),
+  role: z.enum(['owner', 'subscriber']),
+  currentRevisionId: ExtensionRevisionIdSchema,
+  currentVersionLabel: z.string(),
+  /** Release the current version is, when it is one. */
+  currentRelease: z.object({ id: CommunityReleaseIdSchema, number: z.number().int().positive().nullable() }).nullable(),
+  /** `remote-ahead`: update; `local-ahead`: publish (owner) or local changes (subscriber); `diverged`: merge first. */
+  status: z.enum(['same', 'remote-ahead', 'local-ahead', 'diverged', 'unrelated', 'unknown']),
+  found: z.boolean(),
+  delisted: z.boolean(),
+  delistedReason: z.string().nullable(),
+  /** The release the current version came from was withdrawn by its author. */
+  releaseWithdrawn: z.boolean(),
+  latest: CommunityReleaseSchema.nullable(),
+  /** The user chose to keep local changes over `latest`; it is not offered again. */
+  dismissed: z.boolean(),
+  addedPermissions: z.array(CommunityPermissionItemSchema),
+})
+export type CommunitySyncItem = z.output<typeof CommunitySyncItemSchema>
+
+export const CommunitySyncSchema = z.object({
+  checkedAt: z.number().int().nullable(),
+  items: z.array(CommunitySyncItemSchema),
+})
 
 export const CommunityInstalledItemSchema = z.object({
   extensionId: ExtensionIdSchema,

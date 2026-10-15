@@ -65,6 +65,7 @@ const outboundEntry = (input: typeof outboundIntents.$inferSelect, channelId: Ch
     parts: row.parts,
     state: row.state,
     ...(row.commandExecutionId === null ? {} : { commandExecutionId: row.commandExecutionId }),
+    ...(row.noticeKey === null ? {} : { noticeKey: row.noticeKey }),
     ...(row.sourceTurnId === null ? {} : { sourceTurnId: row.sourceTurnId }),
   }
 }

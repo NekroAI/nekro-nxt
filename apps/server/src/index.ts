@@ -328,6 +328,11 @@ declare module '@deepseek-ai/dsh-llm' {
       readonly packageId: string
       readonly status: string
     }
+    /** Outcome of extension work the agent asked for, such as an administrator approving its request. */
+    'nekro-nxt-host-event': {
+      readonly kind: 'nekro-nxt-host-event'
+      readonly identity: string
+    }
   }
 }
 
@@ -4574,6 +4579,17 @@ export class DshHostRuntime implements AgentSessionDriver {
   }
   whenAuthoringSettled(dshSessionId: string): Promise<void> {
     return this.#dynamic.whenAuthoringSettled(dshSessionId)
+  }
+
+  /** Tells the agent about a host event, such as how an extension request it filed ended. */
+  notifyAgent(input: Parameters<DynamicAuthoringRuntime['notifyAgent']>[0]): boolean {
+    return this.#dynamic.notifyAgent(input)
+  }
+
+  /** The persisted source of one authoring attempt, whether or not its conversation is live. */
+  authoringSnapshotForAttempt(attempt: Parameters<DynamicAuthoringService['snapshotForAttempt']>[0]) {
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
+    return this.#authoring.service.snapshotForAttempt(attempt)
   }
 
   runtimeStatus(agentId: AgentRevisionRecord['agentId']): AgentStatus {

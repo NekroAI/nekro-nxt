@@ -350,6 +350,8 @@ const projectConversationMessage = (
         ? (sourceAgent?.name ?? '智能体')
         : message.scheduledTask !== undefined
           ? '定时任务'
+          : message.extensionNotice !== undefined
+            ? '扩展'
           : message.role === 'system'
             ? '频道事件'
             : message.sender !== undefined
@@ -369,6 +371,7 @@ const projectConversationMessage = (
     ...(message.command === undefined ? {} : { command: message.command }),
     ...(message.sender?.localAgentId === undefined ? {} : { localAgentId: message.sender.localAgentId }),
     ...(message.scheduledTask === undefined ? {} : { scheduledTask: { ...message.scheduledTask } }),
+    ...(message.extensionNotice === undefined ? {} : { extensionNotice: { ...message.extensionNotice } }),
     ...(message.inboundHook === undefined ? {} : { inboundHook: message.inboundHook }),
   }
 }

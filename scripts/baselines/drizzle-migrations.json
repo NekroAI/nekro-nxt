@@ -50,6 +50,7 @@
     "0045_commands.sql": "9a7f20d20d2e33ebf5184708421b12d70f02317659578a2712c7c39920d22188",
     "0046_extension_governance.sql": "3ace7e4c60dd8a1e28fd262bb5ede368c9400fac7ebf7ce7893e1eb7f6ffba4d",
     "0047_drop_extension_revision_sources.sql": "a2ead2e85a6042d4e05c24c27b9a1af8c77ee15f00a5008237e8505987c69209",
+    "0048_host_notices.sql": "1805bfca07dded1083034c3edad742dba9164c14d7278f36c5c737e95b8e9a34",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -97,6 +98,7 @@
     "meta/0045_snapshot.json": "1f8cf69638e26ad4e4198273b34a84bec15762a483747ba528af42ae44205b6e",
     "meta/0046_snapshot.json": "ff4ae241fbb8a74db4ada077fb209549ae1ed6f1aedc8f727231f55a36712da4",
     "meta/0047_snapshot.json": "912634f4efc62179f57a2871a05485700cb64920ba40ee19b9462d49d16ddfc8",
-    "meta/_journal.json": "de8770b789ec9e13f36d9e36ba597f87deef031e61f637354a6f880cd4458088"
+    "meta/0048_snapshot.json": "1dc953fcfc0fa4887d909e45b7971a9258043806ec73479d24c24cbf1a944940",
+    "meta/_journal.json": "0c4d6cb4600857adb58542be88e3caa887f2450f3032d1dcaae460ced043783c"
   }
 }

@@ -735,6 +735,11 @@ export const outboundIntents = sqliteTable(
     commandExecutionId: text('command_execution_id').references(() => commandExecutions.id, { onDelete: 'restrict' }),
     /** Position of this reply within its command execution. */
     commandOrdinal: integer('command_ordinal'),
+    /**
+     * Host notice that is neither an agent's message nor a command reply, such as an extension request or its
+     * outcome; the key makes each notice planned at most once.
+     */
+    noticeKey: text('notice_key'),
     sourceTurnId: text('source_turn_id'),
     parts: jsonText<readonly MessagePart[]>('parts').notNull(),
     searchText: text('search_text').notNull(),
@@ -745,10 +750,11 @@ export const outboundIntents = sqliteTable(
   },
   (table) => [
     uniqueIndex('outbound_intents_command_uq').on(table.commandExecutionId, table.commandOrdinal),
+    uniqueIndex('outbound_intents_notice_uq').on(table.noticeKey),
     index('outbound_intents_channel_history_idx').on(table.channelId, table.createdAt),
     check(
       'outbound_intents_source_ck',
-      sql`(${table.episodeId} IS NOT NULL AND ${table.agentRevisionId} IS NOT NULL AND ${table.commandExecutionId} IS NULL AND ${table.commandOrdinal} IS NULL) OR (${table.episodeId} IS NULL AND ${table.agentRevisionId} IS NULL AND ${table.commandExecutionId} IS NOT NULL AND ${table.commandOrdinal} IS NOT NULL AND ${table.channelId} IS NOT NULL)`,
+      sql`(${table.episodeId} IS NOT NULL AND ${table.agentRevisionId} IS NOT NULL AND ${table.commandExecutionId} IS NULL AND ${table.commandOrdinal} IS NULL AND ${table.noticeKey} IS NULL) OR (${table.episodeId} IS NULL AND ${table.agentRevisionId} IS NULL AND ${table.commandExecutionId} IS NOT NULL AND ${table.commandOrdinal} IS NOT NULL AND ${table.noticeKey} IS NULL AND ${table.channelId} IS NOT NULL) OR (${table.episodeId} IS NULL AND ${table.agentRevisionId} IS NULL AND ${table.commandExecutionId} IS NULL AND ${table.commandOrdinal} IS NULL AND ${table.noticeKey} IS NOT NULL AND ${table.channelId} IS NOT NULL)`,
     ),
     uniqueIndex('outbound_intents_client_request_uq').on(table.episodeId, table.clientRequestId),
     index('outbound_intents_recovery_idx').on(table.state, table.createdAt),

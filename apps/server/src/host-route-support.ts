@@ -462,11 +462,13 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
   const resolution = runtime.repository.projections.getLatestOutboundResolution(
     OutboundIntentIdSchema.parse(entry.sourceId),
   )
+  const notice = entry.noticeKey === undefined ? undefined : parseNoticeKey(entry.noticeKey)
   return {
     id: entry.sourceId,
     channelId: entry.channelId,
-    role: command === undefined ? 'agent' : 'system',
+    role: command === undefined && notice === undefined ? 'agent' : 'system',
     ...(command === undefined ? {} : { command, origin: 'command' as const }),
+    ...(notice === undefined ? {} : { origin: 'extension-notice' as const, extensionNotice: notice }),
     parts,
     occurredAt: entry.occurredAt,
     deliveryState: entry.state,
@@ -475,6 +477,12 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
       : { deliveryResolution: { action: resolution.action, resolvedAt: resolution.createdAt } }),
     ...(isAdminConsoleOutbound(entry.sourceTurnId) ? { origin: 'admin-console' as const } : {}),
   }
+}
+
+/** `ext-request:<number>:<step>` names a notice about extension request `<number>`; other keys carry no number. */
+const parseNoticeKey = (key: string): { readonly requestNumber?: number } => {
+  const match = /^ext-request:(\d+):/u.exec(key)
+  return match ? { requestNumber: Number(match[1]) } : {}
 }
 
 export const projectChannelFact = (runtime: NekroRuntime, fact: ChannelFact): HostSnapshotMessage | undefined => {
@@ -507,6 +515,7 @@ export const projectChannelFact = (runtime: NekroRuntime, fact: ChannelFact): Ho
       ...(outbound.intent.commandExecutionId === undefined
         ? {}
         : { commandExecutionId: outbound.intent.commandExecutionId }),
+      ...(outbound.intent.noticeKey === undefined ? {} : { noticeKey: outbound.intent.noticeKey }),
       channelId: fact.channelId,
       occurredAt: outbound.intent.createdAt,
       parts: outbound.intent.parts,

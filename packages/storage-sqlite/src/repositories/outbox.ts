@@ -27,6 +27,7 @@ import { ChannelEventRowSchema, OutboundIntentRowSchema, PhysicalDeliveryRowSche
 type OutboxSlice = Pick<
   RuntimeRepository,
   | 'findOutboundByClientRequest'
+  | 'findOutboundByNoticeKey'
   | 'findOutboundByLogicalMessageId'
   | 'createOutboundPlan'
   | 'markIntentSending'
@@ -47,6 +48,7 @@ export const toIntent = (input: typeof outboundIntents.$inferSelect): OutboundIn
     ...(row.channelId === null ? {} : { channelId: row.channelId }),
     ...(row.commandExecutionId === null ? {} : { commandExecutionId: row.commandExecutionId }),
     ...(row.commandOrdinal === null ? {} : { commandOrdinal: row.commandOrdinal }),
+    ...(row.noticeKey === null ? {} : { noticeKey: row.noticeKey }),
     ...(row.sourceTurnId === null ? {} : { sourceTurnId: row.sourceTurnId }),
     parts: row.parts,
     ...(row.replyTo === null ? {} : { replyTo: row.replyTo }),
@@ -161,6 +163,14 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
             eq(outboundIntents.logicalMessageId, logicalMessageId),
           ),
         )
+        .get()
+      return row === undefined ? undefined : getOutbound(row.id)
+    },
+    findOutboundByNoticeKey(noticeKey: string): OutboundSnapshot | undefined {
+      const row = database
+        .select({ id: outboundIntents.id })
+        .from(outboundIntents)
+        .where(eq(outboundIntents.noticeKey, noticeKey))
         .get()
       return row === undefined ? undefined : getOutbound(row.id)
     },
@@ -289,6 +299,7 @@ export function createOutboxRepository(database: DrizzleCoreDatabase): OutboxSli
           logicalMessageId: intent.logicalMessageId,
           channelId,
           ...(intent.commandExecutionId === null ? {} : { commandExecutionId: intent.commandExecutionId }),
+          ...(intent.noticeKey === null ? {} : { noticeKey: intent.noticeKey }),
           occurredAt: intent.createdAt,
           parts: intent.parts,
           state: intent.state,

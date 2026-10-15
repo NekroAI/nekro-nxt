@@ -102,6 +102,11 @@ import { createNxtHostService, type NxtServiceBackends } from './extension-host-
 import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type DshHostRuntimeOptions } from './index.js'
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
+import { ExtensionActionService } from './extension-governance/actions.js'
+import { AdministratorService } from './extension-governance/administrators.js'
+import { CommunitySyncService } from './extension-governance/community-sync.js'
+import { ExtensionDataService } from './extension-governance/data-service.js'
+import { ExtensionRequestService } from './extension-governance/requests.js'
 import { CommunityFeedbackService } from './community-feedback.js'
 import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-runtime.js'
 import { channelMemberRelations } from './channel-member-relations.js'
@@ -202,6 +207,18 @@ export class NekroRuntime {
   readonly extensionService: ExtensionService
   /** Install, enable, switch and remove Extensions (one host instance plus agent attachments each). */
   readonly extensions: ExtensionLifecycleCoordinator
+  /** Data versions, copies, migrations and data packages of installed extensions. */
+  readonly extensionData: ExtensionDataService
+  /** Which community release each local version is, and what the newest public release means here. */
+  readonly communitySync: CommunitySyncService
+  /** Lifecycle actions shared by the workshop, `/ext` commands and agent tools. */
+  readonly extensionActions: ExtensionActionService
+  /** Requests administrators confirm, and the record of what agents did on their own. */
+  readonly extensionRequests: ExtensionRequestService
+  /** Instance administrators: the console plus listed platform accounts. */
+  readonly administrators: AdministratorService
+  /** Set by the Host routes so request changes reach the Web. */
+  publishExtensionRequestChange: (() => void) | undefined
   readonly credentials: LocalCredentialStore
   readonly notifications: NotificationService
   readonly community: CommunityService
@@ -414,6 +431,16 @@ export class NekroRuntime {
       register: (owner, contribution) => this.registerAdapter(owner, contribution),
       mountConnections: (adapterKey) => this.mountAdapterConnections(adapterKey),
     }
+    this.extensionData = new ExtensionDataService({ repository: this.repository, assets: this.assetService, now: this.#now })
+    this.administrators = new AdministratorService({
+      repository: this.repository,
+      now: this.#now,
+      connectionName: (connectionId) => {
+        const connection = this.repository.getConnection(connectionId)
+        return connection?.alias ?? this.adapters.get(connection?.adapterKey ?? '')?.descriptor.displayName ?? '平台连接'
+      },
+    })
+    this.publishExtensionRequestChange = undefined
     this.extensions = new ExtensionLifecycleCoordinator(
       this.repository,
       this.extensionService,
@@ -429,8 +456,16 @@ export class NekroRuntime {
           return Promise.resolve()
         },
       }),
-      { now: this.#now, compatibility: this.compatibility },
+      { now: this.#now, compatibility: this.compatibility, data: this.extensionData },
     )
+    this.communitySync = new CommunitySyncService({
+      repository: this.repository,
+      community: this.community,
+      lineage: this.extensionService,
+      now: this.#now,
+    })
+    this.extensionActions = new ExtensionActionService(this)
+    this.extensionRequests = new ExtensionRequestService(this, this.#now)
   }
 
   #extensionCommands(agentId: AgentId): readonly RegisteredCommand[] {

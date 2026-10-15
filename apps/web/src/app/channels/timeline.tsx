@@ -1,4 +1,4 @@
-import { AlarmClock, BellOff, BellRing, Check, ChevronRight, CircleAlert, EyeOff, Info, Square, X } from 'lucide-react'
+import { AlarmClock, BellOff, Blocks, BellRing, Check, ChevronRight, CircleAlert, EyeOff, Info, Square, X } from 'lucide-react'
 import { ToolView } from '../../extension-ui/index.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { memo, useEffect, useState } from 'react'
@@ -117,6 +117,20 @@ export const MessageRow = memo(function MessageRow({
           {task.note === undefined ? null : <span className={styles.scheduledNoticeNote}>{task.note}</span>}
         </span>
         <span className={styles.time}>{message.time}</span>
+      </div>
+    )
+  }
+  if (message.extensionNotice !== undefined) {
+    const number = message.extensionNotice.requestNumber
+    return (
+      <div className={styles.scheduledNotice} data-message-id={message.id} aria-label="扩展通知">
+        <Blocks size={14} aria-hidden="true" />
+        <span className={styles.scheduledNoticeText}>
+          <span className={styles.scheduledNoticeTitle}>{number === undefined ? '扩展' : `扩展请求 #${number}`}</span>
+          <MessageContent message={message} variant="system-event" />
+        </span>
+        <span className={styles.time}>{message.time}</span>
+        {isUnconfirmed(message) ? <DeliveryActions message={message} onResolve={onResolve} /> : null}
       </div>
     )
   }

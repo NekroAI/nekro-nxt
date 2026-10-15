@@ -1,10 +1,18 @@
-import type { CommunitySource, HostApiResponse } from '@nekro-nxt/contracts'
+import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { extensionManifestSchema, extensionProvides } from '@nekro-nxt/extension-runtime'
 import { randomUUID } from 'node:crypto'
 import type { NekroRuntime } from './bootstrap.js'
 import { parseExtensionImport, type ParsedExtensionImport } from './host-route-support.js'
 
 const IMPORT_TTL_MS = 10 * 60_000
+
+/** The community release a staged package was downloaded from. */
+export interface CommunityImportSource {
+  readonly communityUrl: string
+  readonly releaseId: string
+  readonly number?: number
+  readonly publisherHandle: string
+}
 
 /**
  * 扩展包导入的第一步：解析并校验包，暂存到用户确认。本地文件与社区下载共用这一步，确认仍走同一个提交接口。
@@ -17,7 +25,7 @@ const extensionProvidesOf = (manifest: unknown) => {
 
 export class ExtensionImportStaging {
   readonly #pending = new Map<string, { readonly parsed: ParsedExtensionImport; readonly expiresAt: number }>()
-  readonly #sources = new Map<string, Omit<CommunitySource, 'installedAt'>>()
+  readonly #sources = new Map<string, CommunityImportSource>()
 
   inspect(runtime: NekroRuntime, bytes: Uint8Array): HostApiResponse<'inspectExtensionImport'> {
     this.#prune()
@@ -52,11 +60,11 @@ export class ExtensionImportStaging {
   }
 
   /** 社区下载的包在确认导入后记录来源；本地文件导入没有来源。 */
-  attachSource(token: string, source: Omit<CommunitySource, 'installedAt'>): void {
+  attachSource(token: string, source: CommunityImportSource): void {
     if (this.#pending.has(token)) this.#sources.set(token, source)
   }
 
-  source(token: string): Omit<CommunitySource, 'installedAt'> | undefined {
+  source(token: string): CommunityImportSource | undefined {
     return this.#sources.get(token)
   }
 

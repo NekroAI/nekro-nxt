@@ -1279,6 +1279,13 @@ export class DynamicAuthoringRuntime {
         navigationChecks: verified.navigationEntries,
         resourceChecks: Object.keys(snapshot?.resources ?? {}).sort(),
         stoppedCleanly: false,
+        contributions: verified.contributions.map((contribution) =>
+          JsonValueSchema.parse(JSON.parse(JSON.stringify(contribution))),
+        ),
+        ...(verified.adapter === undefined
+          ? {}
+          : { adapter: JsonValueSchema.parse(JSON.parse(JSON.stringify(verified.adapter))) }),
+        pluginRunId: verified.pluginRunId,
       },
       eventKind: 'verification-completed',
       eventPayload: {
@@ -1478,6 +1485,51 @@ export class DynamicAuthoringRuntime {
       }
     })()
     this.#authoringContinuationPending.set(continuationId, pending)
+  }
+
+  /**
+   * Delivers one host event (such as the outcome of an extension request) to the agent at most once: in the channel
+   * it concerns when that conversation is live, otherwise in any live conversation of the agent. An idle agent starts
+   * a turn; a busy one reads it at its next step.
+   */
+  notifyAgent(input: {
+    readonly agentId: string
+    readonly channelId?: string
+    readonly identity: string
+    readonly text: string
+  }): boolean {
+    const records = [...this.#sessions.records()].filter((record) => record.revision.agentId === input.agentId)
+    const record = records.find((candidate) => candidate.channelId === input.channelId) ?? records[0]
+    const agent = record === undefined ? undefined : this.#context.agents.get(SessionId(record.sessionId))
+    if (!agent) return false
+    const messageId = createHash('sha256').update(`${input.agentId}:${input.identity}`).digest('hex').slice(0, 24)
+    const continuationId = `${agent.id}:host-${messageId}`
+    if (this.#authoringContinuationIds.has(continuationId)) return true
+    this.#authoringContinuationIds.add(continuationId)
+    const pending = (async () => {
+      try {
+        await Promise.resolve()
+        agent.steer(
+          freezeMessage({
+            id: MessageId(`nxt-host-${messageId}`),
+            role: 'user',
+            content: [{ type: 'text', text: input.text }],
+            source: { kind: 'nekro-nxt-host-event', identity: input.identity },
+          }),
+        )
+        await this.#context.sessions.flush(agent.session)
+      } catch (error) {
+        if (error instanceof Error && error.message.includes(`message "nxt-host-${messageId}" is already pending`)) {
+          return
+        }
+        this.#authoringContinuationIds.delete(continuationId)
+        console.error('[nekro-nxt] 宿主事件注入失败：', error)
+      } finally {
+        this.#authoringContinuationPending.delete(continuationId)
+      }
+    })()
+    this.#authoringContinuationPending.set(continuationId, pending)
+    return true
   }
 
   subscribeDynamicApprovalRequests(listener: (event: DynamicApprovalRequestEvent) => void): () => void {

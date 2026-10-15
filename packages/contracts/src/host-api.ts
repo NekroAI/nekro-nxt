@@ -48,9 +48,8 @@ import {
   CommunityReleaseIdSchema,
   CommunityReviewStatusSchema,
   CommunityStatusSchema,
-  CommunitySourceSchema,
   CommunityEndpointSchema,
-  CommunityInstalledSchema,
+  CommunitySyncSchema,
   CommunityMyExtensionSchema,
   CommunityReviewReportSchema,
 } from './community.js'
@@ -501,8 +500,13 @@ export const HostSnapshotMessageSchema = z
       })
       .strict()
       .optional(),
-    origin: z.enum(['admin-console', 'command']).optional(),
+    origin: z.enum(['admin-console', 'command', 'extension-notice']).optional(),
     command: CommandExecutionRecordSchema.optional(),
+    /** A host notice about extension work: a request an administrator must confirm, or what an action did. */
+    extensionNotice: z
+      .object({ requestNumber: z.number().int().positive().optional() })
+      .strict()
+      .optional(),
     /** What the agent's inbound hooks decided for this message, when anything differs from the default. */
     inboundHook: z
       .object({
@@ -1653,11 +1657,50 @@ export const HostSnapshotSchema = z
           displayName: z.string(),
           description: z.string(),
           createdByAgentId: AgentIdSchema.optional(),
+          /** The Revision of another extension this one was branched from. */
+          branchOf: z
+            .object({
+              extensionId: ExtensionIdSchema,
+              revisionId: ExtensionRevisionIdSchema,
+              /** Present while the original is on this machine. */
+              displayName: z.string().optional(),
+            })
+            .strict()
+            .optional(),
+          /** Shape version of the data stored on this machine. */
+          dataVersion: z.number().int().positive().default(1),
+          /** The unfinished revise task of this extension, if any. */
+          openRevisionTaskId: AuthoringTaskIdSchema.optional(),
+          /** Whether this machine publishes (`owner`) or follows the line on each community. */
+          communityLinks: z
+            .array(z.object({ communityUrl: z.string(), role: z.enum(['owner', 'subscriber']) }).strict())
+            .default([]),
           revisions: z.array(
             z
               .object({
                 id: ExtensionRevisionIdSchema,
                 revisionNumber: z.number().int().positive(),
+                /** Version number from the lineage, `v3` (or `v3·2` for a second Revision of the same generation). */
+                versionLabel: z.string(),
+                parentRevisionId: ExtensionRevisionIdSchema.optional(),
+                origin: z.enum(['authored', 'file', 'community', 'branch']),
+                authoringTaskId: AuthoringTaskIdSchema.optional(),
+                dataVersion: z.number().int().positive(),
+                /** Community releases this Revision is; installs and publishes from here both record one. */
+                releases: z
+                  .array(
+                    z
+                      .object({
+                        communityUrl: z.string(),
+                        releaseId: CommunityReleaseIdSchema,
+                        number: z.number().int().positive().nullable(),
+                        publisherHandle: z.string(),
+                        via: z.enum(['install', 'publish']),
+                        recordedAt: z.number().int().nonnegative(),
+                      })
+                      .strict(),
+                  )
+                  .default([]),
                 format: z.enum(['current', 'unavailable']).optional(),
                 ui: ExtensionUiContributionsSchema.default(EMPTY_EXTENSION_UI_CONTRIBUTIONS),
                 /** The host instance's configuration form (`config.host`). */
@@ -1670,8 +1713,6 @@ export const HostSnapshotSchema = z
                   .regex(/^\/api\/extensions\/[^/]+\/revisions\/[^/]+\/icon\/[a-f0-9]{64}\.(?:svg|png|webp)$/u)
                   .optional(),
                 createdAt: z.number().int().safe().nonnegative(),
-                /** 从社区安装的版本的来源；本机保存与文件导入没有来源。 */
-                source: CommunitySourceSchema.optional(),
                 provides: z.array(ExtensionProvideSchema),
                 /** Whether this Revision can be enabled for agents (agent-layer contributions or capabilities). */
                 agentLayer: z.boolean(),
@@ -3707,13 +3748,13 @@ export const HostApiContracts = {
       .strict(),
     error: HostApiErrorSchema,
   }),
-  listCommunityInstalled: defineContract({
-    timeoutMs: 30_000,
+  listCommunitySync: defineContract({
+    timeoutMs: 60_000,
     method: 'GET',
-    path: '/api/community/installed',
+    path: '/api/community/sync',
     params: z.object({ refresh: z.enum(['1']).optional() }).strict(),
     request: NoRequestBodySchema,
-    response: CommunityInstalledSchema,
+    response: CommunitySyncSchema,
     error: HostApiErrorSchema,
   }),
   listCommunityMine: defineContract({
@@ -3778,6 +3819,7 @@ export const HostApiContracts = {
     response: z
       .object({
         releaseId: CommunityReleaseIdSchema,
+        releaseNumber: z.number().int().positive(),
         reviewStatus: CommunityReviewStatusSchema,
         pageUrl: z.string().url(),
         reportUrl: z.string().url(),
@@ -4306,36 +4348,20 @@ export const HostApiContracts = {
     method: 'POST',
     path: '/api/extensions/save-from-dynamic',
     params: EmptyParamsSchema,
-    request: z.union([
-      z
-        .object({
-          taskId: AuthoringTaskIdSchema,
-          attemptId: AuthoringAttemptIdSchema,
-          displayName: z.string().trim().min(1).max(80),
-          slug: z
-            .string()
-            .trim()
-            .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u),
-          description: z.string().max(500).default(''),
-          targetExtensionId: ExtensionIdSchema.optional(),
-        })
-        .strict(),
-      z
-        .object({
-          agentId: AgentIdSchema,
-          episodeId: EpisodeIdSchema,
-          pluginId: DynamicIdSchema,
-          packageId: DynamicIdSchema,
-          displayName: z.string().trim().min(1).max(80),
-          slug: z
-            .string()
-            .trim()
-            .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u),
-          description: z.string().max(500).default(''),
-          targetExtensionId: ExtensionIdSchema.optional(),
-        })
-        .strict(),
-    ]),
+    request: z
+      .object({
+        taskId: AuthoringTaskIdSchema,
+        /** The candidate the user saw; saving refuses when a newer one appeared since. */
+        attemptId: AuthoringAttemptIdSchema,
+        displayName: z.string().trim().min(1).max(80),
+        slug: z
+          .string()
+          .trim()
+          .regex(/^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u),
+        description: z.string().max(500).default(''),
+        targetExtensionId: ExtensionIdSchema.optional(),
+      })
+      .strict(),
     response: z
       .object({
         extensionId: ExtensionIdSchema,

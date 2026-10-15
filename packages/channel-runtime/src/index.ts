@@ -114,6 +114,8 @@ export interface OutboundIntentRecord {
   readonly channelId?: ChannelId
   readonly commandExecutionId?: string
   readonly commandOrdinal?: number
+  /** Host notice (an extension request or its outcome); neither an agent's message nor a command reply. */
+  readonly noticeKey?: string
   readonly sourceTurnId?: string
   readonly parts: readonly MessagePart[]
   readonly replyTo?: string
@@ -174,6 +176,7 @@ export type ChannelHistoryEntry =
       readonly state: OutboundState
       readonly sourceTurnId?: string
       readonly commandExecutionId?: string
+      readonly noticeKey?: string
     }
 
 export const isConsoleAnchorHistory = (entry: ChannelHistoryEntry): boolean =>
@@ -261,6 +264,8 @@ export interface RuntimeRepository {
     clientRequestId: string,
   ): OutboundSnapshot | undefined
   findOutboundByLogicalMessageId(channelId: ChannelId, logicalMessageId: LogicalMessageId): OutboundSnapshot | undefined
+  /** The notice already planned under this key, if any. */
+  findOutboundByNoticeKey?(noticeKey: string): OutboundSnapshot | undefined
   createOutboundPlan(intent: OutboundIntentRecord, deliveries: readonly PhysicalDeliveryRecord[]): void
   markIntentSending(id: OutboundIntentId): void
   markDeliverySending(id: PhysicalDeliveryId): void
@@ -933,6 +938,10 @@ export class ChannelRuntime {
 
   publishInboundFact(event: ChannelEventRecord): void {
     this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: event.id })
+  }
+
+  sendHostNotice(input: Parameters<ChannelDelivery['sendHostNotice']>[0]): Promise<SendMessageResult> {
+    return this.#delivery.sendHostNotice(input)
   }
 
   sendCommandReply(input: Parameters<ChannelDelivery['sendCommandReply']>[0]): Promise<SendMessageResult> {

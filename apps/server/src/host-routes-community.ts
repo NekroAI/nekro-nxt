@@ -1,17 +1,9 @@
-import {
-  CommunitySourceSchema,
-  ExtensionIdSchema,
-  HostApiContracts,
-  type CommunitySource,
-  type ExtensionId,
-} from '@nekro-nxt/contracts'
+import { ExtensionIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import type { ServerResponse } from 'node:http'
-import type { NekroRuntime } from './bootstrap.js'
 import { registerCommunityPersonaRoutes } from './host-routes-community-personas.js'
 import { registerCommunityFeedbackRoutes } from './host-routes-feedback.js'
 import { COMMUNITY_CALLBACK_PATH, CommunityError, UPDATE_CHECK_INTERVAL_MS } from './community.js'
 import {
-  createExtensionRevisionExport,
   readJsonBody,
   writeContractJson,
   writeError,
@@ -73,14 +65,14 @@ const communityFailure = (res: ServerResponse, error: unknown, fallbackCode: str
  * `/community/callback` 是社区授权后的回跳页，在安全入口中免登录，凭一次性 state 完成登录。
  */
 export function registerCommunityRoutes(context: HostRouteContext): () => void {
-  const { runtime, registerRoute, extensionImports } = context
+  const { runtime, registerRoute, extensionImports, broadcastExtensionsChanged } = context
   const community = runtime.community
   registerCommunityPersonaRoutes(context)
   const disposeFeedback = registerCommunityFeedbackRoutes(context)
-  const checkInstalled = () => community.installed(installedSources(runtime))
-  // 每天检查一次已安装扩展的更新；失败静默，下次打开社区时会再检查。
+  const checkSync = () => runtime.communitySync.check()
+  // 每天检查一次社区更新；失败静默，下次打开社区时会再检查。
   const timer = setInterval(() => {
-    void checkInstalled().catch(() => undefined)
+    void checkSync().catch(() => undefined)
     void runtime.feedback.sync().catch(() => undefined)
   }, UPDATE_CHECK_INTERVAL_MS)
   timer.unref()
@@ -135,7 +127,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
 
   registerRoute({
     kind: 'exact',
-    path: '/api/community/installed',
+    path: '/api/community/sync',
     handler: async (req, res) => {
       if (req.method !== 'GET') {
         writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
@@ -143,8 +135,8 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
       }
       try {
         const url = new URL(req.url ?? '/', 'http://localhost')
-        const cached = url.searchParams.get('refresh') === '1' ? undefined : community.cachedInstalled()
-        writeContractJson(res, 200, HostApiContracts.listCommunityInstalled, cached ?? (await checkInstalled()))
+        const cached = url.searchParams.get('refresh') === '1' ? undefined : runtime.communitySync.cached()
+        writeContractJson(res, 200, HostApiContracts.listCommunitySync, cached ?? (await checkSync()))
       } catch (error) {
         communityFailure(res, error, 'community-request-failed')
       }
@@ -234,18 +226,14 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
       }
       try {
         const input = HostApiContracts.publishToCommunity.parseRequest(await readJsonBody(req))
-        const exported = await createExtensionRevisionExport(runtime, input.extensionId, input.revisionId)
-        writeContractJson(
-          res,
-          200,
-          HostApiContracts.publishToCommunity,
-          await community.publish({
-            filename: exported.filename,
-            body: exported.body,
-            notes: input.notes,
-            listing: input.listing,
-          }),
-        )
+        const { revision: _revision, ...published } = await runtime.extensionActions.publishRevision({
+          extensionId: input.extensionId,
+          revisionId: input.revisionId,
+          notes: input.notes,
+          ...(input.listing === undefined ? {} : { listing: input.listing }),
+        })
+        writeContractJson(res, 200, HostApiContracts.publishToCommunity, published)
+        broadcastExtensionsChanged()
       } catch (error) {
         communityFailure(res, error, 'community-publish-failed')
       }
@@ -324,11 +312,16 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           })
           const bytes = await community.downloadRelease(params.releaseId)
           const inspection = extensionImports.inspect(runtime, bytes)
+          const detail = await community.getExtension(inspection.extensionId)
+          const release =
+            detail.latest?.id === params.releaseId
+              ? detail.latest
+              : undefined
           extensionImports.attachSource(inspection.token, {
-            kind: 'community',
             communityUrl: community.communityUrl,
             releaseId: params.releaseId,
-            publisherHandle: await community.publisherOf(inspection.extensionId),
+            ...(release?.number === undefined ? {} : { number: release.number }),
+            publisherHandle: detail.publisher.handle,
           })
           writeContractJson(res, 200, HostApiContracts.importCommunityRelease, inspection)
           return
@@ -344,35 +337,4 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     clearInterval(timer)
     disposeFeedback()
   }
-}
-
-/** 每个扩展最近一次从社区导入的版本及其来源。 */
-const installedSources = (
-  runtime: NekroRuntime,
-): { extensionId: ExtensionId; displayName: string; revisionId: string; source: CommunitySource }[] => {
-  const latest = new Map<string, ReturnType<NekroRuntime['repository']['listExtensionRevisionSources']>[number]>()
-  for (const record of runtime.repository.listExtensionRevisionSources()) {
-    const current = latest.get(record.extensionId)
-    if (!current || record.installedAt > current.installedAt) latest.set(record.extensionId, record)
-  }
-  return [...latest.values()].flatMap((record) => {
-    const extension = runtime.repository.getExtension(record.extensionId)
-    const source = CommunitySourceSchema.safeParse({
-      kind: record.kind,
-      communityUrl: record.communityUrl,
-      releaseId: record.releaseId,
-      publisherHandle: record.publisherHandle,
-      installedAt: record.installedAt,
-    })
-    return extension && source.success
-      ? [
-          {
-            extensionId: record.extensionId,
-            displayName: extension.displayName,
-            revisionId: record.revisionId,
-            source: source.data,
-          },
-        ]
-      : []
-  })
 }

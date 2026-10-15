@@ -1,11 +1,9 @@
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import {
-  CommunitySourceSchema,
   HostApiContracts,
   configFields,
   type AgentId,
-  type CommunitySource,
   type ChannelId,
   type ChannelRuntimeProjection,
   type ExtensionRevisionId,
@@ -24,6 +22,7 @@ import { accountUsage } from './host-routes-command-accounts.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
 import { unavailableSessionContext } from './channel-runtime-context.js'
 import type { NekroRuntime } from './bootstrap.js'
+import { extensionVersions } from './extension-governance/versions.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
 import { commandConfinementSupport } from './command-confinement.js'
 import { optionalProjection, unavailableImageDiagnostics } from './auxiliary-projections.js'
@@ -157,6 +156,9 @@ export const projectExtensions = (runtime: NekroRuntime) => {
     const latestRevision = revisions.at(-1)
     const latestHostPermission = latestRevision === undefined ? undefined : hostPermission(latestRevision.id)
     const installedManifest = activationManifest(runtime, installation?.extensionRevisionId)
+    const versions = extensionVersions(runtime.repository, runtime.extensionService, extension.id)
+    const openTask = runtime.repository.getOpenRevisionTask(extension.id)
+    const links = runtime.repository.listExtensionCommunityLinks(extension.id)
     return {
       id: extension.id,
       provides: [...extension.provides],
@@ -164,7 +166,21 @@ export const projectExtensions = (runtime: NekroRuntime) => {
       displayName: extension.displayName,
       description: extension.description,
       ...(extension.createdByAgentId === undefined ? {} : { createdByAgentId: extension.createdByAgentId }),
+      ...(extension.branchOf === undefined
+        ? {}
+        : {
+            branchOf: {
+              ...extension.branchOf,
+              ...(runtime.repository.getExtension(extension.branchOf.extensionId) === undefined
+                ? {}
+                : { displayName: runtime.repository.getExtension(extension.branchOf.extensionId)!.displayName }),
+            },
+          }),
+      dataVersion: runtime.extensionData.dataVersion(extension.id),
+      ...(openTask === undefined ? {} : { openRevisionTaskId: openTask.id }),
+      communityLinks: links.map((link) => ({ communityUrl: link.communityUrl, role: link.role })),
       revisions: revisions.map((revision) => {
+        const version = versions.get(revision.id)
         const verification = runtime.repository.getExtensionRevisionVerification(revision.id)
         const manifest = runtime.extensionService.revisionManifest(revision)
         const revisionHostPermission = hostPermission(revision.id)
@@ -180,7 +196,19 @@ export const projectExtensions = (runtime: NekroRuntime) => {
             ? {}
             : { iconUrl: extensionIconUrl(extension.id, revision.id, manifest.icon) }),
           createdAt: revision.createdAt,
-          ...communitySource(runtime, revision.id),
+          versionLabel: version?.label ?? `v${revision.revisionNumber}`,
+          ...(version?.parentRevisionId === undefined ? {} : { parentRevisionId: version.parentRevisionId }),
+          origin: revision.origin,
+          ...(revision.authoringTaskId === undefined ? {} : { authoringTaskId: revision.authoringTaskId }),
+          dataVersion: revision.dataVersion,
+          releases: (version?.releases ?? []).map((release) => ({
+            communityUrl: release.communityUrl,
+            releaseId: release.releaseId,
+            number: release.releaseNumber,
+            publisherHandle: release.publisherHandle,
+            via: release.via,
+            recordedAt: release.recordedAt,
+          })),
           provides: manifest === undefined ? [] : [...extensionProvides(manifest)],
           agentLayer: manifest !== undefined && hasAgentLayer(manifest),
           contributions:
@@ -640,20 +668,6 @@ export class HostQueries {
       scheduledTasks: runtime.scheduledTasks.list(),
     })
   }
-}
-
-/** 从社区安装的版本带上来源，扩展详情据此显示「来自社区 @作者」。 */
-const communitySource = (runtime: NekroRuntime, revisionId: ExtensionRevisionId): { source?: CommunitySource } => {
-  const record = runtime.repository.getExtensionRevisionSource(revisionId)
-  if (!record) return {}
-  const parsed = CommunitySourceSchema.safeParse({
-    kind: record.kind,
-    communityUrl: record.communityUrl,
-    releaseId: record.releaseId,
-    publisherHandle: record.publisherHandle,
-    installedAt: record.installedAt,
-  })
-  return parsed.success ? { source: parsed.data } : {}
 }
 
 const activationTransitionsProjection = (

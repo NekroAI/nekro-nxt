@@ -663,15 +663,19 @@ export function registerExtensionsRoutes({
             resources: pending.resources,
             dshVersion: DEEPSEEK_HARNESS_VERSION,
             ...(input.localSlug === undefined ? {} : { localSlug: input.localSlug }),
+            origin: extensionImports.source(params.token) === undefined ? 'file' : 'community',
           })
           const source = extensionImports.source(params.token)
           if (source) {
-            runtime.repository.recordExtensionRevisionSource({
-              revisionId: result.revision.id,
-              extensionId: result.extension.id,
-              ...source,
-              installedAt: Date.now(),
-            })
+            runtime.communitySync.recordInstall(
+              result.revision,
+              {
+                releaseId: source.releaseId,
+                ...(source.number === undefined ? {} : { number: source.number }),
+                publisherHandle: source.publisherHandle,
+              },
+              source.communityUrl,
+            )
           }
           extensionImports.delete(params.token)
           broadcastExtensionsChanged()
