@@ -98,6 +98,8 @@ export interface AgentSummary {
     readonly communityFeedbackAuto: boolean
     /** Accounts this agent's commands act as; each names an account of the host's library. */
     readonly commandAccounts: CommandAccountGrant[]
+    readonly extensionAutonomy: 'manual' | 'confirm' | 'autonomous'
+    readonly extensionRequesters: 'everyone' | 'admins'
   }
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'

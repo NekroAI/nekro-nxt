@@ -199,7 +199,7 @@ describe('Core SQLite baseline', () => {
   })
 
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(58)
+    expect(Object.keys(coreSchema)).toHaveLength(63)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 
@@ -2538,7 +2538,7 @@ describe('Extension and backup', () => {
     }
   })
 
-  it('records community sources per Revision and drops them with the extension', async () => {
+  it('records community releases and links per line and drops them with the extension', async () => {
     const { database, repository } = await createFixture()
     try {
       const extensionId = ExtensionIdSchema.parse('ext_SOURCED')
@@ -2559,25 +2559,108 @@ describe('Extension and backup', () => {
           contentDigest: 'e'.repeat(64),
           payloadDigest: 'f'.repeat(64),
           createdAt: 1,
+          ancestry: [],
+          origin: 'community',
+          dataVersion: 1,
         },
       })
-      const source = {
+      const communityUrl = 'https://community.example.test'
+      const release = {
         revisionId,
         extensionId,
-        kind: 'community' as const,
-        communityUrl: 'https://community.example.test',
+        communityUrl,
         releaseId: 'rel_01fixture',
+        releaseNumber: 3,
         publisherHandle: 'demo-author',
-        installedAt: 10,
+        via: 'install' as const,
+        recordedAt: 10,
       }
-      repository.recordExtensionRevisionSource(source)
-      repository.recordExtensionRevisionSource({ ...source, releaseId: 'rel_01later', installedAt: 20 })
-      expect(repository.getExtensionRevisionSource(revisionId)).toEqual(source)
-      expect(repository.listExtensionRevisionSources()).toEqual([source])
+      repository.recordExtensionRevisionRelease(release)
+      // Installing the same Revision again keeps the record of where it first came from.
+      repository.recordExtensionRevisionRelease({ ...release, releaseId: 'rel_01later', recordedAt: 20 })
+      expect(repository.listExtensionRevisionReleases(extensionId)).toEqual([release])
+
+      repository.upsertExtensionCommunityLink({ extensionId, communityUrl, role: 'owner', now: 30 })
+      repository.upsertExtensionCommunityLink({ extensionId, communityUrl, role: 'subscriber', now: 40 })
+      expect(repository.getExtensionCommunityLink(extensionId, communityUrl)?.role).toBe('owner')
+      repository.upsertExtensionCommunityLink({ extensionId, communityUrl, role: 'subscriber', now: 50, force: true })
+      repository.dismissExtensionCommunityRelease({ extensionId, communityUrl, releaseId: 'rel_01newer', now: 60 })
+      expect(repository.getExtensionCommunityLink(extensionId, communityUrl)).toEqual({
+        extensionId,
+        communityUrl,
+        role: 'subscriber',
+        dismissedReleaseId: 'rel_01newer',
+        updatedAt: 60,
+      })
+
       repository.deleteExtension(extensionId)
-      expect(repository.listExtensionRevisionSources()).toEqual([])
+      expect(repository.listExtensionRevisionReleases()).toEqual([])
+      expect(repository.listExtensionCommunityLinks()).toEqual([])
     } finally {
       database.close()
+    }
+  })
+
+  it('upgrades migration 45 extensions into lines with releases and subscriber links', async () => {
+    const filename = path.join(await temporaryDirectory(), 'core.sqlite')
+    await createDatabaseAtMigration(filename, 45)
+    mutateSqlite(
+      filename,
+      `INSERT INTO local_extensions (id, slug, display_name, description, created_at, provides)
+       VALUES ('ext_UPGRADED', 'upgraded', '旧扩展', '', 1, '["agent"]')`,
+    )
+    for (const number of [1, 2, 3]) {
+      mutateSqlite(
+        filename,
+        `INSERT INTO extension_revisions (id, extension_id, revision_number, content_digest, created_at, payload_digest)
+         VALUES (?, 'ext_UPGRADED', ?, ?, ?, ?)`,
+        `xrv_UPGRADED${number}`,
+        number,
+        String(number).repeat(64),
+        number,
+        String(number).repeat(64),
+      )
+    }
+    mutateSqlite(
+      filename,
+      `INSERT INTO extension_revision_sources VALUES ('xrv_UPGRADED3', 'ext_UPGRADED', 'community',
+       'https://community.example.test', 'rel_01upgraded', 'demo-author', 30)`,
+    )
+    const migrated = await openMigratedCoreDatabase(filename)
+    try {
+      const repository = new SqliteCoreRepository(migrated)
+      const [first, second, third] = repository.listExtensionRevisions(ExtensionIdSchema.parse('ext_UPGRADED'))
+      expect(first).toMatchObject({ ancestry: [], origin: 'file', dataVersion: 1 })
+      expect(first?.parentRevisionId).toBeUndefined()
+      expect(second).toMatchObject({ parentRevisionId: 'xrv_UPGRADED1', ancestry: ['xrv_UPGRADED1'] })
+      expect(third).toMatchObject({
+        parentRevisionId: 'xrv_UPGRADED2',
+        ancestry: ['xrv_UPGRADED2', 'xrv_UPGRADED1'],
+        origin: 'community',
+      })
+      expect(repository.listExtensionRevisionReleases()).toEqual([
+        {
+          revisionId: 'xrv_UPGRADED3',
+          extensionId: 'ext_UPGRADED',
+          communityUrl: 'https://community.example.test',
+          releaseId: 'rel_01upgraded',
+          releaseNumber: null,
+          publisherHandle: 'demo-author',
+          via: 'install',
+          recordedAt: 30,
+        },
+      ])
+      expect(repository.listExtensionCommunityLinks()).toEqual([
+        {
+          extensionId: 'ext_UPGRADED',
+          communityUrl: 'https://community.example.test',
+          role: 'subscriber',
+          dismissedReleaseId: null,
+          updatedAt: 30,
+        },
+      ])
+    } finally {
+      migrated.close()
     }
   })
 
@@ -3355,6 +3438,8 @@ describe('Extension and backup', () => {
         id: taskId,
         agentId: agent.definition.id,
         channelId: channel.id,
+        originChannelId: channel.id,
+        kind: 'create' as const,
         episodeId,
         initiatingEventId: event.id,
         pluginKey: 'plugin-ledger',

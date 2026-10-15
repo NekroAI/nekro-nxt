@@ -114,6 +114,11 @@ const CLIENT_CODE = `return {
   }
 }`
 
+const latestAuthoring = (runtime: { readonly repository: { listAuthoringTasks(agentId?: string): readonly { readonly id: string; readonly updatedAt: number }[]; listAuthoringAttempts(taskId: string): readonly { readonly id: string }[] } }, agentId: string) => {
+  const task = [...runtime.repository.listAuthoringTasks(agentId)].sort((a, b) => b.updatedAt - a.updatedAt)[0]!
+  return { authoringTask: task, authoringAttempt: runtime.repository.listAuthoringAttempts(task.id).at(-1)! }
+}
+
 describe('Host Adapter Extension end-to-end', () => {
   it('runs with the offline harness, saves V7, installs, creates a Connection, and uninstalls without data loss', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-adapter-extension-'))
@@ -143,11 +148,14 @@ describe('Host Adapter Extension end-to-end', () => {
     const episode = runtime.repository.listActiveEpisodesForAgent(entity.agentId)[0]
     if (!episode?.dshSessionId) throw new Error('Expected a live DSH Session.')
     const dshSessionId = episode.dshSessionId
-    const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+    const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
       plugin: { kind: 'new', idPrefix: 'adapt' },
       name: '合成适配器',
       purpose: '验证 Host Adapter 安装闭环。',
       code: { host: HOST_CODE, client: CLIENT_CODE },
+      resources: {},
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [],
     })
     const pendingRun = runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
     await expect
@@ -196,14 +204,13 @@ describe('Host Adapter Extension end-to-end', () => {
     const api = createNekroHostApi(webContext.webServer, runtime)
     const origin = `http://127.0.0.1:${api.port}`
     try {
+      const { authoringTask, authoringAttempt } = latestAuthoring(runtime, entity.agentId)
       const save = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          agentId: entity.agentId,
-          episodeId: episode.id,
-          pluginId: defined.pluginId,
-          packageId: defined.packageId,
+          taskId: authoringTask.id,
+          attemptId: authoringAttempt.id,
           displayName: '合成适配器',
           slug: 'synthetic-adapter',
           description: '合成适配器测试 Revision。',
@@ -323,23 +330,25 @@ describe('Host Adapter Extension end-to-end', () => {
         message: '这个连接的平台扩展没有安装。',
       })
 
-      const conflicting = runtime.host.defineDynamicPackage(episode.dshSessionId, {
+      const conflicting = runtime.host.defineDynamicAuthoringPackage(episode.dshSessionId, {
         plugin: { kind: 'existing', pluginId: defined.pluginId },
         name: '内置 key 冲突适配器',
         purpose: '验证安装前拒绝占用内置适配器 key。',
         code: { host: HOST_CODE.replace("key: 'synthetic-chat'", "key: 'web'") },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
       })
       await expect(
         runtime.host.runDynamicPackage(episode.dshSessionId, conflicting.pluginId, conflicting.packageId, 'update'),
       ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const conflictingAuthoring = latestAuthoring(runtime, entity.agentId)
       const conflictingSave = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          agentId: entity.agentId,
-          episodeId: episode.id,
-          pluginId: conflicting.pluginId,
-          packageId: conflicting.packageId,
+          taskId: conflictingAuthoring.authoringTask.id,
+          attemptId: conflictingAuthoring.authoringAttempt.id,
           displayName: '内置 key 冲突适配器',
           slug: 'builtin-key-conflict',
           description: '只用于验证 Registry 冲突预检。',

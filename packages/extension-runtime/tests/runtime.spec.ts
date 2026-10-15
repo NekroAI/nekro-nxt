@@ -640,6 +640,7 @@ const manifestRevisionSchema = z
       .or(z.object({ host: z.literal('source/host.ts') }).strict())
       .or(z.object({ client: z.literal('source/client.ts') }).strict()),
     contributions: z.array(z.unknown()),
+    lineage: z.object({ parent: z.string().nullable(), ancestry: z.array(z.string()) }).strict().optional(),
   })
   .strict()
 const buildCacheSchema = z
@@ -974,6 +975,9 @@ const revision = (id: ExtensionRevisionId, extension: ExtensionId, number: numbe
   contentDigest: `digest-${number}`,
   payloadDigest: `payload-${number}`,
   createdAt: number,
+  ancestry: [],
+  origin: 'file',
+  dataVersion: 1,
 })
 
 const materialize = (hostCode: string) =>
@@ -1188,12 +1192,13 @@ describe('Extension save', () => {
     expect(manifest.revisionId).toBe(saved.revision.id)
     expect(manifest).toEqual({
       schemaVersion: 7,
-      requires: { sdk: 9 },
+      requires: { sdk: 10 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
       entrypoints: { host: 'source/host.ts' },
       contributions: [GREETING_TOOL],
+      lineage: { parent: null, ancestry: [] },
     })
     expect(existsSync(path.join(sourceDirectory, 'source-input.json'))).toBe(false)
     expect((await readdir(sourceDirectory)).sort()).toEqual([
@@ -1635,7 +1640,7 @@ describe('Extension materialization and build policy', () => {
     expect(first.sources.host).toContain("from '@nekro-nxt/extension-sdk'")
     expect(first.manifest).toEqual({
       schemaVersion: 7,
-      requires: { sdk: 9 },
+      requires: { sdk: 10 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: extensionId('test'),
       revisionId: revisionId('test'),

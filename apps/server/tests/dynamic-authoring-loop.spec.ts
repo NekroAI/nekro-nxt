@@ -174,23 +174,27 @@ describe('dynamic authoring closed loop', () => {
     ).not.toThrow()
   })
 
-  it('rejects command contributions before creating a dynamic candidate', async () => {
+  it('accepts command contributions and rejects built-in command names before creating a candidate', async () => {
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
     try {
-      const input = {
+      const command = (name: string) => ({ kind: 'command' as const, name, description: '回声' })
+      const input = (name: string) => ({
         plugin: { kind: 'new' as const, idPrefix: 'cmd' },
         name: '动态命令',
-        purpose: '验证未支持的命令贡献不会静默通过。',
+        purpose: '验证命令贡献的预检。',
         code: { host: 'return { apply() {} }' },
         resources: {},
         permissions: { permissions: [], networkOrigins: [] },
-        contributions: [{ kind: 'command', name: 'echo', description: '回声' }],
-      }
+        contributions: [command(name)],
+      })
+      expect(() => preflightNekroNxtAuthoringDefinition(input('echo'))).not.toThrow()
       const tasks = runtime.repository.listAuthoringTasks(entity.agentId)
-      expect(() => preflightNekroNxtAuthoringDefinition(input)).toThrow('请使用本地源码包导入命令扩展')
-      expect(() => runtime.host.defineDynamicAuthoringPackage(dshSessionId, input)).toThrow(
-        '请使用本地源码包导入命令扩展',
-      )
+      for (const reserved of ['ext', 'admin', 'help']) {
+        expect(() => preflightNekroNxtAuthoringDefinition(input(reserved))).toThrow('内置命令名称保留')
+        expect(() => runtime.host.defineDynamicAuthoringPackage(dshSessionId, input(reserved))).toThrow(
+          '内置命令名称保留',
+        )
+      }
       expect(runtime.repository.listAuthoringTasks(entity.agentId)).toEqual(tasks)
     } finally {
       await runtime.dispose()

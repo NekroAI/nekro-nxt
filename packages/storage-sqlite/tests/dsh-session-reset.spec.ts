@@ -105,6 +105,8 @@ const fixture = async () => {
       id: taskId,
       agentId: agent.definition.id,
       channelId: channel.id,
+      originChannelId: channel.id,
+      kind: 'create',
       episodeId,
       initiatingEventId: event.id,
       pluginKey: 'synthetic-plugin',

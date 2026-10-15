@@ -50,7 +50,7 @@ export async function handleGovernanceExtensionRoute(
   url: URL,
 ): Promise<boolean> {
   const { runtime, broadcastExtensionsChanged } = context
-  const match = /^\/api\/extensions\/([^/]+)\/(lineage|branch|rollback|data|data\/preview|data\/migrate|data\/snapshots|data\/export)$/u.exec(
+  const match = /^\/api\/extensions\/([^/]+)\/(lineage|branch|rollback|data|data\/preview|data\/migrate|data\/snapshots|data\/export|data\/export-config)$/u.exec(
     url.pathname,
   )
   if (!match) return false
@@ -140,9 +140,9 @@ export async function handleGovernanceExtensionRoute(
       })
       return true
     }
-    if (route === 'data/export' && req.method === 'GET') {
+    if ((route === 'data/export' || route === 'data/export-config') && req.method === 'GET') {
       const extension = runtime.repository.getExtension(extensionId)!
-      const withConfig = url.searchParams.get('config') === '1'
+      const withConfig = route === 'data/export-config'
       const installation = runtime.repository.getHostInstallation(extensionId)
       const body = await runtime.extensionData.exportPackage({
         extensionId,

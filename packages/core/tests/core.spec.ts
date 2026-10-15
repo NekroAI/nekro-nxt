@@ -581,6 +581,8 @@ describe('CoreService', () => {
       commandNetwork: true,
       commandAccounts: [],
       communityFeedbackAuto: false,
+      extensionAutonomy: 'manual',
+      extensionRequesters: 'everyone',
     })
     expect(() => parseStoredAgentCapabilityGrants({ version: 2, grants: current })).toThrow()
     expect(() => parseStoredAgentCapabilityGrants({ ...current, fullFileAccess: false })).toThrow()
@@ -1404,6 +1406,8 @@ describe('CoreService', () => {
       commandNetwork: true,
       commandAccounts: [],
       communityFeedbackAuto: false,
+      extensionAutonomy: 'manual',
+      extensionRequesters: 'everyone',
     })
 
     const repository = new MemoryRepository()

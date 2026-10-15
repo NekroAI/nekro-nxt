@@ -332,6 +332,13 @@ const AgentCapabilitiesSchema = z
     communityFeedbackAuto: z.boolean().default(false),
     /** Accounts this agent's commands may act as; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
+    /**
+     * What the agent may do with extensions without the console: `manual` only develops and test-runs, `confirm` asks
+     * an administrator in the channel for every step, `autonomous` takes ordinary steps that only affect itself.
+     */
+    extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).default('manual'),
+    /** Whose requests make the agent develop or change extensions: anyone in the channel, or administrators only. */
+    extensionRequesters: z.enum(['everyone', 'admins']).default('everyone'),
   })
   .strict()
 
@@ -442,6 +449,8 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
     commandNetwork: z.boolean().optional(),
     communityFeedbackAuto: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
+    extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).optional(),
+    extensionRequesters: z.enum(['everyone', 'admins']).optional(),
   })
   .strict()
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), '至少提供一个能力。')
@@ -4912,6 +4921,27 @@ export const HostApiContracts = {
     params: extensionParam,
     request: ExtensionDataMigrationInputSchema,
     response: z.object({ snapshotId: z.string(), preview: ExtensionDataPreviewSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  exportExtensionData: defineContract({
+    method: 'GET',
+    timeoutMs: 300_000,
+    path: '/api/extensions/:extensionId/data/export',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    responseFormat: 'bytes',
+    response: z.instanceof(Uint8Array),
+    error: HostApiErrorSchema,
+  }),
+  /** The same package with the host and agent configuration; secrets are left out. */
+  exportExtensionDataWithConfig: defineContract({
+    method: 'GET',
+    timeoutMs: 300_000,
+    path: '/api/extensions/:extensionId/data/export-config',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    responseFormat: 'bytes',
+    response: z.instanceof(Uint8Array),
     error: HostApiErrorSchema,
   }),
   createExtensionDataSnapshot: defineContract({

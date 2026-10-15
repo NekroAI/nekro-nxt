@@ -113,7 +113,11 @@ const createCommunity = () => {
     }
     if (url.pathname === '/api/v1/updates') {
       const request = z
-        .object({ items: z.array(z.object({ extensionId: z.string(), releaseId: z.string() })) })
+        .object({
+          items: z.array(
+            z.object({ extensionId: z.string(), releaseId: z.string().optional(), revisionId: z.string().optional() }),
+          ),
+        })
         .parse(JSON.parse(typeof body === 'string' ? body : '{}'))
       return Response.json({
         items: request.items.map((item) => ({
@@ -122,7 +126,15 @@ const createCommunity = () => {
           delisted: false,
           delistedReason: null,
           releaseWithdrawn: item.releaseId === 'rel_01withdrawn',
-          latest: { ...summary(item.extensionId).latest, id: 'rel_01newer', futureField: 1 },
+          latest: {
+            ...summary(item.extensionId).latest,
+            id: 'rel_01newer',
+            number: 2,
+            revisionId: 'xrv_newer',
+            parentRevisionId: item.revisionId,
+            ancestry: item.revisionId === undefined ? [] : [item.revisionId],
+            futureField: 1,
+          },
           addedPermissions: [{ key: 'history', level: 'high', label: '读取当前频道的聊天记录' }],
         })),
       })
@@ -459,46 +471,25 @@ describe('CommunityService endpoint', () => {
   })
 })
 
-describe('CommunityService installed extensions and authoring', () => {
-  const source = (releaseId: string, communityUrl = COMMUNITY) => ({
-    kind: 'community' as const,
-    communityUrl,
-    releaseId,
-    publisherHandle: 'demo-author',
-    installedAt: 1,
-  })
-
-  it('checks updates only for extensions from the current community and caches the count', async () => {
+describe('CommunityService updates and authoring', () => {
+  it('asks the community about each line by release and revision and keeps only known release fields', async () => {
     const { service } = await createFixture()
-    const result = await service.installed([
-      {
-        extensionId: ExtensionIdSchema.parse('ext_01DEMO'),
-        displayName: '天气小助手',
-        revisionId: 'xrv_a',
-        source: source('rel_01demo'),
-      },
-      {
-        extensionId: ExtensionIdSchema.parse('ext_01OTHER'),
-        displayName: '旧社区扩展',
-        revisionId: 'xrv_b',
-        source: source('rel_01x', 'https://old.example.test'),
-      },
-      {
-        extensionId: ExtensionIdSchema.parse('ext_01GONE'),
-        displayName: '已撤回',
-        revisionId: 'xrv_c',
-        source: source('rel_01withdrawn'),
-      },
+    const result = await service.checkUpdates([
+      { extensionId: ExtensionIdSchema.parse('ext_01DEMO'), releaseId: 'rel_01demo', revisionId: 'xrv_a' },
+      { extensionId: ExtensionIdSchema.parse('ext_01GONE'), releaseId: 'rel_01withdrawn' },
+      { extensionId: ExtensionIdSchema.parse('ext_01LOCAL'), revisionId: 'xrv_local' },
     ])
-    expect(result.items[0]).toMatchObject({ sameCommunity: true, updateAvailable: true, latest: { id: 'rel_01newer' } })
-    expect(result.items[0]?.latest).not.toHaveProperty('futureField')
-    expect(result.items[0]?.addedPermissions.map((item) => item.key)).toEqual(['history'])
-    expect(result.items[1]).toMatchObject({ sameCommunity: false, found: false, updateAvailable: false })
-    expect(result.items[2]).toMatchObject({ releaseWithdrawn: true })
+    expect(result.get('ext_01DEMO')).toMatchObject({
+      found: true,
+      latest: { id: 'rel_01newer', number: 2, revisionId: 'xrv_newer', parentRevisionId: 'xrv_a', ancestry: ['xrv_a'] },
+    })
+    expect(result.get('ext_01DEMO')?.latest).not.toHaveProperty('futureField')
+    expect(result.get('ext_01DEMO')?.addedPermissions.map((item) => item.key)).toEqual(['history'])
+    expect(result.get('ext_01GONE')).toMatchObject({ releaseWithdrawn: true })
+    expect(result.get('ext_01LOCAL')?.latest?.ancestry).toEqual(['xrv_local'])
+    expect(await service.checkUpdates([])).toEqual(new Map())
+    service.setAttention(2)
     expect((await service.status()).updatesAvailable).toBe(2)
-    expect(service.cachedInstalled()?.items).toHaveLength(3)
-    // 缓存直接作为 listCommunityInstalled 的响应返回，必须通过严格的响应校验。
-    expect(() => HostApiContracts.listCommunityInstalled.response.parse(service.cachedInstalled())).not.toThrow()
   })
 
   it('lists my extensions and reads review reports when signed in', async () => {

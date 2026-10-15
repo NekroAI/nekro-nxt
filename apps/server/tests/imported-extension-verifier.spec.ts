@@ -259,6 +259,7 @@ return {
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
       snapshot,
+      lineage: { parent: null, ancestry: [] },
     })
     expect(materialized.manifest).not.toHaveProperty('scope')
     const files = {

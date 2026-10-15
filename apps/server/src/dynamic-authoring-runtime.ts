@@ -28,7 +28,7 @@ import { ToolCallId, freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
-import { extensionManifestContributionSchema } from '@nekro-nxt/extension-format'
+import { RESERVED_COMMAND_NAMES, extensionManifestContributionSchema } from '@nekro-nxt/extension-format'
 import {
   CommandDefinitionSchema,
   CommandResultSchema,
@@ -81,9 +81,7 @@ import {
 } from './inbound-dynamic-harness.js'
 import { commandVerificationArguments } from './commands/verification.js'
 import { moduleToFactoryBody } from '@nekro-nxt/extension-runtime'
-
-/** Names of built-in chat commands; extension commands may not take them. */
-const RESERVED_COMMAND_NAMES = new Set(['help', 'status', 'stop', 'reset', 'compact', 'pause', 'resume', 'off', 'on', 'ext', 'admin'])
+import { z } from 'zod'
 
 /** Verifier-only RPC methods the dynamic wrapper adds; never part of a candidate's interface. */
 const PRIVATE_DYNAMIC_METHODS = new Set([
@@ -91,7 +89,6 @@ const PRIVATE_DYNAMIC_METHODS = new Set([
   COMMAND_DYNAMIC_PROBE_METHOD,
   MIGRATION_DYNAMIC_PROBE_METHOD,
 ])
-import { z } from 'zod'
 
 const InboundProbeDecisionSchema = z
   .object({

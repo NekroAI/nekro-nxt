@@ -256,6 +256,21 @@ export const extensionDataVersionSchema = z.number().int().min(1).max(1_000_000)
 /**
  * Manifest V7（扩展形态统一）。一个扩展 = 一个本机实例 + 可选的智能体挂载；贡献的归属由种类决定，不再声明 scope。
  */
+/** Names of built-in chat commands; extension commands and aliases may not take them. */
+export const RESERVED_COMMAND_NAMES: ReadonlySet<string> = new Set([
+  'help',
+  'status',
+  'stop',
+  'reset',
+  'compact',
+  'pause',
+  'resume',
+  'off',
+  'on',
+  'ext',
+  'admin',
+])
+
 export const extensionManifestSchema = z
   .object({
     schemaVersion: z.literal(7),
@@ -293,12 +308,7 @@ export const extensionManifestSchema = z
     if (commands.length && (value.requires?.sdk ?? 0) < 9) issue('命令扩展需要声明 requires.sdk >= 9。')
     const commandNames = commands.flatMap((command) => [command.name, ...command.aliases])
     if (new Set(commandNames).size !== commandNames.length) issue('扩展内的命令名称和别名不能重复。')
-    if (
-      commandNames.some((name) =>
-        ['help', 'status', 'stop', 'reset', 'compact', 'pause', 'resume', 'off', 'on', 'ext', 'admin'].includes(name),
-      )
-    )
-      issue('内置命令名称保留，扩展不能覆盖。')
+    if (commandNames.some((name) => RESERVED_COMMAND_NAMES.has(name))) issue('内置命令名称保留，扩展不能覆盖。')
     checkContributions(value.contributions, issue)
     checkEntrypoints(value, issue)
     checkRequires(value, issue)

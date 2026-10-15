@@ -44,6 +44,11 @@ class QuietModel extends LlmAdapter {
   }
 }
 
+const latestAuthoring = (runtime: { readonly repository: { listAuthoringTasks(agentId?: string): readonly { readonly id: string; readonly updatedAt: number }[]; listAuthoringAttempts(taskId: string): readonly { readonly id: string }[] } }, agentId: string) => {
+  const task = [...runtime.repository.listAuthoringTasks(agentId)].sort((a, b) => b.updatedAt - a.updatedAt)[0]!
+  return { authoringTask: task, authoringAttempt: runtime.repository.listAuthoringAttempts(task.id).at(-1)! }
+}
+
 describe('NekroNxt domain API — save a running dynamic Package as a local Extension', () => {
   it('saves the active dynamic Package without auto-activating it', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-ext-save-'))
@@ -82,7 +87,7 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
     const dshSessionId = episode!.dshSessionId!
 
     // Define + run a dynamic package in that Session (the creator workbench state).
-    const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+    const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
       plugin: { kind: 'new', idPrefix: 'saved' },
       name: '保存探针',
       purpose: '验证动态保存为本地扩展。',
@@ -100,6 +105,9 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
           }
         }`,
       },
+      resources: {},
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [],
     })
     await expect(
       runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
@@ -122,14 +130,13 @@ describe('NekroNxt domain API — save a running dynamic Package as a local Exte
         }),
       ])
 
+      const { authoringTask, authoringAttempt } = latestAuthoring(runtime, entity.agentId)
       const saveResponse = await fetch(`${origin}/api/extensions/save-from-dynamic`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          agentId: entity.agentId,
-          episodeId: episode!.id,
-          pluginId: defined.pluginId,
-          packageId: defined.packageId,
+          taskId: authoringTask.id,
+          attemptId: authoringAttempt.id,
           displayName: '保存探针（已保存）',
           slug: 'saved-probe',
           description: '从创造工作台保存的动态 Package。',
