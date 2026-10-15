@@ -1,7 +1,16 @@
-import { Pause, Play, Trash2, Zap } from 'lucide-react'
+import { MoreHorizontal, Pause, Play, Trash2, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { useProductStore, type AgentSummary } from '../../product-runtime.js'
-import { Chip, ConfirmDialog, DataTable, IconButton, PropertyGroup, toast, type Tone } from '../../ui-kit/index.js'
+import {
+  Chip,
+  ConfirmDialog,
+  DataTable,
+  IconButton,
+  Menu,
+  PropertyGroup,
+  toast,
+  type Tone,
+} from '../../ui-kit/index.js'
 import { useProductApi } from '../model/store.js'
 import {
   allowedActions,
@@ -76,29 +85,39 @@ export function TaskActions({
   readonly act: (task: ScheduledTaskView, action: ScheduledTaskAction) => Promise<void>
 }) {
   const allowed = allowedActions(task)
+  const items = [
+    ...(allowed.includes('run')
+      ? [{ key: 'run', label: '立即执行', icon: <Zap size={14} />, onSelect: () => void act(task, 'run') }]
+      : []),
+    ...(allowed.includes('pause')
+      ? [{ key: 'pause', label: '暂停', icon: <Pause size={14} />, onSelect: () => void act(task, 'pause') }]
+      : []),
+    ...(allowed.includes('resume')
+      ? [{ key: 'resume', label: '恢复', icon: <Play size={14} />, onSelect: () => void act(task, 'resume') }]
+      : []),
+    ...(allowed.includes('delete')
+      ? [
+          {
+            key: 'delete',
+            label: '删除',
+            icon: <Trash2 size={14} />,
+            danger: true,
+            onSelect: () => void act(task, 'delete'),
+          },
+        ]
+      : []),
+  ]
+  if (items.length === 0) return null
   return (
-    <>
-      {allowed.includes('pause') ? (
-        <IconButton label={`暂停「${task.label}」`} size="small" onClick={() => void act(task, 'pause')}>
-          <Pause size={15} />
+    <Menu
+      label={`「${task.label}」的操作`}
+      trigger={
+        <IconButton label={`「${task.label}」的更多操作`} size="small">
+          <MoreHorizontal size={15} />
         </IconButton>
-      ) : null}
-      {allowed.includes('resume') ? (
-        <IconButton label={`恢复「${task.label}」`} size="small" onClick={() => void act(task, 'resume')}>
-          <Play size={15} />
-        </IconButton>
-      ) : null}
-      {allowed.includes('run') ? (
-        <IconButton label={`立即执行「${task.label}」`} size="small" onClick={() => void act(task, 'run')}>
-          <Zap size={15} />
-        </IconButton>
-      ) : null}
-      {allowed.includes('delete') ? (
-        <IconButton label={`删除「${task.label}」`} size="small" onClick={() => void act(task, 'delete')}>
-          <Trash2 size={15} />
-        </IconButton>
-      ) : null}
-    </>
+      }
+      items={items}
+    />
   )
 }
 
@@ -163,7 +182,7 @@ export function ScheduledTasksSection({ agent }: { readonly agent: AgentSummary 
           {
             key: 'actions',
             header: <span className={styles.srOnly}>操作</span>,
-            width: '104px',
+            width: '40px',
             align: 'end',
             render: (task) => <TaskActions task={task} act={act} />,
           },

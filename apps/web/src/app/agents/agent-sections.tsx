@@ -1,4 +1,4 @@
-import { ExternalLink, Maximize2, MessagesSquare, Minimize2, MoreHorizontal, Plus, Unplug } from 'lucide-react'
+import { Maximize2, MessagesSquare, Minimize2, MoreHorizontal, Plus, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
@@ -346,7 +346,11 @@ function CommandNetworkRow({
       : '这台设备无法限制命令联网，命令始终可以联网'
   return (
     <>
-      <PropertyRow label="命令联网" description={fixed ?? '运行命令和编排程序时访问网络，例如下载数据、安装依赖'}>
+      <PropertyRow
+        depth={1}
+        label="命令联网"
+        description={fixed ?? '运行命令和编排程序时访问网络，例如下载数据、安装依赖'}
+      >
         <Switch
           label="命令联网"
           checked={fixed === undefined ? caps.commandNetwork : true}
@@ -357,7 +361,7 @@ function CommandNetworkRow({
         />
       </PropertyRow>
       {!caps.unrestrictedFileAccess && confinement !== undefined && !confinement.readScope ? (
-        <PropertyRow label="读取范围" description="这台设备上，命令仍能读取工作区以外的文件" />
+        <PropertyRow depth={1} label="读取范围" description="这台设备上，命令仍能读取工作区以外的文件" />
       ) : null}
     </>
   )
@@ -485,6 +489,7 @@ export function CapabilitiesSection({
         ) : null}
         {caps.developmentShell ? (
           <PropertyRow
+            depth={1}
             label="编排模式（PTC）"
             description="把多个步骤写成一段程序一次做完，适合翻大量记录、批量处理文件。开启后，智能体的所有操作都通过程序完成。"
             badge={caps.codeRun && !availability.codeRun?.available ? <Chip tone="warn">待配置</Chip> : undefined}
@@ -502,12 +507,16 @@ export function CapabilitiesSection({
         {caps.developmentShell && availability.codeRun !== undefined ? (
           availability.codeRun.available ? (
             availability.codeRun.source === 'downloaded' ? (
-              <PropertyRow label="编排运行环境" description={`Node ${availability.codeRun.version ?? ''}，由 NXT 下载`}>
+              <PropertyRow
+                depth={2}
+                label="编排运行环境"
+                description={`Node ${availability.codeRun.version ?? ''}，由 NXT 下载`}
+              >
                 <CodeRunNodeRemove availability={availability.codeRun} />
               </PropertyRow>
             ) : null
           ) : availability.codeRun.download !== undefined ? (
-            <PropertyRow label="编排运行环境" description="这台设备没有可用的 Node，下载后即可开启">
+            <PropertyRow depth={2} label="编排运行环境" description="这台设备没有可用的 Node，下载后即可开启">
               <CodeRunNodeDownload availability={availability.codeRun} />
             </PropertyRow>
           ) : null
@@ -540,7 +549,7 @@ export function CapabilitiesSection({
           />
         </PropertyRow>
         {availability.webSearch.available || availability.webSearch.unavailableReason ? null : (
-          <PropertyRow label="搜索凭据" tip="保存后即可开启网页搜索">
+          <PropertyRow depth={1} label="搜索凭据" tip="保存后即可开启网页搜索">
             <WebSearchCredential />
           </PropertyRow>
         )}
@@ -554,8 +563,10 @@ export function CapabilitiesSection({
         {caps.dynamicCreation ? (
           <>
             <PropertyRow
+              depth={1}
               label="扩展自主权"
               layout="stacked"
+              width="md"
               description={EXTENSION_AUTONOMY_HINT[caps.extensionAutonomy]}
             >
               <Segmented
@@ -575,6 +586,7 @@ export function CapabilitiesSection({
               />
             </PropertyRow>
             <PropertyRow
+              depth={1}
               label="谁可以让它做扩展"
               tip="只听管理员时，其他人请它开发或修改扩展会被婉拒；聊天和使用已有扩展不受影响"
             >
@@ -694,7 +706,7 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
       title="扩展"
       tip="开关立即生效"
       actions={
-        <Button size="small" variant="ghost" icon={<ExternalLink />} onClick={() => go('/workshop')}>
+        <Button size="small" variant="ghost" onClick={() => go('/workshop')}>
           浏览工坊
         </Button>
       }
@@ -711,7 +723,11 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
                   {extension.name}
                 </span>
               }
-              description={extension.description || `由${extension.createdByAgent || '本地导入'}提供`}
+              description={
+                <span className={styles.oneLine} title={extension.description || undefined}>
+                  {extension.description || `由${extension.createdByAgent || '本地导入'}提供`}
+                </span>
+              }
             >
               <Switch
                 label={`为${agent.name}启用${extension.name}`}

@@ -205,6 +205,19 @@
   padding: var(--s-3) var(--s-4);
 }
 
+.row[data-depth] .rowText {
+  padding-left: var(--s-4);
+  border-left: 2px solid var(--line);
+}
+
+.row[data-depth='1'] {
+  padding-left: var(--s-6);
+}
+
+.row[data-depth='2'] {
+  padding-left: calc(var(--s-6) * 2);
+}
+
 .list > .row + .row {
   border-top: 1px solid var(--line);
 }

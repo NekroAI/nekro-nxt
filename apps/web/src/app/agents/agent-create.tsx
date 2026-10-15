@@ -71,7 +71,13 @@ export function AgentCreate() {
 
         <PropertyGroup title="基本信息">
           <PropertyList>
-            <PropertyRow label="名称" htmlFor="agent-create-name" tip="频道里显示的名字，之后可以改">
+            <PropertyRow
+              label="名称"
+              htmlFor="agent-create-name"
+              tip="频道里显示的名字，之后可以改"
+              layout="stacked"
+              width="md"
+            >
               <Input
                 id="agent-create-name"
                 className={styles.nameInput}
@@ -85,6 +91,8 @@ export function AgentCreate() {
             {models.length > 0 ? (
               <PropertyRow
                 label="主模型"
+                layout="stacked"
+                width="md"
                 tip="负责理解消息、思考和回复"
                 badge={
                   model ? (

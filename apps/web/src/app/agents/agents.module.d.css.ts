@@ -13,6 +13,7 @@ declare const styles: {
   readonly nameInput: string
   readonly note: string
   readonly noteWarn: string
+  readonly oneLine: string
   readonly persona: string
   readonly personaCard: string
   readonly personaEditor: string

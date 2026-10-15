@@ -137,7 +137,10 @@ export function PropertyRow({
   htmlFor,
   badge,
   width,
+  depth,
 }: {
+  /** A setting that belongs to the row above it (05 §7.2): indented under its parent, one or two levels. */
+  readonly depth?: 1 | 2
   /** Width of a single-line control (05 §4.2): `sm` for selects and short values, `md` for names and addresses. */
   readonly width?: 'sm' | 'md'
   readonly label: ReactNode
@@ -152,7 +155,7 @@ export function PropertyRow({
 }) {
   const Label = htmlFor ? 'label' : 'div'
   return (
-    <div className={[styles.row, layout === 'stacked' ? styles.stacked : ''].join(' ')}>
+    <div className={[styles.row, layout === 'stacked' ? styles.stacked : ''].join(' ')} data-depth={depth}>
       <div className={styles.rowText}>
         <span className={styles.rowLabelLine}>
           <Label className={styles.rowLabel} {...(htmlFor ? { htmlFor } : {})}>

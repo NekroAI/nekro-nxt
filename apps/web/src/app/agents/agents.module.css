@@ -354,3 +354,10 @@
   background: var(--accent-soft);
   color: var(--accent);
 }
+
+.oneLine {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

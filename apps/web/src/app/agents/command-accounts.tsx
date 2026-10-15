@@ -235,6 +235,7 @@ export function CommandAccountRows({
   return (
     <>
       <PropertyRow
+        depth={1}
         label="GitHub 账号"
         description="命令里的 gh 和 git 以这个账号工作"
         badge={grant !== undefined && account === undefined ? <Chip tone="warn">账号已移除</Chip> : undefined}
@@ -256,8 +257,9 @@ export function CommandAccountRows({
       </PropertyRow>
       {account !== undefined ? (
         <>
-          <PropertyRow label="账号权限" description={accountPermissionText(account)} />
+          <PropertyRow depth={2} label="账号权限" description={accountPermissionText(account)} />
           <PropertyRow
+            depth={2}
             label="使用提示"
             description={`告诉${agent.name}这个账号用来做什么，只写进提示词，不限制它能做的事`}
             layout="stacked"
@@ -277,16 +279,20 @@ export function CommandAccountRows({
           </PropertyRow>
           {cli.available ? (
             cli.source === 'downloaded' ? (
-              <PropertyRow label="GitHub CLI" description={`${cli.version ?? ''}，由 NekroNXT 下载`}>
+              <PropertyRow depth={2} label="GitHub CLI" description={`${cli.version ?? ''}，由 NekroNXT 下载`}>
                 <CodeRunNodeRemove availability={cli} kind="github-cli" />
               </PropertyRow>
             ) : null
           ) : cli.download !== undefined ? (
-            <PropertyRow label="GitHub CLI" description="这台设备没有 gh，下载后命令里可以直接使用">
+            <PropertyRow depth={2} label="GitHub CLI" description="这台设备没有 gh，下载后命令里可以直接使用">
               <CodeRunNodeDownload availability={cli} kind="github-cli" />
             </PropertyRow>
           ) : (
-            <PropertyRow label="GitHub CLI" description="这台设备没有 gh，命令里只能通过 REST 接口使用这个账号" />
+            <PropertyRow
+              depth={2}
+              label="GitHub CLI"
+              description="这台设备没有 gh，命令里只能通过 REST 接口使用这个账号"
+            />
           )}
         </>
       ) : null}
