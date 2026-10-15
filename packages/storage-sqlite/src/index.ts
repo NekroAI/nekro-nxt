@@ -417,7 +417,7 @@ export class SqliteCoreRepository implements CurrentRepository {
 
   readonly findOutboundByClientRequest = (...args: Parameters<RuntimeRepository['findOutboundByClientRequest']>) =>
     this.#outbox.findOutboundByClientRequest(...args)
-  readonly findOutboundByNoticeKey = (noticeKey: string) => this.#outbox.findOutboundByNoticeKey!(noticeKey)
+  readonly findOutboundByNoticeKey = (noticeKey: string) => this.#outbox.findOutboundByNoticeKey(noticeKey)
   readonly findOutboundByLogicalMessageId = (
     ...args: Parameters<RuntimeRepository['findOutboundByLogicalMessageId']>
   ) => this.#outbox.findOutboundByLogicalMessageId(...args)

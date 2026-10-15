@@ -111,14 +111,14 @@ export class ExtensionRequestService {
       decidedBy: this.#agentName(input.actor.agentId),
       decidedAt: now,
     })
-    const undo = this.#undoHint(input.action, input.result)
+    const undo = this.#undoHint(input.action)
     this.#notice(
       input.actor.channelId,
       `ext-request:${record.number}:done`,
       `${this.#agentName(input.actor.agentId)}：${input.result.message}${undo}`,
     )
     this.#runtime.publishExtensionRequestChange?.()
-    return this.#runtime.repository.getExtensionRequest(record.number)!
+    return this.#runtime.repository.getExtensionRequest(record.number) ?? record
   }
 
   /** Confirms a pending request and carries it out; the outcome is posted and reported to the agent. */
@@ -142,7 +142,7 @@ export class ExtensionRequestService {
         result: { message: result.message } as JsonValue,
       })
       this.#notice(record.channelId ?? undefined, `ext-request:${number}:done`, `请求 #${number} 已由${label}同意：${result.message}`)
-      this.#tellAgent(record, `〔系统通知〕扩展请求 #${number}（${record.summary}）已由${label}同意并完成：${result.message}`)
+      this.#tellAgent(record, 'done', `〔系统通知〕扩展请求 #${number}（${record.summary}）已由${label}同意并完成：${result.message}`)
       this.#runtime.publishExtensionRequestChange?.()
       return result
     } catch (error) {
@@ -154,7 +154,7 @@ export class ExtensionRequestService {
         result: { message } as JsonValue,
       })
       this.#notice(record.channelId ?? undefined, `ext-request:${number}:failed`, `请求 #${number} 已同意，但没有完成：${message}`)
-      this.#tellAgent(record, `〔系统通知〕扩展请求 #${number}（${record.summary}）已同意，但执行失败：${message}。看一下原因再决定怎么处理。`)
+      this.#tellAgent(record, 'failed', `〔系统通知〕扩展请求 #${number}（${record.summary}）已同意，但执行失败：${message}。看一下原因再决定怎么处理。`)
       this.#runtime.publishExtensionRequestChange?.()
       throw error
     }
@@ -176,7 +176,7 @@ export class ExtensionRequestService {
       throw new Error(`请求 #${number} 已经被处理。`)
     }
     this.#notice(record.channelId ?? undefined, `ext-request:${number}:rejected`, `请求 #${number} 已被${label}拒绝${reason ? `：${reason}` : '。'}`)
-    this.#tellAgent(record, `〔系统通知〕扩展请求 #${number}（${record.summary}）被${label}拒绝${reason ? `：${reason}` : '。'}不要再自行重试同一个请求。`)
+    this.#tellAgent(record, 'rejected', `〔系统通知〕扩展请求 #${number}（${record.summary}）被${label}拒绝${reason ? `：${reason}` : '。'}不要再自行重试同一个请求。`)
     this.#runtime.publishExtensionRequestChange?.()
   }
 
@@ -206,10 +206,8 @@ export class ExtensionRequestService {
     return channel?.kind === 'group' ? '@机器人 ' : ''
   }
 
-  #undoHint(action: ExtensionAction, result: ExtensionActionResult): string {
-    if (action.kind === 'switch' || action.kind === 'community-update') return '。如需撤销，管理员发送 /ext rollback 扩展名。'
-    if (action.kind === 'enable' && result.extensionId !== undefined) return ''
-    return ''
+  #undoHint(action: ExtensionAction): string {
+    return action.kind === 'switch' || action.kind === 'community-update' ? '。如需撤销，管理员发送 /ext rollback 扩展名。' : ''
   }
 
   #notice(channelId: ChannelId | undefined, key: string, text: string): void {
@@ -221,11 +219,11 @@ export class ExtensionRequestService {
       })
   }
 
-  #tellAgent(record: ExtensionRequestRecord, text: string): void {
+  #tellAgent(record: ExtensionRequestRecord, outcome: 'done' | 'failed' | 'rejected', text: string): void {
     this.#runtime.host.notifyAgent({
       agentId: record.agentId,
       ...(record.channelId === null ? {} : { channelId: record.channelId }),
-      identity: `ext-request:${record.number}:${record.status}`,
+      identity: `ext-request:${record.number}:${outcome}`,
       text,
     })
   }

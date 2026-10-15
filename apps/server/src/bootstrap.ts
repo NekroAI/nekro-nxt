@@ -109,6 +109,7 @@ import { AdministratorService } from './extension-governance/administrators.js'
 import { CommunitySyncService } from './extension-governance/community-sync.js'
 import { ExtensionDataService } from './extension-governance/data-service.js'
 import { ExtensionRequestService } from './extension-governance/requests.js'
+import { createMigrationStorage } from './extension-data-migration.js'
 import { CommunityFeedbackService } from './community-feedback.js'
 import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-runtime.js'
 import { channelMemberRelations } from './channel-member-relations.js'
@@ -822,6 +823,7 @@ export class NekroRuntime {
                 },
               )
       const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
+        migrationStorage: (revision) => createMigrationStorage(repository, revision.extensionId),
         activationBackends: createNxtProductBackends(nxtFacts, {
           ...(loggerFor === undefined ? {} : { logger: loggerFor }),
           fetch: nxtFetch,

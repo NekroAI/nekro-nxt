@@ -227,7 +227,7 @@ import {
   NXT_HOST_SERVICE_NAME,
   type NxtServiceBackends,
 } from './extension-host-service.js'
-import type { NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
+import type { NxtDataMigration, NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
 import {
   formatContextTime,
   formatTaskTime,
@@ -504,6 +504,8 @@ export interface DshHostRuntimeOptions {
     readonly scheduledTasks?: ScheduledTaskPort
     /** Latest MCP connection attempt per Activation and server, shown on the extension's usage rows. */
     readonly mcpStatus?: McpStatusRegistry
+    /** Storage a `harness.migrateData` handler rewrites while the coordinator switches versions. */
+    readonly migrationStorage?: (revision: Revision) => NxtDataMigration['storage']
     /** Runs when an Activation mounts into a Session, i.e. into one bound channel (declared jobs live per channel). */
     readonly onSessionMount?: (input: {
       readonly agentId: AgentId
@@ -3060,6 +3062,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         : {
             ...(options.logs === undefined ? {} : { logs: options.logs }),
             logName: (revision) => extensionHost.describeRevision(revision).displayName,
+            ...(extensionHost.migrationStorage === undefined ? {} : { migrationStorage: extensionHost.migrationStorage }),
             nxt: ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext, sdk }) => {
               const described = extensionHost.describeRevision(revision)
               const channelId = this.#sessions.require(sessionId).channelId

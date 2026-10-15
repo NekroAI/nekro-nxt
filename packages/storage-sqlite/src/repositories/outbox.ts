@@ -24,10 +24,9 @@ import type { DrizzleCoreDatabase } from '../database.js'
 import { channelEvents, episodes, outboundIntents, physicalDeliveries } from '../schema.js'
 import { ChannelEventRowSchema, OutboundIntentRowSchema, PhysicalDeliveryRowSchema } from '../row-schemas.js'
 
-type OutboxSlice = Pick<
+type OutboxSlice = Required<Pick<RuntimeRepository, 'findOutboundByNoticeKey'>> & Pick<
   RuntimeRepository,
   | 'findOutboundByClientRequest'
-  | 'findOutboundByNoticeKey'
   | 'findOutboundByLogicalMessageId'
   | 'createOutboundPlan'
   | 'markIntentSending'

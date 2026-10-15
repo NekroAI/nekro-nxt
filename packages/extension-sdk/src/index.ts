@@ -1009,6 +1009,8 @@ export interface NekroNxtExtensionAuthoringReference {
     readonly toolAndPage: string
   }
   readonly recoveryRules: readonly string[]
+  /** How saved extensions change hands: versions, branches, data, autonomy and the community. */
+  readonly governanceRules: readonly string[]
 }
 
 /** One line per `ui-kit@2` component: the props a contribution passes. Rendered into the authoring skill. */
@@ -1489,10 +1491,25 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
       '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
       '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
-      '显式斜杠命令使用 SDK 9 的 command Contribution 和 factory 级 harness.registerCommand(definition, handler)，源码包导入时会执行隔离验证；工坊动态创造暂不支持命令贡献，请使用本地源码包导入命令扩展。不能把命令放进 Session apply 或用 onInbound 模拟。参数来自 context.arguments，媒体仅引用当前频道授权的 assetId，监听 context.signal 清理；耗时命令可用 context.reply 先发过程回复（最多 5 条），返回值是终态结果；默认控制台执行的结果不发往外部频道，需要时在定义里把 consoleReply 设为 channel；处理器默认 60 秒超时（timeoutSeconds 可声明，最长 600），超时会通过 signal 取消。模型不直接调用聊天命令。',
+      '显式斜杠命令使用 SDK 9 的 command Contribution 和 factory 级 harness.registerCommand(definition, handler)：动态创造把命令定义放进 nekro_nxt_extension_define.commands，保存验证会用宿主按参数定义生成的样例真实执行一次，处理器不能有副作用；源码包导入时同样执行隔离验证。命令名不能用 ext、admin 等内置命令名。不能把命令放进 Session apply 或用 onInbound 模拟。参数来自 context.arguments，媒体仅引用当前频道授权的 assetId，监听 context.signal 清理；耗时命令可用 context.reply 先发过程回复（最多 5 条），返回值是终态结果；默认控制台执行的结果不发往外部频道，需要时在定义里把 consoleReply 设为 channel；处理器默认 60 秒超时（timeoutSeconds 可声明，最长 600），超时会通过 signal 取消。模型不直接调用聊天命令。',
       '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息；定时检查类需求在 onJob 里先检查，没有新内容就返回 { wake: false }。',
     ],
   },
+  governanceRules: [
+    '保存后的扩展有一条版本谱系：每次保存都是不可变的新版本，记住它从哪个版本改来。版本号就是谱系里的代数（v1、v2、v3），同一代保存了两次写作 v3·2。社区发布、本机修改都在同一条谱系上，所以能判断本机和社区谁更新、有没有各自改过。',
+    '修改已保存的扩展一定先调用 nekro_nxt_extension_revise 开一个修改任务，它返回基线版本的完整定义；在这个定义上只改需要改的部分，其余照原样提交。不要凭记忆重写整个扩展，也不要另建一个同名的新扩展。一个扩展同时只有一个进行中的修改任务。',
+    "revise 返回的定义带 codeFormat 时原样带上：codeFormat: 'module' 表示源码是带 import/export 的模块（从社区或源码包导入的扩展），宿主会转换后运行；没有这个字段就是普通的 factory 函数体。",
+    '合并两个版本（例如本机改过、社区又出了新版）时，把一个作为 revise 的 version、另一个作为 reference，在基线上把对方的改动合进来，保存后谱系会接在基线之后。',
+    '想保留原扩展、另做一个不同走向的版本时，用 nekro_nxt_extension_action 的 branch：它会成为一个新扩展，记录分支自哪个扩展的哪个版本，可以选择是否复制数据，分支还可以继续分支。只是修 bug 或加功能就修改原扩展，不要开分支。',
+    '存储的数据有格式版本：Manifest 的 dataVersion（整数，默认 1，需要 requires.sdk 至少 10）。只要新版本读不懂旧数据（改了键名、拆分合并字段、换了结构），就把 dataVersion 加一，并在 factory 里用 harness.migrateData(async ({ from, to, storage }) => { ... }) 注册迁移：storage.list 分页读出全部数据，set/delete 改写，owner 与 partition 原样保留。只增加新键、旧数据照样能读时不要提升 dataVersion。',
+    '迁移要能重复执行：处理前先判断这条数据是否已经是新格式。宿主切换版本前会给数据留一份快照，迁移抛错就恢复快照并退回原版本；切回 dataVersion 更低的版本会被拒绝，除非用户在后台恢复切换前的快照。保存验证会用空数据跑一次迁移。',
+    '数据也可以在扩展之间迁移（例如把旧扩展的表情包库迁到它的分支）：migrate_data 的 overwrite 保留目标已有数据、同名以来源为准，replace 先清空目标再写入。它总要管理员确认，执行前宿主会算出差异并留快照。',
+    '你的扩展自主权由管理员在智能体设置里决定：manual 只能开发和试运行，保存、启用等都由用户在后台操作；confirm 时每个操作都在频道里发出请求，管理员发送 /ext approve 编号 同意；autonomous 时只影响你自己的普通风险操作直接完成并在频道留下记录，需要提升级权限或会影响其他智能体的操作仍要管理员确认。用 nekro_nxt_extension_list 查看你现在是哪一档。',
+    '无论哪一档，新增高风险权限（无限制联网、平台原始接口、可隐藏消息的入站钩子等）只能在后台处理；发布到社区、撤回发布和数据迁移总要管理员确认。没有次数限制，但不要重复发同一个请求：被拒绝后先问清原因。',
+    'nekro_nxt_extension_action 的结果有三种：已完成、已发出请求（附编号）、需要到后台处理。照结果如实告诉用户，不要把发出请求说成已经完成。请求结果会以系统通知告诉你，收到后再继续。',
+    '发布到社区需要本机已经登录社区账号，并且这次发布接在你上一次发布之后（谱系是一条直线）。社区上有更新的发布而本机没有合并时，发布会被拒绝：先 update 或用 revise 合并，再发布。从社区安装的别人的扩展不能直接发布新版本：先用 branch 做成你自己的扩展再发布，社区上会标明它分支自哪里。',
+    '社区审核会看这次发布和上一次发布的差异、新增的权限和风险组合；在 notes 里写清楚改了什么、为什么需要新增的权限，方便审核通过。',
+  ],
   recoveryRules: [
     '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
     'define、run、保存和启用是四个独立提交点；不得把动态运行声称为已保存或已启用。',
@@ -1592,6 +1609,10 @@ ${reference.examples.toolAndPage}
 \`\`\`js
 ${reference.examples.hostPage}
 \`\`\`
+
+## 扩展治理
+
+${reference.governanceRules.map((rule) => `- ${rule}`).join('\n')}
 
 ## 修复与停止
 
