@@ -412,4 +412,86 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       if (!disposed) await runtime.dispose()
     }
   })
+  it('pauses a ready task whose conversation ended and saves it from the ledger without a Session', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-offline-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context: Context) => {
+        context.llm.registerAdapter(['test-provider'], new SettledModel())
+      },
+    })
+    await runtime.start()
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '离线保存智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'seed-offline-session',
+        parts: [{ type: 'text', text: '建立离线保存测试会话。' }],
+      })
+      const episode = runtime.repository
+        .listActiveEpisodesForAgent(entity.agentId)
+        .find((candidate) => candidate.dshSessionId !== undefined)
+      if (!episode?.dshSessionId) throw new Error('Expected a live Session.')
+      const defined = runtime.host.defineDynamicAuthoringPackage(episode.dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'offl' },
+        name: '离线探针',
+        purpose: '对话结束后仍能保存。',
+        code: {
+          host: `return {
+            inject: ['tools'],
+            apply(ctx) {
+              harness.registerTool(ctx, harness.defineTool({
+                name: 'offline_probe',
+                description: '返回离线状态。',
+                parameters: {},
+                output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+                execute() { return 'offline' }
+              }))
+            }
+          }`,
+        },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      await expect(
+        runtime.host.runDynamicPackage(episode.dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.status).toBe('ready')
+      await runtime.host.whenAuthoringSettled(episode.dshSessionId)
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+
+      const current = runtime.repository.getEpisode(episode.id)!
+      runtime.repository.closeEpisode(
+        episode.id,
+        'manual',
+        current.lastAdmittedEventId ?? current.openedAtEventId,
+        Date.now(),
+      )
+      runtime.sweepAuthoringTasks()
+      expect(runtime.repository.getAuthoringTask(task.id)).toMatchObject({
+        status: 'paused',
+        pausedReason: '所在的对话已经结束。',
+      })
+
+      const saved = await runtime.authoring.saveTask({ taskId: task.id, name: '离线探针', slug: 'offline-probe' })
+      expect(saved.revision).toMatchObject({ origin: 'authored', authoringTaskId: task.id, ancestry: [] })
+      expect(runtime.repository.getExtensionRevisionVerification(saved.revision.id)?.toolInvocations).toEqual([
+        { name: 'offline_probe', succeeded: true },
+      ])
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('completed')
+    } finally {
+      await runtime.dispose()
+    }
+  })
 })

@@ -307,7 +307,8 @@ export class ExtensionLifecycleCoordinator {
     let dataSnapshot: string | undefined
     let next: LiveExtension
     try {
-      if (this.#data && (switching || dataTarget > dataCurrent) && this.#data.hasData(input.extensionId)) {
+      // Every switch keeps one, even of empty data, so a rollback always knows the version it came from.
+      if (this.#data && (switching || (dataTarget > dataCurrent && this.#data.hasData(input.extensionId)))) {
         dataSnapshot = this.#data.snapshot({
           extensionId: input.extensionId,
           fromRevisionId: existing?.extensionRevisionId ?? revision.id,

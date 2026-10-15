@@ -748,6 +748,34 @@ describe('unified commands', () => {
     expect(invoke).not.toHaveBeenCalled()
     expect(f.admissions).toHaveLength(0)
   })
+  it('runs administrator-level commands only for instance administrators, not for channel managers', async () => {
+    const f = await setup()
+    const invoke = vi.fn(() => ({ parts: [{ type: 'text' as const, text: '已执行' }] }))
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'maintain', description: '维护', minimumPermission: 'admin' }),
+      fullName: 'ext_MAINTAIN:maintain',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_MAINTAIN'),
+      invoke,
+    })
+    const status = async (text: string) => f.repository.commands.forEvent((await f.inbound(text)).channelEventId)?.status
+    expect(await status('/maintain')).toBe('failed')
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    // Managing this channel is not enough for a command that acts on the whole instance.
+    expect(await status('/ext_MAINTAIN:maintain')).toBe('failed')
+    expect(invoke).not.toHaveBeenCalled()
+    f.repository.addInstanceAdministrator({
+      connectionId: f.member.identity.connectionId,
+      platformUserId: f.member.identity.platformUserId,
+      label: '测试管理员',
+      addedVia: 'console',
+      addedAt: 1,
+    })
+    f.commands.grant(f.channel.id, f.member.identity.id, false)
+    expect(await status('/maintain')).toBe('succeeded')
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(() => f.commands.setPolicy('global', 'ext_MAINTAIN:maintain', { permission: 'channel-admin' })).toThrow()
+  })
   it('does not replay a handler after an interrupted execution', async () => {
     const f = await setup()
     const first = await f.inbound('/help')
