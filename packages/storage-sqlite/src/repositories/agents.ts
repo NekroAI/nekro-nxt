@@ -6,7 +6,7 @@ import type {
   CreateAgentCommit,
   CreateAgentWithChannelCommit,
 } from '@nekro-nxt/core'
-import { parseAgentCapabilityGrants, parseImageUnderstandingPolicy } from '@nekro-nxt/core'
+import { parseAgentCapabilityGrants, parseImageUnderstandingPolicy, storedAgentCapabilityGrants } from '@nekro-nxt/core'
 import { normalizePromptDocument, promptDocumentFromText } from '@nekro-nxt/contracts'
 import type { AgentId, AgentRevisionId } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
@@ -95,7 +95,7 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
   modelProvider: record.model.provider,
   modelId: record.model.model,
   ...(record.model.reasoningEffort === undefined ? {} : { reasoningEffort: record.model.reasoningEffort }),
-  capabilities: record.capabilities,
+  capabilities: storedAgentCapabilityGrants(record.capabilities),
   imagePolicy: record.imagePolicy,
   dynamicClientApprovalPolicy: record.dynamicClientApprovalPolicy,
   contentDigest: record.contentDigest,

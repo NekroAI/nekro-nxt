@@ -1,6 +1,14 @@
 declare const styles: {
   readonly adminTag: string
   readonly as: string
+  readonly attach: string
+  readonly attachment: string
+  readonly attachmentAction: string
+  readonly attachmentError: string
+  readonly attachmentHint: string
+  readonly attachmentInfo: string
+  readonly attachmentPreview: string
+  readonly attachments: string
   readonly blocked: string
   readonly bubble: string
   readonly card: string
@@ -16,7 +24,8 @@ declare const styles: {
   readonly commandResult: string
   readonly commandSuggestions: string
   readonly composer: string
-  readonly composerLine: string
+  readonly composerDragging: string
+  readonly composerRow: string
   readonly contextActions: string
   readonly contextCard: string
   readonly contextDanger: string

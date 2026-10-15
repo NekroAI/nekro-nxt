@@ -1,5 +1,14 @@
 import { CommandCatalogEntrySchema, CommandExecutionRecordSchema, CommandPolicySchema } from './commands.js'
 import { z } from 'zod'
+import {
+  hostLogDebugLeaseSchema,
+  hostLogDebugRequestSchema,
+  hostLogEntrySchema,
+  hostLogPageSchema,
+  hostLogSettingsSchema,
+  hostLogSourceSchema,
+  hostLogStatusSchema,
+} from './logs.js'
 import { McpServerFormSchema } from './extension-capabilities.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
 import {
@@ -311,6 +320,7 @@ const AgentCapabilitiesSchema = z
     codeRun: z.boolean().default(false),
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
+    communityFeedbackAuto: z.boolean().default(false),
     /** Accounts this agent's commands may act as; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
   })
@@ -318,7 +328,7 @@ const AgentCapabilitiesSchema = z
 
 export const DynamicClientApprovalPolicySchema = z.enum(['manual', 'automatic'])
 
-export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested'])
+export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested', 'community-feedback-update'])
 export type NotificationEventKey = z.output<typeof NotificationEventKeySchema>
 
 export const NotificationSettingsViewSchema = z
@@ -332,7 +342,12 @@ export const NotificationSettingsViewSchema = z
         deviceKeyConfigured: z.boolean(),
       })
       .strict(),
-    events: z.record(NotificationEventKeySchema, z.boolean()),
+    events: z
+      .object({
+        'dynamic-client-approval-requested': z.boolean(),
+        'community-feedback-update': z.boolean().default(true),
+      })
+      .strict(),
   })
   .strict()
 
@@ -348,7 +363,9 @@ export const UpdateNotificationSettingsRequestSchema = z
         clearDeviceKey: z.boolean().optional(),
       })
       .strict(),
-    events: z.record(NotificationEventKeySchema, z.boolean()),
+    events: z
+      .object({ 'dynamic-client-approval-requested': z.boolean(), 'community-feedback-update': z.boolean().optional() })
+      .strict(),
   })
   .strict()
   .refine((value) => !(value.bark.deviceKey !== undefined && value.bark.clearDeviceKey === true), {
@@ -407,13 +424,14 @@ const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   validatePersonaDocumentProjection(value, context)
 })
 
-// The defaults that fill `scheduledTasks`, `codeRun`, `commandNetwork` and `commandAccounts` for older clients must not
+// Defaults that fill capabilities for older clients must not
 // reset them in a partial update.
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
   .extend({
     scheduledTasks: z.boolean().optional(),
     codeRun: z.boolean().optional(),
     commandNetwork: z.boolean().optional(),
+    communityFeedbackAuto: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
   })
   .strict()
@@ -1181,11 +1199,13 @@ export const AttentionItemSchema = z
       'connection-unhealthy',
       'agent-model-unavailable',
       'agent-vision-unavailable',
+      'logs-unavailable',
+      'community-feedback',
     ]),
     severity: z.enum(['critical', 'warning', 'info']),
     subject: z
       .object({
-        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent']),
+        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent', 'logs', 'community-feedback']),
         id: NonEmptyStringSchema,
       })
       .strict(),
@@ -1202,7 +1222,15 @@ export const AttentionItemSchema = z
     detail: z.string().max(400),
     action: z
       .object({
-        kind: z.enum(['open-channel', 'resolve-delivery', 'open-authoring-task', 'open-connection', 'open-agent']),
+        kind: z.enum([
+          'open-channel',
+          'resolve-delivery',
+          'open-authoring-task',
+          'open-connection',
+          'open-agent',
+          'open-logs',
+          'open-community-feedback',
+        ]),
         label: z.string().min(1).max(40),
       })
       .strict(),
@@ -1401,6 +1429,7 @@ export type AddCommandAccountRequest = z.output<typeof AddCommandAccountRequestS
 
 export const HostSnapshotSchema = z
   .object({
+    communityFeedback: CommunityFeedbackSnapshotSchema.optional(),
     upgrade: HostUpgradeSummarySchema.optional(),
     cursor: HostSyncCursorSchema,
     diagnosticsSampledAt: z.number().int().nonnegative(),
@@ -1812,14 +1841,28 @@ export const HostSnapshotSchema = z
   })
   .strict()
 
+export const CHANNEL_COMPOSER_MAX_ATTACHMENTS = 20
+export const CHANNEL_COMPOSER_MAX_BYTES = 64 * 1024 * 1024
+
 const MessageInputPartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().trim().min(1) }).strict(),
   z.object({ type: z.literal('mention'), memberId: ChannelMemberIdSchema }).strict(),
+  z.object({ type: z.literal('image'), assetId: AssetIdSchema, alt: z.string().trim().max(500).optional() }).strict(),
+  z.object({ type: z.literal('file'), assetId: AssetIdSchema, name: z.string().trim().max(255).optional() }).strict(),
 ])
 
 const SendChannelMessageRequestSchema = z
   .object({
-    parts: z.array(MessageInputPartSchema).min(1),
+    parts: z
+      .array(MessageInputPartSchema)
+      .min(1)
+      .max(256)
+      .refine(
+        (parts) =>
+          parts.filter((part) => part.type === 'image' || part.type === 'file').length <=
+          CHANNEL_COMPOSER_MAX_ATTACHMENTS,
+        '每条消息最多添加 20 个附件。',
+      ),
     clientEventId: NonEmptyStringSchema.optional(),
     senderMemberId: ChannelMemberIdSchema.optional(),
   })
@@ -2386,6 +2429,70 @@ export const HostApiContracts = {
     error: HostApiErrorSchema,
     invalidatesSnapshot: true,
   }),
+  queryLogs: defineContract({
+    method: 'GET',
+    path: '/api/logs',
+    params: z.object({ query: z.string().max(32_768).optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: hostLogPageSchema,
+    error: HostApiErrorSchema,
+  }),
+  getLog: defineContract({
+    method: 'GET',
+    path: '/api/logs/:id',
+    params: z.object({ id: z.string().min(1).max(256) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ entry: hostLogEntrySchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  logSources: defineContract({
+    method: 'GET',
+    path: '/api/logs/sources',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ sources: z.array(hostLogSourceSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  logStatus: defineContract({
+    method: 'GET',
+    path: '/api/logs/status',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: hostLogStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  logSettings: defineContract({
+    method: 'GET',
+    path: '/api/logs/settings',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: hostLogSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateLogSettings: defineContract({
+    method: 'PUT',
+    path: '/api/logs/settings',
+    params: EmptyParamsSchema,
+    request: hostLogSettingsSchema,
+    response: hostLogSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  startLogDebug: defineContract({
+    method: 'POST',
+    path: '/api/logs/debug',
+    params: EmptyParamsSchema,
+    request: hostLogDebugRequestSchema,
+    response: z.object({ lease: hostLogDebugLeaseSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  stopLogDebug: defineContract({
+    method: 'DELETE',
+    path: '/api/logs/debug/:id',
+    params: z.object({ id: z.string().min(1).max(256) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ stopped: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
   retryRuntimeCompatibility: defineContract({
     method: 'POST',
     path: '/api/runtime/compatibility/retry',
@@ -2737,6 +2844,37 @@ export const HostApiContracts = {
         outboundIntentId: OutboundIntentIdSchema.optional(),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  uploadChannelAsset: defineContract({
+    method: 'POST',
+    path: '/api/channels/:channelId/assets',
+    params: channelParam,
+    request: BinaryUploadRequestSchema,
+    encodeRequest: (input) => ({
+      body: input.bytes,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-file-name': encodeURIComponent(input.fileName ?? '附件'),
+      },
+    }),
+    response: z
+      .object({
+        assetId: AssetIdSchema,
+        mediaType: z.string().min(1),
+        byteSize: z.number().int().nonnegative(),
+        fileName: z.string().min(1).max(255),
+        partType: z.enum(['image', 'file']),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  deleteChannelAsset: defineContract({
+    method: 'DELETE',
+    path: '/api/channels/:channelId/assets/:assetId',
+    params: z.object({ channelId: ChannelIdSchema, assetId: AssetIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ assetId: AssetIdSchema, revoked: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   renameChannel: defineContract({
@@ -3319,6 +3457,139 @@ export const HostApiContracts = {
     request: NoRequestBodySchema,
     response: CommunityStatusSchema,
     error: HostApiErrorSchema,
+  }),
+  getCommunityFeedbackSettings: defineContract({
+    method: 'GET',
+    path: '/api/community/feedback/settings',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateCommunityFeedbackSettings: defineContract({
+    method: 'PUT',
+    path: '/api/community/feedback/settings',
+    params: EmptyParamsSchema,
+    request: CommunityFeedbackSettingsUpdateSchema,
+    response: CommunityFeedbackSettingsSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  listCommunityFeedback: defineContract({
+    timeoutMs: 60_000,
+    method: 'GET',
+    path: '/api/community/feedback',
+    params: z.object({ refresh: z.literal('1').optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackLocalListSchema,
+    error: HostApiErrorSchema,
+  }),
+  getCommunityFeedback: defineContract({
+    timeoutMs: 60_000,
+    method: 'GET',
+    path: '/api/community/feedback/items/:ref',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+  }),
+  createCommunityFeedbackDraft: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/drafts',
+    params: EmptyParamsSchema,
+    request: CommunityFeedbackDraftInputSchema,
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  updateCommunityFeedbackDraft: defineContract({
+    method: 'PUT',
+    path: '/api/community/feedback/drafts/:draftId',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: CommunityFeedbackDraftUpdateSchema,
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  sendCommunityFeedbackDraft: defineContract({
+    timeoutMs: 60_000,
+    method: 'POST',
+    path: '/api/community/feedback/drafts/:draftId/send',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: z.object({ consent: z.boolean().default(false) }).strict(),
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  discardCommunityFeedbackDraft: defineContract({
+    method: 'DELETE',
+    path: '/api/community/feedback/drafts/:draftId',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  previewCommunityFeedbackPayload: defineContract({
+    method: 'GET',
+    path: '/api/community/feedback/drafts/:draftId/preview',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackPayloadSchema,
+    error: HostApiErrorSchema,
+  }),
+  getLastSentCommunityFeedbackPayload: defineContract({
+    method: 'GET',
+    path: '/api/community/feedback/last-sent',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackLastPayloadSchema,
+    error: HostApiErrorSchema,
+  }),
+  replyCommunityFeedback: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/messages',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: z.object({ body: z.string().trim().min(1).max(4000) }).strict(),
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  withdrawCommunityFeedback: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/withdraw',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: CommunityFeedbackWithdrawSchema,
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  reopenCommunityFeedback: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/reopen',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: CommunityFeedbackReopenSchema,
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  markCommunityFeedbackAffected: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/affected',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: z.object({ affected: z.boolean().default(true), consent: z.boolean().default(false) }).strict(),
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  confirmCommunityFeedbackFixed: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/confirm-fixed',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: z.object({}).strict(),
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
   }),
   startCommunityLogin: defineContract({
     method: 'POST',
@@ -4421,3 +4692,21 @@ export function buildHostApiContractPath<Params extends AnySchema>(
 export function buildHostApiPath<Name extends HostApiContractName>(name: Name, input: HostApiParams<Name>): string {
   return buildValidatedHostApiPath(HostApiContracts[name], input)
 }
+import {
+  CommunityFeedbackDraftIdSchema,
+  CommunityFeedbackDraftInputSchema,
+  CommunityFeedbackDraftSchema,
+  CommunityFeedbackDraftUpdateSchema,
+  CommunityFeedbackLastPayloadSchema,
+  CommunityFeedbackLocalListSchema,
+  CommunityFeedbackPayloadSchema,
+  CommunityFeedbackSettingsSchema,
+  CommunityFeedbackSettingsUpdateSchema,
+  CommunityFeedbackSnapshotSchema,
+} from './community-feedback-host.js'
+import {
+  CommunityFeedbackRefSchema,
+  CommunityFeedbackSchema,
+  CommunityFeedbackWithdrawSchema,
+  CommunityFeedbackReopenSchema,
+} from './community-feedback.js'

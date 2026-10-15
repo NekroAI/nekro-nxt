@@ -259,9 +259,8 @@ export class DesktopInstanceManager {
       async (manager) => {
         manager.#registerIpc()
         manager.#window.on('resize', () => manager.#layout())
-        manager.#window.on('close', () => manager.dispose())
+        manager.#window.on('closed', () => manager.dispose())
         await manager.switchTo(profiles.selectedProfileId, false)
-        manager.#window.show()
         manager.#profileMonitor.start()
       },
     )

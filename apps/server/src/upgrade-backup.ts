@@ -68,12 +68,22 @@ export interface UpgradeBackupOptions {
 
 const EXCLUDED = [
   'backups',
+  'logs',
   'extension-cache',
   'runtimes',
   'dsh/plugin-staging',
   'dsh/request-images',
   'dsh/pnpm-store',
 ] as const
+// Only live data-root logs survive restore in place; rebuildable exclusions still move aside.
+const retainedDuringRestore = (root: string, name: string): boolean =>
+  root === 'data' && (name === 'backups' || name === 'logs')
+const verifyLiveLogsDirectory = async (roots: readonly BackupRoot[]): Promise<void> => {
+  const root = roots.find((item) => item.key === 'data')!
+  const directory = path.join(root.target, 'logs')
+  if (await exists(directory)) await realDirectory(directory)
+}
+
 const errorCode = (error: unknown): unknown => (error instanceof Error && 'code' in error ? error.code : undefined)
 const exists = async (filename: string): Promise<boolean> => {
   try {
@@ -215,8 +225,9 @@ interface Inventory {
 const inventory = async (
   roots: readonly BackupRoot[],
   applyExclusions: boolean,
-  skipBackupControl = false,
+  skipRetainedLiveDirectories = false,
 ): Promise<Inventory> => {
+  if (skipRetainedLiveDirectories) await verifyLiveLogsDirectory(roots)
   const entries: BackupEntry[] = []
   const identities = new Map<string, string>()
   let sqliteWalBytes = 0
@@ -229,7 +240,7 @@ const inventory = async (
       const candidate = relative ? `${relative}/${name}` : name
       if (
         (applyExclusions && excluded(root.key, candidate)) ||
-        (skipBackupControl && root.key === 'data' && candidate === 'backups')
+        (skipRetainedLiveDirectories && retainedDuringRestore(root.key, candidate))
       )
         continue
       relativePath.parse(candidate)
@@ -354,9 +365,9 @@ const verifyEntries = async (
   roots: readonly BackupRoot[],
   entries: readonly BackupEntry[],
   backupStorage: boolean,
-  skipBackupControl = false,
+  skipRetainedLiveDirectories = false,
 ): Promise<void> => {
-  const found = await inventory(roots, false, skipBackupControl)
+  const found = await inventory(roots, false, skipRetainedLiveDirectories)
   const actual = new Map(found.entries.map((entry) => [`${entry.root}/${entry.path}`, entry]))
   if (actual.size !== entries.length) throw new Error('恢复点文件清单校验失败：存在缺失或额外文件。')
   const directories = new Set<string>()
@@ -666,6 +677,7 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
     ...(externalRoots === undefined ? {} : { externalRoots }),
   })
   if (!sameRoots(manifest.roots, roots)) throw new Error('恢复目标与原始根目录不匹配。')
+  await verifyLiveLogsDirectory(roots)
   const journalPath = path.join(backupRoot, `restore-${backupId}.json`)
   const manifestSha256 = await fileDigest(path.join(directory, 'manifest.json'))
   const subtreeHashes = expectedSubtreeDigests(manifest.entries)
@@ -691,7 +703,7 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
           throw new Error('恢复工作目录与现有路径冲突。')
       }
       for (const name of (await readdir(root.target)).sort()) {
-        if (root.key === 'data' && name === 'backups') continue
+        if (retainedDuringRestore(root.key, name)) continue
         basename.parse(name)
         moves.push({ root: root.key, name, sha256: await subtreeDigest(path.join(root.target, name)) })
       }
@@ -710,6 +722,7 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
   }
   const checkpoint = async (name: string): Promise<void> => {
     await options.onCheckpoint?.(name)
+    await verifyLiveLogsDirectory(roots)
     options.signal?.throwIfAborted()
   }
   const moveNames = new Set<string>()
@@ -718,7 +731,7 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
     if (
       !roots.some((root) => root.key === move.root) ||
       moveNames.has(key) ||
-      (move.root === 'data' && move.name === 'backups')
+      retainedDuringRestore(move.root, move.name)
     )
       throw new Error('恢复 journal 路径无效。')
     moveNames.add(key)
@@ -843,8 +856,8 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
     for (const root of roots) {
       const previous = path.join(failureDirectory(backupRoot, root, backupId), root.key)
       const planned = journal.moves.filter((move) => move.root === root.key)
-      for (const name of [...(await readdir(root.target)), ...(await readdir(previous))]) {
-        if (root.key === 'data' && name === 'backups') continue
+      const liveNames = (await readdir(root.target)).filter((name) => !retainedDuringRestore(root.key, name))
+      for (const name of [...liveNames, ...(await readdir(previous))]) {
         if (!planned.some((move) => move.name === name)) throw new Error('恢复期间出现新的现场文件，已保留并停止。')
       }
       for (const move of planned) {
@@ -871,7 +884,7 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
       .filter((entry) => entry.root === root.key && !entry.path.includes('/'))
       .map((entry) => entry.path)
     for (const name of await readdir(root.target))
-      if (!(root.key === 'data' && name === 'backups') && !names.includes(name))
+      if (!retainedDuringRestore(root.key, name) && !names.includes(name))
         throw new Error('恢复期间目标出现未识别文件，已保留并停止。')
     for (const name of names) {
       const source = path.join(staged.target, name)
@@ -887,7 +900,7 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
       await checkpoint(`restored:${root.key}/${name}`)
     }
   }
-  // Verify the complete installed generation, ignoring only the coordinator's own backups directory.
+  // Only live backups/ and logs/ are retained; staged and failed generations remain strictly verified.
   await verifyEntries(roots, manifest.entries, false, true)
   await verifyFailedGeneration()
   for (const root of roots) await syncUpgradeDirectory(root.target)

@@ -1,5 +1,6 @@
 import { recognizeCommand } from '@nekro-nxt/contracts'
 import { viewerKeyFromRequest } from './viewer.js'
+import { expireComposerAssets, uploadComposerAsset, validateComposerAssets } from './channel-composer-assets.js'
 import {
   AgentIdSchema,
   AssetIdSchema,
@@ -566,6 +567,9 @@ export function registerWorkspaceRoutes({
             ? {}
             : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
           ...(parsed.scheduledTasks === undefined ? {} : { scheduledTasks: parsed.scheduledTasks }),
+          ...(parsed.communityFeedbackAuto === undefined
+            ? {}
+            : { communityFeedbackAuto: parsed.communityFeedbackAuto }),
           ...(parsed.codeRun === undefined ? {} : { codeRun: parsed.codeRun }),
           ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
           ...(parsed.commandAccounts === undefined
@@ -650,6 +654,7 @@ export function registerWorkspaceRoutes({
       const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
+      const assetUploadMatch = /^\/api\/channels\/([^/]+)\/assets$/.exec(url.pathname)
       const channelMatch = /^\/api\/channels\/([^/]+)$/.exec(url.pathname)
       const rawChannelId =
         messageMatch?.[1] ??
@@ -663,6 +668,7 @@ export function registerWorkspaceRoutes({
         runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
         assetMatch?.[1] ??
+        assetUploadMatch?.[1] ??
         channelMatch?.[1]
       if (!rawChannelId) {
         writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
@@ -923,10 +929,6 @@ export function registerWorkspaceRoutes({
       }
 
       if (assetMatch) {
-        if (req.method !== 'GET') {
-          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
-          return
-        }
         const encodedAssetId = assetMatch[2]
         if (encodedAssetId === undefined) {
           writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
@@ -937,6 +939,17 @@ export function registerWorkspaceRoutes({
           assetId = AssetIdSchema.parse(decodeURIComponent(encodedAssetId))
         } catch {
           writeError(res, 400, 'invalid-asset', 'Invalid asset id.')
+          return
+        }
+        expireComposerAssets(runtime, typedChannelId)
+        if (req.method === 'DELETE') {
+          // Only the browser-owned unused grant is withdrawn. Sent/shared resources remain readable.
+          runtime.repository.revokeUnusedBrowserAsset(assetId, typedChannelId)
+          writeContractJson(res, 200, HostApiContracts.deleteChannelAsset, { assetId, revoked: true })
+          return
+        }
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
         if (!runtime.repository.canAccessAsset(assetId, typedChannelId)) {
@@ -959,6 +972,24 @@ export function registerWorkspaceRoutes({
           res.end(bytes)
         } catch (error) {
           writeError(res, 500, 'asset-read-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
+
+      if (assetUploadMatch) {
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        try {
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.uploadChannelAsset,
+            await uploadComposerAsset(runtime, typedChannelId, req),
+          )
+        } catch (error) {
+          writeError(res, 400, 'asset-upload-failed', error instanceof Error ? error.message : String(error))
         }
         return
       }
@@ -1047,6 +1078,7 @@ export function registerWorkspaceRoutes({
           })
           return
         }
+        validateComposerAssets(runtime, typedChannelId, parsed.parts)
         if (channel.kind === 'internal') {
           const result = await runtime.internalChannel.postMessage({
             channelId: typedChannelId,
@@ -1074,11 +1106,14 @@ export function registerWorkspaceRoutes({
           writeError(res, 400, 'proactive-send-disabled', '这个平台连接不允许主动发言。请在连接配置中打开主动发送。')
           return
         }
-        await runtime.channels.sendAdminConsoleMessage({
+        const result = await runtime.channels.sendAdminConsoleMessage({
           channelId: typedChannelId,
           parts: command.kind === 'escaped' ? command.parts : parsed.parts,
           ...(parsed.clientEventId === undefined ? {} : { clientRequestId: parsed.clientEventId }),
         })
+        if (result.status === 'failed' || result.status === 'unknown') {
+          throw new Error(result.status === 'failed' ? '消息发送失败，草稿已保留。' : '消息发送结果未知，草稿已保留。')
+        }
         writeJson(
           res,
           200,

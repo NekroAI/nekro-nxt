@@ -26,6 +26,8 @@ const severity: Record<HostAttentionItem['severity'], AttentionSeverity> = {
 function hrefOf(item: HostAttentionItem): string {
   const { related } = item
   switch (item.action.kind) {
+    case 'open-logs':
+      return '/logs'
     case 'open-channel':
     case 'resolve-delivery':
       return related.channelId ? `/channels/${related.channelId}` : '/channels'
@@ -35,6 +37,8 @@ function hrefOf(item: HostAttentionItem): string {
       return related.connectionId ? `/wiring/connections/${related.connectionId}` : '/wiring'
     case 'open-agent':
       return related.agentId ? `/agents/${related.agentId}` : '/agents'
+    case 'open-community-feedback':
+      return '/community/feedback'
   }
 }
 

@@ -5,6 +5,7 @@ CREATE TABLE `command_executions` (
 	`request_id` text NOT NULL,
 	`event_id` text,
 	`status` text NOT NULL,
+	`needs_recovery` integer DEFAULT true NOT NULL,
 	`record` text NOT NULL,
 	FOREIGN KEY (`channel_id`) REFERENCES `channels`(`id`) ON UPDATE no action ON DELETE restrict,
 	FOREIGN KEY (`event_id`) REFERENCES `channel_events`(`id`) ON UPDATE no action ON DELETE restrict
@@ -13,6 +14,7 @@ CREATE TABLE `command_executions` (
 CREATE UNIQUE INDEX `command_execution_request_uq` ON `command_executions` (`channel_id`,`source`,`request_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `command_execution_event_uq` ON `command_executions` (`event_id`);--> statement-breakpoint
 CREATE INDEX `command_execution_status_idx` ON `command_executions` (`status`);--> statement-breakpoint
+CREATE INDEX `command_execution_recovery_idx` ON `command_executions` (`needs_recovery`,`id`);--> statement-breakpoint
 CREATE TABLE `command_grants` (
 	`channel_id` text NOT NULL,
 	`connection_id` text NOT NULL,

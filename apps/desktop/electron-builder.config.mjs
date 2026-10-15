@@ -81,6 +81,7 @@ const config = {
     'instance-overlay.css',
     'instance-overlay.js',
     'product-release.json',
+    'tray/*.ico',
     'package.json',
   ],
   extraResources: [
@@ -112,8 +113,10 @@ const config = {
     executableName: distribution.executableName,
     icon: 'icon.ico',
     artifactName: `${distribution.artifactSlug}-win-x64-v\${version}-setup.\${ext}`,
-    // 未签名阶段跳过依赖 Wine 的 rcedit/sign；NSIS GUID 与安装身份仍完整保留。
-    signAndEditExecutable: false,
+    // electron-builder 26 使用纯 Node.js 的 resedit 写入 EXE 图标和版本资源。
+    // 关闭代码签名即可避免证书/Wine 依赖，同时保留资源编辑，并支持交叉构建。
+    signAndEditExecutable: true,
+    signExecutable: false,
     target: [{ target: 'nsis', arch: desktopArchitectures('win') }],
   },
   nsis: {

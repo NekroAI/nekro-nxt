@@ -28,6 +28,7 @@ const base: AgentDraft = {
     scheduledTasks: true,
     codeRun: false,
     commandNetwork: true,
+    communityFeedbackAuto: false,
     commandAccounts: [],
   },
 }

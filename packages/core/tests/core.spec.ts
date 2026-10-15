@@ -41,6 +41,7 @@ import {
   digestRevision,
   parseAgentCapabilityGrants,
   parseStoredAgentCapabilityGrants,
+  storedAgentCapabilityGrants,
   parseImageUnderstandingPolicy,
   SELF_PLACEHOLDER_PLATFORM_USER_ID,
 } from '../src/index.ts'
@@ -579,9 +580,25 @@ describe('CoreService', () => {
       codeRun: false,
       commandNetwork: true,
       commandAccounts: [],
+      communityFeedbackAuto: false,
     })
     expect(() => parseStoredAgentCapabilityGrants({ version: 2, grants: current })).toThrow()
     expect(() => parseStoredAgentCapabilityGrants({ ...current, fullFileAccess: false })).toThrow()
+  })
+
+  it('omits default feedback permission from stored capabilities and preserves older revision digests', () => {
+    const base = {
+      displayName: '反馈样例',
+      persona: '',
+      model: { provider: 'fixture', model: 'fixture' },
+      capabilities: deniedCapabilities,
+    }
+    const disabled = parseAgentCapabilityGrants({ ...deniedCapabilities, communityFeedbackAuto: false })
+    expect(storedAgentCapabilityGrants(disabled)).not.toHaveProperty('communityFeedbackAuto')
+    expect(digestRevision(base)).toBe(digestRevision({ ...base, capabilities: disabled }))
+    const enabled = { ...disabled, communityFeedbackAuto: true }
+    expect(storedAgentCapabilityGrants(enabled).communityFeedbackAuto).toBe(true)
+    expect(digestRevision({ ...base, capabilities: enabled })).not.toBe(digestRevision(base))
   })
 
   it('keeps the digest without command accounts and treats a grant, or its usage hint, as new content', () => {
@@ -1386,6 +1403,7 @@ describe('CoreService', () => {
       codeRun: false,
       commandNetwork: true,
       commandAccounts: [],
+      communityFeedbackAuto: false,
     })
 
     const repository = new MemoryRepository()

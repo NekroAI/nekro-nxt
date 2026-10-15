@@ -1,4 +1,5 @@
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
+import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { renderChannelMessageResult } from './channel-message-result.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
 import {
@@ -13,6 +14,13 @@ import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
 import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { mountCodeRunRuntime } from './code-run.js'
+import {
+  COMMUNITY_FEEDBACK_PROMPT,
+  FeedbackTurnOrigin,
+  feedbackAdmissionOrigin,
+  mountFeedbackTools,
+} from './feedback-tools.js'
+import type { CommunityFeedbackService } from './community-feedback.js'
 import { WorkspaceFileSystem } from './workspace-file-system.js'
 import {
   commandAccountEnvironment,
@@ -414,6 +422,7 @@ export interface AgentCommunicationPort {
 }
 
 export interface DshHostRuntimeOptions {
+  readonly logs?: HostLogSink
   readonly providerRemoval?: LlmProviderRemovalCoordinator
   /** Host-local record of provider connection tests shown beside each provider. */
   readonly providerTestResults?: LlmProviderTestResults
@@ -436,6 +445,10 @@ export interface DshHostRuntimeOptions {
   readonly members?: ChannelMemberRelations
   /** Channel-specific instructions, read on every model request so edits apply to running sessions. */
   readonly channelPrompts?: Pick<ChannelPrompts, 'current' | 'updateNotesByAgent' | 'memberNotes' | 'saveMemberNote'>
+  readonly feedback?: {
+    readonly service: () => CommunityFeedbackService | undefined
+    readonly isAdminClientChannel: (channelId: ChannelId) => boolean
+  }
   /** The channel's backlog and review budget; absent hosts use the defaults. */
   readonly contextPolicy?: (channelId: ChannelId) => ChannelContextPolicy
   readonly assets: AssetAccessRepository
@@ -2908,11 +2921,14 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
 
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
 export class DshHostRuntime implements AgentSessionDriver {
+  readonly #logs: HostLogSink | undefined
   readonly #context: Context
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
   readonly #members: ChannelMemberRelations | undefined
   readonly #channelPrompts: DshHostRuntimeOptions['channelPrompts']
+  readonly #feedback: DshHostRuntimeOptions['feedback']
+  readonly #feedbackTurns = new Map<string, FeedbackTurnOrigin>()
   readonly #contextPolicy: (channelId: ChannelId) => ChannelContextPolicy
   readonly #imageContext: SessionImageContext
   readonly #dynamic: DynamicAuthoringRuntime
@@ -2950,11 +2966,13 @@ export class DshHostRuntime implements AgentSessionDriver {
     channelReplyGuard: ChannelReplyGuardController,
   ) {
     this.#context = context
+    this.#logs = options.logs
     this.#runtimeProjection = new SessionRuntimeProjection(context, this.#sessions)
     this.#communication = options.communication
     this.#history = options.history
     this.#members = options.members
     this.#channelPrompts = options.channelPrompts
+    this.#feedback = options.feedback
     this.#contextPolicy = options.contextPolicy ?? (() => DEFAULT_CHANNEL_CONTEXT_POLICY)
     this.#assets = options.assets
     this.#assetService = options.assetService
@@ -2998,14 +3016,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#extensionMounts = new PersistentExtensionMounts(
       this.#sessions,
       extensionHost === undefined
-        ? {}
+        ? { ...(options.logs === undefined ? {} : { logs: options.logs }) }
         : {
-            nxt: ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext }) => {
+            ...(options.logs === undefined ? {} : { logs: options.logs }),
+            logName: (revision) => extensionHost.describeRevision(revision).displayName,
+            nxt: ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext, sdk }) => {
               const described = extensionHost.describeRevision(revision)
               const channelId = this.#sessions.require(sessionId).channelId
               extensionHost.onSessionMount?.({ agentId, revision, channelId })
               return createNxtHostService(
                 {
+                  sdk,
                   mode: 'activation',
                   agentId,
                   ownerKey: revision.extensionId,
@@ -3123,6 +3144,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       options.dshPlugins === undefined
         ? undefined
         : new DshPluginLifecycleCoordinator({
+            ...(options.logs === undefined ? {} : { logs: options.logs }),
             repository: options.dshPlugins.repository,
             rootContext: context,
             isolateContext: isolatePrivateExtensionServices,
@@ -3164,12 +3186,38 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
     const context = new Context()
     try {
+      if (options.logs) {
+        for (const [plugin, name] of [
+          [LlmRuntime, 'llm'],
+          [SessionStore, 'session'],
+          [ToolRuntime, 'tools'],
+          [AgentRegistry, 'agent'],
+          [SkillRegistry, 'skill'],
+          [SystemPrompt, 'system-prompt'],
+          [TokenMeter, 'token-meter'],
+          [LlmRetry, 'llm-retry'],
+          [ToolCallTimeoutPolicy, 'tool-call-timeout-policy'],
+          [WebRuntime, 'web'],
+          [SubagentSpawnInProcess, 'subagent-spawn-in-process'],
+          [SessionStats, 'session-stats'],
+          [SessionCheckpointPolicy, 'session-checkpoint-policy'],
+          [ToolResultPruner, 'compaction-tool-result-pruner'],
+        ] as const)
+          registerLogModule(plugin, {
+            kind: 'dsh-plugin',
+            id: `plugin:@deepseek-ai/dsh-${name}`,
+            name: `DSH · ${name}`,
+            version: DEEPSEEK_HARNESS_VERSION,
+          })
+        attachCordisLogs(context, options.logs)
+      }
       await context.plugin(NekroAssetAttachmentStore, {
         assets: options.assets,
         assetService: options.assetService,
         requestImageRoot: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'request-images'),
       })
       await prepareDshHostProfile(context, {
+        ...(options.logs === undefined ? {} : { logs: options.logs }),
         ...(options.llmSettingsPath === undefined ? {} : { settingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { credentialPath: options.llmCredentialPath }),
       })
@@ -3522,6 +3570,31 @@ export class DshHostRuntime implements AgentSessionDriver {
       readonly hasClient: boolean
     }> = []
     const setup = async (agentContext: Context): Promise<void> => {
+      if (this.#logs) {
+        bindLogOwner(
+          agentContext,
+          this.#logs,
+          { kind: 'system', id: 'agent-runtime', name: '智能体运行' },
+          { agentId: revision.agentId, channelId: input.channelId, sessionId, episodeId: input.episodeId },
+        )
+        attachSessionLogs(
+          agentContext,
+          this.#logs,
+          {
+            agentId: revision.agentId,
+            channelId: input.channelId,
+            sessionId,
+            episodeId: input.episodeId,
+          },
+          {
+            agentName: revision.displayName,
+            ...(channelContext.displayName === undefined ? {} : { channelName: channelContext.displayName }),
+            provider: revision.model.provider,
+            model: revision.model.model,
+          },
+        )
+      }
+      const feedbackOrigin = new FeedbackTurnOrigin()
       agentContext.effect(() => {
         const record = this.#sessions.register({
           sessionId,
@@ -3529,8 +3602,43 @@ export class DshHostRuntime implements AgentSessionDriver {
           channelId: input.channelId,
           episodeId: input.episodeId,
         })
-        return () => this.#sessions.remove(sessionId, record)
+        this.#feedbackTurns.set(sessionId, feedbackOrigin)
+        return () => {
+          this.#sessions.remove(sessionId, record)
+          this.#feedbackTurns.delete(sessionId)
+        }
       }, 'nekro-nxt: product Agent ownership')
+      const feedbackTools = mountFeedbackTools(agentContext.tools, {
+        service: () => this.#feedback?.service(),
+        agentId: revision.agentId,
+        channelId: input.channelId,
+        rootSessionId: sessionId,
+        autoGranted: revision.capabilities.communityFeedbackAuto,
+        origin: feedbackOrigin,
+      })
+      agentContext.effect(() => feedbackTools.dispose, 'nekro-nxt: community feedback tools')
+      agentContext.on('system-prompt/assemble', async (_assembly, context, next) => {
+        // DSH assembles tools before agent/pre-step. Reassemble once after changing the owned registrations.
+        if (feedbackTools.refresh()) return agentContext.systemPrompt.assemble(context)
+        return next()
+      })
+      agentContext.on('agent/pre-step', async ({ agent, turn, messages }, next) => {
+        if (agent.id === sessionId) {
+          feedbackOrigin.begin(turn, messages)
+        }
+        return next()
+      })
+      agentContext.on('agent/inbox/discarded', ({ agent, message }) => {
+        if (agent.id === sessionId) feedbackOrigin.discard(message.id)
+      })
+      agentContext.systemPrompt.section({
+        name: 'nekro-nxt:community-feedback',
+        order: 22,
+        text: (context) =>
+          this.#feedback?.service()?.enabled() && scopeHasTool(agentContext.tools, 'feedback_draft', context.scope)
+            ? COMMUNITY_FEEDBACK_PROMPT
+            : '',
+      })
       const compilePersona = () =>
         compilePersonaDocument({
           document: revision.personaDocument,
@@ -4064,8 +4172,19 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#channelReplyGuard.rememberAdmission(agent, input.admissionId, input.replyRequired)
     if (input.mode === 'inject') agent.inject(message)
     else {
+      const channelId = input.events[0]!.channelId
+      const origin = this.#feedbackTurns.get(input.dshSessionId)
+      origin?.rememberWake(
+        dshMessageId,
+        feedbackAdmissionOrigin(channelId, this.#feedback?.isAdminClientChannel(channelId) === true, input.events),
+      )
       this.#sessions.get(input.dshSessionId)?.dynamic?.runner.beginOrdinaryTurn()
-      agent.followup(message)
+      try {
+        agent.followup(message)
+      } catch (error) {
+        origin?.discard(dshMessageId)
+        throw error
+      }
     }
     if (imageStats.imageCount > 0 || imageStats.skippedCount > 0) {
       agent.session.append('nekro-nxt/image-admission', {
@@ -4976,3 +5095,6 @@ export class ChannelExtensionRuntimeHost implements ExtensionRuntimeHost {
 }
 
 export { HOST_DSH_PACKAGE_VERSIONS }
+import { attachCordisLogs, bindLogOwner, registerLogModule } from './logs/bridge.js'
+import type { HostLogSink } from './logs/service.js'
+import { attachSessionLogs } from './logs/session.js'

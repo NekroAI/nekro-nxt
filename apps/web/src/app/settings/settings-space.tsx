@@ -11,6 +11,7 @@ import {
   Plug,
   Plus,
   Search,
+  ScrollText,
   Upload,
   UserRoundKey,
 } from 'lucide-react'
@@ -72,6 +73,8 @@ import { useCrumb } from '../shell/crumb.js'
 import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
 import { AccountsSection } from './accounts-section.js'
+import { LogSettings } from '../logs/log-settings.js'
+import { FeedbackSettingsSection } from './feedback-section.js'
 import styles from './settings.module.css'
 
 const SECTIONS = [
@@ -82,9 +85,11 @@ const SECTIONS = [
   { key: 'retrieval', label: '检索', icon: <Search size={16} /> },
   { key: 'accounts', label: '账号与服务', icon: <UserRoundKey size={16} /> },
   { key: 'commands', label: '命令', icon: <Blocks size={16} /> },
+  { key: 'feedback', label: '社区反馈', icon: <MessageCircle size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
+  { key: 'logs', label: '日志保存', icon: <ScrollText size={16} /> },
   { key: 'about', label: '关于', icon: <Info size={16} /> },
 ] as const
 
@@ -171,6 +176,7 @@ export default function SettingsSpace() {
         <MainContent width="readable">
           <NarrowNav section={section} />
           {section === 'commands' ? <CommandsSection /> : null}
+          {section === 'logs' ? <LogSettings /> : null}
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
           {section === 'retrieval' ? <Retrieval /> : null}
@@ -181,6 +187,7 @@ export default function SettingsSpace() {
             </>
           ) : null}
           {section === 'notifications' ? <Notifications /> : null}
+          {section === 'feedback' ? <FeedbackSettingsSection /> : null}
           {section === 'access' ? (
             <>
               <SectionHead title="登录设备" />
@@ -698,6 +705,7 @@ function Notifications() {
   const [deviceKey, setDeviceKey] = useState('')
   const [clearKey, setClearKey] = useState(false)
   const [approval, setApproval] = useState(settings.events['dynamic-client-approval-requested'] ?? true)
+  const [feedback, setFeedback] = useState(settings.events['community-feedback-update'])
   const [busy, setBusy] = useState<'' | 'save' | 'bark' | 'system'>('')
   const [saveError, setSaveError] = useState('')
 
@@ -708,6 +716,7 @@ function Notifications() {
     setDeviceKey('')
     setClearKey(false)
     setApproval(settings.events['dynamic-client-approval-requested'] ?? true)
+    setFeedback(settings.events['community-feedback-update'])
     setSaveError('')
   }
   // Saved settings changed (here or elsewhere): show them. Keyed by content, so a refresh that returns the same
@@ -723,6 +732,7 @@ function Notifications() {
       ? ['Bark']
       : []),
     ...(approval !== (settings.events['dynamic-client-approval-requested'] ?? true) ? ['通知事件'] : []),
+    ...(feedback !== settings.events['community-feedback-update'] ? ['社区反馈更新'] : []),
   ]
 
   const run = async (kind: Exclude<typeof busy, ''>, action: () => Promise<unknown>, done: string) => {
@@ -752,7 +762,7 @@ function Notifications() {
             ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
             ...(clearKey ? { clearDeviceKey: true } : {}),
           },
-          events: { 'dynamic-client-approval-requested': approval },
+          events: { 'dynamic-client-approval-requested': approval, 'community-feedback-update': feedback },
         }),
       '通知设置已保存',
     )
@@ -851,6 +861,9 @@ function Notifications() {
         <PropertyList>
           <PropertyRow label="创造任务等待确认运行" tip="智能体写好带界面的候选，需要你允许运行时">
             <Switch label="创造任务等待确认运行" checked={approval} onCheckedChange={setApproval} />
+          </PropertyRow>
+          <PropertyRow label="社区反馈更新" tip="反馈等待确认、收到回复或处理状态有变化时">
+            <Switch label="社区反馈更新" checked={feedback} onCheckedChange={setFeedback} />
           </PropertyRow>
         </PropertyList>
       </PropertyGroup>

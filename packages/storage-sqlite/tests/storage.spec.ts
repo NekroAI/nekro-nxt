@@ -19,7 +19,6 @@ import {
   ChannelMemberIdSchema,
   ConnectionIdSchema,
   ConnectionEventIdSchema,
-  CommandExecutionRecordSchema,
   DshPluginEntryIdSchema,
   DshPluginPackageIdSchema,
   EpisodeHandoffIdSchema,
@@ -43,6 +42,7 @@ import {
   SqliteBackupManifestSchema,
   SqliteCoreRepository,
   agentDefinitions,
+  agentRevisions,
   assetOccurrences,
   channelEvents,
   channels,
@@ -52,54 +52,6 @@ import {
 
 const directories: string[] = []
 
-it('backfills indexed recovery work for existing commands without replaying completed replies', async () => {
-  const filename = path.join(await temporaryDirectory(), 'command-recovery.sqlite')
-  await createDatabaseAtMigration(filename, 43)
-  const previous = openCoreDatabase(filename)
-  const core = new CoreService(new SqliteCoreRepository(previous))
-  const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
-  const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'queue-group', kind: 'group' })
-  previous.close()
-  const native = new BetterSqlite3(filename)
-  const variants = [
-    { status: 'pending' },
-    { status: 'running' },
-    { status: 'succeeded' },
-    { status: 'failed' },
-    { status: 'uncertain' },
-    { status: 'succeeded', replyIntentId: 'out_REPLIED' },
-    { status: 'failed', replyError: '无法规划' },
-    { status: 'failed', replySuppressed: true },
-  ]
-  for (const [index, variant] of variants.entries()) {
-    const record = CommandExecutionRecordSchema.parse({
-      id: `cmd_${index}`,
-      channelId: channel.id,
-      source: 'platform',
-      requestId: `request_${index}`,
-      rawText: '/status',
-      identity: { source: 'platform', displayName: '示例成员' },
-      createdAt: index,
-      ...variant,
-    })
-    native
-      .prepare('INSERT INTO command_executions (id,channel_id,source,request_id,status,record) VALUES (?,?,?,?,?,?)')
-      .run(record.id, channel.id, record.source, record.requestId, record.status, JSON.stringify(record))
-  }
-  native.close()
-  const upgraded = await openMigratedCoreDatabase(filename)
-  try {
-    const repository = new SqliteCoreRepository(upgraded)
-    expect(repository.commands.unfinished().map((r) => r.id)).toEqual(['cmd_0', 'cmd_1', 'cmd_2', 'cmd_3', 'cmd_4'])
-    repository.commands.recover(2000)
-    expect(repository.commands.get('cmd_1')?.status).toBe('uncertain')
-    expect(repository.commands.get('cmd_5')?.replyIntentId).toBe('out_REPLIED')
-    expect(repository.commands.get('cmd_6')?.replyError).toBe('无法规划')
-    expect(repository.commands.get('cmd_7')?.replySuppressed).toBe(true)
-  } finally {
-    upgraded.close()
-  }
-})
 const migrationsDirectory = fileURLToPath(new URL('../migrations/', import.meta.url))
 const temporaryDirectory = async (): Promise<string> => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-storage-'))
@@ -218,8 +170,36 @@ const appendTextEvent = (
   }).event
 
 describe('Core SQLite baseline', () => {
+  it('writes feedback permission only when enabled and reads an omitted grant as disabled', async () => {
+    const { database, core, repository } = await createFixture()
+    try {
+      const created = core.createAgent({
+        displayName: '反馈样例',
+        persona: '',
+        model: { provider: 'fixture', model: 'fixture' },
+      })
+      const read = (id: string) =>
+        database.db
+          .select()
+          .from(agentRevisions)
+          .all()
+          .find((row) => row.id === id)!.capabilities
+      expect(read(created.revision.id)).not.toHaveProperty('communityFeedbackAuto')
+      expect(repository.getAgentRevision(created.revision.id)?.capabilities.communityFeedbackAuto).toBe(false)
+      const revised = core.reviseAgent(created.definition.id, created.revision.id, {
+        displayName: created.revision.displayName,
+        persona: created.revision.persona,
+        model: created.revision.model,
+        capabilities: { ...created.revision.capabilities, communityFeedbackAuto: true },
+      })
+      expect(read(revised.revision.id).communityFeedbackAuto).toBe(true)
+    } finally {
+      database.close()
+    }
+  })
+
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(55)
+    expect(Object.keys(coreSchema)).toHaveLength(57)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 

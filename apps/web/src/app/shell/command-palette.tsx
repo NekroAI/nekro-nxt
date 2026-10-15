@@ -59,6 +59,7 @@ const rememberRecent = (id: string): void => {
 }
 
 const SETTINGS_SECTIONS = [
+  { key: 'logs', label: '日志保存' },
   { key: 'models', label: '模型' },
   { key: 'adapters', label: '平台适配器' },
   { key: 'dsh', label: 'DSH 插件' },
@@ -125,6 +126,14 @@ export function CommandPalette({
         keywords: label,
         run: go(path),
       })),
+      {
+        id: 'go:logs',
+        group: '前往',
+        label: '日志',
+        icon: <Rows3 />,
+        keywords: '日志 logs debug 调试',
+        run: go('/logs'),
+      },
       {
         id: 'go:settings',
         group: '前往',

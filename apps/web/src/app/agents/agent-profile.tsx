@@ -246,6 +246,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           }
           actions={
             <>
+              <LogsButton query={{ scope: { agentId: agent.id } }} />
               <Button
                 variant="primary"
                 icon={<MessagesSquare />}
@@ -369,3 +370,4 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
     </MainContent>
   )
 }
+import { LogsButton } from '../logs/logs-button.js'

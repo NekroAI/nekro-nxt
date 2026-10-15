@@ -1,4 +1,4 @@
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import { AssetIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { createPlatformUserDirectoryLoader } from './platform-user-directory.js'
 import { createOwnedHostQuery } from './owned-host-query.js'
 import { StaleHostReadError } from './host-api-client.js'
@@ -73,7 +73,7 @@ export function createProductStore(
     notificationSettings: {
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-      events: { 'dynamic-client-approval-requested': true },
+      events: { 'dynamic-client-approval-requested': true, 'community-feedback-update': true },
     },
     diagnosticNote: '正在连接 NekroNXT Host…',
     workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
@@ -272,10 +272,17 @@ export function createProductStore(
         throw error
       }
     },
-    sendMessage: async (channelId, body) => {
+    sendMessage: async (channelId, body, attachments = []) => {
       await requireHost().actions['channels.sendMessage']({
         channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
-        body: requireValue(body, '消息内容不能为空。'),
+        parts: [
+          ...(body.trim() ? [{ type: 'text' as const, text: body }] : []),
+          ...attachments.map((attachment) =>
+            attachment.partType === 'image'
+              ? { type: 'image' as const, assetId: AssetIdSchema.parse(attachment.assetId), alt: attachment.name }
+              : { type: 'file' as const, assetId: AssetIdSchema.parse(attachment.assetId), name: attachment.name },
+          ),
+        ],
       })
     },
     loadChannelMessages: async (channelId, mode = 'initial') => {

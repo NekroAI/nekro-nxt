@@ -302,6 +302,14 @@ export const workspaceApi = {
     ),
   uploadAgentAvatar: (agentId: string, bytes: Uint8Array<ArrayBuffer>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.uploadAgentAvatar, { agentId }, { bytes }, options),
+  uploadChannelAsset: (
+    channelId: string,
+    bytes: Uint8Array<ArrayBuffer>,
+    fileName: string,
+    options?: HostRequestOptions,
+  ) => callHostApi(HostApiContracts.uploadChannelAsset, { channelId }, { bytes, fileName }, options),
+  deleteChannelAsset: (channelId: string, assetId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.deleteChannelAsset, { channelId, assetId }, undefined, options),
   /** Same-origin URL of the agent's avatar image; it 404s when no avatar is set. */
   agentAvatarUrl: (agentId: string) => `/api/agents/${encodeURIComponent(agentId)}/avatar`,
 }

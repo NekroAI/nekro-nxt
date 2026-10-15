@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { lstat, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { verifySubprocessRuntimeFiles } from '../../../scripts/lib/runtime-subprocess-smoke.mjs'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const repositoryRoot = path.resolve(appRoot, '../..')
@@ -62,7 +63,7 @@ const virtualStore = path.join(destination, 'node_modules', '.pnpm')
 await rm(path.join(virtualStore, 'node_modules', '@nekro-nxt', 'server'), { force: true })
 const requireFile = async (filename) => {
   const entry = await stat(filename).catch(() => undefined)
-  if (!entry?.isFile()) throw new Error(`Server runtime 缺少跨平台预编译文件：${filename}`)
+  if (!entry?.isFile()) throw new Error(`Server runtime 缺少必需文件：${filename}`)
 }
 const requirePackageDirectory = async (packageName) => {
   const packageRoot = path.join(destination, 'node_modules', ...packageName.split('/'))
@@ -70,8 +71,11 @@ const requirePackageDirectory = async (packageName) => {
   if (!entry?.isDirectory() || entry.isSymbolicLink()) {
     throw new Error(`Server runtime 缺少可搬运的实体依赖目录：${packageName}`)
   }
+  await requireFile(path.join(packageRoot, 'package.json'))
   return packageRoot
 }
+
+await verifySubprocessRuntimeFiles(destination, targetPlatform)
 
 const nodePtyRoot = await requirePackageDirectory('node-pty')
 const nodePtyPrebuilds =

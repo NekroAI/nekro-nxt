@@ -755,6 +755,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
         scheduledTasks: true,
         codeRun: false,
         commandNetwork: true,
+        communityFeedbackAuto: false,
         commandAccounts: [],
       },
       channels: [plan.channelId],

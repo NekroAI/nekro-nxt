@@ -10,6 +10,7 @@ import {
   Search,
   Server,
   Settings,
+  ScrollText,
   Sparkles,
   Store,
   Wrench,
@@ -125,6 +126,10 @@ function Rail() {
         )
       })}
       <span className={styles.railSpacer} />
+      <NavLink to="/logs" className={styles.railItem} aria-current={space === '/logs' ? 'page' : undefined}>
+        <ScrollText aria-hidden="true" strokeWidth={1.7} />
+        <span>日志</span>
+      </NavLink>
       <NavLink to="/settings" className={styles.railItem} aria-current={space === '/settings' ? 'page' : undefined}>
         <Settings aria-hidden="true" strokeWidth={1.7} />
         <span>设置</span>

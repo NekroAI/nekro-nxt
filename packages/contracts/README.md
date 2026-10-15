@@ -5,3 +5,5 @@
 Server 必须通过 Registry 解析请求并校验响应，Web Client 必须用同一 Registry 构造路径和验证返回值；不得使用只靠泛型声称响应正确的 `requestJson<T>()`。外部输入必须先通过本包解析函数验证；同进程内已经类型化的数据不重复解析。Desktop 实例描述额外区分宽松的 `InstanceDescriptorWireSchema` 与当前可执行的 `InstanceDescriptorSchema`：前者保留未来新增字段，并读取未知协议数字与 transport 字符串以生成明确的不兼容错误；后者只接受 protocol 1 的 loopback/固定 SPKI TLS，以及 protocol 2 的显式未加密 HTTP。用户可见消息词汇以 `../../docs/03-消息内容与投递协议.md` 为唯一设计事实源。
 
 本包与 [`@nekro-nxt/extension-format`](../extension-format/README.md) 以 MIT 许可发布到 npm，供社区服务与外部工具使用；NekroNXT 其余代码仍为 AGPL-3.0-only。
+
+`community-feedback.ts` 是社区反馈接口的唯一契约来源，社区 Worker 与 NekroNXT 宿主均引用本包。请求和诊断拒绝未声明字段，公开摘要只包含允许公开的字段；完整详情由社区按提交者、作者、管理员和订阅者分别裁剪。社区账号的不可变 `id` 为可选字段，保留对旧社区的读取兼容性；只有支持反馈并返回该 ID 的社区才能启用反馈。

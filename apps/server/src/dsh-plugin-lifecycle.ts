@@ -1,4 +1,6 @@
 import { Context, type FiberState, type Fiber } from '@deepseek-ai/cordis'
+import type { HostLogSink } from './logs/service.js'
+import { bindLogOwner } from './logs/bridge.js'
 import { createHash } from 'node:crypto'
 import Loader, { Entry } from '@deepseek-ai/cordis-plugin-loader'
 import { readPluginInventory } from '@deepseek-ai/dsh-host-plugin-inventory'
@@ -123,6 +125,7 @@ class DshPluginCompatibilityError extends Error {
 }
 
 export interface DshPluginLifecycleOptions {
+  readonly logs?: HostLogSink
   readonly repository: DshPluginRepository &
     Partial<Pick<SqliteCoreRepository, 'getSystemSetting' | 'putSystemSetting'>>
   readonly rootContext: Context
@@ -205,6 +208,7 @@ const phaseOf = (error: unknown, fallback: DshPluginDiagnosticRecord['phase']): 
 }
 
 export class DshPluginLifecycleCoordinator {
+  readonly #logs: HostLogSink | undefined
   readonly #repository: DshPluginLifecycleOptions['repository']
   readonly #rootContext: Context
   readonly #isolateContext: (context: Context) => Context
@@ -220,6 +224,7 @@ export class DshPluginLifecycleCoordinator {
   #disposed = false
 
   constructor(options: DshPluginLifecycleOptions) {
+    this.#logs = options.logs
     this.#repository = options.repository
     this.#rootContext = options.rootContext
     this.#isolateContext = options.isolateContext
@@ -511,6 +516,14 @@ export class DshPluginLifecycleCoordinator {
     const loaderId = await loader.services.loader.create({ name, config: entry.config })
     await loader.services.loader.await()
     loader.loaderIds.set(entry.id, loaderId)
+    const fiber = loader.services.loader.resolve(loaderId).fiber
+    if (fiber && this.#logs)
+      bindLogOwner(fiber.ctx, this.#logs, {
+        kind: 'dsh-plugin',
+        id: entry.id,
+        name: packageRecord.packageName,
+        version: packageRecord.packageVersion,
+      })
     try {
       const observed = await inventoryEntry(loader, loaderId)
       if (!observed?.enabled || observed.fiberPhase !== 'active') {
@@ -676,6 +689,16 @@ export class DshPluginLifecycleCoordinator {
       phase,
       ...(error === undefined ? {} : { message: messageOf(error) }),
       observedAt: this.#timestamp(),
+    })
+    this.#logs?.write({
+      level: error === undefined ? 'info' : 'error',
+      message: error === undefined ? '插件已启用' : `插件操作失败（${phase}）：${messageOf(error)}`,
+      source: {
+        kind: 'dsh-plugin',
+        id: entryId,
+        name: this.#repository.getDshPluginEntry(entryId)?.moduleName ?? 'DSH 插件',
+      },
+      details: { status, phase, error },
     })
     const entry = this.#repository.getDshPluginEntry(entryId)
     if (!entry) return

@@ -8,7 +8,7 @@ if (productVersion === undefined || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$
 }
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/main.ts'],
+  entry: { index: 'src/index.ts', main: 'src/main.ts', 'logs/storage-worker': 'src/logs/storage-worker.ts' },
   format: ['esm'],
   clean: true,
   dts: false,

@@ -14,6 +14,12 @@ export const INBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_inbound_probe_v1'
  */
 export const wrapDynamicHostSource = (source: string, options: { readonly inbound: boolean }): string => `
 const __nxtFactory = { handler: undefined, job: undefined, nxt: undefined, host: undefined, factoryOpen: true }
+const __nxtLogs = []
+let __nxtLogger
+const logger = Object.fromEntries(['debug', 'info', 'warn', 'error'].map(level => [level, (message, details) => {
+  if (__nxtLogger) __nxtLogger[level](message, details)
+  else if (__nxtLogs.length < 100) __nxtLogs.push([level, message, details])
+}]))
 harness.onInbound = (handler) => {
   if (!__nxtFactory.factoryOpen) {
     throw new Error('harness.onInbound 必须在 factory 阶段（Host 源码顶层、return 之前）注册，不能在 apply 或工具里注册。')
@@ -80,21 +86,18 @@ return {
     ]),
   ],
   apply(ctx, config) {
+    __nxtLogger = ctx.nxt.logger
+    if (__nxtLogger) for (const [level, message, details] of __nxtLogs.splice(0)) __nxtLogger[level](message, details)
     __nxtFactory.nxt = ctx.nxt
     __nxtFactory.host = ctx.nxt.hostLayer
     const readConfig = () => ctx.nxt.config()
-    let attachment = ctx
-    try {
-      Object.defineProperty(ctx, 'config', { value: readConfig, configurable: true })
-      if (ctx.config !== readConfig) throw new Error('context is not extensible')
-    } catch {
-      attachment = new Proxy(ctx, {
-        get(target, key) {
-          if (key === 'config') return readConfig
-          return Reflect.get(target, key)
-        },
-      })
-    }
+    const attachment = new Proxy(ctx, {
+      get(target, key) {
+        if (key === 'config') return readConfig
+        if (key === 'logger') return logger
+        return Reflect.get(target, key)
+      },
+    })
     return __nxtApply.call(__nxtPlugin, attachment, config)
   },
 }

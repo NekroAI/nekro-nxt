@@ -146,8 +146,9 @@ test.describe('settings space', () => {
     try {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
-      await expect(list.getByRole('link')).toHaveCount(10)
+      await expect(list.getByRole('link')).toHaveCount(12)
       await expect(list.getByRole('link', { name: '命令', exact: true })).toBeVisible()
+      await expect(list.getByRole('link', { name: '日志保存' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
       const overview = page.getByRole('table', { name: '模型供应商' })
       await expect(overview).toContainText('示例供应商甲')
@@ -378,6 +379,13 @@ test.describe('settings space', () => {
       before: async (target) => {
         // The management edge sets this cookie with every session; a direct local Host never does.
         await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture-csrf', url: baseUrl }])
+        // The management edge owns this document. Vite's SPA fallback would otherwise redirect it to /live.
+        await target.route('**/login', (request) =>
+          request.fulfill({
+            contentType: 'text/html',
+            body: '<!doctype html><html lang="zh-CN"><head><title>虚构登录页</title></head><body><h1>登录</h1></body></html>',
+          }),
+        )
         await target.route('**/api/management/session', async (request) => {
           calls.push('logout')
           await request.fulfill({ json: { authenticated: false } })
@@ -391,7 +399,7 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(11)
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(13)
       const table = page.getByRole('table', { name: '已登录设备' })
       await expect(table).toContainText('浏览器 · Chrome · macOS')
       await expect(table).toContainText('此设备')
@@ -554,6 +562,100 @@ test.describe('settings space', () => {
       await expect(page.getByText('插件已安装，当前未启用。', { exact: true })).toBeVisible()
       expect(errors).toEqual([])
     } finally {
+      await page.close()
+    }
+  })
+
+  test('clears sent feedback on account changes and discards a late response from the previous account', async () => {
+    let account = 'alpha'
+    let hold = false
+    let reads = 0
+    let release: (() => void) | undefined
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { page, errors } = await open('/settings/feedback', {
+      before: async (target) => {
+        await target.route('**/api/community/status', (route) =>
+          route.fulfill({
+            json: {
+              communityUrl: 'https://community.example.test',
+              environment: 'development',
+              features: ['feedback'],
+              account: {
+                id: `usr_${account}`,
+                handle: account,
+                displayName: account === 'alpha' ? '账号甲' : '账号乙',
+                avatarUrl: null,
+              },
+              signedInAt: 1,
+              updatesAvailable: 0,
+            },
+          }),
+        )
+        await target.route('**/api/community/feedback/settings', (route) =>
+          route.fulfill({
+            json: {
+              enabled: false,
+              supported: true,
+              signedIn: true,
+              communityUrl: 'https://community.example.test',
+              communityUserId: `usr_${account}`,
+              consentedAt: null,
+            },
+          }),
+        )
+        await target.route('**/api/community/feedback/last-sent', async (route) => {
+          const captured = account
+          reads += 1
+          if (hold) await barrier
+          await route.fulfill({
+            json: {
+              ref: 'FB-1',
+              sentAt: 1,
+              payload: {
+                clientRequestId: 'fbd_fixture',
+                kind: 'bug',
+                target: 'nxt',
+                title: `${captured} 的虚构反馈`,
+                body: '这条说明只属于提交它的账号。',
+                diagnostics: {},
+                source: 'form',
+                excerptSharedWithAuthor: false,
+              },
+            },
+          })
+        })
+      },
+    })
+    try {
+      await expect(page.getByText('账号甲', { exact: true })).toBeVisible()
+      await page.getByRole('button', { name: '查看最近一次发送的内容', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: '最近一次发送的内容' })).toContainText('alpha 的虚构反馈')
+      account = 'beta'
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await expect(page.getByText('账号乙', { exact: true })).toBeVisible()
+      await expect(page.getByRole('dialog', { name: '最近一次发送的内容' })).toBeHidden()
+      await expect(page.getByText('alpha 的虚构反馈', { exact: false })).toHaveCount(0)
+      account = 'alpha'
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await expect(page.getByText('账号甲', { exact: true })).toBeVisible()
+      hold = true
+      await page.getByRole('button', { name: '查看最近一次发送的内容', exact: true }).click()
+      await expect.poll(() => reads).toBe(2)
+      account = 'beta'
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+      await expect(page.getByText('账号乙', { exact: true })).toBeVisible()
+      const response = page.waitForResponse('**/api/community/feedback/last-sent')
+      release?.()
+      await (await response).finished()
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      )
+      await expect(page.getByRole('dialog', { name: '最近一次发送的内容' })).toBeHidden()
+      expect(errors).toEqual([])
+    } finally {
+      release?.()
       await page.close()
     }
   })

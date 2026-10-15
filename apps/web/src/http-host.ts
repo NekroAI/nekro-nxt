@@ -158,7 +158,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-    events: { 'dynamic-client-approval-requested': true },
+    events: { 'dynamic-client-approval-requested': true, 'community-feedback-update': true },
   },
   diagnosticNote: '正在连接 NekroNXT 服务…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
@@ -804,6 +804,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     authoringTasks: json.authoringTasks,
     scheduledTasks: json.scheduledTasks,
     commandAccounts: json.commandAccounts ?? [],
+    communityFeedback: json.communityFeedback,
     notificationSettings: json.notificationSettings,
     diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,
   }
@@ -1117,8 +1118,14 @@ export class HttpProductHost implements ProductHostPort {
       this.#mutate(HostApiContracts.deactivateExtension, { agentId, extensionId }, undefined),
     'extensions.clientDiagnostic': async ({ extensionId, revisionId, ...body }) =>
       this.#call(HostApiContracts.extensionClientDiagnostic, { extensionId, revisionId }, body),
-    'channels.sendMessage': async ({ channelId, body }) =>
-      this.#mutate(HostApiContracts.sendChannelMessage, { channelId }, { parts: [{ type: 'text', text: body }] }),
+    'channels.sendMessage': async ({ channelId, body, parts }) =>
+      this.#mutate(
+        HostApiContracts.sendChannelMessage,
+        { channelId },
+        {
+          parts: parts ?? [{ type: 'text', text: body ?? '' }],
+        },
+      ),
     'channels.listMessages': async ({ channelId, mode = 'initial', limit, beforeOccurredAt, beforeSourceId }) =>
       this.#loadChannelMessages(
         channelId,

@@ -23,7 +23,7 @@ export interface AssetChannelGrant {
   readonly assetId: AssetId
   readonly channelId: ChannelId
   /** The product operation that owns this grant. This is intentionally not a user/member identity. */
-  readonly source: 'agent-tool' | 'extension-library'
+  readonly source: 'agent-tool' | 'extension-library' | 'browser-composer'
   readonly grantedAt: number
 }
 

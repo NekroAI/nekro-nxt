@@ -1,3 +1,6 @@
+import type { HostLogSink } from './logs/service.js'
+import { bindLogOwner } from './logs/bridge.js'
+import { observedCredentialProvider } from './logs/credentials.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
@@ -52,6 +55,7 @@ export interface DshHostProfileDiagnostic {
 }
 
 export interface DshHostProfileOptions {
+  readonly logs?: HostLogSink
   /** The old settings document is read once and retained byte-for-byte. */
   readonly settingsPath?: string
   readonly credentialPath?: string
@@ -177,7 +181,10 @@ export async function prepareDshHostProfile(context: Context, options: DshHostPr
   observeDshPluginDisposal(context)
   await context.plugin(Loader, { baseUrl: import.meta.url })
   if (options.credentialPath !== undefined) {
-    await context.plugin(LocalCredentialProvider, { path: options.credentialPath })
+    const provider = options.logs?.registerSecret
+      ? observedCredentialProvider((value) => options.logs?.registerSecret?.(value))
+      : LocalCredentialProvider
+    await context.plugin(provider, { path: options.credentialPath })
   }
   profiles.set(context, {
     options,
@@ -598,6 +605,12 @@ export async function activateDshHostProfile(context: Context): Promise<readonly
   await context.loader.await()
   for (const spec of state.entries.values()) {
     const entry = [...context.loader.entries()].find((candidate) => candidate.options.id === spec.id)
+    if (entry?.fiber && state.options.logs)
+      bindLogOwner(entry.fiber.ctx, state.options.logs, {
+        kind: 'dsh-plugin',
+        id: `plugin:${spec.name}`,
+        name: spec.name,
+      })
     if (entry?.disabled) {
       if (spec.required) throw new Error(`Required DSH entry is disabled: ${spec.id}`)
       continue

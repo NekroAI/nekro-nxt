@@ -26,6 +26,7 @@ describe('createAgentDraft', () => {
       codeRun: false,
       commandNetwork: true,
       commandAccounts: [],
+      communityFeedbackAuto: false,
     })
   })
 })

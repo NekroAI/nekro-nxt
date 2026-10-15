@@ -1,3 +1,4 @@
+import { validateComposerAssets } from './channel-composer-assets.js'
 import {
   AgentIdSchema,
   AssetIdSchema,
@@ -297,6 +298,9 @@ export function registerExtensionsRoutes({
                   ? {}
                   : { unrestrictedFileAccess: parsed.unrestrictedFileAccess }),
                 ...(parsed.scheduledTasks === undefined ? {} : { scheduledTasks: parsed.scheduledTasks }),
+                ...(parsed.communityFeedbackAuto === undefined
+                  ? {}
+                  : { communityFeedbackAuto: parsed.communityFeedbackAuto }),
                 ...(parsed.codeRun === undefined ? {} : { codeRun: parsed.codeRun }),
                 ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
                 ...(parsed.commandAccounts === undefined
@@ -471,6 +475,7 @@ export function registerExtensionsRoutes({
             } else if (input.method === 'messages.send') {
               const request = z.object({ channelId: ChannelIdSchema, message: z.unknown() }).strict().parse(input.input)
               const message = HostApiContracts.sendChannelMessage.parseRequest(request.message)
+              validateComposerAssets(runtime, request.channelId, message.parts)
               const channel = runtime.repository.getChannel(request.channelId)
               if (!channel) throw new Error('频道不存在。')
               if (channel.kind === 'internal') {

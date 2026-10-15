@@ -28,12 +28,10 @@ const config = {
 }
 
 describe('Extension V7 contracts', () => {
-  it('supports SDK level 9 without inventing an unreleased product version', () => {
+  it('uses SDK level 8 and separates browser, host and agent permissions', () => {
     expect(EXTENSION_SDK_LEVEL).toBe(9)
-    // Release labels describe shipped products; the new command capability has no release version yet.
-    // Before shipping SDK 9, add its approved version and restore equality (docs/09, section 5).
-    expect(EXTENSION_SDK_RELEASES.at(-1)?.level).toBeLessThanOrEqual(EXTENSION_SDK_LEVEL)
-    expect(extensionSdkVersion(9)).toBeUndefined()
+    // Raising the level needs the NekroNXT version that ships it, which is what users are shown.
+    expect(EXTENSION_SDK_RELEASES.at(-1)?.level).toBe(EXTENSION_SDK_LEVEL)
     expect(extensionSdkVersion(8)).toBe('0.5.0')
     expect(extensionSdkVersion(7)).toBe('0.4.0')
     expect(extensionSdkVersion(EXTENSION_SDK_LEVEL + 1)).toBeUndefined()

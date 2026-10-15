@@ -1,5 +1,6 @@
 import { CommandService, type RegisteredCommand } from './commands/service.js'
 import { RuntimeCompatibilityRegistry } from './runtime-compatibility.js'
+import type { HostLogService } from './logs/service.js'
 import type { DshSessionStorageRetirementReport, InboundHookDecisionRecord } from '@nekro-nxt/storage-sqlite'
 import { LlmProviderRemovalCoordinator } from './llm-provider-removal.js'
 import { LlmProviderTestResults } from './llm-provider-test-results.js'
@@ -14,6 +15,7 @@ import {
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
 import { ChannelRuntime, type ExtensionJobFiring, type InboundHookDecision } from '@nekro-nxt/channel-runtime'
+import { isAdminConsoleOutbound } from '@nekro-nxt/channel-runtime'
 import {
   AgentIdSchema,
   ChannelIdSchema,
@@ -25,6 +27,7 @@ import {
   DEFAULT_CHANNEL_CONTEXT_POLICY,
   DshNxtHostUiSchema,
   HostApiContracts,
+  OutboundIntentIdSchema,
   ExtensionIdSchema,
   HostUiPageInstanceIdSchema,
   type AgentId,
@@ -98,6 +101,8 @@ import { createNxtHostService, type NxtServiceBackends } from './extension-host-
 import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type DshHostRuntimeOptions } from './index.js'
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
+import { CommunityFeedbackService } from './community-feedback.js'
+import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-runtime.js'
 import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
 import { messageGapMs, readMessagePacing } from './message-pacing.js'
@@ -114,6 +119,8 @@ const JOB_HANDLER_TIMEOUT_MS = 15_000
 const JOB_NOTE_MAX_CHARS = 2000
 
 export interface NekroRuntimeOptions {
+  readonly logs?: HostLogService
+  readonly feedbackEnvironment?: FeedbackEnvironment
   /** Production startup keeps inbound facts durable while migration and recovery settle. */
   readonly deferAdmission?: boolean
   /** Core domain SQLite file path (opened + migrated). */
@@ -173,6 +180,9 @@ const inboundDecision = (record: InboundHookDecisionRecord): InboundHookDecision
 })
 
 export class NekroRuntime {
+  readonly #unsubscribeLogFacts: (() => void) | undefined
+  readonly logs: HostLogService | undefined
+  readonly feedback: CommunityFeedbackService
   upgradeBackupId: string | undefined
   readonly repository: SqliteCoreRepository
   readonly compatibility: RuntimeCompatibilityRegistry
@@ -226,6 +236,8 @@ export class NekroRuntime {
   #disposePromise: Promise<void> | undefined
 
   private constructor(input: {
+    readonly logs?: HostLogService
+    readonly feedbackEnvironment?: FeedbackEnvironment | undefined
     readonly database: CoreDatabase
     readonly deferCommandExecution: boolean
     readonly compatibility: RuntimeCompatibilityRegistry
@@ -263,6 +275,7 @@ export class NekroRuntime {
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
   }) {
+    this.logs = input.logs
     this.#database = input.database
     this.repository = input.repository
     this.hostSecurity = input.hostSecurity
@@ -291,6 +304,69 @@ export class NekroRuntime {
         return identity?.platformUserId === account ? part.memberId : undefined
       },
     })
+    if (input.logs) {
+      const observed = new Map<string, string>()
+      this.#unsubscribeLogFacts = this.channels.subscribeFacts((fact) => {
+        if (fact.kind !== 'outbound') return
+        try {
+          const { intent, deliveries } = this.repository.getOutbound(OutboundIntentIdSchema.parse(fact.sourceId))
+          const delivered = deliveries.filter((delivery) => delivery.state === 'sent').length
+          const signature = `${intent.state}:${delivered}`
+          if (observed.get(intent.id) === signature) return
+          if (observed.size >= 1000) observed.delete(observed.keys().next().value!)
+          observed.set(intent.id, signature)
+          const admin = isAdminConsoleOutbound(intent.sourceTurnId)
+          const agentId =
+            admin || intent.agentRevisionId === undefined
+              ? undefined
+              : this.repository.getAgentRevision(intent.agentRevisionId)?.agentId
+          const channel = this.core.getChannel(fact.channelId)
+          const connectionId = channel?.connectionId
+          const summary = {
+            planned: '消息已排队',
+            sending: '正在发送消息',
+            sent: '消息已送达',
+            'partially-sent': '消息部分送达',
+            failed: '消息发送失败',
+            unknown: '消息是否送达尚未确认',
+          } as const
+          const failures = deliveries.flatMap(({ sequence, receipt }) => {
+            if (receipt?.status === 'failed') return [{ sequence, ...receipt.failure, diagnostic: receipt.diagnostic }]
+            if (receipt?.status === 'unknown')
+              return [{ sequence, kind: 'unknown', message: receipt.message, diagnostic: receipt.diagnostic }]
+            return []
+          })
+          const reason = failures[0]?.message
+          const target = channel?.displayName ?? '频道'
+          input.logs!.write({
+            level:
+              intent.state === 'failed'
+                ? 'error'
+                : intent.state === 'unknown' || intent.state === 'partially-sent'
+                  ? 'warn'
+                  : 'debug',
+            message: `${target} · ${summary[intent.state]}（${delivered}/${deliveries.length} 条已送达）${reason ? `：${reason}` : ''}`,
+            source: { kind: 'system', id: 'delivery', name: '消息投递' },
+            scope: {
+              channelId: fact.channelId,
+              episodeId: intent.episodeId,
+              operationId: intent.id,
+              ...(agentId ? { agentId } : {}),
+              ...(connectionId ? { connectionId } : {}),
+            },
+            details: {
+              actor: admin ? 'admin' : intent.commandExecutionId === undefined ? 'agent' : 'command',
+              state: intent.state,
+              delivered,
+              total: deliveries.length,
+              failures: failures.slice(0, 20),
+            },
+          })
+        } catch {
+          /* A diagnostic observer must not change delivery outcomes. */
+        }
+      })
+    }
     this.internalConnectionId = input.internalConnectionId
     this.workspaceRoot = input.workspaceRoot
     this.dataRoot = input.dataRoot
@@ -314,6 +390,12 @@ export class NekroRuntime {
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.authoringTestSecrets = input.authoringTestSecrets
+    this.feedback = new CommunityFeedbackService(
+      this.repository,
+      this.community,
+      runtimeFeedbackSources(this, input.feedbackEnvironment ?? { hostKind: 'server', releaseId: 'development' }),
+      input.now,
+    )
     this.connections = new ConnectionApplicationService(
       this,
       input.now,
@@ -416,6 +498,7 @@ export class NekroRuntime {
       )
       const credentials = new LocalCredentialStore(
         options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
+        { ...(options.logs === undefined ? {} : { onUse: (value: string) => options.logs!.registerSecret(value) }) },
       )
       const authoringTestSecrets = new AuthoringTestSecrets({
         getTask: (taskId) => repository.getAuthoringTask(taskId),
@@ -641,9 +724,22 @@ export class NekroRuntime {
               note = decision.note.trim().slice(0, JOB_NOTE_MAX_CHARS)
             }
           } catch (error) {
-            console.warn(
-              `[nekro-nxt] 扩展「${described.displayName}」的定时任务处理函数出错，按默认唤醒智能体：${error instanceof Error ? error.message : String(error)}`,
-            )
+            const message = `定时任务「${job.label}」处理失败，已回退为唤醒智能体：${error instanceof Error ? error.message : String(error)}`
+            if (options.logs)
+              options.logs.write({
+                level: 'warn',
+                message,
+                source: { kind: 'extension', id: registered.revision.extensionId, name: described.displayName },
+                scope: {
+                  extensionId: registered.revision.extensionId,
+                  revisionId: registered.revision.id,
+                  agentId: job.agentId,
+                  channelId: job.channelId,
+                  operationId: job.jobId,
+                },
+                details: { error, scheduledAt: job.scheduledAt, firedAt: job.firedAt, fallback: 'wake-agent' },
+              })
+            else console.warn(`[nekro-nxt] ${message}`)
           }
         }
         const committed = await channels.fireExtensionJob({ ...job, ...(note === undefined ? {} : { note }) })
@@ -660,8 +756,25 @@ export class NekroRuntime {
       })
       const mcpStatus = new McpStatusRegistry()
       const adapterPort: { current?: PersistentAdapterPort } = {}
+      const loggerFor: NxtServiceBackends['logger'] =
+        options.logs === undefined
+          ? undefined
+          : (binding) =>
+              options.logs!.logger(
+                {
+                  kind: binding.mode === 'dynamic' ? 'system' : 'extension',
+                  id: binding.mode === 'dynamic' ? `preview:${binding.ownerKey}` : binding.ownerKey,
+                  name: binding.mode === 'dynamic' ? `${binding.displayName} · 试运行` : binding.displayName,
+                },
+                {
+                  ...(binding.agentId ? { agentId: binding.agentId } : {}),
+                  ...(binding.channelId ? { channelId: binding.channelId } : {}),
+                  ...(binding.mode === 'dynamic' ? {} : { extensionId: binding.ownerKey }),
+                },
+              )
       const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
         activationBackends: createNxtProductBackends(nxtFacts, {
+          ...(loggerFor === undefined ? {} : { logger: loggerFor }),
           fetch: nxtFetch,
           complete: nxtComplete,
           library: libraryFor(sqliteLibraryRegistry(repository.extensionLibrary)),
@@ -696,6 +809,7 @@ export class NekroRuntime {
           },
         }),
         dynamicBackends: createNxtProductBackends(nxtFacts, {
+          ...(loggerFor === undefined ? {} : { logger: loggerFor }),
           fetch: nxtFetch,
           complete: nxtComplete,
           // Dynamic runs keep their library and index in memory; pictures and channel grants stay real.
@@ -766,7 +880,16 @@ export class NekroRuntime {
         now,
       })
       await commandAccounts.prepare()
+      const feedbackPort: { current?: CommunityFeedbackService } = {}
       const host = await DshHostRuntime.create({
+        ...(options.logs === undefined ? {} : { logs: options.logs }),
+        feedback: {
+          service: () => feedbackPort.current,
+          isAdminClientChannel: (channelId) => {
+            const channel = repository.getChannel(channelId)
+            return channel?.kind === 'internal' && channel.connectionId === internalConnectionId
+          },
+        },
         codeRunNode: () => codeRunNode.executable(),
         commandAccounts: {
           tokenFor: (accountId) => commandAccounts.tokenFor(accountId),
@@ -979,8 +1102,16 @@ export class NekroRuntime {
             extensionName: event.name,
             purpose: event.purpose,
           })
-          .catch((error) => {
-            console.warn('[nekro-nxt] 通知投递失败：', error instanceof Error ? error.message : String(error))
+          .catch((error: unknown) => {
+            if (options.logs)
+              options.logs.write({
+                level: 'error',
+                message: `智能体「${displayName}」的扩展审批通知发送失败：${error instanceof Error ? error.message : String(error)}`,
+                source: { kind: 'system', id: 'notifications', name: '通知' },
+                scope: { agentId: event.agentId, operationId: event.requestId },
+                details: { error },
+              })
+            else console.warn('[nekro-nxt] 通知投递失败：', error instanceof Error ? error.message : String(error))
           })
       })
 
@@ -999,7 +1130,25 @@ export class NekroRuntime {
         fire: fireJob,
         now,
         diagnostic: (job, message) => {
-          console.warn(`[nekro-nxt] 定时任务 ${job.id}（${job.label}）：${message}`)
+          if (options.logs)
+            options.logs.write({
+              level: 'warn',
+              message: `定时任务「${job.label}」：${message}`,
+              source: job.extensionId
+                ? {
+                    kind: 'extension',
+                    id: job.extensionId,
+                    name: repository.getExtension(job.extensionId)?.displayName ?? '扩展',
+                  }
+                : { kind: 'system', id: 'scheduled-tasks', name: '定时任务' },
+              scope: {
+                agentId: job.agentId,
+                channelId: job.channelId,
+                operationId: job.id,
+                ...(job.extensionId ? { extensionId: job.extensionId } : {}),
+              },
+            })
+          else console.warn(`[nekro-nxt] 定时任务 ${job.id}（${job.label}）：${message}`)
         },
         afterSweep: (advanced) => {
           scheduledTasks.prune()
@@ -1007,6 +1156,8 @@ export class NekroRuntime {
         },
       })
       const runtime = new NekroRuntime({
+        ...(options.logs === undefined ? {} : { logs: options.logs }),
+        feedbackEnvironment: options.feedbackEnvironment,
         dataRoot: path.dirname(options.coreDatabasePath),
         deferCommandExecution: options.deferAdmission === true,
         jobScheduler,
@@ -1045,6 +1196,8 @@ export class NekroRuntime {
         adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
       })
       commandReference.current = runtime.commands
+      feedbackPort.current = runtime.feedback
+      await runtime.feedback.initialize()
       return runtime
     } catch (error) {
       database.close()
@@ -1552,6 +1705,8 @@ export class NekroRuntime {
     const handles = await this.connections.disposeRegistrations()
     for (const outcome of handles) if (outcome.status === 'rejected') failures.push(outcome.reason)
     this.#hostClientDiagnostics.clear()
+    this.#unsubscribeLogFacts?.()
+    await this.feedback.dispose()
     this.#database.close()
     if (failures.length) throw new AggregateError(failures, 'Nekro Runtime disposal failed.')
   }

@@ -25,5 +25,6 @@ export const createAgentDraft = (models: readonly ModelSummary[], webSearchAvail
     codeRun: false,
     commandNetwork: true,
     commandAccounts: [],
+    communityFeedbackAuto: false,
   },
 })

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HostSupervisor, type SupervisedHostProcess } from '../src/host-supervisor.ts'
+import { HOST_STOP_GRACE_MS } from '../src/host-shutdown.ts'
 
 class FakeHostProcess implements SupervisedHostProcess {
   readonly #exitListeners: Array<(code: number) => void> = []
@@ -35,6 +36,7 @@ const immediateDelay = (_delayMs: number, signal: AbortSignal): Promise<void> =>
     : Promise.resolve()
 
 describe('Desktop Host supervisor', () => {
+  afterEach(() => vi.useRealTimers())
   it('restarts an exited Host on the same origin and reports recovery', async () => {
     const origins: string[] = []
     const processes: FakeHostProcess[] = []
@@ -204,7 +206,7 @@ describe('Desktop Host supervisor', () => {
     const rejected = expect(start).rejects.toThrow('failed to start')
     const stop = supervisor.stop()
     ready()
-    await rejected
+    await Promise.resolve()
     expect(process.killCalls).toBe(1)
     let stopped = false
     void stop.then(() => {
@@ -213,7 +215,63 @@ describe('Desktop Host supervisor', () => {
     await Promise.resolve()
     expect(stopped).toBe(false)
     process.exit(0)
+    await rejected
     await stop
     expect(stopped).toBe(true)
+  })
+
+  it('forces a ready Host after the grace period, with concurrent stop calls sharing one termination', async () => {
+    vi.useFakeTimers()
+    const process = new FakeHostProcess({ exitOnKill: false })
+    const forceKill = vi.fn(() => process.exit(9))
+    const spawnHost = vi.fn(() => Object.assign(process, { forceKill }))
+    const supervisor = new HostSupervisor({
+      origin: 'http://127.0.0.1:41240',
+      spawnHost,
+      waitUntilReady: async () => {},
+    })
+    await supervisor.start()
+    const first = supervisor.stop()
+    const second = supervisor.stop()
+    await vi.advanceTimersByTimeAsync(HOST_STOP_GRACE_MS - 1)
+    expect(forceKill).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await Promise.all([first, second])
+    expect(forceKill).toHaveBeenCalledOnce()
+    expect(process.killCalls).toBe(1)
+    expect(spawnHost).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not inherit force eligibility when a ready Host crashes and its replacement is still starting', async () => {
+    vi.useFakeTimers()
+    const initial = new FakeHostProcess()
+    const replacement = new FakeHostProcess({ exitOnKill: false })
+    const forceKill = vi.fn()
+    const onStopWaiting = vi.fn()
+    let launches = 0
+    const supervisor = new HostSupervisor({
+      origin: 'http://127.0.0.1:41241',
+      spawnHost: () => (++launches === 1 ? initial : Object.assign(replacement, { forceKill })),
+      waitUntilReady: async (_origin, signal) => {
+        if (launches === 1) return
+        await new Promise<void>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }),
+        )
+      },
+      onStopWaiting,
+    })
+    await supervisor.start()
+    initial.exit(1)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(launches).toBe(2)
+    const stop = supervisor.stop()
+    await vi.advanceTimersByTimeAsync(HOST_STOP_GRACE_MS)
+    expect(forceKill).not.toHaveBeenCalled()
+    expect(onStopWaiting).toHaveBeenCalledWith('protected-operation', expect.any(AbortSignal))
+    expect(replacement.killCalls).toBe(1)
+    replacement.exit(0)
+    await stop
+    expect(vi.getTimerCount()).toBe(0)
   })
 })

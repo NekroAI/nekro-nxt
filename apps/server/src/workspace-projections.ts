@@ -110,19 +110,23 @@ export class WorkspaceProjections {
   #attentionTimer: ReturnType<typeof setTimeout> | undefined
   #attentionCheck: Promise<void> | undefined
   #attentionDirty = false
+  #logFailureAt: number | undefined
   readonly #safetyTimer: ReturnType<typeof setInterval>
+  readonly #unsubscribeFeedback: () => void
   #disposed = false
 
   constructor(runtime: NekroRuntime, broadcast: (event: HostSseEvent) => void, now: () => number = Date.now) {
     this.#runtime = runtime
     this.#broadcast = broadcast
     this.#now = now
+    this.#unsubscribeFeedback = runtime.feedback.subscribe(() => this.scheduleAttentionCheck())
     this.#safetyTimer = setInterval(() => this.scheduleAttentionCheck(), ATTENTION_SAFETY_INTERVAL_MS)
     this.#safetyTimer.unref?.()
   }
 
   dispose(): void {
     this.#disposed = true
+    this.#unsubscribeFeedback()
     clearInterval(this.#safetyTimer)
     if (this.#attentionTimer !== undefined) clearTimeout(this.#attentionTimer)
   }
@@ -412,6 +416,64 @@ export class WorkspaceProjections {
     const runtime = this.#runtime
     const items: AttentionItem[] = []
     const now = this.#now()
+    if (runtime.logs) {
+      const status = runtime.logs.currentStatus()
+      if (status.state === 'degraded') {
+        this.#logFailureAt ??= now
+        items.push({
+          id: `logs:${status.runId}:${this.#logFailureAt}`,
+          kind: 'logs-unavailable',
+          severity: 'warning',
+          subject: { kind: 'logs', id: 'logging' },
+          related: {},
+          title: '日志保存异常',
+          detail: status.error ?? '日志暂时无法保存，聊天仍可继续。',
+          action: { kind: 'open-logs', label: '查看日志' },
+          occurredAt: this.#logFailureAt,
+        })
+      } else this.#logFailureAt = undefined
+    }
+    const feedback = await runtime.feedback.list()
+    const awaitingFeedback = feedback.drafts.filter((draft) => draft.state === 'awaiting' || draft.state === 'failed')
+    const unreadFeedback = feedback.items.filter((item) => item.unread)
+    if (awaitingFeedback.length > 0) {
+      const version = createHash('sha256')
+        .update(JSON.stringify(awaitingFeedback.map((draft) => [draft.id, draft.updatedAt])))
+        .digest('hex')
+        .slice(0, 20)
+      items.push({
+        id: `feedback:drafts:${version}`,
+        kind: 'community-feedback',
+        severity: 'info',
+        subject: { kind: 'community-feedback', id: 'drafts' },
+        related: {},
+        title: `${awaitingFeedback.length} 条反馈等待确认`,
+        detail: '查看草稿和将发送的内容。',
+        action: { kind: 'open-community-feedback', label: '查看草稿' },
+        occurredAt: Math.max(...awaitingFeedback.map((draft) => draft.updatedAt)),
+      })
+    }
+    if (unreadFeedback.length > 0) {
+      const version = createHash('sha256')
+        .update(
+          JSON.stringify(
+            unreadFeedback.map((item) => [item.communityUrl, item.communityUserId, item.ref, item.lastEventSeq]),
+          ),
+        )
+        .digest('hex')
+        .slice(0, 20)
+      items.push({
+        id: `feedback:updates:${version}`,
+        kind: 'community-feedback',
+        severity: 'info',
+        subject: { kind: 'community-feedback', id: 'updates' },
+        related: {},
+        title: `${unreadFeedback.length} 条反馈有更新`,
+        detail: '查看社区回复和处理进展。',
+        action: { kind: 'open-community-feedback', label: '查看反馈' },
+        occurredAt: Math.max(...unreadFeedback.map((item) => item.updatedAt)),
+      })
+    }
 
     for (const record of runtime.repository.projections.listUnsettledAttentionOutbounds(
       now - ATTENTION_DELIVERY_WINDOW_MS,

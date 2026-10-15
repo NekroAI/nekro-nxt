@@ -146,7 +146,7 @@ const snapshotBody = () =>
     notificationSettings: {
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-      events: { 'dynamic-client-approval-requested': true },
+      events: { 'dynamic-client-approval-requested': true, 'community-feedback-update': true },
     },
     models: [
       {

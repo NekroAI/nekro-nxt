@@ -4,18 +4,19 @@ import { z } from 'zod'
  * Host capability level this build implements. A Revision that declares `requires.sdk` above it is rejected at
  * import with an "upgrade NekroNXT" message instead of an opaque schema error. Bump when a Manifest capability
  * ships; never reuse a level for a different meaning. Level 7 is Manifest V7 (host instance + agent attachments); level 8 adds the asset library, image info, tool result
- * images, the search index and host-layer model calls. Level 9 adds explicit chat commands.
+ * images, the search index and host-layer model calls. Level 9 adds the structured logger and explicit chat commands.
  */
 export const EXTENSION_SDK_LEVEL = 9
 
 /**
  * The first NekroNXT version of each capability level, so users read "needs NekroNXT 0.5.0" rather than a level
- * number. Only released levels have a version entry; unreleased levels return undefined.
+ * number. Add the row for a new level in the change that raises EXTENSION_SDK_LEVEL; a test keeps the two in step.
  */
 export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly version: string }[] = [
   { level: 6, version: '0.3.0' },
   { level: 7, version: '0.4.0' },
   { level: 8, version: '0.5.0' },
+  { level: 9, version: '0.6.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */

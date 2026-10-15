@@ -95,6 +95,7 @@ export interface AgentSummary {
     readonly codeRun: boolean
     /** Network for commands and `run_code` programs. */
     readonly commandNetwork: boolean
+    readonly communityFeedbackAuto: boolean
     /** Accounts this agent's commands act as; each names an account of the host's library. */
     readonly commandAccounts: CommandAccountGrant[]
   }
@@ -543,6 +544,7 @@ export interface ProductState {
   readonly capabilityAvailability: CapabilityAvailability
   /** The host's account library; an account takes effect only for agents that grant it. */
   readonly commandAccounts: readonly CommandAccount[]
+  readonly communityFeedback?: HostApiResponse<'snapshot'>['communityFeedback']
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]
@@ -633,7 +635,11 @@ export interface ProductState {
   deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
   resetChannelContext(channelId: string, episodeId: string, mode: 'clear' | 'compact'): Promise<void>
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
-  sendMessage(channelId: string, body: string): Promise<void>
+  sendMessage(
+    channelId: string,
+    body: string,
+    attachments?: readonly { assetId: string; name: string; partType: 'image' | 'file' }[],
+  ): Promise<void>
   loadChannelMessages(channelId: string, mode?: 'initial' | 'older' | 'latest'): Promise<void>
   loadChannelRuntime(channelId: string): Promise<void>
   renameChannel(channelId: string, displayName: string): Promise<void>

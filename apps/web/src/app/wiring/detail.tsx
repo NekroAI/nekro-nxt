@@ -307,6 +307,7 @@ function ConnectionDetail({
 
       {connection.userManaged ? (
         <PropertyGroup title="诊断">
+          <LogsButton query={{ scope: { connectionId: connection.id } }} />
           {descriptor && (descriptor.diagnostics.receive || descriptor.diagnostics.send) ? (
             <PropertyList>
               {descriptor.diagnostics.receive ? (
@@ -534,3 +535,4 @@ export function WiringDetail({
   if (selected?.kind === 'agent') return <AgentDetail key={selected.id} agentId={selected.id} onClose={onClose} />
   return null
 }
+import { LogsButton } from '../logs/logs-button.js'

@@ -29,6 +29,71 @@ import {
 
 type Snapshot = HostApiResponse<'snapshot'>
 
+test('feedback auto permission requires a global switch and explicit confirmation before saving', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  let enabled = false
+  let snapshot: Snapshot = {
+    ...productSnapshot,
+    communityFeedback: { enabled, signedIn: true, pendingDrafts: 0, unread: 0 },
+  }
+  await installProductRoutes(page, () => snapshot)
+  const mutations: unknown[] = []
+  await page.route(`**/api/agents/${targetAgentId}/capabilities`, async (route) => {
+    const value = route.request().postDataJSON() as unknown
+    const patch = HostApiContracts.updateAgentCapabilities.parseRequest(value)
+    mutations.push(patch)
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) =>
+        agent.id === targetAgentId
+          ? {
+              ...agent,
+              capabilities: { ...agent.capabilities, communityFeedbackAuto: patch.communityFeedbackAuto ?? false },
+            }
+          : agent,
+      ),
+    }
+    const agent = snapshot.agents.find((agent) => agent.id === targetAgentId)!
+    await route.fulfill({ json: { currentRevisionId: agent.currentRevisionId, capabilities: agent.capabilities } })
+  })
+  await page.goto(`/agents/${targetAgentId}`)
+  await expect(page.getByRole('heading', { name: '资料员', exact: true })).toBeVisible()
+  await expect(page.getByRole('switch', { name: '免确认提交反馈', exact: true })).toHaveCount(0)
+  enabled = true
+  snapshot = { ...snapshot, communityFeedback: { enabled, signedIn: true, pendingDrafts: 0, unread: 0 } }
+  for (const theme of ['light', 'dark'] as const) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
+      await page.reload()
+      const control = page.getByRole('switch', { name: '免确认提交反馈', exact: true })
+      await control.scrollIntoViewIfNeeded()
+      await expect(control).not.toBeChecked()
+      await control.click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toContainText('每天最多 5 条')
+      await expect(dialog).toContainText('不附带对话摘录')
+      await capture(page, testInfo, `feedback-permission-${theme}-${width}`)
+      expect(mutations).toHaveLength(0)
+      await dialog.getByRole('button', { name: '允许', exact: true }).click()
+      await expect(control).toBeChecked()
+      await expect(
+        page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存', exact: true }),
+      ).toBeVisible()
+      await page.getByRole('button', { name: '放弃', exact: true }).click()
+      await expect(control).not.toBeChecked()
+    }
+  }
+  await page.getByRole('switch', { name: '免确认提交反馈', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '允许', exact: true }).click()
+  await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存', exact: true }).click()
+  await expect(page.getByRole('region', { name: '未保存的修改' })).toHaveCount(0)
+  expect(mutations).toEqual([expect.objectContaining({ communityFeedbackAuto: true })])
+  expect(failures).toEqual([])
+})
+
 // Every scenario replaces productMetadata; the health endpoint must represent the same synthetic Host.
 test.beforeEach(async ({ page }) => {
   await installSnapshotHealthRoutes(page, productSnapshot)
@@ -622,6 +687,103 @@ test('the composer sends with Enter, keeps Shift+Enter for a new line and binds 
   await expect(page.getByRole('textbox', { name: '消息' })).toHaveValue('')
   expect(sent.map((item) => item.channelId)).toEqual([targetChannelId, targetChannelId])
   expect(failures, failures.join('\n')).toEqual([])
+})
+
+test('composer attachments upload, fail, retry, remove and send as ordered parts', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  )
+  const ids = new Map<string, string>()
+  const uploads: string[] = []
+  const removed: string[] = []
+  const sent: unknown[] = []
+  let failNextText = true
+  await page.route('**/api/channels/*/assets', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const fileName = decodeURIComponent(route.request().headers()['x-file-name'] ?? '')
+    uploads.push(fileName)
+    if (fileName === '说明.txt' && failNextText) {
+      failNextText = false
+      return route.fulfill({
+        status: 400,
+        json: { error: { code: 'invalid-request', message: '虚构上传失败，请重试。' } },
+      })
+    }
+    const image = fileName.endsWith('.png')
+    const assetId = `ast_01M4YR1WNMD7Q8NBM7P2B0GAR${image ? 'A' : 'B'}`
+    ids.set(fileName, assetId)
+    return route.fulfill({
+      json: {
+        assetId,
+        mediaType: image ? 'image/png' : 'text/plain',
+        byteSize: image ? png.byteLength : 12,
+        fileName,
+        partType: image ? 'image' : 'file',
+      },
+    })
+  })
+  await page.route('**/api/channels/*/assets/*', async (route) => {
+    if (route.request().method() === 'DELETE') {
+      const assetId = new URL(route.request().url()).pathname.split('/').pop()!
+      removed.push(assetId)
+      return route.fulfill({ json: { assetId, revoked: true } })
+    }
+    return route.fulfill({ body: png, contentType: 'image/png' })
+  })
+  await page.route('**/api/channels/*/messages', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    sent.push(route.request().postDataJSON())
+    return route.fulfill({ json: { inserted: true } })
+  })
+  await page.goto(`/channels/${targetChannelId}`)
+  const send = page.getByRole('button', { name: '发送', exact: true })
+  await expect(send).toBeDisabled()
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles([{ name: '截图.png', mimeType: 'image/png', buffer: png }])
+  await page
+    .locator('input[type="file"]')
+    .nth(1)
+    .setInputFiles([{ name: '说明.txt', mimeType: 'text/plain', buffer: Buffer.from('虚构说明内容。') }])
+  const list = page.getByRole('list', { name: '待发送附件' })
+  await expect(list.getByRole('listitem', { name: '截图.png' })).toContainText('B')
+  const failed = list.getByRole('listitem', { name: '说明.txt' })
+  await expect(failed).toContainText('上传失败')
+  await expect(failed).toContainText('虚构上传失败，请重试。')
+  // An incomplete attachment blocks sending; nothing was posted yet.
+  await expect(send).toBeDisabled()
+  expect(sent).toEqual([])
+  await failed.getByRole('button', { name: '重试上传说明.txt' }).click()
+  await expect(failed).not.toContainText('上传失败')
+  await expect(send).toBeEnabled()
+  // Removing revokes only the unsent draft grant.
+  await list.getByRole('listitem', { name: '截图.png' }).getByRole('button', { name: '移除截图.png' }).click()
+  await expect(list.getByRole('listitem', { name: '截图.png' })).toHaveCount(0)
+  expect(removed).toEqual([ids.get('截图.png')])
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles([{ name: '截图.png', mimeType: 'image/png', buffer: png }])
+  await expect(list.getByRole('listitem', { name: '截图.png' })).toBeVisible()
+  await page.getByRole('textbox', { name: '消息' }).fill('附带说明')
+  await send.click()
+  await expect.poll(() => sent.length).toBe(1)
+  expect(sent[0]).toMatchObject({
+    parts: [
+      { type: 'text', text: '附带说明' },
+      { type: 'file', assetId: ids.get('说明.txt'), name: '说明.txt' },
+      { type: 'image', assetId: ids.get('截图.png') },
+    ],
+  })
+  await expect(page.getByRole('list', { name: '待发送附件' })).toHaveCount(0)
+  expect(uploads).toEqual(['截图.png', '说明.txt', '说明.txt', '截图.png'])
+  // The single rejected upload is the injected failure; every other browser error is a hard failure.
+  const unexpected = failures.filter((item) => !item.includes('status of 400'))
+  expect(unexpected, unexpected.join('\n')).toEqual([])
 })
 
 test('long history stays above a growing multiline composer and an empty channel says so', async ({ page }) => {

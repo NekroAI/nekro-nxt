@@ -628,6 +628,12 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       const factory = await importFactory(input.artifact.hostEntry, input.artifact.buildKey, 'Extension Host')
       const definition = await factory(undefined, [
         {
+          logger: extensionLogger(
+            undefined,
+            { kind: 'extension', id: input.revision.extensionId, name: '扩展验证' },
+            {},
+            manifest.requires?.sdk ?? 7,
+          ),
           harness: {
             registerCommand: commands.register,
             defineTool: (tool: ExtensionToolDefinition) => tool,
@@ -675,6 +681,12 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       )
       if (definition !== undefined && definition !== null && hasAgentLayer(manifest)) {
         disposePlugin = await runPluginApply(definition, {
+          logger: extensionLogger(
+            undefined,
+            { kind: 'extension', id: input.revision.extensionId, name: '扩展验证' },
+            {},
+            manifest.requires?.sdk ?? 7,
+          ),
           tools: {
             register: (tool: ExtensionToolDefinition) => {
               tools.set(tool.name, tool)
@@ -776,3 +788,4 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
     handlers.clear()
   }
 }
+import { extensionLogger } from './extension-logger.js'

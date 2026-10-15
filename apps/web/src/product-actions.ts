@@ -67,7 +67,10 @@ export interface ProductActions {
   'extensions.installationConfig': Action<'updateHostExtensionConfig'>
   'extensions.clientDiagnostic': Action<'extensionClientDiagnostic'>
   'channels.sendMessage': (
-    input: HostApiParams<'sendChannelMessage'> & { body: string },
+    input: HostApiParams<'sendChannelMessage'> & {
+      body?: string
+      parts?: HostApiRequest<'sendChannelMessage'>['parts']
+    },
   ) => Promise<HostApiResponse<'sendChannelMessage'>>
   'channels.listMessages': (
     input: Omit<HostApiParams<'listChannelMessages'>, 'limit'> & {

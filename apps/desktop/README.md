@@ -6,6 +6,10 @@ Desktop 自带本地 `nxt.product-release`，并可保存多个远程服务实�
 
 每次 Desktop 运行只为本地 Host 分配一次 loopback 端口。Host 就绪后若异常退出，主进程按 `500ms → 1s → 2s → 5s → 5s` 有界退避在同一端口启动替代进程；60 秒滚动窗口内最多发起 5 次恢复。应用退出会取消退避和就绪探测，终止当前 Host，并等待子进程退出。
 
+关闭窗口按平台惯例处理：macOS 隐藏窗口并保留 Dock 图标，Dock 激活或再次启动时恢复；Windows 隐藏窗口并进入托盘，托盘菜单只有“显示窗口”和“退出”；Linux 关闭窗口即退出。窗口隐藏时本地 Host 继续运行，只有显式退出才停止。启动窗口隐藏后进入产品窗口的交接不会重新显示窗口。
+
+显式退出先请求 Host 协作取消，并给已经就绪的 Host 15 秒；超时后强制终止该子进程并继续等待真实退出，再 5 秒仍未退出时提示检查系统进程。仍在启动、升级或备份恢复的进程不套用强杀，避免打断文件操作：15 秒后只显示“正在等待本地数据操作安全结束”，完成后继续退出。
+
 本地服务启动前显示安装包内的独立启动窗口。普通启动限时 60 秒；升级期间读取 `data/backups/upgrade-progress.json`，只有与本次 `NEKRO_UPGRADE_RUN_ID`、子进程 PID、产品 Release 全部一致的版本 1 进度才延长期限。连续 60 秒没有有效心跳视为失败，连续 120 秒只有心跳而没有阶段、步骤或计数变化时显示停滞提示，仍允许继续等待。最终就绪仍要求 HTTP `/health/ready` 的 Release 匹配，进度文件本身不能开放产品窗口。
 
 启动窗口的安全取消在 POSIX 通过 `utilityProcess.kill()` 发送 SIGTERM；Windows 通过 `process.parentPort` 发送 `{ format: 'nxt.host-control', version: 1, action: 'cancel', runId }`，由 Server 在同一安全边界取消。Desktop 等待子进程真正退出后才开放重试或恢复，不进行强制 kill。失败页提供当前阶段、步骤、备份身份与错误诊断，只有本次可信进度包含有效恢复点时才提供“恢复升级前备份”。恢复使用同一个安装包内 Server 入口及 `--restore-upgrade <backupId>`，无需外部 Node 或 pnpm；只有退出码 0 才显示成功，成功页只允许退出并提示改用匹配的旧版程序。关闭应用时会等待已开始的恢复完成，不自动重新启动或再次迁移。启动页的本地 IPC 单独核对主 frame、WebContents 和精确安装包 URL，不改变 management/chrome protocol。
@@ -26,7 +30,7 @@ Windows、macOS 与 Linux Desktop 均保留 F12 渲染器诊断入口。焦点�
 
 Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标题栏。macOS 采用 `hiddenInset` 并为左侧 traffic lights 预留 84px；Windows/Linux 采用 `frame: false + titleBarOverlay` 并为右侧窗口控件预留 138px。主进程只注入根级安全区 CSS 变量，Renderer 顶栏负责拖动区域和业务内容，Web 保持同一几何但不伪造窗口按钮。
 
-当前分发实验尚未使用平台开发者证书：Windows x64 NSIS、macOS arm64 与 x64 两个独立 DMG、Linux x64 AppImage。macOS 应用包在没有 Developer ID 时仍执行完整 ad-hoc 签署，Release 构建会重新挂载两个 DMG 并运行严格签名校验，避免 Electron 残留的 linker signature 让 Gatekeeper 把应用误判为损坏；该签署不等于 Apple 公证，首次打开仍需用户确认。macOS 一次构建产出 `*-mac-arm64-v*.dmg` 与 `*-mac-x64-v*.dmg`，Apple Silicon 选择 arm64 包、Intel 选择 x64 包，每个 DMG 都带独立 receipt；server-runtime 的双架构 N-API prebuild 不参与架构合并。`stable` 与 `preview` 使用不同 appId、NSIS GUID、产品名、可执行文件名和 `userData`，可以同时安装，也不会让预览版迁移正式版数据库。身份的唯一源是 `distributions.json`。
+当前分发实验尚未使用平台开发者证书：Windows x64 NSIS、macOS arm64 与 x64 两个独立 DMG、Linux x64 AppImage。Windows 包仍通过 electron-builder 的 `resedit` 写入 EXE 图标和版本信息，只关闭代码签名，因此 Windows 目标可以继续从 macOS 或 Linux 交叉构建。macOS 应用包在没有 Developer ID 时仍执行完整 ad-hoc 签署，Release 构建会重新挂载两个 DMG 并运行严格签名校验，避免 Electron 残留的 linker signature 让 Gatekeeper 把应用误判为损坏；该签署不等于 Apple 公证，首次打开仍需用户确认。macOS 一次构建产出 `*-mac-arm64-v*.dmg` 与 `*-mac-x64-v*.dmg`，Apple Silicon 选择 arm64 包、Intel 选择 x64 包，每个 DMG 都带独立 receipt；server-runtime 的双架构 N-API prebuild 不参与架构合并。`stable` 与 `preview` 使用不同 appId、NSIS GUID、产品名、可执行文件名和 `userData`，可以同时安装，也不会让预览版迁移正式版数据库。身份的唯一源是 `distributions.json`。
 
 平台品牌资源位于 `resources/stable/` 与 `resources/preview/`。两端分别提供 ICNS、ICO、Linux PNG 图标组、DMG 背景和 NSIS assisted installer 图；Preview 通过黄铜三节点校准胶囊与 Stable 区分，不建立 beta 品牌身份。ICNS 使用视觉占位更大的 macOS 专用母版，Windows、Linux 与 Web 仍使用通用源；DMG 保持固定 Finder 窗口并让必要内容在首次打开时完整可见。图标来源、DMG 精确尺寸、坐标和安全区以[品牌资产视觉规则](../../assets/brand/README.md#视觉规则)为唯一权威。electron-builder 按当前 channel 选择对应 `buildResources`，这些文件不进入应用运行资源。
 
@@ -36,7 +40,7 @@ Desktop 使用 Renderer 自绘的统一 48px 品牌顶栏，不显示系统标�
 
 正式版先按[更新日志规范](../../docs/09-正式发布与更新日志规范.md)更新 `docs/releases/current.md` 并取得用户审查，再运行 `pnpm release <X.Y.Z>`。命令要求根版本、`main`、远端 HEAD 与已验证 Preview 指向同一提交，显示完整更新内容并交互确认后推送 Tag。Tag 触发三个原生 runner 构建 Stable，最终 job 验证四个安装包与内部 receipt，生成正式 Release，并发布同版本与 `latest` Server 镜像。
 
-在 macOS 维护机上可以一次生成三端产物；macOS 仍必须由 macOS 构建。未签名 Windows 包关闭依赖 Wine 的 EXE 资源编辑，保留 NSIS 安装身份和完整应用内容。Windows 引导安装保留“仅当前用户/所有用户”两种范围；electron-builder 固定使用包含安全 `UserProgramFiles` 路径读取修复的 `26.15.3`，不得降级到仍会在当前用户路径解析阶段越界退出的版本。获得签名证书后恢复 EXE 资源编辑与签名：
+在 macOS 维护机上可以一次生成三端产物；macOS 仍必须由 macOS 构建。Windows 目标的 EXE 资源编辑不依赖 Wine，NSIS 安装器生成仍按 electron-builder 的平台工具链执行。Windows 引导安装保留“仅当前用户/所有用户”两种范围；electron-builder 固定使用包含安全 `UserProgramFiles` 路径读取修复的 `26.15.3`，不得降级到仍会在当前用户路径解析阶段越界退出的版本。获得签名证书后只需恢复代码签名配置：
 
 ```sh
 pnpm desktop:preview --platform mac
@@ -62,4 +66,4 @@ pnpm desktop:preview --platform mac
 
 组件与 Trusted Fallback 的真实 DOM 测试位于 browser-tests，使用根 pnpm test:browser；纯错误映射与静态结构测试保留在 Vitest。自动 Preview 的平台任务只保存候选产物，全部平台成功后由串行最终任务校验 receipt 并发布。
 
-`tests/host-startup.spec.ts` 用假时钟覆盖超过 60 秒的迁移、失联与过期进度、子进程退出和离线恢复结果；`electron-tests/startup-recovery.spec.ts` 在已构建的 Desktop/Contracts 上启动真实 Electron，并以临时数据根和合成 Server 入口验证安全取消、重试、诊断及恢复。它不读取或写入常驻用户数据。运行前先构建 Contracts 与 Desktop，再执行 `pnpm --filter @nekro-nxt/desktop test:electron`；Linux 无显示环境使用 Xvfb。原生 Electron 测试单独运行，不混入 headless Chromium 的 `test:browser`。
+`tests/host-startup.spec.ts` 用假时钟覆盖超过 60 秒的迁移、失联与过期进度、子进程退出和离线恢复结果；`electron-tests/startup-recovery.spec.ts` 在已构建的 Desktop/Contracts 上启动真实 Electron，并以临时数据根和合成 Server 入口验证安全取消、重试、诊断及恢复。`electron-tests/window-lifecycle.spec.ts` 用同样的合成 Host 验证关窗隐藏、Dock 激活恢复、启动窗口隐藏后不被交接重新显示，以及显式退出会停止 Host；它不读取或写入常驻用户数据。运行前先构建 Contracts 与 Desktop，再执行 `pnpm --filter @nekro-nxt/desktop test:electron`；Linux 无显示环境使用 Xvfb。原生 Electron 测试单独运行，不混入 headless Chromium 的 `test:browser`。

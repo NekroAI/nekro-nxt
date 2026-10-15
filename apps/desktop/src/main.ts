@@ -14,6 +14,7 @@ import {
   type ProductRelease,
 } from './distribution.js'
 import { HostSupervisor, type SupervisedHostProcess } from './host-supervisor.js'
+import { waitForHostShutdown, type HostStopWaitReason } from './host-shutdown.js'
 import { DesktopInstanceManager } from './instance-manager.js'
 import { LocalHostLifecycleRelay } from './local-host-state.js'
 import {
@@ -25,8 +26,27 @@ import {
   type StartupViewState,
 } from './host-startup.js'
 import { HostStartupWindow } from './startup-window.js'
+import { DesktopWindowLifecycle, type WindowTrayActions } from './window-lifecycle.js'
+import { createWindowsTray } from './windows-tray.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
+
+const showHostStopWaiting = (reason: HostStopWaitReason, signal: AbortSignal): void => {
+  app.focus({ steal: true })
+  void dialog
+    .showMessageBox({
+      type: 'warning',
+      title: 'NekroNXT 尚未退出',
+      message: reason === 'protected-operation' ? '正在等待本地数据操作安全结束' : '本地服务尚未停止',
+      detail:
+        reason === 'protected-operation'
+          ? '启动、升级或备份恢复仍未结束。完成后会继续退出，请勿强制关闭或同时打开另一份本地数据。'
+          : '已尝试终止本地服务，但尚未收到退出确认。请检查系统进程状态；服务停止后会继续退出。',
+      buttons: ['继续等待'],
+      signal,
+    })
+    .catch((error: unknown) => console.error('[desktop] 无法显示退出等待提示。', error))
+}
 
 let mainWindow: BrowserWindow | undefined
 let hostSupervisor: HostSupervisor | undefined
@@ -41,6 +61,7 @@ let stoppingHost: Promise<void> | undefined
 let cancelled = false
 let quitting = false
 let shutdownTask: Promise<void> | undefined
+let windowLifecycle: DesktopWindowLifecycle | undefined
 
 const productReleasePath = (): string => resolveProductReleasePath(import.meta.url)
 
@@ -121,6 +142,7 @@ const forkServer = (
       ...env,
       NEKRO_DATA: dataRoot(),
       NEKRO_RELEASE_ID: productRelease.releaseId,
+      NEKRO_HOST_KIND: 'desktop',
       NEKRO_UPGRADE_RUN_ID: runId,
     },
   })
@@ -135,6 +157,15 @@ const forkServer = (
         if (process.platform !== 'win32') return child.kill()
         child.postMessage({ format: 'nxt.host-control', version: 1, action: 'cancel', runId })
         return true
+      },
+      forceKill: () => {
+        const pid = child.pid
+        if (pid === undefined) return
+        if (process.platform === 'win32') {
+          if (!child.kill()) throw new Error('无法终止本地 Host。')
+        } else {
+          process.kill(pid, 'SIGKILL')
+        }
       },
     },
   }
@@ -152,6 +183,7 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
   }
   const supervisor = new HostSupervisor({
     origin,
+    onStopWaiting: showHostStopWaiting,
     spawnHost: () => {
       const runId = randomUUID()
       const args = retryUpgradeOnce ? ['--retry-upgrade'] : []
@@ -255,10 +287,7 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
 
 app.on('second-instance', () => {
-  const window = mainWindow ?? startupWindow?.window
-  if (window?.isMinimized()) window.restore()
-  window?.show()
-  window?.focus()
+  windowLifecycle?.show()
 })
 
 const launchProduct = async (): Promise<void> => {
@@ -280,6 +309,8 @@ const launchProduct = async (): Promise<void> => {
     instanceManager = manager
     detachLocalHostLifecycle = localHostLifecycle.subscribe((status) => manager.commitLocalHostStatus(status))
     mainWindow = manager.window
+    windowLifecycle?.attach(mainWindow)
+    windowLifecycle?.showWhenReady()
     mainWindow.on('closed', () => {
       detachLocalHostLifecycle?.()
       detachLocalHostLifecycle = undefined
@@ -350,18 +381,20 @@ const onStartupAction = async (action: StartupAction): Promise<void> => {
 void app
   .whenReady()
   .then(async () => {
-    if (!gotLock) return
+    if (!gotLock || quitting) return
     app.setAppUserModelId(desktopDistribution.appId)
-    startupWindow = new HostStartupWindow(startupState, onStartupAction)
-    startupWindow.window.on('close', (event) => {
-      if (startupState.mode === 'restoring' || startupState.mode === 'cancelling') {
-        event.preventDefault()
-        return
-      }
-      event.preventDefault()
-      app.quit()
+    windowLifecycle = new DesktopWindowLifecycle({
+      platform: process.platform,
+      isQuitting: () => quitting,
+      quit: () => app.quit(),
+      createTray: (actions: WindowTrayActions) =>
+        createWindowsTray(productRelease.channel, desktopDistribution.productName, actions),
     })
+    startupWindow = new HostStartupWindow(startupState, onStartupAction)
+    windowLifecycle.attach(startupWindow.window)
     await startupWindow.load()
+    if (quitting) return
+    windowLifecycle.showWhenReady()
     beginStartup()
   })
   .catch((error: unknown) => {
@@ -370,15 +403,7 @@ void app
   })
 
 app.on('activate', () => {
-  if (mainWindow !== undefined) {
-    mainWindow.show()
-    return
-  }
-  if (startupWindow !== undefined) {
-    startupWindow.window.show()
-    return
-  }
-  app.quit()
+  windowLifecycle?.show()
 })
 
 app.on('window-all-closed', () => {
@@ -390,6 +415,7 @@ app.on('before-quit', (event) => {
   event.preventDefault()
   if (shutdownTask !== undefined) return
   quitting = true
+  windowLifecycle?.dispose()
   cancelled = true
   if (startupState.mode !== 'restoring' && startupState.mode !== 'restored')
     publishStartup({ ...startupState, mode: 'cancelling' })
@@ -399,7 +425,7 @@ app.on('before-quit', (event) => {
   shutdownTask = (async () => {
     await stopProductHost()
     await startupTask
-    await restoreTask
+    if (restoreTask !== undefined) await waitForHostShutdown({ exited: restoreTask, onWaiting: showHostStopWaiting })
   })().finally(() => {
     shutdownTask = undefined
     startupWindow?.window.destroy()

@@ -43,6 +43,8 @@ const workshop = preloadable(() => import('./workshop/workshop-space.js'))
 const community = preloadable(() => import('./community/community-space.js'))
 const wiring = preloadable(() => import('./wiring/wiring-space.js'))
 const settings = preloadable(() => import('./settings/settings-space.js'))
+const logs = preloadable(() => import('./logs/logs-space.js'))
+const LogsSpace = logs.Space
 const LiveSpace = live.Space
 const ChannelsSpace = channels.Space
 const AgentsSpace = agents.Space
@@ -78,7 +80,7 @@ function Loading() {
 }
 
 const retrySpaces = () => {
-  for (const item of [live, channels, agents, workshop, community, wiring, settings]) item.reset()
+  for (const item of [live, channels, agents, workshop, community, wiring, settings, logs]) item.reset()
 }
 
 const space = (node: ReactNode) => (
@@ -107,6 +109,7 @@ export function NextApp() {
                 <Route element={<AppShell />}>
                   <Route index element={<Navigate to="/live" replace />} />
                   <Route path="live" element={space(<LiveSpace />)} />
+                  <Route path="logs" element={space(<LogsSpace />)} />
                   <Route path="channels/:channelId?" element={space(<ChannelsSpace />)} />
                   <Route path="agents/:agentId?" element={space(<AgentsSpace />)} />
                   <Route path="workshop/*" element={space(<WorkshopSpace />)} />

@@ -391,6 +391,8 @@ export const AgentCapabilityGrantsSchema = z
     codeRun: z.boolean().default(false),
     /** Network for commands and `run_code` programs; on unless the user turns it off (absent before the field). */
     commandNetwork: z.boolean().default(true),
+    /** Only administrator-initiated channel turns may send feedback without confirmation. */
+    communityFeedbackAuto: z.boolean().default(false),
     /** Accounts commands may act as; empty unless the user grants one to this agent (absent before the field). */
     commandAccounts: z
       .array(CommandAccountGrantSchema)
@@ -411,10 +413,20 @@ export const AgentCapabilityGrantsSchema = z
     scheduledTasks: true,
     codeRun: false,
     commandNetwork: true,
+    communityFeedbackAuto: false,
     commandAccounts: [],
   })
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
+
+/** Default-off additions are absent from persisted capabilities so older readers keep accepting unchanged agents. */
+export type StoredAgentCapabilityGrants = Omit<AgentCapabilityGrants, 'communityFeedbackAuto'> & {
+  readonly communityFeedbackAuto?: boolean
+}
+export const storedAgentCapabilityGrants = (capabilities: AgentCapabilityGrants): StoredAgentCapabilityGrants => {
+  const { communityFeedbackAuto, ...existing } = capabilities
+  return communityFeedbackAuto ? { ...existing, communityFeedbackAuto: true } : existing
+}
 
 const AgentModelSelectionSchema = z
   .object({
@@ -646,6 +658,7 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     ...(content.capabilities.scheduledTasks ? {} : { scheduledTasks: false }),
     ...(content.capabilities.codeRun ? { codeRun: true } : {}),
     ...(content.capabilities.commandNetwork ? {} : { commandNetwork: false }),
+    ...(content.capabilities.communityFeedbackAuto ? { communityFeedbackAuto: true } : {}),
     ...(content.capabilities.commandAccounts.length === 0
       ? {}
       : {

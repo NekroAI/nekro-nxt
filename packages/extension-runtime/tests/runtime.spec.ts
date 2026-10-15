@@ -630,6 +630,7 @@ const revisionId = (value: string): ExtensionRevisionId => ExtensionRevisionIdSc
 const manifestRevisionSchema = z
   .object({
     schemaVersion: z.literal(7),
+    requires: z.object({ sdk: z.number().int().positive() }).strict().optional(),
     permissions: z.object({ permissions: z.array(z.string()), networkOrigins: z.array(z.string()) }).strict(),
     extensionId: ExtensionIdSchema,
     revisionId: ExtensionRevisionIdSchema,
@@ -1187,6 +1188,7 @@ describe('Extension save', () => {
     expect(manifest.revisionId).toBe(saved.revision.id)
     expect(manifest).toEqual({
       schemaVersion: 7,
+      requires: { sdk: 9 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
@@ -1633,6 +1635,7 @@ describe('Extension materialization and build policy', () => {
     expect(first.sources.host).toContain("from '@nekro-nxt/extension-sdk'")
     expect(first.manifest).toEqual({
       schemaVersion: 7,
+      requires: { sdk: 9 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: extensionId('test'),
       revisionId: revisionId('test'),

@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { verifyNativeSessionPersistence } from '../../../scripts/lib/runtime-native-smoke.mjs'
+import { verifySubprocessRuntime } from '../../../scripts/lib/runtime-subprocess-smoke.mjs'
 import {
   installManagedPluginSmoke,
   verifyRestoredManagedPluginAndRemove,
@@ -35,6 +36,7 @@ await requireFile(serverEntryPath, 'Desktop Server 入口')
 await requireFile(distIndexPath, 'Desktop Web 入口')
 const serverEntry = await realpath(serverEntryPath)
 const distIndex = await realpath(distIndexPath)
+await verifySubprocessRuntime(executable, path.join(resources, 'server-runtime'))
 verifyNativeSessionPersistence(executable, path.join(resources, 'server-runtime'))
 
 const reservePort = () =>
@@ -174,7 +176,7 @@ try {
   }
   await verifyRestoredManagedPluginAndRemove(`http://127.0.0.1:${port}`, managedPlugin)
   console.log(
-    `[desktop-runtime] 最终打包目录已通过 Server 就绪、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证：${releaseId}`,
+    `[desktop-runtime] 最终打包目录已通过子进程执行与回收、Server 就绪、凭据持久化与 DSH 插件安装/恢复/关闭/移除验证：${releaseId}`,
   )
 } catch (error) {
   const detail = output.join('').trim()

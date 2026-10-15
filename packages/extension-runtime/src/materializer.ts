@@ -16,6 +16,7 @@ import {
   type ExtensionId,
   type ExtensionRevisionId,
   EXTENSION_SDK_BASE_LEVEL,
+  EXTENSION_SDK_LEVEL,
   requiredExtensionSdkLevel,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
@@ -62,7 +63,7 @@ const inputSchema = z
 const wrapHost = (body: string): string =>
   normalizeSource(`import { defineHostExtension } from '@nekro-nxt/extension-sdk'
 
-export default defineHostExtension(async ({ harness, nxt }) => {
+export default defineHostExtension(async ({ harness, nxt, logger }) => {
 ${body}
 })`)
 
@@ -99,9 +100,12 @@ export function materializeDynamicPackage(input: {
       : { client: wrapClient(parsed.snapshot.clientCode, parsed.snapshot.clientCss?.path) }),
   })
   const permissions = parsed.snapshot.permissions ?? { permissions: [], networkOrigins: [] }
-  // Agent-written extensions never state a level; record the one their capabilities need so an older NekroNXT that
-  // imports the package asks for an upgrade.
-  const required = requiredExtensionSdkLevel(permissions).level
+  // The generated Host factory now consumes the SDK 9 environment (including logger). Do not guess capability
+  // use from source text: callbacks may only log long after verification. Imported old manifests stay unchanged.
+  const required = Math.max(
+    requiredExtensionSdkLevel(permissions).level,
+    parsed.snapshot.hostCode === undefined ? EXTENSION_SDK_BASE_LEVEL : EXTENSION_SDK_LEVEL,
+  )
   const manifest = extensionManifestSchema.parse({
     schemaVersion: 7,
     extensionId: input.extensionId,
