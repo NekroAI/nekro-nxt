@@ -241,7 +241,6 @@ export function Conversation({
         >
           <Eye aria-hidden="true" />
           <span className={styles.toggleLabel}>透视</span>
-          <span className={styles.knob} aria-hidden="true" />
         </Pressable>
         <Pressable
           type="button"

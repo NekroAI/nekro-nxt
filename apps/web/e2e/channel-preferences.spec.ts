@@ -45,7 +45,7 @@ test('platform updates preserve local names and rebinding preserves the processi
     await expect(page.getByText('平台名称：平台更新名称', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '修改频道名称' })).toContainText('我的频道备注')
     await page.screenshot({ path: testInfo.outputPath('local-name-preserved.png'), animations: 'disabled' })
-    await page.getByRole('button', { name: '使用平台名称', exact: true }).click()
+    await page.getByRole('button', { name: '改用平台名称', exact: true }).click()
     await expect(page.getByRole('button', { name: '修改频道名称' })).toContainText('平台更新名称')
     protocol.emit(group, '平台再次更新')
     await expect(page.getByRole('button', { name: '修改频道名称' })).toContainText('平台再次更新')

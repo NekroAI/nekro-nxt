@@ -42,7 +42,7 @@ import {
   type ConnectionSummary,
   type ConversationMessage,
 } from '../../product-runtime.js'
-import { Plus } from 'lucide-react'
+import { ArrowUpDown, Check, Plus } from 'lucide-react'
 import {
   AgentAvatar,
   Button,
@@ -53,7 +53,7 @@ import {
   ListPane,
   MemberAvatar,
   SearchField,
-  Segmented,
+  Menu,
   Select,
   SelectionList,
   toast,
@@ -440,14 +440,13 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
 
   return (
     <ListPane
-      title="频道"
-      label="频道"
-      actions={
+      title={
         <>
-          <span className={styles.listCount}>{channels.length}</span>
-          <CreateInternalChannel />
+          频道 <span className={styles.listCount}>{channels.length}</span>
         </>
       }
+      label="频道"
+      actions={<CreateInternalChannel />}
       toolbar={
         <>
           <div className={styles.filterRow}>
@@ -467,16 +466,24 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
                 })),
               ]}
             />
+            <Menu
+              label="排列方式"
+              trigger={
+                <IconButton label={`排列方式：${mode === 'agent' ? '按智能体' : '最近活动'}`}>
+                  <ArrowUpDown size={15} />
+                </IconButton>
+              }
+              items={[
+                { heading: '排列方式' },
+                ...(['agent', 'recent'] as const).map((value) => ({
+                  key: value,
+                  label: value === 'agent' ? '按智能体' : '最近活动',
+                  icon: value === mode ? <Check size={14} /> : <span className={styles.menuSpacer} />,
+                  onSelect: () => setMode(value),
+                })),
+              ]}
+            />
           </div>
-          <Segmented
-            label="排列方式"
-            value={mode}
-            onChange={setMode}
-            options={[
-              { value: 'agent', label: '按智能体' },
-              { value: 'recent', label: '最近活动' },
-            ]}
-          />
         </>
       }
     >

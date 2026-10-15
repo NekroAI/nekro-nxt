@@ -266,7 +266,7 @@
   height: 32px;
   padding: 0 var(--s-3);
   border: 1px solid var(--line-2);
-  border-radius: 9px;
+  border-radius: var(--r-1);
   background: var(--surface);
   box-shadow: var(--sh-1);
   color: var(--fg-2);
@@ -293,35 +293,6 @@
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--accent);
-}
-
-.knob {
-  position: relative;
-  width: 24px;
-  height: 14px;
-  border-radius: 7px;
-  background: var(--line-3);
-  transition: background var(--dur-2);
-}
-
-.knob::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--knob);
-  transition: transform var(--dur-2) var(--ease);
-}
-
-.toggle[aria-pressed='true'] .knob {
-  background: var(--accent);
-}
-
-.toggle[aria-pressed='true'] .knob::after {
-  transform: translateX(10px);
 }
 
 .iconToggle {
@@ -1339,8 +1310,13 @@ button.step:hover {
 /* —— 列表工具条 —— */
 .filterRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: var(--s-2);
+}
+
+.menuSpacer {
+  display: inline-block;
+  width: 14px;
 }
 
 .filter {

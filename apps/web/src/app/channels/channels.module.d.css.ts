@@ -84,6 +84,7 @@ declare const styles: {
   readonly memorySettingsToggle: string
   readonly memoryTag: string
   readonly memoryTitle: string
+  readonly menuSpacer: string
   readonly meta: string
   readonly mine: string
   readonly msg: string

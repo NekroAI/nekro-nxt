@@ -1,4 +1,5 @@
 declare const styles: {
+  readonly channelControls: string
   readonly command: string
   readonly name: string
   readonly note: string

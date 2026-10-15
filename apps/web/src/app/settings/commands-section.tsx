@@ -220,6 +220,23 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
       ))}
     </>
   )
+  const permissionCell = columns.find((column) => column.key === 'permission')!.render
+  const enabledCell = columns.find((column) => column.key === 'enabled')!.render
+  const commandCell = columns.find((column) => column.key === 'command')!.render
+  // The inspector is too narrow for a table: one stacked row per command, its two settings side by side.
+  const channelRows = (
+    <PropertyList>
+      {rows.length === 0 ? <PropertyRow label="这个频道的命令都跟随全局设置" /> : null}
+      {rows.map((command) => (
+        <PropertyRow key={command.fullName} label={commandCell(command)} layout="stacked">
+          <div className={styles.channelControls}>
+            {permissionCell(command)}
+            {enabledCell(command)}
+          </div>
+        </PropertyRow>
+      ))}
+    </PropertyList>
+  )
   const table =
     !catalog && !error ? (
       <Skeleton height={160} />
@@ -245,7 +262,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
             </Button>
           }
         >
-          {table}
+          {!catalog && !error ? <Skeleton height={120} /> : catalog ? channelRows : null}
         </PropertyGroup>
       ) : (
         <>
@@ -301,7 +318,16 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
           ) : (
             <PropertyList>
               {members.map((member) => (
-                <PropertyRow key={member.identityId} label={member.displayName} description={member.platformUserId}>
+                <PropertyRow
+                  key={member.identityId}
+                  label={member.displayName}
+                  // The platform id only tells apart members who share a name.
+                  description={
+                    members.filter((other) => other.displayName === member.displayName).length > 1
+                      ? member.platformUserId
+                      : undefined
+                  }
+                >
                   <Switch
                     label={`授权 ${member.displayName}`}
                     checked={member.authorized}

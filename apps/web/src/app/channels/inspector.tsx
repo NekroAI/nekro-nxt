@@ -1,7 +1,7 @@
 import { CommandsSection } from '../settings/commands-section.js'
 import { useGo } from '../model/nav.js'
 import { PanelSlot } from '../../extension-ui/index.js'
-import { ArrowUpRight, Cable, ChevronRight, Trash2 } from 'lucide-react'
+import { ArrowUpRight, ChevronRight, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { promptDocumentPlainText } from '@nekro-nxt/contracts'
 
@@ -15,6 +15,7 @@ import {
 import {
   Button,
   ConfirmDialog,
+  DangerZone,
   DetailPane,
   Diagnostics,
   Disclosure,
@@ -185,11 +186,6 @@ export function ChannelInspector({
     <DetailPane
       label="频道信息"
       onClose={onClose}
-      footer={
-        <Button size="small" variant="danger" icon={<Trash2 />} onClick={() => setRemoving(true)}>
-          {channel.kind === 'internal' ? '删除频道' : '移除频道'}
-        </Button>
-      }
       header={
         <div className={styles.paneHeader}>
           <InlineEdit
@@ -206,22 +202,22 @@ export function ChannelInspector({
             }}
           />
           {channel.kind !== 'internal' && channel.platformName && channel.customName ? (
-            <Button
-              size="small"
-              variant="ghost"
-              onClick={() => {
-                void api
-                  .getState()
-                  .renameChannel(channel.id, '')
-                  .then(() => toast('已使用平台名称'))
-                  .catch(failure)
-              }}
-            >
-              使用平台名称
-            </Button>
-          ) : null}
-          {channel.kind !== 'internal' && channel.platformName && channel.customName ? (
-            <span className={styles.paneMeta}>平台名称：{channel.platformName}</span>
+            <span className={styles.paneMeta}>
+              平台名称：{channel.platformName}
+              <Button
+                size="small"
+                variant="ghost"
+                onClick={() => {
+                  void api
+                    .getState()
+                    .renameChannel(channel.id, '')
+                    .then(() => toast('已使用平台名称'))
+                    .catch(failure)
+                }}
+              >
+                改用平台名称
+              </Button>
+            </span>
           ) : null}
           <span className={styles.paneMeta}>
             {channel.kind === 'internal'
@@ -384,16 +380,6 @@ export function ChannelInspector({
                         压缩
                       </Button>
                     </Tooltip>
-                    <Tooltip content="从空白开始；笔记和聊天记录保留">
-                      <Button
-                        size="small"
-                        variant="ghost"
-                        className={styles.contextDanger}
-                        onClick={() => setReset('clear')}
-                      >
-                        清空
-                      </Button>
-                    </Tooltip>
                   </span>
                 ) : null}
               </div>
@@ -482,13 +468,9 @@ export function ChannelInspector({
               }
             >
               {connection.userManaged ? (
-                <IconButton
-                  label="在接线中打开这个账号"
-                  size="small"
-                  onClick={() => navigate(`/wiring/connections/${connection.id}`)}
-                >
-                  <Cable size={15} />
-                </IconButton>
+                <Button size="small" variant="ghost" onClick={() => navigate(`/wiring/connections/${connection.id}`)}>
+                  在接线中打开
+                </Button>
               ) : null}
             </PropertyRow>
           ) : (
@@ -496,6 +478,32 @@ export function ChannelInspector({
           )}
         </PropertyList>
       </PropertyGroup>
+
+      <DangerZone>
+        {agent && runtime?.episodeId ? (
+          <PropertyRow label="清空上下文" description="当前任务停止，从空白开始；笔记和聊天记录保留。">
+            <Button size="small" variant="danger" onClick={() => setReset('clear')}>
+              清空
+            </Button>
+          </PropertyRow>
+        ) : null}
+        <PropertyRow
+          label={channel.kind === 'internal' ? '删除频道' : '移除频道'}
+          description={
+            channel.kind === 'internal' ? '聊天记录保留在审计中。' : '聊天记录保留，群里有新消息时会重新出现。'
+          }
+        >
+          <Button
+            size="small"
+            variant="danger"
+            icon={<Trash2 />}
+            aria-label={channel.kind === 'internal' ? '删除频道' : '移除频道'}
+            onClick={() => setRemoving(true)}
+          >
+            {channel.kind === 'internal' ? '删除' : '移除'}
+          </Button>
+        </PropertyRow>
+      </DangerZone>
 
       <Diagnostics
         items={[
