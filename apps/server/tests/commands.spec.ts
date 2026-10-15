@@ -330,7 +330,7 @@ describe('unified commands', () => {
     await f.inbound('普通消息')
     expect(f.admissions[0]?.events.map((e) => e.parts)).toEqual([[{ type: 'text', text: '普通消息' }]])
   })
-  it('stops during a running turn, resets without creating a receipt Session and permits on while off', async () => {
+  it('stops during a running turn, resets without creating a receipt Session and pauses without touching the rule', async () => {
     const f = await setup()
     f.commands.grant(f.channel.id, f.member.identity.id, true)
     await f.inbound('开始')
@@ -339,12 +339,54 @@ describe('unified commands', () => {
     await f.inbound('/reset')
     expect(f.repository.getActiveEpisode(f.channel.id, f.agent.definition.id)).toBeUndefined()
     expect(f.createSession).toHaveBeenCalledOnce()
+    await f.inbound('/pause')
+    expect(f.repository.getBinding(f.channel.id)).toMatchObject({ triggerPolicy: 'always', paused: true })
     await f.inbound('/off')
-    expect(f.repository.getBinding(f.channel.id)?.triggerPolicy).toBe('observe-only')
-    await f.inbound('/off')
+    await f.inbound('/resume')
+    expect(f.repository.getBinding(f.channel.id)).toMatchObject({ triggerPolicy: 'always', paused: false })
     await f.inbound('/on')
-    expect(f.repository.getBinding(f.channel.id)?.triggerPolicy).toBe('always')
+    expect(f.repository.getBinding(f.channel.id)?.paused).toBe(false)
     expect(f.createSession).toHaveBeenCalledOnce()
+  })
+  it('keeps the pause across rule edits, blocks every automatic trigger and resets it for another agent', async () => {
+    const f = await setup()
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    await f.inbound('/pause')
+    expect(f.repository.getBinding(f.channel.id)?.paused).toBe(true)
+    // Editing the response rule never resumes a paused channel.
+    await f.runtime.replaceBinding({
+      channelId: f.channel.id,
+      agentId: f.agent.definition.id,
+      triggerPolicy: 'mentioned-or-replied',
+    })
+    expect(f.repository.getBinding(f.channel.id)).toMatchObject({ triggerPolicy: 'mentioned-or-replied', paused: true })
+    const before = f.admissions.length
+    await f.inbound('暂停期间的普通消息', undefined, [{ type: 'text', text: '暂停期间的普通消息' }])
+    expect(f.admissions).toHaveLength(before)
+    await f.inbound('/resume')
+    expect(f.repository.getBinding(f.channel.id)).toMatchObject({
+      triggerPolicy: 'mentioned-or-replied',
+      paused: false,
+    })
+    await f.inbound('/pause')
+    const other = f.core.createAgent({
+      displayName: '另一个智能体',
+      persona: '',
+      model: { provider: 'fixture', model: 'fixture' },
+    })
+    await f.runtime.replaceBinding({ channelId: f.channel.id, agentId: other.definition.id, triggerPolicy: 'always' })
+    expect(f.repository.getBinding(f.channel.id)?.paused).toBe(false)
+  })
+  it('reports an idle /stop truthfully and the pause state in /status', async () => {
+    const f = await setup()
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    await f.inbound('/stop')
+    await f.commands.idle()
+    expect(JSON.stringify(f.adapter.deliveries.at(-1))).toContain('当前没有运行中的任务')
+    await f.inbound('/pause')
+    await f.inbound('/status')
+    await f.commands.idle()
+    expect(JSON.stringify(f.adapter.deliveries.at(-1))).toContain('已暂停')
   })
   it('isolates grants across channels and connections, and rechecks revoked grants', async () => {
     const f = await setup()
@@ -374,10 +416,10 @@ describe('unified commands', () => {
     })
     await f.commands.idle()
     expect(f.repository.commands.forEvent(rejected.channelEventId)?.error).toContain('无权执行')
-    expect(f.repository.getBinding(otherChannel.id)?.triggerPolicy).toBe('always')
+    expect(f.repository.getBinding(otherChannel.id)?.paused).toBe(false)
     f.commands.grant(f.channel.id, f.member.identity.id, false)
     await f.inbound('/off')
-    expect(f.repository.getBinding(f.channel.id)?.triggerPolicy).toBe('always')
+    expect(f.repository.getBinding(f.channel.id)?.paused).toBe(false)
   })
   it('deduplicates concurrent platform and Web requests, rejects changed content, and preserves unknown receipts', async () => {
     const f = await setup()
@@ -588,7 +630,7 @@ it('extension command disposal blocks new work, aborts and waits for cleanup', a
     signal: new AbortController().signal,
     host: {
       status: () => ({ bound: true, running: false }),
-      stop: () => Promise.resolve(),
+      stop: () => Promise.resolve({ stopped: false }),
       reset: () => Promise.resolve(),
     },
   })
@@ -619,7 +661,7 @@ it('isolates attachment cancellation while sharing host registration revocation'
     signal: new AbortController().signal,
     host: {
       status: () => ({ bound: true, running: false }),
-      stop: () => Promise.resolve(),
+      stop: () => Promise.resolve({ stopped: false }),
       reset: () => Promise.resolve(),
     },
   }

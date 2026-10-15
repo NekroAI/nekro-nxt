@@ -261,6 +261,7 @@ export const channelBindings = sqliteTable(
     triggerPolicy: text('trigger_policy', {
       enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'],
     }).notNull(),
+    paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
     localAgentMessages: text('local_agent_messages', { enum: ['observe', 'trigger'] })
       .notNull()
       .default('observe'),
@@ -675,16 +676,6 @@ export const commandExecutions = sqliteTable(
     index('command_execution_recovery_idx').on(table.needsRecovery, table.id),
   ],
 )
-export const commandResponsePolicies = sqliteTable('command_response_policies', {
-  channelId: text('channel_id')
-    .$type<ChannelId>()
-    .primaryKey()
-    .references(() => channels.id, { onDelete: 'cascade' }),
-  agentId: text('agent_id').$type<AgentId>().notNull(),
-  boundAt: integer('bound_at').notNull(),
-  policy: text({ enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'] }).notNull(),
-})
-
 export const outboundIntents = sqliteTable(
   'outbound_intents',
   {
@@ -1433,7 +1424,6 @@ export const coreSchema = {
   commandPolicies,
   commandGrants,
   commandExecutions,
-  commandResponsePolicies,
   communityFeedbackDrafts,
   communityFeedbackItems,
   agentDefinitions,

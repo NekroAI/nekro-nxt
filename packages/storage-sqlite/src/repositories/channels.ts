@@ -167,6 +167,7 @@ const toBinding = (input: typeof channelBindings.$inferSelect): BindingRecord =>
     channelId: row.channelId,
     agentId: row.agentId,
     triggerPolicy: row.triggerPolicy,
+    paused: row.paused,
     processingFeedback: row.processingFeedback,
     localAgentMessages: row.localAgentMessages,
     activityTriggerOverrides: Object.fromEntries([
@@ -724,6 +725,7 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
             set: {
               agentId: record.agentId,
               triggerPolicy: record.triggerPolicy,
+              paused: record.paused,
               processingFeedback: record.processingFeedback,
               localAgentMessages: record.localAgentMessages,
               activityTriggerOverridesEnabled,

@@ -508,6 +508,7 @@ export class HostQueries {
           channelId: binding.channelId,
           agentId: binding.agentId,
           triggerPolicy: binding.triggerPolicy,
+          paused: binding.paused,
           processingFeedback: binding.processingFeedback,
           localAgentMessages: binding.localAgentMessages,
           activityTriggerOverrides: binding.activityTriggerOverrides,

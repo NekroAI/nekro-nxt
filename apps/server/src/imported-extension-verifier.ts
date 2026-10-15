@@ -725,7 +725,7 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
         signal: new AbortController().signal,
         host: {
           status: () => ({ bound: true, responseMode: '验证', running: false }),
-          stop: () => Promise.resolve(),
+          stop: () => Promise.resolve({ stopped: false }),
           reset: () => Promise.resolve(),
         },
       })

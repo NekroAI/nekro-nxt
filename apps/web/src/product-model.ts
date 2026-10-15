@@ -130,6 +130,8 @@ export interface ChannelSummary {
     readonly id: string
     readonly agentId: string
     readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+    /** Channel pause, independent of the response rule. */
+    readonly paused: boolean
     readonly processingFeedback: 'auto' | 'off'
     readonly localAgentMessages: 'observe' | 'trigger'
     readonly activityTriggerOverrides: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
@@ -634,6 +636,8 @@ export interface ProductState {
   clearBinding(channelId: string): Promise<void>
   deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
   resetChannelContext(channelId: string, episodeId: string, mode: 'clear' | 'compact'): Promise<void>
+  /** Pauses or resumes every automatic response in the channel; the response rule is kept. */
+  setChannelPaused(channelId: string, paused: boolean): Promise<void>
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
   sendMessage(
     channelId: string,

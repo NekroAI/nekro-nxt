@@ -295,7 +295,9 @@ export class CommandService implements CommandGate {
     const episode = binding === undefined ? undefined : this.#o.repository.getActiveEpisode(channelId, binding.agentId)
     return {
       bound: binding !== undefined,
-      ...(binding === undefined ? {} : { responseMode: RESPONSE_MODE_LABELS[binding.triggerPolicy] }),
+      ...(binding === undefined
+        ? {}
+        : { responseMode: RESPONSE_MODE_LABELS[binding.triggerPolicy], paused: binding.paused }),
       running: episode?.dshSessionId !== undefined && this.#o.running(episode.dshSessionId),
     }
   }
@@ -416,7 +418,8 @@ export class CommandService implements CommandGate {
         const args = parseCommandArguments(command.definition, tokenizeCommand(argumentText))
         const stop = async () => {
           guard(true)
-          await this.#o.channels().stopCurrentTurn(record.channelId, undefined, () => guard(true))
+          const outcome = await this.#o.channels().stopCurrentTurn(record.channelId, undefined, () => guard(true))
+          return { stopped: outcome.result === 'stopped' }
         }
         const reset = async (mode: 'clear' | 'compact') => {
           guard(true)
@@ -470,14 +473,17 @@ export class CommandService implements CommandGate {
             case 'status': {
               const status = this.#status(record.channelId)
               result = reply(
-                `频道：${this.#channel(record.channelId).displayName ?? '当前频道'}\n智能体：${revision?.displayName ?? '未绑定'}\n响应模式：${status.responseMode ?? '未绑定'}\n运行状态：${status.running ? '运行中' : '空闲'}`,
+                `频道：${this.#channel(record.channelId).displayName ?? '当前频道'}\n智能体：${revision?.displayName ?? '未绑定'}\n响应模式：${status.responseMode ?? '未绑定'}\n暂停状态：${status.paused === true ? '已暂停' : '未暂停'}\n运行状态：${status.running ? '运行中' : '空闲'}`,
               )
               break
             }
-            case 'stop':
-              await stop()
-              result = reply('当前轮次已停止，上下文已保留。')
+            case 'stop': {
+              const outcome = await stop()
+              result = reply(
+                outcome.stopped ? '当前轮次已停止，上下文已保留；之后的新消息仍会触发回应。' : '当前没有运行中的任务。',
+              )
               break
+            }
             case 'reset':
               await reset('clear')
               result = reply('当前上下文已清空，聊天历史已保留。')
@@ -486,24 +492,21 @@ export class CommandService implements CommandGate {
               await reset('compact')
               result = reply('当前上下文已压缩。')
               break
-            case 'off':
-            case 'on': {
-              const off = command.fullName === 'off'
-              await this.#o.channels().updateCommandResponsePolicy(
-                binding!,
-                () => guard(true),
-                (current) => {
-                  if (off) {
-                    if (current.triggerPolicy !== 'observe-only') store.saveResponsePolicy(current)
-                    return 'observe-only'
-                  }
-                  return (
-                    store.savedResponsePolicy(current) ??
-                    (this.#channel(record.channelId).kind === 'group' ? 'mentioned-or-replied' : 'always')
-                  )
-                },
+            case 'pause':
+            case 'resume': {
+              const pausing = command.fullName === 'pause'
+              const outcome = await this.#o
+                .channels()
+                .setPaused(record.channelId, pausing, { boundAt: binding!.boundAt, guard: () => guard(true) })
+              result = reply(
+                pausing
+                  ? outcome.changed
+                    ? `已暂停当前频道的自动响应${outcome.stopped ? '，并停止了当前轮次' : ''}。响应规则不变，输入 /resume 恢复。`
+                    : '当前频道已处于暂停状态。'
+                  : outcome.changed
+                    ? '已恢复当前频道的自动响应，按当前响应规则回应；之前停止的任务不会重跑。'
+                    : '当前频道没有暂停。',
               )
-              result = reply(off ? '已切换为仅观察，仍可使用命令。' : '已恢复响应策略。')
               break
             }
             default:

@@ -1562,6 +1562,8 @@ export const HostSnapshotSchema = z
                 channelId: ChannelIdSchema,
                 agentId: AgentIdSchema,
                 triggerPolicy: TriggerPolicySchema,
+                /** Channel pause, independent of the response rule. */
+                paused: z.boolean().default(false),
                 processingFeedback: z.enum(['auto', 'off']).default('auto'),
                 /** Absent means `observe`. */
                 localAgentMessages: z.enum(['observe', 'trigger']).optional(),
@@ -2785,6 +2787,7 @@ export const HostApiContracts = {
         channelId: ChannelIdSchema,
         agentId: AgentIdSchema,
         triggerPolicy: TriggerPolicySchema,
+        paused: z.boolean().default(false),
         processingFeedback: z.enum(['auto', 'off']).default('auto'),
         localAgentMessages: z.enum(['observe', 'trigger']).optional(),
         activityTriggerOverrides: ActivityTriggerOverridesSchema.default({}),
@@ -4558,6 +4561,15 @@ export const HostApiContracts = {
       })
       .strict(),
     error: HostApiErrorSchema,
+  }),
+  setChannelPaused: defineContract({
+    method: 'POST',
+    path: '/api/channels/:channelId/pause',
+    params: channelParam,
+    request: z.object({ paused: z.boolean() }).strict(),
+    response: z.object({ paused: z.boolean(), changed: z.boolean(), stopped: z.boolean() }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
   }),
   resolveOutbound: defineContract({
     method: 'POST',

@@ -133,6 +133,7 @@ const createLegacyFixture = async () => {
     // The fixture writes rows with today's repository, which also writes binding columns added after migration 24;
     // migration 32 rebuilds the table and resets the column to its default either way.
     legacy.exec("ALTER TABLE channel_bindings ADD COLUMN local_agent_messages text NOT NULL DEFAULT 'observe'")
+    legacy.exec('ALTER TABLE channel_bindings ADD COLUMN paused integer NOT NULL DEFAULT 0')
     // Fixture writers use today's schema; remove these fields before the actual upgrade below.
     legacy.exec(
       "ALTER TABLE channels ADD COLUMN platform_display_name text; ALTER TABLE channels ADD COLUMN preferred_processing_feedback text NOT NULL DEFAULT 'auto'",
@@ -285,6 +286,7 @@ const createLegacyFixture = async () => {
       'ALTER TABLE channels DROP COLUMN platform_display_name; ALTER TABLE channels DROP COLUMN preferred_processing_feedback',
     )
     legacyChannels.exec('ALTER TABLE physical_deliveries DROP COLUMN diagnostic')
+    legacyChannels.exec('ALTER TABLE channel_bindings DROP COLUMN paused')
   } finally {
     legacyChannels.close()
   }

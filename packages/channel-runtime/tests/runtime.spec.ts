@@ -2241,6 +2241,7 @@ describe('ChannelRuntime M1 lane', () => {
       channelId: ChannelIdSchema.parse('chn_trigger'),
       agentId: AgentIdSchema.parse('agt_trigger'),
       triggerPolicy,
+      paused: false,
       processingFeedback: 'auto',
       localAgentMessages: 'observe',
       activityTriggerOverrides: {},

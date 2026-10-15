@@ -630,7 +630,7 @@ export function registerWorkspaceRoutes({
         }
         return
       }
-      const projectionMatch = /^\/api\/channels\/([^/]+)\/(read|pending|stop)$/u.exec(url.pathname)
+      const projectionMatch = /^\/api\/channels\/([^/]+)\/(read|pending|stop|pause)$/u.exec(url.pathname)
       if (projectionMatch) {
         let channelId: ChannelId
         try {
@@ -639,7 +639,14 @@ export function registerWorkspaceRoutes({
           writeError(res, 400, 'invalid-channel', 'Invalid channel id.')
           return
         }
-        const action = projectionMatch[2] === 'read' ? 'read' : projectionMatch[2] === 'pending' ? 'pending' : 'stop'
+        const action =
+          projectionMatch[2] === 'read'
+            ? 'read'
+            : projectionMatch[2] === 'pending'
+              ? 'pending'
+              : projectionMatch[2] === 'pause'
+                ? 'pause'
+                : 'stop'
         await projections.handleChannelRoute(req, res, channelId, action)
         return
       }

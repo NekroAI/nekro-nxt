@@ -192,6 +192,11 @@ export interface BindingRecord {
   readonly channelId: ChannelId
   readonly agentId: AgentId
   readonly triggerPolicy: BindingTriggerPolicy
+  /**
+   * Channel-scoped pause, independent of the response rule: every automatic trigger (messages, platform events,
+   * jobs, extension wake-ups) is ignored while true. Kept across rule edits, reset when the agent changes.
+   */
+  readonly paused: boolean
   readonly processingFeedback: 'auto' | 'off'
   /** Messages from another local agent's account: `observe` keeps them as context unless they @ or reply to this agent. */
   readonly localAgentMessages: 'observe' | 'trigger'
@@ -821,6 +826,7 @@ export class CoreService {
       channelId,
       agentId,
       triggerPolicy: channelInput.triggerPolicy,
+      paused: false,
       processingFeedback: 'auto',
       localAgentMessages: 'observe',
       activityTriggerOverrides: {},
@@ -1367,6 +1373,7 @@ export class CoreService {
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
+      paused: false,
       processingFeedback:
         input.processingFeedback ?? this.#repository.getChannel(input.channelId)?.preferredProcessingFeedback ?? 'auto',
       localAgentMessages: parsed.localAgentMessages,
@@ -1387,10 +1394,13 @@ export class CoreService {
     const parsed = bindingInputSchema.parse(input)
     if (!this.#repository.getChannel(input.channelId)) throw new Error(`Unknown channel: ${input.channelId}`)
     if (!this.#repository.getAgent(input.agentId)) throw new Error(`Unknown agent: ${input.agentId}`)
+    const previous = this.#repository.getBinding(input.channelId)
     return this.#repository.replaceBinding({
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: parsed.triggerPolicy,
+      // Editing the rule keeps the pause; a different agent starts unpaused.
+      paused: previous?.agentId === input.agentId && previous.paused,
       processingFeedback:
         input.processingFeedback ?? this.#repository.getChannel(input.channelId)?.preferredProcessingFeedback ?? 'auto',
       localAgentMessages: parsed.localAgentMessages,

@@ -775,6 +775,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
           channelId: plan.channelId,
           agentId: plan.agentId,
           triggerPolicy: 'always',
+          paused: false,
           processingFeedback: 'auto',
           activityTriggerOverrides: {},
           boundAt: 1_725_000_000_000 + created * 100,
@@ -807,6 +808,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: input.triggerPolicy,
+      paused: false,
       boundAt: 1_725_000_001_000,
     })
     snapshot = {
@@ -982,6 +984,7 @@ test('the wiring board binds an agent to an unwired channel in place', async ({ 
       channelId: input.channelId,
       agentId: input.agentId,
       triggerPolicy: input.triggerPolicy,
+      paused: false,
       boundAt: 1_725_000_001_000,
     })
     snapshot = {

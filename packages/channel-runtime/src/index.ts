@@ -711,6 +711,8 @@ export class ChannelRuntime {
   /** Product trigger rule: binding policy, then a stored hook decision, then scheduled jobs that always wake. */
   #triggered(binding: BindingRecord, event: ChannelEventRecord): boolean {
     if (this.#commands?.excludes(event)) return false
+    // Pause outranks every automatic path, including jobs and forced hook decisions.
+    if (binding.paused) return false
     if (isExtensionJobEvent(event)) return binding.triggerPolicy !== 'observe-only'
     const decision = this.#hookDecision(binding, event)
     if (decision?.hidden === true || decision?.trigger === 'suppress') return false
@@ -936,19 +938,36 @@ export class ChannelRuntime {
     return this.#delivery.sendCommandReply(input)
   }
 
-  /** Uses the same lane as rebinding and admissions, retaining the binding generation. */
-  async updateCommandResponsePolicy(
-    binding: BindingRecord,
-    guard: () => void,
-    resolve: (current: BindingRecord) => BindingRecord['triggerPolicy'],
-  ): Promise<void> {
-    await this.#withLane(binding.channelId, binding.agentId, () => {
-      guard()
-      const current = this.#coreRepository.getBinding(binding.channelId)
-      if (!current || current.agentId !== binding.agentId || current.boundAt !== binding.boundAt)
-        throw new Error('频道绑定已变化，请重新执行命令。')
-      this.#coreRepository.replaceBinding({ ...current, triggerPolicy: resolve(current) })
-      return Promise.resolve()
+  /**
+   * Pauses or resumes every automatic response in the Channel without touching the response rule. Pausing also
+   * stops the current turn so it takes effect at once; resuming never replays stopped work. Runs in the same lane as
+   * rebinding and admissions and retains the binding generation when the caller passes it.
+   */
+  async setPaused(
+    channelId: ChannelId,
+    paused: boolean,
+    options: { readonly boundAt?: number; readonly guard?: () => void } = {},
+  ): Promise<{ readonly paused: boolean; readonly changed: boolean; readonly stopped: boolean }> {
+    const binding = this.#coreRepository.getBinding(channelId)
+    if (!binding) {
+      options.guard?.()
+      throw new Error('频道还没有绑定智能体。')
+    }
+    return this.#withLane(channelId, binding.agentId, async () => {
+      options.guard?.()
+      const current = this.#coreRepository.getBinding(channelId)
+      if (
+        !current ||
+        current.agentId !== binding.agentId ||
+        (options.boundAt !== undefined && current.boundAt !== options.boundAt)
+      )
+        throw new Error('频道绑定已变化，请重新操作。')
+      const changed = current.paused !== paused
+      if (changed) this.#coreRepository.replaceBinding({ ...current, paused })
+      const stopped = paused
+        ? (await this.#interruptActiveTurn(channelId, current.agentId)).result === 'stopped'
+        : false
+      return { paused, changed, stopped }
     })
   }
 
@@ -1263,28 +1282,41 @@ export class ChannelRuntime {
     }
     return this.#withLane(channelId, binding.agentId, async () => {
       guard?.()
-      const episode = this.#runtimeRepository.getActiveEpisode(channelId, binding.agentId)
-      if (expectedEpisodeId !== undefined && episode?.id !== expectedEpisodeId) {
-        throw new ChannelStopConflictError('频道上下文已发生变化，请刷新后重试。')
-      }
-      if (!episode || episode.status !== 'active' || episode.dshSessionId === undefined) {
-        return { result: 'idle' as const, retainedPending: 0 }
-      }
-      if (this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'idle') {
-        return {
-          result: 'idle' as const,
-          episodeId: episode.id,
-          retainedPending: this.#sessionDriver.listPendingAdmissions(episode.dshSessionId).length,
-        }
-      }
-      this.#feedback.markEndReason(episode.id, 'cancelled')
-      const outcome = await this.#sessionDriver.interruptTurn(episode.dshSessionId, 'stopped-by-administrator')
-      return {
-        result: outcome.interrupted ? ('stopped' as const) : ('idle' as const),
-        episodeId: episode.id,
-        retainedPending: outcome.retainedPending,
-      }
+      return this.#interruptActiveTurn(channelId, binding.agentId, expectedEpisodeId)
     })
+  }
+
+  /** The body of `stopCurrentTurn`; callers already hold the Channel lane. */
+  async #interruptActiveTurn(
+    channelId: ChannelId,
+    agentId: AgentId,
+    expectedEpisodeId?: EpisodeId,
+  ): Promise<{
+    readonly result: 'stopped' | 'idle'
+    readonly episodeId?: EpisodeId
+    readonly retainedPending: number
+  }> {
+    const episode = this.#runtimeRepository.getActiveEpisode(channelId, agentId)
+    if (expectedEpisodeId !== undefined && episode?.id !== expectedEpisodeId) {
+      throw new ChannelStopConflictError('频道上下文已发生变化，请刷新后重试。')
+    }
+    if (!episode || episode.status !== 'active' || episode.dshSessionId === undefined) {
+      return { result: 'idle' as const, retainedPending: 0 }
+    }
+    if (this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'idle') {
+      return {
+        result: 'idle' as const,
+        episodeId: episode.id,
+        retainedPending: this.#sessionDriver.listPendingAdmissions(episode.dshSessionId).length,
+      }
+    }
+    this.#feedback.markEndReason(episode.id, 'cancelled')
+    const outcome = await this.#sessionDriver.interruptTurn(episode.dshSessionId, 'stopped-by-administrator')
+    return {
+      result: outcome.interrupted ? ('stopped' as const) : ('idle' as const),
+      episodeId: episode.id,
+      retainedPending: outcome.retainedPending,
+    }
   }
 
   /** Fails before any state change when the Outbound cannot be dispatched again now. */

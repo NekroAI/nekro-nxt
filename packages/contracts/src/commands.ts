@@ -129,8 +129,14 @@ export interface CommandExecutionContext {
   readonly arguments: Readonly<Record<string, string | number | boolean>>
   readonly signal: AbortSignal
   readonly host: {
-    status(): { readonly bound: boolean; readonly responseMode?: string; readonly running: boolean }
-    stop(): Promise<void>
+    status(): {
+      readonly bound: boolean
+      readonly responseMode?: string
+      readonly paused?: boolean
+      readonly running: boolean
+    }
+    /** Resolves with `stopped: false` when nothing was running. */
+    stop(): Promise<{ readonly stopped: boolean }>
     reset(mode: 'clear' | 'compact'): Promise<void>
   }
 }

@@ -463,6 +463,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       id: `${binding.channelId}:${binding.agentId}:${binding.boundAt}`,
       agentId: binding.agentId,
       triggerPolicy: binding.triggerPolicy,
+      paused: binding.paused,
       processingFeedback: binding.processingFeedback,
       localAgentMessages: binding.localAgentMessages ?? 'observe',
       activityTriggerOverrides: binding.activityTriggerOverrides,
@@ -1055,6 +1056,8 @@ export class HttpProductHost implements ProductHostPort {
     'agents.delete': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.deleteAgent, { agentId }, body),
     'channels.resetContext': async ({ channelId, ...body }) =>
       this.#mutate(HostApiContracts.resetChannelContext, { channelId }, body),
+    'channels.setPaused': async ({ channelId, ...body }) =>
+      this.#mutate(HostApiContracts.setChannelPaused, { channelId }, body),
     'channels.delete': async ({ channelId, ...body }) =>
       this.#mutate(HostApiContracts.deleteChannel, { channelId }, body),
     'channels.rename': async ({ channelId, ...body }) =>

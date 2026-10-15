@@ -254,6 +254,12 @@ export function createProductStore(
         mode,
       })
     },
+    setChannelPaused: async (channelId, paused) => {
+      await requireHost().actions['channels.setPaused']({
+        channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+        paused,
+      })
+    },
     putWorkTreeOrder: async (order) => {
       const previous = useProductStore.getState().workTreeOrder
       const next = {

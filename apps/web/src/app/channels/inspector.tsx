@@ -163,6 +163,14 @@ export function ChannelInspector({
       failure(error)
     }
   }
+  const changePaused = async (paused: boolean) => {
+    try {
+      await api.getState().setChannelPaused(channel.id, paused)
+      toast(paused ? '已暂停这个频道的自动回应' : '已恢复自动回应')
+    } catch (error) {
+      failure(error)
+    }
+  }
   const changeTrigger = async (triggerPolicy: TriggerPolicy) => {
     if (!agent) return
     try {
@@ -259,6 +267,19 @@ export function ChannelInspector({
                 value={binding.triggerPolicy}
                 options={TRIGGERS.map((value) => ({ value, label: triggerLabel[value] ?? value }))}
                 onValueChange={(value) => isTriggerPolicy(value) && void changeTrigger(value)}
+              />
+            </PropertyRow>
+          ) : null}
+          {agent && binding ? (
+            <PropertyRow
+              label="暂停回应"
+              description={binding.paused ? '暂停中：不会自动回应，上面的规则保留' : undefined}
+              tip="暂停时消息、平台事件、定时任务和扩展唤醒都不再触发回应，并停止当前轮次；规则不变，恢复后不会重跑已停止的任务。也可在频道里输入 /pause、/resume。"
+            >
+              <Switch
+                label="暂停回应"
+                checked={binding.paused}
+                onCheckedChange={(checked) => void changePaused(checked)}
               />
             </PropertyRow>
           ) : null}

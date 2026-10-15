@@ -31,14 +31,6 @@ CREATE TABLE `command_policies` (
 	PRIMARY KEY(`scope`, `command_name`)
 );
 --> statement-breakpoint
-CREATE TABLE `command_response_policies` (
-	`channel_id` text PRIMARY KEY NOT NULL,
-	`agent_id` text NOT NULL,
-	`bound_at` integer NOT NULL,
-	`policy` text NOT NULL,
-	FOREIGN KEY (`channel_id`) REFERENCES `channels`(`id`) ON UPDATE no action ON DELETE cascade
-);
---> statement-breakpoint
 CREATE TABLE `command_system` (
 	`id` integer PRIMARY KEY NOT NULL,
 	`cutoff_event_id` text NOT NULL
@@ -76,6 +68,7 @@ CREATE UNIQUE INDEX `outbound_intents_command_uq` ON `outbound_intents` (`comman
 CREATE INDEX `outbound_intents_channel_history_idx` ON `outbound_intents` (`channel_id`,`created_at`);--> statement-breakpoint
 CREATE UNIQUE INDEX `outbound_intents_client_request_uq` ON `outbound_intents` (`episode_id`,`client_request_id`);--> statement-breakpoint
 CREATE INDEX `outbound_intents_recovery_idx` ON `outbound_intents` (`state`,`created_at`);--> statement-breakpoint
-CREATE INDEX `outbound_intents_episode_history_idx` ON `outbound_intents` (`episode_id`,`created_at`);
+CREATE INDEX `outbound_intents_episode_history_idx` ON `outbound_intents` (`episode_id`,`created_at`);--> statement-breakpoint
+ALTER TABLE `channel_bindings` ADD `paused` integer DEFAULT false NOT NULL;
 --> statement-breakpoint
 INSERT INTO command_system (id, cutoff_event_id) SELECT 1, COALESCE(MAX(id), '') FROM channel_events;

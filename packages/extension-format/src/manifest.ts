@@ -249,7 +249,11 @@ export const extensionManifestSchema = z
     if (commands.length && (value.requires?.sdk ?? 0) < 9) issue('命令扩展需要声明 requires.sdk >= 9。')
     const commandNames = commands.flatMap((command) => [command.name, ...command.aliases])
     if (new Set(commandNames).size !== commandNames.length) issue('扩展内的命令名称和别名不能重复。')
-    if (commandNames.some((name) => ['help', 'status', 'stop', 'reset', 'compact', 'off', 'on'].includes(name)))
+    if (
+      commandNames.some((name) =>
+        ['help', 'status', 'stop', 'reset', 'compact', 'pause', 'resume', 'off', 'on'].includes(name),
+      )
+    )
       issue('内置命令名称保留，扩展不能覆盖。')
     checkContributions(value.contributions, issue)
     checkEntrypoints(value, issue)

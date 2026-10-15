@@ -8,16 +8,8 @@ import {
   type CommandPolicy,
   type ConnectionId,
 } from '@nekro-nxt/contracts'
-import type { BindingRecord } from '@nekro-nxt/core'
 import type { DrizzleCoreDatabase } from '../database.js'
-import {
-  commandSystem,
-  commandExecutions,
-  commandGrants,
-  commandPolicies,
-  commandResponsePolicies,
-  outboundIntents,
-} from '../schema.js'
+import { commandSystem, commandExecutions, commandGrants, commandPolicies, outboundIntents } from '../schema.js'
 
 export function createCommandRepository(db: DrizzleCoreDatabase) {
   const needsRecovery = (record: CommandExecutionRecord): boolean =>
@@ -188,34 +180,6 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
           ),
         )
         .run()
-    },
-    saveResponsePolicy(binding: BindingRecord): void {
-      db.insert(commandResponsePolicies)
-        .values({
-          channelId: binding.channelId,
-          agentId: binding.agentId,
-          boundAt: binding.boundAt,
-          policy: binding.triggerPolicy,
-        })
-        .onConflictDoUpdate({
-          target: commandResponsePolicies.channelId,
-          set: { agentId: binding.agentId, boundAt: binding.boundAt, policy: binding.triggerPolicy },
-        })
-        .run()
-    },
-    savedResponsePolicy(binding: BindingRecord): BindingRecord['triggerPolicy'] | undefined {
-      const row = db
-        .select()
-        .from(commandResponsePolicies)
-        .where(
-          and(
-            eq(commandResponsePolicies.channelId, binding.channelId),
-            eq(commandResponsePolicies.agentId, binding.agentId),
-            eq(commandResponsePolicies.boundAt, binding.boundAt),
-          ),
-        )
-        .get()
-      return row?.policy
     },
   }
 }
