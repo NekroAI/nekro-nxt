@@ -289,9 +289,6 @@ return {
         contentDigest: saved.revision.contentDigest,
         payloadDigest: saved.revision.payloadDigest,
         createdAt: saved.revision.createdAt,
-        ancestry: [],
-        origin: 'file' as const,
-        dataVersion: 1,
       },
       sourceVerification: null,
       files: Object.entries(files).map(([path, bytes]) => ({
