@@ -84,7 +84,9 @@ export function SaveDialog({
       {revising ? (
         target ? (
           <p style={{ margin: 0 }}>
-            保存后成为「{target.name}」的下一个版本，接在 {target.revisions.find((item) => item.id === task.baseRevisionId)?.versionLabel ?? '修改时的版本'} 之后。正在使用的版本不变，需要时在扩展详情里切换。
+            保存后成为「{target.name}」的下一个版本，接在{' '}
+            {target.revisions.find((item) => item.id === task.baseRevisionId)?.versionLabel ?? '修改时的版本'}{' '}
+            之后。正在使用的版本不变，需要时在扩展详情里切换。
           </p>
         ) : (
           <p role="alert" style={{ margin: 0, color: 'var(--bad)' }}>

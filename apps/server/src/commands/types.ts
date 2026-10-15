@@ -34,7 +34,10 @@ export interface CommandGovernancePort {
     input: { readonly subcommand?: string; readonly target?: string; readonly value?: string },
     context: CommandGovernanceContext,
   ): Promise<string>
-  admin(input: { readonly action?: string; readonly value?: string }, context: CommandGovernanceContext): Promise<string>
+  admin(
+    input: { readonly action?: string; readonly value?: string },
+    context: CommandGovernanceContext,
+  ): Promise<string>
 }
 
 export interface CommandGovernanceContext {

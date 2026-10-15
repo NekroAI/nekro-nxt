@@ -20,7 +20,7 @@ const failure = (res: ServerResponse, code: string, error: unknown): void =>
   writeError(res, 400, code, error instanceof Error ? error.message : String(error))
 
 /**
- * `/api/extensions/:id/(lineage|branch|rollback|data…)`. The extensions prefix route hands these over first; the
+ * `/api/extensions/:id/(lineage|branch|revert|data…)`. The extensions prefix route hands these over first; the
  * return value says whether this function answered.
  */
 export async function handleGovernanceExtensionRoute(
@@ -30,9 +30,10 @@ export async function handleGovernanceExtensionRoute(
   url: URL,
 ): Promise<boolean> {
   const { runtime, broadcastExtensionsChanged } = context
-  const match = /^\/api\/extensions\/([^/]+)\/(lineage|branch|rollback|data|data\/preview|data\/migrate|data\/snapshots|data\/export|data\/export-config)$/u.exec(
-    url.pathname,
-  )
+  const match =
+    /^\/api\/extensions\/([^/]+)\/(lineage|branch|revert|data|data\/preview|data\/migrate|data\/snapshots|data\/export|data\/export-config)$/u.exec(
+      url.pathname,
+    )
   if (!match) return false
   let extensionId: ExtensionId
   try {
@@ -72,8 +73,8 @@ export async function handleGovernanceExtensionRoute(
       broadcastExtensionsChanged()
       return true
     }
-    if (route === 'rollback' && req.method === 'POST') {
-      const result = await runtime.extensionActions.perform({ kind: 'rollback', extensionId }, { kind: 'console' })
+    if (route === 'revert' && req.method === 'POST') {
+      const result = await runtime.extensionActions.perform({ kind: 'revert', extensionId }, { kind: 'console' })
       writeContractJson(res, 200, HostApiContracts.rollbackExtension, { message: result.message })
       broadcastExtensionsChanged()
       return true
@@ -187,12 +188,12 @@ export async function handleGovernanceExtensionRoute(
 }
 
 /** `/api/authoring/tasks/:id/archive`; the authoring prefix route hands it over first. */
-export async function handleGovernanceAuthoringRoute(
+export function handleGovernanceAuthoringRoute(
   runtime: NekroRuntime,
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
-): Promise<boolean> {
+): boolean {
   const match = /^\/api\/authoring\/tasks\/([^/]+)\/archive$/u.exec(url.pathname)
   if (!match) return false
   try {
@@ -225,7 +226,9 @@ export function registerGovernanceRoutes(context: HostRouteContext): () => void 
       const url = new URL(req.url ?? '/', 'http://localhost')
       try {
         if (url.pathname === '/api/extension-requests' && req.method === 'GET') {
-          writeContractJson(res, 200, HostApiContracts.listExtensionRequests, { requests: projectExtensionRequests(runtime) })
+          writeContractJson(res, 200, HostApiContracts.listExtensionRequests, {
+            requests: projectExtensionRequests(runtime),
+          })
           return
         }
         const match = /^\/api\/extension-requests\/(\d+)\/(approve|reject)$/u.exec(url.pathname)
@@ -275,7 +278,12 @@ export function registerGovernanceRoutes(context: HostRouteContext): () => void 
           return
         }
         if (url.pathname === '/api/administrators/claim-code' && req.method === 'POST') {
-          writeContractJson(res, 200, HostApiContracts.createAdministratorClaimCode, runtime.administrators.createClaimCode())
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.createAdministratorClaimCode,
+            runtime.administrators.createClaimCode(),
+          )
           return
         }
         writeError(res, 404, 'not-found', 'Unknown route.')
@@ -328,7 +336,10 @@ export function registerGovernanceRoutes(context: HostRouteContext): () => void 
           writeContractJson(res, 200, HostApiContracts.dismissCommunityRelease, { ok: true })
           return
         }
-        const result = await runtime.extensionActions.perform({ kind: 'community-update', extensionId }, { kind: 'console' })
+        const result = await runtime.extensionActions.perform(
+          { kind: 'community-update', extensionId },
+          { kind: 'console' },
+        )
         writeContractJson(res, 200, HostApiContracts.updateFromCommunity, { message: result.message })
         broadcastExtensionsChanged()
       } catch (error) {

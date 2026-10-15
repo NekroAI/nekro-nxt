@@ -3,12 +3,7 @@ import type { ServerResponse } from 'node:http'
 import { registerCommunityPersonaRoutes } from './host-routes-community-personas.js'
 import { registerCommunityFeedbackRoutes } from './host-routes-feedback.js'
 import { COMMUNITY_CALLBACK_PATH, CommunityError, UPDATE_CHECK_INTERVAL_MS } from './community.js'
-import {
-  readJsonBody,
-  writeContractJson,
-  writeError,
-  type HostRouteContext,
-} from './host-route-support.js'
+import { readJsonBody, writeContractJson, writeError, type HostRouteContext } from './host-route-support.js'
 
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/gu, (char) => `&#${char.charCodeAt(0)};`)
 
@@ -232,6 +227,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           notes: input.notes,
           ...(input.listing === undefined ? {} : { listing: input.listing }),
         })
+        void _revision
         writeContractJson(res, 200, HostApiContracts.publishToCommunity, published)
         broadcastExtensionsChanged()
       } catch (error) {
@@ -313,10 +309,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
           const bytes = await community.downloadRelease(params.releaseId)
           const inspection = extensionImports.inspect(runtime, bytes)
           const detail = await community.getExtension(inspection.extensionId)
-          const release =
-            detail.latest?.id === params.releaseId
-              ? detail.latest
-              : undefined
+          const release = detail.latest?.id === params.releaseId ? detail.latest : undefined
           extensionImports.attachSource(inspection.token, {
             communityUrl: community.communityUrl,
             releaseId: params.releaseId,

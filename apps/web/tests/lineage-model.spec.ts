@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
+import { HostApiContracts } from '@nekro-nxt/contracts'
 import { layoutLineage, type LineageLine } from '../src/app/workshop/lineage-model.ts'
+
+/** Fixture lines checked against the lineage response contract, so ids carry their brands. */
+const family = (lines: readonly unknown[]): LineageLine[] =>
+  HostApiContracts.getExtensionLineage.response.parse({ lines }).lines
 
 const node = (
   extensionId: string,
@@ -7,17 +12,16 @@ const node = (
   label: string,
   createdAt: number,
   extra: { readonly parentRevisionId?: string; readonly current?: boolean } = {},
-) =>
-  ({
-    revisionId,
-    extensionId,
-    label,
-    origin: 'authored',
-    createdAt,
-    current: extra.current ?? false,
-    releaseNumbers: [],
-    ...(extra.parentRevisionId === undefined ? {} : { parentRevisionId: extra.parentRevisionId }),
-  }) as unknown as LineageLine['nodes'][number]
+) => ({
+  revisionId,
+  extensionId,
+  label,
+  origin: 'authored',
+  createdAt,
+  current: extra.current ?? false,
+  releaseNumbers: [],
+  ...(extra.parentRevisionId === undefined ? {} : { parentRevisionId: extra.parentRevisionId }),
+})
 
 const where = (layout: ReturnType<typeof layoutLineage>, revisionId: string) => {
   const entry = layout.nodes.find((item) => item.node.revisionId === revisionId)
@@ -26,7 +30,7 @@ const where = (layout: ReturnType<typeof layoutLineage>, revisionId: string) => 
 
 describe('layoutLineage', () => {
   it('keeps the line to the version in use on one row and opens rows for forks and branches of branches', () => {
-    const lines = [
+    const lines = family([
       {
         extensionId: 'ext_A',
         displayName: '原版',
@@ -50,7 +54,7 @@ describe('layoutLineage', () => {
         branchOf: { extensionId: 'ext_B', revisionId: 'xrv_B1' },
         nodes: [node('ext_C', 'xrv_C1', 'v1', 7)],
       },
-    ] as unknown as LineageLine[]
+    ])
     const layout = layoutLineage(lines)
     expect(where(layout, 'xrv_A1')).toEqual({ column: 0, row: 0, lane: 0 })
     expect(where(layout, 'xrv_A2')).toEqual({ column: 1, row: 0, lane: 0 })
@@ -60,22 +64,26 @@ describe('layoutLineage', () => {
     expect(where(layout, 'xrv_B2')).toMatchObject({ column: 3, row: where(layout, 'xrv_B1')?.row })
     expect(where(layout, 'xrv_C1')).toMatchObject({ column: 3, lane: 2 })
     expect(new Set(layout.nodes.map((entry) => `${entry.column}:${entry.row}`)).size).toBe(layout.nodes.length)
-    expect(layout.edges.filter((edge) => edge.kind === 'branch').map((edge) => edge.to.node.revisionId).sort()).toEqual([
-      'xrv_B1',
-      'xrv_C1',
-    ])
+    expect(
+      layout.edges
+        .filter((edge) => edge.kind === 'branch')
+        .map((edge) => edge.to.node.revisionId)
+        .sort(),
+    ).toEqual(['xrv_B1', 'xrv_C1'])
     expect(layout.columns).toBe(4)
   })
 
   it('starts a separate tree for a line whose origin is not on this machine and for a missing parent', () => {
-    const layout = layoutLineage([
-      {
-        extensionId: 'ext_D',
-        displayName: '分支',
-        branchOf: { extensionId: 'ext_GONE', revisionId: 'xrv_GONE' },
-        nodes: [node('ext_D', 'xrv_D2', 'v2', 2, { parentRevisionId: 'xrv_NOTHERE' })],
-      },
-    ] as unknown as LineageLine[])
+    const layout = layoutLineage(
+      family([
+        {
+          extensionId: 'ext_D',
+          displayName: '分支',
+          branchOf: { extensionId: 'ext_GONE', revisionId: 'xrv_GONE' },
+          nodes: [node('ext_D', 'xrv_D2', 'v2', 2, { parentRevisionId: 'xrv_NOTHERE' })],
+        },
+      ]),
+    )
     expect(where(layout, 'xrv_D2')).toEqual({ column: 0, row: 0, lane: 0 })
     expect(layout.edges).toEqual([])
   })

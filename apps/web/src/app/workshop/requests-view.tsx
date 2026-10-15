@@ -118,7 +118,9 @@ export function RequestsView() {
             </Button>
           </>
         ) : (
-          <Chip tone={status.tone}>{request.autonomous && request.status === 'completed' ? '自主完成' : status.label}</Chip>
+          <Chip tone={status.tone}>
+            {request.autonomous && request.status === 'completed' ? '自主完成' : status.label}
+          </Chip>
         )}
       </div>
     )
@@ -137,7 +139,9 @@ export function RequestsView() {
       />
       <PropertyGroup title="等待确认">
         {pending.length === 0 ? (
-          <EmptyState title="没有等待确认的请求">智能体发出的请求会同时出现在频道里，管理员可以在聊天里用 /ext approve 编号 同意。</EmptyState>
+          <EmptyState title="没有等待确认的请求">
+            智能体发出的请求会同时出现在频道里，管理员可以在聊天里用 /ext approve 编号 同意。
+          </EmptyState>
         ) : (
           pending.map((request) => row(request, true))
         )}

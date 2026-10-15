@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ExtensionRevisionId } from '@nekro-nxt/contracts'
+import { ExtensionIdSchema, ExtensionRevisionIdSchema } from '@nekro-nxt/contracts'
 import {
   EXTENSION_LINEAGE_MAX_ANCESTRY,
   extensionManifestSchema,
@@ -12,7 +12,7 @@ import {
   type LineageNode,
 } from '../src/index.js'
 
-const rev = (n: number) => `xrv_01LINEAGE${String(n).padStart(16, '0')}` as ExtensionRevisionId
+const rev = (n: number) => ExtensionRevisionIdSchema.parse(`xrv_01LINEAGE${String(n).padStart(16, '0')}`)
 
 /** A straight line v1 → … → vN, returned as nodes in order. */
 const line = (count: number, offset = 0): LineageNode[] => {
@@ -62,7 +62,10 @@ describe('lineage helpers', () => {
 
   it('starts a branch as a new line that remembers its origin, and branches keep it', () => {
     const [, v2] = line(2)
-    const branch = lineageOfBranch({ extensionId: 'ext_01ORIGIN0000000000000000' as never, revisionId: v2!.revisionId })
+    const branch = lineageOfBranch({
+      extensionId: ExtensionIdSchema.parse('ext_01ORIGIN0000000000000000'),
+      revisionId: v2!.revisionId,
+    })
     expect(branch).toEqual({
       parent: null,
       ancestry: [],
@@ -105,9 +108,9 @@ describe('manifest lineage and data version', () => {
 
   it('accepts administrator commands only at the governance level', () => {
     const command = { kind: 'command', name: 'purge', description: '清空', minimumPermission: 'admin' }
-    expect(extensionManifestSchema.safeParse(manifest({ contributions: [command], requires: { sdk: 9 } })).success).toBe(
-      false,
-    )
+    expect(
+      extensionManifestSchema.safeParse(manifest({ contributions: [command], requires: { sdk: 9 } })).success,
+    ).toBe(false)
     expect(
       extensionManifestSchema.safeParse(manifest({ contributions: [command], requires: { sdk: 10 } })).success,
     ).toBe(true)

@@ -317,7 +317,10 @@ export class ExtensionLifecycleCoordinator {
         })
       }
       if (this.#data && input.restoreDataSnapshotId !== undefined) this.#data.restore(input.restoreDataSnapshotId)
-      const from = input.restoreDataSnapshotId === undefined ? dataCurrent : (this.#data?.dataVersion(input.extensionId) ?? dataCurrent)
+      const from =
+        input.restoreDataSnapshotId === undefined
+          ? dataCurrent
+          : (this.#data?.dataVersion(input.extensionId) ?? dataCurrent)
       next = await this.#start({
         revision,
         manifest,
@@ -399,7 +402,7 @@ export class ExtensionLifecycleCoordinator {
         result = await operation()
       } finally {
         if (live && installation) {
-          await this.#install({ extensionId, revisionId: installation.extensionRevisionId }).catch(async (error) => {
+          await this.#install({ extensionId, revisionId: installation.extensionRevisionId }).catch((error: unknown) => {
             this.#diagnostics.set(extensionId, {
               status: 'restore-failed',
               message: message(error),

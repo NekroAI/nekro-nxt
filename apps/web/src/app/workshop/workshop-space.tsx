@@ -100,7 +100,13 @@ export default function WorkshopSpace() {
   if (pathname.startsWith('/workshop/community')) return <Navigate to="/community" replace />
 
   const selected =
-    route?.kind === 'requests' ? 'requests' : task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined
+    route?.kind === 'requests'
+      ? 'requests'
+      : task
+        ? `task:${task.id}`
+        : extension
+          ? `extension:${extension.id}`
+          : undefined
   const agentOf = (id: string) => agents.find((item) => item.id === id)
   const needle = query.trim().toLowerCase()
   const visibleTasks = tasks.filter((item) => matches(needle, item.title, agentOf(item.agentId)?.name))
@@ -170,7 +176,10 @@ export default function WorkshopSpace() {
           <h3 className={styles.group}>创造任务</h3>
           {openTasks.length === 0 ? <p className={styles.groupEmpty}>没有进行中的创造任务</p> : null}
           {taskGroups.map(({ group, items }) => (
-            <TaskGroupRows key={group} label={openTasks.length > 3 || group === 'paused' ? TASK_GROUP_LABEL[group] : undefined}>
+            <TaskGroupRows
+              key={group}
+              label={openTasks.length > 3 || group === 'paused' ? TASK_GROUP_LABEL[group] : undefined}
+            >
               {items.map((item) => {
                 const status = taskStatus(item)
                 const agent = agentOf(item.agentId)

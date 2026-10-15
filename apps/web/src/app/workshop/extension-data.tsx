@@ -40,7 +40,11 @@ const SNAPSHOT_REASON: Record<DataState['snapshots'][number]['reason'], string> 
 }
 
 const size = (bytes: number) =>
-  bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1024 * 1024
+      ? `${(bytes / 1024).toFixed(1)} KB`
+      : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
 const saveBytes = (bytes: Uint8Array, filename: string) => {
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/zip' }))
@@ -130,7 +134,12 @@ export function ExtensionData({ extension }: { readonly extension: LocalExtensio
               icon: <Download size={14} />,
               onSelect: () => void exportData(true),
             },
-            { key: 'import', label: '从数据文件导入…', icon: <Upload size={14} />, onSelect: () => chooser.current?.click() },
+            {
+              key: 'import',
+              label: '从数据文件导入…',
+              icon: <Upload size={14} />,
+              onSelect: () => chooser.current?.click(),
+            },
             ...(others.length > 0
               ? [
                   {
@@ -145,7 +154,11 @@ export function ExtensionData({ extension }: { readonly extension: LocalExtensio
         />
       }
     >
-      <FileChooser ref={chooser} accept=".nxt-extension-data,.zip,application/zip" onFile={(file) => void inspect(file)} />
+      <FileChooser
+        ref={chooser}
+        accept=".nxt-extension-data,.zip,application/zip"
+        onFile={(file) => void inspect(file)}
+      />
       {state === undefined ? (
         <Skeleton height={48} />
       ) : (
@@ -404,7 +417,10 @@ function MigrationDialog({
           : '先清空目标的全部数据，再写入来源的数据。目标独有的记录会被删除。'}
       </p>
       {packageAgents.length > 0 ? (
-        <Field label="智能体的数据交给谁" hint="数据文件里每个智能体各自的数据，迁到这台机器上的哪个智能体；不选的跳过。">
+        <Field
+          label="智能体的数据交给谁"
+          hint="数据文件里每个智能体各自的数据，迁到这台机器上的哪个智能体；不选的跳过。"
+        >
           <div className={styles.agentMap}>
             {packageAgents.map((agent) => (
               <label key={agent.id}>
@@ -420,7 +436,10 @@ function MigrationDialog({
                       return next
                     })
                   }
-                  options={[{ value: '', label: '跳过' }, ...agents.map((local) => ({ value: local.id, label: local.name }))]}
+                  options={[
+                    { value: '', label: '跳过' },
+                    ...agents.map((local) => ({ value: local.id, label: local.name })),
+                  ]}
                 />
               </label>
             ))}
@@ -482,7 +501,8 @@ function MigrationDialog({
         </Banner>
       ) : preview?.needsMigration ? (
         <Banner tone="info">
-          来源数据是较早的第 {preview.sourceDataVersion} 版格式，写入后扩展启动时会自动升级到第 {preview.targetDataVersion} 版。
+          来源数据是较早的第 {preview.sourceDataVersion} 版格式，写入后扩展启动时会自动升级到第{' '}
+          {preview.targetDataVersion} 版。
         </Banner>
       ) : null}
       {destructive && !tooNew ? (

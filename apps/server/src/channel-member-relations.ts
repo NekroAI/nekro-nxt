@@ -27,7 +27,9 @@ export const channelMemberRelations = (
       if (relation?.kind !== 'local-account') {
         const channel = member === undefined ? undefined : repository.getChannel(member.channelId)
         const identity =
-          channel === undefined ? undefined : core.resolveChannelMemberIdentity(channel.connectionId, channel.id, memberId)
+          channel === undefined
+            ? undefined
+            : core.resolveChannelMemberIdentity(channel.connectionId, channel.id, memberId)
         return channel !== undefined &&
           identity !== undefined &&
           repository.isInstanceAdministrator?.(channel.connectionId, identity.platformUserId) === true

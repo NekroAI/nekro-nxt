@@ -98,7 +98,8 @@ export const editableRevisionSources = (input: {
   const client =
     input.sources.client === undefined ? undefined : unwrap(input.sources.client, `${clientPrefix}${CLIENT_HEADER}`)
   const bodies =
-    (input.sources.host === undefined || host !== undefined) && (input.sources.client === undefined || client !== undefined)
+    (input.sources.host === undefined || host !== undefined) &&
+    (input.sources.client === undefined || client !== undefined)
   if (bodies && wrapsBack(host, client, input)) {
     return { format: 'body', ...(host === undefined ? {} : { host }), ...(client === undefined ? {} : { client }) }
   }

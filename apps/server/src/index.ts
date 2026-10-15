@@ -3062,7 +3062,9 @@ export class DshHostRuntime implements AgentSessionDriver {
         : {
             ...(options.logs === undefined ? {} : { logs: options.logs }),
             logName: (revision) => extensionHost.describeRevision(revision).displayName,
-            ...(extensionHost.migrationStorage === undefined ? {} : { migrationStorage: extensionHost.migrationStorage }),
+            ...(extensionHost.migrationStorage === undefined
+              ? {}
+              : { migrationStorage: extensionHost.migrationStorage }),
             nxt: ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext, sdk }) => {
               const described = extensionHost.describeRevision(revision)
               const channelId = this.#sessions.require(sessionId).channelId

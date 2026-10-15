@@ -24,18 +24,19 @@ import type { DrizzleCoreDatabase } from '../database.js'
 import { channelEvents, episodes, outboundIntents, physicalDeliveries } from '../schema.js'
 import { ChannelEventRowSchema, OutboundIntentRowSchema, PhysicalDeliveryRowSchema } from '../row-schemas.js'
 
-type OutboxSlice = Required<Pick<RuntimeRepository, 'findOutboundByNoticeKey'>> & Pick<
-  RuntimeRepository,
-  | 'findOutboundByClientRequest'
-  | 'findOutboundByLogicalMessageId'
-  | 'createOutboundPlan'
-  | 'markIntentSending'
-  | 'markDeliverySending'
-  | 'recordDeliveryReceipt'
-  | 'completeOutboundIntent'
-  | 'getOutbound'
-  | 'listUnsettledOutboundIds'
->
+type OutboxSlice = Required<Pick<RuntimeRepository, 'findOutboundByNoticeKey'>> &
+  Pick<
+    RuntimeRepository,
+    | 'findOutboundByClientRequest'
+    | 'findOutboundByLogicalMessageId'
+    | 'createOutboundPlan'
+    | 'markIntentSending'
+    | 'markDeliverySending'
+    | 'recordDeliveryReceipt'
+    | 'completeOutboundIntent'
+    | 'getOutbound'
+    | 'listUnsettledOutboundIds'
+  >
 
 export const toIntent = (input: typeof outboundIntents.$inferSelect): OutboundIntentRecord => {
   const row = OutboundIntentRowSchema.parse(input)

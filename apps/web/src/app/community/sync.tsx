@@ -25,7 +25,9 @@ import styles from './community.module.css'
 type Sync = { readonly checkedAt: number | null; readonly items: readonly CommunitySyncItem[] }
 
 /** What a line's state means here, for the one who publishes it and for the one who follows it. */
-const describe = (item: CommunitySyncItem): { readonly label: string; readonly tone: Tone; readonly detail: string } => {
+const describe = (
+  item: CommunitySyncItem,
+): { readonly label: string; readonly tone: Tone; readonly detail: string } => {
   const owner = item.role === 'owner'
   switch (item.status) {
     case 'same':
@@ -93,7 +95,11 @@ export function SyncView({ onChecked }: { readonly onChecked: () => void }) {
   const update = async (item: CommunitySyncItem) => {
     setBusy(item.extensionId)
     try {
-      const result = await callHostApi(HostApiContracts.updateFromCommunity, { extensionId: item.extensionId }, undefined)
+      const result = await callHostApi(
+        HostApiContracts.updateFromCommunity,
+        { extensionId: item.extensionId },
+        undefined,
+      )
       toast(result.message)
       await load(true)
     } catch (caught) {

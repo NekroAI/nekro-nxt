@@ -6,6 +6,7 @@ import { z } from 'zod'
 import {
   AgentIdSchema,
   AssetIdSchema,
+  ExtensionRevisionIdSchema,
   JsonValueSchema,
   type AgentId,
   type AssetId,
@@ -204,14 +205,22 @@ export class ExtensionDataService implements ExtensionDataPort {
   }
 
   /** Revisions the newest switch snapshot moved between; the way back for a rollback. */
-  latestSwitch(
-    extensionId: ExtensionId,
-  ): { readonly snapshotId: string; readonly fromRevisionId: string; readonly toRevisionId: string } | undefined {
+  latestSwitch(extensionId: ExtensionId):
+    | {
+        readonly snapshotId: string
+        readonly fromRevisionId: ExtensionRevisionId
+        readonly toRevisionId: ExtensionRevisionId
+      }
+    | undefined {
     for (const summary of this.listSnapshots(extensionId)) {
       if (summary.reason !== 'switch') continue
       const payload = this.#readSnapshot(summary.id)
       if (payload.fromRevisionId !== undefined && payload.toRevisionId !== undefined) {
-        return { snapshotId: summary.id, fromRevisionId: payload.fromRevisionId, toRevisionId: payload.toRevisionId }
+        return {
+          snapshotId: summary.id,
+          fromRevisionId: ExtensionRevisionIdSchema.parse(payload.fromRevisionId),
+          toRevisionId: ExtensionRevisionIdSchema.parse(payload.toRevisionId),
+        }
       }
     }
     return undefined
@@ -238,7 +247,10 @@ export class ExtensionDataService implements ExtensionDataPort {
    * Writes the source data into the target. The caller runs it while the target extension is stopped; a copy of the
    * target is kept first so the migration can be undone. Data in a newer shape than the target understands is refused.
    */
-  migrate(plan: ExtensionDataMigrationPlan): { readonly snapshotId: string; readonly preview: ExtensionDataMigrationPreview } {
+  migrate(plan: ExtensionDataMigrationPlan): {
+    readonly snapshotId: string
+    readonly preview: ExtensionDataMigrationPreview
+  } {
     const preview = this.preview(plan)
     if (preview.sourceDataVersion > preview.targetDataVersion) {
       throw new Error(

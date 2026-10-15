@@ -189,7 +189,8 @@ export class CommandExecutor {
               : '无权执行此命令，需要管理员在 NekroNXT 中授予此频道的命令管理权限。',
           )
         if (entry.unavailableReason !== undefined) throw new Error(entry.unavailableReason)
-        if (!binding && !['help', 'status', 'admin'].includes(invoked.fullName)) throw new Error('请先为频道绑定智能体。')
+        if (!binding && !['help', 'status', 'admin'].includes(invoked.fullName))
+          throw new Error('请先为频道绑定智能体。')
       }
       guard()
       const args = parseCommandArguments(command.definition, tokenizeCommand(argumentText))

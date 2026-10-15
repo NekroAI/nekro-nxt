@@ -551,7 +551,10 @@ export function CapabilitiesSection({
                 label="扩展自主权"
                 value={caps.extensionAutonomy}
                 onChange={(value) =>
-                  update((current) => ({ ...current, capabilities: { ...current.capabilities, extensionAutonomy: value } }))
+                  update((current) => ({
+                    ...current,
+                    capabilities: { ...current.capabilities, extensionAutonomy: value },
+                  }))
                 }
                 options={[
                   { value: 'manual', label: '手动' },

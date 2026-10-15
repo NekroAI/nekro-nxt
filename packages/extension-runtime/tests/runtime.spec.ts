@@ -647,7 +647,10 @@ const manifestRevisionSchema = z
       .or(z.object({ host: z.literal('source/host.ts') }).strict())
       .or(z.object({ client: z.literal('source/client.ts') }).strict()),
     contributions: z.array(z.unknown()),
-    lineage: z.object({ parent: z.string().nullable(), ancestry: z.array(z.string()) }).strict().optional(),
+    lineage: z
+      .object({ parent: z.string().nullable(), ancestry: z.array(z.string()) })
+      .strict()
+      .optional(),
   })
   .strict()
 const buildCacheSchema = z

@@ -522,10 +522,7 @@ export const HostSnapshotMessageSchema = z
     origin: z.enum(['admin-console', 'command', 'extension-notice']).optional(),
     command: CommandExecutionRecordSchema.optional(),
     /** A host notice about extension work: a request an administrator must confirm, or what an action did. */
-    extensionNotice: z
-      .object({ requestNumber: z.number().int().positive().optional() })
-      .strict()
-      .optional(),
+    extensionNotice: z.object({ requestNumber: z.number().int().positive().optional() }).strict().optional(),
     /** What the agent's inbound hooks decided for this message, when anything differs from the default. */
     inboundHook: z
       .object({
@@ -2411,7 +2408,10 @@ export const ExtensionLineageSchema = z
         .object({
           extensionId: ExtensionIdSchema,
           displayName: z.string(),
-          branchOf: z.object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }).strict().optional(),
+          branchOf: z
+            .object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema })
+            .strict()
+            .optional(),
           nodes: z.array(ExtensionLineageNodeSchema),
         })
         .strict(),
@@ -2448,7 +2448,9 @@ export const ExtensionDataMigrationInputSchema = z
 
 export const ExtensionDataPreviewSchema = z
   .object({
-    diff: z.object({ storage: DataChangeCountSchema, index: DataChangeCountSchema, library: DataChangeCountSchema }).strict(),
+    diff: z
+      .object({ storage: DataChangeCountSchema, index: DataChangeCountSchema, library: DataChangeCountSchema })
+      .strict(),
     destructive: z.boolean(),
     sourceDataVersion: z.number().int().positive(),
     targetDataVersion: z.number().int().positive(),
@@ -2468,7 +2470,11 @@ export const ExtensionDataStateSchema = z
   .object({
     dataVersion: z.number().int().positive(),
     counts: z
-      .object({ storage: z.number().int().nonnegative(), index: z.number().int().nonnegative(), library: z.number().int().nonnegative() })
+      .object({
+        storage: z.number().int().nonnegative(),
+        index: z.number().int().nonnegative(),
+        library: z.number().int().nonnegative(),
+      })
       .strict(),
     snapshots: z.array(
       z
@@ -2494,11 +2500,14 @@ export const ExtensionDataPackageInspectionSchema = z
     exportedAt: z.number().int().nonnegative(),
     agents: z.array(z.object({ id: z.string(), name: z.string() }).strict()),
     counts: z
-      .object({ storage: z.number().int().nonnegative(), index: z.number().int().nonnegative(), library: z.number().int().nonnegative() })
+      .object({
+        storage: z.number().int().nonnegative(),
+        index: z.number().int().nonnegative(),
+        library: z.number().int().nonnegative(),
+      })
       .strict(),
   })
   .strict()
-
 
 export const AdministratorSchema = z
   .object({
@@ -4907,7 +4916,7 @@ export const HostApiContracts = {
     invalidatesSnapshot: true,
     timeoutMs: 300_000,
     method: 'POST',
-    path: '/api/extensions/:extensionId/rollback',
+    path: '/api/extensions/:extensionId/revert',
     params: extensionParam,
     request: NoRequestBodySchema,
     response: z.object({ message: z.string() }).strict(),

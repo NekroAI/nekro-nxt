@@ -3,7 +3,6 @@ import {
   ExtensionIdSchema,
   parseJsonValue,
   type AgentId,
-  type AuthoringTaskId,
   type ChannelId,
   type EpisodeId,
   type ExtensionId,
@@ -31,7 +30,10 @@ export interface ExtensionAgentToolContext {
   readonly episodeId: EpisodeId
   readonly sessionId: string
   /** Defines a candidate in this conversation, as `nekro_nxt_extension_define` does. */
-  readonly define: (input: DynamicAuthoringPackageDefinitionInput) => { readonly pluginId: string; readonly packageId: string }
+  readonly define: (input: DynamicAuthoringPackageDefinitionInput) => {
+    readonly pluginId: string
+    readonly packageId: string
+  }
   /** Defines a stored candidate again in this conversation without recording a new attempt. */
   readonly restore: (snapshot: DynamicAuthoringSnapshot) => { readonly pluginId: string; readonly packageId: string }
   readonly setReviseIntent: (intent: ReviseIntent | undefined) => void
@@ -59,20 +61,24 @@ const editableDefinition = (definition: RevisionDefinition) => {
   const snapshot = definition.snapshot
   const pages = snapshot.contributions.filter(
     (contribution) =>
-      typeof contribution === 'object' && contribution !== null && !Array.isArray(contribution) && contribution['kind'] === 'host-page',
+      typeof contribution === 'object' &&
+      contribution !== null &&
+      !Array.isArray(contribution) &&
+      contribution['kind'] === 'host-page',
   )
-  const commands = snapshot.contributions
-    .filter(
-      (contribution) =>
-        typeof contribution === 'object' &&
-        contribution !== null &&
-        !Array.isArray(contribution) &&
-        contribution['kind'] === 'command',
-    )
-    .map((contribution) => {
-      const { kind: _kind, ...definition } = contribution as Record<string, JsonValue>
-      return definition
-    })
+  const commands = snapshot.contributions.flatMap((contribution) => {
+    if (
+      typeof contribution !== 'object' ||
+      contribution === null ||
+      Array.isArray(contribution) ||
+      contribution['kind'] !== 'command'
+    ) {
+      return []
+    }
+    const { kind: _kind, ...definition } = contribution
+    void _kind
+    return [definition]
+  })
   return {
     codeFormat: definition.codeFormat,
     name: snapshot.name,
@@ -90,7 +96,11 @@ const editableDefinition = (definition: RevisionDefinition) => {
   }
 }
 
-const continueTask = (context: ExtensionAgentToolContext, port: ExtensionGovernanceToolPort, reference: string | undefined) => {
+const continueTask = (
+  context: ExtensionAgentToolContext,
+  port: ExtensionGovernanceToolPort,
+  reference: string | undefined,
+) => {
   const authoring = context.authoring
   if (!authoring) throw new Error('这台 NekroNXT 没有开启创造任务账本。')
   const task = port.continuableTask(context.agentId, context.episodeId, reference)
@@ -124,7 +134,11 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args) {
       const input = z
-        .object({ extension: z.string().trim().min(1), version: z.string().optional(), reference: z.string().optional() })
+        .object({
+          extension: z.string().trim().min(1),
+          version: z.string().optional(),
+          reference: z.string().optional(),
+        })
         .parse(args)
       const port = requireRequester(context)
       const prepared = await port.prepareRevise(context.agentId, {
@@ -235,7 +249,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
     description: [
       '对扩展做生命周期操作。按你的扩展自主权和权限风险，结果可能是直接完成、在频道里发出请求等管理员用 /ext approve 确认，或者需要管理员在后台处理；照返回的结果如实告诉用户。',
       'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展，可给 name、slug）。',
-      'enable / disable：给你自己启用或停用。switch：切到指定版本。rollback：回到上一次切换前的版本。',
+      'enable / disable：给你自己启用或停用。switch：切到指定版本。revert：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
       'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）；includeConfig 连同配置一起迁移（凭据不迁移）。总要管理员确认。',
       'publish：把当前版本发布到社区（notes 写更新说明）。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId）。withdraw：撤回一次发布（releaseId）。发布和撤回总要管理员确认。',
@@ -244,7 +258,19 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       action: {
         type: 'string',
         required: true,
-        enum: ['save', 'enable', 'disable', 'switch', 'rollback', 'branch', 'migrate_data', 'publish', 'update', 'install', 'withdraw'],
+        enum: [
+          'save',
+          'enable',
+          'disable',
+          'switch',
+          'revert',
+          'branch',
+          'migrate_data',
+          'publish',
+          'update',
+          'install',
+          'withdraw',
+        ],
       },
       extension: { type: 'string', description: '扩展名称或编号。' },
       task: { type: 'string', description: 'save 时的任务名称或编号。' },
@@ -263,7 +289,19 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
     async execute(args) {
       const input = z
         .object({
-          action: z.enum(['save', 'enable', 'disable', 'switch', 'rollback', 'branch', 'migrate_data', 'publish', 'update', 'install', 'withdraw']),
+          action: z.enum([
+            'save',
+            'enable',
+            'disable',
+            'switch',
+            'revert',
+            'branch',
+            'migrate_data',
+            'publish',
+            'update',
+            'install',
+            'withdraw',
+          ]),
           extension: z.string().trim().min(1).optional(),
           task: z.string().optional(),
           version: z.string().optional(),
@@ -293,7 +331,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           const task = port.resolveTask(context.agentId, input.task)
           action = {
             kind: 'save',
-            taskId: task.id as AuthoringTaskId,
+            taskId: task.id,
             ...(input.name === undefined ? {} : { name: input.name }),
             ...(input.slug === undefined ? {} : { slug: input.slug }),
           }
@@ -308,8 +346,8 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           action = { kind: 'switch', extensionId: target.id, revisionId: revisionOf(target.id, input.version) }
           break
         }
-        case 'rollback':
-          action = { kind: 'rollback', extensionId: extension().id }
+        case 'revert':
+          action = { kind: 'revert', extensionId: extension().id }
           break
         case 'branch': {
           const origin = extension()

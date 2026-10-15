@@ -134,9 +134,12 @@ export interface DynamicAuthoringPackageDefinitionInput extends DynamicPackageDe
 }
 
 /** The code a dynamic run executes: whole modules become factory bodies, and the Client gets its scoped CSS. */
-const runnableCode = (input: DynamicAuthoringPackageDefinitionInput): { readonly host?: string; readonly client?: string } => {
+const runnableCode = (
+  input: DynamicAuthoringPackageDefinitionInput,
+): { readonly host?: string; readonly client?: string } => {
   const modules = input.codeFormat === 'module'
-  const host = input.code.host === undefined ? undefined : modules ? moduleToFactoryBody(input.code.host, 'host') : input.code.host
+  const host =
+    input.code.host === undefined ? undefined : modules ? moduleToFactoryBody(input.code.host, 'host') : input.code.host
   const client = dynamicPreviewClientCode({
     ...input,
     code: {
@@ -1266,7 +1269,10 @@ export class DynamicAuthoringRuntime {
       contributions.push(declared.data)
     }
     if (snapshot?.dataVersion !== undefined && snapshot.dataVersion > 1) {
-      const probe = await invoke(MIGRATION_DYNAMIC_PROBE_METHOD, { from: snapshot.dataVersion - 1, to: snapshot.dataVersion })
+      const probe = await invoke(MIGRATION_DYNAMIC_PROBE_METHOD, {
+        from: snapshot.dataVersion - 1,
+        to: snapshot.dataVersion,
+      })
       if (!probe.ok) throw new Error(`数据迁移验证失败：${probe.message}`)
     }
     if (adapter === undefined && evidence.renderedPanels.some((panel) => panel.anchor === 'connection')) {

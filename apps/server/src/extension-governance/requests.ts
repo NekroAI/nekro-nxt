@@ -1,11 +1,21 @@
-import type { AgentId, ChannelId, CommunityReviewStatus, ExtensionId, JsonValue } from '@nekro-nxt/contracts'
+import {
+  CommunityReviewStatusSchema,
+  parseJsonValue,
+  type AgentId,
+  type ChannelId,
+  type CommunityReviewStatus,
+  type ExtensionId,
+  type JsonValue,
+} from '@nekro-nxt/contracts'
 import type { ExtensionRequestRecord } from '@nekro-nxt/storage-sqlite'
+import { z } from 'zod'
 import type { NekroRuntime } from '../bootstrap.js'
-import type {
-  ExtensionAction,
-  ExtensionActionAssessment,
-  ExtensionActionResult,
-  ExtensionActor,
+import {
+  ExtensionActionSchema,
+  type ExtensionAction,
+  type ExtensionActionAssessment,
+  type ExtensionActionResult,
+  type ExtensionActor,
 } from './actions.js'
 
 /** Requests wait a day for an administrator; after that the agent has to ask again. */
@@ -38,22 +48,36 @@ const resultOf = (result: ExtensionActionResult): RequestResult => ({
 })
 
 /** Who decided a request: the console, or an administrator's platform account in chat. */
-export type ExtensionRequestDecider = { readonly kind: 'console' } | { readonly kind: 'administrator'; readonly label: string }
+export type ExtensionRequestDecider =
+  { readonly kind: 'console' } | { readonly kind: 'administrator'; readonly label: string }
 
 const extensionOf = (action: ExtensionAction): ExtensionId | undefined => {
   switch (action.kind) {
     case 'save':
+    case 'branch':
     case 'community-install':
     case 'community-withdraw':
       return undefined
-    case 'branch':
-      return undefined
     case 'migrate-data':
       return action.targetExtensionId
-    default:
+    case 'enable':
+    case 'disable':
+    case 'switch':
+    case 'revert':
+    case 'community-publish':
+    case 'community-update':
       return action.extensionId
   }
 }
+
+/** Requests keep their action and outcome as JSON; these read them back. */
+const StoredPayloadSchema = z.object({ action: ExtensionActionSchema.optional() }).passthrough()
+const RequestResultSchema = z.object({
+  message: z.string(),
+  releaseId: z.string().optional(),
+  review: z.union([z.literal('waiting'), CommunityReviewStatusSchema]).optional(),
+})
+const toJson = (value: unknown): JsonValue => parseJsonValue(JSON.parse(JSON.stringify(value)))
 
 /**
  * Administrator-confirmed extension actions and the record of what agents did on their own. Every request gets a
@@ -93,7 +117,7 @@ export class ExtensionRequestService {
       channelId: input.actor.channelId ?? null,
       extensionId: extensionId ?? null,
       summary: input.assessment.summary,
-      payload: { action: input.action, added: input.assessment.added, level: input.assessment.level } as unknown as JsonValue,
+      payload: toJson({ action: input.action, added: input.assessment.added, level: input.assessment.level }),
       createdAt: now,
       expiresAt: now + EXTENSION_REQUEST_TTL_MS,
     })
@@ -125,7 +149,7 @@ export class ExtensionRequestService {
       channelId: input.actor.channelId ?? null,
       extensionId: input.result.extensionId ?? extensionOf(input.action) ?? null,
       summary: input.assessment.summary,
-      payload: { action: input.action, autonomous: true } as unknown as JsonValue,
+      payload: toJson({ action: input.action, autonomous: true }),
       createdAt: now,
       expiresAt: now,
     })
@@ -133,7 +157,7 @@ export class ExtensionRequestService {
       number: record.number,
       from: 'pending',
       status: 'completed',
-      result: resultOf(input.result) as unknown as JsonValue,
+      result: toJson(resultOf(input.result)),
       decidedBy: this.#agentName(input.actor.agentId),
       decidedAt: now,
     })
@@ -156,7 +180,15 @@ export class ExtensionRequestService {
     if (assessment.decision === 'console') throw new Error(assessment.reason ?? '这个请求需要在 NekroNXT 后台处理。')
     const now = this.#now()
     const label = decider.kind === 'console' ? '控制台管理员' : decider.label
-    if (!this.#runtime.repository.updateExtensionRequest({ number, from: 'pending', status: 'approved', decidedBy: label, decidedAt: now })) {
+    if (
+      !this.#runtime.repository.updateExtensionRequest({
+        number,
+        from: 'pending',
+        status: 'approved',
+        decidedBy: label,
+        decidedAt: now,
+      })
+    ) {
       throw new Error(`请求 #${number} 已经被处理。`)
     }
     try {
@@ -165,10 +197,18 @@ export class ExtensionRequestService {
         number,
         from: 'approved',
         status: 'completed',
-        result: resultOf(result) as unknown as JsonValue,
+        result: toJson(resultOf(result)),
       })
-      this.#notice(record.channelId ?? undefined, `ext-request:${number}:done`, `请求 #${number} 已由${label}同意：${result.message}`)
-      this.#tellAgent(record, 'done', `〔系统通知〕扩展请求 #${number}（${record.summary}）已由${label}同意并完成：${result.message}`)
+      this.#notice(
+        record.channelId ?? undefined,
+        `ext-request:${number}:done`,
+        `请求 #${number} 已由${label}同意：${result.message}`,
+      )
+      this.#tellAgent(
+        record,
+        'done',
+        `〔系统通知〕扩展请求 #${number}（${record.summary}）已由${label}同意并完成：${result.message}`,
+      )
       this.#runtime.publishExtensionRequestChange?.()
       return result
     } catch (error) {
@@ -177,10 +217,18 @@ export class ExtensionRequestService {
         number,
         from: 'approved',
         status: 'failed',
-        result: { message } as JsonValue,
+        result: { message },
       })
-      this.#notice(record.channelId ?? undefined, `ext-request:${number}:failed`, `请求 #${number} 已同意，但没有完成：${message}`)
-      this.#tellAgent(record, 'failed', `〔系统通知〕扩展请求 #${number}（${record.summary}）已同意，但执行失败：${message}。看一下原因再决定怎么处理。`)
+      this.#notice(
+        record.channelId ?? undefined,
+        `ext-request:${number}:failed`,
+        `请求 #${number} 已同意，但没有完成：${message}`,
+      )
+      this.#tellAgent(
+        record,
+        'failed',
+        `〔系统通知〕扩展请求 #${number}（${record.summary}）已同意，但执行失败：${message}。看一下原因再决定怎么处理。`,
+      )
       this.#runtime.publishExtensionRequestChange?.()
       throw error
     }
@@ -196,13 +244,21 @@ export class ExtensionRequestService {
         status: 'rejected',
         decidedBy: label,
         decidedAt: this.#now(),
-        ...(reason === undefined ? {} : { result: { message: reason } as JsonValue }),
+        ...(reason === undefined ? {} : { result: { message: reason } }),
       })
     ) {
       throw new Error(`请求 #${number} 已经被处理。`)
     }
-    this.#notice(record.channelId ?? undefined, `ext-request:${number}:rejected`, `请求 #${number} 已被${label}拒绝${reason ? `：${reason}` : '。'}`)
-    this.#tellAgent(record, 'rejected', `〔系统通知〕扩展请求 #${number}（${record.summary}）被${label}拒绝${reason ? `：${reason}` : '。'}不要再自行重试同一个请求。`)
+    this.#notice(
+      record.channelId ?? undefined,
+      `ext-request:${number}:rejected`,
+      `请求 #${number} 已被${label}拒绝${reason ? `：${reason}` : '。'}`,
+    )
+    this.#tellAgent(
+      record,
+      'rejected',
+      `〔系统通知〕扩展请求 #${number}（${record.summary}）被${label}拒绝${reason ? `：${reason}` : '。'}不要再自行重试同一个请求。`,
+    )
     this.#runtime.publishExtensionRequestChange?.()
   }
 
@@ -216,8 +272,11 @@ export class ExtensionRequestService {
       .listExtensionRequests({ status: 'completed', limit: 200 })
       .filter((record) => record.kind === 'community-publish' && record.createdAt >= since)
       .flatMap((record) => {
-        const result = record.result as unknown as RequestResult | null
-        return result?.review === 'waiting' && result.releaseId !== undefined ? [{ record, result, releaseId: result.releaseId }] : []
+        const parsed = RequestResultSchema.safeParse(record.result)
+        const result = parsed.success ? parsed.data : undefined
+        return result?.review === 'waiting' && result.releaseId !== undefined
+          ? [{ record, result, releaseId: result.releaseId }]
+          : []
       })
     for (const { record, result, releaseId } of watched) {
       let status: CommunityReviewStatus
@@ -236,14 +295,19 @@ export class ExtensionRequestService {
           number: record.number,
           from: 'completed',
           status: 'completed',
-          result: { ...result, review: status } as unknown as JsonValue,
+          result: toJson({ ...result, review: status }),
         })
       ) {
         continue
       }
-      const extension = record.extensionId === null ? undefined : this.#runtime.repository.getExtension(record.extensionId)
+      const extension =
+        record.extensionId === null ? undefined : this.#runtime.repository.getExtension(record.extensionId)
       const name = extension ? `「${extension.displayName}」` : '扩展'
-      this.#notice(record.channelId ?? undefined, `ext-request:${record.number}:review`, `${name}的社区发布${outcome}。审查报告：${reportUrl}`)
+      this.#notice(
+        record.channelId ?? undefined,
+        `ext-request:${record.number}:review`,
+        `${name}的社区发布${outcome}。审查报告：${reportUrl}`,
+      )
       this.#tellAgent(
         record,
         'review',
@@ -254,7 +318,8 @@ export class ExtensionRequestService {
   }
 
   expire(): void {
-    if (this.#runtime.repository.expireExtensionRequests(this.#now()) > 0) this.#runtime.publishExtensionRequestChange?.()
+    if (this.#runtime.repository.expireExtensionRequests(this.#now()) > 0)
+      this.#runtime.publishExtensionRequestChange?.()
   }
 
   #pending(number: number): ExtensionRequestRecord {
@@ -267,9 +332,10 @@ export class ExtensionRequestService {
   }
 
   #action(record: ExtensionRequestRecord): ExtensionAction {
-    const payload = record.payload as { readonly action?: ExtensionAction }
-    if (payload.action === undefined) throw new Error(`请求 #${record.number} 的内容无法读取。`)
-    return payload.action
+    const payload = StoredPayloadSchema.safeParse(record.payload)
+    if (!payload.success || payload.data.action === undefined)
+      throw new Error(`请求 #${record.number} 的内容无法读取。`)
+    return payload.data.action
   }
 
   /** External groups only take commands addressed to the bot, so the hint says so. */
@@ -280,7 +346,9 @@ export class ExtensionRequestService {
   }
 
   #undoHint(action: ExtensionAction): string {
-    return action.kind === 'switch' || action.kind === 'community-update' ? '。如需撤销，管理员发送 /ext rollback 扩展名。' : ''
+    return action.kind === 'switch' || action.kind === 'community-update'
+      ? '。如需撤销，管理员发送 /ext revert 扩展名。'
+      : ''
   }
 
   #notice(channelId: ChannelId | undefined, key: string, text: string): void {

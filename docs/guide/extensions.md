@@ -29,7 +29,7 @@
 
 管理员在“设置 → 管理员”里配置：登录这个控制台的人始终是管理员，另外可以从用户里添加平台账号，或者生成认领码，用自己的账号在聊天里发送 `/admin claim 认领码`。群主和群管理员不会自动成为管理员。等待确认的请求也会出现在「工坊」列表顶部。
 
-`/ext` 还可以在聊天里查看和操作扩展：`/ext` 列出智能体的扩展和进行中的任务，`/ext info 名称` 查看版本与同步状态，管理员可以用 `/ext enable`、`/ext disable`、`/ext use 名称 v2`、`/ext rollback 名称`、`/ext save`、`/ext continue`、`/ext update`、`/ext publish`。
+`/ext` 还可以在聊天里查看和操作扩展：`/ext` 列出智能体的扩展和进行中的任务，`/ext info 名称` 查看版本与同步状态，管理员可以用 `/ext enable`、`/ext disable`、`/ext use 名称 v2`、`/ext revert 名称`、`/ext save`、`/ext continue`、`/ext update`、`/ext publish`。
 
 ## 安装与启用
 

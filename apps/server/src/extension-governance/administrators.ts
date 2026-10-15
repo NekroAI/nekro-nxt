@@ -38,12 +38,12 @@ export class AdministratorService {
 
   list(): readonly AdministratorView[] {
     const identities = new Map(
-      this.#repository
-        .listPlatformUsers()
-        .flatMap((user) => {
-          const identity = this.#repository.getPlatformIdentity(user.identityId)
-          return identity === undefined ? [] : [[`${identity.connectionId}\u0000${identity.platformUserId}`, identity] as const]
-        }),
+      this.#repository.listPlatformUsers().flatMap((user) => {
+        const identity = this.#repository.getPlatformIdentity(user.identityId)
+        return identity === undefined
+          ? []
+          : [[`${identity.connectionId}\u0000${identity.platformUserId}`, identity] as const]
+      }),
     )
     return this.#repository.listInstanceAdministrators().map((record) => {
       const identity = identities.get(`${record.connectionId}\u0000${record.platformUserId}`)
@@ -80,7 +80,8 @@ export class AdministratorService {
   }
 
   remove(connectionId: ConnectionId, platformUserId: string): void {
-    if (!this.#repository.removeInstanceAdministrator(connectionId, platformUserId)) throw new Error('这个账号不是管理员。')
+    if (!this.#repository.removeInstanceAdministrator(connectionId, platformUserId))
+      throw new Error('这个账号不是管理员。')
   }
 
   /** A six-digit code shown only in the console; whoever sends it in chat within ten minutes becomes administrator. */
@@ -122,7 +123,9 @@ export class AdministratorService {
   }
 
   #require(connectionId: ConnectionId, platformUserId: string): AdministratorView {
-    const view = this.list().find((entry) => entry.connectionId === connectionId && entry.platformUserId === platformUserId)
+    const view = this.list().find(
+      (entry) => entry.connectionId === connectionId && entry.platformUserId === platformUserId,
+    )
     if (!view) throw new Error('管理员记录写入失败。')
     return view
   }

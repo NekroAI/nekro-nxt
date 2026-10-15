@@ -1,19 +1,22 @@
 import {
+  AgentIdSchema,
+  AuthoringTaskIdSchema,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
   type AgentId,
-  type AuthoringTaskId,
   type ChannelId,
   type CommunityPermissionItem,
   type ExtensionId,
   type ExtensionRevisionId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
+import { z } from 'zod'
 import {
   ExtensionDataDowngradeError,
   addedPermissionItems,
   highestPermissionLevel,
   parseExtensionImport,
   summarizePermissions,
-  type ExtensionDataMigrationMode,
   type PermissionItem,
   type PermissionLevel,
   type Revision,
@@ -30,45 +33,55 @@ export type ExtensionActor =
   | { readonly kind: 'administrator'; readonly label: string }
   | { readonly kind: 'agent'; readonly agentId: AgentId; readonly channelId?: ChannelId }
 
-/** Every lifecycle step an agent, a chat command or the console can ask for; one implementation serves all three. */
-export type ExtensionAction =
-  | {
-      readonly kind: 'save'
-      readonly taskId: AuthoringTaskId
-      readonly name?: string
-      readonly slug?: string
-      readonly description?: string
-    }
-  | { readonly kind: 'enable'; readonly extensionId: ExtensionId; readonly agentId: AgentId }
-  | { readonly kind: 'disable'; readonly extensionId: ExtensionId; readonly agentId: AgentId }
-  | { readonly kind: 'switch'; readonly extensionId: ExtensionId; readonly revisionId: ExtensionRevisionId }
-  | { readonly kind: 'rollback'; readonly extensionId: ExtensionId }
-  | {
-      readonly kind: 'branch'
-      readonly revisionId: ExtensionRevisionId
-      readonly name: string
-      readonly slug?: string
-      readonly copyData: boolean
-    }
-  | {
-      readonly kind: 'migrate-data'
-      readonly targetExtensionId: ExtensionId
-      readonly source:
-        | { readonly kind: 'extension'; readonly extensionId: ExtensionId }
-        | { readonly kind: 'snapshot'; readonly snapshotId: string }
-      readonly mode: ExtensionDataMigrationMode
-      /** Also move the host and agent configuration; credentials never move. */
-      readonly includeConfig?: boolean
-    }
-  | {
-      readonly kind: 'community-publish'
-      readonly extensionId: ExtensionId
-      readonly revisionId?: ExtensionRevisionId
-      readonly notes: string
-    }
-  | { readonly kind: 'community-update'; readonly extensionId: ExtensionId }
-  | { readonly kind: 'community-install'; readonly communityExtensionId: string; readonly agentId?: AgentId }
-  | { readonly kind: 'community-withdraw'; readonly releaseId: string }
+/**
+ * Every lifecycle step an agent, a chat command or the console can ask for; one implementation serves all three.
+ * Requests store the action as JSON and read it back through this schema.
+ */
+export const ExtensionActionSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('save'),
+    taskId: AuthoringTaskIdSchema,
+    name: z.string().optional(),
+    slug: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({ kind: z.literal('enable'), extensionId: ExtensionIdSchema, agentId: AgentIdSchema }),
+  z.object({ kind: z.literal('disable'), extensionId: ExtensionIdSchema, agentId: AgentIdSchema }),
+  z.object({ kind: z.literal('switch'), extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }),
+  z.object({ kind: z.literal('revert'), extensionId: ExtensionIdSchema }),
+  z.object({
+    kind: z.literal('branch'),
+    revisionId: ExtensionRevisionIdSchema,
+    name: z.string(),
+    slug: z.string().optional(),
+    copyData: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal('migrate-data'),
+    targetExtensionId: ExtensionIdSchema,
+    source: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('extension'), extensionId: ExtensionIdSchema }),
+      z.object({ kind: z.literal('snapshot'), snapshotId: z.string() }),
+    ]),
+    mode: z.enum(['overwrite', 'replace']),
+    /** Also move the host and agent configuration; credentials never move. */
+    includeConfig: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('community-publish'),
+    extensionId: ExtensionIdSchema,
+    revisionId: ExtensionRevisionIdSchema.optional(),
+    notes: z.string(),
+  }),
+  z.object({ kind: z.literal('community-update'), extensionId: ExtensionIdSchema }),
+  z.object({
+    kind: z.literal('community-install'),
+    communityExtensionId: z.string(),
+    agentId: AgentIdSchema.optional(),
+  }),
+  z.object({ kind: z.literal('community-withdraw'), releaseId: z.string() }),
+])
+export type ExtensionAction = z.output<typeof ExtensionActionSchema>
 
 /**
  * What an actor may do about an action right now: `run` it, `request` an administrator's confirmation, or do it in
@@ -197,10 +210,10 @@ export class ExtensionActionService {
       }
       case 'switch':
         return this.#switch(action.extensionId, action.revisionId)
-      case 'rollback': {
+      case 'revert': {
         const previous = runtime.extensionData.latestSwitch(action.extensionId)
         if (!previous) throw new Error('没有找到上一次切换的记录，请在扩展详情里选择要切回的版本。')
-        const revision = runtime.repository.getExtensionRevision(previous.fromRevisionId as ExtensionRevisionId)
+        const revision = runtime.repository.getExtensionRevision(previous.fromRevisionId)
         if (!revision) throw new Error('上一个版本已经不在本机。')
         return this.#switch(action.extensionId, revision.id, previous.snapshotId)
       }
@@ -369,7 +382,8 @@ export class ExtensionActionService {
 
   async #communityUpdate(extensionId: ExtensionId): Promise<ExtensionActionResult> {
     const runtime = this.#runtime
-    const item = runtime.communitySync.cachedItem(extensionId) ??
+    const item =
+      runtime.communitySync.cachedItem(extensionId) ??
       (await runtime.communitySync.check()).items.find((entry) => entry.extensionId === extensionId)
     if (!item?.latest) throw new Error('社区上没有这个扩展可用的发布。')
     if (item.status === 'same') return { message: '已经是社区上的最新版本。', extensionId }
@@ -407,17 +421,22 @@ export class ExtensionActionService {
     const normal = { level: 'normal' as PermissionLevel, added: [], affectsOthers: false }
     const itemsOf = (revision: Revision | undefined): PermissionItem[] => {
       const manifest = revision === undefined ? undefined : runtime.extensionService.revisionManifest(revision)
-      return manifest === undefined ? [] : summarizePermissions(manifest as unknown as Record<string, unknown>)
+      return manifest === undefined ? [] : summarizePermissions(manifest)
     }
     const otherAgents = (extensionId: ExtensionId, except?: AgentId) =>
-      runtime.repository.listActivations().some((activation) => activation.extensionId === extensionId && activation.agentId !== except)
+      runtime.repository
+        .listActivations()
+        .some((activation) => activation.extensionId === extensionId && activation.agentId !== except)
     switch (action.kind) {
       case 'save': {
         const task = runtime.repository.getAuthoringTask(action.taskId)
-        const target = task?.targetExtensionId === undefined ? undefined : runtime.repository.getExtension(task.targetExtensionId)
+        const target =
+          task?.targetExtensionId === undefined ? undefined : runtime.repository.getExtension(task.targetExtensionId)
         return {
           ...normal,
-          summary: target ? `保存「${target.displayName}」的新版本` : `保存新扩展「${action.name ?? task?.title ?? ''}」`,
+          summary: target
+            ? `保存「${target.displayName}」的新版本`
+            : `保存新扩展「${action.name ?? task?.title ?? ''}」`,
         }
       }
       case 'enable': {
@@ -437,22 +456,23 @@ export class ExtensionActionService {
           summary: `给${this.#agentName(action.agentId)}停用「${this.#extensionName(action.extensionId)}」`,
         }
       case 'switch':
-      case 'rollback': {
+      case 'revert': {
         const current = this.#maybeCurrent(action.extensionId)
         const targetId =
           action.kind === 'switch'
             ? action.revisionId
-            : (runtime.extensionData.latestSwitch(action.extensionId)?.fromRevisionId as ExtensionRevisionId | undefined)
+            : runtime.extensionData.latestSwitch(action.extensionId)?.fromRevisionId
         const target = targetId === undefined ? undefined : runtime.repository.getExtensionRevision(targetId)
         const added = addedPermissionItems(itemsOf(current), itemsOf(target))
         return {
           summary:
-            action.kind === 'rollback'
+            action.kind === 'revert'
               ? `把「${this.#extensionName(action.extensionId)}」回退到上一个版本${target ? ` ${this.#label(target)}` : ''}`
               : `把「${this.#extensionName(action.extensionId)}」切换到 ${target ? this.#label(target) : '指定版本'}`,
           level: highestPermissionLevel(added),
           added,
-          affectsOthers: runtime.repository.listActivations().filter((entry) => entry.extensionId === action.extensionId).length > 1,
+          affectsOthers:
+            runtime.repository.listActivations().filter((entry) => entry.extensionId === action.extensionId).length > 1,
         }
       }
       case 'branch': {
@@ -470,7 +490,9 @@ export class ExtensionActionService {
         }
       case 'community-publish': {
         const revision =
-          action.revisionId === undefined ? this.#maybeCurrent(action.extensionId) : runtime.repository.getExtensionRevision(action.revisionId)
+          action.revisionId === undefined
+            ? this.#maybeCurrent(action.extensionId)
+            : runtime.repository.getExtensionRevision(action.revisionId)
         return {
           ...normal,
           summary: `把「${this.#extensionName(action.extensionId)}」${revision ? this.#label(revision) : ''} 发布到社区`,
@@ -512,13 +534,15 @@ export class ExtensionActionService {
       case 'disable':
         return action.agentId === agentId ? undefined : '只能给自己启用或停用扩展。'
       case 'switch':
-      case 'rollback':
+      case 'revert':
       case 'community-update':
       case 'community-publish':
         return ownsExtension(action.extensionId) ? undefined : '只能管理自己做的或自己在用的扩展。'
       case 'branch': {
         const source = runtime.repository.getExtensionRevision(action.revisionId)
-        return source !== undefined && ownsExtension(source.extensionId) ? undefined : '只能从自己做的或自己在用的扩展创建分支。'
+        return source !== undefined && ownsExtension(source.extensionId)
+          ? undefined
+          : '只能从自己做的或自己在用的扩展创建分支。'
       }
       case 'migrate-data':
         return ownsExtension(action.targetExtensionId) ? undefined : '只能迁移自己做的或自己在用的扩展的数据。'
@@ -542,7 +566,10 @@ export class ExtensionActionService {
   }
 
   #label(revision: Revision): string {
-    return extensionVersions(this.#runtime.repository, this.#runtime.extensionService, revision.extensionId).get(revision.id)?.label ?? ''
+    return (
+      extensionVersions(this.#runtime.repository, this.#runtime.extensionService, revision.extensionId).get(revision.id)
+        ?.label ?? ''
+    )
   }
 
   #extensionName(extensionId: ExtensionId): string {

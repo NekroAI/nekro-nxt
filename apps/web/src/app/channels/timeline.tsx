@@ -1,4 +1,16 @@
-import { AlarmClock, BellOff, Blocks, BellRing, Check, ChevronRight, CircleAlert, EyeOff, Info, Square, X } from 'lucide-react'
+import {
+  AlarmClock,
+  BellOff,
+  Blocks,
+  BellRing,
+  Check,
+  ChevronRight,
+  CircleAlert,
+  EyeOff,
+  Info,
+  Square,
+  X,
+} from 'lucide-react'
 import { ToolView } from '../../extension-ui/index.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { memo, useEffect, useState } from 'react'

@@ -109,12 +109,12 @@ const BUILTIN_HANDLERS: readonly Omit<RegisteredCommand, 'fullName' | 'source'>[
           name: '操作',
           kind: 'positional',
           type: 'string',
-          description: 'info、approve、reject、enable、disable、rollback、use、save、continue、update、publish',
+          description: 'info、approve、reject、enable、disable、revert、use、save、continue、update、publish',
         },
         { name: '对象', kind: 'positional', type: 'string', description: '请求编号、扩展名称或任务名称' },
         { name: '值', kind: 'positional', type: 'string', description: '版本号（如 v2）或拒绝原因' },
       ],
-      examples: ['/ext', '/ext approve 12', '/ext rollback 用户屏蔽', '/ext use 用户屏蔽 v2'],
+      examples: ['/ext', '/ext approve 12', '/ext revert 用户屏蔽', '/ext use 用户屏蔽 v2'],
     }),
     invoke: async (context, host) => {
       if (!host.governance) throw new Error('这台 NekroNXT 没有开启扩展管理。')

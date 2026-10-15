@@ -92,7 +92,10 @@ export function layoutLineage(lines: readonly LineageLine[]): LineageLayout {
       edges.push({ from: entry, to, kind: parentOf(child)?.kind ?? 'version' })
     })
   }
-  for (const root of [...roots].sort((left, right) => (lane.get(left.extensionId) ?? 0) - (lane.get(right.extensionId) ?? 0) || left.createdAt - right.createdAt)) {
+  for (const root of [...roots].sort(
+    (left, right) =>
+      (lane.get(left.extensionId) ?? 0) - (lane.get(right.extensionId) ?? 0) || left.createdAt - right.createdAt,
+  )) {
     place(root, 0, rows++)
   }
   return { nodes: [...placed.values()], edges, columns, rows }

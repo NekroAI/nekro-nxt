@@ -1,5 +1,15 @@
 import { useGo } from '../model/nav.js'
-import { Archive, ArrowUpRight, Check, CircleStop, MoreHorizontal, Package, RotateCcw, Save, Trash2 } from 'lucide-react'
+import {
+  Archive,
+  ArrowUpRight,
+  Check,
+  CircleStop,
+  MoreHorizontal,
+  Package,
+  RotateCcw,
+  Save,
+  Trash2,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
@@ -178,19 +188,19 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
                       onSelect: () => setArchiveOpen(true),
                     }
                   : open
-                  ? {
-                      key: 'stop',
-                      label: '停止任务',
-                      icon: <CircleStop size={14} />,
-                      onSelect: () => setStopOpen(true),
-                    }
-                  : {
-                      key: 'delete',
-                      label: '删除任务记录',
-                      icon: <Trash2 size={14} />,
-                      danger: true,
-                      onSelect: () => setDeleteOpen(true),
-                    },
+                    ? {
+                        key: 'stop',
+                        label: '停止任务',
+                        icon: <CircleStop size={14} />,
+                        onSelect: () => setStopOpen(true),
+                      }
+                    : {
+                        key: 'delete',
+                        label: '删除任务记录',
+                        icon: <Trash2 size={14} />,
+                        danger: true,
+                        onSelect: () => setDeleteOpen(true),
+                      },
               ]}
             />
           </>

@@ -173,8 +173,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
                     disabled={busy || command.fullName === 'help' || minimum === 'admin'}
                     value={permissionOverride ?? 'inherit'}
                     onValueChange={(value) => {
-                      const permission =
-                        value === 'inherit' ? {} : { permission: CommandPermissionSchema.parse(value) }
+                      const permission = value === 'inherit' ? {} : { permission: CommandPermissionSchema.parse(value) }
                       void mutate(() =>
                         commandApi.policy(channelId ?? 'global', command.fullName, {
                           ...(policy?.enabled === undefined ? {} : { enabled: policy.enabled }),
@@ -220,7 +219,10 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
         </PropertyGroup>
       ) : null}
       {channelId ? (
-        <PropertyGroup title="命令授权成员" description="只授予当前频道的管理命令权限；平台群管理员不会自动获得授权。NekroNXT 管理员在设置的「管理员」里配置，他们在每个频道都有管理权限。">
+        <PropertyGroup
+          title="命令授权成员"
+          description="只授予当前频道的管理命令权限；平台群管理员不会自动获得授权。NekroNXT 管理员在设置的「管理员」里配置，他们在每个频道都有管理权限。"
+        >
           {!members.length ? (
             <p>频道成员目录暂无可授权成员，收到平台消息后可在此选择。</p>
           ) : (

@@ -1,12 +1,17 @@
-import {
-  type CommunitySyncItem,
-  type ExtensionId,
-  type ExtensionRevisionId,
-} from '@nekro-nxt/contracts'
+import { type CommunitySyncItem, type ExtensionId, type ExtensionRevisionId } from '@nekro-nxt/contracts'
 import { lineageRelation, type Revision } from '@nekro-nxt/extension-runtime'
 import type { SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import type { CommunityService } from '../community.js'
 import { extensionVersions, type LineageReader } from './versions.js'
+
+/** What the sync needs from the community connection. */
+export interface SyncCommunity {
+  readonly communityUrl: string
+  status(): Promise<{ readonly account: { readonly handle: string } | null }>
+  mine(): Promise<readonly { readonly id: ExtensionId }[]>
+  checkUpdates: CommunityService['checkUpdates']
+  setAttention(count: number): void
+}
 
 /**
  * Keeps this machine and the community in step for every extension line it follows or publishes: which release each
@@ -14,14 +19,14 @@ import { extensionVersions, type LineageReader } from './versions.js'
  */
 export class CommunitySyncService {
   readonly #repository: SqliteCoreRepository
-  readonly #community: CommunityService
+  readonly #community: SyncCommunity
   readonly #lineage: LineageReader
   readonly #now: () => number
   #cache: { readonly url: string; readonly checkedAt: number; readonly items: readonly CommunitySyncItem[] } | undefined
 
   constructor(input: {
     readonly repository: SqliteCoreRepository
-    readonly community: CommunityService
+    readonly community: SyncCommunity
     readonly lineage: LineageReader
     readonly now?: () => number
   }) {

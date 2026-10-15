@@ -85,7 +85,11 @@ export function createExtensionGovernanceRepository(database: DrizzleCoreDatabas
       .select()
       .from(extensionStorageEntries)
       .where(eq(extensionStorageEntries.extensionId, extensionId))
-      .orderBy(asc(extensionStorageEntries.owner), asc(extensionStorageEntries.partition), asc(extensionStorageEntries.key))
+      .orderBy(
+        asc(extensionStorageEntries.owner),
+        asc(extensionStorageEntries.partition),
+        asc(extensionStorageEntries.key),
+      )
       .all()
       .filter((row) => scope.owners === 'all' || scope.owners.includes(ownerOf(row.owner)))
       .map((row) => ({
@@ -107,7 +111,11 @@ export function createExtensionGovernanceRepository(database: DrizzleCoreDatabas
       const filters =
         ids.length === 0
           ? []
-          : tx.select().from(extensionIndexFilterValues).where(inArray(extensionIndexFilterValues.documentRowId, ids)).all()
+          : tx
+              .select()
+              .from(extensionIndexFilterValues)
+              .where(inArray(extensionIndexFilterValues.documentRowId, ids))
+              .all()
       const keywords = new Map(
         (ids.length === 0
           ? []
@@ -179,7 +187,9 @@ export function createExtensionGovernanceRepository(database: DrizzleCoreDatabas
       )
     },
 
-    createExtensionRequest(input: Omit<ExtensionRequestRecord, 'number' | 'status' | 'result' | 'decidedBy' | 'decidedAt'>): ExtensionRequestRecord {
+    createExtensionRequest(
+      input: Omit<ExtensionRequestRecord, 'number' | 'status' | 'result' | 'decidedBy' | 'decidedAt'>,
+    ): ExtensionRequestRecord {
       const row = database
         .insert(extensionRequests)
         .values({ ...input, status: 'pending', result: null, decidedBy: null, decidedAt: null })
@@ -270,7 +280,10 @@ export function createExtensionGovernanceRepository(database: DrizzleCoreDatabas
               .where(
                 owners === 'all'
                   ? eq(extensionStorageEntries.extensionId, extensionId)
-                  : and(eq(extensionStorageEntries.extensionId, extensionId), inArray(extensionStorageEntries.owner, [...owners])),
+                  : and(
+                      eq(extensionStorageEntries.extensionId, extensionId),
+                      inArray(extensionStorageEntries.owner, [...owners]),
+                    ),
               )
               .run()
             if (scope.index) {
@@ -408,7 +421,9 @@ export function createExtensionGovernanceRepository(database: DrizzleCoreDatabas
         .orderBy(desc(extensionDataSnapshots.createdAt))
         .all()
     },
-    getExtensionDataSnapshotPayload(id: string): { readonly extensionId: ExtensionId; readonly payload: Buffer } | undefined {
+    getExtensionDataSnapshotPayload(
+      id: string,
+    ): { readonly extensionId: ExtensionId; readonly payload: Buffer } | undefined {
       return database
         .select({ extensionId: extensionDataSnapshots.extensionId, payload: extensionDataSnapshots.payload })
         .from(extensionDataSnapshots)

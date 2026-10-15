@@ -185,7 +185,11 @@ function AddAdministratorDialog({
     if (!open) return
     let live = true
     const timer = setTimeout(() => {
-      callHostApi(HostApiContracts.listPlatformUsers, { ...(query.trim() ? { query: query.trim() } : {}), limit: 30 }, undefined)
+      callHostApi(
+        HostApiContracts.listPlatformUsers,
+        { ...(query.trim() ? { query: query.trim() } : {}), limit: 30 },
+        undefined,
+      )
         .then((result) => live && setCandidates(result.items))
         .catch(() => live && setCandidates([]))
     }, 200)

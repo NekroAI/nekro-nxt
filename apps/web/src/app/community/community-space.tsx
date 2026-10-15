@@ -112,7 +112,9 @@ export default function CommunitySpace() {
           '/community/sync',
           <Repeat2 size={14} />,
           '同步',
-          status && status.updatesAvailable > 0 ? `${status.updatesAvailable} 个扩展需要处理` : '安装和发布的扩展与社区是否一致',
+          status && status.updatesAvailable > 0
+            ? `${status.updatesAvailable} 个扩展需要处理`
+            : '安装和发布的扩展与社区是否一致',
           status && status.updatesAvailable > 0 ? (
             <span className={styles.count}>{status.updatesAvailable}</span>
           ) : null,

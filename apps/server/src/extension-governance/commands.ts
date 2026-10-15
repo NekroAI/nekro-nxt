@@ -14,7 +14,7 @@ const SUBCOMMANDS = new Set([
   'reject',
   'enable',
   'disable',
-  'rollback',
+  'revert',
   'use',
   'save',
   'continue',
@@ -44,11 +44,13 @@ export class ExtensionCommandPort implements CommandGovernancePort {
     if (subcommand === 'info') return this.#info(this.#extension(input.target, context.agentId))
     if (!context.administrator) throw new Error(ADMIN_ONLY)
     const decider = { kind: 'administrator' as const, label: context.identity.displayName }
-    const actor =
-      context.identity.source === 'web' ? ({ kind: 'console' } as const) : decider
+    const actor = context.identity.source === 'web' ? ({ kind: 'console' } as const) : decider
     switch (subcommand) {
       case 'approve': {
-        const result = await this.#runtime.extensionRequests.approve(this.#number(input.target), actor.kind === 'console' ? actor : decider)
+        const result = await this.#runtime.extensionRequests.approve(
+          this.#number(input.target),
+          actor.kind === 'console' ? actor : decider,
+        )
         return result.message
       }
       case 'reject': {
@@ -68,7 +70,9 @@ export class ExtensionCommandPort implements CommandGovernancePort {
           identity: `ext-continue:${task.id}:${Date.now()}`,
           text: `〔系统通知〕管理员请你继续创造任务「${task.title}」（${task.id}）。用 nekro_nxt_extension_continue 把它接到这次对话里，接着把它做完。`,
         })
-        return told ? `已请${this.#agentName(task.agentId)}继续「${task.title}」。` : '智能体现在不在线，等它下次回应时再试。'
+        return told
+          ? `已请${this.#agentName(task.agentId)}继续「${task.title}」。`
+          : '智能体现在不在线，等它下次回应时再试。'
       }
       default: {
         const extension = this.#extension(input.target, context.agentId)
@@ -78,10 +82,14 @@ export class ExtensionCommandPort implements CommandGovernancePort {
             ? agentId === undefined
               ? undefined
               : { kind: subcommand, extensionId: extension.id, agentId }
-            : subcommand === 'rollback'
-              ? { kind: 'rollback', extensionId: extension.id }
+            : subcommand === 'revert'
+              ? { kind: 'revert', extensionId: extension.id }
               : subcommand === 'use'
-                ? { kind: 'switch', extensionId: extension.id, revisionId: this.#revisionByLabel(extension.id, input.value) }
+                ? {
+                    kind: 'switch',
+                    extensionId: extension.id,
+                    revisionId: this.#revisionByLabel(extension.id, input.value),
+                  }
                 : subcommand === 'update'
                   ? { kind: 'community-update', extensionId: extension.id }
                   : { kind: 'community-publish', extensionId: extension.id, notes: input.value ?? '' }
@@ -91,10 +99,14 @@ export class ExtensionCommandPort implements CommandGovernancePort {
     }
   }
 
-  async admin(
+  admin(
     input: { readonly action?: string; readonly value?: string },
     context: CommandGovernanceContext,
   ): Promise<string> {
+    return Promise.resolve().then(() => this.#admin(input, context))
+  }
+
+  #admin(input: { readonly action?: string; readonly value?: string }, context: CommandGovernanceContext): string {
     const action = (input.action ?? 'list').toLowerCase()
     if (action === 'claim') {
       if (context.identity.source === 'web') return '控制台登录者本来就是管理员，不需要认领。'
@@ -115,12 +127,18 @@ export class ExtensionCommandPort implements CommandGovernancePort {
       const list = this.#runtime.administrators.list()
       return list.length === 0
         ? '还没有平台账号管理员；控制台登录者始终是管理员。'
-        : ['管理员：', ...list.map((entry, index) => `${index + 1}. ${entry.displayName}（${entry.connectionName}）`)].join('\n')
+        : [
+            '管理员：',
+            ...list.map((entry, index) => `${index + 1}. ${entry.displayName}（${entry.connectionName}）`),
+          ].join('\n')
     }
     return `不认识的操作：${input.action ?? ''}。可用：claim、list。`
   }
 
-  async #act(action: ExtensionAction, actor: { readonly kind: 'console' } | { readonly kind: 'administrator'; readonly label: string }) {
+  async #act(
+    action: ExtensionAction,
+    actor: { readonly kind: 'console' } | { readonly kind: 'administrator'; readonly label: string },
+  ) {
     const assessment = this.#runtime.extensionActions.assess(action, actor)
     if (assessment.decision === 'console') throw new Error(assessment.reason ?? '这件事需要在 NekroNXT 后台处理。')
     const result = await this.#runtime.extensionActions.perform(action, actor)
@@ -136,7 +154,10 @@ export class ExtensionCommandPort implements CommandGovernancePort {
     if (extensions.length === 0) lines.push('（还没有）')
     for (const extension of extensions) {
       const current = runtime.repository.getHostInstallation(extension.id)?.extensionRevisionId
-      const label = current === undefined ? '' : (extensionVersions(runtime.repository, runtime.extensionService, extension.id).get(current)?.label ?? '')
+      const label =
+        current === undefined
+          ? ''
+          : (extensionVersions(runtime.repository, runtime.extensionService, extension.id).get(current)?.label ?? '')
       const enabled = runtime.repository.getActivation(agentId, extension.id) !== undefined
       lines.push(`· ${extension.displayName} ${label}${enabled ? '（已启用）' : '（未启用）'}`)
     }
@@ -167,7 +188,9 @@ export class ExtensionCommandPort implements CommandGovernancePort {
       `数据格式：第 ${runtime.extensionData.dataVersion(extension.id)} 版`,
     ]
     if (extension.branchOf !== undefined) {
-      lines.push(`分支自：${runtime.repository.getExtension(extension.branchOf.extensionId)?.displayName ?? '另一个扩展'}`)
+      lines.push(
+        `分支自：${runtime.repository.getExtension(extension.branchOf.extensionId)?.displayName ?? '另一个扩展'}`,
+      )
     }
     if (sync) lines.push(`社区：${SYNC_STATUS[sync.status]}`)
     return lines.join('\n')
@@ -179,7 +202,8 @@ export class ExtensionCommandPort implements CommandGovernancePort {
       .listExtensions()
       .filter(
         (extension) =>
-          extension.createdByAgentId === agentId || runtime.repository.getActivation(agentId, extension.id) !== undefined,
+          extension.createdByAgentId === agentId ||
+          runtime.repository.getActivation(agentId, extension.id) !== undefined,
       )
   }
 
@@ -198,8 +222,15 @@ export class ExtensionCommandPort implements CommandGovernancePort {
 
   #revisionByLabel(extensionId: ExtensionId, label: string | undefined) {
     if (label === undefined) throw new Error('请写上要切换到的版本，例如 v2。')
-    const normalized = label.trim().toLowerCase().replace(/^(?!v)/u, 'v')
-    for (const version of extensionVersions(this.#runtime.repository, this.#runtime.extensionService, extensionId).values()) {
+    const normalized = label
+      .trim()
+      .toLowerCase()
+      .replace(/^(?!v)/u, 'v')
+    for (const version of extensionVersions(
+      this.#runtime.repository,
+      this.#runtime.extensionService,
+      extensionId,
+    ).values()) {
       if (version.label.toLowerCase() === normalized) return version.revisionId
     }
     throw new Error(`没有版本 ${label}。`)
@@ -208,14 +239,19 @@ export class ExtensionCommandPort implements CommandGovernancePort {
   #task(name: string | undefined, agentId: AgentId | undefined, allowPaused = false) {
     const tasks = this.#runtime.repository
       .listAuthoringTasks(agentId)
-      .filter((task) => (allowPaused ? !['completed', 'stopped'].includes(task.status) : task.status === 'ready' || task.status === 'paused'))
+      .filter((task) =>
+        allowPaused
+          ? !['completed', 'stopped'].includes(task.status)
+          : task.status === 'ready' || task.status === 'paused',
+      )
     const query = name?.trim()
     const found =
       query === undefined || query === ''
         ? tasks.length === 1
           ? tasks[0]
           : undefined
-        : (tasks.find((task) => task.title === query || task.id === query) ?? tasks.find((task) => task.title.includes(query)))
+        : (tasks.find((task) => task.title === query || task.id === query) ??
+          tasks.find((task) => task.title.includes(query)))
     if (!found) throw new Error(query ? `找不到任务「${query}」。` : '有多个任务，请写上任务名称。')
     return found
   }

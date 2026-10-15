@@ -758,7 +758,8 @@ describe('unified commands', () => {
       extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_MAINTAIN'),
       invoke,
     })
-    const status = async (text: string) => f.repository.commands.forEvent((await f.inbound(text)).channelEventId)?.status
+    const status = async (text: string) =>
+      f.repository.commands.forEvent((await f.inbound(text)).channelEventId)?.status
     expect(await status('/maintain')).toBe('failed')
     f.commands.grant(f.channel.id, f.member.identity.id, true)
     // Managing this channel is not enough for a command that acts on the whole instance.

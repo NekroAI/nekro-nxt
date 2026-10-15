@@ -656,6 +656,7 @@ export class DynamicAuthoringService {
     if (!attempt) throw new Error('这个任务还没有候选。')
     const now = this.#now()
     const { pausedReason: _reason, ...rest } = current
+    void _reason
     const task: DynamicAuthoringTask = {
       ...rest,
       channelId: input.channelId,
@@ -695,6 +696,7 @@ export class DynamicAuthoringService {
     if (!current || ['stopped', 'completed'].includes(current.status)) return
     const now = this.#now()
     const { pausedReason: _reason, ...rest } = current
+    void _reason
     this.#repository.updateAuthoringTask({
       task: { ...rest, status: 'stopped', revision: current.revision + 1, updatedAt: now },
       expectedRevision: current.revision,

@@ -81,7 +81,11 @@ export interface LineageGraphLine {
 export const lineageGraph = (
   repository: Pick<
     SqliteCoreRepository,
-    'listExtensions' | 'getExtension' | 'listExtensionRevisions' | 'listExtensionRevisionReleases' | 'getHostInstallation'
+    | 'listExtensions'
+    | 'getExtension'
+    | 'listExtensionRevisions'
+    | 'listExtensionRevisionReleases'
+    | 'getHostInstallation'
   >,
   lineage: LineageReader,
   extensionId: ExtensionId,

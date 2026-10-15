@@ -442,13 +442,19 @@ export class NekroRuntime {
       register: (owner, contribution) => this.registerAdapter(owner, contribution),
       mountConnections: (adapterKey) => this.mountAdapterConnections(adapterKey),
     }
-    this.extensionData = new ExtensionDataService({ repository: this.repository, assets: this.assetService, now: this.#now })
+    this.extensionData = new ExtensionDataService({
+      repository: this.repository,
+      assets: this.assetService,
+      now: this.#now,
+    })
     this.administrators = new AdministratorService({
       repository: this.repository,
       now: this.#now,
       connectionName: (connectionId) => {
         const connection = this.repository.getConnection(connectionId)
-        return connection?.alias ?? this.adapters.get(connection?.adapterKey ?? '')?.descriptor.displayName ?? '平台连接'
+        return (
+          connection?.alias ?? this.adapters.get(connection?.adapterKey ?? '')?.descriptor.displayName ?? '平台连接'
+        )
       },
     })
     this.publishExtensionRequestChange = undefined
@@ -1293,7 +1299,8 @@ export class NekroRuntime {
     const now = this.#now()
     for (const task of this.repository.listAuthoringTasks()) {
       if (task.status === 'paused') {
-        if (now - task.updatedAt > AUTHORING_PAUSE_ARCHIVE_MS) service.archiveTask(task, '暂停超过 30 天没有继续，已归档。')
+        if (now - task.updatedAt > AUTHORING_PAUSE_ARCHIVE_MS)
+          service.archiveTask(task, '暂停超过 30 天没有继续，已归档。')
         continue
       }
       if (['completed', 'stopped', 'interrupted'].includes(task.status)) continue

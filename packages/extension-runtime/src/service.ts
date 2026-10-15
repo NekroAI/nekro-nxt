@@ -432,7 +432,9 @@ export class ExtensionService {
   /** Manifest, normalized sources and resources of a stored Revision. */
   async readRevisionContent(revision: Revision): Promise<StoredRevisionContent> {
     const directory = this.revisionSourceDirectory(revision)
-    const manifest = extensionManifestSchema.parse(JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8')))
+    const manifest = extensionManifestSchema.parse(
+      JSON.parse(await readFile(path.join(directory, 'manifest.json'), 'utf8')),
+    )
     const readOptional = async (file: string): Promise<string | undefined> => {
       try {
         return await readFile(path.join(directory, 'source', file), 'utf8')

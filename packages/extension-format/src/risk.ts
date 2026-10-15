@@ -50,11 +50,12 @@ export const addedPermissionItems = (
   })
 }
 
-
 type Json = Record<string, unknown>
 
 const asObject = (value: unknown): Json | undefined =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Json) : undefined
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value))
+    : undefined
 
 const asStrings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []

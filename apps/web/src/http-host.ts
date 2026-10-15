@@ -353,13 +353,13 @@ const projectConversationMessage = (
           ? '定时任务'
           : message.extensionNotice !== undefined
             ? '扩展'
-          : message.role === 'system'
-            ? '频道事件'
-            : message.sender !== undefined
-              ? nonEmptyLabel(message.sender.displayName, '群成员')
-              : sourceChannel?.kind === 'internal'
-                ? '你'
-                : '群成员',
+            : message.role === 'system'
+              ? '频道事件'
+              : message.sender !== undefined
+                ? nonEmptyLabel(message.sender.displayName, '群成员')
+                : sourceChannel?.kind === 'internal'
+                  ? '你'
+                  : '群成员',
     body: renderConversationBody(message.parts),
     parts,
     mentionedConnectionAccount: message.mentionedConnectionAccount === true,

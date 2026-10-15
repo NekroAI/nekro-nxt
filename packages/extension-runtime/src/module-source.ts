@@ -21,7 +21,9 @@ export const moduleToFactoryBody = (source: string, half: 'host' | 'client'): st
     throw new Error(`扩展源码无法解析：${error instanceof Error ? error.message : String(error)}`)
   }
   const environment =
-    half === 'host' ? '{ harness, nxt, logger: typeof logger === "undefined" ? undefined : logger }' : '{ React, host, styles }'
+    half === 'host'
+      ? '{ harness, nxt, logger: typeof logger === "undefined" ? undefined : logger }'
+      : '{ React, host, styles }'
   return `const __nxtModule = { exports: {} }
 const __nxtRequire = (name) => {
   if (name === '@nekro-nxt/extension-sdk') return ${SDK_SHIM}

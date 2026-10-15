@@ -109,8 +109,9 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   const communityRelease = current?.releases.find((release) => release.via === 'install')
   // Revising goes through an agent that can create: the one that made it, or else the first one with a channel.
   const reviser =
-    agents.find((agent) => agent.id === extension.createdByAgentId && agent.capabilities.dynamicCreation && agent.channels[0]) ??
-    agents.find((agent) => agent.capabilities.dynamicCreation && agent.channels[0] !== undefined)
+    agents.find(
+      (agent) => agent.id === extension.createdByAgentId && agent.capabilities.dynamicCreation && agent.channels[0],
+    ) ?? agents.find((agent) => agent.capabilities.dynamicCreation && agent.channels[0] !== undefined)
 
   return (
     <MainContent>
@@ -348,7 +349,8 @@ function BranchDialog({
       }
     >
       <p style={{ margin: 0 }}>
-        分支是一个新扩展，代码和「{extension.name}」{revision?.versionLabel} 完全相同，之后各自修改、互不影响。它会记住自己分支自哪里，发布到社区时也会标明。
+        分支是一个新扩展，代码和「{extension.name}」{revision?.versionLabel}{' '}
+        完全相同，之后各自修改、互不影响。它会记住自己分支自哪里，发布到社区时也会标明。
       </p>
       <Field label="名称">
         <Input
@@ -741,7 +743,8 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
         }}
       >
         本机数据已经是第 {extension.dataVersion} 版格式，{restoring?.revision.versionLabel} 只认识第{' '}
-        {restoring?.revision.dataVersion} 版。切换时要先把数据恢复成一份旧格式的快照；快照之后写入的数据会丢失，切换前的数据会再留一份快照。
+        {restoring?.revision.dataVersion}{' '}
+        版。切换时要先把数据恢复成一份旧格式的快照；快照之后写入的数据会丢失，切换前的数据会再留一份快照。
         {restoring && restoring.snapshots.length > 0 ? (
           <Field label="恢复哪份快照">
             <Select

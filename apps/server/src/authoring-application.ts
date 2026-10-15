@@ -8,11 +8,25 @@ import type {
   ExtensionRevisionVerification,
 } from '@nekro-nxt/extension-runtime'
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
+import { extensionManifestContributionSchema } from '@nekro-nxt/extension-format'
+import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
 
 type SaveInput = ReturnType<typeof HostApiContracts.saveExtensionFromDynamic.parseRequest>
 type SaveResult = Awaited<ReturnType<NekroRuntime['extensionService']['saveDynamicPackage']>>
 type VerificationInput = Omit<ExtensionRevisionVerification, 'revisionId' | 'verifiedAt' | 'hostBuild' | 'clientBuild'>
+
+/** The adapter evidence a verified run recorded, read back from the ledger. */
+const AdapterEvidenceSchema = z.object({
+  apiVersion: z.literal(2),
+  key: z.string(),
+  descriptorDigest: z.string(),
+  registered: z.boolean(),
+  started: z.boolean(),
+  stopped: z.boolean(),
+  inboundCommitted: z.boolean(),
+  outboundReceipt: z.enum(['sent', 'failed', 'unknown']),
+})
 
 /** What a saved Revision is built from: the candidate's code and the evidence of its verified run. */
 interface SaveMaterial {
@@ -209,16 +223,14 @@ export class AuthoringApplicationService {
       throw new Error('这个候选是在旧版本里试运行的，请在频道里让智能体继续这个任务，重新试运行后再保存。')
     }
     const authored = await this.#runtime.host.authoringSnapshotForAttempt(attempt)
-    const contributions = verification.contributions as unknown as ExtensionContribution[]
+    const contributions = z.array(extensionManifestContributionSchema).parse(verification.contributions)
     const hasHostPages = verification.renderedPages.length > 0
     return {
       snapshot: this.#packageSnapshot(authored, authored.permissions, contributions),
       verification: {
         dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
         contractVersion: 'nekro-nxt-extension-v5',
-        ...(verification.adapter === undefined
-          ? {}
-          : { adapter: verification.adapter as unknown as NonNullable<VerificationInput['adapter']> }),
+        ...(verification.adapter === undefined ? {} : { adapter: AdapterEvidenceSchema.parse(verification.adapter) }),
         origin: {
           episodeId: '',
           pluginId: attempt.runnerPluginId ?? '',
@@ -270,6 +282,7 @@ export class AuthoringApplicationService {
     if (!currentTask || currentAttempt?.id !== attemptId || !['ready', 'paused'].includes(currentTask.status)) return
     const now = Date.now()
     const { pausedReason: _reason, ...rest } = currentTask
+    void _reason
     runtime.repository.updateAuthoringTask({
       task: { ...rest, status: 'completed', revision: currentTask.revision + 1, updatedAt: now, completedAt: now },
       expectedRevision: currentTask.revision,

@@ -18,12 +18,20 @@ const asRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonVal
 /** Fields of one layer that a migration may write: everything the target declares except credentials. */
 const plainFields = (manifest: ExtensionManifest | undefined, layer: ExtensionConfigLayer): readonly string[] => {
   const schema = manifest === undefined ? undefined : layerConfigSchema(manifest, layer)
-  return schema === undefined ? [] : configFields(schema).filter((field) => field.kind !== 'secret').map((field) => field.key)
+  return schema === undefined
+    ? []
+    : configFields(schema)
+        .filter((field) => field.kind !== 'secret')
+        .map((field) => field.key)
 }
 
 const secretFields = (manifest: ExtensionManifest | undefined, layer: ExtensionConfigLayer): readonly string[] => {
   const schema = manifest === undefined ? undefined : layerConfigSchema(manifest, layer)
-  return schema === undefined ? [] : configFields(schema).filter((field) => field.kind === 'secret').map((field) => field.key)
+  return schema === undefined
+    ? []
+    : configFields(schema)
+        .filter((field) => field.kind === 'secret')
+        .map((field) => field.key)
 }
 
 /** Overwrite keeps the target's other settings; replace starts from defaults. Credentials stay as they are. */
@@ -84,9 +92,11 @@ export class ExtensionConfigMigration {
   async apply(plan: ConfigMigrationPlan): Promise<ConfigMigrationChanges> {
     const { changes, host, agents } = this.#plan(plan)
     const coordinator = this.#runtime.extensions
-    if (host !== undefined && changes.hostFields.length > 0) await coordinator.updateHostConfig(plan.targetExtensionId, host)
+    if (host !== undefined && changes.hostFields.length > 0)
+      await coordinator.updateHostConfig(plan.targetExtensionId, host)
     for (const entry of agents) {
-      if (entry.fields.length > 0) await coordinator.updateAgentConfig(entry.agentId, plan.targetExtensionId, entry.value)
+      if (entry.fields.length > 0)
+        await coordinator.updateAgentConfig(entry.agentId, plan.targetExtensionId, entry.value)
     }
     return changes
   }
@@ -99,7 +109,13 @@ export class ExtensionConfigMigration {
     const host =
       installation === undefined || source.host === undefined
         ? undefined
-        : merged(installation.config, source.host, plan.mode, plainFields(hostManifest, 'host'), secretFields(hostManifest, 'host'))
+        : merged(
+            installation.config,
+            source.host,
+            plan.mode,
+            plainFields(hostManifest, 'host'),
+            secretFields(hostManifest, 'host'),
+          )
     const agents = runtime.repository
       .listActivations()
       .filter((activation) => activation.extensionId === plan.targetExtensionId)
@@ -111,7 +127,13 @@ export class ExtensionConfigMigration {
         const incoming = sourceAgent === undefined ? undefined : source.agents[sourceAgent]
         if (incoming === undefined) return []
         const manifest = activationManifest(runtime, activation.extensionRevisionId)
-        const result = merged(activation.config, incoming, plan.mode, plainFields(manifest, 'agent'), secretFields(manifest, 'agent'))
+        const result = merged(
+          activation.config,
+          incoming,
+          plan.mode,
+          plainFields(manifest, 'agent'),
+          secretFields(manifest, 'agent'),
+        )
         return [{ agentId: activation.agentId, value: result.value, fields: result.changed }]
       })
     return {

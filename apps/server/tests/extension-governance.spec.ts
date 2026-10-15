@@ -4,10 +4,10 @@ import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { materializeImportedRevision } from '@nekro-nxt/extension-format'
 import { ExtensionDataDowngradeError } from '@nekro-nxt/extension-runtime'
-import type { ChannelId, ExtensionId } from '@nekro-nxt/contracts'
+import { CommunityReleaseSchema, type ChannelId, type ExtensionId } from '@nekro-nxt/contracts'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { ExtensionCommandPort } from '../src/extension-governance/commands.js'
-import { CommunitySyncService } from '../src/extension-governance/community-sync.js'
+import { CommunitySyncService, type SyncCommunity } from '../src/extension-governance/community-sync.js'
 import { ExtensionRequestService, EXTENSION_REQUEST_TTL_MS } from '../src/extension-governance/requests.js'
 import { extensionVersions, lineageGraph } from '../src/extension-governance/versions.js'
 
@@ -91,7 +91,11 @@ const importRevision = async (
   })
   return runtime.extensionService.importRevision({
     extension: { id: content.manifest.extensionId, slug: 'governance-probe', displayName: '治理探针', description: '' },
-    revision: { id: content.manifest.revisionId, contentDigest: content.contentDigest, payloadDigest: content.payloadDigest },
+    revision: {
+      id: content.manifest.revisionId,
+      contentDigest: content.contentDigest,
+      payloadDigest: content.payloadDigest,
+    },
     manifest: content.manifest,
     sources: content.sources,
   })
@@ -182,9 +186,9 @@ describe('extension lines', () => {
         },
         { kind: 'console' },
       )
-      expect(lineageGraph(runtime.repository, runtime.extensionService, extensionId).map((line) => line.extensionId)).toEqual(
-        [extensionId, branch!.id, nested.extensionId],
-      )
+      expect(
+        lineageGraph(runtime.repository, runtime.extensionService, extensionId).map((line) => line.extensionId),
+      ).toEqual([extensionId, branch!.id, nested.extensionId])
     } finally {
       await runtime.dispose()
     }
@@ -209,7 +213,7 @@ describe('extension data across versions', () => {
       )
       expect(runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId).toBe(v2.id)
 
-      const rolledBack = await runtime.extensionActions.perform({ kind: 'rollback', extensionId }, { kind: 'console' })
+      const rolledBack = await runtime.extensionActions.perform({ kind: 'revert', extensionId }, { kind: 'console' })
       expect(rolledBack.revisionId).toBe(v1.id)
       expect(storedValues(runtime, extensionId)).toEqual({ first: { name: '甲' } })
       expect(runtime.extensionData.dataVersion(extensionId)).toBe(1)
@@ -249,7 +253,12 @@ describe('extension data across versions', () => {
       })
 
       const done = await runtime.extensionActions.perform(
-        { kind: 'migrate-data', targetExtensionId: target, source: { kind: 'extension', extensionId }, mode: 'replace' },
+        {
+          kind: 'migrate-data',
+          targetExtensionId: target,
+          source: { kind: 'extension', extensionId },
+          mode: 'replace',
+        },
         { kind: 'console' },
       )
       expect(done.message).toContain('删除 1')
@@ -293,20 +302,21 @@ describe('extension autonomy', () => {
         expect(assess(enable(autonomous), agent(autonomous)).decision).toBe('run')
       }
       // Publishing and data migration always go through an administrator.
-      expect(
-        assess({ kind: 'community-publish', extensionId, notes: '' }, agent(autonomous)).decision,
-      ).toBe('request')
+      expect(assess({ kind: 'community-publish', extensionId, notes: '' }, agent(autonomous)).decision).toBe('request')
       expect(
         assess(
-          { kind: 'migrate-data', targetExtensionId: extensionId, source: { kind: 'extension', extensionId }, mode: 'overwrite' },
+          {
+            kind: 'migrate-data',
+            targetExtensionId: extensionId,
+            source: { kind: 'extension', extensionId },
+            mode: 'overwrite',
+          },
           agent(autonomous),
         ).decision,
       ).toBe('request')
       // Switching moves every agent that uses the extension, so it needs confirmation once another agent uses it.
       await runtime.extensionActions.perform(enable(confirm), { kind: 'console' })
-      expect(
-        assess({ kind: 'switch', extensionId, revisionId: v2.id }, agent(autonomous)).decision,
-      ).toBe('request')
+      expect(assess({ kind: 'switch', extensionId, revisionId: v2.id }, agent(autonomous)).decision).toBe('request')
       expect(assess(enable(autonomous), { kind: 'administrator', label: '管理员' }).decision).toBe('run')
       expect(assess(enable(autonomous), { kind: 'console' }).decision).toBe('run')
     } finally {
@@ -410,7 +420,9 @@ describe('administrators', () => {
       await expect(port.admin({ action: 'claim', value: code }, context('member-2'))).rejects.toThrow('已失效')
 
       const fresh = runtime.administrators.createClaimCode()
-      expect(await port.admin({ action: 'claim', value: fresh.code }, context('member-1'))).toContain('已成为 NekroNXT 管理员')
+      expect(await port.admin({ action: 'claim', value: fresh.code }, context('member-1'))).toContain(
+        '已成为 NekroNXT 管理员',
+      )
       expect(runtime.administrators.isAdministrator(runtime.internalConnectionId, 'member-1')).toBe(true)
       expect(await port.admin({ action: 'list' }, context('member-1'))).toContain('成员 member-1')
       runtime.administrators.remove(runtime.internalConnectionId, 'member-1')
@@ -420,7 +432,6 @@ describe('administrators', () => {
     }
   })
 })
-
 
 describe('community sync', () => {
   it('tells same, ahead, behind and diverged lines apart by lineage and owns lines published from here', async () => {
@@ -436,14 +447,14 @@ describe('community sync', () => {
         ancestry: [],
       }
       let attention = -1
-      const community = {
+      const community: SyncCommunity = {
         communityUrl,
         status: () => Promise.resolve({ account: { handle: 'demo-author' } }),
         mine: () => Promise.resolve([]),
         setAttention: (count: number) => {
           attention = count
         },
-        checkUpdates: (items: readonly { readonly extensionId: string }[]) =>
+        checkUpdates: (items) =>
           Promise.resolve(
             new Map(
               items.map((item) => [
@@ -453,7 +464,7 @@ describe('community sync', () => {
                   delisted: false,
                   delistedReason: null,
                   releaseWithdrawn: false,
-                  latest: {
+                  latest: CommunityReleaseSchema.parse({
                     ...latest,
                     reviewStatus: 'passed',
                     rating: null,
@@ -463,7 +474,7 @@ describe('community sync', () => {
                     notes: '',
                     createdAt: 1,
                     number: 1,
-                  },
+                  }),
                   addedPermissions: [],
                 },
               ]),
@@ -472,7 +483,7 @@ describe('community sync', () => {
       }
       const sync = new CommunitySyncService({
         repository: runtime.repository,
-        community: community as unknown as ConstructorParameters<typeof CommunitySyncService>[0]['community'],
+        community,
         lineage: runtime.extensionService,
       })
       sync.recordInstall(v1, { releaseId: 'rel_01one', number: 1, publisherHandle: 'demo-author' })

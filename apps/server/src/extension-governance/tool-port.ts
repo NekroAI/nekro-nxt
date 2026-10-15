@@ -1,11 +1,11 @@
-import type {
-  AgentId,
-  AuthoringTaskId,
-  ChannelId,
-  EpisodeId,
-  ExtensionId,
-  ExtensionRevisionId,
-  JsonValue,
+import {
+  parseJsonValue,
+  type AgentId,
+  type ChannelId,
+  type EpisodeId,
+  type ExtensionId,
+  type ExtensionRevisionId,
+  type JsonValue,
 } from '@nekro-nxt/contracts'
 import {
   editableRevisionSources,
@@ -48,7 +48,10 @@ export interface ToolActionOutcome {
 /** What the agent's extension tools need from the host; implemented over the runtime's governance services. */
 export interface ExtensionGovernanceToolPort {
   /** Whether the message that started this turn may start or change extension work for this agent. */
-  requesterAllowed(agentId: AgentId, episodeId: EpisodeId): { readonly allowed: true } | { readonly allowed: false; readonly reason: string }
+  requesterAllowed(
+    agentId: AgentId,
+    episodeId: EpisodeId,
+  ): { readonly allowed: true } | { readonly allowed: false; readonly reason: string }
   list(agentId: AgentId): JsonValue
   prepareRevise(
     agentId: AgentId,
@@ -87,7 +90,11 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const event = eventId === undefined ? undefined : runtime.repository.getChannelEvent(eventId)
     const channel = episode === undefined ? undefined : runtime.repository.getChannel(episode.channelId)
     // The built-in channel and the console speak for an administrator.
-    if (channel?.kind === 'internal' || event?.facts?.['consoleAnchor'] === true || event?.senderMemberId === undefined) {
+    if (
+      channel?.kind === 'internal' ||
+      event?.facts?.['consoleAnchor'] === true ||
+      event?.senderMemberId === undefined
+    ) {
       return { allowed: true as const }
     }
     const identity =
@@ -130,9 +137,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           dataVersion: runtime.extensionData.dataVersion(extension.id),
           ...(extension.branchOf === undefined ? {} : { branchOf: extension.branchOf.extensionId }),
           community:
-            sync === undefined
-              ? null
-              : { role: sync.role, status: sync.status, latest: sync.latest?.number ?? null },
+            sync === undefined ? null : { role: sync.role, status: sync.status, latest: sync.latest?.number ?? null },
           ...(task === undefined ? {} : { openTask: { id: task.id, status: task.status } }),
         }
       }),
@@ -155,7 +160,10 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const extension = this.resolveExtension(agentId, input.extension)
     const versions = extensionVersions(runtime.repository, runtime.extensionService, extension.id)
     const byLabel = (label: string): Revision => {
-      const normalized = label.trim().toLowerCase().replace(/^(?!v)/u, 'v')
+      const normalized = label
+        .trim()
+        .toLowerCase()
+        .replace(/^(?!v)/u, 'v')
       const match = [...versions.values()].find((version) => version.label.toLowerCase() === normalized)
       const revision = match === undefined ? undefined : runtime.repository.getExtensionRevision(match.revisionId)
       if (!revision) throw new Error(`「${extension.displayName}」没有版本 ${label}。`)
@@ -246,15 +254,22 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
         ? tasks.length === 1
           ? tasks[0]
           : undefined
-        : (tasks.find((task) => task.id === (query as AuthoringTaskId) || task.title === query) ??
+        : (tasks.find((task) => task.id === query || task.title === query) ??
           tasks.find((task) => task.title.includes(query)))
     if (!found) throw new Error(query ? `找不到任务「${query}」。` : '有好几个进行中的任务，请写上任务名称或编号。')
     return found
   }
 
   revisionByLabel(extensionId: ExtensionId, label: string): ExtensionRevisionId {
-    const normalized = label.trim().toLowerCase().replace(/^(?!v)/u, 'v')
-    for (const version of extensionVersions(this.#runtime.repository, this.#runtime.extensionService, extensionId).values()) {
+    const normalized = label
+      .trim()
+      .toLowerCase()
+      .replace(/^(?!v)/u, 'v')
+    for (const version of extensionVersions(
+      this.#runtime.repository,
+      this.#runtime.extensionService,
+      extensionId,
+    ).values()) {
       if (version.label.toLowerCase() === normalized) return version.revisionId
     }
     throw new Error(`没有版本 ${label}。`)
@@ -301,7 +316,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
         ...(manifest.clientCss === undefined ? {} : { clientCss: manifest.clientCss }),
         ...(manifest.icon === undefined ? {} : { icon: manifest.icon }),
         permissions: manifest.permissions,
-        contributions: declared.map((contribution) => JSON.parse(JSON.stringify(contribution)) as JsonValue),
+        contributions: declared.map((contribution) => parseJsonValue(JSON.parse(JSON.stringify(contribution)))),
         ...(manifest.config === undefined ? {} : { config: manifest.config }),
         ...(Object.keys(tools).length + Object.keys(rpc).length === 0 ? {} : { verificationInputs: { tools, rpc } }),
         ...(manifest.dataVersion === undefined ? {} : { dataVersion: manifest.dataVersion }),

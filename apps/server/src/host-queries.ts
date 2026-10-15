@@ -1,4 +1,5 @@
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
+import { z } from 'zod'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import {
   HostApiContracts,
@@ -106,12 +107,14 @@ export const assembleChannelRuntimeContext = (runtime: NekroRuntime, channelId: 
   return runtime.host.sessionContext(episode.dshSessionId) ?? unavailableSessionContext
 }
 
-/** The Manifest of the Revision an Activation runs, when that Revision is still readable. */
+const RequestPayloadViewSchema = z.object({ autonomous: z.boolean().optional() }).passthrough()
+const RequestResultViewSchema = z.object({ message: z.string().optional() }).passthrough()
+
 /** Extension requests as pages see them; `pending` ones also travel in the snapshot. */
 export const projectExtensionRequests = (runtime: NekroRuntime, status?: 'pending') =>
   runtime.extensionRequests.list(status).map((record) => {
-    const payload = record.payload as { readonly autonomous?: boolean }
-    const result = record.result as { readonly message?: string } | null
+    const payload = RequestPayloadViewSchema.safeParse(record.payload).data ?? {}
+    const result = RequestResultViewSchema.safeParse(record.result).data
     return {
       number: record.number,
       kind: record.kind,
@@ -129,6 +132,7 @@ export const projectExtensionRequests = (runtime: NekroRuntime, status?: 'pendin
     }
   })
 
+/** The Manifest of the Revision an Activation runs, when that Revision is still readable. */
 export const activationManifest = (runtime: NekroRuntime, revisionId: ExtensionRevisionId | undefined) => {
   if (revisionId === undefined) return undefined
   const revision = runtime.repository.getExtensionRevision(revisionId)

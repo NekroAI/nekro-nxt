@@ -1,6 +1,6 @@
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { Download, GitBranch, PencilLine, Repeat2, Share2 } from 'lucide-react'
-import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { callHostApi } from '../../host-api-client.js'
 import { useProductStore, type LocalExtensionSummary } from '../../product-runtime.js'
@@ -86,7 +86,7 @@ export function LineageView({
       {lines.length > 1 ? (
         <ul className={styles.legend} aria-label="扩展与分支">
           {lines.map((line, index) => (
-            <li key={line.extensionId} style={{ ['--lane' as string]: laneColor(index) } as CSSProperties}>
+            <li key={line.extensionId} style={{ ['--lane' as string]: laneColor(index) }}>
               <span className={styles.swatch} aria-hidden="true" />
               {line.extensionId === extension.id ? (
                 <b>{line.displayName}</b>
@@ -118,7 +118,7 @@ export function LineageView({
                 className={styles.edge}
                 data-kind={edge.kind}
                 d={path}
-                style={{ ['--lane' as string]: laneColor(edge.to.lane) } as CSSProperties}
+                style={{ ['--lane' as string]: laneColor(edge.to.lane) }}
               />
             )
           })}
@@ -134,7 +134,7 @@ export function LineageView({
                 data-current={node.current}
                 data-selected={chosen?.node.revisionId === node.revisionId}
                 data-other={other}
-                style={{ ['--lane' as string]: laneColor(entry.lane) } as CSSProperties}
+                style={{ ['--lane' as string]: laneColor(entry.lane) }}
                 role="button"
                 tabIndex={0}
                 aria-label={`${other ? `${nameOf(node.extensionId)} ` : ''}${node.label}${node.current ? '，正在使用' : ''}${releases ? `，社区发布 ${releases}` : ''}`}
@@ -254,7 +254,12 @@ function VersionDetail({
       ) : null}
       <div className={styles.actions}>
         {!node.current && usable ? (
-          <Button size="small" variant="primary" icon={<Repeat2 size={14} />} onClick={() => actions.onSwitch(revision)}>
+          <Button
+            size="small"
+            variant="primary"
+            icon={<Repeat2 size={14} />}
+            onClick={() => actions.onSwitch(revision)}
+          >
             {extension.installation ? '切换到这个版本' : '安装这个版本'}
           </Button>
         ) : null}
@@ -263,7 +268,12 @@ function VersionDetail({
             让智能体在此基础上修改
           </Button>
         ) : null}
-        <Button size="small" icon={<GitBranch size={14} />} disabled={!usable} onClick={() => actions.onBranch(revision)}>
+        <Button
+          size="small"
+          icon={<GitBranch size={14} />}
+          disabled={!usable}
+          onClick={() => actions.onBranch(revision)}
+        >
           从这里分支
         </Button>
         {usable ? (

@@ -1084,7 +1084,9 @@ test.describe('NekroNxt browser projections', () => {
       },
       browserSnapshot,
       async (page) => {
-        await page.route(`**/api/extensions/${browserExtensionId}/lineage`, (request) => request.fulfill({ json: lineage }))
+        await page.route(`**/api/extensions/${browserExtensionId}/lineage`, (request) =>
+          request.fulfill({ json: lineage }),
+        )
         await page.route(`**/api/extensions/${browserExtensionId}/data`, (request) =>
           request.fulfill({ json: { dataVersion: 1, counts: { storage: 3, index: 0, library: 0 }, snapshots: [] } }),
         )
