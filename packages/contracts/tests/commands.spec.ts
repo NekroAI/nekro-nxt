@@ -95,6 +95,40 @@ describe('command parsing', () => {
       parts: [{ type: 'text', text: '/help' }],
     })
   })
+  it('recognizes group commands only when addressed to the account, unless bare commands are allowed', () => {
+    const bot = ChannelMemberIdSchema.parse('mbr_BOT')
+    const other = ChannelMemberIdSchema.parse('mbr_OTHER')
+    const requireMention = { requireMention: true }
+    expect(recognizeCommand([{ type: 'text', text: '/status' }], bot, requireMention)).toEqual({ kind: 'chat' })
+    expect(recognizeCommand([{ type: 'text', text: '//status' }], bot, requireMention)).toEqual({ kind: 'chat' })
+    expect(
+      recognizeCommand(
+        [
+          { type: 'mention', memberId: other },
+          { type: 'text', text: ' /status' },
+        ],
+        bot,
+        requireMention,
+      ),
+    ).toEqual({ kind: 'chat' })
+    expect(
+      recognizeCommand(
+        [
+          { type: 'mention', memberId: bot },
+          { type: 'text', text: ' /status' },
+        ],
+        bot,
+        requireMention,
+      ),
+    ).toEqual({ kind: 'command', text: '/status' })
+    expect(recognizeCommand([{ type: 'text', text: '/status' }], bot)).toEqual({ kind: 'command', text: '/status' })
+  })
+  it('keeps console-only results by default and accepts a definition without defaulted fields', () => {
+    expect(CommandDefinitionSchema.parse({ name: 'ping', description: '示例' }).webReply).toBe('local')
+    expect(CommandDefinitionSchema.parse({ name: 'ping', description: '示例', webReply: 'channel' }).webReply).toBe(
+      'channel',
+    )
+  })
   it('rejects duplicate names and ambiguous required positional ordering', () => {
     expect(() => CommandDefinitionSchema.parse({ ...definition, aliases: ['回声'] })).toThrow()
     expect(() =>
