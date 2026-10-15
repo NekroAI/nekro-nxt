@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { EXTENSION_SDK_LEVEL, ExtensionIdSchema, HostApiContracts, type JsonValue } from '@nekro-nxt/contracts'
+import { EXTENSION_SDK_LEVEL, ExtensionIdSchema, type JsonValue } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import {
   CommunityError,

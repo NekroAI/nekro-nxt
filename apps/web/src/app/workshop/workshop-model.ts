@@ -65,6 +65,15 @@ export const lifecyclePosition = (task: LifecycleInput, enabledForAgent: boolean
 export const isTaskOpen = (task: Pick<AuthoringTask, 'status'>): boolean =>
   !['completed', 'stopped', 'interrupted'].includes(task.status)
 
+/** 「新建」 or 「修改「X」」: what the task is for, in the workshop list. */
+export const taskPurpose = (
+  task: Pick<AuthoringTask, 'kind' | 'targetExtensionId'>,
+  extensions: readonly Pick<LocalExtensionSummary, 'id' | 'name'>[],
+): string =>
+  task.kind === 'revise'
+    ? `修改「${extensions.find((item) => item.id === task.targetExtensionId)?.name ?? '已删除的扩展'}」`
+    : '新建'
+
 export const taskStatus = (task: Pick<AuthoringTask, 'status'>): { readonly label: string; readonly tone: Tone } => {
   switch (task.status) {
     case 'awaiting-approval':
@@ -193,21 +202,27 @@ export const proposeSlug = (name: string, now = Date.now()): string => {
 
 export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/u
 
-/** Where an open or finished task sits in the list: needs the user, in progress, or done. */
-export type TaskGroup = 'attention' | 'active' | 'ended'
+/**
+ * Where a task sits in the list: needs the user, in progress, paused (its conversation ended), or done. Finished
+ * tasks leave the list; their versions are in the extension's lineage.
+ */
+export type TaskGroup = 'attention' | 'active' | 'paused' | 'ended'
 
 export const TASK_GROUP_LABEL: Record<TaskGroup, string> = {
   attention: '等你处理',
   active: '进行中',
+  paused: '已暂停',
   ended: '已结束',
 }
 
 export const taskGroup = (task: Pick<AuthoringTask, 'status'>): TaskGroup =>
   task.status === 'awaiting-approval' || task.status === 'ready' || task.status === 'failed'
     ? 'attention'
-    : isTaskOpen(task)
-      ? 'active'
-      : 'ended'
+    : task.status === 'paused'
+      ? 'paused'
+      : isTaskOpen(task)
+        ? 'active'
+        : 'ended'
 
 const pad = (value: number): string => String(value).padStart(2, '0')
 

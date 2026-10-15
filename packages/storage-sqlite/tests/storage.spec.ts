@@ -2686,6 +2686,9 @@ describe('Extension and backup', () => {
           contentDigest: 'a'.repeat(64),
           payloadDigest: 'b'.repeat(64),
           createdAt: 1,
+          ancestry: [],
+          origin: 'file' as const,
+          dataVersion: 1,
         },
       })
       repository.saveExtensionRevision({
@@ -2704,6 +2707,9 @@ describe('Extension and backup', () => {
           contentDigest: 'c'.repeat(64),
           payloadDigest: 'd'.repeat(64),
           createdAt: 2,
+          ancestry: [],
+          origin: 'file' as const,
+          dataVersion: 1,
         },
       })
       repository.updateExtensionDetails(extensionId, { displayName: '新页面扩展', description: '新版本的简介' })
@@ -2927,6 +2933,9 @@ describe('Extension and backup', () => {
             contentDigest: String(index + 1).repeat(64),
             payloadDigest: String(index + 3).repeat(64),
             createdAt: index + 1,
+            ancestry: [],
+            origin: 'file' as const,
+            dataVersion: 1,
           },
         })
       }
@@ -3044,6 +3053,9 @@ describe('Extension and backup', () => {
           contentDigest: 'sha256:historical',
           payloadDigest: 'sha256:historical',
           createdAt: 1,
+          ancestry: [],
+          origin: 'file' as const,
+          dataVersion: 1,
         },
         verification: {
           revisionId,
@@ -3108,6 +3120,9 @@ describe('Extension and backup', () => {
           contentDigest: 'sha256:test',
           payloadDigest: 'sha256:test',
           createdAt: 1,
+          ancestry: [],
+          origin: 'file' as const,
+          dataVersion: 1,
         },
       })
       repository.upsertActivation({
@@ -3162,6 +3177,9 @@ describe('Extension and backup', () => {
           contentDigest: 'sha256:query-one',
           payloadDigest: 'sha256:query-one',
           createdAt: 1,
+          ancestry: [],
+          origin: 'file' as const,
+          dataVersion: 1,
         },
       })
       repository.saveExtensionRevision({
@@ -3180,6 +3198,9 @@ describe('Extension and backup', () => {
           contentDigest: 'sha256:query-two',
           payloadDigest: 'sha256:query-two',
           createdAt: 2,
+          ancestry: [],
+          origin: 'file' as const,
+          dataVersion: 1,
         },
       })
       expect(repository.listExtensions()).toMatchObject([

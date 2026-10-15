@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react'
+import { CommandPermissionSchema, type CommandPermission } from '@nekro-nxt/contracts'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { Button, Chip, PropertyGroup, PropertyList, PropertyRow, Select, Switch } from '../../ui-kit/index.js'
 import { useProductStore } from '../../product-runtime.js'
 import styles from './commands-section.module.css'
 
 type Members = Awaited<ReturnType<typeof commandApi.members>>['members']
+
+const PERMISSION_LABEL: Record<CommandPermission, string> = {
+  public: '普通用户',
+  'channel-admin': '频道管理',
+  admin: 'NekroNXT 管理员',
+}
+const rank = (level: CommandPermission | undefined): number =>
+  level === 'admin' ? 2 : level === 'channel-admin' ? 1 : 0
+
 export function CommandsSection({ channelId }: { readonly channelId?: string }) {
   const [catalog, setCatalog] = useState<CommandCatalog>()
   const [members, setMembers] = useState<Members>([])
@@ -85,13 +95,17 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
           ) : null}
           {catalog?.commands.map((command) => {
             const policy = channelId ? command.channelPolicy : command.globalPolicy
-            const globalRestriction = Boolean(channelId && command.globalPolicy?.permission === 'channel-admin')
-            const restricted = command.definition.minimumPermission === 'channel-admin' || globalRestriction
-            const permissionOverride = restricted && policy?.permission === 'public' ? undefined : policy?.permission
+            const minimum = command.definition.minimumPermission
+            const globalLevel = channelId ? command.globalPolicy?.permission : undefined
+            // The strictest of the command's own requirement and, in a channel, the global setting.
+            const floor = rank(globalLevel) > rank(minimum) ? (globalLevel ?? minimum) : minimum
+            const globalRestriction = globalLevel !== undefined && rank(globalLevel) > rank(minimum)
+            const permissionOverride =
+              policy?.permission !== undefined && rank(policy.permission) > rank(floor) ? policy.permission : undefined
             const permissionSource =
-              command.definition.minimumPermission === 'channel-admin'
+              rank(command.permission) === rank(minimum) && minimum !== 'public'
                 ? '命令最低要求'
-                : globalRestriction
+                : globalRestriction && rank(command.permission) === rank(globalLevel)
                   ? '全局设置要求'
                   : policy?.permission !== undefined
                     ? channelId
@@ -115,12 +129,15 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
                     <p>在控制台里执行时，结果也会发送到外部频道。</p>
                   ) : null}
                   <p>
-                    生效权限：{command.permission === 'public' ? '普通用户' : '频道管理'}（{permissionSource}）{' '}
+                    生效权限：{PERMISSION_LABEL[command.permission]}（{permissionSource}）{' '}
                     <Chip>{command.enabled ? '启用' : '停用'}</Chip>
                   </p>
                   {globalRestriction ? (
                     <p>
-                      频道不能降低全局权限。{policy?.permission === 'public' ? '此前保存的普通用户覆盖不生效。' : ''}
+                      频道不能降低全局权限。
+                      {policy?.permission !== undefined && rank(policy.permission) < rank(globalLevel)
+                        ? `此前保存的「${PERMISSION_LABEL[policy.permission]}」覆盖不生效。`
+                        : ''}
                     </p>
                   ) : null}
                   {channelId ? (
@@ -153,15 +170,11 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
                   )}
                   <Select
                     aria-label={`${command.fullName} 权限`}
-                    disabled={
-                      busy || command.fullName === 'help' || command.definition.minimumPermission === 'channel-admin'
-                    }
+                    disabled={busy || command.fullName === 'help' || minimum === 'admin'}
                     value={permissionOverride ?? 'inherit'}
                     onValueChange={(value) => {
                       const permission =
-                        value === 'inherit'
-                          ? {}
-                          : { permission: value === 'channel-admin' ? ('channel-admin' as const) : ('public' as const) }
+                        value === 'inherit' ? {} : { permission: CommandPermissionSchema.parse(value) }
                       void mutate(() =>
                         commandApi.policy(channelId ?? 'global', command.fullName, {
                           ...(policy?.enabled === undefined ? {} : { enabled: policy.enabled }),
@@ -171,8 +184,13 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
                     }}
                     options={[
                       { value: 'inherit', label: channelId ? '跟随全局与命令要求' : '跟随命令默认权限' },
-                      { value: 'public', label: '普通用户', disabled: restricted },
-                      { value: 'channel-admin', label: '频道管理' },
+                      { value: 'public', label: PERMISSION_LABEL.public, disabled: rank(floor) > rank('public') },
+                      {
+                        value: 'channel-admin',
+                        label: PERMISSION_LABEL['channel-admin'],
+                        disabled: rank(floor) > rank('channel-admin'),
+                      },
+                      { value: 'admin', label: PERMISSION_LABEL.admin },
                     ]}
                   />
                 </div>
@@ -202,7 +220,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
         </PropertyGroup>
       ) : null}
       {channelId ? (
-        <PropertyGroup title="命令授权成员" description="只授予当前频道的管理命令权限；平台群管理员不会自动获得授权。">
+        <PropertyGroup title="命令授权成员" description="只授予当前频道的管理命令权限；平台群管理员不会自动获得授权。NekroNXT 管理员在设置的「管理员」里配置，他们在每个频道都有管理权限。">
           {!members.length ? (
             <p>频道成员目录暂无可授权成员，收到平台消息后可在此选择。</p>
           ) : (

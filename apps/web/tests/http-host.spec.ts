@@ -292,6 +292,9 @@ const snapshotBodyWithExtension = () => {
           {
             id: summaryRevisionId,
             revisionNumber: 1,
+            versionLabel: 'v1',
+            origin: 'authored',
+            dataVersion: 1,
             createdAt: 1_700_000_000_000,
             provides: ['agent'],
             agentLayer: true,

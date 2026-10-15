@@ -29,6 +29,7 @@ import {
   PropertyRow,
   RiskLadder,
   SecretInput,
+  Segmented,
   Select,
   Switch,
   toast,
@@ -53,6 +54,15 @@ import { CodeRunNodeDownload, CodeRunNodeRemove } from './runtime-download.js'
 import { missingAgentModel, replacementModel } from './model-health.js'
 import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
+
+/** What each extension autonomy level lets the agent do without opening the console. */
+const EXTENSION_AUTONOMY_HINT: Record<'manual' | 'confirm' | 'autonomous', string> = {
+  manual: '只开发和试运行；保存、启用、切换版本都在工坊里操作。',
+  confirm:
+    '保存、启用、切换等每一步都在频道里发出请求，管理员发送 /ext approve 编号 同意后完成。高风险权限仍要在后台批准。',
+  autonomous:
+    '只影响它自己的普通操作直接完成，并在频道里留下记录和撤销方法；影响其他智能体、需要提升级权限、发布到社区和迁移数据仍要管理员确认，高风险权限仍要在后台批准。',
+}
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 const modelLabel = (model: ModelSummary) => `${model.providerName} · ${model.name}`
@@ -530,6 +540,50 @@ export function CapabilitiesSection({
             onCheckedChange={(checked) => setCapability('dynamicCreation', checked)}
           />
         </PropertyRow>
+        {caps.dynamicCreation ? (
+          <>
+            <PropertyRow
+              label="扩展自主权"
+              layout="stacked"
+              description={EXTENSION_AUTONOMY_HINT[caps.extensionAutonomy]}
+            >
+              <Segmented
+                label="扩展自主权"
+                value={caps.extensionAutonomy}
+                onChange={(value) =>
+                  update((current) => ({ ...current, capabilities: { ...current.capabilities, extensionAutonomy: value } }))
+                }
+                options={[
+                  { value: 'manual', label: '手动' },
+                  { value: 'confirm', label: '管理员确认' },
+                  { value: 'autonomous', label: '自主' },
+                ]}
+              />
+            </PropertyRow>
+            <PropertyRow
+              label="谁可以让它做扩展"
+              tip="只听管理员时，其他人请它开发或修改扩展会被婉拒；聊天和使用已有扩展不受影响"
+            >
+              <Select
+                aria-label="谁可以让它做扩展"
+                value={caps.extensionRequesters}
+                onValueChange={(value) =>
+                  update((current) => ({
+                    ...current,
+                    capabilities: {
+                      ...current.capabilities,
+                      extensionRequesters: value === 'admins' ? 'admins' : 'everyone',
+                    },
+                  }))
+                }
+                options={[
+                  { value: 'everyone', label: '频道里的所有人' },
+                  { value: 'admins', label: '只有管理员' },
+                ]}
+              />
+            </PropertyRow>
+          </>
+        ) : null}
         <PropertyRow label="定时任务" tip="频道成员可以请它设置提醒和周期任务">
           <Switch
             label="定时任务"

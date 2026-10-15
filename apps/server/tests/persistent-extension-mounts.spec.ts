@@ -18,6 +18,9 @@ it('rejects duplicate live instances and retains RPC after disabling an attachme
     contentDigest: 'a'.repeat(64),
     payloadDigest: 'b'.repeat(64),
     createdAt: 1,
+    ancestry: [],
+    origin: 'file' as const,
+    dataVersion: 1,
   }
   const hostEntry = path.join(directory, 'host.mjs')
   try {
@@ -82,6 +85,9 @@ it('waits for an initializing host factory before disposing', async () => {
     contentDigest: 'a'.repeat(64),
     payloadDigest: 'b'.repeat(64),
     createdAt: 1,
+    ancestry: [],
+    origin: 'file' as const,
+    dataVersion: 1,
   }
   const hostEntry = path.join(directory, 'host.mjs')
   try {
@@ -127,6 +133,9 @@ it('rejects a concurrent load before executing a second host factory', async () 
     contentDigest: 'a'.repeat(64),
     payloadDigest: 'b'.repeat(64),
     createdAt: 1,
+    ancestry: [],
+    origin: 'file' as const,
+    dataVersion: 1,
   }
   const hostEntry = path.join(directory, 'host.mjs')
   try {

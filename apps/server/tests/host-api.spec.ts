@@ -235,6 +235,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         contentDigest: 'a'.repeat(64),
         payloadDigest: 'b'.repeat(64),
         createdAt: 1,
+        ancestry: [],
+        origin: 'file' as const,
+        dataVersion: 1,
       }
       runtime.repository.saveExtensionRevision({ extension, revision })
       const pages = [

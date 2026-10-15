@@ -55,7 +55,10 @@ function MemberList({ connectionId }: { readonly connectionId: string }) {
           {page.items.map((user) => (
             <div key={user.identityId} className={styles.member}>
               <MemberAvatar name={user.displayName ?? '?'} size="sm" />
-              <span className={styles.memberName}>{user.displayName ?? '未命名'}</span>
+              <span className={styles.memberName}>
+                {user.displayName ?? '未命名'}
+                {user.administrator ? <Chip tone="accent">管理员</Chip> : null}
+              </span>
               <span className={styles.memberMeta}>
                 {user.historicalOnly ? '仅历史' : `${user.activeChannelCount} 个频道`}
               </span>

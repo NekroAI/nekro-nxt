@@ -589,6 +589,8 @@ export interface ProductState {
   readonly approvals: readonly DynamicApproval[]
   readonly dynamic: readonly DynamicPackageSummary[]
   readonly authoringTasks: HostApiResponse<'snapshot'>['authoringTasks']
+  /** Extension requests waiting for an administrator. */
+  readonly extensionRequests: HostApiResponse<'snapshot'>['extensionRequests']
   readonly scheduledTasks: HostApiResponse<'snapshot'>['scheduledTasks']
   readonly notificationSettings: HostApiResponse<'snapshot'>['notificationSettings']
   readonly diagnosticNote: string

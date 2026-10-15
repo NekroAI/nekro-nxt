@@ -68,6 +68,7 @@ export function createProductStore(
     approvals: [],
     dynamic: [],
     authoringTasks: [],
+    extensionRequests: [],
     scheduledTasks: [],
     commandAccounts: [],
     notificationSettings: {

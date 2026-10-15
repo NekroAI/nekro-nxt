@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { AgentId } from '@nekro-nxt/contracts'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 
@@ -114,7 +115,8 @@ const CLIENT_CODE = `return {
   }
 }`
 
-const latestAuthoring = (runtime: { readonly repository: { listAuthoringTasks(agentId?: string): readonly { readonly id: string; readonly updatedAt: number }[]; listAuthoringAttempts(taskId: string): readonly { readonly id: string }[] } }, agentId: string) => {
+/** The creation task the test just defined, with its latest candidate, to save through the task API. */
+const latestAuthoring = (runtime: NekroRuntime, agentId: AgentId) => {
   const task = [...runtime.repository.listAuthoringTasks(agentId)].sort((a, b) => b.updatedAt - a.updatedAt)[0]!
   return { authoringTask: task, authoringAttempt: runtime.repository.listAuthoringAttempts(task.id).at(-1)! }
 }

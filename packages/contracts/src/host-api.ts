@@ -595,6 +595,8 @@ export const PlatformUserListResponseSchema = z
           activeChannelCount: z.number().int().nonnegative(),
           channelPreview: z.array(PlatformUserChannelPreviewSchema).max(3),
           historicalOnly: z.boolean(),
+          /** Listed in Settings → Administrators. */
+          administrator: z.boolean().default(false),
         })
         .strict(),
     ),
@@ -1450,6 +1452,26 @@ export const AddCommandAccountRequestSchema = z.discriminatedUnion('source', [
 
 export type AddCommandAccountRequest = z.output<typeof AddCommandAccountRequestSchema>
 
+/** An extension action an agent asked an administrator to confirm, or one it took on its own. */
+export const ExtensionRequestSchema = z
+  .object({
+    number: z.number().int().positive(),
+    kind: z.string(),
+    agentId: AgentIdSchema,
+    channelId: ChannelIdSchema.nullable(),
+    extensionId: ExtensionIdSchema.nullable(),
+    summary: z.string(),
+    status: z.enum(['pending', 'approved', 'rejected', 'expired', 'completed', 'failed']),
+    autonomous: z.boolean(),
+    resultMessage: z.string().nullable(),
+    decidedBy: z.string().nullable(),
+    createdAt: z.number().int().nonnegative(),
+    expiresAt: z.number().int().nonnegative(),
+    decidedAt: z.number().int().nonnegative().nullable(),
+  })
+  .strict()
+export type ExtensionRequestView = z.output<typeof ExtensionRequestSchema>
+
 export const HostSnapshotSchema = z
   .object({
     communityFeedback: CommunityFeedbackSnapshotSchema.optional(),
@@ -1900,6 +1922,8 @@ export const HostSnapshotSchema = z
     ),
     authoringTasks: z.array(AuthoringTaskSummarySchema).default([]),
     scheduledTasks: z.array(ScheduledTaskSchema).default([]),
+    /** Extension requests waiting for an administrator. */
+    extensionRequests: z.array(ExtensionRequestSchema).default([]),
   })
   .strict()
 
@@ -2475,25 +2499,6 @@ export const ExtensionDataPackageInspectionSchema = z
   })
   .strict()
 
-/** An extension action an agent asked an administrator to confirm, or one it took on its own. */
-export const ExtensionRequestSchema = z
-  .object({
-    number: z.number().int().positive(),
-    kind: z.string(),
-    agentId: AgentIdSchema,
-    channelId: ChannelIdSchema.nullable(),
-    extensionId: ExtensionIdSchema.nullable(),
-    summary: z.string(),
-    status: z.enum(['pending', 'approved', 'rejected', 'expired', 'completed', 'failed']),
-    autonomous: z.boolean(),
-    resultMessage: z.string().nullable(),
-    decidedBy: z.string().nullable(),
-    createdAt: z.number().int().nonnegative(),
-    expiresAt: z.number().int().nonnegative(),
-    decidedAt: z.number().int().nonnegative().nullable(),
-  })
-  .strict()
-export type ExtensionRequestView = z.output<typeof ExtensionRequestSchema>
 
 export const AdministratorSchema = z
   .object({

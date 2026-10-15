@@ -3,6 +3,7 @@ declare const styles: {
   readonly adapterName: string
   readonly barkFields: string
   readonly brand: string
+  readonly claimCode: string
   readonly deviceName: string
   readonly faint: string
   readonly head: string
@@ -15,6 +16,7 @@ declare const styles: {
   readonly note: string
   readonly noteWarn: string
   readonly notice: string
+  readonly pickList: string
   readonly providerStatus: string
   readonly row: string
   readonly rowChevron: string

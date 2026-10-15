@@ -73,12 +73,22 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
 
 /** Capabilities that differ from the saved ones, as the partial patch the Host expects. */
 export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Capabilities> => {
-  const patch: Partial<Record<BooleanCapability, boolean>> & { commandAccounts?: Capabilities['commandAccounts'] } = {}
+  const patch: Partial<Record<BooleanCapability, boolean>> & {
+    commandAccounts?: Capabilities['commandAccounts']
+    extensionAutonomy?: Capabilities['extensionAutonomy']
+    extensionRequesters?: Capabilities['extensionRequesters']
+  } = {}
   for (const key of CAPABILITY_KEYS) {
     if (draft.capabilities[key] !== base.capabilities[key]) patch[key] = draft.capabilities[key]
   }
   if (!sameGrants(base.capabilities.commandAccounts, draft.capabilities.commandAccounts)) {
     patch.commandAccounts = draft.capabilities.commandAccounts
+  }
+  if (draft.capabilities.extensionAutonomy !== base.capabilities.extensionAutonomy) {
+    patch.extensionAutonomy = draft.capabilities.extensionAutonomy
+  }
+  if (draft.capabilities.extensionRequesters !== base.capabilities.extensionRequesters) {
+    patch.extensionRequesters = draft.capabilities.extensionRequesters
   }
   // System access is one level: send all three switches together so the request states the whole level.
   if (ACCESS_KEYS.some((key) => key in patch)) {
@@ -99,6 +109,8 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if ('commandNetwork' in patch) changes.push('命令联网')
   if ('commandAccounts' in patch) changes.push('账号授权')
   if ('communityFeedbackAuto' in patch) changes.push('免确认提交反馈')
+  if ('extensionAutonomy' in patch) changes.push('扩展自主权')
+  if ('extensionRequesters' in patch) changes.push('谁可以让它做扩展')
   for (const key of OTHER_CAPABILITIES) {
     if (key in patch) changes.push(CAPABILITY_LABEL[key])
   }

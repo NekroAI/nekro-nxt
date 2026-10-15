@@ -230,3 +230,42 @@
   min-width: 0;
   flex: 1;
 }
+
+.claimCode {
+  margin: 0;
+  font: var(--t-page);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2em;
+  text-align: center;
+}
+
+.pickList {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pickList li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--row-tall);
+  padding: var(--s-2) 0;
+}
+
+.pickList li + li {
+  border-top: 1px solid var(--line);
+}
+
+.pickList li > span {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.pickList small {
+  color: var(--muted);
+  font: var(--t-caption);
+}

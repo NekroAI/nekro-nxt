@@ -13,6 +13,7 @@ import {
   Search,
   ScrollText,
   Upload,
+  ShieldCheck,
   UserRoundKey,
 } from 'lucide-react'
 import { CompatibilityNotices } from '../system/compatibility.js'
@@ -73,6 +74,7 @@ import { useCrumb } from '../shell/crumb.js'
 import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
 import { AccountsSection } from './accounts-section.js'
+import { AdministratorsSection } from './administrators-section.js'
 import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
 import styles from './settings.module.css'
@@ -84,6 +86,7 @@ const SECTIONS = [
   { key: 'chat', label: '聊天', icon: <MessageCircle size={16} /> },
   { key: 'retrieval', label: '检索', icon: <Search size={16} /> },
   { key: 'accounts', label: '账号与服务', icon: <UserRoundKey size={16} /> },
+  { key: 'administrators', label: '管理员', icon: <ShieldCheck size={16} /> },
   { key: 'commands', label: '聊天命令', icon: <Blocks size={16} /> },
   { key: 'feedback', label: '社区反馈', icon: <MessageCircle size={16} /> },
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
@@ -175,6 +178,7 @@ export default function SettingsSpace() {
         // Every settings section shares one readable width and the same left edge (05 §6.1).
         <MainContent width="readable">
           <NarrowNav section={section} />
+          {section === 'administrators' ? <AdministratorsSection /> : null}
           {section === 'commands' ? <CommandsSection /> : null}
           {section === 'logs' ? <LogSettings /> : null}
           {section === 'adapters' ? <Adapters /> : null}

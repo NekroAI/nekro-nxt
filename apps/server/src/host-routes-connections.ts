@@ -137,6 +137,10 @@ export function registerConnectionsRoutes({ runtime, registerRoute }: HostRouteC
             kind: channel.kind,
           })),
           historicalOnly: record.historicalOnly,
+          administrator: (() => {
+            const identity = runtime.repository.getPlatformIdentity(record.identityId)
+            return identity !== undefined && runtime.administrators.isAdministrator(identity.connectionId, identity.platformUserId)
+          })(),
         }))
         writeContractJson(res, 200, HostApiContracts.listPlatformUsers, {
           total: matching.length,

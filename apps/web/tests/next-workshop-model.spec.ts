@@ -84,6 +84,7 @@ describe('workshop list and records', () => {
     expect(taskGroup({ status: 'awaiting-approval' })).toBe('attention')
     expect(taskGroup({ status: 'ready' })).toBe('attention')
     expect(taskGroup({ status: 'working' })).toBe('active')
+    expect(taskGroup({ status: 'paused' })).toBe('paused')
     expect(taskGroup({ status: 'completed' })).toBe('ended')
     expect(taskGroup({ status: 'interrupted' })).toBe('ended')
   })

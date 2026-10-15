@@ -77,6 +77,13 @@ const createAuthoringMemoryRepository = (): AuthoringRepository & {
     listRecoverableAuthoringTasks: () =>
       [...tasks.values()].filter((task) => !['interrupted', 'stopped', 'completed'].includes(task.status)),
     getAuthoringTask: (id) => tasks.get(id),
+    getOpenRevisionTask: (extensionId) =>
+      [...tasks.values()].find(
+        (task) =>
+          task.kind === 'revise' &&
+          task.targetExtensionId === extensionId &&
+          !['completed', 'stopped', 'interrupted'].includes(task.status),
+      ),
     getAuthoringTaskByPlugin: (episodeId, pluginKey) =>
       [...tasks.values()].find((task) => task.episodeId === episodeId && task.pluginKey === pluginKey),
     listAuthoringAttempts: (taskId) =>

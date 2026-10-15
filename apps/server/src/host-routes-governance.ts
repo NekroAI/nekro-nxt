@@ -5,7 +5,7 @@ import type { NekroRuntime } from './bootstrap.js'
 import { lineageGraph } from './extension-governance/versions.js'
 import { ExtensionConfigMigration } from './extension-governance/config-migration.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
-import { activationManifest } from './host-queries.js'
+import { activationManifest, projectExtensionRequests } from './host-queries.js'
 import {
   readBinaryBody,
   readJsonBody,
@@ -18,27 +18,6 @@ const DATA_PACKAGE_MAX_BYTES = 512 * 1024 * 1024
 
 const failure = (res: ServerResponse, code: string, error: unknown): void =>
   writeError(res, 400, code, error instanceof Error ? error.message : String(error))
-
-const requestView = (runtime: NekroRuntime) =>
-  runtime.extensionRequests.list().map((record) => {
-    const payload = record.payload as { readonly autonomous?: boolean }
-    const result = record.result as { readonly message?: string } | null
-    return {
-      number: record.number,
-      kind: record.kind,
-      agentId: record.agentId,
-      channelId: record.channelId,
-      extensionId: record.extensionId,
-      summary: record.summary,
-      status: record.status,
-      autonomous: payload.autonomous === true,
-      resultMessage: result?.message ?? null,
-      decidedBy: record.decidedBy,
-      createdAt: record.createdAt,
-      expiresAt: record.expiresAt,
-      decidedAt: record.decidedAt,
-    }
-  })
 
 /**
  * `/api/extensions/:id/(lineage|branch|rollback|data…)`. The extensions prefix route hands these over first; the
@@ -222,9 +201,9 @@ export async function handleGovernanceAuthoringRoute(
     const task = runtime.repository.getAuthoringTask(taskId)
     if (!task) throw new Error('创造任务不存在。')
     if (!['paused', 'interrupted', 'failed'].includes(task.status)) {
-      throw new Error('只有暂停、中断或失败的任务可以放弃；进行中的任务请先停止。')
+      throw new Error('只有暂停、中断或失败的任务可以归档；进行中的任务请先停止。')
     }
-    runtime.host.authoringService()?.archiveTask(task, '已放弃。')
+    runtime.host.authoringService()?.archiveTask(task, '已归档。')
     writeContractJson(res, 200, HostApiContracts.archiveAuthoringTask, { ok: true })
   } catch (error) {
     failure(res, 'authoring-task-archive-failed', error)
@@ -246,7 +225,7 @@ export function registerGovernanceRoutes(context: HostRouteContext): () => void 
       const url = new URL(req.url ?? '/', 'http://localhost')
       try {
         if (url.pathname === '/api/extension-requests' && req.method === 'GET') {
-          writeContractJson(res, 200, HostApiContracts.listExtensionRequests, { requests: requestView(runtime) })
+          writeContractJson(res, 200, HostApiContracts.listExtensionRequests, { requests: projectExtensionRequests(runtime) })
           return
         }
         const match = /^\/api\/extension-requests\/(\d+)\/(approve|reject)$/u.exec(url.pathname)

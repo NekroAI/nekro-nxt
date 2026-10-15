@@ -1,5 +1,5 @@
 import { useGo } from '../model/nav.js'
-import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, Upload, Wrench } from 'lucide-react'
+import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, ShieldQuestion, Upload, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
@@ -34,16 +34,19 @@ import {
   isTaskOpen,
   sortTasks,
   taskGroup,
+  taskPurpose,
   taskStatus,
   type TaskGroup,
 } from './workshop-model.js'
+import { RequestsView } from './requests-view.js'
 import styles from './workshop.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
 
-type Route = { readonly kind: 'task' | 'extension'; readonly id: string }
+type Route = { readonly kind: 'task' | 'extension'; readonly id: string } | { readonly kind: 'requests' }
 
 const parse = (path: string): Route | undefined => {
+  if (/^\/workshop\/requests\/?$/u.test(path)) return { kind: 'requests' }
   // 社区扩展已移到一级「社区」入口；旧地址跳转过去。
   const match = /^\/workshop\/(tasks|extensions)\/([^/]+)/u.exec(path)
   return match
@@ -62,6 +65,7 @@ export default function WorkshopSpace() {
   const navigate = useGo()
   const hostStatus = useProductStore((state) => state.host.status)
   const allTasks = useProductStore((state) => state.authoringTasks)
+  const requests = useProductStore((state) => state.extensionRequests)
   const tasks = useMemo(() => sortTasks(allTasks), [allTasks])
   const extensions = useProductStore((state) => state.extensions)
   const agents = useProductStore((state) => state.agents)
@@ -71,7 +75,7 @@ export default function WorkshopSpace() {
     requested || hostStatus === 'initializing'
       ? undefined
       : (() => {
-          const first = tasks.find(isTaskOpen) ?? tasks[0]
+          const first = tasks.find(isTaskOpen)
           if (first) return { kind: 'task', id: first.id }
           return extensions[0] ? { kind: 'extension', id: extensions[0].id } : undefined
         })()
@@ -83,10 +87,10 @@ export default function WorkshopSpace() {
   const importer = useRef<HTMLInputElement>(null)
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
-  useCrumb('工坊', task?.title ?? extension?.name)
+  useCrumb('工坊', route?.kind === 'requests' ? '等待确认的请求' : (task?.title ?? extension?.name))
   // An item that was just imported or created reaches the list with the next snapshot, after the address already
   // points at it; give that snapshot a moment before treating the address as stale.
-  const missing = route !== undefined && !task && !extension && hostStatus === 'ready'
+  const missing = route !== undefined && route.kind !== 'requests' && !task && !extension && hostStatus === 'ready'
   useEffect(() => {
     if (!missing) return undefined
     const timer = setTimeout(() => navigate('/workshop', { replace: true }), MISSING_ITEM_GRACE_MS)
@@ -95,13 +99,15 @@ export default function WorkshopSpace() {
 
   if (pathname.startsWith('/workshop/community')) return <Navigate to="/community" replace />
 
-  const selected = task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined
+  const selected =
+    route?.kind === 'requests' ? 'requests' : task ? `task:${task.id}` : extension ? `extension:${extension.id}` : undefined
   const agentOf = (id: string) => agents.find((item) => item.id === id)
   const needle = query.trim().toLowerCase()
   const visibleTasks = tasks.filter((item) => matches(needle, item.title, agentOf(item.agentId)?.name))
   const visibleExtensions = extensions.filter((item) => matches(needle, item.name, item.description))
-  const taskGroups = (['attention', 'active', 'ended'] as const satisfies readonly TaskGroup[])
-    .map((group) => ({ group, items: visibleTasks.filter((item) => taskGroup(item) === group) }))
+  const openTasks = visibleTasks.filter(isTaskOpen)
+  const taskGroups = (['attention', 'active', 'paused'] as const satisfies readonly TaskGroup[])
+    .map((group) => ({ group, items: openTasks.filter((item) => taskGroup(item) === group) }))
     .filter((entry) => entry.items.length > 0)
 
   const list = (
@@ -144,10 +150,27 @@ export default function WorkshopSpace() {
         }}
       >
         <SelectionList selectedKey={selected}>
+          {requests.length > 0 ? (
+            <Link
+              to="/workshop/requests"
+              className={styles.row}
+              data-selected={selected === 'requests'}
+              aria-current={selected === 'requests' ? 'page' : undefined}
+            >
+              <span className={styles.rowGlyph}>
+                <ShieldQuestion size={14} />
+              </span>
+              <span className={styles.rowName}>等待确认的请求</span>
+              <span className={styles.rowState}>
+                <StatusDot tone="warn" />
+              </span>
+              <span className={styles.rowSub}>{requests.length} 个智能体的扩展操作等管理员同意</span>
+            </Link>
+          ) : null}
           <h3 className={styles.group}>创造任务</h3>
-          {tasks.length === 0 ? <p className={styles.groupEmpty}>还没有创造任务</p> : null}
+          {openTasks.length === 0 ? <p className={styles.groupEmpty}>没有进行中的创造任务</p> : null}
           {taskGroups.map(({ group, items }) => (
-            <TaskGroupRows key={group} label={tasks.length > 3 ? TASK_GROUP_LABEL[group] : undefined}>
+            <TaskGroupRows key={group} label={openTasks.length > 3 || group === 'paused' ? TASK_GROUP_LABEL[group] : undefined}>
               {items.map((item) => {
                 const status = taskStatus(item)
                 const agent = agentOf(item.agentId)
@@ -177,7 +200,7 @@ export default function WorkshopSpace() {
                       <StatusDot tone={status.tone} />
                     </span>
                     <span className={styles.rowSub}>
-                      {status.label} · {relativeTime(item.updatedAt)}
+                      {taskPurpose(item, extensions)} · {status.label} · {relativeTime(item.updatedAt)}
                     </span>
                   </Link>
                 )
@@ -235,7 +258,9 @@ export default function WorkshopSpace() {
         onOpenChange={setAddingMcp}
         onCreated={(id) => navigate(`/workshop/extensions/${id}`)}
       />
-      {task ? (
+      {route?.kind === 'requests' ? (
+        <RequestsView />
+      ) : task ? (
         <TaskView key={task.id} task={task} />
       ) : extension ? (
         <ExtensionView key={extension.id} extension={extension} />

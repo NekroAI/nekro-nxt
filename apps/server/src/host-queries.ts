@@ -107,6 +107,28 @@ export const assembleChannelRuntimeContext = (runtime: NekroRuntime, channelId: 
 }
 
 /** The Manifest of the Revision an Activation runs, when that Revision is still readable. */
+/** Extension requests as pages see them; `pending` ones also travel in the snapshot. */
+export const projectExtensionRequests = (runtime: NekroRuntime, status?: 'pending') =>
+  runtime.extensionRequests.list(status).map((record) => {
+    const payload = record.payload as { readonly autonomous?: boolean }
+    const result = record.result as { readonly message?: string } | null
+    return {
+      number: record.number,
+      kind: record.kind,
+      agentId: record.agentId,
+      channelId: record.channelId,
+      extensionId: record.extensionId,
+      summary: record.summary,
+      status: record.status,
+      autonomous: payload.autonomous === true,
+      resultMessage: result?.message ?? null,
+      decidedBy: record.decidedBy,
+      createdAt: record.createdAt,
+      expiresAt: record.expiresAt,
+      decidedAt: record.decidedAt,
+    }
+  })
+
 export const activationManifest = (runtime: NekroRuntime, revisionId: ExtensionRevisionId | undefined) => {
   if (revisionId === undefined) return undefined
   const revision = runtime.repository.getExtensionRevision(revisionId)
@@ -672,6 +694,7 @@ export class HostQueries {
         .filter((task) => agentIds.has(task.agentId))
         .map((task) => projectAuthoringTask(runtime, task, attemptsByTask.get(task.id) ?? [])),
       scheduledTasks: runtime.scheduledTasks.list(),
+      extensionRequests: projectExtensionRequests(runtime, 'pending'),
     })
   }
 }
