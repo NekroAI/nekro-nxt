@@ -1,23 +1,10 @@
-import {
-  ArrowDown,
-  ArrowRight,
-  ChevronDown,
-  Eye,
-  FilePlus2,
-  MessageSquareDashed,
-  PanelRight,
-  Plug,
-  X,
-} from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { EMPTY_CHANNEL_DRAFT } from '../../channel-drafts.js'
+import { ArrowDown, ChevronDown, Eye, MessageSquareDashed, PanelRight } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Composer } from './composer.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { useStickToBottom } from './channel-scroll.js'
 import {
-  connectionDisplayName,
-  useProductRuntime,
   useProductStore,
-  useUiStateStore,
   type AgentSummary,
   type ChannelSummary,
   type ConnectionSummary,
@@ -34,7 +21,6 @@ import {
   StatusDot,
   toast,
   Pressable,
-  Textarea,
 } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentHue, agentPhase, triggerLabel } from '../model/identity.js'
@@ -51,182 +37,6 @@ const readXray = (): boolean => {
   } catch {
     return false
   }
-}
-
-function Composer({
-  channel,
-  agent,
-  connection,
-}: {
-  readonly channel: ChannelSummary
-  readonly agent: AgentSummary | undefined
-  readonly connection: ConnectionSummary | undefined
-}) {
-  const api = useProductApi()
-  const ui = useProductRuntime().uiStore
-  // Drafts live in the shared UI store: one per channel, kept across channel switches and restored after a reload.
-  const state = useUiStateStore((current) => current.channelDrafts[channel.id] ?? EMPTY_CHANNEL_DRAFT)
-  const draft = state.text
-  const attachments = state.attachments ?? []
-  const sending = state.pending !== undefined
-  const setDraft = (text: string) => ui.getState().setChannelDraft(channel.id, text)
-  const removeAttachment = async (assetId: string) => {
-    try {
-      await workspaceApi.deleteChannelAsset(channel.id, assetId)
-      ui.getState().setChannelAttachments(
-        channel.id,
-        (ui.getState().channelDrafts[channel.id]?.attachments ?? []).filter(
-          (attachment) => attachment.assetId !== assetId,
-        ),
-      )
-    } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-    }
-  }
-  const composing = useRef(false)
-  const input = useRef<HTMLTextAreaElement>(null)
-  const external = channel.kind !== 'internal'
-  const blocked = !agent
-    ? '还没有智能体响应这个频道'
-    : connection && connectionStatus(connection).health === 'attention'
-      ? `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`
-      : external && connection && !connection.proactiveSend
-        ? `${connectionDisplayName(connection)} 不支持主动发送`
-        : ''
-
-  useLayoutEffect(() => {
-    const element = input.current
-    if (!element) return
-    element.style.height = 'auto'
-    element.style.height = `${Math.min(element.scrollHeight, 180)}px`
-  }, [draft])
-
-  const send = async () => {
-    if (blocked) return
-    // The token pins this send to its channel: switching channels mid-send neither loses nor moves the draft.
-    const token = ui.getState().beginChannelSend(channel.id)
-    if (!token) return
-    let success = false
-    try {
-      await api.getState().sendMessage(channel.id, token.text, token.attachments)
-      success = true
-    } catch (error) {
-      toast(`${error instanceof Error ? error.message : String(error)}，草稿已保留`, { tone: 'bad' })
-    } finally {
-      ui.getState().finishChannelSend(channel.id, token.revision, token.request, success)
-      input.current?.focus()
-    }
-  }
-  const addFiles = async (files: readonly File[]) => {
-    if (blocked || sending) return
-    for (const file of files) {
-      try {
-        const uploaded = await workspaceApi.uploadChannelAsset(
-          channel.id,
-          new Uint8Array(await file.arrayBuffer()),
-          file.name,
-        )
-        const current = ui.getState().channelDrafts[channel.id]?.attachments ?? []
-        ui.getState().setChannelAttachments(channel.id, [
-          ...current,
-          {
-            assetId: uploaded.assetId,
-            name: uploaded.fileName,
-            mediaType: uploaded.mediaType,
-            partType: uploaded.partType,
-          },
-        ])
-      } catch (error) {
-        toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-      }
-    }
-  }
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey && !composing.current && !event.nativeEvent.isComposing) {
-      event.preventDefault()
-      void send()
-    }
-  }
-
-  return (
-    <form
-      className={styles.composer}
-      onSubmit={(event) => {
-        event.preventDefault()
-        void send()
-      }}
-    >
-      {blocked ? (
-        <span className={styles.blocked}>{blocked}</span>
-      ) : (
-        <>
-          {external && connection ? (
-            <span className={styles.as} title="以这个机器人账号发出，群成员可见">
-              <Plug aria-hidden="true" />
-              {connectionDisplayName(connection)}
-            </span>
-          ) : null}
-          <Textarea
-            bare
-            ref={input}
-            className={styles.input}
-            rows={1}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onPaste={(event) => {
-              const files = [...event.clipboardData.files]
-              if (files.length > 0) {
-                event.preventDefault()
-                void addFiles(files)
-              }
-            }}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => {
-              event.preventDefault()
-              void addFiles([...event.dataTransfer.files])
-            }}
-            onKeyDown={onKeyDown}
-            onCompositionStart={() => (composing.current = true)}
-            onCompositionEnd={() => (composing.current = false)}
-            placeholder={external ? `发到 ${channel.name}` : `给 ${agent?.name ?? '智能体'} 发消息`}
-            aria-label="消息"
-          />
-          {attachments.length > 0 ? (
-            <div className={styles.attachments} aria-label="待发送附件">
-              {attachments.map((attachment) => (
-                <div className={styles.attachment} key={attachment.assetId}>
-                  {attachment.partType === 'image' ? (
-                    <img
-                      src={`/api/channels/${encodeURIComponent(channel.id)}/assets/${encodeURIComponent(attachment.assetId)}`}
-                      alt={attachment.name}
-                    />
-                  ) : (
-                    <FilePlus2 aria-hidden="true" />
-                  )}
-                  <span title={attachment.name}>{attachment.name}</span>
-                  <Pressable
-                    type="button"
-                    aria-label={`移除${attachment.name}`}
-                    onClick={() => void removeAttachment(attachment.assetId)}
-                  >
-                    <X aria-hidden="true" />
-                  </Pressable>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </>
-      )}
-      <Pressable
-        type="submit"
-        className={styles.send}
-        disabled={Boolean(blocked) || (!draft.trim() && attachments.length === 0) || sending}
-        aria-label="发送"
-      >
-        <ArrowRight aria-hidden="true" />
-      </Pressable>
-    </form>
-  )
 }
 
 type Pending = Awaited<ReturnType<typeof workspaceApi.getChannelPending>>
@@ -509,7 +319,7 @@ export function Conversation({
           </Button>
         ) : null}
         <Queue channelId={channel.id} count={runtime?.pendingInjectCount ?? 0} />
-        <Composer channel={channel} agent={agent} connection={connection} />
+        <Composer key={channel.id} channel={channel} agent={agent} connection={connection} />
       </div>
       <ConfirmDialog
         open={stopping}

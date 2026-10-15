@@ -1040,7 +1040,8 @@ button.step:hover {
 
 .composer {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  min-width: 0;
   gap: var(--s-2);
   padding: var(--s-2) var(--s-2) var(--s-2) var(--s-2);
   border: 1px solid var(--line-2);
@@ -1059,58 +1060,130 @@ button.step:hover {
     0 0 0 3px var(--accent-soft);
 }
 
-.attachments {
+.composerRow {
   display: flex;
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  gap: var(--s-1);
-  max-width: 45%;
-  padding: var(--s-1) 0;
+  align-items: flex-end;
+  gap: var(--s-2);
+  width: 100%;
+  min-width: 0;
 }
-
-.attachment {
+.composerDragging {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.composerTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.composerTools button {
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
-  max-width: 220px;
-  padding: var(--s-1);
+  padding: var(--s-1) var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  color: var(--fg-2);
+  background: var(--inset);
+  cursor: pointer;
+}
+.composerTools svg {
+  width: 15px;
+  height: 15px;
+}
+.composerTools button:disabled,
+.attachmentAction:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.attachmentHint {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.attachments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: var(--s-2);
+  width: 100%;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: var(--s-2);
   border: 1px solid var(--line-2);
   border-radius: var(--r-1);
   background: var(--inset);
   color: var(--fg-2);
   font-size: var(--fs-xs);
 }
-
-.attachment img {
-  width: 34px;
-  height: 34px;
+.attachmentPreview {
+  display: grid;
+  width: 52px;
+  height: 52px;
   flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
   border-radius: var(--r-1);
-  object-fit: cover;
+  overflow: hidden;
+  color: var(--muted);
+  background: var(--surface);
+  cursor: pointer;
 }
-
-.attachment > span {
+.attachmentPreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.attachmentPreview svg {
+  width: 24px;
+  height: 24px;
+}
+.attachmentInfo {
+  display: grid;
+  gap: var(--s-1);
   min-width: 0;
+  flex: 1;
+}
+.attachmentInfo > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.attachment button {
+.attachmentInfo small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.attachmentInfo .attachmentError {
+  color: var(--bad);
+}
+.attachmentAction {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   flex: none;
   place-items: center;
+  padding: 0;
   border: 0;
-  background: transparent;
+  border-radius: var(--r-1);
   color: var(--muted);
+  background: transparent;
   cursor: pointer;
 }
-
-.attachment svg {
-  width: 14px;
-  height: 14px;
+.attachmentAction:hover {
+  background: var(--surface);
+}
+.attachmentAction svg {
+  width: 16px;
+  height: 16px;
 }
 
 .as {

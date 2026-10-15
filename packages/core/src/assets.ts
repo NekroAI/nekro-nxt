@@ -148,7 +148,7 @@ export class AssetService {
         id: AssetIdSchema.parse(`ast_${this.#nextUlid()}`),
         contentDigest,
         byteSize,
-        mediaType: detected?.mime ?? input.declaredMediaType ?? 'application/octet-stream',
+        mediaType: detected?.mime ?? 'application/octet-stream',
         createdAt: this.#timestamp(),
       }
       const asset = this.#repository.ensureAsset(candidate)

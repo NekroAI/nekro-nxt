@@ -92,21 +92,36 @@ export const Textarea = forwardRef<
   )
 })
 
-/** Hidden file chooser; open it with `ref.current?.click()` from any trigger. The value resets after each pick. */
+/**
+ * Hidden file chooser; open it with `ref.current?.click()` from any trigger. The value resets after each pick.
+ * `onFile` receives the first file; `onFiles` receives every selected file and enables multi-select.
+ */
 export const FileChooser = forwardRef<
   HTMLInputElement,
-  { readonly accept?: string; readonly onFile: (file: File) => void }
->(function FileChooser({ accept, onFile }, ref) {
+  {
+    readonly accept?: string
+    readonly disabled?: boolean
+    readonly label?: string
+  } & (
+    | { readonly onFile: (file: File) => void; readonly onFiles?: undefined }
+    | { readonly onFiles: (files: File[]) => void; readonly onFile?: undefined }
+  )
+>(function FileChooser({ accept, disabled, label, onFile, onFiles }, ref) {
   return (
     <input
       ref={ref}
       type="file"
       hidden
+      multiple={onFiles !== undefined}
       accept={accept}
+      disabled={disabled}
+      aria-label={label}
       onChange={(event) => {
-        const file = event.currentTarget.files?.[0]
+        const files = [...(event.currentTarget.files ?? [])]
         event.currentTarget.value = ''
-        if (file) onFile(file)
+        if (onFiles) {
+          if (files.length > 0) onFiles(files)
+        } else if (files[0]) onFile(files[0])
       }}
     />
   )

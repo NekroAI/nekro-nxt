@@ -2,6 +2,11 @@ declare const styles: {
   readonly adminTag: string
   readonly as: string
   readonly attachment: string
+  readonly attachmentAction: string
+  readonly attachmentError: string
+  readonly attachmentHint: string
+  readonly attachmentInfo: string
+  readonly attachmentPreview: string
   readonly attachments: string
   readonly blocked: string
   readonly bubble: string
@@ -12,6 +17,9 @@ declare const styles: {
   readonly chan: string
   readonly chevron: string
   readonly composer: string
+  readonly composerDragging: string
+  readonly composerRow: string
+  readonly composerTools: string
   readonly contextActions: string
   readonly contextCard: string
   readonly contextDanger: string

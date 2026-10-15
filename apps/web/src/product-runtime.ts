@@ -71,6 +71,7 @@ export function ProductRuntimeProvider({ runtime, children }: { runtime: Product
     update()
     const unsubscribe = runtime.uiStore.subscribe(update)
     return () => {
+      runtime.uiStore.getState().cancelChannelUploads()
       unsubscribe()
       setUnsavedDraftOwner(owner, false)
     }

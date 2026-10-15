@@ -1,3 +1,4 @@
+import { messagePartAssetIds } from '@nekro-nxt/contracts'
 import type {
   AdapterConnectionContext,
   AdapterConnectionRuntime,
@@ -110,6 +111,9 @@ export class WebAdapterConnection implements AdapterConnectionRuntime {
       kind: 'message-created',
       ...(message.senderMemberId === undefined ? {} : { senderMemberId: message.senderMemberId }),
       parts: [...message.parts],
+      assetOccurrences: message.parts.flatMap((part, partIndex) =>
+        messagePartAssetIds(part).map((assetId) => ({ partIndex, assetId })),
+      ),
       platformTimestamp: receivedAt,
       receivedAt,
       dedupeKey: `web-event:${message.clientEventId}`,

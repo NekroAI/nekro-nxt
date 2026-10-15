@@ -37,7 +37,15 @@ describe('runtime-owned channel drafts', () => {
   it('keeps attachments scoped to the channel and retains them after a failed send', () => {
     const store = createUiStateStore()
     const actions = store.getState()
-    const attachment = { assetId: 'ast_demo', name: '截图.png', mediaType: 'image/png', partType: 'image' as const }
+    const attachment = {
+      id: 'selection-a',
+      byteSize: 67,
+      status: 'ready' as const,
+      assetId: 'ast_demo',
+      name: '截图.png',
+      mediaType: 'image/png',
+      partType: 'image' as const,
+    }
     actions.setChannelAttachments('a', [attachment])
     actions.setChannelDraft('b', '另一个频道')
     const sent = actions.beginChannelSend('a')!

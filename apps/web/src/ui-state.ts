@@ -1,10 +1,11 @@
+import { createChannelAttachmentActions, type ChannelAttachmentActions } from './channel-attachments.js'
 import { readChannelDraftRecovery } from './channel-draft-recovery.js'
 import { createChannelDraftState, type ChannelDraftState } from './channel-drafts.js'
 import { createUiPreferencesState, type UiPreferencesState } from './ui-preferences-model.js'
 import { create } from 'zustand'
 import { readInitialThemeChoice, THEME_STORAGE_KEY, type ThemeChoice } from './theme-preference.js'
 
-export interface UiState extends UiPreferencesState, ChannelDraftState {
+export interface UiState extends UiPreferencesState, ChannelDraftState, ChannelAttachmentActions {
   readonly theme: ThemeChoice
   readonly reducedMotion: boolean
   setTheme(theme: ThemeChoice): void
@@ -15,6 +16,7 @@ export function createUiStateStore() {
   return create<UiState>((set, get, api) => ({
     ...createUiPreferencesState(set, get, api),
     ...createChannelDraftState(set, get),
+    ...createChannelAttachmentActions(get),
     channelDrafts: readChannelDraftRecovery(),
     theme: readInitialThemeChoice(),
     reducedMotion: typeof window !== 'undefined' && window.localStorage.getItem('nekro-nxt.reduced-motion') === 'true',

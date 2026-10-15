@@ -1819,7 +1819,16 @@ const MessageInputPartSchema = z.discriminatedUnion('type', [
 
 const SendChannelMessageRequestSchema = z
   .object({
-    parts: z.array(MessageInputPartSchema).min(1),
+    parts: z
+      .array(MessageInputPartSchema)
+      .min(1)
+      .max(256)
+      .refine(
+        (parts) =>
+          parts.filter((part) => part.type === 'image' || part.type === 'file').length <=
+          CHANNEL_COMPOSER_MAX_ATTACHMENTS,
+        '每条消息最多添加 20 个附件。',
+      ),
     clientEventId: NonEmptyStringSchema.optional(),
     senderMemberId: ChannelMemberIdSchema.optional(),
   })
@@ -1827,6 +1836,9 @@ const SendChannelMessageRequestSchema = z
   .refine(
     (body) => body.parts.every((part) => part.type !== 'text' || [...part.text].length <= 64 * 1024),
     'Message text must not exceed 64 KiB.',
+export const CHANNEL_COMPOSER_MAX_ATTACHMENTS = 20
+export const CHANNEL_COMPOSER_MAX_BYTES = 64 * 1024 * 1024
+
   )
 
 const DynamicErrorDetailsSchema = z.object({ message: z.string(), stack: z.string().optional() }).strict()
@@ -2670,12 +2682,18 @@ export const HostApiContracts = {
     path: '/api/channels/:channelId/assets',
     params: channelParam,
     request: BinaryUploadRequestSchema,
-    encodeRequest: encodeBinaryUpload,
+    encodeRequest: (input) => ({
+      body: input.bytes,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-file-name': encodeURIComponent(input.fileName ?? '附件'),
+      },
+    }),
     response: z
       .object({
         assetId: AssetIdSchema,
         mediaType: z.string().min(1),
-        byteSize: z.number().int().positive(),
+        byteSize: z.number().int().nonnegative(),
         fileName: z.string().min(1).max(255),
         partType: z.enum(['image', 'file']),
       })
