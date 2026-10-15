@@ -99,6 +99,16 @@
   flex: 1;
 }
 
+.mainScroll[data-contained] {
+  overflow: hidden;
+}
+
+.mainScroll[data-contained] > .mainInner {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Workbench content widths: always start-aligned, never centred in the leftover space (05 §6.1). */
 /* 限宽内容在剩余空间里居中：宽屏上左右留白对称，不会整页歪向列表一侧。 */
 .readable {

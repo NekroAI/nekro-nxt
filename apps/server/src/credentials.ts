@@ -16,14 +16,24 @@ const isNodeError = (error: unknown, code: string): error is NodeJS.ErrnoExcepti
 export class LocalCredentialStore {
   readonly #root: string
   readonly #platform: NodeJS.Platform
+  readonly #onUse: ((value: string) => void) | undefined
 
-  constructor(root: string, options: { readonly platform?: NodeJS.Platform } = {}) {
+  constructor(
+    root: string,
+    options: { readonly platform?: NodeJS.Platform; readonly onUse?: (value: string) => void } = {},
+  ) {
     if (!path.isAbsolute(root)) throw new TypeError('Credential store root must be absolute.')
     this.#root = path.resolve(root)
     this.#platform = options.platform ?? process.platform
+    this.#onUse = options.onUse
   }
 
   async save(secret: string): Promise<string> {
+    try {
+      this.#onUse?.(secret)
+    } catch {
+      /* Diagnostic observers cannot interrupt credential storage. */
+    }
     if (!secret.trim()) throw new TypeError('Credential secret must not be empty.')
     await this.#prepareRoot()
     const id = randomBytes(16).toString('hex')
@@ -75,6 +85,11 @@ export class LocalCredentialStore {
       throw new Error('Credential reference does not resolve to a regular file.')
     const secret = await readFile(target, 'utf8')
     if (!secret) throw new Error('Credential reference resolved to an empty secret.')
+    try {
+      this.#onUse?.(secret)
+    } catch {
+      /* Diagnostic observers cannot interrupt credential use. */
+    }
     return secret
   }
 

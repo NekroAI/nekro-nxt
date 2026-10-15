@@ -1,3 +1,4 @@
+import type { NxtLogger } from '@nekro-nxt/contracts'
 import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
 import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
@@ -44,6 +45,7 @@ export const NXT_HOST_SERVICE_NAME = 'nxt'
 
 /** Where an `nxt` instance runs and which product facts it may touch. */
 export interface NxtServiceBinding {
+  readonly sdk?: number
   /** `host` is the extension's single host instance; it has no agent or channel. */
   readonly mode: 'activation' | 'dynamic' | 'verification' | 'host'
   readonly agentId: string
@@ -92,6 +94,7 @@ export type NxtEgressPolicy =
 
 /** Product facts the service reads or writes; wired by the Server composition root or a verification fake. */
 export interface NxtServiceBackends {
+  readonly logger?: (binding: NxtServiceBinding) => NxtLogger
   readonly fetch: (policy: NxtEgressPolicy, url: string, init: NxtFetchInit | undefined) => Promise<NxtFetchResponse>
   readonly storage: NxtStorageBackend
   readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
@@ -528,8 +531,16 @@ export const createNxtHostService = (
   }
 
   const label = `[扩展：${binding.displayName}]`
+  const log =
+    (level: 'debug' | 'info' | 'warn' | 'error') =>
+    (message: string, details?: unknown): void => {
+      if (binding.mode !== 'dynamic' && (binding.sdk ?? 7) < 9)
+        throw new Error('使用日志接口的扩展需要声明 requires.sdk 为 9 或更高。')
+      backends.logger?.(binding)[level](message, details)
+    }
 
   return {
+    logger: { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') },
     config: () => binding.config(),
     http: { fetch: fetchWithPolicy },
     secrets: {
@@ -822,6 +833,9 @@ export const createNxtDynamicFacade = (
   resolve: () => NxtHostService,
   resolveHostLayer?: () => NxtHostLayerService,
 ): NxtHostService & { readonly hostLayer: NxtHostLayerService | undefined } => ({
+  get logger() {
+    return resolve().logger
+  },
   config: () => resolve().config(),
   /** The candidate's host-layer `nxt`; the dynamic wrapper hands it to the factory's top-level `nxt`. */
   get hostLayer() {

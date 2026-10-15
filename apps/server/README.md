@@ -74,9 +74,15 @@ DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config
 
 ## 数据根与恢复边界
 
-生产容器使用 `/data`，本地由 `NEKRO_DATA` 或宿主参数指定数据根。组合根当前管理 `core.sqlite`、仅用于旧格式归档的 `sessions.sqlite`、`assets/`、`credentials/`、`dsh/`、`extension-data/`、`extension-cache/`、`workspaces/`、`backups/` 和公开入口的 `host/tls/`。Core 拥有 SQLite 格式，DSH Provider 拥有 JSONL Session 格式；Asset Service、本地凭据存储、DSH 服务、Extension Runtime、工作区和 Host 升级/安全入口各自拥有对应目录。`extension-cache/` 与 `dsh/request-images/` 可重建；扩展源码、Spill、工作区和凭据是持久数据，不能按缓存清理。
+运行日志由 Server 的 `HostLogService` 拥有，在取得数据根锁后、启动升级与 Runtime 前打开。`logs/logs.sqlite` 独立于 Core，工作线程负责读写、分页、清理和导出；`host/logging.json` 原子保存保留策略。运行子模块借用写入接口，宿主在业务资源停止后关闭日志服务。日志异常不改变核心 readiness，关注事项使用缓存状态，不等待日志工作线程。
 
-SQLite 的 `-wal`、`-shm` 是运行期伴生文件，不是独立数据分区，不得手工移动或删除。自动恢复点覆盖主要数据根的持久文件，包括 JSONL、Profile、凭据、插件项目、扩展源码、Asset、Spill、工作区、TLS 与 `dsh/shutdown-inbox/`；明确配置的外置智能体工作区另列根目录。排除 `backups/`、`extension-cache/`、`dsh/request-images/`、`dsh/plugin-staging/`、`dsh/pnpm-store/` 和 socket；SQLite 主库通过 backup API 快照，符号链接只复制链接本身。
+`/api/logs` 提供组合查询，`/api/logs/events` 使用独立 SSE 和持久游标补齐；来源、详情、设置、Debug 与导出位于同一路径下，继承管理鉴权。`console` 兼容采集可撤销；无法可靠确认归属时不猜测插件身份。页面与导出只消费入库前完成脱敏的记录。具体操作见[查看运行日志](../../docs/guide/logs.md)。
+
+`logs/` 是有界运行记录：不进入升级备份，业务恢复时原地保留；恢复阶段允许其中的日志继续变化，但拒绝符号链接或非目录替代。`host/logging.json` 正常参与配置备份。日志保留不扩大 `extension-cache/` 等其他排除项的恢复权限。
+
+生产容器使用 `/data`，本地由 `NEKRO_DATA` 或宿主参数指定数据根。组合根当前管理 `core.sqlite`、仅用于旧格式归档的 `sessions.sqlite`、`assets/`、`credentials/`、`dsh/`、`extension-data/`、`extension-cache/`、`workspaces/`、`backups/`、`logs/` 和公开入口的 `host/tls/`。Core 拥有 SQLite 格式，DSH Provider 拥有 JSONL Session 格式；Asset Service、本地凭据存储、DSH 服务、Extension Runtime、工作区和 Host 升级/安全入口各自拥有对应目录。`extension-cache/` 与 `dsh/request-images/` 可重建；扩展源码、Spill、工作区和凭据是持久数据，不能按缓存清理。
+
+SQLite 的 `-wal`、`-shm` 是运行期伴生文件，不是独立数据分区，不得手工移动或删除。自动恢复点覆盖主要数据根的持久文件，包括 JSONL、Profile、凭据、插件项目、扩展源码、Asset、Spill、工作区、TLS 与 `dsh/shutdown-inbox/`；明确配置的外置智能体工作区另列根目录。排除 `backups/`、`logs/`、`extension-cache/`、`dsh/request-images/`、`dsh/plugin-staging/`、`dsh/pnpm-store/` 和 socket；SQLite 主库通过 backup API 快照，符号链接只复制链接本身。
 
 恢复点按目标 Release 与运行环境指纹复用，先校验内容再原子发布；完成恢复后重新升级会创建下一代恢复点。离线入口 `--restore-upgrade <backupId>` 必须持有数据根锁；它先保留失败现场，再按 manifest 与恢复 journal 重建数据，成功退出后要求使用匹配的旧程序。该清单目前不自动选择旧程序；外置工作区恢复从 manifest 读取范围并以显式工作区父目录验证，不依赖当前 Core。操作说明见[升级、备份与恢复](../../docs/guide/upgrade-backup.md)，可复用流程、验收与剩余限制见 [DSH 升级维护指南](../../docs/dsh-upgrade.md)。
 

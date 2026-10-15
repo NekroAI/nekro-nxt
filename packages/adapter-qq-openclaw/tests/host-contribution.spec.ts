@@ -1,7 +1,7 @@
 import type { AdapterConnectionHostContext } from '@nekro-nxt/adapter-sdk'
 import { AssetIdSchema, ChannelIdSchema, LogicalMessageIdSchema, PhysicalDeliveryIdSchema } from '@nekro-nxt/contracts'
 import { createFakeAdapterHostContext } from '@nekro-nxt/test-harness'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createQQOpenClawHostContribution, QQOpenClawRuntime } from '../src/index.ts'
 
 const jsonBody = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))
@@ -40,8 +40,10 @@ describe('QQ OpenClaw Host contribution', () => {
       body: jsonBody({ url: 'wss://gateway.example.test' }),
     })
 
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     const context: AdapterConnectionHostContext = {
       ...fixture.context,
+      logger,
       messages: {
         ...fixture.context.messages,
         resolvePlatformMessage: (
@@ -166,7 +168,11 @@ describe('QQ OpenClaw Host contribution', () => {
     expect(fixture.events[2]?.parts.some(({ type }) => type === 'quote')).toBe(false)
     expect(fixture.states.size).toBeGreaterThan(0)
     expect(fixture.diagnostics.some(({ status }) => status === 'connected')).toBe(true)
-    expect(fixture.diagnostics.some(({ details }) => details?.['quoteReason'] === 'reference-field-missing')).toBe(true)
+    expect(fixture.diagnostics.some(({ details }) => details?.['quoteReason'])).toBe(false)
+    expect(logger.debug).toHaveBeenCalledWith('引用消息缺少定位信息，已保留可用预览', {
+      reason: 'reference-field-missing',
+    })
+    expect(logger.warn).not.toHaveBeenCalled()
 
     const channelId = ChannelIdSchema.parse(fixture.channels.get('group:fixture-group'))
     const plans = await runtime.planOutbound({

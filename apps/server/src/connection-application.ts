@@ -1,3 +1,4 @@
+import { ConnectionLogObserver } from './logs/connection.js'
 import { randomUUID } from 'node:crypto'
 import {
   parseAdapterCapabilities,
@@ -15,6 +16,8 @@ import {
   parseConfigValue,
   JsonValueSchema,
   LogicalMessageIdSchema,
+  ExtensionIdSchema,
+  type HostLogScope,
   PhysicalDeliveryIdSchema,
   type AdapterActivityKey,
   type ChannelId,
@@ -71,6 +74,7 @@ interface ConnectionLoginSession {
 }
 
 export class ConnectionApplicationService {
+  readonly #connectionLogs = new ConnectionLogObserver()
   readonly #loginCleanupTimers = new Set<ReturnType<typeof setTimeout>>()
   readonly #connectionLoginSessions = new Map<string, ConnectionLoginSession>()
   readonly #connectionChanges = new Map<ConnectionId, Promise<unknown>>()
@@ -99,6 +103,7 @@ export class ConnectionApplicationService {
       | 'assetService'
       | 'internalConnectionId'
       | 'extensionService'
+      | 'logs'
     >,
     readonly now: () => number,
     runtimes: Map<ConnectionId, AdapterConnectionRuntime>,
@@ -109,7 +114,7 @@ export class ConnectionApplicationService {
     this.#adapterRuntimes = runtimes
     this.#adapterTransport = transport
     this.#adapterHandles.push(...handles)
-    this.#adapterDiagnostics.set(ports.internalConnectionId, {
+    this.#recordDiagnostic(ports.internalConnectionId, {
       status: 'connected',
       credentialConfigured: true,
       proactiveSend: true,
@@ -840,7 +845,7 @@ export class ConnectionApplicationService {
         const runtime = this.#adapterRuntimes.get(connectionId)
         await runtime?.stop()
         this.#adapterRuntimes.delete(connectionId)
-        this.#adapterDiagnostics.set(connectionId, { status: 'stopped', message: '这个连接的平台扩展没有安装。' })
+        this.#recordDiagnostic(connectionId, { status: 'stopped', message: '这个连接的平台扩展没有安装。' })
       }),
     )
     this.#notifyConnectionChanges()
@@ -853,7 +858,7 @@ export class ConnectionApplicationService {
     if (failures.length) {
       this.#quiescingAdapterKeys.delete(adapterKey)
       for (const { connectionId, outcome } of failures) {
-        this.#adapterDiagnostics.set(connectionId, {
+        this.#recordDiagnostic(connectionId, {
           status: 'failed',
           message: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
         })
@@ -892,7 +897,7 @@ export class ConnectionApplicationService {
           this.ports.extensionService.revisionFormat(revision) === 'unavailable'
         )
       })
-      this.#adapterDiagnostics.set(connectionId, {
+      this.#recordDiagnostic(connectionId, {
         status: 'stopped',
         message: unavailable
           ? '这个平台扩展的版本已不可用，请安装新版。频道和消息都还在。'
@@ -937,14 +942,14 @@ export class ConnectionApplicationService {
         throw new Error('Adapter runtime processing-feedback capability does not match its Descriptor.')
       }
       this.#adapterRuntimes.set(connectionId, runtime)
-      this.#adapterDiagnostics.set(connectionId, {
+      this.#recordDiagnostic(connectionId, {
         status: 'connecting',
         credentialConfigured: Object.keys(connection.credentialRefs).length > 0,
         proactiveSend: runtime.capabilities.outbound.proactiveSend,
       })
       await runtime.start()
       if (this.#adapterDiagnostics.get(connectionId)?.status === 'connecting') {
-        this.#adapterDiagnostics.set(connectionId, {
+        this.#recordDiagnostic(connectionId, {
           status: 'connected',
           credentialConfigured: Object.keys(connection.credentialRefs).length > 0,
           proactiveSend: runtime.capabilities.outbound.proactiveSend,
@@ -954,7 +959,7 @@ export class ConnectionApplicationService {
       const runtime = this.#adapterRuntimes.get(connectionId)
       this.#adapterRuntimes.delete(connectionId)
       await runtime?.stop().catch(() => undefined)
-      this.#adapterDiagnostics.set(connectionId, {
+      this.#recordDiagnostic(connectionId, {
         status: 'failed',
         message: error instanceof Error ? error.message : String(error),
         credentialConfigured: credentialsAvailable && Object.keys(connection.credentialRefs).length > 0,
@@ -1001,7 +1006,7 @@ export class ConnectionApplicationService {
   #adapterContext(connectionId: ConnectionId): AdapterConnectionHostContext {
     const rejectEvent = (message: string): never => {
       const current = this.#adapterDiagnostics.get(connectionId)
-      this.#adapterDiagnostics.set(connectionId, {
+      this.#recordDiagnostic(connectionId, {
         status: current?.status ?? 'connected',
         message,
         credentialConfigured: current?.credentialConfigured ?? false,
@@ -1022,6 +1027,18 @@ export class ConnectionApplicationService {
     }
     return {
       connectionId,
+      ...(this.ports.logs === undefined
+        ? {}
+        : {
+            logger: this.ports.logs.logger(
+              {
+                kind: 'connection',
+                id: connectionId,
+                name: this.ports.core.getConnection(connectionId)?.alias ?? '平台连接',
+              },
+              this.#logScope(connectionId),
+            ),
+          }),
       now: this.now,
       acceptChannelInbound: async (event) => {
         if (event.connectionId !== connectionId) return rejectEvent('Channel event belongs to another connection.')
@@ -1184,7 +1201,7 @@ export class ConnectionApplicationService {
       },
       diagnostics: {
         publish: (diagnostic) => {
-          this.#adapterDiagnostics.set(connectionId, {
+          this.#recordDiagnostic(connectionId, {
             ...diagnostic,
             credentialConfigured:
               Object.keys(this.ports.core.getConnection(connectionId)?.credentialRefs ?? {}).length > 0,
@@ -1196,6 +1213,40 @@ export class ConnectionApplicationService {
       transport: this.#adapterTransport,
     }
   }
+  #logScope(connectionId: ConnectionId): HostLogScope {
+    const connection = this.ports.core.getConnection(connectionId)
+    const contribution = connection && this.ports.adapters.get(connection.adapterKey)
+    const handle = this.#adapterHandles.find(
+      (item) => item.contribution === contribution && item.owner.startsWith('extension:'),
+    )
+    const owner = handle && ExtensionIdSchema.safeParse(handle.owner.slice('extension:'.length))
+    if (!owner?.success) return { connectionId }
+    const installation = this.ports.repository.getHostInstallation(owner.data)
+    return {
+      connectionId,
+      extensionId: owner.data,
+      ...(installation ? { revisionId: installation.extensionRevisionId } : {}),
+    }
+  }
+  #recordDiagnostic(connectionId: ConnectionId, diagnostic: AdapterConnectionDiagnostic): void {
+    const previous = this.#adapterDiagnostics.get(connectionId)
+    this.#adapterDiagnostics.set(connectionId, diagnostic)
+    const connection = this.ports.core.getConnection(connectionId)
+    const name =
+      connection?.alias ||
+      (connection && this.ports.adapters.get(connection.adapterKey)?.descriptor.displayName) ||
+      '平台连接'
+    const entry = this.#connectionLogs.observe(
+      connectionId,
+      name,
+      this.#logScope(connectionId),
+      diagnostic,
+      previous,
+      this.now(),
+    )
+    if (entry) this.ports.logs?.write(entry)
+  }
+
   #notifyConnectionChanges(event?: ConnectionEventRecord): void {
     for (const listener of this.#connectionListeners) {
       try {

@@ -1,4 +1,13 @@
 import { z } from 'zod'
+import {
+  hostLogDebugLeaseSchema,
+  hostLogDebugRequestSchema,
+  hostLogEntrySchema,
+  hostLogPageSchema,
+  hostLogSettingsSchema,
+  hostLogSourceSchema,
+  hostLogStatusSchema,
+} from './logs.js'
 import { McpServerFormSchema } from './extension-capabilities.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
 import {
@@ -1179,11 +1188,12 @@ export const AttentionItemSchema = z
       'connection-unhealthy',
       'agent-model-unavailable',
       'agent-vision-unavailable',
+      'logs-unavailable',
     ]),
     severity: z.enum(['critical', 'warning', 'info']),
     subject: z
       .object({
-        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent']),
+        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent', 'logs']),
         id: NonEmptyStringSchema,
       })
       .strict(),
@@ -1200,7 +1210,14 @@ export const AttentionItemSchema = z
     detail: z.string().max(400),
     action: z
       .object({
-        kind: z.enum(['open-channel', 'resolve-delivery', 'open-authoring-task', 'open-connection', 'open-agent']),
+        kind: z.enum([
+          'open-channel',
+          'resolve-delivery',
+          'open-authoring-task',
+          'open-connection',
+          'open-agent',
+          'open-logs',
+        ]),
         label: z.string().min(1).max(40),
       })
       .strict(),
@@ -1810,6 +1827,9 @@ export const HostSnapshotSchema = z
   })
   .strict()
 
+export const CHANNEL_COMPOSER_MAX_ATTACHMENTS = 20
+export const CHANNEL_COMPOSER_MAX_BYTES = 64 * 1024 * 1024
+
 const MessageInputPartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string().trim().min(1) }).strict(),
   z.object({ type: z.literal('mention'), memberId: ChannelMemberIdSchema }).strict(),
@@ -1836,9 +1856,6 @@ const SendChannelMessageRequestSchema = z
   .refine(
     (body) => body.parts.every((part) => part.type !== 'text' || [...part.text].length <= 64 * 1024),
     'Message text must not exceed 64 KiB.',
-export const CHANNEL_COMPOSER_MAX_ATTACHMENTS = 20
-export const CHANNEL_COMPOSER_MAX_BYTES = 64 * 1024 * 1024
-
   )
 
 const DynamicErrorDetailsSchema = z.object({ message: z.string(), stack: z.string().optional() }).strict()
@@ -2324,6 +2341,70 @@ const encodeBinaryUpload = (input: z.output<typeof BinaryUploadRequestSchema>) =
 })
 
 export const HostApiContracts = {
+  queryLogs: defineContract({
+    method: 'GET',
+    path: '/api/logs',
+    params: z.object({ query: z.string().max(32_768).optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: hostLogPageSchema,
+    error: HostApiErrorSchema,
+  }),
+  getLog: defineContract({
+    method: 'GET',
+    path: '/api/logs/:id',
+    params: z.object({ id: z.string().min(1).max(256) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ entry: hostLogEntrySchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  logSources: defineContract({
+    method: 'GET',
+    path: '/api/logs/sources',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ sources: z.array(hostLogSourceSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  logStatus: defineContract({
+    method: 'GET',
+    path: '/api/logs/status',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: hostLogStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  logSettings: defineContract({
+    method: 'GET',
+    path: '/api/logs/settings',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: hostLogSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateLogSettings: defineContract({
+    method: 'PUT',
+    path: '/api/logs/settings',
+    params: EmptyParamsSchema,
+    request: hostLogSettingsSchema,
+    response: hostLogSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  startLogDebug: defineContract({
+    method: 'POST',
+    path: '/api/logs/debug',
+    params: EmptyParamsSchema,
+    request: hostLogDebugRequestSchema,
+    response: z.object({ lease: hostLogDebugLeaseSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  stopLogDebug: defineContract({
+    method: 'DELETE',
+    path: '/api/logs/debug/:id',
+    params: z.object({ id: z.string().min(1).max(256) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ stopped: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
   retryRuntimeCompatibility: defineContract({
     method: 'POST',
     path: '/api/runtime/compatibility/retry',

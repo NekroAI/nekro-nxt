@@ -39,6 +39,8 @@ import { createNekroHostApi } from './host-api.js'
 import { initializeServerIdentity, startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { PRODUCT_VERSION } from './product-version.js'
+import { HostLogService } from './logs/service.js'
+import { attachConsoleLogs } from './logs/bridge.js'
 
 const resolveRoot = (input: string): string => (path.isAbsolute(input) ? input : path.resolve(process.cwd(), input))
 
@@ -109,6 +111,7 @@ export const defaultDataRoot = (): string => fileURLToPath(new URL('../../../dat
  * lands on its home) instead of a blank 404.
  */
 export const NEKRO_SPA_ROUTE_PREFIXES = [
+  '/logs',
   '/live',
   '/channels',
   '/agents',
@@ -618,7 +621,7 @@ export interface NekroServerHandle {
 
 const startLeasedServer = async (
   options: StartServerOptions,
-  owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle },
+  owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle; logs?: HostLogService },
 ): Promise<NekroServerHandle> => {
   const requestedHost = options.host ?? '127.0.0.1'
   const port = options.port ?? 0
@@ -649,6 +652,7 @@ const startLeasedServer = async (
       llmSettingsPath: path.join(dataRoot, 'dsh', 'settings.yaml'),
       llmCredentialPath: path.join(dataRoot, 'dsh', '.credentials.yaml'),
       developmentWorkspaceRoot,
+      ...(owner.logs === undefined ? {} : { logs: owner.logs }),
       // 默认连接正式社区；测试站或本地社区开发服务用 NEKRO_COMMUNITY_URL 覆盖。
       community: { url: process.env['NEKRO_COMMUNITY_URL'] },
       ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
@@ -722,6 +726,7 @@ const startLeasedServer = async (
         dshVersion: DEEPSEEK_HARNESS_VERSION,
       },
       () => ready,
+      owner.logs,
     )
     webContext.effect(() => () => api.dispose(), 'nekro-nxt: product HTTP API')
     checkWorkspaceReadiness = () => api.checkReadiness(true)
@@ -837,8 +842,33 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
   parseManagementKey(options.managementKey, !isLoopbackListenHost(requestedHost))
   const recoveryHost = parseListenHost(requestedHost)
   const release = await acquireDataRootLease(resolveRoot(options.dataRoot))
-  const owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle } = {}
+  const owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle; logs?: HostLogService } = {}
+  let detachConsole: (() => void) | undefined
+  const writeLifecycle = (level: 'info' | 'error', message: string, details?: Record<string, unknown>): void => {
+    owner.logs?.write({ level, message, source: { kind: 'system', id: 'host', name: '服务' }, details })
+  }
+  const closeLogs = async (): Promise<void> => {
+    detachConsole?.()
+    detachConsole = undefined
+    try {
+      await owner.logs?.close()
+    } catch {
+      // Log storage must never retain the data-root lease after the business runtime has stopped.
+    }
+  }
+  const releaseStoppedHost = async (): Promise<void> => {
+    writeLifecycle('info', '服务已停止。')
+    await closeLogs()
+    await release()
+  }
   try {
+    owner.logs = await HostLogService.open({ dataRoot: resolveRoot(options.dataRoot) })
+    if (options.managementKey) owner.logs.registerSecret(options.managementKey)
+    detachConsole = attachConsoleLogs(owner.logs)
+    writeLifecycle('info', '正在启动服务。', {
+      version: SERVER_PACKAGE_VERSION,
+      releaseId: parseReleaseId(options.releaseId),
+    })
     if (options.serveRecovery && !options.retryUpgrade) {
       const pending = await pendingUpgradeRecovery(resolveRoot(options.dataRoot), parseReleaseId(options.releaseId))
       if (pending !== undefined) {
@@ -851,8 +881,10 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     const server = await startLeasedServer(options, owner)
     options.signal?.throwIfAborted()
     let stopping: Promise<void> | undefined
-    return { ...server, stop: () => (stopping ??= server.stop().then(() => release())) }
+    writeLifecycle('info', '服务已就绪。')
+    return { ...server, stop: () => (stopping ??= server.stop().then(releaseStoppedHost)) }
   } catch (error) {
+    writeLifecycle('error', '服务启动失败。', { error })
     let progressFailure: unknown
     await recordStartupFailure(
       resolveRoot(options.dataRoot),
@@ -866,7 +898,10 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     const failures = cleanup
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
       .map((result): unknown => result.reason)
-    if (failures.length) throw new AggregateError([error, ...failures], 'Host 启动失败且资源未静止，数据根锁保持占用。')
+    if (failures.length) {
+      await closeLogs()
+      throw new AggregateError([error, ...failures], 'Host 启动失败且资源未静止，数据根锁保持占用。')
+    }
     if (options.serveRecovery && !options.signal?.aborted) {
       try {
         const server = await startRecoveryServer({
@@ -886,13 +921,15 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
         )
         if (progressFailure !== undefined) console.error('[nekro-nxt] 启动诊断文件未能保存，请检查数据目录。')
         let stopping: Promise<void> | undefined
-        return { ...server, stop: () => (stopping ??= server.stop().then(() => release())) }
+        return { ...server, stop: () => (stopping ??= server.stop().then(releaseStoppedHost)) }
       } catch (recoveryError) {
+        await closeLogs()
         await release()
         options.signal?.throwIfAborted()
         throw new AggregateError([error, recoveryError], 'Recovery listener failed to start.')
       }
     }
+    await closeLogs()
     await release()
     if (progressFailure !== undefined)
       throw new AggregateError([error, progressFailure], 'Host 启动失败，诊断写入也未完成。')

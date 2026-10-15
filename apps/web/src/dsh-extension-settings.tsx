@@ -92,7 +92,7 @@ export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label
       ? { label: '已启用', tone: 'ok' }
       : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
 
-const packageLabel = (name: string): string => {
+export const dshPackageLabel = (name: string): string => {
   if (name === '@deepseek-ai/dsh-web-search-deepseek') return 'DeepSeek 网页搜索'
   if (name === '@deepseek-ai/dsh-agent-loop') return '思考与工具执行运行时'
   if (name === '@deepseek-ai/dsh-bash-sandbox') return '命令运行时'
@@ -1081,7 +1081,7 @@ export function useDshCatalog(active: boolean) {
     return [
       ...catalog.plugins.map((plugin) => ({
         id: `plugin:${plugin.packageId ?? plugin.packageName}`,
-        label: packageLabel(plugin.packageName),
+        label: dshPackageLabel(plugin.packageName),
         version: plugin.packageVersion,
         group: pluginGroup(plugin.origin),
         namespaces: catalog.namespaces.filter((namespace) => plugin.settingsNamespaces.includes(namespace.ns)),
@@ -1091,7 +1091,7 @@ export function useDshCatalog(active: boolean) {
         .filter((namespace) => !claimed.has(namespace.ns))
         .map((namespace) => ({
           id: `namespace:${namespace.ns}`,
-          label: namespace.owner ? packageLabel(namespace.owner.packageName) : namespace.ns,
+          label: namespace.owner ? dshPackageLabel(namespace.owner.packageName) : namespace.ns,
           version: namespace.owner?.packageVersion ?? '运行时注册',
           group: 'runtime' as const,
           namespaces: [namespace],
@@ -1294,7 +1294,7 @@ export function InstallDshPluginDialog({
         {inspection ? (
           <div className={styles.inspection}>
             <div className={styles.inspectionHead}>
-              <b>{packageLabel(inspection.packageName)}</b>
+              <b>{dshPackageLabel(inspection.packageName)}</b>
               <span className={styles.muted}>
                 版本 {inspection.packageVersion} · {inspection.entries.length} 个入口 · 装好后默认关闭
               </span>
@@ -1466,6 +1466,7 @@ export function DshPluginDetail({
         }
       />
       {entry.group === 'runtime' ? <Banner tone="info">运行环境自带的配置。</Banner> : null}
+      <LogsButton query={{ sourceIds: plugin?.entries?.length ? plugin.entries.map((item) => item.id) : [entry.id] }} />
       {plugin?.loadError ? <Banner tone="bad">{plugin.loadError.message}</Banner> : null}
       {plugin?.clientUiDetected ? <Banner tone="info">插件自带的界面不可用，其他功能和配置照常使用。</Banner> : null}
       {plugin?.hostUi ? (
@@ -1699,3 +1700,4 @@ export function DshCatalogState({
   }
   return <EmptyState title="当前没有已识别的 DSH 插件" />
 }
+import { LogsButton } from './app/logs/logs-button.js'

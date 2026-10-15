@@ -648,3 +648,4 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly saveChannelMemberNote = (...args: Parameters<ChannelMemberNotesRepository['saveChannelMemberNote']>) =>
     this.#channelMemberNotes.saveChannelMemberNote(...args)
 }
+export { LogDatabase } from './logs.js'

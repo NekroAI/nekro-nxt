@@ -110,6 +110,7 @@ export class WorkspaceProjections {
   #attentionTimer: ReturnType<typeof setTimeout> | undefined
   #attentionCheck: Promise<void> | undefined
   #attentionDirty = false
+  #logFailureAt: number | undefined
   readonly #safetyTimer: ReturnType<typeof setInterval>
   #disposed = false
 
@@ -410,6 +411,23 @@ export class WorkspaceProjections {
     const runtime = this.#runtime
     const items: AttentionItem[] = []
     const now = this.#now()
+    if (runtime.logs) {
+      const status = runtime.logs.currentStatus()
+      if (status.state === 'degraded') {
+        this.#logFailureAt ??= now
+        items.push({
+          id: `logs:${status.runId}:${this.#logFailureAt}`,
+          kind: 'logs-unavailable',
+          severity: 'warning',
+          subject: { kind: 'logs', id: 'logging' },
+          related: {},
+          title: '日志保存异常',
+          detail: status.error ?? '日志暂时无法保存，聊天仍可继续。',
+          action: { kind: 'open-logs', label: '查看日志' },
+          occurredAt: this.#logFailureAt,
+        })
+      } else this.#logFailureAt = undefined
+    }
 
     for (const record of runtime.repository.projections.listUnsettledAttentionOutbounds(
       now - ATTENTION_DELIVERY_WINDOW_MS,

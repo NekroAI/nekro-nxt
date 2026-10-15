@@ -135,7 +135,7 @@ export const createNxtProductBackends = (
   facts: NxtProductFacts,
   infrastructure: Pick<
     NxtServiceBackends,
-    'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs' | 'library' | 'index' | 'models'
+    'fetch' | 'storage' | 'diagnostic' | 'complete' | 'jobs' | 'library' | 'index' | 'models' | 'logger'
   > & {
     readonly platform: Omit<NxtServiceBackends['platform'], 'selfPlatformUserId'>
   },

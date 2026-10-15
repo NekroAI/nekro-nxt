@@ -1,3 +1,5 @@
+export type { NxtLogger } from '@nekro-nxt/contracts'
+import type { NxtLogger } from '@nekro-nxt/contracts'
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import type { AdapterHostContributionV2 } from '@nekro-nxt/adapter-sdk'
 import type { ElementType, ReactNode } from 'react'
@@ -93,6 +95,8 @@ export interface ExtensionToolRegistry {
 
 /** Context of one agent attachment: the plugin returned by the Host factory, mounted in each Session of the agent. */
 export interface ExtensionHostContext {
+  /** Structured logs bound to this attachment; requires SDK 9. */
+  readonly logger?: NxtLogger | undefined
   readonly tools: ExtensionToolRegistry
   /** Present when the plugin declares `inject: ['tools', 'nxt']`; see {@link NxtHostService}. */
   readonly nxt?: NxtHostService
@@ -462,6 +466,8 @@ export interface NxtPromptRenderApi {
  * needs an undeclared or unapproved capability throws an error naming the Manifest field to add.
  */
 export interface NxtHostService {
+  /** SDK 9 write-only logger; also transports ctx.logger into dynamic previews. */
+  readonly logger?: NxtLogger | undefined
   /** This agent's configuration (`config.agent`); same value as `ctx.config()`. */
   config(): ExtensionJsonValue
   readonly http: {
@@ -654,6 +660,8 @@ export interface ExtensionPluginDefinition<Context = ExtensionHostContext> {
  * enabled for.
  */
 export interface ExtensionHostEnvironment {
+  /** Structured logs bound to this host instance; requires SDK 9. */
+  readonly logger?: NxtLogger | undefined
   readonly harness: {
     defineTool<Args extends ExtensionJsonObject, Output extends ExtensionJsonValue>(
       options: ExtensionToolDefinition<Args, Output>,
@@ -1392,6 +1400,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。",
       "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
       "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）、nxt.image.info、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library }, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
+      'logger 与 ctx.logger 提供 debug/info/warn/error(message, details?)，来源由宿主绑定；需要 requires.sdk 至少为 9，动态创造会自动声明。记录状态、数量和错误即可，不记录凭据、聊天正文或模型请求。Debug 在用户开启临时调试时保存。',
       'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
       'ctx.nxt.assets.keep(assetId) / release(assetId) / attach(assetId)：扩展资源库。keep 把当前频道看得到的 Asset 收进本扩展的资源库，之后可以在别的频道使用（同一张图重复 keep 不变，超出配额报错）；release 移出资源库；attach 让资源库里的 Asset 在当前频道可以发送并返回 assetId。create(input, { library: true }) 生成后直接存进资源库。需要 assets: { library: { quotaBytes? } }（默认 2 GiB），本机层与挂载两层共用同一个资源库。本机层用 nxt.assets.list({ limit, after }) / get(assetId) / release(assetId) 管理。',
       'ctx.nxt.image.info(assetId) → { mediaType, width, height, frames, byteSize, dhash }：读取当前频道看得到的或资源库中的图片尺寸、帧数和差异哈希（dhash 是 16 位十六进制，几乎相同的图只差几位）；本机层 nxt.image.info 只能读资源库中的图。需要 assets.library。',

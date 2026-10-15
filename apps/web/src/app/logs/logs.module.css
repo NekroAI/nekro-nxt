@@ -1,0 +1,322 @@
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--s-4);
+}
+.header h1 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+}
+.header p {
+  margin: var(--s-1) 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.settingsLink {
+  color: var(--muted);
+  padding: var(--s-2);
+  display: inline-flex;
+}
+.toolbar {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.toolbar > input {
+  flex: 1 1 240px;
+  width: auto;
+  min-width: 180px;
+}
+.toolbar > [role='combobox'] {
+  width: 170px;
+  flex: 0 0 170px;
+}
+.footer .actions > [role='combobox'] {
+  width: 120px;
+}
+.levels {
+  display: flex;
+  gap: var(--s-1);
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.levelCode {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.spacer {
+  flex: 1;
+}
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--s-3);
+  padding: var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  max-height: 25vh;
+  overflow: auto;
+}
+.sourceList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.source {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: var(--r-1);
+  padding: var(--s-2) var(--s-3);
+  color: var(--fg-2);
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+}
+.source:hover {
+  background: var(--hover);
+}
+.source[data-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.groupTitle {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0 var(--s-3);
+  margin: var(--s-4) 0 var(--s-1);
+}
+.logArea {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line-2);
+  background: var(--surface);
+  border-radius: var(--r-2);
+  overflow: hidden;
+  position: relative;
+}
+.listHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.logScroll {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-anchor: none;
+}
+.virtual {
+  position: relative;
+  min-width: 0;
+}
+.row {
+  position: absolute;
+  top: var(--log-top);
+  height: var(--log-height);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+}
+.row:hover {
+  background: var(--hover);
+}
+.row[data-selected='true'] {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 var(--accent);
+}
+.rowMain {
+  display: grid;
+  grid-template-columns: 100px 42px minmax(80px, 140px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  padding: 0 var(--s-3);
+  border: 0;
+  background: transparent;
+  text-align: left;
+  color: var(--fg);
+}
+.rowMain time {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+.rowSource {
+  color: var(--fg-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowMessage {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowMessage > span,
+.rowMessage > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rowMessage > small {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.level {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.row[data-level='warn'] .level {
+  color: var(--warn);
+}
+.row[data-level='error'] .level {
+  color: var(--bad);
+}
+.newLogs {
+  position: absolute;
+  bottom: var(--s-3);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  box-shadow: var(--sh-2);
+  border-radius: var(--r-1);
+  background: var(--surface);
+}
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+.debugLease {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  background: var(--warn-soft);
+  border-radius: var(--r-1);
+  padding: var(--s-2) var(--s-3);
+  color: var(--warn);
+  font-size: var(--fs-sm);
+}
+.hint {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  margin: 0;
+}
+.details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.timestamp {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  margin: 0;
+}
+.message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  margin: 0;
+  color: var(--fg);
+}
+.technical {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-2);
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  padding: var(--s-3);
+  margin: var(--s-2) 0 0;
+}
+@media (max-width: 760px) {
+  .rowMain {
+    grid-template-columns: 80px 32px minmax(70px, 1fr);
+    gap: var(--s-2);
+  }
+  .rowSource {
+    display: none;
+  }
+  .rowMain time {
+    font-size: var(--fs-xs);
+  }
+  .toolbar > input {
+    min-width: 140px;
+  }
+  .levelCode {
+    display: none;
+  }
+}
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--s-4);
+}
+
+.workspace > :not(.logArea) {
+  flex-shrink: 0;
+}
+
+@media (max-height: 760px), (max-width: 760px) {
+  .workspace {
+    gap: var(--s-2);
+  }
+  .header p,
+  .hint {
+    display: none;
+  }
+}
+
+.inlineLink {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+.density {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+@media (max-width: 1099px) {
+  .filters {
+    max-height: none;
+    overflow: visible;
+  }
+}

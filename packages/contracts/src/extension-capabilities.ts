@@ -6,7 +6,7 @@ import { z } from 'zod'
  * ships; never reuse a level for a different meaning. Level 7 is Manifest V7 (host instance + agent attachments); level 8 adds the asset library, image info, tool result
  * images, the search index and host-layer model calls.
  */
-export const EXTENSION_SDK_LEVEL = 8
+export const EXTENSION_SDK_LEVEL = 9
 
 /**
  * The first NekroNXT version of each capability level, so users read "needs NekroNXT 0.5.0" rather than a level
@@ -16,6 +16,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 6, version: '0.3.0' },
   { level: 7, version: '0.4.0' },
   { level: 8, version: '0.5.0' },
+  { level: 9, version: '0.6.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */

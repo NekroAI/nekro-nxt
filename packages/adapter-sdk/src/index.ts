@@ -1,3 +1,5 @@
+export type { NxtLogger } from '@nekro-nxt/contracts'
+import type { NxtLogger } from '@nekro-nxt/contracts'
 import type {
   AssetId,
   AdapterActivityKey,
@@ -107,6 +109,7 @@ export interface ConnectionInboundCommitResult {
 }
 
 export interface AdapterConnectionContext {
+  readonly logger?: NxtLogger
   readonly connectionId: ConnectionId
   readonly acceptChannelInbound: (event: AdapterChannelInboundEvent) => Promise<InboundCommitResult>
   readonly acceptConnectionInbound?: (event: AdapterConnectionInboundEvent) => Promise<ConnectionInboundCommitResult>

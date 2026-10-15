@@ -249,18 +249,16 @@ export const createQQOpenClawHostContribution = (): AdapterHostContributionV2 =>
           },
         },
         transport,
-        onQuoteDiagnostic: (diagnostic) =>
-          context.diagnostics.publish({
-            status: 'connected',
-            message: {
-              'reference-field-missing': '引用消息缺少定位信息，已保留可用预览。',
-              'platform-reference-unresolved': '原消息未记录，已保留可用引用预览。',
-              'reference-index-save-failed': '消息已发送，但引用信息未能保存。',
-            }[diagnostic.reason],
-            details: { quoteReason: diagnostic.reason },
-            credentialConfigured: true,
-            proactiveSend: configuration.proactiveSend,
-          }),
+        onQuoteDiagnostic: (diagnostic) => {
+          const message = {
+            'reference-field-missing': '引用消息缺少定位信息，已保留可用预览',
+            'platform-reference-unresolved': '原消息未记录，已保留可用引用预览',
+            'reference-index-save-failed': '消息已发送，但引用信息未能保存，后续回复可能无法关联原消息',
+          }[diagnostic.reason]
+          if (diagnostic.reason === 'reference-index-save-failed')
+            context.logger?.warn(message, { reason: diagnostic.reason })
+          else context.logger?.debug(message, { reason: diagnostic.reason })
+        },
         gateway: {
           access: transport,
           sockets: socketFactory(context.transport),
@@ -269,7 +267,9 @@ export const createQQOpenClawHostContribution = (): AdapterHostContributionV2 =>
           onStatus: (status) =>
             context.diagnostics.publish({
               status: status.state,
-              ...(status.lastError === undefined ? {} : { message: status.lastError }),
+              ...(status.lastError === undefined
+                ? {}
+                : { message: status.lastError === 'reconnect' ? '平台要求重新连接' : status.lastError }),
               credentialConfigured: true,
               proactiveSend: configuration.proactiveSend,
               accountReference: configuration.appId,

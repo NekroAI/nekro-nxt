@@ -10,6 +10,7 @@ import {
   Plug,
   Plus,
   Search,
+  ScrollText,
   Upload,
   UserRoundKey,
 } from 'lucide-react'
@@ -71,6 +72,7 @@ import { useCrumb } from '../shell/crumb.js'
 import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
 import { AccountsSection } from './accounts-section.js'
+import { LogSettings } from '../logs/log-settings.js'
 import styles from './settings.module.css'
 
 const SECTIONS = [
@@ -83,6 +85,7 @@ const SECTIONS = [
   { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
   { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
   { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
+  { key: 'logs', label: '日志保存', icon: <ScrollText size={16} /> },
   { key: 'about', label: '关于', icon: <Info size={16} /> },
 ] as const
 
@@ -168,6 +171,7 @@ export default function SettingsSpace() {
         // Every settings section shares one readable width and the same left edge (05 §6.1).
         <MainContent width="readable">
           <NarrowNav section={section} />
+          {section === 'logs' ? <LogSettings /> : null}
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
           {section === 'retrieval' ? <Retrieval /> : null}

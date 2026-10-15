@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import type * as FileOperations from 'node:fs/promises'
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, readlink, stat, writeFile } from 'node:fs/promises'
@@ -593,5 +594,233 @@ describe('space and durable publication failures', () => {
       'before upgrade',
     )
     await restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId })
+  })
+})
+
+describe('live logs retained independently of restored business data', () => {
+  const addLogs = async (dataRoot: string) => {
+    await mkdir(path.join(dataRoot, 'logs'), { recursive: true })
+    await mkdir(path.join(dataRoot, 'host'), { recursive: true })
+    await writeFile(path.join(dataRoot, 'logs/runtime.sqlite'), 'synthetic log database')
+    await writeFile(path.join(dataRoot, 'host/logging.json'), '{"retentionDays":7}')
+  }
+
+  it('excludes changing logs while backing up logging settings', async () => {
+    const options = await fixture()
+    await addLogs(options.dataRoot)
+    const manifest = await createUpgradeBackup({
+      ...options,
+      onProgress: () => writeFileSync(path.join(options.dataRoot, 'logs/runtime.sqlite'), 'changed while copying'),
+    })
+    expect(manifest.excluded).toContain('logs')
+    expect(manifest.entries.some((entry) => entry.path === 'logs' || entry.path.startsWith('logs/'))).toBe(false)
+    expect(manifest.entries.some((entry) => entry.path === 'host/logging.json')).toBe(true)
+    await verifyUpgradeBackup(path.join(options.dataRoot, 'backups', manifest.backupId))
+  })
+
+  it.each([
+    'stage:data/core.sqlite',
+    'prepared',
+    'displaced:data/core.sqlite',
+    'displaced',
+    'restored:data/core.sqlite',
+  ])('keeps logs at the same inode across interruption at %s and retry', async (stopAt) => {
+    const options = await fixture()
+    await addLogs(options.dataRoot)
+    const logs = path.join(options.dataRoot, 'logs')
+    const before = await stat(logs)
+    const manifest = await createUpgradeBackup(options)
+    await writeFile(path.join(options.dataRoot, 'host/logging.json'), '{"retentionDays":2}')
+    await expect(
+      restoreUpgradeBackup({
+        dataRoot: options.dataRoot,
+        backupId: manifest.backupId,
+        onCheckpoint: async (step) => {
+          await writeFile(path.join(logs, 'runtime.sqlite-wal'), step)
+          if (step === stopAt) throw new Error('synthetic interruption')
+        },
+      }),
+    ).rejects.toThrow('synthetic interruption')
+    await writeFile(path.join(logs, 'new-after-interruption.log'), 'synthetic new log')
+    await restoreUpgradeBackup({
+      dataRoot: options.dataRoot,
+      backupId: manifest.backupId,
+      onCheckpoint: async (step) => {
+        await writeFile(path.join(logs, 'runtime.sqlite-wal'), step)
+      },
+    })
+    expect((await stat(logs)).ino).toBe(before.ino)
+    expect(await readFile(path.join(logs, 'runtime.sqlite'), 'utf8')).toBe('synthetic log database')
+    expect(await readFile(path.join(logs, 'new-after-interruption.log'), 'utf8')).toBe('synthetic new log')
+    expect(await readFile(path.join(options.dataRoot, 'host/logging.json'), 'utf8')).toBe('{"retentionDays":7}')
+    const failed = path.join(options.dataRoot, 'backups', `before-restore-${manifest.backupId}`, 'data')
+    expect(await readdir(failed)).not.toContain('logs')
+    expect(await readdir(failed)).toContain('extension-cache')
+    const journal = z
+      .object({ moves: z.array(z.object({ name: z.string() })) })
+      .parse(
+        JSON.parse(await readFile(path.join(options.dataRoot, 'backups', `restore-${manifest.backupId}.json`), 'utf8')),
+      )
+    expect(journal.moves.some((move: { name: string }) => move.name === 'logs')).toBe(false)
+  })
+
+  it('allows logs to appear during restore of an older backup without logs', async () => {
+    const options = await fixture()
+    const manifest = await createUpgradeBackup(options)
+    const directory = path.join(options.dataRoot, 'backups', manifest.backupId)
+    const oldManifest = { ...manifest, excluded: manifest.excluded.filter((item) => item !== 'logs') }
+    await writeUpgradeJson(path.join(directory, 'manifest.json'), oldManifest)
+    await writeUpgradeJson(path.join(directory, 'manifest.sha256'), {
+      sha256: createHash('sha256')
+        .update(await readFile(path.join(directory, 'manifest.json')))
+        .digest('hex'),
+    })
+    await restoreUpgradeBackup({
+      dataRoot: options.dataRoot,
+      backupId: manifest.backupId,
+      onCheckpoint: async (step) => {
+        if (step === 'prepared') {
+          await mkdir(path.join(options.dataRoot, 'logs'))
+          await writeFile(path.join(options.dataRoot, 'logs/new.log'), 'synthetic recovery log')
+        }
+      },
+    })
+    expect(await readFile(path.join(options.dataRoot, 'logs/new.log'), 'utf8')).toBe('synthetic recovery log')
+  })
+
+  it.each(['logs', 'backups'])('rejects journal moves targeting retained %s', async (name) => {
+    const options = await fixture()
+    const manifest = await createUpgradeBackup(options)
+    await expect(
+      restoreUpgradeBackup({
+        dataRoot: options.dataRoot,
+        backupId: manifest.backupId,
+        onCheckpoint: (step) => {
+          if (step === 'prepared') throw new Error('synthetic pause')
+        },
+      }),
+    ).rejects.toThrow('synthetic pause')
+    const journalPath = path.join(options.dataRoot, 'backups', `restore-${manifest.backupId}.json`)
+    const journal = z
+      .object({ moves: z.array(z.object({ root: z.string(), name: z.string(), sha256: z.string() }).passthrough()) })
+      .passthrough()
+      .parse(JSON.parse(await readFile(journalPath, 'utf8')))
+    journal.moves.push({ root: 'data', name, sha256: '0'.repeat(64) })
+    await writeUpgradeJson(journalPath, journal)
+    await expect(restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId })).rejects.toThrow(
+      'journal 路径无效',
+    )
+  })
+
+  it.each(['prepared', 'displaced'])(
+    'rejects unknown live files at %s while allowing logs to change',
+    async (stopAt) => {
+      const options = await fixture()
+      await addLogs(options.dataRoot)
+      const manifest = await createUpgradeBackup(options)
+      await expect(
+        restoreUpgradeBackup({
+          dataRoot: options.dataRoot,
+          backupId: manifest.backupId,
+          onCheckpoint: async (step) => {
+            if (step === stopAt) {
+              await writeFile(path.join(options.dataRoot, 'unknown.txt'), 'synthetic unowned file')
+              await writeFile(path.join(options.dataRoot, 'logs/runtime.sqlite'), 'synthetic updated log')
+            }
+          },
+        }),
+      ).rejects.toThrow(/新的现场文件|未识别文件/u)
+      expect(await readFile(path.join(options.dataRoot, 'unknown.txt'), 'utf8')).toBe('synthetic unowned file')
+    },
+  )
+
+  it('rejects a symlink at the live logs root before displacement and on retry', async () => {
+    const options = await fixture()
+    const manifest = await createUpgradeBackup(options)
+    await symlink(path.join(options.dataRoot, 'workspaces'), path.join(options.dataRoot, 'logs'))
+    await expect(restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId })).rejects.toThrow(
+      '符号链接',
+    )
+    await rm(path.join(options.dataRoot, 'logs'))
+    await expect(
+      restoreUpgradeBackup({
+        dataRoot: options.dataRoot,
+        backupId: manifest.backupId,
+        onCheckpoint: async (step) => {
+          if (step === 'prepared')
+            await symlink(path.join(options.dataRoot, 'workspaces'), path.join(options.dataRoot, 'logs'))
+        },
+      }),
+    ).rejects.toThrow('符号链接')
+    await expect(restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId })).rejects.toThrow(
+      '符号链接',
+    )
+  })
+
+  it.each(['staged', 'failed'])('rejects extra logs inside the %s generation', async (location) => {
+    const options = await fixture()
+    const manifest = await createUpgradeBackup(options)
+    await expect(
+      restoreUpgradeBackup({
+        dataRoot: options.dataRoot,
+        backupId: manifest.backupId,
+        onCheckpoint: (step) => {
+          if (step === 'prepared') throw new Error('synthetic pause')
+        },
+      }),
+    ).rejects.toThrow('synthetic pause')
+    const base =
+      location === 'staged'
+        ? path.join(options.dataRoot, 'backups', `restore-stage-${manifest.backupId}`, 'tree')
+        : path.join(options.dataRoot, 'backups', `before-restore-${manifest.backupId}`, 'data')
+    await mkdir(path.join(base, 'logs'))
+    await expect(restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId })).rejects.toThrow(
+      /清单校验失败|新的现场文件/u,
+    )
+    expect((await stat(path.join(base, 'logs'))).isDirectory()).toBe(true)
+  })
+
+  it('backs up and restores an external workspace logs directory normally', async () => {
+    const options = await fixture()
+    const external = await mkdtemp(path.join(tmpdir(), 'nxt-synthetic-external-logs-'))
+    directories.push(external)
+    await mkdir(path.join(external, 'logs'))
+    await writeFile(path.join(external, 'logs/note.txt'), 'synthetic original workspace file')
+    const externalRoots = [{ key: 'workspace-0', target: external }]
+    const manifest = await createUpgradeBackup({ ...options, externalRoots })
+    expect(manifest.entries.some((entry) => entry.root === 'workspace-0' && entry.path === 'logs/note.txt')).toBe(true)
+    await writeFile(path.join(external, 'logs/note.txt'), 'synthetic failed workspace file')
+    try {
+      await restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId, externalRoots })
+      expect(await readFile(path.join(external, 'logs/note.txt'), 'utf8')).toBe('synthetic original workspace file')
+      expect(
+        await readFile(path.join(`${external}.nxt-before-${manifest.backupId}`, 'workspace-0/logs/note.txt'), 'utf8'),
+      ).toBe('synthetic failed workspace file')
+    } finally {
+      await rm(`${external}.nxt-before-${manifest.backupId}`, { recursive: true, force: true })
+      await rm(`${external}.nxt-restore-${manifest.backupId}`, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an older backup containing logs rather than installing it over live logs', async () => {
+    const options = await fixture()
+    const manifest = await createUpgradeBackup(options)
+    const directory = path.join(options.dataRoot, 'backups', manifest.backupId)
+    await mkdir(path.join(directory, 'roots/data/logs'))
+    await writeUpgradeJson(path.join(directory, 'manifest.json'), {
+      ...manifest,
+      excluded: manifest.excluded.filter((item) => item !== 'logs'),
+      entries: [...manifest.entries, { root: 'data', path: 'logs', kind: 'directory', mode: 0o700, size: 0 }],
+    })
+    await writeUpgradeJson(path.join(directory, 'manifest.sha256'), {
+      sha256: createHash('sha256')
+        .update(await readFile(path.join(directory, 'manifest.json')))
+        .digest('hex'),
+    })
+    await addLogs(options.dataRoot)
+    await expect(restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: manifest.backupId })).rejects.toThrow(
+      '受保护或未知路径',
+    )
+    expect(await readFile(path.join(options.dataRoot, 'logs/runtime.sqlite'), 'utf8')).toBe('synthetic log database')
   })
 })

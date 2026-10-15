@@ -21,6 +21,21 @@ npm 发布说明见 [PUBLISH-README](PUBLISH-README.md)。运行时能力由宿�
 
 其余字段：`permissions` 为 `{ permissions, networkOrigins, host?, agent? }`——前两项是页面与面板经 `host.call` 的产品读写和 HTTP(S) origin，`host` 是本机实例的能力，`agent` 是智能体挂载的能力（见“宿主能力”）；`config` 为 `{ host?: { schema }, agent?: { schema } }`；可选 `requires: { sdk }`；可选 `icon: { path, sha256 }` 指向包内 `assets/icon.{svg,png,webp}`（64–512 像素正方形、不超过 128 KiB，规则见 [扩展包格式](../extension-format/README.md#扩展图标)）。没有任何贡献的扩展必须声明智能体层能力（例如 MCP 服务），否则拒绝保存。
 
+## 运行日志
+
+SDK 9（NekroNXT 0.6.0）提供 `logger.debug/info/warn/error(message, details?)`。Host factory 参数中的 `logger` 绑定本机实例，智能体挂载中的 `ctx.logger` 绑定该扩展、版本和 Session；Adapter 的连接上下文也提供只写 `logger`。来源由宿主提供，详情不能替换来源或读取其他来源的日志。普通 DSH 插件继续使用 Cordis `ctx.logger`。
+
+动态生成的 Host factory 使用当前 SDK 环境，保存时声明 SDK 9；纯 Client 扩展仍按其能力计算最低等级。已有或导入的扩展保留原声明。这样回调在验证之后才第一次写日志时，也不会因遗漏版本声明而失败。
+
+使用新接口的扩展声明 `requires.sdk: 9`；低等级声明实际调用时会收到明确错误。有效接口的保存失败不会向业务代码抛出异常。不记录聊天正文、模型提示词、工具原始参数或结果；错误详情可以传入异常对象，宿主会整理堆栈并脱敏。
+
+```ts
+logger?.info('索引更新完成。', { count: 12, durationMs: 36 })
+ctx.logger?.warn('任务将在稍后重试。', { attempt: 2 })
+```
+
+Debug 默认不保存，用户在日志页临时开启后采集。完整用户行为见[查看运行日志](../../docs/guide/logs.md)。
+
 ## Client
 
 Client factory 接收 `{ React, host, styles }`，返回带 `inject` 与 `apply(ctx)` 的插件。一个安装到本机的扩展只运行一份 Client，它的智能体与频道面板、工具视图按“该扩展启用给哪些智能体”实时放置，启用或停用不会重新加载 Client。`ctx` 提供：

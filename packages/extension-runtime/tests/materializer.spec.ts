@@ -43,13 +43,13 @@ describe('materializeDynamicPackage', () => {
   })
 
   it('records the capability level an agent-written extension needs', () => {
-    expect(materialize({ hostCode: 'return {}', contributions: [tool] }).manifest).not.toHaveProperty('requires')
+    expect(materialize({ hostCode: 'return {}', contributions: [tool] }).manifest.requires).toEqual({ sdk: 9 })
     const library = materialize({
       hostCode: 'return {}',
       contributions: [tool],
       permissions: { permissions: [], networkOrigins: [], agent: { assets: { library: {} } } },
     })
-    expect(library.manifest.requires).toEqual({ sdk: 8 })
+    expect(library.manifest.requires).toEqual({ sdk: 9 })
   })
 
   it('requires source halves used by contributions and a Client for CSS', () => {

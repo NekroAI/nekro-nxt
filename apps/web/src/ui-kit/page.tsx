@@ -126,15 +126,18 @@ export function ListPane({
 export function MainContent({
   width = 'wide',
   fill = false,
+  contained = false,
   children,
 }: {
   readonly width?: 'readable' | 'wide' | 'full'
   /** The last child stretches to the bottom of the pane (canvases whose background must not jump with content). */
   readonly fill?: boolean
+  /** Constrain the canvas to the pane; children own their scroll areas. */
+  readonly contained?: boolean
   readonly children: ReactNode
 }) {
   return (
-    <div className={styles.mainScroll}>
+    <div className={styles.mainScroll} data-contained={contained || undefined}>
       <div className={[styles.mainInner, styles[width], fill ? styles.fill : ''].join(' ')} data-width={width}>
         {children}
       </div>

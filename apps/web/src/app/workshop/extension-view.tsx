@@ -1,4 +1,5 @@
 import { useGo } from '../model/nav.js'
+import { LogsButton } from '../logs/logs-button.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { ChevronRight, Download, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -118,44 +119,47 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
           </>
         }
         actions={
-          <Menu
-            label="扩展操作"
-            align="end"
-            trigger={
-              <Button size="small" variant="ghost" icon={<MoreHorizontal size={14} />}>
-                更多
-              </Button>
-            }
-            items={[
-              ...(current
-                ? [
-                    {
-                      key: 'export',
-                      label: '导出最新版本',
-                      icon: <Download size={14} />,
-                      onSelect: () => void download(extension, current).catch(failure),
-                    },
-                    ...(usable(current)
-                      ? [
-                          {
-                            key: 'publish',
-                            label: '发布到社区',
-                            icon: <Share2 size={14} />,
-                            onSelect: () => setPublishOpen(true),
-                          },
-                        ]
-                      : []),
-                  ]
-                : []),
-              {
-                key: 'delete',
-                label: '删除扩展',
-                icon: <Trash2 size={14} />,
-                danger: true,
-                onSelect: () => setDeleteOpen(true),
-              },
-            ]}
-          />
+          <>
+            <LogsButton query={{ scope: { extensionId: extension.id } }} />
+            <Menu
+              label="扩展操作"
+              align="end"
+              trigger={
+                <Button size="small" variant="ghost" icon={<MoreHorizontal size={14} />}>
+                  更多
+                </Button>
+              }
+              items={[
+                ...(current
+                  ? [
+                      {
+                        key: 'export',
+                        label: '导出最新版本',
+                        icon: <Download size={14} />,
+                        onSelect: () => void download(extension, current).catch(failure),
+                      },
+                      ...(usable(current)
+                        ? [
+                            {
+                              key: 'publish',
+                              label: '发布到社区',
+                              icon: <Share2 size={14} />,
+                              onSelect: () => setPublishOpen(true),
+                            },
+                          ]
+                        : []),
+                    ]
+                  : []),
+                {
+                  key: 'delete',
+                  label: '删除扩展',
+                  icon: <Trash2 size={14} />,
+                  danger: true,
+                  onSelect: () => setDeleteOpen(true),
+                },
+              ]}
+            />
+          </>
         }
       />
       <PublishDialog extension={extension} revision={current} open={publishOpen} onOpenChange={setPublishOpen} />

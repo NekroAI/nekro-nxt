@@ -145,7 +145,8 @@ test.describe('settings space', () => {
     try {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
-      await expect(list.getByRole('link')).toHaveCount(9)
+      await expect(list.getByRole('link')).toHaveCount(10)
+      await expect(list.getByRole('link', { name: '日志保存' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
       const overview = page.getByRole('table', { name: '模型供应商' })
       await expect(overview).toContainText('示例供应商甲')
@@ -376,6 +377,13 @@ test.describe('settings space', () => {
       before: async (target) => {
         // The management edge sets this cookie with every session; a direct local Host never does.
         await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture-csrf', url: baseUrl }])
+        // The management edge owns this document. Vite's SPA fallback would otherwise redirect it to /live.
+        await target.route('**/login', (request) =>
+          request.fulfill({
+            contentType: 'text/html',
+            body: '<!doctype html><html lang="zh-CN"><head><title>虚构登录页</title></head><body><h1>登录</h1></body></html>',
+          }),
+        )
         await target.route('**/api/management/session', async (request) => {
           calls.push('logout')
           await request.fulfill({ json: { authenticated: false } })
@@ -389,7 +397,7 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(10)
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(11)
       const table = page.getByRole('table', { name: '已登录设备' })
       await expect(table).toContainText('浏览器 · Chrome · macOS')
       await expect(table).toContainText('此设备')

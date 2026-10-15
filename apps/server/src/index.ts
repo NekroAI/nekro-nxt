@@ -1,4 +1,5 @@
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
+import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { renderChannelMessageResult } from './channel-message-result.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
 import {
@@ -414,6 +415,7 @@ export interface AgentCommunicationPort {
 }
 
 export interface DshHostRuntimeOptions {
+  readonly logs?: HostLogSink
   readonly providerRemoval?: LlmProviderRemovalCoordinator
   /** Host-local record of provider connection tests shown beside each provider. */
   readonly providerTestResults?: LlmProviderTestResults
@@ -2908,6 +2910,7 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
 
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
 export class DshHostRuntime implements AgentSessionDriver {
+  readonly #logs: HostLogSink | undefined
   readonly #context: Context
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
@@ -2950,6 +2953,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     channelReplyGuard: ChannelReplyGuardController,
   ) {
     this.#context = context
+    this.#logs = options.logs
     this.#runtimeProjection = new SessionRuntimeProjection(context, this.#sessions)
     this.#communication = options.communication
     this.#history = options.history
@@ -2998,14 +3002,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#extensionMounts = new PersistentExtensionMounts(
       this.#sessions,
       extensionHost === undefined
-        ? {}
+        ? { ...(options.logs === undefined ? {} : { logs: options.logs }) }
         : {
-            nxt: ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext }) => {
+            ...(options.logs === undefined ? {} : { logs: options.logs }),
+            logName: (revision) => extensionHost.describeRevision(revision).displayName,
+            nxt: ({ agentId, revision, config, hostConfig, sessionId, context: fiberContext, sdk }) => {
               const described = extensionHost.describeRevision(revision)
               const channelId = this.#sessions.require(sessionId).channelId
               extensionHost.onSessionMount?.({ agentId, revision, channelId })
               return createNxtHostService(
                 {
+                  sdk,
                   mode: 'activation',
                   agentId,
                   ownerKey: revision.extensionId,
@@ -3123,6 +3130,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       options.dshPlugins === undefined
         ? undefined
         : new DshPluginLifecycleCoordinator({
+            ...(options.logs === undefined ? {} : { logs: options.logs }),
             repository: options.dshPlugins.repository,
             rootContext: context,
             isolateContext: isolatePrivateExtensionServices,
@@ -3164,12 +3172,38 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
     const context = new Context()
     try {
+      if (options.logs) {
+        for (const [plugin, name] of [
+          [LlmRuntime, 'llm'],
+          [SessionStore, 'session'],
+          [ToolRuntime, 'tools'],
+          [AgentRegistry, 'agent'],
+          [SkillRegistry, 'skill'],
+          [SystemPrompt, 'system-prompt'],
+          [TokenMeter, 'token-meter'],
+          [LlmRetry, 'llm-retry'],
+          [ToolCallTimeoutPolicy, 'tool-call-timeout-policy'],
+          [WebRuntime, 'web'],
+          [SubagentSpawnInProcess, 'subagent-spawn-in-process'],
+          [SessionStats, 'session-stats'],
+          [SessionCheckpointPolicy, 'session-checkpoint-policy'],
+          [ToolResultPruner, 'compaction-tool-result-pruner'],
+        ] as const)
+          registerLogModule(plugin, {
+            kind: 'dsh-plugin',
+            id: `plugin:@deepseek-ai/dsh-${name}`,
+            name: `DSH · ${name}`,
+            version: DEEPSEEK_HARNESS_VERSION,
+          })
+        attachCordisLogs(context, options.logs)
+      }
       await context.plugin(NekroAssetAttachmentStore, {
         assets: options.assets,
         assetService: options.assetService,
         requestImageRoot: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'request-images'),
       })
       await prepareDshHostProfile(context, {
+        ...(options.logs === undefined ? {} : { logs: options.logs }),
         ...(options.llmSettingsPath === undefined ? {} : { settingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { credentialPath: options.llmCredentialPath }),
       })
@@ -3522,6 +3556,30 @@ export class DshHostRuntime implements AgentSessionDriver {
       readonly hasClient: boolean
     }> = []
     const setup = async (agentContext: Context): Promise<void> => {
+      if (this.#logs) {
+        bindLogOwner(
+          agentContext,
+          this.#logs,
+          { kind: 'system', id: 'agent-runtime', name: '智能体运行' },
+          { agentId: revision.agentId, channelId: input.channelId, sessionId, episodeId: input.episodeId },
+        )
+        attachSessionLogs(
+          agentContext,
+          this.#logs,
+          {
+            agentId: revision.agentId,
+            channelId: input.channelId,
+            sessionId,
+            episodeId: input.episodeId,
+          },
+          {
+            agentName: revision.displayName,
+            ...(channelContext.displayName === undefined ? {} : { channelName: channelContext.displayName }),
+            provider: revision.model.provider,
+            model: revision.model.model,
+          },
+        )
+      }
       agentContext.effect(() => {
         const record = this.#sessions.register({
           sessionId,
@@ -4972,3 +5030,6 @@ export class ChannelExtensionRuntimeHost implements ExtensionRuntimeHost {
 }
 
 export { HOST_DSH_PACKAGE_VERSIONS }
+import { attachCordisLogs, bindLogOwner, registerLogModule } from './logs/bridge.js'
+import type { HostLogSink } from './logs/service.js'
+import { attachSessionLogs } from './logs/session.js'

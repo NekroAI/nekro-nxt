@@ -26,11 +26,14 @@ import {
   type NxtInboundHandler,
   type NxtJobHandler,
 } from '@nekro-nxt/extension-sdk'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { defineDshToolFromUnknown, parseDshToolDefinition } from './dsh-interop/unsafe.js'
 import { isolatePrivateExtensionServices } from './extension-context.js'
+import type { HostLogSink, HostLogWriter } from './logs/service.js'
+import { bindLogOwner, withLogOwner } from './logs/bridge.js'
+import { extensionLogger } from './extension-logger.js'
 import { NXT_HOST_SERVICE_NAME } from './extension-host-service.js'
 import { withToolImages, type ToolImageResolver } from './extension-tool-images.js'
 import type { SessionRegistry } from './session-registry.js'
@@ -60,6 +63,7 @@ const persistentExtensionContext = (
 
 /** Builds the Session-bound `nxt` of one agent attachment; the Server composition root owns the backends. */
 export type PersistentNxtFactory = (input: {
+  readonly sdk: number
   readonly agentId: AgentId
   readonly revision: Revision
   /** The agent's configuration. */
@@ -107,6 +111,8 @@ interface Attachment {
 }
 
 interface Instance {
+  readonly sdk: number
+  readonly logger?: HostLogWriter
   readonly revision: Revision
   readonly config: JsonValue
   readonly plugin?: ExtensionPluginDefinition
@@ -180,10 +186,14 @@ export class PersistentExtensionMounts {
   readonly #hostNxt: PersistentHostNxtFactory | undefined
   readonly #mcp: PersistentMcpMount | undefined
   readonly #adapters: PersistentAdapterPort | undefined
+  readonly #logs: HostLogSink | undefined
+  readonly #logName: ((revision: Revision) => string) | undefined
 
   constructor(
     sessions: SessionRegistry<unknown>,
     options: {
+      readonly logs?: HostLogSink
+      readonly logName?: (revision: Revision) => string
       readonly nxt?: PersistentNxtFactory
       readonly hostNxt?: PersistentHostNxtFactory
       readonly mcp?: PersistentMcpMount
@@ -192,6 +202,8 @@ export class PersistentExtensionMounts {
     } = {},
   ) {
     this.#sessions = sessions
+    this.#logs = options.logs
+    this.#logName = options.logName
     this.#toolImages = options.toolImages
     this.#nxt = options.nxt
     this.#hostNxt = options.hostNxt
@@ -256,6 +268,20 @@ export class PersistentExtensionMounts {
     this.#pending.add(pending)
     try {
       return await pending
+    } catch (error) {
+      this.#logs?.write({
+        level: 'error',
+        message: `扩展加载失败：${error instanceof Error ? error.message : String(error)}`,
+        source: {
+          kind: 'extension',
+          id: extensionId,
+          name: this.#logName?.(input.revision) ?? '扩展',
+          version: input.revision.id,
+        },
+        scope: { extensionId, revisionId: input.revision.id },
+        details: { error },
+      })
+      throw error
     } finally {
       this.#pending.delete(pending)
       this.#loading.delete(extensionId)
@@ -269,6 +295,15 @@ export class PersistentExtensionMounts {
     readonly config: JsonValue
   }): Promise<LoadedExtension> {
     const { revision, manifest, artifact, config } = input
+    const source = {
+      kind: 'extension' as const,
+      id: revision.extensionId,
+      name: this.#logName?.(revision) ?? '扩展',
+      version: revision.id,
+    }
+    const scope = { extensionId: revision.extensionId, revisionId: revision.id }
+    const logger = this.#logs?.logger(source, scope)
+    logger?.info('正在加载扩展。')
     const handlers = new Map<string, ExtensionRpcHandler>()
     const expectedAdapter = manifestAdapter(manifest)
     let inbound: NxtInboundHandler | undefined
@@ -285,7 +320,12 @@ export class PersistentExtensionMounts {
       }
       let factoryResult: unknown
       try {
-        factoryResult = await loaded.default({
+        const factory = (environment: ExtensionHostEnvironment) =>
+          this.#logs
+            ? withLogOwner({ sink: this.#logs, source, scope }, () => loaded.default(environment))
+            : loaded.default(environment)
+        factoryResult = await factory({
+          logger: extensionLogger(this.#logs, source, scope, manifest.requires?.sdk ?? 7),
           harness: {
             defineTool: <Args extends Record<string, ExtensionJsonValue>, Output extends ExtensionJsonValue>(
               options: ExtensionToolDefinition<Args, Output>,
@@ -371,6 +411,8 @@ export class PersistentExtensionMounts {
     }
 
     const instance: Instance = {
+      sdk: manifest.requires?.sdk ?? 7,
+      ...((manifest.requires?.sdk ?? 7) >= 9 && logger !== undefined ? { logger } : {}),
       revision,
       config,
       ...(plugin === undefined ? {} : { plugin }),
@@ -381,6 +423,7 @@ export class PersistentExtensionMounts {
       active: true,
     }
     this.#instances.set(revision.extensionId, instance)
+    logger?.info('扩展已加载。')
     return {
       ...(expectedAdapter === undefined ? {} : { adapterKey: expectedAdapter.key }),
       attach: (agentId, agentConfig) => this.#attach(instance, agentId, agentConfig),
@@ -394,6 +437,7 @@ export class PersistentExtensionMounts {
             },
           }),
       dispose: async () => {
+        logger?.info('正在停止扩展。')
         instance.active = false
         if (this.#instances.get(revision.extensionId) === instance) this.#instances.delete(revision.extensionId)
         const failures: unknown[] = []
@@ -410,6 +454,8 @@ export class PersistentExtensionMounts {
         } catch (error) {
           failures.push(error)
         }
+        if (failures.length) logger?.error('扩展停止失败。', { errors: failures })
+        else logger?.info('扩展已停止。')
         if (failures.length === 1) throw failures[0]
         if (failures.length > 1) throw new AggregateError(failures, '扩展停止失败。')
       },
@@ -420,7 +466,34 @@ export class PersistentExtensionMounts {
     if (!instance.active) throw new Error('这个扩展当前没有在本机运行。')
     const handler = instance.handlers.get(method)
     if (!handler) throw new Error(`界面数据接口未注册：${method}`)
-    return parseJsonValue(JSON.parse(JSON.stringify(await handler(input, caller))))
+    const source = {
+      kind: 'extension' as const,
+      id: instance.revision.extensionId,
+      name: this.#logName?.(instance.revision) ?? '扩展',
+      version: instance.revision.id,
+    }
+    const scope = {
+      extensionId: instance.revision.extensionId,
+      revisionId: instance.revision.id,
+      operationId: `rpc:${randomUUID()}`,
+    }
+    const logger = this.#logs?.logger(source, scope)
+    const started = performance.now()
+    logger?.debug('扩展请求开始。', { method })
+    try {
+      const invoke = () => handler(input, caller)
+      const value = this.#logs ? await withLogOwner({ sink: this.#logs, source, scope }, invoke) : await invoke()
+      const result = parseJsonValue(JSON.parse(JSON.stringify(value)))
+      logger?.debug('扩展请求完成。', { method, durationMs: Math.round(performance.now() - started) })
+      return result
+    } catch (error) {
+      logger?.error(`扩展请求 ${method} 失败：${error instanceof Error ? error.message : String(error)}`, {
+        method,
+        error,
+        durationMs: Math.round(performance.now() - started),
+      })
+      throw error
+    }
   }
 
   async #attach(instance: Instance, agentId: AgentId, config: JsonValue): Promise<MountedAttachment> {
@@ -477,9 +550,28 @@ export class PersistentExtensionMounts {
           ? {}
           : { inject: plugin.inject.filter((service) => service !== NXT_HOST_SERVICE_NAME) }),
         apply: async (context: Context) => {
+          const scope = {
+            extensionId: instance.revision.extensionId,
+            revisionId: instance.revision.id,
+            agentId: attachment.agentId,
+            sessionId,
+            channelId: this.#sessions.get(sessionId)?.channelId,
+          }
+          const source = {
+            kind: 'extension' as const,
+            id: instance.revision.extensionId,
+            name: this.#logName?.(instance.revision) ?? '扩展',
+            version: instance.revision.id,
+          }
+          if (this.#logs)
+            bindLogOwner(context, this.#logs, source, {
+              ...scope,
+              ...(scope.channelId === undefined ? { channelId: undefined } : {}),
+            })
           const nxt =
             wantsNxt && nxtFactory !== undefined
               ? nxtFactory({
+                  sdk: instance.sdk,
                   agentId: attachment.agentId,
                   revision: instance.revision,
                   config: attachment.config,
@@ -489,7 +581,23 @@ export class PersistentExtensionMounts {
                 })
               : undefined
           const images = this.#toolImages?.({ revision: instance.revision, sessionId })
-          await apply?.(persistentExtensionContext(context, nxt, attachment.config, images))
+          const view = persistentExtensionContext(context, nxt, attachment.config, images)
+          const run = () => apply?.({ ...view, logger: extensionLogger(this.#logs, source, scope, instance.sdk) })
+          if (this.#logs)
+            await withLogOwner(
+              {
+                sink: this.#logs,
+                source,
+                scope: {
+                  extensionId: instance.revision.extensionId,
+                  revisionId: instance.revision.id,
+                  agentId: attachment.agentId,
+                  sessionId,
+                },
+              },
+              run,
+            )
+          else await run()
           await this.#mcp?.({
             agentId: attachment.agentId,
             revision: instance.revision,

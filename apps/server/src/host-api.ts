@@ -16,6 +16,7 @@ import { assembleChannelRuntime, HostQueries } from './host-queries.js'
 import {
   projectChannelFact,
   projectConnectionEvent,
+  projectDshPlugins,
   readJsonBody,
   writeContractJson,
   writeError,
@@ -27,6 +28,8 @@ import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerCommandAccountRoutes } from './host-routes-command-accounts.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
 import { registerMcpRoutes } from './host-routes-mcp.js'
+import { registerLogRoutes } from './host-routes-logs.js'
+import type { HostLogService } from './logs/service.js'
 import { registerCommunityRoutes } from './host-routes-community.js'
 import { registerConnectionsRoutes } from './host-routes-connections.js'
 import { installedLibraryQuota, registerExtensionLibraryRoutes } from './host-routes-extension-library.js'
@@ -96,6 +99,7 @@ export const createNekroHostApi = (
     dshVersion: DEEPSEEK_HARNESS_VERSION,
   },
   isReady: () => boolean = () => true,
+  logs?: HostLogService,
 ): NekroHostApi => {
   const disposers: Array<() => void> = []
 
@@ -110,6 +114,18 @@ export const createNekroHostApi = (
       webServer.register({
         ...route,
         handler: (req, res) => {
+          if (isReady() && !route.path.startsWith('/api/logs') && route.path !== '/api/events') {
+            const started = performance.now()
+            res.once('finish', () => {
+              const durationMs = Math.round(performance.now() - started)
+              ;(logs ?? runtime.logs)?.write({
+                level: res.statusCode >= 500 ? 'error' : durationMs >= 2000 ? 'warn' : 'debug',
+                message: `${req.method ?? 'HTTP'} ${route.path} · HTTP ${res.statusCode} · ${durationMs} ms${res.statusCode >= 500 ? ' · 请求失败' : durationMs >= 2000 ? ' · 处理较慢' : ''}`,
+                source: { kind: 'system', id: 'http', name: '服务请求' },
+                details: { method: req.method, route: route.path, status: res.statusCode, durationMs },
+              })
+            })
+          }
           if (!isReady()) {
             writeError(res, 503, 'host-upgrading', 'NekroNXT 正在完成升级，请稍后再试。')
             return
@@ -155,6 +171,25 @@ export const createNekroHostApi = (
   // One global SSE hub: live clients plus a short in-memory replay window
   // keyed by Last-Event-ID. Domain facts stay in Channel / Session stores.
   const hub = new HostSseHub()
+  disposers.push(
+    registerLogRoutes(registerRoute, logs ?? runtime.logs, () => [
+      ...runtime.core.listConnections().map((connection) => ({
+        kind: 'connection' as const,
+        id: connection.id,
+        name: connection.alias || runtime.adapters.get(connection.adapterKey)?.descriptor.displayName || '平台连接',
+      })),
+      ...runtime.repository
+        .listExtensions()
+        .map((extension) => ({ kind: 'extension' as const, id: extension.id, name: extension.displayName })),
+      ...HostApiContracts.dshPlugins
+        .parseResponse({ plugins: projectDshPlugins(runtime) })
+        .plugins.flatMap((plugin) =>
+          (plugin.entries?.length ? plugin.entries.map((entry) => entry.id) : [`plugin:${plugin.packageName}`]).map(
+            (id) => ({ kind: 'dsh-plugin' as const, id, name: plugin.packageName, version: plugin.packageVersion }),
+          ),
+        ),
+    ]),
+  )
   const messageRevision = new Map<ChannelId, number>()
   const runtimeRevision = new Map<ChannelId, number>()
   const pendingFacts = new Map<ChannelId, ChannelFact[]>()
@@ -169,6 +204,19 @@ export const createNekroHostApi = (
     if (event.event === 'snapshot-changed' || event.event === 'dynamic-changed') projections.scheduleAttentionCheck()
   }
   const projections = new WorkspaceProjections(runtime, (event) => hub.publish(event))
+  const logService = logs ?? runtime.logs
+  if (logService) {
+    let previous = logService.currentStatus().state
+    disposers.push(
+      logService.subscribe(() => {
+        const state = logService.currentStatus().state
+        if (state !== previous) {
+          previous = state
+          projections.scheduleAttentionCheck()
+        }
+      }),
+    )
+  }
   const extensionImports = new ExtensionImportStaging()
   disposers.push(() => projections.dispose())
   const broadcastExtensionsChanged = (): void => {
