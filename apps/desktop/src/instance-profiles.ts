@@ -37,7 +37,7 @@ const LOCAL_PROFILE_ID = 'local'
 const DEFAULT_ROUTE = '/'
 /** Current client spaces plus the retired ones a remote instance on an older server may still use. */
 const ALLOWED_ROUTE =
-  /^\/(?:(?:live|channels|agents|workshop|wiring|settings|apps|work|connections|users|extensions)(?:\/[^?#]*)?)?(?:\?[^#]*)?(?:#.*)?$/u
+  /^\/(?:(?:live|channels|agents|workshop|wiring|settings|community|apps|work|connections|users|extensions)(?:\/[^?#]*)?)?(?:\?[^#]*)?(?:#.*)?$/u
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 

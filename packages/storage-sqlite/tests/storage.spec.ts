@@ -42,6 +42,7 @@ import {
   SqliteBackupManifestSchema,
   SqliteCoreRepository,
   agentDefinitions,
+  agentRevisions,
   assetOccurrences,
   channelEvents,
   channels,
@@ -168,8 +169,36 @@ const appendTextEvent = (
   }).event
 
 describe('Core SQLite baseline', () => {
+  it('writes feedback permission only when enabled and reads an omitted grant as disabled', async () => {
+    const { database, core, repository } = await createFixture()
+    try {
+      const created = core.createAgent({
+        displayName: '反馈样例',
+        persona: '',
+        model: { provider: 'fixture', model: 'fixture' },
+      })
+      const read = (id: string) =>
+        database.db
+          .select()
+          .from(agentRevisions)
+          .all()
+          .find((row) => row.id === id)!.capabilities
+      expect(read(created.revision.id)).not.toHaveProperty('communityFeedbackAuto')
+      expect(repository.getAgentRevision(created.revision.id)?.capabilities.communityFeedbackAuto).toBe(false)
+      const revised = core.reviseAgent(created.definition.id, created.revision.id, {
+        displayName: created.revision.displayName,
+        persona: created.revision.persona,
+        model: created.revision.model,
+        capabilities: { ...created.revision.capabilities, communityFeedbackAuto: true },
+      })
+      expect(read(revised.revision.id).communityFeedbackAuto).toBe(true)
+    } finally {
+      database.close()
+    }
+  })
+
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(50)
+    expect(Object.keys(coreSchema)).toHaveLength(52)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 

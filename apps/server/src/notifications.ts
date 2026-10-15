@@ -9,7 +9,8 @@ import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import type { LocalCredentialStore } from './credentials.js'
 
 export const DYNAMIC_CLIENT_APPROVAL_NOTIFICATION = 'dynamic-client-approval-requested' as const
-export type NotificationEventKey = typeof DYNAMIC_CLIENT_APPROVAL_NOTIFICATION
+export const COMMUNITY_FEEDBACK_NOTIFICATION = 'community-feedback-update' as const
+export type NotificationEventKey = typeof DYNAMIC_CLIENT_APPROVAL_NOTIFICATION | typeof COMMUNITY_FEEDBACK_NOTIFICATION
 
 const NOTIFICATION_SETTING_KEY = 'notifications'
 const DEFAULT_BARK_SERVER_URL = 'https://api.day.app'
@@ -28,6 +29,7 @@ const StoredNotificationSettingsSchema = z
     events: z
       .object({
         [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: z.boolean(),
+        [COMMUNITY_FEEDBACK_NOTIFICATION]: z.boolean().default(true),
       })
       .strict(),
   })
@@ -55,7 +57,10 @@ export interface NotificationSettingsUpdate {
     readonly deviceKey?: string
     readonly clearDeviceKey?: boolean
   }
-  readonly events: Readonly<Record<NotificationEventKey, boolean>>
+  readonly events: Readonly<{
+    [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: boolean
+    [COMMUNITY_FEEDBACK_NOTIFICATION]?: boolean | undefined
+  }>
 }
 
 export interface BarkTestInput {
@@ -86,7 +91,7 @@ const defaultSettings = (): StoredNotificationSettings => ({
   version: 1,
   system: { enabled: true },
   bark: { enabled: false, serverUrl: DEFAULT_BARK_SERVER_URL },
-  events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true },
+  events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true, [COMMUNITY_FEEDBACK_NOTIFICATION]: true },
 })
 
 const normalizeServerUrl = (raw: string): string => {
@@ -171,6 +176,8 @@ export class NotificationService {
       },
       events: {
         [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: input.events[DYNAMIC_CLIENT_APPROVAL_NOTIFICATION],
+        [COMMUNITY_FEEDBACK_NOTIFICATION]:
+          input.events[COMMUNITY_FEEDBACK_NOTIFICATION] ?? current.events[COMMUNITY_FEEDBACK_NOTIFICATION],
       },
     }
     try {
@@ -226,6 +233,36 @@ export class NotificationService {
     if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
       const deviceKey = await this.#credentials.resolve(stored.bark.credentialRef)
       await this.#sendBark(stored.bark.serverUrl, deviceKey, { title, body })
+      sent = true
+    }
+    return sent ? 'sent' : 'skipped'
+  }
+
+  async notifyCommunityFeedback(input: {
+    readonly kind: 'draft' | 'update'
+    readonly ref?: string
+  }): Promise<'sent' | 'skipped'> {
+    const stored = this.#readRecord()?.settings ?? defaultSettings()
+    if (!stored.events[COMMUNITY_FEEDBACK_NOTIFICATION]) return 'skipped'
+    const title = input.kind === 'draft' ? '有反馈等你确认' : '社区反馈有更新'
+    const body = input.kind === 'draft' ? '可以在社区反馈页查看并发送。' : `反馈 ${input.ref ?? ''} 有了新进展。`
+    let sent = false
+    if (stored.system.enabled) {
+      this.#publishClientNotification({
+        id: `feedback:${input.ref ?? 'draft'}:${this.#now()}:${this.#notificationCursor + 1}`,
+        kind: 'action-required',
+        title,
+        body,
+        occurredAt: this.#now(),
+        route: '/community/feedback',
+      })
+      sent = true
+    }
+    if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
+      await this.#sendBark(stored.bark.serverUrl, await this.#credentials.resolve(stored.bark.credentialRef), {
+        title,
+        body,
+      })
       sent = true
     }
     return sent ? 'sent' : 'skipped'

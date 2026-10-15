@@ -8,6 +8,7 @@ import {
 import type { ServerResponse } from 'node:http'
 import type { NekroRuntime } from './bootstrap.js'
 import { registerCommunityPersonaRoutes } from './host-routes-community-personas.js'
+import { registerCommunityFeedbackRoutes } from './host-routes-feedback.js'
 import { COMMUNITY_CALLBACK_PATH, CommunityError, UPDATE_CHECK_INTERVAL_MS } from './community.js'
 import {
   createExtensionRevisionExport,
@@ -75,10 +76,12 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
   const { runtime, registerRoute, extensionImports } = context
   const community = runtime.community
   registerCommunityPersonaRoutes(context)
+  const disposeFeedback = registerCommunityFeedbackRoutes(context)
   const checkInstalled = () => community.installed(installedSources(runtime))
   // 每天检查一次已安装扩展的更新；失败静默，下次打开社区时会再检查。
   const timer = setInterval(() => {
     void checkInstalled().catch(() => undefined)
+    void runtime.feedback.sync().catch(() => undefined)
   }, UPDATE_CHECK_INTERVAL_MS)
   timer.unref()
 
@@ -337,7 +340,10 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     },
   })
 
-  return () => clearInterval(timer)
+  return () => {
+    clearInterval(timer)
+    disposeFeedback()
+  }
 }
 
 /** 每个扩展最近一次从社区导入的版本及其来源。 */

@@ -95,6 +95,7 @@ export interface AgentSummary {
     readonly codeRun: boolean
     /** Network for commands and `run_code` programs. */
     readonly commandNetwork: boolean
+    readonly communityFeedbackAuto: boolean
     /** Accounts this agent's commands act as; each names an account of the host's library. */
     readonly commandAccounts: CommandAccountGrant[]
   }
@@ -542,6 +543,7 @@ export interface ProductState {
   readonly capabilityAvailability: CapabilityAvailability
   /** The host's account library; an account takes effect only for agents that grant it. */
   readonly commandAccounts: readonly CommandAccount[]
+  readonly communityFeedback?: HostApiResponse<'snapshot'>['communityFeedback']
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]

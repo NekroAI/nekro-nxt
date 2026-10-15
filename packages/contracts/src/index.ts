@@ -9,3 +9,5 @@ export * from './community.js'
 export * from './community-personas.js'
 
 export * from './logs.js'
+export * from './community-feedback.js'
+export * from './community-feedback-host.js'

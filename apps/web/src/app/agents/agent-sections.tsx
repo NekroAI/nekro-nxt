@@ -5,6 +5,7 @@ import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '.
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { PanelSlot, useExtensionActivation } from '../../extension-ui/index.js'
 import { callHostApi } from '../../host-api-client.js'
+import { useFeedbackSummary } from '../community/feedback-model.js'
 import {
   connectionDisplayName,
   useProductRuntime,
@@ -394,6 +395,7 @@ export function CapabilitiesSection({
   readonly update: DraftUpdate
 }) {
   const availability = useProductStore((state) => state.capabilityAvailability)
+  const feedback = useFeedbackSummary()
   const [pending, setPending] = useState<{
     readonly title: string
     readonly body: string
@@ -535,6 +537,29 @@ export function CapabilitiesSection({
             onCheckedChange={(checked) => setCapability('scheduledTasks', checked)}
           />
         </PropertyRow>
+        {feedback.enabled ? (
+          <PropertyRow
+            label="免确认提交反馈"
+            tip="只在你从客户端发出的消息触发的轮次中生效，不附带对话摘录，每天最多 5 条"
+          >
+            <Switch
+              label="免确认提交反馈"
+              checked={caps.communityFeedbackAuto}
+              onCheckedChange={(enabled) =>
+                confirmIfRisky(
+                  enabled,
+                  `允许${agent.name}免确认提交反馈？`,
+                  '反馈会直接发送到社区。只对你从客户端发出的消息触发的轮次生效，不附带对话摘录，每天最多 5 条。',
+                  () =>
+                    update((current) => ({
+                      ...current,
+                      capabilities: { ...current.capabilities, communityFeedbackAuto: enabled },
+                    })),
+                )
+              }
+            />
+          </PropertyRow>
+        ) : null}
       </PropertyList>
       <ConfirmDialog
         open={pending !== null}

@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
+import { Bot, CheckCircle2, MessageCircle, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
 import { useMemo } from 'react'
 import { useProductRuntime } from '../../product-runtime.js'
 import { Button, IconButton } from '../../ui-kit/index.js'
@@ -54,6 +54,7 @@ function groupAttention(items: readonly AttentionItem[]): readonly AttentionItem
 const SEVERITY_RANK: Record<AttentionItem['severity'], number> = { bad: 0, warn: 1, info: 2 }
 
 const attentionIcon = (item: AttentionItem) => {
+  if (item.kind === 'community-feedback') return <MessageCircle />
   if (item.kind === 'connection-unhealthy') return <Plug />
   if (item.kind === 'authoring-approval') return <Wrench />
   if (item.kind === 'agent-model-unavailable' || item.kind === 'agent-vision-unavailable') return <Bot />

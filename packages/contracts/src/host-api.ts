@@ -319,6 +319,7 @@ const AgentCapabilitiesSchema = z
     codeRun: z.boolean().default(false),
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
+    communityFeedbackAuto: z.boolean().default(false),
     /** Accounts this agent's commands may act as; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
   })
@@ -326,7 +327,7 @@ const AgentCapabilitiesSchema = z
 
 export const DynamicClientApprovalPolicySchema = z.enum(['manual', 'automatic'])
 
-export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested'])
+export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested', 'community-feedback-update'])
 export type NotificationEventKey = z.output<typeof NotificationEventKeySchema>
 
 export const NotificationSettingsViewSchema = z
@@ -340,7 +341,12 @@ export const NotificationSettingsViewSchema = z
         deviceKeyConfigured: z.boolean(),
       })
       .strict(),
-    events: z.record(NotificationEventKeySchema, z.boolean()),
+    events: z
+      .object({
+        'dynamic-client-approval-requested': z.boolean(),
+        'community-feedback-update': z.boolean().default(true),
+      })
+      .strict(),
   })
   .strict()
 
@@ -356,7 +362,9 @@ export const UpdateNotificationSettingsRequestSchema = z
         clearDeviceKey: z.boolean().optional(),
       })
       .strict(),
-    events: z.record(NotificationEventKeySchema, z.boolean()),
+    events: z
+      .object({ 'dynamic-client-approval-requested': z.boolean(), 'community-feedback-update': z.boolean().optional() })
+      .strict(),
   })
   .strict()
   .refine((value) => !(value.bark.deviceKey !== undefined && value.bark.clearDeviceKey === true), {
@@ -415,13 +423,14 @@ const ReviseAgentRequestSchema = AgentRevisionRequestContentSchema.extend({
   validatePersonaDocumentProjection(value, context)
 })
 
-// The defaults that fill `scheduledTasks`, `codeRun`, `commandNetwork` and `commandAccounts` for older clients must not
+// Defaults that fill capabilities for older clients must not
 // reset them in a partial update.
 const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
   .extend({
     scheduledTasks: z.boolean().optional(),
     codeRun: z.boolean().optional(),
     commandNetwork: z.boolean().optional(),
+    communityFeedbackAuto: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
   })
   .strict()
@@ -1189,11 +1198,12 @@ export const AttentionItemSchema = z
       'agent-model-unavailable',
       'agent-vision-unavailable',
       'logs-unavailable',
+      'community-feedback',
     ]),
     severity: z.enum(['critical', 'warning', 'info']),
     subject: z
       .object({
-        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent', 'logs']),
+        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent', 'logs', 'community-feedback']),
         id: NonEmptyStringSchema,
       })
       .strict(),
@@ -1217,6 +1227,7 @@ export const AttentionItemSchema = z
           'open-connection',
           'open-agent',
           'open-logs',
+          'open-community-feedback',
         ]),
         label: z.string().min(1).max(40),
       })
@@ -1416,6 +1427,7 @@ export type AddCommandAccountRequest = z.output<typeof AddCommandAccountRequestS
 
 export const HostSnapshotSchema = z
   .object({
+    communityFeedback: CommunityFeedbackSnapshotSchema.optional(),
     upgrade: HostUpgradeSummarySchema.optional(),
     cursor: HostSyncCursorSchema,
     diagnosticsSampledAt: z.number().int().nonnegative(),
@@ -3370,6 +3382,139 @@ export const HostApiContracts = {
     response: CommunityStatusSchema,
     error: HostApiErrorSchema,
   }),
+  getCommunityFeedbackSettings: defineContract({
+    method: 'GET',
+    path: '/api/community/feedback/settings',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateCommunityFeedbackSettings: defineContract({
+    method: 'PUT',
+    path: '/api/community/feedback/settings',
+    params: EmptyParamsSchema,
+    request: CommunityFeedbackSettingsUpdateSchema,
+    response: CommunityFeedbackSettingsSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  listCommunityFeedback: defineContract({
+    timeoutMs: 60_000,
+    method: 'GET',
+    path: '/api/community/feedback',
+    params: z.object({ refresh: z.literal('1').optional() }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackLocalListSchema,
+    error: HostApiErrorSchema,
+  }),
+  getCommunityFeedback: defineContract({
+    timeoutMs: 60_000,
+    method: 'GET',
+    path: '/api/community/feedback/items/:ref',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+  }),
+  createCommunityFeedbackDraft: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/drafts',
+    params: EmptyParamsSchema,
+    request: CommunityFeedbackDraftInputSchema,
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  updateCommunityFeedbackDraft: defineContract({
+    method: 'PUT',
+    path: '/api/community/feedback/drafts/:draftId',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: CommunityFeedbackDraftUpdateSchema,
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  sendCommunityFeedbackDraft: defineContract({
+    timeoutMs: 60_000,
+    method: 'POST',
+    path: '/api/community/feedback/drafts/:draftId/send',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: z.object({ consent: z.boolean().default(false) }).strict(),
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  discardCommunityFeedbackDraft: defineContract({
+    method: 'DELETE',
+    path: '/api/community/feedback/drafts/:draftId',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackDraftSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  previewCommunityFeedbackPayload: defineContract({
+    method: 'GET',
+    path: '/api/community/feedback/drafts/:draftId/preview',
+    params: z.object({ draftId: CommunityFeedbackDraftIdSchema }).strict(),
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackPayloadSchema,
+    error: HostApiErrorSchema,
+  }),
+  getLastSentCommunityFeedbackPayload: defineContract({
+    method: 'GET',
+    path: '/api/community/feedback/last-sent',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CommunityFeedbackLastPayloadSchema,
+    error: HostApiErrorSchema,
+  }),
+  replyCommunityFeedback: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/messages',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: z.object({ body: z.string().trim().min(1).max(4000) }).strict(),
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  withdrawCommunityFeedback: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/withdraw',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: CommunityFeedbackWithdrawSchema,
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  reopenCommunityFeedback: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/reopen',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: CommunityFeedbackReopenSchema,
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  markCommunityFeedbackAffected: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/affected',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: z.object({ affected: z.boolean().default(true), consent: z.boolean().default(false) }).strict(),
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
+  confirmCommunityFeedbackFixed: defineContract({
+    method: 'POST',
+    path: '/api/community/feedback/items/:ref/confirm-fixed',
+    params: z.object({ ref: CommunityFeedbackRefSchema }).strict(),
+    request: z.object({}).strict(),
+    response: CommunityFeedbackSchema,
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
+  }),
   startCommunityLogin: defineContract({
     method: 'POST',
     path: '/api/community/login',
@@ -4471,3 +4616,21 @@ export function buildHostApiContractPath<Params extends AnySchema>(
 export function buildHostApiPath<Name extends HostApiContractName>(name: Name, input: HostApiParams<Name>): string {
   return buildValidatedHostApiPath(HostApiContracts[name], input)
 }
+import {
+  CommunityFeedbackDraftIdSchema,
+  CommunityFeedbackDraftInputSchema,
+  CommunityFeedbackDraftSchema,
+  CommunityFeedbackDraftUpdateSchema,
+  CommunityFeedbackLastPayloadSchema,
+  CommunityFeedbackLocalListSchema,
+  CommunityFeedbackPayloadSchema,
+  CommunityFeedbackSettingsSchema,
+  CommunityFeedbackSettingsUpdateSchema,
+  CommunityFeedbackSnapshotSchema,
+} from './community-feedback-host.js'
+import {
+  CommunityFeedbackRefSchema,
+  CommunityFeedbackSchema,
+  CommunityFeedbackWithdrawSchema,
+  CommunityFeedbackReopenSchema,
+} from './community-feedback.js'

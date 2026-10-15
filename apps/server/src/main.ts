@@ -655,6 +655,7 @@ const startLeasedServer = async (
       ...(owner.logs === undefined ? {} : { logs: owner.logs }),
       // 默认连接正式社区；测试站或本地社区开发服务用 NEKRO_COMMUNITY_URL 覆盖。
       community: { url: process.env['NEKRO_COMMUNITY_URL'] },
+      feedbackEnvironment: { hostKind: process.env['NEKRO_HOST_KIND'] === 'desktop' ? 'desktop' : 'server', releaseId },
       ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
     },
     options.signal,

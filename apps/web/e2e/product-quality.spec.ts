@@ -29,6 +29,71 @@ import {
 
 type Snapshot = HostApiResponse<'snapshot'>
 
+test('feedback auto permission requires a global switch and explicit confirmation before saving', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  let enabled = false
+  let snapshot: Snapshot = {
+    ...productSnapshot,
+    communityFeedback: { enabled, signedIn: true, pendingDrafts: 0, unread: 0 },
+  }
+  await installProductRoutes(page, () => snapshot)
+  const mutations: unknown[] = []
+  await page.route(`**/api/agents/${targetAgentId}/capabilities`, async (route) => {
+    const value = route.request().postDataJSON() as unknown
+    const patch = HostApiContracts.updateAgentCapabilities.parseRequest(value)
+    mutations.push(patch)
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) =>
+        agent.id === targetAgentId
+          ? {
+              ...agent,
+              capabilities: { ...agent.capabilities, communityFeedbackAuto: patch.communityFeedbackAuto ?? false },
+            }
+          : agent,
+      ),
+    }
+    const agent = snapshot.agents.find((agent) => agent.id === targetAgentId)!
+    await route.fulfill({ json: { currentRevisionId: agent.currentRevisionId, capabilities: agent.capabilities } })
+  })
+  await page.goto(`/agents/${targetAgentId}`)
+  await expect(page.getByRole('heading', { name: '资料员', exact: true })).toBeVisible()
+  await expect(page.getByRole('switch', { name: '免确认提交反馈', exact: true })).toHaveCount(0)
+  enabled = true
+  snapshot = { ...snapshot, communityFeedback: { enabled, signedIn: true, pendingDrafts: 0, unread: 0 } }
+  for (const theme of ['light', 'dark'] as const) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
+      await page.reload()
+      const control = page.getByRole('switch', { name: '免确认提交反馈', exact: true })
+      await control.scrollIntoViewIfNeeded()
+      await expect(control).not.toBeChecked()
+      await control.click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toContainText('每天最多 5 条')
+      await expect(dialog).toContainText('不附带对话摘录')
+      await capture(page, testInfo, `feedback-permission-${theme}-${width}`)
+      expect(mutations).toHaveLength(0)
+      await dialog.getByRole('button', { name: '允许', exact: true }).click()
+      await expect(control).toBeChecked()
+      await expect(
+        page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存', exact: true }),
+      ).toBeVisible()
+      await page.getByRole('button', { name: '放弃', exact: true }).click()
+      await expect(control).not.toBeChecked()
+    }
+  }
+  await page.getByRole('switch', { name: '免确认提交反馈', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '允许', exact: true }).click()
+  await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存', exact: true }).click()
+  await expect(page.getByRole('region', { name: '未保存的修改' })).toHaveCount(0)
+  expect(mutations).toEqual([expect.objectContaining({ communityFeedbackAuto: true })])
+  expect(failures).toEqual([])
+})
+
 // Every scenario replaces productMetadata; the health endpoint must represent the same synthetic Host.
 test.beforeEach(async ({ page }) => {
   await installSnapshotHealthRoutes(page, productSnapshot)

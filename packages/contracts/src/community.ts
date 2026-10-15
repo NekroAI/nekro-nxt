@@ -90,6 +90,8 @@ export const CommunityExtensionSortSchema = z.enum(['updated', 'score', 'downloa
 export const CommunityReleaseIdSchema = z.string().regex(/^rel_[0-9A-Za-z]+$/u)
 
 export const CommunityAccountSchema = z.object({
+  /** Immutable community identity; absent when connected to a community predating feedback support. */
+  id: z.string().min(1).max(100).optional(),
   handle: z.string().min(1).max(80),
   displayName: z.string().max(200),
   avatarUrl: z.string().url().nullable(),
@@ -100,6 +102,7 @@ export const CommunityEnvironmentSchema = z.enum(['production', 'staging', 'deve
 export type CommunityEnvironment = z.output<typeof CommunityEnvironmentSchema>
 
 export const CommunityStatusSchema = z.object({
+  features: z.array(z.string()).optional(),
   communityUrl: z.string().url(),
   /** 社区自我声明的环境；连不上或旧版社区时为 null。 */
   environment: CommunityEnvironmentSchema.nullable(),

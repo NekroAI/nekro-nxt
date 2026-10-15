@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { JsonValue } from '@nekro-nxt/contracts'
 import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import { LocalCredentialStore } from '../src/credentials.js'
-import { DYNAMIC_CLIENT_APPROVAL_NOTIFICATION, NotificationService } from '../src/notifications.js'
+import {
+  COMMUNITY_FEEDBACK_NOTIFICATION,
+  DYNAMIC_CLIENT_APPROVAL_NOTIFICATION,
+  NotificationService,
+} from '../src/notifications.js'
 
 const temporaryRoots: string[] = []
 afterEach(async () => {
@@ -42,12 +46,39 @@ const approval = {
 }
 
 describe('NotificationService', () => {
+  it('routes feedback to its page and preserves a disabled event when an older client saves', async () => {
+    const { service, fetch } = await createFixture()
+    const cursor = service.readClientNotifications(undefined).cursor
+    await expect(service.notifyCommunityFeedback({ kind: 'draft' })).resolves.toBe('sent')
+    await expect(service.notifyCommunityFeedback({ kind: 'update', ref: 'FB-12' })).resolves.toBe('sent')
+    expect(service.readClientNotifications(cursor).notifications.map((item) => item.route)).toEqual([
+      '/community/feedback',
+      '/community/feedback',
+    ])
+    expect(fetch).not.toHaveBeenCalled()
+    const disabled = await service.updateSettings({
+      system: { enabled: true },
+      bark: { enabled: false, serverUrl: 'https://push.example.test' },
+      events: {
+        [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true,
+        [COMMUNITY_FEEDBACK_NOTIFICATION]: false,
+      },
+    })
+    await service.updateSettings({
+      expectedRevision: disabled.revision!,
+      system: { enabled: true },
+      bark: { enabled: false, serverUrl: 'https://push.example.test' },
+      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: false },
+    })
+    expect((await service.getSettings()).events[COMMUNITY_FEEDBACK_NOTIFICATION]).toBe(false)
+    await expect(service.notifyCommunityFeedback({ kind: 'draft' })).resolves.toBe('skipped')
+  })
   it('defaults to Desktop system notifications while keeping Bark disabled', async () => {
     const { service } = await createFixture()
     await expect(service.getSettings()).resolves.toEqual({
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true },
+      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true, [COMMUNITY_FEEDBACK_NOTIFICATION]: true },
     })
   })
 

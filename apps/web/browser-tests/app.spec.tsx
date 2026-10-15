@@ -116,7 +116,7 @@ const browserSnapshot = HostApiContracts.snapshot.response.parse({
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-    events: { 'dynamic-client-approval-requested': true },
+    events: { 'dynamic-client-approval-requested': true, 'community-feedback-update': true },
   },
   models: [{ provider: 'openai', providerName: 'OpenAI', id: 'gpt-5', name: 'GPT-5' }],
   agents: [

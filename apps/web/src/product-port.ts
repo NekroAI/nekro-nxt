@@ -23,6 +23,7 @@ export interface ProductSnapshot {
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
   readonly capabilityAvailability: CapabilityAvailability
   readonly commandAccounts?: ProductState['commandAccounts']
+  readonly communityFeedback?: ProductState['communityFeedback']
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
   readonly channels: readonly ChannelSummary[]

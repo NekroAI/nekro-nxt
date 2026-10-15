@@ -33,6 +33,11 @@ import { createExtensionSourcesRepository } from './repositories/extension-sourc
 export type { ExtensionRevisionSourceRecord } from './repositories/extension-sources.js'
 export type { ChannelMemberNoteRecord } from './repositories/channel-member-notes.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
+import {
+  createCommunityFeedbackRepository,
+  type CommunityFeedbackRepository,
+} from './repositories/community-feedback.js'
+export type { CommunityFeedbackRepository, CommunityFeedbackIdentity } from './repositories/community-feedback.js'
 
 export * from './backup.js'
 export * from './database.js'
@@ -106,6 +111,7 @@ const emptyWorkTreeOrder = (): WorkTreeOrderRecord => ({
 
 export class SqliteCoreRepository implements CurrentRepository {
   readonly #database: CoreDatabase
+  readonly communityFeedback: CommunityFeedbackRepository
   readonly #db
   readonly #agents
   readonly #channels
@@ -135,6 +141,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   ) {
     this.#database = database
     this.#db = database.db
+    this.communityFeedback = createCommunityFeedbackRepository(database.db)
     this.#agents = createAgentsRepository(database.db)
     this.#channels = createChannelsRepository(database.db)
     this.#runtime = createRuntimeRepository(database.db)
