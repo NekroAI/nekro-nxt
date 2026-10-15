@@ -590,16 +590,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await page.goto(`/workshop/extensions/${extensionId}`)
   await expect(page.getByRole('heading', { name: '合成聊天适配器', level: 1 })).toBeVisible()
   await expect(page.getByText('未安装', { exact: true }).first()).toBeVisible()
-  const version = page.getByRole('combobox', { name: '版本' })
-  // Records list newest first: the first option is v2, the second v1.
-  const pickRecord = async (position: number) => {
-    await version.click()
-    const option = page.getByRole('option').nth(position)
-    const label = (await option.textContent()) ?? ''
-    await option.click()
-    return label
-  }
-  await pickRecord(0)
+  // Installing from the overview takes the newest saved version.
   await page.getByRole('button', { name: '安装', exact: true }).click()
   await expect(page.getByText('已安装', { exact: true }).first()).toBeVisible()
   expect(installationRequests).toEqual([revisionV2])
@@ -615,14 +606,14 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await expect(detail.getByRole('heading', { name: '旅程合成连接' })).toBeVisible()
   await expect(detail.getByRole('combobox', { name: '测试频道' })).toContainText('合成演示频道')
 
-  await page.goto(`/workshop/extensions/${extensionId}`)
-  const v1 = await pickRecord(1)
-  await page.getByRole('button', { name: '切换到这个版本' }).click()
-  await expect(version).toHaveText(`${v1} · 已安装`)
-  await pickRecord(0)
-  await page.getByRole('button', { name: '切换到这个版本' }).click()
-  await expect(version).toHaveText(/ · 已安装$/u)
-  await expect(version).not.toHaveText(`${v1} · 已安装`)
+  await page.goto(`/workshop/extensions/${extensionId}?tab=versions`)
+  // The version table lists newest first: the first row is v2, the second v1.
+  const versions = page.getByRole('table', { name: '版本' }).getByRole('row')
+  await versions.nth(2).getByRole('button', { name: '切换到这个版本' }).click()
+  await expect(versions.nth(2)).toContainText('正在使用')
+  await versions.nth(1).getByRole('button', { name: '切换到这个版本' }).click()
+  await expect(versions.nth(1)).toContainText('正在使用')
+  await expect(versions.nth(2)).not.toContainText('正在使用')
   await expect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
   expect(installationRequests).toEqual([revisionV2, revisionV1, revisionV2])
   expect(await page.locator('main').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
@@ -630,6 +621,7 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   const installedScreenshot = testInfo.outputPath('adapter-installed.png')
   await page.screenshot({ path: installedScreenshot, animations: 'disabled' })
   await testInfo.attach('adapter-installed', { path: installedScreenshot, contentType: 'image/png' })
+  await page.getByRole('tab', { name: '概览' }).click()
   await page.getByRole('button', { name: '卸载', exact: true }).click()
   const uninstallDialog = page.getByRole('dialog')
   await expect(uninstallDialog).toContainText('连接、频道和消息保留')

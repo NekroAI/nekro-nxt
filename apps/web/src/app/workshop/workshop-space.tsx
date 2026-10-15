@@ -1,5 +1,5 @@
 import { useGo } from '../model/nav.js'
-import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, ShieldQuestion, Upload, Wrench } from 'lucide-react'
+import { Hammer, LayoutPanelLeft, PanelsTopLeft, Plug, RefreshCw, ShieldQuestion, Upload, Wrench } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
@@ -39,14 +39,19 @@ import {
   type TaskGroup,
 } from './workshop-model.js'
 import { RequestsView } from './requests-view.js'
+import { UpdatesView, useCommunityUpdates } from './updates-view.js'
 import styles from './workshop.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
 
-type Route = { readonly kind: 'task' | 'extension'; readonly id: string } | { readonly kind: 'requests' }
+type Route =
+  | { readonly kind: 'task' | 'extension'; readonly id: string }
+  | { readonly kind: 'requests' }
+  | { readonly kind: 'updates' }
 
 const parse = (path: string): Route | undefined => {
   if (/^\/workshop\/requests\/?$/u.test(path)) return { kind: 'requests' }
+  if (/^\/workshop\/updates\/?$/u.test(path)) return { kind: 'updates' }
   // 社区扩展已移到一级「社区」入口；旧地址跳转过去。
   const match = /^\/workshop\/(tasks|extensions)\/([^/]+)/u.exec(path)
   return match
@@ -69,6 +74,7 @@ export default function WorkshopSpace() {
   const tasks = useMemo(() => sortTasks(allTasks), [allTasks])
   const extensions = useProductStore((state) => state.extensions)
   const agents = useProductStore((state) => state.agents)
+  const updates = useCommunityUpdates()
   const requested = parse(pathname)
   // Wide screens can preview the first object; on narrow screens the base route remains the collection list.
   const fallback: Route | undefined =
@@ -87,10 +93,23 @@ export default function WorkshopSpace() {
   const importer = useRef<HTMLInputElement>(null)
   const task = route?.kind === 'task' ? tasks.find((item) => item.id === route.id) : undefined
   const extension = route?.kind === 'extension' ? extensions.find((item) => item.id === route.id) : undefined
-  useCrumb('工坊', route?.kind === 'requests' ? '等待确认的请求' : (task?.title ?? extension?.name))
+  useCrumb(
+    '工坊',
+    route?.kind === 'requests'
+      ? '等待确认的请求'
+      : route?.kind === 'updates'
+        ? '社区更新'
+        : (task?.title ?? extension?.name),
+  )
   // An item that was just imported or created reaches the list with the next snapshot, after the address already
   // points at it; give that snapshot a moment before treating the address as stale.
-  const missing = route !== undefined && route.kind !== 'requests' && !task && !extension && hostStatus === 'ready'
+  const missing =
+    route !== undefined &&
+    route.kind !== 'requests' &&
+    route.kind !== 'updates' &&
+    !task &&
+    !extension &&
+    hostStatus === 'ready'
   useEffect(() => {
     if (!missing) return undefined
     const timer = setTimeout(() => navigate('/workshop', { replace: true }), MISSING_ITEM_GRACE_MS)
@@ -100,8 +119,8 @@ export default function WorkshopSpace() {
   if (pathname.startsWith('/workshop/community')) return <Navigate to="/community" replace />
 
   const selected =
-    route?.kind === 'requests'
-      ? 'requests'
+    route?.kind === 'requests' || route?.kind === 'updates'
+      ? route.kind
       : task
         ? `task:${task.id}`
         : extension
@@ -218,6 +237,25 @@ export default function WorkshopSpace() {
           ))}
 
           <h3 className={styles.group}>扩展库</h3>
+          <Link
+            to="/workshop/updates"
+            className={styles.row}
+            data-selected={selected === 'updates'}
+            aria-current={selected === 'updates' ? 'page' : undefined}
+          >
+            <span className={styles.rowGlyph}>
+              <RefreshCw size={14} />
+            </span>
+            <span className={styles.rowName}>社区更新</span>
+            {updates.size > 0 ? (
+              <span className={styles.rowState}>
+                <StatusDot tone="accent" />
+              </span>
+            ) : null}
+            <span className={styles.rowSub}>
+              {updates.size > 0 ? `${updates.size} 个扩展有更新` : '从社区安装和发布的扩展'}
+            </span>
+          </Link>
           {extensions.length === 0 ? (
             <p className={styles.groupEmpty}>
               还没有扩展。可以
@@ -243,7 +281,10 @@ export default function WorkshopSpace() {
                 <span className={styles.rowState}>
                   <StatusDot tone={usage.tone} />
                 </span>
-                <span className={styles.rowSub}>{usage.label}</span>
+                <span className={styles.rowSub}>
+                  {usage.label}
+                  {updates.has(item.id) ? <span className={styles.rowUpdate}> · 有更新</span> : null}
+                </span>
               </Link>
             )
           })}
@@ -269,6 +310,8 @@ export default function WorkshopSpace() {
       />
       {route?.kind === 'requests' ? (
         <RequestsView />
+      ) : route?.kind === 'updates' ? (
+        <UpdatesView />
       ) : task ? (
         <TaskView key={task.id} task={task} />
       ) : extension ? (

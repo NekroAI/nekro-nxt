@@ -12,6 +12,7 @@ declare const styles: {
   readonly cellAgentText: string
   readonly chevron: string
   readonly config: string
+  readonly contributionChips: string
   readonly contributionName: string
   readonly contributions: string
   readonly creators: string
@@ -54,6 +55,8 @@ declare const styles: {
   readonly rowName: string
   readonly rowState: string
   readonly rowSub: string
+  readonly rowUpdate: string
+  readonly srOnly: string
   readonly start: string
   readonly startActions: string
   readonly startFoot: string
@@ -62,6 +65,7 @@ declare const styles: {
   readonly taskSide: string
   readonly testSecrets: string
   readonly testSecretsActions: string
+  readonly versionCell: string
 }
 
 export default styles

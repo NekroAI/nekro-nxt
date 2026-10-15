@@ -731,3 +731,29 @@
   flex-wrap: wrap;
   gap: var(--s-1);
 }
+
+.contributionChips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rowUpdate {
+  color: var(--accent);
+}
+
+.versionCell {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

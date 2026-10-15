@@ -1,4 +1,4 @@
-import { Compass, MessageCircle, Repeat2, Send, UserRound, UsersRound } from 'lucide-react'
+import { Compass, MessageCircle, Send, UserRound, UsersRound } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import type { CommunityPermissionItem, CommunityReviewStatus, HostApiResponse } from '@nekro-nxt/contracts'
@@ -11,7 +11,6 @@ import { FeedbackView } from './feedback.js'
 import { feedbackScope, useFeedbackSummary } from './feedback-model.js'
 import { ENVIRONMENT_LABEL, useCommunityStatus } from './community-model.js'
 import { CommunityView } from './discover.js'
-import { SyncView } from './sync.js'
 import { MineView, ReviewReportView } from './mine.js'
 import { useWideLayout } from './persona-model.js'
 import { PersonaCatalog, PersonaDetail } from './personas.js'
@@ -107,18 +106,6 @@ export default function CommunitySpace() {
       <SelectionList selectedKey={selected}>
         {row('discover', '/community', <Compass size={14} />, '发现', '浏览、搜索与安装社区扩展')}
         {row('personas', '/community/personas', <UsersRound size={14} />, '人设', '安装社区作者分享的人设')}
-        {row(
-          'sync',
-          '/community/sync',
-          <Repeat2 size={14} />,
-          '同步',
-          status && status.updatesAvailable > 0
-            ? `${status.updatesAvailable} 个扩展需要处理`
-            : '安装和发布的扩展与社区是否一致',
-          status && status.updatesAvailable > 0 ? (
-            <span className={styles.count}>{status.updatesAvailable}</span>
-          ) : null,
-        )}
         {row('mine', '/community/mine', <Send size={14} />, '我的发布', account ? '发布记录与审查结果' : '登录后查看')}
         {status?.features?.includes('feedback') || feedback.pendingDrafts > 0 || feedback.unread > 0
           ? row(
@@ -193,7 +180,7 @@ export default function CommunitySpace() {
           <PersonaCatalog selectedId={section.personaId} />
         )
       ) : section.kind === 'sync' ? (
-        <SyncView onChecked={() => void community.refresh()} />
+        <Navigate to="/workshop/updates" replace />
       ) : section.kind === 'feedback' ? (
         <FeedbackView key={feedbackScope(community)} community={community} />
       ) : section.kind === 'mine' ? (

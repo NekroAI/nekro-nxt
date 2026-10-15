@@ -7,7 +7,8 @@ import { useProductStore, type LocalExtensionSummary } from '../../product-runti
 import { Button, Chip, Skeleton } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { useGo } from '../model/nav.js'
-import { layoutLineage, originLabel, type LineageLine, type PlacedNode } from './lineage-model.js'
+import { layoutLineage, type LineageLine, type LineageNode, type PlacedNode } from './lineage-model.js'
+import { describeVersion, type VersionText } from './version-text.js'
 import styles from './lineage.module.css'
 
 type Revision = LocalExtensionSummary['revisions'][number]
@@ -45,7 +46,10 @@ export function LineageView({
   readonly extension: LocalExtensionSummary
   readonly actions: LineageActions
 }) {
-  const familySize = useProductStore((state) => state.extensions.length)
+  const extensions = useProductStore((state) => state.extensions)
+  const tasks = useProductStore((state) => state.authoringTasks)
+  const agents = useProductStore((state) => state.agents)
+  const familySize = extensions.length
   const [lines, setLines] = useState<readonly LineageLine[]>()
   const [selected, setSelected] = useState<string>()
   const installed = extension.installation?.revisionId
@@ -70,8 +74,28 @@ export function LineageView({
   const height = PAD_TOP + PAD_BOTTOM + Math.max(0, layout.rows - 1) * ROW
   const lineOf = (extensionId: string) => lines.find((line) => line.extensionId === extensionId)
   const nameOf = (extensionId: string) => lineOf(extensionId)?.displayName ?? '另一个扩展'
-  const labelOf = (revisionId: string) =>
-    lines.flatMap((line) => line.nodes).find((node) => node.revisionId === revisionId)?.label
+  // Versions of every line read the same way: date, what changed, where it came from (interaction model §2.5).
+  const textOf = (node: LineageNode) => {
+    const owner = extensions.find((item) => item.id === node.extensionId)
+    const revision = owner?.revisions.find((item) => item.id === node.revisionId)
+    return describeVersion(
+      revision ?? {
+        createdAt: node.createdAt,
+        origin: node.origin,
+        versionLabel: node.label,
+        releases: node.releaseNumbers.map((number) => ({ number })),
+      },
+      {
+        siblings: lineOf(node.extensionId)?.nodes.map((item) => item.createdAt) ?? [],
+        tasks,
+        agentName: (agentId) => agents.find((agent) => agent.id === agentId)?.name,
+      },
+    )
+  }
+  const labelOf = (revisionId: string) => {
+    const node = lines.flatMap((line) => line.nodes).find((item) => item.revisionId === revisionId)
+    return node ? textOf(node).title : undefined
+  }
 
   const select = (revisionId: string) => setSelected(revisionId)
   const onKey = (event: KeyboardEvent, revisionId: string) => {
@@ -137,7 +161,7 @@ export function LineageView({
                 style={{ ['--lane' as string]: laneColor(entry.lane) }}
                 role="button"
                 tabIndex={0}
-                aria-label={`${other ? `${nameOf(node.extensionId)} ` : ''}${node.label}${node.current ? '，正在使用' : ''}${releases ? `，社区发布 ${releases}` : ''}`}
+                aria-label={`${other ? `${nameOf(node.extensionId)} ` : ''}${textOf(node).title}${node.current ? '，正在使用' : ''}${releases ? `，社区发布 ${releases}` : ''}`}
                 aria-pressed={chosen?.node.revisionId === node.revisionId}
                 onClick={() => select(node.revisionId)}
                 onKeyDown={(event) => onKey(event, node.revisionId)}
@@ -145,7 +169,7 @@ export function LineageView({
                 <circle className={styles.halo} cx={x} cy={y} r={RADIUS + 5} />
                 <circle className={styles.dot} cx={x} cy={y} r={RADIUS} />
                 <text className={styles.label} x={x} y={y - RADIUS - 7}>
-                  {node.label}
+                  {textOf(node).short}
                 </text>
                 {releases ? (
                   <text className={styles.badge} x={x} y={y + RADIUS + 15}>
@@ -163,6 +187,7 @@ export function LineageView({
           entry={chosen}
           extension={extension}
           lineName={nameOf(chosen.node.extensionId)}
+          text={textOf(chosen.node)}
           parentLabel={chosen.node.parentRevisionId === undefined ? undefined : labelOf(chosen.node.parentRevisionId)}
           actions={actions}
         />
@@ -175,12 +200,14 @@ function VersionDetail({
   entry,
   extension,
   lineName,
+  text,
   parentLabel,
   actions,
 }: {
   readonly entry: PlacedNode
   readonly extension: LocalExtensionSummary
   readonly lineName: string
+  readonly text: VersionText
   readonly parentLabel: string | undefined
   readonly actions: LineageActions
 }) {
@@ -191,7 +218,7 @@ function VersionDetail({
       <div className={styles.detail}>
         <div className={styles.detailHead}>
           <b>
-            {lineName} {node.label}
+            {lineName} · {text.title}
           </b>
           {node.current ? <Chip tone="ok">正在使用</Chip> : null}
         </div>
@@ -214,7 +241,7 @@ function VersionDetail({
   return (
     <div className={styles.detail}>
       <div className={styles.detailHead}>
-        <b>{node.label}</b>
+        <b>{text.title}</b>
         {node.current ? <Chip tone="ok">正在使用</Chip> : null}
         {users.length > 0 ? <Chip tone="ok">{users.map((item) => item.agentName).join('、')} 在用</Chip> : null}
         {revision.releases.map((release) => (
@@ -228,7 +255,7 @@ function VersionDetail({
       <dl className={styles.facts}>
         <div>
           <dt>来源</dt>
-          <dd>{originLabel[node.origin]}</dd>
+          <dd>{text.source}</dd>
         </div>
         <div>
           <dt>保存于</dt>
@@ -237,6 +264,10 @@ function VersionDetail({
         <div>
           <dt>基于</dt>
           <dd>{basedOn}</dd>
+        </div>
+        <div>
+          <dt>编号</dt>
+          <dd>{text.code}</dd>
         </div>
         <div>
           <dt>数据格式</dt>

@@ -1,7 +1,6 @@
 import { communityReviewLabel, HostApiContracts, type CommunitySyncItem } from '@nekro-nxt/contracts'
 import { RefreshCw, Repeat2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { callHostApi } from '../../host-api-client.js'
 import { useProductStore } from '../../product-runtime.js'
 import {
@@ -12,15 +11,15 @@ import {
   EmptyState,
   ExtensionIcon,
   MainContent,
-  ObjectHeader,
+  PageHeader,
   Skeleton,
   toast,
   type Tone,
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { useGo } from '../model/nav.js'
-import { errorMessage } from './community-model.js'
-import styles from './community.module.css'
+import { errorMessage } from '../community/community-model.js'
+import styles from '../community/community.module.css'
 
 type Sync = { readonly checkedAt: number | null; readonly items: readonly CommunitySyncItem[] }
 
@@ -31,7 +30,7 @@ const describe = (
   const owner = item.role === 'owner'
   switch (item.status) {
     case 'same':
-      return { label: '已同步', tone: 'ok', detail: `本机的 ${item.currentVersionLabel} 就是社区最新发布。` }
+      return { label: '已是最新', tone: 'ok', detail: '' }
     case 'remote-ahead':
       return {
         label: '社区有更新',
@@ -42,7 +41,7 @@ const describe = (
       }
     case 'local-ahead':
       return owner
-        ? { label: '可以发布', tone: 'accent', detail: `本机的 ${item.currentVersionLabel} 比社区最新发布更新。` }
+        ? { label: '可以发布', tone: 'accent', detail: '本机版本比社区最新发布更新。' }
         : {
             label: '本机有修改',
             tone: 'neutral',
@@ -66,7 +65,7 @@ const describe = (
  * the newest release are the same, which one is ahead, or whether both changed. Updating imports the release as the
  * next local version and switches to it.
  */
-export function SyncView({ onChecked }: { readonly onChecked: () => void }) {
+export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) {
   const navigate = useGo()
   const extensions = useProductStore((state) => state.extensions)
   const localIcons = new Map(extensions.map((extension) => [extension.id, extension.iconUrl]))
@@ -81,7 +80,7 @@ export function SyncView({ onChecked }: { readonly onChecked: () => void }) {
     try {
       setSync(await callHostApi(HostApiContracts.listCommunitySync, refresh ? { refresh: '1' } : {}, undefined))
       setError(undefined)
-      onChecked()
+      onChecked?.()
     } catch (caught) {
       setError(errorMessage(caught))
     } finally {
@@ -125,19 +124,9 @@ export function SyncView({ onChecked }: { readonly onChecked: () => void }) {
   ).length
   return (
     <MainContent>
-      <ObjectHeader
-        visual={
-          <span className={styles.objectGlyph}>
-            <Repeat2 size={20} />
-          </span>
-        }
-        title="同步"
-        meta={
-          <span>
-            {sync?.checkedAt ? `${relativeTime(sync.checkedAt)}检查` : '本机安装和发布的社区扩展'}
-            {attention ? ` · ${attention} 个需要处理` : ''}
-          </span>
-        }
+      <PageHeader
+        title="社区更新"
+        subtitle={`${sync?.checkedAt ? `上次检查 ${relativeTime(sync.checkedAt)}` : '从社区安装和发布到社区的扩展'}${attention ? ` · ${attention} 个需要处理` : ''}`}
         actions={
           <Button size="small" icon={<RefreshCw size={14} />} busy={checking} onClick={() => void load(true)}>
             检查更新
@@ -183,11 +172,11 @@ export function SyncView({ onChecked }: { readonly onChecked: () => void }) {
                     {item.releaseWithdrawn ? <Chip tone="warn">作者已撤回本机这次发布</Chip> : null}
                     {item.delisted ? <Chip tone="bad">已从社区下架</Chip> : null}
                   </div>
-                  <span className={styles.itemMeta}>{state.detail}</span>
+                  {state.detail ? <span className={styles.itemMeta}>{state.detail}</span> : null}
                   <span className={styles.itemMeta}>
-                    本机 {item.currentVersionLabel}
-                    {item.currentRelease?.number ? `（发布 #${item.currentRelease.number}）` : ''}
-                    {item.latest ? ` · 社区最新发布${latestNumber}，${relativeTime(item.latest.createdAt)}` : ''}
+                    {item.latest
+                      ? `社区最新发布${latestNumber}，${relativeTime(item.latest.createdAt)}`
+                      : '社区上没有发布'}
                     {item.latest && review && item.status !== 'same' ? ` · ${review.label}` : ''}
                   </span>
                   {item.status === 'remote-ahead' && item.addedPermissions.length > 0 ? (
@@ -201,9 +190,13 @@ export function SyncView({ onChecked }: { readonly onChecked: () => void }) {
                 </div>
                 <div className={styles.itemActions}>
                   {item.found && !item.delisted ? (
-                    <Link to={`/community/extensions/${item.extensionId}`} className={styles.textLink}>
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      onClick={() => navigate(`/community/extensions/${item.extensionId}`)}
+                    >
                       社区页面
-                    </Link>
+                    </Button>
                   ) : null}
                   <Button
                     size="small"
@@ -263,4 +256,32 @@ export function SyncView({ onChecked }: { readonly onChecked: () => void }) {
       </ConfirmDialog>
     </MainContent>
   )
+}
+
+/**
+ * Lines with something to do (a newer community release, or both sides changed), for the workshop list. Reads the
+ * last check without asking the community again.
+ */
+export function useCommunityUpdates(): ReadonlySet<string> {
+  const [ids, setIds] = useState<ReadonlySet<string>>(new Set())
+  const extensions = useProductStore((state) => state.extensions.length)
+  useEffect(() => {
+    let live = true
+    callHostApi(HostApiContracts.listCommunitySync, {}, undefined)
+      .then((sync) => {
+        if (!live) return
+        setIds(
+          new Set(
+            sync.items
+              .filter((item) => !item.dismissed && (item.status === 'remote-ahead' || item.status === 'diverged'))
+              .map((item) => item.extensionId),
+          ),
+        )
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [extensions])
+  return ids
 }

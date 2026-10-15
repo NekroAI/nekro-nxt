@@ -45,6 +45,7 @@ import {
   type AuthoringAttempt,
   type AuthoringTask,
 } from './workshop-model.js'
+import { useVersionText } from './version-text.js'
 import styles from './workshop.module.css'
 
 type TaskDetail = HostApiResponse<'getAuthoringTask'>
@@ -87,7 +88,8 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const ui = useProductRuntime().uiStore
   const detail = useTaskDetail(task)
   const target = task.kind === 'revise' ? extensions.find((item) => item.id === task.targetExtensionId) : undefined
-  const baseLabel = target?.revisions.find((item) => item.id === task.baseRevisionId)?.versionLabel
+  const describe = useVersionText()
+  const baseLabel = task.baseRevisionId ? describe(target, task.baseRevisionId)?.title : undefined
   const extensionId = savedExtensionId(detail)
   const saved = extensions.find((item) => item.id === extensionId)
   const enabledForAgent = saved?.activations.some((item) => item.agentId === task.agentId) ?? false
@@ -149,7 +151,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
             {task.kind === 'revise' ? (
               target ? (
                 <Link to={`/workshop/extensions/${target.id}`} className={styles.metaLink}>
-                  修改「{target.name}」{baseLabel ? ` ${baseLabel}` : ''}
+                  修改「{target.name}」{baseLabel ? `（${baseLabel}）` : ''}
                 </Link>
               ) : (
                 <span>修改已删除的扩展</span>

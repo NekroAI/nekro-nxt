@@ -9,8 +9,8 @@ import { useEffect, useState } from 'react'
 import { callHostApi } from '../../host-api-client.js'
 import type { LocalExtensionSummary } from '../../product-runtime.js'
 import { Banner, Button, Chip, Dialog, Field, Input, Textarea, toast } from '../../ui-kit/index.js'
-import { relativeTime } from '../channels/timeline-model.js'
 import { openExternal, useCommunityStatus } from '../community/community-model.js'
+import { useVersionText } from './version-text.js'
 
 type Revision = LocalExtensionSummary['revisions'][number]
 type Published = HostApiResponse<'publishToCommunity'>
@@ -99,6 +99,7 @@ export function PublishDialog({
   readonly onBranch?: () => void
 }) {
   const community = useCommunityStatus(open)
+  const describe = useVersionText()
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [published, setPublished] = useState<Published>()
@@ -291,8 +292,7 @@ export function PublishDialog({
       ) : account ? (
         <>
           <p>
-            以 @{account.handle} 发布 {revision?.versionLabel ?? '最新版本'}
-            {revision ? `（${relativeTime(revision.createdAt)}保存）` : ''}
+            以 @{account.handle} 发布 {(revision ? describe(extension, revision.id)?.title : undefined) ?? '最新版本'}
             {previous?.number ? `，接在社区发布 #${previous.number} 之后` : '，这是它在社区上的第一次发布'}
             。所有人都能看到并安装它。
           </p>

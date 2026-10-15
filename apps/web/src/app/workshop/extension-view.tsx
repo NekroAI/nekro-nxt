@@ -3,7 +3,7 @@ import { LogsButton } from '../logs/logs-button.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { Download, GitBranch, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { communityPublisherLabel, HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import {
@@ -20,6 +20,7 @@ import {
   Button,
   Chip,
   ConfirmDialog,
+  DangerZone,
   DataTable,
   Diagnostics,
   Dialog,
@@ -35,6 +36,7 @@ import {
   Select,
   Switch,
   SwitchRow,
+  TabStrip,
   toast,
   type Column,
 } from '../../ui-kit/index.js'
@@ -64,9 +66,11 @@ import {
 import { ExtensionData } from './extension-data.js'
 import { LineageView } from './lineage-view.js'
 import { PublishDialog } from './publish-dialog.js'
+import { useVersionText, type VersionText } from './version-text.js'
 import styles from './workshop.module.css'
 
 type Revision = LocalExtensionSummary['revisions'][number]
+type Tab = 'overview' | 'config' | 'versions' | 'data' | 'diagnostics'
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 
@@ -102,6 +106,23 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   const [publishing, setPublishing] = useState<Revision>()
   const [branching, setBranching] = useState<Revision>()
   const switching = useVersionSwitch(extension)
+  const describe = useVersionText()
+  const versionOf = (revision: Revision | undefined) => (revision ? describe(extension, revision.id) : undefined)
+  const [params, setParams] = useSearchParams()
+  const [uninstallOpen, setUninstallOpen] = useState(false)
+  const api = useProductApi()
+  const hasConfig =
+    (extension.installation !== undefined && activeConfigSchema(extension) !== undefined) ||
+    extension.activations.some((activation) => activeConfigSchema(extension, activation.agentId) !== undefined)
+  const tabs: readonly { readonly value: Tab; readonly label: string }[] = [
+    { value: 'overview', label: '概览' },
+    ...(hasConfig ? [{ value: 'config' as const, label: '配置' }] : []),
+    { value: 'versions', label: '版本' },
+    { value: 'data', label: '数据' },
+    { value: 'diagnostics', label: '诊断' },
+  ]
+  const tab = tabs.find((item) => item.value === params.get('tab'))?.value ?? 'overview'
+  const openTab = (value: Tab) => setParams(value === 'overview' ? {} : { tab: value }, { replace: true })
   const latest = extension.revisions.at(-1)
   const installed = extension.revisions.find((item) => item.id === extension.installation?.revisionId)
   const current = installed ?? extension.revisions.findLast(usable) ?? latest
@@ -126,7 +147,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         meta={
           <>
             <span>{providesLabel(extension.provides)}</span>
-            {current ? <span>{current.versionLabel}</span> : null}
+            {current ? <span>{versionOf(current)?.title}</span> : null}
             {extension.branchOf ? (
               <Link to={`/workshop/extensions/${extension.branchOf.extensionId}`} className={styles.metaLink}>
                 分支自{extension.branchOf.displayName ? `「${extension.branchOf.displayName}」` : '另一个扩展'}
@@ -156,7 +177,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                   ? [
                       {
                         key: 'export',
-                        label: `导出 ${current.versionLabel}`,
+                        label: '导出当前版本',
                         icon: <Download size={14} />,
                         onSelect: () => void download(extension, current).catch(failure),
                       },
@@ -178,13 +199,6 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                         : []),
                     ]
                   : []),
-                {
-                  key: 'delete',
-                  label: '删除扩展',
-                  icon: <Trash2 size={14} />,
-                  danger: true,
-                  onSelect: () => setDeleteOpen(true),
-                },
               ]}
             />
           </>
@@ -221,51 +235,99 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         </Banner>
       ) : null}
 
-      <Overview revision={current} pages={extension.revisions.flatMap((revision) => revision.pages)} />
+      <TabStrip label="扩展详情" options={tabs} value={tab} onChange={openTab} />
 
-      <Installation extension={extension} switching={switching} />
-      {hasAgentLayer(extension) ? <AgentUsage extension={extension} /> : null}
+      {tab === 'overview' ? (
+        <>
+          <Overview revision={current} pages={extension.revisions.flatMap((revision) => revision.pages)} />
+          <Installation
+            extension={extension}
+            switching={switching}
+            title={versionOf(extension.revisions.find((item) => item.id === extension.installation?.revisionId))}
+            onVersions={() => openTab('versions')}
+          />
+          {hasAgentLayer(extension) ? <AgentUsage extension={extension} /> : null}
+          {extension.installation ? (
+            <PanelSlot anchor={{ kind: 'extension', id: extension.id }} density="full" />
+          ) : null}
+          <DangerZone>
+            {extension.installation ? (
+              <PropertyRow label="卸载" description={`扩展停止运行，数据保留${removalConsequences(extension)}`}>
+                <Button variant="danger" disabled={switching.busy} onClick={() => setUninstallOpen(true)}>
+                  卸载
+                </Button>
+              </PropertyRow>
+            ) : null}
+            <PropertyRow label="删除扩展" description="全部版本、源码、数据与验证记录都会被永久删除。">
+              <Button variant="danger" icon={<Trash2 size={14} />} onClick={() => setDeleteOpen(true)}>
+                删除扩展
+              </Button>
+            </PropertyRow>
+          </DangerZone>
+        </>
+      ) : null}
 
-      <ExtensionSettings extension={extension} />
+      {tab === 'config' ? <ExtensionSettings extension={extension} /> : null}
 
-      <PropertyGroup
-        title="谱系"
-        tip="每次保存都是一个新版本，接在它修改的版本之后；分支是从某个版本另起的扩展，分支还可以再分支。实心点是正在使用的版本，#n 是社区发布编号。"
-      >
-        <LineageView
-          extension={extension}
-          actions={{
-            onSwitch: (revision) => switching.request(revision),
-            onBranch: (revision) => setBranching(revision),
-            onPublish: (revision) => setPublishing(revision),
-            onExport: (revision) => void download(extension, revision).catch(failure),
-            onRevise:
-              reviser?.channels[0] === undefined
-                ? undefined
-                : (revision) => {
-                    const channelId = reviser.channels[0]!
-                    ui.getState().setChannelDraft(
-                      channelId,
-                      `在「${extension.name}」的 ${revision.versionLabel} 基础上修改：`,
-                    )
-                    navigate(`/channels/${channelId}`)
-                  },
-          }}
+      {tab === 'versions' ? (
+        <>
+          <VersionList extension={extension} switching={switching} describe={versionOf} />
+          <PropertyGroup
+            title="谱系"
+            tip="每次保存都是一个新版本，接在它修改的版本之后；分支是从某个版本另起的扩展，分支还可以再分支。实心点是正在使用的版本。点一个版本可以切换、导出、发布或从它修改。"
+          >
+            <LineageView
+              extension={extension}
+              actions={{
+                onSwitch: (revision) => switching.request(revision),
+                onBranch: (revision) => setBranching(revision),
+                onPublish: (revision) => setPublishing(revision),
+                onExport: (revision) => void download(extension, revision).catch(failure),
+                onRevise:
+                  reviser?.channels[0] === undefined
+                    ? undefined
+                    : (revision) => {
+                        const channelId = reviser.channels[0]!
+                        ui.getState().setChannelDraft(
+                          channelId,
+                          `在「${extension.name}」${versionOf(revision)?.title ?? ''}的基础上修改：`,
+                        )
+                        navigate(`/channels/${channelId}`)
+                      },
+              }}
+            />
+          </PropertyGroup>
+        </>
+      ) : null}
+
+      {tab === 'data' ? <ExtensionData extension={extension} /> : null}
+
+      {tab === 'diagnostics' ? (
+        <Diagnostics
+          items={[
+            { label: '扩展 ID', value: extension.id },
+            { label: '本地标识', value: extension.slug },
+            ...extension.revisions.toReversed().map((revision) => ({
+              label: `${versionOf(revision)?.title ?? ''}（${versionOf(revision)?.code ?? ''}）`,
+              value: `${revision.id}（第 ${revision.revision} 个）`,
+            })),
+          ]}
         />
-      </PropertyGroup>
+      ) : null}
 
-      <ExtensionData extension={extension} />
-
-      <Diagnostics
-        items={[
-          { label: '扩展 ID', value: extension.id },
-          { label: '本地标识', value: extension.slug },
-          ...extension.revisions.toReversed().map((revision) => ({
-            label: `${revision.versionLabel} 版本`,
-            value: `${revision.id}（第 ${revision.revision} 个）`,
-          })),
-        ]}
-      />
+      <ConfirmDialog
+        open={uninstallOpen}
+        onOpenChange={setUninstallOpen}
+        title={`卸载「${extension.name}」？`}
+        confirmLabel="卸载"
+        danger
+        onConfirm={async () => {
+          await api.getState().setHostExtensionInstalled(extension.id, null)
+          toast('已卸载')
+        }}
+      >
+        {`扩展会停止运行，数据保留${removalConsequences(extension)}`}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={deleteOpen}
@@ -297,6 +359,8 @@ function BranchDialog({
   readonly onClose: () => void
 }) {
   const navigate = useGo()
+  const describe = useVersionText()
+  const describeVersionTitle = (item: Revision) => `「${describe(extension, item.id)?.title ?? ''}」`
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugEdited, setSlugEdited] = useState(false)
@@ -336,7 +400,7 @@ function BranchDialog({
     <Dialog
       open={revision !== undefined}
       onOpenChange={(open) => !open && !busy && onClose()}
-      title={`从 ${revision?.versionLabel ?? ''} 创建分支`}
+      title="从这个版本创建分支"
       actions={
         <>
           <Button onClick={onClose} disabled={busy}>
@@ -349,7 +413,7 @@ function BranchDialog({
       }
     >
       <p style={{ margin: 0 }}>
-        分支是一个新扩展，代码和「{extension.name}」{revision?.versionLabel}{' '}
+        分支是一个新扩展，代码和「{extension.name}」{revision ? describeVersionTitle(revision) : ''}
         完全相同，之后各自修改、互不影响。它会记住自己分支自哪里，发布到社区时也会标明。
       </p>
       <Field label="名称">
@@ -390,57 +454,90 @@ function BranchDialog({
 /** What the extension gives the user and where it shows up. */
 function Overview({ revision, pages }: { readonly revision: Revision | undefined; readonly pages: Revision['pages'] }) {
   const navigate = useGo()
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const parts = [
     ...(revision?.contributions ?? []).map((value) => ({ ...contributionParts(value), detail: undefined })),
     ...mcpParts(revision?.verification?.permissions?.agent?.mcp?.servers ?? []),
   ]
+    // Data endpoints only feed the extension's own screens; people never use them directly.
+    .filter((part) => part.kind !== '数据接口')
+  // One row per kind (tools, pages, panels…), its names as chips.
+  const kinds = [...new Set(parts.map((part) => part.kind))].map((kind) => ({
+    kind,
+    parts: parts.filter((part) => part.kind === kind),
+  }))
   return (
     <PropertyGroup title="能提供什么">
-      {parts.length === 0 ? (
+      {kinds.length === 0 ? (
         <p className={styles.faint}>这个版本还没有经过验证，暂时无法说明它提供的内容。</p>
       ) : (
         <PropertyList>
-          {parts.map((part) => (
-            <PropertyRow
-              key={`${part.kind}:${part.name}`}
-              label={part.kind}
-              description={
-                part.detail ??
-                (part.kind === '页面' && pages.find((page) => page.title === part.name)?.rail !== undefined
-                  ? '独立页面，已加入左侧导航'
-                  : undefined) ??
-                CONTRIBUTION_PLACE[part.kind] ??
-                CONTRIBUTION_PLACE['内容']
-              }
-            >
-              <code className={styles.contributionName}>{part.name}</code>
-              {part.kind === '页面' ? (
-                <OpenPage page={pages.find((page) => page.title === part.name)} navigate={navigate} />
-              ) : null}
-            </PropertyRow>
-          ))}
+          {kinds.map(({ kind, parts: items }) => {
+            const open = expanded.has(kind) || items.length <= CHIP_LIMIT
+            const shown = open ? items : items.slice(0, CHIP_LIMIT)
+            const detail = items.length === 1 ? items[0]?.detail : undefined
+            return (
+              <PropertyRow
+                key={kind}
+                label={`${kind} ${items.length}`}
+                description={
+                  detail ??
+                  (kind === '页面' && items.some((part) => pages.find((page) => page.title === part.name)?.rail)
+                    ? '独立页面，已加入左侧导航'
+                    : undefined) ??
+                  CONTRIBUTION_PLACE[kind] ??
+                  CONTRIBUTION_PLACE['内容']
+                }
+                layout="stacked"
+              >
+                <div className={styles.contributionChips}>
+                  {shown.map((part) =>
+                    kind === '页面' ? (
+                      <OpenPage
+                        key={part.name}
+                        name={part.name}
+                        page={pages.find((page) => page.title === part.name)}
+                        navigate={navigate}
+                      />
+                    ) : (
+                      <Chip key={part.name}>{part.name}</Chip>
+                    ),
+                  )}
+                  {open ? null : (
+                    <Button size="small" variant="ghost" onClick={() => setExpanded((old) => new Set(old).add(kind))}>
+                      还有 {items.length - CHIP_LIMIT} 个
+                    </Button>
+                  )}
+                </div>
+              </PropertyRow>
+            )
+          })}
         </PropertyList>
       )}
     </PropertyGroup>
   )
 }
 
+const CHIP_LIMIT = 8
+
 /** Opens an installed page; a page that is not installed has nothing to open. */
 function OpenPage({
+  name,
   page,
   navigate,
 }: {
+  readonly name: string
   readonly page: Revision['pages'][number] | undefined
   readonly navigate: (path: string) => void
 }) {
-  if (!page) return null
+  if (!page) return <Chip>{name}</Chip>
   return (
     <Button
       size="small"
       aria-label={`打开「${page.title}」`}
       onClick={() => navigate(`${page.routeBase}${page.startPath ? `/${page.startPath}` : ''}`)}
     >
-      打开
+      打开「{name}」
     </Button>
   )
 }
@@ -498,13 +595,6 @@ function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSu
             <ExtensionConfigEditor key={agentId} extension={extension} agentId={agentId} />
           </div>
         </PropertyGroup>
-      ) : null}
-      {extension.installation ? (
-        <PanelSlot
-          anchor={{ kind: 'extension', id: extension.id }}
-          density="full"
-          {...(agentId === undefined ? {} : { agentId })}
-        />
       ) : null}
     </>
   )
@@ -641,6 +731,7 @@ type DataSnapshots = HostApiResponse<'getExtensionData'>['snapshots']
  */
 function useVersionSwitch(extension: LocalExtensionSummary) {
   const api = useProductApi()
+  const describe = useVersionText()
   const [busy, setBusy] = useState(false)
   const [approve, setApprove] = useState<Approval>()
   const [acceptedRisks, setAcceptedRisks] = useState<ReadonlySet<string>>(new Set())
@@ -651,7 +742,8 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
     setBusy(true)
     try {
       await api.getState().setHostExtensionInstalled(extension.id, revision.id, approvals)
-      toast(extension.installation ? `已切换到 ${revision.versionLabel}` : `已安装 ${revision.versionLabel}`)
+      const name = describe(extension, revision.id)?.title ?? '这个版本'
+      toast(extension.installation ? `已切换到「${name}」` : `已安装「${name}」`)
     } finally {
       setBusy(false)
     }
@@ -732,7 +824,7 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
       <ConfirmDialog
         open={restoring !== undefined}
         onOpenChange={(open) => !open && setRestoring(undefined)}
-        title={`切换到 ${restoring?.revision.versionLabel ?? ''} 需要恢复旧数据`}
+        title="切换到这个版本需要恢复旧数据"
         confirmLabel="恢复并切换"
         danger
         confirmDisabled={restoreChoice === ''}
@@ -742,8 +834,7 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
           proceed(restoring.revision, restoreChoice)
         }}
       >
-        本机数据已经是第 {extension.dataVersion} 版格式，{restoring?.revision.versionLabel} 只认识第{' '}
-        {restoring?.revision.dataVersion}{' '}
+        本机数据已经是第 {extension.dataVersion} 版格式，这个版本只认识第 {restoring?.revision.dataVersion}{' '}
         版。切换时要先把数据恢复成一份旧格式的快照；快照之后写入的数据会丢失，切换前的数据会再留一份快照。
         {restoring && restoring.snapshots.length > 0 ? (
           <Field label="恢复哪份快照">
@@ -766,23 +857,102 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
   return { request, rollback, busy, dialog }
 }
 
-/** The extension's single installation on this machine; switching moves every agent using it. */
-function Installation({
+/** Every saved version, newest first; any usable one can be installed or switched to from its row. */
+function VersionList({
   extension,
   switching,
+  describe,
 }: {
   readonly extension: LocalExtensionSummary
   readonly switching: ReturnType<typeof useVersionSwitch>
+  readonly describe: (revision: Revision | undefined) => VersionText | undefined
 }) {
-  const api = useProductApi()
+  const installed = extension.installation?.revisionId
+  const columns: readonly Column<Revision>[] = [
+    {
+      key: 'version',
+      header: '版本',
+      width: 'minmax(220px, 2fr)',
+      render: (revision) => {
+        const text = describe(revision)
+        return (
+          <span className={styles.versionCell}>
+            <b>{text?.title}</b>
+            <span className={styles.faint}>
+              {text?.source} · {text?.code}
+            </span>
+          </span>
+        )
+      },
+    },
+    {
+      key: 'state',
+      header: '状态',
+      width: 'minmax(120px, 1fr)',
+      priority: 2,
+      render: (revision) => {
+        const users = extension.activations.filter((item) => item.revisionId === revision.id)
+        return (
+          <span className={styles.contributionChips}>
+            {revision.id === installed ? <Chip tone="ok">正在使用</Chip> : null}
+            {users.length > 0 && revision.id !== installed ? (
+              <Chip>{users.map((item) => item.agentName).join('、')} 在用</Chip>
+            ) : null}
+            {usable(revision) ? null : <Chip tone="warn">格式不受支持</Chip>}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'action',
+      header: <span className={styles.srOnly}>操作</span>,
+      width: '132px',
+      align: 'end',
+      render: (revision) =>
+        revision.id === installed || !usable(revision) ? null : (
+          <Button size="small" busy={switching.busy} onClick={() => switching.request(revision)}>
+            {installed ? '切换到这个版本' : '安装这个版本'}
+          </Button>
+        ),
+    },
+  ]
+  return (
+    <PropertyGroup
+      title="版本"
+      actions={
+        installed && extension.revisions.length > 1 ? (
+          <Button size="small" variant="ghost" disabled={switching.busy} onClick={() => void switching.rollback()}>
+            回到上一个版本
+          </Button>
+        ) : undefined
+      }
+    >
+      <DataTable
+        label="版本"
+        columns={columns}
+        rows={extension.revisions.toReversed()}
+        rowKey={(revision) => revision.id}
+      />
+    </PropertyGroup>
+  )
+}
+
+/** The extension's single installation on this machine; versions are chosen on the 版本 tab. */
+function Installation({
+  extension,
+  switching,
+  title,
+  onVersions,
+}: {
+  readonly extension: LocalExtensionSummary
+  readonly switching: ReturnType<typeof useVersionSwitch>
+  readonly title: VersionText | undefined
+  readonly onVersions: () => void
+}) {
   const installed = extension.installation
-  const [choice, setChoice] = useState(installed?.revisionId ?? extension.revisions.findLast(usable)?.id ?? '')
-  const [uninstallOpen, setUninstallOpen] = useState(false)
-  const chosen = extension.revisions.find((item) => item.id === choice)
-  const chosenInstalled = chosen !== undefined && chosen.id === installed?.revisionId
+  const newest = extension.revisions.findLast(usable)
   const onlyAgents =
     hasAgentLayer(extension) && !extension.provides.some((item) => item === 'page' || item === 'adapter')
-
   return (
     <PropertyGroup title="安装">
       {installed?.runtime && installed.runtime.status !== 'active' ? (
@@ -793,60 +963,33 @@ function Installation({
       ) : null}
       <PropertyList>
         <PropertyRow
-          label="当前版本"
+          label={installed && title ? title.title : '还没有安装到本机'}
           description={
             installed
-              ? installed.revisionId === extension.revisions.findLast(usable)?.id
-                ? '已是最新保存的版本'
-                : '有更新保存的版本，可以切换'
+              ? installed.revisionId === newest?.id
+                ? `${title?.source ?? ''} · 已是最新保存的版本`
+                : `${title?.source ?? ''} · 有更新保存的版本`
               : onlyAgents
                 ? '给智能体启用时会自动安装'
-                : '还没有安装到本机'
+                : undefined
           }
         >
-          <Select
-            aria-label="版本"
-            value={choice}
-            onValueChange={(value) => setChoice(value)}
-            options={extension.revisions.toReversed().map((item) => ({
-              value: item.id,
-              label: `${item.versionLabel} · ${relativeTime(item.createdAt)}${item.id === installed?.revisionId ? ' · 已安装' : ''}`,
-              disabled: !usable(item),
-            }))}
-          />
-          <Button
-            variant="primary"
-            busy={switching.busy}
-            disabled={!chosen || chosenInstalled}
-            onClick={() => chosen && switching.request(chosen)}
-          >
-            {installed ? '切换到这个版本' : '安装'}
-          </Button>
-          {installed && extension.revisions.length > 1 ? (
-            <Button disabled={switching.busy} onClick={() => void switching.rollback()}>
-              回到上一个版本
-            </Button>
-          ) : null}
           {installed ? (
-            <Button variant="danger" disabled={switching.busy} onClick={() => setUninstallOpen(true)}>
-              卸载
+            <Button size="small" onClick={onVersions}>
+              {installed.revisionId === newest?.id ? '查看版本' : '切换版本'}
+            </Button>
+          ) : newest ? (
+            <Button
+              size="small"
+              variant={onlyAgents ? 'default' : 'primary'}
+              busy={switching.busy}
+              onClick={() => switching.request(newest)}
+            >
+              安装
             </Button>
           ) : null}
         </PropertyRow>
       </PropertyList>
-      <ConfirmDialog
-        open={uninstallOpen}
-        onOpenChange={setUninstallOpen}
-        title={`卸载「${extension.name}」？`}
-        confirmLabel="卸载"
-        danger
-        onConfirm={async () => {
-          await api.getState().setHostExtensionInstalled(extension.id, null)
-          toast('已卸载')
-        }}
-      >
-        {`扩展会停止运行，数据保留${removalConsequences(extension)}`}
-      </ConfirmDialog>
     </PropertyGroup>
   )
 }

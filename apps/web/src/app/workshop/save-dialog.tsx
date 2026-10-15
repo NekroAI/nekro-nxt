@@ -3,6 +3,7 @@ import { useProductStore } from '../../product-runtime.js'
 import { Button, Dialog, Field, Input, Textarea, toast } from '../../ui-kit/index.js'
 import { useProductApi } from '../model/store.js'
 import { SLUG_PATTERN, proposeSlug, type AuthoringTask } from './workshop-model.js'
+import { useVersionText } from './version-text.js'
 
 /**
  * Saves the task's verified candidate as an immutable version. A revise task always becomes the next version of the
@@ -20,6 +21,7 @@ export function SaveDialog({
   readonly agentName: string
 }) {
   const api = useProductApi()
+  const describe = useVersionText()
   const target = useProductStore((state) =>
     task.kind === 'revise' ? state.extensions.find((item) => item.id === task.targetExtensionId) : undefined,
   )
@@ -85,7 +87,7 @@ export function SaveDialog({
         target ? (
           <p style={{ margin: 0 }}>
             保存后成为「{target.name}」的下一个版本，接在{' '}
-            {target.revisions.find((item) => item.id === task.baseRevisionId)?.versionLabel ?? '修改时的版本'}{' '}
+            {(task.baseRevisionId ? describe(target, task.baseRevisionId)?.title : undefined) ?? '修改时的版本'}{' '}
             之后。正在使用的版本不变，需要时在扩展详情里切换。
           </p>
         ) : (
