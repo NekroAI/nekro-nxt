@@ -1,4 +1,5 @@
 import { BUILTIN_DEFINITIONS, RESPONSE_MODE_LABELS } from './built-ins.js'
+import { CommandRateLimiter, type CommandAdmission } from './rate-limit.js'
 import { randomUUID } from 'node:crypto'
 import {
   ChannelIdSchema,
@@ -43,6 +44,12 @@ interface CommandServiceOptions {
   readonly running: (sessionId: string) => boolean
   readonly botMemberId: (event: ChannelEventRecord) => ChannelMemberId | undefined
   readonly now: () => number
+  /** Told, at most once per minute per channel, how many platform commands were dropped by the rate limit. */
+  readonly onRateLimited?: (report: {
+    readonly channelId: ChannelId
+    readonly dropped: number
+    readonly reason: Exclude<CommandAdmission, 'allowed'>
+  }) => void
 }
 const reply = (text: string): CommandResult => ({ parts: [{ type: 'text', text }] })
 class SilentCommandError extends Error {}
@@ -59,6 +66,8 @@ export class CommandService implements CommandGate {
   readonly #queue = new Map<string, QueuedCommand>()
   readonly #activeChannels = new Set<ChannelId>()
   readonly #cutoff: string
+  readonly #limiter: CommandRateLimiter
+  readonly #limited = new Map<ChannelId, { dropped: number; reportedAt: number }>()
   #scheduled: NodeJS.Immediate | undefined
   #opened = false
   #disposed = false
@@ -66,6 +75,7 @@ export class CommandService implements CommandGate {
   constructor(options: CommandServiceOptions) {
     this.#o = options
     this.#ready = options.deferExecution !== true
+    this.#limiter = new CommandRateLimiter(options.now)
     this.#cutoff = options.repository.commands.cutoff()
     options.repository.commands.recover(options.now())
   }
@@ -119,6 +129,12 @@ export class CommandService implements CommandGate {
       event.senderMemberId === undefined
         ? undefined
         : this.#o.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, event.senderMemberId)
+    // Over the limit the message stays a fact (and never reaches the model), but nothing runs or replies.
+    const admission = this.#limiter.admit(channel.id, identity?.platformUserId ?? String(event.senderMemberId))
+    if (admission !== 'allowed') {
+      this.#noteLimited(channel.id, admission)
+      return undefined
+    }
     return this.#o.repository.commands.insert({
       id: `cmd_${randomUUID()}`,
       channelId: channel.id,
@@ -135,6 +151,17 @@ export class CommandService implements CommandGate {
         displayName: identity?.displayName ?? '平台用户',
       },
     })
+  }
+  #noteLimited(channelId: ChannelId, reason: Exclude<CommandAdmission, 'allowed'>): void {
+    const now = this.#o.now()
+    const entry = this.#limited.get(channelId) ?? { dropped: 0, reportedAt: Number.NEGATIVE_INFINITY }
+    entry.dropped += 1
+    if (now - entry.reportedAt >= 60_000) {
+      this.#o.onRateLimited?.({ channelId, dropped: entry.dropped, reason })
+      entry.dropped = 0
+      entry.reportedAt = now
+    }
+    this.#limited.set(channelId, entry)
   }
   async executeWeb(
     channelId: ChannelId,

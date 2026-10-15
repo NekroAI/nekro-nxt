@@ -497,6 +497,18 @@ describe('unified commands', () => {
     await f.commands.idle()
     expect(f.adapter.deliveries).toHaveLength(2)
   })
+  it('drops platform commands over the per-user limit without records, replies or model admission', async () => {
+    const f = await setup()
+    const results = []
+    for (let index = 0; index < 12; index += 1) results.push(await f.inbound('/status', `spam-${index}`))
+    await f.commands.idle()
+    const records = results.map((result) => f.repository.commands.forEvent(result.channelEventId))
+    expect(records.filter((record) => record !== undefined)).toHaveLength(10)
+    expect(records[10]).toBeUndefined()
+    expect(f.adapter.deliveries).toHaveLength(10)
+    // The over-limit messages are commands, so they still never reach the model.
+    expect(f.admissions).toHaveLength(0)
+  })
   it('uses stable extension names, denies ambiguity and enforces permission floors', async () => {
     const f = await setup()
     const definition = CommandDefinitionSchema.parse({ name: 'echo', aliases: ['e'], description: '示例' })
