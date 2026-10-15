@@ -44,6 +44,12 @@ export const CommandDefinitionSchema = z
     examples: z.array(z.string().max(2000)).max(16).default([]),
     minimumPermission: CommandPermissionSchema.default('public'),
     enabledByDefault: z.boolean().default(true),
+    /**
+     * Where the result goes when an administrator runs the command from the Web console in an external channel.
+     * `local` (default) shows it in the console only; `channel` also sends it through the bot account, and the
+     * console labels the command accordingly. Platform-originated commands always reply in their conversation.
+     */
+    webReply: z.enum(['local', 'channel']).default('local'),
   })
   .strict()
   .superRefine((definition, ctx) => {
@@ -69,6 +75,8 @@ export const CommandDefinitionSchema = z
     }
   })
 export type CommandDefinition = z.output<typeof CommandDefinitionSchema>
+/** What an extension author writes: defaults are optional. */
+export type CommandDefinitionInput = z.input<typeof CommandDefinitionSchema>
 export const CommandPolicySchema = z
   .object({ enabled: z.boolean().optional(), permission: CommandPermissionSchema.optional() })
   .strict()
@@ -117,6 +125,8 @@ export const CommandExecutionRecordSchema = z
     replyIntentId: OutboundIntentIdSchema.optional(),
     replyError: z.string().optional(),
     replySuppressed: z.boolean().optional(),
+    /** The result was kept in the console on purpose and never sent to the platform. */
+    replyLocal: z.boolean().optional(),
     createdAt: z.number().int().nonnegative(),
     completedAt: z.number().int().nonnegative().optional(),
   })
@@ -277,10 +287,23 @@ export type CommandRecognition =
   | { readonly kind: 'command'; readonly text: string }
   | { readonly kind: 'escaped'; readonly parts: readonly MessagePart[] }
   | { readonly kind: 'chat' }
-export function recognizeCommand(parts: readonly MessagePart[], botMemberId?: ChannelMemberId): CommandRecognition {
+export interface CommandRecognitionOptions {
+  /** External groups: only text addressed to this account (leading mention) is a command. */
+  readonly requireMention?: boolean
+}
+export function recognizeCommand(
+  parts: readonly MessagePart[],
+  botMemberId?: ChannelMemberId,
+  options: CommandRecognitionOptions = {},
+): CommandRecognition {
   let input = parts
   while (input.length > 1 && input[0]?.type === 'text' && input[0].text.trim() === '') input = input.slice(1)
-  if (input[0]?.type === 'mention' && input[0].memberId === botMemberId) input = input.slice(1)
+  let addressed = false
+  if (input[0]?.type === 'mention' && botMemberId !== undefined && input[0].memberId === botMemberId) {
+    input = input.slice(1)
+    addressed = true
+  }
+  if (options.requireMention === true && !addressed) return { kind: 'chat' }
   if (input.length === 0 || input.some((p) => p.type !== 'text')) return { kind: 'chat' }
   const text = input
     .map((p) => (p.type === 'text' ? p.text : ''))

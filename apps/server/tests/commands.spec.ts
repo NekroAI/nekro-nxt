@@ -18,7 +18,7 @@ const deferred = () => {
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
-async function setup(deferExecution = false) {
+async function setup(deferExecution = false, bareCommands = true) {
   const database = await openMigratedCoreDatabase(':memory:')
   const repository = new SqliteCoreRepository(database)
   let sequence = 0,
@@ -33,6 +33,7 @@ async function setup(deferExecution = false) {
   const connection = core.createConnection({ adapterKey: 'fake', config: {} })
   const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'group-one', kind: 'group' })
   core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+  repository.commands.setBareCommands(channel.id, bareCommands)
   const member = core.observeChannelMember({
     connectionId: connection.id,
     channelId: channel.id,
@@ -393,6 +394,7 @@ describe('unified commands', () => {
     f.commands.grant(f.channel.id, f.member.identity.id, true)
     const other = f.core.createConnection({ adapterKey: 'fake', config: {} })
     const otherChannel = f.core.createChannel({ connectionId: other.id, platformChannelId: 'other', kind: 'group' })
+    f.repository.commands.setBareCommands(otherChannel.id, true)
     const otherMember = f.core.observeChannelMember({
       connectionId: other.id,
       channelId: otherChannel.id,
@@ -430,10 +432,12 @@ describe('unified commands', () => {
     await f.commands.executeWeb(f.channel.id, '/off', 'web-one', 'local')
     await expect(f.commands.executeWeb(f.channel.id, '/on', 'web-one', 'local')).rejects.toThrow('请求 ID')
     expect(record.status).toBe('succeeded')
-    expect(f.adapter.deliveries).toHaveLength(2)
+    // Web results stay in the console, so only the platform request produced a delivery.
+    expect(f.adapter.deliveries).toHaveLength(1)
     f.commands.recover()
     await f.commands.idle()
-    expect(f.adapter.deliveries).toHaveLength(2)
+    // The unknown receipt is never resent by recovery.
+    expect(f.adapter.deliveries).toHaveLength(1)
   })
   it('includes usage for malformed quotes without invoking the model', async () => {
     const f = await setup()
@@ -456,6 +460,42 @@ describe('unified commands', () => {
     await f.commands.executeWeb(f.channel.id, '/help', 'unbound-help', 'local')
     const rejected = await f.commands.executeWeb(f.channel.id, '/reset', 'unbound-reset', 'local')
     expect(rejected.error).toContain('绑定智能体')
+  })
+  it('requires an address in external groups unless the administrator opted in', async () => {
+    const f = await setup(false, false)
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    const bare = await f.inbound('/status')
+    expect(f.repository.commands.forEvent(bare.channelEventId)).toBeUndefined()
+    expect(f.admissions.length).toBeGreaterThan(0)
+    const addressed = await f.inbound('', undefined, [
+      { type: 'mention', memberId: f.bot.member.id },
+      { type: 'text', text: ' /status' },
+    ])
+    expect(f.repository.commands.forEvent(addressed.channelEventId)?.commandName).toBe('status')
+    f.commands.setBareCommands(f.channel.id, true)
+    const opted = await f.inbound('/status')
+    expect(f.repository.commands.forEvent(opted.channelEventId)?.commandName).toBe('status')
+  })
+  it('keeps Web results in the console for external channels unless the command declares otherwise', async () => {
+    const f = await setup()
+    const local = await f.commands.executeWeb(f.channel.id, '/status', 'local-status', 'local')
+    expect(local.replyLocal).toBe(true)
+    expect(f.adapter.deliveries).toHaveLength(0)
+    const definition = CommandDefinitionSchema.parse({ name: 'announce', description: '公告', webReply: 'channel' })
+    f.extensions.push({
+      definition,
+      fullName: 'ext_ANN:announce',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_ANN'),
+      invoke: () => ({ parts: [{ type: 'text' as const, text: '大家好' }] }),
+    })
+    const sent = await f.commands.executeWeb(f.channel.id, '/announce', 'web-announce', 'local')
+    expect(sent.replyLocal).toBeUndefined()
+    expect(f.adapter.deliveries).toHaveLength(1)
+    // A platform member always gets the answer in the conversation.
+    await f.inbound('/status')
+    await f.commands.idle()
+    expect(f.adapter.deliveries).toHaveLength(2)
   })
   it('uses stable extension names, denies ambiguity and enforces permission floors', async () => {
     const f = await setup()

@@ -94,6 +94,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
               >
                 <div className={styles.controls}>
                   <code className={styles.usage}>{command.usage}</code>
+                  {command.definition.webReply === 'channel' ? <p>在控制台里执行时，结果也会发送到外部频道。</p> : null}
                   <p>
                     生效权限：{command.permission === 'public' ? '普通用户' : '频道管理'}（{permissionSource}）{' '}
                     <Chip>{command.enabled ? '启用' : '停用'}</Chip>
@@ -161,6 +162,26 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
           })}
         </PropertyList>
       </PropertyGroup>
+      {channelId && catalog?.channel?.kind === 'group' ? (
+        <PropertyGroup
+          title="群聊中的命令"
+          description="群里可能有多个机器人。默认只有 @机器人 后再输入 /命令 才会执行，其他以 / 开头的消息按普通聊天处理。"
+        >
+          <PropertyList>
+            <PropertyRow
+              label="允许不带 @ 的命令"
+              description={catalog.channel.bareCommands ? '群里直接输入 /命令 也会执行' : '需要先 @机器人'}
+            >
+              <Switch
+                label="允许不带 @ 的命令"
+                checked={catalog.channel.bareCommands}
+                disabled={busy}
+                onCheckedChange={(enabled) => void mutate(() => commandApi.setBareCommands(channelId, enabled))}
+              />
+            </PropertyRow>
+          </PropertyList>
+        </PropertyGroup>
+      ) : null}
       {channelId ? (
         <PropertyGroup title="命令授权成员" description="只授予当前频道的管理命令权限；平台群管理员不会自动获得授权。">
           {!members.length ? (

@@ -47,7 +47,7 @@
     "0042_delivery_diagnostics.sql": "cc2ba25c47f0af379097bb26f1edc4ff8a799c4947f7f8051d06f545543a8aba",
     "0043_browser_composer_asset_grants.sql": "5953d25c5742afd65ee28b4b0e9a3a8c175fb026587254a13dc8f3bce684d6d6",
     "0044_community_feedback.sql": "14957238cca7ed2606560701ce05bdedbc44520b349fd9e2c0e44997ce24e30f",
-    "0045_commands.sql": "e64dd7e128513d974454e90c950021d9a828e189a90e029c90ab68a9ed154fa8",
+    "0045_commands.sql": "b4b6816163ef48c0b1082f2ae4cb3fc96e0a5b1ae7129c4d5c3518ceeaf46618",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -92,7 +92,7 @@
     "meta/0041_snapshot.json": "6b0367a14137a17d9e16433f15f32b634cf793a3b1a15ff72faa1ea4516a4808",
     "meta/0042_snapshot.json": "31fc0fe4d5f69913ea36474f17251b9d21bb3ad909620937eba4b65b91501fff",
     "meta/0044_snapshot.json": "bc837207fe63b01698f85216f80acbfd679d7cf7dcfcb2cfc75130e5ca123388",
-    "meta/0045_snapshot.json": "3aa99b01527964db05abc52fd6a80c995419f7c33aedf29562b25f0ac6e9c5c5",
-    "meta/_journal.json": "99b0553a66f1f543fe1e53760d1bad4587c625cdc150955e012bd13ea29656c5"
+    "meta/0045_snapshot.json": "4b9d87d9c063a576b7dc51e902b2c51749aab52affd9b0d8c22b19d8591724a6",
+    "meta/_journal.json": "6ba736d022485b5aee53dd378ee6ca4d2ebaf8b49ca6faf468274ed62235477e"
   }
 }

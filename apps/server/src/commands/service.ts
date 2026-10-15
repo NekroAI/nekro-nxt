@@ -71,7 +71,27 @@ export class CommandService implements CommandGate {
   }
   #recognize(event: ChannelEventRecord) {
     if (event.kind !== 'message-created' || event.id <= this.#cutoff) return { kind: 'chat' } as const
-    return recognizeCommand(event.parts, this.#o.botMemberId(event))
+    return recognizeCommand(event.parts, this.#o.botMemberId(event), {
+      requireMention: this.#requiresMention(event.channelId),
+    })
+  }
+  /** External groups may hold several bots; there a command must address this account unless the admin opted in. */
+  #requiresMention(channelId: ChannelId): boolean {
+    return (
+      this.#o.repository.getChannel(channelId)?.kind === 'group' && !this.#o.repository.commands.bareCommands(channelId)
+    )
+  }
+  channelSettings(channelId: ChannelId) {
+    const channel = this.#channel(channelId)
+    return {
+      kind: channel.kind,
+      requiresMention: this.#requiresMention(channelId),
+      bareCommands: this.#o.repository.commands.bareCommands(channelId),
+    }
+  }
+  setBareCommands(channelId: ChannelId, enabled: boolean): void {
+    if (this.#channel(channelId).kind !== 'group') throw new Error('只有外部群聊需要设置是否允许不带提及的命令。')
+    this.#o.repository.commands.setBareCommands(channelId, enabled)
   }
   excludes(event: ChannelEventRecord): boolean {
     return this.#o.repository.commands.forEvent(event.id) !== undefined || this.#recognize(event).kind === 'command'
@@ -397,6 +417,12 @@ export class CommandService implements CommandGate {
           ...(binding === undefined ? {} : { agentId: binding.agentId }),
           ...(revision === undefined ? {} : { agentRevisionId: revision.id }),
         })
+        if (
+          record.source === 'web' &&
+          this.#channel(record.channelId).kind !== 'internal' &&
+          command.definition.webReply !== 'channel'
+        )
+          record = store.update({ ...record, replyLocal: true, replySuppressed: true })
         this.#publish(record)
         const guard = (management = false) => {
           controller.signal.throwIfAborted()

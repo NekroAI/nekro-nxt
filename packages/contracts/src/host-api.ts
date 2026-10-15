@@ -2362,7 +2362,22 @@ export const HostApiContracts = {
     path: '/api/commands',
     params: z.object({ channelId: ChannelIdSchema.optional() }).strict(),
     request: NoRequestBodySchema,
-    response: z.object({ commands: z.array(CommandCatalogEntrySchema), problems: z.array(z.string()) }).strict(),
+    response: z
+      .object({
+        commands: z.array(CommandCatalogEntrySchema),
+        problems: z.array(z.string()),
+        /** Present when a channel was requested. */
+        channel: z
+          .object({
+            kind: z.enum(['internal', 'direct', 'group']),
+            /** The channel is an external group where commands must address the account. */
+            requiresMention: z.boolean(),
+            bareCommands: z.boolean(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   executeCommand: defineContract({
@@ -2419,6 +2434,15 @@ export const HostApiContracts = {
       })
       .strict(),
     error: HostApiErrorSchema,
+  }),
+  setCommandChannelSettings: defineContract({
+    method: 'PUT',
+    path: '/api/commands/channel-settings',
+    params: EmptyParamsSchema,
+    request: z.object({ channelId: ChannelIdSchema, bareCommands: z.boolean() }).strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+    invalidatesSnapshot: true,
   }),
   setCommandGrant: defineContract({
     method: 'PUT',

@@ -31,6 +31,7 @@ export function registerManagementCommandRoutes({ runtime, registerRoute }: Host
           writeContractJson(res, 200, HostApiContracts.listCommands, {
             commands: runtime.commands.catalog(channelId, { source: 'web', displayName: 'Web 管理员', viewerId }),
             problems,
+            ...(channelId === undefined ? {} : { channel: runtime.commands.channelSettings(channelId) }),
           })
           return
         }
@@ -48,6 +49,12 @@ export function registerManagementCommandRoutes({ runtime, registerRoute }: Host
           const body = HostApiContracts.setCommandPolicy.parseRequest(await readJsonBody(req))
           runtime.commands.setPolicy(body.scope, body.name, body.policy)
           writeContractJson(res, 200, HostApiContracts.setCommandPolicy, { saved: true })
+          return
+        }
+        if (req.method === 'PUT' && url.pathname === '/api/commands/channel-settings') {
+          const body = HostApiContracts.setCommandChannelSettings.parseRequest(await readJsonBody(req))
+          runtime.commands.setBareCommands(body.channelId, body.bareCommands)
+          writeContractJson(res, 200, HostApiContracts.setCommandChannelSettings, { saved: true })
           return
         }
         if (req.method === 'PUT' && url.pathname === '/api/commands/grants') {

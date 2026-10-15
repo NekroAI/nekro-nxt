@@ -1,5 +1,11 @@
-import type { CommandDefinition, CommandHandler } from '@nekro-nxt/contracts'
-export type { CommandDefinition, CommandExecutionContext, CommandResult, CommandHandler } from '@nekro-nxt/contracts'
+import type { CommandDefinitionInput, CommandHandler } from '@nekro-nxt/contracts'
+export type {
+  CommandDefinition,
+  CommandDefinitionInput,
+  CommandExecutionContext,
+  CommandResult,
+  CommandHandler,
+} from '@nekro-nxt/contracts'
 export type { NxtLogger } from '@nekro-nxt/contracts'
 import type { NxtLogger } from '@nekro-nxt/contracts'
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
@@ -666,7 +672,7 @@ export interface ExtensionHostEnvironment {
   readonly logger?: NxtLogger | undefined
   readonly harness: {
     /** SDK 9: Host factory registration; never depends on a DSH Session. */
-    registerCommand(definition: CommandDefinition, handler: CommandHandler): () => void
+    registerCommand(definition: CommandDefinitionInput, handler: CommandHandler): () => void
     defineTool<Args extends ExtensionJsonObject, Output extends ExtensionJsonValue>(
       options: ExtensionToolDefinition<Args, Output>,
     ): ExtensionToolDefinition<Args, Output>

@@ -144,6 +144,7 @@ export function Composer({
   const [commandError, setCommandError] = useState('')
   const [selected, setSelected] = useState(0)
   const [commandFocus, setCommandFocus] = useState(0)
+  const [commandChannel, setCommandChannel] = useState<CommandCatalog['channel']>()
   const trimmed = draft.trimStart()
   const commandMode = trimmed.startsWith('/') && !trimmed.startsWith('//') && attachments.length === 0
   const commandQuery = trimmed.slice(1)
@@ -163,7 +164,10 @@ export function Composer({
     void commandApi
       .list(channel.id, controller.signal)
       .then((result) => {
-        if (!controller.signal.aborted) setCommands(result.commands)
+        if (!controller.signal.aborted) {
+          setCommands(result.commands)
+          setCommandChannel(result.channel)
+        }
       })
       .catch((error) => {
         if (!controller.signal.aborted) setCommandError(error instanceof Error ? error.message : '读取命令失败。')
@@ -321,6 +325,16 @@ export function Composer({
       {commandMode && currentCommand ? (
         <span role="status" className={styles.commandHint}>
           用法：{currentCommand.usage}
+          {external
+            ? currentCommand.definition.webReply === 'channel'
+              ? ' · 结果也会发送到频道'
+              : ' · 只在这里显示，不发送到频道'
+            : ''}
+        </span>
+      ) : null}
+      {commandMode && !currentCommand && external ? (
+        <span role="status" className={styles.commandHint}>
+          在这里执行的命令不会发送到频道{commandChannel?.requiresMention ? '；群成员需要先 @机器人' : ''}
         </span>
       ) : null}
       <div className={styles.composerRow}>

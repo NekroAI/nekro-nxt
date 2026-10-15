@@ -3,6 +3,7 @@ import {
   CommandResultSchema,
   parseJsonValue,
   type CommandDefinition,
+  type CommandDefinitionInput,
   type CommandExecutionContext,
   type CommandHandler,
   type CommandResult,
@@ -16,7 +17,7 @@ export class CommandRegistrations {
   #ownsHandlers = true
   #active = true
   #factoryOpen = true
-  register = (definition: CommandDefinition, handler: CommandHandler): (() => void) => {
+  register = (definition: CommandDefinitionInput, handler: CommandHandler): (() => void) => {
     if (!this.#factoryOpen || !this.#active) throw new Error('registerCommand 必须在扩展 Host factory 阶段调用。')
     const parsed = CommandDefinitionSchema.parse(definition)
     if (typeof handler !== 'function' || this.#handlers.has(parsed.name)) throw new Error('命令重复注册或处理器无效。')

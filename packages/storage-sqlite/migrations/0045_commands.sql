@@ -1,3 +1,9 @@
+CREATE TABLE `command_channel_settings` (
+	`channel_id` text PRIMARY KEY NOT NULL,
+	`bare_commands` integer DEFAULT false NOT NULL,
+	FOREIGN KEY (`channel_id`) REFERENCES `channels`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
 CREATE TABLE `command_executions` (
 	`id` text PRIMARY KEY NOT NULL,
 	`channel_id` text NOT NULL,

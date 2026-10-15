@@ -87,6 +87,11 @@ export const MessageRow = memo(function MessageRow({
             {command.error}
           </p>
         ) : null}
+        {command.replyLocal === true ? (
+          <p className={styles.commandContent} role="status">
+            只在控制台显示，没有发送到频道。
+          </p>
+        ) : null}
         {deliveryFailed ? (
           <div className={styles.commandDelivery} role="status">
             <span>

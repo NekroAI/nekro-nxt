@@ -637,6 +637,15 @@ export const commandPolicies = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.scope, table.commandName] })],
 )
+/** Per-channel command behavior that is not a policy of one command. */
+export const commandChannelSettings = sqliteTable('command_channel_settings', {
+  channelId: text('channel_id')
+    .$type<ChannelId>()
+    .primaryKey()
+    .references(() => channels.id, { onDelete: 'cascade' }),
+  /** External groups recognize `/command` without a leading mention of the account. */
+  bareCommands: integer('bare_commands', { mode: 'boolean' }).notNull().default(false),
+})
 export const commandGrants = sqliteTable(
   'command_grants',
   {
@@ -1423,6 +1432,7 @@ export const coreSchema = {
   commandSystem,
   commandPolicies,
   commandGrants,
+  commandChannelSettings,
   commandExecutions,
   communityFeedbackDrafts,
   communityFeedbackItems,

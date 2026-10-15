@@ -9,7 +9,14 @@ import {
   type ConnectionId,
 } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { commandSystem, commandExecutions, commandGrants, commandPolicies, outboundIntents } from '../schema.js'
+import {
+  commandChannelSettings,
+  commandSystem,
+  commandExecutions,
+  commandGrants,
+  commandPolicies,
+  outboundIntents,
+} from '../schema.js'
 
 export function createCommandRepository(db: DrizzleCoreDatabase) {
   const needsRecovery = (record: CommandExecutionRecord): boolean =>
@@ -147,6 +154,21 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
           target: [commandPolicies.scope, commandPolicies.commandName],
           set: { policy: parsed },
         })
+        .run()
+    },
+    bareCommands(channelId: ChannelId): boolean {
+      return (
+        db
+          .select({ value: commandChannelSettings.bareCommands })
+          .from(commandChannelSettings)
+          .where(eq(commandChannelSettings.channelId, channelId))
+          .get()?.value ?? false
+      )
+    },
+    setBareCommands(channelId: ChannelId, enabled: boolean): void {
+      db.insert(commandChannelSettings)
+        .values({ channelId, bareCommands: enabled })
+        .onConflictDoUpdate({ target: commandChannelSettings.channelId, set: { bareCommands: enabled } })
         .run()
     },
     grants(channelId: ChannelId) {
