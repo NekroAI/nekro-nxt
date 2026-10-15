@@ -98,10 +98,14 @@ test('production command journey: authorization, completion, denial, delivery fa
     expect(platform.sent).toHaveLength(beforeDenied)
     platform.send('/pause', true)
     await expect(page.getByText(/无权执行此命令/).first()).toBeVisible()
-    expect(platform.sent).toHaveLength(beforeDenied)
+    // By default the member is told a grant is needed, instead of wondering whether the bot is broken.
+    await expect.poll(() => platform.sent.length).toBe(beforeDenied + 1)
+    expect(JSON.stringify(platform.sent.at(-1))).toContain('授予')
+    // A name that is not a command here is ordinary chat for the agent, never a swallowed failure.
     platform.send('/不存在的命令', true)
-    await expect(page.getByText(/未知命令：\/不存在的命令/).first()).toBeVisible()
-    expect(platform.sent).toHaveLength(beforeDenied)
+    await expect(page.getByText('/不存在的命令').first()).toBeVisible()
+    await expect(page.getByText(/未知命令：/)).toHaveCount(0)
+    expect(platform.sent).toHaveLength(beforeDenied + 1)
     await page.screenshot({ path: testInfo.outputPath('unauthorized.png'), fullPage: true })
     const inspector = page.getByRole('button', { name: '频道信息' })
     if ((await inspector.count()) && (await inspector.getAttribute('aria-pressed')) !== 'true') await inspector.click()
@@ -138,6 +142,10 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect.poll(async () => (await bindingOf())?.paused).toBe(true)
     // Pausing never rewrites the response rule.
     expect((await bindingOf())?.triggerPolicy).toBe('observe-only')
+    // A paused channel says so where people look, not only in the inspector.
+    await page.goto(`/channels/${channel.id}`)
+    await expect(page.getByRole('heading', { level: 1 }).getByText('已暂停', { exact: true })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('paused.png'), fullPage: true })
     platform.send('/resume', true)
     await expect.poll(async () => (await bindingOf())?.paused).toBe(false)
     await page.goto('/settings/commands')

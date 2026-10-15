@@ -2366,6 +2366,8 @@ export const HostApiContracts = {
       .object({
         commands: z.array(CommandCatalogEntrySchema),
         problems: z.array(z.string()),
+        /** Host-wide behavior: whether platform members without a grant are told so. */
+        settings: z.object({ unauthorizedFeedback: z.boolean() }).strict(),
         /** Present when a channel was requested. */
         channel: z
           .object({
@@ -2433,6 +2435,14 @@ export const HostApiContracts = {
         ),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  setCommandSettings: defineContract({
+    method: 'PUT',
+    path: '/api/commands/settings',
+    params: EmptyParamsSchema,
+    request: z.object({ unauthorizedFeedback: z.boolean() }).strict(),
+    response: z.object({ saved: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   setCommandChannelSettings: defineContract({

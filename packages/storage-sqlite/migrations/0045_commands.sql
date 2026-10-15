@@ -33,6 +33,12 @@ CREATE TABLE `command_grants` (
 	FOREIGN KEY (`connection_id`) REFERENCES `connections`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE TABLE `command_ignored_events` (
+	`event_id` text PRIMARY KEY NOT NULL,
+	`reason` text NOT NULL,
+	FOREIGN KEY (`event_id`) REFERENCES `channel_events`(`id`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
 CREATE TABLE `command_policies` (
 	`scope` text NOT NULL,
 	`command_name` text NOT NULL,

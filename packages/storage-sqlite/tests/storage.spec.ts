@@ -199,7 +199,7 @@ describe('Core SQLite baseline', () => {
   })
 
   it('accepts better-sqlite3 table_list metadata and migrates a clean database', async () => {
-    expect(Object.keys(coreSchema)).toHaveLength(57)
+    expect(Object.keys(coreSchema)).toHaveLength(58)
     expect(channelEvents.logicalMessageId.name).toBe('logical_message_id')
     expect('logicalMessageId' in channels).toBe(false)
 

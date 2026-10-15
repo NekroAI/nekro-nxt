@@ -66,6 +66,23 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
           </p>
         ))}
         <PropertyList>
+          {!channelId && catalog ? (
+            <PropertyRow
+              label="无权限时回复提示"
+              description={
+                catalog.settings.unauthorizedFeedback
+                  ? '平台成员执行需要授权的命令时，告诉对方需要管理员授权'
+                  : '不回复，只在命令记录里留下原因'
+              }
+            >
+              <Switch
+                label="无权限时回复提示"
+                checked={catalog.settings.unauthorizedFeedback}
+                disabled={busy}
+                onCheckedChange={(enabled) => void mutate(() => commandApi.setUnauthorizedFeedback(enabled))}
+              />
+            </PropertyRow>
+          ) : null}
           {catalog?.commands.map((command) => {
             const policy = channelId ? command.channelPolicy : command.globalPolicy
             const globalRestriction = Boolean(channelId && command.globalPolicy?.permission === 'channel-admin')
@@ -94,7 +111,9 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
               >
                 <div className={styles.controls}>
                   <code className={styles.usage}>{command.usage}</code>
-                  {command.definition.webReply === 'channel' ? <p>在控制台里执行时，结果也会发送到外部频道。</p> : null}
+                  {command.definition.consoleReply === 'channel' ? (
+                    <p>在控制台里执行时，结果也会发送到外部频道。</p>
+                  ) : null}
                   <p>
                     生效权限：{command.permission === 'public' ? '普通用户' : '频道管理'}（{permissionSource}）{' '}
                     <Chip>{command.enabled ? '启用' : '停用'}</Chip>

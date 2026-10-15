@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ChannelMemberIdSchema,
   CommandDefinitionSchema,
+  commandNameOf,
   parseCommandArguments,
   recognizeCommand,
   tokenizeCommand,
@@ -123,11 +124,36 @@ describe('command parsing', () => {
     ).toEqual({ kind: 'command', text: '/status' })
     expect(recognizeCommand([{ type: 'text', text: '/status' }], bot)).toEqual({ kind: 'command', text: '/status' })
   })
+  it('accepts platform-confirmed addressing and a leading @name written as text', () => {
+    const bot = ChannelMemberIdSchema.parse('mbr_BOT')
+    const other = ChannelMemberIdSchema.parse('mbr_OTHER')
+    const options = { requireMention: true, addressed: true }
+    expect(recognizeCommand([{ type: 'text', text: ' /status' }], bot, options)).toEqual({
+      kind: 'command',
+      text: '/status',
+    })
+    expect(recognizeCommand([{ type: 'text', text: '@机器人 /status' }], bot, options)).toEqual({
+      kind: 'command',
+      text: '/status',
+    })
+    // Someone else mentioned first is never this account's command, even if the bot is mentioned later.
+    expect(
+      recognizeCommand(
+        [
+          { type: 'mention', memberId: other },
+          { type: 'text', text: ' /status' },
+        ],
+        bot,
+        options,
+      ),
+    ).toEqual({ kind: 'chat' })
+    expect(commandNameOf('/ext_A:echo 你好')).toBe('ext_A:echo')
+  })
   it('keeps console-only results by default and accepts a definition without defaulted fields', () => {
-    expect(CommandDefinitionSchema.parse({ name: 'ping', description: '示例' }).webReply).toBe('local')
-    expect(CommandDefinitionSchema.parse({ name: 'ping', description: '示例', webReply: 'channel' }).webReply).toBe(
-      'channel',
-    )
+    expect(CommandDefinitionSchema.parse({ name: 'ping', description: '示例' }).consoleReply).toBe('local')
+    expect(
+      CommandDefinitionSchema.parse({ name: 'ping', description: '示例', consoleReply: 'channel' }).consoleReply,
+    ).toBe('channel')
   })
   it('rejects duplicate names and ambiguous required positional ordering', () => {
     expect(() => CommandDefinitionSchema.parse({ ...definition, aliases: ['回声'] })).toThrow()

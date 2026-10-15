@@ -10,12 +10,14 @@ import {
 } from '@nekro-nxt/contracts'
 import type { SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { BUILTIN_COMMANDS } from './builtins.js'
-import { SilentCommandError, type RegisteredCommand } from './types.js'
+import type { RegisteredCommand } from './types.js'
 
 export interface CommandDirectoryOptions {
   readonly repository: SqliteCoreRepository
   readonly extensions: (agentId: AgentId) => readonly RegisteredCommand[]
 }
+
+export class UnknownCommandError extends Error {}
 
 const WEB_ADMIN: CommandExecutionIdentity = { source: 'web', displayName: 'Web 管理员' }
 
@@ -57,8 +59,18 @@ export class CommandDirectory {
     )
     if (matches.length > 1)
       throw new Error(`命令名称冲突，请使用完整名称：${matches.map((command) => '/' + command.fullName).join('、')}`)
-    if (!matches[0]) throw new SilentCommandError(`未知命令：/${name}。输入 /help 查看可用命令。`)
+    if (!matches[0]) throw new UnknownCommandError(`未知命令：/${name}。输入 /help 查看可用命令。`)
     return matches[0]
+  }
+
+  /** Whether a name means a command here (including ambiguous short names); anything else is ordinary chat. */
+  knows(name: string, channelId: ChannelId): boolean {
+    try {
+      this.resolve(name, channelId)
+      return true
+    } catch (error) {
+      return !(error instanceof UnknownCommandError)
+    }
   }
 
   authorized(channelId: ChannelId | undefined, identity: CommandExecutionIdentity): boolean {

@@ -15,7 +15,7 @@ import { RESPONSE_MODE_LABELS } from './builtins.js'
 import type { CommandDirectory } from './catalog.js'
 import { mutateRecord, type CommandReplies } from './replies.js'
 import {
-  SilentCommandError,
+  UnauthorizedCommandError,
   textResult,
   type CommandObserver,
   type CommandRunCapabilities,
@@ -163,7 +163,7 @@ export class CommandExecutor {
         ...(binding === undefined ? {} : { agentId: binding.agentId }),
         ...(revision === undefined ? {} : { agentRevisionId: revision.id }),
         // Console runs in an external channel stay in the console unless the command declares otherwise.
-        ...(record.source === 'web' && channel?.kind !== 'internal' && command.definition.webReply !== 'channel'
+        ...(record.source === 'web' && channel?.kind !== 'internal' && command.definition.consoleReply !== 'channel'
           ? { replyLocal: true, replySuppressed: true }
           : {}),
       })
@@ -183,7 +183,7 @@ export class CommandExecutor {
           (entry.permission === 'channel-admin' || management) &&
           !this.#o.directory.authorized(record.channelId, record.identity)
         )
-          throw new SilentCommandError('无权执行此命令，需要此频道的命令管理授权。')
+          throw new UnauthorizedCommandError('无权执行此命令，需要管理员在 NekroNXT 中授予此频道的命令管理权限。')
         if (entry.unavailableReason !== undefined) throw new Error(entry.unavailableReason)
         if (!binding && !['help', 'status'].includes(invoked.fullName)) throw new Error('请先为频道绑定智能体。')
       }
@@ -232,24 +232,49 @@ export class CommandExecutor {
       }
       const capabilities = this.#capabilities(record, binding?.boundAt, guard)
       let result: CommandResult
-      try {
+      if (command.extensionRevisionId === undefined) {
         result = await command.invoke(context, capabilities)
-      } catch (error) {
-        if (error instanceof SilentCommandError || command.extensionRevisionId === undefined) throw error
-        throw new Error(controller.signal.aborted ? '命令已取消。' : '扩展命令执行失败，请检查扩展状态。')
+      } else {
+        const seconds = command.definition.timeoutSeconds
+        let timer: NodeJS.Timeout | undefined
+        let timedOut = false
+        // A stuck handler must not hold the channel queue (and the /stop or /pause behind it) indefinitely.
+        const deadline = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            controller.abort(new Error('timeout'))
+            reject(new Error(`扩展命令超过 ${seconds} 秒未完成，已取消。`))
+          }, seconds * 1000)
+        })
+        const running = Promise.resolve().then(() => invoked.invoke(context, capabilities))
+        // After a timeout the handler may still settle; its outcome no longer matters.
+        running.catch(() => undefined)
+        try {
+          result = await Promise.race([running, deadline])
+        } catch (error) {
+          if (timedOut || error instanceof UnauthorizedCommandError) throw error
+          throw new Error(controller.signal.aborted ? '命令已取消。' : '扩展命令执行失败，请检查扩展状态。')
+        } finally {
+          clearTimeout(timer)
+        }
       }
       result = CommandResultSchema.parse(result)
       this.#assertAssets(record.channelId, result)
       record = this.#settle(id, { status: 'succeeded', result })
     } catch (error) {
       const message = error instanceof Error ? error.message : '命令执行失败。'
+      const unauthorized = error instanceof UnauthorizedCommandError
       const detail =
-        message + (command === undefined ? '' : `\n用法：${commandUsage(command.definition, command.fullName)}`)
+        message +
+        (command === undefined || unauthorized ? '' : `\n用法：${commandUsage(command.definition, command.fullName)}`)
       record = this.#settle(id, {
         status: 'failed',
         error: detail,
         result: textResult(detail),
-        ...(record.source === 'platform' && error instanceof SilentCommandError ? { replySuppressed: true } : {}),
+        // The administrator decides whether platform members hear that they lack a grant.
+        ...(record.source === 'platform' && unauthorized && !repository.commands.unauthorizedFeedback()
+          ? { replySuppressed: true }
+          : {}),
       })
     } finally {
       this.#controllers.delete(controller)
@@ -325,7 +350,7 @@ export class CommandExecutor {
         }
         const found = this.#o.directory.resolve(target.replace(/^\//u, ''), record.channelId)
         const entry = available.find((candidate) => candidate.fullName === found.fullName)
-        if (!entry) throw new SilentCommandError('该命令不可用或无权查看。')
+        if (!entry) throw new Error('该命令不可用，或你没有使用它的权限。')
         return textResult(
           [
             entry.usage,

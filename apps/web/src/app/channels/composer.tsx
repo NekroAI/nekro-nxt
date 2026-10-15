@@ -326,7 +326,7 @@ export function Composer({
         <span role="status" className={styles.commandHint}>
           用法：{currentCommand.usage}
           {external
-            ? currentCommand.definition.webReply === 'channel'
+            ? currentCommand.definition.consoleReply === 'channel'
               ? ' · 结果也会发送到频道'
               : ' · 只在这里显示，不发送到频道'
             : ''}

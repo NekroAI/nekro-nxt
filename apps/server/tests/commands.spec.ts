@@ -302,16 +302,17 @@ describe('unified commands', () => {
     expect(read).not.toHaveBeenCalled()
     expect(unfinished).toHaveBeenCalledOnce()
   })
-  it('stores help, unknown and denied commands without model admission or ordinary hooks', async () => {
+  it('stores help and denied commands without model admission or ordinary hooks', async () => {
     const f = await setup()
     await f.inbound('/help')
-    await f.inbound('/unknown')
     await f.inbound('/reset')
     expect(f.createSession).not.toHaveBeenCalled()
     expect(f.hook).not.toHaveBeenCalled()
     const history = f.repository.listChannelHistory(f.channel.id)
+    // /help, its reply, /reset and the reply telling the member a grant is needed.
     expect(history).toHaveLength(4)
-    expect(f.adapter.deliveries).toHaveLength(1)
+    expect(f.adapter.deliveries).toHaveLength(2)
+    expect(JSON.stringify(f.adapter.deliveries[1]?.parts)).toContain('授予')
     expect(history.filter((e) => e.source === 'outbound-intent').every((e) => e.commandExecutionId !== undefined)).toBe(
       true,
     )
@@ -322,13 +323,15 @@ describe('unified commands', () => {
         .sort(),
     ).toEqual([])
     expect(JSON.stringify(f.adapter.deliveries[0]?.parts)).not.toContain('/reset')
-    for (const entry of history.filter((entry) => entry.source === 'channel-event')) {
-      const record = f.repository.commands.forEvent(entry.sourceId)!
-      if (record.status === 'failed') expect(record.replySuppressed).toBe(true)
-    }
     f.commands.recover()
     await f.commands.idle()
-    expect(f.adapter.deliveries).toHaveLength(1)
+    expect(f.adapter.deliveries).toHaveLength(2)
+    // With the feedback turned off, unauthorized members are recorded but not answered.
+    f.commands.setUnauthorizedFeedback(false)
+    const silent = await f.inbound('/reset')
+    await f.commands.idle()
+    expect(f.repository.commands.forEvent(silent.channelEventId)?.replySuppressed).toBe(true)
+    expect(f.adapter.deliveries).toHaveLength(2)
     await f.inbound('普通消息')
     expect(f.admissions[0]?.events.map((e) => e.parts)).toEqual([[{ type: 'text', text: '普通消息' }]])
   })
@@ -482,7 +485,7 @@ describe('unified commands', () => {
     const local = await f.commands.executeWeb(f.channel.id, '/status', 'local-status', 'local')
     expect(local.replyLocal).toBe(true)
     expect(f.adapter.deliveries).toHaveLength(0)
-    const definition = CommandDefinitionSchema.parse({ name: 'announce', description: '公告', webReply: 'channel' })
+    const definition = CommandDefinitionSchema.parse({ name: 'announce', description: '公告', consoleReply: 'channel' })
     f.extensions.push({
       definition,
       fullName: 'ext_ANN:announce',
@@ -607,6 +610,81 @@ describe('unified commands', () => {
     expect(rateLimited).toHaveBeenCalledOnce()
     expect(rateLimited.mock.calls[0]?.[0]).toMatchObject({ dropped: 1 })
   })
+  it('treats a platform-confirmed mention as addressing, as QQ and WeCom report it', async () => {
+    const f = await setup(false, false)
+    const send = (parts: readonly MessagePart[], key: string) =>
+      f.runtime.acceptChannelInbound({
+        connectionId: f.connection.id,
+        channelId: f.channel.id,
+        adapterKey: 'fake',
+        kind: 'message-created',
+        senderMemberId: f.member.member.id,
+        parts: [...parts],
+        facts: { mentionedBot: true },
+        platformTimestamp: 1000,
+        receivedAt: 1000,
+        dedupeKey: key,
+      })
+    // QQ's group @ event: the platform strips the bot mention from the content.
+    const qq = await send([{ type: 'text', text: ' /status' }], 'qq-at')
+    await f.commands.idle()
+    expect(f.repository.commands.forEvent(qq.channelEventId)?.commandName).toBe('status')
+    // WeCom keeps the @name as text in front of the command.
+    const wecom = await send([{ type: 'text', text: '@示例机器人 /help' }], 'wecom-at')
+    await f.commands.idle()
+    expect(f.repository.commands.forEvent(wecom.channelEventId)?.commandName).toBe('help')
+  })
+  it('leaves names that are not commands here to the agent as ordinary chat', async () => {
+    const f = await setup()
+    const path = await f.inbound('/usr/local 是什么目录')
+    const emoticon = await f.inbound('/微笑')
+    expect(f.repository.commands.forEvent(path.channelEventId)).toBeUndefined()
+    expect(f.repository.commands.forEvent(emoticon.channelEventId)).toBeUndefined()
+    expect(f.admissions.flatMap((admission) => admission.events.map((event) => event.id))).toContain(
+      path.channelEventId,
+    )
+    // The console still reports a name it does not know.
+    const typed = await f.commands.executeWeb(f.channel.id, '/不存在', 'web-unknown', 'local')
+    expect(typed.error).toContain('未知命令')
+  })
+  it('decides once whether a message is a command, whatever the settings become later', async () => {
+    const f = await setup(false, false)
+    const unaddressed = await f.inbound('/status')
+    const event = f.repository.getChannelEvent(unaddressed.channelEventId)!
+    expect(f.commands.excludes(event)).toBe(false)
+    f.commands.setBareCommands(f.channel.id, true)
+    // Turning bare commands on later does not reclassify what was already chat.
+    expect(f.commands.excludes(event)).toBe(false)
+    for (let index = 0; index < 11; index += 1) await f.inbound('/status', `burst-${index}`)
+    const dropped = await f.inbound('/status', 'burst-dropped')
+    expect(f.repository.commands.forEvent(dropped.channelEventId)).toBeUndefined()
+    f.commands.setBareCommands(f.channel.id, false)
+    // A command dropped by the rate limit stays out of model context even though it has no execution.
+    expect(f.commands.excludes(f.repository.getChannelEvent(dropped.channelEventId)!)).toBe(true)
+  })
+  it('cancels an extension handler at its declared time limit and frees the channel queue', async () => {
+    const f = await setup()
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    let aborted = false
+    f.extensions.push({
+      definition: CommandDefinitionSchema.parse({ name: 'hang', description: '不会结束', timeoutSeconds: 1 }),
+      fullName: 'ext_HANG:hang',
+      source: '测试',
+      extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_HANG'),
+      invoke: (context) =>
+        new Promise(() => {
+          context.signal.addEventListener('abort', () => (aborted = true), { once: true })
+        }),
+    })
+    const hang = await f.inbound('/hang')
+    const stop = await f.inbound('/stop')
+    await f.commands.idle()
+    const record = f.repository.commands.forEvent(hang.channelEventId)!
+    expect(record.status).toBe('failed')
+    expect(record.error).toContain('超过 1 秒')
+    expect(aborted).toBe(true)
+    expect(f.repository.commands.forEvent(stop.channelEventId)?.status).toBe('succeeded')
+  })
   it('uses stable extension names, denies ambiguity and enforces permission floors', async () => {
     const f = await setup()
     const definition = CommandDefinitionSchema.parse({ name: 'echo', aliases: ['e'], description: '示例' })
@@ -634,8 +712,9 @@ describe('unified commands', () => {
     expect(() => f.commands.setPolicy(f.channel.id, 'status', { permission: 'public' })).toThrow('全局权限')
     f.commands.setPolicy(f.channel.id, 'status', {})
   })
-  it('reports a paused command to authorized callers and keeps unauthorized platform calls silent', async () => {
+  it('reports a paused command to authorized callers and keeps unauthorized platform calls silent when asked', async () => {
     const f = await setup()
+    f.commands.setUnauthorizedFeedback(false)
     const invoke = vi.fn(() => ({ parts: [{ type: 'text' as const, text: 'should not run' }] }))
     f.extensions.push({
       definition: CommandDefinitionSchema.parse({
@@ -911,15 +990,25 @@ it('rejects stale bound capabilities and keeps ordinary messages while an extens
 
 it('holds startup commands until extension activations have been restored', async () => {
   const f = await setup(true)
-  const commit = await f.inbound('/ready')
-  expect(f.repository.commands.forEvent(commit.channelEventId)?.status).toBe('pending')
-  expect(f.adapter.deliveries).toHaveLength(0)
-  expect(f.admissions).toHaveLength(0)
-  f.extensions.push({
+  // Before mounts are restored the committed activation already declares the command (an unavailable placeholder),
+  // so it is recognized and held rather than handed to the model as chat.
+  const ready = {
     definition: CommandDefinitionSchema.parse({ name: 'ready', description: '启动恢复测试' }),
     fullName: 'ext_ready:ready',
     source: '恢复测试',
     extensionRevisionId: ExtensionRevisionIdSchema.parse('xrv_READY'),
+  }
+  f.extensions.push({
+    ...ready,
+    unavailableReason: '恢复中',
+    invoke: () => ({ parts: [{ type: 'text', text: '未恢复' }] }),
+  })
+  const commit = await f.inbound('/ready')
+  expect(f.repository.commands.forEvent(commit.channelEventId)?.status).toBe('pending')
+  expect(f.adapter.deliveries).toHaveLength(0)
+  expect(f.admissions).toHaveLength(0)
+  f.extensions.splice(0, f.extensions.length, {
+    ...ready,
     invoke: () => ({ parts: [{ type: 'text', text: '已恢复' }] }),
   })
   f.commands.open()

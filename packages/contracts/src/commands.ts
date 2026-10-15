@@ -14,6 +14,8 @@ import {
   type MessagePart,
 } from './domain.js'
 
+export const COMMAND_DEFAULT_TIMEOUT_SECONDS = 60
+export const COMMAND_MAX_TIMEOUT_SECONDS = 600
 export const CommandPermissionSchema = z.enum(['public', 'channel-admin'])
 export type CommandPermission = z.output<typeof CommandPermissionSchema>
 const nameSchema = z
@@ -45,11 +47,16 @@ export const CommandDefinitionSchema = z
     minimumPermission: CommandPermissionSchema.default('public'),
     enabledByDefault: z.boolean().default(true),
     /**
-     * Where the result goes when an administrator runs the command from the Web console in an external channel.
-     * `local` (default) shows it in the console only; `channel` also sends it through the bot account, and the
-     * console labels the command accordingly. Platform-originated commands always reply in their conversation.
+     * Where the result goes when an administrator runs the command from the console (Web or Desktop) in an external
+     * channel. `local` (default) shows it in the console only; `channel` also sends it through the bot account, and
+     * the console labels the command accordingly. Platform-originated commands always reply in their conversation.
      */
-    webReply: z.enum(['local', 'channel']).default('local'),
+    consoleReply: z.enum(['local', 'channel']).default('local'),
+    /**
+     * How long an extension handler may run before it is cancelled and recorded as timed out, so a stuck handler
+     * cannot hold the channel's command queue. Built-in commands ignore it.
+     */
+    timeoutSeconds: z.number().int().min(1).max(COMMAND_MAX_TIMEOUT_SECONDS).default(COMMAND_DEFAULT_TIMEOUT_SECONDS),
   })
   .strict()
   .superRefine((definition, ctx) => {
@@ -316,8 +323,13 @@ export type CommandRecognition =
   | { readonly kind: 'escaped'; readonly parts: readonly MessagePart[] }
   | { readonly kind: 'chat' }
 export interface CommandRecognitionOptions {
-  /** External groups: only text addressed to this account (leading mention) is a command. */
+  /** External groups: only text addressed to this account is a command. */
   readonly requireMention?: boolean
+  /**
+   * The platform itself says this message mentions the account (QQ's @ events, WeCom group callbacks), even when the
+   * mention is not a leading mention part. Such adapters may also leave a leading `@name` as plain text.
+   */
+  readonly addressed?: boolean
 }
 export function recognizeCommand(
   parts: readonly MessagePart[],
@@ -326,18 +338,25 @@ export function recognizeCommand(
 ): CommandRecognition {
   let input = parts
   while (input.length > 1 && input[0]?.type === 'text' && input[0].text.trim() === '') input = input.slice(1)
-  let addressed = false
-  if (input[0]?.type === 'mention' && botMemberId !== undefined && input[0].memberId === botMemberId) {
+  let addressed = options.addressed === true
+  let mentionPart = false
+  if (input[0]?.type === 'mention') {
+    // A leading mention of someone else addresses them, never this account.
+    if (botMemberId === undefined || input[0].memberId !== botMemberId) return { kind: 'chat' }
     input = input.slice(1)
     addressed = true
+    mentionPart = true
   }
   if (options.requireMention === true && !addressed) return { kind: 'chat' }
   if (input.length === 0 || input.some((p) => p.type !== 'text')) return { kind: 'chat' }
-  const text = input
+  let text = input
     .map((p) => (p.type === 'text' ? p.text : ''))
     .join('')
     .trimStart()
+  if (options.addressed === true && !mentionPart) text = text.replace(/^@\S+\s+/u, '')
   if (text.startsWith('//')) return { kind: 'escaped', parts: [{ type: 'text', text: text.slice(1) }] }
   if (!text.startsWith('/')) return { kind: 'chat' }
   return { kind: 'command', text }
 }
+/** The command name a recognized text invokes (`/name args` → `name`). */
+export const commandNameOf = (text: string): string => /^\/(\S*)/u.exec(text.trimStart())?.[1] ?? ''

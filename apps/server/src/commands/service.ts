@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import {
+  commandNameOf,
   recognizeCommand,
   type AgentId,
   type ChannelId,
@@ -91,6 +92,7 @@ export class CommandService implements CommandGate {
     if (event.kind !== 'message-created' || event.id <= this.#cutoff) return { kind: 'chat' } as const
     return recognizeCommand(event.parts, this.#o.botMemberId(event), {
       requireMention: this.#requiresMention(event.channelId),
+      addressed: event.facts?.['mentionedBot'] === true,
     })
   }
 
@@ -101,8 +103,9 @@ export class CommandService implements CommandGate {
     )
   }
 
+  /** Decided once, when the message was committed; later setting changes never reclassify history. */
   excludes(event: ChannelEventRecord): boolean {
-    return this.#o.repository.commands.forEvent(event.id) !== undefined || this.#recognize(event).kind === 'command'
+    return this.#o.repository.commands.isCommandEvent(event.id)
   }
 
   project(event: ChannelEventRecord): ChannelEventRecord {
@@ -126,6 +129,8 @@ export class CommandService implements CommandGate {
     const detected = this.#recognize(event)
     if (detected.kind !== 'command') return undefined
     const channel = this.#channel(event.channelId)
+    // Only names that mean a command here are intercepted; paths, emoticon shortcuts and the like stay chat.
+    if (!this.#directory.knows(commandNameOf(detected.text), channel.id)) return undefined
     const identity =
       event.senderMemberId === undefined
         ? undefined
@@ -133,6 +138,7 @@ export class CommandService implements CommandGate {
     // Over the limit the message stays a fact (and never reaches the model), but nothing runs or replies.
     const admission = this.#limiter.admit(channel.id, identity?.platformUserId ?? String(event.senderMemberId))
     if (admission !== 'allowed') {
+      this.#o.repository.commands.ignore(event.id, 'rate-limited')
       this.#noteLimited(channel.id, admission)
       return undefined
     }
@@ -235,6 +241,15 @@ export class CommandService implements CommandGate {
 
   members(channelId: ChannelId) {
     return this.#directory.members(channelId)
+  }
+
+  /** Host-wide command behavior. */
+  settings() {
+    return { unauthorizedFeedback: this.#o.repository.commands.unauthorizedFeedback() }
+  }
+
+  setUnauthorizedFeedback(enabled: boolean): void {
+    this.#o.repository.commands.setUnauthorizedFeedback(enabled, this.#o.now())
   }
 
   channelSettings(channelId: ChannelId) {

@@ -118,6 +118,7 @@ function RowContent({
       </span>
       <span className={styles.rowTime}>{relativeTime(activity.at)}</span>
       <span className={styles.rowSub}>
+        {channel.bindings[0]?.paused ? '已暂停 · ' : ''}
         {mode === 'recent' && activity.preview ? `${activity.preview.author}：${activity.preview.text}` : sourceFull}
       </span>
       {channel.unread > 0 ? (

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ed6ab898-dbb8-45e3-aa56-a41f9d1f586e",
+  "id": "b3a89aaa-0be9-4133-9e48-3ee2048dbb83",
   "prevId": "7be0dd0c-19aa-411e-af1d-68b6e56b331a",
   "tables": {
     "admission_events": {
@@ -2083,6 +2083,44 @@
           "name": "command_grants_channel_id_connection_id_platform_user_id_pk"
         }
       },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "command_ignored_events": {
+      "name": "command_ignored_events",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "command_ignored_events_event_id_channel_events_id_fk": {
+          "name": "command_ignored_events_event_id_channel_events_id_fk",
+          "tableFrom": "command_ignored_events",
+          "tableTo": "channel_events",
+          "columnsFrom": [
+            "event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

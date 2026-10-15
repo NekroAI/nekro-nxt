@@ -457,7 +457,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
         : channel.bindings[0]?.triggerPolicy === 'observe-only'
           ? '仅观察'
           : channel.bindings[0]?.triggerPolicy === 'command'
-            ? '收到命令时'
+            ? '平台命令事件'
             : '始终响应',
     bindings: channel.bindings.map((binding) => ({
       id: `${binding.channelId}:${binding.agentId}:${binding.boundAt}`,

@@ -637,6 +637,17 @@ export const commandPolicies = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.scope, table.commandName] })],
 )
+/**
+ * Messages recognized as commands that deliberately got no execution (dropped by the rate limit). Recording the
+ * decision keeps them out of model context for good, instead of re-deciding later under different settings.
+ */
+export const commandIgnoredEvents = sqliteTable('command_ignored_events', {
+  eventId: text('event_id')
+    .$type<ChannelEventId>()
+    .primaryKey()
+    .references(() => channelEvents.id, { onDelete: 'cascade' }),
+  reason: text({ enum: ['rate-limited'] }).notNull(),
+})
 /** Per-channel command behavior that is not a policy of one command. */
 export const commandChannelSettings = sqliteTable('command_channel_settings', {
   channelId: text('channel_id')
@@ -1440,6 +1451,7 @@ export const coreSchema = {
   commandPolicies,
   commandGrants,
   commandChannelSettings,
+  commandIgnoredEvents,
   commandExecutions,
   communityFeedbackDrafts,
   communityFeedbackItems,

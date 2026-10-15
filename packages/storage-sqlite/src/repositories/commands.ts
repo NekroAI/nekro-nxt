@@ -12,12 +12,16 @@ import {
 import type { DrizzleCoreDatabase } from '../database.js'
 import {
   commandChannelSettings,
+  commandIgnoredEvents,
+  systemSettings,
   commandSystem,
   commandExecutions,
   commandGrants,
   commandPolicies,
   outboundIntents,
 } from '../schema.js'
+
+const UNAUTHORIZED_FEEDBACK_KEY = 'commands.unauthorizedFeedback'
 
 /** Completed executions kept in full per channel; older ones are reduced to their searchable columns. */
 export const COMMAND_EXECUTION_RETAIN = 500
@@ -180,6 +184,43 @@ export function createCommandRepository(db: DrizzleCoreDatabase) {
         .onConflictDoUpdate({
           target: [commandPolicies.scope, commandPolicies.commandName],
           set: { policy: parsed },
+        })
+        .run()
+    },
+    /** Records that a recognized command message was deliberately not executed. */
+    ignore(eventId: ChannelEventId, reason: 'rate-limited'): void {
+      db.insert(commandIgnoredEvents).values({ eventId, reason }).onConflictDoNothing().run()
+    },
+    /** Whether the message was decided to be a command when it arrived (executed or deliberately ignored). */
+    isCommandEvent(eventId: ChannelEventId): boolean {
+      return (
+        db
+          .select({ id: commandExecutions.id })
+          .from(commandExecutions)
+          .where(eq(commandExecutions.eventId, eventId))
+          .get() !== undefined ||
+        db
+          .select({ id: commandIgnoredEvents.eventId })
+          .from(commandIgnoredEvents)
+          .where(eq(commandIgnoredEvents.eventId, eventId))
+          .get() !== undefined
+      )
+    },
+    /** Whether unauthorized platform members are told they need a grant (default) or ignored silently. */
+    unauthorizedFeedback(): boolean {
+      const value = db
+        .select({ value: systemSettings.value })
+        .from(systemSettings)
+        .where(eq(systemSettings.key, UNAUTHORIZED_FEEDBACK_KEY))
+        .get()?.value
+      return value !== false
+    },
+    setUnauthorizedFeedback(enabled: boolean, at: number): void {
+      db.insert(systemSettings)
+        .values({ key: UNAUTHORIZED_FEEDBACK_KEY, value: enabled, revision: 1, updatedAt: at })
+        .onConflictDoUpdate({
+          target: systemSettings.key,
+          set: { value: enabled, revision: sql`${systemSettings.revision} + 1`, updatedAt: at },
         })
         .run()
     },

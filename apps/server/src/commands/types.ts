@@ -37,7 +37,7 @@ export interface CommandObserver {
   rateLimited?(report: { readonly channelId: ChannelId; readonly dropped: number; readonly reason: string }): void
 }
 
-/** A refusal the platform must not hear about (unknown or unauthorized): recorded, never answered. */
-export class SilentCommandError extends Error {}
+/** The caller lacks the grant. Platform members are told so unless the administrator turned that feedback off. */
+export class UnauthorizedCommandError extends Error {}
 
 export const textResult = (text: string): CommandResult => ({ parts: [{ type: 'text', text }] })

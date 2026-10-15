@@ -212,6 +212,7 @@ export function Conversation({
             ) : (
               <Chip>未接线</Chip>
             )}
+            {channel.bindings[0]?.paused ? <Chip tone="warn">已暂停</Chip> : null}
           </h1>
           <div className={styles.subline}>
             {connection ? <StatusDot tone={connectionStatus(connection).tone} /> : null}

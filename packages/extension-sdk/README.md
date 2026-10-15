@@ -120,4 +120,4 @@ ctx.effect(() => disposeTool()) // 错误：effect 现在执行，Tool 随即被
 
 ## 聊天命令（SDK 9）
 
-Manifest V7 增加 command Contribution，Host factory 使用 `harness.registerCommand(definition, handler)`。处理器获得验证后的 arguments、identity、channelId、signal、`reply`（过程回复，每次执行最多 5 条）和受权限约束的 host 能力，返回终态文本/图片/文件结果；需要在控制台执行时也发送到外部频道的命令声明 `webReply: 'channel'`。注册属于扩展本机实例，执行与取消按智能体挂载隔离，禁止在 Session apply 中注册；卸载须响应 signal 并完成清理。完整契约见[命令系统](../../docs/10-命令系统.md)，可安装源码与打包方法见[回声示例](../../apps/server/examples/command-echo/README.md)。
+Manifest V7 增加 command Contribution，Host factory 使用 `harness.registerCommand(definition, handler)`。处理器获得验证后的 arguments、identity、channelId、signal、`reply`（过程回复，每次执行最多 5 条）和受权限约束的 host 能力，返回终态文本/图片/文件结果；需要在控制台执行时也发送到外部频道的命令声明 `consoleReply: 'channel'`；执行时限默认 60 秒，可用 `timeoutSeconds` 声明（最长 600 秒），超时会收到取消信号。注册属于扩展本机实例，执行与取消按智能体挂载隔离，禁止在 Session apply 中注册；卸载须响应 signal 并完成清理。完整契约见[命令系统](../../docs/10-命令系统.md)，可安装源码与打包方法见[回声示例](../../apps/server/examples/command-echo/README.md)。

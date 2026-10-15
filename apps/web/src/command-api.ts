@@ -9,6 +9,8 @@ export const commandApi = {
   members: (channelId: string) => callHostApi(HostApiContracts.listCommandMembers, { channelId }, undefined),
   policy: (scope: string, name: string, policy: HostApiResponse<'listCommands'>['commands'][number]['globalPolicy']) =>
     callHostApi(HostApiContracts.setCommandPolicy, {}, { scope, name, policy: policy ?? {} }),
+  setUnauthorizedFeedback: (unauthorizedFeedback: boolean) =>
+    callHostApi(HostApiContracts.setCommandSettings, {}, { unauthorizedFeedback }),
   setBareCommands: (channelId: string, bareCommands: boolean) =>
     callHostApi(HostApiContracts.setCommandChannelSettings, {}, { channelId, bareCommands }),
   grant: (channelId: string, identityId: string, enabled: boolean) =>
