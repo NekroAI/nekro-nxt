@@ -961,6 +961,10 @@ const isEntryPoint = (): boolean => {
 
 // Only auto-start when invoked as an entry point (pnpm dev/start), not on import.
 if (isEntryPoint()) {
+  // Inside Electron's utility process, DSH's local runner starts children with process.execPath (the Electron
+  // binary), which must run as Node. Desktop cannot pass the variable through fork: a utility process started with
+  // ELECTRON_RUN_AS_NODE set exits immediately, so the Server sets it for its own descendants after startup.
+  if (process.versions['electron'] !== undefined && 'parentPort' in process) process.env['ELECTRON_RUN_AS_NODE'] = '1'
   void (async () => {
     try {
       const dataRoot = process.env['NEKRO_DATA'] ?? defaultDataRoot()

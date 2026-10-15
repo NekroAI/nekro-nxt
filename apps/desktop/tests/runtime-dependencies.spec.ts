@@ -88,8 +88,12 @@ describe('Desktop runtime dependencies', () => {
     const pluginInstaller = await readFile(path.join(repositoryRoot, 'apps/server/src/dsh-plugin-installer.ts'), 'utf8')
     expect(pluginInstaller).toContain("ELECTRON_RUN_AS_NODE: process.env['ELECTRON_RUN_AS_NODE']")
 
+    // A utility process started with ELECTRON_RUN_AS_NODE exits at once, so Desktop must not pass it to fork;
+    // the Server sets it for its own subprocesses after it is running.
     const desktopMain = await readFile(path.join(desktopRoot, 'src/main.ts'), 'utf8')
-    expect(desktopMain).toContain("ELECTRON_RUN_AS_NODE: '1'")
+    expect(desktopMain).not.toContain('ELECTRON_RUN_AS_NODE')
+    const serverMain = await readFile(path.join(repositoryRoot, 'apps/server/src/main.ts'), 'utf8')
+    expect(serverMain).toContain("process.env['ELECTRON_RUN_AS_NODE'] = '1'")
 
     for (const channel of ['stable', 'preview']) {
       const previousChannel = process.env['NEKRO_DESKTOP_CHANNEL']
