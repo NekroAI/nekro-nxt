@@ -10,6 +10,9 @@ export default defineConfig({
     // SQLite/restore fixtures are CPU and disk intensive under V8 coverage.
     // Bound contention without weakening individual timeout or coverage gates.
     maxWorkers: 4,
+    // Server startup tests also launch the log storage worker, which loads TypeScript sources; a loaded CI runner
+    // needs more than Vitest's 5 s default for those without hiding hangs (individual tests set lower bounds).
+    testTimeout: 15_000,
     include: ['apps/*/tests/**/*.spec.{ts,tsx}', 'packages/*/tests/**/*.spec.{ts,tsx}', 'scripts/**/*.spec.{ts,tsx}'],
     server: {
       deps: {
