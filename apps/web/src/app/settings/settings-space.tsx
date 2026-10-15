@@ -82,19 +82,19 @@ import styles from './settings.module.css'
 
 // Four groups (docs/NekroNxt界面交互模型.md §9); the order inside a group is the order people need them.
 const GROUPS = [
-  { key: 'agent', label: '智能体运行' },
-  { key: 'connection', label: '连接' },
+  { key: 'runtime', label: '智能体运行' },
+  { key: 'links', label: '连接' },
   { key: 'permission', label: '权限' },
   { key: 'system', label: '系统' },
 ] as const
 
 const SECTIONS = [
-  { key: 'models', label: '模型', group: 'agent', icon: <Cpu size={16} /> },
-  { key: 'retrieval', label: '检索', group: 'agent', icon: <Search size={16} /> },
-  { key: 'dsh', label: 'DSH 插件', group: 'agent', icon: <Blocks size={16} /> },
-  { key: 'chat', label: '聊天', group: 'agent', icon: <MessageCircle size={16} /> },
-  { key: 'adapters', label: '平台适配器', group: 'connection', icon: <Plug size={16} /> },
-  { key: 'accounts', label: '账号与服务', group: 'connection', icon: <UserRoundKey size={16} /> },
+  { key: 'models', label: '模型', group: 'runtime', icon: <Cpu size={16} /> },
+  { key: 'retrieval', label: '检索', group: 'runtime', icon: <Search size={16} /> },
+  { key: 'dsh', label: 'DSH 插件', group: 'runtime', icon: <Blocks size={16} /> },
+  { key: 'chat', label: '聊天', group: 'runtime', icon: <MessageCircle size={16} /> },
+  { key: 'adapters', label: '平台适配器', group: 'links', icon: <Plug size={16} /> },
+  { key: 'accounts', label: '账号与服务', group: 'links', icon: <UserRoundKey size={16} /> },
   { key: 'administrators', label: '管理员', group: 'permission', icon: <ShieldCheck size={16} /> },
   { key: 'commands', label: '聊天命令', group: 'permission', icon: <SquareSlash size={16} /> },
   { key: 'access', label: '登录设备', group: 'permission', icon: <MonitorSmartphone size={16} /> },
