@@ -209,6 +209,8 @@ function VersionDetail({
   const usable = revision.format === undefined || revision.format === 'current'
   const users = extension.activations.filter((item) => item.revisionId === revision.id)
   const dataNewer = revision.dataVersion < extension.dataVersion
+  const startsBranch = extension.branchOf !== undefined && node.parentRevisionId === undefined
+  const basedOn = parentLabel ?? (startsBranch ? '分支起点' : '最早的版本')
   return (
     <div className={styles.detail}>
       <div className={styles.detailHead}>
@@ -234,7 +236,7 @@ function VersionDetail({
         </div>
         <div>
           <dt>基于</dt>
-          <dd>{parentLabel ?? (extension.branchOf && node.parentRevisionId === undefined ? '分支起点' : '最早的版本')}</dd>
+          <dd>{basedOn}</dd>
         </div>
         <div>
           <dt>数据格式</dt>

@@ -19,7 +19,7 @@ npm 发布说明见 [PUBLISH-README](PUBLISH-README.md)。运行时能力由宿�
 | `message-renderer`                         | 本机实例   | 本扩展适配器的 `rich` 消息 kind                                          |
 | `host-page`                                | 本机实例   | 最多 8 个顶级页面；至多一个页面声明 `rail` 注册导航轨入口                |
 
-其余字段：`permissions` 为 `{ permissions, networkOrigins, host?, agent? }`——前两项是页面与面板经 `host.call` 的产品读写和 HTTP(S) origin，`host` 是本机实例的能力，`agent` 是智能体挂载的能力（见“宿主能力”）；`config` 为 `{ host?: { schema }, agent?: { schema } }`；可选 `requires: { sdk }`；可选 `icon: { path, sha256 }` 指向包内 `assets/icon.{svg,png,webp}`（64–512 像素正方形、不超过 128 KiB，规则见 [扩展包格式](../extension-format/README.md#扩展图标)）。没有任何贡献的扩展必须声明智能体层能力（例如 MCP 服务），否则拒绝保存。
+其余字段：`permissions` 为 `{ permissions, networkOrigins, host?, agent? }`——前两项是页面与面板经 `host.call` 的产品读写和 HTTP(S) origin，`host` 是本机实例的能力，`agent` 是智能体挂载的能力（见“宿主能力”）；`config` 为 `{ host?: { schema }, agent?: { schema } }`；可选 `requires: { sdk }`；可选 `icon: { path, sha256 }` 指向包内 `assets/icon.{svg,png,webp}`（64–512 像素正方形、不超过 128 KiB，规则见 [扩展包格式](../extension-format/README.md#扩展图标)）。没有任何贡献的扩展必须声明智能体层能力（例如 MCP 服务），否则拒绝保存。SDK 10 起还有 `lineage`（版本谱系，宿主保存时写入）与 `dataVersion`（数据格式版本），见下文“数据迁移”与[扩展包格式](../extension-format/README.md#版本谱系与数据版本sdk-10)。
 
 ## 运行日志
 
@@ -120,4 +120,24 @@ ctx.effect(() => disposeTool()) // 错误：effect 现在执行，Tool 随即被
 
 ## 聊天命令（SDK 9）
 
-Manifest V7 增加 command Contribution，Host factory 使用 `harness.registerCommand(definition, handler)`。处理器获得验证后的 arguments、identity、channelId、signal、`reply`（过程回复，每次执行最多 5 条）和受权限约束的 host 能力，返回终态文本/图片/文件结果；需要在控制台执行时也发送到外部频道的命令声明 `consoleReply: 'channel'`；执行时限默认 60 秒，可用 `timeoutSeconds` 声明（最长 600 秒），超时会收到取消信号。注册属于扩展本机实例，执行与取消按智能体挂载隔离，禁止在 Session apply 中注册；卸载须响应 signal 并完成清理。完整契约见[命令系统](../../docs/10-命令系统.md)，可安装源码与打包方法见[回声示例](../../apps/server/examples/command-echo/README.md)。
+Manifest V7 增加 command Contribution，Host factory 使用 `harness.registerCommand(definition, handler)`。处理器获得验证后的 arguments、identity、channelId、signal、`reply`（过程回复，每次执行最多 5 条）和受权限约束的 host 能力，返回终态文本/图片/文件结果；需要在控制台执行时也发送到外部频道的命令声明 `consoleReply: 'channel'`；执行时限默认 60 秒，可用 `timeoutSeconds` 声明（最长 600 秒），超时会收到取消信号。注册属于扩展本机实例，执行与取消按智能体挂载隔离，禁止在 Session apply 中注册；卸载须响应 signal 并完成清理。定义的 `minimumPermission` 可以是 `public`、`channel-admin` 或 `admin`（NekroNXT 管理员，SDK 10）。工坊动态创造同样可以提供命令。完整契约见[命令系统](../../docs/10-命令系统.md)，可安装源码与打包方法见[回声示例](../../apps/server/examples/command-echo/README.md)。
+
+## 数据迁移（SDK 10）
+
+扩展改变已存数据的格式时，把 Manifest 的 `dataVersion` 加一，并在 factory 中注册一个迁移：
+
+```ts
+harness.migrateData?.(async ({ from, to, storage }) => {
+  let after: string | undefined
+  do {
+    const page = await storage.list({ after })
+    for (const entry of page.entries) {
+      // 先判断是否已经是新格式：迁移必须能重复执行。
+      if (isOld(entry.value)) await storage.set(entry, upgrade(entry.value))
+    }
+    after = page.next
+  } while (after !== undefined)
+})
+```
+
+`storage.list` 按稳定顺序列出扩展的全部存储（所有 owner 与 partition），`set` / `delete` 原样保留条目的 `owner` 与 `partition`。宿主在切换版本时先留数据快照，再在挂载智能体之前运行迁移；迁移抛错时恢复快照并退回原版本。切回 `dataVersion` 更低的版本会被拒绝，除非同时恢复一份旧格式的快照。保存与导入验证会用空数据运行一次迁移。只增加新键、旧数据照样能读时不要提升 `dataVersion`。

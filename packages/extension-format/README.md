@@ -9,6 +9,14 @@
 
 Manifest V7 与传输包 v2 没有 `scope`：贡献归属由种类决定，见[扩展形态统一](../../docs/decisions/accepted/2026-10-09-扩展形态统一.md)。Manifest V6 及更早、传输包 v1 不再读取，统一抛出 `LEGACY_EXTENSION_MESSAGE`（提示从社区获取新版或让智能体重新创造）。
 
+## 版本谱系与数据版本（SDK 10）
+
+Manifest 可选字段 `lineage: { parent, ancestry, branchOf? }` 记录这个版本接在哪个版本之后：`parent` 是上一个版本（第一个版本为 `null`），`ancestry` 是更早的版本，从近到远、最多 256 个，`ancestry[0]` 必须等于 `parent`，不能包含自身或重复；分支的第一个版本 `parent` 为 `null`，`branchOf: { extensionId, revisionId }` 指向它分支自的版本。`lineage` 计入 `contentDigest`、不计入 `payloadDigest`，同样内容在不同历史上的两个版本载荷摘要相同。
+
+可选字段 `dataVersion`（正整数，默认 1）是扩展存储数据的格式版本，计入 `payloadDigest`。带 `lineage`、`dataVersion` 或管理员级命令的清单必须声明 `requires.sdk >= 10`。
+
+`lineageAfter`、`lineageOfBranch`、`lineageDepth`（版本号）、`lineageRelation`（同一版本、本机领先、远端领先、两边分叉或无关）与 `isFastForward` 实现谱系计算；`summarizePermissions`、`combinationFindings`、`highestPermissionLevel`、`addedPermissionItems` 是与社区审查共用的权限风险分级。
+
 ## 扩展图标
 
 Manifest 可选字段 `icon: { path, sha256 }` 声明扩展自身的图标，`path` 只能是 `assets/icon.svg`、`assets/icon.png`、`assets/icon.webp` 之一，`sha256` 是图标文件原始字节的 SHA-256（SVG 即 UTF-8 字节）。
