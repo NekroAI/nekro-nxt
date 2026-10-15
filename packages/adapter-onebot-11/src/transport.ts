@@ -343,7 +343,7 @@ export class OneBotWebSocketClient {
     const index = Math.min(this.#reconnectAttempt, this.#reconnectDelaysMs.length - 1)
     const delay = this.#reconnectDelaysMs[index] ?? 30_000
     this.#reconnectAttempt += 1
-    this.#publish('reconnecting', reason || `连接断开，${delay}ms 后重连。`)
+    this.#publish('reconnecting', reason || `连接断开，${delay / 1000} 秒后重连`)
     this.#reconnectTimer = setTimeout(() => {
       this.#reconnectTimer = undefined
       this.#connect()
