@@ -7,6 +7,7 @@ import { ExtensionDataDowngradeError } from '@nekro-nxt/extension-runtime'
 import { CommunityReleaseSchema, type ChannelId, type ExtensionId } from '@nekro-nxt/contracts'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { ExtensionCommandPort } from '../src/extension-governance/commands.js'
+import { ExtensionGovernanceTools } from '../src/extension-governance/tool-port.js'
 import { CommunitySyncService, type SyncCommunity } from '../src/extension-governance/community-sync.js'
 import { ExtensionRequestService, EXTENSION_REQUEST_TTL_MS } from '../src/extension-governance/requests.js'
 import { extensionVersions, lineageGraph } from '../src/extension-governance/versions.js'
@@ -334,6 +335,10 @@ describe('extension autonomy', () => {
       const requests = runtime.extensionRequests
       const asked = requests.create({ action, actor, assessment: runtime.extensionActions.assess(action, actor) })
       expect(asked.status).toBe('pending')
+      // Asking again for the same thing keeps the one request.
+      expect(
+        requests.create({ action, actor, assessment: runtime.extensionActions.assess(action, actor) }).number,
+      ).toBe(asked.number)
       // Notices keep the channel's pacing between messages, so they may take a few seconds to go out.
       await expect
         .poll(() => runtime.repository.findOutboundByNoticeKey(`ext-request:${asked.number}:asked`), NOTICE_POLL)
@@ -356,13 +361,46 @@ describe('extension autonomy', () => {
         { subcommand: 'approve', target: `#${asked.number}` },
         { channelId: entity.channelId, agentId: entity.agentId, identity: platform, administrator: true },
       )
-      expect(message).toContain('已给治理智能体启用')
+      expect(message).toBe(`已同意请求 #${asked.number}：已给治理智能体启用「治理探针」。`)
       expect(runtime.repository.getActivation(entity.agentId, extensionId)).toBeDefined()
       expect(requests.get(asked.number)).toMatchObject({ status: 'completed', decidedBy: '群友' })
+      // The command's reply already told the channel; no second notice is posted there.
+      expect(runtime.repository.findOutboundByNoticeKey(`ext-request:${asked.number}:done`)).toBeUndefined()
+
+      // Approved from the console, the channel hears the outcome as a notice.
+      const disable = { kind: 'disable', extensionId, agentId: entity.agentId } as const
+      const second = requests.create({
+        action: disable,
+        actor,
+        assessment: runtime.extensionActions.assess(disable, actor),
+      })
+      await requests.approve(second.number, { kind: 'console' })
       await expect
-        .poll(() => runtime.repository.findOutboundByNoticeKey(`ext-request:${asked.number}:done`), NOTICE_POLL)
+        .poll(() => runtime.repository.findOutboundByNoticeKey(`ext-request:${second.number}:done`), NOTICE_POLL)
         .toBeDefined()
       await expect(requests.approve(asked.number, { kind: 'console' })).rejects.toThrow('已经被处理')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('lets an autonomous agent enable for itself after its turn and reports how it ended', async () => {
+    const runtime = await createRuntime()
+    try {
+      const { extensionId } = await importBoth(runtime)
+      const entity = await agentWithChannel(runtime, 'autonomous')
+      const tools = new ExtensionGovernanceTools(runtime)
+      const outcome = await tools.act(entity.agentId, entity.channelId, {
+        kind: 'enable',
+        extensionId,
+        agentId: entity.agentId,
+      })
+      // Enabling changes what is mounted for the agent, so it lands at the agent's safe gap instead of blocking it.
+      expect(outcome.outcome).toBe('scheduled')
+      await expect.poll(() => runtime.repository.getActivation(entity.agentId, extensionId)).toBeDefined()
+      await expect
+        .poll(() => runtime.extensionRequests.list().find((request) => request.agentId === entity.agentId)?.status)
+        .toBe('completed')
     } finally {
       await runtime.dispose()
     }
@@ -379,7 +417,12 @@ describe('extension autonomy', () => {
       const action = { kind: 'enable', extensionId, agentId: entity.agentId } as const
       const assessment = runtime.extensionActions.assess(action, actor)
       const stale = requests.create({ action, actor, assessment })
-      const rejected = requests.create({ action, actor, assessment })
+      const disable = { kind: 'disable', extensionId, agentId: entity.agentId } as const
+      const rejected = requests.create({
+        action: disable,
+        actor,
+        assessment: runtime.extensionActions.assess(disable, actor),
+      })
       requests.reject(rejected.number, { kind: 'console' }, '先别启用')
       expect(requests.get(rejected.number)).toMatchObject({ status: 'rejected', decidedBy: '控制台管理员' })
       now += EXTENSION_REQUEST_TTL_MS + 1

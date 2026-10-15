@@ -247,7 +247,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
   defineTool({
     name: 'nekro_nxt_extension_action',
     description: [
-      '对扩展做生命周期操作。按你的扩展自主权和权限风险，结果可能是直接完成、在频道里发出请求等管理员用 /ext approve 确认，或者需要管理员在后台处理；照返回的结果如实告诉用户。',
+      '对扩展做生命周期操作。按你的扩展自主权和权限风险，结果可能是直接完成、在这次回复结束后生效（启用、切换等会改变你身上挂载的操作）、在频道里发出请求等管理员用 /ext approve 确认，或者需要管理员在后台处理；照返回的结果如实告诉用户。',
       'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展，可给 name、slug）。',
       'enable / disable：给你自己启用或停用。switch：切到指定版本。revert：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',

@@ -40,7 +40,7 @@ export interface RevisePreparation {
 }
 
 export interface ToolActionOutcome {
-  readonly outcome: 'done' | 'requested' | 'console'
+  readonly outcome: 'done' | 'scheduled' | 'requested' | 'console'
   readonly message: string
   readonly requestNumber?: number
 }
@@ -67,6 +67,17 @@ export interface ExtensionGovernanceToolPort {
   /** The installed Revision, or the newest one when not installed. */
   currentRevision(extensionId: ExtensionId): ExtensionRevisionId
 }
+
+/** Actions that change what is mounted for agents, so they wait until the agent is between turns. */
+const LANDS_AFTER_TURN: ReadonlySet<ExtensionAction['kind']> = new Set([
+  'enable',
+  'disable',
+  'switch',
+  'revert',
+  'migrate-data',
+  'community-update',
+  'community-install',
+])
 
 const prefixFrom = (slug: string): string => {
   const letters = slug.toLowerCase().replaceAll(/[^a-z]/gu, '')
@@ -212,6 +223,15 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
         outcome: 'requested',
         requestNumber: record.number,
         message: `${assessment.reason ?? '需要管理员确认。'}已在频道里发出请求 #${record.number}，管理员确认后会自动执行并通知你。`,
+      }
+    }
+    if (LANDS_AFTER_TURN.has(action.kind)) {
+      // These wait for the agent's safe gap, which comes only after this very turn: they land in the background.
+      runtime.extensionRequests.runAfterTurn({ action, actor, assessment })
+      return {
+        outcome: 'scheduled',
+        message:
+          '已开始，会在这次回复结束后生效；完成后频道里会有通知，也会以系统通知告诉你。这次回复里先别调用新工具或测试它，告诉用户等一下即可。',
       }
     }
     const result = await runtime.extensionActions.perform(action, actor)

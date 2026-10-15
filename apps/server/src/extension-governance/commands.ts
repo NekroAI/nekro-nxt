@@ -47,15 +47,28 @@ export class ExtensionCommandPort implements CommandGovernancePort {
     const actor = context.identity.source === 'web' ? ({ kind: 'console' } as const) : decider
     switch (subcommand) {
       case 'approve': {
-        const result = await this.#runtime.extensionRequests.approve(
-          this.#number(input.target),
-          actor.kind === 'console' ? actor : decider,
-        )
-        return result.message
+        const number = this.#number(input.target)
+        // The outcome of the request itself is the reply, not a command failure: no usage hint after it.
+        try {
+          const result = await this.#runtime.extensionRequests.approve(
+            number,
+            actor.kind === 'console' ? actor : decider,
+            context.channelId,
+          )
+          return `已同意请求 #${number}：${result.message}`
+        } catch (error) {
+          if (this.#runtime.extensionRequests.get(number)?.status !== 'failed') throw error
+          return `已同意请求 #${number}，但没有完成：${error instanceof Error ? error.message : String(error)}`
+        }
       }
       case 'reject': {
         const number = this.#number(input.target)
-        this.#runtime.extensionRequests.reject(number, actor.kind === 'console' ? actor : decider, input.value)
+        this.#runtime.extensionRequests.reject(
+          number,
+          actor.kind === 'console' ? actor : decider,
+          input.value,
+          context.channelId,
+        )
         return `已拒绝请求 #${number}。`
       }
       case 'save': {

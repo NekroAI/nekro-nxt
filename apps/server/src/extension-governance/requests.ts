@@ -109,6 +109,14 @@ export class ExtensionRequestService {
     readonly actor: Extract<ExtensionActor, { readonly kind: 'agent' }>
     readonly assessment: ExtensionActionAssessment
   }): ExtensionRequestRecord {
+    // Asking twice for the same thing keeps one request, so the administrator never has to approve duplicates.
+    const same = JSON.stringify(input.action)
+    const existing = this.list('pending').find(
+      (request) =>
+        request.agentId === input.actor.agentId &&
+        JSON.stringify(StoredPayloadSchema.safeParse(request.payload).data?.action) === same,
+    )
+    if (existing) return existing
     const now = this.#now()
     const extensionId = extensionOf(input.action)
     const record = this.#runtime.repository.createExtensionRequest({
@@ -171,8 +179,47 @@ export class ExtensionRequestService {
     return this.#runtime.repository.getExtensionRequest(record.number) ?? record
   }
 
+  /**
+   * Carries out an agent's own action after its current turn: the action waits for the agent's safe gap, so the tool
+   * call returns at once and the outcome is posted and reported when it lands.
+   */
+  runAfterTurn(input: {
+    readonly action: ExtensionAction
+    readonly actor: Extract<ExtensionActor, { readonly kind: 'agent' }>
+    readonly assessment: ExtensionActionAssessment
+  }): void {
+    void this.#runtime.extensionActions
+      .perform(input.action, input.actor)
+      .then((result) => {
+        const record = this.recordAutonomous({ ...input, result })
+        this.#tellAgent(record, 'done', `〔系统通知〕${input.assessment.summary}已完成：${result.message}`)
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error)
+        this.#notice(
+          input.actor.channelId,
+          `ext-run:${input.actor.agentId}:${this.#now()}`,
+          `${this.#agentName(input.actor.agentId)}没能${input.assessment.summary}：${message}`,
+        )
+        this.#runtime.host.notifyAgent({
+          agentId: input.actor.agentId,
+          ...(input.actor.channelId === undefined ? {} : { channelId: input.actor.channelId }),
+          identity: `ext-run-failed:${input.actor.agentId}:${this.#now()}`,
+          text: `〔系统通知〕${input.assessment.summary}没有完成：${message}。看一下原因再决定怎么处理。`,
+        })
+      })
+  }
+
   /** Confirms a pending request and carries it out; the outcome is posted and reported to the agent. */
-  async approve(number: number, decider: ExtensionRequestDecider): Promise<ExtensionActionResult> {
+  /**
+   * `answeredIn` is the channel a chat command came from: the command's own reply already tells that channel the
+   * outcome, so no separate notice is posted there.
+   */
+  async approve(
+    number: number,
+    decider: ExtensionRequestDecider,
+    answeredIn?: ChannelId,
+  ): Promise<ExtensionActionResult> {
     const record = this.#pending(number)
     const action = this.#action(record)
     const actor = decider.kind === 'console' ? ({ kind: 'console' } as const) : decider
@@ -200,7 +247,7 @@ export class ExtensionRequestService {
         result: toJson(resultOf(result)),
       })
       this.#notice(
-        record.channelId ?? undefined,
+        record.channelId === answeredIn ? undefined : (record.channelId ?? undefined),
         `ext-request:${number}:done`,
         `请求 #${number} 已由${label}同意：${result.message}`,
       )
@@ -220,7 +267,7 @@ export class ExtensionRequestService {
         result: { message },
       })
       this.#notice(
-        record.channelId ?? undefined,
+        record.channelId === answeredIn ? undefined : (record.channelId ?? undefined),
         `ext-request:${number}:failed`,
         `请求 #${number} 已同意，但没有完成：${message}`,
       )
@@ -234,7 +281,7 @@ export class ExtensionRequestService {
     }
   }
 
-  reject(number: number, decider: ExtensionRequestDecider, reason?: string): void {
+  reject(number: number, decider: ExtensionRequestDecider, reason?: string, answeredIn?: ChannelId): void {
     const record = this.#pending(number)
     const label = decider.kind === 'console' ? '控制台管理员' : decider.label
     if (
@@ -250,7 +297,7 @@ export class ExtensionRequestService {
       throw new Error(`请求 #${number} 已经被处理。`)
     }
     this.#notice(
-      record.channelId ?? undefined,
+      record.channelId === answeredIn ? undefined : (record.channelId ?? undefined),
       `ext-request:${number}:rejected`,
       `请求 #${number} 已被${label}拒绝${reason ? `：${reason}` : '。'}`,
     )

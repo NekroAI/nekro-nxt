@@ -89,6 +89,11 @@ export class AuthoringApplicationService {
     readonly slug?: string
     readonly description?: string
     readonly targetExtensionId?: ExtensionId
+    /**
+     * The agent saves its own candidate while its turn is still running: waiting for the turn to end would wait for
+     * this save, so the verified record in the ledger is used instead.
+     */
+    readonly fromAgentTurn?: boolean
   }): Promise<SaveResult> {
     if (this.#disposed) throw new Error('NekroNXT 正在关闭，请稍后再试。')
     if (this.#saving.has(input.taskId)) throw new Error('这个候选正在保存，请稍候。')
@@ -112,7 +117,7 @@ export class AuthoringApplicationService {
     const runtime = this.#runtime
     const initial = runtime.repository.getAuthoringTask(input.taskId)
     if (!initial) throw new Error('创造任务不存在。')
-    const live = this.#liveSession(initial)
+    const live = input.fromAgentTurn === true ? undefined : this.#liveSession(initial)
     if (live !== undefined) await runtime.host.whenAuthoringSettled(live)
     const task = runtime.repository.getAuthoringTask(input.taskId)!
     const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)

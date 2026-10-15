@@ -175,6 +175,7 @@ export class ExtensionActionService {
           ...(action.name === undefined ? {} : { name: action.name }),
           ...(action.slug === undefined ? {} : { slug: action.slug }),
           ...(action.description === undefined ? {} : { description: action.description }),
+          ...(actor.kind === 'agent' ? { fromAgentTurn: true } : {}),
         })
         const label = this.#label(saved.revision)
         return {
