@@ -356,10 +356,10 @@
 }
 
 .wireSummary {
+  stroke: var(--line-3);
   stroke-dasharray: 2 5;
   stroke-linecap: round;
   stroke-width: 1.6;
-  opacity: 0.55;
 }
 
 .wireBind {

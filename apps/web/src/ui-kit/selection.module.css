@@ -53,11 +53,15 @@
   position: relative;
   display: flex;
   gap: var(--s-1);
+  overflow-x: auto;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--line);
 }
 
 .tab {
   position: relative;
+  flex: none;
+  white-space: nowrap;
   padding: var(--s-2) var(--s-3) var(--s-3);
   border: 0;
   background: transparent;

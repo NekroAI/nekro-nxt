@@ -1,4 +1,4 @@
-import { hueOf, type Tone } from '../../ui-kit/index.js'
+import { hueOf, identityHue, type Tone } from '../../ui-kit/index.js'
 import {
   connectionDisplayName,
   type AgentSummary,
@@ -8,7 +8,7 @@ import {
 
 /** Agent identity hue: explicit appearance when the Host provides one, otherwise stable from the id. */
 export const agentHue = (agent: Pick<AgentSummary, 'id' | 'appearance'>): number =>
-  agent.appearance?.hue ?? hueOf(agent.id)
+  agent.appearance?.hue === undefined ? hueOf(agent.id) : identityHue(agent.appearance.hue)
 
 /** CSS color for the agent's identity accent (lines, bars, wires). */
 export const agentAccent = (agent: Parameters<typeof agentHue>[0]): string => `hsl(${agentHue(agent)} 58% 58%)`
@@ -16,24 +16,22 @@ export const agentAccent = (agent: Parameters<typeof agentHue>[0]): string => `h
 /** A channel's own identity hue, stable from its id. */
 export const channelHue = (channelId: string): number => hueOf(channelId)
 
+/** Series hues for channels drawn together: spaced around the wheel and clear of the danger red. */
+const SERIES_HUES = [212, 158, 38, 268, 188, 92, 318, 240, 128, 62] as const
+
 /**
- * Hues for channels drawn together (charts, legends): each starts from its stable hue and steps around the wheel
- * until it is at least 36° from those already placed, so neighbouring series never share a colour.
+ * Hues for channels drawn together (charts, legends, cards): each channel starts from a stable slot in the series
+ * palette and takes the next free one, so neighbouring series never share a colour and no series reads as an error.
  */
 export const distinctChannelHues = (channelIds: readonly string[]): ReadonlyMap<string, number> => {
-  const placed: number[] = []
+  const taken = new Set<number>()
   const result = new Map<string, number>()
   for (const id of [...channelIds].sort()) {
-    let hue = channelHue(id)
-    for (
-      let attempt = 0;
-      attempt < 8 && placed.some((other) => Math.min(Math.abs(other - hue), 360 - Math.abs(other - hue)) < 36);
-      attempt += 1
-    ) {
-      hue = (hue + 47) % 360
-    }
-    placed.push(hue)
-    result.set(id, hue)
+    let slot = Math.floor(channelHue(id)) % SERIES_HUES.length
+    for (let attempt = 0; attempt < SERIES_HUES.length && taken.has(slot); attempt += 1)
+      slot = (slot + 1) % SERIES_HUES.length
+    if (taken.size < SERIES_HUES.length) taken.add(slot)
+    result.set(id, SERIES_HUES.at(slot) ?? 212)
   }
   return result
 }

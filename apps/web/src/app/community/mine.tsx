@@ -90,7 +90,16 @@ export function MineView({ community }: { readonly community: CommunityState }) 
   // 社区返回的图标优先；旧版社区没有图标时用本机同一扩展的图标。
   const communityIcon = (extension: CommunityMyExtension) =>
     extension.iconUrl ?? localPublishable.get(extension.id)?.iconUrl
-  const unpublished = localExtensions.filter((extension) => !published.has(extension.id) && usableRevision(extension))
+  // Lines this machine follows (installed from someone else's releases) cannot be published here; only its own lines
+  // and lines that were never on the community are offered.
+  const follows = (extension: (typeof localExtensions)[number]) =>
+    extension.communityLinks.some((link) => link.role === 'subscriber') ||
+    extension.revisions.some((revision) =>
+      revision.releases.some((release) => release.via === 'install' && release.publisherHandle !== account?.handle),
+    )
+  const unpublished = localExtensions.filter(
+    (extension) => !published.has(extension.id) && usableRevision(extension) && !follows(extension),
+  )
 
   const requestReview = async (release: Release) => {
     try {

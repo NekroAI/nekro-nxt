@@ -24,11 +24,23 @@ export function initialOf(name: string): string {
   return Array.from(trimmed)[0] ?? '?'
 }
 
+/**
+ * Identity colours stay clear of the danger colour (`--bad`, hue ≈ 5°). Hues from 50° to 320° are kept; the 45° on
+ * each side of red are squeezed outward (320°–5° into 320°–342°, 5°–50° into 24°–50°), so no agent, member or wire
+ * is read as a warning while most identities keep their colour.
+ */
+export function identityHue(hue: number): number {
+  const h = ((hue % 360) + 360) % 360
+  if (h >= 50 && h <= 320) return h
+  if (h > 320 || h < 5) return 320 + (h > 320 ? h - 320 : h + 40) * (22 / 45)
+  return 24 + (h - 5) * (26 / 45)
+}
+
 /** Stable hue for identities without an explicit appearance. */
 export function hueOf(seed: string): number {
   let hash = 7
   for (const char of seed) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) % 360
-  return hash
+  return identityHue(hash)
 }
 
 interface AvatarProps {

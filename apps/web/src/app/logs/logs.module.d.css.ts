@@ -24,6 +24,8 @@ declare const styles: {
   readonly settingsLink: string
   readonly source: string
   readonly sourceList: string
+  readonly sourceName: string
+  readonly sourceNote: string
   readonly spacer: string
   readonly technical: string
   readonly timestamp: string

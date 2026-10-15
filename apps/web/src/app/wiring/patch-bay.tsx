@@ -362,12 +362,7 @@ export function PatchBay({
                 d={wire.d}
               />
             ) : wire.kind === 'summary' ? (
-              <path
-                key={wire.key}
-                className={styles.wireSummary}
-                style={{ stroke: agentAccent(wire.agent!) }}
-                d={wire.d}
-              />
+              <path key={wire.key} className={styles.wireSummary} d={wire.d} />
             ) : (
               <g key={wire.key}>
                 <path className={styles.wireGlow} style={{ stroke: agentAccent(wire.agent!) }} d={wire.d} />

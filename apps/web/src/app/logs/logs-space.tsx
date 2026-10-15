@@ -15,7 +15,6 @@ import {
 import {
   hostLogQuerySchema,
   formatLogMessage,
-  hostLogSourceSchema,
   InstanceDescriptorSchema,
   type HostLogEntry,
   type HostLogLevel,
@@ -60,6 +59,13 @@ const KIND: Record<HostLogSource['kind'], string> = {
 }
 const LEVEL: Record<HostLogLevel, string> = { debug: '调试', info: '信息', warn: '警告', error: '错误' }
 const LEVELS: HostLogLevel[] = ['debug', 'info', 'warn', 'error']
+interface SourceItem {
+  readonly key: string
+  readonly kind: HostLogSource['kind']
+  readonly label: string
+  readonly removed: boolean
+  readonly members: { kind: HostLogSource['kind']; id: string }[]
+}
 const sourceName = (source: HostLogSource) =>
   source.kind === 'dsh-plugin' ? dshPackageLabel(source.name) : source.name
 const defaults = (): HostLogQuery => ({ levels: ['info', 'warn', 'error'] })
@@ -142,6 +148,35 @@ export default function LogsSpace() {
       .filter(Boolean)
       .join(' · ')
   }
+  // Extensions and connections that no longer exist still own old records. Same-named ones are one entry, marked
+  // as removed and listed after the live ones, so the list never shows several identical names side by side.
+  const sourceEntries = useMemo(() => {
+    const loaded = extensions.length > 0 || connections.length > 0
+    const present = new Set<string>([...extensions.map((item) => item.id), ...connections.map((item) => item.id)])
+    const live: SourceItem[] = []
+    const removed = new Map<string, SourceItem>()
+    for (const source of sources) {
+      const ref = { kind: source.kind, id: source.id }
+      if (loaded && (source.kind === 'extension' || source.kind === 'connection') && !present.has(source.id)) {
+        const key = `${source.kind}:removed:${source.name}`
+        const item = removed.get(key)
+        if (item) item.members.push(ref)
+        else removed.set(key, { key, kind: source.kind, label: sourceName(source), removed: true, members: [ref] })
+      } else {
+        live.push({
+          key: `${source.kind}:${source.id}`,
+          kind: source.kind,
+          label: sourceName(source),
+          removed: false,
+          members: [ref],
+        })
+      }
+    }
+    return [...live, ...removed.values()]
+  }, [sources, extensions, connections])
+  const isChosen = (item: SourceItem) =>
+    query.sources?.length === item.members.length &&
+    item.members.every((member) => query.sources?.some((ref) => ref.kind === member.kind && ref.id === member.id))
   const identifiedSource =
     query.sourceIds?.length === 1 ? sources.find((source) => source.id === query.sourceIds?.[0]) : undefined
   const sourceFilter =
@@ -344,12 +379,12 @@ export default function LogsSpace() {
         if (!controller.signal.aborted) failure(error)
       })
   }
-  const chooseSource = (source?: { kind: HostLogSource['kind']; id: string }) => {
+  const chooseSource = (...chosen: { kind: HostLogSource['kind']; id: string }[]) => {
     const next = { ...query }
     delete next.sources
     delete next.sourceIds
     delete next.sourceKinds
-    if (source) next.sources = [source]
+    if (chosen.length) next.sources = chosen.slice(0, 100)
     update(next)
   }
   const changeScope = (key: 'agentId' | 'connectionId' | 'channelId' | 'extensionId', value: string) => {
@@ -382,25 +417,20 @@ export default function LogsSpace() {
       setExporting(false)
     }
   }
-  const sourceItems = [
+  const sourceOptions = [
     { value: '', label: '全部来源' },
-    ...sources.map((source) => ({
-      value: JSON.stringify({ kind: source.kind, id: source.id }),
-      label: `${KIND[source.kind]} · ${sourceName(source)}`,
+    ...sourceEntries.map((item) => ({
+      value: item.key,
+      label: `${KIND[item.kind]} · ${item.label}${item.removed ? '（已移除）' : ''}`,
     })),
   ]
   const filterControls = (
     <div className={styles.filters}>
       <Field label="来源">
         <Select
-          value={sourceFilter ? JSON.stringify(sourceFilter) : ''}
-          options={sourceItems}
-          onValueChange={(value) => {
-            const next = { ...query }
-            if (value) next.sources = [hostLogSourceSchema.pick({ kind: true, id: true }).parse(JSON.parse(value))]
-            else delete next.sources
-            update(next)
-          }}
+          value={sourceEntries.find(isChosen)?.key ?? ''}
+          options={sourceOptions}
+          onValueChange={(value) => chooseSource(...(sourceEntries.find((item) => item.key === value)?.members ?? []))}
         />
       </Field>
       <Field label="智能体">
@@ -582,17 +612,19 @@ export default function LogsSpace() {
                   >
                     {collapsedKinds.has(kind) ? <ChevronRight size={12} /> : <ChevronDown size={12} />} {label}
                   </Button>
-                  {sources
-                    .filter((source) => source.kind === kind && !collapsedKinds.has(kind))
-                    .map((source) => (
+                  {sourceEntries
+                    .filter((item) => item.kind === kind && !collapsedKinds.has(kind))
+                    .map((item) => (
                       <Pressable
-                        key={`${source.kind}:${source.id}`}
+                        key={item.key}
                         className={styles.source}
-                        data-selected={sourceFilter?.kind === source.kind && sourceFilter.id === source.id}
-                        title={source.name}
-                        onClick={() => chooseSource({ kind: source.kind, id: source.id })}
+                        data-selected={isChosen(item)}
+                        data-removed={item.removed || undefined}
+                        title={item.label}
+                        onClick={() => chooseSource(...item.members)}
                       >
-                        {sourceName(source)}
+                        <span className={styles.sourceName}>{item.label}</span>
+                        {item.removed ? <span className={styles.sourceNote}>已移除</span> : null}
                       </Pressable>
                     ))}
                 </div>

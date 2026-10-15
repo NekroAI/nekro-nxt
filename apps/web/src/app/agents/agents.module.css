@@ -73,6 +73,8 @@
   gap: var(--s-1);
   margin: 0 calc(-1 * var(--s-2));
   padding: var(--s-2);
+  overflow-x: auto;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: blur(10px);
@@ -80,7 +82,9 @@
 
 .sectionLink {
   position: relative;
+  flex: none;
   min-height: var(--control-sm);
+  white-space: nowrap;
   padding: 0 var(--s-3);
   border: 0;
   border-radius: var(--r-1);

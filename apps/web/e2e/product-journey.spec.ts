@@ -393,7 +393,7 @@ test('adding a connection selects a platform before showing its fields', async (
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
   )
   await page.goto('/wiring')
-  await page.getByRole('button', { name: '添加账号' }).click()
+  await page.getByRole('button', { name: '添加平台账号' }).click()
   await expect(page).toHaveURL(/\/wiring\/new$/u)
   await expect(page.getByRole('heading', { name: '添加平台账号' })).toBeVisible()
   await expect(page.getByRole('button', { name: /示例群聊平台/u })).toBeVisible()

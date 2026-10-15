@@ -75,6 +75,9 @@
   gap: var(--s-2);
 }
 .source {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
   width: 100%;
   text-align: left;
   border: 0;
@@ -82,10 +85,21 @@
   padding: var(--s-2) var(--s-3);
   color: var(--fg-2);
   background: transparent;
+  font-size: var(--fs-sm);
+}
+.sourceName {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-sm);
+}
+.sourceNote {
+  flex: none;
+  font: var(--t-caption);
+  color: var(--faint);
+}
+.source[data-removed='true'] .sourceName {
+  color: var(--muted);
 }
 .source:hover {
   background: var(--hover);

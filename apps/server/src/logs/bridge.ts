@@ -46,12 +46,8 @@ export function attachCordisLogs(context: Context, sink: HostLogSink): () => voi
         sink.write({
           level: message.type,
           message: typeof first === 'string' ? first : first instanceof Error ? first.message : '组件输出了一条日志。',
-          source: owner?.source ?? {
-            kind: 'system',
-            id: `dsh:${message.name}`,
-            name: `引擎 · ${message.name}`,
-            component: message.name,
-          },
+          // Engine internals without an owner share one source; the module name stays as the component.
+          source: owner?.source ?? { kind: 'system', id: 'dsh:runtime', name: '运行环境', component: message.name },
           ...(owner?.scope === undefined ? {} : { scope: owner.scope }),
           formatArgs: typeof first === 'string' ? message.args.slice(1) : message.args,
         })

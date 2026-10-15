@@ -129,7 +129,7 @@ export default function WiringSpace() {
   useCrumb(
     '接线',
     creating
-      ? '添加账号'
+      ? '添加平台账号'
       : crumb
         ? connectionDisplayName(crumb)
         : selected?.kind === 'channel'
@@ -162,7 +162,7 @@ export default function WiringSpace() {
           />
           <span className={styles.headSpacer} />
           <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>
-            添加账号
+            添加平台账号
           </Button>
         </header>
         <div className={styles.board}>

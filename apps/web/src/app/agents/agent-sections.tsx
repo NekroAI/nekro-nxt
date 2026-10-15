@@ -1,4 +1,4 @@
-import { ExternalLink, Maximize2, MessagesSquare, Minimize2, Plus, Unplug } from 'lucide-react'
+import { ExternalLink, Maximize2, MessagesSquare, Minimize2, MoreHorizontal, Plus, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
@@ -224,7 +224,7 @@ export function ChannelsSection({
           {
             key: 'name',
             header: '频道',
-            width: 'minmax(180px, 2fr)',
+            width: 'minmax(120px, 2fr)',
             render: (channel) => (
               <span className={styles.cellStack}>
                 <span className={styles.cellTitle}>{channel.name}</span>
@@ -235,7 +235,7 @@ export function ChannelsSection({
           {
             key: 'trigger',
             header: '触发方式',
-            width: 'minmax(140px, 1fr)',
+            width: 'minmax(128px, 1fr)',
             render: (channel) => {
               const binding = channel.bindings[0]
               return binding ? (
@@ -265,21 +265,32 @@ export function ChannelsSection({
           {
             key: 'actions',
             header: <span className={styles.srOnly}>操作</span>,
-            width: '72px',
+            width: '40px',
             align: 'end',
             render: (channel) => (
-              <>
-                <IconButton label={`打开${channel.name}`} size="small" onClick={() => go(`/channels/${channel.id}`)}>
-                  <MessagesSquare size={15} />
-                </IconButton>
-                <IconButton
-                  label={`让${agent.name}不再响应${channel.name}`}
-                  size="small"
-                  onClick={() => onBind({ kind: 'unbind', channelId: channel.id })}
-                >
-                  <Unplug size={15} />
-                </IconButton>
-              </>
+              <Menu
+                label={`${channel.name} 的操作`}
+                trigger={
+                  <IconButton label={`${channel.name} 的更多操作`} size="small">
+                    <MoreHorizontal size={15} />
+                  </IconButton>
+                }
+                items={[
+                  {
+                    key: 'open',
+                    label: '打开频道',
+                    icon: <MessagesSquare size={14} />,
+                    onSelect: () => go(`/channels/${channel.id}`),
+                  },
+                  {
+                    key: 'unbind',
+                    label: '不再响应这个频道',
+                    icon: <Unplug size={14} />,
+                    danger: true,
+                    onSelect: () => onBind({ kind: 'unbind', channelId: channel.id }),
+                  },
+                ]}
+              />
             ),
           },
         ]}

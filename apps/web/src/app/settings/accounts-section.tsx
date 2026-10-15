@@ -102,7 +102,7 @@ export function AccountsSection() {
         title="GitHub 账号"
         actions={
           <Button size="small" onClick={() => setAdding(true)}>
-            添加账号
+            添加 GitHub 账号
           </Button>
         }
       >

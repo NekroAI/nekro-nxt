@@ -18,7 +18,7 @@ function niceCeil(value: number): number {
 const clock = (at: number) =>
   new Date(at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 
-export const channelColor = (hue: number) => `hsl(${hue} 62% 56%)`
+export const channelColor = (hue: number) => `hsl(${hue} 46% 58%)`
 
 /**
  * Messages per time bucket, stacked by channel. Bars instead of smoothed curves: counts are discrete, a bar never

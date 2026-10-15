@@ -25,7 +25,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.setViewportSize({ width: theme === 'light' ? 390 : 844, height: theme === 'light' ? 844 : 390 })
       await page.addInitScript((value) => localStorage.setItem('nekro-nxt.theme', value), theme)
       await page.goto('/wiring')
-      await page.getByRole('button', { name: '添加账号', exact: true }).click()
+      await page.getByRole('button', { name: '添加平台账号', exact: true }).click()
       await page
         .getByRole('region', { name: '选择平台' })
         .getByRole('button', { name: /^OneBot 11/u })
@@ -104,7 +104,7 @@ for (const theme of ['light', 'dark'] as const) {
       )
       id = undefined
       await page.goto(`/wiring/connections/${removed}`)
-      await expect(page.getByRole('button', { name: '添加账号', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: '添加平台账号', exact: true })).toBeVisible()
       expect(errors).toEqual([])
     } finally {
       try {
