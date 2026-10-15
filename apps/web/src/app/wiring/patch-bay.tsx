@@ -407,7 +407,7 @@ export function PatchBay({
                     <span>{connectionDisplayName(connection)}</span>
                   </span>
                   <span className={styles.nodeSub}>
-                    {!connection.userManaged ? '内置' : connection.alias ? connection.adapter : '平台账号'}
+                    {!connection.userManaged ? '本机' : connection.alias ? connection.adapter : '平台账号'}
                   </span>
                   <span className={[styles.port, styles.portRight].join(' ')} />
                 </Pressable>

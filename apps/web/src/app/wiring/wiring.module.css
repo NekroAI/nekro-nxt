@@ -1,18 +1,15 @@
 /* —— 页头与工具条 —— */
 /* Title, search, scope and the add action share one row; the canvas gets the height back. */
 .head {
+  display: grid;
+  gap: var(--s-4);
+}
+
+.toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--s-3);
-}
-
-.head .title {
-  margin-right: var(--s-2);
-}
-
-.headSpacer {
-  flex: 1;
 }
 
 .title {
@@ -181,7 +178,6 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: var(--s-2);
-  margin-bottom: var(--s-2);
 }
 
 .groupHead {
@@ -190,13 +186,13 @@
   align-items: center;
   gap: var(--s-2);
   width: 100%;
-  min-height: var(--control);
+  min-height: var(--row-tall);
   padding: 0 var(--s-3);
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
   border-radius: var(--r-1);
-  background: color-mix(in srgb, var(--surface) 60%, transparent);
-  color: var(--fg-2);
-  font: var(--t-label);
+  background: var(--surface);
+  color: var(--fg);
+  font: var(--t-title);
   text-align: left;
   cursor: pointer;
 }

@@ -22,7 +22,6 @@ declare const styles: {
   readonly groupHead: string
   readonly groupName: string
   readonly head: string
-  readonly headSpacer: string
   readonly listAgent: string
   readonly listIcon: string
   readonly listMeta: string
@@ -55,6 +54,7 @@ declare const styles: {
   readonly target: string
   readonly testSend: string
   readonly title: string
+  readonly toolbar: string
   readonly value: string
   readonly wireBind: string
   readonly wireConn: string

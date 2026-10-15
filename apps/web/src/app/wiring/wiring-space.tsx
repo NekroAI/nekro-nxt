@@ -9,7 +9,8 @@ import {
   PropertyGroup,
   PropertyList,
   SearchField,
-  Segmented,
+  PageHeader,
+  ToggleChip,
   Select,
   WorkbenchPage,
 } from '../../ui-kit/index.js'
@@ -146,25 +147,24 @@ export default function WiringSpace() {
       detail={selected ? <WiringDetail selected={selected} onClose={() => go('/wiring')} /> : undefined}
     >
       <MainContent width="full" fill>
-        <header className={styles.head}>
-          <h1 className={styles.title}>接线</h1>
-          <div className={styles.search}>
-            <SearchField value={query} onChange={setQuery} placeholder="搜索频道、账号或智能体" label="搜索频道" />
-          </div>
-          <Segmented
-            label="频道范围"
-            value={scope}
-            onChange={setScope}
-            options={[
-              { value: 'all', label: '全部频道' },
-              { value: 'free', label: '只看未接线' },
-            ]}
+        <div className={styles.head}>
+          <PageHeader
+            title="接线"
+            actions={
+              <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>
+                添加平台账号
+              </Button>
+            }
           />
-          <span className={styles.headSpacer} />
-          <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>
-            添加平台账号
-          </Button>
-        </header>
+          <div className={styles.toolbar}>
+            <div className={styles.search}>
+              <SearchField value={query} onChange={setQuery} placeholder="搜索频道、账号或智能体" label="搜索频道" />
+            </div>
+            <ToggleChip pressed={scope === 'free'} onPressedChange={(free) => setScope(free ? 'free' : 'all')}>
+              只看未接线
+            </ToggleChip>
+          </div>
+        </div>
         <div className={styles.board}>
           <PatchBay selected={selected} filter={filter} />
           <CompactBindings query={query} freeOnly={scope === 'free'} />
