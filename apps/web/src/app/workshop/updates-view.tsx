@@ -18,7 +18,7 @@ import {
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { useGo } from '../model/nav.js'
-import { errorMessage } from '../community/community-model.js'
+import { errorMessage, useCommunityStatus } from '../community/community-model.js'
 import styles from '../community/community.module.css'
 
 type Sync = { readonly checkedAt: number | null; readonly items: readonly CommunitySyncItem[] }
@@ -265,7 +265,13 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
 export function useCommunityUpdates(): ReadonlySet<string> {
   const [ids, setIds] = useState<ReadonlySet<string>>(new Set())
   const extensions = useProductStore((state) => state.extensions.length)
+  // The community status already counts lines with updates; the list is only asked for when there are some.
+  const available = useCommunityStatus().status?.updatesAvailable ?? 0
   useEffect(() => {
+    if (available === 0) {
+      setIds(new Set())
+      return undefined
+    }
     let live = true
     callHostApi(HostApiContracts.listCommunitySync, {}, undefined)
       .then((sync) => {
@@ -282,6 +288,6 @@ export function useCommunityUpdates(): ReadonlySet<string> {
     return () => {
       live = false
     }
-  }, [extensions])
+  }, [extensions, available])
   return ids
 }

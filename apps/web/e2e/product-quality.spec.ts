@@ -1178,7 +1178,7 @@ test('the workshop saves the verified candidate, enables it for its agent and ca
   await expect(page.getByText('第 1 次候选已通过验证')).toBeVisible()
 
   await page.getByRole('button', { name: '保存为扩展' }).click()
-  const dialog = page.getByRole('dialog', { name: '保存为本地扩展' })
+  const dialog = page.getByRole('dialog', { name: '保存为新扩展' })
   await expect(dialog.getByLabel('名称', { exact: true })).toHaveValue('群聊摘要卡片')
   await dialog.getByLabel('标识').fill('group-digest-card')
   await capture(page, testInfo, 'workshop-save')
@@ -1373,6 +1373,7 @@ for (const theme of ['light', 'dark'] as const) {
     for (const [index, name] of ['甲', '乙'].entries()) {
       await page.getByRole('link', { name: new RegExp(`虚构配置${name}`, 'u') }).click()
       await expect(page.getByRole('heading', { name: `虚构配置${name}`, exact: true })).toBeVisible()
+      await page.getByRole('tab', { name: '配置', exact: true }).click()
       await page.getByLabel('备注', { exact: true }).fill(`更新备注${name}`)
       await page.getByRole('button', { name: '保存配置', exact: true }).click()
       await expect.poll(() => saves).toContain(`ext_mobile${index}`)
@@ -1384,6 +1385,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.screenshot({ path: testInfo.outputPath(`workshop-list-${theme}.png`) })
     await page.getByRole('link', { name: /虚构配置甲/u }).click()
     await page.reload()
+    await page.getByRole('tab', { name: '配置', exact: true }).click()
     await expect(page.getByLabel('备注', { exact: true })).toHaveValue('更新备注甲')
     await page.goBack()
     await expect(page.getByRole('link', { name: /虚构配置乙/u })).toBeVisible()

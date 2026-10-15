@@ -586,6 +586,8 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   })
 
   await installWorkspaceRoutes(page, snapshot)
+  // The extension exists only in the mocked snapshot, so its lineage is mocked too.
+  await page.route(`**/api/extensions/${extensionId}/lineage`, (route) => route.fulfill({ json: { lines: [] } }))
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(`/workshop/extensions/${extensionId}`)
   await expect(page.getByRole('heading', { name: '合成聊天适配器', level: 1 })).toBeVisible()
@@ -1697,7 +1699,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
 
   await page.goto(`/agents/${agentId}`)
   await expect(page.getByRole('heading', { name: agentName, exact: true, level: 1 })).toBeVisible()
-  await page.getByRole('button', { name: '更多操作' }).click()
+  await page.getByRole('button', { name: '更多操作', exact: true }).click()
   await page.getByRole('menuitem', { name: '删除智能体' }).click()
   const deleteDialog = page.getByRole('dialog', { name: `删除${agentName}？` })
   await expect(deleteDialog).toContainText(`${agentName}会停止所有频道的工作`)

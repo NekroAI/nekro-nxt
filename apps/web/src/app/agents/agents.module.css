@@ -361,3 +361,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+@media (max-width: 760px) {
+  .sectionLink {
+    padding: 0 var(--s-2);
+  }
+}

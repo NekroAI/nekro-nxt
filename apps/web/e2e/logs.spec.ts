@@ -135,9 +135,10 @@ test('production log journey: history, details, repeats, export, live pause, set
   await page.goto(`${origin}/settings/logs`)
   await page.getByRole('combobox', { name: '保留时间' }).click()
   await page.getByRole('option', { name: '3 天', exact: true }).click()
-  await page.getByRole('button', { name: '保存设置', exact: true }).click()
+  await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存', exact: true }).click()
   await page.getByRole('button', { name: '保存并清理旧日志', exact: true }).click()
-  await expect(page.getByRole('button', { name: '保存设置', exact: true })).toBeDisabled()
+  // Once saved there is nothing left to save, so the save bar goes away.
+  await expect(page.getByRole('region', { name: '未保存的修改' })).toHaveCount(0)
   await page.waitForFunction(
     () =>
       !document

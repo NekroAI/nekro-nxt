@@ -39,10 +39,13 @@ export function DataTable<Row>({
   readonly footer?: ReactNode
 }) {
   // One template per container width: hidden low-priority columns must drop their tracks too.
+  // In the narrowest containers (phones, 05 §6.2) flexible columns may shrink below their usual minimum, so the
+  // table never scrolls sideways; their content truncates instead.
   const templateFor = (maxPriority: number) =>
     columns
       .filter((column) => (column.priority ?? 1) <= maxPriority)
       .map((column) => column.width ?? 'minmax(0, 1fr)')
+      .map((track) => (maxPriority === 1 ? track.replace(/minmax\(\s*\d+px\s*,/gu, 'minmax(0,') : track))
       .join(' ')
   const onKey = (event: KeyboardEvent<HTMLDivElement>, row: Row) => {
     if (!onSelect) return

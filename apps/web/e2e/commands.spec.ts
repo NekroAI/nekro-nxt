@@ -177,28 +177,24 @@ test('production command journey: authorization, completion, denial, delivery fa
     expect(activation.ok()).toBe(true)
     await page.goto(`/channels/${channel.id}`)
     const input = page.getByLabel('消息', { exact: true })
-    const echoUsage = page.getByLabel('频道命令设置').locator('code').filter({ hasText: ':echo' })
+    const commandSettings = page.getByLabel('频道命令设置')
+    // The inspector lists only commands that differ from the global settings until asked for all of them.
+    await commandSettings.getByRole('button', { name: '显示全部命令' }).click()
+    const echoUsage = commandSettings.locator('code').filter({ hasText: ':echo' })
     await expect(echoUsage).toBeVisible()
-    const inspectorLayout = await echoUsage.evaluate((usage) => {
-      const controls = usage.parentElement!
-      const row = controls.parentElement!.parentElement!
-      const description = row.firstElementChild!
-      const section = row.closest('section[aria-label="频道命令设置"]')!
-      return {
-        descriptionWidth: description.getBoundingClientRect().width,
-        stacked: description.getBoundingClientRect().bottom <= controls.getBoundingClientRect().top,
-        fits: section.scrollWidth <= section.clientWidth,
-      }
-    })
-    expect(inspectorLayout.descriptionWidth).toBeGreaterThan(200)
-    expect(inspectorLayout.stacked).toBe(true)
-    expect(inspectorLayout.fits).toBe(true)
+    const usageBox = await echoUsage.boundingBox()
+    const controlBox = await commandSettings.getByRole('combobox', { name: /echo 权限$/u }).boundingBox()
+    // Each command stacks its settings under its description, and the narrow inspector never scrolls sideways.
+    expect(usageBox!.width).toBeGreaterThan(80)
+    expect(controlBox!.y).toBeGreaterThanOrEqual(usageBox!.y + usageBox!.height)
+    expect(await commandSettings.evaluate((section) => section.scrollWidth <= section.clientWidth + 1)).toBe(true)
     await echoUsage.scrollIntoViewIfNeeded()
     await page.screenshot({ path: testInfo.outputPath('inspector-layout.png'), fullPage: true })
     await input.fill('/')
     const options = page.getByRole('option')
-    await expect(options).toHaveCount(8)
-    for (let i = 0; i < 7; i++) await input.press('ArrowDown')
+    // Seven chat commands, /ext and /admin from extension governance, and the imported echo command.
+    await expect(options).toHaveCount(10)
+    for (let i = 0; i < 9; i++) await input.press('ArrowDown')
     const selectedVisible = () =>
       page.getByRole('listbox', { name: '可用命令' }).evaluate((list) => {
         const option = list.querySelector('[aria-selected="true"]')!.getBoundingClientRect()

@@ -153,6 +153,17 @@
     color var(--dur-1);
 }
 
+/* Compact like a chip, but its hit area still reaches --target. */
+.toggleChip {
+  position: relative;
+}
+
+.toggleChip::after {
+  content: '';
+  position: absolute;
+  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
+}
+
 .toggleChip:hover {
   background: var(--hover);
   color: var(--fg);
