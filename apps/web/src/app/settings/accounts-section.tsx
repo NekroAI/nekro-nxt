@@ -1,3 +1,4 @@
+import { MoreHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
@@ -8,6 +9,8 @@ import {
   ConfirmDialog,
   DataTable,
   EmptyState,
+  IconButton,
+  Menu,
   PropertyGroup,
   PropertyList,
   PropertyRow,
@@ -81,17 +84,21 @@ export function AccountsSection() {
     {
       key: 'actions',
       header: <span className={styles.srOnly}>操作</span>,
-      width: '168px',
+      width: '40px',
       align: 'end',
       render: (account) => (
-        <span className={styles.rowControls}>
-          <Button size="small" variant="ghost" onClick={() => setReplacing(account)}>
-            更换 token
-          </Button>
-          <Button size="small" variant="danger" onClick={() => setRemoving(account)}>
-            移除
-          </Button>
-        </span>
+        <Menu
+          label={`${account.login} 的操作`}
+          trigger={
+            <IconButton label={`${account.login} 的更多操作`} size="small">
+              <MoreHorizontal size={15} />
+            </IconButton>
+          }
+          items={[
+            { key: 'replace', label: '更换 token', onSelect: () => setReplacing(account) },
+            { key: 'remove', label: '移除账号', danger: true, onSelect: () => setRemoving(account) },
+          ]}
+        />
       ),
     },
   ]

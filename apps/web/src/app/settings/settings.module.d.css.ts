@@ -13,6 +13,8 @@ declare const styles: {
   readonly loading: string
   readonly muted: string
   readonly narrowNav: string
+  readonly navGroup: string
+  readonly navGroupLabel: string
   readonly note: string
   readonly noteWarn: string
   readonly notice: string
@@ -25,6 +27,7 @@ declare const styles: {
   readonly source: string
   readonly srOnly: string
   readonly title: string
+  readonly titleWithTip: string
 }
 
 export default styles

@@ -28,6 +28,21 @@
   background: transparent;
 }
 
+.navGroup {
+  display: grid;
+  gap: calc(var(--s-1) / 2);
+}
+
+.navGroup + .navGroup {
+  margin-top: var(--s-4);
+}
+
+.navGroupLabel {
+  padding: 0 var(--s-4) var(--s-1);
+  color: var(--faint);
+  font: var(--t-caption);
+}
+
 /* Below 1100px the list pane collapses; these selectors take its place. */
 .narrowNav {
   display: none;
@@ -61,6 +76,12 @@
   min-width: 0;
   margin: 0;
   font: var(--t-page);
+}
+
+.titleWithTip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
 }
 
 .headActions {

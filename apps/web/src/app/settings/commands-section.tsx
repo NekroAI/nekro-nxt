@@ -1,7 +1,18 @@
 import { useEffect, useState } from 'react'
 import { CommandPermissionSchema, type CommandPermission } from '@nekro-nxt/contracts'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
-import { Button, Chip, PropertyGroup, PropertyList, PropertyRow, Select, Switch } from '../../ui-kit/index.js'
+import {
+  Banner,
+  Button,
+  DataTable,
+  PropertyGroup,
+  PropertyList,
+  PropertyRow,
+  Select,
+  Skeleton,
+  Switch,
+  type Column,
+} from '../../ui-kit/index.js'
 import { useProductStore } from '../../product-runtime.js'
 import styles from './commands-section.module.css'
 
@@ -22,6 +33,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
   const [busy, setBusy] = useState(false)
   const extensions = useProductStore((s) => s.extensions)
   const [generation, setGeneration] = useState(0)
+  const [showAll, setShowAll] = useState(false)
   useEffect(() => {
     const controller = new AbortController()
     setCatalog(undefined)
@@ -53,151 +65,212 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
       setBusy(false)
     }
   }
-  return (
-    <section aria-label={channelId ? '频道命令设置' : '命令设置'}>
-      <PropertyGroup
-        title={channelId ? '聊天命令覆盖' : '聊天命令'}
-        description={
-          channelId ? '启用状态可覆盖全局；权限不能低于命令要求或全局设置。' : '统一管理聊天命令。帮助始终可用。'
-        }
-      >
-        {error ? (
-          <p role="alert">
-            {error}
-            <Button variant="ghost" onClick={() => setGeneration((n) => n + 1)}>
+  type Command = NonNullable<typeof catalog>['commands'][number]
+  // Everything a row needs about one command's effective permission, for the console or for this channel.
+  const describe = (command: Command) => {
+    const policy = channelId ? command.channelPolicy : command.globalPolicy
+    const minimum = command.definition.minimumPermission
+    const globalLevel = channelId ? command.globalPolicy?.permission : undefined
+    // The strictest of the command's own requirement and, in a channel, the global setting.
+    const floor = rank(globalLevel) > rank(minimum) ? (globalLevel ?? minimum) : minimum
+    const globalRestriction = globalLevel !== undefined && rank(globalLevel) > rank(minimum)
+    const permissionOverride =
+      policy?.permission !== undefined && rank(policy.permission) > rank(floor) ? policy.permission : undefined
+    const permissionSource =
+      rank(command.permission) === rank(minimum) && minimum !== 'public'
+        ? '命令最低要求'
+        : globalRestriction && rank(command.permission) === rank(globalLevel)
+          ? '全局设置要求'
+          : policy?.permission !== undefined
+            ? channelId
+              ? '频道设置'
+              : '全局设置'
+            : channelId && command.globalPolicy?.permission !== undefined
+              ? '全局设置'
+              : '命令默认值'
+    return { policy, minimum, globalLevel, floor, globalRestriction, permissionOverride, permissionSource }
+  }
+  const columns: readonly Column<Command>[] = [
+    {
+      key: 'command',
+      header: '命令',
+      width: 'minmax(220px, 2fr)',
+      render: (command) => {
+        const { policy, globalLevel, globalRestriction } = describe(command)
+        return (
+          <span className={styles.command}>
+            <span className={styles.name}>/{command.fullName}</span>
+            <span className={styles.note}>
+              {command.source} · {command.definition.description}
+            </span>
+            <code className={styles.usage}>{command.usage}</code>
+            {command.definition.consoleReply === 'channel' ? (
+              <span className={styles.note}>在控制台里执行时，结果也会发送到外部频道。</span>
+            ) : null}
+            {globalRestriction && policy?.permission !== undefined && rank(policy.permission) < rank(globalLevel) ? (
+              <span className={styles.note}>
+                频道不能降低全局权限，此前保存的「{PERMISSION_LABEL[policy.permission]}」不生效。
+              </span>
+            ) : null}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'permission',
+      header: '生效权限',
+      width: 'minmax(180px, 1fr)',
+      render: (command) => {
+        const { policy, minimum, floor, permissionOverride, permissionSource } = describe(command)
+        return (
+          <span className={styles.command}>
+            <Select
+              aria-label={`${command.fullName} 权限`}
+              disabled={busy || command.fullName === 'help' || minimum === 'admin'}
+              value={permissionOverride ?? 'inherit'}
+              onValueChange={(value) => {
+                const permission = value === 'inherit' ? {} : { permission: CommandPermissionSchema.parse(value) }
+                void mutate(() =>
+                  commandApi.policy(channelId ?? 'global', command.fullName, {
+                    ...(policy?.enabled === undefined ? {} : { enabled: policy.enabled }),
+                    ...permission,
+                  }),
+                )
+              }}
+              options={[
+                {
+                  value: 'inherit',
+                  label: `${PERMISSION_LABEL[command.permission]}（${permissionSource}）`,
+                },
+                { value: 'public', label: PERMISSION_LABEL.public, disabled: rank(floor) > rank('public') },
+                {
+                  value: 'channel-admin',
+                  label: PERMISSION_LABEL['channel-admin'],
+                  disabled: rank(floor) > rank('channel-admin'),
+                },
+                { value: 'admin', label: PERMISSION_LABEL.admin },
+              ]}
+            />
+          </span>
+        )
+      },
+    },
+    {
+      key: 'enabled',
+      header: '启用',
+      width: channelId ? '120px' : '88px',
+      align: 'end',
+      render: (command) => {
+        const { policy, permissionOverride } = describe(command)
+        if (command.fullName === 'help') return <span className={styles.note}>始终开启</span>
+        return channelId ? (
+          <Select
+            aria-label={`${command.fullName} 启用覆盖`}
+            disabled={busy}
+            value={policy?.enabled === undefined ? 'inherit' : String(policy.enabled)}
+            onValueChange={(value) => {
+              const enabled = value === 'inherit' ? {} : { enabled: value === 'true' }
+              void mutate(() =>
+                commandApi.policy(channelId, command.fullName, {
+                  ...(permissionOverride ? { permission: permissionOverride } : {}),
+                  ...enabled,
+                }),
+              )
+            }}
+            options={[
+              { value: 'inherit', label: command.globalPolicy?.enabled === false ? '跟随全局（停用）' : '跟随全局' },
+              { value: 'true', label: '启用' },
+              { value: 'false', label: '停用' },
+            ]}
+          />
+        ) : (
+          <Switch
+            label={`启用 ${command.fullName}`}
+            checked={command.enabled}
+            disabled={busy}
+            onCheckedChange={(enabled) =>
+              void mutate(() => commandApi.policy('global', command.fullName, { ...policy, enabled }))
+            }
+          />
+        )
+      },
+    },
+  ]
+  // In a channel only what differs from the console's settings is listed; the rest is one click away.
+  const overridden = catalog?.commands.filter((command) => command.channelPolicy !== undefined) ?? []
+  const rows = channelId && !showAll ? overridden : (catalog?.commands ?? [])
+  const status = (
+    <>
+      {error ? (
+        <Banner
+          tone="bad"
+          action={
+            <Button size="small" onClick={() => setGeneration((n) => n + 1)}>
               重试
             </Button>
-          </p>
-        ) : null}
-        {!catalog && !error ? <p role="status">正在读取命令…</p> : null}
-        {catalog?.problems.map((problem) => (
-          <p role="alert" key={problem}>
-            {problem}
-          </p>
-        ))}
-        <PropertyList>
-          {!channelId && catalog ? (
-            <PropertyRow
-              label="无权限时回复提示"
-              description={
-                catalog.settings.unauthorizedFeedback
-                  ? '平台成员执行需要授权的命令时，告诉对方需要管理员授权'
-                  : '不回复，只在命令记录里留下原因'
-              }
-            >
-              <Switch
-                label="无权限时回复提示"
-                checked={catalog.settings.unauthorizedFeedback}
-                disabled={busy}
-                onCheckedChange={(enabled) => void mutate(() => commandApi.setUnauthorizedFeedback(enabled))}
-              />
-            </PropertyRow>
-          ) : null}
-          {catalog?.commands.map((command) => {
-            const policy = channelId ? command.channelPolicy : command.globalPolicy
-            const minimum = command.definition.minimumPermission
-            const globalLevel = channelId ? command.globalPolicy?.permission : undefined
-            // The strictest of the command's own requirement and, in a channel, the global setting.
-            const floor = rank(globalLevel) > rank(minimum) ? (globalLevel ?? minimum) : minimum
-            const globalRestriction = globalLevel !== undefined && rank(globalLevel) > rank(minimum)
-            const permissionOverride =
-              policy?.permission !== undefined && rank(policy.permission) > rank(floor) ? policy.permission : undefined
-            const permissionSource =
-              rank(command.permission) === rank(minimum) && minimum !== 'public'
-                ? '命令最低要求'
-                : globalRestriction && rank(command.permission) === rank(globalLevel)
-                  ? '全局设置要求'
-                  : policy?.permission !== undefined
-                    ? channelId
-                      ? '频道设置'
-                      : '全局设置'
-                    : channelId && command.globalPolicy?.permission !== undefined
-                      ? '全局设置'
-                      : '命令默认值'
-            const save = (next: NonNullable<typeof policy>) =>
-              void mutate(() => commandApi.policy(channelId ?? 'global', command.fullName, { ...policy, ...next }))
-            return (
+          }
+        >
+          {error}
+        </Banner>
+      ) : null}
+      {catalog?.problems.map((problem) => (
+        <Banner key={problem} tone="warn">
+          {problem}
+        </Banner>
+      ))}
+    </>
+  )
+  const table =
+    !catalog && !error ? (
+      <Skeleton height={160} />
+    ) : catalog ? (
+      <DataTable
+        label="聊天命令"
+        columns={columns}
+        rows={rows}
+        rowKey={(command) => command.fullName}
+        empty={channelId ? '这个频道的命令都跟随全局设置。' : '还没有命令。'}
+      />
+    ) : null
+  return (
+    <section className={styles.stack} aria-label={channelId ? '频道命令设置' : '命令设置'}>
+      {status}
+      {channelId ? (
+        <PropertyGroup
+          title="聊天命令"
+          description="只列出与全局设置不同的命令。权限不能低于命令要求或全局设置。"
+          actions={
+            <Button size="small" variant="ghost" onClick={() => setShowAll((value) => !value)}>
+              {showAll ? '只看不同的' : '显示全部命令'}
+            </Button>
+          }
+        >
+          {table}
+        </PropertyGroup>
+      ) : (
+        <>
+          {catalog ? (
+            <PropertyList>
               <PropertyRow
-                key={command.fullName}
-                label={<span className={styles.name}>/{command.fullName}</span>}
-                description={`${command.source} · ${command.definition.description}`}
-                layout="stacked"
+                label="无权限时回复提示"
+                description={
+                  catalog.settings.unauthorizedFeedback
+                    ? '平台成员执行需要授权的命令时，告诉对方需要管理员授权'
+                    : '不回复，只在命令记录里留下原因'
+                }
               >
-                <div className={styles.controls}>
-                  <code className={styles.usage}>{command.usage}</code>
-                  {command.definition.consoleReply === 'channel' ? (
-                    <p>在控制台里执行时，结果也会发送到外部频道。</p>
-                  ) : null}
-                  <p>
-                    生效权限：{PERMISSION_LABEL[command.permission]}（{permissionSource}）{' '}
-                    <Chip>{command.enabled ? '启用' : '停用'}</Chip>
-                  </p>
-                  {globalRestriction ? (
-                    <p>
-                      频道不能降低全局权限。
-                      {policy?.permission !== undefined && rank(policy.permission) < rank(globalLevel)
-                        ? `此前保存的「${PERMISSION_LABEL[policy.permission]}」覆盖不生效。`
-                        : ''}
-                    </p>
-                  ) : null}
-                  {channelId ? (
-                    <Select
-                      aria-label={`${command.fullName} 启用覆盖`}
-                      disabled={busy || command.fullName === 'help'}
-                      value={policy?.enabled === undefined ? 'inherit' : String(policy.enabled)}
-                      onValueChange={(value) => {
-                        const enabled = value === 'inherit' ? {} : { enabled: value === 'true' }
-                        void mutate(() =>
-                          commandApi.policy(channelId, command.fullName, {
-                            ...(permissionOverride ? { permission: permissionOverride } : {}),
-                            ...enabled,
-                          }),
-                        )
-                      }}
-                      options={[
-                        { value: 'inherit', label: '跟随全局' },
-                        { value: 'true', label: '启用' },
-                        { value: 'false', label: '停用' },
-                      ]}
-                    />
-                  ) : (
-                    <Switch
-                      label={`启用 ${command.fullName}`}
-                      checked={command.enabled}
-                      disabled={busy || command.fullName === 'help'}
-                      onCheckedChange={(enabled) => save({ enabled })}
-                    />
-                  )}
-                  <Select
-                    aria-label={`${command.fullName} 权限`}
-                    disabled={busy || command.fullName === 'help' || minimum === 'admin'}
-                    value={permissionOverride ?? 'inherit'}
-                    onValueChange={(value) => {
-                      const permission = value === 'inherit' ? {} : { permission: CommandPermissionSchema.parse(value) }
-                      void mutate(() =>
-                        commandApi.policy(channelId ?? 'global', command.fullName, {
-                          ...(policy?.enabled === undefined ? {} : { enabled: policy.enabled }),
-                          ...permission,
-                        }),
-                      )
-                    }}
-                    options={[
-                      { value: 'inherit', label: channelId ? '跟随全局与命令要求' : '跟随命令默认权限' },
-                      { value: 'public', label: PERMISSION_LABEL.public, disabled: rank(floor) > rank('public') },
-                      {
-                        value: 'channel-admin',
-                        label: PERMISSION_LABEL['channel-admin'],
-                        disabled: rank(floor) > rank('channel-admin'),
-                      },
-                      { value: 'admin', label: PERMISSION_LABEL.admin },
-                    ]}
-                  />
-                </div>
+                <Switch
+                  label="无权限时回复提示"
+                  checked={catalog.settings.unauthorizedFeedback}
+                  disabled={busy}
+                  onCheckedChange={(enabled) => void mutate(() => commandApi.setUnauthorizedFeedback(enabled))}
+                />
               </PropertyRow>
-            )
-          })}
-        </PropertyList>
-      </PropertyGroup>
+            </PropertyList>
+          ) : null}
+          {table}
+        </>
+      )}
       {channelId && catalog?.channel?.kind === 'group' ? (
         <PropertyGroup
           title="群聊中的命令"

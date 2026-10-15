@@ -1,5 +1,6 @@
+import { SectionHead } from './section-head.js'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
-import { KeyRound, UserPlus } from 'lucide-react'
+import { KeyRound, MoreHorizontal, UserPlus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { callHostApi } from '../../host-api-client.js'
 import {
@@ -10,8 +11,9 @@ import {
   DataTable,
   Dialog,
   EmptyState,
+  IconButton,
   MemberAvatar,
-  PropertyGroup,
+  Menu,
   SearchField,
   Skeleton,
   toast,
@@ -83,49 +85,55 @@ export function AdministratorsSection() {
     },
     {
       key: 'actions',
-      header: '',
-      width: '80px',
+      header: <span className={styles.srOnly}>操作</span>,
+      width: '40px',
       align: 'end',
       render: (entry) => (
-        <Button size="small" variant="ghost" onClick={() => setRemoving(entry)}>
-          移除
-        </Button>
+        <Menu
+          label={`${entry.displayName} 的操作`}
+          trigger={
+            <IconButton label={`${entry.displayName} 的更多操作`} size="small">
+              <MoreHorizontal size={15} />
+            </IconButton>
+          }
+          items={[{ key: 'remove', label: '移除管理员', danger: true, onSelect: () => setRemoving(entry) }]}
+        />
       ),
     },
   ]
 
   return (
     <>
-      <PropertyGroup
+      <SectionHead
         title="管理员"
-        description="管理员可以在聊天里管理扩展、确认智能体的扩展请求（/ext approve 编号），并且在每个频道都有管理命令权限。登录这个控制台的人始终是管理员；群主、群管理员不会自动成为管理员。"
+        subtitle="管理员可以在聊天里管理扩展、确认智能体的扩展请求，并在每个频道都有管理命令权限。"
+        tip="登录这个控制台的人始终是管理员；群主、群管理员不会自动成为管理员。在聊天里用 /ext approve 编号 确认扩展请求。"
         actions={
           <>
             <Button size="small" icon={<KeyRound size={14} />} onClick={() => void createClaim()}>
               生成认领码
             </Button>
-            <Button size="small" variant="primary" icon={<UserPlus size={14} />} onClick={() => setAdding(true)}>
+            <Button size="small" icon={<UserPlus size={14} />} onClick={() => setAdding(true)}>
               添加管理员
             </Button>
           </>
         }
-      >
-        {administrators === undefined ? (
-          <Skeleton height={64} />
-        ) : administrators.length === 0 ? (
-          <EmptyState title="还没有平台账号管理员">
-            从用户列表里添加，或生成认领码，在聊天里发送 /admin claim 认领码 把自己的账号设为管理员。
-          </EmptyState>
-        ) : (
-          <DataTable
-            label="管理员"
-            columns={columns}
-            rows={administrators}
-            rowKey={(entry) => `${entry.connectionId}:${entry.platformUserId}`}
-            empty="还没有平台账号管理员。"
-          />
-        )}
-      </PropertyGroup>
+      />
+      {administrators === undefined ? (
+        <Skeleton height={64} />
+      ) : administrators.length === 0 ? (
+        <EmptyState title="还没有平台账号管理员">
+          从用户列表里添加，或生成认领码，在聊天里发送 /admin claim 认领码 把自己的账号设为管理员。
+        </EmptyState>
+      ) : (
+        <DataTable
+          label="管理员"
+          columns={columns}
+          rows={administrators}
+          rowKey={(entry) => `${entry.connectionId}:${entry.platformUserId}`}
+          empty="还没有平台账号管理员。"
+        />
+      )}
       <AddAdministratorDialog
         open={adding}
         onOpenChange={setAdding}

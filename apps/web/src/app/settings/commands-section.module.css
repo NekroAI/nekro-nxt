@@ -1,17 +1,29 @@
-.controls {
+.stack {
   display: grid;
-  gap: var(--s-2);
+  gap: var(--s-6);
   min-width: 0;
 }
 
-.controls p {
-  margin: 0;
+.command {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.name {
+  min-width: 0;
+  font: var(--t-title);
+  overflow-wrap: anywhere;
+}
+
+.note {
   color: var(--muted);
   font: var(--t-note);
 }
 
-.name,
 .usage {
   min-width: 0;
+  color: var(--fg-2);
+  font: var(--t-mono);
   overflow-wrap: anywhere;
 }

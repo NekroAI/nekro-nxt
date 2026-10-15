@@ -1,9 +1,11 @@
 import { CommandsSection } from './commands-section.js'
+import { SectionHead } from './section-head.js'
 import {
   Bell,
   Blocks,
   ChevronRight,
   Cpu,
+  Inbox,
   Info,
   MessageCircle,
   MonitorSmartphone,
@@ -12,12 +14,12 @@ import {
   Plus,
   Search,
   ScrollText,
+  SquareSlash,
   Upload,
   ShieldCheck,
   UserRoundKey,
 } from 'lucide-react'
-import { CompatibilityNotices } from '../system/compatibility.js'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   DSH_GROUP_LABEL,
@@ -48,7 +50,6 @@ import {
   DataTable,
   EmptyState,
   Field,
-  InfoTip,
   Input,
   ListPane,
   MainContent,
@@ -79,21 +80,29 @@ import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
 import styles from './settings.module.css'
 
+// Four groups (docs/NekroNxt界面交互模型.md §9); the order inside a group is the order people need them.
+const GROUPS = [
+  { key: 'agent', label: '智能体运行' },
+  { key: 'connection', label: '连接' },
+  { key: 'permission', label: '权限' },
+  { key: 'system', label: '系统' },
+] as const
+
 const SECTIONS = [
-  { key: 'models', label: '模型', icon: <Cpu size={16} /> },
-  { key: 'dsh', label: 'DSH 插件', icon: <Blocks size={16} /> },
-  { key: 'adapters', label: '平台适配器', icon: <Plug size={16} /> },
-  { key: 'chat', label: '聊天', icon: <MessageCircle size={16} /> },
-  { key: 'retrieval', label: '检索', icon: <Search size={16} /> },
-  { key: 'accounts', label: '账号与服务', icon: <UserRoundKey size={16} /> },
-  { key: 'administrators', label: '管理员', icon: <ShieldCheck size={16} /> },
-  { key: 'commands', label: '聊天命令', icon: <Blocks size={16} /> },
-  { key: 'feedback', label: '社区反馈', icon: <MessageCircle size={16} /> },
-  { key: 'notifications', label: '通知', icon: <Bell size={16} /> },
-  { key: 'access', label: '登录设备', icon: <MonitorSmartphone size={16} /> },
-  { key: 'appearance', label: '外观', icon: <Palette size={16} /> },
-  { key: 'logs', label: '日志保存', icon: <ScrollText size={16} /> },
-  { key: 'about', label: '关于', icon: <Info size={16} /> },
+  { key: 'models', label: '模型', group: 'agent', icon: <Cpu size={16} /> },
+  { key: 'retrieval', label: '检索', group: 'agent', icon: <Search size={16} /> },
+  { key: 'dsh', label: 'DSH 插件', group: 'agent', icon: <Blocks size={16} /> },
+  { key: 'chat', label: '聊天', group: 'agent', icon: <MessageCircle size={16} /> },
+  { key: 'adapters', label: '平台适配器', group: 'connection', icon: <Plug size={16} /> },
+  { key: 'accounts', label: '账号与服务', group: 'connection', icon: <UserRoundKey size={16} /> },
+  { key: 'administrators', label: '管理员', group: 'permission', icon: <ShieldCheck size={16} /> },
+  { key: 'commands', label: '聊天命令', group: 'permission', icon: <SquareSlash size={16} /> },
+  { key: 'access', label: '登录设备', group: 'permission', icon: <MonitorSmartphone size={16} /> },
+  { key: 'notifications', label: '通知', group: 'system', icon: <Bell size={16} /> },
+  { key: 'appearance', label: '外观', group: 'system', icon: <Palette size={16} /> },
+  { key: 'logs', label: '日志保存', group: 'system', icon: <ScrollText size={16} /> },
+  { key: 'feedback', label: '社区反馈', group: 'system', icon: <Inbox size={16} /> },
+  { key: 'about', label: '关于', group: 'system', icon: <Info size={16} /> },
 ] as const
 
 type SectionKey = (typeof SECTIONS)[number]['key']
@@ -141,17 +150,24 @@ export default function SettingsSpace() {
       list={
         <ListPane title="设置" label="设置">
           <SelectionList selectedKey={section}>
-            {sections.map((item) => (
-              <Link
-                key={item.key}
-                to={`/settings/${item.key}`}
-                className={styles.row}
-                data-selected={section === item.key}
-                aria-current={item.key === section ? 'page' : undefined}
-              >
-                {item.icon}
-                {item.label}
-              </Link>
+            {GROUPS.map((group) => (
+              <div key={group.key} className={styles.navGroup} role="group" aria-label={group.label}>
+                <div className={styles.navGroupLabel}>{group.label}</div>
+                {sections
+                  .filter((item) => item.group === group.key)
+                  .map((item) => (
+                    <Link
+                      key={item.key}
+                      to={`/settings/${item.key}`}
+                      className={styles.row}
+                      data-selected={section === item.key}
+                      aria-current={item.key === section ? 'page' : undefined}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </Link>
+                  ))}
+              </div>
             ))}
           </SelectionList>
         </ListPane>
@@ -179,7 +195,12 @@ export default function SettingsSpace() {
         <MainContent width="readable">
           <NarrowNav section={section} />
           {section === 'administrators' ? <AdministratorsSection /> : null}
-          {section === 'commands' ? <CommandsSection /> : null}
+          {section === 'commands' ? (
+            <>
+              <SectionHead title="聊天命令" subtitle="在群聊和私聊里用 / 开头执行的命令。" />
+              <CommandsSection />
+            </>
+          ) : null}
           {section === 'logs' ? <LogSettings /> : null}
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
@@ -221,29 +242,6 @@ function NarrowNav({ section }: { readonly section: SectionKey }) {
         onValueChange={(value) => void navigate(`/settings/${value}`)}
       />
     </div>
-  )
-}
-
-function SectionHead({
-  title,
-  actions,
-  tip,
-}: {
-  readonly title: string
-  readonly actions?: ReactNode
-  readonly tip?: ReactNode
-}) {
-  return (
-    <>
-      <header className={styles.head}>
-        <h1 className={styles.title}>
-          {title}
-          {tip ? <InfoTip label={title}>{tip}</InfoTip> : null}
-        </h1>
-        {actions ? <div className={styles.headActions}>{actions}</div> : null}
-      </header>
-      <CompatibilityNotices showContextReset />
-    </>
   )
 }
 
@@ -539,7 +537,8 @@ function Adapters() {
       <SectionHead title="平台适配器" />
       <DataTable
         label="平台适配器"
-        columns={columns}
+        // The source column only says something once an adapter comes from a local extension.
+        columns={rows.some((row) => row.source) ? columns : columns.filter((column) => column.key !== 'source')}
         rows={rows}
         rowKey={({ adapter }) => adapter.key}
         empty="没有已安装的平台适配器"

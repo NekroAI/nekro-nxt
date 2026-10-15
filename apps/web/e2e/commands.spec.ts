@@ -128,8 +128,10 @@ test('production command journey: authorization, completion, denial, delivery fa
       ).ok(),
     ).toBe(true)
     await page.reload()
-    await expect(page.getByText('生效权限：频道管理（全局设置要求）')).toBeVisible()
-    await expect(page.getByText(/此前保存的普通用户覆盖不生效/)).toBeVisible()
+    await expect(page.getByRole('combobox', { name: 'status 权限', exact: true })).toHaveText(
+      /频道管理（全局设置要求）/u,
+    )
+    await expect(page.getByText(/此前保存的「普通用户」不生效/u)).toBeVisible()
     await page.getByRole('combobox', { name: 'status 权限', exact: true }).click()
     await expect(page.getByRole('option', { name: '普通用户', exact: true })).toBeDisabled()
     await page.screenshot({ path: testInfo.outputPath('permission-floor.png'), fullPage: true })
@@ -150,7 +152,9 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect.poll(async () => (await bindingOf())?.paused).toBe(false)
     await page.goto('/settings/commands')
     await expect(page.getByRole('heading', { name: '聊天命令', exact: true })).toBeVisible()
-    await expect(page.getByRole('switch', { name: '启用 help' })).toBeDisabled()
+    // Help cannot be turned off, so it shows that instead of a disabled switch.
+    await expect(page.getByRole('switch', { name: '启用 help' })).toHaveCount(0)
+    await expect(page.getByRole('row', { name: /\/help/u }).getByText('始终开启')).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('settings.png'), fullPage: true })
     const root = path.resolve(import.meta.dirname, '../../..')
     await promisify(execFile)(process.execPath, ['--import', 'tsx', 'apps/server/examples/command-echo/build.ts'], {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
+import { SectionHead } from './section-head.js'
 import {
   Banner,
   Button,
@@ -72,7 +73,7 @@ export function FeedbackSettingsSection() {
   }
   return (
     <div className={styles.stack}>
-      <h1 className={styles.title}>社区反馈</h1>
+      <SectionHead title="社区反馈" />
       {community.error || query.error ? (
         <Banner
           tone="bad"

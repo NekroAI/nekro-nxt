@@ -1,6 +1,8 @@
 declare const styles: {
-  readonly controls: string
+  readonly command: string
   readonly name: string
+  readonly note: string
+  readonly stack: string
   readonly usage: string
 }
 

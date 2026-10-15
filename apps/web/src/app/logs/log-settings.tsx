@@ -1,21 +1,22 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import type { HostLogSettings, HostLogStatus } from '@nekro-nxt/contracts'
 import {
   Banner,
   Button,
   ConfirmDialog,
-  Field,
+  PageHeader,
   PropertyGroup,
   PropertyList,
   PropertyRow,
+  SaveBar,
   Select,
   toast,
 } from '../../ui-kit/index.js'
 import { logsApi } from './logs-api.js'
-import styles from './logs.module.css'
 
 export function LogSettings() {
+  const navigate = useNavigate()
   const [settings, setSettings] = useState<HostLogSettings>()
   const [original, setOriginal] = useState<HostLogSettings>()
   const [status, setStatus] = useState<HostLogStatus>()
@@ -51,18 +52,17 @@ export function LogSettings() {
       setBusy(false)
     }
   }
-  const changed = settings?.retentionDays !== original?.retentionDays || settings?.maxSizeMiB !== original?.maxSizeMiB
   return (
     <>
-      <header>
-        <h1>日志保存</h1>
-        <p>
-          设置当前服务的日志保留时间与容量。
-          <Link to="/logs" className={styles.inlineLink}>
+      <PageHeader
+        title="日志保存"
+        subtitle="当前服务的日志保留多久、最多占用多少空间。"
+        actions={
+          <Button size="small" onClick={() => void navigate('/logs')}>
             查看日志
-          </Link>
-        </p>
-      </header>
+          </Button>
+        }
+      />
       {error ? (
         <Banner tone="bad">
           {error}
@@ -73,31 +73,38 @@ export function LogSettings() {
       ) : null}
       {settings ? (
         <PropertyGroup title="保留策略" description="时间或容量达到上限后，自动清理最旧的记录。">
-          <Field label="保留时间">
-            <Select
-              value={String(settings.retentionDays)}
-              options={Array.from({ length: 30 }, (_, index) => ({
-                value: String(index + 1),
-                label: `${index + 1} 天`,
-              }))}
-              onValueChange={(value) => setSettings({ ...settings, retentionDays: Number(value) })}
-            />
-          </Field>
-          <Field label="容量上限" hint="包含日志数据库、索引及写入期间的伴生文件。">
-            <Select
-              value={String(settings.maxSizeMiB)}
-              options={[64, 128, 256, 512, 1024, 2048].map((value) => ({
-                value: String(value),
-                label: `${value} MiB`,
-              }))}
-              onValueChange={(value) => setSettings({ ...settings, maxSizeMiB: Number(value) })}
-            />
-          </Field>
-          <Button
-            variant="primary"
+          <PropertyList>
+            <PropertyRow label="保留时间" width="sm">
+              <Select
+                aria-label="保留时间"
+                value={String(settings.retentionDays)}
+                options={Array.from({ length: 30 }, (_, index) => ({
+                  value: String(index + 1),
+                  label: `${index + 1} 天`,
+                }))}
+                onValueChange={(value) => setSettings({ ...settings, retentionDays: Number(value) })}
+              />
+            </PropertyRow>
+            <PropertyRow label="容量上限" tip="包含日志数据库、索引及写入期间的伴生文件。" width="sm">
+              <Select
+                aria-label="容量上限"
+                value={String(settings.maxSizeMiB)}
+                options={[64, 128, 256, 512, 1024, 2048].map((value) => ({
+                  value: String(value),
+                  label: `${value} MiB`,
+                }))}
+                onValueChange={(value) => setSettings({ ...settings, maxSizeMiB: Number(value) })}
+              />
+            </PropertyRow>
+          </PropertyList>
+          <SaveBar
+            changes={[
+              ...(settings.retentionDays !== original?.retentionDays ? ['保留时间'] : []),
+              ...(settings.maxSizeMiB !== original?.maxSizeMiB ? ['容量上限'] : []),
+            ]}
             busy={busy}
-            disabled={!changed}
-            onClick={() => {
+            onDiscard={() => original && setSettings(original)}
+            onSave={() => {
               if (
                 original &&
                 (settings.retentionDays < original.retentionDays || settings.maxSizeMiB < original.maxSizeMiB)
@@ -105,9 +112,7 @@ export function LogSettings() {
                 setConfirm(true)
               else void save().catch(() => undefined)
             }}
-          >
-            保存设置
-          </Button>
+          />
         </PropertyGroup>
       ) : (
         <p>正在读取日志设置…</p>
