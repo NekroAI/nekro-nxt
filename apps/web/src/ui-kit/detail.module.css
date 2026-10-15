@@ -54,6 +54,15 @@
 
 /* Narrow windows: the status moves under a title that wraps instead of being cut to a few characters. */
 @media (max-width: 760px) {
+  /* The name keeps a readable width; actions move to their own line instead of squeezing it. */
+  .identity {
+    flex: 1 1 12em;
+  }
+
+  .actions {
+    flex-basis: 100%;
+  }
+
   .titleRow {
     flex-wrap: wrap;
   }

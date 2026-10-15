@@ -33,3 +33,17 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--s-2);
 }
+
+.narrowOnly {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .wideOnly {
+    display: none;
+  }
+
+  .narrowOnly {
+    display: block;
+  }
+}

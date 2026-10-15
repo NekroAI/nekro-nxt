@@ -223,10 +223,10 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
   const permissionCell = columns.find((column) => column.key === 'permission')!.render
   const enabledCell = columns.find((column) => column.key === 'enabled')!.render
   const commandCell = columns.find((column) => column.key === 'command')!.render
-  // The inspector is too narrow for a table: one stacked row per command, its two settings side by side.
-  const channelRows = (
+  // The inspector and phones are too narrow for a table: one stacked row per command, its two settings side by side.
+  const stackedRows = (
     <PropertyList>
-      {rows.length === 0 ? <PropertyRow label="这个频道的命令都跟随全局设置" /> : null}
+      {rows.length === 0 ? <PropertyRow label={channelId ? '这个频道的命令都跟随全局设置' : '还没有命令'} /> : null}
       {rows.map((command) => (
         <PropertyRow key={command.fullName} label={commandCell(command)} layout="stacked">
           <div className={styles.channelControls}>
@@ -262,7 +262,7 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
             </Button>
           }
         >
-          {!catalog && !error ? <Skeleton height={120} /> : catalog ? channelRows : null}
+          {!catalog && !error ? <Skeleton height={120} /> : catalog ? stackedRows : null}
         </PropertyGroup>
       ) : (
         <>
@@ -285,7 +285,9 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
               </PropertyRow>
             </PropertyList>
           ) : null}
-          {table}
+          {/* Phones get the stacked rows; the table needs the width of a desktop window (05 §6.2). */}
+          <div className={styles.wideOnly}>{table}</div>
+          <div className={styles.narrowOnly}>{catalog ? stackedRows : null}</div>
         </>
       )}
       {channelId && catalog?.channel?.kind === 'group' ? (
