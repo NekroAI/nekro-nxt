@@ -101,7 +101,7 @@ import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 import * as ToolSubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
 import * as ToolSubagentListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
-import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
+import { defineTool, ToolRuntime, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import {
   type AgentSessionDriver,
@@ -186,7 +186,8 @@ import {
 } from '@nekro-nxt/extension-sdk'
 import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { CONVERSATION_SCRIPT_PROVIDER, ConversationScriptModel } from './sub-conversation-script.js'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
@@ -211,6 +212,7 @@ import {
   type DynamicAuthoringPackageDefinitionInput,
   type DynamicAuthoringPolicyState,
   type DynamicPackageDefinitionInput,
+  type RunScriptedConversation,
 } from './dynamic-authoring-runtime.js'
 import { isolatePrivateExtensionServices } from './extension-context.js'
 import {
@@ -754,7 +756,9 @@ class NekroNxtAgentScopeInheritance extends Service {
     const parent = scopeOf(parentContext)
     if (!child || !parent) throw new Error('Subagent Scope inheritance requires scoped parent and child contexts.')
     bindScopeParent(child, parent)
-    const denied = visibleChildDeniedToolNames(childContext, true)
+    // Tools are mounted by now, so only names this Scope can see are denied (a host-started child may have a parent
+    // without the subagent tool).
+    const denied = visibleChildDeniedToolNames(childContext, false)
     if (denied.length) childContext.tools.restrict({ deny: denied })
     childContext.on('agent/request', async (_payload, next) => ({ ...(await next()), maxTokens: CHILD_MAX_TOKENS }))
     return undefined
@@ -2967,6 +2971,7 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
 export class DshHostRuntime implements AgentSessionDriver {
   readonly #logs: HostLogSink | undefined
   readonly #context: Context
+  readonly #conversationScripts: ConversationScriptModel
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
   readonly #members: ChannelMemberRelations | undefined
@@ -3008,8 +3013,10 @@ export class DshHostRuntime implements AgentSessionDriver {
     context: Context,
     options: DshHostRuntimeOptions,
     channelReplyGuard: ChannelReplyGuardController,
+    conversationScripts: ConversationScriptModel,
   ) {
     this.#context = context
+    this.#conversationScripts = conversationScripts
     this.#logs = options.logs
     this.#runtimeProjection = new SessionRuntimeProjection(context, this.#sessions)
     this.#communication = options.communication
@@ -3054,7 +3061,13 @@ export class DshHostRuntime implements AgentSessionDriver {
     )
     this.#authoring = options.authoring
     this.#channelReplyGuard = channelReplyGuard
-    this.#dynamic = new DynamicAuthoringRuntime(context, this.#sessions, options.authoring, () => this.#assertActive())
+    this.#dynamic = new DynamicAuthoringRuntime(
+      context,
+      this.#sessions,
+      options.authoring,
+      () => this.#assertActive(),
+      (input) => this.runScriptedConversation(input),
+    )
     this.#extensionHost = options.extensionHost
     const extensionHost = options.extensionHost
     this.#extensionMounts = new PersistentExtensionMounts(
@@ -3270,6 +3283,8 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
       await context.plugin(LlmRuntime)
       await options.configureLlm?.(context)
+      const conversationScripts = new ConversationScriptModel()
+      context.llm.registerAdapter([CONVERSATION_SCRIPT_PROVIDER], conversationScripts)
       await context.plugin(SessionStore)
       await context.plugin(NekroJsonlSessionPersistence, {
         root: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'sessions'),
@@ -3348,7 +3363,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       await context.plugin(SessionCheckpointPolicy)
       await activateDshHostProfile(context)
       await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
-      const runtime = new DshHostRuntime(context, options, channelReplyGuard)
+      const runtime = new DshHostRuntime(context, options, channelReplyGuard, conversationScripts)
       await runtime.#dshPluginLifecycle?.initialize()
       return runtime
     } catch (error) {
@@ -4603,6 +4618,39 @@ export class DshHostRuntime implements AgentSessionDriver {
       },
     )
     return this.#codeRunMount
+  }
+
+  /**
+   * Runs `calls` in a sub-conversation of `parent` played by the conversation script model, and returns each call's
+   * outcome. The calls go through the normal tool pipeline inside turns of the sub-conversation's own log.
+   */
+  async runScriptedConversation(input: Parameters<RunScriptedConversation>[0]): ReturnType<RunScriptedConversation> {
+    this.#assertActive()
+    const childId = SessionId(`nxt-cnv_${randomUUID()}`)
+    const results = new Map<string, Readonly<ToolExecutionResult>>()
+    const stopObserving = this.#context.on('tools/result', (execution, result) => {
+      if (execution.agent?.id === childId) results.set(String(execution.callId), result)
+    })
+    const unload = this.#conversationScripts.load(childId, { calls: input.calls, closing: input.closing })
+    try {
+      const activation = await this.#context.subagents.startActivation({
+        provider: 'spawn',
+        label: input.title,
+        childId,
+        request: {
+          prompt: [{ type: 'text', text: input.title }],
+          parent: input.parent,
+          agentOptions: { provider: CONVERSATION_SCRIPT_PROVIDER, model: childId },
+        },
+        signal: new AbortController().signal,
+        delivery: 'caller',
+      })
+      await activation.result
+      return { results }
+    } finally {
+      stopObserving()
+      unload()
+    }
   }
 
   async cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void> {

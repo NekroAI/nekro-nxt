@@ -3,12 +3,14 @@ import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { HostApiContracts, type ExtensionCapabilities } from '@nekro-nxt/contracts'
 import { NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE } from '@nekro-nxt/extension-sdk'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
+import { NekroJsonlSessionPersistence } from '../src/dsh-session-persistence.js'
 import { projectHistoryEntry } from '../src/host-route-support.js'
 import { createNekroHostApi } from '../src/host-api.js'
 import { DynamicAuthoringRuntime, preflightNekroNxtAuthoringDefinition } from '../src/dynamic-authoring-runtime.js'
@@ -128,6 +130,47 @@ describe('dynamic authoring closed loop', () => {
       expect(runtime.repository.listAuthoringTasks(entity.agentId).some((task) => task.status === 'failed')).toBe(true)
     } finally {
       await runtime.dispose()
+    }
+  }, 60_000)
+
+  it('checks candidate tools in a sub-conversation whose log, like the channel conversation, reads back', async () => {
+    const { runtime, dshSessionId } = await startAuthoringSession(new QuietModel(), true)
+    const directory = temporaryDirectories.at(-1)!
+    let childId: string | undefined
+    try {
+      await runtime.host.whenIdle(dshSessionId)
+      const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'subv' },
+        name: '子对话验证探针',
+        purpose: '候选工具在独立的子对话里验证。',
+        code: { host: toolHost('sub_conversation_probe', "return 'verified'") },
+      })
+      await runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+      const children = await runtime.host.listSubagents(dshSessionId)
+      expect(children).toHaveLength(1)
+      childId = String(children[0]!.id)
+    } finally {
+      await runtime.dispose()
+    }
+    const reader = new Context()
+    try {
+      await reader.plugin(NekroJsonlSessionPersistence, { root: path.join(directory, 'dsh', 'sessions') })
+      const read = async (id: string) => {
+        const handle = await reader.sessionPersistence.open(SessionId(id), 'read')
+        try {
+          return (await handle.read()).events.map((event) => event.type)
+        } finally {
+          await handle.close()
+        }
+      }
+      const root = await read(dshSessionId)
+      const child = await read(childId)
+      expect(root.filter((type) => type.startsWith('tool/ptc-dispatch'))).toEqual([])
+      expect(child).toEqual(
+        expect.arrayContaining(['turn/start', 'tool/ptc-dispatch-start', 'tool/ptc-dispatch', 'turn/end']),
+      )
+    } finally {
+      await reader.fiber.dispose()
     }
   }, 60_000)
 

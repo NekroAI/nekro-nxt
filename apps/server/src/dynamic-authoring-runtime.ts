@@ -24,10 +24,11 @@ import DynamicCordisRunnerService, {
   type DynamicCordisStopResponse,
   type DynamicCordisUndefineReceipt,
 } from '@deepseek-ai/dsh-cordis-host-runner'
-import { ToolCallId, freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
+import { freezeMessage, MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { ToolRuntime } from '@deepseek-ai/dsh-tools'
+import { ToolRuntime, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import type { ConversationScript } from './sub-conversation-script.js'
 import { RESERVED_COMMAND_NAMES, extensionManifestContributionSchema } from '@nekro-nxt/extension-format'
 import {
   CommandDefinitionSchema,
@@ -924,11 +925,20 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     return { ...request, sessionId: rootSessionId }
   }
 }
+/** Runs tool calls in a scripted sub-conversation under `parent` and returns each call's outcome by call id. */
+export type RunScriptedConversation = (input: {
+  readonly parent: Agent
+  readonly title: string
+  readonly calls: ConversationScript['calls']
+  readonly closing: string
+}) => Promise<{ readonly results: ReadonlyMap<string, Readonly<ToolExecutionResult>> }>
+
 export class DynamicAuthoringRuntime {
   readonly #context: Context
   readonly #sessions: SessionRegistry<{ readonly context: Context; readonly runner: NekroNxtDynamicCordisRunner }>
   readonly #authoring: DshHostRuntimeOptions['authoring']
   readonly #assertActive: () => void
+  readonly #runScripted: RunScriptedConversation
   readonly #authoringContinuationIds = new Set<string>()
   readonly #authoringContinuationPending = new Map<string, Promise<void>>()
   readonly #dynamicApprovalListeners = new Set<(event: DynamicApprovalRequestEvent) => void>()
@@ -937,11 +947,13 @@ export class DynamicAuthoringRuntime {
     sessions: SessionRegistry<{ readonly context: Context; readonly runner: NekroNxtDynamicCordisRunner }>,
     authoring: DshHostRuntimeOptions['authoring'],
     assertActive: () => void,
+    runScripted: RunScriptedConversation,
   ) {
     this.#context = context
     this.#sessions = sessions
     this.#authoring = authoring
     this.#assertActive = assertActive
+    this.#runScripted = runScripted
   }
   publishApproval(event: DynamicApprovalRequestEvent): void {
     for (const listener of this.#dynamicApprovalListeners) {
@@ -1298,14 +1310,13 @@ export class DynamicAuthoringRuntime {
       contributions.push({ kind: 'adapter', apiVersion: 2, key: adapter.key, descriptorDigest })
     }
 
-    for (const name of evidence.toolNames) {
-      const schema = visibleTools.find((candidate) => candidate.name === name)
-      if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
+    // The tools run in a scripted sub-conversation of their own: DSH only accepts tool calls inside a turn, and
+    // running them here, outside any turn of the channel's conversation, would leave a log it cannot read back.
+    const toolCalls = evidence.toolNames.map((name, index) => {
       const verificationInput = inputs?.tools[name]
-      const result = await this.#context.tools.execute({
-        callId: ToolCallId(`verify-${packageId}-${name}`),
-        // PTC permits native tools only as transport subcalls. Keep the regular policy pipeline;
-        // do not change the agent's presentation or invent an opaque parent execution token.
+      return {
+        id: `check-${packageId}-${index + 1}`,
+        // PTC permits native tools only as transport subcalls, so a PTC agent's check goes through run_code too.
         name: usesCodeRun ? 'run_code' : name,
         arguments: usesCodeRun
           ? {
@@ -1313,9 +1324,24 @@ export class DynamicAuthoringRuntime {
               code: `return await tools[${JSON.stringify(name)}](${JSON.stringify(verificationInput ?? {})})`,
             }
           : (verificationInput ?? {}),
-        agent,
-        signal: new AbortController().signal,
-      })
+      }
+    })
+    const checked =
+      toolCalls.length === 0
+        ? undefined
+        : await this.#runScripted({
+            parent: agent,
+            title: `验证 ${evidence.toolNames.join('、')}`,
+            calls: toolCalls,
+            closing: '验证调用已完成。',
+          })
+    for (const [index, name] of evidence.toolNames.entries()) {
+      const schema = visibleTools.find((candidate) => candidate.name === name)
+      if (!schema) throw new Error(`Dynamic Tool disappeared before verification: ${name}`)
+      const verificationInput = inputs?.tools[name]
+      const result = checked?.results.get(toolCalls[index]!.id)
+      if (result === undefined)
+        throw new Error(verificationFailure('Tool', name, '验证对话没有完成这次调用。', verificationInput))
       if (result.isError) throw new Error(verificationFailure('Tool', name, result.error.message, verificationInput))
       const value = usesCodeRun ? z.object({ result: JsonValueSchema }).parse(result.value).result : result.value
       if (JSON.stringify(value).length > 16 * 1024)
