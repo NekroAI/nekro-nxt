@@ -291,6 +291,11 @@ export class SubscriptionLogins {
     return typeof value['apiKeyEnv'] === 'string' ? 'api-key' : 'subscription'
   }
 
+  /** The saved route settings, for telling a real draft from a page that echoes them back. */
+  savedProfile(provider: string): Readonly<Record<string, unknown>> | undefined {
+    return this.#options.profile(provider).value
+  }
+
   /** The label of the account the route is using, for the provider overview. */
   async activeLabel(provider: SubscriptionProvider): Promise<string | null> {
     const vault = await this.#vault(provider)

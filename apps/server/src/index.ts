@@ -3714,7 +3714,13 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#assertActive()
     const signedIn =
       isSubscriptionProvider(input.provider) && this.#subscriptions?.mode(input.provider) === 'subscription'
-    if (signedIn && input.apiKey === undefined && input.baseURL === undefined && input.api === undefined) {
+    // The page sends the saved address and protocol back with every test; only a different value is a draft.
+    const saved = signedIn ? this.#subscriptions?.savedProfile(input.provider) : undefined
+    const changesRoute =
+      input.apiKey !== undefined ||
+      (input.baseURL !== undefined && input.baseURL !== saved?.['baseURL']) ||
+      (input.api !== undefined && input.api !== saved?.['api'])
+    if (signedIn && !changesRoute) {
       // A draft is tested in a throwaway runtime that holds no sign-in; the saved route carries the account.
       return this.#modelSettings.testLlmProvider({ provider: input.provider, model: input.model })
     }
