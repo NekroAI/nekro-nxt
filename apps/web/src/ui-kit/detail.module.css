@@ -99,6 +99,13 @@
   gap: var(--s-2);
 }
 
+/* Object page headers in the main area share the page header's control height; compact headers in panes keep theirs. */
+.header:not(.headerCompact) > .actions button {
+  min-width: var(--control);
+  min-height: var(--control);
+  font-size: var(--fs-sm);
+}
+
 /* —— 详情栏 —— */
 .pane {
   display: flex;

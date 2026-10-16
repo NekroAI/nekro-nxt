@@ -48,6 +48,13 @@
   gap: var(--s-2);
 }
 
+/* Header actions use the standard control height whatever size the caller asked for (05 §4.2). */
+.pageActions button {
+  min-width: var(--control);
+  min-height: var(--control);
+  font-size: var(--fs-sm);
+}
+
 /* —— 看板型 —— */
 .board {
   display: grid;

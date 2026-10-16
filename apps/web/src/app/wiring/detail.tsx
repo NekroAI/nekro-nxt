@@ -25,6 +25,7 @@ import {
   toast,
 } from '../../ui-kit/index.js'
 import { BindDialog, type BindIntent } from '../channels/bind-dialog.js'
+import { BindingRows } from '../channels/binding-fields.js'
 import { connectionStatus, testOutcome } from '../model/connection-status.js'
 import { agentHue, agentPhase, connectionFullLabel, triggerLabel } from '../model/identity.js'
 import { useGo } from '../model/nav.js'
@@ -405,7 +406,6 @@ function ChannelDetail({ channelId, onClose }: { readonly channelId: string; rea
   const [intent, setIntent] = useState<BindIntent | null>(null)
   if (!channel) return null
   const agent = agents.find((item) => item.id === channel.agentId)
-  const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
   return (
     <DetailPane
       onClose={onClose}
@@ -426,29 +426,9 @@ function ChannelDetail({ channelId, onClose }: { readonly channelId: string; rea
         </Button>
       }
     >
-      <PropertyGroup title="响应">
+      <PropertyGroup title="谁来回复">
         <PropertyList>
-          <PropertyRow label="智能体" description={agent ? undefined : '还没有智能体响应这个频道'}>
-            <Select
-              aria-label={`${channel.name} 的响应智能体`}
-              value={channel.agentId}
-              options={[
-                { value: '', label: '未接线' },
-                ...agents.map((item) => ({ value: item.id, label: item.name })),
-              ]}
-              onValueChange={(value) => {
-                const next = value
-                if (next === channel.agentId) return
-                if (!next) setIntent({ kind: 'unbind', channelId: channel.id })
-                else setIntent({ kind: channel.agentId ? 'replace' : 'bind', channelId: channel.id, agentId: next })
-              }}
-            />
-          </PropertyRow>
-          {agent ? (
-            <PropertyRow label="触发方式" tip="在频道设置里调整">
-              <span className={styles.value}>{trigger}</span>
-            </PropertyRow>
-          ) : null}
+          <BindingRows channel={channel} onIntent={setIntent} />
         </PropertyList>
       </PropertyGroup>
       {connection ? (

@@ -168,6 +168,10 @@ html[data-ui='next'] {
   /* Single-line control widths (05 §4.2): selects, numbers and short text / names and addresses. */
   --field-sm: 240px;
   --field: 320px;
+  /* The conversation column: the timeline and the composer share one reading width. */
+  --conversation-width: 860px;
+  /* Narrowest the wiring board can draw its three columns. */
+  --board-min-width: 640px;
   --t-page: 650 var(--fs-2xl) / 1.25 var(--font-sans);
   --t-section: 650 var(--fs-lg) / 1.4 var(--font-sans);
   --t-title: 600 var(--fs-md) / 1.45 var(--font-sans);

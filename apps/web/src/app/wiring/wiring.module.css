@@ -40,7 +40,7 @@
   display: grid;
   grid-template-columns: minmax(150px, 1fr) minmax(190px, 1.2fr) minmax(160px, 1fr);
   column-gap: var(--s-9);
-  min-width: 640px;
+  min-width: var(--board-min-width);
   padding: var(--s-2) var(--s-2) var(--s-6);
   border-radius: var(--r-3);
   background-image: radial-gradient(var(--line-2) 1px, transparent 1.3px);

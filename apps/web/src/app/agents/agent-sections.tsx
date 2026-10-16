@@ -37,9 +37,9 @@ import {
 } from '../../ui-kit/index.js'
 import type { BindIntent } from '../channels/bind-dialog.js'
 import { relativeTime } from '../channels/timeline-model.js'
-import { isTriggerPolicy, triggerLabel } from '../model/identity.js'
 import { useGo } from '../model/nav.js'
 import { useProductApi } from '../model/store.js'
+import { TriggerSelect } from '../channels/binding-fields.js'
 import { agentModelKey } from './agent-create-draft.js'
 import {
   accessOfLevel,
@@ -169,7 +169,6 @@ export function ChannelsSection({
   readonly agent: AgentSummary
   readonly onBind: (intent: BindIntent) => void
 }) {
-  const api = useProductApi()
   const go = useGo()
   const channels = useProductStore((state) => state.channels)
   const connections = useProductStore((state) => state.connections)
@@ -181,14 +180,7 @@ export function ChannelsSection({
     const connection = connections.find((item) => item.id === channel.connectionId)
     return connection ? connectionDisplayName(connection) : channel.connectionName
   }
-  const changeTrigger = async (channelId: string, triggerPolicy: Parameters<typeof isTriggerPolicy>[0]) => {
-    if (!isTriggerPolicy(triggerPolicy)) return
-    try {
-      await api.getState().createBinding({ agentId: agent.id, channelId, triggerPolicy })
-    } catch (error) {
-      failure(error)
-    }
-  }
+
   return (
     <PropertyGroup
       id="profile-channels"
@@ -234,22 +226,9 @@ export function ChannelsSection({
           },
           {
             key: 'trigger',
-            header: '触发方式',
+            header: '何时回复',
             width: 'minmax(128px, 1fr)',
-            render: (channel) => {
-              const binding = channel.bindings[0]
-              return binding ? (
-                <Select
-                  aria-label={`${channel.name} 的触发方式`}
-                  value={binding.triggerPolicy}
-                  options={(['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map((value) => ({
-                    value,
-                    label: triggerLabel[value] ?? value,
-                  }))}
-                  onValueChange={(value) => void changeTrigger(channel.id, value)}
-                />
-              ) : null
-            },
+            render: (channel) => <TriggerSelect channel={channel} />,
           },
           {
             key: 'activity',

@@ -32,9 +32,9 @@ import {
   toast,
   Tooltip,
 } from '../../ui-kit/index.js'
-import { triggerLabel, isTriggerPolicy, type TriggerPolicy } from '../model/identity.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
+import { BindingRows } from './binding-fields.js'
 import { ChannelMemory } from './channel-memory.js'
 import { ContextSheet } from './context-sheet.js'
 import { ChannelPromptSheet, type ChannelPromptView } from './channel-prompt-sheet.js'
@@ -45,16 +45,7 @@ import { formatTokens } from './timeline-model.js'
 import { describeSchedule, sortTasks } from '../agents/scheduled-task-model.js'
 import { nextRunText, TaskActions, useScheduledTaskActions } from '../agents/scheduled-tasks-section.js'
 
-const TRIGGERS = ['mentioned-or-replied', 'always', 'command', 'observe-only'] as const
 const INSPECTOR_TASKS = 3
-
-/** What each trigger policy means in practice (packages/channel-runtime shouldTrigger). */
-const triggerHint: Record<TriggerPolicy, string> = {
-  always: '频道里的每条消息都会交给它处理',
-  'mentioned-or-replied': '有人 @它或回复它的消息时',
-  command: '平台上报原生命令事件时（不是这里的聊天命令）',
-  'observe-only': '长期只记录消息、不回复；临时停一下请用暂停回应',
-}
 
 const kindLabel: Record<ChannelSummary['kind'], string> = { internal: '内置频道', group: '群聊', direct: '私聊' }
 
@@ -172,15 +163,6 @@ export function ChannelInspector({
       failure(error)
     }
   }
-  const changeTrigger = async (triggerPolicy: TriggerPolicy) => {
-    if (!agent) return
-    try {
-      await api.getState().createBinding({ agentId: agent.id, channelId: channel.id, triggerPolicy })
-      toast(`触发改为“${triggerLabel[triggerPolicy]}”`)
-    } catch (error) {
-      failure(error)
-    }
-  }
 
   return (
     <DetailPane
@@ -229,23 +211,12 @@ export function ChannelInspector({
     >
       <PropertyGroup title="谁来回复" description={agent ? undefined : '还没有智能体回复这个频道'}>
         <PropertyList>
-          <PropertyRow label="智能体" description={agent?.model}>
-            <span className={styles.rowControl}>
-              <Select
-                aria-label="响应的智能体"
-                value={agent?.id ?? ''}
-                {...(agent ? {} : { placeholder: '选择智能体' })}
-                options={[
-                  ...agents.map((item) => ({ value: item.id, label: item.name })),
-                  ...(agent ? [{ value: '', label: '不回复' }] : []),
-                ]}
-                onValueChange={(value) => {
-                  if (!value) setIntent({ kind: 'unbind', channelId: channel.id })
-                  else if (value !== agent?.id)
-                    setIntent({ kind: agent ? 'replace' : 'bind', channelId: channel.id, agentId: value })
-                }}
-              />
-              {agent ? (
+          <BindingRows
+            channel={channel}
+            onIntent={setIntent}
+            responderDescription={agent?.model}
+            responderExtra={
+              agent ? (
                 <IconButton
                   label={`打开${agent.name}的资料`}
                   size="small"
@@ -253,19 +224,9 @@ export function ChannelInspector({
                 >
                   <ArrowUpRight size={15} />
                 </IconButton>
-              ) : null}
-            </span>
-          </PropertyRow>
-          {agent && binding ? (
-            <PropertyRow label="何时回复" description={triggerHint[binding.triggerPolicy]}>
-              <Select
-                aria-label="触发方式"
-                value={binding.triggerPolicy}
-                options={TRIGGERS.map((value) => ({ value, label: triggerLabel[value] ?? value }))}
-                onValueChange={(value) => isTriggerPolicy(value) && void changeTrigger(value)}
-              />
-            </PropertyRow>
-          ) : null}
+              ) : null
+            }
+          />
           {agent && binding ? (
             <PropertyRow
               label="暂停回应"

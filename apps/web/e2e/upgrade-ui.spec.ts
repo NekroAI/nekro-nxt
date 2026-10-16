@@ -86,6 +86,17 @@ async function installUpgradeHost(page: Page, diagnostics: RuntimeCompatibilityD
     }
     if (url.pathname === '/api/llm/providers')
       return json(HostApiContracts.llmProviders.parseResponse({ writable: true, protocols: [], providers: [] }))
+    // The workshop list asks whether any community line has an update.
+    if (url.pathname === '/api/community/status')
+      return json(
+        HostApiContracts.getCommunityStatus.parseResponse({
+          communityUrl: 'https://community.example.invalid',
+          environment: null,
+          account: null,
+          signedInAt: null,
+          updatesAvailable: 0,
+        }),
+      )
     if (url.pathname === '/api/dsh/plugins') return json({ plugins: [] })
     if (url.pathname === '/api/dsh/settings') return json({ namespaces: [] })
     if (url.pathname.endsWith('/inventory')) return json({ rows: [] })

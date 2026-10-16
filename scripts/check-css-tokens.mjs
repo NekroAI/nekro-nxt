@@ -123,6 +123,8 @@ function unscopedSelectors(css) {
 
 /** Font sizes come from `--t-*` roles or `--fs-*` steps; a pixel line-height after `/` is allowed. */
 const FONT_PROPERTY = /^(font|font-size)$/u
+/** Page-level widths in product pages come from Tokens (05 §4.2). */
+const WIDTH_PROPERTY = /^(width|min-width|max-width)$/u
 const PIXEL_SIZE = /\b\d+(\.\d+)?px\b/u
 
 export function inspectCss(relativePath, css) {
@@ -139,6 +141,12 @@ export function inspectCss(relativePath, css) {
     }
     if (!tokensFile && FONT_PROPERTY.test(property) && PIXEL_SIZE.test(value.replace(/\/\s*[\d.]+px/gu, '')))
       findings.push({ file: relativePath, line, rule: 'font', text: `${property}: ${value}` })
+    if (!tokensFile && relativePath.startsWith('apps/web/src/app/') && WIDTH_PROPERTY.test(property)) {
+      // Responsive caps such as min(560px, 100%) are fine; a bare large width belongs in a Token.
+      const bare = value.replace(/(?:min|max|clamp)\([^)]*\)/gu, '')
+      if ([...bare.matchAll(/\b(\d+)px\b/gu)].some((match) => Number(match[1]) >= 400))
+        findings.push({ file: relativePath, line, rule: 'width', text: `${property}: ${value}` })
+    }
     if (SPACING_PROPERTY.test(property)) {
       const invalid = components(value).filter((part) => !validSpacing(part))
       if (invalid.length > 0)
@@ -185,6 +193,13 @@ function runSelfTest() {
   assert.deepEqual(inspectCss('apps/web/src/ui-kit/tokens.css', '.x { color: #000; }'), [])
   assert.deepEqual(
     inspectCss(
+      'apps/web/src/app/fixture.module.css',
+      '.w { max-width: 720px; }\n.v { width: min(560px, 100%); max-width: 240px; }',
+    ).map(({ line, rule }) => [line, rule]),
+    [[1, 'width']],
+  )
+  assert.deepEqual(
+    inspectCss(
       'apps/web/src/ui-kit/data.module.css',
       `[data-align='end'] { gap: 0; }\n.cell[data-align='end'] { gap: 0; }\n.a :where(h1, h2) { gap: 0; }\n@media (max-width: 9px) { button { gap: 0; } }\n@keyframes k { from { opacity: 0; } }`,
     ).map(({ line, rule }) => [line, rule]),
@@ -200,7 +215,7 @@ function runSelfTest() {
   assert.equal(validSpacing('calc(var(--s-4) + 2px)'), false)
   assert.equal(validSpacing('calc(var(--s-4) * 2)'), true)
   console.log(
-    'CSS token self-test passed (colors, spacing shorthands, font sizes, calc over Tokens, comments and tokens.css).',
+    'CSS token self-test passed (colors, spacing shorthands, font sizes, page widths, calc over Tokens, comments and tokens.css).',
   )
 }
 
@@ -216,7 +231,7 @@ if (process.argv.includes('--self-test')) {
     console.log(`CSS token check passed (${files.length} CSS Module files).`)
   } else {
     const lines = findings.map(({ file, line, rule, text }) => `${file}:${line} [${rule}] ${text}`)
-    const summary = `CSS token check: ${findings.length} findings in ${new Set(findings.map((f) => f.file)).size} files (color ${byRule('color')}, spacing ${byRule('spacing')}, font ${byRule('font')}, scope ${byRule('scope')}).`
+    const summary = `CSS token check: ${findings.length} findings in ${new Set(findings.map((f) => f.file)).size} files (color ${byRule('color')}, spacing ${byRule('spacing')}, font ${byRule('font')}, width ${byRule('width')}, scope ${byRule('scope')}).`
     if (strict) {
       console.error(['组件样式必须只使用 Token：', ...lines, summary].join('\n'))
       process.exitCode = 1

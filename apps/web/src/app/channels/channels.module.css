@@ -313,7 +313,7 @@
 .convInner {
   display: grid;
   gap: calc(var(--s-1) / 2);
-  max-width: 860px;
+  max-width: var(--conversation-width);
   margin: 0 auto;
   padding: 0 var(--s-6);
 }
@@ -920,7 +920,8 @@ button.step:hover {
 
 .dock > * {
   width: 100%;
-  max-width: 808px;
+  /* Same edges as the timeline: its column minus the side padding of .convInner. */
+  max-width: calc(var(--conversation-width) - var(--s-6) * 2);
   margin: 0 auto;
 }
 
