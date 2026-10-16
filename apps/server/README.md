@@ -64,6 +64,19 @@ Settings descriptor 离开 Host 前仍通过 `isDshSettingsSchemaWireSafe()` 检
 
 DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config 优先序列化 Schema 表单，没有 Schema 时提供高级 JSON。Secret/credential-ref Config 拒绝持久化。DSH 原生 WebUI 不接入产品，`dsh.client` 只形成“原生界面未接入”提示。安装检查与提交使用进程内 Operation ID，通过 SSE 报告下载、依赖、构建脚本、校验和原子提交阶段。
 
+## ChatGPT 登录渠道
+
+在“设置 → 模型 → 添加模型供应商”选择 ChatGPT，点击“Continue with ChatGPT”，在运行 NekroNXT 的电脑上完成浏览器授权。允许使用 ChatGPT 套餐后获取账号模型，再为智能体选择模型。可保存多个账号注册、切换账号、重新登录和退出；“管理 ChatGPT 使用量”打开 ChatGPT 的额度与授权设置。登录本身不表示模型连接测试已通过。
+
+Server 与 Desktop 共用宿主侧的 `dsh/chatgpt/accounts.json`，其中包含私密令牌。保留此文件可恢复账号与注册映射，损坏时从受保护备份恢复；不要将其提交到仓库、发到聊天或同时交给两个运行实例刷新。协议、预览限制与接入取舍见 [ChatGPT 登录模型渠道](../../docs/decisions/implemented/2026-10-16-ChatGPT登录模型渠道.md)。
+
+远程 Server 按 [OpenAI 自托管指南](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms) 传入凭据：
+
+1. 在本机 NekroNXT 完成所需账号和工作空间的 ChatGPT 登录，停止本机宿主以交接令牌刷新。
+2. 停止远程 Server。通过 SSH 等安全通道，把本机的 `dsh/chatgpt/accounts.json` 复制到远程数据根的 `dsh/chatgpt/import-accounts.json`（容器为 `/data/dsh/chatgpt/import-accounts.json`），使用仅所有者可读写的权限。
+3. 启动远程 Server。它合并传入注册，保留自己的 host ID，成功保存后删除传入文件；已有同一注册会被更新。传入失败保留文件供检查，Server 不启动。
+4. 远程 Server 负责后续刷新；可在设置中刷新模型、选择账号并测试连接。重新在两台宿主上独立使用时，各自完成独立注册，避免竞争同一轮换令牌。
+
 ## 兼容性隔离与重试
 
 生产版本来自 `@nekro-nxt/dsh-compat/release` 的统一矩阵。Extension 缓存绑定运行环境指纹与 ABI，环境变化后重新构建；旧源码 Revision 与验证证据不改写。DSH 插件检查其受管项目与宿主的依赖兼容性，正常恢复不会联网升级或重写用户插件锁文件。

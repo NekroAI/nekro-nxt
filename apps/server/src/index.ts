@@ -4,6 +4,7 @@ import type { ExtensionGovernanceToolPort } from './extension-governance/tool-po
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { renderChannelMessageResult } from './channel-message-result.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
+import * as ChatGptModels from './chatgpt-models.js'
 import {
   prepareDshHostProfile,
   activateDshHostProfile,
@@ -3304,6 +3305,12 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
       await context.plugin(LlmRuntime)
       await options.configureLlm?.(context)
+      if (options.llmSettingsPath !== undefined) {
+        await context.plugin(ChatGptModels, {
+          root: path.join(path.dirname(options.llmSettingsPath), 'chatgpt'),
+          ...(options.logs === undefined ? {} : { logs: options.logs }),
+        })
+      }
       const conversationScripts = new ConversationScriptModel()
       context.llm.registerAdapter([CONVERSATION_SCRIPT_PROVIDER], conversationScripts)
       await context.plugin(SessionStore)
@@ -3475,6 +3482,10 @@ export class DshHostRuntime implements AgentSessionDriver {
   getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
     this.#assertActive()
     return this.#modelSettings.getLlmProviderSettings()
+  }
+
+  getChatGptAuth() {
+    return ChatGptModels.chatGptAuth(this.#context.root)
   }
 
   getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {

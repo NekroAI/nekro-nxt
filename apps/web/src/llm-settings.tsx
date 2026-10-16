@@ -1,4 +1,5 @@
 import { LlmProviderRemovalDialog } from './llm-provider-removal.js'
+import { ChatGptSettings } from './chatgpt-settings.js'
 import { useProductRuntime } from './product-runtime.js'
 import { StaleHostReadError, callHostApi } from './host-api-client.js'
 import { ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
@@ -69,7 +70,13 @@ const customProviderKey = (displayName: string, providers: readonly ProviderView
 
 /** How a provider is wired: user-declared, the generic catalog route, or a fixed built-in adapter. */
 export const providerKind = (provider: ProviderView): string =>
-  provider.declared ? '自定义接入' : provider.settingsNs === 'llm-pi-ai' ? '通用接入' : '内置固定接入'
+  provider.provider === 'chatgpt'
+    ? 'ChatGPT 登录'
+    : provider.declared
+      ? '自定义接入'
+      : provider.settingsNs === 'llm-pi-ai'
+        ? '通用接入'
+        : '内置固定接入'
 
 export interface ProviderStatus {
   readonly label: string
@@ -86,6 +93,8 @@ export interface ProviderStatus {
  * omit `lastTest` and keep the plain "已启用".
  */
 export const providerStatus = (provider: ProviderView, now = Date.now()): ProviderStatus => {
+  if (provider.provider === 'chatgpt')
+    return { label: provider.active ? '已登录' : '未登录', tone: provider.active ? 'ok' : 'neutral' }
   if (!provider.active) {
     return provider.configured ? { label: '待启用', tone: 'warn' } : { label: '未配置', tone: 'neutral' }
   }
@@ -186,7 +195,14 @@ export function AddProviderDialog({
  * One provider's configuration: credential, model catalog, connection test, advanced route settings and removal.
  * `providerId` may be {@link CUSTOM_PROVIDER} for a provider that is being created.
  */
-export function ModelProviderDetail({
+export function ModelProviderDetail(props: {
+  readonly providerId: string
+  readonly onSelect: (provider: string) => void
+}): ReactNode {
+  return props.providerId === 'chatgpt' ? <ChatGptSettings /> : <ApiProviderDetail {...props} />
+}
+
+function ApiProviderDetail({
   providerId: requested,
   onSelect,
 }: {

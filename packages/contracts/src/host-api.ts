@@ -2310,6 +2310,33 @@ export const LlmProviderSettingsSchema = z
   })
   .strict()
 
+export const ChatGptStatusSchema = z
+  .object({
+    activeId: z.string().nullable(),
+    accounts: z.array(
+      z
+        .object({
+          id: NonEmptyStringSchema,
+          label: NonEmptyStringSchema,
+          email: z.string().nullable(),
+          signedIn: z.boolean(),
+          planEnabled: z.boolean(),
+        })
+        .strict(),
+    ),
+    models: z.array(z.object({ id: NonEmptyStringSchema, name: NonEmptyStringSchema }).strict()),
+    welcome: z.boolean(),
+    login: z
+      .object({
+        id: NonEmptyStringSchema,
+        status: z.enum(['waiting', 'exchanging', 'completed', 'failed', 'cancelled']),
+        message: z.string().nullable(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict()
+
 export const ConnectionTestResultSchema = z.discriminatedUnion('status', [
   z
     .object({
@@ -4344,6 +4371,34 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: LlmProviderSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  chatGptStatus: defineContract({
+    method: 'GET',
+    path: '/api/llm/chatgpt',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ChatGptStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  chatGptLogin: defineContract({
+    method: 'POST',
+    path: '/api/llm/chatgpt/login',
+    params: EmptyParamsSchema,
+    request: z.object({ accountId: NonEmptyStringSchema.optional() }).strict(),
+    response: z.object({ authorizeUrl: z.url() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  chatGptAction: defineContract({
+    method: 'POST',
+    path: '/api/llm/chatgpt/action',
+    params: EmptyParamsSchema,
+    request: z.discriminatedUnion('action', [
+      z.object({ action: z.literal('select'), accountId: NonEmptyStringSchema }).strict(),
+      z.object({ action: z.literal('logout'), accountId: NonEmptyStringSchema }).strict(),
+      z.object({ action: z.enum(['refresh-models', 'acknowledge', 'cancel']) }).strict(),
+    ]),
+    response: z.object({ status: ChatGptStatusSchema, revocationConfirmed: z.boolean().optional() }).strict(),
     error: HostApiErrorSchema,
   }),
   llmDiscoverModels: defineContract({

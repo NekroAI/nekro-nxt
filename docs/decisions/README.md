@@ -47,6 +47,7 @@
 - DSH 受管包、Host/智能体 Loader、来源和加载诊断：[DSH 能力插件优先兼容与受管加载](implemented/2026-08-18-DSH能力插件优先兼容与支持识别.md)。
 - DSH Session、Tool、Handoff 与群聊组合：[DSH 0.1.1 群聊能力组合](implemented/2026-08-18-DSH-0.1.1群聊能力组合.md)。
 - 模型供应商目录和配置来源：[复用 DSH 模型供应商目录](implemented/2026-08-17-复用DSH模型供应商目录.md)。
+- ChatGPT 套餐授权、账号与公开 Responses 接入：[ChatGPT 登录模型渠道](implemented/2026-10-16-ChatGPT登录模型渠道.md)。
 - 动态包、保存版本与 Activation：[本地扩展持久化](implemented/2026-08-15-本地扩展持久化.md)。
 - 扩展形态统一（本机实例 + 智能体挂载、Manifest V7、两层授权、社区与官方扩展迁移，实施中）：[扩展形态统一](accepted/2026-10-09-扩展形态统一.md)。
 - 扩展的版本谱系、分支、修改任务与暂停、数据格式与迁移、管理员与智能体扩展自主权、社区快进发布与同步：[扩展流转治理](accepted/2026-10-15-扩展流转治理.md)。

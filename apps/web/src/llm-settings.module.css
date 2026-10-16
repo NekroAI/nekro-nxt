@@ -1,4 +1,16 @@
 /* —— 供应商详情 —— */
+.chatGptLogoLight {
+  display: none;
+}
+
+:global(html[data-theme='dark']) .chatGptLogoDark {
+  display: none;
+}
+
+:global(html[data-theme='dark']) .chatGptLogoLight {
+  display: block;
+}
+
 .detail {
   display: grid;
   align-content: start;

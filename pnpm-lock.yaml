@@ -292,6 +292,9 @@ importers:
       '@deepseek-ai/dsh-working-directory':
         specifier: 0.2.1-alpha.2
         version: 0.2.1-alpha.2(d3dadd6ccc60c19d6dd164159ffe5f9b)
+      '@earendil-works/pi-ai':
+        specifier: 1.1.0
+        version: 1.1.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.3)(undici@8.11.2)(ws@8.21.3)(zod@4.4.3)
       '@huggingface/tokenizers':
         specifier: 0.2.0
         version: 0.2.0
@@ -352,6 +355,9 @@ importers:
       fflate:
         specifier: 0.8.3
         version: 0.8.3
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
       linkedom:
         specifier: 0.18.13
         version: 0.18.13

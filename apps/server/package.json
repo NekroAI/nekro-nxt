@@ -22,6 +22,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "jose": "6.2.12",
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/cordis-plugin-loader": "1.0.6-alpha.1",
     "@deepseek-ai/dsh-agent": "0.2.1-alpha.2",

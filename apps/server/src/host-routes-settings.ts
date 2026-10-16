@@ -27,6 +27,52 @@ export function registerSettingsRoutes({
   broadcast,
   broadcastExtensionsChanged,
 }: HostRouteContext): () => void {
+  for (const contract of [
+    HostApiContracts.chatGptStatus,
+    HostApiContracts.chatGptLogin,
+    HostApiContracts.chatGptAction,
+  ]) {
+    registerRoute({
+      kind: 'exact',
+      path: contract.path,
+      handler: async (req, res) => {
+        if (req.method !== contract.method) {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        try {
+          const auth = runtime.host.getChatGptAuth()
+          if (!auth) throw new Error('ChatGPT 登录尚未启用。')
+          if (contract === HostApiContracts.chatGptStatus) {
+            writeContractJson(res, 200, HostApiContracts.chatGptStatus, auth.view())
+          } else if (contract === HostApiContracts.chatGptLogin) {
+            const input = HostApiContracts.chatGptLogin.parseRequest(await readJsonBody(req))
+            writeContractJson(res, 200, HostApiContracts.chatGptLogin, await auth.start(input.accountId))
+          } else {
+            const input = HostApiContracts.chatGptAction.parseRequest(await readJsonBody(req))
+            let revocationConfirmed: boolean | undefined
+            if (input.action === 'select') await auth.select(input.accountId)
+            else if (input.action === 'logout') revocationConfirmed = (await auth.logout(input.accountId)).revoked
+            else if (input.action === 'refresh-models') await auth.refreshModels()
+            else if (input.action === 'acknowledge') await auth.acknowledge()
+            else await auth.cancel()
+            broadcast({ event: 'snapshot-changed', data: { changed: true } })
+            writeContractJson(res, 200, HostApiContracts.chatGptAction, {
+              status: auth.view(),
+              ...(revocationConfirmed === undefined ? {} : { revocationConfirmed }),
+            })
+          }
+        } catch (error) {
+          writeError(
+            res,
+            400,
+            'chatgpt-operation-failed',
+            error instanceof Error ? error.message : 'ChatGPT 操作失败，请重试。',
+          )
+        }
+      },
+    })
+  }
   registerRoute({
     kind: 'exact',
     path: '/api/runtime/compatibility/retry',
