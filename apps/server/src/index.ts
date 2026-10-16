@@ -113,6 +113,7 @@ import {
   type EpisodeCloseReason,
   type SendMessageInput,
   type SendMessageResult,
+  UnrecoverableSessionError,
 } from '@nekro-nxt/channel-runtime'
 import {
   type ExtensionCapabilities,
@@ -4105,11 +4106,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
     const persisted = (await this.#context.sessionPersistence.list()).some(({ header }) => header.id === sessionId)
     const handle = persisted
-      ? await this.#context.agents.resume({
-          resumeSessionId: sessionId,
-          agentOptions: { provider: revision.model.provider, model: revision.model.model },
-          setup,
-        })
+      ? await this.#context.agents
+          .resume({
+            resumeSessionId: sessionId,
+            agentOptions: { provider: revision.model.provider, model: revision.model.model },
+            setup,
+          })
+          .catch((error: unknown) => {
+            if (!(error instanceof Error) || error.name !== 'SessionPersistenceCorruptionError') throw error
+            this.#sessions.remove(sessionId)
+            throw new UnrecoverableSessionError(error.message, { cause: error })
+          })
       : await this.#context.agents.create({
           sessionId,
           ...(developmentWorkspace === undefined ? {} : { meta: { cwd: developmentWorkspace } }),

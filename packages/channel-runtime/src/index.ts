@@ -541,6 +541,17 @@ export class ChannelStopConflictError extends Error {
   }
 }
 
+/**
+ * The Session Driver throws this when a stored conversation can no longer be read. Recovery then closes only that
+ * Episode; the channel starts a fresh one on its next message instead of the whole service staying down.
+ */
+export class UnrecoverableSessionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'UnrecoverableSessionError'
+  }
+}
+
 /** Single-lane M1 Runtime. M2 extends the same persisted states with injection and recovery. */
 export class ChannelRuntime {
   #admissionState: 'closed' | 'opening' | 'open' | 'disposed'
@@ -1174,26 +1185,42 @@ export class ChannelRuntime {
           handoff?.recentEventIds
             .map((eventId) => this.#coreRepository.getChannelEvent(eventId))
             .filter((event): event is ChannelEventRecord => event !== undefined) ?? []
-        const dshSessionId = await this.#sessionDriver.createSession({
-          episodeId: episode.id,
-          channelId: episode.channelId,
-          agentId: episode.agentId,
-          agentRevisionId: episode.agentRevisionId,
-          ...(handoff === undefined
-            ? {}
-            : {
-                handoff: {
-                  id: handoff.id,
-                  fromEpisodeId: handoff.fromEpisodeId,
-                  sourceEventIds: handoff.sourceEventIds,
-                  createdAt: handoff.createdAt,
-                  provider: handoff.provider,
-                  model: handoff.model,
-                  summary: handoff.summary,
-                  recentEvents,
-                },
-              }),
-        })
+        let dshSessionId: string
+        try {
+          dshSessionId = await this.#sessionDriver.createSession({
+            episodeId: episode.id,
+            channelId: episode.channelId,
+            agentId: episode.agentId,
+            agentRevisionId: episode.agentRevisionId,
+            ...(handoff === undefined
+              ? {}
+              : {
+                  handoff: {
+                    id: handoff.id,
+                    fromEpisodeId: handoff.fromEpisodeId,
+                    sourceEventIds: handoff.sourceEventIds,
+                    createdAt: handoff.createdAt,
+                    provider: handoff.provider,
+                    model: handoff.model,
+                    summary: handoff.summary,
+                    recentEvents,
+                  },
+                }),
+          })
+        } catch (error) {
+          if (!(error instanceof UnrecoverableSessionError)) throw error
+          console.error(`[nekro-nxt] 频道 ${episode.channelId} 的对话记录无法读取，已结束这段对话：`, error)
+          this.#feedback.markEndReason(episode.id, 'cancelled')
+          await this.#feedback.cleanupEpisodeFeedback(episode.id)
+          this.#runtimeRepository.closeEpisode(
+            episode.id,
+            'unrecoverable-session',
+            episode.lastAdmittedEventId ?? episode.openedAtEventId,
+            this.#timestamp(),
+          )
+          this.#deferredRecoveryEpisodes.delete(episode.id)
+          return
+        }
         if (episode.status === 'opening') episode = this.#runtimeRepository.activateEpisode(episode.id, dshSessionId)
         else if (episode.dshSessionId !== dshSessionId) {
           throw new Error(`Recovered DSH Session identity changed for Episode ${episode.id}.`)

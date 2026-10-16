@@ -1,4 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -74,6 +75,48 @@ describe('NXT public JSONL persistence adapter', () => {
           expect.objectContaining({ type: 'nekro-nxt/image-admission', ignorable: true, data: event.data }),
         ])
         expect(event.ignorable).toBeUndefined()
+      } finally {
+        await restored.close()
+      }
+    } finally {
+      await first.fiber.dispose()
+      await second.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('candidate verification sub-calls', () => {
+  it('keep a Session readable when they are logged outside any turn', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nxt-jsonl-verify-'))
+    const first = new Context()
+    const second = new Context()
+    try {
+      await first.plugin(SessionStore)
+      await first.plugin(NekroJsonlSessionPersistence, { root })
+      const session = first.sessions.create(SessionId('synthetic-verify-session'))
+      const handle = await first.sessionPersistence.create(session.header)
+      const dispatch = {
+        rootCallId: ToolCallId('verify-pkg-1-make_card'),
+        parentCallId: ToolCallId('verify-pkg-1-make_card'),
+        subCallId: ToolCallId('verify-pkg-1-make_card:ptc:1'),
+        name: 'make_card',
+        arguments: { title: '示例卡片' },
+      }
+      session.append('tool/ptc-dispatch-start', dispatch)
+      session.append('tool/ptc-dispatch', { ...dispatch, isError: false, content: [{ type: 'text', text: '好' }] })
+      await first.sessions.flush(session)
+      await handle.close()
+      await first.fiber.dispose()
+      await second.plugin(NekroJsonlSessionPersistence, { root })
+      const restored = await second.sessionPersistence.open(session.id, 'read')
+      try {
+        const events = (await restored.read()).events
+        expect(events.map((event) => [event.type, event.ignorable])).toEqual([
+          ['nekro-nxt/verification-dispatch', true],
+          ['nekro-nxt/verification-dispatch', true],
+        ])
+        expect(events[0]?.data).toEqual({ type: 'tool/ptc-dispatch-start', data: dispatch })
       } finally {
         await restored.close()
       }

@@ -67,7 +67,7 @@ import type {
   PhysicalDeliveryRecord,
   RuntimeRepository,
 } from '../src/index.ts'
-import { ChannelRuntime, ChannelStopConflictError, isTriggered } from '../src/index.ts'
+import { ChannelRuntime, ChannelStopConflictError, UnrecoverableSessionError, isTriggered } from '../src/index.ts'
 
 class MemoryCoreRepository implements CoreRepository {
   readonly agents = new Map<AgentId, CreateAgentCommit>()
@@ -2178,6 +2178,23 @@ describe('ChannelRuntime M1 lane', () => {
     })
     expect(context.runtimeRepository.getOutbound(outbound.intent.id).intent.state).toBe('unknown')
     expect(context.adapter.deliveries).toHaveLength(deliveriesBeforeRecovery)
+  })
+
+  it('closes only the Episode whose stored conversation cannot be read and keeps recovering the rest', async () => {
+    const context = await setup()
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    context.sessionDriver.createSession = () => Promise.reject(new UnrecoverableSessionError('示例会话记录损坏'))
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      await expect(context.runtime.recover()).resolves.toMatchObject({ resumedEpisodes: 0 })
+    } finally {
+      errors.mockRestore()
+    }
+    expect(context.runtimeRepository.getEpisode(episode.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'unrecoverable-session',
+    })
   })
 
   it('stops a live Episode only after the owned DSH Session reaches its cancellation boundary', async () => {
