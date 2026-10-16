@@ -1,3 +1,4 @@
+import { snapshotSubConversations } from './host-routes-sub-conversations.js'
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import { z } from 'zod'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
@@ -699,6 +700,7 @@ export class HostQueries {
         .listAuthoringTasks()
         .filter((task) => agentIds.has(task.agentId))
         .map((task) => projectAuthoringTask(runtime, task, attemptsByTask.get(task.id) ?? [])),
+      subConversations: snapshotSubConversations(runtime).filter((conversation) => agentIds.has(conversation.agentId)),
       scheduledTasks: runtime.scheduledTasks.list(),
       extensionRequests: projectExtensionRequests(runtime, 'pending'),
     })

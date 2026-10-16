@@ -149,6 +149,15 @@ describe('dynamic authoring closed loop', () => {
       const children = await runtime.host.listSubagents(dshSessionId)
       expect(children).toHaveLength(1)
       childId = String(children[0]!.id)
+      const [task] = runtime.repository.listAuthoringTasks()
+      expect(runtime.repository.getSubConversationBySession(childId)).toMatchObject({
+        title: '验证 sub_conversation_probe',
+        openedBy: 'host',
+        driver: 'script',
+        status: 'closed',
+        closeReason: 'completed',
+        authoringTaskId: task?.id,
+      })
     } finally {
       await runtime.dispose()
     }

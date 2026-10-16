@@ -15,6 +15,7 @@ import {
   AgentIdSchema,
   AgentRevisionIdSchema,
   AuthoringAttemptIdSchema,
+  SubConversationIdSchema,
   AuthoringTaskIdSchema,
   AssetIdSchema,
   ChannelEventIdSchema,
@@ -1016,6 +1017,40 @@ export const DEFAULT_MESSAGE_PACING: MessagePacing = 'normal'
 
 export const MessagePacingSettingsSchema = z.object({ pacing: MessagePacingSchema }).strict()
 
+/**
+ * A conversation of its own under a channel's conversation (docs/NekroNxt界面交互模型.md §4.6): the agent opens one
+ * for a separate piece of work, and the host opens scripted ones to check creation candidates. It has its own log
+ * and context, and is shown under its channel.
+ */
+export const SubConversationSchema = z
+  .object({
+    id: SubConversationIdSchema,
+    channelId: ChannelIdSchema,
+    episodeId: EpisodeIdSchema,
+    agentId: AgentIdSchema,
+    title: z.string().min(1).max(200),
+    /** `agent`: the agent opened it with a tool; `host`: NekroNXT opened it, such as to check a candidate. */
+    openedBy: z.enum(['agent', 'host']),
+    /** `model`: the agent's model talks in it; `script`: the host plays fixed tool calls. */
+    driver: z.enum(['model', 'script']),
+    status: z.enum(['open', 'closed']),
+    closeReason: z.enum(['completed', 'closed-by-agent', 'closed-by-admin', 'failed', 'conversation-ended']).optional(),
+    /** What it handed back to the channel's conversation when it ended. */
+    summary: z.string().max(4000).optional(),
+    authoringTaskId: AuthoringTaskIdSchema.optional(),
+    createdAt: z.number().int().nonnegative(),
+    closedAt: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
+export type SubConversation = z.output<typeof SubConversationSchema>
+
+/** How long ended sub-conversations are kept before they are cleaned up. */
+export const SubConversationRetentionSchema = z.enum(['1d', '3d', '7d', '30d', 'never'])
+export type SubConversationRetention = z.output<typeof SubConversationRetentionSchema>
+export const DEFAULT_SUB_CONVERSATION_RETENTION: SubConversationRetention = '7d'
+export const SubConversationSettingsSchema = z.object({ retention: SubConversationRetentionSchema }).strict()
+
 /** `keyword`: SQLite keyword search only; `builtin`: keywords fused with the built-in semantic model. */
 export const RetrievalModeSchema = z.enum(['keyword', 'builtin'])
 export type RetrievalMode = z.output<typeof RetrievalModeSchema>
@@ -1936,6 +1971,8 @@ export const HostSnapshotSchema = z
         .strict(),
     ),
     authoringTasks: z.array(AuthoringTaskSummarySchema).default([]),
+    /** Open sub-conversations, and the most recently ended ones of each channel. */
+    subConversations: z.array(SubConversationSchema).default([]),
     scheduledTasks: z.array(ScheduledTaskSchema).default([]),
     /** Extension requests waiting for an administrator. */
     extensionRequests: z.array(ExtensionRequestSchema).default([]),
@@ -2549,6 +2586,7 @@ const dshSettingsParam = z.object({ namespace: NonEmptyStringSchema }).strict()
 const dshCredentialParam = z.object({ ref: DshCredentialRefSchema }).strict()
 const llmProviderParam = z.object({ provider: NonEmptyStringSchema }).strict()
 const authoringTaskParam = z.object({ taskId: AuthoringTaskIdSchema }).strict()
+const subConversationParam = z.object({ conversationId: SubConversationIdSchema }).strict()
 const scheduledTaskParam = z.object({ taskId: ScheduledTaskIdSchema }).strict()
 const authoringAttemptParam = z.object({ taskId: AuthoringTaskIdSchema, attemptId: AuthoringAttemptIdSchema }).strict()
 
@@ -3195,6 +3233,57 @@ export const HostApiContracts = {
     // What the live session sends the model: route, rendered instructions and tool schemas. Read on demand; the runtime
     // projection pushed over SSE never carries it. `available: false` when no session of the channel is in memory.
     response: ChannelRuntimeContextSchema,
+    error: HostApiErrorSchema,
+  }),
+  listSubConversations: defineContract({
+    method: 'GET',
+    path: '/api/sub-conversations/channels/:channelId',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: z.object({ items: z.array(SubConversationSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getSubConversationRuntime: defineContract({
+    method: 'GET',
+    path: '/api/sub-conversations/:conversationId/runtime',
+    params: subConversationParam,
+    request: NoRequestBodySchema,
+    // Read from memory while it runs and from its stored log after it ended.
+    response: z.object({ conversation: SubConversationSchema, runtime: ChannelRuntimeProjectionSchema }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  closeSubConversation: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/sub-conversations/:conversationId/close',
+    params: subConversationParam,
+    request: z.object({}).strict(),
+    response: SubConversationSchema,
+    error: HostApiErrorSchema,
+  }),
+  deleteSubConversation: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/sub-conversations/:conversationId',
+    params: subConversationParam,
+    request: NoRequestBodySchema,
+    response: z.object({ deleted: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getSubConversationSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/sub-conversations',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: SubConversationSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateSubConversationSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/sub-conversations',
+    params: EmptyParamsSchema,
+    request: SubConversationSettingsSchema,
+    response: SubConversationSettingsSchema,
     error: HostApiErrorSchema,
   }),
   getChannelRuntimeInput: defineContract({

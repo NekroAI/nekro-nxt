@@ -116,22 +116,22 @@ class DelegationModel extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const toolNames = new Set(options.tools?.map((tool) => tool.name) ?? [])
-    if (toolNames.has('subagent')) {
+    if (toolNames.has('conversation_open')) {
       this.rootRequestOptions.push(options)
       this.rootRequests += 1
       if (!this.#delegated) {
         this.#delegated = true
-        yield* toolCallChunks('subagent', 'delegate-initial', {
-          description: '核对官方组合',
-          prompt: '独立检查当前任务并返回一句结论。',
+        yield* toolCallChunks('conversation_open', 'delegate-initial', {
+          title: '核对官方组合',
+          task: '独立检查当前任务并返回一句结论。',
         })
         return
       }
       if (this.followupChildId !== undefined && !this.#followupSent) {
         this.#followupSent = true
-        yield* toolCallChunks('send_message', 'delegate-followup', {
-          agent_id: this.followupChildId,
-          message: '恢复后再核对一次。',
+        yield* toolCallChunks('conversation_send', 'delegate-followup', {
+          conversation: this.followupChildId.replace(/^nxt-/u, ''),
+          text: '恢复后再核对一次。',
         })
         return
       }
@@ -213,12 +213,12 @@ class DynamicDelegationModel extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     const toolNames = new Set(options.tools?.map(({ name }) => name) ?? [])
-    if (toolNames.has('subagent')) {
+    if (toolNames.has('conversation_open')) {
       if (!this.rootDelegated) {
         this.rootDelegated = true
-        yield* toolCallChunks('subagent', 'dynamic-delegate', {
-          description: '开发动态扩展',
-          prompt: '检查当前 Host 契约，创建、运行、检查、停止并修订一个动态 Host Tool。',
+        yield* toolCallChunks('conversation_open', 'dynamic-delegate', {
+          title: '开发动态扩展',
+          task: '检查当前 Host 契约，创建、运行、检查、停止并修订一个动态 Host Tool。',
         })
         return
       }
@@ -342,6 +342,7 @@ class DenylistRecoveryModel extends LlmAdapter {
   readonly replacementChildFinished = deferred()
   followupChildId: string | undefined
   childRequests = 0
+  readonly childToolNames: string[][] = []
   private initialStarted = false
   private followupSent = false
   private replacementStarted = false
@@ -367,34 +368,35 @@ class DenylistRecoveryModel extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     const toolNames = new Set(options.tools?.map(({ name }) => name) ?? [])
-    if (!toolNames.has('subagent')) {
+    if (!toolNames.has('conversation_open')) {
       this.childRequests += 1
+      this.childToolNames.push([...toolNames])
       yield* textChunks(`子任务 ${this.childRequests} 完成。`)
       if (this.childRequests === 1) this.firstChildFinished.resolve()
-      else this.replacementChildFinished.resolve()
+      else if (this.replacementStarted) this.replacementChildFinished.resolve()
       return
     }
     if (!this.initialStarted) {
       this.initialStarted = true
-      yield* toolCallChunks('subagent', 'denylist-initial', {
-        description: '建立可恢复子级',
-        prompt: '返回一句完成说明。',
+      yield* toolCallChunks('conversation_open', 'denylist-initial', {
+        title: '建立可恢复子级',
+        task: '返回一句完成说明。',
       })
       return
     }
     if (this.followupChildId !== undefined && !this.followupSent) {
       this.followupSent = true
-      yield* toolCallChunks('send_message', 'denylist-followup', {
-        agent_id: this.followupChildId,
-        message: '在频道动作能力变化后继续。',
+      yield* toolCallChunks('conversation_send', 'denylist-followup', {
+        conversation: this.followupChildId.replace(/^nxt-/u, ''),
+        text: '在频道动作能力变化后继续。',
       })
       return
     }
     if (this.followupSent && !this.replacementStarted) {
       this.replacementStarted = true
-      yield* toolCallChunks('subagent', 'denylist-replacement', {
-        description: '替换不可恢复子级',
-        prompt: '建立新的子智能体并返回一句完成说明。',
+      yield* toolCallChunks('conversation_open', 'denylist-replacement', {
+        title: '替换不可恢复子级',
+        task: '建立新的子智能体并返回一句完成说明。',
       })
       return
     }
@@ -628,6 +630,7 @@ describe('DSH official capability composition', () => {
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+        subConversations: { store: repository, retention: () => '7d' },
         configureLlm: (context: Context) => {
           context.llm.registerAdapter(['test-provider'], model)
         },
@@ -655,14 +658,20 @@ describe('DSH official capability composition', () => {
         agentRevisionId: deniedDefinition.revision.id,
       })
       expect(host.toolNames(sessionId)).toEqual(
-        expect.arrayContaining(['subagent', 'send_message', 'interrupt_agent', 'list_agents']),
+        expect.arrayContaining([
+          'conversation_open',
+          'conversation_send',
+          'conversation_close',
+          'conversation_delete',
+          'conversation_list',
+        ]),
       )
+      expect(host.toolNames(sessionId)).not.toEqual(expect.arrayContaining(['subagent']))
       expect(host.toolNames(sessionId)).not.toEqual(
         expect.arrayContaining(['retract_channel_message', 'nudge_channel_member']),
       )
-      expect(host.toolNames(deniedSessionId)).not.toEqual(
-        expect.arrayContaining(['subagent', 'send_message', 'interrupt_agent', 'list_agents']),
-      )
+      expect(host.toolNames(deniedSessionId)).not.toEqual(expect.arrayContaining(['conversation_open']))
+      expect(host.toolNames(deniedSessionId)).not.toEqual(expect.arrayContaining(['conversation_send']))
       await host.admit({
         dshSessionId: sessionId,
         admissionId: AdmissionIdSchema.parse('adm_DELEGATION1'),
@@ -687,7 +696,8 @@ describe('DSH official capability composition', () => {
       const childToolNames = model.childRequests[0]?.tools?.map((tool) => tool.name) ?? []
       expect(childToolNames).toEqual(
         expect.arrayContaining([
-          'send_message',
+          'conversation_send',
+          'conversation_close',
           'nekro_nxt_channel_context',
           'conversation_history_read',
           'conversation_history_search',
@@ -711,16 +721,16 @@ describe('DSH official capability composition', () => {
           'finish_channel_turn',
           'retract_channel_message',
           'nudge_channel_member',
-          'subagent',
-          'interrupt_agent',
-          'list_agents',
         ]),
       )
-      expect(systemText(model.rootRequestOptions[0])).toContain('可以交给子智能体去做')
+      for (const parentOnly of ['conversation_open', 'conversation_delete', 'conversation_list']) {
+        expect(childToolNames).not.toContain(parentOnly)
+      }
+      expect(systemText(model.rootRequestOptions[0])).toContain('开一个子对话交给它做')
       expect(systemText(model.rootRequestOptions[0])).toContain('大家只能看到你用 send_channel_message 发出去的消息')
       expect(systemText(model.childRequests[0])).toContain('完整继承人设：只报告已经核验的事实。')
       expect(systemText(model.childRequests[0])).toContain('不能直接在频道里说话')
-      expect(systemText(model.childRequests[0])).not.toContain('可以交给子智能体去做')
+      expect(systemText(model.childRequests[0])).not.toContain('开一个子对话交给它做')
       expect(systemText(model.childRequests[0])).not.toContain('大家只能看到你用 send_channel_message 发出去的消息')
       expect(JSON.stringify(model.childRequests[0]?.messages)).not.toContain('启动后台子任务。')
 
@@ -883,7 +893,7 @@ describe('DSH official capability composition', () => {
     }
   }, 15_000)
 
-  it('fails closed when a persisted child denylist names a channel action removed after restart', async () => {
+  it('resumes a child after a restart with the channel actions it may not use recomputed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-denylist-recovery-'))
     temporaryDirectories.push(directory)
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
@@ -915,6 +925,7 @@ describe('DSH official capability composition', () => {
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+        subConversations: { store: repository, retention: () => '7d' },
         configureLlm: (context: Context) => {
           context.llm.registerAdapter(['test-provider'], model)
         },
@@ -973,9 +984,15 @@ describe('DSH official capability composition', () => {
       await model.replacementChildFinished.promise
       await host.whenIdle(sessionId)
 
-      expect(model.childRequests).toBe(2)
-      expect(JSON.stringify(host.sessionEvents(sessionId))).toContain('NOT_RESUMABLE')
-      expect(JSON.stringify(host.sessionEvents(sessionId))).toContain(`subagent \\"${child.id}\\" is unavailable`)
+      // The resumed child and the replacement both ran; neither may act in the channel.
+      expect(model.childRequests).toBe(3)
+      expect(model.childToolNames[0]).not.toEqual(expect.arrayContaining(['retract_channel_message']))
+      for (const tools of model.childToolNames.slice(1)) {
+        expect(tools).not.toEqual(expect.arrayContaining(['send_channel_message']))
+        expect(tools).not.toContain('retract_channel_message')
+        expect(tools).not.toContain('nudge_channel_member')
+      }
+      expect(JSON.stringify(host.sessionEvents(sessionId))).not.toContain('NOT_RESUMABLE')
       expect(await host.listSubagents(sessionId)).toHaveLength(2)
     } finally {
       await host.dispose()

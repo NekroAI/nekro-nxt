@@ -6,6 +6,7 @@ import type {
   AgentRevisionId,
   AuthoringAttemptId,
   AuthoringTaskId,
+  SubConversationId,
   AdmissionId,
   AssetId,
   ChannelContextPolicy,
@@ -1700,6 +1701,46 @@ export const channelMemberNotes = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.channelId, table.memberId] }),
     check('channel_member_notes_updated_by_ck', sql`${table.updatedBy} IN ('admin', 'agent')`),
+  ],
+)
+
+/** A sub-conversation under a channel's conversation; its log lives in the DSH session `dsh_session_id`. */
+export const subConversations = sqliteTable(
+  'sub_conversations',
+  {
+    id: text().$type<SubConversationId>().primaryKey(),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    // Not a foreign key: the channel already removes its sub-conversations, and a channel conversation's session is
+    // known before its episode row in some host paths.
+    episodeId: text('episode_id').$type<EpisodeId>().notNull(),
+    agentId: text('agent_id').$type<AgentId>().notNull(),
+    dshSessionId: text('dsh_session_id').notNull().unique(),
+    parentDshSessionId: text('parent_dsh_session_id').notNull(),
+    title: text().notNull(),
+    openedBy: text('opened_by', { enum: ['agent', 'host'] }).notNull(),
+    driver: text({ enum: ['model', 'script'] }).notNull(),
+    status: text({ enum: ['open', 'closed'] }).notNull(),
+    closeReason: text('close_reason', {
+      enum: ['completed', 'closed-by-agent', 'closed-by-admin', 'failed', 'conversation-ended'],
+    }),
+    summary: text(),
+    authoringTaskId: text('authoring_task_id').$type<AuthoringTaskId>(),
+    createdAt: integer('created_at').notNull(),
+    closedAt: integer('closed_at'),
+  },
+  (table) => [
+    index('sub_conversations_channel_idx').on(table.channelId, table.createdAt),
+    index('sub_conversations_episode_idx').on(table.episodeId, table.status),
+    index('sub_conversations_closed_idx').on(table.status, table.closedAt),
+    check('sub_conversations_opened_by_ck', sql`${table.openedBy} IN ('agent', 'host')`),
+    check('sub_conversations_driver_ck', sql`${table.driver} IN ('model', 'script')`),
+    check(
+      'sub_conversations_status_ck',
+      sql`(${table.status} = 'open' AND ${table.closeReason} IS NULL AND ${table.closedAt} IS NULL) OR (${table.status} = 'closed' AND ${table.closeReason} IN ('completed', 'closed-by-agent', 'closed-by-admin', 'failed', 'conversation-ended') AND ${table.closedAt} IS NOT NULL)`,
+    ),
   ],
 )
 

@@ -931,6 +931,7 @@ export type RunScriptedConversation = (input: {
   readonly title: string
   readonly calls: ConversationScript['calls']
   readonly closing: string
+  readonly authoringTaskId?: AuthoringTaskId
 }) => Promise<{ readonly results: ReadonlyMap<string, Readonly<ToolExecutionResult>> }>
 
 export class DynamicAuthoringRuntime {
@@ -1312,6 +1313,9 @@ export class DynamicAuthoringRuntime {
 
     // The tools run in a scripted sub-conversation of their own: DSH only accepts tool calls inside a turn, and
     // running them here, outside any turn of the channel's conversation, would leave a log it cannot read back.
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
+    const authoringTaskId =
+      episodeId === undefined ? undefined : this.#authoring?.service.taskForRunner(episodeId, pluginId)?.id
     const toolCalls = evidence.toolNames.map((name, index) => {
       const verificationInput = inputs?.tools[name]
       return {
@@ -1332,6 +1336,7 @@ export class DynamicAuthoringRuntime {
         : await this.#runScripted({
             parent: agent,
             title: `验证 ${evidence.toolNames.join('、')}`,
+            ...(authoringTaskId === undefined ? {} : { authoringTaskId }),
             calls: toolCalls,
             closing: '验证调用已完成。',
           })

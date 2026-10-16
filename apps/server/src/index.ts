@@ -97,11 +97,8 @@ import * as ToolCallTimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-polic
 import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
 import * as FsTool from '@deepseek-ai/dsh-tool-fs'
 import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
-import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
-import * as ToolSubagentControl from '@deepseek-ai/dsh-tool-subagent-control'
-import * as ToolSubagentListAgents from '@deepseek-ai/dsh-tool-subagent-control/list-agents'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
-import { defineTool, ToolRuntime, type ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import {
   type AgentSessionDriver,
@@ -151,6 +148,8 @@ import {
   type DshSettingsNamespaceView,
   type DshSettingsPathOperation,
   type EpisodeId,
+  DEFAULT_SUB_CONVERSATION_RETENTION,
+  type SubConversationRetention,
   type JsonValue,
   type ScheduledTask,
   type LogicalMessageId,
@@ -186,8 +185,10 @@ import {
 } from '@nekro-nxt/extension-sdk'
 import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { CONVERSATION_SCRIPT_PROVIDER, ConversationScriptModel } from './sub-conversation-script.js'
+import { PARENT_ONLY_CONVERSATION_TOOLS, subConversationTools } from './sub-conversation-tools.js'
+import { SubConversationManager, memorySubConversationStore, type SubConversationStore } from './sub-conversations.js'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
@@ -466,6 +467,12 @@ export interface DshHostRuntimeOptions {
   readonly assets: AssetAccessRepository
   readonly assetService: AssetService
   readonly resolveAgentRevision: (revisionId: AgentRevisionId) => AgentRevisionRecord | undefined
+  /** Where sub-conversations are recorded and how long ended ones are kept; in memory without it. */
+  readonly subConversations?: {
+    readonly store: SubConversationStore
+    readonly retention: () => SubConversationRetention
+    readonly changed?: () => void
+  }
   readonly authoring?: {
     readonly service: DynamicAuthoringService
     readonly resolveInitiatingEvent: (episodeId: EpisodeId) => ChannelEventId | undefined
@@ -757,8 +764,8 @@ class NekroNxtAgentScopeInheritance extends Service {
     if (!child || !parent) throw new Error('Subagent Scope inheritance requires scoped parent and child contexts.')
     bindScopeParent(child, parent)
     // Tools are mounted by now, so only names this Scope can see are denied (a host-started child may have a parent
-    // without the subagent tool).
-    const denied = visibleChildDeniedToolNames(childContext, false)
+    // without sub-conversation tools).
+    const denied = visibleChildDeniedToolNames(childContext)
     if (denied.length) childContext.tools.restrict({ deny: denied })
     childContext.on('agent/request', async (_payload, next) => ({ ...(await next()), maxTokens: CHILD_MAX_TOKENS }))
     return undefined
@@ -1155,7 +1162,7 @@ const ROOT_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完�
 
 const CHILD_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里，只有要看了结果才能决定下一步时，才分成几段。`
 
-const CHILD_CHANNEL_MESSAGE_POLICY = `你是被派来完成一项具体任务的子智能体，不能直接在频道里说话。做完后把完整结果作为最后的回复交回去；中途有重要发现或卡住了，可以用 send_message 告诉派你来的智能体（用委派说明里给的标识）。几件互不相关的事可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。`
+const CHILD_CHANNEL_MESSAGE_POLICY = `你在一个子对话里，替频道里的对话完成一项具体任务，不能直接在频道里说话。做完后把完整结果作为最后的回复交回去，频道里的对话可能还会接着追问；中途有重要发现或卡住了，可以用 conversation_send 先告诉它。几件互不相关的事可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。`
 
 /** Conversation text a handoff summary reads; older messages stay reachable through the history tools. */
 const HANDOFF_TRANSCRIPT_MAX_CHARS = 80_000
@@ -1178,7 +1185,7 @@ const ROOT_MEMORY_POLICY = [
   '值得长期记住的事，用 notes_update 记下来，先分清是关于谁的：群规、固定活动、群里的梗记进群笔记；某个人希望怎么被称呼、在做什么、喜好和更正，记进他自己的笔记（about 填他的成员 ID），不要写进群笔记。写清是谁说的、哪天说的；旧的说法被更正了就改掉。别人问你的问题、一次性的安排、玩笑、没人确认的传言不记。',
 ].join('\n')
 
-const ROOT_CONTEXT_MANAGEMENT_POLICY = `费时又会产生大量中间信息的活（大范围搜索、翻很多聊天记录、读一堆文件、写代码反复调试、开发扩展），可以交给子智能体去做，你留在群里继续聊；简单的事自己做更快。交代任务时把需要的背景写全，子智能体能自己查这个群的聊天记录。互不相关的任务可以同时派出去，但同一个扩展别让两个子智能体同时改。`
+const ROOT_CONTEXT_MANAGEMENT_POLICY = `费时又会产生大量中间信息的活（大范围搜索、翻很多聊天记录、读一堆文件、写代码反复调试、开发扩展），可以用 conversation_open 开一个子对话交给它做，你留在群里继续聊；简单的事自己做更快。交代任务时把需要的背景写全，子对话能自己查这个群的聊天记录。它的回复会送回来，事情办完就用 conversation_close 结束它。互不相关的事可以同时开几个子对话，但同一个扩展别让两个子对话同时改。`
 
 const scopeHasTool = (tools: ToolRuntime, name: string, scope: ReturnType<typeof scopeOf>): boolean =>
   tools.get(name, scope) !== undefined
@@ -2928,26 +2935,23 @@ const CHILD_DENIED_TOOL_NAMES = [
   'subagent',
   'interrupt_agent',
   'list_agents',
+  ...PARENT_ONLY_CONVERSATION_TOOLS,
 ] as const
 
-const visibleChildDeniedToolNames = (context: Context, includeSubagent: boolean): string[] => {
+const visibleChildDeniedToolNames = (context: Context): string[] => {
   const visible = new Set(context.tools.schemas(scopeOf(context)).map(({ name }) => name))
-  if (includeSubagent) visible.add('subagent')
   return CHILD_DENIED_TOOL_NAMES.filter((name) => visible.has(name))
 }
 
-async function mountDelegationCapabilities(agentContext: Context, revision: AgentRevisionRecord): Promise<void> {
+/** Sub-conversations replace DSH's own subagent tools, so every child is recorded and shown under its channel. */
+function mountDelegationCapabilities(
+  agentContext: Context,
+  revision: AgentRevisionRecord,
+  manager: SubConversationManager,
+  store: Pick<SubConversationStore, 'listSubConversations' | 'getSubConversationBySession'>,
+): void {
   if (!revision.capabilities.subagents) return
-  await agentContext.plugin(ToolSubagentControl)
-  await agentContext.plugin(ToolSubagentListAgents)
-  const denied = visibleChildDeniedToolNames(agentContext, true)
-  await agentContext.plugin(ToolSubagent, {
-    provider: 'spawn',
-    toolName: 'subagent',
-    maxDepth: 1,
-    agentOptions: { maxTokens: CHILD_MAX_TOKENS },
-    toolFilter: { deny: denied },
-  })
+  for (const tool of subConversationTools(manager, store)) agentContext.tools.register(tool)
 }
 
 async function mountWebCapabilities(agentContext: Context, revision: AgentRevisionRecord): Promise<void> {
@@ -2971,7 +2975,8 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
 export class DshHostRuntime implements AgentSessionDriver {
   readonly #logs: HostLogSink | undefined
   readonly #context: Context
-  readonly #conversationScripts: ConversationScriptModel
+  readonly #subConversations: SubConversationManager
+  readonly #subConversationStore: SubConversationStore
   readonly #communication: AgentCommunicationPort
   readonly #history: ProductChannelHistoryRepository
   readonly #members: ChannelMemberRelations | undefined
@@ -3016,7 +3021,23 @@ export class DshHostRuntime implements AgentSessionDriver {
     conversationScripts: ConversationScriptModel,
   ) {
     this.#context = context
-    this.#conversationScripts = conversationScripts
+    this.#subConversationStore = options.subConversations?.store ?? memorySubConversationStore()
+    this.#subConversations = new SubConversationManager({
+      context,
+      scripts: conversationScripts,
+      store: this.#subConversationStore,
+      sessionsRoot: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'sessions'),
+      ownerOf: (parentSessionId) => {
+        const owned = this.#sessions.get(parentSessionId)
+        return owned === undefined
+          ? undefined
+          : { channelId: owned.channelId, episodeId: owned.episodeId, agentId: owned.revision.agentId }
+      },
+      retention: options.subConversations?.retention ?? (() => DEFAULT_SUB_CONVERSATION_RETENTION),
+      changed: () => {
+        options.subConversations?.changed?.()
+      },
+    })
     this.#logs = options.logs
     this.#runtimeProjection = new SessionRuntimeProjection(context, this.#sessions)
     this.#communication = options.communication
@@ -3788,7 +3809,9 @@ export class DshHostRuntime implements AgentSessionDriver {
         order: 20.5,
         text: (context) =>
           scopeHasTool(agentContext.tools, 'send_channel_message', context.scope)
-            ? `${ROOT_MEMORY_POLICY}\n${ROOT_CONTEXT_MANAGEMENT_POLICY}`
+            ? scopeHasTool(agentContext.tools, 'conversation_open', context.scope)
+              ? `${ROOT_MEMORY_POLICY}\n${ROOT_CONTEXT_MANAGEMENT_POLICY}`
+              : ROOT_MEMORY_POLICY
             : '',
       })
       agentContext.systemPrompt.section({
@@ -4097,7 +4120,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           }
         }, 'nekro-nxt: dynamic session ownership')
       }
-      await mountDelegationCapabilities(agentContext, revision)
+      mountDelegationCapabilities(agentContext, revision, this.#subConversations, this.#subConversationStore)
       await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(
         agentContext,
@@ -4626,31 +4649,12 @@ export class DshHostRuntime implements AgentSessionDriver {
    */
   async runScriptedConversation(input: Parameters<RunScriptedConversation>[0]): ReturnType<RunScriptedConversation> {
     this.#assertActive()
-    const childId = SessionId(`nxt-cnv_${randomUUID()}`)
-    const results = new Map<string, Readonly<ToolExecutionResult>>()
-    const stopObserving = this.#context.on('tools/result', (execution, result) => {
-      if (execution.agent?.id === childId) results.set(String(execution.callId), result)
-    })
-    const unload = this.#conversationScripts.load(childId, { calls: input.calls, closing: input.closing })
-    try {
-      const activation = await this.#context.subagents.startActivation({
-        provider: 'spawn',
-        label: input.title,
-        childId,
-        request: {
-          prompt: [{ type: 'text', text: input.title }],
-          parent: input.parent,
-          agentOptions: { provider: CONVERSATION_SCRIPT_PROVIDER, model: childId },
-        },
-        signal: new AbortController().signal,
-        delivery: 'caller',
-      })
-      await activation.result
-      return { results }
-    } finally {
-      stopObserving()
-      unload()
-    }
+    return this.#subConversations.runScript(input)
+  }
+
+  /** The sub-conversations a host route reads and ends; see {@link SubConversationManager}. */
+  get subConversations(): SubConversationManager {
+    return this.#subConversations
   }
 
   async cancelSession(dshSessionId: string, reason: EpisodeCloseReason): Promise<void> {
@@ -4677,6 +4681,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       this.#sessions.remove(sessionId)
       // Creation tasks of the closed conversation wait to be continued in a later one instead of staying half-run.
       if (episodeId !== undefined) this.#authoring?.service.pauseTasksOfEpisode(episodeId, '所在的对话已经结束。')
+      if (episodeId !== undefined) this.#subConversations.closeForEpisode(episodeId)
     }
     if (drainError !== undefined && disposeError !== undefined) {
       throw new AggregateError([drainError, disposeError], `DSH Session teardown failed: ${dshSessionId}`)
@@ -4770,6 +4775,25 @@ export class DshHostRuntime implements AgentSessionDriver {
   ): () => boolean {
     this.#assertActive()
     return this.#runtimeProjection.subscribeRuntimeStatus(listener)
+  }
+
+  /**
+   * The events of a sub-conversation for its runtime view: from memory while it runs, from its stored log after it
+   * ended. Undefined when its log is gone.
+   */
+  async subConversationEvents(
+    dshSessionId: string,
+  ): Promise<{ readonly live: boolean; readonly events: ReturnType<typeof normalizeSessionEvents> } | undefined> {
+    this.#assertActive()
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    if (agent !== undefined) return { live: true, events: this.normalizedSessionEvents(dshSessionId) }
+    if ((await this.#context.sessionPersistence.stat(SessionId(dshSessionId))) === undefined) return undefined
+    const handle = await this.#context.sessionPersistence.open(SessionId(dshSessionId), 'read')
+    try {
+      return { live: false, events: normalizeSessionEvents((await handle.read()).events) }
+    } finally {
+      await handle.close()
+    }
   }
 
   tryLiveSession(dshSessionId: string) {

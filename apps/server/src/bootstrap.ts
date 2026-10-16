@@ -119,6 +119,10 @@ import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-run
 import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
 import { messageGapMs, readMessagePacing } from './message-pacing.js'
+import { readSubConversationRetention } from './sub-conversation-settings.js'
+
+/** How often ended sub-conversations past their retention are removed. */
+const SUB_CONVERSATION_SWEEP_MS = 60 * 60 * 1000
 export type { ConnectionTestResult } from './connection-application.js'
 /**
  * Single source of truth for the NekroNxt Server main assembly. Extracts the
@@ -251,6 +255,8 @@ export class NekroRuntime {
   readonly verificationBrowser: VerificationBrowser
   #verificationOrigin: string | undefined
   #candidateVerifier: CandidateVerifier | undefined
+  #subConversationChanges = new Set<() => void>()
+  #subConversationSweep: ReturnType<typeof setInterval> | undefined
   readonly commandAccounts: CommandAccountService
   readonly retrieval: RetrievalRuntime
   readonly #hostClientDiagnostics = new Map<
@@ -955,7 +961,15 @@ export class NekroRuntime {
       await commandAccounts.prepare()
       const feedbackPort: { current?: CommunityFeedbackService } = {}
       const governancePort: { current?: ExtensionGovernanceTools } = {}
+      const subConversationChanges = new Set<() => void>()
       const host = await DshHostRuntime.create({
+        subConversations: {
+          store: repository,
+          retention: () => readSubConversationRetention({ get: (key) => repository.getSystemSetting(key) }),
+          changed: () => {
+            for (const listener of subConversationChanges) listener()
+          },
+        },
         ...(options.logs === undefined ? {} : { logs: options.logs }),
         feedback: {
           service: () => feedbackPort.current,
@@ -1274,6 +1288,7 @@ export class NekroRuntime {
         adapterRuntimes,
         adapterTransport: options.adapterTransport ?? createProductionAdapterTransport(),
       })
+      runtime.#subConversationChanges = subConversationChanges
       commandReference.current = runtime.commands
       feedbackPort.current = runtime.feedback
       governancePort.current = new ExtensionGovernanceTools(runtime)
@@ -1310,6 +1325,15 @@ export class NekroRuntime {
       log: (message, error) => console.error(`[nekro-nxt] ${message}：`, error),
     })
     this.#candidateVerifier.start()
+    this.host.subConversations.closeInterrupted()
+    const sweepSubConversations = () => {
+      void this.host.subConversations.sweep().catch((error: unknown) => {
+        console.error('[nekro-nxt] 清理已结束的子对话失败：', error)
+      })
+    }
+    sweepSubConversations()
+    this.#subConversationSweep = setInterval(sweepSubConversations, SUB_CONVERSATION_SWEEP_MS)
+    this.#subConversationSweep.unref()
     this.#reviewWatch = setInterval(() => {
       void this.extensionRequests.watchReviews().catch((error: unknown) => {
         console.error('[nekro-nxt] 社区审查结果检查失败：', error)
@@ -1701,6 +1725,12 @@ export class NekroRuntime {
       }
     }
   }
+  /** Called when a sub-conversation opens, ends or is removed. */
+  subscribeSubConversations(listener: () => void): () => void {
+    this.#subConversationChanges.add(listener)
+    return () => this.#subConversationChanges.delete(listener)
+  }
+
   subscribeConnectionChanges(...args: Parameters<ConnectionApplicationService['subscribeConnectionChanges']>) {
     return this.connections.subscribeConnectionChanges(...args)
   }
@@ -1822,6 +1852,7 @@ export class NekroRuntime {
 
   async #dispose(): Promise<void> {
     if (this.#reviewWatch !== undefined) clearInterval(this.#reviewWatch)
+    if (this.#subConversationSweep !== undefined) clearInterval(this.#subConversationSweep)
     await this.#candidateVerifier?.dispose()
     this.#disposed = true
     await this.#jobScheduler.dispose()

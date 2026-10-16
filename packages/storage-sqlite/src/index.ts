@@ -27,6 +27,7 @@ import {
   createChannelMemberNotesRepository,
   type ChannelMemberNotesRepository,
 } from './repositories/channel-member-notes.js'
+import { createSubConversationsRepository, type SubConversationsRepository } from './repositories/sub-conversations.js'
 import {
   createChannelContextPoliciesRepository,
   type ChannelContextPoliciesRepository,
@@ -42,6 +43,7 @@ export type {
   InstanceAdministratorRecord,
 } from './repositories/extension-governance.js'
 export type { ChannelMemberNoteRecord } from './repositories/channel-member-notes.js'
+export type { SubConversationRecord } from './repositories/sub-conversations.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 import {
   createCommunityFeedbackRepository,
@@ -138,6 +140,7 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #channelPrompts
   readonly #channelContextPolicies
   readonly #channelMemberNotes
+  readonly #subConversations
   readonly #extensionSources
   readonly #governance
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
@@ -171,6 +174,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channelPrompts = createChannelPromptsRepository(database.db)
     this.#channelContextPolicies = createChannelContextPoliciesRepository(database.db)
     this.#channelMemberNotes = createChannelMemberNotesRepository(database.db)
+    this.#subConversations = createSubConversationsRepository(database.db)
     this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.#governance = createExtensionGovernanceRepository(database.db)
     this.projections = createProjectionRepository(database.db)
@@ -733,5 +737,21 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#channelMemberNotes.listChannelMemberNotes(...args)
   readonly saveChannelMemberNote = (...args: Parameters<ChannelMemberNotesRepository['saveChannelMemberNote']>) =>
     this.#channelMemberNotes.saveChannelMemberNote(...args)
+  readonly insertSubConversation = (...args: Parameters<SubConversationsRepository['insertSubConversation']>) =>
+    this.#subConversations.insertSubConversation(...args)
+  readonly getSubConversation = (...args: Parameters<SubConversationsRepository['getSubConversation']>) =>
+    this.#subConversations.getSubConversation(...args)
+  readonly getSubConversationBySession = (
+    ...args: Parameters<SubConversationsRepository['getSubConversationBySession']>
+  ) => this.#subConversations.getSubConversationBySession(...args)
+  readonly listSubConversations = (...args: Parameters<SubConversationsRepository['listSubConversations']>) =>
+    this.#subConversations.listSubConversations(...args)
+  readonly listSubConversationsClosedBefore = (
+    ...args: Parameters<SubConversationsRepository['listSubConversationsClosedBefore']>
+  ) => this.#subConversations.listSubConversationsClosedBefore(...args)
+  readonly closeSubConversation = (...args: Parameters<SubConversationsRepository['closeSubConversation']>) =>
+    this.#subConversations.closeSubConversation(...args)
+  readonly deleteSubConversation = (...args: Parameters<SubConversationsRepository['deleteSubConversation']>) =>
+    this.#subConversations.deleteSubConversation(...args)
 }
 export { LogDatabase } from './logs.js'
