@@ -5,6 +5,7 @@ import {
   AuthoringTaskIdSchema,
   EpisodeIdSchema,
   HostApiContracts,
+  hostPermissionDeclaration,
   type AgentId,
 } from '@nekro-nxt/contracts'
 import { projectAuthoringAttempt, projectAuthoringTask } from './host-queries.js'
@@ -264,7 +265,8 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
               pluginRunId: client.pluginRunId,
               name: client.name,
               code: client.code,
-              ...(snapshot === undefined ? {} : { permissions: snapshot.permissions }),
+              // The browser enforces only what the page layer declares; host and agent capabilities stay on the Host.
+              ...(snapshot === undefined ? {} : { permissions: hostPermissionDeclaration(snapshot.permissions) }),
             }),
           )
         } catch (error) {

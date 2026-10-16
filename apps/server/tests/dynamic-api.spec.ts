@@ -125,7 +125,8 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
         }`,
       },
       resources: {},
-      permissions: { permissions: [], networkOrigins: [] },
+      // A V7 candidate also declares agent-layer capabilities; the preview only receives the page layer.
+      permissions: { permissions: [], networkOrigins: [], agent: { history: { read: true } } },
       contributions: [],
     })
     const ran = runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
@@ -223,6 +224,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
         name: '动态客户端',
       })
       expect(parsedClientCode.code).toContain('apply')
+      expect(parsedClientCode.permissions).toEqual({ permissions: [], networkOrigins: [] })
 
       const approveResponse = await fetch(`${origin}/api/dynamic/${entity.agentId}/approve`, {
         method: 'POST',
