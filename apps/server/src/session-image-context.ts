@@ -308,7 +308,7 @@ export const historyPartsText = (
         case 'mention':
           return `@${memberLabel(memberSummary(history, part.memberId, relations))}`
         case 'image':
-          return `[图片 ${part.assetId}${part.alt ? `：${part.alt}` : ''}]`
+          return `[${part.sticker ? '表情包' : '图片'} ${part.assetId}${part.alt ? `：${part.alt}` : ''}]`
         case 'file':
           return `[文件 ${part.assetId}${part.name ? `：${part.name}` : ''}]`
         case 'audio':
@@ -984,7 +984,7 @@ export class SessionImageContext {
         case 'image':
           blocks.push({
             type: 'text',
-            text: `[图片 ${part.assetId}${part.alt ? `：${part.alt}` : ''}]`,
+            text: `[${part.sticker ? '表情包' : '图片'} ${part.assetId}${part.alt ? `：${part.alt}` : ''}]`,
           })
           await attachImage(part.assetId, part.alt)
           break

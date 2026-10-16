@@ -66,6 +66,15 @@ const numberValue = (value: unknown): number | undefined =>
       ? Number(value)
       : undefined
 
+/**
+ * Whether the protocol endpoint reported the picture as a sticker: a market face, `sub_type` 1 or a summary such as
+ * 「[动画表情]」. Stickers dragged in from a desktop client arrive as ordinary pictures, so this is only a hint.
+ */
+const isStickerSegment = (item: Segment): boolean =>
+  item.type === 'mface' ||
+  numberValue(item.data['sub_type']) === 1 ||
+  /表情/u.test(textValue(item.data['summary']) ?? '')
+
 const timestampMs = (value: unknown, fallback: number): number => {
   const numeric = numberValue(value)
   if (numeric === undefined || !Number.isFinite(numeric) || numeric < 0) return fallback
@@ -861,7 +870,11 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
         try {
           const asset = await this.#downloadAsset(url)
           const partIndex = parts.length
-          parts.push(isImage ? { type: 'image', assetId: asset.assetId } : { type: 'audio', assetId: asset.assetId })
+          parts.push(
+            isImage
+              ? { type: 'image', assetId: asset.assetId, ...(isStickerSegment(item) ? { sticker: true } : {}) }
+              : { type: 'audio', assetId: asset.assetId },
+          )
           assetOccurrences.push({ partIndex, assetId: asset.assetId })
         } catch {
           parts.push({

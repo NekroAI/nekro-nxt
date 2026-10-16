@@ -73,7 +73,7 @@ export const previewMessageParts = (runtime: NekroRuntime, parts: readonly Messa
         case 'mention':
           return `@${runtime.repository.getChannelMember(part.memberId)?.displayName ?? '成员'}`
         case 'image':
-          return '[图片]'
+          return part.sticker ? '[表情包]' : '[图片]'
         case 'file':
           return part.name === undefined ? '[文件]' : `[文件] ${part.name}`
         case 'audio':

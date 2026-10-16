@@ -684,6 +684,47 @@ describe('OneBot 11 normalized inbound', () => {
     await runtime.stop()
   })
 
+  it('marks pictures the endpoint reports as stickers and leaves ordinary pictures unmarked', async () => {
+    const protocol = await protocolEndpoint(() => undefined)
+    const fake = createFakeContext()
+    Object.defineProperty(fake.context.assets, 'fetchRemoteBytes', {
+      value: () => Promise.resolve({ bytes: new Uint8Array([4, 5, 6]), declaredMediaType: 'image/png' }),
+    })
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: false, captureMessageReactionEvents: false },
+    })
+    await runtime.start()
+    await waitFor(
+      () => runtime['capabilities'] !== undefined && fake.diagnostics.some(({ status }) => status === 'connected'),
+    )
+    const socket = [...protocol.server.clients][0]!
+    socket.send(
+      JSON.stringify({
+        time: 123,
+        post_type: 'message',
+        message_type: 'group',
+        group_id: 70004,
+        sender: { user_id: 80004, nickname: '成员丁' },
+        message_id: 20004,
+        message: [
+          { type: 'image', data: { url: 'https://media.example.test/photo.png', sub_type: 0 } },
+          { type: 'image', data: { url: 'https://media.example.test/saved.gif', sub_type: '1' } },
+          { type: 'image', data: { url: 'https://media.example.test/summary.gif', summary: '[动画表情]' } },
+          { type: 'mface', data: { url: 'https://media.example.test/market.gif', summary: '[开心]' } },
+        ],
+      }),
+    )
+    await waitFor(() => fake.events.length === 1)
+    expect(fake.events[0]!.parts.map((part) => (part.type === 'image' ? (part.sticker ?? false) : part.type))).toEqual([
+      false,
+      true,
+      true,
+      true,
+    ])
+    await runtime.stop()
+  })
+
   it('normalizes the supported notice families and downloads uploaded group files', async () => {
     const protocol = await protocolEndpoint((request) => {
       if (request['action'] === 'get_group_file_url') {

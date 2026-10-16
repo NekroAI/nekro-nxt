@@ -280,7 +280,18 @@ export const RichTargetUrlSchema = z
 export const MessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }).strict(),
   z.object({ type: z.literal('mention'), memberId: ChannelMemberIdSchema }).strict(),
-  z.object({ type: z.literal('image'), assetId: AssetIdSchema, alt: z.string().optional() }).strict(),
+  z
+    .object({
+      type: z.literal('image'),
+      assetId: AssetIdSchema,
+      alt: z.string().optional(),
+      /**
+       * The platform reported the picture as a sticker. A hint only: a sticker dragged in from a desktop client and
+       * pictures from platforms without this signal arrive unmarked.
+       */
+      sticker: z.literal(true).optional(),
+    })
+    .strict(),
   z.object({ type: z.literal('file'), assetId: AssetIdSchema, name: z.string().optional() }).strict(),
   z.object({ type: z.literal('audio'), assetId: AssetIdSchema }).strict(),
   z.object({ type: z.literal('quote'), messageId: LogicalMessageIdSchema }).strict(),

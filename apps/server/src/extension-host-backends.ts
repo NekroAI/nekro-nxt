@@ -71,7 +71,7 @@ export const messagePartsText = (facts: NxtProductFacts, parts: readonly Message
         case 'mention':
           return `@${member(facts, part.memberId)?.displayName ?? part.memberId}`
         case 'image':
-          return part.alt === undefined ? '[图片]' : `[图片：${part.alt}]`
+          return `[${part.sticker ? '表情包' : '图片'}${part.alt === undefined ? '' : `：${part.alt}`}]`
         case 'file':
           return part.name === undefined ? '[文件]' : `[文件：${part.name}]`
         case 'audio':
