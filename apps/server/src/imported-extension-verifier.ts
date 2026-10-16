@@ -484,6 +484,7 @@ const VERIFICATION_INBOUND_MESSAGE: NxtInboundMessage = {
   channel: { id: 'chn_VERIFY', kind: 'group', displayName: '验证频道' },
   sender: { memberId: 'mbr_VERIFY', displayName: '验证成员' },
   text: '验证消息',
+  images: [],
   mentionsAgent: true,
   wouldTrigger: true,
   receivedAt: 1,

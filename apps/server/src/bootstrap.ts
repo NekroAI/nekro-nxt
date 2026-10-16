@@ -1046,6 +1046,9 @@ export class NekroRuntime {
               ? {}
               : { sender: { memberId: senderId, ...(senderName === undefined ? {} : { displayName: senderName }) } }),
             text: messagePartsText(nxtFacts, event.parts),
+            images: event.parts.flatMap((part) =>
+              part.type === 'image' ? [{ assetId: part.assetId, sticker: part.sticker === true }] : [],
+            ),
             mentionsAgent: event.facts?.['mentionedBot'] === true || event.facts?.['replyToBot'] === true,
             wouldTrigger: defaultTriggered,
             receivedAt: event.receivedAt,

@@ -110,6 +110,7 @@ ${
     channel: { id: 'chn_PREVIEW', kind: 'group', displayName: '预览频道' },
     sender: { memberId: 'mbr_PREVIEW', displayName: '预览成员' },
     text: '预览消息',
+    images: [],
     mentionsAgent: true,
     wouldTrigger: true,
     receivedAt: 1,

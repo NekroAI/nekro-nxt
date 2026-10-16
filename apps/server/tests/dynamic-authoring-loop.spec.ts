@@ -551,7 +551,7 @@ describe('dynamic authoring closed loop', () => {
   if (message.text.startsWith('广告')) return { hideFromAgent: true }
   const seen = (await nxt.storage.get('seen')) ?? 0
   await nxt.storage.set('seen', seen + 1)
-  return { annotation: '已见消息 ' + (seen + 1) }
+  return { annotation: '已见消息 ' + (seen + 1) + '，图片 ' + JSON.stringify(message.images) }
 })
 return { inject: ['nxt'], apply() {} }`
     const capabilities: ExtensionCapabilities = {
@@ -613,6 +613,31 @@ return { inject: ['nxt'], apply() {} }`
             parts: ad!.parts,
           }).inboundHook,
         ).toEqual({ trigger: 'default', hidden: true, extensions: ['广告过滤'] }),
+      )
+
+      const picture = await runtime.assetService.prepare({
+        bytes: new Uint8Array(
+          Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
+            'base64',
+          ),
+        ),
+        declaredMediaType: 'image/png',
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'picture-message',
+        parts: [{ type: 'image', assetId: picture.asset.id }],
+      })
+      const pictureEvent = runtime.repository
+        .listChannelEvents(entity.channelId)
+        .find((event) => event.parts[0]?.type === 'image')
+      expect(pictureEvent).toBeDefined()
+      // Hooks see the pictures of the message; the internal channel has no platform sticker marking.
+      await vi.waitFor(() =>
+        expect(runtime.repository.getInboundHookDecision(pictureEvent!.id, entity.agentId)?.annotation).toContain(
+          JSON.stringify([{ assetId: picture.asset.id, sticker: false }]),
+        ),
       )
     } finally {
       await runtime.dispose()

@@ -367,6 +367,12 @@ export interface NxtLlmResponse {
   readonly usage?: { readonly inputTokens: number; readonly outputTokens: number }
 }
 
+export interface NxtInboundImage {
+  /** Usable with this channel's `nxt.assets.keep` and `nxt.image.info`. */
+  readonly assetId: string
+  readonly sticker: boolean
+}
+
 export interface NxtInboundMessage {
   readonly logicalMessageId: string
   readonly channel: {
@@ -376,6 +382,11 @@ export interface NxtInboundMessage {
   }
   readonly sender?: NxtMemberSummary
   readonly text: string
+  /**
+   * SDK 11. Pictures of the message in order. `sticker` is the platform's own marking and only a hint: stickers dragged
+   * in from a desktop client and pictures from platforms without the signal arrive unmarked.
+   */
+  readonly images: readonly NxtInboundImage[]
   /** Whether the message mentions or replies to this agent's bot account. */
   readonly mentionsAgent: boolean
   /** Whether the binding's trigger policy would wake the agent without any hook. */
@@ -1462,7 +1473,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
       'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
       "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
-      "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
+      "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；message 含 text、images（[{ assetId, sticker }]，sticker 是平台的表情包标记，只作参考，拖进来的表情包和不支持标记的平台都是 false）、mentionsAgent、wouldTrigger；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
       'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
       'harness.onJob((job, nxt) => ({ wake, note }))：声明了 jobs 的扩展可在 factory 阶段注册唯一的到期处理函数，本扩展的任务到期时先运行它（job 含 jobId、label、payload、scheduledAt、declaredId、channel），nxt 绑定到任务所在频道；返回 { wake: false } 则这次不唤醒智能体（例如订阅检查没有新内容），返回 note 会随到期事件交给智能体（例如新文章列表，最多 2000 字）。15 秒内未返回或抛错时按默认唤醒。轮询类需求一定要用它，避免每次检查都消耗一次模型调用。',
       'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。对拿不到真实身份的机器人账号执行动作会明确失败。platform.selfPlatformUserId() 返回机器人账号的平台 ID（拿不到时为 undefined），只给声明了该适配器 raw 的扩展。',
