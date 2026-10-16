@@ -552,6 +552,14 @@ export class UnrecoverableSessionError extends Error {
   }
 }
 
+/** A missing runtime dependency defers recovery while preserving the Episode and its pending input. */
+export class DeferredSessionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'DeferredSessionError'
+  }
+}
+
 /** Single-lane M1 Runtime. M2 extends the same persisted states with injection and recovery. */
 export class ChannelRuntime {
   #admissionState: 'closed' | 'opening' | 'open' | 'disposed'
@@ -1208,6 +1216,11 @@ export class ChannelRuntime {
                 }),
           })
         } catch (error) {
+          if (error instanceof DeferredSessionError) {
+            this.#deferredRecoveryEpisodes.add(episode.id)
+            console.warn('[nekro-nxt] 对话使用的模型供应商尚未启用，已暂缓恢复，原记录保留。')
+            return
+          }
           if (!(error instanceof UnrecoverableSessionError)) throw error
           console.error(`[nekro-nxt] 频道 ${episode.channelId} 的对话记录无法读取，已结束这段对话：`, error)
           this.#feedback.markEndReason(episode.id, 'cancelled')
@@ -1692,6 +1705,8 @@ export class ChannelRuntime {
 
   async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId): Promise<void> {
     if (!this.#admissionAllowed(agentId)) return
+    const episode = this.#runtimeRepository.getActiveEpisode(channelId, agentId)
+    if (episode && this.#deferredRecoveryEpisodes.has(episode.id)) return
     const binding = this.#coreRepository.getBinding(channelId)
     if (!binding || binding.agentId !== agentId) return
     const events = this.#runtimeRepository.listUnadmittedEvents(channelId, agentId, binding.boundAt)

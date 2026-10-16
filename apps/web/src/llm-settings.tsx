@@ -305,6 +305,7 @@ export function ModelProviderDetail({
   const discover = async (): Promise<void> => {
     if (!providerId || pending) return
     setPending('discover')
+    setDiscovered([])
     try {
       const result = await callHostApi(
         HostApiContracts.llmDiscoverModels,
