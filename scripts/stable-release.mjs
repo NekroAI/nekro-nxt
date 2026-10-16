@@ -134,7 +134,9 @@ async function waitForReleaseWorkflow(tag, head) {
     return
   }
   console.log(`正式发布工作流：${workflow.url}`)
-  run('gh', ['run', 'watch', String(workflow.databaseId), '--exit-status', '--interval', '10'], { stdio: 'inherit' })
+  run('gh', ['run', 'watch', String(workflow.databaseId), '--repo', repository, '--exit-status', '--interval', '10'], {
+    stdio: 'inherit',
+  })
   const release = run('gh', ['release', 'view', tag, '--repo', repository, '--json', 'url'], { allowFailure: true })
   if (release.status === 0) console.log(`正式版已发布：${JSON.parse(release.stdout).url}`)
 }
