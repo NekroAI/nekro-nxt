@@ -23,6 +23,7 @@
 | 通知设置 | `PUT /api/settings/notifications` | Core SQLite 保存系统/Bark 渠道和功能开关；Bark Device Key 只保存本机凭据引用 |
 | 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅内置频道入站 |
+| Chat 思考预算 | `GET / PUT /api/channels/:channelId/reasoning` | 返回当前模型支持的档位、默认值和 Chat 独立选择；PUT 校验模型身份与配置 revision，`effort: null` 恢复默认。以 `channel-reasoning:<channelId>` 保存到 Core 系统设置，格式版本为 1。只对所保存的 provider/model 生效；DSH `agent/request` 在下一次请求读取，正在执行的工具继续完成。优先级为 Chat 选择、智能体配置、Adapter 默认值；失效档位忽略。 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页；首载、翻页、重连对账 |
 | 单次工具调用 | `GET /api/channels/:channelId/runtime/tools/:callId` | 当前会话中一次工具调用的完整参数与结果：参数格式化为 JSON 并对疑似密钥的键打码，结果为模型收到的文本；两者各上限 64,000 字并标记是否截断。会话已不在内存时返回 404 |
 | 频道工作轨迹 | `GET /api/channels/:channelId/runtime` | 按频道投影 phase、当前工具、待注入、上下文占用、当前 Episode 缓存分析和最近多轮 Turn（含耗时与本步用量）；每轮可带 `startedAt` / `endedAt`（进行中省略）与 `triggerEventId`；首载与重连对账 |

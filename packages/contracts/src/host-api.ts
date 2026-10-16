@@ -2279,6 +2279,27 @@ export const LlmProviderTestResultSchema = z
   })
   .strict()
 
+export const ModelReasoningSchema = z
+  .object({
+    efforts: z.array(
+      z.object({ id: NonEmptyStringSchema, name: NonEmptyStringSchema, description: z.string().optional() }).strict(),
+    ),
+    defaultEffort: NonEmptyStringSchema.optional(),
+  })
+  .strict()
+
+export const ChannelReasoningViewSchema = z
+  .object({
+    provider: NonEmptyStringSchema,
+    model: NonEmptyStringSchema,
+    modelName: z.string(),
+    reasoning: ModelReasoningSchema.optional(),
+    effort: NonEmptyStringSchema.nullable(),
+    effectiveEffort: NonEmptyStringSchema.optional(),
+    revision: z.number().int().positive().nullable(),
+  })
+  .strict()
+
 export const LlmProviderViewSchema = z
   .object({
     provider: NonEmptyStringSchema,
@@ -2291,6 +2312,7 @@ export const LlmProviderViewSchema = z
     configured: z.boolean(),
     baseURL: z.string().optional(),
     api: NonEmptyStringSchema.optional(),
+    reasoning: ModelReasoningSchema.optional(),
     credential: LlmProviderCredentialSchema.optional(),
     models: z.array(LlmProviderModelSchema),
     /** The model list was edited on this host; built-in providers can restore their own catalog. */
@@ -3579,6 +3601,29 @@ export const HostApiContracts = {
     response: ChannelMemberNotesViewSchema,
     error: HostApiErrorSchema,
   }),
+  getChannelReasoning: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/reasoning',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: ChannelReasoningViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateChannelReasoning: defineContract({
+    method: 'PUT',
+    path: '/api/channels/:channelId/reasoning',
+    params: channelParam,
+    request: z
+      .object({
+        provider: NonEmptyStringSchema,
+        model: NonEmptyStringSchema,
+        effort: NonEmptyStringSchema.nullable(),
+        expectedRevision: z.number().int().positive().nullable(),
+      })
+      .strict(),
+    response: ChannelReasoningViewSchema,
+    error: HostApiErrorSchema,
+  }),
   getChannelContextPolicy: defineContract({
     method: 'GET',
     path: '/api/channels/:channelId/context-policy',
@@ -4530,6 +4575,7 @@ export const HostApiContracts = {
           .max(64 * 1024)
           .optional(),
         displayName: z.string().trim().min(1).max(120).optional(),
+        reasoningEffort: NonEmptyStringSchema.nullable().optional(),
         baseURL: z.url().optional(),
         api: NonEmptyStringSchema.optional(),
         models: z.array(LlmDiscoveredModelSchema).optional(),

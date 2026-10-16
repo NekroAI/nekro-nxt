@@ -1,4 +1,5 @@
 import { recognizeCommand } from '@nekro-nxt/contracts'
+import { readChannelReasoning, saveChannelReasoning, supportedReasoningEffort } from './channel-reasoning.js'
 import { viewerKeyFromRequest } from './viewer.js'
 import { expireComposerAssets, uploadComposerAsset, validateComposerAssets } from './channel-composer-assets.js'
 import {
@@ -659,6 +660,7 @@ export function registerWorkspaceRoutes({
       const runtimeContextMatch = /^\/api\/channels\/([^/]+)\/runtime\/context$/.exec(url.pathname)
       const promptMatch = /^\/api\/channels\/([^/]+)\/prompt$/.exec(url.pathname)
       const contextPolicyMatch = /^\/api\/channels\/([^/]+)\/context-policy$/.exec(url.pathname)
+      const reasoningMatch = /^\/api\/channels\/([^/]+)\/reasoning$/.exec(url.pathname)
       const memberNotesMatch = /^\/api\/channels\/([^/]+)\/member-notes(?:\/([^/]+))?$/.exec(url.pathname)
       const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
@@ -673,6 +675,7 @@ export function registerWorkspaceRoutes({
         runtimeContextMatch?.[1] ??
         promptMatch?.[1] ??
         contextPolicyMatch?.[1] ??
+        reasoningMatch?.[1] ??
         memberNotesMatch?.[1] ??
         runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
@@ -805,6 +808,67 @@ export function registerWorkspaceRoutes({
           throw error
         }
         writeContractJson(res, 200, HostApiContracts.updateChannelMemberNote, view())
+        return
+      }
+
+      if (reasoningMatch) {
+        const binding = runtime.repository.getBinding(typedChannelId)
+        const revision = binding ? runtime.repository.getAgent(binding.agentId)?.revision : undefined
+        if (!runtime.repository.getChannel(typedChannelId) || !revision) {
+          writeError(res, 404, 'channel-model-unavailable', '这个频道还没有可用的智能体模型。')
+          return
+        }
+        if (req.method !== 'GET' && req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        try {
+          const { provider, model } = revision.model
+          const info = await runtime.host.modelReasoning(provider, model)
+          if (req.method === 'PUT') {
+            const parsed = HostApiContracts.updateChannelReasoning.parseRequest(await readJsonBody(req))
+            const currentBinding = runtime.repository.getBinding(typedChannelId)
+            const currentModel = currentBinding
+              ? runtime.repository.getAgent(currentBinding.agentId)?.revision.model
+              : undefined
+            if (
+              parsed.provider !== provider ||
+              parsed.model !== model ||
+              currentModel?.provider !== provider ||
+              currentModel.model !== model
+            ) {
+              writeError(res, 409, 'channel-model-changed', '频道模型已改变，请刷新后重试。')
+              return
+            }
+            if (parsed.effort !== null && !supportedReasoningEffort(parsed.effort, info.reasoning)) {
+              writeError(res, 400, 'unsupported-reasoning', '这个模型不支持所选思考预算，请重新选择。')
+              return
+            }
+            const stored = readChannelReasoning(runtime.repository, typedChannelId, provider, model)
+            if (stored.revision !== parsed.expectedRevision) {
+              writeError(res, 409, 'reasoning-conflict', '思考预算已改变，请刷新后重试。')
+              return
+            }
+            saveChannelReasoning(runtime.repository, typedChannelId, parsed)
+          }
+          const stored = readChannelReasoning(runtime.repository, typedChannelId, provider, model)
+          const effort = supportedReasoningEffort(stored.effort, info.reasoning) ?? null
+          const effectiveEffort =
+            effort ??
+            supportedReasoningEffort(revision.model.reasoningEffort, info.reasoning) ??
+            info.reasoning?.defaultEffort
+          writeContractJson(res, 200, HostApiContracts.getChannelReasoning, {
+            provider,
+            model,
+            modelName: info.modelName,
+            ...(info.reasoning === undefined ? {} : { reasoning: info.reasoning }),
+            effort,
+            ...(effectiveEffort === undefined ? {} : { effectiveEffort }),
+            revision: stored.revision,
+          })
+        } catch (error) {
+          writeError(res, 400, 'channel-reasoning-failed', error instanceof Error ? error.message : String(error))
+        }
         return
       }
 

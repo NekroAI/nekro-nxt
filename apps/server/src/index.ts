@@ -1,4 +1,5 @@
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
+import { supportedReasoningEffort } from './channel-reasoning.js'
 import { extensionAgentTools, type ReviseIntent } from './extension-governance/agent-tools.js'
 import type { ExtensionGovernanceToolPort } from './extension-governance/tool-port.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
@@ -471,6 +472,7 @@ export interface DshHostRuntimeOptions {
   }
   /** The channel's backlog and review budget; absent hosts use the defaults. */
   readonly contextPolicy?: (channelId: ChannelId) => ChannelContextPolicy
+  readonly channelReasoning?: (channelId: ChannelId, provider: string, model: string) => string | null
   readonly assets: AssetAccessRepository
   readonly assetService: AssetService
   readonly resolveAgentRevision: (revisionId: AgentRevisionId) => AgentRevisionRecord | undefined
@@ -2991,6 +2993,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #feedback: DshHostRuntimeOptions['feedback']
   readonly #feedbackTurns = new Map<string, FeedbackTurnOrigin>()
   readonly #contextPolicy: (channelId: ChannelId) => ChannelContextPolicy
+  readonly #channelReasoning: DshHostRuntimeOptions['channelReasoning']
   readonly #imageContext: SessionImageContext
   readonly #dynamic: DynamicAuthoringRuntime
   readonly #assets: AssetAccessRepository
@@ -3055,6 +3058,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#channelPrompts = options.channelPrompts
     this.#feedback = options.feedback
     this.#contextPolicy = options.contextPolicy ?? (() => DEFAULT_CHANNEL_CONTEXT_POLICY)
+    this.#channelReasoning = options.channelReasoning
     this.#assets = options.assets
     this.#assetService = options.assetService
     this.#resolveAgentRevision = options.resolveAgentRevision
@@ -3497,6 +3501,10 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#assertActive()
     return this.#modelSettings.listAvailableLlmModels()
   }
+
+  modelReasoning(provider: string, model: string) {
+    return this.#modelSettings.modelReasoning(provider, model)
+  }
   getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
     this.#assertActive()
     return this.#imageContext.getAgentImageDiagnostics(revision)
@@ -3849,6 +3857,17 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
       agentContext.on('agent/inbox/discarded', ({ agent, message }) => {
         if (agent.id === sessionId) feedbackOrigin.discard(message.id)
+      })
+      agentContext.on('agent/request', async (_payload, next) => {
+        if (_payload.agent.id !== sessionId) return next()
+        const config = { ...(await next()) }
+        delete config.reasoningEffort
+        const info = await this.#context.llm.resolveModelInfo(config.provider, config.model)
+        const effort = supportedReasoningEffort(
+          this.#channelReasoning?.(input.channelId, config.provider, config.model) ?? revision.model.reasoningEffort,
+          info.reasoning,
+        )
+        return { ...config, ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }) }
       })
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:community-feedback',

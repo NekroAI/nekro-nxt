@@ -2,7 +2,7 @@ import { unusedNxtBackends } from './fixtures/unused-nxt-backends.js'
 import { extensionVerification } from './fixtures/extension-verification.js'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { preflightNekroNxtDynamicSource } from '../src/dynamic-authoring-runtime.js'
-import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, ReasoningEffortId, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { getOrCreateAnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import {
   DeepSeekAdapter,
@@ -715,6 +715,121 @@ class InvalidImageInspectionProbeModel extends ScriptedCommunicationModel {
 }
 
 describe('DSH Host and internal Channel vertical slice', () => {
+  it('applies Chat budget changes after an in-flight tool and restores current adapter defaults', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-reasoning-request-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assets = new AssetService(repository, path.join(directory, 'assets'))
+    let sequence = 0
+    const core = new CoreService(repository, { now: () => 700, nextUlid: () => `BUDGET${++sequence}` })
+    const definition = core.createAgent({
+      displayName: '预算测试智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'synthetic-budget',
+      kind: 'internal',
+    })
+    let effort: string | null = null
+    let adapterDefault = 'high'
+    class BudgetModel extends ScriptedCommunicationModel {
+      override async resolveModel(provider: string, model: string) {
+        return {
+          ...(await super.resolveModel(provider, model)),
+          reasoning: {
+            efforts: ['low', 'high', 'max'].map((id) => ({ id: ReasoningEffortId(id), name: id })),
+            defaultEffort: ReasoningEffortId(adapterDefault),
+          },
+        }
+      }
+    }
+    const model = new BudgetModel()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let began!: () => void
+    const started = new Promise<void>((resolve) => {
+      began = resolve
+    })
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      history: repository,
+      assets: repository,
+      assetService: assets,
+      resolveAgentRevision: (id) => repository.getAgentRevision(id),
+      channelReasoning: () => effort,
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], model)
+      },
+      communication: {
+        sendMessage: async () => {
+          began()
+          await gate
+          return { logicalMessageId: LogicalMessageIdSchema.parse('msg_BUDGETTEST'), status: 'sent', receipts: [] }
+        },
+      },
+    })
+    try {
+      const sessionId = await host.createSession({
+        episodeId: EpisodeIdSchema.parse('eps_BUDGETTEST'),
+        channelId: channel.id,
+        agentId: definition.definition.id,
+        agentRevisionId: definition.revision.id,
+      })
+      const admit = async (suffix: string) => {
+        const event = core.appendInbound({
+          connectionId: connection.id,
+          channelId: channel.id,
+          adapterKey: 'fixture-alpha',
+          platformEventId: suffix,
+          kind: 'message-created',
+          parts: [{ type: 'text', text: '合成预算请求' }],
+          platformTimestamp: 700,
+          receivedAt: 700,
+          dedupeKey: suffix,
+        }).event
+        await host.admit({
+          dshSessionId: sessionId,
+          admissionId: AdmissionIdSchema.parse(`adm_BUDGET${suffix}`),
+          events: [event],
+          mode: 'followup',
+          replyRequired: true,
+        })
+      }
+      await admit('FIRST')
+      await started
+      expect(model.calls[0]?.reasoningEffort).toBe('high')
+      effort = 'low'
+      expect(model.calls[0]?.signal?.aborted).not.toBe(true)
+      release()
+      await host.whenIdle(sessionId)
+      expect(model.calls.at(-1)?.reasoningEffort).toBe('low')
+      expect(
+        host
+          .sessionEvents(sessionId)
+          .filter((event) => event.type === 'request/header')
+          .map((event) => event.data.header.config.reasoningEffort),
+      ).toEqual(['high', 'low'])
+      effort = null
+      adapterDefault = 'max'
+      await admit('SECOND')
+      await host.whenIdle(sessionId)
+      expect(model.calls.at(-1)?.reasoningEffort).toBe('max')
+      effort = 'removed-level'
+      await admit('THIRD')
+      await host.whenIdle(sessionId)
+      expect(model.calls.at(-1)?.reasoningEffort).toBe('max')
+    } finally {
+      release()
+      await host.dispose()
+      database.close()
+    }
+  })
   it('supports multi-stage sends, enforces two reply corrections, and projects protocol failure after a third miss', async () => {
     const runScenario = async (
       model: ScriptedCommunicationModel,

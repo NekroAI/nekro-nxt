@@ -30,6 +30,7 @@ import {
   type DshPluginCatalogEntry,
   type DshSettingsNamespaceView,
   type DshSettingsPathOperation,
+  type HostApiResponse,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import { describeSubscriptionFailure } from './subscription-failures.js'
@@ -120,6 +121,7 @@ export interface ConfigurableLlmProviderView {
   readonly configured: boolean
   readonly baseURL?: string
   readonly api?: string
+  readonly reasoning?: HostApiResponse<'getChannelReasoning'>['reasoning']
   readonly credential?: { readonly configured: boolean; readonly source?: string; readonly writable: boolean }
   readonly models: readonly LlmModelView[]
   readonly modelsCustomized: boolean
@@ -164,6 +166,7 @@ export interface SaveLlmProviderInput {
   readonly displayName?: string
   readonly baseURL?: string
   readonly api?: string
+  readonly reasoningEffort?: string | null
   readonly models?: readonly {
     readonly id: string
     readonly name?: string
@@ -337,6 +340,11 @@ export class HostModelSettings {
     return this.#context.llm.registerAdapter(providers, adapter)
   }
 
+  async modelReasoning(provider: string, model: string) {
+    const resolved = await this.#context.llm.resolveModelInfo(provider, model)
+    return { modelName: resolved.name, reasoning: resolved.reasoning }
+  }
+
   async listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
     const groups = await Promise.all(
       this.#context.llm.listProviders().map(async (provider) =>
@@ -390,6 +398,24 @@ export class HostModelSettings {
           declared: entry.declared === true,
           active: active.has(entry.provider),
           configured,
+          ...(['llm-pi-ai', 'llm-deepseek'].includes(entry.settingsNs)
+            ? {
+                reasoning: {
+                  efforts: (entry.settingsNs === 'llm-deepseek'
+                    ? ['off', 'low', 'high', 'max']
+                    : ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+                  ).map((id) => ({ id, name: id })),
+                  ...(typeof rawProfile?.[entry.settingsNs === 'llm-deepseek' ? 'reasoningEffort' : 'reasoning'] ===
+                  'string'
+                    ? {
+                        defaultEffort: String(
+                          rawProfile[entry.settingsNs === 'llm-deepseek' ? 'reasoningEffort' : 'reasoning'],
+                        ),
+                      }
+                    : {}),
+                },
+              }
+            : {}),
           ...(typeof profile?.baseURL === 'string' ? { baseURL: profile.baseURL } : {}),
           ...(typeof profile?.api === 'string' ? { api: profile.api } : {}),
           ...(credential === undefined
@@ -666,6 +692,11 @@ export class HostModelSettings {
     if (input.displayName !== undefined) fields['displayName'] = input.displayName
     if (input.baseURL !== undefined) fields['baseURL'] = input.baseURL
     if (input.api !== undefined) fields['api'] = input.api
+    const effortField = settingsNs === 'llm-deepseek' ? 'reasoningEffort' : 'reasoning'
+    if (input.reasoningEffort !== undefined) {
+      if (!['llm-deepseek', 'llm-pi-ai'].includes(settingsNs)) throw new Error('这个供应商不支持设置默认思考预算。')
+      if (input.reasoningEffort !== null) fields[effortField] = input.reasoningEffort
+    }
     if (input.models !== undefined) {
       fields['models'] = this.#modelEntries(
         settingsNs,
@@ -684,6 +715,9 @@ export class HostModelSettings {
       current === undefined
         ? [{ op: 'set', path: settingsPath, value: fields }]
         : Object.entries(fields).map(([key, value]) => ({ op: 'set' as const, path: [...settingsPath, key], value }))
+    if (input.reasoningEffort === null && current !== undefined) {
+      ops.push({ op: 'unset', path: [...settingsPath, effortField] })
+    }
     if (ops.length === 0 && current === undefined) ops.push({ op: 'set', path: settingsPath, value: {} })
     // DSH refuses catalog overrides beside an explicit model list; the list now carries every customization.
     if (input.models !== undefined && current?.modelOverrides !== undefined) {

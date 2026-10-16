@@ -34,6 +34,42 @@ const providerView = async (runtime: NekroRuntime, provider: string) => {
 }
 
 describe('LLM model catalog management', () => {
+  it('saves and clears provider defaults through the owning DSH adapter settings', async () => {
+    const { runtime } = await createRuntime()
+    try {
+      for (const provider of ['openai', 'deepseek-official']) {
+        const initial = await providerView(runtime, provider)
+        await runtime.host.saveLlmProvider({
+          provider,
+          expectedRevision: initial.settingsRevision,
+          reasoningEffort: 'low',
+        })
+        const saved = await providerView(runtime, provider)
+        expect(saved.reasoning?.defaultEffort).toBe('low')
+        if (provider === 'deepseek-official')
+          expect((await runtime.host.modelReasoning(provider, saved.models[0]!.id)).reasoning?.defaultEffort).toBe(
+            'low',
+          )
+        await expect(
+          runtime.host.saveLlmProvider({
+            provider,
+            expectedRevision: saved.settingsRevision,
+            reasoningEffort: 'invalid',
+          }),
+        ).rejects.toThrow()
+        const current = await providerView(runtime, provider)
+        expect(current.reasoning?.defaultEffort).toBe('low')
+        await runtime.host.saveLlmProvider({
+          provider,
+          expectedRevision: current.settingsRevision,
+          reasoningEffort: null,
+        })
+        expect((await providerView(runtime, provider)).reasoning?.defaultEffort).not.toBe('low')
+      }
+    } finally {
+      await runtime.dispose()
+    }
+  })
   it('keeps a signed-in route marked as a ChatGPT plan in the list a save returns', async () => {
     const { runtime } = await createRuntime()
     try {

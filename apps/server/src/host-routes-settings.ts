@@ -822,6 +822,7 @@ export function registerSettingsRoutes({
             expectedRevision: parsed.expectedRevision,
             ...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
             ...(parsed.displayName === undefined ? {} : { displayName: parsed.displayName }),
+            ...(parsed.reasoningEffort === undefined ? {} : { reasoningEffort: parsed.reasoningEffort }),
             ...(parsed.baseURL === undefined ? {} : { baseURL: parsed.baseURL }),
             ...(parsed.api === undefined ? {} : { api: parsed.api }),
             ...(parsed.models === undefined

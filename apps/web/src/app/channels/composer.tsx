@@ -14,6 +14,7 @@ import { FileChooser, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/i
 import { connectionStatus } from '../model/connection-status.js'
 import { useProductApi } from '../model/store.js'
 import { ResourcePreviewDialog } from './resource-preview.js'
+import { ReasoningBudget } from './reasoning-budget.js'
 import styles from './channels.module.css'
 
 const sizeLabel = (bytes: number) =>
@@ -429,6 +430,13 @@ export function Composer({
           <ArrowRight aria-hidden="true" />
         </Pressable>
       </div>
+      {agent?.modelRef ? (
+        <ReasoningBudget
+          key={`${channel.id}:${agent.currentRevisionId}`}
+          channelId={channel.id}
+          modelKey={`${agent.currentRevisionId}:${agent.modelRef.provider}:${agent.modelRef.model}`}
+        />
+      ) : null}
     </form>
   )
 }

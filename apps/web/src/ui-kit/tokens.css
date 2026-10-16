@@ -25,6 +25,9 @@ html[data-ui='next'] [data-nxt-theme='light'] {
   --accent-fill: #3f5b8f;
   --accent-fill-hover: #2f4a7a;
   --on-accent-fill: #ffffff;
+  --reasoning-fill: #3578ed;
+  --reasoning-ultra: #8150c9;
+  --reasoning-ultra-fill: #a46aef;
   --bad-fill: #b03a30;
   --bad-fill-hover: #962f26;
   --on-bad-fill: #ffffff;
@@ -162,6 +165,9 @@ html[data-ui='next'] [data-nxt-theme='dark'] {
   --accent-fill: #4a6aa8;
   --accent-fill-hover: #5a7bbb;
   --on-accent-fill: #f4f7fc;
+  --reasoning-fill: #3e83f6;
+  --reasoning-ultra: #bb8aff;
+  --reasoning-ultra-fill: #a46aef;
   --bad-fill: #b9483d;
   --bad-fill-hover: #c85a4f;
   --on-bad-fill: #fff6f5;

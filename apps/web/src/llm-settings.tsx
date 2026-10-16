@@ -40,6 +40,7 @@ import {
   type Tone,
 } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
+import { reasoningLabel } from './reasoning-label.js'
 
 type ProviderSettingsView = HostApiResponse<'llmProviders'>
 export type ProviderView = ProviderSettingsView['providers'][number]
@@ -245,6 +246,8 @@ export function ModelProviderDetail({
   const [apiKey, setApiKey] = useState('')
   const [rows, setRows] = useState<readonly ModelRow[]>([])
   const [modelsDirty, setModelsDirty] = useState(false)
+  const [reasoningEffort, setReasoningEffort] = useState<string>('default')
+  const [reasoningDirty, setReasoningDirty] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(customMode)
@@ -281,6 +284,8 @@ export function ModelProviderDetail({
     setDiscovered([])
     setApiKey('')
     setModelsDirty(false)
+    setReasoningDirty(false)
+    setReasoningEffort(selected?.reasoning?.defaultEffort ?? 'default')
     if (customMode) {
       setDisplayName('')
       setBaseURL('')
@@ -356,6 +361,7 @@ export function ModelProviderDetail({
           ...(customEditor ? { displayName: displayName.trim() } : {}),
           ...(api && (customEditor || catalogRoute) ? { api } : {}),
           ...(submitsModels ? { models: submittedModels } : {}),
+          ...(reasoningDirty ? { reasoningEffort: reasoningEffort === 'default' ? null : reasoningEffort } : {}),
         },
       )
       store.getState().replaceLlmProviders(next)
@@ -574,6 +580,25 @@ export function ModelProviderDetail({
           <ModelListView models={selected?.models ?? []} />
         )}
       </PropertyGroup>
+
+      {selected?.reasoning ? (
+        <PropertyGroup title="思考预算" description="各频道默认使用此预算，也可以单独调整。">
+          <Field label="默认思考预算">
+            <Select
+              value={reasoningEffort}
+              onValueChange={(value) => {
+                setReasoningEffort(value)
+                setReasoningDirty(true)
+              }}
+              disabled={pending !== null}
+              options={[
+                { value: 'default', label: '模型默认' },
+                ...selected.reasoning.efforts.map((effort) => ({ value: effort.id, label: reasoningLabel(effort) })),
+              ]}
+            />
+          </Field>
+        </PropertyGroup>
+      ) : null}
 
       {customEditor || catalogRoute || selected ? (
         <PropertyGroup

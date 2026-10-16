@@ -120,6 +120,7 @@ import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
 import { messageGapMs, readMessagePacing } from './message-pacing.js'
 import { readSubConversationRetention } from './sub-conversation-settings.js'
+import { readChannelReasoning } from './channel-reasoning.js'
 
 /** How often ended sub-conversations past their retention are removed. */
 const SUB_CONVERSATION_SWEEP_MS = 60 * 60 * 1000
@@ -1020,6 +1021,8 @@ export class NekroRuntime {
         members: memberRelations,
         channelPrompts,
         contextPolicy: (channelId) => repository.getChannelContextPolicy(channelId) ?? DEFAULT_CHANNEL_CONTEXT_POLICY,
+        channelReasoning: (channelId, provider, model) =>
+          readChannelReasoning(repository, channelId, provider, model).effort,
         assets: repository,
         assetService,
         resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
