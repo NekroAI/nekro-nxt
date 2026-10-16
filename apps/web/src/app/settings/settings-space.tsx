@@ -73,6 +73,8 @@ import {
   toast,
   WorkbenchPage,
   type Column,
+  Ambient,
+  RevealText,
 } from '../../ui-kit/index.js'
 import { useDensity } from '../model/density.js'
 import { useProductApi } from '../model/store.js'
@@ -1132,19 +1134,23 @@ function About() {
   return (
     <>
       <SectionHead title="关于" />
-      <div className={styles.brand}>
-        <img src="/brand/mark.svg" alt="" />
-        <div>
-          <b>{metadata?.displayName?.trim() || 'NekroNXT'}</b>
-          <span>
-            {updates.status !== undefined && updates.status.channel !== 'development'
-              ? `版本 ${versionDescription(updates.status)}`
-              : version
-                ? `开发版本 · ${version}`
-                : '开发版本'}
-          </span>
+      <Ambient className={styles.brandAmbient}>
+        <div className={styles.brand}>
+          <img src="/brand/mark.svg" alt="" />
+          <div>
+            <b>
+              <RevealText text={metadata?.displayName?.trim() || 'NekroNXT'} />
+            </b>
+            <span>
+              {updates.status !== undefined && updates.status.channel !== 'development'
+                ? `版本 ${versionDescription(updates.status)}`
+                : version
+                  ? `开发版本 · ${version}`
+                  : '开发版本'}
+            </span>
+          </div>
         </div>
-      </div>
+      </Ambient>
       <PropertyList>
         <ProductUpdateRows updates={updates} />
         <UpgradeBackupRows />

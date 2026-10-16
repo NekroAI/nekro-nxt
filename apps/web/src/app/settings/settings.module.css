@@ -152,15 +152,23 @@
 }
 
 /* —— 关于 —— */
+.brandAmbient {
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-1), var(--hl);
+}
+
 .brand {
   display: flex;
   align-items: center;
   gap: var(--s-4);
+  min-height: calc(var(--s-9) * 2.5);
+  padding: var(--s-6);
 }
 
 .brand img {
-  width: 48px;
-  height: 48px;
+  width: 64px;
+  height: 64px;
+  filter: drop-shadow(0 6px 16px var(--ambient-tide-soft));
 }
 
 .brand div {
@@ -169,10 +177,10 @@
 }
 
 .brand b {
-  font: var(--t-section);
+  font: 650 var(--fs-2xl) / 1.25 var(--font-sans);
 }
 
-.brand span {
+.brand div > span {
   color: var(--muted);
   font: var(--t-note);
 }

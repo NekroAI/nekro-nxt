@@ -34,6 +34,7 @@ import {
   TabStrip,
   ToggleChip,
   toast,
+  spotlight,
 } from '../../ui-kit/index.js'
 import { MarkdownDocument } from '../../components/markdown-document.js'
 import { relativeTime } from '../channels/timeline-model.js'
@@ -206,7 +207,12 @@ function CommunityCatalog() {
       ) : (
         <div className={styles.communityGrid}>
           {items.map((item) => (
-            <Link key={item.id} to={`/community/extensions/${item.id}`} className={styles.communityCard}>
+            <Link
+              key={item.id}
+              to={`/community/extensions/${item.id}`}
+              className={[styles.communityCard, spotlight.className].join(' ')}
+              onPointerMove={spotlight.onPointerMove}
+            >
               <span className={styles.communityCardHead}>
                 <ExtensionIcon id={item.id} name={item.displayName} iconUrl={item.iconUrl} />
                 <span className={styles.communityCardTitle}>

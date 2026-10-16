@@ -55,6 +55,36 @@ html[data-ui='next'] [data-nxt-theme='light'] {
   --sh-2: 0 1px 2px rgb(20 36 61 / 0.04), 0 6px 18px -6px rgb(20 36 61 / 0.14);
   --sh-3: 0 24px 60px -18px rgb(20 36 61 / 0.35), 0 4px 14px rgb(20 36 61 / 0.08);
   --hl: inset 0 1px 0 rgb(255 255 255 / 0.7);
+  /* Material (05 §5.1): raised controls, the pressed state, and glass for layers over scrolling content. */
+  --sh-raised:
+    0 1px 2px rgb(20 36 61 / 0.07), 0 0 0 0.5px rgb(20 36 61 / 0.04), inset 0 1px 0 rgb(255 255 255 / 0.8),
+    inset 0 -1px 0 rgb(20 36 61 / 0.04);
+  --sh-raised-hover:
+    0 2px 5px -1px rgb(20 36 61 / 0.12), 0 0 0 0.5px rgb(20 36 61 / 0.05), inset 0 1px 0 rgb(255 255 255 / 0.8),
+    inset 0 -1px 0 rgb(20 36 61 / 0.05);
+  --sh-press: inset 0 1px 3px rgb(20 36 61 / 0.14), inset 0 0 0 0.5px rgb(20 36 61 / 0.06);
+  --sh-fill: 0 1px 2px rgb(20 36 61 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.18), inset 0 -1px 0 rgb(0 0 0 / 0.12);
+  --sh-fill-hover:
+    0 3px 8px -2px rgb(47 74 122 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.2), inset 0 -1px 0 rgb(0 0 0 / 0.12);
+  --sh-fill-press: inset 0 2px 4px rgb(0 0 0 / 0.25);
+  --accent-fill-grad: linear-gradient(180deg, #4a679d, #3f5b8f 55%, #38528a);
+  --accent-fill-grad-hover: linear-gradient(180deg, #415e93, #2f4a7a 60%, #2b4472);
+  --bad-fill-grad: linear-gradient(180deg, #bc463b, #b03a30 55%, #a3342b);
+  --bad-fill-grad-hover: linear-gradient(180deg, #a5382e, #962f26 60%, #8a2b23);
+  --glass: rgb(255 254 251 / 0.8);
+  --glass-strong: rgb(247 247 248 / 0.86);
+  --glass-inverse: rgb(20 36 61 / 0.9);
+  --glass-line: rgb(23 42 69 / 0.12);
+  --fill-sweep: rgb(255 255 255 / 0.28);
+  --spot: rgb(63 91 143 / 0.09);
+  /* Ambient backdrop for low-frequency pages (05 §2.2). */
+  --ambient-base: #e8edf6;
+  --ambient-tide: #7f99cf;
+  --ambient-glow: #b6dcf4;
+  --ambient-sheen: #ffffff;
+  --ambient-strength: 1;
+  --ambient-tide-soft: rgb(156 177 218 / 0.45);
+  --ambient-glow-soft: rgb(207 230 247 / 0.7);
   --r-1: 8px;
   --r-2: 12px;
   --r-3: 16px;
@@ -73,6 +103,37 @@ html[data-ui='next'] [data-nxt-theme='light'] {
   --dur-1: 160ms;
   --dur-2: 280ms;
   --dur-3: 420ms;
+  /* Exits run on --ease-in, one step shorter than the entry. */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  /* Damped spring (ζ≈0.78, ~2% overshoot, 05 §11.5) for direct feedback: indicators, switches, popovers. */
+  --spring: linear(
+    0,
+    0.0498,
+    0.1656,
+    0.3094,
+    0.4563,
+    0.5917,
+    0.708,
+    0.8025,
+    0.8757,
+    0.9297,
+    0.9677,
+    0.9928,
+    1.0081,
+    1.0163,
+    1.0196,
+    1.0197,
+    1.018,
+    1.0153,
+    1.0124,
+    1.0095,
+    1.007,
+    1.0049,
+    1.0032,
+    1.0019,
+    1
+  );
+  --blur: blur(18px) saturate(1.5);
   --hue-agent: 230;
 }
 
@@ -130,6 +191,31 @@ html[data-ui='next'] [data-nxt-theme='dark'] {
   --sh-2: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 22px -8px rgb(0 0 0 / 0.5);
   --sh-3: 0 28px 70px -20px rgb(0 0 0 / 0.7), 0 4px 16px rgb(0 0 0 / 0.35);
   --hl: inset 0 1px 0 rgb(255 255 255 / 0.05);
+  --sh-raised: 0 1px 2px rgb(0 0 0 / 0.35), 0 0 0 0.5px rgb(0 0 0 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --sh-raised-hover:
+    0 3px 8px -2px rgb(0 0 0 / 0.5), 0 0 0 0.5px rgb(0 0 0 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.08);
+  --sh-press: inset 0 1px 3px rgb(0 0 0 / 0.45);
+  --sh-fill: 0 1px 2px rgb(0 0 0 / 0.4), inset 0 1px 0 rgb(255 255 255 / 0.14), inset 0 -1px 0 rgb(0 0 0 / 0.15);
+  --sh-fill-hover:
+    0 3px 10px -2px rgb(74 106 168 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.16), inset 0 -1px 0 rgb(0 0 0 / 0.15);
+  --sh-fill-press: inset 0 2px 4px rgb(0 0 0 / 0.35);
+  --accent-fill-grad: linear-gradient(180deg, #5675b2, #4a6aa8 55%, #4462a0);
+  --accent-fill-grad-hover: linear-gradient(180deg, #6585c3, #5a7bbb 55%, #5373b2);
+  --bad-fill-grad: linear-gradient(180deg, #c4554a, #b9483d 55%, #ae4237);
+  --bad-fill-grad-hover: linear-gradient(180deg, #d1665b, #c85a4f 55%, #bd5348);
+  --glass: rgb(18 34 58 / 0.78);
+  --glass-strong: rgb(23 42 70 / 0.86);
+  --glass-inverse: rgb(238 242 248 / 0.92);
+  --glass-line: rgb(190 210 240 / 0.14);
+  --fill-sweep: rgb(255 255 255 / 0.22);
+  --spot: rgb(163 186 226 / 0.1);
+  --ambient-base: #0e1b31;
+  --ambient-tide: #3a5fa6;
+  --ambient-glow: #2a86c4;
+  --ambient-sheen: #c3d4f0;
+  --ambient-strength: 0.9;
+  --ambient-tide-soft: rgb(45 76 136 / 0.45);
+  --ambient-glow-soft: rgb(29 106 163 / 0.35);
 }
 
 /*

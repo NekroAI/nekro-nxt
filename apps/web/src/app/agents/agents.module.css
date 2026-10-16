@@ -65,52 +65,17 @@
   scroll-margin-top: var(--s-8);
 }
 
+/* The section bar floats over the profile as it scrolls (05 §5.1 glass over scrolling content). */
 .sectionNav {
   position: sticky;
   z-index: 4;
   top: 0;
-  display: flex;
-  gap: var(--s-1);
+  /* A grid item sizes to its content by default; the strip scrolls inside instead of widening the page. */
+  min-width: 0;
   margin: 0 calc(-1 * var(--s-2));
   padding: var(--s-2);
-  overflow-x: auto;
-  scrollbar-width: none;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 92%, transparent);
-  backdrop-filter: blur(10px);
-}
-
-.sectionLink {
-  position: relative;
-  flex: none;
-  min-height: var(--control-sm);
-  white-space: nowrap;
-  padding: 0 var(--s-3);
-  border: 0;
-  border-radius: var(--r-1);
-  background: transparent;
-  color: var(--muted);
-  font: var(--t-label);
-  cursor: pointer;
-  transition:
-    background var(--dur-1),
-    color var(--dur-1);
-}
-
-.sectionLink::after {
-  content: '';
-  position: absolute;
-  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
-}
-
-.sectionLink:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.sectionLink[aria-current='true'] {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: var(--blur);
 }
 
 .modelSelect {

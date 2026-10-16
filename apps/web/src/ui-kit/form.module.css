@@ -207,6 +207,7 @@
   border: 0;
   border-radius: 11px;
   background: var(--line-3);
+  box-shadow: var(--sh-inset);
   cursor: pointer;
   transition: background var(--dur-2) var(--ease);
 }
@@ -234,8 +235,8 @@
   height: 15px;
   border-radius: 50%;
   background: var(--knob);
-  box-shadow: var(--knob-shadow);
-  transition: transform var(--dur-2) var(--ease);
+  box-shadow: var(--knob-shadow), var(--hl);
+  transition: transform var(--dur-3) var(--spring);
 }
 
 .switch[data-state='checked'] .thumb {

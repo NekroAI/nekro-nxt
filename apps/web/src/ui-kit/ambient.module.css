@@ -1,0 +1,29 @@
+.ambient {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: var(--r-3);
+  /* The still glow doubles as the fallback when WebGL is unavailable. */
+  background:
+    radial-gradient(120% 90% at 78% 20%, var(--ambient-glow-soft), transparent 60%),
+    radial-gradient(90% 80% at 15% 90%, var(--ambient-tide-soft), transparent 65%), var(--ambient-base);
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 700ms var(--ease);
+}
+
+.ambient[data-live='true'] .canvas {
+  opacity: 1;
+}
+
+.content {
+  position: relative;
+  height: 100%;
+}

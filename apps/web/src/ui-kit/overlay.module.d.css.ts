@@ -24,6 +24,7 @@ declare const styles: {
   readonly toastAction: string
   readonly toastClose: string
   readonly toastIcon: string
+  readonly toastRing: string
   readonly toasts: string
   readonly tooltip: string
   readonly wide: string

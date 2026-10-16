@@ -34,12 +34,12 @@ import styles from './shell.module.css'
 import { updateLabel, useProductUpdates, versionDescription, versionLabel } from './product-updates.js'
 
 export const SPACES = [
-  { path: '/live', label: '概览', icon: Activity },
-  { path: '/channels', label: '频道', icon: MessagesSquare },
-  { path: '/agents', label: '智能体', icon: Sparkles },
-  { path: '/workshop', label: '工坊', icon: Wrench },
-  { path: '/community', label: '社区', icon: Store },
-  { path: '/wiring', label: '接线', icon: Cable },
+  { path: '/live', label: '概览', icon: Activity, motion: 'pulse' },
+  { path: '/channels', label: '频道', icon: MessagesSquare, motion: 'tilt' },
+  { path: '/agents', label: '智能体', icon: Sparkles, motion: 'twinkle' },
+  { path: '/workshop', label: '工坊', icon: Wrench, motion: 'turn' },
+  { path: '/community', label: '社区', icon: Store, motion: 'hop' },
+  { path: '/wiring', label: '接线', icon: Cable, motion: 'sway' },
 ] as const
 
 const spaceOf = (pathname: string): string => `/${pathname.split('/')[1] ?? ''}`
@@ -167,13 +167,14 @@ function Rail() {
         }}
         aria-hidden="true"
       />
-      {SPACES.map(({ path, label, icon: Icon }) => (
+      {SPACES.map(({ path, label, icon: Icon, motion }) => (
         <NavLink
           key={path}
           to={path}
           className={[styles.railItem, MOBILE_SPACES.has(path) ? '' : styles.railDesktopOnly].join(' ')}
           aria-current={narrow && !MOBILE_SPACES.has(path) ? undefined : current(path)}
           data-rail-space=""
+          data-motion={motion}
         >
           <Icon aria-hidden="true" strokeWidth={1.7} />
           <span>{label}</span>
@@ -220,6 +221,7 @@ function Rail() {
         to="/logs"
         className={[styles.railItem, styles.railDesktopOnly].join(' ')}
         aria-current={narrow ? undefined : current('/logs')}
+        data-motion="hop"
       >
         <ScrollText aria-hidden="true" strokeWidth={1.7} />
         <span>日志</span>
@@ -228,6 +230,7 @@ function Rail() {
         to="/settings"
         className={[styles.railItem, styles.railDesktopOnly].join(' ')}
         aria-current={narrow ? undefined : current('/settings')}
+        data-motion="gear"
       >
         <Settings aria-hidden="true" strokeWidth={1.7} />
         <span>设置</span>
@@ -276,6 +279,17 @@ function Rail() {
   )
 }
 
+/** Counts up each time `count` grows, so the bell swings once per new item and stays still on first load. */
+function useRingOnIncrease(count: number): number {
+  const previous = useRef(count)
+  const [ring, setRing] = useState(0)
+  useEffect(() => {
+    if (count > previous.current) setRing((value) => value + 1)
+    previous.current = count
+  }, [count])
+  return ring
+}
+
 const desktopStatusLabel: Record<DesktopInstanceStatus, string> = {
   ready: '运行正常',
   connecting: '正在连接',
@@ -290,6 +304,7 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
   const attention = useAttention()
   const bell = useBell()
   const setBellOpen = bellStore.setOpen
+  const ring = useRingOnIncrease(attention.length)
   const desktop = useDesktopInstance()
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const hostStatus = useProductStore((state) => state.host.status)
@@ -369,7 +384,9 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
             className={styles.bell}
             aria-label={attention.length ? `${attention.length} 项需要关注` : '没有需要关注的事项'}
           >
-            <Bell aria-hidden="true" strokeWidth={1.7} />
+            <span key={ring} className={ring > 0 ? styles.bellRing : undefined}>
+              <Bell aria-hidden="true" strokeWidth={1.7} />
+            </span>
             {attention.length ? <span className={styles.bellCount}>{attention.length}</span> : null}
           </Pressable>
         }

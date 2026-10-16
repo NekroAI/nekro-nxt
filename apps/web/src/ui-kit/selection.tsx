@@ -80,7 +80,48 @@ export function Segmented<Value extends string>({
   )
 }
 
-/** Tab strip; the caller renders the panel so it can keep its own scroll and state. */
+/**
+ * The light copy of the labels that shows only inside the capsule. It is clipped to the capsule's own geometry and
+ * moves with it, so text over the fill is always light and text over the groove always dark, in every frame.
+ */
+function LitLabels<Value extends string>({
+  options,
+  geometry,
+  animated,
+}: {
+  readonly options: readonly Option<Value>[]
+  readonly geometry: IndicatorGeometry
+  readonly animated: boolean
+}) {
+  const right = geometry.x + geometry.width
+  const bottom = geometry.y + geometry.height
+  return (
+    <span
+      className={[styles.tabsLit, animated ? styles.animatedClip : ''].join(' ')}
+      style={{
+        opacity: geometry.visible ? 1 : 0,
+        clipPath: `inset(${geometry.y}px calc(100% - ${right}px) calc(100% - ${bottom}px) ${geometry.x}px round 999px)`,
+      }}
+      aria-hidden="true"
+    >
+      {options.map((option) =>
+        // Text labels are drawn by a pseudo-element: this copy is decoration, not content to read or audit twice.
+        typeof option.label === 'string' ? (
+          <span key={option.value} className={styles.tabLit} data-label={option.label} />
+        ) : (
+          <span key={option.value} className={styles.tabLit}>
+            {option.label}
+          </span>
+        ),
+      )}
+    </span>
+  )
+}
+
+/**
+ * Tab strip: a raised capsule slides under the labels inside a groove (05 §7.2). The caller renders the panel so it
+ * can keep its own scroll and state.
+ */
 export function TabStrip<Value extends string>({
   options,
   value,
@@ -102,8 +143,15 @@ export function TabStrip<Value extends string>({
       role="tablist"
       aria-label={label}
       className={[styles.tabs, className ?? ''].join(' ')}
+      // Tabs never wrap; on a narrow screen the strip scrolls sideways (05 §6.2).
+      data-scroll-x=""
       onKeyDown={(event) => moveSelection(event, options, value, onChange)}
     >
+      <span
+        className={[styles.tabIndicator, ready ? styles.animated : ''].join(' ')}
+        style={boxStyle(geometry)}
+        aria-hidden="true"
+      />
       {options.map((option) => (
         <button
           key={option.value}
@@ -117,16 +165,50 @@ export function TabStrip<Value extends string>({
           {option.label}
         </button>
       ))}
+      <LitLabels options={options} geometry={geometry} animated={ready} />
+    </div>
+  )
+}
+
+/**
+ * In-page section navigation (anchors to sections further down). Same capsule as `TabStrip`; `active` follows the
+ * section in view and `onJump` scrolls to one.
+ */
+export function SectionNav<Value extends string>({
+  options,
+  active,
+  onJump,
+  label,
+  className,
+}: {
+  readonly options: readonly Option<Value>[]
+  readonly active: Value | undefined
+  readonly onJump: (value: Value) => void
+  readonly label: string
+  readonly className?: string
+}) {
+  const ref = useRef<HTMLElement>(null)
+  const { geometry, ready } = useIndicator(ref, '[aria-current="true"]', active)
+  return (
+    <nav ref={ref} aria-label={label} className={[styles.tabs, className ?? ''].join(' ')} data-scroll-x="">
       <span
         className={[styles.tabIndicator, ready ? styles.animated : ''].join(' ')}
-        style={{
-          opacity: geometry.visible ? 1 : 0,
-          width: `${Math.max(0, geometry.width - 20)}px`,
-          transform: `translateX(${geometry.x + 10}px)`,
-        }}
+        style={boxStyle(geometry)}
         aria-hidden="true"
       />
-    </div>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          aria-current={option.value === active ? 'true' : undefined}
+          className={styles.tab}
+          onClick={() => onJump(option.value)}
+        >
+          {option.label}
+        </button>
+      ))}
+      <LitLabels options={options} geometry={geometry} animated={ready} />
+    </nav>
   )
 }
 

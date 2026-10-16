@@ -318,18 +318,20 @@
   border: 1px solid var(--line);
   border-radius: var(--r-2);
   background: var(--surface);
-  box-shadow: var(--sh-1);
+  box-shadow: var(--sh-1), var(--hl);
   color: var(--fg);
   font: var(--t-body);
   text-decoration: none;
   transition:
-    box-shadow var(--dur-1) var(--ease),
+    transform var(--dur-3) var(--spring),
+    box-shadow var(--dur-2) var(--ease),
     border-color var(--dur-1) var(--ease);
 }
 
 .communityCard:hover {
   border-color: var(--line-2);
-  box-shadow: var(--sh-2);
+  box-shadow: var(--sh-2), var(--hl);
+  transform: translateY(-2px);
 }
 
 .communityCardHead {

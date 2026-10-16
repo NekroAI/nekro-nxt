@@ -59,7 +59,7 @@
   color: var(--fg);
   text-decoration: none;
   transition:
-    transform var(--dur-3) var(--ease),
+    transform var(--dur-3) var(--spring),
     box-shadow var(--dur-3) var(--ease),
     border-color var(--dur-2);
 }
@@ -83,8 +83,8 @@
 
 .card:hover {
   border-color: var(--line-2);
-  box-shadow: var(--sh-2);
-  transform: translateY(-3px);
+  box-shadow: var(--sh-2), var(--hl);
+  transform: translateY(-2px);
 }
 
 .cardHead {

@@ -1,3 +1,4 @@
+import { cssVars } from './css-vars.js'
 import * as RadixDialog from '@radix-ui/react-dialog'
 import * as RadixMenu from '@radix-ui/react-dropdown-menu'
 import * as RadixPopover from '@radix-ui/react-popover'
@@ -433,6 +434,8 @@ interface ToastItem {
   /** A newer toast of the same group replaces this one instead of stacking. */
   readonly group?: string | undefined
   readonly leaving: boolean
+  /** Time on screen before it leaves by itself; the ring around the close button drains over it. */
+  readonly life: number
 }
 
 let toasts: readonly ToastItem[] = []
@@ -440,7 +443,36 @@ let nextId = 1
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((listener) => listener())
 
+/** Auto-dismiss timers; hovering a toast pauses its own, so it never leaves while someone is reading it. */
+const lifetimes = new Map<
+  number,
+  { timer?: ReturnType<typeof setTimeout> | undefined; remaining: number; started: number }
+>()
+
+const runLife = (id: number): void => {
+  const life = lifetimes.get(id)
+  if (!life) return
+  life.started = Date.now()
+  life.timer = setTimeout(() => dismissToast(id), life.remaining)
+}
+
+const pauseToast = (id: number): void => {
+  const life = lifetimes.get(id)
+  if (!life?.timer) return
+  clearTimeout(life.timer)
+  life.timer = undefined
+  life.remaining = Math.max(400, life.remaining - (Date.now() - life.started))
+}
+
+const resumeToast = (id: number): void => {
+  const life = lifetimes.get(id)
+  if (life && !life.timer) runLife(id)
+}
+
 const dismissToast = (id: number): void => {
+  const life = lifetimes.get(id)
+  if (life?.timer) clearTimeout(life.timer)
+  lifetimes.delete(id)
   if (!toasts.some((item) => item.id === id && !item.leaving)) return
   toasts = toasts.map((item) => (item.id === id ? { ...item, leaving: true } : item))
   emit()
@@ -459,13 +491,15 @@ export function toast(
   options: { readonly tone?: 'ok' | 'bad'; readonly action?: ToastItem['action']; readonly group?: string } = {},
 ): void {
   const id = nextId++
+  const life = options.tone === 'bad' ? 5200 : 2600
   const kept = options.group === undefined ? toasts : toasts.filter((item) => item.group !== options.group)
   toasts = [
     ...kept.slice(-2),
-    { id, message, tone: options.tone ?? 'ok', action: options.action, group: options.group, leaving: false },
+    { id, message, tone: options.tone ?? 'ok', action: options.action, group: options.group, leaving: false, life },
   ]
   emit()
-  setTimeout(() => dismissToast(id), options.tone === 'bad' ? 5200 : 2600)
+  lifetimes.set(id, { remaining: life, started: Date.now() })
+  runLife(id)
 }
 
 export function Toaster() {
@@ -484,6 +518,9 @@ export function Toaster() {
           className={styles.toast}
           data-leaving={item.leaving}
           role={item.tone === 'bad' ? 'alert' : 'status'}
+          style={cssVars({ '--toast-life': `${item.life}ms` })}
+          onPointerEnter={() => pauseToast(item.id)}
+          onPointerLeave={() => resumeToast(item.id)}
         >
           <span className={[styles.toastIcon, item.tone === 'bad' ? styles.bad : ''].join(' ')}>
             {item.tone === 'bad' ? <TriangleAlert /> : <Check />}
@@ -500,6 +537,9 @@ export function Toaster() {
             aria-label="关闭通知"
             onClick={() => dismissToast(item.id)}
           >
+            <svg className={styles.toastRing} viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="10.5" />
+            </svg>
             <X aria-hidden="true" />
           </button>
         </div>

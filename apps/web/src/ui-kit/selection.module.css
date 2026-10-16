@@ -15,9 +15,7 @@
   left: 0;
   border-radius: 7px;
   background: var(--surface);
-  box-shadow:
-    var(--sh-1),
-    inset 0 0 0 1px var(--line);
+  box-shadow: var(--sh-raised);
   pointer-events: none;
 }
 
@@ -52,38 +50,82 @@
 .tabs {
   position: relative;
   display: flex;
-  gap: var(--s-1);
+  gap: calc(var(--s-1) / 2);
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  padding: calc(var(--s-1) * 0.75);
   overflow-x: auto;
   scrollbar-width: none;
-  border-bottom: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--inset);
+  box-shadow: var(--sh-inset);
 }
 
 .tab {
   position: relative;
+  z-index: 1;
   flex: none;
-  white-space: nowrap;
-  padding: var(--s-2) var(--s-3) var(--s-3);
+  min-height: var(--control);
+  padding: 0 var(--s-4);
   border: 0;
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  font-size: var(--fs-sm);
-  font-weight: 550;
+  font: var(--t-label);
+  white-space: nowrap;
   cursor: pointer;
-  transition: color var(--dur-1);
+  transition: color var(--dur-1) var(--ease);
 }
 
-.tab:hover,
-.tab[aria-selected='true'] {
+.tab:hover {
   color: var(--fg);
 }
 
+/* Same box model as the strip and its tabs, laid over them; only the part inside the capsule is visible. */
+.tabsLit {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  gap: calc(var(--s-1) / 2);
+  width: max-content;
+  height: 100%;
+  padding: calc(var(--s-1) * 0.75);
+  color: var(--on-accent-fill);
+  pointer-events: none;
+}
+
+.tabLit {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--control);
+  padding: 0 var(--s-4);
+  font: var(--t-label);
+  white-space: nowrap;
+}
+
+.tabLit[data-label]::before {
+  content: attr(data-label);
+}
+
+.animatedClip {
+  transition:
+    clip-path var(--dur-3) var(--spring),
+    opacity var(--dur-1);
+}
+
+/* The selected tab is a filled capsule (05 §5.1 raised fill), so page switches read stronger than filters. */
 .tabIndicator {
   position: absolute;
-  bottom: -1px;
+  top: 0;
   left: 0;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
+  border-radius: 999px;
+  background: var(--accent-fill-grad);
+  box-shadow: var(--sh-fill);
   pointer-events: none;
 }
 
@@ -96,6 +138,7 @@
   background: var(--surface);
   box-shadow:
     var(--sh-2),
+    var(--hl),
     inset 0 0 0 1px var(--line);
   pointer-events: none;
 }
@@ -112,9 +155,10 @@
   transition: background var(--dur-2);
 }
 
+/* Direct feedback rides the damped spring (05 §11.5); size changes settle without overshoot. */
 .animated {
   transition:
-    transform var(--dur-3) var(--ease),
+    transform var(--dur-3) var(--spring),
     width var(--dur-3) var(--ease),
     height var(--dur-3) var(--ease),
     opacity var(--dur-1);

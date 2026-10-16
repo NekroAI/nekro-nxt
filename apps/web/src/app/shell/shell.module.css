@@ -163,6 +163,34 @@ a.instance {
   height: 18px;
 }
 
+.bell > span:first-child {
+  display: grid;
+}
+
+/* A new item swings the bell once from its hook; the count badge does not move. */
+.bellRing {
+  transform-origin: 50% 8%;
+  animation: bellRing 700ms var(--ease) both;
+}
+
+@keyframes bellRing {
+  15% {
+    transform: rotate(14deg);
+  }
+
+  35% {
+    transform: rotate(-11deg);
+  }
+
+  55% {
+    transform: rotate(7deg);
+  }
+
+  75% {
+    transform: rotate(-3deg);
+  }
+}
+
 .bell[data-state='open'] {
   background: var(--hover);
   color: var(--fg);
@@ -243,6 +271,7 @@ a.instance {
   background: var(--surface);
   box-shadow:
     var(--sh-2),
+    var(--hl),
     inset 0 0 0 1px var(--line);
   pointer-events: none;
 }
@@ -260,7 +289,7 @@ a.instance {
 
 .railIndicatorReady {
   transition:
-    transform var(--dur-3) var(--ease),
+    transform var(--dur-3) var(--spring),
     width var(--dur-3) var(--ease),
     height var(--dur-3) var(--ease),
     opacity var(--dur-1);
@@ -313,6 +342,93 @@ a.instance {
 .railItem[aria-current='page'] {
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Each space's icon answers its selection once (05 §11.5 direct feedback); nothing loops. */
+.railItem[aria-current='page'] svg {
+  animation: railPulse 520ms var(--ease) both;
+}
+
+.railItem[aria-current='page'][data-motion='tilt'] svg {
+  animation-name: railTilt;
+}
+
+.railItem[aria-current='page'][data-motion='twinkle'] svg {
+  animation-name: railTwinkle;
+}
+
+.railItem[aria-current='page'][data-motion='turn'] svg {
+  animation-name: railTurn;
+}
+
+.railItem[aria-current='page'][data-motion='hop'] svg {
+  animation-name: railHop;
+}
+
+.railItem[aria-current='page'][data-motion='sway'] svg {
+  animation-name: railSway;
+}
+
+.railItem[aria-current='page'][data-motion='gear'] svg {
+  animation: railGear 620ms var(--spring) both;
+}
+
+@keyframes railPulse {
+  40% {
+    transform: scale(1.14);
+  }
+}
+
+@keyframes railTilt {
+  30% {
+    transform: rotate(-10deg) scale(1.08);
+  }
+
+  65% {
+    transform: rotate(6deg);
+  }
+}
+
+@keyframes railTwinkle {
+  40% {
+    transform: rotate(18deg) scale(1.16);
+  }
+}
+
+@keyframes railTurn {
+  35% {
+    transform: rotate(-24deg);
+  }
+
+  70% {
+    transform: rotate(8deg);
+  }
+}
+
+@keyframes railHop {
+  35% {
+    transform: translateY(-3px);
+  }
+
+  70% {
+    transform: translateY(1px);
+  }
+}
+
+@keyframes railSway {
+  30% {
+    transform: translateX(-2px) rotate(-6deg);
+  }
+
+  65% {
+    transform: translateX(1px) rotate(4deg);
+  }
+}
+
+@keyframes railGear {
+  from {
+    transform: rotate(-90deg);
+  }
 }
 
 .railSpacer {
@@ -500,22 +616,36 @@ a.instance {
 @media (max-width: 760px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--topbar-height) minmax(0, 1fr) calc(var(--statusbar-height) * 2);
+    grid-template-rows: var(--topbar-height) minmax(0, 1fr) calc(var(--statusbar-height) * 2 + var(--s-2));
   }
 
+  /* The bottom bar floats as a glass capsule above the page edge (05 §6.2). */
   .rail {
     flex-direction: row;
     grid-row: 3;
     grid-column: 1;
     justify-content: space-around;
-    padding: var(--s-1) var(--s-1);
-    border-top: 1px solid var(--line);
-    border-right: 0;
+    margin: 0 var(--s-3) var(--s-2);
+    padding: var(--s-1);
+    overflow: visible;
+    border: 1px solid var(--glass-line);
+    border-right: 1px solid var(--glass-line);
+    border-radius: 999px;
+    background: var(--glass-strong);
+    box-shadow: var(--sh-3), var(--hl);
+    backdrop-filter: var(--blur);
+  }
+
+  .railIndicator {
+    border-radius: 999px;
   }
 
   .railItem {
     flex: 1;
     width: auto;
+    gap: calc(var(--s-1) / 2);
+    padding: calc(var(--s-1) * 1.5) 0;
+    border-radius: 999px;
   }
 
   /* The bottom bar keeps four spaces and “更多” (05 §6.2); everything else opens from “更多”. */

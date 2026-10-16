@@ -9,7 +9,7 @@
   border: 1px solid var(--line-2);
   border-radius: var(--r-1);
   background: var(--surface);
-  box-shadow: var(--sh-1), var(--hl);
+  box-shadow: var(--sh-raised);
   color: var(--fg);
   font-size: var(--fs-sm);
   font-weight: 550;
@@ -19,16 +19,20 @@
     background var(--dur-1),
     border-color var(--dur-1),
     box-shadow var(--dur-1),
-    transform 120ms var(--ease);
+    transform var(--dur-2) var(--spring);
 }
 
 .button:hover:not(:disabled) {
   border-color: var(--line-3);
-  background: var(--surface-2);
+  box-shadow: var(--sh-raised-hover);
 }
 
+/* Pressed (05 §5.1): the surface sinks into an inset shadow and moves down 1px; release springs back. */
 .button:active:not(:disabled) {
-  transform: scale(0.97);
+  background: var(--surface-2);
+  box-shadow: var(--sh-press);
+  transform: translateY(1px);
+  transition-duration: 60ms;
 }
 
 .button:disabled {
@@ -44,14 +48,20 @@
 
 .primary {
   border-color: transparent;
-  background: var(--accent-fill);
+  background: var(--accent-fill-grad);
   color: var(--on-accent-fill);
-  box-shadow: var(--sh-1);
+  box-shadow: var(--sh-fill);
 }
 
 .primary:hover:not(:disabled) {
   border-color: transparent;
-  background: var(--accent-fill-hover);
+  background: var(--accent-fill-grad-hover);
+  box-shadow: var(--sh-fill-hover);
+}
+
+.primary:active:not(:disabled) {
+  background: var(--accent-fill-grad-hover);
+  box-shadow: var(--sh-fill-press);
 }
 
 /* A filled button that cannot act yet drops its colour instead of fading it (05 §7.2). */
@@ -62,6 +72,45 @@
   box-shadow: none;
   color: var(--faint);
   opacity: 1;
+}
+
+/*
+ * Busy filled buttons keep their colour and carry a light sweep (05 §5.1: light marks work in progress), so a running
+ * action never looks like an unavailable one.
+ */
+.primary[aria-busy='true'],
+.dangerSolid[aria-busy='true'] {
+  overflow: hidden;
+  box-shadow: var(--sh-fill);
+  color: var(--on-accent-fill);
+  cursor: progress;
+}
+
+.primary[aria-busy='true'] {
+  background: var(--accent-fill-grad);
+}
+
+.dangerSolid[aria-busy='true'] {
+  background: var(--bad-fill-grad);
+  color: var(--on-bad-fill);
+}
+
+.primary[aria-busy='true']::before,
+.dangerSolid[aria-busy='true']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 30%, var(--fill-sweep) 50%, transparent 70%);
+  transform: translateX(-100%);
+  animation: busySweep 1.6s var(--ease) infinite;
+  pointer-events: none;
+}
+
+@keyframes busySweep {
+  70%,
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 .danger {
@@ -75,13 +124,20 @@
 
 .dangerSolid {
   border-color: transparent;
-  background: var(--bad-fill);
+  background: var(--bad-fill-grad);
   color: var(--on-bad-fill);
+  box-shadow: var(--sh-fill);
 }
 
 .dangerSolid:hover:not(:disabled) {
   border-color: transparent;
-  background: var(--bad-fill-hover);
+  background: var(--bad-fill-grad-hover);
+  box-shadow: var(--sh-fill);
+}
+
+.dangerSolid:active:not(:disabled) {
+  background: var(--bad-fill-grad-hover);
+  box-shadow: var(--sh-fill-press);
 }
 
 .ghost {
@@ -94,7 +150,13 @@
 .ghost:hover:not(:disabled) {
   border-color: transparent;
   background: var(--hover);
+  box-shadow: none;
   color: var(--fg);
+}
+
+.ghost:active:not(:disabled) {
+  background: var(--inset);
+  box-shadow: var(--sh-press);
 }
 
 .small {
@@ -269,7 +331,20 @@
   width: 14px;
   height: 14px;
   flex: none;
-  animation: spin 0.9s linear infinite;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinnerTrack {
+  opacity: 0.18;
+}
+
+/* Loading is energy (05 §5.1): the moving arc carries a soft glow in its own colour. */
+.spinnerArc {
+  filter: drop-shadow(0 0 1.5px currentColor);
 }
 
 @keyframes spin {

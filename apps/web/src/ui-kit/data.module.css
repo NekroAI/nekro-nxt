@@ -29,7 +29,8 @@
   top: 0;
   min-height: var(--control-lg);
   border-bottom: 1px solid var(--line);
-  background: var(--surface-2);
+  background: var(--glass-strong);
+  backdrop-filter: var(--blur);
   color: var(--muted);
   font: var(--t-label);
 }
@@ -193,12 +194,13 @@
   align-items: center;
   gap: var(--s-3);
   padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--glass-line);
   border-radius: var(--r-2);
-  /* Opaque: text scrolling underneath must not show through the actions. */
-  background: var(--surface);
-  box-shadow: var(--sh-3);
-  animation: saveIn var(--dur-2) var(--ease) both;
+  /* Glass over scrolling content (05 §5.1): blurred and dense enough that text underneath never reads through. */
+  background: var(--glass-strong);
+  box-shadow: var(--sh-3), var(--hl);
+  backdrop-filter: var(--blur);
+  animation: saveIn var(--dur-3) var(--spring) both;
 }
 
 @keyframes saveIn {

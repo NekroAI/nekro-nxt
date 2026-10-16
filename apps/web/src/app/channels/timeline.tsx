@@ -16,7 +16,7 @@ import { workspaceApi } from '../../host-api-client.js'
 import { memo, useEffect, useState } from 'react'
 import { MessageContent, resolveMessageSide } from './message-content.js'
 import type { AgentSummary, ChannelSummary, ConversationMessage } from '../../product-runtime.js'
-import { AgentAvatar, Button, Chip, Pressable, Spinner, cssVars } from '../../ui-kit/index.js'
+import { AgentAvatar, Button, Chip, Pressable, ShimmerText, Spinner, cssVars } from '../../ui-kit/index.js'
 import { MemberAvatar } from '../../ui-kit/avatar.js'
 import { agentAccent, agentHue } from '../model/identity.js'
 import styles from './channels.module.css'
@@ -501,7 +501,7 @@ export function TurnRow({
         {trigger && trigger.role !== 'agent' ? <span className={styles.turnTrigger}>回应 {trigger.author}</span> : null}
         {running ? (
           <Chip tone="accent" icon={<Spinner />}>
-            {startedAt ? <Elapsed since={startedAt} /> : '进行中'}
+            {startedAt ? <Elapsed since={startedAt} /> : <ShimmerText>进行中</ShimmerText>}
           </Chip>
         ) : (
           <span>{[summary, formatDuration(turn.durationMs)].filter(Boolean).join(' · ')}</span>

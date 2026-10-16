@@ -27,6 +27,7 @@ import { agentHue, agentPhase, channelHue, distinctChannelHues, isAgentWorking }
 import { useCrumb } from '../shell/crumb.js'
 import { ActivityChart, channelColor } from './activity-chart.js'
 import styles from './live.module.css'
+import { Welcome } from './welcome.js'
 
 const WINDOWS = [
   { window: '2h', bucket: '5m', label: '近 2 小时' },
@@ -138,6 +139,17 @@ export default function LiveSpace() {
 
   const fresh = useFreshChannels(channels)
   useRelativeTimeTick()
+  const hostStatus = useProductStore((state) => state.host.status)
+  if (hostStatus === 'ready' && agents.length === 0)
+    return (
+      <BoardPage>
+        <div className={[styles.inner, styles.enter].join(' ')}>
+          <CompatibilityNotices showContextReset />
+          <PageHeader title="概览" />
+          <Welcome />
+        </div>
+      </BoardPage>
+    )
   return (
     <BoardPage>
       <div className={[styles.inner, styles.enter].join(' ')}>

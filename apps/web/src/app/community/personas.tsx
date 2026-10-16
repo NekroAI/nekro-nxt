@@ -20,6 +20,7 @@ import {
   SearchField,
   Skeleton,
   toast,
+  spotlight,
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { errorMessage, openExternal, publisherName } from './community-model.js'
@@ -157,7 +158,8 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
             <Link
               key={item.id}
               to={selectedId === item.id ? '/community/personas' : `/community/personas/${item.id}`}
-              className={styles.card}
+              className={[styles.card, spotlight.className].join(' ')}
+              onPointerMove={spotlight.onPointerMove}
               data-selected={selectedId === item.id}
               aria-current={selectedId === item.id ? 'true' : undefined}
               style={{ ['--i' as string]: Math.min(index, 12) }}

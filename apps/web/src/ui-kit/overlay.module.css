@@ -11,7 +11,7 @@
 }
 
 .scrim[data-state='closed'] {
-  animation: fadeOut 160ms ease both;
+  animation: fadeOut 160ms var(--ease-in) both;
 }
 
 .dialog {
@@ -40,7 +40,7 @@
 }
 
 .dialog[data-state='closed'] {
-  animation: dialogOut 160ms ease both;
+  animation: dialogOut 160ms var(--ease-in) both;
 }
 
 .wide {
@@ -119,7 +119,7 @@
 }
 
 .sheet[data-state='closed'] {
-  animation: sheetOut 200ms ease both;
+  animation: sheetOut 200ms var(--ease-in) both;
 }
 
 .sheetHead {
@@ -160,10 +160,11 @@
   gap: calc(var(--s-1) / 2);
   min-width: 200px;
   padding: var(--s-2);
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--glass-line);
   border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--sh-3);
+  background: var(--glass);
+  box-shadow: var(--sh-3), var(--hl);
+  backdrop-filter: var(--blur);
   transform-origin: var(--radix-dropdown-menu-content-transform-origin);
 }
 
@@ -173,10 +174,11 @@
   width: min(420px, calc(100vw - 24px));
   max-height: min(560px, var(--radix-popover-content-available-height));
   overflow: auto;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--glass-line);
   border-radius: var(--r-2);
-  background: var(--surface);
-  box-shadow: var(--sh-3);
+  background: var(--glass);
+  box-shadow: var(--sh-3), var(--hl);
+  backdrop-filter: var(--blur);
   transform-origin: var(--radix-popover-content-transform-origin);
 }
 
@@ -186,11 +188,13 @@
 
 .popover[data-state='open'],
 .menu[data-state='open'] {
-  animation: popIn 220ms var(--ease) both;
+  animation:
+    popIn var(--dur-3) var(--spring) both,
+    fadeIn var(--dur-1) var(--ease) both;
 }
 
 .menu[data-state='closed'] {
-  animation: fadeOut 120ms ease both;
+  animation: popOut var(--dur-1) var(--ease-in) both;
 }
 
 .menuItem {
@@ -243,11 +247,12 @@
   max-width: 280px;
   padding: var(--s-2) var(--s-2);
   border-radius: 8px;
-  background: var(--fg);
+  background: var(--glass-inverse);
   box-shadow: var(--sh-2);
   color: var(--bg);
   font-size: var(--fs-xs);
   line-height: 1.5;
+  backdrop-filter: var(--blur);
 }
 
 .infoTip {
@@ -291,18 +296,21 @@
   z-index: 70;
   max-width: min(320px, calc(100vw - 24px));
   padding: var(--s-2) var(--s-3);
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--glass-line);
   border-radius: var(--r-2);
-  background: var(--surface);
-  box-shadow: var(--sh-2);
+  background: var(--glass);
+  box-shadow: var(--sh-2), var(--hl);
   color: var(--fg-2);
+  backdrop-filter: var(--blur);
   font-size: var(--fs-xs);
   line-height: 1.6;
   transform-origin: var(--radix-popover-content-transform-origin);
 }
 
 .infoTipContent[data-state='open'] {
-  animation: popIn 160ms var(--ease) both;
+  animation:
+    popIn var(--dur-3) var(--spring) both,
+    fadeIn var(--dur-1) var(--ease) both;
 }
 
 .infoTipContent p {
@@ -315,7 +323,9 @@
 
 .tooltip[data-state='delayed-open'],
 .tooltip[data-state='instant-open'] {
-  animation: popIn 160ms var(--ease) both;
+  animation:
+    popIn var(--dur-2) var(--spring) both,
+    fadeIn var(--dur-1) var(--ease) both;
 }
 
 .toasts {
@@ -337,16 +347,19 @@
   max-width: min(520px, calc(100vw - 32px));
   padding: var(--s-2) var(--s-4) var(--s-2) var(--s-3);
   border-radius: 12px;
-  background: var(--fg);
+  background: var(--glass-inverse);
   box-shadow: var(--sh-3);
   color: var(--bg);
   font-size: var(--fs-sm);
   pointer-events: auto;
-  animation: toastIn 420ms var(--ease) both;
+  backdrop-filter: var(--blur);
+  animation:
+    toastIn var(--dur-3) var(--spring) both,
+    fadeIn var(--dur-1) var(--ease) both;
 }
 
 .toast[data-leaving='true'] {
-  animation: toastOut 240ms ease both;
+  animation: toastOut var(--dur-2) var(--ease-in) both;
 }
 
 .toastIcon {
@@ -390,6 +403,39 @@
 .toastClose:hover {
   background: var(--hover);
   color: var(--fg);
+}
+
+.toastClose {
+  position: relative;
+}
+
+/* Countdown to auto-dismiss (05 §11.5: tied to a real timer); it holds while the pointer is on the toast. */
+.toastClose .toastRing {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 66;
+  opacity: 0.55;
+  transform: rotate(-90deg);
+}
+
+.toastRing circle {
+  animation: toastDrain var(--toast-life) linear forwards;
+}
+
+.toast:hover .toastRing circle {
+  animation-play-state: paused;
+}
+
+@keyframes toastDrain {
+  to {
+    stroke-dashoffset: 66;
+  }
 }
 
 .toastClose svg {
@@ -451,15 +497,20 @@
 
 @keyframes popIn {
   from {
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+
+@keyframes popOut {
+  to {
     opacity: 0;
-    transform: scale(0.95) translateY(-4px);
+    transform: scale(0.98);
   }
 }
 
 @keyframes toastIn {
   from {
-    opacity: 0;
-    transform: translateY(16px) scale(0.95);
+    transform: translateY(16px) scale(0.96);
   }
 }
 
@@ -477,4 +528,18 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* Without backdrop blur the translucent fills would let content show through; fall back to solid surfaces. */
+@supports not (backdrop-filter: blur(1px)) {
+  .menu,
+  .popover,
+  .infoTipContent {
+    background: var(--surface);
+  }
+
+  .tooltip,
+  .toast {
+    background: var(--fg);
+  }
 }

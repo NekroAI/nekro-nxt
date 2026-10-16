@@ -20,7 +20,9 @@ export {
   identityHue,
   type AvatarSize,
 } from './avatar.js'
-export { Segmented, TabStrip, SelectionList, type Option } from './selection.js'
+export { Segmented, TabStrip, SectionNav, SelectionList, type Option } from './selection.js'
+export { Ambient } from './ambient.js'
+export { RevealText, ShimmerText, spotlight } from './motion.js'
 export { useIndicator, type IndicatorGeometry } from './indicator.js'
 export {
   Field,

@@ -1,0 +1,69 @@
+.reveal {
+  display: inline-block;
+}
+
+.revealChar {
+  display: inline-block;
+  animation: charIn 480ms var(--spring) var(--delay) both;
+}
+
+@keyframes charIn {
+  from {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(0.35em);
+  }
+
+  60% {
+    filter: blur(0);
+  }
+}
+
+/* The sweep rides on the text colour itself, so it reads in both themes and on any surface. */
+.shimmer {
+  background: linear-gradient(
+      100deg,
+      currentColor 0%,
+      currentColor 40%,
+      color-mix(in srgb, currentColor 35%, transparent) 50%,
+      currentColor 60%,
+      currentColor 100%
+    )
+    0 0 / 250% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: sweep 2.2s linear infinite;
+}
+
+@keyframes sweep {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -150% 0;
+  }
+}
+
+/* Light follows the pointer across a showcase card (05 §5.1: hover is focus), fading in and out with the hover. */
+.spotlight {
+  position: relative;
+  isolation: isolate;
+}
+
+.spotlight::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(260px circle at var(--spot-x, 50%) var(--spot-y, 0%), var(--spot), transparent 70%);
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease);
+  pointer-events: none;
+}
+
+.spotlight:hover::after {
+  opacity: 1;
+}

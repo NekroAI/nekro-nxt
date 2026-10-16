@@ -17,6 +17,7 @@ import {
   ConfirmDialog,
   Disclosure,
   EmptyState,
+  ShimmerText,
   MemberAvatar,
   StatusDot,
   toast,
@@ -183,7 +184,8 @@ export function Conversation({
 
   const items = useMemo(() => buildTimeline(messages, runtime?.turns ?? []), [messages, runtime?.turns])
   const messageById = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages])
-  const phase = agent ? agentPhase[runtime?.phase ?? channel.runtimePhase ?? agent.state] : undefined
+  const phaseKey = agent ? (runtime?.phase ?? channel.runtimePhase ?? agent.state) : undefined
+  const phase = phaseKey ? agentPhase[phaseKey] : undefined
   const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
 
   const setXray = (next: boolean) => {
@@ -212,7 +214,11 @@ export function Conversation({
             <span>{channel.name}</span>
             {phase ? (
               <Chip tone={phase.tone} dot>
-                {phase.label}
+                {phaseKey === 'thinking' || phaseKey === 'using-tool' ? (
+                  <ShimmerText>{phase.label}</ShimmerText>
+                ) : (
+                  phase.label
+                )}
               </Chip>
             ) : (
               <Chip>未接线</Chip>

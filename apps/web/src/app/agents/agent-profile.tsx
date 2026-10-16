@@ -12,7 +12,7 @@ import {
   MainContent,
   Menu,
   ObjectHeader,
-  Pressable,
+  SectionNav,
   SaveBar,
   SwitchRow,
   cssVars,
@@ -86,8 +86,10 @@ const scrollParent = (element: HTMLElement): HTMLElement | null => {
  * near the top of the scroll area. At the top that is always the first section, at the bottom the last one, so a
  * tall window never skips ahead to a section that merely fits on screen.
  */
-function useActiveSection(): string {
+function useActiveSection(): readonly [string, (id: string) => void] {
   const [active, setActive] = useState<string>(SECTIONS[0].id)
+  // While a jump scrolls, the bar stays on the target instead of hopping through every section on the way.
+  const pinned = useRef<{ id: string; until: number } | undefined>(undefined)
   useEffect(() => {
     const first = document.getElementById(SECTIONS[0].id)
     const scroller = first ? scrollParent(first) : null
@@ -95,6 +97,14 @@ function useActiveSection(): string {
     let frame = 0
     const update = () => {
       frame = 0
+      const pin = pinned.current
+      if (pin) {
+        if (performance.now() < pin.until) {
+          pin.until = performance.now() + 140
+          return
+        }
+        pinned.current = undefined
+      }
       const elements = SECTIONS.flatMap((section) => {
         const element = document.getElementById(section.id)
         return element ? [element] : []
@@ -119,7 +129,11 @@ function useActiveSection(): string {
       cancelAnimationFrame(frame)
     }
   }, [])
-  return active
+  const pin = (id: string) => {
+    pinned.current = { id, until: performance.now() + 400 }
+    setActive(id)
+  }
+  return [active, pin] as const
 }
 
 export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
@@ -140,7 +154,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
   const [deleteBuiltIn, setDeleteBuiltIn] = useState(true)
   const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   const [bindIntent, setBindIntent] = useState<BindIntent | null>(null)
-  const active = useActiveSection()
+  const [active, pinSection] = useActiveSection()
 
   const phase = agentPhase[agent.state]
   const owned = channels.filter((channel) => channel.agentId === agent.id)
@@ -183,7 +197,10 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
     }
   }
 
-  const jump = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const jump = (id: string) => {
+    pinSection(id)
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   return (
     <MainContent>
@@ -290,18 +307,14 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           }
         />
 
-        <nav className={styles.sectionNav} aria-label="分节">
-          {SECTIONS.map((section) => (
-            <Pressable
-              key={section.id}
-              className={styles.sectionLink}
-              aria-current={active === section.id ? 'true' : undefined}
-              onClick={() => jump(section.id)}
-            >
-              {section.label}
-            </Pressable>
-          ))}
-        </nav>
+        <div className={styles.sectionNav}>
+          <SectionNav
+            label="分节"
+            options={SECTIONS.map((section) => ({ value: section.id, label: section.label }))}
+            active={active}
+            onJump={jump}
+          />
+        </div>
 
         <CompatibilityNotices agentId={agent.id} providerId={agent.modelRef?.provider} />
 

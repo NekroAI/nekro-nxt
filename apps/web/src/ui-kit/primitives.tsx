@@ -1,5 +1,4 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react'
-import { LoaderCircle } from 'lucide-react'
 import styles from './primitives.module.css'
 
 export type Tone = 'neutral' | 'ok' | 'warn' | 'bad' | 'accent'
@@ -152,7 +151,12 @@ export function Kbd({ children }: { readonly children: ReactNode }) {
 }
 
 export function Spinner({ className }: { readonly className?: string }) {
-  return <LoaderCircle className={cx(styles.spinner, className)} aria-hidden="true" />
+  return (
+    <svg className={cx(styles.spinner, className)} viewBox="0 0 16 16" aria-hidden="true">
+      <circle className={styles.spinnerTrack} cx="8" cy="8" r="6.25" />
+      <path className={styles.spinnerArc} d="M8 1.75a6.25 6.25 0 0 1 6.25 6.25" />
+    </svg>
+  )
 }
 
 /**

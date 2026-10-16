@@ -5,6 +5,7 @@ declare const styles: {
   readonly bellHead: string
   readonly bellMore: string
   readonly bellPanel: string
+  readonly bellRing: string
   readonly brand: string
   readonly canvas: string
   readonly canvasEnter: string
