@@ -31,6 +31,12 @@ const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   finish_channel_turn: '结束本轮处理',
   web_search: '网页搜索',
   web_fetch: '获取网页',
+  conversation_open: '开启子对话',
+  conversation_send: '子对话传话',
+  conversation_close: '结束子对话',
+  conversation_delete: '销毁子对话',
+  conversation_list: '列出子对话',
+  // Records written before sub-conversations replaced DSH's subagent tools.
   subagent: '子智能体',
   send_message: '向子智能体发消息',
   interrupt_agent: '中断子智能体',

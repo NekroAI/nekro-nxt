@@ -19,7 +19,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
+import { Fragment, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   agentSortId,
@@ -64,6 +64,7 @@ import { useAttention } from '../model/attention.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
+import { SubConversationRows } from './sub-conversation-rows.js'
 import styles from './channels.module.css'
 import { relativeTime } from './timeline-model.js'
 
@@ -286,7 +287,14 @@ function CreateInternalChannel() {
   )
 }
 
-export function ChannelList({ selectedId }: { readonly selectedId: string | undefined }) {
+export function ChannelList({
+  selectedId,
+  selectedConversationId,
+}: {
+  readonly selectedId: string | undefined
+  /** A sub-conversation of `selectedId` shown instead of the channel itself. */
+  readonly selectedConversationId?: string | undefined
+}) {
   const api = useProductApi()
   const agents = useProductStore((state) => state.agents)
   const channels = useProductStore((state) => state.channels)
@@ -488,26 +496,28 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
       }
     >
       <SelectionList
-        selectedKey={`${listMode}:${selectedId ?? ''}`}
+        selectedKey={`${listMode}:${selectedId ?? ''}:${selectedConversationId ?? ''}`}
         accent={selectedAgent ? agentAccent(selectedAgent) : undefined}
       >
         {filtering && shown.length === 0 ? <p className={styles.noMatch}>没有符合条件的频道</p> : null}
         {listMode === 'recent' ? (
           shown.map((channel) => (
-            <Link
-              key={channel.id}
-              to={`/channels/${channel.id}`}
-              className={styles.row}
-              data-selected={channel.id === selectedId}
-              aria-current={channel.id === selectedId ? 'page' : undefined}
-            >
-              <RowContent
-                channel={channel}
-                agent={agentById.get(channel.agentId)}
-                connection={connectionById.get(channel.connectionId)}
-                mode="recent"
-              />
-            </Link>
+            <Fragment key={channel.id}>
+              <Link
+                to={`/channels/${channel.id}`}
+                className={styles.row}
+                data-selected={channel.id === selectedId && selectedConversationId === undefined}
+                aria-current={channel.id === selectedId && selectedConversationId === undefined ? 'page' : undefined}
+              >
+                <RowContent
+                  channel={channel}
+                  agent={agentById.get(channel.agentId)}
+                  connection={connectionById.get(channel.connectionId)}
+                  mode="recent"
+                />
+              </Link>
+              <SubConversationRows channelId={channel.id} selectedConversationId={selectedConversationId} />
+            </Fragment>
           ))
         ) : (
           <DndContext
@@ -550,14 +560,16 @@ export function ChannelList({ selectedId }: { readonly selectedId: string | unde
                     strategy={verticalListSortingStrategy}
                   >
                     {group.channels.map((channel) => (
-                      <SortableRow
-                        key={channel.id}
-                        channel={channel}
-                        agent={group.agent}
-                        connection={connectionById.get(channel.connectionId)}
-                        selected={channel.id === selectedId}
-                        suppressClick={suppressClick}
-                      />
+                      <Fragment key={channel.id}>
+                        <SortableRow
+                          channel={channel}
+                          agent={group.agent}
+                          connection={connectionById.get(channel.connectionId)}
+                          selected={channel.id === selectedId && selectedConversationId === undefined}
+                          suppressClick={suppressClick}
+                        />
+                        <SubConversationRows channelId={channel.id} selectedConversationId={selectedConversationId} />
+                      </Fragment>
                     ))}
                   </SortableContext>
                 </AgentGroup>

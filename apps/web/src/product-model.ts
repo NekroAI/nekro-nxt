@@ -591,6 +591,8 @@ export interface ProductState {
   readonly approvals: readonly DynamicApproval[]
   readonly dynamic: readonly DynamicPackageSummary[]
   readonly authoringTasks: HostApiResponse<'snapshot'>['authoringTasks']
+  /** Open sub-conversations and the latest ended ones of each channel. */
+  readonly subConversations: HostApiResponse<'snapshot'>['subConversations']
   /** Extension requests waiting for an administrator. */
   readonly extensionRequests: HostApiResponse<'snapshot'>['extensionRequests']
   readonly scheduledTasks: HostApiResponse<'snapshot'>['scheduledTasks']

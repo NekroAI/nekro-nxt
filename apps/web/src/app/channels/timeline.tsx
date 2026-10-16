@@ -366,6 +366,10 @@ const INPUT_SOURCES: Readonly<Record<string, string>> = {
   'nekro-nxt-channel-reply-guard': '回应提醒',
   'nekro-nxt-visual-restore': '恢复历史图片',
   'nekro-nxt-authoring-event': '扩展开发进展',
+  // Sub-conversations: the task it was given, a message passed between the two conversations, and its reply.
+  user: '交给子对话的任务',
+  'agent-message': '对话之间的传话',
+  'subagent-settled': '子对话的回复',
 }
 
 const inputLabel = (input: RuntimeInput): string =>

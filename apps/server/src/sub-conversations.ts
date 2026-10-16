@@ -79,7 +79,7 @@ export class SubConversationError extends Error {
 }
 
 /**
- * Sub-conversations: conversations of their own under a channel's conversation (docs/NekroNxt界面交互模型.md §4.6).
+ * Sub-conversations: conversations of their own under a channel's conversation (docs/NekroNxt界面交互模型.md §5.6).
  * Each is a direct DSH child session of the channel's root session, so DSH owns running, messaging and releasing
  * it; this records what it is for, who opened it and how it ended, and removes ended ones after the retention time.
  */

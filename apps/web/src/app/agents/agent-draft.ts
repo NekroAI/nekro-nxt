@@ -53,7 +53,7 @@ const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation', 'schedu
 const ACCESS_KEYS = ['fileTools', 'developmentShell', 'unrestrictedFileAccess'] as const
 
 const CAPABILITY_LABEL: Record<(typeof OTHER_CAPABILITIES)[number], string> = {
-  subagents: '子智能体',
+  subagents: '子对话',
   webSearch: '网页搜索',
   dynamicCreation: '动态创造',
   scheduledTasks: '定时任务',

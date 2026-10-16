@@ -500,9 +500,9 @@ export function CapabilitiesSection({
             </PropertyRow>
           ) : null
         ) : null}
-        <PropertyRow label="子智能体" tip="把任务交给子智能体在后台处理">
+        <PropertyRow label="子对话" tip="把需要单独处理的事交给子对话去做，进行中的子对话显示在频道下">
           <Switch
-            label="子智能体"
+            label="子对话"
             checked={caps.subagents}
             onCheckedChange={(checked) => setCapability('subagents', checked)}
           />

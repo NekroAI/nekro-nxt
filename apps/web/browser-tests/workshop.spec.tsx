@@ -248,6 +248,8 @@ test.describe('workshop', () => {
     )
     try {
       await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      // Configuration lives on its own tab of the extension detail.
+      await page.getByRole('tab', { name: '配置' }).click()
       const secret = page.getByLabel('API Key')
       await expect(secret).toHaveValue('')
       await expect(secret).toHaveAttribute('placeholder', '已保存，留空则不修改')

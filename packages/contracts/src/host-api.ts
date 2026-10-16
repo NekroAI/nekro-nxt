@@ -1018,7 +1018,7 @@ export const DEFAULT_MESSAGE_PACING: MessagePacing = 'normal'
 export const MessagePacingSettingsSchema = z.object({ pacing: MessagePacingSchema }).strict()
 
 /**
- * A conversation of its own under a channel's conversation (docs/NekroNxt界面交互模型.md §4.6): the agent opens one
+ * A conversation of its own under a channel's conversation (docs/NekroNxt界面交互模型.md §5.6): the agent opens one
  * for a separate piece of work, and the host opens scripted ones to check creation candidates. It has its own log
  * and context, and is shown under its channel.
  */

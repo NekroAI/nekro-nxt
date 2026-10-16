@@ -8,6 +8,7 @@ import {
   Inbox,
   Info,
   MessageCircle,
+  MessagesSquare,
   MonitorSmartphone,
   Palette,
   Plug,
@@ -40,7 +41,12 @@ import {
   useLlmProviders,
   type ProviderView,
 } from '../../llm-settings.js'
-import type { MessagePacing, RetrievalStatus, UpgradeBackupSettings } from '@nekro-nxt/contracts'
+import type {
+  MessagePacing,
+  RetrievalStatus,
+  SubConversationRetention,
+  UpgradeBackupSettings,
+} from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
 import { providerDisplayName } from '../../provider-labels.js'
 import { useProductRuntime, useProductStore, useUiStateStore } from '../../product-runtime.js'
@@ -93,6 +99,7 @@ const SECTIONS = [
   { key: 'retrieval', label: '检索', group: 'runtime', icon: <Search size={16} /> },
   { key: 'dsh', label: 'DSH 插件', group: 'runtime', icon: <Blocks size={16} /> },
   { key: 'chat', label: '聊天', group: 'runtime', icon: <MessageCircle size={16} /> },
+  { key: 'conversations', label: '子对话', group: 'runtime', icon: <MessagesSquare size={16} /> },
   { key: 'adapters', label: '平台适配器', group: 'links', icon: <Plug size={16} /> },
   { key: 'accounts', label: '账号与服务', group: 'links', icon: <UserRoundKey size={16} /> },
   { key: 'administrators', label: '管理员', group: 'permission', icon: <ShieldCheck size={16} /> },
@@ -204,6 +211,7 @@ export default function SettingsSpace() {
           {section === 'logs' ? <LogSettings /> : null}
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
+          {section === 'conversations' ? <SubConversations /> : null}
           {section === 'retrieval' ? <Retrieval /> : null}
           {section === 'accounts' ? (
             <>
@@ -581,6 +589,52 @@ function Chat() {
             <Skeleton width={220} height={28} />
           ) : (
             <Segmented label="连发间隔" value={pacing} onChange={change} options={PACING_OPTIONS} />
+          )}
+        </PropertyRow>
+      </PropertyList>
+    </>
+  )
+}
+
+const RETENTION_OPTIONS: readonly { readonly value: SubConversationRetention; readonly label: string }[] = [
+  { value: '1d', label: '1 天' },
+  { value: '3d', label: '3 天' },
+  { value: '7d', label: '7 天' },
+  { value: '30d', label: '30 天' },
+  { value: 'never', label: '一直保留' },
+]
+
+/** How long ended sub-conversations stay before they are removed with their records. */
+function SubConversations() {
+  const [retention, setRetention] = useState<SubConversationRetention>()
+  useEffect(() => {
+    const controller = new AbortController()
+    workspaceApi
+      .getSubConversationSettings({ signal: controller.signal })
+      .then((settings) => setRetention(settings.retention))
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [])
+  const change = (next: SubConversationRetention) => {
+    const previous = retention
+    setRetention(next)
+    workspaceApi.updateSubConversationSettings({ retention: next }).catch((error: unknown) => {
+      setRetention(previous)
+      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+    })
+  }
+  return (
+    <>
+      <SectionHead title="子对话" />
+      <PropertyList>
+        <PropertyRow
+          label="结束后保留"
+          tip="智能体开的子对话和验证扩展时开的子对话，结束后在频道下保留多久；到期后连同记录一起删除。"
+        >
+          {retention === undefined ? (
+            <Skeleton width={260} height={28} />
+          ) : (
+            <Segmented label="结束后保留" value={retention} onChange={change} options={RETENTION_OPTIONS} />
           )}
         </PropertyRow>
       </PropertyList>

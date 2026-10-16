@@ -1,0 +1,123 @@
+/* Sub-conversation rows sit under their channel row, indented past its name. */
+.rows {
+  display: grid;
+  gap: calc(var(--s-1) / 4);
+  padding: 0 0 calc(var(--s-1) / 2) var(--s-6);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--control-sm);
+  padding: var(--s-1) var(--s-2);
+  border-radius: 8px;
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+  transition: background var(--dur-1);
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row[data-selected='true']:hover {
+  background: transparent;
+}
+
+.row[data-status='closed'] {
+  color: var(--muted);
+}
+
+.icon {
+  width: 14px;
+  height: 14px;
+  color: var(--faint);
+}
+
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.fold {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  width: 100%;
+  min-height: var(--control-sm);
+  padding: var(--s-1) var(--s-2);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fold:hover {
+  background: var(--hover);
+  color: var(--muted);
+}
+
+.foldIcon {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--dur-1);
+}
+
+.fold[aria-expanded='true'] .foldIcon {
+  transform: rotate(90deg);
+}
+
+.channelLink {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 3px;
+}
+
+.channelLink:hover {
+  color: var(--fg);
+}
+
+.summary {
+  display: grid;
+  gap: var(--s-1);
+  margin: var(--s-3) 0;
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  font-size: var(--fs-md);
+}
+
+.summary b {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+
+.summary p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.readOnly {
+  margin: 0;
+  padding: var(--s-2) var(--s-4) var(--s-3);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+  text-align: center;
+}

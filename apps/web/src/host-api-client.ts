@@ -243,6 +243,20 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.downloadRetrievalModel, {}, undefined, options),
   removeRetrievalModel: (options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.removeRetrievalModel, {}, undefined, options),
+  getSubConversationRuntime: (conversationId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getSubConversationRuntime, { conversationId }, undefined, options),
+  listSubConversations: (channelId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.listSubConversations, { channelId }, undefined, options),
+  closeSubConversation: (conversationId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.closeSubConversation, { conversationId }, {}, options),
+  deleteSubConversation: (conversationId: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.deleteSubConversation, { conversationId }, undefined, options),
+  getSubConversationSettings: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getSubConversationSettings, {}, undefined, options),
+  updateSubConversationSettings: (
+    request: HostApiRequest<'updateSubConversationSettings'>,
+    options?: HostRequestOptions,
+  ) => callHostApi(HostApiContracts.updateSubConversationSettings, {}, request, options),
   getMessagePacingSettings: (options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getMessagePacingSettings, {}, undefined, options),
   updateMessagePacingSettings: (request: HostApiRequest<'updateMessagePacingSettings'>, options?: HostRequestOptions) =>

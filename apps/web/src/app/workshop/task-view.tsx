@@ -11,6 +11,8 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import type { SubConversation } from '@nekro-nxt/contracts'
+import { subConversationHref, subConversationStatus } from '../channels/sub-conversation-rows.js'
 import { Link } from 'react-router-dom'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { DynamicClientSlots } from '../../dynamic-client-coordinator.js'
@@ -26,6 +28,7 @@ import {
   Menu,
   ObjectHeader,
   PropertyGroup,
+  PropertyRow,
   Spinner,
   toast,
 } from '../../ui-kit/index.js'
@@ -283,6 +286,8 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
               ))}
             </ol>
           </PropertyGroup>
+
+          <VerificationConversations taskId={task.id} />
         </div>
       </div>
 
@@ -500,6 +505,29 @@ function NextAction(props: {
       </div>
       {restore}
     </div>
+  )
+}
+
+const NO_CONVERSATIONS: readonly SubConversation[] = []
+
+/** The sub-conversations NekroNXT opened to check this task's candidates; each shows the calls it made. */
+function VerificationConversations({ taskId }: { readonly taskId: string }) {
+  const all = useProductStore((state) => state.subConversations ?? NO_CONVERSATIONS)
+  const conversations = all.filter((conversation) => conversation.authoringTaskId === taskId)
+  if (conversations.length === 0) return null
+  return (
+    <PropertyGroup title="验证对话">
+      {conversations.map((conversation) => (
+        <PropertyRow
+          key={conversation.id}
+          label={<Link to={subConversationHref(conversation)}>{conversation.title}</Link>}
+        >
+          <span className={styles.attemptMeta}>
+            {subConversationStatus(conversation)} · {relativeTime(conversation.closedAt ?? conversation.createdAt)}
+          </span>
+        </PropertyRow>
+      ))}
+    </PropertyGroup>
   )
 }
 

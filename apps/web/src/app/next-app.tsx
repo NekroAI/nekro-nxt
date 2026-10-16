@@ -111,6 +111,7 @@ export function NextApp() {
                   <Route path="live" element={space(<LiveSpace />)} />
                   <Route path="logs" element={space(<LogsSpace />)} />
                   <Route path="channels/:channelId?" element={space(<ChannelsSpace />)} />
+                  <Route path="channels/:channelId/conversations/:conversationId" element={space(<ChannelsSpace />)} />
                   <Route path="agents/:agentId?" element={space(<AgentsSpace />)} />
                   <Route path="workshop/*" element={space(<WorkshopSpace />)} />
                   <Route path="community/*" element={space(<CommunitySpace />)} />

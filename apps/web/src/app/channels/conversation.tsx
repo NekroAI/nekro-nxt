@@ -25,9 +25,14 @@ import {
 import { connectionStatus } from '../model/connection-status.js'
 import { agentHue, agentPhase, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
+import { useGo } from '../model/nav.js'
+import { Link } from 'react-router-dom'
+import type { HostApiResponse } from '@nekro-nxt/contracts'
 import styles from './channels.module.css'
+import { subConversationStatus } from './sub-conversation-rows.js'
+import subStyles from './sub-conversations.module.css'
 import { MessageRow, TurnRow } from './timeline.js'
-import { buildTimeline } from './timeline-model.js'
+import { buildTimeline, relativeTime } from './timeline-model.js'
 
 const EMPTY: readonly ConversationMessage[] = []
 const XRAY_KEY = 'nekro-nxt.channel-xray'
@@ -337,6 +342,160 @@ export function Conversation({
         }}
       >
         <p>已完成的步骤不会撤回，排队的消息会保留。</p>
+      </ConfirmDialog>
+    </section>
+  )
+}
+
+type SubConversationRead = HostApiResponse<'getSubConversationRuntime'>
+
+/** How often an open sub-conversation's record is read again while its page is shown. */
+const SUB_CONVERSATION_POLL_MS = 2000
+
+/**
+ * One sub-conversation under its channel (docs/NekroNxt界面交互模型.md §5.6): what it was opened for, how it ended and
+ * everything that happened in it. It is read only; agents pass messages in and out of it.
+ */
+export function SubConversationView({
+  channel,
+  agent,
+  conversationId,
+}: {
+  readonly channel: ChannelSummary
+  readonly agent: AgentSummary | undefined
+  readonly conversationId: string
+}) {
+  const summary = useProductStore((state) =>
+    state.subConversations.find((conversation) => conversation.id === conversationId),
+  )
+  const [read, setRead] = useState<SubConversationRead>()
+  const [missing, setMissing] = useState(false)
+  const [confirm, setConfirm] = useState<'close' | 'delete' | null>(null)
+  const go = useGo()
+  const status = read?.conversation.status ?? summary?.status
+  const changedAt = summary?.closedAt ?? summary?.status
+
+  useEffect(() => {
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const load = () => {
+      workspaceApi
+        .getSubConversationRuntime(conversationId, { signal: controller.signal })
+        .then((next) => {
+          setRead(next)
+          setMissing(false)
+          if (next.conversation.status === 'open') timer = setTimeout(load, SUB_CONVERSATION_POLL_MS)
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setMissing(true)
+        })
+    }
+    load()
+    return () => {
+      controller.abort()
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [conversationId, changedAt])
+
+  const conversation = read?.conversation ?? summary
+  if (!conversation) {
+    return (
+      <div className={styles.emptyCanvas}>
+        <EmptyState
+          icon={<MessageSquareDashed />}
+          title={missing ? '这个子对话已经不在了' : '正在读取子对话'}
+          action={
+            missing ? (
+              <Button variant="primary" onClick={() => go(`/channels/${channel.id}`)}>
+                回到频道
+              </Button>
+            ) : undefined
+          }
+        >
+          {missing ? '结束后超过保留时间的子对话会连同记录一起清理。' : undefined}
+        </EmptyState>
+      </div>
+    )
+  }
+  const turns = read?.runtime.turns ?? []
+  return (
+    <section className={styles.chan} aria-label={conversation.title}>
+      <header className={styles.head}>
+        <div className={styles.title} key={conversation.id}>
+          <h1 className={styles.titleLine}>
+            <span>{conversation.title}</span>
+            <Chip tone={status === 'open' ? 'accent' : conversation.closeReason === 'failed' ? 'warn' : 'neutral'} dot>
+              {subConversationStatus(conversation)}
+            </Chip>
+          </h1>
+          <div className={styles.subline}>
+            <Link to={`/channels/${channel.id}`} className={subStyles.channelLink}>
+              {channel.name}
+            </Link>
+            <span>
+              {conversation.openedBy === 'agent'
+                ? `${agent?.name ?? '智能体'}开启`
+                : conversation.authoringTaskId === undefined
+                  ? 'NekroNXT 开启'
+                  : 'NekroNXT 开启 · 验证扩展候选'}
+              {` · ${relativeTime(conversation.createdAt)}`}
+            </span>
+            {conversation.authoringTaskId === undefined ? null : (
+              <Link to={`/workshop/tasks/${conversation.authoringTaskId}`} className={subStyles.channelLink}>
+                查看创造任务
+              </Link>
+            )}
+          </div>
+        </div>
+        {conversation.status === 'open' ? (
+          <Button size="small" onClick={() => setConfirm('close')}>
+            结束
+          </Button>
+        ) : (
+          <Button size="small" variant="danger" onClick={() => setConfirm('delete')}>
+            销毁
+          </Button>
+        )}
+      </header>
+      <div className={styles.conv} role="log" aria-label="子对话记录">
+        <div className={styles.convInner}>
+          {conversation.summary ? (
+            <div className={subStyles.summary}>
+              <b>{conversation.closeReason === 'failed' ? '没有完成' : '结论'}</b>
+              <p>{conversation.summary}</p>
+            </div>
+          ) : null}
+          {read && turns.length === 0 ? (
+            <div className={styles.emptyTimeline}>
+              <EmptyState icon={<MessageSquareDashed />} title="还没有记录">
+                子对话开始处理后，过程会出现在这里。
+              </EmptyState>
+            </div>
+          ) : null}
+          {turns.map((turn) => (
+            <TurnRow key={turn.turn} turn={turn} agent={agent} xray animateXray={false} startedAt={turn.startedAt} />
+          ))}
+        </div>
+      </div>
+      <p className={subStyles.readOnly}>子对话里的消息由智能体之间传递，这里只能查看。</p>
+      <ConfirmDialog
+        open={confirm !== null}
+        onOpenChange={(open) => !open && setConfirm(null)}
+        title={confirm === 'close' ? '结束这个子对话？' : '销毁这个子对话？'}
+        confirmLabel={confirm === 'close' ? '结束' : '销毁'}
+        danger={confirm === 'delete'}
+        onConfirm={async () => {
+          if (confirm === 'close') {
+            await workspaceApi.closeSubConversation(conversation.id)
+            toast('子对话已结束')
+            return
+          }
+          await workspaceApi.deleteSubConversation(conversation.id)
+          toast('子对话已销毁')
+          go(`/channels/${channel.id}`)
+        }}
+      >
+        <p>{confirm === 'close' ? '它正在做的事会停下，记录保留，可以继续查看。' : '它的记录会一起删除，无法恢复。'}</p>
       </ConfirmDialog>
     </section>
   )

@@ -8,7 +8,7 @@ import { Button, EmptyState, WorkbenchPage } from '../../ui-kit/index.js'
 import { useCrumb } from '../shell/crumb.js'
 import { ChannelList } from './channel-list.js'
 import styles from './channels.module.css'
-import { Conversation } from './conversation.js'
+import { Conversation, SubConversationView } from './conversation.js'
 import { ChannelInspector } from './inspector.js'
 
 const INSPECTOR_KEY = 'nekro-nxt.channel-inspector'
@@ -23,7 +23,7 @@ const readInspector = (): boolean => {
 }
 
 export default function ChannelsSpace() {
-  const { channelId } = useParams<{ channelId: string }>()
+  const { channelId, conversationId } = useParams<{ channelId: string; conversationId: string }>()
   const navigate = useGo()
   const hostStatus = useProductStore((state) => state.host.status)
   const channels = useProductStore((state) => state.channels)
@@ -80,9 +80,9 @@ export default function ChannelsSpace() {
 
   return (
     <WorkbenchPage
-      list={<ChannelList selectedId={channel?.id} />}
+      list={<ChannelList selectedId={channel?.id} selectedConversationId={conversationId} />}
       detail={
-        channel && inspectorOpen ? (
+        channel && inspectorOpen && conversationId === undefined ? (
           <ChannelInspector
             key={channel.id}
             channel={channel}
@@ -93,7 +93,9 @@ export default function ChannelsSpace() {
         ) : undefined
       }
     >
-      {channel ? (
+      {channel && conversationId !== undefined ? (
+        <SubConversationView key={conversationId} channel={channel} agent={agent} conversationId={conversationId} />
+      ) : channel ? (
         <Conversation
           channel={channel}
           agent={agent}
