@@ -1664,7 +1664,12 @@ export class DynamicAuthoringRuntime {
     const result = await runner.resolveRequestRun(ApprovalRequestId(requestId), resolution)
     const row = runner.inventory().find((candidate) => candidate.pluginId === owned.pluginId)
     const episodeId = this.#sessions.get(dshSessionId)?.episodeId
-    if (row && episodeId) this.syncAuthoringRow(episodeId, row, owned.latestRun.packageId)
+    if (row && episodeId) {
+      this.syncAuthoringRow(episodeId, row, owned.latestRun.packageId)
+      // A page that could not start a half ends the attempt here; the agent hears about it now. An approved run waits
+      // for the page's verification report, which wakes the agent itself.
+      if (!resolution.ok && resolution.reason !== 'rejected') this.queueAuthoringContinuation(episodeId, row)
+    }
     return result
   }
 

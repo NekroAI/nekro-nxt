@@ -185,7 +185,17 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
               throw new Error("Approval request does not belong to the agent's active session.")
             resolution = { ok: true, pluginRunId: pending.pluginRunId }
           } else {
-            resolution = { ok: false, reason: 'rejected' }
+            const declined = HostApiContracts.dynamicDecline.parseRequest(body)
+            resolution = {
+              ok: false,
+              reason: declined.reason ?? 'rejected',
+              ...(declined.reason === undefined || declined.reason === 'rejected' || pending === undefined
+                ? {}
+                : { pluginRunId: pending.pluginRunId }),
+              ...(declined.startedHere === undefined ? {} : { startedHere: declined.startedHere }),
+              ...(declined.message === undefined ? {} : { message: declined.message }),
+              ...(declined.stack === undefined ? {} : { stack: declined.stack }),
+            }
           }
           const ack = await runtime.host.resolveDynamicRunRequest(dshSessionId, parsed.requestId, resolution)
           writeJson(res, 200, contract.parseResponse({ accepted: ack.accepted }))

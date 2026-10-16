@@ -114,7 +114,11 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     const body = { episodeId: this.#episodeId, requestId, ...(pluginRunId.trim() ? { pluginRunId } : {}) }
     return resolutionAccepted(resolution)
       ? this.#post(HostApiContracts.dynamicApprove, { agentId: this.#agentId }, body)
-      : this.#post(HostApiContracts.dynamicDecline, { agentId: this.#agentId }, body)
+      : this.#post(
+          HostApiContracts.dynamicDecline,
+          { agentId: this.#agentId },
+          { ...body, ...declineDetails(resolution) },
+        )
   }
 
   async settleUserRun(agentId: string, pluginId: string, resolution: RunResolution): Promise<RunResponse> {
@@ -240,6 +244,32 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
     body: HostApiContractRequest<Contract>,
   ): Promise<Output> {
     return callHostApi(contract, params, body)
+  }
+}
+
+/**
+ * A failed half travels with its reason and error, so the Host settles a failed attempt instead of a decline; only an
+ * explicit rejection (or a resolution without a reason) is a decline.
+ */
+const declineDetails = (
+  resolution: unknown,
+): {
+  reason?: 'rejected' | 'host-half-failed' | 'client-half-failed'
+  startedHere?: boolean
+  message?: string
+  stack?: string
+} => {
+  if (typeof resolution !== 'object' || resolution === null) return {}
+  const value = new Map<string, unknown>(Object.entries(resolution))
+  const reason = value.get('reason')
+  const startedHere = value.get('startedHere')
+  const message = value.get('message')
+  const stack = value.get('stack')
+  return {
+    ...(reason === 'host-half-failed' || reason === 'client-half-failed' || reason === 'rejected' ? { reason } : {}),
+    ...(typeof startedHere === 'boolean' ? { startedHere } : {}),
+    ...(typeof message === 'string' ? { message: message.slice(0, 4000) } : {}),
+    ...(typeof stack === 'string' ? { stack: stack.slice(0, 16000) } : {}),
   }
 }
 

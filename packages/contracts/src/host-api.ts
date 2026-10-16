@@ -4375,7 +4375,19 @@ export const HostApiContracts = {
     path: '/api/dynamic/:agentId/decline',
     params: agentParam,
     request: z
-      .object({ episodeId: EpisodeIdSchema, requestId: DynamicIdSchema, pluginRunId: DynamicIdSchema.optional() })
+      .object({
+        episodeId: EpisodeIdSchema,
+        requestId: DynamicIdSchema,
+        pluginRunId: DynamicIdSchema.optional(),
+        /**
+         * Why the run did not go ahead: the user declined it, or the page could not start one of its halves. A failed
+         * half is settled as a failed attempt (its Host is retracted and the agent hears about it), not as a decline.
+         */
+        reason: z.enum(['rejected', 'host-half-failed', 'client-half-failed']).optional(),
+        startedHere: z.boolean().optional(),
+        message: z.string().max(4000).optional(),
+        stack: z.string().max(16000).optional(),
+      })
       .strict(),
     response: z.object({ accepted: z.boolean() }).strict(),
     error: HostApiErrorSchema,

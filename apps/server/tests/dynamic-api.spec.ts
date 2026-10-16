@@ -309,6 +309,131 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
     }
   })
 
+  it('settles a page that could not load the Client half as a failed attempt, not a decline', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dyn-failed-'))
+    temporaryDirectories.push(directory)
+    const model = new SettledModel()
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], model)
+      },
+    })
+    await runtime.start()
+    const entity = await runtime.createAgentWithInternalChannel({
+      displayName: '创造智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+      capabilities: { dynamicCreation: true },
+    })
+    await runtime.internalChannel.postMessage({
+      channelId: entity.channelId,
+      clientEventId: 'seed-session',
+      parts: [{ type: 'text', text: '建立活动会话。' }],
+    })
+    const episode = runtime.repository
+      .listActiveEpisodesForAgent(entity.agentId)
+      .find((candidate) => candidate.dshSessionId !== undefined)
+    const dshSessionId = episode!.dshSessionId!
+    const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+      plugin: { kind: 'new', idPrefix: 'broken' },
+      name: '加载失败的客户端',
+      purpose: '验证浏览器审批。',
+      code: {
+        host: `return {
+          inject: ['tools'],
+          apply(ctx) {
+            const tool = harness.defineTool({
+              name: 'dynamic_client_probe',
+              description: '验证带 Client 半边的动态 Tool 证据。',
+              parameters: {},
+              output: {
+                schema: { type: 'string' },
+                render(_args, value) { return [{ type: 'text', text: value }] }
+              },
+              execute() { return 'dynamic-client-ok' }
+            })
+            harness.registerTool(ctx, tool)
+          }
+        }`,
+        client: `return {
+          inject: ['panels'],
+          apply(ctx) {
+            ctx.panels.register(
+              { id: 'main', anchor: 'agent', title: '概览', densities: ['full'] },
+              () => React.createElement('div'),
+            )
+          }
+        }`,
+      },
+      resources: {},
+      // A V7 candidate also declares agent-layer capabilities; the preview only receives the page layer.
+      permissions: { permissions: [], networkOrigins: [], agent: { history: { read: true } } },
+      contributions: [],
+    })
+    void runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+    const latestRun = () =>
+      runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)?.latestRun
+    await expect.poll(() => latestRun()?.approvalRequestId).toBeDefined()
+    const approval = latestRun()!.approvalRequestId!
+    const hostHalf = await runtime.host.runDynamicHostHalf(
+      dshSessionId,
+      defined.pluginId,
+      defined.packageId,
+      'run',
+      approval,
+      false,
+    )
+    if (!hostHalf.ok) throw new Error(hostHalf.message)
+
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    try {
+      const response = await fetch(`http://127.0.0.1:${api.port}/api/dynamic/${entity.agentId}/decline`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          episodeId: episode!.id,
+          requestId: approval,
+          pluginRunId: hostHalf.pluginRunId,
+          reason: 'client-half-failed',
+          message: '界面脚本加载失败：虚构的语法错误',
+        }),
+      })
+      expect(response.ok, await response.clone().text()).toBe(true)
+      expect(HostApiContracts.dynamicDecline.parseResponse(await response.json())).toEqual({ accepted: true })
+      // The page's error is kept, the started Host is retracted, and the agent is told so it can fix the candidate.
+      expect(latestRun()).toMatchObject({
+        status: 'failed',
+        error: expect.objectContaining({ message: '界面脚本加载失败：虚构的语法错误' }),
+      })
+      expect(
+        runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)?.activeRun,
+      ).toBeUndefined()
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.status).toBe('failed')
+      await expect
+        .poll(() =>
+          model.requests.some((request) =>
+            request.messages.some(
+              (message) =>
+                message.role === 'user' &&
+                message.content.some((block) => block.type === 'text' && block.text.includes('〔系统通知〕')),
+            ),
+          ),
+        )
+        .toBe(true)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
   it('restores a verified Host-only authoring task from its persisted source ledger', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-recovery-'))
     temporaryDirectories.push(directory)
