@@ -27,6 +27,7 @@ import {
 } from './host-queries.js'
 import {
   assertAuxiliaryImageModel,
+  assertReasoningEffort,
   buildSnapshotMessage,
   readJsonBody,
   writeContractJson,
@@ -379,6 +380,7 @@ export function registerWorkspaceRoutes({
             }
           : parsed.capabilities
       await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+      await assertReasoningEffort(runtime, parsed.model)
       const content: AgentRevisionContent = {
         displayName: parsed.displayName,
         persona: parsed.persona,
@@ -535,6 +537,7 @@ export function registerWorkspaceRoutes({
             return
           }
           await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+          await assertReasoningEffort(runtime, parsed.model)
           const updated = runtime.core.reviseAgent(agentId, revision.id, {
             displayName: parsed.displayName,
             persona: parsed.persona,

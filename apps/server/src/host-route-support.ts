@@ -327,6 +327,19 @@ export const assertAuxiliaryImageModel = async (
   }
 }
 
+/** A thinking level is kept only when the chosen model offers it; the page lists exactly those. */
+export const assertReasoningEffort = async (
+  runtime: NekroRuntime,
+  model: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string | undefined },
+): Promise<void> => {
+  if (model.reasoningEffort === undefined) return
+  const models = await runtime.host.listAvailableLlmModels()
+  const selected = models.find((item) => item.provider === model.provider && item.id === model.model)
+  if (!selected?.reasoning?.efforts.some((effort) => effort.id === model.reasoningEffort)) {
+    throw new Error('这个模型不支持所选的思考强度，请重新选择。')
+  }
+}
+
 export const writeContractJson = <Contract extends HostApiContract>(
   res: ServerResponse,
   status: number,

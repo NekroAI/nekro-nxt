@@ -114,6 +114,11 @@ export interface ModelSummary {
   readonly name: string
   readonly description?: string
   readonly inputModalities?: readonly string[]
+  /** Selectable thinking levels, least to most; absent when the model offers no choice. */
+  readonly reasoning?: {
+    readonly efforts: readonly { readonly id: string; readonly name: string }[]
+    readonly defaultEffort?: string
+  }
 }
 
 export interface ChannelSummary {

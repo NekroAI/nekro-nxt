@@ -48,7 +48,7 @@ import { createReadStream } from 'node:fs'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
 import type { LlmProviderTestResults } from './llm-provider-test-results.js'
 import { Context, Service } from '@deepseek-ai/cordis'
-import { AgentRegistry, type Agent, type AgentStatus } from '@deepseek-ai/dsh-agent'
+import { AgentRegistry, type Agent, type AgentOptions, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-agent-loop'
 import { type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
@@ -228,6 +228,7 @@ import {
   type AvailableLlmModel,
   type LlmProviderSettingsView,
   type SaveLlmProviderInput,
+  type SaveLlmProviderModel,
   type TestLlmProviderInput,
   type WebSearchCapabilityStatus,
 } from './host-model-settings.js'
@@ -3440,6 +3441,20 @@ export class DshHostRuntime implements AgentSessionDriver {
     else this.#incompatibleAgents.add(agentId)
   }
 
+  /**
+   * The model route and thinking level for a conversation. A level the model no longer offers (its list changed
+   * after the agent was saved) is left out, so the model's own default applies instead of the request failing.
+   */
+  async #agentOptions(revision: AgentRevisionRecord): Promise<AgentOptions> {
+    const { provider, model, reasoningEffort } = revision.model
+    if (reasoningEffort === undefined) return { provider, model }
+    const offered = await this.#context.llm
+      .resolveModelInfo(provider, model)
+      .then((info) => info.reasoning?.efforts.some((effort) => String(effort.id) === reasoningEffort) === true)
+      .catch(() => false)
+    return offered ? { provider, model, reasoningEffort: ReasoningEffortId(reasoningEffort) } : { provider, model }
+  }
+
   async checkModelCompatibility(revision: AgentRevisionRecord): Promise<string | undefined> {
     const diagnostics = getDshHostProfileDiagnostics(this.#context)
     if (
@@ -3696,14 +3711,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     readonly baseURL?: string
     readonly api?: string
     readonly apiKey?: string
-  }): Promise<
-    readonly {
-      readonly id: string
-      readonly name?: string
-      readonly contextWindow?: number
-      readonly maxTokens?: number
-    }[]
-  > {
+  }): Promise<readonly SaveLlmProviderModel[]> {
     this.#assertActive()
     const provider = input.provider
     const draft = input.baseURL !== undefined || input.api !== undefined || input.apiKey !== undefined
@@ -4289,11 +4297,12 @@ export class DshHostRuntime implements AgentSessionDriver {
       await this.#extensionMounts.mountIntoSession(revision.agentId, sessionId, agentContext)
     }
     const persisted = (await this.#context.sessionPersistence.list()).some(({ header }) => header.id === sessionId)
+    const agentOptions = await this.#agentOptions(revision)
     const handle = persisted
       ? await this.#context.agents
           .resume({
             resumeSessionId: sessionId,
-            agentOptions: { provider: revision.model.provider, model: revision.model.model },
+            agentOptions,
             setup,
           })
           .catch((error: unknown) => {
@@ -4304,7 +4313,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       : await this.#context.agents.create({
           sessionId,
           ...(developmentWorkspace === undefined ? {} : { meta: { cwd: developmentWorkspace } }),
-          agentOptions: { provider: revision.model.provider, model: revision.model.model },
+          agentOptions,
           setup,
         })
     this.#sessions.require(sessionId).handle = handle

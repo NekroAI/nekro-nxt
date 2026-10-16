@@ -9,6 +9,8 @@ export interface EditableModel {
   readonly contextWindow?: number | undefined
   readonly maxTokens?: number | undefined
   readonly inputModalities?: ('text' | 'image')[] | undefined
+  /** Thinking levels the model offers; carried along, not edited in the table. */
+  readonly reasoningEfforts?: string[] | undefined
 }
 
 /** One editable model row; numeric fields stay as typed text until the row is submitted. */
@@ -19,6 +21,7 @@ export interface ModelRow {
   readonly contextWindow: string
   readonly maxTokens: string
   readonly image: boolean
+  readonly reasoningEfforts?: readonly string[]
 }
 
 let nextRowKey = 0
@@ -31,6 +34,7 @@ export const modelRowFromModel = (model: EditableModel): ModelRow => ({
   contextWindow: model.contextWindow === undefined ? '' : String(model.contextWindow),
   maxTokens: model.maxTokens === undefined ? '' : String(model.maxTokens),
   image: model.inputModalities?.includes('image') === true,
+  ...(model.reasoningEfforts?.length ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
 })
 
 export const emptyModelRow = (): ModelRow => ({
@@ -74,6 +78,26 @@ export const modelPayload = (rows: readonly ModelRow[]): EditableModel[] =>
       ...(typeof contextWindow === 'number' ? { contextWindow } : {}),
       ...(typeof maxTokens === 'number' ? { maxTokens } : {}),
       inputModalities: row.image ? ['text', 'image'] : ['text'],
+      ...(row.reasoningEfforts?.length ? { reasoningEfforts: [...row.reasoningEfforts] } : {}),
+    }
+  })
+
+/**
+ * Listed models the discovery describes better: thinking levels the row lacks, and a context length left empty.
+ * What the person set in the table is kept.
+ */
+export const enrichRows = (rows: readonly ModelRow[], discovered: readonly EditableModel[]): ModelRow[] =>
+  rows.map((row) => {
+    const found = discovered.find((model) => model.id === row.id.trim())
+    if (!found) return row
+    return {
+      ...row,
+      ...(!row.reasoningEfforts?.length && found.reasoningEfforts?.length
+        ? { reasoningEfforts: [...found.reasoningEfforts] }
+        : {}),
+      ...(!row.contextWindow && found.contextWindow !== undefined
+        ? { contextWindow: String(found.contextWindow) }
+        : {}),
     }
   })
 

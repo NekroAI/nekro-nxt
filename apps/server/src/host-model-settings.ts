@@ -46,6 +46,11 @@ export interface AvailableLlmModel {
   readonly name: string
   readonly description?: string
   readonly inputModalities?: readonly string[]
+  /** Selectable thinking levels, least to most; absent when the model offers no choice. */
+  readonly reasoning?: {
+    readonly efforts: readonly { readonly id: string; readonly name: string }[]
+    readonly defaultEffort?: string
+  }
 }
 
 const JsonObjectSchema = z.record(z.string(), z.unknown())
@@ -138,6 +143,8 @@ export interface LlmModelView {
   readonly contextWindow?: number
   readonly maxTokens?: number
   readonly inputModalities?: readonly LlmModelModality[]
+  /** Thinking levels this host's model list declares for the model. */
+  readonly reasoningEfforts?: readonly string[]
 }
 
 export interface LlmProviderSettingsView {
@@ -170,6 +177,8 @@ export interface SaveLlmProviderInput {
     readonly contextWindow?: number
     readonly maxTokens?: number
     readonly inputModalities?: readonly LlmModelModality[]
+    /** Thinking levels to declare, least to most; each level's wire value is its own name. */
+    readonly reasoningEfforts?: readonly string[]
   }[]
 }
 
@@ -256,6 +265,7 @@ const ConfiguredLlmModelSchema = z
     maxTokens: z.number().optional(),
     input: z.array(z.string()).optional(),
     inputModalities: z.array(z.string()).optional(),
+    reasoningEfforts: z.union([z.literal(false), z.record(z.string(), z.string().nullable())]).optional(),
   })
   .passthrough()
 
@@ -280,14 +290,17 @@ const modelView = (model: {
   readonly contextWindow?: number | undefined
   readonly maxTokens?: number | undefined
   readonly inputModalities?: readonly string[] | undefined
+  readonly reasoningEfforts?: false | Readonly<Record<string, string | null>> | undefined
 }): LlmModelView => {
   const inputModalities = normalizeModalities(model.inputModalities)
+  const reasoningEfforts = model.reasoningEfforts ? Object.keys(model.reasoningEfforts) : []
   return {
     id: model.id,
     name: model.name || model.id,
     ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
     ...(inputModalities === undefined ? {} : { inputModalities }),
+    ...(reasoningEfforts.length === 0 ? {} : { reasoningEfforts }),
   }
 }
 
@@ -340,14 +353,33 @@ export class HostModelSettings {
   async listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
     const groups = await Promise.all(
       this.#context.llm.listProviders().map(async (provider) =>
-        (await this.#context.llm.listModels(provider.id)).map((model) => ({
-          provider: provider.id,
-          providerName: provider.name,
-          id: model.id,
-          name: model.name,
-          ...(model.description === undefined ? {} : { description: model.description }),
-          ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
-        })),
+        Promise.all(
+          (await this.#context.llm.listModels(provider.id)).map(async (model) => {
+            // The selectable thinking levels live on the resolved route; resolving reads the loaded catalog only.
+            const reasoning = await this.#context.llm
+              .resolveModelInfo(provider.id, model.id)
+              .then((info) => info.reasoning)
+              .catch(() => undefined)
+            return {
+              provider: provider.id,
+              providerName: provider.name,
+              id: model.id,
+              name: model.name,
+              ...(model.description === undefined ? {} : { description: model.description }),
+              ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
+              ...(reasoning === undefined || reasoning.efforts.length === 0
+                ? {}
+                : {
+                    reasoning: {
+                      efforts: reasoning.efforts.map((effort) => ({ id: String(effort.id), name: effort.name })),
+                      ...(reasoning.defaultEffort === undefined
+                        ? {}
+                        : { defaultEffort: String(reasoning.defaultEffort) }),
+                    },
+                  }),
+            }
+          }),
+        ),
       ),
     )
     return groups.flat()
@@ -740,6 +772,9 @@ export class HostModelSettings {
       if (model.maxTokens !== undefined) entry['maxTokens'] = model.maxTokens
       const modalities = normalizeModalities(model.inputModalities)
       if (modalities !== undefined) entry[modalityField] = [...modalities]
+      if (settingsNs === 'llm-pi-ai' && model.reasoningEfforts?.length) {
+        entry['reasoningEfforts'] = Object.fromEntries(model.reasoningEfforts.map((level) => [level, level]))
+      }
       return entry
     })
   }

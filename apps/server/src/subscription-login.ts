@@ -38,6 +38,28 @@ const AGENT_NAME = 'NekroNXT'
 const OPENAI_ISSUER = 'https://auth.openai.com'
 const OPENAI_MODELS_URL = 'https://api.openai.com/v1/models'
 const NOTICE_LIMIT = 8
+/** The thinking levels pi-ai can send, which are also the ids DSH offers for them. */
+const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+
+/** One model the signed-in account may use, as the account's model list describes it. */
+export interface AccountModel {
+  readonly id: string
+  readonly name: string
+  readonly contextWindow?: number
+  readonly inputModalities?: readonly ('text' | 'image')[]
+  readonly reasoningEfforts?: readonly string[]
+}
+
+/** The llm-pi-ai model entry for an account model; each thinking level is sent under its own name. */
+const profileModel = (model: AccountModel): Record<string, unknown> => ({
+  id: model.id,
+  name: model.name,
+  ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+  ...(model.inputModalities === undefined ? {} : { input: [...model.inputModalities] }),
+  ...(model.reasoningEfforts === undefined
+    ? {}
+    : { reasoningEfforts: Object.fromEntries(model.reasoningEfforts.map((level) => [level, level])) }),
+})
 /** Sign-in reads nothing from the process environment; the account is the only credential. */
 const NO_AMBIENT_AUTH = { env: () => Promise.resolve(undefined), fileExists: () => Promise.resolve(false) }
 
@@ -484,7 +506,7 @@ export class SubscriptionLogins {
   }
 
   /** The models this account may use. The installed catalog lists every OpenAI model, not the plan's. */
-  async discoverModels(provider: SubscriptionProvider): Promise<readonly { id: string; name: string }[]> {
+  async discoverModels(provider: SubscriptionProvider): Promise<readonly AccountModel[]> {
     const models = createModels({ credentials: this.#slotStore(), authContext: NO_AMBIENT_AUTH })
     models.setProvider(openaiProvider())
     // Refreshes under DSH's credential lock when the token is about to expire, as a request would.
@@ -498,14 +520,41 @@ export class SubscriptionLogins {
     const catalog = z
       .object({
         models: z.array(
-          z.object({ slug: z.string().min(1), display_name: z.string().min(1), visibility: z.string() }).loose(),
+          z
+            .object({
+              slug: z.string().min(1),
+              display_name: z.string().min(1),
+              visibility: z.string(),
+              context_window: z.number().int().positive().optional().catch(undefined),
+              input_modalities: z.array(z.string()).optional().catch(undefined),
+              supported_reasoning_levels: z
+                .array(z.object({ effort: z.string() }).loose())
+                .optional()
+                .catch(undefined),
+            })
+            .loose(),
         ),
       })
       .loose()
       .parse(await response.json())
     return catalog.models
       .filter((model) => model.visibility === 'list')
-      .map((model) => ({ id: model.slug, name: model.display_name }))
+      .map((model) => {
+        const input = (model.input_modalities ?? []).filter(
+          (modality): modality is 'text' | 'image' => modality === 'text' || modality === 'image',
+        )
+        // Only levels pi-ai can send; `ultra` adds Codex task delegation, which this route does not use.
+        const efforts = (model.supported_reasoning_levels ?? [])
+          .map((level) => level.effort)
+          .filter((effort) => THINKING_LEVELS.has(effort))
+        return {
+          id: model.slug,
+          name: model.display_name,
+          ...(model.context_window === undefined ? {} : { contextWindow: model.context_window }),
+          ...(input.includes('text') ? { inputModalities: input } : {}),
+          ...(efforts.length === 0 ? {} : { reasoningEfforts: efforts }),
+        }
+      })
   }
 
   /** pi-ai's store over DSH's slot, as DSH's own adapter writes it, noting what a sign-in replaces. */
@@ -572,9 +621,9 @@ export class SubscriptionLogins {
     })
     const { value, revision } = this.#options.profile(provider)
     // The installed catalog lists every OpenAI model; an untouched list becomes the ones this account may use.
-    let models: readonly { id: string; name: string }[] | undefined
+    let models: readonly Record<string, unknown>[] | undefined
     if (value?.['models'] === undefined && value?.['modelOverrides'] === undefined) {
-      models = await this.discoverModels(provider).catch(() => undefined)
+      models = (await this.discoverModels(provider).catch(() => undefined))?.map(profileModel)
     }
     const ops: ProfileOp[] =
       value === undefined

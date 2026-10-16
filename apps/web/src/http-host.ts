@@ -391,6 +391,14 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     name: nonEmptyLabel(model.name, '未命名模型'),
     ...(model.description === undefined ? {} : { description: model.description }),
     ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
+    ...(model.reasoning === undefined
+      ? {}
+      : {
+          reasoning: {
+            efforts: model.reasoning.efforts.map((effort) => ({ ...effort })),
+            ...(model.reasoning.defaultEffort === undefined ? {} : { defaultEffort: model.reasoning.defaultEffort }),
+          },
+        }),
   }))
   const agents: AgentSummary[] = json.agents.map((agent) => ({
     id: agent.id,
