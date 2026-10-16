@@ -10,7 +10,7 @@ import {
   type ChannelSummary,
   type ConnectionSummary,
 } from '../../product-runtime.js'
-import { Button, FileChooser, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/index.js'
+import { FileChooser, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { useProductApi } from '../model/store.js'
 import { ResourcePreviewDialog } from './resource-preview.js'
@@ -336,17 +336,6 @@ export function Composer({
         <span role="status" className={styles.commandHint}>
           在这里执行的命令不会发送到频道{commandChannel?.requiresMention ? '；群成员需要先 @机器人' : ''}
         </span>
-      ) : null}
-      {agent?.modelRef?.provider === 'chatgpt' ? (
-        <div>
-          <Button
-            size="small"
-            variant="ghost"
-            onClick={() => window.open('https://chatgpt.com/settings/usage', '_blank', 'noopener,noreferrer')}
-          >
-            使用 ChatGPT 套餐 · 管理使用量
-          </Button>
-        </div>
       ) : null}
       <div className={styles.composerRow}>
         {commandMode ? (

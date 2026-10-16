@@ -1,5 +1,5 @@
 import { LlmProviderRemovalDialog } from './llm-provider-removal.js'
-import { ChatGptSettings } from './chatgpt-settings.js'
+import { SubscriptionAccounts } from './subscription-accounts.js'
 import { useProductRuntime } from './product-runtime.js'
 import { StaleHostReadError, callHostApi } from './host-api-client.js'
 import { ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
@@ -29,6 +29,7 @@ import {
   InfoTip,
   Input,
   ObjectHeader,
+  Segmented,
   Pressable,
   PropertyGroup,
   SecretInput,
@@ -70,8 +71,8 @@ const customProviderKey = (displayName: string, providers: readonly ProviderView
 
 /** How a provider is wired: user-declared, the generic catalog route, or a fixed built-in adapter. */
 export const providerKind = (provider: ProviderView): string =>
-  provider.provider === 'chatgpt'
-    ? 'ChatGPT 登录'
+  provider.subscription?.active
+    ? `${provider.subscription.label} 套餐登录`
     : provider.declared
       ? '自定义接入'
       : provider.settingsNs === 'llm-pi-ai'
@@ -93,8 +94,9 @@ export interface ProviderStatus {
  * omit `lastTest` and keep the plain "已启用".
  */
 export const providerStatus = (provider: ProviderView, now = Date.now()): ProviderStatus => {
-  if (provider.provider === 'chatgpt')
-    return { label: provider.active ? '已登录' : '未登录', tone: provider.active ? 'ok' : 'neutral' }
+  if (provider.configured && provider.subscription?.active && provider.subscription.accountLabel === null) {
+    return { label: '未登录', tone: 'warn' }
+  }
   if (!provider.active) {
     return provider.configured ? { label: '待启用', tone: 'warn' } : { label: '未配置', tone: 'neutral' }
   }
@@ -134,6 +136,8 @@ export function useLlmProviders() {
   return { settings: query.data ?? null, loading: query.loading, error: query.error, load }
 }
 
+const SUBSCRIPTION_OPTION = 'subscription:'
+
 /** Chooses an unconfigured catalog provider or the custom route to start configuring. */
 export function AddProviderDialog({
   open,
@@ -146,8 +150,33 @@ export function AddProviderDialog({
   readonly providers: readonly ProviderView[]
   readonly onPick: (provider: string) => void
 }) {
+  const store = useProductRuntime().store
   const available = providers.filter((provider) => !provider.configured)
   const [candidate, setCandidate] = useState('')
+  const [starting, setStarting] = useState(false)
+  /** A subscription route is the same provider signed in with an account instead of an API key. */
+  const pick = async (): Promise<void> => {
+    const subscribed = candidate.startsWith(SUBSCRIPTION_OPTION) ? candidate.slice(SUBSCRIPTION_OPTION.length) : ''
+    const provider = providers.find((item) => item.provider === subscribed)
+    if (provider) {
+      setStarting(true)
+      try {
+        await callHostApi(
+          HostApiContracts.llmSubscriptionAction,
+          { provider: provider.provider },
+          { action: 'use-subscription', expectedRevision: provider.settingsRevision },
+        )
+        await store.getState().loadLlmProviders(true)
+      } catch (cause) {
+        toast(failure(cause), { tone: 'bad', group: 'llm-provider-add' })
+        return
+      } finally {
+        setStarting(false)
+      }
+    }
+    onOpenChange(false)
+    onPick(provider?.provider ?? candidate)
+  }
   useEffect(() => {
     if (open) setCandidate(available[0]?.provider ?? CUSTOM_PROVIDER)
     // Reset only on open; the catalog refreshing must not override the user's pick.
@@ -162,13 +191,7 @@ export function AddProviderDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             取消
           </Button>
-          <Button
-            variant="primary"
-            onClick={() => {
-              onOpenChange(false)
-              onPick(candidate)
-            }}
-          >
+          <Button variant="primary" busy={starting} onClick={() => void pick()}>
             开始配置
           </Button>
         </>
@@ -183,6 +206,12 @@ export function AddProviderDialog({
               value: provider.provider,
               label: providerDisplayName(provider.provider, provider.displayName),
             })),
+            ...available
+              .filter((provider) => provider.subscription)
+              .map((provider) => ({
+                value: `${SUBSCRIPTION_OPTION}${provider.provider}`,
+                label: `${provider.subscription!.label} 套餐（登录账号）`,
+              })),
             { value: CUSTOM_PROVIDER, label: '自定义 OpenAI 兼容供应商' },
           ]}
         />
@@ -195,14 +224,7 @@ export function AddProviderDialog({
  * One provider's configuration: credential, model catalog, connection test, advanced route settings and removal.
  * `providerId` may be {@link CUSTOM_PROVIDER} for a provider that is being created.
  */
-export function ModelProviderDetail(props: {
-  readonly providerId: string
-  readonly onSelect: (provider: string) => void
-}): ReactNode {
-  return props.providerId === 'chatgpt' ? <ChatGptSettings /> : <ApiProviderDetail {...props} />
-}
-
-function ApiProviderDetail({
+export function ModelProviderDetail({
   providerId: requested,
   onSelect,
 }: {
@@ -228,7 +250,10 @@ function ApiProviderDetail({
   const [discovered, setDiscovered] = useState<readonly DiscoveredModelView[]>([])
   const [pending, setPending] = useState<'save' | 'discover' | 'test' | null>(null)
   const [submitted, setSubmitted] = useState(false)
+  const [credentialMode, setCredentialMode] = useState<'api-key' | 'subscription'>('api-key')
+  const [switchingToSubscription, setSwitchingToSubscription] = useState(false)
   const advancedId = useId()
+  const subscription = selected?.subscription
 
   const customEditor = customMode || selected?.declared === true
   const providerId = customMode
@@ -263,6 +288,7 @@ function ApiProviderDetail({
       return
     }
     if (!selected) return
+    setCredentialMode(selected.subscription?.active ? 'subscription' : 'api-key')
     setDisplayName(providerDisplayName(selected.provider, selected.displayName))
     setBaseURL(selected.baseURL ?? '')
     setApi(selected.api ?? '')
@@ -351,6 +377,21 @@ function ApiProviderDetail({
     }
   }
 
+  /** The route stops reading its API key (kept in the store) and uses the signed-in account. */
+  const useSubscription = async (): Promise<void> => {
+    if (!selected) return
+    try {
+      await callHostApi(
+        HostApiContracts.llmSubscriptionAction,
+        { provider: selected.provider },
+        { action: 'use-subscription', expectedRevision: selected.settingsRevision },
+      )
+      await store.getState().loadLlmProviders(true)
+    } catch (cause) {
+      toast(failure(cause), { tone: 'bad', group: `llm-provider-save:${selected.provider}` })
+    }
+  }
+
   const restoreModels = async (): Promise<void> => {
     if (!selected) return
     const next = await callHostApi(
@@ -424,7 +465,15 @@ function ApiProviderDetail({
             <>
               <span>{providerKind(selected)}</span>
               <span>{selected.models.length} 个模型</span>
-              <span>{selected.credential?.configured ? 'API 密钥已保存' : '尚未保存 API 密钥'}</span>
+              <span>
+                {subscription?.active
+                  ? subscription.accountLabel
+                    ? `${subscription.label} 账号：${subscription.accountLabel}`
+                    : `尚未登录 ${subscription.label}`
+                  : selected.credential?.configured
+                    ? 'API 密钥已保存'
+                    : '尚未保存 API 密钥'}
+              </span>
             </>
           ) : (
             <span>连接任意 OpenAI 兼容接口</span>
@@ -433,26 +482,54 @@ function ApiProviderDetail({
       />
 
       <PropertyGroup title="凭据">
-        <div className={styles.fields}>
-          {customEditor ? (
-            <Field label="供应商名称" error={displayNameError}>
-              <Input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} />
+        {subscription ? (
+          <Segmented
+            label="接入方式"
+            value={credentialMode}
+            onChange={(mode) => {
+              setCredentialMode(mode)
+              if (mode === 'subscription' && !subscription.active) {
+                if (selected?.credential?.configured) setSwitchingToSubscription(true)
+                else void useSubscription()
+              }
+            }}
+            options={[
+              { value: 'api-key', label: 'API 密钥' },
+              { value: 'subscription', label: `${subscription.label} 套餐` },
+            ]}
+          />
+        ) : null}
+        {subscription && credentialMode === 'subscription' && subscription.active && selected ? (
+          <SubscriptionAccounts provider={selected.provider} />
+        ) : credentialMode === 'subscription' ? null : (
+          <div className={styles.fields}>
+            {customEditor ? (
+              <Field label="供应商名称" error={displayNameError}>
+                <Input value={displayName} maxLength={80} onChange={(event) => setDisplayName(event.target.value)} />
+              </Field>
+            ) : null}
+            <Field
+              label="API 密钥"
+              tip={
+                selected?.credential?.configured
+                  ? '留空表示沿用当前密钥；已保存密钥无法查看。'
+                  : '保存后的密钥无法查看。'
+              }
+            >
+              <SecretInput
+                configured={selected?.credential?.configured === true}
+                data-1p-ignore="true"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+              />
             </Field>
-          ) : null}
-          <Field
-            label="API 密钥"
-            tip={
-              selected?.credential?.configured ? '留空表示沿用当前密钥；已保存密钥无法查看。' : '保存后的密钥无法查看。'
-            }
-          >
-            <SecretInput
-              configured={selected?.credential?.configured === true}
-              data-1p-ignore="true"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-            />
-          </Field>
-        </div>
+            {subscription?.active ? (
+              <span className={styles.muted}>
+                保存 API 密钥后，这个供应商改用密钥，不再使用 {subscription.label} 账号。
+              </span>
+            ) : null}
+          </div>
+        )}
       </PropertyGroup>
 
       <PropertyGroup
@@ -619,6 +696,18 @@ function ApiProviderDetail({
           }}
         />
       ) : null}
+      <ConfirmDialog
+        open={switchingToSubscription}
+        onOpenChange={(open) => {
+          setSwitchingToSubscription(open)
+          if (!open && !subscription?.active) setCredentialMode('api-key')
+        }}
+        title={`改用 ${subscription?.label ?? ''} 套餐`}
+        confirmLabel="改用套餐"
+        onConfirm={useSubscription}
+      >
+        {title}将改用登录的 {subscription?.label} 账号发送请求。已保存的 API 密钥会保留，之后可以随时改回。
+      </ConfirmDialog>
       <ConfirmDialog
         open={restoreOpen}
         onOpenChange={setRestoreOpen}

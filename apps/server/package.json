@@ -22,8 +22,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "1.1.0",
-    "jose": "6.2.12",
     "@deepseek-ai/cordis": "4.0.5-alpha.1",
     "@deepseek-ai/cordis-plugin-loader": "1.0.6-alpha.1",
     "@deepseek-ai/dsh-agent": "0.2.1-alpha.2",
@@ -32,6 +30,7 @@
     "@deepseek-ai/dsh-atomic-write": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-attachment": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-attachment-local": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-authorization": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-bash-sandbox": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-compaction-basic": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-alpha.2",
@@ -91,6 +90,7 @@
     "@deepseek-ai/dsh-web": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-web-search-deepseek": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-working-directory": "0.2.1-alpha.2",
+    "@earendil-works/pi-ai": "1.1.0",
     "@huggingface/tokenizers": "0.2.0",
     "@joplin/turndown-plugin-gfm": "1.0.67",
     "@modelcontextprotocol/client": "2.0.0",

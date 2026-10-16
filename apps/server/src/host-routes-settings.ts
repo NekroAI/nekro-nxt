@@ -27,52 +27,50 @@ export function registerSettingsRoutes({
   broadcast,
   broadcastExtensionsChanged,
 }: HostRouteContext): () => void {
-  for (const contract of [
-    HostApiContracts.chatGptStatus,
-    HostApiContracts.chatGptLogin,
-    HostApiContracts.chatGptAction,
-  ]) {
-    registerRoute({
-      kind: 'exact',
-      path: contract.path,
-      handler: async (req, res) => {
-        if (req.method !== contract.method) {
+  // A sign-in advances in the background; the page re-reads the status when it changes.
+  const unsubscribeSubscriptions = runtime.host.onSubscriptionsChanged(() =>
+    broadcast({ event: 'snapshot-changed', data: { changed: true } }),
+  )
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/llm/subscriptions',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/llm\/subscriptions\/([^/]+)$/u.exec(url.pathname)
+      if (match?.[1] === undefined) {
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
+        return
+      }
+      const provider = decodeURIComponent(match[1])
+      try {
+        if (req.method === 'GET') {
+          const params = HostApiContracts.llmSubscriptionStatus.parseParams({ provider })
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.llmSubscriptionStatus,
+            await runtime.host.subscriptionStatus(params.provider),
+          )
+          return
+        }
+        if (req.method !== 'POST') {
           writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
           return
         }
-        try {
-          const auth = runtime.host.getChatGptAuth()
-          if (!auth) throw new Error('ChatGPT 登录尚未启用。')
-          if (contract === HostApiContracts.chatGptStatus) {
-            writeContractJson(res, 200, HostApiContracts.chatGptStatus, auth.view())
-          } else if (contract === HostApiContracts.chatGptLogin) {
-            const input = HostApiContracts.chatGptLogin.parseRequest(await readJsonBody(req))
-            writeContractJson(res, 200, HostApiContracts.chatGptLogin, await auth.start(input.accountId))
-          } else {
-            const input = HostApiContracts.chatGptAction.parseRequest(await readJsonBody(req))
-            let revocationConfirmed: boolean | undefined
-            if (input.action === 'select') await auth.select(input.accountId)
-            else if (input.action === 'logout') revocationConfirmed = (await auth.logout(input.accountId)).revoked
-            else if (input.action === 'refresh-models') await auth.refreshModels()
-            else if (input.action === 'acknowledge') await auth.acknowledge()
-            else await auth.cancel()
-            broadcast({ event: 'snapshot-changed', data: { changed: true } })
-            writeContractJson(res, 200, HostApiContracts.chatGptAction, {
-              status: auth.view(),
-              ...(revocationConfirmed === undefined ? {} : { revocationConfirmed }),
-            })
-          }
-        } catch (error) {
-          writeError(
-            res,
-            400,
-            'chatgpt-operation-failed',
-            error instanceof Error ? error.message : 'ChatGPT 操作失败，请重试。',
-          )
-        }
-      },
-    })
-  }
+        const params = HostApiContracts.llmSubscriptionAction.parseParams({ provider })
+        const input = HostApiContracts.llmSubscriptionAction.parseRequest(await readJsonBody(req))
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.llmSubscriptionAction,
+          await runtime.host.subscriptionAction(params.provider, input),
+        )
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT' ? 409 : 400
+        writeError(res, code, 'llm-subscription-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
   registerRoute({
     kind: 'exact',
     path: '/api/runtime/compatibility/retry',
@@ -850,5 +848,5 @@ export function registerSettingsRoutes({
       }
     },
   })
-  return () => undefined
+  return unsubscribeSubscriptions
 }

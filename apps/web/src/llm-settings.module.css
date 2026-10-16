@@ -25,6 +25,13 @@
   max-width: var(--reader-width);
 }
 
+.accounts {
+  display: grid;
+  gap: var(--s-4);
+  min-width: 0;
+  max-width: var(--reader-width);
+}
+
 .loading {
   display: grid;
   gap: var(--s-3);

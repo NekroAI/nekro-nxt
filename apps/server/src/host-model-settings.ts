@@ -1,4 +1,3 @@
-import { chatGptAuth, CHATGPT_PROVIDER } from './chatgpt-models.js'
 import {
   getLlmProviderRemovalImpact,
   LlmProviderRemovalConflict,
@@ -126,6 +125,8 @@ export interface ConfigurableLlmProviderView {
   readonly discoverable: boolean
   /** Absent when this host does not record connection tests. */
   readonly lastTest?: LlmProviderTestResult | null
+  /** Present when the provider can sign in with a subscription account instead of an API key. */
+  readonly subscription?: { readonly label: string; readonly active: boolean; readonly accountLabel: string | null }
 }
 
 export type LlmModelModality = 'text' | 'image'
@@ -408,23 +409,6 @@ export class HostModelSettings {
         }
       }),
     )
-    const chatgpt = chatGptAuth(this.#context.root)?.view()
-    if (chatgpt) {
-      const account = chatgpt.accounts.find((item) => item.id === chatgpt.activeId)
-      providers.push({
-        provider: CHATGPT_PROVIDER,
-        displayName: 'ChatGPT',
-        settingsNs: 'chatgpt',
-        settingsPath: [],
-        settingsRevision: 0,
-        declared: false,
-        active: account?.planEnabled === true && account.signedIn,
-        configured: chatgpt.accounts.length > 0,
-        models: [...chatgpt.models],
-        modelsCustomized: false,
-        discoverable: false,
-      })
-    }
     return { writable: this.#context.settings.writable, protocols: [...LlmPiAi.supportedProtocols()], providers }
   }
 
@@ -963,11 +947,6 @@ export class HostModelSettings {
       finished = true
       if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
         const code = chunk.reason.failure.code
-        if (provider === CHATGPT_PROVIDER) {
-          if (code === 'AUTH' || code === 'MISSING_CREDENTIAL') throw new Error('ChatGPT 授权已失效，请重新登录。')
-          if (code === 'QUOTA' || code === 'RATE_LIMIT')
-            throw new Error('ChatGPT 使用额度受限，请打开 ChatGPT 使用量设置查看。')
-        }
         if (code === 'AUTH' || code === 'MISSING_CREDENTIAL') throw new Error('认证失败，请更新 API 密钥。')
         if (code === 'QUOTA') throw new Error('供应商额度不足或订阅限制。')
         if (code === 'RATE_LIMIT') throw new Error('供应商限流，请稍后再试。')
