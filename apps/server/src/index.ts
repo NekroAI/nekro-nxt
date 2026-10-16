@@ -3504,7 +3504,11 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   async getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    const settings = await this.#modelSettings.getLlmProviderSettings()
+    return this.#withSubscriptions(await this.#modelSettings.getLlmProviderSettings())
+  }
+
+  /** Every provider list the page receives says which routes sign in, or a save would hide the accounts. */
+  async #withSubscriptions(settings: LlmProviderSettingsView): Promise<LlmProviderSettingsView> {
     const subscriptions = this.#subscriptions
     if (!subscriptions) return settings
     return {
@@ -3671,19 +3675,19 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#modelSettings.getLlmProviderRemovalImpact(provider)
   }
 
-  removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+  async removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    return this.#modelSettings.removeLlmProvider(provider, expectedRevision)
+    return this.#withSubscriptions(await this.#modelSettings.removeLlmProvider(provider, expectedRevision))
   }
 
-  saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
+  async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    return this.#modelSettings.saveLlmProvider(input)
+    return this.#withSubscriptions(await this.#modelSettings.saveLlmProvider(input))
   }
 
-  restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+  async restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    return this.#modelSettings.restoreLlmProviderModels(provider, expectedRevision)
+    return this.#withSubscriptions(await this.#modelSettings.restoreLlmProviderModels(provider, expectedRevision))
   }
 
   discoverLlmProviderModels(input: {
