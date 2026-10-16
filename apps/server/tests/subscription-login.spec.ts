@@ -8,6 +8,7 @@ import { LlmRuntime, createUserMessage } from '@deepseek-ai/dsh-llm'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import { describeSubscriptionFailure } from '../src/subscription-failures.ts'
 import { SubscriptionLogins, type SubscriptionStatusView } from '../src/subscription-login.ts'
 
 const contexts: Context[] = []
@@ -22,7 +23,9 @@ afterEach(async () => {
 const accessToken = (email: string, serial: number) =>
   [
     Buffer.from('{"alg":"none"}').toString('base64url'),
-    Buffer.from(JSON.stringify({ 'https://api.openai.com/profile': { email }, serial })).toString('base64url'),
+    Buffer.from(
+      JSON.stringify({ sub: `subject-${email}`, 'https://api.openai.com/profile': { email }, serial }),
+    ).toString('base64url'),
     'signature-not-checked',
   ].join('.')
 
@@ -190,6 +193,24 @@ describe('subscription sign-in', () => {
     expect(profiles['openai']).toEqual({ api: 'openai-responses' })
     await signIn(subscriptions)
     expect(profiles['openai']).toEqual({ api: 'openai-responses', models: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] })
+  })
+
+  it('recognizes the same account signing in again by its subject', async () => {
+    vi.stubGlobal('fetch', openai(['first@example.com', 'first@example.com']).handler)
+    const { subscriptions } = await host({ openai: {} })
+    const first = await signIn(subscriptions)
+    const again = await signIn(subscriptions)
+    expect(again.accounts).toHaveLength(1)
+    expect(again.activeAccountId).toBe(first.activeAccountId)
+  })
+
+  it('explains plan refusals instead of showing the raw OpenAI error', () => {
+    expect(
+      describeSubscriptionFailure(
+        'OpenAI API error (403): {"message":"The ChatGPT user is not eligible for subscription sharing.","code":"subscription_sharing_user_not_eligible"}',
+      ),
+    ).toContain('不能把套餐额度用于 NekroNXT')
+    expect(describeSubscriptionFailure('OpenAI API error (500): upstream')).toBeUndefined()
   })
 
   it('reports a cancelled sign-in without touching the stored account', async () => {

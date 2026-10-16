@@ -63,6 +63,7 @@ const fromRecord = (record: CredentialRecord | undefined): Credential | undefine
 }
 const AccessClaimsSchema = z
   .object({
+    sub: z.string().optional(),
     email: z.string().optional(),
     'https://api.openai.com/profile': z.object({ email: z.string().optional() }).loose().optional(),
   })
@@ -76,6 +77,8 @@ const AccountSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     email: z.string().optional(),
+    /** OpenAI's opaque account identifier from the access token; signing the same account in again matches it. */
+    subject: z.string().optional(),
     createdAt: z.number().int().nonnegative(),
     /** The account's credential while another account holds the provider's single DSH slot. */
     parked: OAuthCredentialSchema.optional(),
@@ -152,17 +155,23 @@ export interface SubscriptionLoginsOptions {
 const vaultKey = (provider: SubscriptionProvider): CredentialKey =>
   credentialKey('nekro-nxt', `subscription-${provider}`)
 
-/** Best-effort display label from the access token; never used to authenticate anything. */
-function emailOf(credential: Credential | undefined): string | undefined {
-  if (credential?.type !== 'oauth') return undefined
+/**
+ * Who the access token belongs to, read without verifying it: only to label an account and recognize it on the
+ * next sign-in, never to authenticate. ChatGPT's tokens carry an opaque subject and usually no email.
+ */
+function identityOf(credential: Credential | undefined): { subject?: string; email?: string } {
+  if (credential?.type !== 'oauth') return {}
   try {
     const claims = AccessClaimsSchema.parse(
       JSON.parse(Buffer.from(credential.access.split('.')[1] ?? '', 'base64url').toString('utf8')),
     )
     const email = claims['https://api.openai.com/profile']?.email ?? claims.email
-    return email?.includes('@') ? email : undefined
+    return {
+      ...(claims.sub ? { subject: claims.sub } : {}),
+      ...(email?.includes('@') ? { email } : {}),
+    }
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -518,7 +527,7 @@ export class SubscriptionLogins {
   /** The new sign-in now holds the slot: record it, and park whichever account it displaced. */
   async #adoptSignedIn(provider: SubscriptionProvider, replaced: { previous?: CredentialRecord }): Promise<void> {
     const signedIn = fromRecord(await this.#context.credentials.readRecord(recordKeyFor(provider)))
-    const email = emailOf(signedIn)
+    const { subject, email } = identityOf(signedIn)
     const previous = fromRecord(replaced.previous)
     await this.#writeVault(provider, (current) => {
       let accounts = current.accounts
@@ -531,17 +540,29 @@ export class SubscriptionLogins {
         accounts = [
           ...accounts,
           withParked(
-            { id: randomUUID(), label: emailOf(previous) ?? nextLabel(accounts), createdAt: Date.now() },
+            { id: randomUUID(), label: identityOf(previous).email ?? nextLabel(accounts), createdAt: Date.now() },
             previous,
           ),
         ]
       }
-      // Signing the same email in again refreshes that account instead of adding a twin.
-      const same = email === undefined ? undefined : accounts.find((account) => account.email === email)
+      // Signing the same account in again refreshes it instead of adding a twin.
+      const same =
+        subject === undefined && email === undefined
+          ? undefined
+          : accounts.find((account) => (subject === undefined ? account.email === email : account.subject === subject))
       const id = same?.id ?? randomUUID()
       accounts = same
         ? accounts.map((account) => (account.id === id ? withoutParked(account) : account))
-        : [...accounts, { id, label: email ?? nextLabel(accounts), ...(email ? { email } : {}), createdAt: Date.now() }]
+        : [
+            ...accounts,
+            {
+              id,
+              label: email ?? nextLabel(accounts),
+              ...(email ? { email } : {}),
+              ...(subject ? { subject } : {}),
+              createdAt: Date.now(),
+            },
+          ]
       return { ...current, activeId: id, accounts }
     })
     const { value, revision } = this.#options.profile(provider)
