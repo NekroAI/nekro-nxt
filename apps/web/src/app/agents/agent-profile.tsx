@@ -179,8 +179,8 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           persona: draft.personaText,
           personaDocument: draft.persona,
           model: chosen,
-          ...(agent.modelRef?.reasoningEffort && draft.modelKey === base.modelKey
-            ? { reasoningEffort: agent.modelRef.reasoningEffort }
+          ...(draft.effort && chosen.reasoning?.efforts.some((effort) => effort.id === draft.effort)
+            ? { reasoningEffort: draft.effort }
             : {}),
           imagePolicy: imagePolicyFor(agent.imagePolicy, chosen, vision),
           dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,

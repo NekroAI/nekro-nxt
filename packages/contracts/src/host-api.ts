@@ -1547,6 +1547,14 @@ export const HostSnapshotSchema = z
           name: z.string(),
           description: z.string().optional(),
           inputModalities: z.array(z.string()).optional(),
+          /** Selectable thinking levels, least to most; absent when the model offers no choice. */
+          reasoning: z
+            .object({
+              efforts: z.array(z.object({ id: NonEmptyStringSchema, name: z.string() }).strict()).min(1),
+              defaultEffort: NonEmptyStringSchema.optional(),
+            })
+            .strict()
+            .optional(),
         })
         .strict(),
     ),
@@ -2239,6 +2247,9 @@ export type HostSseEvent = z.output<typeof HostSseEventSchema>
 /** Request content a model accepts; `image` enables native vision for agents using the model. */
 export const LlmModelInputModalitiesSchema = z.array(z.enum(['text', 'image'])).min(1)
 
+/** Thinking levels a model offers, least to most; the ids are the adapter's own. */
+export const LlmModelReasoningEffortsSchema = z.array(NonEmptyStringSchema).min(1)
+
 export const LlmProviderModelSchema = z
   .object({
     id: NonEmptyStringSchema,
@@ -2246,6 +2257,7 @@ export const LlmProviderModelSchema = z
     contextWindow: z.number().int().positive().optional(),
     maxTokens: z.number().int().positive().optional(),
     inputModalities: LlmModelInputModalitiesSchema.optional(),
+    reasoningEfforts: LlmModelReasoningEffortsSchema.optional(),
   })
   .strict()
 
@@ -2256,6 +2268,7 @@ export const LlmDiscoveredModelSchema = z
     contextWindow: z.number().int().positive().optional(),
     maxTokens: z.number().int().positive().optional(),
     inputModalities: LlmModelInputModalitiesSchema.optional(),
+    reasoningEfforts: LlmModelReasoningEffortsSchema.optional(),
   })
   .strict()
 

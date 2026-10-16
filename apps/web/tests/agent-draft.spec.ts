@@ -17,6 +17,7 @@ const base: AgentDraft = {
   persona: promptDocumentFromText('严谨、简洁'),
   personaText: '严谨、简洁',
   modelKey: 'fixture/text-model',
+  effort: '',
   visionKey: '',
   capabilities: {
     subagents: true,
@@ -54,6 +55,12 @@ describe('agent draft', () => {
     })
     expect(draftChanges(base, base)).toEqual([])
     expect(identityChanged(base, { ...base, capabilities: { ...base.capabilities, subagents: false } })).toBe(false)
+  })
+
+  it('saves a changed thinking level with the identity', () => {
+    const edited = { ...base, effort: 'high' }
+    expect(draftChanges(base, edited)).toEqual(['思考强度'])
+    expect(identityChanged(base, edited)).toBe(true)
   })
 
   it('ignores surrounding spaces in the name', () => {

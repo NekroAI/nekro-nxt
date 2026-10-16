@@ -19,6 +19,15 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
+/** The account model as the route stores it: levels pi-ai can send, each under its own name; `ultra` is left out. */
+const ACCOUNT_MODEL = {
+  id: 'gpt-5.5',
+  name: 'GPT-5.5',
+  contextWindow: 272000,
+  input: ['text', 'image'],
+  reasoningEfforts: { low: 'low', medium: 'medium', max: 'max' },
+}
+
 /** A signed access token as ChatGPT issues it; only the profile claim matters here. */
 const accessToken = (email: string, serial: number) =>
   [
@@ -56,7 +65,19 @@ function openai(queue: string[]) {
     if (url === 'https://api.openai.com/v1/models')
       return Response.json({
         models: [
-          { slug: 'gpt-5.5', display_name: 'GPT-5.5', visibility: 'list' },
+          {
+            slug: 'gpt-5.5',
+            display_name: 'GPT-5.5',
+            visibility: 'list',
+            context_window: 272000,
+            input_modalities: ['text', 'image'],
+            supported_reasoning_levels: [
+              { effort: 'low', description: 'Fast' },
+              { effort: 'medium', description: 'Balanced' },
+              { effort: 'max', description: 'Deepest' },
+              { effort: 'ultra', description: 'Delegates tasks' },
+            ],
+          },
           { slug: 'internal-tool', display_name: 'Internal', visibility: 'hide' },
         ],
       })
@@ -139,7 +160,7 @@ describe('subscription sign-in', () => {
     expect(done.accounts).toEqual([expect.objectContaining({ label: 'first@example.com', email: 'first@example.com' })])
     expect(done.activeAccountId).toBe(done.accounts[0]!.id)
     // The untouched catalog became the models this account may use.
-    expect(profiles['openai']).toEqual({ models: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] })
+    expect(profiles['openai']).toEqual({ models: [ACCOUNT_MODEL] })
 
     for await (const chunk of context.llm.stream({
       provider: 'openai',
@@ -192,7 +213,7 @@ describe('subscription sign-in', () => {
     await subscriptions.useSubscription('openai', 0)
     expect(profiles['openai']).toEqual({ api: 'openai-responses' })
     await signIn(subscriptions)
-    expect(profiles['openai']).toEqual({ api: 'openai-responses', models: [{ id: 'gpt-5.5', name: 'GPT-5.5' }] })
+    expect(profiles['openai']).toEqual({ api: 'openai-responses', models: [ACCOUNT_MODEL] })
   })
 
   it('recognizes the same account signing in again by its subject', async () => {

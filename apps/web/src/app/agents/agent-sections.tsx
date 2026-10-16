@@ -54,6 +54,7 @@ import { CodeRunNodeDownload, CodeRunNodeRemove } from './runtime-download.js'
 import { missingAgentModel, replacementModel } from './model-health.js'
 import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
+import { EffortSlider } from './effort-slider.js'
 
 /** What each extension autonomy level lets the agent do without opening the console. */
 const EXTENSION_AUTONOMY_HINT: Record<'manual' | 'confirm' | 'autonomous', string> = {
@@ -134,9 +135,26 @@ export function ModelSection({
             value={model ? draft.modelKey : ''}
             {...(model ? {} : { placeholder: '选择模型' })}
             options={options}
-            onValueChange={(value) => update((current) => ({ ...current, modelKey: value }))}
+            onValueChange={(value) =>
+              update((current) => {
+                // A level the newly chosen model does not offer falls back to that model's default.
+                const next = models.find((item) => agentModelKey(item) === value)
+                const kept = next?.reasoning?.efforts.some((effort) => effort.id === current.effort) === true
+                return { ...current, modelKey: value, effort: kept ? current.effort : '' }
+              })
+            }
           />
         </PropertyRow>
+        {model?.reasoning ? (
+          <PropertyRow label="思考强度" layout="stacked" tip="越高，处理复杂问题越可靠，回答也越慢、用量越多">
+            <EffortSlider
+              efforts={model.reasoning.efforts}
+              defaultEffort={model.reasoning.defaultEffort}
+              value={model.reasoning.efforts.some((effort) => effort.id === draft.effort) ? draft.effort : ''}
+              onChange={(effort) => update((current) => ({ ...current, effort }))}
+            />
+          </PropertyRow>
+        ) : null}
         {model && !supportsImages(model) ? (
           <PropertyRow
             label="视觉模型"

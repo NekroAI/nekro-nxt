@@ -29,6 +29,7 @@ import { z } from 'zod'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import {
   assertAuxiliaryImageModel,
+  assertReasoningEffort,
   buildSnapshotMessage,
   createExtensionRevisionExport,
   HOST_UI_PRODUCT_MUTATIONS,
@@ -249,6 +250,7 @@ export function registerExtensionsRoutes({
                   codeRun: false,
                 } as const)
               await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+              await assertReasoningEffort(runtime, parsed.model)
               const entity = await runtime.createAgentWithInternalChannel({
                 displayName: parsed.displayName,
                 persona: parsed.persona,
@@ -269,6 +271,7 @@ export function registerExtensionsRoutes({
                 throw new Error('智能体配置刚被修改，请刷新后重试。')
               }
               await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+              await assertReasoningEffort(runtime, parsed.model)
               const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
                 displayName: parsed.displayName,
                 persona: parsed.persona,
