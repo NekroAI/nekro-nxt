@@ -257,9 +257,28 @@ class DynamicClientCoordinator {
       if (!episodeId) throw new Error('请先打开这个动态运行所属的 Episode。')
       const before = await this.#host.inventory(agentId, episodeId)
       const pending = before.find((row) => row.latestRun?.approvalRequestId === requestId)
-      await runtime.reconcile(before)
-      if (approved) await runtime.approve(requestId)
-      else await runtime.decline(requestId)
+      try {
+        await runtime.reconcile(before)
+      } catch (error) {
+        // Restoring another, older run failed; that must not keep this request from being answered.
+        this.#failure = errorMessage(error)
+        this.#publish()
+      }
+      try {
+        if (approved) await runtime.approve(requestId)
+        else await runtime.decline(requestId)
+      } catch (error) {
+        // The request may never have reached the Host. Settle it as a failed attempt so the task records why and the
+        // agent hears about it, instead of staying "running" with nothing left to click.
+        const stuck = (await this.#host.inventory(agentId, episodeId)).find(
+          (row) => row.latestRun?.approvalRequestId === requestId && row.latestRun.status === 'awaiting-approval',
+        )
+        if (approved && stuck)
+          await this.#host
+            .resolveRequestRun(requestId, { ok: false, reason: 'client-half-failed', message: errorMessage(error) })
+            .catch(() => undefined)
+        throw error
+      }
       const after = await this.#host.inventory(agentId, episodeId)
       await runtime.reconcile(after)
       const settled = pending === undefined ? undefined : after.find((row) => row.pluginId === pending.pluginId)

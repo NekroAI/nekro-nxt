@@ -408,10 +408,8 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       expect(response.ok, await response.clone().text()).toBe(true)
       expect(HostApiContracts.dynamicDecline.parseResponse(await response.json())).toEqual({ accepted: true })
       // The page's error is kept, the started Host is retracted, and the agent is told so it can fix the candidate.
-      expect(latestRun()).toMatchObject({
-        status: 'failed',
-        error: expect.objectContaining({ message: '界面脚本加载失败：虚构的语法错误' }),
-      })
+      expect(latestRun()?.status).toBe('failed')
+      expect(latestRun()?.error?.message).toBe('界面脚本加载失败：虚构的语法错误')
       expect(
         runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)?.activeRun,
       ).toBeUndefined()

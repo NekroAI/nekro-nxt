@@ -126,7 +126,7 @@ describe('DSH Dynamic Client Runtime', () => {
       }
       await runtime.reconcile([declined])
       await runtime.decline('approval-2')
-      expect(resolutions.at(-1)).toEqual({ episodeId, requestId: 'approval-2' })
+      expect(resolutions.at(-1)).toEqual({ episodeId, requestId: 'approval-2', reason: 'rejected' })
     } finally {
       await runtime.dispose()
     }
