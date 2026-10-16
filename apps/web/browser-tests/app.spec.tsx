@@ -725,6 +725,18 @@ test.describe('NekroNxt browser projections', () => {
             : memberDirectory,
       })
     })
+    // The workshop asks whether the community is signed in to offer sync; a signed-out community by default.
+    await page.route('**/api/community/status', (request) =>
+      request.fulfill({
+        json: {
+          communityUrl: 'https://community.example.test',
+          environment: 'staging',
+          account: null,
+          signedInAt: null,
+          updatesAvailable: 0,
+        },
+      }),
+    )
     // Extension pages read their lineage and data on their own; tests that look at them override these.
     await page.route('**/api/extensions/*/lineage', (request) => request.fulfill({ json: { lines: [] } }))
     await page.route('**/api/extensions/*/data', (request) =>
@@ -1064,22 +1076,26 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(page.getByRole('heading', { name: '文档复核' })).toBeVisible()
         await playwrightExpect(page.getByText('1 个智能体使用', { exact: true }).first()).toBeVisible()
         await playwrightExpect(page.getByText('document_review', { exact: true })).toBeVisible()
-        // Versions are numbered by their place on the lineage, never by an internal r-number.
-        const current = page.getByRole('button', { name: 'v3，正在使用，社区发布 #2' })
+        // Versions are named by when they were saved and what changed, never by an internal r-number.
+        await page.getByRole('tab', { name: '版本' }).click()
+        const current = page.getByRole('button', { name: /正在使用，社区发布 #2$/u })
         await playwrightExpect(current).toBeVisible()
-        await page.getByRole('button', { name: 'v2', exact: true }).click()
-        await playwrightExpect(page.getByRole('button', { name: '安装这个版本' })).toBeVisible()
+        await page
+          .getByRole('button', { name: /的版本$/u })
+          .first()
+          .click()
+        // The picked version offers to be installed in its lineage card (the version list has its own buttons).
+        await playwrightExpect(page.getByRole('button', { name: '安装这个版本' }).first()).toBeVisible()
         await page.screenshot({ path: '.local/browser-test-results/lineage.png', fullPage: true })
-        await playwrightExpect(page.getByText('第 1 版', { exact: true }).first()).toBeVisible()
         await playwrightExpect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
         await playwrightExpect(page.locator('main')).not.toContainText('Revision')
-        // Internal identifiers stay in the collapsed diagnostics until asked for.
+        // Internal identifiers stay on the diagnostics tab.
         await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeHidden()
+        await page.getByRole('tab', { name: '诊断' }).click()
         await page.getByRole('button', { name: '诊断信息' }).click()
         await playwrightExpect(page.getByText(browserExtensionRevisionId, { exact: false })).toBeVisible()
-        await page.getByRole('button', { name: '更多' }).first().click()
-        await playwrightExpect(page.getByRole('menuitem', { name: '删除扩展' })).toBeVisible()
-        await page.keyboard.press('Escape')
+        await page.getByRole('tab', { name: '概览' }).click()
+        await playwrightExpect(page.getByRole('button', { name: '删除扩展' })).toBeVisible()
         await playwrightExpect(page.getByRole('button', { name: '导入扩展' })).toBeVisible()
       },
       browserSnapshot,
@@ -1283,9 +1299,10 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       '/community',
       async (page) => {
-        await page.getByRole('switch', { name: '只看官方扩展' }).click()
+        await page.getByRole('button', { name: '只看官方', pressed: false }).click()
         await playwrightExpect.poll(() => listRequests.some((url) => url.includes('official=1'))).toBe(true)
-        await page.getByRole('radio', { name: '综合评分' }).click()
+        await page.getByRole('combobox', { name: '排序' }).click()
+        await page.getByRole('option', { name: '综合评分' }).click()
         await playwrightExpect.poll(() => listRequests.some((url) => url.includes('sort=score'))).toBe(true)
         await page.getByRole('link', { name: /社区天气/u }).click()
         await playwrightExpect(page.getByText('测试站')).toBeVisible()
@@ -1571,7 +1588,7 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
-        await page.getByRole('button', { name: '更多操作' }).click()
+        await page.getByRole('button', { name: '更多操作', exact: true }).click()
         await page.getByRole('menuitem', { name: '分享人设到社区' }).click()
         const dialog = page.getByRole('dialog', { name: '分享人设到社区' })
         await playwrightExpect(dialog.getByLabel('名称')).toHaveValue('资料员')
@@ -1850,14 +1867,29 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(table).toContainText('文档复核固定计划')
         await playwrightExpect(table).toContainText('已暂停')
         await playwrightExpect(table).toContainText('已触发')
-        // Declared plans cannot be deleted; finished tasks can only be cleared.
-        await playwrightExpect(page.getByRole('button', { name: '删除「每晚汇总」' })).toHaveCount(0)
-        await playwrightExpect(page.getByRole('button', { name: '暂停「提醒喝水」' })).toHaveCount(0)
+        // Row actions sit in each task's menu. Declared plans cannot be deleted; finished tasks can only be cleared.
+        const menuOf = async (label: string) => {
+          await playwrightExpect(page.getByRole('menu')).toHaveCount(0)
+          await page.getByRole('button', { name: `「${label}」的更多操作` }).click()
+          const menu = page.getByRole('menu')
+          await playwrightExpect(menu).toBeVisible()
+          return menu
+        }
+        const close = async () => {
+          await page.keyboard.press('Escape')
+          await playwrightExpect(page.getByRole('menu')).toHaveCount(0)
+        }
+        await playwrightExpect((await menuOf('每晚汇总')).getByRole('menuitem', { name: '恢复' })).toBeVisible()
+        await playwrightExpect(page.getByRole('menuitem', { name: '删除' })).toHaveCount(0)
+        await close()
+        await playwrightExpect((await menuOf('提醒喝水')).getByRole('menuitem', { name: '删除' })).toBeVisible()
+        await playwrightExpect(page.getByRole('menuitem', { name: '暂停' })).toHaveCount(0)
+        await close()
         await page.screenshot({ path: '.local/browser-test-results/agent-scheduled-tasks.png', fullPage: true })
 
-        await page.getByRole('button', { name: '暂停「工作日早报」' }).click()
-        await page.getByRole('button', { name: '恢复「每晚汇总」' }).click()
-        await page.getByRole('button', { name: '删除「提醒喝水」' }).click()
+        await (await menuOf('工作日早报')).getByRole('menuitem', { name: '暂停' }).click()
+        await (await menuOf('每晚汇总')).getByRole('menuitem', { name: '恢复' }).click()
+        await (await menuOf('提醒喝水')).getByRole('menuitem', { name: '删除' }).click()
         await page.getByRole('dialog', { name: '删除「提醒喝水」？' }).getByRole('button', { name: '删除' }).click()
         await playwrightExpect
           .poll(() => [...calls].sort())
@@ -1873,7 +1905,8 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(notice).toContainText('提醒示例成员：定时功能测试')
         await playwrightExpect(notice).toContainText('由示例成员发起')
         await playwrightExpect(page.getByText('群成员', { exact: true })).toHaveCount(0)
-        await inspector.getByRole('button', { name: '立即执行「工作日早报」' }).click()
+        await inspector.getByRole('button', { name: '「工作日早报」的更多操作' }).click()
+        await page.getByRole('menuitem', { name: '立即执行' }).click()
         await playwrightExpect.poll(() => calls).toContain('POST job_morning/run')
         await page.screenshot({ path: '.local/browser-test-results/channel-scheduled-tasks.png' })
       },
@@ -2168,7 +2201,7 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
-        await page.getByRole('button', { name: '添加账号' }).click()
+        await page.getByRole('button', { name: '添加 GitHub 账号' }).click()
         const dialog = page.getByRole('dialog', { name: '添加 GitHub 账号' })
         await dialog.getByRole('radio', { name: '使用本机 gh 登录' }).click()
         await dialog.getByRole('button', { name: '添加' }).click()
@@ -3027,7 +3060,7 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/wiring/connections/${browserConnectionId}`,
       async (page) => {
-        const add = page.getByRole('button', { name: '添加账号' })
+        const add = page.getByRole('button', { name: '添加平台账号' })
         await playwrightExpect(add).toBeVisible()
         await add.click()
         await playwrightExpect(page).toHaveURL(/\/wiring\/new$/u)

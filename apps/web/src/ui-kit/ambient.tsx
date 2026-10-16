@@ -5,10 +5,15 @@ const motionOff = (): boolean =>
   document.documentElement.dataset['nxtMotion'] === 'off' ||
   (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
 
+/**
+ * A GPU that draws WebGL. Without one the browser falls back to software rendering, where the scene would take most
+ * of each frame and slow the page down; those devices keep the static glow.
+ */
 const webglAvailable = (): boolean => {
   try {
     const probe = document.createElement('canvas')
-    return probe.getContext('webgl2') !== null || probe.getContext('webgl') !== null
+    const options = { failIfMajorPerformanceCaveat: true }
+    return probe.getContext('webgl2', options) !== null || probe.getContext('webgl', options) !== null
   } catch {
     return false
   }

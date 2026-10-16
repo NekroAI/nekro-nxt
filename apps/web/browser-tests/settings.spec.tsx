@@ -146,7 +146,7 @@ test.describe('settings space', () => {
     try {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
-      await expect(list.getByRole('link')).toHaveCount(13)
+      await expect(list.getByRole('link')).toHaveCount(15)
       await expect(list.getByRole('link', { name: '聊天命令', exact: true })).toBeVisible()
       await expect(list.getByRole('link', { name: '日志保存' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
@@ -399,7 +399,7 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(14)
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(16)
       const table = page.getByRole('table', { name: '已登录设备' })
       await expect(table).toContainText('浏览器 · Chrome · macOS')
       await expect(table).toContainText('此设备')
@@ -475,10 +475,8 @@ test.describe('settings space', () => {
       await expect(page.getByText('2.90.0，来自这台设备')).toBeVisible()
       await page.screenshot({ path: '.local/browser-test-results/settings-accounts.png' })
 
-      await table
-        .getByRole('row', { name: /octo-fixture/u })
-        .getByRole('button', { name: '移除' })
-        .click()
+      await table.getByRole('button', { name: 'octo-fixture 的更多操作' }).click()
+      await page.getByRole('menuitem', { name: '移除账号' }).click()
       const dialog = page.getByRole('dialog', { name: '移除 octo-fixture？' })
       await expect(dialog).toContainText(`${productSnapshot.agents[0]!.displayName} 的命令会立刻失去这个账号`)
       await dialog.getByRole('button', { name: '移除' }).click()
@@ -512,7 +510,8 @@ test.describe('settings space', () => {
     try {
       const table = page.getByRole('table', { name: '平台适配器' })
       await expect(table.getByText('示例群聊平台', { exact: true })).toBeVisible()
-      await expect(table.getByText('内置', { exact: true }).first()).toBeVisible()
+      // Every adapter here is built in, so the table leaves out the source column (05 §9).
+      await expect(table.getByRole('columnheader', { name: '来源' })).toHaveCount(0)
       await expect(table.getByText('由本机自动管理', { exact: true })).toBeVisible()
       await table.getByRole('button', { name: '添加账号' }).first().click()
       await expect(page).toHaveURL(/\/wiring\/new\?adapter=fixture-beta/u)

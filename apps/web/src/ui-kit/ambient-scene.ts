@@ -102,7 +102,13 @@ const token = (element: Element, name: string, fallback: string): Color => {
 }
 
 export function createAmbientScene(canvas: HTMLCanvasElement): AmbientScene {
-  const renderer = new WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'low-power' })
+  const renderer = new WebGLRenderer({
+    canvas,
+    antialias: false,
+    alpha: false,
+    powerPreference: 'low-power',
+    failIfMajorPerformanceCaveat: true,
+  })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
   const scene = new Scene()
   const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1)

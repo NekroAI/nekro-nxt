@@ -146,7 +146,7 @@ test.describe('wiring', () => {
       await expect(page.getByRole('button', { name: /^资料员的内置频道/u })).toHaveCount(0)
       await page.getByRole('searchbox', { name: '搜索频道' }).fill('')
 
-      await page.getByRole('radio', { name: '只看未接线' }).click()
+      await page.getByRole('button', { name: '只看未接线', pressed: false }).click()
       await expect(page.getByRole('button', { name: /^资料员的内置频道/u })).toHaveCount(0)
       await expect(page.getByRole('button', { name: /^产品讨论群/u })).toBeVisible()
     } finally {

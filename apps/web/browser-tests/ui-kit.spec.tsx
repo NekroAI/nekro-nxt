@@ -208,8 +208,14 @@ test.describe('ui-kit browser behaviour', () => {
     await expect(failure).toBeVisible()
     await failure.getByRole('button', { name: '关闭通知' }).click()
     await expect(failure).toHaveCount(0)
+    // A notification under the pointer waits while it is read; it leaves once the pointer moves away.
+    const confirmation = page.getByRole('status').filter({ hasText: '同步结果' })
+    await confirmation.hover()
+    await page.waitForTimeout(4_500)
+    await expect(confirmation).toHaveCount(1)
+    await page.mouse.move(0, 0)
     // Confirmations leave on their own; failures stay longer for reading.
-    await expect(page.getByRole('status').filter({ hasText: '同步结果' })).toHaveCount(0, { timeout: 5_000 })
+    await expect(confirmation).toHaveCount(0, { timeout: 5_000 })
   })
 
   test('the segmented indicator animates its move and lands on the new option', async () => {
