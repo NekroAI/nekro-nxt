@@ -1159,8 +1159,9 @@ button.step:hover {
   flex: none;
   align-items: center;
   gap: var(--s-2);
-  margin-bottom: var(--s-2);
-  padding: var(--s-1) var(--s-2) var(--s-1) var(--s-2);
+  /* As tall as the attach button, so its text sits on the input's first line. */
+  height: 36px;
+  padding: 0 var(--s-3);
   border-radius: 999px;
   background: var(--inset);
   color: var(--fg-2);
@@ -1171,6 +1172,28 @@ button.step:hover {
 .as svg {
   width: 13px;
   height: 13px;
+}
+
+/* Which platform account sends: a mark the size of the attach button, the name in its tooltip. */
+.sender {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  place-items: center;
+  border-radius: 11px;
+  color: var(--muted);
+}
+
+.sender:hover,
+.sender:focus-visible {
+  color: var(--fg-2);
+  background: var(--inset);
+}
+
+.sender svg {
+  width: 16px;
+  height: 16px;
 }
 
 .input {

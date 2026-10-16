@@ -10,7 +10,7 @@ import {
   type ChannelSummary,
   type ConnectionSummary,
 } from '../../product-runtime.js'
-import { FileChooser, Pressable, Textarea, toast } from '../../ui-kit/index.js'
+import { FileChooser, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { useProductApi } from '../model/store.js'
 import { ResourcePreviewDialog } from './resource-preview.js'
@@ -341,10 +341,18 @@ export function Composer({
         {commandMode ? (
           <span className={styles.as}>执行当前频道命令</span>
         ) : external && connection ? (
-          <span className={styles.as} title="以这个机器人账号发出，群成员可见">
-            <Plug aria-hidden="true" />
-            {connectionDisplayName(connection)}
-          </span>
+          // Only the mark stays in the row: the account name is often long and the placeholder already names
+          // the channel; who sends it is a hover or a tap away.
+          <Tooltip content={`以「${connectionDisplayName(connection)}」发出，群成员可见`}>
+            <span
+              className={styles.sender}
+              tabIndex={0}
+              role="img"
+              aria-label={`以「${connectionDisplayName(connection)}」发出`}
+            >
+              <Plug aria-hidden="true" />
+            </span>
+          </Tooltip>
         ) : null}
         <Textarea
           bare

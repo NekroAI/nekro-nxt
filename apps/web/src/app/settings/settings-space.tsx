@@ -9,6 +9,7 @@ import {
   Info,
   MessageCircle,
   MessagesSquare,
+  ScanEye,
   MonitorSmartphone,
   Palette,
   Plug,
@@ -47,6 +48,7 @@ import type {
   SubConversationRetention,
   UpgradeBackupSettings,
 } from '@nekro-nxt/contracts'
+import { CodeRunNodeDownload, CodeRunNodeRemove } from '../agents/runtime-download.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { providerDisplayName } from '../../provider-labels.js'
 import { useProductRuntime, useProductStore, useUiStateStore } from '../../product-runtime.js'
@@ -102,6 +104,7 @@ const SECTIONS = [
   { key: 'dsh', label: 'DSH 插件', group: 'runtime', icon: <Blocks size={16} /> },
   { key: 'chat', label: '聊天', group: 'runtime', icon: <MessageCircle size={16} /> },
   { key: 'conversations', label: '子对话', group: 'runtime', icon: <MessagesSquare size={16} /> },
+  { key: 'verification', label: '界面检查', group: 'runtime', icon: <ScanEye size={16} /> },
   { key: 'adapters', label: '平台适配器', group: 'links', icon: <Plug size={16} /> },
   { key: 'accounts', label: '账号与服务', group: 'links', icon: <UserRoundKey size={16} /> },
   { key: 'administrators', label: '管理员', group: 'permission', icon: <ShieldCheck size={16} /> },
@@ -214,6 +217,7 @@ export default function SettingsSpace() {
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
           {section === 'conversations' ? <SubConversations /> : null}
+          {section === 'verification' ? <InterfaceChecks /> : null}
           {section === 'retrieval' ? <Retrieval /> : null}
           {section === 'accounts' ? (
             <>
@@ -591,6 +595,38 @@ function Chat() {
             <Skeleton width={220} height={28} />
           ) : (
             <Segmented label="连发间隔" value={pacing} onChange={change} options={PACING_OPTIONS} />
+          )}
+        </PropertyRow>
+      </PropertyList>
+    </>
+  )
+}
+
+/**
+ * The headless browser that checks the interface of candidates agents make when no NekroNXT page is open. Shared by
+ * the whole device, like the semantic model; without it candidates still run, marked as interface unchecked.
+ */
+function InterfaceChecks() {
+  const browser = useProductStore((state) => state.capabilityAvailability.verificationBrowser)
+  return (
+    <>
+      <SectionHead title="界面检查" />
+      <PropertyList>
+        <PropertyRow
+          label="后台浏览器"
+          description={
+            browser?.source === 'system'
+              ? '已随 NekroNXT 安装'
+              : browser?.available
+                ? '已安装，没打开 NekroNXT 页面时用它检查扩展界面'
+                : '无头 Chromium，下载约 100 MB，安装后约 200 MB'
+          }
+          tip="智能体做的扩展带界面时，试运行要在浏览器里加载并检查。打开着任何一个 NekroNXT 页面时由页面完成；一个页面都没开时由这个浏览器在后台完成。不安装也可以，候选照常运行，标为「界面未检查」。"
+        >
+          {browser === undefined ? null : browser.available ? (
+            <CodeRunNodeRemove availability={browser} kind="verification-browser" />
+          ) : (
+            <CodeRunNodeDownload availability={browser} kind="verification-browser" />
           )}
         </PropertyRow>
       </PropertyList>

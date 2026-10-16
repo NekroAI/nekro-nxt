@@ -57,7 +57,7 @@ export class ExtensionCommandPort implements CommandGovernancePort {
         return `已拒绝运行「${task.title}」的候选，${this.#agentName(task.agentId)}会收到通知。`
       }
       this.#runtime.host.approveWaitingAuthoringCandidate(task.id)
-      return `已允许运行「${task.title}」的候选。打开着的 NekroNXT 页面或后台验证会接着加载界面并完成验证，结果会发给${this.#agentName(task.agentId)}。`
+      return `已允许运行「${task.title}」的候选。打开着的 NekroNXT 页面或后台浏览器会接着加载界面并完成验证，结果会发给${this.#agentName(task.agentId)}。`
     }
     switch (subcommand) {
       case 'approve': {

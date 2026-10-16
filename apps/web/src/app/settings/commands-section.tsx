@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
 import { CommandPermissionSchema, type CommandPermission } from '@nekro-nxt/contracts'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
+import { Plus } from 'lucide-react'
 import {
   Banner,
   Button,
   DataTable,
+  Dialog,
+  MemberAvatar,
+  SearchField,
   PropertyGroup,
   PropertyList,
   PropertyRow,
@@ -15,6 +19,7 @@ import {
 } from '../../ui-kit/index.js'
 import { useProductStore } from '../../product-runtime.js'
 import styles from './commands-section.module.css'
+import settingsStyles from './settings.module.css'
 
 type Members = Awaited<ReturnType<typeof commandApi.members>>['members']
 
@@ -311,39 +316,98 @@ export function CommandsSection({ channelId }: { readonly channelId?: string }) 
         </PropertyGroup>
       ) : null}
       {channelId ? (
-        <PropertyGroup
-          title="命令授权成员"
-          description="只授予当前频道的管理命令权限；平台群管理员不会自动获得授权。NekroNXT 管理员在设置的「管理员」里配置，他们在每个频道都有管理权限。"
-        >
-          {!members.length ? (
-            <p>频道成员目录暂无可授权成员，收到平台消息后可在此选择。</p>
-          ) : (
-            <PropertyList>
-              {members.map((member) => (
-                <PropertyRow
-                  key={member.identityId}
-                  label={member.displayName}
-                  // The platform id only tells apart members who share a name.
-                  description={
-                    members.filter((other) => other.displayName === member.displayName).length > 1
-                      ? member.platformUserId
-                      : undefined
-                  }
-                >
-                  <Switch
-                    label={`授权 ${member.displayName}`}
-                    checked={member.authorized}
-                    disabled={busy}
-                    onCheckedChange={(enabled) =>
-                      void mutate(() => commandApi.grant(channelId, member.identityId, enabled))
-                    }
-                  />
-                </PropertyRow>
-              ))}
-            </PropertyList>
-          )}
-        </PropertyGroup>
+        <CommandMembers
+          members={members}
+          busy={busy}
+          onGrant={(identityId, enabled) => void mutate(() => commandApi.grant(channelId, identityId, enabled))}
+        />
       ) : null}
     </section>
+  )
+}
+
+/** How many matching members the add dialog lists at once; the search narrows the rest. */
+const PICK_LIMIT = 30
+
+/**
+ * Members with this channel's management commands. Only the authorized ones are listed, each removable; others are
+ * found and added from a searchable list, so a large group does not stretch the inspector.
+ */
+function CommandMembers({
+  members,
+  busy,
+  onGrant,
+}: {
+  readonly members: Members
+  readonly busy: boolean
+  readonly onGrant: (identityId: string, enabled: boolean) => void
+}) {
+  const [adding, setAdding] = useState(false)
+  const [query, setQuery] = useState('')
+  const authorized = members.filter((member) => member.authorized)
+  const sameName = (member: Members[number]) =>
+    members.filter((other) => other.displayName === member.displayName).length > 1
+  const needle = query.trim().toLowerCase()
+  const candidates = members
+    .filter((member) => !member.authorized)
+    .filter((member) => !needle || member.displayName.toLowerCase().includes(needle))
+  return (
+    <PropertyGroup
+      title="命令授权成员"
+      description="可以在这个频道使用管理命令的成员。"
+      tip="群主和群管理员不会自动获得授权。NekroNXT 管理员在每个频道都有管理权限，在设置的「管理员」里配置。"
+      actions={
+        members.length > 0 ? (
+          <Button size="small" icon={<Plus />} onClick={() => setAdding(true)}>
+            添加成员
+          </Button>
+        ) : undefined
+      }
+    >
+      {members.length === 0 ? (
+        <p className={styles.membersEmpty}>收到这个频道的消息后，就能从发过言的成员里选择。</p>
+      ) : authorized.length === 0 ? (
+        <p className={styles.membersEmpty}>还没有授权成员。</p>
+      ) : (
+        <PropertyList>
+          {authorized.map((member) => (
+            <PropertyRow
+              key={member.identityId}
+              label={member.displayName}
+              // The platform id only tells apart members who share a name.
+              description={sameName(member) ? member.platformUserId : undefined}
+            >
+              <Button size="small" variant="ghost" disabled={busy} onClick={() => onGrant(member.identityId, false)}>
+                取消授权
+              </Button>
+            </PropertyRow>
+          ))}
+        </PropertyList>
+      )}
+      <Dialog open={adding} onOpenChange={setAdding} title="添加命令授权成员" wide>
+        <SearchField value={query} onChange={setQuery} label="查找成员" placeholder="按昵称查找" />
+        {candidates.length === 0 ? (
+          <Banner tone="info">{needle ? '没有找到这个成员。' : '频道里的成员都已经授权了。'}</Banner>
+        ) : (
+          <ul className={settingsStyles.pickList}>
+            {candidates.slice(0, PICK_LIMIT).map((member) => (
+              <li key={member.identityId}>
+                <MemberAvatar name={member.displayName} size="sm" />
+                <span className={settingsStyles.pickInfo}>
+                  <b>{member.displayName}</b>
+                  {sameName(member) ? <small>{member.platformUserId}</small> : null}
+                </span>
+                <Button size="small" disabled={busy} onClick={() => onGrant(member.identityId, true)}>
+                  授权
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {candidates.length > PICK_LIMIT ? (
+          <p className={styles.membersEmpty}>还有 {candidates.length - PICK_LIMIT} 位成员，输入昵称缩小范围。</p>
+        ) : null}
+      </Dialog>
+    </PropertyGroup>
   )
 }

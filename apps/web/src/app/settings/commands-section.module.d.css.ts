@@ -1,6 +1,7 @@
 declare const styles: {
   readonly channelControls: string
   readonly command: string
+  readonly membersEmpty: string
   readonly name: string
   readonly narrowOnly: string
   readonly note: string

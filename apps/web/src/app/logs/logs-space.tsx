@@ -42,6 +42,7 @@ import {
   Switch,
   ToggleChip,
   Menu,
+  Tooltip,
   PageHeader,
   WorkbenchPage,
   toast,
@@ -252,6 +253,8 @@ export default function LogsSpace() {
   const start = Math.max(0, Math.floor(viewport.top / rowHeight) - 8)
   const end = Math.min(rows.length, Math.ceil((viewport.top + viewport.height) / rowHeight) + 8)
 
+  /** The view before 清空视图, so the empty view that follows can bring the earlier records back. */
+  const [beforeClear, setBeforeClear] = useState<{ readonly query: HostLogQuery; readonly range: typeof range }>()
   const update = (next: HostLogQuery, nextRange = range) => {
     edited.current = true
     setQuery(next)
@@ -414,6 +417,8 @@ export default function LogsSpace() {
     setExporting(true)
     try {
       await exportLogs(effective, format, controller.signal)
+      // Logs carry chat text and other people's messages; the reminder comes with the file, when it matters.
+      toast('日志已导出。发给别人前，看一下里面有没有聊天内容等不便公开的信息。')
     } catch (error) {
       if (!controller.signal.aborted) failure(error)
     } finally {
@@ -800,16 +805,19 @@ export default function LogsSpace() {
                 >
                   {feed.following ? '暂停跟随' : '回到最新'}
                 </Button>
-                <Button
-                  size="small"
-                  variant="ghost"
-                  onClick={() => {
-                    setKeyword(keyword)
-                    update({ ...query, from: new Date().toISOString() }, 'custom')
-                  }}
-                >
-                  清空视图
-                </Button>
+                <Tooltip content="只显示从现在开始的新记录，已有的日志仍然保存">
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    onClick={() => {
+                      setKeyword(keyword)
+                      setBeforeClear({ query, range })
+                      update({ ...query, from: new Date().toISOString() }, 'custom')
+                    }}
+                  >
+                    清空视图
+                  </Button>
+                </Tooltip>
               </div>
             </div>
             {feed.error ? (
@@ -819,6 +827,17 @@ export default function LogsSpace() {
               </EmptyState>
             ) : feed.loading && !feed.entries.length ? (
               <EmptyState title="正在读取日志…" />
+            ) : !feed.entries.length && beforeClear !== undefined ? (
+              <EmptyState icon={<ScrollText />} title="清空后还没有新日志">
+                <Button
+                  onClick={() => {
+                    update(beforeClear.query, beforeClear.range)
+                    setBeforeClear(undefined)
+                  }}
+                >
+                  显示之前的日志
+                </Button>
+              </EmptyState>
             ) : !feed.entries.length ? (
               <EmptyState icon={<ScrollText />} title="当前条件下没有日志">
                 <p>调整筛选条件，或等待新的运行记录。</p>
@@ -935,17 +954,19 @@ export default function LogsSpace() {
               />
             </div>
             <div className={styles.actions}>
-              <Button
-                size="small"
-                icon={<Download size={14} />}
-                disabled={exporting}
-                onClick={() => void download('text')}
-              >
-                导出文本
-              </Button>
-              <Button size="small" disabled={exporting} onClick={() => void download('jsonl')}>
-                JSONL
-              </Button>
+              <Menu
+                label="导出日志"
+                trigger={
+                  <Button size="small" icon={<Download size={14} />} busy={exporting}>
+                    导出
+                  </Button>
+                }
+                items={[
+                  { heading: '导出当前筛选下的全部记录' },
+                  { key: 'text', label: '文本', onSelect: () => void download('text') },
+                  { key: 'jsonl', label: 'JSONL（每行一条）', onSelect: () => void download('jsonl') },
+                ]}
+              />
               {exporting ? (
                 <Button size="small" onClick={() => exportingController.current?.abort()}>
                   取消导出
@@ -979,9 +1000,6 @@ export default function LogsSpace() {
               </Button>
             </div>
           ))}
-          <p className={styles.hint}>
-            清空视图不删除历史。导出包含当前筛选的全部记录；分享前请检查第三方文本中的业务信息。
-          </p>
         </div>
       </MainContent>
       <Sheet open={narrow && advanced} onOpenChange={setAdvanced} title="筛选日志">

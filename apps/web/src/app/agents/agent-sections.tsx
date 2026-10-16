@@ -587,24 +587,6 @@ export function CapabilitiesSection({
                 ]}
               />
             </PropertyRow>
-            {availability.verificationBrowser !== undefined ? (
-              <PropertyRow
-                depth={1}
-                label="后台验证"
-                description={
-                  availability.verificationBrowser.available
-                    ? '没打开 NekroNXT 页面时，在后台加载并检查候选的界面'
-                    : '没打开页面时，带界面的候选会跳过界面检查'
-                }
-                tip="自主运行或已在聊天里允许的候选，会由任意打开的 NekroNXT 页面加载并检查界面；一个页面都没开时由这个浏览器在后台完成。浏览器只装在这台机器上，所有智能体共用。"
-              >
-                {availability.verificationBrowser.available ? (
-                  <CodeRunNodeRemove availability={availability.verificationBrowser} kind="verification-browser" />
-                ) : (
-                  <CodeRunNodeDownload availability={availability.verificationBrowser} kind="verification-browser" />
-                )}
-              </PropertyRow>
-            ) : null}
           </>
         ) : null}
         <PropertyRow label="定时任务" tip="频道成员可以请它设置提醒和周期任务">

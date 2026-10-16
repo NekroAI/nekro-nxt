@@ -114,6 +114,7 @@ declare const styles: {
   readonly scheduledNoticeText: string
   readonly scheduledNoticeTitle: string
   readonly send: string
+  readonly sender: string
   readonly sourceName: string
   readonly stack: string
   readonly step: string

@@ -99,7 +99,8 @@ test('production log journey: history, details, repeats, export, live pause, set
   await search.fill('虚构重复重试记录')
   await expect(page.getByRole('button', { name: '展开 40 条重复日志' })).toBeVisible()
   const downloaded = page.waitForEvent('download')
-  await page.getByRole('button', { name: '导出文本', exact: true }).click()
+  await page.getByRole('button', { name: '导出', exact: true }).click()
+  await page.getByRole('menuitem', { name: '文本' }).click()
   const download = await downloaded
   const file = await download.path()
   expect(file).not.toBeNull()
@@ -127,7 +128,8 @@ test('production log journey: history, details, repeats, export, live pause, set
     .get(`${origin}/api/logs/status`)
     .then(async (response) => hostLogStatusSchema.parse(await response.json()))
   await page.getByRole('button', { name: '清空视图', exact: true }).click()
-  await expect(page.getByText('当前条件下没有日志', { exact: true })).toBeVisible()
+  await expect(page.getByText('清空后还没有新日志', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '显示之前的日志' })).toBeVisible()
   const after = await request
     .get(`${origin}/api/logs/status`)
     .then(async (response) => hostLogStatusSchema.parse(await response.json()))
@@ -221,7 +223,7 @@ test('large log lists scroll independently at desktop and narrow window sizes', 
     })
     await expect.poll(() => grid.evaluate((e) => e.scrollTop)).toBe(0)
     expect(await search.boundingBox()).toEqual(before)
-    await expect(page.getByRole('button', { name: 'JSONL', exact: true })).toBeInViewport()
+    await expect(page.getByRole('button', { name: '导出', exact: true })).toBeInViewport()
     expect(
       await page.locator('html').evaluate((e) => e.scrollWidth <= innerWidth && e.scrollHeight <= innerHeight),
     ).toBe(true)

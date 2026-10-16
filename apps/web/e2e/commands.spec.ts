@@ -109,9 +109,13 @@ test('production command journey: authorization, completion, denial, delivery fa
     await page.screenshot({ path: testInfo.outputPath('unauthorized.png'), fullPage: true })
     const inspector = page.getByRole('button', { name: '频道信息' })
     if ((await inspector.count()) && (await inspector.getAttribute('aria-pressed')) !== 'true') await inspector.click()
-    await expect(page.getByRole('switch', { name: '授权 示例成员' })).toBeVisible()
-    await page.getByRole('switch', { name: '授权 示例成员' }).click()
-    await expect(page.getByRole('switch', { name: '授权 示例成员' })).toBeChecked()
+    // Only authorized members are listed; others are added from a search, so a large group stays short.
+    await page.getByRole('button', { name: '添加成员' }).click()
+    const picker = page.getByRole('dialog', { name: '添加命令授权成员' })
+    await picker.getByRole('searchbox', { name: '查找成员' }).fill('示例')
+    await picker.getByRole('listitem').filter({ hasText: '示例成员' }).getByRole('button', { name: '授权' }).click()
+    await picker.press('Escape')
+    await expect(page.getByRole('button', { name: '取消授权' })).toBeVisible()
     // A previously saved weaker channel override must never look like the effective permission.
     expect(
       (
