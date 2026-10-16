@@ -28,6 +28,7 @@ import {
   Field,
   InfoTip,
   Input,
+  Menu,
   ObjectHeader,
   Segmented,
   Pressable,
@@ -270,7 +271,8 @@ export function ModelProviderDetail({
   const submittedModels = modelPayload(rows)
   const testModels = submitsModels ? submittedModels : selected?.models.length ? selected.models : discovered
   const testModel = testModels[0]
-  const testModelName = testModel && 'name' in testModel ? (testModel.name ?? testModel.id) : testModel?.id
+  const modelName = (model: (typeof testModels)[number]): string =>
+    'name' in model && model.name ? model.name : model.id
 
   // A different provider (or fresh data for it) resets the draft; typing never does.
   const selectedKey = selected ? `${selected.provider}:${selected.settingsRevision}` : requested
@@ -411,8 +413,9 @@ export function ModelProviderDetail({
       .catch(() => undefined)
   }
 
-  const testConnection = async (): Promise<void> => {
-    if (!providerId || !testModel || pending) return
+  /** The person picks the model the test request goes to, so a failure names the model that was asked. */
+  const testConnection = async (model: (typeof testModels)[number]): Promise<void> => {
+    if (!providerId || pending) return
     setPending('test')
     try {
       await callHostApi(
@@ -420,7 +423,7 @@ export function ModelProviderDetail({
         {},
         {
           provider: providerId,
-          model: testModel.id,
+          model: model.id,
           settingsNs: selected?.settingsNs ?? 'llm-pi-ai',
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
           ...(baseURL.trim() ? { baseURL: baseURL.trim() } : {}),
@@ -428,9 +431,12 @@ export function ModelProviderDetail({
           models: testModels.map((model) => ({ ...model })),
         },
       )
-      toast(`测试通过，可以使用 ${testModelName}。`, { group: `llm-provider-test:${providerId}` })
+      toast(`测试通过，可以使用 ${modelName(model)}。`, { group: `llm-provider-test:${providerId}` })
     } catch (cause) {
-      toast(failure(cause), { tone: 'bad', group: `llm-provider-test:${providerId}` })
+      toast(`${modelName(model)} 测试失败：${failure(cause)}`, {
+        tone: 'bad',
+        group: `llm-provider-test:${providerId}`,
+      })
     } finally {
       setPending(null)
     }
@@ -660,13 +666,22 @@ export function ModelProviderDetail({
               获取可用模型
             </Button>
           ) : null}
-          <Button
-            busy={pending === 'test'}
-            disabled={!canTest || pending !== null}
-            onClick={() => void testConnection()}
-          >
-            测试连接
-          </Button>
+          <Menu
+            align="start"
+            trigger={
+              <Button busy={pending === 'test'} disabled={!canTest || pending !== null}>
+                测试连接
+              </Button>
+            }
+            items={[
+              { heading: '用哪个模型测试' },
+              ...testModels.map((model) => ({
+                key: model.id,
+                label: modelName(model),
+                onSelect: () => void testConnection(model),
+              })),
+            ]}
+          />
         </div>
         <Button type="submit" variant="primary" busy={pending === 'save'} disabled={!canSave || pending !== null}>
           保存供应商

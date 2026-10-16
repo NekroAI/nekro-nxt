@@ -1,15 +1,29 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 
-/** The production data root outlives a run; start each sign-in test from an unconfigured OpenAI route. */
-async function resetOpenAi(request: APIRequestContext): Promise<void> {
-  const providers = HostApiContracts.llmProviders.parseResponse(await (await request.get('/api/llm/providers')).json())
-  const openai = providers.providers.find((provider) => provider.provider === 'openai')
-  if (!openai?.configured) return
-  const response = await request.delete('/api/llm/providers/openai', {
-    data: { expectedRevision: openai.settingsRevision },
+/**
+ * Show OpenAI as a route that signs in with ChatGPT. Journeys run in parallel against one host, so these tests do
+ * not write the shared model settings; a sign-in that is cancelled or denied writes nothing either.
+ */
+async function showSubscriptionRoute(page: Page, accountLabel: () => string | null = () => null): Promise<void> {
+  await page.route('**/api/llm/providers', async (route) => {
+    const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
+    await route.fulfill({
+      json: {
+        ...real,
+        providers: real.providers.map((provider) =>
+          provider.provider === 'openai'
+            ? {
+                ...provider,
+                configured: true,
+                active: true,
+                subscription: { label: 'ChatGPT', active: true, accountLabel: accountLabel() },
+              }
+            : provider,
+        ),
+      },
+    })
   })
-  expect(response.ok(), await response.text()).toBe(true)
 }
 
 const openedUrl = async (page: Page): Promise<string> =>
@@ -32,14 +46,9 @@ for (const theme of ['light', 'dark'] as const) {
         return null
       }
     }, theme)
-    await resetOpenAi(request)
+    await showSubscriptionRoute(page)
 
-    await page.goto('/settings/models')
-    await page.getByRole('button', { name: '添加供应商', exact: true }).click()
-    const dialog = page.getByRole('dialog', { name: '添加模型供应商' })
-    await dialog.getByRole('combobox').click()
-    await page.getByRole('option', { name: 'ChatGPT 套餐（登录账号）', exact: true }).click()
-    await dialog.getByRole('button', { name: '开始配置' }).click()
+    await page.goto('/settings/models?provider=openai')
     // The same OpenAI route as an API key, signed in with an account instead.
     await expect(page.getByRole('radio', { name: 'ChatGPT 套餐' })).toBeChecked()
     await expect(page.getByLabel('API 密钥', { exact: true })).toHaveCount(0)
@@ -94,25 +103,10 @@ for (const width of [375, 1440]) {
       ],
       login: null,
     }
-    const activeLabel = () => status.accounts.find((account) => account.id === status.activeAccountId)?.label ?? null
-    await page.route('**/api/llm/providers', async (route) => {
-      const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
-      await route.fulfill({
-        json: {
-          ...real,
-          providers: real.providers.map((provider) =>
-            provider.provider === 'openai'
-              ? {
-                  ...provider,
-                  configured: true,
-                  active: true,
-                  subscription: { label: 'ChatGPT', active: true, accountLabel: activeLabel() },
-                }
-              : provider,
-          ),
-        },
-      })
-    })
+    await showSubscriptionRoute(
+      page,
+      () => status.accounts.find((account) => account.id === status.activeAccountId)?.label ?? null,
+    )
     await page.route('**/api/llm/subscriptions/openai', async (route) => {
       if (route.request().method() === 'GET') {
         await route.fulfill({ json: status })
@@ -145,3 +139,48 @@ for (const width of [375, 1440]) {
     expect(failures).toEqual([])
   })
 }
+
+test('adding the ChatGPT plan switches the unconfigured OpenAI route to sign-in', async ({ page }) => {
+  let switched = false
+  await page.route('**/api/llm/providers', async (route) => {
+    const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
+    await route.fulfill({
+      json: {
+        ...real,
+        providers: real.providers.map((provider) =>
+          provider.provider === 'openai'
+            ? {
+                ...provider,
+                configured: switched,
+                active: switched,
+                subscription: { label: 'ChatGPT', active: switched, accountLabel: null },
+              }
+            : provider,
+        ),
+      },
+    })
+  })
+  // The switch is answered here; the shared host's settings stay as they are.
+  await page.route('**/api/llm/subscriptions/openai', async (route) => {
+    const status = HostApiContracts.llmSubscriptionStatus.parseResponse(
+      await (await route.fetch({ method: 'GET' })).json(),
+    )
+    if (route.request().method() !== 'POST') {
+      await route.fulfill({ json: status })
+      return
+    }
+    expect(HostApiContracts.llmSubscriptionAction.parseRequest(route.request().postDataJSON())).toMatchObject({
+      action: 'use-subscription',
+    })
+    switched = true
+    await route.fulfill({ json: { status: { ...status, mode: 'subscription' } } })
+  })
+  await page.goto('/settings/models')
+  await page.getByRole('button', { name: '添加供应商', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '添加模型供应商' })
+  await dialog.getByRole('combobox').click()
+  await page.getByRole('option', { name: 'ChatGPT 套餐（登录账号）', exact: true }).click()
+  await dialog.getByRole('button', { name: '开始配置' }).click()
+  await expect(page.getByRole('radio', { name: 'ChatGPT 套餐' })).toBeChecked()
+  expect(switched).toBe(true)
+})

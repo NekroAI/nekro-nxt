@@ -281,6 +281,7 @@ test('provider connection test uses the unsaved page draft without saving it', a
   await page.getByRole('button', { name: '添加模型' }).click()
   await page.getByRole('textbox', { name: '模型 ID' }).fill('draft-model')
   await page.getByRole('button', { name: '测试连接' }).click()
+  await page.getByRole('menuitem', { name: 'draft-model', exact: true }).click()
 
   await expect(page.getByText('测试通过，可以使用 draft-model。', { exact: true })).toBeVisible()
   expect(testRequests).toEqual([
