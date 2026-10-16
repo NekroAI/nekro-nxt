@@ -682,6 +682,8 @@ const startLeasedServer = async (
       host: managementKey === undefined ? host : '127.0.0.1',
       port: managementKey === undefined ? port : 0,
     })
+    // The headless browser that checks creation candidates opens this Host's own page on its loopback listener.
+    runtime.setVerificationOrigin(`http://127.0.0.1:${webContext.webServer.port}`)
     // Public static helper; NXT's management edge owns authentication. The upstream
     // plugin now injects its native Connection service, which this Host does not use.
     const distIndex = resolveRoot(options.distIndex)

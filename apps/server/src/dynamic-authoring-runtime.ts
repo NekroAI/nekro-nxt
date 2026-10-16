@@ -676,6 +676,8 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     agent: Agent,
     pluginId: string,
     packageId: string,
+    /** No browser could load the Client half: its rendering and RPC evidence are not required. */
+    options: { readonly clientSkipped?: boolean } = {},
   ): {
     readonly pluginRunId: string
     readonly toolNames: readonly string[]
@@ -692,7 +694,8 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     if (row?.activeRun?.packageId !== packageId) throw new Error('Dynamic Package is not the active verified Run.')
     const pkg = row.packages.find((candidate) => candidate.packageId === packageId)
     const clientEvidence = this.clientEvidenceByPackage.get(packageId)
-    if (pkg?.hasClientHalf && clientEvidence?.pluginRunId !== row.activeRun.pluginRunId) {
+    const checkClient = pkg?.hasClientHalf === true && options.clientSkipped !== true
+    if (checkClient && clientEvidence?.pluginRunId !== row.activeRun.pluginRunId) {
       throw new Error('Dynamic Client half has not rendered its NekroNxt UI contributions for this Run.')
     }
     const clientRpcEvidence = this.clientRpcMethodsByPackage.get(packageId)
@@ -702,7 +705,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const clientCallableHandlers = this.isAdapterPackage(packageId)
       ? publicHandlers.filter((method) => method !== ADAPTER_DYNAMIC_EVIDENCE_METHOD)
       : publicHandlers
-    if (pkg?.hasClientHalf && clientCallableHandlers.some((method) => !clientRpcMethods.has(method))) {
+    if (checkClient && clientCallableHandlers.some((method) => !clientRpcMethods.has(method))) {
       throw new Error('Dynamic Client preview has not called every registered Host RPC for this Run.')
     }
     return {
@@ -1073,6 +1076,50 @@ export class DynamicAuthoringRuntime {
     if (requestId) await this.resolveDynamicRunRequest(session.sessionId, requestId, { ok: false, reason: 'rejected' })
   }
 
+  /**
+   * Runs a candidate that may go ahead without asking when no browser can load its interface: the Host approves it,
+   * starts the Host half and records a verification that says the interface was not checked. The agent hears the
+   * result like any other run.
+   */
+  async runWaitingCandidateWithoutClient(taskId: Parameters<DynamicAuthoringService['getTask']>[0]): Promise<void> {
+    this.#assertActive()
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
+    const task = this.#authoring.service.getTask(taskId)
+    const attempt = task === undefined ? undefined : this.#authoring.service.listAttempts(task.id).at(-1)
+    if (!task || task.status !== 'awaiting-approval' || attempt?.state !== 'awaiting-approval') return
+    const session = [...this.#sessions.records()].find((record) => record.episodeId === task.episodeId)
+    if (!session?.dynamic) return
+    const sessionId = session.sessionId
+    const row = this.dynamicInventory(sessionId).find((candidate) => candidate.pluginId === task.pluginKey)
+    const requestId = row?.latestRun?.approvalRequestId
+    const packageId = row?.latestRun?.packageId
+    if (!row || requestId === undefined || packageId === undefined) return
+    this.#authoring.service.decideAttempt({
+      taskId: task.id,
+      attemptId: attempt.id,
+      expectedRevision: task.revision,
+      approved: true,
+      approveRiskStable: true,
+    })
+    const host = await this.runDynamicHostHalf(sessionId, task.pluginKey, packageId, 'run', requestId, false)
+    if (!host.ok) {
+      await this.resolveDynamicRunRequest(sessionId, requestId, {
+        ok: false,
+        reason: 'host-half-failed',
+        message: host.message,
+      })
+      return
+    }
+    await this.resolveDynamicRunRequest(sessionId, requestId, { ok: true, pluginRunId: host.pluginRunId })
+    try {
+      await this.completeAuthoringVerification(sessionId, task.pluginKey, packageId, { clientSkipped: true })
+    } catch (error) {
+      await this.failAuthoringVerification(sessionId, task.pluginKey, packageId, error)
+    }
+    const settled = this.dynamicInventory(sessionId).find((candidate) => candidate.pluginId === task.pluginKey)
+    if (settled) this.queueAuthoringContinuation(task.episodeId, settled)
+  }
+
   decideAuthoringAttempt(input: Parameters<DynamicAuthoringService['decideAttempt']>[0]) {
     this.#assertActive()
     if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
@@ -1189,9 +1236,14 @@ export class DynamicAuthoringRuntime {
    * lifecycle, every Tool and RPC is really called with its declared verification input, the inbound hook answers a
    * synthetic message, and every Client contribution rendered. The result is the Manifest contribution list.
    */
-  async verifyDynamicPackage(dshSessionId: string, pluginId: string, packageId: string) {
+  async verifyDynamicPackage(
+    dshSessionId: string,
+    pluginId: string,
+    packageId: string,
+    options: { readonly clientSkipped?: boolean } = {},
+  ) {
     const { agent, runner } = this.dynamicRuntime(dshSessionId)
-    const evidence = runner.verificationSnapshot(agent, pluginId, packageId)
+    const evidence = runner.verificationSnapshot(agent, pluginId, packageId, options)
     const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
     const inputs = snapshot?.verificationInputs
     const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
@@ -1344,10 +1396,15 @@ export class DynamicAuthoringRuntime {
     }
   }
 
-  async completeAuthoringVerification(dshSessionId: string, pluginId: string, packageId: string): Promise<void> {
+  async completeAuthoringVerification(
+    dshSessionId: string,
+    pluginId: string,
+    packageId: string,
+    options: { readonly clientSkipped?: boolean } = {},
+  ): Promise<void> {
     const episodeId = this.#sessions.get(dshSessionId)?.episodeId
     if (!this.#authoring || !episodeId) return
-    const verified = await this.verifyDynamicPackage(dshSessionId, pluginId, packageId)
+    const verified = await this.verifyDynamicPackage(dshSessionId, pluginId, packageId, options)
     const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
     const row = this.dynamicInventory(dshSessionId).find((candidate) => candidate.pluginId === pluginId)
     const latest = row?.latestRun
@@ -1373,7 +1430,9 @@ export class DynamicAuthoringRuntime {
       },
       verification: {
         hostStarted: latest.host.status === 'running' || latest.host.status === 'absent',
-        clientLoaded: latest.client.status === 'running' || latest.client.status === 'absent',
+        clientLoaded:
+          options.clientSkipped !== true && (latest.client.status === 'running' || latest.client.status === 'absent'),
+        ...(options.clientSkipped === true ? { clientSkipped: true } : {}),
         renderedPanels: verified.renderedPanels.map((panel) => panel.id),
         renderedToolViews: verified.renderedToolViews,
         renderedMessageRenderers: verified.renderedMessageRenderers,

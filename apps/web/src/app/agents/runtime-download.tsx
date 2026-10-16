@@ -10,15 +10,19 @@ const failure = (error: unknown) => toast(error instanceof Error ? error.message
 const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
 
 /** Which downloadable program a download or removal acts on. */
-export type RuntimeKind = 'node' | 'github-cli'
+export type RuntimeKind = 'node' | 'github-cli' | 'verification-browser'
 
 const RUNTIME_CONTRACTS = {
   node: { download: HostApiContracts.downloadCodeRunNode, remove: HostApiContracts.removeCodeRunNode },
   'github-cli': { download: HostApiContracts.downloadGithubCli, remove: HostApiContracts.removeGithubCli },
+  'verification-browser': {
+    download: HostApiContracts.downloadVerificationBrowser,
+    remove: HostApiContracts.removeVerificationBrowser,
+  },
 } as const
 
 const runtimeLabel = (kind: RuntimeKind, version: string) =>
-  kind === 'node' ? `Node ${version}` : `GitHub CLI ${version}`
+  kind === 'node' ? `Node ${version}` : kind === 'github-cli' ? `GitHub CLI ${version}` : '无头 Chromium'
 
 /** A program on a device without one: NXT downloads the pinned release itself and shows its progress. */
 export function CodeRunNodeDownload({

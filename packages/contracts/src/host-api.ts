@@ -110,6 +110,9 @@ const DynamicAttemptErrorSchema = z
     phase: z.enum(['approval', 'host-load', 'host-apply', 'client-load', 'client-apply', 'client-render']),
     message: z.string(),
     stack: z.string().optional(),
+    /** A render failure also names the contribution slot that failed and whether its frame gave up. */
+    slot: NonEmptyStringSchema.optional(),
+    abdicated: z.boolean().optional(),
     pluginId: DynamicIdSchema,
     packageId: DynamicIdSchema,
     pluginRunId: DynamicIdSchema,
@@ -185,6 +188,8 @@ const AuthoringAttemptSummarySchema = z
       })
       .strict()
       .optional(),
+    /** Verified without loading its interface, because no browser was available; the interface itself is unchecked. */
+    uiUnverified: z.boolean().optional(),
     createdAt: z.number().int().nonnegative(),
     settledAt: z.number().int().nonnegative().optional(),
   })
@@ -1408,6 +1413,10 @@ export type CodeRunAvailability = z.output<typeof CodeRunAvailabilitySchema>
 export const GithubCliAvailabilitySchema = CodeRunAvailabilitySchema
 export type GithubCliAvailability = z.output<typeof GithubCliAvailabilitySchema>
 
+/** The optional headless Chromium that loads and checks creation candidates when no page is open. */
+export const VerificationBrowserAvailabilitySchema = CodeRunAvailabilitySchema
+export type VerificationBrowserAvailability = z.output<typeof VerificationBrowserAvailabilitySchema>
+
 /**
  * One account in the host's library. The library only keeps accounts; an account takes effect only for the agents
  * whose capabilities grant it, which `usedBy` lists.
@@ -1513,6 +1522,8 @@ export const HostSnapshotSchema = z
         codeRun: CodeRunAvailabilitySchema.optional(),
         /** Optional in older hosts, which never offer command accounts. */
         githubCli: GithubCliAvailabilitySchema.optional(),
+        /** Optional in older hosts, which check candidates only in an open page. */
+        verificationBrowser: VerificationBrowserAvailabilitySchema.optional(),
         /** What this host can confine for commands beyond file writes; optional in older hosts. */
         commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
         webSearch: z
@@ -3353,6 +3364,24 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: GithubCliAvailabilitySchema,
+    error: HostApiErrorSchema,
+  }),
+  downloadVerificationBrowser: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/runtimes/verification-browser/download',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: VerificationBrowserAvailabilitySchema,
+    error: HostApiErrorSchema,
+  }),
+  removeVerificationBrowser: defineContract({
+    invalidatesSnapshot: true,
+    method: 'DELETE',
+    path: '/api/runtimes/verification-browser',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: VerificationBrowserAvailabilitySchema,
     error: HostApiErrorSchema,
   }),
   getCommandAccounts: defineContract({

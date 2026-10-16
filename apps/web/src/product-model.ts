@@ -502,6 +502,8 @@ export interface CapabilityAvailability {
   readonly githubCli?: GithubCliAvailability | undefined
   /** Absent until a host reports it; such a host cannot run `run_code`. */
   readonly codeRun?: CodeRunAvailability | undefined
+  /** Absent until a host reports it; such a host checks candidates only in an open page. */
+  readonly verificationBrowser?: CodeRunAvailability | undefined
   /** What the host can confine for commands beyond file writes; absent hosts confine writes only. */
   readonly commandConfinement?: { readonly readScope: boolean; readonly networkControl: boolean } | undefined
   readonly webSearch: {

@@ -4807,6 +4807,10 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#dynamic.decideAuthoringAttempt(input)
   }
 
+  runWaitingCandidateWithoutClient(taskId: Parameters<DynamicAuthoringService['getTask']>[0]) {
+    return this.#dynamic.runWaitingCandidateWithoutClient(taskId)
+  }
+
   approveWaitingAuthoringCandidate(taskId: Parameters<DynamicAuthoringService['approveWaitingCandidate']>[0]) {
     return this.#dynamic.approveWaitingAuthoringCandidate(taskId)
   }

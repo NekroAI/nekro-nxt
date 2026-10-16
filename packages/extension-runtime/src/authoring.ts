@@ -85,6 +85,8 @@ export interface AuthoringAttemptFailure {
 export interface DynamicAuthoringVerification {
   readonly hostStarted: boolean
   readonly clientLoaded: boolean
+  /** The candidate ran without its interface being loaded and checked: no browser was available on this machine. */
+  readonly clientSkipped?: boolean | undefined
   readonly renderedPanels: readonly string[]
   readonly renderedToolViews: readonly string[]
   readonly renderedMessageRenderers: readonly string[]
@@ -271,6 +273,7 @@ export const DynamicAuthoringVerificationSchema = z
   .object({
     hostStarted: z.boolean(),
     clientLoaded: z.boolean(),
+    clientSkipped: z.boolean().optional(),
     renderedPanels: z.array(z.string()).default([]),
     renderedToolViews: z.array(z.string()).default([]),
     renderedMessageRenderers: z.array(z.string()).default([]),

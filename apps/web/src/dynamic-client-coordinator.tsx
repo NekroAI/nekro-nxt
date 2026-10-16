@@ -334,19 +334,16 @@ interface VerificationCase {
 }
 
 /** Records that one case rendered; measures horizontal overflow of its container after layout. */
-function CaseProbe({
-  container,
-  onDone,
-}: {
-  readonly container: React.RefObject<HTMLDivElement | null>
-  readonly onDone: (problem?: string) => void
-}) {
+function CaseProbe({ onDone }: { readonly onDone: (problem?: string) => void }) {
+  // The case container is an ancestor whose ref is attached only after this layout effect runs; the probe's own
+  // marker is attached already and the container is in the document, so it is found from the marker.
+  const marker = useRef<HTMLSpanElement>(null)
   useLayoutEffect(() => {
-    const element = container.current
+    const element = marker.current?.closest<HTMLElement>('[data-verification-case]')
     if (!element) return onDone('预览容器缺失。')
     onDone(element.scrollWidth > element.clientWidth + 1 ? '内容产生了横向溢出。' : undefined)
-  }, [container, onDone])
-  return null
+  }, [onDone])
+  return <span ref={marker} hidden />
 }
 
 function VerificationCaseView({
@@ -356,10 +353,9 @@ function VerificationCaseView({
   readonly item: VerificationCase
   readonly onResult: (key: string, problem?: string) => void
 }) {
-  const container = useRef<HTMLDivElement>(null)
   return (
     <div
-      ref={container}
+      data-verification-case=""
       className={styles.verificationCase}
       style={{ width: item.width }}
       data-nxt-theme={item.theme}
@@ -371,7 +367,7 @@ function VerificationCaseView({
         fallback={() => null}
       >
         {item.render()}
-        <CaseProbe container={container} onDone={(problem) => onResult(item.key, problem)} />
+        <CaseProbe onDone={(problem) => onResult(item.key, problem)} />
       </ContributionBoundary>
     </div>
   )

@@ -459,10 +459,18 @@ function NextAction(props: {
   }
   if (task.status === 'ready') {
     return (
-      <div className={styles.action} data-tone="ok">
+      <div className={styles.action} data-tone={candidate?.uiUnverified ? 'warn' : 'ok'}>
         <div className={styles.actionText}>
-          <b>第 {candidate?.ordinal ?? 1} 次候选已通过验证</b>
-          <span>{props.settling ? `${props.agentName}正在收尾，完成后即可保存` : '确认预览效果后保存为本地扩展'}</span>
+          <b>
+            第 {candidate?.ordinal ?? 1} 次候选{candidate?.uiUnverified ? '已运行，界面没有检查' : '已通过验证'}
+          </b>
+          <span>
+            {props.settling
+              ? `${props.agentName}正在收尾，完成后即可保存`
+              : candidate?.uiUnverified
+                ? '这台机器没有可用的浏览器，界面未经检查；打开预览确认能用后再保存'
+                : '确认预览效果后保存为本地扩展'}
+          </span>
         </div>
         <Button variant="primary" icon={<Save size={14} />} disabled={props.settling} onClick={props.onSave}>
           {task.kind === 'revise' ? '保存为新版本' : '保存为扩展'}
@@ -508,7 +516,9 @@ function AttemptRow({ attempt, current }: { readonly attempt: AuthoringAttempt; 
       <div className={styles.attemptBody}>
         <div className={styles.attemptHead}>
           <b>{attempt.name}</b>
-          <Chip tone={tone}>{attemptStateLabel[attempt.state]}</Chip>
+          <Chip tone={attempt.uiUnverified ? 'warn' : tone}>
+            {attempt.uiUnverified ? '界面未检查' : attemptStateLabel[attempt.state]}
+          </Chip>
         </div>
         {attempt.purpose ? <p>{attempt.purpose}</p> : null}
         {attempt.error ? (

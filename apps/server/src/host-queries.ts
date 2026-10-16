@@ -407,6 +407,7 @@ export const projectAuthoringAttempt = (attempt: DynamicAuthoringAttempt) => ({
           repairable: attempt.error.repairable,
         },
       }),
+  ...(attempt.verification?.clientSkipped === true ? { uiUnverified: true } : {}),
   createdAt: attempt.createdAt,
   ...(attempt.settledAt === undefined ? {} : { settledAt: attempt.settledAt }),
 })
@@ -670,6 +671,7 @@ export class HostQueries {
         subagents: { available: true },
         codeRun: runtime.codeRunNode.status(),
         githubCli: runtime.githubCli.status(),
+        verificationBrowser: runtime.verificationBrowser.status(),
         commandConfinement: commandConfinementSupport(),
         webSearch,
       },

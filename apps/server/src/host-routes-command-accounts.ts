@@ -26,11 +26,12 @@ const view = async (runtime: NekroRuntime): Promise<CommandAccountsView> => ({
   localLogins: await runtime.commandAccounts.localLogins(),
 })
 
-/** The account library and the GitHub CLI download; grants themselves are part of an agent's capabilities. */
+/** The account library and the downloadable programs (GitHub CLI, the verification browser); grants are part of an agent's capabilities. */
 export function registerCommandAccountRoutes({ runtime, registerRoute, broadcast }: HostRouteContext): () => void {
   const changed = () => broadcast({ event: 'snapshot-changed', data: { changed: true } })
   const unsubscribeAccounts = runtime.commandAccounts.subscribe(changed)
   const unsubscribeCli = runtime.githubCli.subscribe(changed)
+  const unsubscribeBrowser = runtime.verificationBrowser.subscribe(changed)
   const reject = (res: Parameters<typeof writeError>[0], error: unknown) =>
     writeError(
       res,
@@ -96,6 +97,42 @@ export function registerCommandAccountRoutes({ runtime, registerRoute, broadcast
   })
   registerRoute({
     kind: 'exact',
+    path: '/api/runtimes/verification-browser/download',
+    handler: (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      writeContractJson(
+        res,
+        200,
+        HostApiContracts.downloadVerificationBrowser,
+        runtime.verificationBrowser.startDownload(),
+      )
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/runtimes/verification-browser',
+    handler: async (req, res) => {
+      if (req.method !== 'DELETE') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.removeVerificationBrowser,
+          await runtime.verificationBrowser.removeDownloaded(),
+        )
+      } catch (error) {
+        writeError(res, 400, 'verification-browser-busy', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
+    kind: 'exact',
     path: '/api/runtimes/github-cli',
     handler: async (req, res) => {
       if (req.method !== 'DELETE') {
@@ -112,6 +149,7 @@ export function registerCommandAccountRoutes({ runtime, registerRoute, broadcast
   return () => {
     unsubscribeAccounts()
     unsubscribeCli()
+    unsubscribeBrowser()
   }
 }
 

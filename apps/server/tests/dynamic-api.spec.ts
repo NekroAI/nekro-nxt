@@ -8,6 +8,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
+import { projectAuthoringAttempt } from '../src/host-queries.js'
 
 const temporaryDirectories: string[] = []
 
@@ -428,6 +429,100 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
     } finally {
       api.dispose()
       await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
+  it('runs a candidate with its interface unchecked when no browser can load it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dyn-unchecked-'))
+    temporaryDirectories.push(directory)
+    const model = new SettledModel()
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], model)
+      },
+    })
+    await runtime.start()
+    const entity = await runtime.createAgentWithInternalChannel({
+      displayName: '创造智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+      capabilities: { dynamicCreation: true },
+    })
+    await runtime.internalChannel.postMessage({
+      channelId: entity.channelId,
+      clientEventId: 'seed-session',
+      parts: [{ type: 'text', text: '建立活动会话。' }],
+    })
+    const episode = runtime.repository
+      .listActiveEpisodesForAgent(entity.agentId)
+      .find((candidate) => candidate.dshSessionId !== undefined)
+    const dshSessionId = episode!.dshSessionId!
+    const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+      plugin: { kind: 'new', idPrefix: 'nochk' },
+      name: '无人检查的客户端',
+      purpose: '验证浏览器审批。',
+      code: {
+        host: `return {
+          inject: ['tools'],
+          apply(ctx) {
+            const tool = harness.defineTool({
+              name: 'dynamic_client_probe',
+              description: '验证带 Client 半边的动态 Tool 证据。',
+              parameters: {},
+              output: {
+                schema: { type: 'string' },
+                render(_args, value) { return [{ type: 'text', text: value }] }
+              },
+              execute() { return 'dynamic-client-ok' }
+            })
+            harness.registerTool(ctx, tool)
+          }
+        }`,
+        client: `return {
+          inject: ['panels'],
+          apply(ctx) {
+            ctx.panels.register(
+              { id: 'main', anchor: 'agent', title: '概览', densities: ['full'] },
+              () => React.createElement('div'),
+            )
+          }
+        }`,
+      },
+      resources: {},
+      // A V7 candidate also declares agent-layer capabilities; the preview only receives the page layer.
+      permissions: { permissions: [], networkOrigins: [], agent: { history: { read: true } } },
+      contributions: [],
+    })
+    void runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+    await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.status).toBe('awaiting-approval')
+    const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+    try {
+      await runtime.host.runWaitingCandidateWithoutClient(task.id)
+      const ready = runtime.repository.getAuthoringTask(task.id)
+      expect(ready?.status).toBe('ready')
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      expect(attempt.state).toBe('active')
+      expect(attempt.verification).toMatchObject({ hostStarted: true, clientLoaded: false, clientSkipped: true })
+      expect(projectAuthoringAttempt(attempt)).toMatchObject({ uiUnverified: true })
+      // The agent hears the result like after any other run.
+      await expect
+        .poll(() =>
+          model.requests.some((request) =>
+            request.messages.some(
+              (message) =>
+                message.role === 'user' &&
+                message.content.some((block) => block.type === 'text' && block.text.includes('〔系统通知〕')),
+            ),
+          ),
+        )
+        .toBe(true)
+    } finally {
       await runtime.dispose()
     }
   })

@@ -27,6 +27,7 @@ import {
   type JsonValue,
   DEFAULT_CHANNEL_CONTEXT_POLICY,
   DshNxtHostUiSchema,
+  AuthoringTaskIdSchema,
   HostApiContracts,
   OutboundIntentIdSchema,
   ExtensionIdSchema,
@@ -70,6 +71,8 @@ import { ConnectionApplicationService } from './connection-application.js'
 import { LocalCredentialStore } from './credentials.js'
 import { CommandAccountService } from './command-accounts.js'
 import { GithubCli } from './github-cli.js'
+import { CandidateVerifier } from './candidate-verifier.js'
+import { VerificationBrowser } from './verification-browser.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 import type { PersistentAdapterPort } from './persistent-extension-mounts.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
@@ -245,6 +248,9 @@ export class NekroRuntime {
   readonly authoringTestSecrets: AuthoringTestSecrets
   readonly codeRunNode: CodeRunNode
   readonly githubCli: GithubCli
+  readonly verificationBrowser: VerificationBrowser
+  #verificationOrigin: string | undefined
+  #candidateVerifier: CandidateVerifier | undefined
   readonly commandAccounts: CommandAccountService
   readonly retrieval: RetrievalRuntime
   readonly #hostClientDiagnostics = new Map<
@@ -298,6 +304,7 @@ export class NekroRuntime {
     readonly authoringTestSecrets: AuthoringTestSecrets
     readonly codeRunNode: CodeRunNode
     readonly githubCli: GithubCli
+    readonly verificationBrowser: VerificationBrowser
     readonly commandAccounts: CommandAccountService
     readonly retrieval: RetrievalRuntime
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
@@ -417,6 +424,7 @@ export class NekroRuntime {
     this.scheduledTasks = input.scheduledTasks
     this.codeRunNode = input.codeRunNode
     this.githubCli = input.githubCli
+    this.verificationBrowser = input.verificationBrowser
     this.commandAccounts = input.commandAccounts
     this.retrieval = input.retrieval
     this.channelPrompts = input.channelPrompts
@@ -933,6 +941,10 @@ export class NekroRuntime {
       await codeRunNode.prepare()
       const githubCli = new GithubCli({ root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'gh') })
       await githubCli.prepare()
+      const verificationBrowser = new VerificationBrowser({
+        root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'chromium'),
+      })
+      await verificationBrowser.prepare()
       const commandAccounts = new CommandAccountService(repository, credentials, {
         githubCli: () => githubCli.executable(),
         now,
@@ -1227,6 +1239,7 @@ export class NekroRuntime {
         scheduledTasks,
         codeRunNode,
         githubCli,
+        verificationBrowser,
         commandAccounts,
         retrieval,
         channelPrompts,
@@ -1282,12 +1295,51 @@ export class NekroRuntime {
       throw new Error('The internal Channel Adapter did not provide a localChannel port.')
     }
     this.sweepAuthoringTasks()
+    this.#candidateVerifier = new CandidateVerifier({
+      waiting: () => this.#waitingCandidates(),
+      settled: (taskId) => {
+        const status = this.repository.getAuthoringTask(AuthoringTaskIdSchema.parse(taskId))?.status
+        return status !== 'awaiting-approval' && status !== 'running'
+      },
+      origin: () => process.env['NEKRO_VERIFY_ORIGIN'] || this.#verificationOrigin,
+      browser: this.verificationBrowser,
+      runWithoutClient: (taskId) => this.host.runWaitingCandidateWithoutClient(AuthoringTaskIdSchema.parse(taskId)),
+      log: (message, error) => console.error(`[nekro-nxt] ${message}：`, error),
+    })
+    this.#candidateVerifier.start()
     this.#reviewWatch = setInterval(() => {
       void this.extensionRequests.watchReviews().catch((error: unknown) => {
         console.error('[nekro-nxt] 社区审查结果检查失败：', error)
       })
     }, EXTENSION_REVIEW_POLL_MS)
     this.#reviewWatch.unref()
+  }
+
+  /** Where the headless browser reaches this Host's own web page; set once the web host listens. */
+  setVerificationOrigin(origin: string): void {
+    this.#verificationOrigin = origin
+  }
+
+  /**
+   * Candidates waiting to run that may go ahead without asking (interaction model §7.2): the agent works
+   * autonomously, or the user already approved a run with the same risks.
+   */
+  #waitingCandidates(): readonly { readonly taskId: string; readonly updatedAt: number }[] {
+    return this.repository
+      .listAuthoringTasks()
+      .filter((task) => {
+        if (task.status !== 'awaiting-approval') return false
+        const attempt = this.repository.listAuthoringAttempts(task.id).at(-1)
+        if (attempt?.state !== 'awaiting-approval') return false
+        const revision = this.repository.getAgent(task.agentId)?.revision
+        return (
+          revision?.capabilities.extensionAutonomy === 'autonomous' ||
+          revision?.dynamicClientApprovalPolicy === 'automatic' ||
+          task.approvalPolicy === 'fully-automatic' ||
+          task.approvedRiskDigest === attempt.riskDigest
+        )
+      })
+      .map((task) => ({ taskId: task.id, updatedAt: task.updatedAt }))
   }
 
   /**
@@ -1767,6 +1819,7 @@ export class NekroRuntime {
 
   async #dispose(): Promise<void> {
     if (this.#reviewWatch !== undefined) clearInterval(this.#reviewWatch)
+    await this.#candidateVerifier?.dispose()
     this.#disposed = true
     await this.#jobScheduler.dispose()
     await this.retrieval.dispose()
