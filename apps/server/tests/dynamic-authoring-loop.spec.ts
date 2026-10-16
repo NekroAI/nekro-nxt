@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { projectHistoryEntry } from '../src/host-route-support.js'
 import { createNekroHostApi } from '../src/host-api.js'
-import { preflightNekroNxtAuthoringDefinition } from '../src/dynamic-authoring-runtime.js'
+import { DynamicAuthoringRuntime, preflightNekroNxtAuthoringDefinition } from '../src/dynamic-authoring-runtime.js'
 
 const temporaryDirectories: string[] = []
 
@@ -60,9 +60,9 @@ const toolHost = (name: string, execute: string) => `return {
   }
 }`
 
-const createRuntime = async (model = new QuietModel()) => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-loop-'))
-  temporaryDirectories.push(directory)
+const createRuntime = async (model = new QuietModel(), existingDirectory?: string) => {
+  const directory = existingDirectory ?? (await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-loop-')))
+  if (existingDirectory === undefined) temporaryDirectories.push(directory)
   return NekroRuntime.create({
     coreDatabasePath: path.join(directory, 'core.sqlite'),
     sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
@@ -128,6 +128,38 @@ describe('dynamic authoring closed loop', () => {
       expect(runtime.repository.listAuthoringTasks(entity.agentId).some((task) => task.status === 'failed')).toBe(true)
     } finally {
       await runtime.dispose()
+    }
+  }, 60_000)
+
+  it('keeps a verified candidate ready across a restart without calling its tools again', async () => {
+    const model = new QuietModel()
+    const { runtime, entity, dshSessionId } = await startAuthoringSession(model, true)
+    const directory = temporaryDirectories.at(-1)!
+    try {
+      await runtime.host.whenIdle(dshSessionId)
+      const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'rstv' },
+        name: '重启探针',
+        purpose: '验证通过后重启仍可保存。',
+        code: { host: toolHost('restart_probe', "return 'verified'") },
+      })
+      await runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+      expect(runtime.repository.listAuthoringTasks(entity.agentId)[0]?.status).toBe('ready')
+    } finally {
+      await runtime.dispose()
+    }
+    const verify = vi.spyOn(DynamicAuthoringRuntime.prototype, 'verifyDynamicPackage')
+    const restarted = await createRuntime(model, directory)
+    try {
+      await restarted.start()
+      await restarted.recover()
+      const [task] = restarted.repository.listAuthoringTasks(entity.agentId)
+      expect(task?.status).toBe('ready')
+      expect(restarted.repository.listAuthoringAttempts(task!.id).at(-1)?.verification).toBeDefined()
+      expect(verify).not.toHaveBeenCalled()
+    } finally {
+      verify.mockRestore()
+      await restarted.dispose()
     }
   }, 60_000)
 

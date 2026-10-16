@@ -64,6 +64,7 @@ import {
   validateHostUiSvg,
   type DynamicAuthoringService,
   type DynamicAuthoringSnapshot,
+  type DynamicAuthoringVerification,
   type ExtensionContribution,
 } from '@nekro-nxt/extension-runtime'
 import { createHash } from 'node:crypto'
@@ -1503,9 +1504,21 @@ export class DynamicAuthoringRuntime {
     return runner.inventory().filter(({ agentId }) => agentId === agent.id)
   }
 
-  syncAuthoringRow(episodeId: EpisodeId, row: DynamicCordisInventoryRow, packageId: string): void {
+  /**
+   * @param keepVerification - the evidence of the earlier run of this same candidate. A candidate restored after a
+   * restart runs again without being verified again (verifying calls its tools for real); while the restored run
+   * is up, the task stays ready on that evidence.
+   */
+  syncAuthoringRow(
+    episodeId: EpisodeId,
+    row: DynamicCordisInventoryRow,
+    packageId: string,
+    keepVerification?: DynamicAuthoringVerification,
+  ): void {
     const latest = row.latestRun
     if (!this.#authoring || !latest || latest.packageId !== packageId) return
+    const restored =
+      keepVerification !== undefined && (latest.status === 'running' || latest.status === 'client-pending')
     const state =
       latest.status === 'awaiting-approval'
         ? 'awaiting-approval'
@@ -1520,8 +1533,9 @@ export class DynamicAuthoringRuntime {
                 : latest.status === 'stopped'
                   ? 'stopped'
                   : 'failed'
-    const taskStatus =
-      latest.status === 'awaiting-approval'
+    const taskStatus = restored
+      ? 'ready'
+      : latest.status === 'awaiting-approval'
         ? 'awaiting-approval'
         : latest.status === 'failed' || latest.status === 'cancelled'
           ? 'failed'
@@ -1545,8 +1559,9 @@ export class DynamicAuthoringRuntime {
       pluginKey: row.pluginId,
       runnerPackageId: latest.packageId,
       runnerRunId: latest.pluginRunId,
-      state,
+      state: restored ? 'active' : state,
       taskStatus,
+      ...(restored ? { verification: keepVerification } : {}),
       host: {
         status: latest.host.status,
         waitingFor: latest.host.waitingFor,

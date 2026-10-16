@@ -170,6 +170,7 @@ import {
   type Activation,
   type DynamicAuthoringService,
   type DynamicAuthoringSnapshot,
+  type DynamicAuthoringVerification,
   type ExtensionRuntimeHost,
   type LoadedExtension,
   type LocalExtension,
@@ -3615,6 +3616,8 @@ export class DshHostRuntime implements AgentSessionDriver {
       readonly shouldRun: boolean
       readonly hasClient: boolean
     }> = []
+    // Candidates that had passed verification before the restart, by Runner package.
+    const verifiedBeforeRestart = new Map<string, DynamicAuthoringVerification>()
     const setup = async (agentContext: Context): Promise<void> => {
       if (this.#logs) {
         bindLogOwner(
@@ -3948,6 +3951,12 @@ export class DshHostRuntime implements AgentSessionDriver {
               const row = runner.inventory().find((candidate) => candidate.pluginId === pluginId)
               // Runs come from the Agent's own cordis_run (the result is already in its tool output) or from
               // cold-start recovery; neither needs a continuation turn. Browser-side results queue their own.
+              const keptVerification = verifiedBeforeRestart.get(packageId)
+              verifiedBeforeRestart.delete(packageId)
+              if (row && keptVerification !== undefined) {
+                this.#dynamic.syncAuthoringRow(input.episodeId, row, packageId, keptVerification)
+                return
+              }
               if (row) {
                 this.#dynamic.syncAuthoringRow(input.episodeId, row, packageId)
                 // A rejected run (for example an invalid mode) leaves the previous Package as latestRun; verifying
@@ -3971,6 +3980,9 @@ export class DshHostRuntime implements AgentSessionDriver {
           for (const candidate of recoveryCandidates) {
             try {
               const receipt = runner.restoreAuthoringPackage(sessionId, candidate.snapshot)
+              if (candidate.task.status === 'ready' && candidate.attempt.verification !== undefined) {
+                verifiedBeforeRestart.set(receipt.packageId, candidate.attempt.verification)
+              }
               this.#authoring.service.rebindRecoveredAttempt({
                 task: candidate.task,
                 attempt: candidate.attempt,
