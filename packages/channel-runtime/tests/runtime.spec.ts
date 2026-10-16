@@ -2740,13 +2740,13 @@ describe('ChannelRuntime M1 lane', () => {
         episodeId: episode.id,
         parts: [{ type: 'image', assetId: AssetIdSchema.parse('ast_noimage') }],
       }),
-    ).rejects.toThrow('does not support message part: image')
+    ).rejects.toThrow('这个平台不能发送图片')
     await expect(
       limited.runtime.sendMessage({
         episodeId: episode.id,
         parts: [{ type: 'rich', adapterKey: 'sample', kind: 'card', summary: '卡片摘要' }],
       }),
-    ).rejects.toThrow('does not support message part: rich')
+    ).rejects.toThrow('这个平台不能发送卡片消息')
 
     const noAdapter = new ChannelRuntime(
       limited.core,

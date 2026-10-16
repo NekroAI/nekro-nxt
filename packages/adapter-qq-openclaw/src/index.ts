@@ -108,7 +108,8 @@ export const QQ_OPENCLAW_CAPABILITIES: AdapterOutboundCapabilities = {
   text: true,
   mentions: true,
   images: true,
-  files: true,
+  // The QQ bot API sends images, video and voice; ordinary files (file_type 4) are not open to bots.
+  files: false,
   audio: true,
   replies: true,
   mixedContent: false,
@@ -800,7 +801,11 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
     }
     this.observeReplyContext(message.platformMessageId, {
       channelId,
-      ...(message.replyExpiresAt === undefined ? {} : { expiresAt: message.replyExpiresAt }),
+      // QQ counts the passive reply window from when the message was sent; a message delivered again after a
+      // reconnect can already be past it although it only just arrived here.
+      expiresAt:
+        message.replyExpiresAt ??
+        Math.min(message.platformTimestamp, this.#context.now()) + this.#config.passiveReplyTtlMs,
       ...(message.remainingReplies === undefined ? {} : { remainingReplies: message.remainingReplies }),
     })
     // Admission can start responding during the commit callback; indexes must already be available then.

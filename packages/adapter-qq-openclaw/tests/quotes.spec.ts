@@ -19,7 +19,8 @@ import { QQOpenClawConnection, decodeQQInboundMessage, type QQQuoteDiagnostic } 
 import { createQQIdentityDirectory } from '../src/host-contribution.ts'
 import { QQQuoteIndex, QQ_QUOTE_INDEX_LIMIT } from '../src/quote-index.ts'
 
-const decode = (id: string, extra: Record<string, unknown> = {}) =>
+/** `at` is when the platform says the message was sent; QQ's passive reply window counts from it. */
+const decode = (id: string, extra: Record<string, unknown> = {}, at = 100) =>
   decodeQQInboundMessage(
     'GROUP_MESSAGE_CREATE',
     {
@@ -29,7 +30,7 @@ const decode = (id: string, extra: Record<string, unknown> = {}) =>
       content: '虚构正文',
       ...extra,
     },
-    { now: () => 100 },
+    { now: () => at },
   )!
 
 const fixture = async () => {
@@ -161,7 +162,7 @@ describe('QQ quote history integration', () => {
       })
       // A fresh message authorizes a reply quoting the old message, even after the original budget expired.
       f.setNow(400000)
-      await adapter.receive(decode('ROBOT1.0_fresh'))
+      await adapter.receive(decode('ROBOT1.0_fresh', {}, 400000))
       const parts = [{ type: 'text' as const, text: '引用旧消息' }]
       const [plan] = await adapter.planOutbound({
         connectionId: f.connection.id,
@@ -323,7 +324,7 @@ describe('QQ quote history integration', () => {
       await adapter.receive({ ...decode('ROBOT1.0_limited'), remainingReplies: 1 })
       // Other messages still have quota; move beyond their expiry before creating a one-slot context.
       f.setNow(900000)
-      await adapter.receive({ ...decode('ROBOT1.0_only_one'), remainingReplies: 1 })
+      await adapter.receive({ ...decode('ROBOT1.0_only_one', {}, 900000), remainingReplies: 1 })
       await expect(
         adapter.planOutbound({
           connectionId: f.connection.id,

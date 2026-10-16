@@ -501,6 +501,80 @@ describe('QQ OpenClaw Adapter', () => {
     await adapter.stop()
   })
 
+  it('does not passively reply to a message delivered again after its reply window ended', async () => {
+    let sent = 0
+    const adapter = new QQOpenClawConnection(
+      {
+        connectionId,
+        now: () => 10_000,
+        acceptChannelInbound: () =>
+          Promise.resolve({ channelEventId: ChannelEventIdSchema.parse('evt_late'), inserted: true }),
+      },
+      {
+        appId: 'bot-openid',
+        clientSecretCredentialRef: 'credential:qq',
+        proactiveSend: false,
+        markdown: true,
+        maxTextLength: 100,
+        maxAssetBytes: 1024,
+        passiveReplyTtlMs: 1000,
+        passiveReplyLimit: 2,
+      },
+      {
+        directory: {
+          resolveTarget: () => Promise.resolve({ kind: 'group', openId: 'group-openid' }),
+          resolveMemberOpenId: () => Promise.resolve(undefined),
+          resolvePlatformMessageId: () => Promise.resolve(undefined),
+        },
+        assets: { read: () => Promise.reject(new Error('not used')) },
+        transport: {
+          start: () => Promise.resolve(),
+          stop: () => Promise.resolve(),
+          sendText: () => {
+            sent += 1
+            return Promise.resolve({ platformMessageId: 'not-expected' })
+          },
+          upload: () => Promise.reject(new Error('not used')),
+          sendMedia: () => Promise.reject(new Error('not used')),
+        },
+        inbound: {
+          ensureTarget: () => Promise.resolve(channelId),
+          ensureMember: ({ openId }) =>
+            Promise.resolve(ChannelMemberIdSchema.parse(`mbr_${openId.replaceAll('-', '')}`)),
+          isSelfMember: () => Promise.resolve(false),
+          importAttachment: () => Promise.reject(new Error('not used')),
+          resolveQuote: () => Promise.resolve(undefined),
+        },
+      },
+    )
+    await adapter.start()
+    // Sent at 2000, delivered again after a reconnect at 10000: QQ's window (1000 ms here) closed long ago.
+    await adapter.receive({
+      eventType: 'GROUP_AT_MESSAGE_CREATE',
+      platformMessageId: 'qq-late',
+      target: { kind: 'group', openId: 'group-openid' },
+      senderOpenId: 'sender-openid',
+      content: '<@bot-openid> 在吗',
+      mentions: [{ openId: 'bot-openid', bot: true }],
+      platformTimestamp: 2_000,
+    })
+    await expect(
+      adapter.deliver(
+        {
+          deliveryId: PhysicalDeliveryIdSchema.parse('phy_late'),
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_late'),
+          connectionId,
+          channelId,
+          parts: [{ type: 'text', text: '在的' }],
+          replyTo: 'qq-late',
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ status: 'failed', failure: { kind: 'permanent' } })
+    expect(sent).toBe(0)
+    await adapter.stop()
+  })
+
   it('collects ordinary group messages without forcing an intelligent-agent trigger', async () => {
     const accepted: AdapterChannelInboundEvent[] = []
     const adapter = new QQOpenClawConnection(

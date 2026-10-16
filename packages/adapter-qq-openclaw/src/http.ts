@@ -242,7 +242,7 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
         cause: error,
       })
     }
-    if (!response.ok) throw this.#httpError(response, false)
+    if (!response.ok) throw await this.#httpError(response, false)
     const data = await this.#json(response)
     const token = string(data['access_token'], data['accessToken'])
     if (!token) throw new QQTransportError('authentication', 'QQ token response omitted access_token.')
@@ -288,7 +288,7 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
         const denied = await this.#json(response)
         if (integer(denied['code']) === 11253) return denied
       }
-      throw this.#httpError(response, submissionRisk)
+      throw await this.#httpError(response, submissionRisk)
     }
     return this.#json(response)
   }
@@ -300,11 +300,29 @@ export class QQOpenClawHttpTransport implements QQOpenClawTransport, QQGatewayAc
     } catch (error) {
       throw new QQTransportError('transient', 'QQ upload part request failed.', { cause: error })
     }
-    if (!response.ok) throw this.#httpError(response, false)
+    if (!response.ok) throw await this.#httpError(response, false)
   }
 
-  #httpError(response: Response, submissionRisk: boolean): QQTransportError {
-    const message = `QQ HTTP request failed with status ${response.status}.`
+  /** QQ explains a refusal in the body (`code`, `message`); the status alone does not say why. */
+  async #httpError(response: Response, submissionRisk: boolean): Promise<QQTransportError> {
+    let reason = ''
+    try {
+      const body: unknown = JSON.parse(await response.text())
+      if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
+        const fields = new Map<string, unknown>(Object.entries(body))
+        const code = fields.get('code') ?? fields.get('err_code')
+        const text = fields.get('message') ?? fields.get('msg')
+        reason = [
+          typeof code === 'number' || typeof code === 'string' ? `code ${code}` : '',
+          typeof text === 'string' ? text.slice(0, 200) : '',
+        ]
+          .filter(Boolean)
+          .join(': ')
+      }
+    } catch {
+      // A body that is not JSON adds nothing.
+    }
+    const message = `QQ HTTP request failed with status ${response.status}${reason ? ` (${reason})` : ''}.`
     if (response.status === 401 || response.status === 403) return new QQTransportError('authentication', message)
     if (response.status === 429) {
       const delay = retryAfter(response, this.#now())

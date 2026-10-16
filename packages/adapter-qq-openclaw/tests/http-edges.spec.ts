@@ -90,6 +90,24 @@ describe('QQ OpenClaw HTTP edge cases', () => {
         signal: signal(),
       }),
     ).rejects.toMatchObject({ kind: 'permanent' })
+    // QQ's own code and message say why a send was refused; they stay on the failure.
+    const explained = createTransport(
+      sequenceFetch(
+        [() => json({ access_token: 'token' }), () => json({ code: 40034025, message: '示例拒绝原因' }, 400)],
+        [],
+      ),
+    )
+    await expect(
+      explained.sendText({
+        target: { kind: 'group', openId: 'group' },
+        markdown: false,
+        content: 'late reply',
+        signal: signal(),
+      }),
+    ).rejects.toMatchObject({
+      kind: 'permanent',
+      message: 'QQ HTTP request failed with status 400 (code 40034025: 示例拒绝原因).',
+    })
     const unknown = createTransport(sequenceFetch([() => json({ access_token: 'token' }), () => json({}, 500)], []))
     await expect(
       unknown.sendText({

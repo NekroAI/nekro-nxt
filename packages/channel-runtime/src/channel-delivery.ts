@@ -35,6 +35,17 @@ const supportsPart = (adapter: AdapterConnectionRuntime, part: MessagePart): boo
       return false
   }
 }
+/** What the agent reads when a platform cannot carry a part; it says what to do instead. */
+const UNSUPPORTED_PART: Readonly<Record<MessagePart['type'], string>> = {
+  text: '这个平台不能发送文字消息。',
+  mention: '这个平台不支持在消息里 @ 成员，请直接写对方的名字。',
+  image: '这个平台不能发送图片，请改用文字说明。',
+  file: '这个平台不能发送文件，请把内容直接写进消息，或者改成图片发送。',
+  audio: '这个平台不能发送语音，请改用文字。',
+  quote: '这个平台不支持引用回复，请直接发送消息。',
+  rich: '这个平台不能发送卡片消息，请改用文字。',
+}
+
 export interface DeliveryPacing {
   readonly gapMs: (channelId: ChannelId, parts: readonly MessagePart[]) => number
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
@@ -137,7 +148,7 @@ export class ChannelDelivery {
     if (!adapter) throw new Error(`Connection adapter is not running: ${channel.connectionId}`)
     if (input.parts.length === 0) throw new Error('Outbound requires at least one content part.')
     for (const part of input.parts) {
-      if (!supportsPart(adapter, part)) throw new Error(`Adapter does not support message part: ${part.type}`)
+      if (!supportsPart(adapter, part)) throw new Error(UNSUPPORTED_PART[part.type])
     }
     await this.#waitForGap(channel.id, input.parts, input.signal)
 
