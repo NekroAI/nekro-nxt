@@ -108,8 +108,8 @@ export const QQ_OPENCLAW_CAPABILITIES: AdapterOutboundCapabilities = {
   text: true,
   mentions: true,
   images: true,
-  // The QQ bot API sends images, video and voice; ordinary files (file_type 4) are not open to bots.
-  files: false,
+  // Groups accept ordinary files (file_type 4) as well as images, video and voice.
+  files: true,
   audio: true,
   replies: true,
   mixedContent: false,
