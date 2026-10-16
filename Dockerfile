@@ -32,13 +32,21 @@ COPY --from=build --chown=root:root /workspace/apps/web/dist /opt/nekro/web/dist
 COPY --from=build --chown=root:root /workspace/LICENSE /workspace/NOTICE /opt/nekro/
 COPY --chown=root:root docker/entrypoint.sh /opt/nekro/entrypoint.sh
 RUN chmod -R a=rX /opt/nekro
+# The headless Chromium that loads and checks creation candidates' interfaces when no page is open, with the system
+# libraries it needs; the installer is the server's own playwright-core. Permissions are set in the same layer so the
+# browser is not stored twice.
+RUN PLAYWRIGHT_BROWSERS_PATH=/opt/nekro/chromium PLAYWRIGHT_SKIP_BROWSER_GC=1 \
+    node /opt/nekro/server/node_modules/playwright-core/cli.js install --with-deps chromium-headless-shell \
+  && rm -rf /var/lib/apt/lists/* \
+  && chmod -R a=rX /opt/nekro/chromium
 
 ENV NODE_ENV=production \
   NEKRO_DATA=/data \
   NEKRO_DIST_INDEX=/opt/nekro/web/dist/index.html \
   NEKRO_HOST=0.0.0.0 \
   NEKRO_PORT=4960 \
-  NEKRO_RELEASE_ID=${NEKRO_RELEASE_ID}
+  NEKRO_RELEASE_ID=${NEKRO_RELEASE_ID} \
+  NEKRO_VERIFICATION_BROWSER_ROOT=/opt/nekro/chromium
 
 WORKDIR /data
 # The entrypoint gives /data to NEKRO_UID:NEKRO_GID (default 10001, the nekro user) and drops to it.

@@ -943,6 +943,9 @@ export class NekroRuntime {
       await githubCli.prepare()
       const verificationBrowser = new VerificationBrowser({
         root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'chromium'),
+        ...(process.env['NEKRO_VERIFICATION_BROWSER_ROOT']
+          ? { systemRoot: process.env['NEKRO_VERIFICATION_BROWSER_ROOT'] }
+          : {}),
       })
       await verificationBrowser.prepare()
       const commandAccounts = new CommandAccountService(repository, credentials, {

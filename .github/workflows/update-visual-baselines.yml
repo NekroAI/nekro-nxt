@@ -1,0 +1,46 @@
+name: Update visual baselines
+
+# Visual baselines are platform-specific. macOS ones are refreshed locally; the Linux ones CI compares against are
+# regenerated here, on the same runner image as the journey job, and committed to the chosen branch.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch to regenerate and commit the Linux baselines on
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
+      - run: pnpm build
+      - run: pnpm exec playwright test apps/web/e2e/product-quality.spec.ts --update-snapshots
+      - name: Commit changed Linux baselines
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          git add -- 'apps/**/*-linux.png'
+          if git diff --cached --quiet; then
+            echo 'Linux baselines are already up to date.'
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'test(ui): 更新 Linux 视觉基线'
+          git push origin "HEAD:$REF"

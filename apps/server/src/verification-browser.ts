@@ -12,7 +12,8 @@ import type { Browser } from 'playwright-core'
 /** Same shape as the other downloadable programs (`CodeRunAvailability`), so pages show it the same way. */
 export interface VerificationBrowserStatus {
   readonly available: boolean
-  readonly source?: 'downloaded'
+  /** `system`: preinstalled with NekroNXT (the Docker image); `downloaded`: fetched on request into the data root. */
+  readonly source?: 'system' | 'downloaded'
   readonly version?: string
   /** Present while it is not usable: to install it, or why it failed to install or start. */
   readonly download?: {
@@ -29,13 +30,16 @@ const PRODUCT = 'Chromium'
 export interface VerificationBrowserOptions {
   /** `<data root>/runtimes/chromium`; the folder is NekroNXT's own and holds nothing else. */
   readonly root: string
+  /** A browser folder installed with NekroNXT itself (the Docker image sets `NEKRO_VERIFICATION_BROWSER_ROOT`). */
+  readonly systemRoot?: string
   /** Runs the installer; tests replace it. Resolves when the process exits, with its exit code. */
   readonly install?: (root: string, onLine: (line: string) => void) => Promise<number>
   /** Starts the browser; tests replace it. */
   readonly launch?: (executablePath: string) => Promise<Browser>
 }
 
-const EXECUTABLES = new Set(['chrome-headless-shell', 'chrome-headless-shell.exe'])
+// The file name differs by build: `chrome-headless-shell` (macOS, Windows, Linux x64) or `headless_shell` (Linux arm64).
+const EXECUTABLES = new Set(['chrome-headless-shell', 'chrome-headless-shell.exe', 'headless_shell'])
 
 /** `node <playwright-core>/cli.js install chromium-headless-shell`, with the browsers folder pointed at `root`. */
 const runInstaller = (root: string, onLine: (line: string) => void): Promise<number> =>
@@ -76,6 +80,7 @@ const progressOf = (line: string): { readonly receivedBytes: number; readonly to
 export class VerificationBrowser {
   readonly #options: VerificationBrowserOptions
   #executable: string | undefined
+  #source: 'system' | 'downloaded' = 'downloaded'
   #problem: string | undefined
   #download: NonNullable<VerificationBrowserStatus['download']> = { version: PRODUCT, state: 'idle' }
   #inflight: Promise<void> | undefined
@@ -87,12 +92,22 @@ export class VerificationBrowser {
 
   /** Looks for an installed browser; later calls reuse the answer. */
   async prepare(): Promise<void> {
-    this.#executable = await this.#findExecutable()
+    await this.#locate()
+  }
+
+  async #locate(): Promise<void> {
+    const downloaded = await this.#findExecutable(this.#options.root)
+    const system =
+      downloaded === undefined && this.#options.systemRoot !== undefined
+        ? await this.#findExecutable(this.#options.systemRoot)
+        : undefined
+    this.#executable = downloaded ?? system
+    this.#source = system === undefined ? 'downloaded' : 'system'
   }
 
   status(): VerificationBrowserStatus {
     if (this.#executable !== undefined && this.#problem === undefined && this.#download.state !== 'downloading')
-      return { available: true, source: 'downloaded', version: PRODUCT }
+      return { available: true, source: this.#source, version: PRODUCT }
     // Installed but unable to start: show why, with the same retry as a failed download.
     const download =
       this.#problem !== undefined && this.#download.state !== 'downloading'
@@ -124,7 +139,7 @@ export class VerificationBrowser {
         this.#setDownload({ version: PRODUCT, state: 'downloading', ...progress })
       })
       if (code !== 0) throw new Error(last.trim() || `安装程序退出（代码 ${code}）。`)
-      this.#executable = await this.#findExecutable()
+      await this.#locate()
       if (this.#executable === undefined) throw new Error('安装完成后没有找到浏览器。')
       this.#problem = undefined
       this.#setDownload({ version: PRODUCT, state: 'idle' })
@@ -141,8 +156,8 @@ export class VerificationBrowser {
   async removeDownloaded(): Promise<VerificationBrowserStatus> {
     if (this.#inflight !== undefined) throw new Error('浏览器正在下载，完成后再删除。')
     await rm(this.#options.root, { recursive: true, force: true })
-    this.#executable = undefined
     this.#problem = undefined
+    await this.#locate()
     this.#notify()
     return this.status()
   }
@@ -163,7 +178,7 @@ export class VerificationBrowser {
     }
   }
 
-  async #findExecutable(): Promise<string | undefined> {
+  async #findExecutable(root: string): Promise<string | undefined> {
     const search = async (directory: string, depth: number): Promise<string | undefined> => {
       let entries: string[]
       try {
@@ -188,7 +203,7 @@ export class VerificationBrowser {
       }
       return undefined
     }
-    return search(this.#options.root, 3)
+    return search(root, 3)
   }
 
   subscribe(listener: () => void): () => void {

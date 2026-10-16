@@ -64,6 +64,17 @@ describe('verification browser', () => {
     expect(browser.status().available).toBe(false)
   })
 
+  it('uses a browser installed with NekroNXT without offering to remove it', async () => {
+    const directory = await scratch()
+    const systemRoot = path.join(directory, 'bundled')
+    const folder = path.join(systemRoot, 'chromium_headless_shell-1', 'chrome-headless-shell-linux64')
+    await mkdir(folder, { recursive: true })
+    await writeFile(path.join(folder, 'chrome-headless-shell'), '')
+    const browser = new VerificationBrowser({ root: path.join(directory, 'chromium'), systemRoot })
+    await browser.prepare()
+    expect(browser.status()).toEqual({ available: true, source: 'system', version: 'Chromium' })
+  })
+
   it('shows why an installed browser cannot start and keeps candidates from trying again', async () => {
     const root = path.join(await scratch(), 'chromium')
     await mkdir(path.join(root, 'chromium_headless_shell-1', 'chrome-headless-shell-linux64'), { recursive: true })
