@@ -6,7 +6,14 @@ import { z } from 'zod'
 import type { NekroNxtDynamicCordisRunner } from './dynamic-authoring-runtime.js'
 
 /** Product-owned commands over the public Runner; all ownership and approvals remain in the Runner. */
-export function mountDynamicCordisTools(context: Context, runner: NekroNxtDynamicCordisRunner): void {
+export function mountDynamicCordisTools(
+  context: Context,
+  runner: NekroNxtDynamicCordisRunner,
+  options: {
+    /** Whether this agent's candidates go ahead without anyone approving them (its extension autonomy). */
+    readonly runsWithoutAsking?: () => boolean
+  } = {},
+): void {
   const agentFor = (execution: ToolExecution) => {
     if (!execution.agent) throw new Error('动态扩展操作需要当前智能体。')
     return runner.resolveDynamicAuthoringOwner(execution.agent)
@@ -98,7 +105,9 @@ export function mountDynamicCordisTools(context: Context, runner: NekroNxtDynami
           result.ok && result.status === 'awaiting-approval'
             ? {
                 nextStep:
-                  '候选包含界面，需要用户在频道的扩展开发任务中打开任务页面确认运行，浏览器加载界面并完成验证后，结果会自动发给你。在此之前不要重复运行或声称已完成。',
+                  options.runsWithoutAsking?.() === true
+                    ? '候选包含界面，会自动运行并在后台加载界面、完成验证，结果会自动发给你；不需要让用户去点确认。在此之前不要重复运行或声称已完成。'
+                    : '候选包含界面，需要管理员确认运行：在任务页面点「允许运行」，或由管理员在聊天里发送 /ext run 加任务名称。确认后界面会自动加载并验证，结果会自动发给你。在此之前不要重复运行或声称已完成。',
               }
             : {}
         return parseJsonValue(JSON.parse(JSON.stringify({ ...result, ...nextStep })))

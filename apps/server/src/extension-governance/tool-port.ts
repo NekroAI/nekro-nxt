@@ -52,6 +52,11 @@ export interface ExtensionGovernanceToolPort {
     agentId: AgentId,
     episodeId: EpisodeId,
   ): { readonly allowed: true } | { readonly allowed: false; readonly reason: string }
+  /**
+   * Whether this agent's candidates run without anyone approving them: its extension autonomy is autonomous, or the
+   * older automatic setting is on.
+   */
+  runsWithoutAsking(agentId: AgentId): boolean
   list(agentId: AgentId): JsonValue
   prepareRevise(
     agentId: AgentId,
@@ -90,6 +95,13 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
 
   constructor(runtime: NekroRuntime) {
     this.#runtime = runtime
+  }
+
+  runsWithoutAsking(agentId: AgentId): boolean {
+    const revision = this.#runtime.repository.getAgent(agentId)?.revision
+    return (
+      revision?.capabilities.extensionAutonomy === 'autonomous' || revision?.dynamicClientApprovalPolicy === 'automatic'
+    )
   }
 
   requesterAllowed(agentId: AgentId, episodeId: EpisodeId) {

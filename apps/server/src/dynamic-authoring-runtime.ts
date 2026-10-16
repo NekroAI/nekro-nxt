@@ -1041,6 +1041,38 @@ export class DynamicAuthoringRuntime {
     return this.#authoring.service.snapshotForRunnerPackage(episodeId, pluginId, packageId)
   }
 
+  approveWaitingAuthoringCandidate(taskId: Parameters<DynamicAuthoringService['approveWaitingCandidate']>[0]) {
+    this.#assertActive()
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
+    return this.#authoring.service.approveWaitingCandidate(taskId)
+  }
+
+  /**
+   * Declines the candidate a task is waiting on, from chat: the ledger records the rejection and the Runner hears it
+   * directly, so no page needs to be open.
+   */
+  async rejectWaitingAuthoringCandidate(taskId: Parameters<DynamicAuthoringService['approveWaitingCandidate']>[0]) {
+    this.#assertActive()
+    if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')
+    const task = this.#authoring.service.getTask(taskId)
+    const attempt = task === undefined ? undefined : this.#authoring.service.listAttempts(task.id).at(-1)
+    if (!task || task.status !== 'awaiting-approval' || attempt?.state !== 'awaiting-approval') {
+      throw new Error('这个任务现在没有等待确认运行的候选。')
+    }
+    this.#authoring.service.decideAttempt({
+      taskId: task.id,
+      attemptId: attempt.id,
+      expectedRevision: task.revision,
+      approved: false,
+      approveRiskStable: false,
+    })
+    const session = [...this.#sessions.records()].find((record) => record.episodeId === task.episodeId)
+    if (!session?.dynamic) return
+    const row = this.dynamicInventory(session.sessionId).find((candidate) => candidate.pluginId === task.pluginKey)
+    const requestId = row?.latestRun?.approvalRequestId
+    if (requestId) await this.resolveDynamicRunRequest(session.sessionId, requestId, { ok: false, reason: 'rejected' })
+  }
+
   decideAuthoringAttempt(input: Parameters<DynamicAuthoringService['decideAttempt']>[0]) {
     this.#assertActive()
     if (!this.#authoring) throw new Error('Authoring ledger is not enabled.')

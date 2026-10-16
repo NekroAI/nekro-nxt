@@ -217,6 +217,48 @@ describe('Dynamic authoring artifacts', () => {
     expect(repository.listAuthoringAttempts(current.id).at(-1)?.state).toBe('stopped')
   })
 
+  it('records a chat approval of the waiting candidate without starting it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-authoring-chat-approval-'))
+    temporaryDirectories.push(directory)
+    const repository = createAuthoringMemoryRepository()
+    const service = new DynamicAuthoringService(repository, new AuthoringArtifactStore(directory))
+    const episodeId = EpisodeIdSchema.parse('eps_CHATAPPROVAL')
+    const first = await service.recordDefinition({
+      agentId: AgentIdSchema.parse('agt_CHATAPPROVAL'),
+      channelId: ChannelIdSchema.parse('chn_CHATAPPROVAL'),
+      episodeId,
+      initiatingEventId: ChannelEventIdSchema.parse('evt_CHATAPPROVAL'),
+      approvalPolicy: 'risk-stable',
+      pluginKey: 'chat-approval',
+      runnerPackageId: 'package-chat',
+      snapshot: {
+        name: '天气卡片',
+        purpose: '在频道里展示天气。',
+        code: { host: 'return { apply() {} }', client: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      },
+    })
+    expect(() => service.approveWaitingCandidate(first.task.id)).toThrow('没有等待确认运行的候选')
+    service.syncAttempt({
+      episodeId,
+      pluginKey: 'chat-approval',
+      runnerPackageId: 'package-chat',
+      state: 'awaiting-approval',
+      taskStatus: 'awaiting-approval',
+      host: { status: 'absent', waitingFor: [] },
+      client: { status: 'absent', waitingFor: [] },
+      eventKind: 'approval-requested',
+      eventPayload: {},
+    })
+    const approved = service.approveWaitingCandidate(first.task.id)
+    // The risks count as approved; the task still waits, so the usual approval path runs it.
+    expect(approved).toMatchObject({ status: 'awaiting-approval', approvedRiskDigest: first.attempt.riskDigest })
+    expect(repository.listAuthoringAttempts(first.task.id).at(-1)?.state).toBe('awaiting-approval')
+    expect(service.approveWaitingCandidate(first.task.id).revision).toBe(approved.revision)
+  })
+
   it('interrupts instead of restoring a candidate left unsaved beyond the recovery window', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-expiry-'))
     temporaryDirectories.push(directory)

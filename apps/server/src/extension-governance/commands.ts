@@ -12,6 +12,7 @@ const SUBCOMMANDS = new Set([
   'info',
   'approve',
   'reject',
+  'run',
   'enable',
   'disable',
   'revert',
@@ -45,6 +46,19 @@ export class ExtensionCommandPort implements CommandGovernancePort {
     if (!context.administrator) throw new Error(ADMIN_ONLY)
     const decider = { kind: 'administrator' as const, label: context.identity.displayName }
     const actor = context.identity.source === 'web' ? ({ kind: 'console' } as const) : decider
+    // A task name after approve, reject or run means the candidate that task is waiting to run.
+    if (
+      subcommand === 'run' ||
+      ((subcommand === 'approve' || subcommand === 'reject') && !this.#isNumber(input.target))
+    ) {
+      const task = this.#waitingTask(input.target, context.agentId)
+      if (subcommand === 'reject') {
+        await this.#runtime.host.rejectWaitingAuthoringCandidate(task.id)
+        return `已拒绝运行「${task.title}」的候选，${this.#agentName(task.agentId)}会收到通知。`
+      }
+      this.#runtime.host.approveWaitingAuthoringCandidate(task.id)
+      return `已允许运行「${task.title}」的候选。打开着的 NekroNXT 页面或后台验证会接着加载界面并完成验证，结果会发给${this.#agentName(task.agentId)}。`
+    }
     switch (subcommand) {
       case 'approve': {
         const number = this.#number(input.target)
@@ -180,6 +194,8 @@ export class ExtensionCommandPort implements CommandGovernancePort {
     if (tasks.length > 0) {
       lines.push('进行中的创造任务：')
       for (const task of tasks) lines.push(`· ${task.title}（${TASK_STATUS[task.status] ?? task.status}）`)
+      if (tasks.some((task) => task.status === 'awaiting-approval'))
+        lines.push('管理员发送 /ext run 任务名称 允许候选运行，/ext reject 任务名称 拒绝。')
     }
     const pending = runtime.extensionRequests.list('pending').filter((request) => request.agentId === agentId)
     if (pending.length > 0) {
@@ -267,6 +283,32 @@ export class ExtensionCommandPort implements CommandGovernancePort {
           tasks.find((task) => task.title.includes(query)))
     if (!found) throw new Error(query ? `找不到任务「${query}」。` : '有多个任务，请写上任务名称。')
     return found
+  }
+
+  #isNumber(value: string | undefined): boolean {
+    return /^#?\d+$/u.test((value ?? '').trim())
+  }
+
+  /** The task whose candidate waits for someone to allow it to run; with one waiting, the name may be left out. */
+  #waitingTask(name: string | undefined, agentId: AgentId | undefined) {
+    const tasks = this.#runtime.repository
+      .listAuthoringTasks(agentId)
+      .filter((task) => task.status === 'awaiting-approval')
+    const query = name?.trim()
+    const found =
+      query === undefined || query === ''
+        ? tasks.length === 1
+          ? tasks[0]
+          : undefined
+        : (tasks.find((task) => task.title === query || task.id === query) ??
+          tasks.find((task) => task.title.includes(query)))
+    if (found) return found
+    if (tasks.length === 0) throw new Error('现在没有等待确认运行的候选。')
+    throw new Error(
+      query
+        ? `找不到等待确认的任务「${query}」。等待中的有：${tasks.map((task) => task.title).join('、')}。`
+        : `有多个任务在等待确认，请写上任务名称：${tasks.map((task) => task.title).join('、')}。`,
+    )
   }
 
   #number(value: string | undefined): number {

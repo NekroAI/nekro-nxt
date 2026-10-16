@@ -103,18 +103,23 @@ const BUILTIN_HANDLERS: readonly Omit<RegisteredCommand, 'fullName' | 'source'>[
     definition: define({
       name: 'ext',
       description:
-        '查看和管理当前智能体的扩展：不带参数列出扩展、进行中的任务和待确认请求；管理员可以确认请求、启停、回退和切换版本',
+        '查看和管理当前智能体的扩展：不带参数列出扩展、进行中的任务和待确认请求；管理员可以确认请求、允许候选运行、启停、回退和切换版本',
       parameters: [
         {
           name: '操作',
           kind: 'positional',
           type: 'string',
-          description: 'info、approve、reject、enable、disable、revert、use、save、continue、update、publish',
+          description: 'info、approve、reject、run、enable、disable、revert、use、save、continue、update、publish',
         },
-        { name: '对象', kind: 'positional', type: 'string', description: '请求编号、扩展名称或任务名称' },
+        {
+          name: '对象',
+          kind: 'positional',
+          type: 'string',
+          description: '请求编号、扩展名称或任务名称；approve、reject 后跟任务名称时针对它等待运行的候选',
+        },
         { name: '值', kind: 'positional', type: 'string', description: '版本号（如 v2）或拒绝原因' },
       ],
-      examples: ['/ext', '/ext approve 12', '/ext revert 用户屏蔽', '/ext use 用户屏蔽 v2'],
+      examples: ['/ext', '/ext approve 12', '/ext run 天气卡片', '/ext revert 用户屏蔽', '/ext use 用户屏蔽 v2'],
     }),
     invoke: async (context, host) => {
       if (!host.governance) throw new Error('这台 NekroNXT 没有开启扩展管理。')

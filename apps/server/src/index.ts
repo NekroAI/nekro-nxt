@@ -3922,7 +3922,10 @@ export class DshHostRuntime implements AgentSessionDriver {
                 episodeId: input.episodeId,
                 initiatingEventId,
                 approvalPolicy:
-                  revision.dynamicClientApprovalPolicy === 'automatic' ? 'fully-automatic' : 'risk-stable',
+                  this.#authoring?.governance?.()?.runsWithoutAsking(revision.agentId) === true ||
+                  revision.dynamicClientApprovalPolicy === 'automatic'
+                    ? 'fully-automatic'
+                    : 'risk-stable',
                 pluginKey: receipt.pluginId,
                 runnerPackageId: receipt.packageId,
                 snapshot,
@@ -4024,7 +4027,9 @@ export class DshHostRuntime implements AgentSessionDriver {
           'nekro-nxt: inspect provider',
         )
         await dynamicContext.plugin(CordisTool)
-        mountDynamicCordisTools(dynamicContext, runner)
+        mountDynamicCordisTools(dynamicContext, runner, {
+          runsWithoutAsking: () => this.#authoring?.governance?.()?.runsWithoutAsking(revision.agentId) === true,
+        })
         const governance = this.#authoring?.governance
         const requesterGuard = () => {
           const verdict = governance?.()?.requesterAllowed(revision.agentId, input.episodeId)
@@ -4800,6 +4805,14 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   decideAuthoringAttempt(input: Parameters<DynamicAuthoringService['decideAttempt']>[0]) {
     return this.#dynamic.decideAuthoringAttempt(input)
+  }
+
+  approveWaitingAuthoringCandidate(taskId: Parameters<DynamicAuthoringService['approveWaitingCandidate']>[0]) {
+    return this.#dynamic.approveWaitingAuthoringCandidate(taskId)
+  }
+
+  rejectWaitingAuthoringCandidate(taskId: Parameters<DynamicAuthoringService['approveWaitingCandidate']>[0]) {
+    return this.#dynamic.rejectWaitingAuthoringCandidate(taskId)
   }
 
   restoreAuthoringAttempt(input: Parameters<DynamicAuthoringRuntime['restoreAuthoringAttempt']>[0]) {

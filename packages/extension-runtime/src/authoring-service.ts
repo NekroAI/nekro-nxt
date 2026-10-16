@@ -730,6 +730,36 @@ export class DynamicAuthoringService {
     this.#publish({ taskId: current.id, agentId: current.agentId })
   }
 
+  /**
+   * An administrator approved the waiting candidate from chat (`/ext run`). Its risks now count as approved, so the
+   * next page or headless browser that takes candidates runs it through the usual approval path; nothing runs here.
+   */
+  approveWaitingCandidate(taskId: DynamicAuthoringTask['id']): DynamicAuthoringTask {
+    const current = this.#repository.getAuthoringTask(taskId)
+    if (!current) throw new Error('找不到这个创造任务。')
+    const attempt = this.#repository.listAuthoringAttempts(current.id).at(-1)
+    if (current.status !== 'awaiting-approval' || attempt?.state !== 'awaiting-approval') {
+      throw new Error('这个任务现在没有等待确认运行的候选。')
+    }
+    if (current.approvedRiskDigest === attempt.riskDigest) return current
+    const now = this.#now()
+    const task = { ...current, approvedRiskDigest: attempt.riskDigest, revision: current.revision + 1, updatedAt: now }
+    this.#repository.updateAuthoringTask({
+      task,
+      expectedRevision: current.revision,
+      event: {
+        taskId: current.id,
+        sequence: task.revision,
+        kind: 'approval-accepted',
+        attemptId: attempt.id,
+        payload: { approved: true, via: 'chat' },
+        createdAt: now,
+      },
+    })
+    this.#publish({ taskId: current.id, agentId: current.agentId })
+    return task
+  }
+
   decideAttempt(input: {
     readonly taskId: DynamicAuthoringTask['id']
     readonly attemptId: AuthoringAttemptId

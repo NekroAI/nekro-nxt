@@ -1,4 +1,5 @@
 declare const styles: {
+  readonly background: string
   readonly pagePreview: string
   readonly pagePreviewCanvas: string
   readonly pagePreviewFrame: string

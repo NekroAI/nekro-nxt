@@ -19,7 +19,9 @@ import type {
 import { HostUiKitComponentNameSchema, HostUiNavigationModelSchema } from '@nekro-nxt/contracts'
 import { HttpDynamicClientHost } from './http-dynamic-host.js'
 import type { DynamicPackageSummary } from './product-port.js'
-import { useProductStore, useProductRuntime, type ProductRuntime } from './product-runtime.js'
+import { useLocation } from 'react-router-dom'
+import type { HostApiResponse } from '@nekro-nxt/contracts'
+import { useProductStore, useProductRuntime, type AgentSummary, type ProductRuntime } from './product-runtime.js'
 import { Button } from './ui-kit/index.js'
 import { HostUiPageFrame } from './host-ui-client.js'
 import { ContributionBoundary, ContributionFrame } from './extension-ui/contribution-frame.js'
@@ -842,6 +844,33 @@ export const dynamicClientInventoryVersion = (inventory: readonly DynamicPackage
     .sort()
     .join('|')
 
+type AuthoringTaskView = HostApiResponse<'snapshot'>['authoringTasks'][number]
+type AgentApproval = Pick<AgentSummary, 'id' | 'dynamicClientApprovalPolicy'> & {
+  readonly capabilities: Pick<AgentSummary['capabilities'], 'extensionAutonomy'>
+}
+type TaskApproval = Pick<
+  AuthoringTaskView,
+  'agentId' | 'episodeId' | 'status' | 'approvalPolicy' | 'approvedRiskDigest'
+> & {
+  readonly candidateAttempt?:
+    Pick<NonNullable<AuthoringTaskView['candidateAttempt']>, 'state' | 'riskDigest'> | undefined
+}
+
+/**
+ * Whether a candidate may go ahead without anyone clicking (docs/NekroNxt界面交互模型.md §7.2): the agent works
+ * autonomously, its old automatic setting is on, or the user already approved a run with the same risks.
+ */
+export const runsWithoutAsking = (task: TaskApproval | undefined, agent: AgentApproval | undefined): boolean => {
+  if (agent?.capabilities.extensionAutonomy === 'autonomous' || agent?.dynamicClientApprovalPolicy === 'automatic')
+    return true
+  if (task?.approvalPolicy === 'fully-automatic') return true
+  return (
+    task !== undefined &&
+    task.approvedRiskDigest !== undefined &&
+    task.candidateAttempt?.riskDigest === task.approvedRiskDigest
+  )
+}
+
 export function DynamicClientProvider({ children }: { readonly children: ReactNode }) {
   const useProductStore = useProductRuntime().store
 
@@ -856,16 +885,13 @@ export function DynamicClientProvider({ children }: { readonly children: ReactNo
     () =>
       dynamic.filter((item) => {
         if (item.status !== 'awaiting-approval' || item.approvalRequestId === undefined) return false
-        if (agents.find((agent) => agent.id === item.agentId)?.dynamicClientApprovalPolicy === 'automatic') return true
+        const agent = agents.find((candidate) => candidate.id === item.agentId)
         const task = authoringTasks.find(
           (candidate) => candidate.agentId === item.agentId && candidate.episodeId === item.episodeId,
         )
-        return (
-          task?.status === 'awaiting-approval' &&
-          task.candidateAttempt?.state === 'awaiting-approval' &&
-          task.approvedRiskDigest !== undefined &&
-          task.candidateAttempt.riskDigest === task.approvedRiskDigest
-        )
+        // Without a task (a bare dynamic run) only the agent's own setting counts.
+        if (task === undefined) return runsWithoutAsking(undefined, agent)
+        return task.candidateAttempt?.state === 'awaiting-approval' && runsWithoutAsking(task, agent)
       }),
     [agents, authoringTasks, dynamic],
   )
@@ -949,6 +975,32 @@ export function DynamicClientSlots({ agentId, episodeId }: { readonly agentId: s
             channelId={channelId}
           />
         ))}
+    </div>
+  )
+}
+
+/**
+ * Takes a candidate that may go ahead without asking through approval, loading and verification on whatever page is
+ * open, so nobody has to sit on its task page. The candidate's own task page, when open, does this visibly instead.
+ */
+export function BackgroundCandidates() {
+  const store = useProductRuntime().store
+  const agents = store((state) => state.agents)
+  const tasks = store((state) => state.authoringTasks)
+  const { pathname } = useLocation()
+  const task = tasks.find(
+    (candidate) =>
+      (candidate.status === 'awaiting-approval' || candidate.status === 'running') &&
+      runsWithoutAsking(
+        candidate,
+        agents.find((agent) => agent.id === candidate.agentId),
+      ) &&
+      !pathname.startsWith(`/workshop/tasks/${candidate.id}`),
+  )
+  if (!task) return null
+  return (
+    <div className={styles.background} aria-hidden="true" data-background-candidate="">
+      <DynamicClientSlots agentId={task.agentId} episodeId={task.episodeId} />
     </div>
   )
 }

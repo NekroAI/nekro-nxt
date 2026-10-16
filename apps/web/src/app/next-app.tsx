@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ExtensionUiProvider } from '../extension-ui/index.js'
-import { DynamicClientProvider } from '../dynamic-client-coordinator.js'
+import { BackgroundCandidates, DynamicClientProvider } from '../dynamic-client-coordinator.js'
 import { HostUiClientProvider } from '../host-ui-client.js'
 import { Skeleton, Toaster, TooltipProvider } from '../ui-kit/index.js'
 import { AppShell } from './shell/app-shell.js'
@@ -120,6 +120,7 @@ export function NextApp() {
                   <Route path="*" element={<Navigate to="/live" replace />} />
                 </Route>
               </Routes>
+              <BackgroundCandidates />
               <Toaster />
             </CrumbProvider>
           </TooltipProvider>
