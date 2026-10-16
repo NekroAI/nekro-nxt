@@ -311,6 +311,8 @@ test.describe('settings space', () => {
 
       // A new test is read back from the Host and replaces the failure.
       await page.getByRole('button', { name: '测试连接' }).click()
+      // The test asks the model picked from the list.
+      await page.getByRole('menuitem').first().click()
       await expect(header).toContainText('测试通过 · 刚刚')
       await expect(page.getByRole('button', { name: '说明：失败原因' })).toHaveCount(0)
       expect(testRequest).toMatchObject({ provider: 'example-c', settingsNs: 'llm-pi-ai' })

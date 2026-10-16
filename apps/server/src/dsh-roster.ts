@@ -10,6 +10,7 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-atomic-write',
   '@deepseek-ai/dsh-attachment',
   '@deepseek-ai/dsh-attachment-local',
+  '@deepseek-ai/dsh-authorization',
   '@deepseek-ai/dsh-bash-sandbox',
   '@deepseek-ai/dsh-compaction-basic',
   '@deepseek-ai/dsh-compaction-tool-result-pruner',

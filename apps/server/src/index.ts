@@ -4,6 +4,13 @@ import type { ExtensionGovernanceToolPort } from './extension-governance/tool-po
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { renderChannelMessageResult } from './channel-message-result.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
+import AuthorizationService from '@deepseek-ai/dsh-authorization'
+import {
+  isSubscriptionProvider,
+  SubscriptionLogins,
+  type SubscriptionProvider,
+  type SubscriptionStatusView,
+} from './subscription-login.js'
 import {
   prepareDshHostProfile,
   activateDshHostProfile,
@@ -3011,6 +3018,8 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #channelReplyGuard: ChannelReplyGuardController
   #disposed = false
   #disposePromise: Promise<void> | undefined
+  readonly #subscriptions: SubscriptionLogins | undefined
+  readonly #subscriptionListeners = new Set<() => void>()
   /** One pending quiet-time review per live session, re-armed by each admission. */
   readonly #idleReviews = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -3073,6 +3082,25 @@ export class DshHostRuntime implements AgentSessionDriver {
       options.providerRemoval,
       options.providerTestResults,
     )
+    this.#subscriptions =
+      options.llmCredentialPath === undefined
+        ? undefined
+        : new SubscriptionLogins(context, {
+            profile: (provider) => {
+              const descriptor = context.settings
+                .describe({ redactSecrets: true })
+                .find((candidate) => candidate.ns === 'llm-pi-ai')
+              const value = z
+                .object({ providers: z.record(z.string(), z.record(z.string(), z.unknown())).optional() })
+                .loose()
+                .safeParse(descriptor?.value).data?.providers?.[provider]
+              return { revision: descriptor?.revision ?? 0, ...(value === undefined ? {} : { value }) }
+            },
+            mutateProfile: (ops, expectedRevision) => context.settings.mutate('llm-pi-ai', ops, expectedRevision),
+            changed: () => {
+              for (const listener of this.#subscriptionListeners) listener()
+            },
+          })
     this.#imageContext = new SessionImageContext(
       context,
       this.#sessions,
@@ -3302,6 +3330,8 @@ export class DshHostRuntime implements AgentSessionDriver {
         ...(options.llmSettingsPath === undefined ? {} : { settingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { credentialPath: options.llmCredentialPath }),
       })
+      // DSH sign-in flows; subscription sign-in uses one when it offers a browser login for the provider.
+      if (options.llmCredentialPath !== undefined) await context.plugin(AuthorizationService)
       await context.plugin(LlmRuntime)
       await options.configureLlm?.(context)
       const conversationScripts = new ConversationScriptModel()
@@ -3472,9 +3502,95 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#imageContext.getAgentImageDiagnostics(revision)
   }
 
-  getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
+  async getLlmProviderSettings(): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    return this.#modelSettings.getLlmProviderSettings()
+    return this.#withSubscriptions(await this.#modelSettings.getLlmProviderSettings())
+  }
+
+  /** Every provider list the page receives says which routes sign in, or a save would hide the accounts. */
+  async #withSubscriptions(settings: LlmProviderSettingsView): Promise<LlmProviderSettingsView> {
+    const subscriptions = this.#subscriptions
+    if (!subscriptions) return settings
+    return {
+      ...settings,
+      providers: await Promise.all(
+        settings.providers.map(async (provider) => {
+          if (!isSubscriptionProvider(provider.provider)) return provider
+          const status = await subscriptions.status(provider.provider)
+          if (!status.available) return provider
+          return {
+            ...provider,
+            subscription: {
+              label: status.label,
+              active: status.mode === 'subscription',
+              accountLabel: status.accounts.find((account) => account.id === status.activeAccountId)?.label ?? null,
+            },
+          }
+        }),
+      ),
+    }
+  }
+
+  subscriptionStatus(provider: string): Promise<SubscriptionStatusView> {
+    this.#assertActive()
+    return this.#requireSubscriptions().status(this.#subscriptionProvider(provider))
+  }
+
+  /** Runs one account or sign-in action; the result is the provider's status after it. */
+  async subscriptionAction(
+    provider: string,
+    action:
+      | { readonly action: 'use-subscription'; readonly expectedRevision: number }
+      | { readonly action: 'login' | 'cancel' }
+      | { readonly action: 'answer'; readonly promptId: string; readonly value: string }
+      | { readonly action: 'activate' | 'remove'; readonly accountId: string }
+      | { readonly action: 'rename'; readonly accountId: string; readonly label: string },
+  ): Promise<{ readonly status: SubscriptionStatusView; readonly revocationConfirmed?: boolean }> {
+    this.#assertActive()
+    const subscriptions = this.#requireSubscriptions()
+    const id = this.#subscriptionProvider(provider)
+    let revocationConfirmed: boolean | undefined
+    switch (action.action) {
+      case 'use-subscription':
+        await subscriptions.useSubscription(id, action.expectedRevision)
+        break
+      case 'login':
+        await subscriptions.login(id)
+        break
+      case 'cancel':
+        subscriptions.cancel(id)
+        break
+      case 'answer':
+        subscriptions.answer(id, action.promptId, action.value)
+        break
+      case 'activate':
+        await subscriptions.activate(id, action.accountId)
+        break
+      case 'rename':
+        await subscriptions.rename(id, action.accountId, action.label)
+        break
+      case 'remove':
+        revocationConfirmed = (await subscriptions.remove(id, action.accountId)).revocationConfirmed
+    }
+    return {
+      status: await subscriptions.status(id),
+      ...(revocationConfirmed === undefined ? {} : { revocationConfirmed }),
+    }
+  }
+
+  onSubscriptionsChanged(listener: () => void): () => void {
+    this.#subscriptionListeners.add(listener)
+    return () => this.#subscriptionListeners.delete(listener)
+  }
+
+  #requireSubscriptions(): SubscriptionLogins {
+    if (!this.#subscriptions) throw new Error('这台主机没有凭据存储，不能登录模型套餐。')
+    return this.#subscriptions
+  }
+
+  #subscriptionProvider(provider: string): SubscriptionProvider {
+    if (!isSubscriptionProvider(provider)) throw new Error(`没有可以登录的套餐：${provider}`)
+    return provider
   }
 
   getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
@@ -3559,19 +3675,19 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#modelSettings.getLlmProviderRemovalImpact(provider)
   }
 
-  removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+  async removeLlmProvider(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    return this.#modelSettings.removeLlmProvider(provider, expectedRevision)
+    return this.#withSubscriptions(await this.#modelSettings.removeLlmProvider(provider, expectedRevision))
   }
 
-  saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
+  async saveLlmProvider(input: SaveLlmProviderInput): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    return this.#modelSettings.saveLlmProvider(input)
+    return this.#withSubscriptions(await this.#modelSettings.saveLlmProvider(input))
   }
 
-  restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
+  async restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
     this.#assertActive()
-    return this.#modelSettings.restoreLlmProviderModels(provider, expectedRevision)
+    return this.#withSubscriptions(await this.#modelSettings.restoreLlmProviderModels(provider, expectedRevision))
   }
 
   discoverLlmProviderModels(input: {
@@ -3589,11 +3705,29 @@ export class DshHostRuntime implements AgentSessionDriver {
     }[]
   > {
     this.#assertActive()
+    const provider = input.provider
+    const draft = input.baseURL !== undefined || input.api !== undefined || input.apiKey !== undefined
+    if (provider !== undefined && isSubscriptionProvider(provider) && !draft) {
+      // A signed-in route lists what the account may use; the catalog lists every model the provider has.
+      if (this.#subscriptions?.mode(provider) === 'subscription') return this.#subscriptions.discoverModels(provider)
+    }
     return this.#modelSettings.discoverLlmProviderModels(input)
   }
 
   testLlmProvider(input: TestLlmProviderInput): Promise<{ readonly provider: string; readonly model: string }> {
     this.#assertActive()
+    const signedIn =
+      isSubscriptionProvider(input.provider) && this.#subscriptions?.mode(input.provider) === 'subscription'
+    // The page sends the saved address and protocol back with every test; only a different value is a draft.
+    const saved = signedIn ? this.#subscriptions?.savedProfile(input.provider) : undefined
+    const changesRoute =
+      input.apiKey !== undefined ||
+      (input.baseURL !== undefined && input.baseURL !== saved?.['baseURL']) ||
+      (input.api !== undefined && input.api !== saved?.['api'])
+    if (signedIn && !changesRoute) {
+      // A draft is tested in a throwaway runtime that holds no sign-in; the saved route carries the account.
+      return this.#modelSettings.testLlmProvider({ provider: input.provider, model: input.model })
+    }
     return this.#modelSettings.testLlmProvider(input)
   }
 
@@ -5214,6 +5348,8 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   async #dispose(): Promise<void> {
     this.#disposed = true
+    this.#subscriptions?.dispose()
+    this.#subscriptionListeners.clear()
     for (const timer of this.#idleReviews.values()) clearTimeout(timer)
     this.#idleReviews.clear()
     const failures: unknown[] = []

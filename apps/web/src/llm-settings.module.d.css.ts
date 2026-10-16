@@ -1,6 +1,9 @@
 declare const styles: {
+  readonly accounts: string
   readonly actionBar: string
   readonly actionBarStart: string
+  readonly chatGptLogoDark: string
+  readonly chatGptLogoLight: string
   readonly chevron: string
   readonly chipList: string
   readonly compactActions: string

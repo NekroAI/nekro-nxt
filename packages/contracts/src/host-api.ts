@@ -2299,6 +2299,60 @@ export const LlmProviderViewSchema = z
     discoverable: z.boolean(),
     /** `null` when the current configuration was never tested; absent from hosts that do not record tests. */
     lastTest: LlmProviderTestResultSchema.nullable().optional(),
+    /** Present when the provider can sign in with a subscription account instead of an API key. */
+    subscription: z
+      .object({
+        label: NonEmptyStringSchema,
+        /** The route uses the signed-in account rather than an API key. */
+        active: z.boolean(),
+        accountLabel: z.string().nullable(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
+export const SubscriptionStatusSchema = z
+  .object({
+    provider: NonEmptyStringSchema,
+    label: NonEmptyStringSchema,
+    usageUrl: z.url(),
+    available: z.boolean(),
+    mode: z.enum(['unconfigured', 'api-key', 'subscription']),
+    activeAccountId: z.string().nullable(),
+    accounts: z.array(
+      z
+        .object({
+          id: NonEmptyStringSchema,
+          label: NonEmptyStringSchema,
+          email: z.string().nullable(),
+          createdAt: z.number().int().nonnegative(),
+        })
+        .strict(),
+    ),
+    login: z
+      .object({
+        id: NonEmptyStringSchema,
+        status: z.enum(['running', 'authorized', 'cancelled', 'failed']),
+        notices: z.array(
+          z.object({ message: z.string(), url: z.string().optional(), code: z.string().optional() }).strict(),
+        ),
+        prompt: z
+          .object({
+            id: NonEmptyStringSchema,
+            kind: z.enum(['text', 'secret', 'select']),
+            message: z.string(),
+            placeholder: z.string().optional(),
+            options: z
+              .array(z.object({ id: z.string(), label: z.string(), description: z.string().optional() }).strict())
+              .optional(),
+          })
+          .strict()
+          .nullable(),
+        error: z.string().nullable(),
+      })
+      .strict()
+      .nullable(),
   })
   .strict()
 
@@ -4344,6 +4398,31 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: LlmProviderSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  llmSubscriptionStatus: defineContract({
+    method: 'GET',
+    path: '/api/llm/subscriptions/:provider',
+    params: llmProviderParam,
+    request: NoRequestBodySchema,
+    response: SubscriptionStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  llmSubscriptionAction: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/llm/subscriptions/:provider',
+    params: llmProviderParam,
+    request: z.discriminatedUnion('action', [
+      z.object({ action: z.literal('use-subscription'), expectedRevision: z.number().int().nonnegative() }).strict(),
+      z.object({ action: z.enum(['login', 'cancel']) }).strict(),
+      z.object({ action: z.literal('answer'), promptId: NonEmptyStringSchema, value: z.string().max(4096) }).strict(),
+      z.object({ action: z.enum(['activate', 'remove']), accountId: NonEmptyStringSchema }).strict(),
+      z
+        .object({ action: z.literal('rename'), accountId: NonEmptyStringSchema, label: z.string().min(1).max(80) })
+        .strict(),
+    ]),
+    response: z.object({ status: SubscriptionStatusSchema, revocationConfirmed: z.boolean().optional() }).strict(),
     error: HostApiErrorSchema,
   }),
   llmDiscoverModels: defineContract({

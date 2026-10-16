@@ -64,6 +64,14 @@ Settings descriptor 离开 Host 前仍通过 `isDshSettingsSchemaWireSafe()` 检
 
 DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config 优先序列化 Schema 表单，没有 Schema 时提供高级 JSON。Secret/credential-ref Config 拒绝持久化。DSH 原生 WebUI 不接入产品，`dsh.client` 只形成“原生界面未接入”提示。安装检查与提交使用进程内 Operation ID，通过 SSE 报告下载、依赖、构建脚本、校验和原子提交阶段。
 
+## 模型套餐登录
+
+供应商可以登录账号、使用订阅套餐额度来代替 API 密钥，目前开放 ChatGPT。在“设置 → 模型 → 添加供应商”选择“ChatGPT 套餐（登录账号）”，或在 OpenAI 供应商页把凭据切换为“ChatGPT 套餐”，点“Continue with ChatGPT”完成授权。可以添加多个账号，同一时间使用其中一个。
+
+凭据保存在 DSH 凭据文件 `dsh/.credentials.yaml`：正在使用的账号在 `llm-pi-ai/openai`，其他账号在 `nekro-nxt/subscription-openai`。不要把这个文件交给两个同时运行的实例，它们会争用同一个会轮换的刷新令牌。
+
+从其他设备访问或在容器中运行时，授权后浏览器会跳到打不开的 `127.0.0.1:1455` 页面，把地址栏中的网址粘贴回登录框即可。取舍与限制见 [模型套餐登录](../../docs/decisions/implemented/2026-10-16-模型套餐登录.md)。
+
 ## 兼容性隔离与重试
 
 生产版本来自 `@nekro-nxt/dsh-compat/release` 的统一矩阵。Extension 缓存绑定运行环境指纹与 ABI，环境变化后重新构建；旧源码 Revision 与验证证据不改写。DSH 插件检查其受管项目与宿主的依赖兼容性，正常恢复不会联网升级或重写用户插件锁文件。

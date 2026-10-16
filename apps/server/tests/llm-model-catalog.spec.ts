@@ -34,6 +34,28 @@ const providerView = async (runtime: NekroRuntime, provider: string) => {
 }
 
 describe('LLM model catalog management', () => {
+  it('keeps a signed-in route marked as a ChatGPT plan in the list a save returns', async () => {
+    const { runtime } = await createRuntime()
+    try {
+      const openai = await providerView(runtime, 'openai')
+      expect(openai.subscription).toEqual({ label: 'ChatGPT', active: false, accountLabel: null })
+      await runtime.host.subscriptionAction('openai', {
+        action: 'use-subscription',
+        expectedRevision: openai.settingsRevision,
+      })
+      const switched = await providerView(runtime, 'openai')
+      const saved = await runtime.host.saveLlmProvider({
+        provider: 'openai',
+        expectedRevision: switched.settingsRevision,
+        models: [{ id: 'gpt-5', name: 'GPT-5' }],
+      })
+      // The page replaces its list with this response; without the mark the accounts disappear.
+      expect(saved.providers.find((entry) => entry.provider === 'openai')?.subscription).toMatchObject({ active: true })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('edits the DeepSeek catalog with vision models and restores the built-in list', async () => {
     const { runtime } = await createRuntime()
     try {

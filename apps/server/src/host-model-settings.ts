@@ -32,6 +32,7 @@ import {
   type DshSettingsPathOperation,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
+import { describeSubscriptionFailure } from './subscription-failures.js'
 export class LlmProviderRemovalResultUnknown extends Error {
   constructor(cause: unknown) {
     super('供应商已移除，但页面没能刷新，请重新打开查看。', { cause })
@@ -125,6 +126,8 @@ export interface ConfigurableLlmProviderView {
   readonly discoverable: boolean
   /** Absent when this host does not record connection tests. */
   readonly lastTest?: LlmProviderTestResult | null
+  /** Present when the provider can sign in with a subscription account instead of an API key. */
+  readonly subscription?: { readonly label: string; readonly active: boolean; readonly accountLabel: string | null }
 }
 
 export type LlmModelModality = 'text' | 'image'
@@ -945,6 +948,8 @@ export class HostModelSettings {
       finished = true
       if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
         const code = chunk.reason.failure.code
+        const refusal = describeSubscriptionFailure(chunk.reason.failure.message)
+        if (refusal) throw new Error(refusal)
         if (code === 'AUTH' || code === 'MISSING_CREDENTIAL') throw new Error('认证失败，请更新 API 密钥。')
         if (code === 'QUOTA') throw new Error('供应商额度不足或订阅限制。')
         if (code === 'RATE_LIMIT') throw new Error('供应商限流，请稍后再试。')

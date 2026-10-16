@@ -27,6 +27,50 @@ export function registerSettingsRoutes({
   broadcast,
   broadcastExtensionsChanged,
 }: HostRouteContext): () => void {
+  // A sign-in advances in the background; the page re-reads the status when it changes.
+  const unsubscribeSubscriptions = runtime.host.onSubscriptionsChanged(() =>
+    broadcast({ event: 'snapshot-changed', data: { changed: true } }),
+  )
+  registerRoute({
+    kind: 'prefix',
+    path: '/api/llm/subscriptions',
+    handler: async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+      const match = /^\/api\/llm\/subscriptions\/([^/]+)$/u.exec(url.pathname)
+      if (match?.[1] === undefined) {
+        writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)
+        return
+      }
+      const provider = decodeURIComponent(match[1])
+      try {
+        if (req.method === 'GET') {
+          const params = HostApiContracts.llmSubscriptionStatus.parseParams({ provider })
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.llmSubscriptionStatus,
+            await runtime.host.subscriptionStatus(params.provider),
+          )
+          return
+        }
+        if (req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        const params = HostApiContracts.llmSubscriptionAction.parseParams({ provider })
+        const input = HostApiContracts.llmSubscriptionAction.parseRequest(await readJsonBody(req))
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.llmSubscriptionAction,
+          await runtime.host.subscriptionAction(params.provider, input),
+        )
+      } catch (error) {
+        const code = error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT' ? 409 : 400
+        writeError(res, code, 'llm-subscription-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
   registerRoute({
     kind: 'exact',
     path: '/api/runtime/compatibility/retry',
@@ -804,5 +848,5 @@ export function registerSettingsRoutes({
       }
     },
   })
-  return () => undefined
+  return unsubscribeSubscriptions
 }

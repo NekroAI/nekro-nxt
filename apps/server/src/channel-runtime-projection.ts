@@ -16,6 +16,7 @@ import type {
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import type { ChannelDeliveryState, ChannelResponseState } from './channel-reply-guard.js'
+import { describeSubscriptionFailure } from './subscription-failures.js'
 
 const ToolArgumentObjectSchema = z.record(z.string(), z.unknown())
 
@@ -617,7 +618,8 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       if (event.reasonKind === 'error') {
         record.error = {
           code: event.errorCode?.trim() || 'UNKNOWN',
-          message: event.errorMessage?.trim() || '本轮执行失败。',
+          message:
+            describeSubscriptionFailure(event.errorMessage ?? '') ?? (event.errorMessage?.trim() || '本轮执行失败。'),
         }
       }
       continue

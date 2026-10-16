@@ -16,3 +16,9 @@ The NekroNXT and NXT names, Shuiyue Ying character, project logos,
 illustrations, installer artwork, and promotional media are Copyright © 2026
 NekroAI. These brand assets are not licensed under the repository software
 license. See docs/BRAND.md for the applicable use policy.
+
+The unmodified ChatGPT sign-in logos in apps/web/public/vendor are OpenAI
+brand assets, used to identify Sign in with ChatGPT. They are not covered by
+this repository's software license. Source and usage guidelines:
+https://developers.openai.com/siwc/website
+https://developers.openai.com/siwc/ui-ux-guidelines

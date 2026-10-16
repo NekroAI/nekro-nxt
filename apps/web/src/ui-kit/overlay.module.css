@@ -159,6 +159,8 @@
   display: grid;
   gap: calc(var(--s-1) / 2);
   min-width: 200px;
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
   padding: var(--s-2);
   border: 1px solid var(--glass-line);
   border-radius: 12px;
