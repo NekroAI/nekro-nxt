@@ -1,17 +1,29 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { LlmAdapter, ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { materializeImportedRevision } from '@nekro-nxt/extension-format'
 import { ExtensionDataDowngradeError } from '@nekro-nxt/extension-runtime'
-import { CommunityReleaseSchema, type ChannelId, type ExtensionId } from '@nekro-nxt/contracts'
+import {
+  CommunityReleaseSchema,
+  EpisodeIdSchema,
+  type AgentId,
+  type ChannelId,
+  type ExtensionId,
+  type ExtensionLayeredConfig,
+} from '@nekro-nxt/contracts'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { ExtensionCommandPort } from '../src/extension-governance/commands.js'
 import { ExtensionGovernanceTools } from '../src/extension-governance/tool-port.js'
+import { extensionAgentTools } from '../src/extension-governance/agent-tools.js'
 import { CommunitySyncService, type SyncCommunity } from '../src/extension-governance/community-sync.js'
 import { ExtensionRequestService, EXTENSION_REQUEST_TTL_MS } from '../src/extension-governance/requests.js'
 import { extensionVersions, lineageGraph } from '../src/extension-governance/versions.js'
+import { extensionVerification } from './fixtures/extension-verification.js'
 
 const directories: string[] = []
 
@@ -202,6 +214,27 @@ const agentWithChannel = async (runtime: NekroRuntime, autonomy: 'manual' | 'con
   return Promise.resolve({ agentId: agent.definition.id, channelId: channel.id })
 }
 
+const saveSharedExtension = (runtime: NekroRuntime, creator: AgentId, config?: ExtensionLayeredConfig) =>
+  runtime.extensionService.saveDynamicPackage({
+    slug: 'shared-probe',
+    displayName: '共享探针',
+    description: '虚构的共享扩展',
+    createdByAgentId: creator,
+    verification: extensionVerification(['gov_probe'], ['ping']),
+    snapshot: {
+      name: '共享探针',
+      purpose: '验证扩展共享',
+      hostCode: SOURCE_V1,
+      codeFormat: 'module',
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [
+        { kind: 'tool', name: 'gov_probe', description: '治理探针' },
+        { kind: 'rpc', method: 'ping' },
+      ],
+      ...(config === undefined ? {} : { config }),
+    },
+  })
+
 describe('extension lines', () => {
   it('chains imported versions, labels them by generation and branches into a new line', async () => {
     const runtime = await createRuntime()
@@ -272,6 +305,14 @@ describe('revise tasks', () => {
         .toBe('revise')
       const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
       expect(task).toMatchObject({ targetExtensionId: extensionId, baseRevisionId: v1.id })
+      const consumer = await agentWithChannel(runtime, 'autonomous')
+      const tools = new ExtensionGovernanceTools(runtime)
+      expect(tools.list(consumer.agentId)).toMatchObject({ tasks: [], pendingRequests: [] })
+      expect(JSON.stringify(tools.list(consumer.agentId))).not.toContain(task.id)
+      await expect(tools.prepareRevise(consumer.agentId, { extension: extensionId })).rejects.toThrow(
+        '其他智能体的修改任务',
+      )
+      expect(() => tools.resolveTask(consumer.agentId, task.id)).toThrow('找不到任务')
       const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
       const episode = runtime.repository.getEpisode(task.episodeId)!
       // The candidate registers gov_probe like the enabled version; it takes over that tool in this conversation.
@@ -369,6 +410,57 @@ describe('extension data across versions', () => {
 })
 
 describe('extension autonomy', () => {
+  it('checks the requester before exposing the local catalog through the agent tool', async () => {
+    const runtime = await createRuntime()
+    const context = new Context()
+    try {
+      const creator = await agentWithChannel(runtime, 'autonomous')
+      const consumer = await agentWithChannel(runtime, 'autonomous')
+      await saveSharedExtension(runtime, creator.agentId)
+      const port = new ExtensionGovernanceTools(runtime)
+      const requester = vi
+        .spyOn(port, 'requesterAllowed')
+        .mockReturnValue({ allowed: false, reason: '请管理员发起扩展管理请求。' })
+      const episodeId = EpisodeIdSchema.parse('eps_CATALOGREQUEST')
+      const unusedDefinition = () => {
+        throw new Error('No definition expected in a catalog request.')
+      }
+      const list = extensionAgentTools({
+        port: () => port,
+        authoring: undefined,
+        agentId: consumer.agentId,
+        channelId: consumer.channelId,
+        episodeId,
+        sessionId: 'synthetic-catalog-session',
+        define: unusedDefinition,
+        restore: unusedDefinition,
+        setReviseIntent: vi.fn(),
+      }).find((tool) => tool.name === 'nekro_nxt_extension_list')!
+      await context.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
+      await context.plugin(ToolRuntime)
+      context.tools.register(list)
+      const execute = () =>
+        context.tools.execute({
+          callId: ToolCallId('catalog-request'),
+          name: list.name,
+          arguments: {},
+          signal: new AbortController().signal,
+        })
+      const denied = await execute()
+      expect(denied.isError).toBe(true)
+      expect(JSON.stringify(denied.content)).toContain('请管理员')
+      expect(JSON.stringify(denied.content)).not.toContain('shared-probe')
+      expect(requester).toHaveBeenCalledWith(consumer.agentId, episodeId)
+      requester.mockReturnValue({ allowed: true })
+      const allowed = await execute()
+      expect(allowed.isError).toBe(false)
+      expect(JSON.stringify(allowed.content)).toContain('shared-probe')
+    } finally {
+      await context.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
   it('decides by autonomy, reach and risk, never by how often the agent asks', async () => {
     const runtime = await createRuntime()
     try {
@@ -384,8 +476,8 @@ describe('extension autonomy', () => {
       expect(assess(enable(manual), agent(manual)).decision).toBe('console')
       expect(assess(enable(confirm), agent(confirm)).decision).toBe('request')
       expect(assess(enable(autonomous), agent(autonomous)).decision).toBe('run')
-      // Agents act only on extensions they made or use.
-      expect(assess({ kind: 'community-publish', extensionId, notes: '' }, agent(autonomous)).decision).toBe('console')
+      // Delegated management includes extensions made by others; publishing still needs approval.
+      expect(assess({ kind: 'community-publish', extensionId, notes: '' }, agent(autonomous)).decision).toBe('request')
       await runtime.extensionActions.perform(enable(autonomous), { kind: 'console' })
       for (let attempt = 0; attempt < 5; attempt += 1) {
         expect(assess(enable(autonomous), agent(autonomous)).decision).toBe('run')
@@ -408,6 +500,274 @@ describe('extension autonomy', () => {
       expect(assess({ kind: 'switch', extensionId, revisionId: v2.id }, agent(autonomous)).decision).toBe('request')
       expect(assess(enable(autonomous), { kind: 'administrator', label: '管理员' }).decision).toBe('run')
       expect(assess(enable(autonomous), { kind: 'console' }).decision).toBe('run')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('discovers another agent’s saved extension and enables or disables only itself with an audit trail', async () => {
+    const runtime = await createRuntime()
+    try {
+      const creator = await agentWithChannel(runtime, 'autonomous')
+      const consumer = await agentWithChannel(runtime, 'autonomous')
+      const manual = await agentWithChannel(runtime, 'manual')
+      const confirm = await agentWithChannel(runtime, 'confirm')
+      const { extension, revision } = await saveSharedExtension(runtime, creator.agentId)
+      const tools = new ExtensionGovernanceTools(runtime)
+      expect(tools.list(manual.agentId)).toMatchObject({
+        autonomy: 'manual',
+        scope: 'related',
+        extensions: [],
+      })
+      expect(JSON.stringify(tools.list(manual.agentId))).toContain('管理员')
+      expect(() => tools.resolveExtension(manual.agentId, extension.id)).toThrow('可访问')
+      for (const entity of [consumer, confirm]) {
+        expect(tools.list(entity.agentId)).toMatchObject({
+          scope: 'local',
+          extensions: [
+            {
+              id: extension.id,
+              slug: 'shared-probe',
+              createdByYou: false,
+              enabledForYou: false,
+              installed: false,
+              currentVersion: null,
+              availableVersion: 'v1',
+              enablement: {
+                decision: entity === consumer ? 'run' : 'request',
+              },
+            },
+          ],
+        })
+        expect(tools.resolveExtension(entity.agentId, extension.id).id).toBe(extension.id)
+        expect(tools.resolveExtension(entity.agentId, extension.displayName).id).toBe(extension.id)
+      }
+      const enable = (agentId: AgentId) => ({ kind: 'enable', extensionId: extension.id, agentId }) as const
+      expect(await tools.act(manual.agentId, manual.channelId, enable(manual.agentId))).toMatchObject({
+        outcome: 'console',
+      })
+      await runtime.extensionActions.perform(enable(creator.agentId), { kind: 'console' })
+      // A shared version switch affects the sole other consumer, even before this agent enables it.
+      expect(
+        await tools.act(consumer.agentId, consumer.channelId, {
+          kind: 'switch',
+          extensionId: extension.id,
+          revisionId: revision.id,
+        }),
+      ).toMatchObject({ outcome: 'requested' })
+      const denied = await tools.act(consumer.agentId, consumer.channelId, enable(creator.agentId))
+      expect(denied.outcome).toBe('console')
+      expect(denied.message).toContain('只能给自己')
+      expect(await tools.act(consumer.agentId, consumer.channelId, enable(consumer.agentId))).toMatchObject({
+        outcome: 'scheduled',
+      })
+      await expect
+        .poll(
+          () =>
+            runtime.extensionRequests
+              .list()
+              .find((request) => request.agentId === consumer.agentId && request.kind === 'enable')?.status,
+        )
+        .toBe('completed')
+      expect(runtime.repository.getActivation(consumer.agentId, extension.id)).toBeDefined()
+      expect(tools.list(consumer.agentId)).toMatchObject({
+        extensions: [{ enabledForYou: true, installed: true, currentVersion: 'v1' }],
+      })
+      expect(
+        await tools.act(consumer.agentId, consumer.channelId, {
+          kind: 'disable',
+          extensionId: extension.id,
+          agentId: creator.agentId,
+        }),
+      ).toMatchObject({ outcome: 'console' })
+      expect(
+        await tools.act(consumer.agentId, consumer.channelId, {
+          kind: 'disable',
+          extensionId: extension.id,
+          agentId: consumer.agentId,
+        }),
+      ).toMatchObject({ outcome: 'scheduled' })
+      await expect
+        .poll(
+          () =>
+            runtime.extensionRequests
+              .list()
+              .find((request) => request.agentId === consumer.agentId && request.kind === 'disable')?.status,
+        )
+        .toBe('completed')
+      expect(runtime.repository.getActivation(consumer.agentId, extension.id)).toBeUndefined()
+      expect(runtime.repository.getActivation(creator.agentId, extension.id)).toBeDefined()
+      const requested = await tools.act(confirm.agentId, confirm.channelId, enable(confirm.agentId))
+      expect(requested.outcome).toBe('requested')
+      expect(runtime.repository.getActivation(confirm.agentId, extension.id)).toBeUndefined()
+      await runtime.extensionRequests.approve(requested.requestNumber!, { kind: 'console' })
+      expect(runtime.extensionRequests.get(requested.requestNumber!)).toMatchObject({
+        status: 'completed',
+        decidedBy: '控制台管理员',
+      })
+      expect(runtime.repository.getActivation(confirm.agentId, extension.id)).toBeDefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('reports missing shared or private configuration without exposing another agent’s settings or credentials', async () => {
+    const runtime = await createRuntime()
+    try {
+      const creator = await agentWithChannel(runtime, 'autonomous')
+      const consumer = await agentWithChannel(runtime, 'autonomous')
+      const { extension, revision } = await saveSharedExtension(runtime, creator.agentId, {
+        host: {
+          schema: {
+            type: 'object',
+            dict: {
+              endpoint: { type: 'string', meta: { required: true } },
+              hostKey: { type: 'string', meta: { required: true, role: 'secret' } },
+            },
+          },
+        },
+        agent: {
+          schema: {
+            type: 'object',
+            dict: {
+              nickname: { type: 'string', meta: { required: true } },
+              agentKey: { type: 'string', meta: { required: true, role: 'secret' } },
+            },
+          },
+        },
+      })
+      const tools = new ExtensionGovernanceTools(runtime)
+      const action = { kind: 'enable', extensionId: extension.id, agentId: consumer.agentId } as const
+      expect(tools.list(consumer.agentId)).toMatchObject({
+        extensions: [{ enablement: { decision: 'console' } }],
+      })
+      expect(JSON.stringify(tools.list(consumer.agentId))).toContain('本机配置')
+      const missingConfig = await tools.act(consumer.agentId, consumer.channelId, action)
+      expect(missingConfig.outcome).toBe('console')
+      expect(missingConfig.message).toContain('本机配置')
+      const hostKey = await runtime.credentials.save('fictional-shared-secret')
+      const creatorKey = await runtime.credentials.save('fictional-creator-secret')
+      await runtime.extensions.install({
+        extensionId: extension.id,
+        revisionId: revision.id,
+        config: { endpoint: 'https://example.invalid', hostKey },
+      })
+      await runtime.extensions.activate({
+        agentId: creator.agentId,
+        extensionId: extension.id,
+        revisionId: revision.id,
+        config: { nickname: '虚构私有设置', agentKey: creatorKey },
+      })
+      runtime.repository.setExtensionStorageEntry({
+        extensionId: extension.id,
+        owner: creator.agentId,
+        partition: 'agent',
+        key: 'private',
+        value: '虚构私有数据',
+        updatedAt: 1,
+        quotaBytes: 1024,
+      })
+      const listed = tools.list(consumer.agentId)
+      expect(listed).toMatchObject({
+        extensions: [{ enablement: { decision: 'console' } }],
+      })
+      const serialized = JSON.stringify(listed)
+      expect(serialized).toContain('智能体配置还缺必填项')
+      for (const privateValue of [
+        hostKey,
+        creatorKey,
+        'fictional-shared-secret',
+        'fictional-creator-secret',
+        '虚构私有设置',
+        '虚构私有数据',
+      ])
+        expect(serialized).not.toContain(privateValue)
+      await expect(runtime.extensionActions.perform(action, { kind: 'console' })).rejects.toThrow(
+        '智能体配置还缺必填项',
+      )
+      // The agent's own credential can only be filled once it is enabled, so it never blocks enabling.
+      await runtime.extensions.activate({
+        agentId: consumer.agentId,
+        extensionId: extension.id,
+        revisionId: revision.id,
+        config: { nickname: '虚构使用者' },
+      })
+      expect(runtime.extensionActions.enablementProblem(consumer.agentId, extension.id)).toBeUndefined()
+      expect(tools.list(consumer.agentId)).toMatchObject({
+        extensions: [{ enablement: { note: expect.stringContaining('填写你的凭据') as unknown } }],
+      })
+      const consumerKey = await runtime.credentials.save('fictional-consumer-secret')
+      await runtime.extensions.updateAgentConfig(consumer.agentId, extension.id, {
+        nickname: '虚构使用者',
+        agentKey: consumerKey,
+      })
+      expect(await tools.act(consumer.agentId, consumer.channelId, action)).toMatchObject({ outcome: 'scheduled' })
+      await expect
+        .poll(() => runtime.extensionRequests.list().find((request) => request.agentId === consumer.agentId)?.status)
+        .toBe('completed')
+      expect(runtime.repository.getActivation(creator.agentId, extension.id)?.config).toEqual({
+        nickname: '虚构私有设置',
+        agentKey: creatorKey,
+      })
+      expect(runtime.repository.getActivation(consumer.agentId, extension.id)?.config).toEqual({
+        nickname: '虚构使用者',
+        agentKey: consumerKey,
+      })
+      expect(
+        runtime.repository.readExtensionDataset(extension.id, {
+          owners: [consumer.agentId],
+          index: false,
+          library: false,
+        }).storage,
+      ).toEqual([])
+      expect(JSON.stringify(tools.list(consumer.agentId))).not.toContain(consumerKey)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('allows shared code management while requesting approval before copying private data', async () => {
+    const runtime = await createRuntime()
+    try {
+      const creator = await agentWithChannel(runtime, 'autonomous')
+      const consumer = await agentWithChannel(runtime, 'autonomous')
+      const { extension, revision } = await saveSharedExtension(runtime, creator.agentId)
+      const tools = new ExtensionGovernanceTools(runtime)
+      const prepared = await tools.prepareRevise(consumer.agentId, { extension: extension.id })
+      expect(prepared).toMatchObject({ extensionId: extension.id, baseRevisionId: revision.id })
+      const actor = { kind: 'agent', agentId: consumer.agentId } as const
+      const branch = {
+        kind: 'branch',
+        revisionId: revision.id,
+        name: '共享分支',
+        slug: 'shared-branch',
+        copyData: false,
+      } as const
+      expect(runtime.extensionActions.assess(branch, actor).decision).toBe('run')
+      runtime.repository.setExtensionStorageEntry({
+        extensionId: extension.id,
+        owner: creator.agentId,
+        partition: 'agent',
+        key: 'private',
+        value: '虚构私有数据',
+        updatedAt: 1,
+        quotaBytes: 1024,
+      })
+      const branched = await tools.act(consumer.agentId, consumer.channelId, branch)
+      expect(branched.outcome).toBe('done')
+      const branchId = runtime.repository.getExtensionBySlug('shared-branch')!.id
+      expect(
+        runtime.repository.readExtensionDataset(branchId, { owners: 'all', index: false, library: false }).storage,
+      ).toEqual([])
+      const request = await tools.act(consumer.agentId, consumer.channelId, {
+        ...branch,
+        name: '数据分支',
+        slug: 'shared-data-branch',
+        copyData: true,
+      })
+      expect(request.outcome).toBe('requested')
+      expect(runtime.repository.getExtensionBySlug('shared-data-branch')).toBeUndefined()
+      expect(runtime.extensionRequests.get(request.requestNumber!)?.status).toBe('pending')
     } finally {
       await runtime.dispose()
     }

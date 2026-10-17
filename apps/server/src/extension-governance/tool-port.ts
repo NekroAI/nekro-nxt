@@ -89,7 +89,7 @@ const prefixFrom = (slug: string): string => {
   return letters.length >= 3 ? letters.slice(0, 6) : 'rev'
 }
 
-/** The agent-facing governance port: its reach is the agent's own extensions and the actions its autonomy allows. */
+/** The agent-facing governance port: local extensions are shared within the agent's delegated autonomy. */
 export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
   readonly #runtime: NekroRuntime
 
@@ -134,34 +134,48 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
 
   list(agentId: AgentId): JsonValue {
     const runtime = this.#runtime
-    const extensions = runtime.repository
-      .listExtensions()
-      .filter(
-        (extension) =>
-          extension.createdByAgentId === agentId ||
-          runtime.repository.getActivation(agentId, extension.id) !== undefined ||
-          runtime.repository.listAuthoringTasks(agentId).some((task) => task.targetExtensionId === extension.id),
-      )
+    const extensions = this.#visibleExtensions(agentId)
     const autonomy = runtime.repository.getAgent(agentId)?.revision.capabilities.extensionAutonomy ?? 'manual'
     return {
       autonomy,
+      scope: autonomy === 'manual' ? 'related' : 'local',
+      ...(autonomy === 'manual'
+        ? {
+            scopeReason:
+              '扩展自主权是「手动」，这里只列出与你相关的扩展。请管理员在智能体能力里调整扩展自主权后管理本机扩展。',
+          }
+        : {}),
       extensions: extensions.map((extension) => {
         const versions = extensionVersions(runtime.repository, runtime.extensionService, extension.id)
         const current = runtime.repository.getHostInstallation(extension.id)?.extensionRevisionId
         const sync = runtime.communitySync.cachedItem(extension.id)
         const task = runtime.repository.getOpenRevisionTask(extension.id)
+        const enablement = runtime.extensionActions.assess(
+          { kind: 'enable', extensionId: extension.id, agentId },
+          { kind: 'agent', agentId },
+        )
+        const note = runtime.extensionActions.enablementNote(agentId, extension.id)
         return {
           id: extension.id,
           name: extension.displayName,
+          slug: extension.slug,
           createdByYou: extension.createdByAgentId === agentId,
           enabledForYou: runtime.repository.getActivation(agentId, extension.id) !== undefined,
           currentVersion: current === undefined ? null : (versions.get(current)?.label ?? null),
+          installed: current !== undefined,
+          availableVersion:
+            (current === undefined ? [...versions.values()].at(-1) : versions.get(current))?.label ?? null,
+          enablement: {
+            decision: enablement.decision,
+            ...(enablement.reason === undefined ? {} : { reason: enablement.reason }),
+            ...(note === undefined ? {} : { note }),
+          },
           versions: [...versions.values()].map((version) => version.label),
           dataVersion: runtime.extensionData.dataVersion(extension.id),
           ...(extension.branchOf === undefined ? {} : { branchOf: extension.branchOf.extensionId }),
           community:
             sync === undefined ? null : { role: sync.role, status: sync.status, latest: sync.latest?.number ?? null },
-          ...(task === undefined ? {} : { openTask: { id: task.id, status: task.status } }),
+          ...(task?.agentId !== agentId ? {} : { openTask: { id: task.id, status: task.status } }),
         }
       }),
       tasks: runtime.repository
@@ -204,6 +218,9 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     }
     const reference = input.reference === undefined ? undefined : byLabel(input.reference)
     const openTask = runtime.repository.getOpenRevisionTask(extension.id)
+    if (openTask !== undefined && openTask.agentId !== agentId) {
+      throw new Error('这个扩展已有其他智能体的修改任务，请等它完成后再修改。')
+    }
     return {
       extensionId: extension.id,
       extensionName: extension.displayName,
@@ -263,7 +280,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
   resolveExtension(agentId: AgentId, reference: string): LocalExtension {
     const runtime = this.#runtime
     const query = reference.trim()
-    const all = runtime.repository.listExtensions()
+    const all = this.#visibleExtensions(agentId)
     const own = all.filter(
       (extension) =>
         extension.createdByAgentId === agentId || runtime.repository.getActivation(agentId, extension.id) !== undefined,
@@ -271,9 +288,24 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const match = (list: readonly LocalExtension[]) =>
       list.find((extension) => extension.id === query || extension.displayName === query || extension.slug === query) ??
       list.find((extension) => extension.displayName.includes(query))
-    const found = match(own) ?? match(all)
-    if (!found) throw new Error(`找不到扩展「${query}」。可以先用 nekro_nxt_extension_list 看看有哪些。`)
+    const exact = all.find((extension) => extension.id === query || extension.slug === query)
+    const found = exact ?? match(own) ?? match(all)
+    if (!found) throw new Error(`找不到可访问的扩展「${query}」。请用 nekro_nxt_extension_list 查看范围和扩展编号。`)
     return found
+  }
+
+  #visibleExtensions(agentId: AgentId): readonly LocalExtension[] {
+    const runtime = this.#runtime
+    const all = runtime.repository.listExtensions()
+    if ((runtime.repository.getAgent(agentId)?.revision.capabilities.extensionAutonomy ?? 'manual') !== 'manual')
+      return all
+    const tasks = runtime.repository.listAuthoringTasks(agentId)
+    return all.filter(
+      (extension) =>
+        extension.createdByAgentId === agentId ||
+        runtime.repository.getActivation(agentId, extension.id) !== undefined ||
+        tasks.some((task) => task.targetExtensionId === extension.id),
+    )
   }
 
   resolveTask(agentId: AgentId, reference: string | undefined): DynamicAuthoringTask {
