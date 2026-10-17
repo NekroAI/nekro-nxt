@@ -174,7 +174,11 @@ export class ExtensionActionService {
     return { ...base, decision: 'run' }
   }
 
-  /** Checks only shared host configuration and this agent's own configuration; never returns stored values. */
+  /**
+   * Why this agent cannot have the extension enabled yet. Checks only shared host configuration and this agent's own
+   * configuration, and never returns stored values. The agent's own credentials are filled after enabling, so they
+   * never block it; see `enablementNote`.
+   */
   enablementProblem(agentId: AgentId, extensionId: ExtensionId): string | undefined {
     const runtime = this.#runtime
     const revision = this.#maybeCurrent(extensionId)
@@ -187,26 +191,46 @@ export class ExtensionActionService {
     ) {
       return '这个扩展尚未完成本机验证，请管理员在工坊里检查验证结果。'
     }
-    for (const layer of ['host', 'agent'] as const) {
-      const label = layer === 'host' ? '本机配置' : '你的智能体配置'
-      const previous =
-        layer === 'host'
-          ? runtime.repository.getHostInstallation(extensionId)?.config
-          : runtime.repository.getActivation(agentId, extensionId)?.config
-      let config
-      try {
-        config = carryExtensionConfig(manifest, layer, previous)
-      } catch {
-        return `${label}不完整，请管理员在工坊的扩展详情里填写后重试。凭据请在配置页填写。`
-      }
-      const missing = configFields(layerConfigSchema(manifest, layer)).filter(
-        (field) => field.kind === 'secret' && field.required && config[field.key] === undefined,
-      )
-      if (missing.length > 0) {
-        return `${label}缺少必填凭据，请管理员在工坊的扩展详情里填写后重试。凭据请在配置页填写。`
-      }
-    }
+    const host = this.#layerConfig(manifest, 'host', runtime.repository.getHostInstallation(extensionId)?.config)
+    if (host === undefined) return '本机配置不完整，请管理员在工坊的扩展详情里填写后重试。'
+    if (host.missingSecrets) return '本机配置缺少必填凭据，请管理员在工坊的扩展详情里填写后重试。'
+    const agent = this.#layerConfig(manifest, 'agent', runtime.repository.getActivation(agentId, extensionId)?.config)
+    if (agent === undefined) return '这个扩展要求的智能体配置还缺必填项，需要管理员在工坊里处理。'
     return undefined
+  }
+
+  /** What still needs doing after enabling: the agent's own credentials can only be filled once it is enabled. */
+  enablementNote(agentId: AgentId, extensionId: ExtensionId): string | undefined {
+    const revision = this.#maybeCurrent(extensionId)
+    const manifest = revision === undefined ? undefined : this.#runtime.extensionService.revisionManifest(revision)
+    if (!manifest || !hasAgentLayer(manifest)) return undefined
+    const agent = this.#layerConfig(
+      manifest,
+      'agent',
+      this.#runtime.repository.getActivation(agentId, extensionId)?.config,
+    )
+    return agent?.missingSecrets
+      ? '启用后还要请管理员在工坊的扩展详情里填写你的凭据，填好之前用到凭据的功能不能用。'
+      : undefined
+  }
+
+  /** A layer's configuration as enabling would carry it; undefined when it is incomplete. */
+  #layerConfig(
+    manifest: NonNullable<ReturnType<NekroRuntime['extensionService']['revisionManifest']>>,
+    layer: 'host' | 'agent',
+    previous: JsonValue | undefined,
+  ): { readonly missingSecrets: boolean } | undefined {
+    let config
+    try {
+      config = carryExtensionConfig(manifest, layer, previous)
+    } catch {
+      return undefined
+    }
+    return {
+      missingSecrets: configFields(layerConfigSchema(manifest, layer)).some(
+        (field) => field.kind === 'secret' && field.required && config[field.key] === undefined,
+      ),
+    }
   }
 
   // —— Execution ——
@@ -244,8 +268,9 @@ export class ExtensionActionService {
           ...(agent.approvalRequired ? { permissionApproval: { permissionDigest: agent.permissionDigest } } : {}),
           ...(host.approvalRequired ? { hostPermissionApproval: { permissionDigest: host.permissionDigest } } : {}),
         })
+        const note = this.enablementNote(action.agentId, action.extensionId)
         return {
-          message: `已给${this.#agentName(action.agentId)}启用「${this.#extensionName(action.extensionId)}」。`,
+          message: `已给${this.#agentName(action.agentId)}启用「${this.#extensionName(action.extensionId)}」。${note ?? ''}`,
           extensionId: action.extensionId,
           revisionId: revision.id,
         }

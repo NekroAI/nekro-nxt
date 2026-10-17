@@ -644,7 +644,7 @@ describe('extension autonomy', () => {
       expect(JSON.stringify(tools.list(consumer.agentId))).toContain('本机配置')
       const missingConfig = await tools.act(consumer.agentId, consumer.channelId, action)
       expect(missingConfig.outcome).toBe('console')
-      expect(missingConfig.message).toContain('配置页')
+      expect(missingConfig.message).toContain('本机配置')
       const hostKey = await runtime.credentials.save('fictional-shared-secret')
       const creatorKey = await runtime.credentials.save('fictional-creator-secret')
       await runtime.extensions.install({
@@ -672,7 +672,7 @@ describe('extension autonomy', () => {
         extensions: [{ enablement: { decision: 'console' } }],
       })
       const serialized = JSON.stringify(listed)
-      expect(serialized).toContain('你的智能体配置')
+      expect(serialized).toContain('智能体配置还缺必填项')
       for (const privateValue of [
         hostKey,
         creatorKey,
@@ -682,15 +682,20 @@ describe('extension autonomy', () => {
         '虚构私有数据',
       ])
         expect(serialized).not.toContain(privateValue)
-      await expect(runtime.extensionActions.perform(action, { kind: 'console' })).rejects.toThrow('你的智能体配置')
-      // A present ordinary field does not make a missing private credential ready.
+      await expect(runtime.extensionActions.perform(action, { kind: 'console' })).rejects.toThrow(
+        '智能体配置还缺必填项',
+      )
+      // The agent's own credential can only be filled once it is enabled, so it never blocks enabling.
       await runtime.extensions.activate({
         agentId: consumer.agentId,
         extensionId: extension.id,
         revisionId: revision.id,
         config: { nickname: '虚构使用者' },
       })
-      expect(runtime.extensionActions.enablementProblem(consumer.agentId, extension.id)).toContain('必填凭据')
+      expect(runtime.extensionActions.enablementProblem(consumer.agentId, extension.id)).toBeUndefined()
+      expect(tools.list(consumer.agentId)).toMatchObject({
+        extensions: [{ enablement: { note: expect.stringContaining('填写你的凭据') as unknown } }],
+      })
       const consumerKey = await runtime.credentials.save('fictional-consumer-secret')
       await runtime.extensions.updateAgentConfig(consumer.agentId, extension.id, {
         nickname: '虚构使用者',

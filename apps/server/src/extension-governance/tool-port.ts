@@ -154,6 +154,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           { kind: 'enable', extensionId: extension.id, agentId },
           { kind: 'agent', agentId },
         )
+        const note = runtime.extensionActions.enablementNote(agentId, extension.id)
         return {
           id: extension.id,
           name: extension.displayName,
@@ -167,6 +168,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           enablement: {
             decision: enablement.decision,
             ...(enablement.reason === undefined ? {} : { reason: enablement.reason }),
+            ...(note === undefined ? {} : { note }),
           },
           versions: [...versions.values()].map((version) => version.label),
           dataVersion: runtime.extensionData.dataVersion(extension.id),
