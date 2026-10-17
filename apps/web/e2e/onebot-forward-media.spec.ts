@@ -1,5 +1,6 @@
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { expect, test } from '@playwright/test'
+import { answering } from './fixtures/route.js'
 
 for (const theme of ['light', 'dark'] as const) {
   test(`forwarded images and fallback details remain usable in the ${theme} production conversation`, async ({
@@ -28,38 +29,41 @@ for (const theme of ['light', 'dark'] as const) {
     ).toBe(true)
 
     // Adapter-owned inbound facts; WebSocket parsing and channel asset occurrences are covered in runtime.spec.ts.
-    await page.route(`**/api/channels/${channelId}/messages**`, async (route) => {
-      const response = await route.fetch()
-      const body = HostApiContracts.listChannelMessages.response.parse(await response.json())
-      await route.fulfill({
-        json: {
-          ...body,
-          messages: body.messages.map((message) => ({
-            ...message,
-            parts: [
-              {
-                type: 'rich',
-                adapterKey: 'onebot-11',
-                kind: 'forward',
-                summary,
-                extension: {
-                  truncated,
-                  items: [
-                    { sender: '虚构成员甲', text: '这里是转发图片与表情。' },
-                    { sender: '虚构成员甲', imageAssetId: 'ast_forwardImage', imageName: '转发图片' },
-                    { sender: '虚构成员甲', text: '表情（编号 14）' },
-                    { sender: '虚构成员甲', text: '文件：资料.txt（未展开）' },
-                    { text: '嵌套合并转发：' },
-                    { sender: '虚构成员乙', text: '嵌套正文' },
-                    { sender: '虚构成员乙', imageAssetId: 'ast_forwardSticker', imageName: '表情图片' },
-                  ],
+    await page.route(
+      `**/api/channels/${channelId}/messages**`,
+      answering(async (route) => {
+        const response = await route.fetch()
+        const body = HostApiContracts.listChannelMessages.response.parse(await response.json())
+        await route.fulfill({
+          json: {
+            ...body,
+            messages: body.messages.map((message) => ({
+              ...message,
+              parts: [
+                {
+                  type: 'rich',
+                  adapterKey: 'onebot-11',
+                  kind: 'forward',
+                  summary,
+                  extension: {
+                    truncated,
+                    items: [
+                      { sender: '虚构成员甲', text: '这里是转发图片与表情。' },
+                      { sender: '虚构成员甲', imageAssetId: 'ast_forwardImage', imageName: '转发图片' },
+                      { sender: '虚构成员甲', text: '表情（编号 14）' },
+                      { sender: '虚构成员甲', text: '文件：资料.txt（未展开）' },
+                      { text: '嵌套合并转发：' },
+                      { sender: '虚构成员乙', text: '嵌套正文' },
+                      { sender: '虚构成员乙', imageAssetId: 'ast_forwardSticker', imageName: '表情图片' },
+                    ],
+                  },
                 },
-              },
-            ],
-          })),
-        },
-      })
-    })
+              ],
+            })),
+          },
+        })
+      }),
+    )
     await page.route(`**/api/channels/${channelId}/assets/ast_forward*`, (route) =>
       route.fulfill({
         contentType: 'image/svg+xml',

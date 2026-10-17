@@ -1,5 +1,6 @@
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { expect, test } from '@playwright/test'
+import { answering } from './fixtures/route.js'
 
 for (const theme of ['light', 'dark'] as const) {
   for (const width of [1440, 390]) {
@@ -26,42 +27,45 @@ for (const theme of ['light', 'dark'] as const) {
         ).ok(),
       ).toBe(true)
       // Adapter decoding, scoped indexes and SQLite facts are covered by the QQ integration tests.
-      await page.route(`**/api/channels/${channelId}/messages**`, async (route) => {
-        const response = await route.fetch()
-        const body = HostApiContracts.listChannelMessages.response.parse(await response.json())
-        await route.fulfill({
-          json: {
-            ...body,
-            messages: body.messages.map((message) => ({
-              ...message,
-              parts: [
-                { type: 'text', text: '当前消息：请查看这条引用。' },
-                {
-                  type: 'rich',
-                  adapterKey: 'qq-openclaw',
-                  kind: 'quote-preview',
-                  title: '引用消息',
-                  summary: '原消息未记录，以下为平台提供的引用预览。',
-                  extension: {
-                    items: [
-                      { sender: '虚构成员甲', text: '这是被引用的正文，与当前发言分开显示。' },
-                      {
-                        card: {
-                          kind: 'card',
-                          title: '虚构资料卡片',
-                          summary: '虚构资料',
-                          targetUrl: 'https://example.test/quote',
+      await page.route(
+        `**/api/channels/${channelId}/messages**`,
+        answering(async (route) => {
+          const response = await route.fetch()
+          const body = HostApiContracts.listChannelMessages.response.parse(await response.json())
+          await route.fulfill({
+            json: {
+              ...body,
+              messages: body.messages.map((message) => ({
+                ...message,
+                parts: [
+                  { type: 'text', text: '当前消息：请查看这条引用。' },
+                  {
+                    type: 'rich',
+                    adapterKey: 'qq-openclaw',
+                    kind: 'quote-preview',
+                    title: '引用消息',
+                    summary: '原消息未记录，以下为平台提供的引用预览。',
+                    extension: {
+                      items: [
+                        { sender: '虚构成员甲', text: '这是被引用的正文，与当前发言分开显示。' },
+                        {
+                          card: {
+                            kind: 'card',
+                            title: '虚构资料卡片',
+                            summary: '虚构资料',
+                            targetUrl: 'https://example.test/quote',
+                          },
                         },
-                      },
-                      { fileAssetId: 'ast_quoteText', fileName: '引用资料.txt', fileMediaType: 'text/plain' },
-                    ],
+                        { fileAssetId: 'ast_quoteText', fileName: '引用资料.txt', fileMediaType: 'text/plain' },
+                      ],
+                    },
                   },
-                },
-              ],
-            })),
-          },
-        })
-      })
+                ],
+              })),
+            },
+          })
+        }),
+      )
       await page.route(`**/api/channels/${channelId}/assets/ast_quoteText`, (route) =>
         route.fulfill({
           contentType: 'text/plain; charset=utf-8',

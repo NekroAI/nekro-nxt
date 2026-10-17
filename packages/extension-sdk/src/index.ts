@@ -1483,7 +1483,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     ],
     rules: [
       '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载：Host 源码顶层（factory）只在本机执行一次，在这里注册 harness.handle（RPC）、harness.registerAdapter、harness.onInbound、harness.onJob；return 的插件挂载到每个智能体，在它的 apply 里注册工具。一个扩展可以同时提供工具、页面、面板、适配器，不需要拆成多个扩展。',
-      '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。',
+      '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。config.agent 要在启用后才能填写，所以其中的必填项都要给默认值（凭据除外），否则保存会被拒绝。',
       "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }。不要写 properties、required 数组或 additionalProperties。",
       '工具 parameters 中类型为 object 的参数必须显式写 additionalProperties: true 或 false；尽量用扁平的 string/number/boolean 参数。',
       'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网在智能体挂载里声明 permissions.agent.network，在 factory 顶层声明 permissions.host.network，不要混用。',
