@@ -351,6 +351,13 @@
       "when": 1792132945168,
       "tag": "0049_sub_conversations",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1792211076616,
+      "tag": "0050_agent_compaction",
+      "breakpoints": true
     }
   ]
 }

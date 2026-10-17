@@ -68,6 +68,20 @@ export interface ImageUnderstandingPolicy {
 
 export type DynamicClientApprovalPolicy = 'manual' | 'automatic'
 
+/** Which model writes one kind of compaction summary: the kind's default, or a model chosen for this agent. */
+export type AgentCompactionModelChoice =
+  { readonly mode: 'follow' } | { readonly mode: 'custom'; readonly model: AgentModelSelection }
+
+/**
+ * The two compactions differ in what they can reuse. In-session compaction replays the conversation as the request
+ * prefix, so following the main model (and its thinking level) keeps the provider's cache; compaction into a new
+ * session writes a fresh transcript and by default follows the host's compaction model instead.
+ */
+export interface AgentCompactionPolicy {
+  readonly inSession: AgentCompactionModelChoice
+  readonly newSession: AgentCompactionModelChoice
+}
+
 export interface AgentRevisionContent {
   readonly displayName: string
   readonly persona: string
@@ -76,6 +90,8 @@ export interface AgentRevisionContent {
   readonly capabilities?: Partial<AgentCapabilityGrants>
   readonly imagePolicy?: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy?: DynamicClientApprovalPolicy
+  /** Omitted on revise keeps the current choices; omitted on create follows both defaults. */
+  readonly compaction?: AgentCompactionPolicy
 }
 
 /** Non-versioned presentation of an intelligent agent; never part of an AgentRevision. */
@@ -94,7 +110,7 @@ export interface AgentDefinitionRecord {
 
 export interface AgentRevisionRecord extends Omit<
   AgentRevisionContent,
-  'capabilities' | 'imagePolicy' | 'personaDocument'
+  'capabilities' | 'imagePolicy' | 'personaDocument' | 'compaction'
 > {
   readonly id: AgentRevisionId
   readonly agentId: AgentId
@@ -102,6 +118,7 @@ export interface AgentRevisionRecord extends Omit<
   readonly capabilities: AgentCapabilityGrants
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
+  readonly compaction: AgentCompactionPolicy
   readonly personaDocument: PromptDocumentV1
   readonly contentDigest: string
   readonly createdAt: number
@@ -509,6 +526,21 @@ export const DEFAULT_IMAGE_UNDERSTANDING_POLICY: ImageUnderstandingPolicy =
 
 export const DynamicClientApprovalPolicySchema = z.enum(['manual', 'automatic']).default('manual')
 
+const AgentCompactionModelChoiceSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('follow') }).strict(),
+  z.object({ mode: z.literal('custom'), model: AgentModelSelectionSchema }).strict(),
+])
+
+export const DEFAULT_AGENT_COMPACTION_POLICY: AgentCompactionPolicy = {
+  inSession: { mode: 'follow' },
+  newSession: { mode: 'follow' },
+}
+
+export const AgentCompactionPolicySchema = z
+  .object({ inSession: AgentCompactionModelChoiceSchema, newSession: AgentCompactionModelChoiceSchema })
+  .strict()
+  .default(DEFAULT_AGENT_COMPACTION_POLICY)
+
 export function parseImageUnderstandingPolicy(input: unknown): ImageUnderstandingPolicy {
   return ImageUnderstandingPolicySchema.parse(input)
 }
@@ -532,6 +564,7 @@ const agentRevisionContentSchema = z
     capabilities: AgentCapabilityGrantsSchema,
     imagePolicy: ImageUnderstandingPolicySchema,
     dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
+    compaction: AgentCompactionPolicySchema,
   })
   .strict()
 
@@ -634,12 +667,13 @@ const canonicalJson = (value: JsonValue): string => {
 
 type NormalizedAgentRevisionContent = Omit<
   AgentRevisionContent,
-  'capabilities' | 'imagePolicy' | 'personaDocument' | 'dynamicClientApprovalPolicy'
+  'capabilities' | 'imagePolicy' | 'personaDocument' | 'dynamicClientApprovalPolicy' | 'compaction'
 > & {
   readonly capabilities: AgentCapabilityGrants
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly personaDocument: PromptDocumentV1
   readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
+  readonly compaction: AgentCompactionPolicy
 }
 
 const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgentRevisionContent => {
@@ -661,8 +695,36 @@ const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgent
     capabilities: parsed.capabilities,
     imagePolicy: parsed.imagePolicy,
     dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy,
+    compaction: {
+      inSession: compactionChoice(parsed.compaction.inSession),
+      newSession: compactionChoice(parsed.compaction.newSession),
+    },
   }
 }
+
+const compactionChoice = (choice: z.infer<typeof AgentCompactionModelChoiceSchema>): AgentCompactionModelChoice =>
+  choice.mode === 'follow'
+    ? { mode: 'follow' }
+    : {
+        mode: 'custom',
+        model: {
+          provider: choice.model.provider,
+          model: choice.model.model,
+          ...(choice.model.reasoningEffort === undefined ? {} : { reasoningEffort: choice.model.reasoningEffort }),
+        },
+      }
+
+const compactionChoicePayload = (choice: AgentCompactionModelChoice): JsonValue =>
+  choice.mode === 'follow'
+    ? { mode: 'follow' }
+    : {
+        mode: 'custom',
+        model: {
+          provider: choice.model.provider,
+          model: choice.model.model,
+          reasoningEffort: choice.model.reasoningEffort ?? null,
+        },
+      }
 
 const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): JsonValue => ({
   displayName: content.displayName,
@@ -725,6 +787,15 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
           },
   },
   dynamicClientApprovalPolicy: content.dynamicClientApprovalPolicy,
+  // Following both defaults leaves the digest of every earlier Revision unchanged.
+  ...(content.compaction.inSession.mode === 'follow' && content.compaction.newSession.mode === 'follow'
+    ? {}
+    : {
+        compaction: {
+          inSession: compactionChoicePayload(content.compaction.inSession),
+          newSession: compactionChoicePayload(content.compaction.newSession),
+        },
+      }),
 })
 
 const digestRevision = (input: AgentRevisionContent): string => {
@@ -743,10 +814,12 @@ const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevision
   capabilities: revision.capabilities,
   imagePolicy: revision.imagePolicy,
   dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
+  compaction: revision.compaction,
 })
 
 /** Revision fields an administrator can tell apart in history; `approvalPolicy` is the dynamic client approval policy. */
-export type AgentRevisionChangedField = 'name' | 'persona' | 'model' | 'capabilities' | 'imagePolicy' | 'approvalPolicy'
+export type AgentRevisionChangedField =
+  'name' | 'persona' | 'model' | 'capabilities' | 'imagePolicy' | 'approvalPolicy' | 'compaction'
 
 const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, string])[] = [
   ['name', 'displayName'],
@@ -755,6 +828,7 @@ const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, stri
   ['capabilities', 'capabilities'],
   ['imagePolicy', 'imagePolicy'],
   ['approvalPolicy', 'dynamicClientApprovalPolicy'],
+  ['compaction', 'compaction'],
 ]
 
 const payloadField = (payload: JsonValue, key: string): JsonValue =>
@@ -869,7 +943,10 @@ export class CoreService {
     if (current.definition.currentRevisionId !== expectedCurrentRevisionId) {
       throw new Error(`Agent revision conflict: expected ${expectedCurrentRevisionId}.`)
     }
-    const content = parseAgentRevisionContent(input)
+    // Callers that rebuild a revision without compaction choices (a capability change, a persona import) keep them.
+    const content = parseAgentRevisionContent(
+      input.compaction === undefined ? { ...input, compaction: current.revision.compaction } : input,
+    )
     if (equivalentRevisionContent(content, revisionContent(current.revision))) return current
     const digest = digestRevision(content)
     const existing =

@@ -139,6 +139,7 @@ const createLegacyFixture = async () => {
       "ALTER TABLE channels ADD COLUMN platform_display_name text; ALTER TABLE channels ADD COLUMN preferred_processing_feedback text NOT NULL DEFAULT 'auto'",
     )
     legacy.exec('ALTER TABLE physical_deliveries ADD COLUMN diagnostic text')
+    legacy.exec('ALTER TABLE agent_revisions ADD COLUMN compaction text')
     // Task columns added by migration 46; it rebuilds the table from the original columns, so these are dropped.
     legacy.exec(
       "ALTER TABLE dynamic_authoring_tasks ADD COLUMN origin_channel_id text; ALTER TABLE dynamic_authoring_tasks ADD COLUMN kind text NOT NULL DEFAULT 'create'; ALTER TABLE dynamic_authoring_tasks ADD COLUMN target_extension_id text; ALTER TABLE dynamic_authoring_tasks ADD COLUMN base_revision_id text; ALTER TABLE dynamic_authoring_tasks ADD COLUMN reference_revision_id text; ALTER TABLE dynamic_authoring_tasks ADD COLUMN paused_reason text",
@@ -293,6 +294,7 @@ const createLegacyFixture = async () => {
     )
     legacyChannels.exec('ALTER TABLE physical_deliveries DROP COLUMN diagnostic')
     legacyChannels.exec('ALTER TABLE channel_bindings DROP COLUMN paused')
+    legacyChannels.exec('ALTER TABLE agent_revisions DROP COLUMN compaction')
   } finally {
     legacyChannels.close()
   }

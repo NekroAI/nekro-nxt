@@ -1,0 +1,1 @@
+ALTER TABLE `agent_revisions` ADD `compaction` text;

@@ -679,7 +679,7 @@ const setup = async (
       return handoffSummary
         ? handoffSummary(input)
         : Promise.resolve({
-            summary: '既有对话交接摘要',
+            summary: '既有对话压缩摘要',
             provider: input.revision.model.provider,
             model: input.revision.model.model,
           })
@@ -2115,7 +2115,7 @@ describe('ChannelRuntime M1 lane', () => {
     ).resolves.toMatchObject({ inserted: true })
     expect(context.runtimeRepository.getEpisode(first.id)).toMatchObject({ status: 'closed' })
     expect([...context.runtimeRepository.episodes.values()].filter(({ status }) => status === 'active')).toHaveLength(1)
-    expect(context.runtimeRepository.handoffs[0]?.summary).toContain('模型交接摘要不可用')
+    expect(context.runtimeRepository.handoffs[0]?.summary).toContain('模型压缩摘要不可用')
     expect(context.runtimeRepository.handoffs[0]?.sourceEventIds).toHaveLength(1)
   })
 
@@ -2633,7 +2633,7 @@ describe('ChannelRuntime M1 lane', () => {
       nextEpisode: { status: 'active' },
     })
     expect(context.runtimeRepository.handoffs).toHaveLength(1)
-    expect(context.runtimeRepository.handoffs[0]?.summary).toContain('模型交接摘要不可用')
+    expect(context.runtimeRepository.handoffs[0]?.summary).toContain('模型压缩摘要不可用')
     expect(context.handoffInputs).toHaveLength(1)
   })
 

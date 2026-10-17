@@ -38,7 +38,7 @@ import type {
   CommunityFeedbackDraftId,
   CommunityFeedbackItem,
 } from '@nekro-nxt/contracts'
-import type { StoredAgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
+import type { AgentCompactionPolicy, StoredAgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import type {
   AuthoringAttemptFailure,
   AuthoringHalfState,
@@ -87,6 +87,8 @@ export const agentRevisions = sqliteTable(
     dynamicClientApprovalPolicy: text('dynamic_client_approval_policy', { enum: ['manual', 'automatic'] })
       .notNull()
       .default('manual'),
+    /** Null follows both compaction defaults, which is every Revision written before the field existed. */
+    compaction: jsonText<AgentCompactionPolicy>('compaction'),
     contentDigest: text('content_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },

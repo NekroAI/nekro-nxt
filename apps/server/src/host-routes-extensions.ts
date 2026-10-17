@@ -30,6 +30,7 @@ import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import {
   assertAuxiliaryImageModel,
   assertReasoningEffort,
+  assertCompactionPolicy,
   buildSnapshotMessage,
   createExtensionRevisionExport,
   HOST_UI_PRODUCT_MUTATIONS,
@@ -251,6 +252,7 @@ export function registerExtensionsRoutes({
                 } as const)
               await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
               await assertReasoningEffort(runtime, parsed.model)
+              await assertCompactionPolicy(runtime, parsed.compaction)
               const entity = await runtime.createAgentWithInternalChannel({
                 displayName: parsed.displayName,
                 persona: parsed.persona,
@@ -261,6 +263,7 @@ export function registerExtensionsRoutes({
                 ...(parsed.dynamicClientApprovalPolicy === undefined
                   ? {}
                   : { dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy }),
+                ...(parsed.compaction === undefined ? {} : { compaction: parsed.compaction }),
               })
               value = { agentId: entity.agentId, channelId: entity.channelId, connectionId: entity.connectionId }
             } else if (input.method === 'agents.revise') {
@@ -272,6 +275,7 @@ export function registerExtensionsRoutes({
               }
               await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
               await assertReasoningEffort(runtime, parsed.model)
+              await assertCompactionPolicy(runtime, parsed.compaction)
               const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
                 displayName: parsed.displayName,
                 persona: parsed.persona,
@@ -281,6 +285,7 @@ export function registerExtensionsRoutes({
                 imagePolicy: parsed.imagePolicy ?? current.revision.imagePolicy,
                 dynamicClientApprovalPolicy:
                   parsed.dynamicClientApprovalPolicy ?? current.revision.dynamicClientApprovalPolicy,
+                ...(parsed.compaction === undefined ? {} : { compaction: parsed.compaction }),
               })
               value = { currentRevisionId: updated.revision.id }
             } else if (input.method === 'agents.capabilities') {

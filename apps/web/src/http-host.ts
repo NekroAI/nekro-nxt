@@ -6,6 +6,7 @@ import {
   CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
   CHANNEL_MESSAGE_PAGE_SIZE,
   connectionDisplayName,
+  FOLLOW_COMPACTION,
   type AgentRuntimeState,
   type AgentSummary,
   type ChannelRuntimeView,
@@ -73,7 +74,7 @@ const deliveryStateToUi = (state: string | undefined): DeliveryState | undefined
 const agentStateRank = (state: AgentRuntimeState): number => {
   if (state === 'unavailable') return 4
   if (state === 'using-tool') return 3
-  if (state === 'thinking') return 2
+  if (state === 'thinking' || state === 'compacting') return 2
   if (state === 'waiting-input') return 1
   return 0
 }
@@ -423,6 +424,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     capabilities: { ...agent.capabilities },
     imagePolicy: agent.imagePolicy,
     dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
+    compaction: agent.compaction ?? FOLLOW_COMPACTION,
     imageDiagnostics: agent.imageDiagnostics,
     appearance: {
       ...(agent.appearance?.hue === undefined ? {} : { hue: agent.appearance.hue }),
@@ -1503,6 +1505,7 @@ export class HttpProductHost implements ProductHostPort {
       | 'episodeId'
       | 'phase'
       | 'summary'
+      | 'compaction'
       | 'pendingInjectCount'
       | 'occupancy'
       | 'cache'
@@ -1517,6 +1520,7 @@ export class HttpProductHost implements ProductHostPort {
       ...(raw.episodeId === undefined ? {} : { episodeId: raw.episodeId }),
       phase: raw.phase,
       summary: raw.summary,
+      ...(raw.compaction === undefined ? {} : { compaction: raw.compaction }),
       pendingInjectCount: raw.pendingInjectCount,
       ...(raw.occupancy === undefined ? {} : { occupancy: raw.occupancy }),
       ...(raw.memory === undefined ? {} : { memory: raw.memory }),

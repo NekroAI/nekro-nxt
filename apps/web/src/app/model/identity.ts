@@ -37,12 +37,13 @@ export const distinctChannelHues = (channelIds: readonly string[]): ReadonlyMap<
 }
 
 export const isAgentWorking = (agent: Pick<AgentSummary, 'state'> | undefined): boolean =>
-  agent !== undefined && (agent.state === 'thinking' || agent.state === 'using-tool')
+  agent !== undefined && (agent.state === 'thinking' || agent.state === 'using-tool' || agent.state === 'compacting')
 
 export const agentPhase: Record<AgentSummary['state'], { readonly label: string; readonly tone: Tone }> = {
   idle: { label: '空闲', tone: 'neutral' },
   thinking: { label: '思考中', tone: 'accent' },
   'using-tool': { label: '使用工具', tone: 'accent' },
+  compacting: { label: '压缩中', tone: 'accent' },
   'waiting-input': { label: '等待输入', tone: 'warn' },
   unavailable: { label: '不可用', tone: 'bad' },
 }

@@ -513,6 +513,42 @@ describe('CoreService', () => {
     ).toThrow('revision conflict')
   })
 
+  it('keeps the compaction models when a revision leaves them out, and stores defaults as no change', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const first = core.createAgent({
+      displayName: '小奈',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    expect(first.revision.compaction).toEqual({ inSession: { mode: 'follow' }, newSession: { mode: 'follow' } })
+    const followed = core.reviseAgent(first.definition.id, first.revision.id, {
+      displayName: '小奈',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+      compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
+    })
+    expect(followed.revision.id).toBe(first.revision.id)
+    const compaction = {
+      inSession: { mode: 'follow' as const },
+      newSession: { mode: 'custom' as const, model: { provider: 'deepseek', model: 'flash' } },
+    }
+    const custom = core.reviseAgent(first.definition.id, first.revision.id, {
+      displayName: '小奈',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+      compaction,
+    })
+    expect(custom.revision.compaction).toEqual(compaction)
+    const renamed = core.reviseAgent(first.definition.id, custom.revision.id, {
+      displayName: '小奈二号',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+    })
+    expect(renamed.revision.compaction).toEqual(compaction)
+  })
+
   it('uses canonical content digests independent of object key order', () => {
     const first = digestRevision({
       displayName: '小奈',

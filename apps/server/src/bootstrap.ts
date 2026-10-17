@@ -119,6 +119,7 @@ import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-run
 import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
 import { messageGapMs, readMessagePacing } from './message-pacing.js'
+import { readCompactionSettings } from './compaction-settings.js'
 import { readSubConversationRetention } from './sub-conversation-settings.js'
 
 /** How often ended sub-conversations past their retention are removed. */
@@ -963,6 +964,10 @@ export class NekroRuntime {
       const governancePort: { current?: ExtensionGovernanceTools } = {}
       const subConversationChanges = new Set<() => void>()
       const host = await DshHostRuntime.create({
+        compaction: {
+          settings: () => readCompactionSettings({ get: (key) => repository.getSystemSetting(key) }),
+          currentRevision: (agentId) => repository.getAgent(agentId)?.revision,
+        },
         subConversations: {
           store: repository,
           retention: () => readSubConversationRetention({ get: (key) => repository.getSystemSetting(key) }),
