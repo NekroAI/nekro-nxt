@@ -1,6 +1,7 @@
 import {
   extensionContributionSchema,
   extensionIconSchema,
+  assertEnableableAgentConfig,
   extensionManifestSchema,
   extensionProvides,
   normalizeSource,
@@ -172,6 +173,8 @@ export function materializeDynamicPackage(input: {
     ...(input.lineage === undefined ? {} : { lineage: input.lineage }),
     ...(parsed.snapshot.dataVersion === undefined ? {} : { dataVersion: parsed.snapshot.dataVersion }),
   })
+  assertEnableableAgentConfig(manifest)
+
   const resources = revisionResourcesSchema.parse(parsed.snapshot.resources ?? {})
   validateRevisionResources(manifest, resources, '动态扩展')
   return {

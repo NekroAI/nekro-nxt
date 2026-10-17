@@ -630,7 +630,7 @@ describe('extension autonomy', () => {
           schema: {
             type: 'object',
             dict: {
-              nickname: { type: 'string', meta: { required: true } },
+              nickname: { type: 'string', meta: { required: true, default: '虚构默认称呼' } },
               agentKey: { type: 'string', meta: { required: true, role: 'secret' } },
             },
           },
@@ -667,12 +667,13 @@ describe('extension autonomy', () => {
         updatedAt: 1,
         quotaBytes: 1024,
       })
+      // With the shared configuration complete, only the agent's own credential is missing: it may enable and is told
+      // to have it filled afterwards.
       const listed = tools.list(consumer.agentId)
       expect(listed).toMatchObject({
-        extensions: [{ enablement: { decision: 'console' } }],
+        extensions: [{ enablement: { decision: 'run', note: expect.stringContaining('填写你的凭据') as unknown } }],
       })
       const serialized = JSON.stringify(listed)
-      expect(serialized).toContain('智能体配置还缺必填项')
       for (const privateValue of [
         hostKey,
         creatorKey,
@@ -682,9 +683,6 @@ describe('extension autonomy', () => {
         '虚构私有数据',
       ])
         expect(serialized).not.toContain(privateValue)
-      await expect(runtime.extensionActions.perform(action, { kind: 'console' })).rejects.toThrow(
-        '智能体配置还缺必填项',
-      )
       // The agent's own credential can only be filled once it is enabled, so it never blocks enabling.
       await runtime.extensions.activate({
         agentId: consumer.agentId,

@@ -225,6 +225,22 @@ const checkConfig = (
   }
 }
 
+/**
+ * Checked when NekroNXT takes in a new Revision (saving a candidate, importing a package), never when it reads one it
+ * already has: an agent's own configuration is filled only after the extension is enabled for it, so a required
+ * non-credential field without a default would leave the extension impossible to enable.
+ */
+export const assertEnableableAgentConfig = (manifest: ExtensionManifest): void => {
+  const blocking = configFields(manifest.config?.agent?.schema ?? EMPTY_CONFIG_SCHEMA).filter(
+    (field) => field.kind !== 'secret' && field.required && field.default === undefined,
+  )
+  if (blocking.length > 0) {
+    throw new Error(
+      `config.agent 的必填项要给默认值：${blocking.map((field) => field.key).join('、')}。智能体自己的配置要在启用后才能填写，没有默认值就无法启用。`,
+    )
+  }
+}
+
 /** At most this many ancestors travel with a Revision; older ones are dropped, newest first. */
 export const EXTENSION_LINEAGE_MAX_ANCESTRY = 256
 

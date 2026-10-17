@@ -1,29 +1,33 @@
 import { expect, test, type Page } from '@playwright/test'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
+import { answering } from './fixtures/route.js'
 
 /**
  * Show OpenAI as a route that signs in with ChatGPT. Journeys run in parallel against one host, so these tests do
  * not write the shared model settings; a sign-in that is cancelled or denied writes nothing either.
  */
 async function showSubscriptionRoute(page: Page, accountLabel: () => string | null = () => null): Promise<void> {
-  await page.route('**/api/llm/providers', async (route) => {
-    const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
-    await route.fulfill({
-      json: {
-        ...real,
-        providers: real.providers.map((provider) =>
-          provider.provider === 'openai'
-            ? {
-                ...provider,
-                configured: true,
-                active: true,
-                subscription: { label: 'ChatGPT', active: true, accountLabel: accountLabel() },
-              }
-            : provider,
-        ),
-      },
-    })
-  })
+  await page.route(
+    '**/api/llm/providers',
+    answering(async (route) => {
+      const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
+      await route.fulfill({
+        json: {
+          ...real,
+          providers: real.providers.map((provider) =>
+            provider.provider === 'openai'
+              ? {
+                  ...provider,
+                  configured: true,
+                  active: true,
+                  subscription: { label: 'ChatGPT', active: true, accountLabel: accountLabel() },
+                }
+              : provider,
+          ),
+        },
+      })
+    }),
+  )
 }
 
 const openedUrl = async (page: Page): Promise<string> =>
@@ -142,24 +146,27 @@ for (const width of [375, 1440]) {
 
 test('adding the ChatGPT plan switches the unconfigured OpenAI route to sign-in', async ({ page }) => {
   let switched = false
-  await page.route('**/api/llm/providers', async (route) => {
-    const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
-    await route.fulfill({
-      json: {
-        ...real,
-        providers: real.providers.map((provider) =>
-          provider.provider === 'openai'
-            ? {
-                ...provider,
-                configured: switched,
-                active: switched,
-                subscription: { label: 'ChatGPT', active: switched, accountLabel: null },
-              }
-            : provider,
-        ),
-      },
-    })
-  })
+  await page.route(
+    '**/api/llm/providers',
+    answering(async (route) => {
+      const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
+      await route.fulfill({
+        json: {
+          ...real,
+          providers: real.providers.map((provider) =>
+            provider.provider === 'openai'
+              ? {
+                  ...provider,
+                  configured: switched,
+                  active: switched,
+                  subscription: { label: 'ChatGPT', active: switched, accountLabel: null },
+                }
+              : provider,
+          ),
+        },
+      })
+    }),
+  )
   // The switch is answered here; the shared host's settings stay as they are.
   await page.route('**/api/llm/subscriptions/openai', async (route) => {
     const status = HostApiContracts.llmSubscriptionStatus.parseResponse(

@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { HostApiContracts } from '@nekro-nxt/contracts'
+import { answering } from './fixtures/route.js'
 
 test('an unconfigured ChatGPT account reports discovery failure rather than offering the installed directory', async ({
   page,
@@ -56,26 +57,29 @@ test('a failed model refresh clears previous candidates and can be retried', asy
     )
       failures.push(message.text())
   })
-  await page.route('**/api/llm/providers', async (route) => {
-    const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
-    await route.fulfill({
-      json: {
-        ...real,
-        providers: real.providers.map((provider) =>
-          provider.provider === 'openai'
-            ? {
-                ...provider,
-                configured: true,
-                active: true,
-                api: 'openai-responses',
-                models: [],
-                subscription: { label: 'ChatGPT', active: true, accountLabel: null },
-              }
-            : provider,
-        ),
-      },
-    })
-  })
+  await page.route(
+    '**/api/llm/providers',
+    answering(async (route) => {
+      const real = HostApiContracts.llmProviders.parseResponse(await (await route.fetch()).json())
+      await route.fulfill({
+        json: {
+          ...real,
+          providers: real.providers.map((provider) =>
+            provider.provider === 'openai'
+              ? {
+                  ...provider,
+                  configured: true,
+                  active: true,
+                  api: 'openai-responses',
+                  models: [],
+                  subscription: { label: 'ChatGPT', active: true, accountLabel: null },
+                }
+              : provider,
+          ),
+        },
+      })
+    }),
+  )
   let attempts = 0
   await page.route('**/api/llm/discover-models', async (route) => {
     expect(route.request().postDataJSON()).toMatchObject({ provider: 'openai', api: 'openai-responses' })
