@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { configureDshLlmProviders } from '../src/main.js'
+import { assertReasoningEffort } from '../src/host-route-support.js'
 
 const temporaryDirectories: string[] = []
 
@@ -168,6 +169,30 @@ describe('LLM model catalog management', () => {
       expect(
         (await runtime.host.listAvailableLlmModels()).filter((model) => model.provider === 'openai'),
       ).toMatchObject([{ id: 'synthetic-account-chat' }])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('offers the thinking levels a saved model declares and refuses one it does not', async () => {
+    const { runtime } = await createRuntime()
+    try {
+      const openai = await providerView(runtime, 'openai')
+      await runtime.host.saveLlmProvider({
+        provider: 'openai',
+        expectedRevision: openai.settingsRevision,
+        api: 'openai-responses',
+        models: [{ id: 'sample-reasoner', name: '示例推理模型', reasoningEfforts: ['low', 'medium', 'max'] }],
+      })
+      const listed = (await runtime.host.listAvailableLlmModels()).find((model) => model.id === 'sample-reasoner')
+      expect(listed?.reasoning?.efforts.map((effort) => effort.id)).toEqual(['low', 'medium', 'max'])
+      // The provider page reads the declared levels back, so a later save keeps them.
+      expect((await providerView(runtime, 'openai')).models[0]?.reasoningEfforts).toEqual(['low', 'medium', 'max'])
+
+      const choice = { provider: 'openai', model: 'sample-reasoner' }
+      await expect(assertReasoningEffort(runtime, { ...choice, reasoningEffort: 'max' })).resolves.toBeUndefined()
+      await expect(assertReasoningEffort(runtime, { ...choice, reasoningEffort: 'xhigh' })).rejects.toThrow('思考强度')
+      await expect(assertReasoningEffort(runtime, choice)).resolves.toBeUndefined()
     } finally {
       await runtime.dispose()
     }

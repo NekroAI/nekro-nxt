@@ -6,7 +6,13 @@ import type {
   CreateAgentCommit,
   CreateAgentWithChannelCommit,
 } from '@nekro-nxt/core'
-import { parseAgentCapabilityGrants, parseImageUnderstandingPolicy, storedAgentCapabilityGrants } from '@nekro-nxt/core'
+import {
+  AgentCompactionPolicySchema,
+  DEFAULT_AGENT_COMPACTION_POLICY,
+  parseAgentCapabilityGrants,
+  parseImageUnderstandingPolicy,
+  storedAgentCapabilityGrants,
+} from '@nekro-nxt/core'
 import { normalizePromptDocument, promptDocumentFromText } from '@nekro-nxt/contracts'
 import type { AgentId, AgentRevisionId } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
@@ -55,6 +61,8 @@ const toRevision = (input: typeof agentRevisions.$inferSelect): AgentRevisionRec
     capabilities: parseAgentCapabilityGrants(row.capabilities),
     imagePolicy: parseImageUnderstandingPolicy(row.imagePolicy),
     dynamicClientApprovalPolicy: row.dynamicClientApprovalPolicy,
+    compaction:
+      row.compaction === null ? DEFAULT_AGENT_COMPACTION_POLICY : AgentCompactionPolicySchema.parse(row.compaction),
     contentDigest: row.contentDigest,
     createdAt: row.createdAt,
   }
@@ -98,6 +106,10 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
   capabilities: storedAgentCapabilityGrants(record.capabilities),
   imagePolicy: record.imagePolicy,
   dynamicClientApprovalPolicy: record.dynamicClientApprovalPolicy,
+  // Left out while both follow their defaults, which a missing value already means.
+  ...(record.compaction.inSession.mode === 'follow' && record.compaction.newSession.mode === 'follow'
+    ? {}
+    : { compaction: record.compaction }),
   contentDigest: record.contentDigest,
   createdAt: record.createdAt,
 })

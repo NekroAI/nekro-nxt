@@ -8,7 +8,12 @@ import type {
 } from '@nekro-nxt/extension-sdk'
 import { useMemo } from 'react'
 import { useStore } from 'zustand'
+import type { AgentRuntimeState } from '../product-model.js'
 import type { ProductRuntime } from '../product-runtime.js'
+
+/** The SDK's phases predate compaction; to an extension a compacting agent is simply busy. */
+const extensionPhase = (phase: AgentRuntimeState): ExtensionAgentView['phase'] =>
+  phase === 'compacting' ? 'thinking' : phase
 
 type ProductStore = ProductRuntime['store']
 
@@ -42,7 +47,10 @@ export const createExtensionData = (
   useAgent(agentId: string): ExtensionAgentView | undefined {
     assertPermission(permissions, 'useAgent')
     const agent = useStore(store, (state) => state.agents.find((candidate) => candidate.id === agentId))
-    return useMemo(() => (agent ? { id: agent.id, name: agent.name, phase: agent.state } : undefined), [agent])
+    return useMemo(
+      () => (agent ? { id: agent.id, name: agent.name, phase: extensionPhase(agent.state) } : undefined),
+      [agent],
+    )
   },
   useChannel(channelId: string): ExtensionChannelView | undefined {
     assertPermission(permissions, 'useChannel')
@@ -85,7 +93,7 @@ export const createExtensionData = (
         runtime
           ? {
               channelId: runtime.channelId,
-              phase: runtime.phase,
+              phase: extensionPhase(runtime.phase),
               ...(runtime.occupancy
                 ? { contextTokens: runtime.occupancy.projectedTokens, contextWindow: runtime.occupancy.contextWindow }
                 : {}),

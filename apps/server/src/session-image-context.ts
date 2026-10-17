@@ -21,6 +21,7 @@ import {
   freezeMessage,
   LlmError,
   MessageId,
+  ReasoningEffortId,
   type ContentBlock,
   type TextBlock,
   type UserMessage,
@@ -448,7 +449,7 @@ export type NekroCompactionResult = NonNullable<Awaited<ReturnType<BasicCompacti
  * assistant; a channel needs people, running games, agreements and promises kept with their exact wording.
  */
 export const CHANNEL_COMPACTION_INSTRUCTION = [
-  '先停一下，把上面更早的对话整理成一份交接记录，让之后的你接着聊时不丢重要的信息。',
+  '先停一下，把上面更早的对话整理成一份压缩记录，让之后的你接着聊时不丢重要的信息。',
   '',
   '按下面的结构输出，每节用简短的条目，不写成段落；没有内容的节写「（无）」，不要删节：',
   '',
@@ -486,8 +487,21 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
+/** The model and thinking level one agent's in-session compaction is written with. */
+export interface InSessionCompactionModel {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
 export class NekroNxtCompactionEngine extends BasicCompactionEngine {
   private visualRestoreDepth = 0
+  private modelChoice: ((agent: Agent) => InSessionCompactionModel | undefined) | undefined
+
+  /** Which model an agent's in-session compaction uses; without one the conversation's own model is used. */
+  setModelChoice(choose: (agent: Agent) => InSessionCompactionModel | undefined): void {
+    this.modelChoice = choose
+  }
 
   /**
    * DSH's own summarizer with the channel instruction: the replayed conversation stays the request prefix, so the
@@ -513,15 +527,19 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
           )
     const summarizationProvider = policy?.summarizationProvider ?? this.config.summarizationProvider
     const maxTokens = policy?.maxTokens ?? this.config.maxTokens
-    const target =
-      summarizationProvider.length > 0
+    const chosen = this.modelChoice?.(agent)
+    const target: InSessionCompactionModel | undefined =
+      chosen ??
+      (summarizationProvider.length > 0
         ? { provider: summarizationProvider, model: policy?.summarizationModel ?? this.config.summarizationModel }
-        : conversation
+        : conversation)
     if (target === undefined) throw new Error('No provider/model is available for compaction.')
     const assembler = new BlockAssembler()
     const options = {
       provider: target.provider,
       model: target.model,
+      // The conversation's thinking level is part of what the provider caches; following it keeps the cache.
+      ...(target.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(target.reasoningEffort) }),
       messages: [
         ...input.messages,
         // Request-only, like DSH's own instruction: it is never written to the session log.

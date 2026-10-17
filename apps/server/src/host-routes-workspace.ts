@@ -27,6 +27,8 @@ import {
 } from './host-queries.js'
 import {
   assertAuxiliaryImageModel,
+  assertReasoningEffort,
+  assertCompactionPolicy,
   buildSnapshotMessage,
   readJsonBody,
   writeContractJson,
@@ -379,6 +381,8 @@ export function registerWorkspaceRoutes({
             }
           : parsed.capabilities
       await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+      await assertReasoningEffort(runtime, parsed.model)
+      await assertCompactionPolicy(runtime, parsed.compaction)
       const content: AgentRevisionContent = {
         displayName: parsed.displayName,
         persona: parsed.persona,
@@ -393,6 +397,7 @@ export function registerWorkspaceRoutes({
         ...(parsed.dynamicClientApprovalPolicy === undefined
           ? {}
           : { dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy }),
+        ...(parsed.compaction === undefined ? {} : { compaction: parsed.compaction }),
       }
       const entity = await runtime.createAgentWithInternalChannel(content)
       writeJson(
@@ -535,6 +540,8 @@ export function registerWorkspaceRoutes({
             return
           }
           await assertAuxiliaryImageModel(runtime, parsed.imagePolicy)
+          await assertReasoningEffort(runtime, parsed.model)
+          await assertCompactionPolicy(runtime, parsed.compaction)
           const updated = runtime.core.reviseAgent(agentId, revision.id, {
             displayName: parsed.displayName,
             persona: parsed.persona,
@@ -547,6 +554,7 @@ export function registerWorkspaceRoutes({
             capabilities: revision.capabilities,
             imagePolicy: parsed.imagePolicy ?? revision.imagePolicy,
             dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy ?? revision.dynamicClientApprovalPolicy,
+            ...(parsed.compaction === undefined ? {} : { compaction: parsed.compaction }),
           })
           writeJson(res, 200, HostApiContracts.reviseAgent.parseResponse({ currentRevisionId: updated.revision.id }))
           return

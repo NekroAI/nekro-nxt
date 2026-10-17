@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { AgentStatus } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { AgentRevisionRecord } from '@nekro-nxt/core'
-import type { ChannelId, ChannelRuntimeOccupancy } from '@nekro-nxt/contracts'
+import { ChannelIdSchema, type ChannelId, type ChannelRuntimeOccupancy } from '@nekro-nxt/contracts'
 import type { SessionRegistry } from './session-registry.js'
 import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
 import { projectSessionOccupancy, type RuntimePerformanceTotals } from './channel-runtime-projection.js'
@@ -13,6 +13,7 @@ export class SessionRuntimeProjection {
   readonly #context: Context
   readonly #sessions: SessionRegistry<unknown>
   readonly #subscriptions = new Set<() => void>()
+  readonly #channelNotifiers = new Set<(channelId: ChannelId) => void>()
 
   constructor(context: Context, sessions: SessionRegistry<unknown>) {
     this.#context = context
@@ -83,6 +84,11 @@ export class SessionRuntimeProjection {
     }
   }
 
+  /** Re-publish a channel's runtime when something outside its session changed it, such as a compaction wait. */
+  touchChannel(channelId: string): void {
+    for (const notify of this.#channelNotifiers) notify(ChannelIdSchema.parse(channelId))
+  }
+
   subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
     const offStatus = this.#context.on('agent/status', ({ agent }) => {
       const channelId = this.#sessions.get(String(agent.id))?.channelId
@@ -111,6 +117,7 @@ export class SessionRuntimeProjection {
       pending.add(channelId)
       timer ??= setTimeout(flush, 100)
     }
+    this.#channelNotifiers.add(notify)
     const offEvent = this.#context.on(
       'session/event',
       (session: { readonly id: string }, event?: { readonly type?: string }) => {
@@ -129,6 +136,7 @@ export class SessionRuntimeProjection {
       pending.clear()
       failing.clear()
       if (timer !== undefined) clearTimeout(timer)
+      this.#channelNotifiers.delete(notify)
       offStatus()
       offEvent()
       offOccupancy()

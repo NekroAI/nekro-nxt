@@ -1,6 +1,11 @@
 import { promptDocumentPlainText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import type { AgentAccessLevel } from '../../agent-access-level.js'
-import type { AgentSummary, ImageUnderstandingPolicy, ModelSummary } from '../../product-runtime.js'
+import type {
+  AgentCompactionPolicy,
+  AgentSummary,
+  ImageUnderstandingPolicy,
+  ModelSummary,
+} from '../../product-runtime.js'
 import { agentModelKey } from './agent-create-draft.js'
 
 export type Capabilities = AgentSummary['capabilities']
@@ -17,7 +22,11 @@ export interface AgentDraft {
   readonly persona: PromptDocumentV1
   readonly personaText: string
   readonly modelKey: string
+  /** Thinking level for the main model; empty uses the model's own default. */
+  readonly effort: string
   readonly visionKey: string
+  /** Which model writes each kind of compaction summary. */
+  readonly compaction: AgentCompactionPolicy
   readonly capabilities: Capabilities
 }
 
@@ -26,6 +35,7 @@ export const draftOf = (agent: AgentSummary): AgentDraft => ({
   persona: agent.personaDocument,
   personaText: promptDocumentPlainText(agent.personaDocument),
   modelKey: agent.modelRef ? agentModelKey({ provider: agent.modelRef.provider, id: agent.modelRef.model }) : '',
+  effort: agent.modelRef?.reasoningEffort ?? '',
   visionKey:
     agent.imagePolicy.textModel.mode === 'auxiliary'
       ? agentModelKey({
@@ -33,6 +43,7 @@ export const draftOf = (agent: AgentSummary): AgentDraft => ({
           id: agent.imagePolicy.textModel.model.model,
         })
       : '',
+  compaction: agent.compaction,
   capabilities: agent.capabilities,
 })
 
@@ -69,7 +80,9 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
   draft.name.trim() !== base.name ||
   !sameDocument(draft.persona, base.persona) ||
   draft.modelKey !== base.modelKey ||
-  draft.visionKey !== base.visionKey
+  draft.effort !== base.effort ||
+  draft.visionKey !== base.visionKey ||
+  JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction)
 
 /** Capabilities that differ from the saved ones, as the partial patch the Host expects. */
 export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Capabilities> => {
@@ -102,7 +115,9 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   const changes: string[] = []
   if (draft.name.trim() !== base.name) changes.push('名称')
   if (draft.modelKey !== base.modelKey) changes.push('主模型')
+  if (draft.effort !== base.effort) changes.push('思考强度')
   if (draft.visionKey !== base.visionKey) changes.push('视觉模型')
+  if (JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction)) changes.push('压缩模型')
   const patch = capabilityPatch(base, draft)
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')
   if ('codeRun' in patch) changes.push('编排模式')

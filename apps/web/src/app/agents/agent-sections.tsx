@@ -54,6 +54,8 @@ import { CodeRunNodeDownload, CodeRunNodeRemove } from './runtime-download.js'
 import { missingAgentModel, replacementModel } from './model-health.js'
 import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
+import { EffortSlider } from './effort-slider.js'
+import { CompactionModelField, type CompactionModel } from './compaction-model.js'
 
 /** What each extension autonomy level lets the agent do without opening the console. */
 const EXTENSION_AUTONOMY_HINT: Record<'manual' | 'confirm' | 'autonomous', string> = {
@@ -66,6 +68,13 @@ const EXTENSION_AUTONOMY_HINT: Record<'manual' | 'confirm' | 'autonomous', strin
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 const modelLabel = (model: ModelSummary) => `${model.providerName} · ${model.name}`
+
+/** Whether a compaction model asks exactly what the conversation does, which is what the provider caches. */
+const sameAsMain = (chosen: CompactionModel, main: ModelSummary | undefined, effort: string): boolean =>
+  main !== undefined &&
+  chosen.provider === main.provider &&
+  chosen.model === main.id &&
+  (chosen.reasoningEffort ?? '') === effort
 
 export type { DraftUpdate } from './agent-draft.js'
 
@@ -134,9 +143,26 @@ export function ModelSection({
             value={model ? draft.modelKey : ''}
             {...(model ? {} : { placeholder: '选择模型' })}
             options={options}
-            onValueChange={(value) => update((current) => ({ ...current, modelKey: value }))}
+            onValueChange={(value) =>
+              update((current) => {
+                // A level the newly chosen model does not offer falls back to that model's default.
+                const next = models.find((item) => agentModelKey(item) === value)
+                const kept = next?.reasoning?.efforts.some((effort) => effort.id === current.effort) === true
+                return { ...current, modelKey: value, effort: kept ? current.effort : '' }
+              })
+            }
           />
         </PropertyRow>
+        {model?.reasoning ? (
+          <PropertyRow label="思考强度" layout="stacked" tip="越高，处理复杂问题越可靠，回答也越慢、用量越多">
+            <EffortSlider
+              efforts={model.reasoning.efforts}
+              defaultEffort={model.reasoning.defaultEffort}
+              value={model.reasoning.efforts.some((effort) => effort.id === draft.effort) ? draft.effort : ''}
+              onChange={(effort) => update((current) => ({ ...current, effort }))}
+            />
+          </PropertyRow>
+        ) : null}
         {model && !supportsImages(model) ? (
           <PropertyRow
             label="视觉模型"
@@ -156,6 +182,52 @@ export function ModelSection({
             />
           </PropertyRow>
         ) : null}
+        <PropertyRow
+          label="会话内压缩"
+          layout="stacked"
+          tip="上下文快满时，在当前会话里整理更早的内容。跟随主模型时能用上模型的缓存，更快也更省。"
+          description={
+            draft.compaction.inSession.mode === 'custom' &&
+            !sameAsMain(draft.compaction.inSession.model, model, draft.effort)
+              ? '和主模型或思考强度不同时，用不上模型的缓存。'
+              : undefined
+          }
+        >
+          <CompactionModelField
+            label="会话内压缩"
+            followLabel="跟随主模型"
+            value={draft.compaction.inSession.mode === 'custom' ? draft.compaction.inSession.model : undefined}
+            onChange={(chosen) =>
+              update((current) => ({
+                ...current,
+                compaction: {
+                  ...current.compaction,
+                  inSession: chosen ? { mode: 'custom', model: chosen } : { mode: 'follow' },
+                },
+              }))
+            }
+          />
+        </PropertyRow>
+        <PropertyRow
+          label="开新会话时压缩"
+          layout="stacked"
+          tip="闲置后再被唤醒、或手动压缩时，先把上一段对话整理成摘要再开新会话。这一步用不上缓存，可以换成更快的模型。"
+        >
+          <CompactionModelField
+            label="开新会话时压缩"
+            followLabel="跟随默认（设置 → 聊天）"
+            value={draft.compaction.newSession.mode === 'custom' ? draft.compaction.newSession.model : undefined}
+            onChange={(chosen) =>
+              update((current) => ({
+                ...current,
+                compaction: {
+                  ...current.compaction,
+                  newSession: chosen ? { mode: 'custom', model: chosen } : { mode: 'follow' },
+                },
+              }))
+            }
+          />
+        </PropertyRow>
       </PropertyList>
     </PropertyGroup>
   )

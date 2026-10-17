@@ -123,7 +123,7 @@ class ScriptedCommunicationModel extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'stop' } }
       return
     }
-    if (systemText(options).startsWith('你在给一个群聊智能体写交接记录')) {
+    if (systemText(options).startsWith('你在给一个群聊智能体写压缩记录')) {
       yield { type: 'block-start', index: 0, blockType: 'text' }
       yield { type: 'text-delta', index: 0, text: '用户希望继续当前频道任务，并保持简洁准确。' }
       yield {
@@ -1274,7 +1274,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         createdAt: 100,
         provider: 'test-provider',
         model: 'chat-model',
-        summary: '待恢复的交接摘要。',
+        summary: '待恢复的压缩摘要。',
         recentEvents: [],
       },
     } as const
@@ -2404,7 +2404,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       const recentEventIds = handoff.recentEventIds
       expect(recentEventIds).toHaveLength(1)
       expect(typeof recentEventIds[0]).toBe('string')
-      const summaryCall = model.calls.find(({ system }) => system?.startsWith('你在给一个群聊智能体写交接记录'))
+      const summaryCall = model.calls.find(({ system }) => system?.startsWith('你在给一个群聊智能体写压缩记录'))
       const summaryInput = JSON.stringify(summaryCall?.messages)
       expect(summaryInput).toContain('你好，请回复我。')
       expect(summaryInput).toContain('这是通信工具确认发送的回复。')
@@ -2420,7 +2420,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       )
       expect(resumedEvents).toContain('〔之前聊天内容的摘要〕')
       expect(resumedEvents).not.toContain('把它视为有来源的既有背景')
-      expect(model.calls.some(({ system }) => system?.startsWith('你在给一个群聊智能体写交接记录'))).toBe(true)
+      expect(model.calls.some(({ system }) => system?.startsWith('你在给一个群聊智能体写压缩记录'))).toBe(true)
       expect(observed).toEqual(['这是通信工具确认发送的回复。', '这是通信工具确认发送的回复。'])
 
       const eventCount = host.sessionEvents(resumedEpisode.dshSessionId!).length

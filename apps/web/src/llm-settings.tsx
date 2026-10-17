@@ -14,6 +14,7 @@ import {
   modelRowFromModel,
   modelRowsError,
   modelsToAdd,
+  enrichRows,
   type ModelRow,
 } from './llm-model-editor.js'
 import {
@@ -324,10 +325,20 @@ export function ModelProviderDetail({
         setModelsDirty(true)
       }
       const missing = modelsToAdd(rows, result.models).length
+      // Models already listed take the thinking levels and context length the provider reports for them.
+      const enriched = enrichRows(rows, result.models)
+      const improved = enriched.filter(
+        (row, index) => row !== rows[index] && JSON.stringify(row) !== JSON.stringify(rows[index]),
+      ).length
+      if (improved > 0) {
+        setRows(enriched)
+        setModelsDirty(true)
+      }
+      const filled = improved > 0 ? `已为 ${improved} 个模型补充思考强度等信息，保存后生效。` : ''
       toast(
         missing > 0
-          ? `已找到 ${result.models.length} 个可用模型，其中 ${missing} 个尚未加入列表。`
-          : `已找到 ${result.models.length} 个可用模型，均已在列表中。`,
+          ? `已找到 ${result.models.length} 个可用模型，其中 ${missing} 个尚未加入列表。${filled}`
+          : `已找到 ${result.models.length} 个可用模型，均已在列表中。${filled}`,
         { group: `llm-provider-discover:${providerId}` },
       )
     } catch (cause) {

@@ -28,6 +28,8 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'llm/retry',
   'llm/retry-started',
   'nekro-nxt/memory',
+  'compaction/start',
+  'compaction/end',
 ])
 
 export const shouldBroadcastChannelRuntime = (eventType: string | undefined): boolean =>
@@ -136,6 +138,14 @@ export const normalizeSessionEvents = (
   const toolSteps = new Map<string, { readonly turn: number; readonly step: number }>()
   for (const event of events) {
     const at = event.time
+    if (event.type === 'compaction/start' || event.type === 'compaction/end') {
+      result.push(
+        event.type === 'compaction/start'
+          ? { type: 'compaction/start', ...(at === undefined ? {} : { at }) }
+          : { type: 'compaction/end', ...(at === undefined ? {} : { at }) },
+      )
+      continue
+    }
     if (event.type === 'nekro-nxt/memory') {
       const activity = memoryActivity(event.data, at)
       if (activity !== undefined) result.push({ type: 'memory', activity })

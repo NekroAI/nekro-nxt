@@ -117,10 +117,10 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
   defineTool({
     name: 'nekro_nxt_extension_list',
     description:
-      '查看你做过、在用或正在修改的扩展：当前版本、全部版本、数据格式版本、和社区的同步状态、进行中的任务，以及等管理员确认的请求。也会告诉你自己的扩展自主权（manual / confirm / autonomous）。',
+      '查看授权范围内的本机扩展，包括其他智能体保存的扩展：名称、编号、版本、启用状态和启用前提，以及你自己的任务和待确认请求。返回扩展自主权（manual / confirm / autonomous）和当前查看范围；手动档只列出与你相关的扩展。',
     parameters: {},
     output: { schema: { type: 'json' }, render: renderJson },
-    execute: () => Promise.resolve(json(requirePort(context).list(context.agentId))),
+    execute: () => Promise.resolve(json(requireRequester(context).list(context.agentId))),
   }),
   defineTool({
     name: 'nekro_nxt_extension_revise',

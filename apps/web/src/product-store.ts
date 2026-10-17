@@ -103,6 +103,7 @@ export function createProductStore(
       reasoningEffort,
       imagePolicy,
       dynamicClientApprovalPolicy,
+      compaction,
     }) => {
       await requireHost().actions['agents.revise']({
         agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
@@ -117,6 +118,7 @@ export function createProductStore(
         model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
         imagePolicy,
         dynamicClientApprovalPolicy,
+        ...(compaction === undefined ? {} : { compaction }),
       })
     },
     updateNotificationSettings: async (input) => {

@@ -360,7 +360,7 @@ function ToolCard({
 
 /** Where a message the model received came from (DSH `user/message` source kinds the host writes). */
 const INPUT_SOURCES: Readonly<Record<string, string>> = {
-  'nekro-nxt-handoff': '交接摘要',
+  'nekro-nxt-handoff': '压缩摘要',
   'nekro-nxt-console-outbound': '管理员发送的消息',
   'nekro-nxt-memory-review': '自动整理笔记',
   'nekro-nxt-channel-reply-guard': '回应提醒',
@@ -456,6 +456,37 @@ const turnSummary = (turn: RuntimeTurn): string => {
   if (sent) return `回复了 ${sent} 条`
   if (turn.state === 'unreplied' || turn.responseState === 'finished') return '没有回复'
   return ''
+}
+
+/**
+ * A compaction has no turn of its own when it runs before a new session opens, so it gets a row: the person sees the
+ * agent working instead of a silent channel.
+ */
+export function CompactionRow({
+  agent,
+  kind,
+  startedAt,
+}: {
+  readonly agent: AgentSummary | undefined
+  readonly kind: 'in-session' | 'new-session'
+  readonly startedAt: number
+}) {
+  return (
+    <div
+      className={[styles.turn, styles.turnRunning].join(' ')}
+      style={cssVars({ '--turn-accent': agent ? agentAccent(agent) : 'var(--accent)' })}
+    >
+      <div className={styles.turnHead}>
+        <b>{agent?.name ?? '智能体'}</b>
+        <span className={styles.turnTrigger}>
+          {kind === 'new-session' ? '正在压缩上一段对话，完成后开始新会话' : '正在压缩更早的对话'}
+        </span>
+        <Chip tone="accent" icon={<Spinner />}>
+          <Elapsed since={startedAt} />
+        </Chip>
+      </div>
+    </div>
+  )
 }
 
 export function TurnRow({
