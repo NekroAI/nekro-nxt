@@ -1,6 +1,7 @@
 import {
   AgentIdSchema,
   AuthoringTaskIdSchema,
+  configFields,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
   type AgentId,
@@ -14,7 +15,10 @@ import { z } from 'zod'
 import {
   ExtensionDataDowngradeError,
   addedPermissionItems,
+  carryExtensionConfig,
+  hasAgentLayer,
   highestPermissionLevel,
+  layerConfigSchema,
   parseExtensionImport,
   summarizePermissions,
   type PermissionItem,
@@ -131,7 +135,7 @@ export class ExtensionActionService {
   // —— Assessment ——
 
   assess(action: ExtensionAction, actor: ExtensionActor): ExtensionActionAssessment {
-    const { summary, level, added, affectsOthers } = this.#describe(action)
+    const { summary, level, added, affectsOthers } = this.#describe(action, actor)
     const base = { summary, level, added }
     if (actor.kind === 'console') return { ...base, decision: 'run' }
     if (actor.kind === 'administrator') {
@@ -146,11 +150,18 @@ export class ExtensionActionService {
     }
     const scope = this.#agentScope(action, actor.agentId)
     if (scope !== undefined) return { ...base, decision: 'console', reason: scope }
+    if (action.kind === 'enable') {
+      const problem = this.enablementProblem(action.agentId, action.extensionId)
+      if (problem !== undefined) return { ...base, decision: 'console', reason: problem }
+    }
     if (level === 'high') {
       return { ...base, decision: 'console', reason: '涉及高风险权限，需要在 NekroNXT 后台确认。' }
     }
     if (OUTWARD.includes(action.kind)) {
       return { ...base, decision: 'request', reason: '会在社区公开，需要管理员确认。' }
+    }
+    if (action.kind === 'branch' && action.copyData) {
+      return { ...base, decision: 'request', reason: '会复制扩展数据，需要管理员确认。' }
     }
     if (action.kind === 'migrate-data') {
       return { ...base, decision: 'request', reason: '会改写已有数据，需要管理员确认。' }
@@ -161,6 +172,41 @@ export class ExtensionActionService {
       return { ...base, decision: 'request', reason: '需要提升级权限，需要管理员确认。' }
     }
     return { ...base, decision: 'run' }
+  }
+
+  /** Checks only shared host configuration and this agent's own configuration; never returns stored values. */
+  enablementProblem(agentId: AgentId, extensionId: ExtensionId): string | undefined {
+    const runtime = this.#runtime
+    const revision = this.#maybeCurrent(extensionId)
+    if (!revision) return '这个扩展没有可用的版本，请管理员在工坊里检查。'
+    const manifest = runtime.extensionService.revisionManifest(revision)
+    if (!manifest) return '这个扩展的格式不受支持，请管理员在工坊里更新。'
+    if (!hasAgentLayer(manifest)) return '这个扩展没有智能体能力，请管理员在工坊里安装到本机。'
+    if (
+      runtime.repository.getExtensionRevisionVerification(revision.id)?.contractVersion !== 'nekro-nxt-extension-v5'
+    ) {
+      return '这个扩展尚未完成本机验证，请管理员在工坊里检查验证结果。'
+    }
+    for (const layer of ['host', 'agent'] as const) {
+      const label = layer === 'host' ? '本机配置' : '你的智能体配置'
+      const previous =
+        layer === 'host'
+          ? runtime.repository.getHostInstallation(extensionId)?.config
+          : runtime.repository.getActivation(agentId, extensionId)?.config
+      let config
+      try {
+        config = carryExtensionConfig(manifest, layer, previous)
+      } catch {
+        return `${label}不完整，请管理员在工坊的扩展详情里填写后重试。凭据请在配置页填写。`
+      }
+      const missing = configFields(layerConfigSchema(manifest, layer)).filter(
+        (field) => field.kind === 'secret' && field.required && config[field.key] === undefined,
+      )
+      if (missing.length > 0) {
+        return `${label}缺少必填凭据，请管理员在工坊的扩展详情里填写后重试。凭据请在配置页填写。`
+      }
+    }
+    return undefined
   }
 
   // —— Execution ——
@@ -185,6 +231,8 @@ export class ExtensionActionService {
         }
       }
       case 'enable': {
+        const problem = this.enablementProblem(action.agentId, action.extensionId)
+        if (problem !== undefined) throw new Error(problem)
         const revision = this.#currentRevision(action.extensionId)
         const coordinator = runtime.extensions
         const host = coordinator.hostRequirement(action.extensionId, revision.id)
@@ -412,7 +460,10 @@ export class ExtensionActionService {
   }
 
   /** Summary, permission risk and reach of an action, computed from local facts only. */
-  #describe(action: ExtensionAction): {
+  #describe(
+    action: ExtensionAction,
+    actor: ExtensionActor,
+  ): {
     readonly summary: string
     readonly level: PermissionLevel
     readonly added: readonly (PermissionItem | CommunityPermissionItem)[]
@@ -441,7 +492,7 @@ export class ExtensionActionService {
         }
       }
       case 'enable': {
-        const revision = this.#currentRevision(action.extensionId)
+        const revision = this.#maybeCurrent(action.extensionId)
         const installed = runtime.repository.getHostInstallation(action.extensionId) !== undefined
         const items = itemsOf(revision).filter((item) => item.layer === 'agent' || !installed)
         return {
@@ -472,8 +523,7 @@ export class ExtensionActionService {
               : `把「${this.#extensionName(action.extensionId)}」切换到 ${target ? this.#label(target) : '指定版本'}`,
           level: highestPermissionLevel(added),
           added,
-          affectsOthers:
-            runtime.repository.listActivations().filter((entry) => entry.extensionId === action.extensionId).length > 1,
+          affectsOthers: otherAgents(action.extensionId, actor.kind === 'agent' ? actor.agentId : undefined),
         }
       }
       case 'branch': {
@@ -505,7 +555,7 @@ export class ExtensionActionService {
           summary: `把「${this.#extensionName(action.extensionId)}」更新到社区最新发布`,
           level: highestPermissionLevel(item?.addedPermissions ?? []),
           added: item?.addedPermissions ?? [],
-          affectsOthers: otherAgents(action.extensionId),
+          affectsOthers: otherAgents(action.extensionId, actor.kind === 'agent' ? actor.agentId : undefined),
         }
       }
       case 'community-install':
@@ -518,14 +568,6 @@ export class ExtensionActionService {
   /** Why an agent may not touch this target at all, or undefined when it may. */
   #agentScope(action: ExtensionAction, agentId: AgentId): string | undefined {
     const runtime = this.#runtime
-    const ownsExtension = (extensionId: ExtensionId) => {
-      const extension = runtime.repository.getExtension(extensionId)
-      return (
-        extension?.createdByAgentId === agentId ||
-        runtime.repository.getActivation(agentId, extensionId) !== undefined ||
-        runtime.repository.listAuthoringTasks(agentId).some((task) => task.targetExtensionId === extensionId)
-      )
-    }
     switch (action.kind) {
       case 'save': {
         const task = runtime.repository.getAuthoringTask(action.taskId)
@@ -538,15 +580,9 @@ export class ExtensionActionService {
       case 'revert':
       case 'community-update':
       case 'community-publish':
-        return ownsExtension(action.extensionId) ? undefined : '只能管理自己做的或自己在用的扩展。'
-      case 'branch': {
-        const source = runtime.repository.getExtensionRevision(action.revisionId)
-        return source !== undefined && ownsExtension(source.extensionId)
-          ? undefined
-          : '只能从自己做的或自己在用的扩展创建分支。'
-      }
+      case 'branch':
       case 'migrate-data':
-        return ownsExtension(action.targetExtensionId) ? undefined : '只能迁移自己做的或自己在用的扩展的数据。'
+        return undefined
       case 'community-install':
         return action.agentId === undefined || action.agentId === agentId ? undefined : '只能给自己安装启用。'
       case 'community-withdraw':
