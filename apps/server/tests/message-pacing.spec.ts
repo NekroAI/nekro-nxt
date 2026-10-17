@@ -1,5 +1,6 @@
 import { AssetIdSchema, type JsonValue, type MessagePart } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
+import { readCompactionSettings, writeCompactionSettings } from '../src/compaction-settings.ts'
 import { messageGapMs, readMessagePacing, writeMessagePacing } from '../src/message-pacing.ts'
 
 const text = (value: string): MessagePart[] => [{ type: 'text', text: value }]
@@ -38,5 +39,29 @@ describe('message pacing', () => {
     expect(readMessagePacing(settings)).toBe('off')
     rows.set('channel.messagePacing', { value: { pacing: 'unknown' }, revision: 9 })
     expect(readMessagePacing(settings)).toBe('normal')
+  })
+})
+
+describe('compaction settings', () => {
+  it('defaults to the main model and three minutes, and keeps what the admin saved', () => {
+    const rows = new Map<string, { value: JsonValue; revision: number }>()
+    const settings = {
+      get: (key: string) => rows.get(key),
+      put: (key: string, value: JsonValue) => {
+        rows.set(key, { value, revision: (rows.get(key)?.revision ?? 0) + 1 })
+      },
+    }
+    expect(readCompactionSettings(settings)).toEqual({ newSessionModel: { mode: 'main' }, timeoutSeconds: 180 })
+    const saved = {
+      newSessionModel: {
+        mode: 'custom' as const,
+        model: { provider: 'fixture', model: 'fast', reasoningEffort: 'low' },
+      },
+      timeoutSeconds: 300,
+    }
+    writeCompactionSettings(settings, saved)
+    expect(readCompactionSettings(settings)).toEqual(saved)
+    rows.set('channel.compaction', { value: { timeoutSeconds: 5 }, revision: 9 })
+    expect(readCompactionSettings(settings).timeoutSeconds).toBe(180)
   })
 })

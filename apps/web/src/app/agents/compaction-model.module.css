@@ -1,0 +1,11 @@
+.field {
+  display: grid;
+  gap: var(--s-3);
+  width: 100%;
+  min-width: 0;
+}
+
+.select {
+  justify-self: start;
+  width: min(100%, var(--field));
+}

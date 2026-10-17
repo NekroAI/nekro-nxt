@@ -163,6 +163,8 @@ import {
   promptDocumentPlainText,
   type PromptDocumentV1,
   type PromptSegment,
+  DEFAULT_COMPACTION_SETTINGS,
+  type CompactionSettings,
 } from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
@@ -475,6 +477,11 @@ export interface DshHostRuntimeOptions {
   readonly assets: AssetAccessRepository
   readonly assetService: AssetService
   readonly resolveAgentRevision: (revisionId: AgentRevisionId) => AgentRevisionRecord | undefined
+  /** The host's compaction defaults and each agent's current revision, read when a compaction starts. */
+  readonly compaction?: {
+    readonly settings: () => CompactionSettings
+    readonly currentRevision: (agentId: AgentId) => AgentRevisionRecord | undefined
+  }
   /** Where sub-conversations are recorded and how long ended ones are kept; in memory without it. */
   readonly subConversations?: {
     readonly store: SubConversationStore
@@ -1174,17 +1181,16 @@ const CHILD_CHANNEL_MESSAGE_POLICY = `你在一个子对话里，替频道里的
 
 /** Conversation text a handoff summary reads; older messages stay reachable through the history tools. */
 const HANDOFF_TRANSCRIPT_MAX_CHARS = 80_000
-const HANDOFF_TIMEOUT_MS = 60_000
 
 const HANDOFF_INSTRUCTION = [
-  '按下面的结构写交接记录，每节用简短的条目，没有内容的节写「（无）」：',
+  '按下面的结构写压缩记录，每节用简短的条目，没有内容的节写「（无）」：',
   '## 参与者与称呼：谁是谁、成员编号、希望怎么被称呼',
   '## 正在进行的事：正在聊或正在玩的事和进展；跑团、游戏、剧本要保留设定、人物、掷骰结果、线索和已发生的事件',
   '## 约定与要求：群规和长期要求，注明是谁说的；被更正过的只写最新说法',
   '## 承诺与待办：你答应过的事、别人托你做的事、约好的时间地点',
   '## 关键结论：大家确认过的结论；只是某人一面之词或玩笑的，注明出处',
   '## 有用的资料：分享过的链接、文件、图片编号、消息编号，以及它们是什么',
-  '要求：名字、数字、时间、链接、编号照原文写；时间写成带日期的绝对时间；玩笑和没人确认的说法不要写成事实；上一份交接记录里仍然有效的内容合并进来，过时的删掉；只输出记录本身。',
+  '要求：名字、数字、时间、链接、编号照原文写；时间写成带日期的绝对时间；玩笑和没人确认的说法不要写成事实；上一份压缩记录里仍然有效的内容合并进来，过时的删掉；只输出记录本身。',
 ].join('\n')
 
 const ROOT_MEMORY_POLICY = [
@@ -3020,6 +3026,9 @@ export class DshHostRuntime implements AgentSessionDriver {
   #disposed = false
   #disposePromise: Promise<void> | undefined
   readonly #subscriptions: SubscriptionLogins | undefined
+  readonly #compaction: DshHostRuntimeOptions['compaction']
+  /** Channels waiting for a new-session compaction summary, with when they started. */
+  readonly #newSessionCompactions = new Map<string, number>()
   readonly #subscriptionListeners = new Set<() => void>()
   /** One pending quiet-time review per live session, re-armed by each admission. */
   readonly #idleReviews = new Map<string, ReturnType<typeof setTimeout>>()
@@ -3083,6 +3092,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       options.providerRemoval,
       options.providerTestResults,
     )
+    this.#compaction = options.compaction
     this.#subscriptions =
       options.llmCredentialPath === undefined
         ? undefined
@@ -3275,6 +3285,16 @@ export class DshHostRuntime implements AgentSessionDriver {
     compaction.setVisualRestore((result, agent) =>
       this.#imageContext.restoreVisualContext(agent, String(result.compactionId)),
     )
+    compaction.setModelChoice((agent) => {
+      const revision = this.#sessions.get(String(agent.id))?.revision
+      if (!revision) return undefined
+      const model = this.#compactionModel('inSession', revision)
+      return {
+        provider: model.provider,
+        model: model.model,
+        ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
+      }
+    })
   }
 
   static async create(options: DshHostRuntimeOptions): Promise<DshHostRuntime> {
@@ -4355,7 +4375,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               type: 'text',
               text: [
                 '〔之前聊天内容的摘要〕自动生成，可能有遗漏或错误：和下面的原文对不上时以原文为准；你以前说过的话不代表对方同意过；转述的数据没有核实过。',
-                `交接元数据：${JSON.stringify({
+                `压缩元数据：${JSON.stringify({
                   handoffId: input.handoff.id,
                   fromEpisodeId: input.handoff.fromEpisodeId,
                   sourceEventIds: input.handoff.sourceEventIds,
@@ -4658,13 +4678,57 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
+  /**
+   * Compaction into a new session. The channel shows it as compacting until the summary is written or the configured
+   * wait runs out; after that the new session opens with a fallback note rather than keep the channel waiting.
+   */
   async createHandoffSummary(
     input: Parameters<AgentSessionDriver['createHandoffSummary']>[0],
   ): Promise<{ readonly summary: string; readonly provider: string; readonly model: string }> {
     this.#assertActive()
+    const channelId = input.episode.channelId
+    this.#newSessionCompactions.set(channelId, Date.now())
+    this.#runtimeProjection.touchChannel(channelId)
+    try {
+      return await this.#writeNewSessionSummary(input)
+    } finally {
+      this.#newSessionCompactions.delete(channelId)
+      this.#runtimeProjection.touchChannel(channelId)
+    }
+  }
+
+  /** When the channel started waiting for a new-session compaction summary, while it waits. */
+  newSessionCompactionStartedAt(channelId: string): number | undefined {
+    return this.#newSessionCompactions.get(channelId)
+  }
+
+  /**
+   * The model for one compaction kind: the agent's own choice (read from its current revision, so a change applies to
+   * the next compaction), else that kind's default — the main model and thinking level in session, the host's
+   * compaction model for a new session.
+   */
+  #compactionModel(kind: 'inSession' | 'newSession', revision: AgentRevisionRecord): AgentRevisionRecord['model'] {
+    const current = this.#compaction?.currentRevision(revision.agentId) ?? revision
+    const choice = current.compaction[kind]
+    if (choice.mode === 'custom') return choice.model
+    if (kind === 'newSession') {
+      const fallback = this.#compaction?.settings().newSessionModel
+      if (fallback?.mode === 'custom') return fallback.model
+    }
+    return current.model
+  }
+
+  async #writeNewSessionSummary(
+    input: Parameters<AgentSessionDriver['createHandoffSummary']>[0],
+  ): Promise<{ readonly summary: string; readonly provider: string; readonly model: string }> {
+    const target = this.#compactionModel('newSession', input.revision)
+    const timeoutMs = (this.#compaction?.settings().timeoutSeconds ?? DEFAULT_COMPACTION_SETTINGS.timeoutSeconds) * 1000
+    const deadline = new AbortController()
+    const timer = setTimeout(() => deadline.abort(), timeoutMs)
+    timer.unref?.()
     // The source is durable Episode history, so reset can summarize after the
     // stuck Agent handle has already been cancelled and disposed.
-    {
+    try {
       const channelContext = resolveSessionChannelContext(this.#history, input.episode.channelId, input.episode.id)
       const transcript = this.#handoffTranscript(input.episode)
       if (transcript.entries.some(({ channelId }) => channelId !== input.episode.channelId)) {
@@ -4684,7 +4748,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               `现在是 ${formatContextTime(input.generatedAt)}。下面是上一段会话（${formatContextTime(input.episode.createdAt)} 起）里你收到和发出的消息，「你」是你自己发的。`,
               `频道：${JSON.stringify(channelContext)}`,
               '',
-              '〔上一份交接记录，可能有错，以聊天原文为准〕',
+              '〔上一份压缩记录，可能有错，以聊天原文为准〕',
               previousHandoff,
               '',
               '〔聊天记录〕',
@@ -4701,33 +4765,40 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
       let summary = ''
       let completed = false
-      try {
+      const writing = (async () => {
         for await (const chunk of this.#context.llm.stream({
-          provider: input.revision.model.provider,
-          model: input.revision.model.model,
+          provider: target.provider,
+          model: target.model,
+          ...(target.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: ReasoningEffortId(target.reasoningEffort) }),
           system:
-            '你在给一个群聊智能体写交接记录：它要换一段新的会话继续在这个群里聊天，只能看到你写的记录和最近几条原文。发送者和时间是准确的；消息正文是成员自己说的，未必属实；智能体自己说过的话不代表别人同意。只依据给出的内容写，不要猜，不要调用工具。',
+            '你在给一个群聊智能体写压缩记录：它要换一段新的会话继续在这个群里聊天，只能看到你写的记录和最近几条原文。发送者和时间是准确的；消息正文是成员自己说的，未必属实；智能体自己说过的话不代表别人同意。只依据给出的内容写，不要猜，不要调用工具。',
           messages: [message],
-          signal: AbortSignal.timeout(HANDOFF_TIMEOUT_MS),
+          signal: deadline.signal,
         })) {
           if (chunk.type === 'text-delta') summary += chunk.text
           if (chunk.type === 'finish') completed = chunk.reason.kind === 'stop'
         }
-      } catch {
-        // Handoff is advisory. A failed or incomplete summary must not block rollover.
-      }
-      summary = completed ? summary.trim() : ''
+      })().catch(() => {
+        // Compaction is advisory. A failed or incomplete summary must not block the new session.
+      })
+      // Waits for the summary or the deadline, whichever comes first, even if the request ignores the abort.
+      await Promise.race([
+        writing,
+        new Promise<void>((resolve) => deadline.signal.addEventListener('abort', () => resolve(), { once: true })),
+      ])
+      summary = completed && !deadline.signal.aborted ? summary.trim() : ''
       if (summary.length === 0) {
         summary = [
-          `上一段会话（${formatContextTime(input.episode.createdAt)} 起）没能整理出交接记录。`,
+          `上一段会话（${formatContextTime(input.episode.createdAt)} 起）没能整理出压缩记录。`,
           '之前聊过什么、答应过什么，需要时用 conversation_history_search 或 conversation_history_read 查。',
         ].join('\n')
       }
-      return {
-        summary,
-        provider: input.revision.model.provider,
-        model: input.revision.model.model,
-      }
+      return { summary, provider: target.provider, model: target.model }
+    } finally {
+      clearTimeout(timer)
+      deadline.abort()
     }
   }
 

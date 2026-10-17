@@ -184,6 +184,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
             : {}),
           imagePolicy: imagePolicyFor(agent.imagePolicy, chosen, vision),
           dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
+          compaction: draft.compaction,
         })
       }
       const patch = capabilityPatch(base, draft)

@@ -19,6 +19,15 @@ import type {
 } from '@nekro-nxt/contracts'
 import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
 import type { DynamicPackageSummary } from './product-port.js'
+
+export type AgentCompactionPolicy = HostApiResponse<'snapshot'>['agents'][number] extends { compaction?: infer P }
+  ? NonNullable<P>
+  : never
+export type AgentCompactionChoice = AgentCompactionPolicy['inSession']
+export const FOLLOW_COMPACTION: AgentCompactionPolicy = {
+  inSession: { mode: 'follow' },
+  newSession: { mode: 'follow' },
+}
 export type { ThemeChoice } from './theme-preference.js'
 export type AgentRuntimeState = ChannelRuntimePhase
 
@@ -27,6 +36,7 @@ export const runtimeStateLabel = (phase: AgentRuntimeState): string =>
     idle: '空闲',
     thinking: '思考中',
     'using-tool': '使用工具',
+    compacting: '压缩中',
     'waiting-input': '等待输入',
     unavailable: '不可用',
   })[phase]
@@ -102,6 +112,8 @@ export interface AgentSummary {
   }
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
+  /** Which model writes each kind of compaction summary. */
+  readonly compaction: AgentCompactionPolicy
   readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
   /** Non-versioned identity look; absent fields fall back to values derived from the id. */
   readonly appearance?: { readonly hue?: number; readonly avatarUrl?: string }
@@ -165,6 +177,8 @@ export interface ChannelRuntimeView {
   readonly episodeId?: string
   readonly phase: AgentRuntimeState
   readonly summary: string
+  /** A compaction under way, shown as its own row until the summary is written. */
+  readonly compaction?: HostApiResponse<'getChannelRuntime'>['compaction']
   readonly pendingInjectCount: number
   readonly occupancy?: HostApiResponse<'getChannelRuntime'>['occupancy']
   readonly cache?: HostApiResponse<'getChannelRuntime'>['cache']
@@ -622,6 +636,7 @@ export interface ProductState {
     readonly reasoningEffort?: string
     readonly imagePolicy: ImageUnderstandingPolicy
     readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
+    readonly compaction?: AgentCompactionPolicy
   }): Promise<void>
   updateNotificationSettings(
     input: HostApiRequest<'updateNotificationSettings'>,

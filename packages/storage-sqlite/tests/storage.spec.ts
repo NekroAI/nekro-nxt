@@ -218,6 +218,7 @@ describe('Core SQLite baseline', () => {
     await createDatabaseAtMigration(filename, 24)
     // Current fixture writers need these columns; remove them again before exercising the historical upgrade.
     mutateSqlite(filename, 'ALTER TABLE channels ADD platform_display_name text')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD compaction text')
     mutateSqlite(filename, "ALTER TABLE channels ADD preferred_processing_feedback text NOT NULL DEFAULT 'auto'")
     const old = openCoreDatabase(filename)
     const repository = new SqliteCoreRepository(old)
@@ -252,6 +253,7 @@ describe('Core SQLite baseline', () => {
     })
     old.close()
     mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN platform_display_name')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN compaction')
     mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN preferred_processing_feedback')
     const migrated = await openMigratedCoreDatabase(filename)
     try {
@@ -285,6 +287,7 @@ describe('Core SQLite baseline', () => {
     const filename = path.join(await temporaryDirectory(), 'core.sqlite')
     await createDatabaseAtMigration(filename, 31)
     mutateSqlite(filename, 'ALTER TABLE channels ADD platform_display_name text')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD compaction text')
     mutateSqlite(filename, "ALTER TABLE channels ADD preferred_processing_feedback text NOT NULL DEFAULT 'auto'")
     const old = openCoreDatabase(filename)
     const repository = new SqliteCoreRepository(old)
@@ -296,6 +299,7 @@ describe('Core SQLite baseline', () => {
     const event = appendTextEvent(core, connection.id, channel.id, 'bound-inbound', '旧绑定的消息', 100)
     old.close()
     mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN platform_display_name')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN compaction')
     mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN preferred_processing_feedback')
     mutateSqlite(
       filename,
@@ -3689,6 +3693,8 @@ it('upgrades pre-command data with a durable cutoff and preserves existing outbo
   const directory = await temporaryDirectory()
   const filename = path.join(directory, 'pre-command.sqlite')
   await createDatabaseAtMigration(filename, 42)
+  // Current fixture writers need this column; it is removed again before the upgrade runs.
+  mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD compaction text')
   const old = openCoreDatabase(filename)
   const repository = new SqliteCoreRepository(old)
   let seq = 0
@@ -3741,6 +3747,7 @@ it('upgrades pre-command data with a durable cutoff and preserves existing outbo
       1000,
     )
   native.close()
+  mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN compaction')
   const upgraded = await openMigratedCoreDatabase(filename)
   try {
     const next = new SqliteCoreRepository(upgraded)

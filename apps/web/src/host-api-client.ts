@@ -257,6 +257,10 @@ export const workspaceApi = {
     request: HostApiRequest<'updateSubConversationSettings'>,
     options?: HostRequestOptions,
   ) => callHostApi(HostApiContracts.updateSubConversationSettings, {}, request, options),
+  getCompactionSettings: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getCompactionSettings, {}, undefined, options),
+  updateCompactionSettings: (request: HostApiRequest<'updateCompactionSettings'>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.updateCompactionSettings, {}, request, options),
   getMessagePacingSettings: (options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getMessagePacingSettings, {}, undefined, options),
   updateMessagePacingSettings: (request: HostApiRequest<'updateMessagePacingSettings'>, options?: HostRequestOptions) =>

@@ -340,6 +340,33 @@ export const assertReasoningEffort = async (
   }
 }
 
+/** A chosen model must be in the live catalog, with a thinking level it offers. */
+export const assertAvailableModel = async (
+  runtime: NekroRuntime,
+  model: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string | undefined },
+): Promise<void> => {
+  const models = await runtime.host.listAvailableLlmModels()
+  if (!models.some((item) => item.provider === model.provider && item.id === model.model)) {
+    throw new Error('所选的压缩模型不在可用模型里，请重新选择。')
+  }
+  await assertReasoningEffort(runtime, model)
+}
+
+/** Models an agent chose for its compactions; following a default needs no check. */
+export const assertCompactionPolicy = async (
+  runtime: NekroRuntime,
+  policy:
+    | {
+        readonly inSession: { readonly mode: string; readonly model?: Parameters<typeof assertAvailableModel>[1] }
+        readonly newSession: { readonly mode: string; readonly model?: Parameters<typeof assertAvailableModel>[1] }
+      }
+    | undefined,
+): Promise<void> => {
+  for (const choice of [policy?.inSession, policy?.newSession]) {
+    if (choice?.mode === 'custom' && choice.model) await assertAvailableModel(runtime, choice.model)
+  }
+}
+
 export const writeContractJson = <Contract extends HostApiContract>(
   res: ServerResponse,
   status: number,

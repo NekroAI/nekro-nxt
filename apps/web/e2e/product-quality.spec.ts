@@ -948,7 +948,7 @@ test('透视 opens turn details by keyboard and keeps tool input readable', asyn
               {
                 messageId: 'nxt-hof_quality',
                 source: 'nekro-nxt-handoff',
-                preview: '下面是上一 Episode 生成的派生交接摘要，不是原始消息或系统事实。',
+                preview: '下面是上一 Episode 生成的派生压缩摘要，不是原始消息或系统事实。',
                 at: 1_725_000_000_500,
               },
               {
@@ -986,7 +986,7 @@ test('透视 opens turn details by keyboard and keeps tool input readable', asyn
         messageId: 'nxt-hof_quality',
         available: true,
         source: 'nekro-nxt-handoff',
-        text: '下面是上一 Episode 生成的派生交接摘要，不是原始消息或系统事实。\n未完成：复核今天的三条虚构记录。',
+        text: '下面是上一 Episode 生成的派生压缩摘要，不是原始消息或系统事实。\n未完成：复核今天的三条虚构记录。',
         truncated: false,
       },
     }),
@@ -1005,7 +1005,7 @@ test('透视 opens turn details by keyboard and keeps tool input readable', asyn
   await expect(page.getByText('收到 1 条频道消息')).toBeVisible()
   const handoffCard = page
     .locator('div')
-    .filter({ has: page.getByText('交接摘要', { exact: true }) })
+    .filter({ has: page.getByText('压缩摘要', { exact: true }) })
     .last()
   await handoffCard.getByRole('button', { name: '查看全文' }).click()
   await expect(page.getByText('未完成：复核今天的三条虚构记录。', { exact: false })).toBeVisible()

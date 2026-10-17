@@ -60,12 +60,14 @@ export const assembleChannelRuntime = (
   const live = episode?.dshSessionId === undefined ? undefined : runtime.host.tryLiveSession(episode.dshSessionId)
   const metrics =
     episode?.dshSessionId === undefined ? undefined : runtime.host.sessionRuntimeMetrics(episode.dshSessionId)
+  const compactionStartedAt = runtime.host.newSessionCompactionStartedAt(channelId)
   return projectChannelRuntime({
     channelId,
     agentId: binding.agentId,
     ...(episode === undefined ? {} : { episodeId: episode.id }),
     sessionStatus: live?.status ?? 'missing',
     pendingInjectCount,
+    ...(compactionStartedAt === undefined ? {} : { newSessionCompactionStartedAt: compactionStartedAt }),
     ...(metrics?.occupancy === undefined ? {} : { occupancy: metrics.occupancy }),
     ...(metrics?.performanceTotals === undefined ? {} : { performanceTotals: metrics.performanceTotals }),
     events:
@@ -536,11 +538,15 @@ export class HostQueries {
         capabilities: commit.revision.capabilities,
         imagePolicy: commit.revision.imagePolicy,
         dynamicClientApprovalPolicy: commit.revision.dynamicClientApprovalPolicy,
+        compaction: commit.revision.compaction,
         ...(diagnosticsByRevision.has(commit.revision.id)
           ? { imageDiagnostics: diagnosticsByRevision.get(commit.revision.id) }
           : {}),
         currentRevisionId: commit.revision.id,
-        runtimeStatus: runtimePhase === 'thinking' || runtimePhase === 'using-tool' ? 'running' : 'idle',
+        runtimeStatus:
+          runtimePhase === 'thinking' || runtimePhase === 'using-tool' || runtimePhase === 'compacting'
+            ? 'running'
+            : 'idle',
         runtimePhase,
         createdAt: commit.revision.createdAt,
         channels: ownedChannels,

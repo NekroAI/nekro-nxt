@@ -32,7 +32,7 @@ import type { HostApiResponse } from '@nekro-nxt/contracts'
 import styles from './channels.module.css'
 import { subConversationStatus } from './sub-conversation-rows.js'
 import subStyles from './sub-conversations.module.css'
-import { MessageRow, TurnRow } from './timeline.js'
+import { CompactionRow, MessageRow, TurnRow } from './timeline.js'
 import { buildTimeline, relativeTime } from './timeline-model.js'
 
 const EMPTY: readonly ConversationMessage[] = []
@@ -321,6 +321,9 @@ export function Conversation({
               />
             ),
           )}
+          {runtime?.compaction ? (
+            <CompactionRow agent={agent} kind={runtime.compaction.kind} startedAt={runtime.compaction.startedAt} />
+          ) : null}
         </div>
       </div>
       <div className={styles.dock}>
