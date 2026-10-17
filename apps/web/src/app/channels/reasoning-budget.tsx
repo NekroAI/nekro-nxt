@@ -3,7 +3,7 @@ import { ChevronDown, RotateCcw, Zap } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { callHostApi } from '../../host-api-client.js'
 import { reasoningLabel } from '../../reasoning-label.js'
-import { Input, Popover, Pressable, cssVars, toast } from '../../ui-kit/index.js'
+import { DampedSlider, Popover, Pressable, toast } from '../../ui-kit/index.js'
 import styles from './reasoning-budget.module.css'
 
 type View = HostApiResponse<'getChannelReasoning'>
@@ -15,8 +15,16 @@ export function ReasoningBudget({ channelId, modelKey }: { readonly channelId: s
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState<number>()
+  const [pageVisible, setPageVisible] = useState(true)
   const inFlight = useRef(false)
   const generation = useRef(0)
+  useEffect(() => {
+    if (!open) return
+    const update = () => setPageVisible(document.visibilityState === 'visible')
+    update()
+    document.addEventListener('visibilitychange', update)
+    return () => document.removeEventListener('visibilitychange', update)
+  }, [open])
   const load = async (signal?: AbortSignal) => {
     const current = ++generation.current
     setLoading(true)
@@ -94,7 +102,7 @@ export function ReasoningBudget({ channelId, modelKey }: { readonly channelId: s
       inFlight.current = false
     }
   }
-  const commit = (value: string) => void save(efforts[Number(value)]!.id)
+  const commit = (value: number) => void save(efforts[value]!.id)
   return (
     <Popover
       label="思考预算"
@@ -131,42 +139,25 @@ export function ReasoningBudget({ channelId, modelKey }: { readonly channelId: s
             <RotateCcw aria-hidden="true" />
           </Pressable>
         </div>
-        <div
-          className={styles.track}
-          style={cssVars({
-            '--budget-progress': `${efforts.length === 1 ? 100 : (index / (efforts.length - 1)) * 100}%`,
-          })}
-        >
-          <div className={styles.dots} aria-hidden="true">
-            {efforts.map((effort) => (
-              <i key={effort.id} />
-            ))}
-          </div>
-          <Input
-            bare
-            type="range"
-            aria-label="思考预算"
-            aria-valuetext={label}
-            min={0}
+        <div className={styles.track}>
+          <DampedSlider
+            label="思考预算"
+            valueText={label}
             max={efforts.length - 1}
-            step={1}
             value={index}
-            disabled={saving || loading || efforts.length === 1}
-            onChange={(event) => setPreview(Number(event.target.value))}
-            onPointerUp={(event) => commit(event.currentTarget.value)}
-            onPointerCancel={() => setPreview(undefined)}
-            onKeyUp={(event) => {
-              if (
-                ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(
-                  event.key,
-                )
-              )
-                commit(event.currentTarget.value)
-            }}
-            onBlur={(event) => {
-              if (preview !== undefined) commit(event.currentTarget.value)
-            }}
-          />
+            showMarks={!ultra}
+            disabled={saving || loading}
+            onValueChange={setPreview}
+            onValueCommit={commit}
+            onValueCancel={() => setPreview(undefined)}
+          >
+            <span className={styles.ultra} data-part="ultra" data-running={(ultra && open && pageVisible) || undefined}>
+              <span className={styles.particles} data-part="particles">
+                <i />
+                <i />
+              </span>
+            </span>
+          </DampedSlider>
         </div>
         <div className={styles.caption} role="status">
           {saving

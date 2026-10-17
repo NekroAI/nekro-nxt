@@ -24,6 +24,7 @@ export { Segmented, TabStrip, SectionNav, SelectionList, type Option } from './s
 export { Ambient } from './ambient.js'
 export { RevealText, ShimmerText, spotlight } from './motion.js'
 export { useIndicator, type IndicatorGeometry } from './indicator.js'
+export { DampedSlider } from './damped-slider.js'
 export {
   Field,
   Input,

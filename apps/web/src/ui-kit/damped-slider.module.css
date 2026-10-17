@@ -1,0 +1,103 @@
+.slider {
+  position: relative;
+  height: var(--row);
+  overflow: clip;
+  touch-action: none;
+}
+.rail {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 24px;
+  transform: translateY(-50%);
+  overflow: hidden;
+  border-radius: var(--r-3);
+  background: var(--inset);
+}
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(100% + 16px);
+  overflow: hidden;
+  background: var(--slider-fill, var(--accent-fill));
+  transform: translateX(-100%);
+}
+.marks {
+  position: absolute;
+  inset: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease);
+}
+.slider[data-marks] .marks {
+  opacity: 1;
+}
+.marks i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--fg-2);
+  opacity: 0.45;
+}
+.position,
+.fillPosition {
+  position: absolute;
+  inset: 0 16px;
+  pointer-events: none;
+  transition: transform var(--dur-1) var(--spring);
+}
+.thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--knob);
+  box-shadow: var(--knob-shadow);
+  transform: translate(-50%, -50%);
+}
+.input {
+  position: relative;
+  display: block;
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.input::-webkit-slider-thumb {
+  appearance: none;
+  width: 32px;
+  height: 32px;
+}
+.input::-moz-range-thumb {
+  width: 32px;
+  height: 32px;
+  border: 0;
+}
+.slider:has(.input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-2);
+}
+.slider[data-disabled] .input {
+  cursor: default;
+}
+.slider[data-input='keyboard'] .position,
+.slider[data-input='keyboard'] .fillPosition,
+.slider[data-input='keyboard'] .marks {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .position,
+  .fillPosition {
+    transition: none;
+  }
+}
+:global(html[data-nxt-motion='off']) .position,
+:global(html[data-nxt-motion='off']) .fillPosition {
+  transition: none;
+}
