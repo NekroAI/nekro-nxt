@@ -1,7 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { configureDshLlmProviders } from '../src/main.js'
 import { assertReasoningEffort } from '../src/host-route-support.js'
@@ -9,12 +9,35 @@ import { assertReasoningEffort } from '../src/host-route-support.js'
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
-const createRuntime = async () => {
+const createRuntime = async (signedIn = false) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-llm-catalog-'))
   temporaryDirectories.push(directory)
+  if (signedIn) {
+    await mkdir(path.join(directory, 'dsh'))
+    await writeFile(
+      path.join(directory, 'dsh', '.credentials.yaml'),
+      JSON.stringify({
+        version: 1,
+        records: {
+          'llm-pi-ai/openai': {
+            kind: 'grant',
+            payload: {
+              type: 'oauth',
+              access: 'synthetic-account-catalog-token',
+              refresh: 'synthetic-account-catalog-refresh',
+              expires: Date.now() + 3_600_000,
+              clientId: 'synthetic-issued-client',
+            },
+          },
+        },
+      }),
+      { mode: 0o600 },
+    )
+  }
   const runtime = await NekroRuntime.create({
     coreDatabasePath: path.join(directory, 'core.sqlite'),
     sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
@@ -35,6 +58,122 @@ const providerView = async (runtime: NekroRuntime, provider: string) => {
 }
 
 describe('LLM model catalog management', () => {
+  it('queries the account catalog when discovery echoes the saved protocol and address', async () => {
+    const network = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          models: [
+            { slug: 'synthetic-account-chat', display_name: '账号模型', visibility: 'list' },
+            { slug: 'synthetic-hidden', display_name: '隐藏模型', visibility: 'hide' },
+          ],
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', network)
+    const { runtime } = await createRuntime(true)
+    try {
+      const initial = await providerView(runtime, 'openai')
+      await runtime.host.subscriptionAction('openai', {
+        action: 'use-subscription',
+        expectedRevision: initial.settingsRevision,
+      })
+      const switched = await providerView(runtime, 'openai')
+      await runtime.host.saveLlmProvider({
+        provider: 'openai',
+        expectedRevision: switched.settingsRevision,
+        baseURL: 'https://api.openai.com/v1',
+        api: 'openai-responses',
+      })
+      for (const echo of [
+        {},
+        { api: 'openai-responses' },
+        { baseURL: 'https://api.openai.com/v1', api: 'openai-responses' },
+      ]) {
+        expect(
+          await runtime.host.discoverLlmProviderModels({ provider: 'openai', settingsNs: 'llm-pi-ai', ...echo }),
+        ).toEqual([{ id: 'synthetic-account-chat', name: '账号模型' }])
+      }
+      expect(network).toHaveBeenCalledTimes(3)
+      for (const call of network.mock.calls) {
+        expect(call).toMatchObject([
+          'https://api.openai.com/v1/models',
+          {
+            headers: { authorization: 'Bearer synthetic-account-catalog-token' },
+          },
+        ])
+      }
+      network.mockClear()
+      for (const draft of [
+        { api: 'openai-completions' },
+        { baseURL: 'https://gateway.example.test/v1' },
+        { apiKey: 'synthetic-draft-key' },
+      ]) {
+        const models = await runtime.host.discoverLlmProviderModels({ provider: 'openai', ...draft })
+        expect(models.some((model) => model.id === 'gpt-4')).toBe(true)
+      }
+      expect(network).not.toHaveBeenCalled()
+
+      const customized = await providerView(runtime, 'openai')
+      await runtime.host.saveLlmProvider({
+        provider: 'openai',
+        expectedRevision: customized.settingsRevision,
+        models: [{ id: 'synthetic-custom-selection' }],
+      })
+      const restored = await runtime.host.restoreLlmProviderModels(
+        'openai',
+        (await providerView(runtime, 'openai')).settingsRevision,
+      )
+      expect(
+        restored.providers.find((provider) => provider.provider === 'openai')?.models.map((model) => model.id),
+      ).toEqual(['synthetic-account-chat'])
+      expect(network).toHaveBeenCalledTimes(1)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('reports account catalog failures instead of returning the installed directory', async () => {
+    vi.stubGlobal('fetch', () => Promise.resolve(new Response(null, { status: 503 })))
+    const { runtime } = await createRuntime(true)
+    try {
+      await runtime.host.subscriptionAction('openai', {
+        action: 'use-subscription',
+        expectedRevision: (await providerView(runtime, 'openai')).settingsRevision,
+      })
+      await expect(
+        runtime.host.discoverLlmProviderModels({ provider: 'openai', api: 'openai-responses' }),
+      ).rejects.toThrow('没能读取')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('does not offer the installed directory before a subscription has a model selection', async () => {
+    const { runtime } = await createRuntime()
+    try {
+      await runtime.host.subscriptionAction('openai', {
+        action: 'use-subscription',
+        expectedRevision: (await providerView(runtime, 'openai')).settingsRevision,
+      })
+      const pending = await providerView(runtime, 'openai')
+      expect(pending.models).toEqual([])
+      expect((await runtime.host.listAvailableLlmModels()).filter((model) => model.provider === 'openai')).toEqual([])
+      await runtime.host.saveLlmProvider({
+        provider: 'openai',
+        expectedRevision: pending.settingsRevision,
+        models: [{ id: 'synthetic-account-chat', name: '账号模型' }],
+      })
+      expect((await providerView(runtime, 'openai')).models.map((model) => model.id)).toEqual([
+        'synthetic-account-chat',
+      ])
+      expect(
+        (await runtime.host.listAvailableLlmModels()).filter((model) => model.provider === 'openai'),
+      ).toMatchObject([{ id: 'synthetic-account-chat' }])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('offers the thinking levels a saved model declares and refuses one it does not', async () => {
     const { runtime } = await createRuntime()
     try {

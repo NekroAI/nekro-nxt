@@ -110,13 +110,15 @@ export function SubscriptionAccounts({ provider }: { readonly provider: string }
     if (login.status === 'running' || handled.current === login.id) return
     handled.current = login.id
     setAnswer('')
-    if (login.status === 'authorized') {
+    if (login.status === 'authorized' || (login.status === 'failed' && status.activeAccountId !== null)) {
       setChosen(status.activeAccountId ?? '')
-      toast(`已登录 ${status.label}。`, { group: `subscription:${provider}` })
       void store
         .getState()
         .loadLlmProviders(true)
         .catch(() => undefined)
+    }
+    if (login.status === 'authorized') {
+      toast(`已登录 ${status.label}。`, { group: `subscription:${provider}` })
     } else if (login.status === 'failed' && login.error) {
       toast(login.error, { tone: 'bad', group: `subscription:${provider}` })
     }

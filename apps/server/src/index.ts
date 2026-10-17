@@ -118,6 +118,7 @@ import {
   type SendMessageInput,
   type SendMessageResult,
   UnrecoverableSessionError,
+  SessionModelUnavailableError,
 } from '@nekro-nxt/channel-runtime'
 import {
   type ExtensionCapabilities,
@@ -3528,9 +3529,18 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
-  listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
+  async listAvailableLlmModels(): Promise<readonly AvailableLlmModel[]> {
     this.#assertActive()
-    return this.#modelSettings.listAvailableLlmModels()
+    const models = await this.#modelSettings.listAvailableLlmModels()
+    const unselected = new Set(
+      [...new Set(models.map((model) => model.provider))].filter(
+        (provider) =>
+          isSubscriptionProvider(provider) &&
+          this.#subscriptions?.mode(provider) === 'subscription' &&
+          !this.#subscriptions.hasModelSelection(provider),
+      ),
+    )
+    return models.filter((model) => !unselected.has(model.provider))
   }
   getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
     this.#assertActive()
@@ -3555,6 +3565,9 @@ export class DshHostRuntime implements AgentSessionDriver {
           if (!status.available) return provider
           return {
             ...provider,
+            ...(status.mode === 'subscription' && !subscriptions.hasModelSelection(provider.provider)
+              ? { models: [] }
+              : {}),
             subscription: {
               label: status.label,
               active: status.mode === 'subscription',
@@ -3722,6 +3735,11 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   async restoreLlmProviderModels(provider: string, expectedRevision: number): Promise<LlmProviderSettingsView> {
     this.#assertActive()
+    if (isSubscriptionProvider(provider) && this.#subscriptions?.mode(provider) === 'subscription') {
+      const models = await this.#subscriptions.discoverModels(provider)
+      if (models.length === 0) throw new Error('这个账号没有可用模型，请检查 ChatGPT 套餐后重试。')
+      return this.saveLlmProvider({ provider, expectedRevision, models })
+    }
     return this.#withSubscriptions(await this.#modelSettings.restoreLlmProviderModels(provider, expectedRevision))
   }
 
@@ -3734,7 +3752,11 @@ export class DshHostRuntime implements AgentSessionDriver {
   }): Promise<readonly SaveLlmProviderModel[]> {
     this.#assertActive()
     const provider = input.provider
-    const draft = input.baseURL !== undefined || input.api !== undefined || input.apiKey !== undefined
+    const saved = provider === undefined ? undefined : this.#subscriptions?.savedProfile(provider)
+    const draft =
+      input.apiKey !== undefined ||
+      (input.baseURL !== undefined && input.baseURL !== saved?.['baseURL']) ||
+      (input.api !== undefined && input.api !== saved?.['api'])
     if (provider !== undefined && isSubscriptionProvider(provider) && !draft) {
       // A signed-in route lists what the account may use; the catalog lists every model the provider has.
       if (this.#subscriptions?.mode(provider) === 'subscription') return this.#subscriptions.discoverModels(provider)
@@ -3776,7 +3798,13 @@ export class DshHostRuntime implements AgentSessionDriver {
     if (developmentWorkspace !== undefined) {
       await mkdir(developmentWorkspace, { recursive: true, mode: 0o700 })
     }
-    const modelInfo = await this.#context.llm.resolveModelInfo(revision.model.provider, revision.model.model)
+    const modelInfo = await this.#context.llm
+      .resolveModelInfo(revision.model.provider, revision.model.model)
+      .catch((cause: unknown) => {
+        if (cause instanceof Error && 'code' in cause && cause.code === 'NO_ADAPTER')
+          throw new SessionModelUnavailableError(`模型供应商 ${revision.model.provider} 尚未启用。`, { cause })
+        throw cause
+      })
     const supportsImage = modelInfo.inputModalities?.includes('image') === true
     const requestedAuxiliary = revision.imagePolicy.textModel
     let auxiliary:
@@ -4876,7 +4904,11 @@ export class DshHostRuntime implements AgentSessionDriver {
     const sessionId = SessionId(dshSessionId)
     const handle = this.#sessions.get(sessionId)?.handle
     const episodeId = this.#sessions.get(sessionId)?.episodeId
-    if (!handle) throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
+    if (!handle) {
+      // Cold recovery can replay a committed handoff whose previous live Session is already gone.
+      if (!this.#context.agents.get(sessionId)) return
+      throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
+    }
     let drainError: unknown
     try {
       await this.#context.subagents.drainDescendants([handle.agent])

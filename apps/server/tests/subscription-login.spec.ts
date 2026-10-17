@@ -150,6 +150,37 @@ async function signIn(subscriptions: SubscriptionLogins): Promise<SubscriptionSt
 }
 
 describe('subscription sign-in', () => {
+  it('replaces normalized empty model defaults with the account catalog after sign-in', async () => {
+    vi.stubGlobal('fetch', openai(['first@example.com']).handler)
+    const { subscriptions, profiles } = await host({
+      openai: { api: 'openai-responses', models: [], modelOverrides: {} },
+    })
+    expect((await signIn(subscriptions)).login?.status).toBe('authorized')
+    expect(profiles['openai']?.['models']).toMatchObject([{ id: 'gpt-5.5', name: 'GPT-5.5' }])
+  })
+
+  it('settles a model-list failure after authorization and keeps the signed-in credential for retry', async () => {
+    const network = openai(['first@example.com'])
+    let failCatalog = true
+    vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input instanceof Request ? input.url : input) === 'https://api.openai.com/v1/models' && failCatalog
+        ? Promise.resolve(new Response(null, { status: 503 }))
+        : network.handler(input, init),
+    )
+    const { context, subscriptions, profiles } = await host({ openai: { api: 'openai-responses' } })
+    const done = await signIn(subscriptions)
+    expect(done.login).toMatchObject({ status: 'failed' })
+    expect(done.login?.error).toContain('已登录 ChatGPT，但没能读取模型列表')
+    expect(done.accounts).toHaveLength(1)
+    expect(await context.credentials.readRecord(LlmPiAi.recordKeyFor('openai'))).toMatchObject({
+      kind: 'grant',
+      payload: { refresh: 'refresh-first@example.com-1' },
+    })
+    expect(profiles['openai']).not.toHaveProperty('models')
+    failCatalog = false
+    expect(await subscriptions.discoverModels('openai')).toMatchObject([{ id: 'gpt-5.5', name: 'GPT-5.5' }])
+  })
+
   it('stores the sign-in where DSH reads it, so the ordinary route sends the account token', async () => {
     const network = openai(['first@example.com'])
     vi.stubGlobal('fetch', network.handler)

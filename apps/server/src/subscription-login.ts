@@ -203,8 +203,12 @@ const nextLabel = (accounts: readonly Account[]): string => {
   return `账号 ${number}`
 }
 
+class SubscriptionModelDiscoveryError extends Error {}
+
 /** pi-ai's login and refresh messages are English and technical; the page shows these instead. */
 function loginFailure(error: unknown, label: string): string {
+  if (error instanceof SubscriptionModelDiscoveryError)
+    return `已登录 ${label}，但没能读取模型列表。请点击“获取可用模型”重试。`
   const message = error instanceof Error ? error.message : String(error)
   if (/Port \d+ is in use/u.test(message))
     return `${label} 登录需要的本机端口 1455 被占用，可能有另一个登录（例如 Codex 命令行）没有结束。结束后再试。`
@@ -318,6 +322,16 @@ export class SubscriptionLogins {
     return this.#options.profile(provider).value
   }
 
+  /** An untouched installed directory says nothing about the signed-in account's models. */
+  hasModelSelection(provider: string): boolean {
+    const value = this.savedProfile(provider)
+    const overrides = value?.['modelOverrides']
+    return (
+      (Array.isArray(value?.['models']) && value['models'].length > 0) ||
+      (typeof overrides === 'object' && overrides !== null && Object.keys(overrides).length > 0)
+    )
+  }
+
   /** The label of the account the route is using, for the provider overview. */
   async activeLabel(provider: SubscriptionProvider): Promise<string | null> {
     const vault = await this.#vault(provider)
@@ -364,16 +378,14 @@ export class SubscriptionLogins {
       const replaced: { previous?: CredentialRecord } = {}
       this.#replacedSlot.set(provider, replaced)
       void this.#signIn(provider, attempt)
-        .then(
-          async (outcome) => {
-            if (outcome.status === 'authorized') await this.#serial(() => this.#adoptSignedIn(provider, replaced))
-            attempt.status = outcome.status
-          },
-          (error: unknown) => {
-            attempt.status = 'failed'
-            attempt.error = loginFailure(error, SUBSCRIPTIONS[provider].label)
-          },
-        )
+        .then(async (outcome) => {
+          if (outcome.status === 'authorized') await this.#serial(() => this.#adoptSignedIn(provider, replaced))
+          attempt.status = outcome.status
+        })
+        .catch((error: unknown) => {
+          attempt.status = 'failed'
+          attempt.error = loginFailure(error, SUBSCRIPTIONS[provider].label)
+        })
         .finally(() => {
           this.#replacedSlot.delete(provider)
           attempt.prompt?.reject(new AuthorizationDeclinedError())
@@ -512,49 +524,56 @@ export class SubscriptionLogins {
     // Refreshes under DSH's credential lock when the token is about to expire, as a request would.
     const token = (await models.getAuth(provider))?.auth.apiKey
     if (!token) throw new Error(`请先登录 ${SUBSCRIPTIONS[provider].label}。`)
-    const response = await this.#fetch(OPENAI_MODELS_URL, {
-      headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(30_000),
-    })
-    if (!response.ok) throw new Error(`没能读取 ${SUBSCRIPTIONS[provider].label} 账号可用的模型，请检查登录后重试。`)
-    const catalog = z
-      .object({
-        models: z.array(
-          z
-            .object({
-              slug: z.string().min(1),
-              display_name: z.string().min(1),
-              visibility: z.string(),
-              context_window: z.number().int().positive().optional().catch(undefined),
-              input_modalities: z.array(z.string()).optional().catch(undefined),
-              supported_reasoning_levels: z
-                .array(z.object({ effort: z.string() }).loose())
-                .optional()
-                .catch(undefined),
-            })
-            .loose(),
-        ),
+    try {
+      const response = await this.#fetch(OPENAI_MODELS_URL, {
+        headers: { authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(30_000),
       })
-      .loose()
-      .parse(await response.json())
-    return catalog.models
-      .filter((model) => model.visibility === 'list')
-      .map((model) => {
-        const input = (model.input_modalities ?? []).filter(
-          (modality): modality is 'text' | 'image' => modality === 'text' || modality === 'image',
-        )
-        // Only levels pi-ai can send; `ultra` adds Codex task delegation, which this route does not use.
-        const efforts = (model.supported_reasoning_levels ?? [])
-          .map((level) => level.effort)
-          .filter((effort) => THINKING_LEVELS.has(effort))
-        return {
-          id: model.slug,
-          name: model.display_name,
-          ...(model.context_window === undefined ? {} : { contextWindow: model.context_window }),
-          ...(input.includes('text') ? { inputModalities: input } : {}),
-          ...(efforts.length === 0 ? {} : { reasoningEfforts: efforts }),
-        }
-      })
+      if (!response.ok) throw new Error(`Model catalog returned HTTP ${response.status}`)
+      const catalog = z
+        .object({
+          models: z.array(
+            z
+              .object({
+                slug: z.string().min(1),
+                display_name: z.string().min(1),
+                visibility: z.string(),
+                context_window: z.number().int().positive().optional().catch(undefined),
+                input_modalities: z.array(z.string()).optional().catch(undefined),
+                supported_reasoning_levels: z
+                  .array(z.object({ effort: z.string() }).loose())
+                  .optional()
+                  .catch(undefined),
+              })
+              .loose(),
+          ),
+        })
+        .loose()
+        .parse(await response.json())
+      return catalog.models
+        .filter((model) => model.visibility === 'list')
+        .map((model) => {
+          const input = (model.input_modalities ?? []).filter(
+            (modality): modality is 'text' | 'image' => modality === 'text' || modality === 'image',
+          )
+          // Only levels pi-ai can send; `ultra` adds Codex task delegation, which this route does not use.
+          const efforts = (model.supported_reasoning_levels ?? [])
+            .map((level) => level.effort)
+            .filter((effort) => THINKING_LEVELS.has(effort))
+          return {
+            id: model.slug,
+            name: model.display_name,
+            ...(model.context_window === undefined ? {} : { contextWindow: model.context_window }),
+            ...(input.includes('text') ? { inputModalities: input } : {}),
+            ...(efforts.length === 0 ? {} : { reasoningEfforts: efforts }),
+          }
+        })
+    } catch (cause) {
+      throw new SubscriptionModelDiscoveryError(
+        `没能读取 ${SUBSCRIPTIONS[provider].label} 账号的模型列表，请检查登录后重试。`,
+        { cause },
+      )
+    }
   }
 
   /** pi-ai's store over DSH's slot, as DSH's own adapter writes it, noting what a sign-in replaces. */
@@ -622,8 +641,8 @@ export class SubscriptionLogins {
     const { value, revision } = this.#options.profile(provider)
     // The installed catalog lists every OpenAI model; an untouched list becomes the ones this account may use.
     let models: readonly Record<string, unknown>[] | undefined
-    if (value?.['models'] === undefined && value?.['modelOverrides'] === undefined) {
-      models = (await this.discoverModels(provider).catch(() => undefined))?.map(profileModel)
+    if (!this.hasModelSelection(provider)) {
+      models = (await this.discoverModels(provider)).map(profileModel)
     }
     const ops: ProfileOp[] =
       value === undefined
