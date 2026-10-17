@@ -463,7 +463,7 @@ const deterministicHandoffFallback = (
   sourceEvents: readonly ChannelEventRecord[],
 ): Awaited<ReturnType<AgentSessionDriver['createHandoffSummary']>> => ({
   summary: [
-    '模型交接摘要不可用；不要假设旧上下文已经完整恢复。',
+    '模型压缩摘要不可用；不要假设旧上下文已经完整恢复。',
     `旧 Episode：${episode.id}`,
     `边界锚点：${sourceEvents.map(({ id }) => id).join(' → ') || '无'}`,
     '需要具体细节时，请使用 conversation_history_search 或 conversation_history_read 回查当前频道原文。',

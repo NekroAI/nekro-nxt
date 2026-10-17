@@ -17,6 +17,8 @@ const base: AgentDraft = {
   persona: promptDocumentFromText('严谨、简洁'),
   personaText: '严谨、简洁',
   modelKey: 'fixture/text-model',
+  effort: '',
+  compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
   visionKey: '',
   capabilities: {
     subagents: true,
@@ -54,6 +56,24 @@ describe('agent draft', () => {
     })
     expect(draftChanges(base, base)).toEqual([])
     expect(identityChanged(base, { ...base, capabilities: { ...base.capabilities, subagents: false } })).toBe(false)
+  })
+
+  it('saves a changed thinking level with the identity', () => {
+    const edited = { ...base, effort: 'high' }
+    expect(draftChanges(base, edited)).toEqual(['思考强度'])
+    expect(identityChanged(base, edited)).toBe(true)
+  })
+
+  it('saves changed compaction models with the identity', () => {
+    const edited: AgentDraft = {
+      ...base,
+      compaction: {
+        inSession: { mode: 'follow' },
+        newSession: { mode: 'custom', model: { provider: 'fixture', model: 'fast-model' } },
+      },
+    }
+    expect(draftChanges(base, edited)).toEqual(['压缩模型'])
+    expect(identityChanged(base, edited)).toBe(true)
   })
 
   it('ignores surrounding spaces in the name', () => {

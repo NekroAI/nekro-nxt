@@ -30,6 +30,50 @@ const agentId = AgentIdSchema.parse('agt_observer')
 const episodeId = EpisodeIdSchema.parse('eps_observer')
 
 describe('channel runtime projection', () => {
+  it('shows compacting while DSH compacts the session or a new session waits for its summary', () => {
+    const open = projectChannelRuntime({
+      channelId,
+      agentId,
+      sessionStatus: 'running',
+      pendingInjectCount: 0,
+      events: [{ type: 'compaction/start', at: 500 }],
+    })
+    expect(open).toMatchObject({ phase: 'compacting', compaction: { kind: 'in-session', startedAt: 500 } })
+    expect(open.summary).toBe('正在压缩上一段对话。')
+    const closed = projectChannelRuntime({
+      channelId,
+      agentId,
+      sessionStatus: 'idle',
+      pendingInjectCount: 0,
+      events: [
+        { type: 'compaction/start', at: 500 },
+        { type: 'compaction/end', at: 600 },
+      ],
+    })
+    expect(closed.phase).toBe('idle')
+    expect(closed.compaction).toBeUndefined()
+    // A crash between start and end leaves no running agent, so nothing claims to be compacting.
+    expect(
+      projectChannelRuntime({
+        channelId,
+        agentId,
+        sessionStatus: 'idle',
+        pendingInjectCount: 0,
+        events: [{ type: 'compaction/start', at: 500 }],
+      }).phase,
+    ).toBe('idle')
+    expect(
+      projectChannelRuntime({
+        channelId,
+        agentId,
+        sessionStatus: 'idle',
+        pendingInjectCount: 0,
+        events: [],
+        newSessionCompactionStartedAt: 700,
+      }),
+    ).toMatchObject({ phase: 'compacting', compaction: { kind: 'new-session', startedAt: 700 } })
+  })
+
   it('places each turn on the timeline with its open/close times and the channel event that opened it', () => {
     const channelMessage = (admissionId: string, channelEventIds: readonly string[]) =>
       createUserMessage({
@@ -98,7 +142,7 @@ describe('channel runtime projection', () => {
     let seq = 0
     const at = (time: number) => ({ seq: SessionSeq(++seq), time })
     const handoff = createUserMessage({
-      content: [{ type: 'text', text: '下面是上一 Episode 生成的派生交接摘要。' }],
+      content: [{ type: 'text', text: '下面是上一 Episode 生成的派生压缩摘要。' }],
       source: {
         kind: 'nekro-nxt-handoff',
         handoffId: 'hof_A',
@@ -143,7 +187,7 @@ describe('channel runtime projection', () => {
       {
         messageId: handoff.id,
         source: 'nekro-nxt-handoff',
-        preview: '下面是上一 Episode 生成的派生交接摘要。',
+        preview: '下面是上一 Episode 生成的派生压缩摘要。',
         at: 100,
       },
       {

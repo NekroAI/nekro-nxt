@@ -58,6 +58,8 @@ const RECENT_MEMORY_ACTIVITY = 8
 
 export type RuntimeProjectionEvent =
   | { readonly type: 'memory'; readonly activity: ChannelMemoryActivity }
+  | { readonly type: 'compaction/start'; readonly at?: number }
+  | { readonly type: 'compaction/end'; readonly at?: number }
   | { readonly type: 'turn/start'; readonly turn: number; readonly at?: number }
   | { readonly type: 'turn/trigger'; readonly turn: number; readonly eventId: ChannelEventId }
   | {
@@ -159,6 +161,8 @@ export interface ChannelRuntimeProjectionInput {
   readonly occupancy?: ChannelRuntimeOccupancy
   readonly performanceTotals?: RuntimePerformanceTotals
   readonly events: readonly RuntimeProjectionEvent[]
+  /** Set while the channel waits for a compaction summary before its new session opens. */
+  readonly newSessionCompactionStartedAt?: number
 }
 
 type ProjectedTool = {
@@ -406,7 +410,7 @@ export const projectGenerationPerformance = (
 const phaseRank = (phase: ChannelRuntimePhase): number => {
   if (phase === 'unavailable') return 4
   if (phase === 'using-tool') return 3
-  if (phase === 'thinking') return 2
+  if (phase === 'thinking' || phase === 'compacting') return 2
   if (phase === 'waiting-input') return 1
   return 0
 }
@@ -689,6 +693,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       continue
     }
     if (event.type === 'llm/retry' || event.type === 'llm/retry-started') continue
+    if (event.type === 'compaction/start' || event.type === 'compaction/end') continue
     const step = ensureStep(event.turn, event.step)
     if (event.text?.trim()) step.text = event.text
     if (event.reasoning?.trim()) step.reasoning = event.reasoning
@@ -743,8 +748,21 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
   const runningTools = latest?.steps.flatMap((step) => step.tools.filter((tool) => tool.state === 'running')) ?? []
   const failedTurn = latest?.state === 'error' ? latest : undefined
   const unrepliedTurn = latest?.state === 'unreplied' ? latest : undefined
+  // An in-session compaction is open from DSH's start until its end; a crash between the two leaves no running agent.
+  let inSessionCompactionAt: number | undefined
+  for (const event of input.events) {
+    if (event.type === 'compaction/start') inSessionCompactionAt = event.at ?? 0
+    else if (event.type === 'compaction/end') inSessionCompactionAt = undefined
+  }
+  const compaction =
+    input.newSessionCompactionStartedAt !== undefined
+      ? { kind: 'new-session' as const, startedAt: input.newSessionCompactionStartedAt }
+      : inSessionCompactionAt !== undefined && input.sessionStatus === 'running'
+        ? { kind: 'in-session' as const, startedAt: inSessionCompactionAt }
+        : undefined
   let phase: ChannelRuntimePhase = 'idle'
-  if (failedTurn && input.sessionStatus !== 'running') phase = 'unavailable'
+  if (compaction) phase = 'compacting'
+  else if (failedTurn && input.sessionStatus !== 'running') phase = 'unavailable'
   else if (input.sessionStatus === 'running' && runningTools.length > 0) phase = 'using-tool'
   else if (input.sessionStatus === 'running') phase = 'thinking'
 
@@ -752,24 +770,27 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
   const summary =
     input.agentId === undefined
       ? '尚未绑定智能体。'
-      : phase === 'using-tool' && currentTool
-        ? `智能体正在使用${currentTool.displayName}。`
-        : phase === 'thinking'
-          ? '智能体正在处理当前消息。'
-          : phase === 'unavailable'
-            ? failedTurn?.error?.message
-              ? `智能体本轮失败：${failedTurn.error.message}`
-              : '智能体当前不可用，请检查模型和连接设置。'
-            : unrepliedTurn
-              ? '智能体这一轮既没有回复，也没有说明原因。'
-              : latest?.responseState === 'finished'
-                ? '智能体这一轮没有回复。'
-                : '智能体当前空闲。'
+      : phase === 'compacting'
+        ? '正在压缩上一段对话。'
+        : phase === 'using-tool' && currentTool
+          ? `智能体正在使用${currentTool.displayName}。`
+          : phase === 'thinking'
+            ? '智能体正在处理当前消息。'
+            : phase === 'unavailable'
+              ? failedTurn?.error?.message
+                ? `智能体本轮失败：${failedTurn.error.message}`
+                : '智能体当前不可用，请检查模型和连接设置。'
+              : unrepliedTurn
+                ? '智能体这一轮既没有回复，也没有说明原因。'
+                : latest?.responseState === 'finished'
+                  ? '智能体这一轮没有回复。'
+                  : '智能体当前空闲。'
 
   return {
     channelId: input.channelId,
     ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
     ...(input.episodeId === undefined ? {} : { episodeId: input.episodeId }),
+    ...(compaction === undefined ? {} : { compaction }),
     phase,
     summary,
     pendingInjectCount: input.pendingInjectCount,

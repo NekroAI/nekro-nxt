@@ -22,9 +22,11 @@ import {
   writeContractJson,
   writeError,
   writeJson,
+  assertAvailableModel,
 } from './host-route-support.js'
 import { ProductUpdates } from './product-updates.js'
 import { readMessagePacing, writeMessagePacing, type MessagePacingSettingsStore } from './message-pacing.js'
+import { readCompactionSettings, writeCompactionSettings } from './compaction-settings.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerSubConversationRoutes } from './host-routes-sub-conversations.js'
 import { registerCommandAccountRoutes } from './host-routes-command-accounts.js'
@@ -366,6 +368,32 @@ export const createNekroHostApi = (
       writeContractJson(res, 200, HostApiContracts.updateMessagePacingSettings, {
         pacing: writeMessagePacing(pacingSettings, parsed.pacing),
       })
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/compaction',
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        writeContractJson(res, 200, HostApiContracts.getCompactionSettings, readCompactionSettings(pacingSettings))
+        return
+      }
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.updateCompactionSettings.parseRequest(await readJsonBody(req))
+        if (parsed.newSessionModel.mode === 'custom') await assertAvailableModel(runtime, parsed.newSessionModel.model)
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.updateCompactionSettings,
+          writeCompactionSettings(pacingSettings, parsed),
+        )
+      } catch (error) {
+        writeError(res, 400, 'compaction-settings-failed', error instanceof Error ? error.message : String(error))
+      }
     },
   })
   const upgradeBackupSettings = async (): Promise<UpgradeBackupSettings> => {

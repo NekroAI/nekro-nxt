@@ -42,7 +42,9 @@ import {
   useLlmProviders,
   type ProviderView,
 } from '../../llm-settings.js'
+import { CompactionModelField } from '../agents/compaction-model.js'
 import type {
+  CompactionSettings,
   MessagePacing,
   RetrievalStatus,
   SubConversationRetention,
@@ -568,16 +570,34 @@ const PACING_OPTIONS: readonly { readonly value: MessagePacing; readonly label: 
   { value: 'slow', label: '长' },
 ]
 
+const COMPACTION_WAIT_OPTIONS = [60, 120, 180, 300, 600].map((seconds) => ({
+  value: String(seconds),
+  label: `${seconds / 60} 分钟`,
+}))
+
 function Chat() {
   const [pacing, setPacing] = useState<MessagePacing>()
+  const [compaction, setCompaction] = useState<CompactionSettings>()
   useEffect(() => {
     const controller = new AbortController()
     workspaceApi
       .getMessagePacingSettings({ signal: controller.signal })
       .then((settings) => setPacing(settings.pacing))
       .catch(() => undefined)
+    workspaceApi
+      .getCompactionSettings({ signal: controller.signal })
+      .then(setCompaction)
+      .catch(() => undefined)
     return () => controller.abort()
   }, [])
+  const saveCompaction = (next: CompactionSettings) => {
+    const previous = compaction
+    setCompaction(next)
+    workspaceApi.updateCompactionSettings(next).catch((error: unknown) => {
+      setCompaction(previous)
+      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+    })
+  }
   const change = (next: MessagePacing) => {
     const previous = pacing
     setPacing(next)
@@ -595,6 +615,49 @@ function Chat() {
             <Skeleton width={220} height={28} />
           ) : (
             <Segmented label="连发间隔" value={pacing} onChange={change} options={PACING_OPTIONS} />
+          )}
+        </PropertyRow>
+        <PropertyRow
+          label="开新会话时的压缩模型"
+          layout="stacked"
+          tip="闲置后再被唤醒、或手动压缩时，先用它把上一段对话整理成摘要，再开新会话。这一步用不上缓存，换成更快的模型能少等一会儿。智能体可以另外指定。"
+        >
+          {compaction === undefined ? (
+            <Skeleton width={320} height={28} />
+          ) : (
+            <CompactionModelField
+              label="开新会话时的压缩模型"
+              followLabel="跟随智能体的主模型"
+              value={compaction.newSessionModel.mode === 'custom' ? compaction.newSessionModel.model : undefined}
+              onChange={(model) =>
+                saveCompaction({
+                  ...compaction,
+                  newSessionModel: model ? { mode: 'custom', model } : { mode: 'main' },
+                })
+              }
+            />
+          )}
+        </PropertyRow>
+        <PropertyRow
+          label="压缩最多等待"
+          tip="到时间还没整理完，就带着一句说明直接开新会话，之前的内容由智能体按需翻聊天记录。"
+        >
+          {compaction === undefined ? (
+            <Skeleton width={160} height={28} />
+          ) : (
+            <Select
+              aria-label="压缩最多等待"
+              value={String(compaction.timeoutSeconds)}
+              options={
+                COMPACTION_WAIT_OPTIONS.some((option) => option.value === String(compaction.timeoutSeconds))
+                  ? COMPACTION_WAIT_OPTIONS
+                  : [
+                      ...COMPACTION_WAIT_OPTIONS,
+                      { value: String(compaction.timeoutSeconds), label: `${compaction.timeoutSeconds} 秒` },
+                    ]
+              }
+              onValueChange={(value) => saveCompaction({ ...compaction, timeoutSeconds: Number(value) })}
+            />
           )}
         </PropertyRow>
       </PropertyList>

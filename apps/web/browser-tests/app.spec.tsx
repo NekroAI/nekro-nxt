@@ -1976,6 +1976,8 @@ test.describe('NekroNxt browser projections', () => {
   test('drags along the system-access scale and selects the level where the pointer is released', async () => {
     await withProductPage(`/agents/${browserAgentId}`, async (page) => {
       const levels = page.getByRole('radiogroup', { name: '系统访问' })
+      // The mouse works in viewport coordinates, so the scale has to be on screen first.
+      await levels.scrollIntoViewIfNeeded()
       const centre = async (name: string) => {
         const box = (await levels.getByRole('radio', { name }).boundingBox())!
         return { x: box.x + box.width / 2, y: box.y + 12 }

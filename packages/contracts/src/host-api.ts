@@ -406,6 +406,39 @@ export const ClientNotificationFeedResponseSchema = z
   })
   .strict()
 
+/** Which model writes one kind of compaction summary: that kind's default, or a model chosen for this agent. */
+export const AgentCompactionModelChoiceSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('follow') }).strict(),
+  z.object({ mode: z.literal('custom'), model: AgentModelSchema }).strict(),
+])
+
+/**
+ * In-session compaction follows the main model by default, so the replayed conversation hits the provider's cache;
+ * compaction into a new session follows the host's compaction model.
+ */
+export const AgentCompactionPolicySchema = z
+  .object({ inSession: AgentCompactionModelChoiceSchema, newSession: AgentCompactionModelChoiceSchema })
+  .strict()
+
+/** The host's model for compaction into a new session, and how long a new session may wait for its summary. */
+export const CompactionSettingsSchema = z
+  .object({
+    newSessionModel: z.discriminatedUnion('mode', [
+      z.object({ mode: z.literal('main') }).strict(),
+      z.object({ mode: z.literal('custom'), model: AgentModelSchema }).strict(),
+    ]),
+    /** Past this the new session starts with a fallback note instead of a summary. */
+    timeoutSeconds: z.number().int().min(30).max(900),
+  })
+  .strict()
+
+export type CompactionSettings = z.output<typeof CompactionSettingsSchema>
+
+export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
+  newSessionModel: { mode: 'main' },
+  timeoutSeconds: 180,
+}
+
 const AgentRevisionRequestContentSchema = z
   .object({
     displayName: z.string().trim().min(1).max(80),
@@ -417,6 +450,7 @@ const AgentRevisionRequestContentSchema = z
     model: AgentModelSchema,
     imagePolicy: ImageUnderstandingPolicyApiSchema.optional(),
     dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema.optional(),
+    compaction: AgentCompactionPolicySchema.optional(),
   })
   .strict()
 
@@ -638,7 +672,14 @@ export const ChannelFactSseDataSchema = z
   })
   .strict()
 
-export const ChannelRuntimePhaseSchema = z.enum(['idle', 'thinking', 'using-tool', 'waiting-input', 'unavailable'])
+export const ChannelRuntimePhaseSchema = z.enum([
+  'idle',
+  'thinking',
+  'using-tool',
+  'compacting',
+  'waiting-input',
+  'unavailable',
+])
 
 export const ChannelRuntimeUsageSchema = z
   .object({
@@ -868,6 +909,11 @@ export const ChannelRuntimeProjectionSchema = z
     episodeId: EpisodeIdSchema.optional(),
     phase: ChannelRuntimePhaseSchema,
     summary: z.string(),
+    /** A compaction under way: inside the current session, or before a new session opens. */
+    compaction: z
+      .object({ kind: z.enum(['in-session', 'new-session']), startedAt: z.number().int().nonnegative() })
+      .strict()
+      .optional(),
     pendingInjectCount: z.number().int().nonnegative(),
     occupancy: ChannelRuntimeOccupancySchema.optional(),
     cache: ChannelRuntimeCacheSchema.optional(),
@@ -1547,6 +1593,14 @@ export const HostSnapshotSchema = z
           name: z.string(),
           description: z.string().optional(),
           inputModalities: z.array(z.string()).optional(),
+          /** Selectable thinking levels, least to most; absent when the model offers no choice. */
+          reasoning: z
+            .object({
+              efforts: z.array(z.object({ id: NonEmptyStringSchema, name: z.string() }).strict()).min(1),
+              defaultEffort: NonEmptyStringSchema.optional(),
+            })
+            .strict()
+            .optional(),
         })
         .strict(),
     ),
@@ -1590,6 +1644,8 @@ export const HostSnapshotSchema = z
           capabilities: AgentCapabilitiesSchema,
           imagePolicy: ImageUnderstandingPolicyApiSchema,
           dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
+          /** Optional for older hosts, whose agents always follow both defaults. */
+          compaction: AgentCompactionPolicySchema.optional(),
           imageDiagnostics: z
             .object({
               route: z
@@ -2239,6 +2295,9 @@ export type HostSseEvent = z.output<typeof HostSseEventSchema>
 /** Request content a model accepts; `image` enables native vision for agents using the model. */
 export const LlmModelInputModalitiesSchema = z.array(z.enum(['text', 'image'])).min(1)
 
+/** Thinking levels a model offers, least to most; the ids are the adapter's own. */
+export const LlmModelReasoningEffortsSchema = z.array(NonEmptyStringSchema).min(1)
+
 export const LlmProviderModelSchema = z
   .object({
     id: NonEmptyStringSchema,
@@ -2246,6 +2305,7 @@ export const LlmProviderModelSchema = z
     contextWindow: z.number().int().positive().optional(),
     maxTokens: z.number().int().positive().optional(),
     inputModalities: LlmModelInputModalitiesSchema.optional(),
+    reasoningEfforts: LlmModelReasoningEffortsSchema.optional(),
   })
   .strict()
 
@@ -2256,6 +2316,7 @@ export const LlmDiscoveredModelSchema = z
     contextWindow: z.number().int().positive().optional(),
     maxTokens: z.number().int().positive().optional(),
     inputModalities: LlmModelInputModalitiesSchema.optional(),
+    reasoningEfforts: LlmModelReasoningEffortsSchema.optional(),
   })
   .strict()
 
@@ -2466,6 +2527,7 @@ export const AgentRevisionChangedFieldSchema = z.enum([
   'capabilities',
   'imagePolicy',
   'approvalPolicy',
+  'compaction',
 ])
 
 export const AgentRevisionHistorySchema = z
@@ -3421,6 +3483,23 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: MessagePacingSettingsSchema,
     response: MessagePacingSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  getCompactionSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/compaction',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CompactionSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateCompactionSettings: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/settings/compaction',
+    params: EmptyParamsSchema,
+    request: CompactionSettingsSchema,
+    response: CompactionSettingsSchema,
     error: HostApiErrorSchema,
   }),
   getUpgradeBackupSettings: defineContract({
