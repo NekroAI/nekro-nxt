@@ -1,125 +1,8 @@
-/* Same geometry as the access ladder; the accent deepens with the level instead of a risk colour. */
-.slider {
-  --level-color: color-mix(in srgb, var(--accent) var(--depth), var(--accent-soft));
-
-  display: grid;
-  gap: var(--s-3);
-}
-
-.scale {
-  position: relative;
-  display: grid;
-  grid-auto-columns: minmax(0, 1fr);
-  grid-auto-flow: column;
-  cursor: grab;
-  touch-action: pan-y;
-  user-select: none;
-}
-
-.scale[data-dragging='true'],
-.scale[data-dragging='true'] .stop {
-  cursor: grabbing;
-}
-
-.scale[aria-disabled='true'] {
-  cursor: not-allowed;
-}
-
-/* The track runs between the first and last dot centres. */
-.track {
-  position: absolute;
-  top: calc(var(--control) / 2 - 2px);
-  right: calc(50% / var(--steps));
-  left: calc(50% / var(--steps));
-  height: 4px;
-  border-radius: 2px;
-  background: var(--line-2);
-}
-
-.fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent-soft), var(--level-color));
-  transition: width var(--dur-2) var(--ease);
-}
-
-.stop {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  gap: var(--s-1);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font: var(--t-note);
-  cursor: inherit;
-}
-
-.stop:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.dot {
-  display: grid;
-  width: var(--control);
-  height: var(--control);
-  place-items: center;
-}
-
-.dot::before {
-  content: '';
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--line-3);
-  border-radius: 50%;
-  background: var(--surface);
-  transition:
-    transform var(--dur-2) var(--ease),
-    background var(--dur-2),
-    border-color var(--dur-2);
-}
-
-.stop[data-reached='true'] .dot::before {
-  border-color: var(--level-color);
-  background: var(--level-color);
-}
-
-.stop[data-selected='true'] .dot::before {
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--level-color) 22%, transparent);
-  transform: scale(1.35);
-}
-
-.stop:hover .dot::before {
-  border-color: var(--level-color);
-}
-
-.stopLabel {
-  white-space: nowrap;
-}
-
-.stop[data-selected='true'] .stopLabel {
-  color: var(--fg);
-  font: var(--t-label);
-}
-
-.summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--s-2);
-  padding: var(--s-2) var(--s-3);
-  border-radius: var(--r-1);
-  background: color-mix(in srgb, var(--level-color) 10%, transparent);
-}
-
 .chip {
   flex: none;
   padding: 0 var(--s-2);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--level-color) 18%, transparent);
+  background: color-mix(in srgb, var(--scale-to) 18%, transparent);
   color: var(--fg);
   font: var(--t-label);
 }
@@ -128,11 +11,4 @@
   min-width: 0;
   color: var(--fg-2);
   font: var(--t-note);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .fill,
-  .dot::before {
-    transition: none;
-  }
 }

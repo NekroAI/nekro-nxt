@@ -1934,9 +1934,9 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
-        const levels = page.getByRole('radiogroup', { name: '系统访问' })
-        await playwrightExpect(levels.getByRole('radio', { name: '基础权限' })).toHaveAttribute('aria-checked', 'true')
-        await levels.getByRole('radio', { name: '运行命令' }).click()
+        const levels = page.getByRole('slider', { name: '系统访问' })
+        await playwrightExpect(levels).toHaveAttribute('aria-valuetext', '基础权限')
+        await page.getByRole('button', { name: '运行命令', exact: true }).click()
         const confirm = page.getByRole('dialog', { name: '允许资料员运行命令？' })
         await playwrightExpect(confirm).toBeVisible()
         expect(capabilityRequests).toHaveLength(0)
@@ -1973,31 +1973,31 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('drags along the system-access scale and selects the level where the pointer is released', async () => {
+  test('drags along the system-access scale, follows the pointer between levels and snaps to the nearest', async () => {
     await withProductPage(`/agents/${browserAgentId}`, async (page) => {
-      const levels = page.getByRole('radiogroup', { name: '系统访问' })
+      const levels = page.getByRole('slider', { name: '系统访问' })
       // The mouse works in viewport coordinates, so the scale has to be on screen first.
       await levels.scrollIntoViewIfNeeded()
-      const centre = async (name: string) => {
-        const box = (await levels.getByRole('radio', { name }).boundingBox())!
-        return { x: box.x + box.width / 2, y: box.y + 12 }
+      const box = (await levels.boundingBox())!
+      const edge = box.height / 2
+      const at = (fraction: number) => ({ x: box.x + edge + fraction * (box.width - 2 * edge), y: box.y + edge })
+      const knobCentre = async () => {
+        const knob = (await levels.locator('[data-halo]').boundingBox())!
+        return knob.x + knob.width / 2
       }
-      const start = await centre('基础权限')
-      const workspace = await centre('工作区读写')
-      const commands = await centre('运行命令')
-      await page.mouse.move(start.x, start.y)
+      await page.mouse.move(at(0).x, at(0).y)
       await page.mouse.down()
-      await page.mouse.move(commands.x, commands.y, { steps: 8 })
-      // The drag previews the stop under the pointer without asking yet.
-      await playwrightExpect(levels.getByRole('radio', { name: '运行命令' })).toHaveAttribute('aria-checked', 'true')
-      await page.mouse.move(workspace.x, workspace.y, { steps: 4 })
+      // Between two levels the knob sits under the pointer instead of jumping to a stop.
+      await page.mouse.move(at(0.55).x, at(0.55).y, { steps: 8 })
+      expect(Math.abs((await knobCentre()) - at(0.55).x)).toBeLessThan(3)
+      // The drag previews the nearest level without asking yet.
+      await playwrightExpect(levels).toHaveAttribute('aria-valuetext', '运行命令')
+      await page.mouse.move(at(0.4).x, at(0.4).y, { steps: 4 })
       await page.mouse.up()
-      await playwrightExpect(levels.getByRole('radio', { name: '工作区读写' })).toHaveAttribute('aria-checked', 'true')
+      await playwrightExpect(levels).toHaveAttribute('aria-valuetext', '工作区读写')
+      await playwrightExpect.poll(async () => Math.abs((await knobCentre()) - at(1 / 3).x)).toBeLessThan(2)
       await playwrightExpect(page.getByRole('dialog')).toHaveCount(0)
-      await page.mouse.move(workspace.x, workspace.y)
-      await page.mouse.down()
-      await page.mouse.move(commands.x, commands.y, { steps: 4 })
-      await page.mouse.up()
+      await levels.press('ArrowRight')
       await playwrightExpect(page.getByRole('dialog', { name: '允许资料员运行命令？' })).toBeVisible()
     })
   })

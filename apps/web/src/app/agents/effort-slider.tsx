@@ -1,5 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
-import { cssVars, Pressable } from '../../ui-kit/index.js'
+import { StepScale } from '../../ui-kit/index.js'
 import styles from './effort-slider.module.css'
 
 /** Names and one-line meanings for the thinking levels DSH offers; an unknown level keeps its own name. */
@@ -17,9 +16,10 @@ export const effortName = (effort: { readonly id: string; readonly name: string 
   LEVELS[effort.id]?.name ?? effort.name
 
 /**
- * Thinking level on one scale: the model's default first, then the levels it offers from least to most. Laid out
- * like the access ladder: a stop is chosen by clicking it, by arrow keys, or by dragging along the scale, and the
- * fill deepens towards the deeper levels.
+ * Thinking level on one scale: the model's default first, then the levels it offers from least to most, deepening
+ * the accent towards the deeper levels. At the deepest level the fill turns into a current flowing towards the knob,
+ * for how quickly that level spends tokens; `material` turns this off where another scale on the page already shows
+ * it.
  */
 export function EffortSlider({
   efforts,
@@ -27,6 +27,7 @@ export function EffortSlider({
   value,
   onChange,
   disabled = false,
+  material = true,
 }: {
   readonly efforts: readonly { readonly id: string; readonly name: string }[]
   readonly defaultEffort?: string | undefined
@@ -34,109 +35,47 @@ export function EffortSlider({
   readonly value: string
   readonly onChange: (value: string) => void
   readonly disabled?: boolean
+  readonly material?: boolean
 }) {
-  const [dragged, setDragged] = useState<number | undefined>(undefined)
-  const dragPointer = useRef<number | undefined>(undefined)
   const fallback = efforts.find((effort) => effort.id === defaultEffort)
   const stops = [
     {
       id: '',
-      name: '默认',
+      label: '默认',
       hint: fallback ? `使用模型的默认强度（${effortName(fallback)}）` : '使用模型自己的默认强度',
     },
-    ...efforts.map((effort) => ({ id: effort.id, name: effortName(effort), hint: LEVELS[effort.id]?.hint ?? '' })),
+    ...efforts.map((effort) => ({ id: effort.id, label: effortName(effort), hint: LEVELS[effort.id]?.hint ?? '' })),
   ]
+  const last = stops.length - 1
   const selected = Math.max(
     0,
     stops.findIndex((stop) => stop.id === value),
   )
-  const level = dragged ?? selected
-  const current = stops[level]!
-  const fill = stops.length > 1 ? level / (stops.length - 1) : 0
-  const choose = (index: number) => {
-    const stop = stops[index]
-    if (stop && index !== selected) onChange(stop.id)
-  }
-  const onKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    const forward = event.key === 'ArrowRight' || event.key === 'ArrowUp'
-    const backward = event.key === 'ArrowLeft' || event.key === 'ArrowDown'
-    if (!forward && !backward) return
-    event.preventDefault()
-    const next = Math.max(0, Math.min(stops.length - 1, selected + (forward ? 1 : -1)))
-    choose(next)
-    // Focus follows the selection, as in any radio group.
-    event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[next]?.focus()
-  }
-  // The track runs between the first and last stop centres, each stop owning an equal column.
-  const stopAt = (event: PointerEvent<HTMLDivElement>) => {
-    const box = event.currentTarget.getBoundingClientRect()
-    const column = box.width / stops.length
-    const position = ((event.clientX - box.left - column / 2) / (box.width - column)) * (stops.length - 1)
-    return Math.max(0, Math.min(stops.length - 1, Math.round(Number.isFinite(position) ? position : 0)))
-  }
-  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (disabled || event.button !== 0) return
-    dragPointer.current = event.pointerId
-    event.currentTarget.setPointerCapture(event.pointerId)
-    setDragged(stopAt(event))
-  }
-  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (dragPointer.current === event.pointerId) setDragged(stopAt(event))
-  }
-  const onPointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (dragPointer.current !== event.pointerId) return
-    dragPointer.current = undefined
-    const next = stopAt(event)
-    setDragged(undefined)
-    choose(next)
-  }
-  const onPointerCancel = () => {
-    dragPointer.current = undefined
-    setDragged(undefined)
-  }
   return (
-    <div className={styles.slider} style={cssVars({ '--depth': `${Math.round(35 + fill * 65)}%` })}>
-      <div
-        className={styles.scale}
-        role="radiogroup"
-        aria-label="思考强度"
-        aria-disabled={disabled || undefined}
-        data-dragging={dragged !== undefined}
-        onKeyDown={onKey}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-        style={cssVars({ '--steps': stops.length })}
-      >
-        <span className={styles.track} aria-hidden="true">
-          <span className={styles.fill} style={{ width: `${fill * 100}%` }} />
-        </span>
-        {stops.map((stop, index) => (
-          <Pressable
-            key={stop.id || 'default'}
-            role="radio"
-            aria-checked={index === selected}
-            aria-description={stop.hint}
-            tabIndex={index === selected ? 0 : -1}
-            disabled={disabled}
-            className={styles.stop}
-            data-reached={index <= level}
-            data-selected={index === level}
-            // Pointer presses select through the scale's drag; this keeps Enter and Space working.
-            onClick={(event) => {
-              if (event.detail === 0) choose(index)
-            }}
-          >
-            <span className={styles.dot} aria-hidden="true" />
-            <span className={styles.stopLabel}>{stop.name}</span>
-          </Pressable>
-        ))}
-      </div>
-      <div className={styles.summary}>
-        <span className={styles.chip}>{current.name}</span>
-        <span className={styles.summaryText}>{current.hint}</span>
-      </div>
-    </div>
+    <StepScale
+      label="思考强度"
+      stops={stops}
+      value={selected}
+      onChange={(index) => onChange(stops[index]?.id ?? '')}
+      disabled={disabled}
+      tone={(index) => ({
+        from: 'color-mix(in srgb, var(--accent) 50%, var(--surface))',
+        to: `color-mix(in srgb, var(--accent) ${Math.round(70 + (last > 0 ? index / last : 0) * 30)}%, var(--surface))`,
+      })}
+      material={
+        material && efforts.length > 0
+          ? (index) => (index === last ? { kind: 'flow', strength: 1, halo: 'var(--focus)' } : undefined)
+          : undefined
+      }
+      summary={(index) => {
+        const stop = stops[index ?? 0]
+        return (
+          <>
+            <span className={styles.chip}>{stop?.label}</span>
+            <span className={styles.summaryText}>{stop?.hint}</span>
+          </>
+        )
+      }}
+    />
   )
 }

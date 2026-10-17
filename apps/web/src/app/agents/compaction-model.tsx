@@ -56,6 +56,7 @@ export function CompactionModelField({
         <EffortSlider
           efforts={chosen.reasoning.efforts}
           defaultEffort={chosen.reasoning.defaultEffort}
+          material={false}
           value={
             chosen.reasoning.efforts.some((effort) => effort.id === value.reasoningEffort)
               ? (value.reasoningEffort ?? '')

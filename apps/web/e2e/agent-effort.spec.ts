@@ -40,17 +40,22 @@ for (const width of [375, 1440]) {
     })
 
     await page.goto(`/agents/${targetAgentId}`)
-    const scale = page.getByRole('radiogroup', { name: '思考强度' })
+    const scale = page.getByRole('slider', { name: '思考强度' })
     await expect(scale).toBeVisible()
     // Unset means the model's own default, which the scale names.
-    await expect(scale.getByRole('radio', { name: '默认', exact: true })).toBeChecked()
+    await expect(scale).toHaveAttribute('aria-valuetext', '默认')
     await expect(page.getByText('使用模型的默认强度（中）')).toBeVisible()
-    await scale.getByRole('radio', { name: '默认', exact: true }).focus()
+    await scale.focus()
     await page.keyboard.press('ArrowRight')
     await page.keyboard.press('ArrowRight')
     await page.keyboard.press('ArrowRight')
-    await expect(scale.getByRole('radio', { name: '高', exact: true })).toBeChecked()
+    await expect(scale).toHaveAttribute('aria-valuetext', '高')
     await expect(page.getByText('复杂问题想得更深')).toBeVisible()
+    // End reaches the deepest level; a label selects directly.
+    await page.keyboard.press('End')
+    await expect(scale).toHaveAttribute('aria-valuetext', '最高')
+    await page.getByRole('button', { name: '高', exact: true }).click()
+    await expect(scale).toHaveAttribute('aria-valuetext', '高')
     await page.screenshot({ path: `.local/agent-effort-${width}.png`, animations: 'disabled' })
     // The save bar collects the change with the other unsaved fields.
     await page
