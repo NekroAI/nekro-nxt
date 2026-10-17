@@ -552,11 +552,14 @@ export class UnrecoverableSessionError extends Error {
   }
 }
 
-/** A missing runtime dependency defers recovery while preserving the Episode and its pending input. */
-export class DeferredSessionError extends Error {
+/**
+ * The Episode's Agent Revision names a model provider this host no longer runs, so its Session cannot be resumed.
+ * Recovery hands the Episode off to the agent's current Revision; the history stays where it was.
+ */
+export class SessionModelUnavailableError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options)
-    this.name = 'DeferredSessionError'
+    this.name = 'SessionModelUnavailableError'
   }
 }
 
@@ -1194,6 +1197,7 @@ export class ChannelRuntime {
             .map((eventId) => this.#coreRepository.getChannelEvent(eventId))
             .filter((event): event is ChannelEventRecord => event !== undefined) ?? []
         let dshSessionId: string
+        let rolledOver = false
         try {
           dshSessionId = await this.#sessionDriver.createSession({
             episodeId: episode.id,
@@ -1216,26 +1220,35 @@ export class ChannelRuntime {
                 }),
           })
         } catch (error) {
-          if (error instanceof DeferredSessionError) {
-            this.#deferredRecoveryEpisodes.add(episode.id)
-            console.warn('[nekro-nxt] 对话使用的模型供应商尚未启用，已暂缓恢复，原记录保留。')
+          if (error instanceof SessionModelUnavailableError) {
+            const resumed = await this.#handOffUnresumable(episode, error)
+            if (resumed === undefined) {
+              this.#deferredRecoveryEpisodes.add(episode.id)
+              return
+            }
+            if (resumed.dshSessionId === undefined) throw new Error(`Handed-off Episode has no Session: ${resumed.id}`)
+            episode = resumed
+            dshSessionId = resumed.dshSessionId
+            rolledOver = true
+          } else {
+            if (!(error instanceof UnrecoverableSessionError)) throw error
+            console.error(`[nekro-nxt] 频道 ${episode.channelId} 的对话记录无法读取，已结束这段对话：`, error)
+            this.#feedback.markEndReason(episode.id, 'cancelled')
+            await this.#feedback.cleanupEpisodeFeedback(episode.id)
+            this.#runtimeRepository.closeEpisode(
+              episode.id,
+              'unrecoverable-session',
+              episode.lastAdmittedEventId ?? episode.openedAtEventId,
+              this.#timestamp(),
+            )
+            this.#deferredRecoveryEpisodes.delete(episode.id)
             return
           }
-          if (!(error instanceof UnrecoverableSessionError)) throw error
-          console.error(`[nekro-nxt] 频道 ${episode.channelId} 的对话记录无法读取，已结束这段对话：`, error)
-          this.#feedback.markEndReason(episode.id, 'cancelled')
-          await this.#feedback.cleanupEpisodeFeedback(episode.id)
-          this.#runtimeRepository.closeEpisode(
-            episode.id,
-            'unrecoverable-session',
-            episode.lastAdmittedEventId ?? episode.openedAtEventId,
-            this.#timestamp(),
-          )
-          this.#deferredRecoveryEpisodes.delete(episode.id)
-          return
         }
-        if (episode.status === 'opening') episode = this.#runtimeRepository.activateEpisode(episode.id, dshSessionId)
-        else if (episode.dshSessionId !== dshSessionId) {
+        // A handed-off Episode is already active; the old one's pending input follows it below.
+        if (!rolledOver && episode.status === 'opening') {
+          episode = this.#runtimeRepository.activateEpisode(episode.id, dshSessionId)
+        } else if (!rolledOver && episode.dshSessionId !== dshSessionId) {
           throw new Error(`Recovered DSH Session identity changed for Episode ${episode.id}.`)
         }
         report.resumedEpisodes += 1
@@ -1715,6 +1728,26 @@ export class ChannelRuntime {
     const event = events.find((candidate) => this.#triggered(binding, candidate))
     // One Admission batches the whole eligible backlog. Replaying the stale list would duplicate it.
     if (event !== undefined) await this.#admit(binding, event, events)
+  }
+
+  /**
+   * Hands an Episode whose model provider is gone off to the agent's current Revision, writing the compaction from
+   * its durable history. Undefined when the Episode already runs the current Revision or is still opening; it then
+   * waits for the agent to be repaired, as an isolated agent does.
+   */
+  async #handOffUnresumable(episode: EpisodeRecord, cause: Error): Promise<EpisodeRecord | undefined> {
+    const current = this.#coreRepository.getAgent(episode.agentId)
+    if (episode.status !== 'active' || current === undefined || current.revision.id === episode.agentRevisionId) {
+      console.warn(`[nekro-nxt] 频道 ${episode.channelId} 的对话暂缓恢复：${cause.message}`)
+      return undefined
+    }
+    const anchorId = episode.lastAdmittedEventId ?? episode.openedAtEventId
+    const anchor = this.#coreRepository.getChannelEvent(anchorId)
+    if (!anchor) throw new Error(`Episode anchor Event no longer exists: ${anchorId}`)
+    console.warn(
+      `[nekro-nxt] 频道 ${episode.channelId} 的对话无法按原配置恢复，压缩后按智能体当前配置开新会话：${cause.message}`,
+    )
+    return this.#rolloverIfNeeded(episode, anchor, 'incompatible-revision')
   }
 
   async #rolloverIfNeeded(

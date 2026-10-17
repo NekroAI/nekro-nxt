@@ -67,7 +67,13 @@ import type {
   PhysicalDeliveryRecord,
   RuntimeRepository,
 } from '../src/index.ts'
-import { ChannelRuntime, ChannelStopConflictError, UnrecoverableSessionError, isTriggered } from '../src/index.ts'
+import {
+  ChannelRuntime,
+  ChannelStopConflictError,
+  SessionModelUnavailableError,
+  UnrecoverableSessionError,
+  isTriggered,
+} from '../src/index.ts'
 
 class MemoryCoreRepository implements CoreRepository {
   readonly agents = new Map<AgentId, CreateAgentCommit>()
@@ -2195,6 +2201,38 @@ describe('ChannelRuntime M1 lane', () => {
       status: 'closed',
       closeReason: 'unrecoverable-session',
     })
+  })
+
+  it('hands an Episode whose model provider is gone off to the current Revision instead of leaving the channel silent', async () => {
+    const context = await setup()
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const current = context.core.reviseAgent(context.agent.definition.id, context.agent.revision.id, {
+      displayName: '小奈',
+      persona: '换了模型供应商。',
+      model: { provider: 'other-provider', model: 'v5' },
+    })
+    const createSession = context.sessionDriver.createSession.bind(context.sessionDriver)
+    context.sessionDriver.createSession = (input) =>
+      input.agentRevisionId === episode.agentRevisionId
+        ? Promise.reject(new SessionModelUnavailableError('模型供应商 deepseek 尚未启用。'))
+        : createSession(input)
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await expect(context.runtime.recover()).resolves.toMatchObject({ resumedEpisodes: 1 })
+    } finally {
+      warnings.mockRestore()
+    }
+    expect(context.runtimeRepository.getEpisode(episode.id)).toMatchObject({
+      status: 'closed',
+      closeReason: 'incompatible-revision',
+    })
+    const active = [...context.runtimeRepository.episodes.values()].find(({ status }) => status === 'active')
+    expect(active).toMatchObject({ agentRevisionId: current.revision.id })
+    expect(context.runtimeRepository.handoffs).toHaveLength(1)
+    // The channel keeps answering in the new Session.
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'after-handoff', 104))
+    expect(context.runtimeRepository.getEpisode(active!.id)?.lastAdmittedEventId).toBeDefined()
   })
 
   it('stops a live Episode only after the owned DSH Session reaches its cancellation boundary', async () => {

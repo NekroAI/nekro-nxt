@@ -118,7 +118,7 @@ import {
   type SendMessageInput,
   type SendMessageResult,
   UnrecoverableSessionError,
-  DeferredSessionError,
+  SessionModelUnavailableError,
 } from '@nekro-nxt/channel-runtime'
 import {
   type ExtensionCapabilities,
@@ -3802,7 +3802,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       .resolveModelInfo(revision.model.provider, revision.model.model)
       .catch((cause: unknown) => {
         if (cause instanceof Error && 'code' in cause && cause.code === 'NO_ADAPTER')
-          throw new DeferredSessionError('对话使用的模型供应商尚未启用，原记录保留。', { cause })
+          throw new SessionModelUnavailableError(`模型供应商 ${revision.model.provider} 尚未启用。`, { cause })
         throw cause
       })
     const supportsImage = modelInfo.inputModalities?.includes('image') === true
