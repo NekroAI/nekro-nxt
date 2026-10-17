@@ -1,4 +1,5 @@
 import { fixtureReleaseId, installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
+import { installChannelReasoningRoutes } from '../e2e/fixtures/workspace.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -549,6 +550,7 @@ test.describe('NekroNxt browser projections', () => {
     })
     const parsedSnapshot = HostApiContracts.snapshot.response.parse(snapshot)
     await installWorkspaceStubs(page)
+    await installChannelReasoningRoutes(page, () => parsedSnapshot)
     await installSnapshotHealthRoutes(page, parsedSnapshot)
     await page.route('**/api/snapshot', (request) =>
       request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(parsedSnapshot) }),

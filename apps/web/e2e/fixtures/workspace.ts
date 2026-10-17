@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import type { HostApiResponse } from '@nekro-nxt/contracts'
+import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 
 type Snapshot = HostApiResponse<'snapshot'>
 
@@ -28,6 +28,7 @@ export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapsho
     const channelId = new URL(route.request().url()).pathname.split('/')[3]
     return json(route, { channelId, activity: { unreadCount: 0, unreadCapped: false } })
   })
+  await installChannelReasoningRoutes(page, snapshot)
   // No channel prompt unless a test registers its own route after this one.
   await page.route('**/api/channels/*/prompt', (route) =>
     json(route, {
@@ -71,6 +72,28 @@ export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapsho
           current: true,
         },
       ],
+    })
+  })
+}
+
+/** General UI fixtures use models without reasoning controls; budget journeys install their own real provider. */
+export async function installChannelReasoningRoutes(page: Page, snapshot: () => Snapshot): Promise<void> {
+  await page.route('**/api/channels/*/reasoning', (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    const current = snapshot()
+    const channelId = new URL(route.request().url()).pathname.split('/')[3]
+    const channel = current.channels.find((item) => item.id === channelId)
+    const agent = current.agents.find((item) => item.id === channel?.boundAgentId)
+    if (!agent) return route.fallback()
+    const { provider, model } = agent.model
+    return route.fulfill({
+      json: HostApiContracts.getChannelReasoning.parseResponse({
+        provider,
+        model,
+        modelName: current.models.find((item) => item.provider === provider && item.id === model)?.name ?? model,
+        effort: null,
+        revision: null,
+      }),
     })
   })
 }
