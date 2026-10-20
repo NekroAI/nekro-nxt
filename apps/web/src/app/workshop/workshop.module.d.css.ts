@@ -12,6 +12,17 @@ declare const styles: {
   readonly cellAgentText: string
   readonly chevron: string
   readonly config: string
+  readonly configHistory: string
+  readonly configHistoryCurrent: string
+  readonly configHistoryDiff: string
+  readonly configHistoryItem: string
+  readonly configHistoryList: string
+  readonly configHistoryOld: string
+  readonly configHistoryReason: string
+  readonly configHistoryRow: string
+  readonly configHistorySource: string
+  readonly configHistoryTitle: string
+  readonly configHistoryToggle: string
   readonly contributionChips: string
   readonly contributionName: string
   readonly contributions: string

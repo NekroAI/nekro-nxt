@@ -84,6 +84,7 @@ test.describe('workshop', () => {
       route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
     )
     await page.route('**/api/settings/credentials', (route) => route.fulfill({ json: credentialsView() }))
+    await page.route('**/api/extensions/*/config-versions', (route) => route.fulfill({ json: { versions: [] } }))
     await page.goto(`${baseUrl}/workshop`)
     return page
   }
@@ -329,6 +330,98 @@ test.describe('workshop', () => {
       await expect
         .poll(() => saved)
         .toEqual({ config: { city: '另一市' }, credentialBindings: { apiKey: weatherCredentialId } })
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('lists the configuration history of one agent and reverts to an earlier version after a confirmation', async () => {
+    const schema = {
+      type: 'object' as const,
+      dict: {
+        city: { type: 'string' as const, meta: { description: '默认城市', default: '示例市' } },
+        apiKey: { type: 'string' as const, meta: { description: 'API Key', role: 'secret' } },
+      },
+    }
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id !== summaryExtensionId
+          ? extension
+          : {
+              ...extension,
+              revisions: extension.revisions.map((revision) => ({ ...revision, agentConfigSchema: schema })),
+              activations: extension.activations.map((activation) => ({
+                ...activation,
+                config: { city: '另一市' },
+                configuredSecrets: ['apiKey'],
+                boundCredentials: { apiKey: weatherCredentialId },
+              })),
+            },
+      ),
+    }
+    const now = Date.now()
+    const version = (id: number, fields: object) => ({
+      id,
+      extensionId: summaryExtensionId,
+      layer: 'agent',
+      agentId: targetAgentId,
+      version: id,
+      config: {},
+      source: 'console',
+      actorAgentId: null,
+      requesterMemberId: null,
+      reason: null,
+      createdAt: now - (10 - id) * 3_600_000,
+      ...fields,
+    })
+    const versions = [
+      version(3, {
+        config: { city: '另一市' },
+        configuredSecrets: ['apiKey'],
+        boundCredentials: { apiKey: weatherCredentialId },
+        source: 'agent',
+        actorAgentId: targetAgentId,
+        reason: '换成团队共用的天气密钥',
+      }),
+      version(2, { config: { city: '示例市' }, configuredSecrets: ['apiKey'] }),
+      version(1, { config: { city: '示例市' } }),
+      { ...version(9, { config: { region: '北区' } }), layer: 'host', agentId: null },
+    ]
+    const page = await openWorkshop(snapshot)
+    const reverts: { path: string; body: unknown }[] = []
+    await page.route(`**/api/extensions/${summaryExtensionId}/config-versions`, (route) =>
+      route.fulfill({ json: { versions } }),
+    )
+    await page.route(`**/api/extensions/${summaryExtensionId}/config-versions/*/revert`, async (route) => {
+      reverts.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() })
+      await route.fulfill({ json: { version: { ...versions[1], id: 4, version: 4, source: 'revert' } } })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      await page.getByRole('tab', { name: '配置' }).click()
+      const history = page.getByRole('region', { name: '配置历史' })
+      // Only this agent's versions; the host layer's live under its own configuration.
+      await expect(history.getByRole('listitem')).toHaveCount(3)
+      await expect(history).toContainText('智能体「资料员」')
+      await expect(history).toContainText('换成团队共用的天气密钥')
+      await expect(history).toContainText('后台')
+      await history.getByRole('button', { name: /智能体「资料员」/u }).click()
+      await expect(history).toContainText('默认城市')
+      await expect(history).toContainText('示例市 → 另一市')
+      await expect(history).toContainText('已设置 → 天气服务')
+      await history.getByRole('button', { name: /后台/u }).first().click()
+      await expect(history).toContainText('未设置 → 已设置')
+      await page.screenshot({ path: '.local/browser-test-results/extension-config-history.png' })
+
+      // The current version cannot be restored onto itself.
+      await expect(history.getByRole('button', { name: '恢复到这一版' })).toHaveCount(2)
+      await history.getByRole('button', { name: '恢复到这一版' }).first().click()
+      const dialog = page.getByRole('dialog', { name: '恢复到这一版？' })
+      await expect(dialog).toContainText('的配置会保存为最新的一版。')
+      await dialog.getByRole('button', { name: '恢复' }).click()
+      await expect(dialog).toBeHidden()
+      expect(reverts).toEqual([{ path: `/api/extensions/${summaryExtensionId}/config-versions/2/revert`, body: {} }])
     } finally {
       await page.close()
     }

@@ -777,3 +777,110 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* —— 配置历史 —— */
+.configHistory {
+  display: grid;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+
+.configHistoryTitle {
+  margin: 0;
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.configHistoryList {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.configHistoryItem {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.configHistoryRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  min-height: var(--control);
+}
+
+.configHistoryToggle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: var(--t-note);
+  text-align: start;
+  cursor: pointer;
+}
+
+.configHistoryToggle svg {
+  flex: none;
+  color: var(--muted);
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.configHistoryToggle svg[data-open='true'] {
+  transform: rotate(90deg);
+}
+
+.configHistorySource {
+  color: var(--muted);
+}
+
+.configHistoryCurrent {
+  color: var(--accent);
+}
+
+.configHistoryReason {
+  margin: 0;
+  padding-left: var(--s-5);
+  color: var(--muted);
+  font: var(--t-note);
+  overflow-wrap: anywhere;
+}
+
+.configHistoryDiff {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: var(--s-1) 0 var(--s-2) var(--s-5);
+  font: var(--t-note);
+}
+
+.configHistoryDiff > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.configHistoryDiff dt {
+  color: var(--muted);
+}
+
+.configHistoryDiff dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.configHistoryOld {
+  color: var(--muted);
+  text-decoration: line-through;
+}

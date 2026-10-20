@@ -63,6 +63,7 @@ import {
   proposeSlug,
   providesLabel,
 } from './workshop-model.js'
+import { ConfigHistory, useConfigVersions } from './config-history.js'
 import { ExtensionData } from './extension-data.js'
 import { LineageView } from './lineage-view.js'
 import { PublishDialog } from './publish-dialog.js'
@@ -567,12 +568,14 @@ function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSu
   const agentId = enabledAgents.find((agent) => agent.id === chosen)?.id ?? enabledAgents[0]?.id
   const hostConfig = extension.installation !== undefined && activeConfigSchema(extension) !== undefined
   const agentConfig = agentId !== undefined && activeConfigSchema(extension, agentId) !== undefined
+  const history = useConfigVersions(extension)
   return (
     <>
       {hostConfig ? (
         <PropertyGroup title="本机配置" tip="对整台机器生效，所有智能体共用。">
           <div className={styles.config}>
             <ExtensionConfigEditor key="host" extension={extension} />
+            <ConfigHistory extension={extension} versions={history.versions} onReverted={history.reload} />
           </div>
         </PropertyGroup>
       ) : null}
@@ -593,6 +596,13 @@ function ExtensionSettings({ extension }: { readonly extension: LocalExtensionSu
         >
           <div className={styles.config}>
             <ExtensionConfigEditor key={agentId} extension={extension} agentId={agentId} />
+            <ConfigHistory
+              key={`history-${agentId ?? ''}`}
+              extension={extension}
+              agentId={agentId}
+              versions={history.versions}
+              onReverted={history.reload}
+            />
           </div>
         </PropertyGroup>
       ) : null}
