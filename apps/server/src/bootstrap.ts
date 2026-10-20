@@ -1272,7 +1272,9 @@ export class NekroRuntime {
       notificationsPort.current = notifications
       await providerAccess.prepare(async () => {
         try {
-          return (await host.getLlmProviderSettings()).providers.map((provider) => provider.provider)
+          return (await host.getLlmProviderSettings()).providers
+            .filter((provider) => provider.configured)
+            .map((provider) => provider.provider)
         } catch {
           // Hosts without model settings have no providers to open.
           return []

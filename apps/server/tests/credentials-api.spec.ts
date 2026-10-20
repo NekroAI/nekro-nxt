@@ -51,9 +51,10 @@ describe('model provider access', () => {
       getLlmProviderSettings: () =>
         Promise.resolve({
           providers: [
-            { provider: 'open', active: true },
-            { provider: 'closed', active: true },
-            { provider: 'unkeyed', active: true, credential: { configured: false } },
+            { provider: 'open', active: true, configured: true },
+            { provider: 'closed', active: true, configured: true },
+            { provider: 'catalog-only', active: false, configured: false },
+            { provider: 'unkeyed', active: true, configured: true, credential: { configured: false } },
           ],
         }),
       listAvailableLlmModels: () =>

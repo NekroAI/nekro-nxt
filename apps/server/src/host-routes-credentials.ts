@@ -88,11 +88,14 @@ export const modelProviderAccessList = async (runtime: NekroRuntime): Promise<Mo
   } catch {
     return []
   }
-  return providers.map((provider) => ({
-    provider: provider.provider,
-    name: provider.displayName,
-    open: runtime.modelProviderAccess.isOpen(provider.provider),
-  }))
+  // The catalog lists every provider DSH knows; only those configured in 设置 → 模型 can be opened.
+  return providers
+    .filter((provider) => provider.configured)
+    .map((provider) => ({
+      provider: provider.provider,
+      name: provider.displayName,
+      open: runtime.modelProviderAccess.isOpen(provider.provider),
+    }))
 }
 
 export const credentialsView = async (runtime: NekroRuntime): Promise<CredentialsView> => ({

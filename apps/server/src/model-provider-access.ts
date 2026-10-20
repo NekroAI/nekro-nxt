@@ -5,7 +5,8 @@ import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 
 const SETTING_KEY = 'model-provider-access'
 
-const StoredSchema = z.object({ version: z.literal(1), open: z.array(z.string()) }).strict()
+// Version 1 recorded every catalog provider instead of the configured ones; reading it again re-records them.
+const StoredSchema = z.object({ version: z.literal(2), open: z.array(z.string()) }).strict()
 
 interface SettingsRepository {
   getSystemSetting(key: string): SystemSettingRecord | undefined
@@ -56,7 +57,7 @@ export class ModelProviderAccess {
   }
 
   #write(open: readonly string[], revision: number | undefined): void {
-    this.#repository.putSystemSetting(SETTING_KEY, { version: 1, open: [...open].sort() }, revision, this.#now())
+    this.#repository.putSystemSetting(SETTING_KEY, { version: 2, open: [...open].sort() }, revision, this.#now())
     this.#open = new Set(open)
   }
 }
@@ -67,6 +68,7 @@ export interface ModelCatalog {
     readonly providers: readonly {
       readonly provider: string
       readonly active: boolean
+      readonly configured: boolean
       readonly credential?: { readonly configured: boolean }
     }[]
   }>
@@ -92,7 +94,11 @@ export const openModelOptions = async (
   const usable = new Set(
     (await catalog.getLlmProviderSettings()).providers
       .filter(
-        (provider) => provider.active && provider.credential?.configured !== false && access.isOpen(provider.provider),
+        (provider) =>
+          provider.configured &&
+          provider.active &&
+          provider.credential?.configured !== false &&
+          access.isOpen(provider.provider),
       )
       .map((provider) => provider.provider),
   )
