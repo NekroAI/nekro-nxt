@@ -2,9 +2,11 @@ import {
   AgentIdSchema,
   AuthoringTaskIdSchema,
   CredentialIdSchema,
+  CredentialNameSchema,
   configFields,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
+  JsonValueSchema,
   type AgentId,
   type ChannelId,
   type CommunityPermissionItem,
@@ -21,6 +23,7 @@ import {
   highestPermissionLevel,
   layerConfigSchema,
   parseExtensionImport,
+  type ExtensionManifest,
   summarizePermissions,
   type PermissionItem,
   type PermissionLevel,
@@ -32,12 +35,41 @@ import { createExtensionRevisionExport } from '../host-route-support.js'
 import { ExtensionConfigMigration } from './config-migration.js'
 import { namedCredentialReference } from '../credentials-library.js'
 import { extensionVersions } from './versions.js'
+import type { CredentialRecord } from '@nekro-nxt/storage-sqlite'
+import type {
+  ExtensionConfigChange,
+  ExtensionConfigOwner,
+  ExtensionConfigWriteMeta,
+  LeveledConfigField,
+} from './config-service.js'
 
 /** Who asks for an extension action. Console and administrators act for themselves; agents are bound by autonomy. */
 export type ExtensionActor =
   | { readonly kind: 'console' }
   | { readonly kind: 'administrator'; readonly label: string }
-  | { readonly kind: 'agent'; readonly agentId: AgentId; readonly channelId?: ChannelId }
+  | {
+      readonly kind: 'agent'
+      readonly agentId: AgentId
+      readonly channelId?: ChannelId
+      /**
+       * Who asked the agent in this turn: an administrator, or a member (also when the agent acts on its own).
+       * Configuration changes depend on it; absent counts as a member.
+       */
+      readonly requester?: 'admin' | 'member'
+    }
+
+/** Non-secret values by field; `null` puts a field back to its default. */
+const ConfigValuesSchema = z.record(z.string().min(1).max(64), JsonValueSchema)
+/** Secret fields bound to a named credential by name; `null` clears the field. */
+const ConfigCredentialsSchema = z.record(z.string().min(1).max(64), CredentialNameSchema.nullable())
+/** Who a configuration change comes from, recorded with the version it writes. */
+const ConfigOrigin = {
+  /** The agent that asked for the change. */
+  actorAgentId: AgentIdSchema.optional(),
+  /** The channel member whose message led to it. */
+  requesterMemberId: z.string().min(1).max(128).optional(),
+  reason: z.string().max(500).optional(),
+}
 
 /**
  * Every lifecycle step an agent, a chat command or the console can ask for; one implementation serves all three.
@@ -51,7 +83,15 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     slug: z.string().optional(),
     description: z.string().optional(),
   }),
-  z.object({ kind: z.literal('enable'), extensionId: ExtensionIdSchema, agentId: AgentIdSchema }),
+  z.object({
+    kind: z.literal('enable'),
+    extensionId: ExtensionIdSchema,
+    agentId: AgentIdSchema,
+    /** Initial agent configuration, judged together with enabling. */
+    values: ConfigValuesSchema.optional(),
+    credentials: ConfigCredentialsSchema.optional(),
+    ...ConfigOrigin,
+  }),
   z.object({ kind: z.literal('disable'), extensionId: ExtensionIdSchema, agentId: AgentIdSchema }),
   z.object({ kind: z.literal('switch'), extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }),
   z.object({ kind: z.literal('revert'), extensionId: ExtensionIdSchema }),
@@ -90,6 +130,26 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
    * Lets an agent use a named credential whose automatic use is off (智能体扩展配置与凭据 C3): the approval stays on the
    * credential. With a task and a field, that field of the task's test configuration is bound to it as well.
    */
+  /**
+   * Changes one layer of an extension's configuration (智能体扩展配置与凭据 C10). The agent layer names the agent;
+   * the host layer is shared by every agent.
+   */
+  z.object({
+    kind: z.literal('configure'),
+    extensionId: ExtensionIdSchema,
+    layer: z.enum(['host', 'agent']),
+    agentId: AgentIdSchema.optional(),
+    values: ConfigValuesSchema.default({}),
+    credentials: ConfigCredentialsSchema.default({}),
+    ...ConfigOrigin,
+  }),
+  /** Writes an earlier configuration version again (C12). */
+  z.object({
+    kind: z.literal('revert-config'),
+    extensionId: ExtensionIdSchema,
+    versionId: z.number().int().positive(),
+    ...ConfigOrigin,
+  }),
   z.object({
     kind: z.literal('use-credential'),
     credentialId: CredentialIdSchema,
@@ -125,6 +185,13 @@ export interface ExtensionActionResult {
 
 const OUTWARD: readonly ExtensionAction['kind'][] = ['community-publish', 'community-withdraw']
 
+/** A configuration change checked against the schema, with the named credentials it binds. */
+export interface ConfigPlan {
+  readonly owner: ExtensionConfigOwner
+  readonly change: ExtensionConfigChange
+  readonly credentials: readonly { readonly key: string; readonly record: CredentialRecord }[]
+}
+
 const slugFrom = (name: string, fallback: string): string => {
   const ascii = name
     .toLowerCase()
@@ -151,6 +218,19 @@ export class ExtensionActionService {
     const { summary, level, added, affectsOthers } = this.#describe(action, actor)
     const base = { summary, level, added }
     if (actor.kind === 'console') return { ...base, decision: 'run' }
+    if (action.kind === 'configure' || action.kind === 'revert-config') {
+      let plan: ConfigPlan
+      try {
+        plan = this.configPlan(action)
+      } catch (error) {
+        return { ...base, decision: 'console', reason: error instanceof Error ? error.message : String(error) }
+      }
+      if (actor.kind === 'agent') {
+        const scope = this.#agentScope(action, actor.agentId)
+        if (scope !== undefined) return { ...base, decision: 'console', reason: scope }
+      }
+      return { ...base, ...this.#configVerdict(plan, actor) }
+    }
     // Using a credential is not extension work: every autonomy level may ask, and only the credential needs a yes.
     if (action.kind === 'use-credential') {
       if (actor.kind === 'administrator') return { ...base, decision: 'run' }
@@ -158,6 +238,8 @@ export class ExtensionActionService {
       if (scope !== undefined) return { ...base, decision: 'console', reason: scope }
       return { ...base, decision: 'request', reason: '这个凭据需要管理员同意后才能使用。' }
     }
+    const initial = action.kind === 'enable' ? this.#initialConfigVerdict(action, actor) : undefined
+    if (initial?.decision === 'console') return { ...base, ...initial }
     if (actor.kind === 'administrator') {
       return level === 'high'
         ? { ...base, decision: 'console', reason: '涉及高风险权限，需要在 NekroNXT 后台确认。' }
@@ -191,13 +273,183 @@ export class ExtensionActionService {
     if (level === 'elevated') {
       return { ...base, decision: 'request', reason: '需要提升级权限，需要管理员确认。' }
     }
+    if (initial !== undefined) return { ...base, ...initial }
     return { ...base, decision: 'run' }
   }
 
   /**
-   * Why this agent cannot have the extension enabled yet. Checks only shared host configuration and this agent's own
-   * configuration, and never returns stored values. The agent's own credentials are filled after enabling, so they
-   * never block it; see `enablementNote`.
+   * What a configuration change writes and which fields and credentials it touches; throws a message for the agent
+   * when the change does not fit the schema or names a credential that does not exist.
+   */
+  configPlan(action: Extract<ExtensionAction, { readonly kind: 'configure' | 'revert-config' }>): ConfigPlan {
+    const config = this.#runtime.extensionConfig
+    if (action.kind === 'revert-config') {
+      const record = config.version(action.versionId)
+      if (record.extensionId !== action.extensionId) throw new Error('没有这个配置版本。')
+      const owner: ExtensionConfigOwner = {
+        extensionId: record.extensionId,
+        layer: record.layer,
+        ...(record.agentId === null ? {} : { agentId: record.agentId }),
+      }
+      const change = config.revertChange(record)
+      return { owner, change: { ...change, changed: config.revertFields(record) }, credentials: [] }
+    }
+    if (action.layer === 'agent' && action.agentId === undefined) throw new Error('修改智能体配置要指明智能体。')
+    const owner: ExtensionConfigOwner = {
+      extensionId: action.extensionId,
+      layer: action.layer,
+      ...(action.layer === 'agent' ? { agentId: action.agentId } : {}),
+    }
+    const { ids, records } = this.#credentialIds(action.credentials)
+    return { owner, change: config.planChange(owner, action.values, ids), credentials: records }
+  }
+
+  /** Configuration decisions by field level, layer, requester and credential (智能体扩展配置与凭据 C10、C11). */
+  #configVerdict(
+    plan: ConfigPlan,
+    actor: Exclude<ExtensionActor, { readonly kind: 'console' }>,
+  ): Pick<ExtensionActionAssessment, 'decision' | 'reason'> {
+    return this.#levelVerdict(
+      {
+        layer: plan.owner.layer,
+        changed: plan.change.changed,
+        bound: plan.credentials.filter(({ key }) => plan.change.bindings[key] !== null),
+      },
+      actor,
+    )
+  }
+
+  /**
+   * The decision for changing one field of `level` in `layer`; a secret field counts as bound to a credential the
+   * agent may use without asking. Used to show the agent what configure would do.
+   */
+  configureDecision(
+    layer: ExtensionConfigOwner['layer'],
+    field: LeveledConfigField,
+    actor: Exclude<ExtensionActor, { readonly kind: 'console' }>,
+  ): ExtensionActionAssessment['decision'] {
+    return this.#levelVerdict({ layer, changed: [field], bound: [] }, actor).decision
+  }
+
+  #levelVerdict(
+    input: {
+      readonly layer: ExtensionConfigOwner['layer']
+      readonly changed: readonly LeveledConfigField[]
+      readonly bound: readonly { readonly key: string; readonly record: CredentialRecord }[]
+    },
+    actor: Exclude<ExtensionActor, { readonly kind: 'console' }>,
+  ): Pick<ExtensionActionAssessment, 'decision' | 'reason'> {
+    const levels = new Set(input.changed.map((entry) => entry.level))
+    const adminOnly = input.changed.filter((entry) => entry.level === 'admin')
+    if (adminOnly.length > 0) {
+      return {
+        decision: 'console',
+        reason: `「${adminOnly.map((entry) => entry.field.title).join('」「')}」只能由管理员在后台修改。`,
+      }
+    }
+    if (actor.kind === 'administrator') return { decision: 'run' }
+    const capabilities = this.#runtime.repository.getAgent(actor.agentId)?.revision.capabilities
+    const bound = input.bound
+    if (actor.requester !== 'admin') {
+      if ((capabilities?.extensionConfigRequesters ?? 'admins') === 'admins') {
+        return {
+          decision: 'console',
+          reason: '这个智能体只接受管理员提出的配置修改；请告诉对方需要管理员来提，或者由管理员在后台修改。',
+        }
+      }
+      if (input.layer === 'host' || levels.has('network') || levels.has('secret')) {
+        return {
+          decision: 'console',
+          reason: '本机配置、网络地址和凭据只接受管理员提出的修改；请告诉对方需要管理员来提。',
+        }
+      }
+    }
+    if ((capabilities?.extensionAutonomy ?? 'manual') === 'manual') {
+      return { decision: 'console', reason: '这个智能体的扩展自主权是「手动」，需要在工坊里修改配置。' }
+    }
+    if (input.layer === 'host') {
+      return { decision: 'request', reason: '本机配置由所有智能体共用，需要管理员确认。' }
+    }
+    if (levels.has('network')) {
+      return { decision: 'request', reason: '会改变扩展可以访问的地址，需要管理员确认。' }
+    }
+    const library = this.#runtime.credentialLibrary
+    for (const { record } of bound) {
+      if (!library.inScope(record, actor.agentId)) {
+        return { decision: 'console', reason: `凭据「${record.name}」不对你开放。` }
+      }
+    }
+    const waiting = bound.filter(({ record }) => library.needsApproval(record, actor.agentId))
+    if (waiting.length > 0) {
+      return {
+        decision: 'request',
+        reason: `凭据「${waiting.map(({ record }) => record.name).join('」「')}」需要管理员同意后才能使用。`,
+      }
+    }
+    if (capabilities?.extensionAutonomy === 'confirm') return { decision: 'request', reason: '需要管理员确认。' }
+    return { decision: 'run' }
+  }
+
+  /** Initial values given with `enable` are judged like a change to the agent's own configuration. */
+  #initialConfigVerdict(
+    action: Extract<ExtensionAction, { readonly kind: 'enable' }>,
+    actor: Exclude<ExtensionActor, { readonly kind: 'console' }>,
+  ): Pick<ExtensionActionAssessment, 'decision' | 'reason'> | undefined {
+    if (action.values === undefined && action.credentials === undefined) return undefined
+    let plan: ConfigPlan
+    try {
+      plan = this.#initialPlan(action)
+    } catch (error) {
+      return { decision: 'console', reason: error instanceof Error ? error.message : String(error) }
+    }
+    const verdict = this.#configVerdict(plan, actor)
+    return verdict.decision === 'run' ? undefined : verdict
+  }
+
+  #initialPlan(action: Extract<ExtensionAction, { readonly kind: 'enable' }>): ConfigPlan {
+    const owner: ExtensionConfigOwner = { extensionId: action.extensionId, layer: 'agent', agentId: action.agentId }
+    const { ids, records } = this.#credentialIds(action.credentials ?? {})
+    return {
+      owner,
+      change: this.#runtime.extensionConfig.planChange(
+        owner,
+        action.values ?? {},
+        ids,
+        this.#runtime.repository.getActivation(action.agentId, action.extensionId)?.config,
+      ),
+      credentials: records,
+    }
+  }
+
+  #credentialIds(credentials: Readonly<Record<string, string | null>>): {
+    readonly ids: Readonly<Record<string, ExtensionConfigChange['bindings'][string]>>
+    readonly records: readonly { readonly key: string; readonly record: CredentialRecord }[]
+  } {
+    const library = this.#runtime.credentialLibrary
+    const ids: Record<string, ExtensionConfigChange['bindings'][string]> = {}
+    const records: { key: string; record: CredentialRecord }[] = []
+    for (const [key, name] of Object.entries(credentials)) {
+      if (name === null) {
+        ids[key] = null
+        continue
+      }
+      const record = library.find(name)
+      if (record === undefined) {
+        throw new Error(
+          `没有名为「${name}」的凭据。用 nekro_nxt_credential_list 查看可用的凭据，缺少时用 nekro_nxt_credential_request 请管理员添加。`,
+        )
+      }
+      ids[key] = record.id
+      records.push({ key, record })
+    }
+    return { ids, records }
+  }
+
+  /**
+   * Why this agent cannot have the extension enabled yet, when only an administrator can fix it. Checks only shared
+   * host configuration and this agent's own configuration, and never returns stored values. Required fields the agent
+   * may fill itself are reported by `enablementMissing`; its own credentials never block enabling, see
+   * `enablementNote`.
    */
   enablementProblem(agentId: AgentId, extensionId: ExtensionId): string | undefined {
     const runtime = this.#runtime
@@ -214,9 +466,46 @@ export class ExtensionActionService {
     const host = this.#layerConfig(manifest, 'host', runtime.repository.getHostInstallation(extensionId)?.config)
     if (host === undefined) return '本机配置不完整，请管理员在工坊的扩展详情里填写后重试。'
     if (host.missingSecrets) return '本机配置缺少必填凭据，请管理员在工坊的扩展详情里填写后重试。'
-    const agent = this.#layerConfig(manifest, 'agent', runtime.repository.getActivation(agentId, extensionId)?.config)
-    if (agent === undefined) return '这个扩展要求的智能体配置还缺必填项，需要管理员在工坊里处理。'
+    const missing = this.#missingAgentFields(manifest, runtime.repository.getActivation(agentId, extensionId)?.config)
+    const adminOnly = missing.filter((field) => field.adminOnly)
+    if (adminOnly.length > 0) {
+      return `智能体配置还缺只能由管理员填写的「${adminOnly.map((field) => field.title).join('」「')}」，需要管理员在工坊里处理。`
+    }
     return undefined
+  }
+
+  /**
+   * Required fields of the agent's own configuration still empty after defaults, the stored values and `values`:
+   * the agent can pass them with `enable`. Undefined when nothing is missing.
+   */
+  enablementMissing(
+    agentId: AgentId,
+    extensionId: ExtensionId,
+    values: Readonly<Record<string, JsonValue>> = {},
+  ): string | undefined {
+    const revision = this.#maybeCurrent(extensionId)
+    const manifest = revision === undefined ? undefined : this.#runtime.extensionService.revisionManifest(revision)
+    if (!manifest || !hasAgentLayer(manifest)) return undefined
+    const stored = this.#runtime.repository.getActivation(agentId, extensionId)?.config
+    const merged = {
+      ...(stored !== null && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}),
+      ...Object.fromEntries(Object.entries(values).filter(([, value]) => value !== null)),
+    }
+    const missing = this.#missingAgentFields(manifest, merged).filter((field) => !field.adminOnly)
+    return missing.length === 0
+      ? undefined
+      : `启用前还要填写智能体配置：${missing.map((field) => `「${field.title}」（${field.key}）`).join('、')}。启用时在 values 里一起提供。`
+  }
+
+  #missingAgentFields(manifest: ExtensionManifest, value: JsonValue | undefined) {
+    const schema = layerConfigSchema(manifest, 'agent')
+    const record =
+      value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
+    return configFields(schema).filter((field) => {
+      if (field.kind === 'secret' || !field.required) return false
+      const current = record[field.key] ?? field.default
+      return current === undefined || current === null || (typeof current === 'string' && current.trim() === '')
+    })
   }
 
   /** What still needs doing after enabling: the agent's own credentials can only be filled once it is enabled. */
@@ -224,19 +513,19 @@ export class ExtensionActionService {
     const revision = this.#maybeCurrent(extensionId)
     const manifest = revision === undefined ? undefined : this.#runtime.extensionService.revisionManifest(revision)
     if (!manifest || !hasAgentLayer(manifest)) return undefined
-    const agent = this.#layerConfig(
-      manifest,
-      'agent',
-      this.#runtime.repository.getActivation(agentId, extensionId)?.config,
+    const stored = this.#runtime.repository.getActivation(agentId, extensionId)?.config
+    const record =
+      stored !== null && stored !== undefined && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
+    return configFields(layerConfigSchema(manifest, 'agent')).some(
+      (field) => field.kind === 'secret' && field.required && record[field.key] === undefined,
     )
-    return agent?.missingSecrets
-      ? '启用后还要请管理员在工坊的扩展详情里填写你的凭据，填好之前用到凭据的功能不能用。'
+      ? '启用后还缺你自己的凭据：有可用的凭据时用 configure 的 credentials 绑定，没有时请管理员添加；填好之前用到凭据的功能不能用。'
       : undefined
   }
 
   /** A layer's configuration as enabling would carry it; undefined when it is incomplete. */
   #layerConfig(
-    manifest: NonNullable<ReturnType<NekroRuntime['extensionService']['revisionManifest']>>,
+    manifest: ExtensionManifest,
     layer: 'host' | 'agent',
     previous: JsonValue | undefined,
   ): { readonly missingSecrets: boolean } | undefined {
@@ -277,22 +566,58 @@ export class ExtensionActionService {
       case 'enable': {
         const problem = this.enablementProblem(action.agentId, action.extensionId)
         if (problem !== undefined) throw new Error(problem)
+        const missing = this.enablementMissing(action.agentId, action.extensionId, action.values)
+        if (missing !== undefined) throw new Error(missing)
         const revision = this.#currentRevision(action.extensionId)
         const coordinator = runtime.extensions
         const host = coordinator.hostRequirement(action.extensionId, revision.id)
         const agent = coordinator.agentRequirement(action.agentId, action.extensionId, revision.id)
+        const initial =
+          action.values === undefined && action.credentials === undefined ? undefined : this.#initialPlan(action)
         await coordinator.activate({
           agentId: action.agentId,
           extensionId: action.extensionId,
           revisionId: revision.id,
+          ...(initial === undefined ? {} : { config: this.#initialConfig(initial, action) }),
           ...(agent.approvalRequired ? { permissionApproval: { permissionDigest: agent.permissionDigest } } : {}),
           ...(host.approvalRequired ? { hostPermissionApproval: { permissionDigest: host.permissionDigest } } : {}),
         })
+        runtime.extensionConfig.recordCurrent(
+          { extensionId: action.extensionId, layer: 'agent', agentId: action.agentId },
+          this.#configMeta(action, actor),
+        )
         const note = this.enablementNote(action.agentId, action.extensionId)
         return {
           message: `已给${this.#agentName(action.agentId)}启用「${this.#extensionName(action.extensionId)}」。${note ?? ''}`,
           extensionId: action.extensionId,
           revisionId: revision.id,
+        }
+      }
+      case 'configure':
+      case 'revert-config': {
+        const plan = this.configPlan(action)
+        const where = this.#configPlace(plan.owner)
+        if (runtime.extensionConfig.stored(plan.owner) === undefined) {
+          throw new Error(
+            plan.owner.layer === 'host'
+              ? `「${this.#extensionName(plan.owner.extensionId)}」还没有安装到本机。`
+              : `还没有给${this.#agentName(plan.owner.agentId!)}启用「${this.#extensionName(plan.owner.extensionId)}」，先用 enable 启用，可以在 values 里带上配置。`,
+          )
+        }
+        if (plan.change.changed.length === 0) return { message: `${where}没有变化。`, extensionId: action.extensionId }
+        const version = await runtime.extensionConfig.writeOrRestore({
+          owner: plan.owner,
+          config: plan.change.config,
+          bindings: plan.change.bindings,
+          meta: this.#configMeta(action, actor),
+        })
+        const fields = plan.change.changed.map((entry) => entry.field.title).join('、')
+        return {
+          message:
+            action.kind === 'revert-config'
+              ? `${where}已恢复到第 ${runtime.extensionConfig.version(action.versionId).version} 版（${fields}），成为第 ${version.version} 版。`
+              : `${where}已修改：${fields}（第 ${version.version} 版）。`,
+          extensionId: action.extensionId,
         }
       }
       case 'disable': {
@@ -340,11 +665,10 @@ export class ExtensionActionService {
         )
         const config =
           action.includeConfig === true
-            ? await new ExtensionConfigMigration(runtime).apply({
-                source: action.source,
-                targetExtensionId: action.targetExtensionId,
-                mode: action.mode,
-              })
+            ? await new ExtensionConfigMigration(runtime).apply(
+                { source: action.source, targetExtensionId: action.targetExtensionId, mode: action.mode },
+                actor.kind === 'administrator' ? 'chat-admin' : actor.kind === 'agent' ? 'agent' : 'console',
+              )
             : undefined
         const { storage, index, library } = result.preview.diff
         const configNote =
@@ -385,6 +709,49 @@ export class ExtensionActionService {
   }
 
   // —— Internals ——
+
+  /** The agent-layer configuration `enable` starts with: the given values over the stored ones, credentials bound. */
+  #initialConfig(plan: ConfigPlan, action: Extract<ExtensionAction, { readonly kind: 'enable' }>): JsonValue {
+    const stored = this.#runtime.repository.getActivation(action.agentId, action.extensionId)?.config
+    const previous =
+      stored !== null && stored !== undefined && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
+    const secretKeys = configFields(layerConfigSchema(this.#runtime.extensionConfig.manifest(plan.owner), 'agent'))
+      .filter((field) => field.kind === 'secret')
+      .map((field) => field.key)
+    const secrets: Record<string, JsonValue> = {}
+    for (const key of secretKeys) {
+      const binding = plan.change.bindings[key]
+      if (binding !== undefined && binding !== null) secrets[key] = namedCredentialReference(binding)
+      else if (binding === undefined && typeof previous[key] === 'string') secrets[key] = previous[key]
+    }
+    return { ...plan.change.config, ...secrets }
+  }
+
+  /** Who a configuration write comes from, for its version record. */
+  #configMeta(
+    action: Extract<ExtensionAction, { readonly kind: 'enable' | 'configure' | 'revert-config' }>,
+    actor: ExtensionActor,
+  ): ExtensionConfigWriteMeta {
+    const actorAgentId = action.actorAgentId ?? (actor.kind === 'agent' ? actor.agentId : undefined)
+    return {
+      source:
+        action.kind === 'revert-config'
+          ? 'revert'
+          : actorAgentId !== undefined
+            ? 'agent'
+            : actor.kind === 'administrator'
+              ? 'chat-admin'
+              : 'console',
+      ...(actorAgentId === undefined ? {} : { actorAgentId }),
+      ...(action.requesterMemberId === undefined ? {} : { requesterMemberId: action.requesterMemberId }),
+      ...(action.reason === undefined ? {} : { reason: action.reason }),
+    }
+  }
+
+  #configPlace(owner: ExtensionConfigOwner): string {
+    const name = this.#extensionName(owner.extensionId)
+    return owner.layer === 'host' ? `「${name}」的本机配置` : `${this.#agentName(owner.agentId!)}在「${name}」的配置`
+  }
 
   async #switch(
     extensionId: ExtensionId,
@@ -622,6 +989,30 @@ export class ExtensionActionService {
         return { ...normal, summary: '从社区安装扩展' }
       case 'community-withdraw':
         return { ...normal, summary: '撤回一次社区发布' }
+      case 'configure':
+      case 'revert-config': {
+        let plan: ConfigPlan | undefined
+        try {
+          plan = this.configPlan(action)
+        } catch {
+          plan = undefined
+        }
+        const where =
+          plan === undefined ? `「${this.#extensionName(action.extensionId)}」的配置` : this.#configPlace(plan.owner)
+        const fields = plan?.change.changed.map((entry) => entry.field.title).join('、') ?? ''
+        const record =
+          action.kind === 'revert-config'
+            ? runtime.repository.extensionConfigVersions.getExtensionConfigVersion(action.versionId)
+            : undefined
+        return {
+          ...normal,
+          summary:
+            action.kind === 'revert-config'
+              ? `把${where}恢复到第 ${record?.version ?? '?'} 版${fields === '' ? '' : `（${fields}）`}`
+              : `修改${where}${fields === '' ? '' : `：${fields}`}`,
+          affectsOthers: plan?.owner.layer === 'host',
+        }
+      }
       case 'use-credential': {
         const credential = runtime.credentialLibrary.get(action.credentialId)
         return {
@@ -643,6 +1034,14 @@ export class ExtensionActionService {
       case 'enable':
       case 'disable':
         return action.agentId === agentId ? undefined : '只能给自己启用或停用扩展。'
+      case 'configure':
+        return action.layer === 'host' || action.agentId === agentId ? undefined : '只能修改自己的智能体配置。'
+      case 'revert-config': {
+        const record = runtime.repository.extensionConfigVersions.getExtensionConfigVersion(action.versionId)
+        return record === undefined || record.agentId === null || record.agentId === agentId
+          ? undefined
+          : '只能恢复自己的智能体配置。'
+      }
       case 'switch':
       case 'revert':
       case 'community-update':

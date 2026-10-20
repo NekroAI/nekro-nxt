@@ -423,6 +423,11 @@ export const AgentCapabilityGrantsSchema = z
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).default('manual'),
     /** Whose messages may start or change extension work: every channel member, or administrators only. */
     extensionRequesters: z.enum(['everyone', 'admins']).default('everyone'),
+    /**
+     * Whose messages may make the agent change extension configuration. Members may only cause changes to ordinary
+     * fields of the agent's own configuration even with `everyone`.
+     */
+    extensionConfigRequesters: z.enum(['everyone', 'admins']).default('admins'),
     /** Accounts commands may act as; empty unless the user grants one to this agent (absent before the field). */
     commandAccounts: z
       .array(CommandAccountGrantSchema)
@@ -446,6 +451,7 @@ export const AgentCapabilityGrantsSchema = z
     communityFeedbackAuto: false,
     extensionAutonomy: 'manual',
     extensionRequesters: 'everyone',
+    extensionConfigRequesters: 'admins',
     commandAccounts: [],
   })
 
@@ -454,19 +460,22 @@ export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
 /** Default-off additions are absent from persisted capabilities so older readers keep accepting unchanged agents. */
 export type StoredAgentCapabilityGrants = Omit<
   AgentCapabilityGrants,
-  'communityFeedbackAuto' | 'extensionAutonomy' | 'extensionRequesters'
+  'communityFeedbackAuto' | 'extensionAutonomy' | 'extensionRequesters' | 'extensionConfigRequesters'
 > & {
   readonly communityFeedbackAuto?: boolean
   readonly extensionAutonomy?: AgentCapabilityGrants['extensionAutonomy']
   readonly extensionRequesters?: AgentCapabilityGrants['extensionRequesters']
+  readonly extensionConfigRequesters?: AgentCapabilityGrants['extensionConfigRequesters']
 }
 export const storedAgentCapabilityGrants = (capabilities: AgentCapabilityGrants): StoredAgentCapabilityGrants => {
-  const { communityFeedbackAuto, extensionAutonomy, extensionRequesters, ...existing } = capabilities
+  const { communityFeedbackAuto, extensionAutonomy, extensionRequesters, extensionConfigRequesters, ...existing } =
+    capabilities
   return {
     ...existing,
     ...(communityFeedbackAuto ? { communityFeedbackAuto: true } : {}),
     ...(extensionAutonomy === 'manual' ? {} : { extensionAutonomy }),
     ...(extensionRequesters === 'everyone' ? {} : { extensionRequesters }),
+    ...(extensionConfigRequesters === 'admins' ? {} : { extensionConfigRequesters }),
   }
 }
 
@@ -752,6 +761,9 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     ...(content.capabilities.extensionRequesters === 'everyone'
       ? {}
       : { extensionRequesters: content.capabilities.extensionRequesters }),
+    ...(content.capabilities.extensionConfigRequesters === 'admins'
+      ? {}
+      : { extensionConfigRequesters: content.capabilities.extensionConfigRequesters }),
     ...(content.capabilities.commandAccounts.length === 0
       ? {}
       : {

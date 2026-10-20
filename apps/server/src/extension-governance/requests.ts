@@ -63,11 +63,29 @@ const extensionOf = (action: ExtensionAction): ExtensionId | undefined => {
       return action.targetExtensionId
     case 'enable':
     case 'disable':
+    case 'configure':
+    case 'revert-config':
     case 'switch':
     case 'revert':
     case 'community-publish':
     case 'community-update':
       return action.extensionId
+  }
+}
+
+type ConfigureAction = Extract<ExtensionAction, { readonly kind: 'configure' }>
+
+/** Two changes to the same layer as one: later values and bindings win, reasons are kept together. */
+const mergeConfigure = (first: ConfigureAction, second: ConfigureAction): ConfigureAction => {
+  const reasons = [first.reason, second.reason].filter((reason) => reason !== undefined && reason !== '')
+  const reason = [...new Set(reasons)].join('；').slice(0, 500)
+  const requesterMemberId = second.requesterMemberId ?? first.requesterMemberId
+  return {
+    ...first,
+    values: { ...first.values, ...second.values },
+    credentials: { ...first.credentials, ...second.credentials },
+    ...(reason === '' ? {} : { reason }),
+    ...(requesterMemberId === undefined ? {} : { requesterMemberId }),
   }
 }
 
@@ -88,6 +106,11 @@ const toJson = (value: unknown): JsonValue => parseJsonValue(JSON.parse(JSON.str
 export class ExtensionRequestService {
   readonly #runtime: NekroRuntime
   readonly #now: () => number
+  /** Configuration changes waiting for the end of the agent's turn, by extension, layer, target and agent. */
+  readonly #pendingConfigure = new Map<
+    string,
+    { action: ConfigureAction; actor: Extract<ExtensionActor, { readonly kind: 'agent' }> }
+  >()
 
   constructor(runtime: NekroRuntime, now: () => number = Date.now) {
     this.#runtime = runtime
@@ -209,6 +232,52 @@ export class ExtensionRequestService {
           text: `〔系统通知〕${input.assessment.summary}没有完成：${message}。看一下原因再决定怎么处理。`,
         })
       })
+  }
+
+  /**
+   * Carries out an agent's configuration change once its turn has ended. Changes to the same layer within one turn
+   * are merged and written once; the merged change is judged again before it is written.
+   */
+  scheduleConfigure(input: {
+    readonly action: ConfigureAction
+    readonly actor: Extract<ExtensionActor, { readonly kind: 'agent' }>
+  }): 'scheduled' | 'merged' {
+    const { action, actor } = input
+    const key = [action.extensionId, action.layer, action.agentId ?? '', actor.agentId].join('|')
+    const pending = this.#pendingConfigure.get(key)
+    if (pending !== undefined) {
+      pending.action = mergeConfigure(pending.action, action)
+      if (actor.requester === 'admin') pending.actor = actor
+      return 'merged'
+    }
+    const entry = { action, actor }
+    this.#pendingConfigure.set(key, entry)
+    void this.#runtime.host
+      .waitUntilSafe(actor.agentId)
+      .catch(() => undefined)
+      .then(() => {
+        this.#pendingConfigure.delete(key)
+        const assessment = this.#runtime.extensionActions.assess(entry.action, entry.actor)
+        if (assessment.decision === 'run') {
+          this.runAfterTurn({ action: entry.action, actor: entry.actor, assessment })
+        } else if (assessment.decision === 'request') {
+          const record = this.create({ action: entry.action, actor: entry.actor, assessment })
+          this.#runtime.host.notifyAgent({
+            agentId: actor.agentId,
+            ...(actor.channelId === undefined ? {} : { channelId: actor.channelId }),
+            identity: `ext-config-requested:${record.number}`,
+            text: `〔系统通知〕${assessment.summary}需要管理员确认，已在频道里发出请求 #${record.number}。`,
+          })
+        } else {
+          this.#runtime.host.notifyAgent({
+            agentId: actor.agentId,
+            ...(actor.channelId === undefined ? {} : { channelId: actor.channelId }),
+            identity: `ext-config-console:${key}:${this.#now()}`,
+            text: `〔系统通知〕${assessment.summary}没有完成：${assessment.reason ?? '需要管理员在后台处理。'}`,
+          })
+        }
+      })
+    return 'scheduled'
   }
 
   /** Confirms a pending request and carries it out; the outcome is posted and reported to the agent. */
@@ -394,6 +463,9 @@ export class ExtensionRequestService {
   }
 
   #undoHint(action: ExtensionAction): string {
+    if (action.kind === 'configure' || action.kind === 'revert-config') {
+      return '如需撤销，可以在扩展详情的配置历史里恢复之前的版本。'
+    }
     return action.kind === 'switch' || action.kind === 'community-update'
       ? '如需撤销，管理员发送 /ext revert 扩展名。'
       : ''

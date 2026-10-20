@@ -94,6 +94,57 @@ test('feedback auto permission requires a global switch and explicit confirmatio
   expect(failures).toEqual([])
 })
 
+test('who may have the agent change extension configuration is set under dynamic creation', async ({
+  page,
+}, testInfo) => {
+  const failures = installRuntimeFailureGate(page)
+  let snapshot: Snapshot = productSnapshot
+  await installProductRoutes(page, () => snapshot)
+  const mutations: unknown[] = []
+  await page.route(`**/api/agents/${targetAgentId}/capabilities`, async (route) => {
+    const patch = HostApiContracts.updateAgentCapabilities.parseRequest(route.request().postDataJSON() as unknown)
+    mutations.push(patch)
+    snapshot = {
+      ...snapshot,
+      agents: snapshot.agents.map((agent) =>
+        agent.id === targetAgentId
+          ? {
+              ...agent,
+              capabilities: {
+                ...agent.capabilities,
+                extensionConfigRequesters:
+                  patch.extensionConfigRequesters ?? agent.capabilities.extensionConfigRequesters,
+              },
+            }
+          : agent,
+      ),
+    }
+    const agent = snapshot.agents.find((agent) => agent.id === targetAgentId)!
+    await route.fulfill({ json: { currentRevisionId: agent.currentRevisionId, capabilities: agent.capabilities } })
+  })
+  await page.goto(`/agents/${targetAgentId}`)
+  await expect(page.getByRole('heading', { name: '资料员', exact: true })).toBeVisible()
+  const control = page.getByRole('combobox', { name: '谁可以让它改配置' })
+  for (const theme of ['light', 'dark'] as const) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.addInitScript((value) => window.localStorage.setItem('nekro-nxt.theme', value), theme)
+      await page.reload()
+      await control.scrollIntoViewIfNeeded()
+      await expect(control).toContainText('只有管理员')
+      await capture(page, testInfo, `config-requesters-${theme}-${width}`)
+    }
+  }
+  await control.click()
+  await page.getByRole('option', { name: '频道里的所有人', exact: true }).click()
+  await expect(page.getByRole('region', { name: '未保存的修改' })).toContainText('谁可以让它改配置')
+  await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存', exact: true }).click()
+  await expect(page.getByRole('region', { name: '未保存的修改' })).toHaveCount(0)
+  await expect(control).toContainText('频道里的所有人')
+  expect(mutations).toEqual([{ extensionConfigRequesters: 'everyone' }])
+  expect(failures).toEqual([])
+})
+
 // Every scenario replaces productMetadata; the health endpoint must represent the same synthetic Host.
 test.beforeEach(async ({ page }) => {
   await installSnapshotHealthRoutes(page, productSnapshot)

@@ -29,6 +29,7 @@ describe('createAgentDraft', () => {
       communityFeedbackAuto: false,
       extensionAutonomy: 'manual',
       extensionRequesters: 'everyone',
+      extensionConfigRequesters: 'admins',
     })
   })
 })

@@ -170,7 +170,9 @@ import {
   type PromptSegment,
   DEFAULT_COMPACTION_SETTINGS,
   type CompactionSettings,
+  type ExtensionLayeredConfig,
 } from '@nekro-nxt/contracts'
+import { assertAgentAuthoredConfig } from '@nekro-nxt/extension-format'
 import type {
   AgentRevisionRecord,
   AssetRecord,
@@ -1028,6 +1030,8 @@ const nekroNxtExtensionDefineTool = (
   keepTestConfig?: (packageId: string, values: Readonly<Record<string, JsonValue>>) => void,
   /** Checks credential bindings in `testConfig`; returns notes for ones that wait for an administrator. */
   checkTestCredentials: (values: Readonly<Record<string, JsonValue>>) => readonly string[] = () => [],
+  /** Configuration a candidate of this plugin revises: its administrator-only fields stay as they are. */
+  reviseBaseConfig: (pluginId: string) => ExtensionLayeredConfig | undefined = () => undefined,
 ) =>
   defineTool({
     name: 'nekro_nxt_extension_define',
@@ -1191,6 +1195,10 @@ const nekroNxtExtensionDefineTool = (
         .loose()
         .parse(args)
       const definition = authoringDefinitionFromFacade(definitionArgs)
+      assertAgentAuthoredConfig(
+        definition.config,
+        definition.plugin.kind === 'existing' ? reviseBaseConfig(definition.plugin.pluginId) : undefined,
+      )
       const values = testConfig === undefined ? undefined : parseAgentTestConfig(definition.config, testConfig)
       if (values !== undefined && keepTestConfig === undefined) throw new Error('这台 NekroNXT 不能保存测试配置。')
       const notes = values === undefined ? [] : checkTestCredentials(values)
@@ -4372,6 +4380,12 @@ export class DshHostRuntime implements AgentSessionDriver {
               ? undefined
               : (packageId, values) => testConfigByPackage.set(packageId, values),
             (values) => governance?.()?.checkTestCredentials(revision.agentId, values) ?? [],
+            (pluginId) => {
+              const task = this.#authoring?.service.taskForRunner(input.episodeId, pluginId)
+              return task?.kind === 'revise' && task.baseRevisionId !== undefined
+                ? governance?.()?.revisionConfig(task.baseRevisionId)
+                : undefined
+            },
           ),
         )
         if (governance !== undefined) {

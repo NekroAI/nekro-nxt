@@ -659,6 +659,29 @@ export function CapabilitiesSection({
                 ]}
               />
             </PropertyRow>
+            <PropertyRow
+              depth={1}
+              label="谁可以让它改配置"
+              tip="选所有人时，其他人只能让它改自己的普通配置项；本机配置、访问地址和凭据仍只听管理员"
+            >
+              <Select
+                aria-label="谁可以让它改配置"
+                value={caps.extensionConfigRequesters}
+                onValueChange={(value) =>
+                  update((current) => ({
+                    ...current,
+                    capabilities: {
+                      ...current.capabilities,
+                      extensionConfigRequesters: value === 'everyone' ? 'everyone' : 'admins',
+                    },
+                  }))
+                }
+                options={[
+                  { value: 'everyone', label: '频道里的所有人' },
+                  { value: 'admins', label: '只有管理员' },
+                ]}
+              />
+            </PropertyRow>
           </>
         ) : null}
         <PropertyRow label="定时任务" tip="频道成员可以请它设置提醒和周期任务">

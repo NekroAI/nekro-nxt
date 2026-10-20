@@ -34,6 +34,7 @@ const base: AgentDraft = {
     commandAccounts: [],
     extensionAutonomy: 'manual',
     extensionRequesters: 'everyone',
+    extensionConfigRequesters: 'admins',
   },
 }
 
