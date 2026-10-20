@@ -126,14 +126,14 @@ export class ExtensionService {
     const now = this.#timestamp()
     const extensionId = existing?.id ?? ExtensionIdSchema.parse(`ext_${this.#nextUlid()}`)
     const revisionId = ExtensionRevisionIdSchema.parse(`xrv_${this.#nextUlid()}`)
-    const lineage: ExtensionLineage = existing
-      ? lineageAfter(this.#lineageNode(this.#parentFor(existing.id, input.parentRevisionId)))
-      : { parent: null, ancestry: [] }
+    const parent = existing ? this.#parentFor(existing.id, input.parentRevisionId) : undefined
+    const lineage: ExtensionLineage = parent ? lineageAfter(this.#lineageNode(parent)) : { parent: null, ancestry: [] }
     const materialized = materializeDynamicPackage({
       extensionId,
       revisionId,
       snapshot: input.snapshot,
       lineage,
+      ...(parent === undefined ? {} : { baseConfig: this.revisionManifest(parent)?.config }),
     })
     if (existing) this.#assertAdapterKeyKept(existing.id, materialized.manifest)
     const duplicate = this.#repository.getExtensionRevisionByPayloadDigest(extensionId, materialized.payloadDigest)

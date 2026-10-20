@@ -10,6 +10,7 @@ import {
   PANEL_ANCHOR_LAYER,
   PanelContributionSchema,
   ToolViewContributionSchema,
+  adminOnlyConfigKeys,
   configFields,
   EMPTY_CONFIG_SCHEMA,
   EMPTY_EXTENSION_UI_CONTRIBUTIONS,
@@ -226,18 +227,32 @@ const checkConfig = (
 }
 
 /**
- * Checked when NekroNXT takes in a new Revision (saving a candidate, importing a package), never when it reads one it
- * already has: an agent's own configuration is filled only after the extension is enabled for it, so a required
- * non-credential field without a default would leave the extension impossible to enable.
+ * Fields only an administrator may change (`meta.agentWritable: false`) come from extensions people bring in by import
+ * or from the community. A candidate the agent writes keeps the marks of the version it revises (`base`) as they are:
+ * it can neither add one nor take one away.
  */
-export const assertEnableableAgentConfig = (manifest: ExtensionManifest): void => {
-  const blocking = configFields(manifest.config?.agent?.schema ?? EMPTY_CONFIG_SCHEMA).filter(
-    (field) => field.kind !== 'secret' && field.required && field.default === undefined,
-  )
-  if (blocking.length > 0) {
+export const assertAgentAuthoredConfig = (
+  config: ExtensionManifest['config'],
+  base?: ExtensionManifest['config'],
+): void => {
+  const marked = (source: ExtensionManifest['config'], layer: 'host' | 'agent') =>
+    new Set(adminOnlyConfigKeys(source?.[layer]?.schema ?? EMPTY_CONFIG_SCHEMA))
+  const added: string[] = []
+  const removed: string[] = []
+  for (const layer of ['host', 'agent'] as const) {
+    const own = marked(config, layer)
+    const inherited = marked(base, layer)
+    const present = new Set(Object.keys(config?.[layer]?.schema.dict ?? {}))
+    for (const key of own) if (!inherited.has(key)) added.push(`config.${layer}.${key}`)
+    for (const key of inherited) if (present.has(key) && !own.has(key)) removed.push(`config.${layer}.${key}`)
+  }
+  if (added.length > 0) {
     throw new Error(
-      `config.agent 的必填项要给默认值：${blocking.map((field) => field.key).join('、')}。智能体自己的配置要在启用后才能填写，没有默认值就无法启用。`,
+      `动态创造的扩展不能把配置项标记为 agentWritable: false：${added.join('、')}。去掉这个标记；只有导入或从社区安装的扩展可以把配置项留给管理员。`,
     )
+  }
+  if (removed.length > 0) {
+    throw new Error(`这些配置项只能由管理员修改，修改扩展时要保留 agentWritable: false：${removed.join('、')}。`)
   }
 }
 

@@ -17,6 +17,7 @@ import type { ExtensionBuilder } from './builder.js'
 import {
   activationOwnerKey,
   agentPermissionRequirement,
+  carryAgentConfigLeniently,
   carryExtensionConfig,
   extensionOwnerKey,
   hostPermissionRequirement,
@@ -289,7 +290,7 @@ export class ExtensionLifecycleCoordinator {
         : resolveExtensionConfig(manifest, 'host', input.config)
     const attachments = activations.map((activation) => ({
       agentId: activation.agentId,
-      config: carryExtensionConfig(manifest, 'agent', activation.config),
+      config: carryAgentConfigLeniently(manifest, activation.config),
     }))
     const artifact = await this.#build(revision)
     const adapterKey = manifestAdapter(manifest)?.key

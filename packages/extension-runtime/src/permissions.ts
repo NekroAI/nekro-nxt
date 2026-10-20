@@ -190,6 +190,24 @@ export const carryExtensionConfig = (
   return { ...base, ...secretReferences(secrets, previous) }
 }
 
+/**
+ * Carries an agent's configuration to another Revision without failing the switch: when the new Revision adds a
+ * required field without a default, the agent keeps the values that still fit and stays incomplete until someone
+ * fills the field (the agent through configure, or the console).
+ */
+export const carryAgentConfigLeniently = (manifest: ExtensionManifest | undefined, previous: JsonValue | undefined) => {
+  try {
+    return carryExtensionConfig(manifest, 'agent', previous)
+  } catch {
+    const schema = layerConfigSchema(manifest, 'agent')
+    const secrets = configSecretKeys(schema)
+    return {
+      ...validateConfigValue(schema, withoutKeys(previous, secrets) ?? {}, { skipKeys: secrets }).value,
+      ...secretReferences(secrets, previous),
+    }
+  }
+}
+
 /** Credential references a configuration of one layer holds; deleted once nothing references them. */
 export const configSecretReferences = (
   manifest: ExtensionManifest | undefined,

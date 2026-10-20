@@ -6,8 +6,9 @@ import { JsonValueSchema, type JsonValue } from './domain.js'
  * product form can render and the Host can validate without executing Schema callbacks.
  *
  * Supported nodes: object (dict), string, number, natural, percent, boolean, const, union of consts (enum) and
- * array of primitives. `meta.role: 'secret'` marks a write-only credential. NekroNXT reads three extra meta keys:
- * `hint` (help text), `advanced` (collapsed by default) and `visibleWhen` (show only when a sibling equals a value).
+ * array of primitives. `meta.role: 'secret'` marks a write-only credential. NekroNXT reads four extra meta keys:
+ * `hint` (help text), `advanced` (collapsed by default), `visibleWhen` (show only when a sibling equals a value) and
+ * `agentWritable: false` (only an administrator may change the field, in the console).
  */
 export const CONFIG_SCHEMA_MAX_BYTES = 64 * 1024
 
@@ -27,6 +28,8 @@ export const ConfigSchemaMetaSchema = z
     pattern: z.object({ source: z.string().max(500), flags: z.string().max(8).optional() }).optional(),
     advanced: z.boolean().optional(),
     group: z.string().max(40).optional(),
+    /** `false` keeps the field out of the agent's reach: only an administrator changes it, in the console. */
+    agentWritable: z.boolean().optional(),
     visibleWhen: z
       .object({ key: z.string().min(1).max(64), equals: JsonValueSchema })
       .strict()
@@ -105,7 +108,25 @@ export interface ConfigField {
   readonly advanced: boolean
   readonly group?: string
   readonly options?: readonly { readonly value: JsonValue; readonly label: string }[]
+  /** Declared `meta.agentWritable: false`: only an administrator changes it. */
+  readonly adminOnly: boolean
   readonly node: ConfigSchemaNode
+}
+
+/**
+ * How much a change to one field matters when an agent makes it: `admin` fields are changed in the console only,
+ * `secret` fields hold credentials, `network` fields decide where the extension may connect, the rest are `normal`.
+ */
+export type ConfigFieldLevel = 'normal' | 'network' | 'secret' | 'admin'
+
+export const configFieldLevel = (
+  field: Pick<ConfigField, 'key' | 'kind' | 'adminOnly'>,
+  networkFields: ReadonlySet<string> | readonly string[],
+): ConfigFieldLevel => {
+  if (field.adminOnly) return 'admin'
+  if (field.kind === 'secret') return 'secret'
+  const network = networkFields instanceof Set ? networkFields : new Set(networkFields)
+  return network.has(field.key) ? 'network' : 'normal'
 }
 
 export const configDescription = (meta: ConfigSchemaMeta | undefined): string | undefined => {
@@ -155,9 +176,16 @@ export const configFields = (document: ConfigSchemaDocument): readonly ConfigFie
       advanced: node.meta?.advanced === true,
       ...(node.meta?.group === undefined ? {} : { group: node.meta.group }),
       ...(options === undefined ? {} : { options }),
+      adminOnly: node.meta?.agentWritable === false,
       node,
     }
   })
+
+/** Fields declared `meta.agentWritable: false`. */
+export const adminOnlyConfigKeys = (document: ConfigSchemaDocument): readonly string[] =>
+  configFields(document)
+    .filter((field) => field.adminOnly)
+    .map((field) => field.key)
 
 export const configSecretKeys = (document: ConfigSchemaDocument): readonly string[] =>
   configFields(document)
@@ -302,6 +330,8 @@ interface FieldOptions<Value extends JsonValue> {
   readonly required?: boolean
   readonly advanced?: boolean
   readonly group?: string
+  /** `false` for billing or moderation switches only an administrator should change. */
+  readonly agentWritable?: boolean
 }
 
 const fieldMeta = <Value extends JsonValue>(title: string, options: FieldOptions<Value> = {}): ConfigSchemaMeta => ({
@@ -311,6 +341,7 @@ const fieldMeta = <Value extends JsonValue>(title: string, options: FieldOptions
   ...(options.required === undefined ? {} : { required: options.required }),
   ...(options.advanced === undefined ? {} : { advanced: options.advanced }),
   ...(options.group === undefined ? {} : { group: options.group }),
+  ...(options.agentWritable === undefined ? {} : { agentWritable: options.agentWritable }),
 })
 
 /** Builds serialized Schemastery documents without depending on the Schemastery runtime. */
