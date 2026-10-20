@@ -12,8 +12,7 @@ import {
 import type { CredentialRecord } from '@nekro-nxt/storage-sqlite'
 import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
-import { CredentialError, namedCredentialId } from './credentials-library.js'
-import { effectiveCommandGrants } from './command-account-env.js'
+import { CredentialError, commandEnvName, namedCredentialId } from './credentials-library.js'
 import { readJsonBody, writeContractJson, writeError, type HostRouteContext } from './host-route-support.js'
 
 const boundIn = (config: JsonValue | undefined, id: CredentialId): boolean =>
@@ -48,8 +47,10 @@ export const credentialUsers = (runtime: NekroRuntime, id: CredentialId): Creden
     })),
     commandAgents: runtime.core
       .listAgents()
-      .filter((commit) =>
-        effectiveCommandGrants(commit.revision.capabilities).some((grant) => grant.credentialId === id),
+      .filter(
+        (commit) =>
+          commit.revision.capabilities.developmentShell &&
+          runtime.credentialLibrary.commandCredentials(commit.definition.id).some(({ record }) => record.id === id),
       )
       .map((commit) => commit.definition.id),
   }
@@ -64,6 +65,8 @@ export const credentialView = (runtime: NekroRuntime, record: CredentialRecord):
   domains: [...record.domains],
   agentScope: 'all' in record.agentScope ? { all: true } : { agentIds: [...record.agentScope.agentIds] },
   autoUse: record.autoUse,
+  envName: commandEnvName(record) ?? null,
+  approvedAgentIds: [...record.approvedAgentIds],
   redactable: runtime.credentialLibrary.redactable(record.id),
   available: runtime.credentialLibrary.available(record.id),
   metadata: {

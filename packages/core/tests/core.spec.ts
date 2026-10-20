@@ -15,7 +15,6 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
-  CredentialIdSchema,
 } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import type {
@@ -617,7 +616,6 @@ describe('CoreService', () => {
       codeRun: false,
       commandNetwork: true,
       commandAccounts: [],
-      commandCredentials: [],
       communityFeedbackAuto: false,
       extensionAutonomy: 'manual',
       extensionRequesters: 'everyone',
@@ -639,29 +637,6 @@ describe('CoreService', () => {
     const enabled = { ...disabled, communityFeedbackAuto: true }
     expect(storedAgentCapabilityGrants(enabled).communityFeedbackAuto).toBe(true)
     expect(digestRevision({ ...base, capabilities: enabled })).not.toBe(digestRevision(base))
-  })
-
-  it('stores command credentials only once one is granted, and refuses reserved variable names', () => {
-    const repository = new MemoryRepository()
-    let id = 0
-    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
-    const content = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
-    const first = core.createAgent({ ...content, capabilities: deniedCapabilities })
-    const credential = { credentialId: CredentialIdSchema.parse('crd_FIXTURE'), env: 'WEATHER_KEY', usage: [] }
-    const withCredential = core.reviseAgent(first.definition.id, first.revision.id, {
-      ...content,
-      capabilities: { ...deniedCapabilities, commandCredentials: [credential] },
-    })
-    expect(withCredential.revision.contentDigest).not.toBe(first.revision.contentDigest)
-    expect(withCredential.revision.capabilities.commandCredentials).toEqual([credential])
-    expect(storedAgentCapabilityGrants(parseAgentCapabilityGrants(deniedCapabilities))).not.toHaveProperty(
-      'commandCredentials',
-    )
-    for (const env of ['PATH', 'LD_PRELOAD', 'lower_case', '1START']) {
-      expect(() =>
-        parseAgentCapabilityGrants({ ...deniedCapabilities, commandCredentials: [{ ...credential, env }] }),
-      ).toThrow()
-    }
   })
 
   it('keeps the digest without command accounts and treats a grant, or its usage hint, as new content', () => {
@@ -1466,7 +1441,6 @@ describe('CoreService', () => {
       codeRun: false,
       commandNetwork: true,
       commandAccounts: [],
-      commandCredentials: [],
       communityFeedbackAuto: false,
       extensionAutonomy: 'manual',
       extensionRequesters: 'everyone',

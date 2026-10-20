@@ -44,6 +44,41 @@ export const CredentialDescriptionSchema = z
 
 export const CredentialDomainsSchema = z.array(ExtensionNetworkDomainSchema).max(32)
 
+/** Names a credential's environment variable cannot take: the shell and the tools' own configuration. */
+const RESERVED_COMMAND_ENV = new Set([
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'PWD',
+  'OLDPWD',
+  'TMPDIR',
+  'TEMP',
+  'TMP',
+  'LANG',
+  'TERM',
+  'NODE_OPTIONS',
+  'NODE_PATH',
+  'GH_CONFIG_DIR',
+  'GH_PROMPT_DISABLED',
+  'GIT_TERMINAL_PROMPT',
+  'GIT_CONFIG_COUNT',
+])
+const RESERVED_COMMAND_ENV_PREFIXES = ['LC_', 'LD_', 'DYLD_', 'GIT_CONFIG_', 'NEKRO_', 'DSH_']
+
+/** The environment variable a program credential reaches commands under. */
+export const CredentialEnvNameSchema = z
+  .string()
+  .trim()
+  .max(64)
+  .regex(/^[A-Z_][A-Z0-9_]*$/u, '环境变量名只能使用大写字母、数字和下划线，且不能以数字开头。')
+  .refine(
+    (name) =>
+      !RESERVED_COMMAND_ENV.has(name) && !RESERVED_COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)),
+    '这个环境变量名由系统使用，请换一个。',
+  )
+
 export const CredentialValueSchema = z.string().min(1).max(CREDENTIAL_VALUE_MAX_CHARS)
 
 /** A login the local `gh` holds, offered as a quick way to add a GitHub credential. */
@@ -81,6 +116,7 @@ export const CredentialUsersSchema = z
         })
         .strict(),
     ),
+    /** Agents with commands enabled whose commands receive it. */
     commandAgents: z.array(AgentIdSchema),
   })
   .strict()
@@ -96,6 +132,13 @@ export const CredentialViewSchema = z
     domains: z.array(z.string()),
     agentScope: CredentialAgentScopeSchema,
     autoUse: z.boolean(),
+    /**
+     * Program credentials: the environment variable agents' commands receive it under, or `null` when commands do
+     * not receive it. GitHub credentials always reach commands as `GH_TOKEN`, with `gh` and `git` set up.
+     */
+    envName: z.string().nullable(),
+    /** Agents an administrator let use it while automatic use is off. */
+    approvedAgentIds: z.array(AgentIdSchema),
     /** False when the stored value is too short to hide from tool results, or cannot be read. */
     redactable: z.boolean(),
     /** False when the stored value cannot be read any more; the entry stays so it can be replaced. */
@@ -164,6 +207,8 @@ export const CreateCredentialRequestSchema = z.discriminatedUnion('kind', [
       ...credentialMetaFields,
       usage: CredentialUsageSchema.default('request'),
       domains: CredentialDomainsSchema.default([]),
+      /** Program credentials only. */
+      envName: CredentialEnvNameSchema.optional(),
       value: CredentialValueSchema,
       /** The agent request this form was opened from, if any. */
       requestId: z.string().min(1).max(64).optional(),
@@ -192,6 +237,10 @@ export const UpdateCredentialRequestSchema = z
     domains: CredentialDomainsSchema.optional(),
     agentScope: CredentialAgentScopeSchema.optional(),
     autoUse: z.boolean().optional(),
+    /** `null` stops giving it to commands; only program credentials take one. GitHub credentials use `GH_TOKEN`. */
+    envName: CredentialEnvNameSchema.nullable().optional(),
+    /** Replaces the agents allowed to use it while automatic use is off, for example to withdraw an approval. */
+    approvedAgentIds: z.array(AgentIdSchema).max(256).optional(),
   })
   .strict()
 export type UpdateCredentialRequest = z.output<typeof UpdateCredentialRequestSchema>
@@ -250,66 +299,6 @@ export const credentialRequestRoute = (request: {
   if (request.domains.length > 0) query.set('domains', request.domains.join(','))
   return `/settings/credentials?${query.toString()}`
 }
-
-/** Names of environment variables a command credential cannot take: the shell and the tools' own configuration. */
-const RESERVED_COMMAND_ENV = new Set([
-  'PATH',
-  'HOME',
-  'USER',
-  'LOGNAME',
-  'SHELL',
-  'PWD',
-  'OLDPWD',
-  'TMPDIR',
-  'TEMP',
-  'TMP',
-  'LANG',
-  'TERM',
-  'NODE_OPTIONS',
-  'NODE_PATH',
-  'GH_CONFIG_DIR',
-  'GH_PROMPT_DISABLED',
-  'GIT_TERMINAL_PROMPT',
-  'GIT_CONFIG_COUNT',
-])
-const RESERVED_COMMAND_ENV_PREFIXES = ['LC_', 'LD_', 'DYLD_', 'GIT_CONFIG_', 'NEKRO_', 'DSH_']
-
-export const CommandCredentialEnvSchema = z
-  .string()
-  .trim()
-  .max(64)
-  .regex(/^[A-Z_][A-Z0-9_]*$/u, '环境变量名只能使用大写字母、数字和下划线，且不能以数字开头。')
-  .refine(
-    (name) =>
-      !RESERVED_COMMAND_ENV.has(name) && !RESERVED_COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix)),
-    '这个环境变量名由系统使用，请换一个。',
-  )
-
-/** What the user wants a GitHub credential used for. Told to the agent only; the token's own permissions are the limit. */
-export const CommandCredentialUsageHintSchema = z.enum(['read', 'issues', 'pull-requests', 'push'])
-
-/**
- * A credential this agent's commands receive as an environment variable. GitHub credentials also set up `gh` and `git`
- * over https. The credential still has to allow program use and include the agent in its scope.
- */
-export const CommandCredentialGrantSchema = z
-  .object({
-    credentialId: CredentialIdSchema,
-    env: CommandCredentialEnvSchema,
-    /** GitHub credentials only: guidance for the agent, not enforced. */
-    usage: z.array(CommandCredentialUsageHintSchema).max(4).default([]),
-  })
-  .strict()
-export type CommandCredentialGrant = z.output<typeof CommandCredentialGrantSchema>
-
-export const CommandCredentialGrantsSchema = z
-  .array(CommandCredentialGrantSchema)
-  .max(8)
-  .refine((grants) => new Set(grants.map((grant) => grant.env)).size === grants.length, '环境变量名不能重复。')
-  .refine(
-    (grants) => new Set(grants.map((grant) => grant.credentialId)).size === grants.length,
-    '同一个凭据只能授权一次。',
-  )
 
 /** Secret fields of an extension configuration layer bound to a named credential, by field. */
 export const BoundCredentialsSchema = z.record(z.string(), CredentialIdSchema)

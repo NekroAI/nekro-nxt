@@ -982,6 +982,8 @@ describe('extension autonomy', () => {
         summary: expect.stringContaining('天气服务') as unknown,
       })
       await runtime.extensionRequests.approve(request.number, { kind: 'console' })
+      // The approval stays on the credential, for this agent only.
+      expect(runtime.credentialLibrary.get(guarded.id)?.approvedAgentIds).toEqual([entity.agentId])
       expect(runtime.authoringTestConfig.values(task.id).agentProvided).toEqual({
         backupKey: `credential:named:${open.id}`,
         apiKey: `credential:named:${guarded.id}`,
@@ -1045,6 +1047,42 @@ describe('extension autonomy', () => {
       const serialized = JSON.stringify(listed)
       for (const hidden of ['fictional-search-key', 'fictional-private-key', 'credential:local', 'crd_'])
         expect(serialized).not.toContain(hidden)
+
+      // An existing credential whose automatic use is off: asking files an approval request instead.
+      const guarded = await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '受控搜索',
+        value: 'fictional-guarded-key',
+        usage: 'program',
+        envName: 'SEARCH_KEY',
+        autoUse: false,
+      })
+      expect(await tools.listCredentials(entity.agentId)).toMatchObject({
+        credentials: expect.arrayContaining([
+          expect.objectContaining({ name: '受控搜索', needsApproval: true, envName: 'SEARCH_KEY' }),
+        ]) as unknown,
+      })
+      const asked = z
+        .object({ requested: z.boolean(), requestNumber: z.number() })
+        .loose()
+        .parse(
+          tools.requestCredential(entity.agentId, entity.channelId, {
+            name: '受控搜索',
+            purpose: '命令里查资料',
+            domains: [],
+            usage: 'program',
+          }),
+        )
+      expect(asked.requested).toBe(true)
+      expect(runtime.extensionRequests.get(asked.requestNumber)).toMatchObject({
+        kind: 'use-credential',
+        status: 'pending',
+      })
+      await runtime.extensionRequests.approve(asked.requestNumber, { kind: 'console' })
+      expect(runtime.credentialLibrary.commandCredentials(entity.agentId).map(({ record }) => record.id)).toEqual([
+        guarded.id,
+      ])
+      expect(runtime.credentialLibrary.commandCredentials(other.agentId)).toEqual([])
 
       const notify = vi.spyOn(runtime.host, 'notifyAgent')
       expect(

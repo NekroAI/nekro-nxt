@@ -27,6 +27,10 @@ export interface CredentialRecord {
   readonly domains: readonly string[]
   readonly agentScope: CredentialAgentScope
   readonly autoUse: boolean
+  /** Program credentials only: the environment variable commands receive it under. */
+  readonly envName?: string
+  /** Agents an administrator let use it while automatic use is off. */
+  readonly approvedAgentIds: readonly AgentId[]
   readonly credentialRef: string
   readonly metadata: CredentialMetadata
   readonly createdAt: number
@@ -65,6 +69,8 @@ const record = (row: Row): CredentialRecord => ({
   domains: DomainsSchema.parse(row.domains),
   agentScope: CredentialAgentScopeSchema.parse(row.agentScope),
   autoUse: row.autoUse,
+  ...(row.envName === null ? {} : { envName: row.envName }),
+  approvedAgentIds: z.array(AgentIdSchema).parse(row.approvedAgentIds),
   credentialRef: row.credentialRef,
   metadata: CredentialMetadataSchema.parse(row.metadata),
   createdAt: row.createdAt,
@@ -92,6 +98,8 @@ const values = (input: CredentialRecord) => ({
   domains: input.domains,
   agentScope: input.agentScope,
   autoUse: input.autoUse,
+  envName: input.envName ?? null,
+  approvedAgentIds: input.approvedAgentIds,
   credentialRef: input.credentialRef,
   metadata: input.metadata,
   createdAt: input.createdAt,

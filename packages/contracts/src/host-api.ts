@@ -12,7 +12,6 @@ import {
 import { McpServerFormSchema } from './extension-capabilities.js'
 import {
   BoundCredentialsSchema,
-  CommandCredentialGrantsSchema,
   CredentialBindingsRequestSchema,
   CreateCredentialRequestSchema,
   CredentialsViewSchema,
@@ -351,10 +350,11 @@ const AgentCapabilitiesSchema = z
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
     communityFeedbackAuto: z.boolean().default(false),
-    /** Accounts this agent's commands may act as; absent in older clients means none. Superseded by `commandCredentials`. */
+    /**
+     * Accounts this agent's commands may act as; absent in older clients means none. Kept for older agents: accounts are
+     * now GitHub credentials, which reach commands through their own scope.
+     */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
-    /** Credentials this agent's commands receive as environment variables; absent in older clients means none. */
-    commandCredentials: CommandCredentialGrantsSchema.default([]),
     /**
      * What the agent may do with extensions without the console: `manual` only develops and test-runs, `confirm` asks
      * an administrator in the channel for every step, `autonomous` takes ordinary steps that only affect itself.
@@ -511,7 +511,6 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
     commandNetwork: z.boolean().optional(),
     communityFeedbackAuto: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
-    commandCredentials: CommandCredentialGrantsSchema.optional(),
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).optional(),
     extensionRequesters: z.enum(['everyone', 'admins']).optional(),
   })

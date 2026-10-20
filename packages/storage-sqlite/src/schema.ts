@@ -1878,6 +1878,10 @@ export const credentials = sqliteTable(
     domains: jsonText<readonly string[]>('domains').notNull(),
     agentScope: jsonText<CredentialAgentScope>('agent_scope').notNull(),
     autoUse: integer('auto_use', { mode: 'boolean' }).notNull(),
+    /** Environment variable commands receive a program credential under; GitHub credentials use `GH_TOKEN`. */
+    envName: text('env_name'),
+    /** Agents an administrator let use the credential while automatic use is off. */
+    approvedAgentIds: jsonText<readonly AgentId[]>('approved_agent_ids').notNull(),
     credentialRef: text('credential_ref').notNull(),
     metadata: jsonText<CredentialMetadata>('metadata').notNull(),
     createdAt: integer('created_at').notNull(),

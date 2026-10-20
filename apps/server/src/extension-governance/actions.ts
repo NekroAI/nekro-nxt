@@ -86,12 +86,16 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     agentId: AgentIdSchema.optional(),
   }),
   z.object({ kind: z.literal('community-withdraw'), releaseId: z.string() }),
-  /** Lets a creation task's test runs use a named credential whose automatic use is off (智能体扩展配置与凭据 C3). */
+  /**
+   * Lets an agent use a named credential whose automatic use is off (智能体扩展配置与凭据 C3): the approval stays on the
+   * credential. With a task and a field, that field of the task's test configuration is bound to it as well.
+   */
   z.object({
     kind: z.literal('use-credential'),
-    taskId: AuthoringTaskIdSchema,
-    key: z.string(),
     credentialId: CredentialIdSchema,
+    agentId: AgentIdSchema,
+    taskId: AuthoringTaskIdSchema.optional(),
+    key: z.string().optional(),
   }),
 ])
 export type ExtensionAction = z.output<typeof ExtensionActionSchema>
@@ -147,7 +151,7 @@ export class ExtensionActionService {
     const { summary, level, added, affectsOthers } = this.#describe(action, actor)
     const base = { summary, level, added }
     if (actor.kind === 'console') return { ...base, decision: 'run' }
-    // Test runs belong to dynamic creation, which every autonomy level allows; only the credential needs a yes.
+    // Using a credential is not extension work: every autonomy level may ask, and only the credential needs a yes.
     if (action.kind === 'use-credential') {
       if (actor.kind === 'administrator') return { ...base, decision: 'run' }
       const scope = this.#agentScope(action, actor.agentId)
@@ -363,19 +367,19 @@ export class ExtensionActionService {
         return { message: '已撤回这次发布。' }
       }
       case 'use-credential': {
-        const task = runtime.repository.getAuthoringTask(action.taskId)
         const credential = runtime.credentialLibrary.get(action.credentialId)
-        if (task === undefined) throw new Error('这个创造任务已经不在了。')
         if (credential === undefined) throw new Error('这个凭据已经被删除。')
-        if (!runtime.credentialLibrary.inScope(credential, task.agentId)) {
-          throw new Error(`凭据「${credential.name}」不对这个智能体开放。`)
-        }
+        await runtime.credentialLibrary.approve(action.credentialId, action.agentId)
+        const allowed = `${this.#agentName(action.agentId)}可以使用凭据「${credential.name}」了。`
+        if (action.taskId === undefined || action.key === undefined) return { message: allowed }
+        const task = runtime.repository.getAuthoringTask(action.taskId)
+        if (task === undefined) throw new Error('这个创造任务已经不在了。')
         await runtime.authoringTestConfig.bindCredential(
           action.taskId,
           action.key,
           namedCredentialReference(action.credentialId),
         )
-        return { message: `「${task.title}」的试运行可以使用凭据「${credential.name}」了。` }
+        return { message: `${allowed}「${task.title}」的试运行已经用上它。` }
       }
     }
   }
@@ -619,11 +623,10 @@ export class ExtensionActionService {
       case 'community-withdraw':
         return { ...normal, summary: '撤回一次社区发布' }
       case 'use-credential': {
-        const task = runtime.repository.getAuthoringTask(action.taskId)
         const credential = runtime.credentialLibrary.get(action.credentialId)
         return {
           ...normal,
-          summary: `在「${task?.title ?? '创造任务'}」的试运行里使用凭据「${credential?.name ?? '已删除的凭据'}」`,
+          summary: `让${this.#agentName(action.agentId)}使用凭据「${credential?.name ?? '已删除的凭据'}」`,
         }
       }
     }
@@ -652,8 +655,11 @@ export class ExtensionActionService {
       case 'community-withdraw':
         return undefined
       case 'use-credential': {
-        const task = runtime.repository.getAuthoringTask(action.taskId)
-        return task?.agentId === agentId ? undefined : '只能在自己的创造任务里使用凭据。'
+        if (action.agentId !== agentId) return '只能为自己申请使用凭据。'
+        if (action.taskId === undefined) return undefined
+        return runtime.repository.getAuthoringTask(action.taskId)?.agentId === agentId
+          ? undefined
+          : '只能在自己的创造任务里使用凭据。'
       }
     }
   }

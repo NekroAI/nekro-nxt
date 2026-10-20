@@ -893,9 +893,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(added.ok).toBe(true)
       const [account] = HostApiContracts.addCommandAccount.parseResponse(await added.json()).accounts
       expect(account).toMatchObject({ login: 'octo-fixture', source: 'token', usedBy: [] })
-      // The account routes now keep a GitHub credential, open to every agent as an account used to be.
+      // The account routes now keep a GitHub credential, open only to the agents it is granted to.
       expect(runtime.credentialLibrary.list()).toMatchObject([
-        { name: 'GitHub octo-fixture', kind: 'github', usage: 'program', agentScope: { all: true } },
+        { name: 'GitHub octo-fixture', kind: 'github', usage: 'program', agentScope: { agentIds: [] } },
       ])
 
       const granted = HostApiContracts.updateAgentCapabilities.parseResponse(
@@ -910,6 +910,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         await (await fetch(`${origin}/api/settings/command-accounts`)).json(),
       )
       expect(listed.accounts[0]?.usedBy).toEqual([agentId])
+      expect(runtime.credentialLibrary.list()[0]?.agentScope).toEqual({ agentIds: [agentId] })
       expect(JSON.stringify(listed)).not.toContain('tok-fixture')
 
       const removed = await fetch(`${origin}/api/settings/command-accounts/${account!.id}`, { method: 'DELETE' })

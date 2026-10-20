@@ -4,12 +4,11 @@ import {
   type AgentId,
   type CommandAccount,
   type CommandAccountsView,
-  type CommandCredentialGrant,
 } from '@nekro-nxt/contracts'
 import { CredentialError, accountIdOfCredential, credentialIdOfAccount } from './credentials-library.js'
 import { writeContractJson, writeError, readJsonBody, type HostRouteContext } from './host-route-support.js'
 import type { NekroRuntime } from './bootstrap.js'
-import { credentialUsers, fulfilCredentialRequests } from './host-routes-credentials.js'
+import { fulfilCredentialRequests } from './host-routes-credentials.js'
 
 /**
  * GitHub credentials in the shape of the older command account library. The routes below keep that library's
@@ -26,7 +25,11 @@ export const commandAccounts = (runtime: NekroRuntime): CommandAccount[] =>
       source: record.metadata.source ?? 'token',
       ...(record.metadata.scopes === undefined ? {} : { scopes: [...record.metadata.scopes] }),
       createdAt: record.createdAt,
-      usedBy: credentialUsers(runtime, record.id).commandAgents,
+      // The older page lists the agents an account is granted to: the credential's scope.
+      usedBy:
+        'all' in record.agentScope
+          ? runtime.core.listAgents().map((commit) => commit.definition.id)
+          : [...record.agentScope.agentIds],
     }))
 
 const view = async (runtime: NekroRuntime): Promise<CommandAccountsView> => ({
@@ -76,11 +79,11 @@ export function registerCommandAccountRoutes({ runtime, registerRoute, broadcast
           return
         }
         if (accountId === undefined && req.method === 'POST') {
-          // The older library granted accounts per agent, so an account added here is open to every agent.
+          // The older library granted accounts per agent: an account added here reaches the agents granted it.
           const record = await runtime.credentialLibrary.create({
             kind: 'github',
             github: githubSource(HostApiContracts.addCommandAccount.parseRequest(await readJsonBody(req))),
-            agentScope: { all: true },
+            agentScope: { agentIds: [] },
             autoUse: true,
           })
           fulfilCredentialRequests(runtime, record)
@@ -195,33 +198,30 @@ export const knownCommandAccounts = <Grant extends { readonly accountId: string 
   return [...grants]
 }
 
-/** Command grants may only name credentials the library holds. */
-export const knownCommandCredentials = (
-  runtime: NekroRuntime,
-  grants: readonly CommandCredentialGrant[],
-): CommandCredentialGrant[] => {
-  for (const grant of grants) {
-    if (runtime.credentialLibrary.get(grant.credentialId) === undefined) {
-      throw new Error('授权的凭据已不存在，请刷新后重试。')
-    }
-  }
-  return [...grants]
-}
-
 /**
- * The older account controls grant an account to one agent. A migrated account's credential is open only to the
- * agents that had it, so a new grant opens the credential to that agent too, as the grant used to mean.
+ * The older account controls grant an account to agents, one per agent. Each account is a GitHub credential limited to
+ * listed agents, so saving the grants keeps the agent in exactly the scopes of the accounts it was granted.
  */
-export const openGrantedAccounts = async (
+export const syncGrantedAccounts = async (
   runtime: NekroRuntime,
   agentId: AgentId,
   grants: readonly { readonly accountId: string }[] | undefined,
 ): Promise<void> => {
-  for (const grant of grants ?? []) {
-    const id = credentialIdOfAccount(grant.accountId)
-    const record = id === undefined ? undefined : runtime.credentialLibrary.get(id)
-    if (id === undefined || record === undefined || 'all' in record.agentScope) continue
-    if (record.agentScope.agentIds.includes(agentId)) continue
-    await runtime.credentialLibrary.update(id, { agentScope: { agentIds: [...record.agentScope.agentIds, agentId] } })
+  if (grants === undefined) return
+  const granted = new Set(grants.flatMap((grant) => credentialIdOfAccount(grant.accountId) ?? []))
+  // Removals first, so moving an agent to another account never meets its old one on `GH_TOKEN`.
+  for (const adding of [false, true]) {
+    for (const record of runtime.credentialLibrary.list()) {
+      if (record.kind !== 'github' || 'all' in record.agentScope) continue
+      const listed = record.agentScope.agentIds.includes(agentId)
+      if (listed === granted.has(record.id) || listed === adding) continue
+      await runtime.credentialLibrary.update(record.id, {
+        agentScope: {
+          agentIds: adding
+            ? [...record.agentScope.agentIds, agentId]
+            : record.agentScope.agentIds.filter((id) => id !== agentId),
+        },
+      })
+    }
   }
 }

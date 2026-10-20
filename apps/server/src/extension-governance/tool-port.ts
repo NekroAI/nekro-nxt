@@ -19,7 +19,7 @@ import {
   type Revision,
 } from '@nekro-nxt/extension-runtime'
 import { candidateConfigFields, testCredentialBinding, type CandidateConfigField } from '../authoring-test-config.js'
-import { namedCredentialId, namedCredentialReference } from '../credentials-library.js'
+import { commandEnvName, namedCredentialId, namedCredentialReference } from '../credentials-library.js'
 import { modelProviderAccessList } from '../host-routes-credentials.js'
 import type { NekroRuntime } from '../bootstrap.js'
 import { redactLogText } from '../logs/redact.js'
@@ -597,9 +597,17 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const notes: string[] = []
     await runtime.authoringTestConfig.setAgentValues(taskId, values, (key, name) => {
       const credential = this.#testCredential(task.agentId, name)
-      if (credential.autoUse) return namedCredentialReference(credential.id)
+      if (!runtime.credentialLibrary.needsApproval(credential, task.agentId)) {
+        return namedCredentialReference(credential.id)
+      }
       const actor = { kind: 'agent' as const, agentId: task.agentId, channelId: task.channelId }
-      const action: ExtensionAction = { kind: 'use-credential', taskId, key, credentialId: credential.id }
+      const action: ExtensionAction = {
+        kind: 'use-credential',
+        credentialId: credential.id,
+        agentId: task.agentId,
+        taskId,
+        key,
+      }
       const record = runtime.extensionRequests.create({
         action,
         actor,
@@ -618,9 +626,9 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
       const name = testCredentialBinding(value)
       if (name === undefined) return []
       const credential = this.#testCredential(agentId, name)
-      return credential.autoUse
-        ? []
-        : [`凭据「${credential.name}」要管理员同意后才能用，记录候选后会在频道里发出请求。`]
+      return this.#runtime.credentialLibrary.needsApproval(credential, agentId)
+        ? [`凭据「${credential.name}」要管理员同意后才能用，记录候选后会在频道里发出请求。`]
+        : []
     })
   }
 
@@ -648,21 +656,26 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
       // Hosts without model settings list no models.
     }
     return {
-      credentials: library.list().map((record) => ({
-        name: record.name,
-        ...(record.description === '' ? {} : { description: record.description }),
-        kind: record.kind,
-        usage: record.usage,
-        domains: [...record.domains],
-        autoUse: record.autoUse,
-        availableToYou: library.inScope(record, agentId) && library.available(record.id),
-      })),
+      credentials: library.list().map((record) => {
+        const envName = commandEnvName(record)
+        return {
+          name: record.name,
+          ...(record.description === '' ? {} : { description: record.description }),
+          kind: record.kind,
+          usage: record.usage,
+          domains: [...record.domains],
+          autoUse: record.autoUse,
+          ...(envName === undefined ? {} : { envName }),
+          availableToYou: library.inScope(record, agentId) && library.available(record.id),
+          needsApproval: library.inScope(record, agentId) && library.needsApproval(record, agentId),
+        }
+      }),
       modelProviders: providers.map((provider) => ({
         name: provider.name,
         models: models.filter((model) => model.provider === provider.provider).map((model) => model.name),
       })),
       meaning:
-        'usage 为 request 的凭据只能在扩展里用 secrets.placeholder 放进 http.fetch 请求，发往 domains 中的域名；program 的凭据代码能读到值。autoUse 为 false 的凭据要管理员同意后才能用。modelProviders 是扩展通过 nxt.models 可以调用的模型。',
+        'usage 为 request 的凭据只能在扩展里用 secrets.placeholder 放进 http.fetch 请求，发往 domains 中的域名；program 的凭据代码能读到值，带 envName 的会以这个环境变量交给你的命令。needsApproval 为 true 的要先用 nekro_nxt_credential_request 请管理员同意。modelProviders 是扩展通过 nxt.models 可以调用的模型。',
     }
   }
 
@@ -677,13 +690,30 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     },
   ): JsonValue {
     const runtime = this.#runtime
-    const existing = runtime.credentialLibrary.find(input.name)
-    if (existing !== undefined) {
+    const library = runtime.credentialLibrary
+    const existing = library.find(input.name)
+    if (existing !== undefined && !library.inScope(existing, agentId)) {
       return {
         requested: false,
-        message: runtime.credentialLibrary.inScope(existing, agentId)
-          ? `已经有凭据「${existing.name}」，可以直接使用。`
-          : `已经有凭据「${existing.name}」，但它不对你开放；请管理员在设置的「凭据」里把你加进可用范围。`,
+        message: `已经有凭据「${existing.name}」，但它不对你开放；请管理员在设置的「凭据」里把你加进可用范围。`,
+      }
+    }
+    if (existing !== undefined && !library.needsApproval(existing, agentId)) {
+      return { requested: false, message: `已经有凭据「${existing.name}」，可以直接使用。` }
+    }
+    if (existing !== undefined) {
+      // It exists but its automatic use is off: ask to use it.
+      const actor = { kind: 'agent' as const, agentId, channelId }
+      const action: ExtensionAction = { kind: 'use-credential', credentialId: existing.id, agentId }
+      const record = runtime.extensionRequests.create({
+        action,
+        actor,
+        assessment: runtime.extensionActions.assess(action, actor),
+      })
+      return {
+        requested: true,
+        requestNumber: record.number,
+        message: `凭据「${existing.name}」要管理员同意后才能用，已在频道里发出请求 #${record.number}，同意后会通知你。`,
       }
     }
     const { request, repeated } = runtime.credentialRequests.create({ agentId, channelId, ...input })

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a554520c-a3fa-4bd0-96f9-98e25d146429",
+  "id": "1397cc8e-93ae-4bb1-9f6e-503708581cfe",
   "prevId": "76bd3ec2-d952-4b1b-a677-2bf26927e7a8",
   "tables": {
     "admission_events": {
@@ -2912,6 +2912,20 @@
         "auto_use": {
           "name": "auto_use",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "env_name": {
+          "name": "env_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "approved_agent_ids": {
+          "name": "approved_agent_ids",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

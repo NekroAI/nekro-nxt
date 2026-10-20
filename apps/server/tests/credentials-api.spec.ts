@@ -148,26 +148,32 @@ describe('credentials API', () => {
       expect(duplicate.status).toBe(400)
 
       const updated = HostApiContracts.updateCredential.parseResponse(
-        (await call(`/${credential!.id}`, 'PATCH', { usage: 'program', autoUse: false })).json,
+        (await call(`/${credential!.id}`, 'PATCH', { usage: 'program', autoUse: false, envName: 'WEATHER_KEY' })).json,
       )
-      expect(updated.credentials[0]).toMatchObject({ usage: 'program', autoUse: false })
+      expect(updated.credentials[0]).toMatchObject({
+        usage: 'program',
+        autoUse: false,
+        envName: 'WEATHER_KEY',
+        approvedAgentIds: [],
+      })
       await call(`/${credential!.id}/value`, 'PUT', { value: 'fictional-weather-key-2' })
       expect(runtime.credentialLibrary.usable(credential!.id, agentId, 'program')).toMatchObject({
         value: 'fictional-weather-key-2',
       })
 
-      // Commands of the agent receive it, so removing it first lists who uses it.
+      // Automatic use is off, so the agent's commands receive it only once an administrator approves.
       runtime.core.reviseAgent(agentId, seeded.revision.id, {
         displayName: seeded.revision.displayName,
         persona: seeded.revision.persona,
         personaDocument: seeded.revision.personaDocument,
         model: seeded.revision.model,
-        capabilities: {
-          ...seeded.revision.capabilities,
-          commandCredentials: [{ credentialId: credential!.id, env: 'WEATHER_KEY', usage: [] }],
-        },
+        capabilities: { ...seeded.revision.capabilities, developmentShell: true },
         imagePolicy: seeded.revision.imagePolicy,
       })
+      expect(
+        HostApiContracts.getCredentials.parseResponse((await call('', 'GET')).json).credentials[0]?.usedBy,
+      ).toEqual({ extensions: [], commandAgents: [] })
+      await runtime.credentialLibrary.approve(credential!.id, agentId)
       runtime.credentialLibrary.recordUse({
         credentialId: credential!.id,
         agentId,

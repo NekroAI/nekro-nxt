@@ -141,6 +141,107 @@ describe('credential library', () => {
     expect(library.usable(program.id, undefined, 'program')).toMatchObject({ value: 'program-value' })
   })
 
+  it('gives commands in-scope program credentials with a variable, used automatically or approved', async () => {
+    const { library } = await setup({ accounts: { 'tok-github': { login: 'octo-fixture' } } })
+    const weather = await library.create({
+      kind: 'generic',
+      name: '天气',
+      value: 'weather-program-value',
+      usage: 'program',
+      envName: 'WEATHER_KEY',
+      agentScope: { agentIds: [agent] },
+    })
+    const guarded = await library.create({
+      kind: 'generic',
+      name: '受控',
+      value: 'guarded-program-value',
+      usage: 'program',
+      envName: 'GUARDED_KEY',
+      autoUse: false,
+    })
+    // A program credential without a variable is for extensions only.
+    await library.create({ kind: 'generic', name: '仅扩展', value: 'extension-only-value', usage: 'program' })
+    const account = await library.create({
+      kind: 'github',
+      github: { source: 'token', token: 'tok-github' },
+      agentScope: { agentIds: [agent] },
+    })
+    const received = (agentId: AgentId) =>
+      library.commandCredentials(agentId).map(({ record, env }) => [record.name, env])
+    expect(received(agent)).toEqual([
+      ['天气', 'WEATHER_KEY'],
+      ['GitHub octo-fixture', 'GH_TOKEN'],
+    ])
+    expect(received(otherAgent)).toEqual([])
+
+    await library.approve(guarded.id, agent)
+    expect(library.get(guarded.id)?.approvedAgentIds).toEqual([agent])
+    expect(received(agent)).toContainEqual(['受控', 'GUARDED_KEY'])
+    expect(received(otherAgent)).toEqual([])
+
+    // Request-only drops the variable; GitHub accounts keep GH_TOKEN.
+    await library.update(weather.id, { usage: 'request', domains: ['api.weather.test'] })
+    expect(library.get(weather.id)?.envName).toBeUndefined()
+    await expect(library.update(account.id, { envName: 'OTHER_TOKEN' })).rejects.toThrow('GH_TOKEN')
+  })
+
+  it('refuses a variable another credential already gives the same agents', async () => {
+    const { library } = await setup({
+      accounts: { first: { login: 'octo-fixture' }, second: { login: 'second-fixture' } },
+    })
+    await library.create({
+      kind: 'generic',
+      name: '天气',
+      value: 'weather-program-value',
+      usage: 'program',
+      envName: 'WEATHER_KEY',
+      agentScope: { agentIds: [agent] },
+    })
+    await expect(
+      library.create({
+        kind: 'generic',
+        name: '天气二',
+        value: 'second-value',
+        usage: 'program',
+        envName: 'WEATHER_KEY',
+      }),
+    ).rejects.toThrow('凭据「天气」已经以 WEATHER_KEY')
+    // Disjoint scopes may share a variable.
+    const other = await library.create({
+      kind: 'generic',
+      name: '天气二',
+      value: 'second-value',
+      usage: 'program',
+      envName: 'WEATHER_KEY',
+      agentScope: { agentIds: [otherAgent] },
+    })
+    await expect(library.update(other.id, { agentScope: { all: true } })).rejects.toThrow('WEATHER_KEY')
+    await expect(
+      library.create({ kind: 'generic', name: '保留', value: 'reserved-value', usage: 'program', envName: 'PATH' }),
+    ).rejects.toThrow()
+
+    // GitHub accounts claim GH_TOKEN, so two of them need separate agents.
+    await library.create({
+      kind: 'github',
+      github: { source: 'token', token: 'first' },
+      agentScope: { agentIds: [agent] },
+    })
+    await expect(
+      library.create({
+        kind: 'github',
+        github: { source: 'token', token: 'second' },
+        agentScope: { agentIds: [agent] },
+      }),
+    ).rejects.toThrow('GH_TOKEN')
+    await expect(
+      library.create({
+        kind: 'github',
+        github: { source: 'token', token: 'second' },
+        agentScope: { agentIds: [otherAgent] },
+      }),
+    ).resolves.toMatchObject({ name: 'GitHub second-fixture' })
+  })
+
   it('removes a credential at once and survives a restart without it', async () => {
     const { library, make } = await setup()
     const created = await library.create({ kind: 'generic', name: '临时', value: 'temporary-value', usage: 'program' })

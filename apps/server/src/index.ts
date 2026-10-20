@@ -39,7 +39,6 @@ import {
   commandCredentialEnvironment,
   commandCredentialPrompt,
   createEnvForwardingExecutor,
-  effectiveCommandGrants,
   type CommandCredentialSources,
 } from './command-account-env.js'
 import {
@@ -4928,23 +4927,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
-  /** The variables that give one agent's commands the credentials it was granted. */
+  /** The variables that give one agent's commands its credentials. */
   #commandEnvironmentOf(revision: AgentRevisionRecord): Record<string, string> {
     if (this.#commandAccounts === undefined) return {}
-    return commandCredentialEnvironment(
-      revision.agentId,
-      effectiveCommandGrants(revision.capabilities),
-      this.#commandAccounts,
-    )
+    return commandCredentialEnvironment(revision.agentId, this.#commandAccounts)
   }
 
   #commandAccountPromptOf(revision: AgentRevisionRecord): string | undefined {
     if (this.#commandAccounts === undefined || !revision.capabilities.developmentShell) return undefined
-    return commandCredentialPrompt(
-      revision.agentId,
-      effectiveCommandGrants(revision.capabilities),
-      this.#commandAccounts,
-    )
+    // Older account grants still carry usage hints for the GitHub credential they became.
+    const hints = new Map(revision.capabilities.commandAccounts.map((grant) => [`crd_${grant.accountId}`, grant.usage]))
+    return commandCredentialPrompt(revision.agentId, this.#commandAccounts, (id) => hints.get(id) ?? [])
   }
 
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */

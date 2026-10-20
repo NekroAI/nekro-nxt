@@ -166,9 +166,13 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
   defineTool({
     name: 'nekro_nxt_credential_request',
     description:
-      '缺少凭据时请管理员添加：给出建议的名称、用途和需要访问的域名。管理员会收到通知，打开已填好的添加页面；添加后会通知你继续。不要让人把凭据发在聊天里。',
+      '缺少凭据，或者要用的凭据需要管理员同意（nekro_nxt_credential_list 里 needsApproval 为 true）时用它：缺少时给出建议的名称、用途和需要访问的域名，管理员会收到通知，打开已填好的添加页面；需要同意时会在频道里发出请求，管理员用 /ext approve 同意。处理好后会通知你继续。不要让人把凭据发在聊天里。',
     parameters: {
-      name: { type: 'string', required: true, description: '建议的凭据名称，例如「天气服务 API Key」。' },
+      name: {
+        type: 'string',
+        required: true,
+        description: '已有凭据的名称，或建议新凭据的名称，例如「天气服务 API Key」。',
+      },
       purpose: { type: 'string', required: true, description: '用来做什么，管理员会看到。' },
       domains: {
         type: 'array',

@@ -1047,17 +1047,16 @@ export class NekroRuntime {
         },
         codeRunNode: () => codeRunNode.executable(),
         commandAccounts: {
-          credential: (credentialId, agentId) => {
-            const usable = credentialLibrary.usable(credentialId, agentId, 'program')
-            if (usable === undefined || 'denied' in usable) return undefined
-            return {
-              name: usable.record.name,
-              description: usable.record.description,
-              kind: usable.record.kind,
-              ...(usable.record.metadata.login === undefined ? {} : { login: usable.record.metadata.login }),
-              value: usable.value,
-            }
-          },
+          credentials: (agentId) =>
+            credentialLibrary.commandCredentials(agentId).map(({ record, value, env }) => ({
+              id: record.id,
+              name: record.name,
+              description: record.description,
+              kind: record.kind,
+              env,
+              ...(record.metadata.login === undefined ? {} : { login: record.metadata.login }),
+              value,
+            })),
           used: (credentialId, agentId) =>
             credentialLibrary.recordUse({ credentialId, agentId, consumerKind: 'command', consumerId: 'shell' }),
           githubCliDirectory: () => githubCli.directoryForPath(),

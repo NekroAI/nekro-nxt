@@ -24,6 +24,7 @@ const credential = (overrides: Partial<CredentialRecord> = {}): CredentialRecord
   domains: ['api.weather.test'],
   agentScope: { agentIds: [agentId] },
   autoUse: true,
+  approvedAgentIds: [],
   credentialRef: 'credential:local:0123456789abcdef0123456789abcdef',
   metadata: {},
   createdAt: 1_000,
@@ -51,8 +52,24 @@ describe('credentials repository', () => {
     expect(repository.getCredential(id)).toEqual(credential())
     expect(() => repository.insertCredential(credential({ id: CredentialIdSchema.parse('crd_FIXTURE2') }))).toThrow()
 
-    expect(repository.updateCredential(credential({ name: '天气', autoUse: false, updatedAt: 2_000 }))).toBe(true)
-    expect(repository.getCredential(id)).toMatchObject({ name: '天气', autoUse: false, createdAt: 1_000 })
+    expect(
+      repository.updateCredential(
+        credential({
+          name: '天气',
+          autoUse: false,
+          envName: 'WEATHER_KEY',
+          approvedAgentIds: [agentId],
+          updatedAt: 2_000,
+        }),
+      ),
+    ).toBe(true)
+    expect(repository.getCredential(id)).toMatchObject({
+      name: '天气',
+      autoUse: false,
+      envName: 'WEATHER_KEY',
+      approvedAgentIds: [agentId],
+      createdAt: 1_000,
+    })
 
     repository.recordCredentialUse({ credentialId: id, at: 3_000, consumerKind: 'extension', consumerId: 'ext_A' })
     expect(repository.getCredential(id)?.lastUsedAt).toBe(3_000)

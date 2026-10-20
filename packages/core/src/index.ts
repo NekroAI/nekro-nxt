@@ -17,7 +17,6 @@ import type {
 } from '@nekro-nxt/contracts'
 import {
   AgentIdSchema,
-  CommandCredentialGrantsSchema,
   AgentRevisionIdSchema,
   ChannelEventIdSchema,
   AdapterActivityKeySchema,
@@ -432,12 +431,6 @@ export const AgentCapabilityGrantsSchema = z
         message: '每个服务只能授权一个账号。',
       })
       .default([]),
-    /**
-     * Credentials commands receive as environment variables (智能体扩展配置与凭据 C2); empty unless the user grants one
-     * (absent before the field). Grants of `commandAccounts` keep working: a migrated account is the credential
-     * `crd_<accountId>`.
-     */
-    commandCredentials: CommandCredentialGrantsSchema.default([]),
   })
   .strict()
   .default({
@@ -454,7 +447,6 @@ export const AgentCapabilityGrantsSchema = z
     extensionAutonomy: 'manual',
     extensionRequesters: 'everyone',
     commandAccounts: [],
-    commandCredentials: [],
   })
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
@@ -462,22 +454,19 @@ export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
 /** Default-off additions are absent from persisted capabilities so older readers keep accepting unchanged agents. */
 export type StoredAgentCapabilityGrants = Omit<
   AgentCapabilityGrants,
-  'communityFeedbackAuto' | 'extensionAutonomy' | 'extensionRequesters' | 'commandCredentials'
+  'communityFeedbackAuto' | 'extensionAutonomy' | 'extensionRequesters'
 > & {
   readonly communityFeedbackAuto?: boolean
   readonly extensionAutonomy?: AgentCapabilityGrants['extensionAutonomy']
   readonly extensionRequesters?: AgentCapabilityGrants['extensionRequesters']
-  readonly commandCredentials?: AgentCapabilityGrants['commandCredentials']
 }
 export const storedAgentCapabilityGrants = (capabilities: AgentCapabilityGrants): StoredAgentCapabilityGrants => {
-  const { communityFeedbackAuto, extensionAutonomy, extensionRequesters, commandCredentials, ...existing } =
-    capabilities
+  const { communityFeedbackAuto, extensionAutonomy, extensionRequesters, ...existing } = capabilities
   return {
     ...existing,
     ...(communityFeedbackAuto ? { communityFeedbackAuto: true } : {}),
     ...(extensionAutonomy === 'manual' ? {} : { extensionAutonomy }),
     ...(extensionRequesters === 'everyone' ? {} : { extensionRequesters }),
-    ...(commandCredentials.length === 0 ? {} : { commandCredentials }),
   }
 }
 
@@ -773,17 +762,6 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
               ...(grant.usage.length === 0 ? {} : { usage: [...grant.usage].sort() }),
             }))
             .sort((left, right) => left.service.localeCompare(right.service)),
-        }),
-    ...(content.capabilities.commandCredentials.length === 0
-      ? {}
-      : {
-          commandCredentials: [...content.capabilities.commandCredentials]
-            .map((grant) => ({
-              credentialId: grant.credentialId,
-              env: grant.env,
-              ...(grant.usage.length === 0 ? {} : { usage: [...grant.usage].sort() }),
-            }))
-            .sort((left, right) => left.env.localeCompare(right.env)),
         }),
   },
   imagePolicy: {

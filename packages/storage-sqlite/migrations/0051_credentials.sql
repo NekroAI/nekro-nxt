@@ -22,6 +22,8 @@ CREATE TABLE `credentials` (
 	`domains` text NOT NULL,
 	`agent_scope` text NOT NULL,
 	`auto_use` integer NOT NULL,
+	`env_name` text,
+	`approved_agent_ids` text NOT NULL,
 	`credential_ref` text NOT NULL,
 	`metadata` text NOT NULL,
 	`created_at` integer NOT NULL,

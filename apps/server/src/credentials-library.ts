@@ -102,6 +102,13 @@ export interface UsableCredential {
 
 const sameName = (left: string, right: string): boolean => left.trim().toLowerCase() === right.trim().toLowerCase()
 
+/** The variable commands receive a credential under: GitHub always `GH_TOKEN`, other program credentials their own. */
+export const commandEnvName = (record: Pick<CredentialRecord, 'kind' | 'usage' | 'envName'>): string | undefined =>
+  record.usage !== 'program' ? undefined : record.kind === 'github' ? 'GH_TOKEN' : record.envName
+
+const scopesOverlap = (left: CredentialRecord['agentScope'], right: CredentialRecord['agentScope']): boolean =>
+  'all' in left || 'all' in right || left.agentIds.some((agentId) => right.agentIds.includes(agentId))
+
 /** A credential only filled into requests goes nowhere without a domain. */
 const assertRequestDomains = (usage: CredentialUsage, domains: readonly string[]): void => {
   if (usage === 'request' && domains.length === 0) {
@@ -222,6 +229,46 @@ export class CredentialLibrary {
     return { record, value }
   }
 
+  /**
+   * Credentials this agent's commands receive (智能体扩展配置与凭据 C2、C3): program credentials in its scope that have
+   * an environment variable (GitHub ones always do), used automatically or approved for this agent. When two claim the
+   * same variable (possible only for data written before the check), the older one wins.
+   */
+  commandCredentials(agentId: AgentId): Array<UsableCredential & { readonly env: string }> {
+    const claimed = new Set<string>()
+    return this.#records.flatMap((record) => {
+      const env = commandEnvName(record)
+      const value = this.#values.get(record.id)
+      if (env === undefined || value === undefined) return []
+      if (!this.inScope(record, agentId) || this.needsApproval(record, agentId)) return []
+      if (claimed.has(env)) return []
+      claimed.add(env)
+      return [{ record, value, env }]
+    })
+  }
+
+  /** Whether the agent may use it now, or has to ask an administrator first. */
+  needsApproval(record: CredentialRecord, agentId: AgentId): boolean {
+    return !record.autoUse && !record.approvedAgentIds.includes(agentId)
+  }
+
+  /** An administrator let the agent use a credential whose automatic use is off. */
+  approve(id: CredentialId, agentId: AgentId): Promise<CredentialRecord> {
+    return this.#serialized(() => {
+      const current = this.#require(id)
+      if (!this.inScope(current, agentId)) throw new CredentialError(`凭据「${current.name}」不对这个智能体开放。`)
+      if (current.approvedAgentIds.includes(agentId)) return Promise.resolve(current)
+      const next: CredentialRecord = {
+        ...current,
+        approvedAgentIds: [...current.approvedAgentIds, agentId],
+        updatedAt: this.#now(),
+      }
+      if (!this.#repository.credentials.updateCredential(next)) throw new CredentialError('没有找到这个凭据。')
+      this.#reload()
+      return Promise.resolve(next)
+    })
+  }
+
   recordUse(input: CredentialUseInput): void {
     const at = this.#now()
     if (input.consumerKind === 'command') {
@@ -256,13 +303,14 @@ export class CredentialLibrary {
   }
 
   create(input: z.input<typeof CreateCredentialRequestSchema>): Promise<CredentialRecord> {
-    const request = CreateCredentialRequestSchema.parse(input)
     return this.#serialized(async () => {
+      const request = CreateCredentialRequestSchema.parse(input)
       let value: string
       let name: string
       let metadata: CredentialRecord['metadata'] = {}
       let usage: CredentialUsage
       let domains: readonly string[]
+      let envName: string | undefined
       if (request.kind === 'github') {
         value = await githubTokenOf(request.github, this.#githubCli())
         const identity = await verifyGithubToken(this.#fetch, value)
@@ -279,10 +327,15 @@ export class CredentialLibrary {
         name = request.name
         usage = request.usage
         domains = request.domains
+        envName = request.envName
       }
       if (value.trim() === '') throw new CredentialError('凭据的值不能为空。')
       assertRequestDomains(usage, domains)
       this.#assertFreeName(name)
+      this.#assertFreeEnv(
+        { kind: request.kind, usage, agentScope: request.agentScope, ...(envName === undefined ? {} : { envName }) },
+        undefined,
+      )
       const reference = await this.#store.save(value)
       const now = this.#now()
       const record: CredentialRecord = {
@@ -294,6 +347,8 @@ export class CredentialLibrary {
         domains: [...new Set(domains)],
         agentScope: request.agentScope,
         autoUse: request.autoUse,
+        ...(envName === undefined ? {} : { envName }),
+        approvedAgentIds: [],
         credentialRef: reference,
         metadata,
         createdAt: now,
@@ -318,10 +373,21 @@ export class CredentialLibrary {
       if (current.kind === 'github' && patch.usage === 'request') {
         throw new CredentialError('GitHub 账号给命令使用，需要允许程序读取。')
       }
+      if (current.kind === 'github' && patch.envName !== undefined && patch.envName !== null) {
+        throw new CredentialError('GitHub 账号固定以 GH_TOKEN 给命令使用。')
+      }
       if (patch.name !== undefined && !sameName(patch.name, current.name)) this.#assertFreeName(patch.name)
-      assertRequestDomains(patch.usage ?? current.usage, patch.domains ?? current.domains)
+      const usage = patch.usage ?? current.usage
+      assertRequestDomains(usage, patch.domains ?? current.domains)
+      // Only program credentials reach commands; turning one into request-only stops that.
+      const envName =
+        usage === 'program' ? (patch.envName === undefined ? current.envName : (patch.envName ?? undefined)) : undefined
+      const { envName: _previousEnv, ...rest } = current
+      void _previousEnv
       const next: CredentialRecord = {
-        ...current,
+        ...rest,
+        ...(envName === undefined ? {} : { envName }),
+        ...(patch.approvedAgentIds === undefined ? {} : { approvedAgentIds: [...new Set(patch.approvedAgentIds)] }),
         ...(patch.name === undefined ? {} : { name: patch.name }),
         ...(patch.description === undefined ? {} : { description: patch.description }),
         ...(patch.usage === undefined ? {} : { usage: patch.usage }),
@@ -330,6 +396,7 @@ export class CredentialLibrary {
         ...(patch.autoUse === undefined ? {} : { autoUse: patch.autoUse }),
         updatedAt: this.#now(),
       }
+      this.#assertFreeEnv(next, id)
       if (!this.#repository.credentials.updateCredential(next)) throw new CredentialError('没有找到这个凭据。')
       const value = this.#values.get(id)
       if (value !== undefined && next.name !== current.name) this.#secrets.register(value, { label: next.name })
@@ -405,6 +472,24 @@ export class CredentialLibrary {
     }
   }
 
+  /** Two credentials one agent's commands both receive cannot share a variable. */
+  #assertFreeEnv(
+    candidate: Pick<CredentialRecord, 'kind' | 'usage' | 'envName' | 'agentScope'>,
+    self: CredentialId | undefined,
+  ): void {
+    const env = commandEnvName(candidate)
+    if (env === undefined) return
+    const other = this.#records.find(
+      (record) =>
+        record.id !== self && commandEnvName(record) === env && scopesOverlap(record.agentScope, candidate.agentScope),
+    )
+    if (other !== undefined) {
+      throw new CredentialError(
+        `凭据「${other.name}」已经以 ${env} 给同一批智能体的命令使用，请换一个环境变量名或调整可用范围。`,
+      )
+    }
+  }
+
   #freeName(base: string, taken: readonly string[] = this.#records.map((record) => record.name)): string {
     let name = base
     for (let index = 2; taken.some((existing) => sameName(existing, name)); index += 1) name = `${base} (${index})`
@@ -441,6 +526,7 @@ export class CredentialLibrary {
           domains: [...GITHUB_DOMAINS],
           agentScope: { agentIds: [...new Set(grants.get(account.id) ?? [])] },
           autoUse: true,
+          approvedAgentIds: [],
           credentialRef: account.credentialRef,
           metadata: {
             login: account.login,
