@@ -52,3 +52,5 @@ Host 的完整恢复点通过本包公开的 `readBackupAgentIds(databasePath)` 
 `0043_browser_composer_asset_grants` 扩展频道资源授权来源以承载客户端附件；保留既有授权、外键与索引。浏览器草稿移除只撤销未使用的 `browser-composer` 授权；已被入站或出站消息引用的资源及其他来源授权保持可用。完整生命周期见[客户端附件](../../docs/03-消息内容与投递协议.md#01-客户端附件)。
 
 `0051_credentials` 增加具名凭据（[智能体扩展配置与凭据](../../docs/decisions/accepted/2026-10-20-智能体扩展配置与凭据.md)）。`credentials` 只保存名称、使用方式、域名、可用范围和凭据存储引用，值不入库；`credential_uses` 随凭据级联删除，`repository.credentials.recordCredentialUse` 每次写入时只保留该凭据最近 500 条且不超过 90 天的记录。`importCredentials` 在同一事务里插入凭据并写入一个系统设置，用于一次性导入；按编号已存在的凭据跳过，名称冲突则整体回滚。
+
+`0052_extension_config_versions` 增加扩展配置历史：每次写入扩展的本机配置或某个智能体的配置都追加一个版本，按扩展、层与智能体单调编号（本机层 `agent_id` 为空），保存写入后的配置（凭据字段只有引用）、来源、发起的智能体、提出请求的成员与原因。随扩展或智能体删除级联删除；`repository.extensionConfigVersions` 在一个事务里计算下一个版本号并写入。

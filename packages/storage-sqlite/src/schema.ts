@@ -1063,6 +1063,46 @@ export const hostExtensionInstallations = sqliteTable(
   ],
 )
 
+/**
+ * Saved states of extension configuration, per extension, layer and agent (`agent_id` is null for the host layer).
+ * Secret fields keep only credential references; reverting writes an old state again as a new version.
+ */
+export const extensionConfigVersions = sqliteTable(
+  'extension_config_versions',
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    extensionId: text('extension_id')
+      .$type<ExtensionId>()
+      .notNull()
+      .references(() => localExtensions.id, { onDelete: 'cascade' }),
+    layer: text({ enum: ['host', 'agent'] }).notNull(),
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    version: integer().notNull(),
+    config: jsonText<JsonValue>('config').notNull(),
+    source: text({ enum: ['console', 'agent', 'chat-admin', 'revert', 'auto-revert'] }).notNull(),
+    // Not foreign keys: the record outlives the agents that made or asked for a change.
+    actorAgentId: text('actor_agent_id').$type<AgentId>(),
+    requesterMemberId: text('requester_member_id'),
+    reason: text(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('extension_config_versions_owner_idx').on(table.extensionId, table.layer, table.agentId, table.version),
+    check('extension_config_versions_layer_ck', sql`${table.layer} IN ('host', 'agent')`),
+    check(
+      'extension_config_versions_agent_ck',
+      sql`(${table.layer} = 'host' AND ${table.agentId} IS NULL) OR (${table.layer} = 'agent' AND ${table.agentId} IS NOT NULL)`,
+    ),
+    check(
+      'extension_config_versions_source_ck',
+      sql`${table.source} IN ('console', 'agent', 'chat-admin', 'revert', 'auto-revert')`,
+    ),
+    check('extension_config_versions_version_ck', sql`${table.version} > 0`),
+  ],
+)
+
 export const hostUiPageEntries = sqliteTable(
   'host_ui_page_entries',
   {
