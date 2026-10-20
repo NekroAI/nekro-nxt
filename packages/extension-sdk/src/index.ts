@@ -753,7 +753,7 @@ export interface ExtensionHostEnvironment {
     migrateData?(handler: NxtDataMigrationHandler): () => void
     /**
      * The host instance's configuration (`config.host`). Each agent's configuration is `ctx.config()` inside the
-     * attachment. Dynamic runs have no saved configuration and get the schema defaults.
+     * attachment. Dynamic runs have no saved configuration and get the schema defaults with the task's test values.
      */
     config(): ExtensionJsonValue
   }
@@ -1520,7 +1520,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
   governanceRules: [
     '保存后的扩展有一条版本谱系：每次保存都是不可变的新版本，记住它从哪个版本改来。版本号就是谱系里的代数（v1、v2、v3），同一代保存了两次写作 v3·2。社区发布、本机修改都在同一条谱系上，所以能判断本机和社区谁更新、有没有各自改过。',
     '修改已保存的扩展一定先调用 nekro_nxt_extension_revise 开一个修改任务，它返回基线版本的完整定义；在这个定义上只改需要改的部分，其余照原样提交。不要凭记忆重写整个扩展，也不要另建一个同名的新扩展。一个扩展同时只有一个进行中的修改任务。',
-    '修改一个已经给你启用的扩展时，不用先停用它：修改任务的候选试运行时，会在这次对话里暂时接替已启用版本的同名工具；候选停止或对话结束后已启用的版本自动回来。保存后用 switch 切到新版本（或在自主档下由你切换），其他对话从下一次起用新版本。',
+    '修改一个已经给你启用的扩展时，不用先停用它：修改任务的候选试运行时，会在这次对话里暂时接替已启用版本的同名工具；候选停止或对话结束后已启用的版本自动回来。保存后用 switch 切到新版本（或在自主档下由你切换），其他对话从下一次起用新版本。保存过的候选在它保存成的扩展启用或切换生效时自动停下，之后调用的就是启用的版本和它的正式配置，不用再 cordis_stop。',
     "revise 返回的定义带 codeFormat 时原样带上：codeFormat: 'module' 表示源码是带 import/export 的模块（从社区或源码包导入的扩展），宿主会转换后运行；没有这个字段就是普通的 factory 函数体。",
     '合并两个版本（例如本机改过、社区又出了新版）时，把一个作为 revise 的 version、另一个作为 reference，在基线上把对方的改动合进来，保存后谱系会接在基线之后。',
     '想保留原扩展、另做一个不同走向的版本时，用 nekro_nxt_extension_action 的 branch：它会成为一个新扩展，记录分支自哪个扩展的哪个版本，可以选择是否复制数据，分支还可以继续分支。只是修 bug 或加功能就修改原扩展，不要开分支。',
@@ -1544,7 +1544,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     '保存后扩展还没有安装：有页面或适配器的扩展需要用户安装到本机；只给智能体用的扩展在给智能体启用时自动安装。每台机器一个扩展只有一个当前版本，切换版本会带上所有在用的智能体。',
     'ctx.effect 的回调会立即执行；面板、工具视图和页面按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。',
     'Host RPC 必须在 factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份，改用 caller。',
-    '本机配置用 harness.config()，智能体配置用挂载内的 ctx.config()；动态运行阶段没有保存的配置，使用 Schema 默认值。',
+    '本机配置用 harness.config()，智能体配置用挂载内的 ctx.config()；试运行没有保存的配置，使用 Schema 默认值和测试配置。',
     '面板读取对象数据使用 ctx.data 的 Hook，并在 nekro_nxt_extension_define.permissions 中声明对应读取权限。',
     '验证会在每种声明的密度和明暗两种主题下真实渲染面板，并渲染工具视图的 chip 与 card；任一渲染失败都不能保存。',
     'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',

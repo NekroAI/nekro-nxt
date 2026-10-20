@@ -2,6 +2,7 @@ import {
   AgentIdSchema,
   AuthoringAttemptIdSchema,
   AuthoringTaskIdSchema,
+  ExtensionIdSchema,
   ExtensionLayeredConfigSchema,
   ExtensionPermissionsSchema,
   JsonValueSchema,
@@ -518,6 +519,17 @@ export class DynamicAuthoringService {
 
   getTask(taskId: DynamicAuthoringTask['id']): DynamicAuthoringTask | undefined {
     return this.#repository.getAuthoringTask(taskId)
+  }
+
+  /** The extension a completed task was saved into; undefined while the task is still open. */
+  savedExtension(task: DynamicAuthoringTask): ExtensionId | undefined {
+    if (task.status !== 'completed') return undefined
+    if (task.kind === 'revise') return task.targetExtensionId
+    const payload = this.#repository
+      .listAuthoringEvents(task.id)
+      .findLast((event) => event.kind === 'task-completed')?.payload
+    const saved = z.object({ extensionId: ExtensionIdSchema }).safeParse(payload)
+    return saved.success ? saved.data.extensionId : undefined
   }
 
   subscribe(listener: (change: DynamicAuthoringChange) => void): () => void {

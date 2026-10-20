@@ -1,3 +1,5 @@
+import type { JsonValue } from '@nekro-nxt/contracts'
+
 /** Host RPC a dynamic candidate with an inbound hook exposes only to the Host verifier; never saved or shown. */
 export const INBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_inbound_probe_v1'
 /** Verifier-only RPC that runs one registered chat command with sample arguments. */
@@ -16,7 +18,12 @@ export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
  *
  * The saved Revision keeps the original source.
  */
-export const wrapDynamicHostSource = (source: string, options: { readonly inbound: boolean }): string => `
+export const wrapDynamicHostSource = (
+  source: string,
+  options: { readonly inbound: boolean; readonly hostConfig: JsonValue },
+): string => `
+const __nxtHostConfig = ${JSON.stringify(options.hostConfig)}
+harness.config = () => JSON.parse(JSON.stringify(__nxtHostConfig))
 const __nxtFactory = { handler: undefined, job: undefined, migration: undefined, nxt: undefined, host: undefined, factoryOpen: true }
 const __nxtCommands = new Map()
 const __nxtLogs = []

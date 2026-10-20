@@ -611,7 +611,8 @@ describe('dynamic authoring closed loop', () => {
           revisionId: saved.revision.id,
         }),
       ).rejects.toThrow('permission-approval-required')
-      // The authoring Session still runs the candidate with the same Tool, so only that Session is handed off.
+      // The authoring Session still runs the saved task's candidate with the same Tool; the candidate gives way to the
+      // enabled version and the conversation goes on.
       const handoff = vi.spyOn(runtime.channels, 'rolloverEpisodesForActivation')
       await expect(
         runtime.extensions.activate({
@@ -621,11 +622,12 @@ describe('dynamic authoring closed loop', () => {
           permissionApproval: { permissionDigest: requirement.permissionDigest },
         }),
       ).resolves.toMatchObject({ extensionRevisionId: saved.revision.id })
-      expect(handoff).toHaveBeenCalledTimes(1)
+      expect(handoff).not.toHaveBeenCalled()
       const next = runtime.repository.listActiveEpisodesForAgent(entity.agentId)
       expect(next).toHaveLength(1)
-      expect(next[0]?.dshSessionId).not.toBe(dshSessionId)
-      expect(runtime.host.toolNames(next[0]!.dshSessionId!)).toContain('visit_counter')
+      expect(next[0]?.dshSessionId).toBe(dshSessionId)
+      expect(runtime.host.dynamicInventory(dshSessionId)).toEqual([])
+      expect(runtime.host.toolNames(dshSessionId)).toContain('visit_counter')
     } finally {
       await runtime.dispose()
     }

@@ -102,6 +102,13 @@ export type PersistentMcpMount = (input: {
   readonly context: Context
 }) => Promise<void>
 
+/**
+ * Takes out a Session's dynamic candidates whose task is finished and was saved into this extension, before the
+ * extension mounts there. A candidate registers its tools in the agent scope, where the enabled version cannot register
+ * the same names beside it; from now on the enabled version, with its own configuration, is what the agent uses.
+ */
+export type ReleaseFinishedCandidates = (extensionId: Revision['extensionId']) => Promise<void>
+
 /** Publishes a validated adapter to the product Registry and mounts its connections. */
 export interface PersistentAdapterPort {
   register(owner: string, contribution: AdapterHostContributionV2): Promise<{ dispose(): Promise<void> }>
@@ -203,6 +210,8 @@ export class PersistentExtensionMounts {
    * version stays out of that Session until the candidate stops or the Session ends.
    */
   readonly #yielded = new Map<string, Set<Revision['extensionId']>>()
+  /** Per Session with dynamic creation, see {@link ReleaseFinishedCandidates}. */
+  readonly #finishedCandidates = new Map<string, ReleaseFinishedCandidates>()
 
   constructor(
     sessions: SessionRegistry<unknown>,
@@ -618,6 +627,14 @@ export class PersistentExtensionMounts {
     }
   }
 
+  /** Connects a Session's dynamic candidates; the returned function disconnects them when the Session ends. */
+  connectCandidates(sessionId: string, release: ReleaseFinishedCandidates): () => void {
+    this.#finishedCandidates.set(sessionId, release)
+    return () => {
+      if (this.#finishedCandidates.get(sessionId) === release) this.#finishedCandidates.delete(sessionId)
+    }
+  }
+
   /** Puts the attachment back into the Session once the revise candidate is gone. */
   async resumeInSession(sessionId: string, extensionId: Revision['extensionId']): Promise<void> {
     const yielded = this.#yielded.get(sessionId)
@@ -648,6 +665,12 @@ export class PersistentExtensionMounts {
     agentContext: Context,
   ): Promise<void> {
     if (!attachment.active || attachment.fibers.has(sessionId)) return
+    const releaseFinished = this.#finishedCandidates.get(sessionId)
+    if (releaseFinished !== undefined && !attachment.mounting.has(sessionId)) {
+      // Releasing a finished revise candidate resumes this extension in the Session, which may mount it already.
+      await releaseFinished(instance.revision.extensionId)
+      if (!attachment.active || attachment.fibers.has(sessionId)) return
+    }
     if (this.#yielded.get(sessionId)?.has(instance.revision.extensionId) === true) return
     const inFlight = attachment.mounting.get(sessionId)
     if (inFlight) return inFlight

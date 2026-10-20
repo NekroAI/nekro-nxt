@@ -1202,7 +1202,7 @@ const nekroNxtExtensionDefineTool = (
       const values = testConfig === undefined ? undefined : parseAgentTestConfig(definition.config, testConfig)
       if (values !== undefined && keepTestConfig === undefined) throw new Error('这台 NekroNXT 不能保存测试配置。')
       const notes = values === undefined ? [] : checkTestCredentials(values)
-      const receipt = runner.defineAuthoringPackage(sessionId, definition)
+      const receipt = runner.defineAuthoringPackage(sessionId, definition, values)
       if (values !== undefined) keepTestConfig?.(receipt.packageId, values)
       return Promise.resolve(notes.length === 0 ? receipt : { ...receipt, notes: [...notes] })
     },
@@ -4149,6 +4149,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           // A candidate has no saved configuration: schema defaults, then what the agent provided for this task, then
           // what the user typed. Only the user's values may point the candidate at private networks.
           const testConfig = () => extensionHost.dynamicConfig?.(revision.agentId, input.episodeId)
+          runner.configureCandidateTestValues(() => testConfig() ?? { agentProvided: {}, userEntered: {} })
           const candidateConfig = (layer: 'host' | 'agent'): JsonValue => {
             const test = testConfig()
             return runner.activeCandidateConfig(layer, { ...test?.agentProvided, ...test?.userEntered })
@@ -4329,6 +4330,28 @@ export class DshHostRuntime implements AgentSessionDriver {
             }
           }
         }
+        // A saved task's candidate keeps running until something stops it. Once the extension it was saved into mounts
+        // here, the candidate goes, so the enabled version's tools register with their own configuration.
+        const releasing = new Set<string>()
+        dynamicContext.effect(
+          () =>
+            this.#extensionMounts.connectCandidates(sessionId, async (extensionId) => {
+              const authoring = this.#authoring?.service
+              if (authoring === undefined) return
+              for (const row of runner.inventory()) {
+                if (row.activeRun === undefined || releasing.has(row.pluginId)) continue
+                const task = authoring.taskForRunner(input.episodeId, row.pluginId)
+                if (task === undefined || authoring.savedExtension(task) !== extensionId) continue
+                releasing.add(row.pluginId)
+                try {
+                  await this.#dynamic.undefineDynamicPlugin(sessionId, row.pluginId)
+                } finally {
+                  releasing.delete(row.pluginId)
+                }
+              }
+            }),
+          'nekro-nxt: dynamic candidates beside extension mounts',
+        )
         dynamicContext.effect(
           () =>
             dynamicContext.on('cordis/request-run', (request: DynamicCordisRunRequest) => {
@@ -5634,9 +5657,10 @@ export class DshHostRuntime implements AgentSessionDriver {
 /**
  * Runs installed Extensions for the lifecycle coordinator. Attachments switch inside the agent's live Sessions at
  * their safe gap: DSH assembles the tool list for every model request, so mounted or disposed Tool Fibers take effect
- * at the next step without an Episode handoff. The exception is a Session still running a dynamic candidate, typically
- * the one in which the extension was just created and saved: its Tools can collide with the saved Revision, so when
- * attaching fails and such Sessions exist they are handed off to new Episodes first and the attach is retried once.
+ * at the next step without an Episode handoff. A candidate whose task was saved into the extension is taken out of its
+ * Session before the attachment mounts there. The exception is a Session still running the candidate of an open task:
+ * its Tools can collide with the saved Revision, so when attaching fails and such Sessions exist they are handed off to
+ * new Episodes first and the attach is retried once.
  */
 export class ChannelExtensionRuntimeHost implements ExtensionRuntimeHost {
   readonly #channels: ChannelRuntime

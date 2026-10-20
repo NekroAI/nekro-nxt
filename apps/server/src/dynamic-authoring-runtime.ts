@@ -155,6 +155,12 @@ const runnableCode = (
   return { ...(host === undefined ? {} : { host }), ...(client === undefined ? {} : { client }) }
 }
 
+/** The test values of a task, kept apart by who provided them. */
+interface CandidateTestValues {
+  readonly agentProvided: Readonly<Record<string, JsonValue>>
+  readonly userEntered: Readonly<Record<string, JsonValue>>
+}
+
 export interface DynamicAuthoringPolicyState {
   readonly episodeId: EpisodeId
   readonly turn: number
@@ -346,6 +352,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   private readonly authoringPersistenceByPackage = new Map<string, Promise<void>>()
   private authoringPersistenceTail: Promise<void> = Promise.resolve()
   private definingAuthoringSnapshot: DynamicAuthoringSnapshot | undefined
+  /** Test values passed with the definition being made; they are stored for the task only after it is defined. */
+  private definingTestValues: Readonly<Record<string, JsonValue>> | undefined
+  private candidateTestValues: (() => CandidateTestValues) | undefined
   private suppressAuthoringPersistence = false
   private userOperationDepth = 0
   private onAuthoringDefinition:
@@ -459,7 +468,32 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.onAuthoringReleased = callbacks.released
   }
 
-  defineAuthoringPackage(sessionId: string, input: DynamicAuthoringPackageDefinitionInput): DynamicCordisDefineReceipt {
+  /** Where the test values of the task authoring in this Session come from; the factory's `harness.config()` uses them. */
+  configureCandidateTestValues(values: () => CandidateTestValues): void {
+    this.candidateTestValues = values
+  }
+
+  /**
+   * What `harness.config()` returns to a candidate's host factory, fixed when the candidate is defined: the defaults of
+   * `config.host`, then the task's test values for it. Credentials stay out, as in a saved extension.
+   */
+  private factoryHostConfig(config: DynamicAuthoringSnapshot['config']): JsonValue {
+    const schema = layerConfigSchema({ config }, 'host')
+    const secrets = configSecretKeys(schema)
+    const stored = this.candidateTestValues?.()
+    const values = { ...stored?.agentProvided, ...this.definingTestValues, ...stored?.userEntered }
+    return Object.fromEntries(
+      Object.entries({ ...validateConfigValue(schema, {}).value, ...values }).filter(
+        ([key]) => Object.hasOwn(schema.dict, key) && !secrets.includes(key),
+      ),
+    )
+  }
+
+  defineAuthoringPackage(
+    sessionId: string,
+    input: DynamicAuthoringPackageDefinitionInput,
+    testValues?: Readonly<Record<string, JsonValue>>,
+  ): DynamicCordisDefineReceipt {
     const parsed = preflightNekroNxtAuthoringDefinition(input)
     const request: DynamicCordisDefineRequest = {
       sessionId: SessionId(sessionId),
@@ -485,10 +519,12 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       ...(parsed.dataVersion === undefined ? {} : { dataVersion: parsed.dataVersion }),
       ...(parsed.codeFormat === 'module' ? { codeFormat: 'module' as const } : {}),
     }
+    this.definingTestValues = testValues
     try {
       return this.define(request)
     } finally {
       this.definingAuthoringSnapshot = undefined
+      this.definingTestValues = undefined
     }
   }
 
@@ -585,6 +621,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
               : host
             : wrapDynamicHostSource(registersAdapter ? wrapAdapterDynamicHostSource(host) : host, {
                 inbound: declaresInbound,
+                hostConfig: this.factoryHostConfig(snapshot.config),
               })
       const receipt = super.define(
         wrappedHost === undefined || wrappedHost === host

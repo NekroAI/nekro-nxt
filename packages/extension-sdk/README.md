@@ -90,7 +90,7 @@ Host 入口的 factory 只在本机执行一次（本机实例），参数为 `{
 
 ## 配置
 
-`config.host.schema` 与 `config.agent.schema` 都是序列化 Schemastery 的产品子集：object、string、number、natural、percent、boolean、const、const 组成的 union 和原始值 array；两层字段名不能重复。`meta.role: 'secret'` 表示只写凭据；`hint`、`advanced`、`group` 与 `visibleWhen` 控制表单展示。本机配置随安装保存，factory 中用 `harness.config()` 读取；智能体配置按 `(agentId, extensionId)` 随启用保存并在安全间隙生效，挂载内用 `ctx.config()` 读取。动态运行阶段没有已保存配置，使用 Schema 默认值。
+`config.host.schema` 与 `config.agent.schema` 都是序列化 Schemastery 的产品子集：object、string、number、natural、percent、boolean、const、const 组成的 union 和原始值 array；两层字段名不能重复。`meta.role: 'secret'` 表示只写凭据；`hint`、`advanced`、`group` 与 `visibleWhen` 控制表单展示。本机配置随安装保存，factory 中用 `harness.config()` 读取；智能体配置按 `(agentId, extensionId)` 随启用保存并在安全间隙生效，挂载内用 `ctx.config()` 读取。动态运行阶段没有已保存配置，使用 Schema 默认值和创造任务的测试配置。
 
 ## Host 工具注册与 `ctx.effect`
 

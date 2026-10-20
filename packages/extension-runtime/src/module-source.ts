@@ -22,7 +22,7 @@ export const moduleToFactoryBody = (source: string, half: 'host' | 'client'): st
   }
   const environment =
     half === 'host'
-      ? '{ harness, nxt, logger: typeof logger === "undefined" ? undefined : logger }'
+      ? '{ harness, config: typeof harness.config === "function" ? harness.config() : undefined, nxt, logger: typeof logger === "undefined" ? undefined : logger }'
       : '{ React, host, styles }'
   return `const __nxtModule = { exports: {} }
 const __nxtRequire = (name) => {

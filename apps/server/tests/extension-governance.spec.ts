@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { Context } from '@deepseek-ai/cordis'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { LlmAdapter, ToolCallId, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
@@ -66,6 +66,45 @@ class ScriptedModel extends LlmAdapter {
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
       yield { type: 'tool-call-delta', index: 0, id, name: call.name, argumentsDelta: text }
       yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: call.name, arguments: text } }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
+    yield { type: 'block-start', index: 0, blockType: 'text' }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: '好了。' } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }
+}
+
+/**
+ * Calls the tool named by the trigger word of the newest request once, then ends the turn; keeps what each tool
+ * returned. Reminders and notices carry no trigger word, so they never use up a step.
+ */
+class TriggeredModel extends ScriptedModel {
+  readonly results: string[] = []
+  #calls = 0
+  readonly #answered = new Set<string>()
+  constructor(readonly triggers: Record<string, { readonly name: string; readonly args: unknown }>) {
+    super([])
+  }
+  override async *stream(options?: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    const messages = options?.messages ?? []
+    const last = messages.at(-1)
+    if (last?.role === 'tool') this.results.push(JSON.stringify(last))
+    // Each request is `#trigger … [mN]`; a handoff may repeat earlier ones, so each N is answered once.
+    const pending = messages
+      .filter((message) => message.role === 'user')
+      .flatMap((message) => [...JSON.stringify(message.content).matchAll(/(#[a-z-]+)[^[]*\[m(\d+)\]/gu)])
+      .filter((match) => this.triggers[match[1]!] !== undefined && !this.#answered.has(match[2]!))
+      .sort((left, right) => Number(right[2]) - Number(left[2]))[0]
+    if (pending !== undefined) this.#answered.add(pending[2]!)
+    const call = pending === undefined ? undefined : this.triggers[pending[1]!]
+    if (call) {
+      const id = ToolCallId(`triggered-${++this.#calls}`)
+      const args = JSON.stringify(call.args)
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index: 0, id, name: call.name, argumentsDelta: args }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: call.name, arguments: args } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
@@ -332,6 +371,280 @@ describe('revise tasks', () => {
       await runtime.dispose()
     }
   })
+})
+
+/** Answers with the agent configuration it runs with, so a candidate and the enabled version can be told apart. */
+const CITY_TOOL = `harness.registerTool(ctx, harness.defineTool({
+  name: 'city_probe',
+  description: '城市探针',
+  parameters: {},
+  output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+  execute() { return 'city=' + ctx.config().city },
+}))`
+
+const CITY_CONFIG = {
+  agent: {
+    schema: {
+      type: 'object' as const,
+      dict: { city: { type: 'string' as const, meta: { description: '城市', default: '默认市' } } },
+    },
+  },
+}
+
+const ASK_CITY = { name: 'city_probe', args: {} }
+
+let cityMessage = 0
+
+/** Posts a message and waits until the agent's turn has ended. */
+const say = async (runtime: NekroRuntime, channelId: ChannelId, text: string) => {
+  await runtime.internalChannel.postMessage({
+    channelId,
+    clientEventId: `city-${++cityMessage}`,
+    parts: [{ type: 'text', text: `${text} [m${cityMessage}]` }],
+  })
+}
+
+/** Waits for the next city_probe answer and returns it. */
+const nextCity = async (model: TriggeredModel, runtime: NekroRuntime, channelId: ChannelId) => {
+  const before = model.results.length
+  await say(runtime, channelId, '#ask-city 现在是哪个城市？')
+  await expect.poll(() => model.results.length, NOTICE_POLL).toBeGreaterThan(before)
+  return /city=([^"\\]+)/u.exec(model.results.at(-1)!)?.[1]
+}
+
+/** Runs the task's latest candidate in its conversation and waits until it can be saved. */
+const runCandidate = async (runtime: NekroRuntime, agentId: AgentId) => {
+  const task = runtime.repository.listAuthoringTasks(agentId)[0]!
+  const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+  const sessionId = runtime.repository.getEpisode(task.episodeId)!.dshSessionId!
+  await expect.poll(() => runtime.host.sessionStatus(sessionId), NOTICE_POLL).toBe('idle')
+  await expect(
+    runtime.host.runDynamicPackage(sessionId, task.pluginKey, attempt.runnerPackageId!, 'run'),
+  ).resolves.toMatchObject({ ok: true, status: 'running' })
+  await expect.poll(() => runtime.repository.getAuthoringTask(task.id)?.status, NOTICE_POLL).toBe('ready')
+  return { task, sessionId }
+}
+
+const runningCandidates = (runtime: NekroRuntime, sessionId: string) =>
+  runtime.host.dynamicInventory(sessionId).filter((row) => row.activeRun !== undefined)
+
+const importCityLine = async (runtime: NekroRuntime) => {
+  const content = materializeImportedRevision({
+    manifest: {
+      schemaVersion: 7,
+      requires: { sdk: 10 },
+      extensionId: 'ext_CITYLINE',
+      revisionId: 'xrv_CITYLINEONE',
+      entrypoints: { host: 'source/host.ts' },
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [{ kind: 'tool', name: 'city_probe', description: '城市探针' }],
+      config: CITY_CONFIG,
+    },
+    sources: { host: `export default ({ harness }) => ({ inject: ['tools'], apply(ctx) { ${CITY_TOOL} } })` },
+  })
+  return runtime.extensionService.importRevision({
+    extension: { id: content.manifest.extensionId, slug: 'city-line', displayName: '城市线', description: '' },
+    revision: {
+      id: content.manifest.revisionId,
+      contentDigest: content.contentDigest,
+      payloadDigest: content.payloadDigest,
+    },
+    manifest: content.manifest,
+    sources: content.sources,
+  })
+}
+
+const DEFINE_CITY = {
+  name: 'nekro_nxt_extension_define',
+  args: {
+    plugin: { kind: 'new', idPrefix: 'city' },
+    name: '城市探针',
+    purpose: '回答当前配置的城市。',
+    code: { host: `return { inject: ['tools'], apply(ctx) { ${CITY_TOOL} } }` },
+    config: CITY_CONFIG,
+    testConfig: { city: '试运行市' },
+  },
+}
+
+describe('candidates after saving', () => {
+  it('gives the enabled version its tools once the saved candidate is enabled in the same conversation', async () => {
+    const model = new TriggeredModel({ '#define-city': DEFINE_CITY, '#ask-city': ASK_CITY })
+    const runtime = await createRuntime(model)
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '城市智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await say(runtime, entity.channelId, '#define-city 做一个城市探针。')
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, NOTICE_POLL).toBe(1)
+      const { task, sessionId } = await runCandidate(runtime, entity.agentId)
+      await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('试运行市')
+
+      const saved = await runtime.extensionActions.perform(
+        { kind: 'save', taskId: task.id, name: '城市探针', slug: 'city-probe' },
+        { kind: 'console' },
+      )
+      // Saving alone leaves the candidate running: it is still what the agent tries out.
+      expect(runningCandidates(runtime, sessionId)).toHaveLength(1)
+      await runtime.extensionActions.perform(
+        { kind: 'enable', extensionId: saved.extensionId!, agentId: entity.agentId, values: { city: '正式市' } },
+        { kind: 'console' },
+      )
+      expect(runningCandidates(runtime, sessionId)).toEqual([])
+      await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('正式市')
+
+      await runtime.extensionActions.perform(
+        {
+          kind: 'configure',
+          extensionId: saved.extensionId!,
+          layer: 'agent',
+          agentId: entity.agentId,
+          values: { city: '新市' },
+          credentials: {},
+        },
+        { kind: 'console' },
+      )
+      await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('新市')
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+
+  it('brings the enabled version back after a revise is saved and switched to', async () => {
+    const model = new TriggeredModel({
+      '#revise-city': { name: 'nekro_nxt_extension_revise', args: { extension: '城市线' } },
+      '#ask-city': ASK_CITY,
+    })
+    const runtime = await createRuntime(model)
+    try {
+      const { extension, revision } = await importCityLine(runtime)
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '修改城市智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await runtime.extensions.install({ extensionId: extension.id, revisionId: revision.id })
+      await runtime.extensionActions.perform(
+        { kind: 'enable', extensionId: extension.id, agentId: entity.agentId, values: { city: '正式市' } },
+        { kind: 'console' },
+      )
+      await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('正式市')
+
+      await say(runtime, entity.channelId, '#revise-city 改一下城市线。')
+      await expect
+        .poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.kind, NOTICE_POLL)
+        .toBe('revise')
+      const revise = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      model.triggers['#change-city'] = {
+        name: 'nekro_nxt_extension_define',
+        args: {
+          plugin: { kind: 'existing', pluginId: revise.pluginKey },
+          name: '城市线',
+          purpose: '回答当前配置的城市，并说明来自第二版。',
+          code: { host: `export default ({ harness }) => ({ inject: ['tools'], apply(ctx) { ${CITY_TOOL} } }) // v2` },
+          codeFormat: 'module',
+          config: CITY_CONFIG,
+        },
+      }
+      await say(runtime, entity.channelId, '#change-city 按说明改。')
+      await expect.poll(() => runtime.repository.listAuthoringAttempts(revise.id).length, NOTICE_POLL).toBe(2)
+      const { task, sessionId } = await runCandidate(runtime, entity.agentId)
+      // While the revise is open its candidate stands in for the enabled version, with the candidate's defaults.
+      await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('默认市')
+
+      const saved = await runtime.extensionActions.perform({ kind: 'save', taskId: task.id }, { kind: 'console' })
+      await runtime.extensionActions.perform(
+        { kind: 'switch', extensionId: extension.id, revisionId: saved.revisionId! },
+        { kind: 'console' },
+      )
+      expect(runningCandidates(runtime, sessionId)).toEqual([])
+      await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('正式市')
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+
+  it('still mounts an extension whose tool names an open task’s candidate already uses', async () => {
+    const model = new TriggeredModel({ '#define-city': DEFINE_CITY, '#ask-city': ASK_CITY })
+    const runtime = await createRuntime(model)
+    try {
+      const { extension } = await importCityLine(runtime)
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '同名智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await say(runtime, entity.channelId, '#define-city 做一个城市探针。')
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, NOTICE_POLL).toBe(1)
+      const { task } = await runCandidate(runtime, entity.agentId)
+      // The task is still open, so its candidate keeps the conversation; the conversation is handed off instead.
+      await runtime.extensionActions.perform(
+        { kind: 'enable', extensionId: extension.id, agentId: entity.agentId, values: { city: '正式市' } },
+        { kind: 'console' },
+      )
+      expect(runtime.repository.getEpisode(task.episodeId)?.closeReason).toBe('incompatible-activation')
+      await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('正式市')
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+})
+
+describe('trial configuration', () => {
+  it('gives the host factory harness.config() with defaults and the task’s test values', async () => {
+    const host = `const region = harness.config().region + '/' + harness.config().unit
+return { inject: ['tools'], apply(ctx) { harness.registerTool(ctx, harness.defineTool({
+  name: 'region_probe',
+  description: '地区探针',
+  parameters: {},
+  output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+  execute() { return 'city=' + region },
+})) } }`
+    const model = new TriggeredModel({
+      '#define-region': {
+        name: 'nekro_nxt_extension_define',
+        args: {
+          plugin: { kind: 'new', idPrefix: 'region' },
+          name: '地区探针',
+          purpose: '回答本机配置的地区。',
+          code: { host },
+          config: {
+            host: {
+              schema: {
+                type: 'object',
+                dict: {
+                  region: { type: 'string', meta: { description: '地区', default: '示例区' } },
+                  unit: { type: 'string', meta: { description: '单位', default: '摄氏' } },
+                },
+              },
+            },
+          },
+          testConfig: { region: '试运行区' },
+        },
+      },
+      '#ask-region': { name: 'region_probe', args: {} },
+    })
+    const runtime = await createRuntime(model)
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '地区智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await say(runtime, entity.channelId, '#define-region 做一个地区探针。')
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, NOTICE_POLL).toBe(1)
+      await runCandidate(runtime, entity.agentId)
+      await say(runtime, entity.channelId, '#ask-region 现在是哪个地区？')
+      await expect.poll(() => model.results.at(-1), NOTICE_POLL).toContain('city=试运行区/摄氏')
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
 })
 
 describe('extension data across versions', () => {
