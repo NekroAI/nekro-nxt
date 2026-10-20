@@ -8,15 +8,15 @@ const payloadKey = /^(?:messages|prompt|reasoning|body|requestBody|responseBody|
 const nativeStack = Object.getOwnPropertyDescriptor(new Error(), 'stack')
 const initialStackFormatter = Object.getOwnPropertyDescriptor(Error, 'prepareStackTrace')
 
-/** Bounded formatting never invokes getters, custom inspectors or toJSON on plugin values. */
-export function normalizeLog(input: HostLogInput, runId: string, now: number, secrets: readonly string[] = []) {
-  let redacted = false
-  let truncated = false
-  const text = (input: string): string => {
-    let value = input.slice(0, 32_768)
-    if (input.length > 32_768) truncated = true
-    for (const secret of secrets) if (secret.length >= 4) value = value.split(secret).join('[已隐藏]')
-    value = value
+/**
+ * Hides registered secrets, bearer tokens, credential-looking assignments, URL credentials and queries, personal
+ * directories and terminal control characters in one line of log text.
+ */
+export function redactLogText(input: string, secrets: readonly string[] = []): string {
+  let value = input
+  for (const secret of secrets) if (secret.length >= 4) value = value.split(secret).join('[已隐藏]')
+  return (
+    value
       // eslint-disable-next-line no-control-regex -- ANSI escapes are deliberately removed from untrusted logs.
       .replace(/\u001b\[[0-9;]*[A-Za-z]/gu, '')
       // eslint-disable-next-line no-control-regex -- Preserve tabs/newlines while removing other terminal controls.
@@ -40,6 +40,17 @@ export function normalizeLog(input: HostLogInput, runId: string, now: number, se
       })
       .replace(/\/(?:Users|home)\/[^/\s]+/gu, '/[个人目录]')
       .replace(/[a-z]:\\Users\\[^\\\s]+/giu, '[个人目录]')
+  )
+}
+
+/** Bounded formatting never invokes getters, custom inspectors or toJSON on plugin values. */
+export function normalizeLog(input: HostLogInput, runId: string, now: number, secrets: readonly string[] = []) {
+  let redacted = false
+  let truncated = false
+  const text = (input: string): string => {
+    let value = input.slice(0, 32_768)
+    if (input.length > 32_768) truncated = true
+    value = redactLogText(value, secrets)
     if (value !== input) redacted = true
     if (value.length > 16_384) {
       value = `${value.slice(0, 16_384)}…`

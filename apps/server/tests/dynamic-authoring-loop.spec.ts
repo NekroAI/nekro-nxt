@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
+import { ExtensionGovernanceTools } from '../src/extension-governance/tool-port.js'
 import { NekroJsonlSessionPersistence } from '../src/dsh-session-persistence.js'
 import { projectHistoryEntry } from '../src/host-route-support.js'
 import { createNekroHostApi } from '../src/host-api.js'
@@ -959,11 +960,27 @@ return { inject: ['nxt'], apply() {} }`
       ).rejects.toThrow('observed {"unit":"摄氏","label":"智能体标签","retries":9,"fetched":"pong"}')
 
       await runtime.authoringTestConfig.setSecrets(task.id, { apiKey: 'fictional-test-key' })
-      expect(runtime.authoringTestConfig.values(task.id).agentProvided).toEqual({
-        endpoint,
-        label: '智能体标签',
-        retries: 5,
+      const inspected = await new ExtensionGovernanceTools(runtime).inspect(entity.agentId, {
+        kind: 'task',
+        reference: undefined,
       })
+      expect(inspected).toMatchObject({
+        task: { id: task.id },
+        config: [
+          { layer: 'host', key: 'region', value: '示例区', source: 'default' },
+          { layer: 'agent', key: 'endpoint', level: 'network', value: endpoint, source: 'user' },
+          { key: 'unit', value: '摄氏', source: 'default' },
+          { key: 'label', value: '智能体标签', source: 'agent' },
+          { key: 'retries', value: 9, source: 'user' },
+          { key: 'apiKey', level: 'secret', set: true },
+        ],
+        problems: [],
+        authority: { actions: { save: 'console' } },
+      })
+      const reference = runtime.authoringTestConfig.values(task.id).userEntered['apiKey']
+      if (typeof reference !== 'string') throw new Error('The test credential has no reference.')
+      expect(JSON.stringify(inspected)).not.toContain(reference)
+      expect(JSON.stringify(inspected)).not.toContain('fictional-test-key')
 
       await runtime.authoringTestConfig.clear(task.id)
       expect(runtime.authoringTestConfig.values(task.id)).toEqual({ agentProvided: {}, userEntered: {} })
