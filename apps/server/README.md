@@ -88,6 +88,8 @@ DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config
 
 `logs/` 是有界运行记录：不进入升级备份，业务恢复时原地保留；恢复阶段允许其中的日志继续变化，但拒绝符号链接或非目录替代。`host/logging.json` 正常参与配置备份。日志保留不扩大 `extension-cache/` 等其他排除项的恢复权限。
 
+凭据值由 `SecretRegistry` 统一登记，日志与模型上下文共用这一份。本地凭据目录和 DSH 凭据文档在启动时预先登记，之后保存、解析或轮换的值随用随登；进程环境变量和 `.env` 中的模型密钥在首次解析时登记。`credential-redaction.ts` 在每个 DSH Host 上挂载：工具结果的规范值、渲染内容、错误信息、附加上下文和 `run_code` 子调用记录中的凭据替换为 `[凭据已隐藏]`（原值、标准与 URL 安全 base64、URL 编码形式），替换先于溢出保存，溢出文件里也只有替换后的文本；参数含有凭据或指向凭据目录、DSH 凭据文档的工具调用直接拒绝，命令和程序文本中的路径识别是尽力而为。成员发来的消息在入库前替换，扩展提供的上下文在进入提示词前替换。少于 8 个字符的值只在日志中隐藏。被拒绝的 `run_code` 子调用参数仍原样留在 DSH Session 日志中，运行视图展示时隐藏。
+
 生产容器使用 `/data`，本地由 `NEKRO_DATA` 或宿主参数指定数据根。组合根当前管理 `core.sqlite`、仅用于旧格式归档的 `sessions.sqlite`、`assets/`、`credentials/`、`dsh/`、`extension-data/`、`extension-cache/`、`workspaces/`、`backups/`、`logs/` 和公开入口的 `host/tls/`。Core 拥有 SQLite 格式，DSH Provider 拥有 JSONL Session 格式；Asset Service、本地凭据存储、DSH 服务、Extension Runtime、工作区和 Host 升级/安全入口各自拥有对应目录。`extension-cache/` 与 `dsh/request-images/` 可重建；扩展源码、Spill、工作区和凭据是持久数据，不能按缓存清理。
 
 SQLite 的 `-wal`、`-shm` 是运行期伴生文件，不是独立数据分区，不得手工移动或删除。自动恢复点覆盖主要数据根的持久文件，包括 JSONL、Profile、凭据、插件项目、扩展源码、Asset、Spill、工作区、TLS 与 `dsh/shutdown-inbox/`；明确配置的外置智能体工作区另列根目录。排除 `backups/`、`logs/`、`extension-cache/`、`dsh/request-images/`、`dsh/plugin-staging/`、`dsh/pnpm-store/` 和 socket；SQLite 主库通过 backup API 快照，符号链接只复制链接本身。

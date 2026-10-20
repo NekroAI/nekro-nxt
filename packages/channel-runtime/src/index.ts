@@ -431,6 +431,8 @@ export interface ChannelRuntimeOptions {
   readonly adapterState?: AdapterRuntimeStateStore
   readonly commands?: CommandGate
   readonly inboundHooks?: InboundHookGate
+  /** Rewrites an inbound event before it is stored, such as hiding known secrets the sender pasted. */
+  readonly sanitizeInbound?: (event: AdapterChannelInboundEvent) => AdapterChannelInboundEvent
 }
 
 export type ContextResetMode = 'clear' | 'compact'
@@ -585,6 +587,7 @@ export class ChannelRuntime {
   readonly #activityWakes = new Map<ChannelId, { readonly eventId: string; readonly at: number }[]>()
   readonly #commands: CommandGate | undefined
   readonly #inboundHooks: InboundHookGate | undefined
+  readonly #sanitizeInbound: (event: AdapterChannelInboundEvent) => AdapterChannelInboundEvent
   readonly #validateActivityTriggerOverrides: NonNullable<ChannelRuntimeOptions['validateActivityTriggerOverrides']>
   readonly #now: () => number
   readonly #nextUlid: () => string
@@ -612,6 +615,7 @@ export class ChannelRuntime {
     this.#activityDirectedAt = options.activityDirectedAt ?? (() => undefined)
     this.#commands = options.commands
     this.#inboundHooks = options.inboundHooks
+    this.#sanitizeInbound = options.sanitizeInbound ?? ((event) => event)
     this.#validateActivityTriggerOverrides = options.validateActivityTriggerOverrides ?? (() => undefined)
     this.#now = options.now ?? Date.now
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
@@ -643,7 +647,8 @@ export class ChannelRuntime {
     }
   }
 
-  async acceptChannelInbound(event: AdapterChannelInboundEvent): Promise<InboundCommitResult> {
+  async acceptChannelInbound(input: AdapterChannelInboundEvent): Promise<InboundCommitResult> {
+    const event = this.#sanitizeInbound(input)
     const commit = this.#commands?.commitInbound(event) ?? this.#core.appendInbound(event)
     if (this.#commands?.excludes(commit.event)) {
       this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: commit.event.id })

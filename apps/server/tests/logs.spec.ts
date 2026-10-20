@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { HostLogService } from '../src/logs/service.js'
 import { normalizeLog } from '../src/logs/redact.js'
 import { LogDatabase } from '@nekro-nxt/storage-sqlite'
-import { observedCredentialProvider } from '../src/logs/credentials.js'
+import { observedCredentialProvider, preloadCredentialDocument } from '../src/logs/credentials.js'
 
 const roots: string[] = []
 const services: HostLogService[] = []
@@ -66,6 +66,12 @@ describe('host operational logs', () => {
       service.write({ level: 'error', source, message: `failed with ${value?.value}` })
       await service.flush()
       expect(JSON.stringify((await service.query()).entries)).not.toContain('fictional-opaque-credential')
+      // Logs and model-facing redaction share one registry.
+      expect(service.secrets.redact('key fictional-opaque-credential')).toBe('key [凭据已隐藏]')
+      const preloaded: string[] = []
+      await preloadCredentialDocument(path.join(root, 'synthetic-credentials.yaml'), (found) => preloaded.push(found))
+      await preloadCredentialDocument(path.join(root, 'absent.yaml'), (found) => preloaded.push(found))
+      expect(preloaded).toEqual(['fictional-opaque-credential'])
     } finally {
       await context.fiber.dispose()
     }

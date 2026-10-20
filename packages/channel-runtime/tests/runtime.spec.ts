@@ -642,7 +642,13 @@ const setup = async (
   feedbackInteractions?: AdapterConnectionInteractions,
   admissionOptions: Pick<
     ChannelRuntimeOptions,
-    'deferAdmission' | 'canAdmitAgent' | 'inboundHooks' | 'activityDirectedAt' | 'messageGapMs' | 'sleep'
+    | 'deferAdmission'
+    | 'canAdmitAgent'
+    | 'inboundHooks'
+    | 'activityDirectedAt'
+    | 'messageGapMs'
+    | 'sleep'
+    | 'sanitizeInbound'
   > = {},
 ) => {
   const coreRepository = new MemoryCoreRepository()
@@ -796,6 +802,29 @@ const inbound = (
 })
 
 describe('ChannelRuntime M1 lane', () => {
+  it('stores and admits the sanitized inbound event', async () => {
+    const harness = await setup(true, undefined, undefined, undefined, {
+      sanitizeInbound: (event) => ({
+        ...event,
+        parts: event.parts.map((part) =>
+          part.type === 'text'
+            ? { ...part, text: part.text.replace('sk-fictional-0123456789abcdef', '[凭据已隐藏]') }
+            : part,
+        ),
+      }),
+    })
+    const event = {
+      ...inbound(harness.connection.id, harness.channel.id),
+      parts: [{ type: 'text' as const, text: '密钥 sk-fictional-0123456789abcdef' }],
+    }
+
+    const commit = await harness.runtime.acceptChannelInbound(event)
+
+    const stored = harness.coreRepository.getChannelEvent(commit.channelEventId)
+    expect(stored?.parts).toEqual([{ type: 'text', text: '密钥 [凭据已隐藏]' }])
+    expect(harness.admissionCalls[0]?.events[0]?.parts).toEqual([{ type: 'text', text: '密钥 [凭据已隐藏]' }])
+  })
+
   it('stores startup inbound facts without Session creation or feedback until admission opens', async () => {
     const feedback = vi.fn(() => Promise.resolve({ status: 'succeeded' as const }))
     const context = await setup(
