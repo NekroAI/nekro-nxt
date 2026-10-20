@@ -59,10 +59,17 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           const body = HostApiContracts.setAuthoringTestConfig.parseRequest(await readJsonBody(req))
           if (body.values !== undefined) await runtime.authoringTestConfig.setUserValues(params.taskId, body.values)
           await runtime.authoringTestConfig.setSecrets(params.taskId, body.secrets)
+          if (body.credentialBindings !== undefined) {
+            for (const id of Object.values(body.credentialBindings)) {
+              if (id !== null && runtime.credentialLibrary.get(id) === undefined) throw new Error('凭据不存在。')
+            }
+            await runtime.authoringTestConfig.bindCredentials(params.taskId, body.credentialBindings)
+          }
           const described = await runtime.authoringTestConfig.describe(params.taskId)
           writeContractJson(res, 200, HostApiContracts.setAuthoringTestConfig, {
             configured: [...described.configured],
             values: { ...described.values },
+            boundCredentials: { ...described.boundCredentials },
           })
           return
         }
@@ -100,6 +107,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
                   configured: [...testConfig.configured],
                   values: { ...testConfig.values },
                   agentValues: { ...testConfig.agentValues },
+                  boundCredentials: { ...testConfig.boundCredentials },
                 },
               }),
           attempts: runtime.repository.listAuthoringAttempts(task.id).map(projectAuthoringAttempt),

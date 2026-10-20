@@ -2981,6 +2981,8 @@ export const HostApiContracts = {
             configured: z.array(z.string()),
             values: z.record(z.string(), z.union([z.string(), z.number()])),
             agentValues: z.record(z.string(), JsonValueSchema),
+            /** Secret fields bound to a named credential, by the user or else by the agent. */
+            boundCredentials: BoundCredentialsSchema.optional(),
           })
           .strict()
           .optional(),
@@ -3039,10 +3041,16 @@ export const HostApiContracts = {
         secrets: z.record(z.string(), z.string().max(8192)),
         /** Text and number values; an empty string goes back to the agent's value or the default. */
         values: z.record(z.string(), z.union([z.string().max(8192), z.number()])).optional(),
+        /** Secret fields to bind to named credentials instead of a typed value; `null` leaves the field unset. */
+        credentialBindings: CredentialBindingsRequestSchema.optional(),
       })
       .strict(),
     response: z
-      .object({ configured: z.array(z.string()), values: z.record(z.string(), z.union([z.string(), z.number()])) })
+      .object({
+        configured: z.array(z.string()),
+        values: z.record(z.string(), z.union([z.string(), z.number()])),
+        boundCredentials: BoundCredentialsSchema.optional(),
+      })
       .strict(),
     error: HostApiErrorSchema,
   }),
