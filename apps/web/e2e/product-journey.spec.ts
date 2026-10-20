@@ -257,6 +257,39 @@ test('notification settings present channels before events and save only after a
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+test('adds a credential that is never shown again and removes it', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  // The Playwright data root persists between runs, so each run adds its own name.
+  const name = `示例服务 ${Date.now() % 100_000}`
+  const value = 'fixture-journey-credential-value'
+  await page.goto('/settings/credentials')
+  await expect(page.getByRole('heading', { name: '凭据', level: 1 })).toBeVisible()
+  await page.getByRole('button', { name: '添加凭据' }).first().click()
+  const dialog = page.getByRole('dialog', { name: '添加凭据' })
+  await dialog.getByRole('textbox', { name: '名称', exact: true }).fill(name)
+  await dialog.getByRole('textbox', { name: '值', exact: true }).fill(value)
+  await dialog.getByRole('button', { name: '添加', exact: true }).click()
+  // Request-only credentials need somewhere to go.
+  await expect(dialog.getByText('至少填写一个域名。')).toBeVisible()
+  await dialog.getByRole('textbox', { name: '允许的域名', exact: true }).fill('api.example.com')
+  await dialog.getByRole('button', { name: '添加', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page).toHaveURL(/credential=crd_/u)
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '允许的域名' })).toHaveValue('api.example.com')
+  await page.reload()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  expect(await page.content()).not.toContain(value)
+
+  await page.getByRole('button', { name: '删除', exact: true }).click()
+  const confirm = page.getByRole('dialog', { name: `删除「${name}」？` })
+  await confirm.getByRole('button', { name: '删除' }).click()
+  await expect(confirm).toBeHidden()
+  await expect(page).not.toHaveURL(/credential=/u)
+  await expect(page.getByText(name, { exact: true })).toHaveCount(0)
+  expect(failures, failures.join('\n')).toEqual([])
+})
+
 test('provider connection test uses the unsaved page draft without saving it', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   const { saveRequests } = await installDeepSeekProviderRoutes(page, true)

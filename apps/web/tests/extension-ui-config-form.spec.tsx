@@ -1,7 +1,8 @@
 import { configSchema } from '@nekro-nxt/contracts'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ConfigForm } from '../src/extension-ui/config-form.tsx'
+import { credentialsView, weatherCredentialId } from '../e2e/fixtures/credentials.ts'
+import { ConfigForm, configIssues, secretIssues } from '../src/extension-ui/config-form.tsx'
 
 const schema = configSchema.object({
   endpoint: configSchema.string('服务地址', { required: true, group: '连接' }),
@@ -52,5 +53,37 @@ describe('ConfigForm', () => {
     )
     expect(html).toContain('访问令牌')
     expect(html).toContain('type="password"')
+  })
+
+  it('offers named credentials for a secret and shows the bound one instead of a value field', () => {
+    const credentials = credentialsView().credentials
+    const html = renderToStaticMarkup(
+      <ConfigForm
+        schema={schema}
+        value={{}}
+        onChange={() => undefined}
+        secrets={{
+          value: {},
+          onChange: () => undefined,
+          credentials: {
+            options: credentials,
+            usable: () => true,
+            bound: { token: weatherCredentialId },
+            onBind: () => undefined,
+            onCreate: () => undefined,
+          },
+        }}
+      />,
+    )
+    expect(html).toContain('aria-label="访问令牌"')
+    expect(html).toContain('>天气服务<')
+    expect(html).not.toContain('type="password"')
+  })
+
+  it('counts a bound credential as a filled required secret', () => {
+    const required = configSchema.object({ token: configSchema.secret('访问令牌', { required: true }) })
+    expect(secretIssues(required, {})).toEqual({ token: '请填写访问令牌。' })
+    expect(secretIssues(required, {}, new Set(['token']))).toEqual({})
+    expect(configIssues(required, {})).toEqual({})
   })
 })

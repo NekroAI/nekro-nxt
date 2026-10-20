@@ -70,9 +70,6 @@ const CAPABILITY_LABEL: Record<(typeof OTHER_CAPABILITIES)[number], string> = {
   scheduledTasks: '定时任务',
 }
 
-const sameGrants = (left: Capabilities['commandAccounts'], right: Capabilities['commandAccounts']) =>
-  JSON.stringify(left) === JSON.stringify(right)
-
 const sameDocument = (left: PromptDocumentV1, right: PromptDocumentV1) => JSON.stringify(left) === JSON.stringify(right)
 
 /** Fields saved through `reviseAgent` (identity, persona and models). */
@@ -87,16 +84,12 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
 /** Capabilities that differ from the saved ones, as the partial patch the Host expects. */
 export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Capabilities> => {
   const patch: Partial<Record<BooleanCapability, boolean>> & {
-    commandAccounts?: Capabilities['commandAccounts']
     extensionAutonomy?: Capabilities['extensionAutonomy']
     extensionRequesters?: Capabilities['extensionRequesters']
     extensionConfigRequesters?: Capabilities['extensionConfigRequesters']
   } = {}
   for (const key of CAPABILITY_KEYS) {
     if (draft.capabilities[key] !== base.capabilities[key]) patch[key] = draft.capabilities[key]
-  }
-  if (!sameGrants(base.capabilities.commandAccounts, draft.capabilities.commandAccounts)) {
-    patch.commandAccounts = draft.capabilities.commandAccounts
   }
   if (draft.capabilities.extensionAutonomy !== base.capabilities.extensionAutonomy) {
     patch.extensionAutonomy = draft.capabilities.extensionAutonomy
@@ -126,7 +119,6 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')
   if ('codeRun' in patch) changes.push('编排模式')
   if ('commandNetwork' in patch) changes.push('命令联网')
-  if ('commandAccounts' in patch) changes.push('账号授权')
   if ('communityFeedbackAuto' in patch) changes.push('免确认提交反馈')
   if ('extensionAutonomy' in patch) changes.push('扩展自主权')
   if ('extensionRequesters' in patch) changes.push('谁可以让它做扩展')

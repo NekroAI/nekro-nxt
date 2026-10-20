@@ -1,5 +1,7 @@
+import { credentialsView } from '../e2e/fixtures/credentials.js'
 import { fixtureReleaseId, installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
+  CredentialsViewSchema,
   AgentIdSchema,
   AgentRevisionIdSchema,
   ChannelEventIdSchema,
@@ -395,6 +397,9 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
   await page.route('**/api/commands', (route) => route.fulfill({ json: { commands: [], problems: [] } }))
   await page.route('**/api/commands?*', (route) => route.fulfill({ json: { commands: [], problems: [] } }))
   await page.route('**/api/commands/members/*', (route) => route.fulfill({ json: { members: [] } }))
+  await page.route('**/api/settings/credentials', (route) =>
+    route.fulfill({ json: { credentials: [], modelProviders: [], requests: [], localGithubLogins: [] } }),
+  )
   await page.route('**/api/product/updates', (route) =>
     route.fulfill({
       json: { channel: 'development', currentVersion: 'fixture', state: 'unsupported', autoCheck: true },
@@ -2113,139 +2118,45 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('grants one GitHub account to one agent, with a usage hint, and offers gh where it is missing', async () => {
-    const capabilityRequests: unknown[] = []
-    const accountId = 'acct0001fixture'
-    const account = {
-      id: accountId,
-      service: 'github',
-      login: 'octo-fixture',
-      source: 'token',
-      scopes: ['repo', 'read:org'],
-      createdAt: 1,
-      usedBy: [],
-    }
-    const withAccounts = HostApiContracts.snapshot.response.parse({
-      ...browserSnapshot,
-      commandAccounts: [account],
-      agents: browserSnapshot.agents.map((agent) =>
-        agent.id === browserAgentId
-          ? { ...agent, capabilities: { ...agent.capabilities, fileTools: true, developmentShell: true } }
-          : agent,
+  test('lists the credentials the agent commands receive and leaves their scope to the credential', async () => {
+    const view = credentialsView()
+    const opened = CredentialsViewSchema.parse({
+      ...view,
+      credentials: view.credentials.map((credential) =>
+        'all' in credential.agentScope ? credential : { ...credential, agentScope: { agentIds: [browserAgentId] } },
       ),
-      capabilityAvailability: {
-        ...browserSnapshot.capabilityAvailability,
-        githubCli: { available: false, download: { version: '2.102.0', state: 'idle' } },
-      },
     })
-    await withProductPage(
-      `/agents/${browserAgentId}`,
-      async (page) => {
-        // Nothing is granted until the user picks an account on this agent.
-        await playwrightExpect(page.getByText('账号权限')).toHaveCount(0)
-        await page.getByRole('combobox', { name: 'GitHub 账号' }).click()
-        await page.getByRole('option', { name: 'octo-fixture' }).click()
-        await playwrightExpect(page.getByText('repo、read:org')).toBeVisible()
-        await playwrightExpect(page.getByText('不限制它能做的事')).toBeVisible()
-        await page.getByRole('button', { name: '处理 issue' }).click()
-        await playwrightExpect(page.getByRole('button', { name: '下载 GitHub CLI 2.102.0' })).toBeVisible()
-        await page.getByText('GitHub 账号', { exact: true }).first().scrollIntoViewIfNeeded()
-        await page.screenshot({ path: '.local/browser-test-results/agent-command-accounts.png' })
-        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
-        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
-        expect(capabilityRequests[0]).toEqual({
-          commandAccounts: [{ service: 'github', accountId, usage: ['issues'] }],
-        })
-      },
-      withAccounts,
-      async (page) => {
-        await page.route('**/api/agents/*/capabilities', async (request) => {
-          capabilityRequests.push(request.request().postDataJSON())
-          await request.fulfill({
-            json: {
-              currentRevisionId: browserRevisionId,
-              capabilities: {
-                ...withAccounts.agents[0]!.capabilities,
-                commandAccounts: [{ service: 'github', accountId, usage: ['issues'] }],
-              },
-            },
-          })
-        })
-      },
-    )
-  })
-
-  test('grants a freshly added account to the agent in the draft and leaves saving to the save bar', async () => {
-    const capabilityRequests: unknown[] = []
-    const accountId = 'acct0002fixture'
-    const added = {
-      id: accountId,
-      service: 'github',
-      login: 'second-fixture',
-      source: 'gh-login',
-      scopes: ['repo'],
-      createdAt: 2,
-      usedBy: [],
-    }
-    const base = HostApiContracts.snapshot.response.parse({
+    const withCommands = HostApiContracts.snapshot.response.parse({
       ...browserSnapshot,
       agents: browserSnapshot.agents.map((agent) =>
         agent.id === browserAgentId
           ? { ...agent, capabilities: { ...agent.capabilities, fileTools: true, developmentShell: true } }
           : agent,
       ),
-      capabilityAvailability: {
-        ...browserSnapshot.capabilityAvailability,
-        githubCli: { available: true, source: 'system', version: '2.90.0' },
-      },
     })
-    let current: typeof base = base
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
-        await page.getByRole('button', { name: '添加 GitHub 账号' }).click()
-        const dialog = page.getByRole('dialog', { name: '添加 GitHub 账号' })
-        await dialog.getByRole('radio', { name: '使用本机 gh 登录' }).click()
-        await dialog.getByRole('button', { name: '添加' }).click()
-        // The account is selected in the draft, and nothing is granted until the save bar saves it.
-        await playwrightExpect(page.getByRole('combobox', { name: 'GitHub 账号' })).toContainText('second-fixture')
-        const bar = page.getByRole('region', { name: '未保存的修改' })
-        await playwrightExpect(bar).toContainText('账号授权')
-        expect(capabilityRequests).toEqual([])
-        await bar.getByRole('button', { name: '保存' }).click()
-        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
-        expect(capabilityRequests[0]).toEqual({ commandAccounts: [{ service: 'github', accountId, usage: [] }] })
+        const row = page.getByText('命令可用的凭据', { exact: true }).locator('..').locator('..')
+        // Request-only credentials never reach commands; a program one without approval for this agent neither.
+        await playwrightExpect(page.getByText('团队 GitHub（GH_TOKEN）')).toBeVisible()
+        await playwrightExpect(row).not.toContainText('天气服务')
+        await playwrightExpect(row).not.toContainText('翻译服务')
+        await row.scrollIntoViewIfNeeded()
+        await page.screenshot({ path: '.local/browser-test-results/agent-command-credentials.png' })
+        await page.getByRole('button', { name: '管理凭据' }).click()
+        await playwrightExpect(page).toHaveURL(/\/settings\/credentials$/u)
       },
-      base,
+      withCommands,
       async (page) => {
-        await page.route('**/api/snapshot', (request) => request.fulfill({ json: current }))
-        await page.route('**/api/settings/command-accounts', async (request) => {
-          if (request.request().method() === 'GET') {
-            await request.fulfill({ json: { accounts: [], localLogins: [{ login: 'second-fixture', active: true }] } })
-            return
-          }
-          current = HostApiContracts.snapshot.response.parse({ ...current, commandAccounts: [added] })
-          await request.fulfill({ json: { accounts: [added], localLogins: [] } })
-        })
-        await page.route('**/api/agents/*/capabilities', async (request) => {
-          capabilityRequests.push(request.request().postDataJSON())
-          await request.fulfill({
-            json: {
-              currentRevisionId: browserRevisionId,
-              capabilities: {
-                ...base.agents[0]!.capabilities,
-                commandAccounts: [{ service: 'github', accountId, usage: [] }],
-              },
-            },
-          })
-        })
+        await page.route('**/api/settings/credentials', (route) => route.fulfill({ json: opened }))
       },
     )
   })
 
-  test('shows no account controls to an agent that cannot run commands', async () => {
+  test('shows no command credentials to an agent that cannot run commands', async () => {
     await withProductPage(`/agents/${browserAgentId}`, async (page) => {
-      await playwrightExpect(page.getByRole('combobox', { name: 'GitHub 账号' })).toHaveCount(0)
+      await playwrightExpect(page.getByText('命令可用的凭据', { exact: true })).toHaveCount(0)
     })
   })
 

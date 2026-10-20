@@ -34,6 +34,7 @@ const PAGES = [
   { name: '添加账号', path: '/wiring/new?adapter=fixture-beta' },
   { name: '设置·模型', path: '/settings/models' },
   { name: '设置·平台适配器', path: '/settings/adapters' },
+  { name: '设置·凭据', path: '/settings/credentials' },
   { name: '设置·DSH 插件', path: '/settings/dsh' },
   { name: '设置·通知', path: '/settings/notifications' },
   { name: '设置·外观', path: '/settings/appearance' },

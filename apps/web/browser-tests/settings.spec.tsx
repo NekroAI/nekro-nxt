@@ -4,8 +4,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
+import {
+  CredentialsViewSchema,
+  RemoveCredentialRequestSchema,
+  SetModelProviderAccessRequestSchema,
+  UpdateCredentialRequestSchema,
+  type CredentialsView,
+} from '@nekro-nxt/contracts'
+import {
+  credentialsView,
+  mapCredentialId,
+  translateCredentialId,
+  weatherCredentialId,
+  weatherUses,
+} from '../e2e/fixtures/credentials.js'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
-import { productSnapshot } from '../e2e/fixtures/product-quality.js'
+import { productSnapshot, targetAgentId } from '../e2e/fixtures/product-quality.js'
 
 const provider = (id: string, displayName: string, configured: boolean) => ({
   provider: id,
@@ -427,62 +441,249 @@ test.describe('settings space', () => {
     }
   })
 
-  test('keeps GitHub accounts, shows who uses them and removes one after a confirmation', async () => {
-    const agentId = productSnapshot.agents[0]!.id
-    let accounts = [
-      {
-        id: 'acct0001fixture',
-        service: 'github',
-        login: 'octo-fixture',
-        source: 'token',
-        scopes: ['repo'],
-        createdAt: 1,
-        usedBy: [agentId],
-      },
-      {
-        id: 'acct0002fixture',
-        service: 'github',
-        login: 'second-fixture',
-        source: 'gh-login',
-        createdAt: 2,
-        usedBy: [],
-      },
-    ]
-    const calls: string[] = []
+  /** Stubs the credential routes over a mutable view and records every change request. */
+  const credentialRoutes =
+    (state: { view: CredentialsView; calls: { method: string; path: string; body: unknown }[] }) =>
+    async (target: Page) => {
+      await target.route('**/api/settings/credentials**', async (request) => {
+        const method = request.request().method()
+        const path = new URL(request.request().url()).pathname.replace('/api/settings/credentials', '')
+        if (method === 'GET' && path === '') return request.fulfill({ json: state.view })
+        if (method === 'GET' && path.endsWith('/uses')) {
+          return request.fulfill({ json: { uses: path.includes(weatherCredentialId) ? weatherUses() : [] } })
+        }
+        const body: unknown = request.request().postDataJSON()
+        state.calls.push({ method, path, body })
+        if (method === 'POST' && path === '') {
+          state.view = CredentialsViewSchema.parse({
+            ...state.view,
+            requests: [],
+            credentials: [
+              ...state.view.credentials,
+              {
+                ...state.view.credentials[0]!,
+                id: mapCredentialId,
+                name: '地图服务',
+                description: '查询路线规划',
+                domains: ['maps.example.com'],
+                usedBy: { extensions: [], commandAgents: [] },
+                lastUsedAt: null,
+              },
+            ],
+          })
+          return request.fulfill({ json: state.view })
+        }
+        if (method === 'POST' && path.endsWith('/remove')) {
+          const confirmed = RemoveCredentialRequestSchema.parse(body).confirm
+          const id = path.split('/')[1]
+          const credential = state.view.credentials.find((candidate) => candidate.id === id)!
+          if (!confirmed) return request.fulfill({ json: { removed: false, usedBy: credential.usedBy } })
+          state.view = { ...state.view, credentials: state.view.credentials.filter((candidate) => candidate.id !== id) }
+          return request.fulfill({ json: { removed: true, view: state.view } })
+        }
+        if (method === 'PATCH') {
+          const id = path.split('/')[1]
+          state.view = CredentialsViewSchema.parse({
+            ...state.view,
+            credentials: state.view.credentials.map((candidate) =>
+              candidate.id === id ? { ...candidate, ...UpdateCredentialRequestSchema.parse(body) } : candidate,
+            ),
+          })
+          return request.fulfill({ json: state.view })
+        }
+        if (method === 'PUT' && path.startsWith('/model-providers/')) {
+          const provider = decodeURIComponent(path.split('/')[2] ?? '')
+          state.view = {
+            ...state.view,
+            modelProviders: state.view.modelProviders.map((candidate) =>
+              candidate.provider === provider
+                ? { ...candidate, ...SetModelProviderAccessRequestSchema.parse(body) }
+                : candidate,
+            ),
+          }
+          return request.fulfill({ json: state.view })
+        }
+        if (method === 'DELETE') {
+          state.view = { ...state.view, requests: [] }
+          return request.fulfill({ json: state.view })
+        }
+        return request.fulfill({ json: state.view })
+      })
+    }
+
+  test('lists credentials, opens the add form from an agent request and saves it for that request', async () => {
+    const state = { view: credentialsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open('/settings/credentials', { before: credentialRoutes(state) })
+    try {
+      const table = page.getByRole('table', { name: '凭据' })
+      await expect(table).toContainText('天气服务')
+      await expect(table).toContainText('api.weather.example.com')
+      await expect(table).toContainText('程序可读 · TRANSLATE_API_KEY')
+      await expect(table).toContainText('GitHub · octo-fixture')
+      await expect(table).toContainText('5 分钟前')
+      const requests = page.getByRole('region', { name: '凭据申请' })
+      await expect(requests).toContainText('资料员申请：查询路线规划')
+
+      await requests.getByRole('button', { name: '添加', exact: true }).click()
+      await expect(page).toHaveURL(/add=1/u)
+      const dialog = page.getByRole('dialog', { name: '添加凭据' })
+      await expect(dialog.getByRole('textbox', { name: '名称', exact: true })).toHaveValue('地图服务')
+      await expect(dialog.getByRole('textbox', { name: '说明', exact: true })).toHaveValue('查询路线规划')
+      await expect(dialog.getByRole('textbox', { name: '允许的域名', exact: true })).toHaveValue('maps.example.com')
+      await expect(dialog.getByRole('radio', { name: '仅用于网络请求' })).toBeChecked()
+      await dialog.getByRole('textbox', { name: '值', exact: true }).fill('fixture-map-key')
+      await dialog.getByRole('button', { name: '添加', exact: true }).click()
+      await expect.poll(() => state.calls.map(({ method, path }) => `${method} ${path}`)).toEqual(['POST '])
+      expect(state.calls[0]!.body).toEqual({
+        kind: 'generic',
+        name: '地图服务',
+        description: '查询路线规划',
+        usage: 'request',
+        domains: ['maps.example.com'],
+        agentScope: { all: true },
+        autoUse: true,
+        value: 'fixture-map-key',
+        requestId: 'req_fixture1',
+      })
+      // The new credential opens; the request it answered is gone.
+      await expect(page).toHaveURL(new RegExp(`credential=${mapCredentialId}`, 'u'))
+      await expect(page.getByRole('heading', { name: '地图服务' })).toBeVisible()
+      await expect(page.getByRole('region', { name: '凭据申请' })).toHaveCount(0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('opens a pre-filled add form straight from the link in a request notification', async () => {
+    const state = { view: credentialsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open(
+      '/settings/credentials?add=1&name=%E7%BF%BB%E8%AF%91&purpose=%E7%BF%BB%E8%AF%91%E6%96%87%E6%A1%A3&usage=program&request=req_fixture2&domains=a.example.com,b.example.com',
+      { before: credentialRoutes(state) },
+    )
+    try {
+      const dialog = page.getByRole('dialog', { name: '添加凭据' })
+      await expect(dialog.getByRole('textbox', { name: '名称', exact: true })).toHaveValue('翻译')
+      await expect(dialog.getByRole('textbox', { name: '允许的域名', exact: true })).toHaveValue(
+        'a.example.com, b.example.com',
+      )
+      await expect(dialog.getByRole('radio', { name: '允许程序读取' })).toBeChecked()
+      await expect(dialog.getByText('智能体运行的程序可以读到原文。')).toBeVisible()
+      await expect(dialog.getByRole('textbox', { name: '环境变量名', exact: true })).toBeVisible()
+      // A value this short cannot be hidden from what the agent reads back.
+      await dialog.getByRole('textbox', { name: '值', exact: true }).fill('short')
+      await expect(dialog.getByText('少于 8 个字符，无法在智能体的上下文中隐藏。')).toBeVisible()
+      await dialog.getByRole('radio', { name: '仅用于网络请求' }).click()
+      await expect(dialog.getByText('智能体运行的程序可以读到原文。')).toHaveCount(0)
+      await expect(dialog.getByRole('textbox', { name: '环境变量名', exact: true })).toHaveCount(0)
+      // Who may use it stays collapsed until asked for.
+      await expect(dialog.getByRole('radio', { name: '全部智能体' })).toBeHidden()
+      await dialog.getByRole('button', { name: '高级' }).click()
+      await expect(dialog.getByRole('radio', { name: '全部智能体' })).toBeChecked()
+      await dialog.getByRole('button', { name: '取消' }).click()
+      await expect(page).not.toHaveURL(/add=1/u)
+      expect(state.calls).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('switches automatic use and model access in place, revokes an approval and deletes after naming users', async () => {
+    const state = { view: credentialsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open('/settings/credentials', { before: credentialRoutes(state) })
+    try {
+      await page.getByRole('switch', { name: '天气服务 自动使用' }).click()
+      await page.getByRole('switch', { name: '示例供应商甲 开放给智能体和扩展' }).click()
+      await expect
+        .poll(() => state.calls.map(({ method, path, body }) => [method, path, body]))
+        .toEqual([
+          ['PATCH', `/${weatherCredentialId}`, { autoUse: false }],
+          ['PUT', '/model-providers/example-a', { open: false }],
+        ])
+      // The switch sits in the row but does not open it.
+      await expect(page).not.toHaveURL(/credential=/u)
+
+      await page.getByRole('table', { name: '凭据' }).getByText('翻译服务', { exact: true }).click()
+      const approved = page.getByRole('region', { name: '已同意的智能体' })
+      await approved.getByRole('button', { name: '撤销' }).click()
+      await expect.poll(() => state.calls.at(-1)?.body).toEqual({ approvedAgentIds: [] })
+
+      await page.getByRole('table', { name: '凭据' }).getByText('天气服务', { exact: true }).click()
+      const uses = page.getByRole('table', { name: '使用记录' })
+      await expect(uses).toContainText('扩展 · 群聊摘要')
+      await expect(uses).toContainText('api.weather.example.com')
+      await expect(uses).toContainText('命令')
+      await expect(page.getByRole('region', { name: '使用方' })).toContainText('群聊摘要')
+
+      await page.getByRole('button', { name: '删除', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: '删除「天气服务」？' })
+      await expect(dialog).toContainText('扩展「群聊摘要」')
+      await dialog.getByRole('button', { name: '删除' }).click()
+      await expect(dialog).toBeHidden()
+      expect(state.calls.at(-1)).toEqual({
+        method: 'POST',
+        path: `/${weatherCredentialId}/remove`,
+        body: { confirm: true },
+      })
+      await expect(page.getByRole('table', { name: '凭据' })).not.toContainText('天气服务')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('edits a credential and saves only what changed', async () => {
+    const state = { view: credentialsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open(`/settings/credentials?credential=${translateCredentialId}`, {
+      before: credentialRoutes(state),
+    })
+    try {
+      await expect(page.getByRole('heading', { name: '翻译服务' })).toBeVisible()
+      await page.getByRole('textbox', { name: '环境变量名' }).fill('translate_key')
+      await expect(page.getByRole('textbox', { name: '环境变量名' })).toHaveValue('TRANSLATE_KEY')
+      const bar = page.getByRole('region', { name: '未保存的修改' })
+      await expect(bar).toContainText('环境变量名')
+      await bar.getByRole('button', { name: '保存' }).click()
+      await expect.poll(() => state.calls.length).toBe(1)
+      expect(state.calls[0]).toMatchObject({
+        method: 'PATCH',
+        path: `/${translateCredentialId}`,
+        body: { usage: 'program', envName: 'TRANSLATE_KEY', domains: [], agentScope: { agentIds: [targetAgentId] } },
+      })
+      await expect(bar).toBeHidden()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('takes the old accounts address to credentials and keeps the GitHub CLI controls there', async () => {
+    const state = { view: credentialsView(), calls: [] as { method: string; path: string; body: unknown }[] }
     const { page, errors } = await open('/settings/accounts', {
       before: async (target) => {
-        const snapshot = () => ({
-          ...productSnapshot,
-          commandAccounts: accounts,
-          capabilityAvailability: {
-            ...productSnapshot.capabilityAvailability,
-            githubCli: { available: true, source: 'system', version: '2.90.0' },
-          },
-        })
-        await target.route('**/api/snapshot', (request) => request.fulfill({ json: snapshot() }))
-        await target.route('**/api/settings/command-accounts/*', async (request) => {
-          const id = new URL(request.request().url()).pathname.split('/').at(-1)
-          calls.push(`${request.request().method()} ${id}`)
-          accounts = accounts.filter((account) => account.id !== id)
-          await request.fulfill({ json: { accounts, localLogins: [] } })
-        })
+        await credentialRoutes(state)(target)
+        await target.route('**/api/snapshot', (request) =>
+          request.fulfill({
+            json: {
+              ...productSnapshot,
+              capabilityAvailability: {
+                ...productSnapshot.capabilityAvailability,
+                githubCli: { available: true, source: 'system', version: '2.90.0' },
+              },
+            },
+          }),
+        )
       },
     })
     try {
-      const table = page.getByRole('table', { name: 'GitHub 账号' })
-      await expect(table).toContainText('octo-fixture')
-      await expect(table).toContainText('repo')
-      await expect(table).toContainText(productSnapshot.agents[0]!.displayName)
-      await expect(table).toContainText('由 GitHub 上这个 token 的设置决定')
+      await expect(page).toHaveURL(/\/settings\/credentials$/u)
+      await expect(page.getByRole('heading', { name: '凭据', level: 1 })).toBeVisible()
       await expect(page.getByText('2.90.0，来自这台设备')).toBeVisible()
-      await page.screenshot({ path: '.local/browser-test-results/settings-accounts.png' })
-
-      await table.getByRole('button', { name: 'octo-fixture 的更多操作' }).click()
-      await page.getByRole('menuitem', { name: '移除账号' }).click()
-      const dialog = page.getByRole('dialog', { name: '移除 octo-fixture？' })
-      await expect(dialog).toContainText(`${productSnapshot.agents[0]!.displayName} 的命令会立刻失去这个账号`)
-      await dialog.getByRole('button', { name: '移除' }).click()
-      await expect.poll(() => calls).toEqual(['DELETE acct0001fixture'])
+      await page.getByRole('button', { name: '添加 GitHub 账号' }).click()
+      const dialog = page.getByRole('dialog', { name: '添加 GitHub 账号' })
+      await dialog.getByRole('radio', { name: '本机 gh 已登录账号' }).click()
+      await expect(dialog.getByRole('combobox', { name: 'gh 账号' })).toContainText('octo-fixture')
       expect(errors).toEqual([])
     } finally {
       await page.close()

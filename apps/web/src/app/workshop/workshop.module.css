@@ -664,6 +664,12 @@
   box-shadow: var(--sh-1);
 }
 
+.testSecret {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
 .testSecretsActions {
   display: flex;
   justify-content: flex-end;
@@ -690,9 +696,23 @@
 
 .mcpRow {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.2fr) auto auto;
   align-items: center;
   gap: var(--s-2);
+}
+
+.mcpSourceWide {
+  grid-column: span 3;
+}
+
+@media (max-width: 560px) {
+  .mcpRow {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  }
+
+  .mcpRow > :first-child {
+    grid-column: 1 / -1;
+  }
 }
 
 .mcpRowsHint {

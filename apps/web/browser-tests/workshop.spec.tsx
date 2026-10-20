@@ -1,4 +1,4 @@
-import { AuthoringAttemptIdSchema, AuthoringTaskIdSchema } from '@nekro-nxt/contracts'
+import { AuthoringAttemptIdSchema, AuthoringTaskIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { crc32, deflateSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
+import { credentialsView, weatherCredentialId } from '../e2e/fixtures/credentials.js'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
   productSnapshot,
@@ -82,6 +83,7 @@ test.describe('workshop', () => {
     await page.route('**/api/events', (route) =>
       route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' }),
     )
+    await page.route('**/api/settings/credentials', (route) => route.fulfill({ json: credentialsView() }))
     await page.goto(`${baseUrl}/workshop`)
     return page
   }
@@ -119,6 +121,12 @@ test.describe('workshop', () => {
       await dialog.getByRole('button', { name: '添加', exact: true }).first().click()
       await dialog.getByLabel('请求头 1 名称').fill('Authorization')
       await dialog.getByLabel('请求头 1 值').fill('Bearer fixture-token')
+      // A second header takes its value from a named credential instead of a typed one.
+      await dialog.getByRole('button', { name: '添加', exact: true }).first().click()
+      await dialog.getByLabel('请求头 2 名称').fill('X-Api-Key')
+      await dialog.getByRole('combobox', { name: '请求头 2 来源' }).click()
+      await page.getByRole('option', { name: '天气服务' }).click()
+      await expect(dialog.getByLabel('请求头 2 值')).toHaveCount(0)
       await dialog.getByRole('button', { name: '测试连接' }).click()
       await expect(dialog).toContainText('已连接，提供 2 个工具。')
       await expect(dialog).toContainText('search_docs')
@@ -131,13 +139,22 @@ test.describe('workshop', () => {
         transport: 'streamable-http',
         name: 'docs',
         url: 'https://docs.example.com/mcp',
-        headers: [{ name: 'Authorization', value: 'Bearer fixture-token', secret: true }],
+        headers: [
+          { name: 'Authorization', value: 'Bearer fixture-token', secret: true },
+          { name: 'X-Api-Key', value: '', secret: true, credential: weatherCredentialId },
+        ],
       }
       expect(requests[0]?.body).toEqual({ server })
       expect(requests[1]?.body).toEqual({
         displayName: '示例知识库',
         description: '',
-        server: { ...server, headers: [{ name: 'Authorization', value: '', secret: true }] },
+        server: {
+          ...server,
+          headers: [
+            { name: 'Authorization', value: '', secret: true },
+            { name: 'X-Api-Key', value: '', secret: true, credential: weatherCredentialId },
+          ],
+        },
       })
       await expect(dialog).toBeHidden()
     } finally {
@@ -176,7 +193,7 @@ test.describe('workshop', () => {
       updatedAt: 1_725_000_000_100,
     }
     const page = await openWorkshop({ ...productSnapshot, authoringTasks: [task] })
-    let submitted: unknown
+    const submitted: unknown[] = []
     await page.route(`**/api/authoring/tasks/${taskId}`, (route) =>
       route.fulfill({
         json: {
@@ -196,28 +213,50 @@ test.describe('workshop', () => {
       }),
     )
     await page.route(`**/api/authoring/tasks/${taskId}/test-secrets`, async (route) => {
-      submitted = route.request().postDataJSON()
-      await route.fulfill({ json: { configured: ['apiKey'], values: { endpoint: 'http://nas.example.test:8080' } } })
+      const body = HostApiContracts.setAuthoringTestConfig.parseRequest(route.request().postDataJSON())
+      submitted.push(body)
+      await route.fulfill({
+        json: {
+          configured: ['apiKey'],
+          values: { endpoint: 'http://nas.example.test:8080' },
+          boundCredentials: Object.fromEntries(
+            Object.entries(body.credentialBindings ?? {}).filter(([, id]) => id !== null),
+          ),
+        },
+      })
     })
     try {
       await page.goto(`${baseUrl}/workshop/tasks/${taskId}`)
       const endpoint = page.getByLabel('服务地址')
       await expect(endpoint).toHaveAttribute('placeholder', 'https://weather.example.com')
-      const input = page.getByLabel('高德 Key')
-      await expect(input).toBeVisible()
+      const source = page.getByRole('combobox', { name: '高德 Key' })
+      await expect(source).toContainText('选择凭据')
       const save = page.getByRole('button', { name: '保存测试配置' })
       await expect(save).toBeDisabled()
       await endpoint.fill('http://nas.example.test:8080')
+      await source.click()
+      await page.getByRole('option', { name: '单独填写' }).click()
+      const input = page.getByRole('textbox', { name: '高德 Key的值' })
       await input.fill('fixture-test-key')
       await page.screenshot({ path: '.local/browser-test-results/authoring-test-config.png' })
       await save.click()
       await expect
         .poll(() => submitted)
-        .toEqual({ secrets: { apiKey: 'fixture-test-key' }, values: { endpoint: 'http://nas.example.test:8080' } })
+        .toEqual([{ secrets: { apiKey: 'fixture-test-key' }, values: { endpoint: 'http://nas.example.test:8080' } }])
       await expect(endpoint).toHaveValue('http://nas.example.test:8080')
       await expect(save).toBeDisabled()
       await expect(input).toHaveValue('')
       await expect(input).toHaveAttribute('placeholder', '已保存，留空则不修改')
+      // The same field can use a named credential instead.
+      await source.click()
+      await page.getByRole('option', { name: '天气服务' }).click()
+      await expect(input).toHaveCount(0)
+      await save.click()
+      await expect
+        .poll(() => submitted.at(-1))
+        .toEqual({ secrets: {}, values: {}, credentialBindings: { apiKey: weatherCredentialId } })
+      await expect(save).toBeDisabled()
+      await expect(source).toContainText('天气服务')
     } finally {
       await page.close()
     }
@@ -265,7 +304,10 @@ test.describe('workshop', () => {
       await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
       // Configuration lives on its own tab of the extension detail.
       await page.getByRole('tab', { name: '配置' }).click()
-      const secret = page.getByLabel('API Key')
+      // The stored value was typed for this field; it stays write-only.
+      const source = page.getByRole('combobox', { name: 'API Key' })
+      await expect(source).toContainText('单独填写')
+      const secret = page.getByRole('textbox', { name: 'API Key的值' })
       await expect(secret).toHaveValue('')
       await expect(secret).toHaveAttribute('placeholder', '已保存，留空则不修改')
       await page.getByLabel('默认城市').fill('另一市')
@@ -278,6 +320,15 @@ test.describe('workshop', () => {
       // The stubbed snapshot never catches up, so the editor keeps the edited city; the typed key is cleared once saved.
       await expect.poll(() => saved).toEqual({ config: { city: '另一市' }, secrets: { apiKey: 'fixture-new-key' } })
       await expect(secret).toHaveValue('')
+
+      // Binding a named credential replaces the typed value.
+      await source.click()
+      await page.getByRole('option', { name: '天气服务' }).click()
+      await expect(secret).toHaveCount(0)
+      await page.getByRole('button', { name: '保存配置' }).click()
+      await expect
+        .poll(() => saved)
+        .toEqual({ config: { city: '另一市' }, credentialBindings: { apiKey: weatherCredentialId } })
     } finally {
       await page.close()
     }

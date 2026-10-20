@@ -275,7 +275,7 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
           </PropertyGroup>
 
           {open && detail?.testConfig !== undefined ? (
-            <TestConfigGroup taskId={task.id} config={detail.testConfig} />
+            <TestConfigGroup taskId={task.id} agentId={task.agentId} config={detail.testConfig} />
           ) : null}
 
           <PropertyGroup title="尝试记录">

@@ -9,6 +9,8 @@ import {
 } from '@nekro-nxt/contracts'
 import { ChevronDown } from 'lucide-react'
 import { useId, useMemo, useState, type ReactNode } from 'react'
+import type { CredentialView } from '@nekro-nxt/contracts'
+import { CredentialPicker, type SecretSource } from '../credentials/credential-picker.js'
 import { Disclosure, Field, Input, Pressable, SecretInput, Select, SwitchRow, Textarea } from '../ui-kit/index.js'
 import styles from './config-form.module.css'
 
@@ -37,7 +39,7 @@ const issuesByField = (issues: readonly ConfigValidationIssue[]): Readonly<Recor
   return byField
 }
 
-/** Required secrets left empty; `configured` lists secrets the Host already stores. */
+/** Required secrets left empty; `configured` lists secrets the Host already stores or that are bound to a credential. */
 export const secretIssues = (
   schema: ConfigSchemaDocument,
   secrets: Readonly<Record<string, string>>,
@@ -52,6 +54,18 @@ export const secretIssues = (
       .map((field) => [field.key, `请填写${field.title}。`]),
   )
 
+/** Named credentials the secret fields of a form can use instead of a value typed for one field. */
+export interface ConfigFormCredentials {
+  readonly options: readonly CredentialView[]
+  /** Which credentials may be bound here; others bound earlier stay listed by name. */
+  readonly usable: (credential: CredentialView) => boolean
+  /** Field → bound credential, as the draft has it. */
+  readonly bound: Readonly<Record<string, string>>
+  readonly onBind: (key: string, credentialId: string | null) => void
+  /** Adds a credential for the field and binds it. */
+  readonly onCreate: (key: string, title: string) => void
+}
+
 export interface ConfigFormProps {
   readonly schema: ConfigSchemaDocument
   /** Non-secret values. */
@@ -63,6 +77,8 @@ export interface ConfigFormProps {
     readonly onChange: (value: Readonly<Record<string, string>>) => void
     /** Secrets already stored by the Host: shown as configured, an empty draft keeps them. */
     readonly configured?: ReadonlySet<string>
+    /** Lets secret fields bind a named credential; without it they only take a typed value. */
+    readonly credentials?: ConfigFormCredentials
   }
   /** Show validation messages (typically after the first submit attempt). */
   readonly showIssues?: boolean
@@ -95,7 +111,13 @@ export function ConfigForm({
       showIssues
         ? {
             ...configIssues(schema, value),
-            ...(secrets ? secretIssues(schema, secrets.value, secrets.configured) : {}),
+            ...(secrets
+              ? secretIssues(
+                  schema,
+                  secrets.value,
+                  new Set([...(secrets.configured ?? []), ...Object.keys(secrets.credentials?.bound ?? {})]),
+                )
+              : {}),
           }
         : {},
     [schema, secrets, showIssues, value],
@@ -108,6 +130,7 @@ export function ConfigForm({
       value={value[field.key]}
       secret={secrets?.value[field.key] ?? ''}
       configured={secrets?.configured?.has(field.key) ?? false}
+      credentials={secrets?.credentials}
       error={issues[field.key]}
       disabled={disabled}
       onValue={(next) => {
@@ -163,6 +186,7 @@ function ConfigFieldControl({
   value,
   secret,
   configured,
+  credentials,
   error,
   disabled,
   onValue,
@@ -172,11 +196,13 @@ function ConfigFieldControl({
   readonly value: JsonValue | undefined
   readonly secret: string
   readonly configured: boolean
+  readonly credentials: ConfigFormCredentials | undefined
   readonly error: string | undefined
   readonly disabled: boolean
   readonly onValue: (value: JsonValue | undefined) => void
   readonly onSecret: (value: string) => void
 }): ReactNode {
+  const [privateChosen, setPrivateChosen] = useState(false)
   const label = field.required ? `${field.title} *` : field.title
   const current = value ?? field.default
   switch (field.kind) {
@@ -192,7 +218,46 @@ function ConfigFieldControl({
           />
         </div>
       )
-    case 'secret':
+    case 'secret': {
+      if (credentials !== undefined) {
+        const bound = credentials.bound[field.key]
+        const source: SecretSource =
+          bound !== undefined
+            ? { kind: 'credential', id: bound }
+            : privateChosen || secret !== '' || configured
+              ? { kind: 'private' }
+              : { kind: 'unset' }
+        return (
+          <div className={styles.secretField}>
+            <Field label={label} hint={field.hint} error={error}>
+              <CredentialPicker
+                label={field.title}
+                value={source}
+                credentials={credentials.options}
+                usable={credentials.usable}
+                allowPrivate
+                disabled={disabled}
+                onChange={(next) => {
+                  setPrivateChosen(next.kind === 'private')
+                  credentials.onBind(field.key, next.kind === 'credential' ? next.id : null)
+                  if (next.kind !== 'private') onSecret('')
+                }}
+                onCreate={() => credentials.onCreate(field.key, field.title)}
+              />
+            </Field>
+            {source.kind === 'private' ? (
+              <SecretInput
+                aria-label={`${field.title}的值`}
+                configured={configured && bound === undefined}
+                value={secret}
+                autoComplete="off"
+                disabled={disabled}
+                onChange={(event) => onSecret(event.target.value)}
+              />
+            ) : null}
+          </div>
+        )
+      }
       return (
         <Field label={label} hint={field.hint} error={error}>
           <SecretInput
@@ -204,6 +269,7 @@ function ConfigFieldControl({
           />
         </Field>
       )
+    }
     case 'enum': {
       const options = field.options ?? []
       const index = options.findIndex((option) => JSON.stringify(option.value) === JSON.stringify(current))

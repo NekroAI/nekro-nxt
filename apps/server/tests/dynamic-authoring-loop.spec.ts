@@ -821,8 +821,35 @@ return { inject: ['nxt'], apply() {} }`
         configured: [],
         values: {},
         agentValues: {},
+        boundCredentials: {},
       })
       await expect(runtime.authoringTestConfig.setSecrets(task.id, { other: 'x' })).rejects.toThrow(/没有这些凭据字段/u)
+
+      // Binding a named credential sets the field; unbinding and clearing never delete the credential itself.
+      const named = await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '测试服务',
+        value: 'fixture-named-test-key',
+        domains: ['api.example.test'],
+      })
+      await runtime.authoringTestConfig.bindCredentials(task.id, { apiKey: named.id })
+      expect(await runtime.authoringTestConfig.describe(task.id)).toMatchObject({
+        configured: ['apiKey'],
+        boundCredentials: { apiKey: named.id },
+      })
+      expect(runtime.authoringTestConfig.values(task.id).userEntered['apiKey']).toBe(`credential:named:${named.id}`)
+      await expect(runtime.authoringTestConfig.bindCredentials(task.id, { other: named.id })).rejects.toThrow(
+        /没有这些凭据字段/u,
+      )
+      await runtime.authoringTestConfig.bindCredentials(task.id, { apiKey: null })
+      expect(await runtime.authoringTestConfig.describe(task.id)).toMatchObject({
+        configured: [],
+        boundCredentials: {},
+      })
+      await runtime.authoringTestConfig.bindCredentials(task.id, { apiKey: named.id })
+      await runtime.authoringTestConfig.clear(task.id)
+      expect(runtime.credentialLibrary.available(named.id)).toBe(true)
+
       await runtime.authoringTestConfig.setSecrets(task.id, { apiKey: 'fixture-test-key' })
       expect((await runtime.authoringTestConfig.describe(task.id)).configured).toEqual(['apiKey'])
 

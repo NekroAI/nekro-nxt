@@ -4,6 +4,7 @@ import {
   validateConfigValue,
   type AgentId,
   type ConfigField,
+  type CredentialId,
   type ExtensionConfigLayer,
   type JsonValue,
 } from '@nekro-nxt/contracts'
@@ -13,6 +14,7 @@ import type {
   DynamicAuthoringTask,
 } from '@nekro-nxt/extension-runtime'
 import { z } from 'zod'
+import { namedCredentialId, namedCredentialReference } from './credentials-library.js'
 
 const secretsKey = (taskId: string) => `authoring-test-secrets:${taskId}`
 const valuesKey = (taskId: string) => `authoring-test-config:${taskId}`
@@ -31,6 +33,8 @@ export interface AuthoringTestConfigDescription {
   readonly fields: readonly AuthoringTestConfigField[]
   /** Secret fields that have a test credential. */
   readonly configured: readonly string[]
+  /** Secret fields bound to a named credential, by the user or else by the agent. */
+  readonly boundCredentials: Readonly<Record<string, CredentialId>>
   /** Values the user typed for non-secret fields. */
   readonly values: Readonly<Record<string, string | number>>
   /** Values the agent provided for non-secret fields; the user's values take precedence. */
@@ -165,6 +169,12 @@ export class AuthoringTestConfig {
         ),
       ),
       agentValues: Object.fromEntries(Object.entries(stored.agent).filter(([key]) => !secretKeys.has(key))),
+      boundCredentials: Object.fromEntries(
+        [...secretKeys].flatMap((key) => {
+          const id = namedCredentialId(secrets[key]) ?? namedCredentialId(stored.agent[key])
+          return id === undefined ? [] : [[key, id] as const]
+        }),
+      ),
     }
   }
 
@@ -186,7 +196,34 @@ export class AuthoringTestConfig {
       if (previous !== undefined) replaced.push(previous)
     }
     this.#deps.putSetting(secretsKey(taskId), stored, current?.revision, this.#deps.now())
-    await Promise.allSettled(replaced.map((reference) => this.#deps.credentials.delete(reference)))
+    await this.#deleteOwned(replaced)
+  }
+
+  /**
+   * Binds secret fields to named credentials the user picked on the task page; `null` leaves the field unset. A
+   * binding replaces a typed test value, whose stored copy is deleted; the named credential itself is never touched.
+   */
+  async bindCredentials(
+    taskId: DynamicAuthoringTask['id'],
+    bindings: Readonly<Record<string, CredentialId | null>>,
+  ): Promise<void> {
+    if (this.#deps.getTask(taskId) === undefined) throw new Error('创造任务不存在。')
+    const allowed = new Set(
+      (await this.fields(taskId)).filter((field) => field.kind === 'secret').map((field) => field.key),
+    )
+    const unknown = Object.keys(bindings).filter((key) => !allowed.has(key))
+    if (unknown.length > 0) throw new Error(`当前候选没有这些凭据字段：${unknown.join('、')}`)
+    const current = this.#deps.getSetting(secretsKey(taskId))
+    const stored: Record<string, string> = { ...references(current?.value) }
+    const replaced: string[] = []
+    for (const [key, id] of Object.entries(bindings)) {
+      const previous = stored[key]
+      if (previous !== undefined) replaced.push(previous)
+      if (id === null) delete stored[key]
+      else stored[key] = namedCredentialReference(id)
+    }
+    this.#deps.putSetting(secretsKey(taskId), stored, current?.revision, this.#deps.now())
+    await this.#deleteOwned(replaced)
   }
 
   /** Stores what the user typed for text and number fields; an empty value falls back to the agent's or the default. */
@@ -278,7 +315,16 @@ export class AuthoringTestConfig {
     const stored = references(current?.value)
     if (Object.keys(stored).length === 0) return
     this.#deps.putSetting(secretsKey(taskId), {}, current?.revision, this.#deps.now())
-    await Promise.allSettled(Object.values(stored).map((reference) => this.#deps.credentials.delete(reference)))
+    await this.#deleteOwned(Object.values(stored))
+  }
+
+  /** Deletes stored test values; references to named credentials belong to the credential library and stay. */
+  async #deleteOwned(references: readonly string[]): Promise<void> {
+    await Promise.allSettled(
+      references
+        .filter((reference) => namedCredentialId(reference) === undefined)
+        .map((reference) => this.#deps.credentials.delete(reference)),
+    )
   }
 
   #values(taskId: DynamicAuthoringTask['id']): {

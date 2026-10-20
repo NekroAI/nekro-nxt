@@ -1,5 +1,7 @@
 import { parseJsonValue, type ConfigSchemaDocument, type JsonValue } from '@nekro-nxt/contracts'
 import { useEffect, useMemo, useState } from 'react'
+import { AddCredentialDialog } from '../credentials/credential-form.js'
+import { credentialOpenTo, useCredentials } from '../credentials/credentials-data.js'
 import { useProductRuntime, type LocalExtensionSummary } from '../product-runtime.js'
 import { Button } from '../ui-kit/index.js'
 import { ConfigForm, configDefaults, configIssues, secretIssues, type ConfigValue } from './config-form.js'
@@ -48,8 +50,15 @@ export function ExtensionConfigEditor({
   // Stored secret values never reach the client; only which ones are set.
   const secretsText = (layer?.configuredSecrets ?? []).join('\n')
   const configuredSecrets = useMemo(() => new Set(secretsText === '' ? [] : secretsText.split('\n')), [secretsText])
+  const boundText = JSON.stringify(layer?.boundCredentials ?? {})
+  // Keyed by content for the same reason as the stored configuration above.
+  const savedBindings = useMemo(() => ({ ...layer?.boundCredentials }), [boundText])
+  const credentials = useCredentials(schema !== undefined)
   const [draft, setDraft] = useState<ConfigValue>(saved)
   const [secretDrafts, setSecretDrafts] = useState<Readonly<Record<string, string>>>({})
+  // Changed bindings only: a credential id, or `null` to unbind.
+  const [bindingDrafts, setBindingDrafts] = useState<Readonly<Record<string, string | null>>>({})
+  const [creating, setCreating] = useState<{ readonly key: string; readonly title: string }>()
   const [submitted, setSubmitted] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -59,13 +68,34 @@ export function ExtensionConfigEditor({
     setSubmitted(false)
     setError('')
   }, [saved])
+  useEffect(() => setBindingDrafts({}), [savedBindings])
   if (!schema) return null
   const typedSecrets = Object.fromEntries(Object.entries(secretDrafts).filter(([, value]) => value.trim() !== ''))
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved) || Object.keys(typedSecrets).length > 0
+  const bound: Record<string, string> = { ...savedBindings }
+  for (const [key, id] of Object.entries(bindingDrafts)) {
+    if (id === null) delete bound[key]
+    else bound[key] = id
+  }
+  // A typed value replaces a binding on its own; sending both for one field is refused.
+  const bindingChanges = Object.fromEntries(
+    Object.entries(bindingDrafts).filter(
+      ([key, id]) => (id ?? undefined) !== savedBindings[key] && typedSecrets[key] === undefined,
+    ),
+  )
+  const dirty =
+    JSON.stringify(draft) !== JSON.stringify(saved) ||
+    Object.keys(typedSecrets).length > 0 ||
+    Object.keys(bindingChanges).length > 0
+  const usable = (credential: Parameters<typeof credentialOpenTo>[0]) =>
+    agentId === undefined ? 'all' in credential.agentScope : credentialOpenTo(credential, agentId)
   const save = async () => {
     setSubmitted(true)
     if (Object.keys(configIssues(schema, draft)).length > 0) return
-    if (Object.keys(secretIssues(schema, secretDrafts, configuredSecrets)).length > 0) return
+    if (
+      Object.keys(secretIssues(schema, secretDrafts, new Set([...configuredSecrets, ...Object.keys(bound)]))).length > 0
+    ) {
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -74,9 +104,11 @@ export function ExtensionConfigEditor({
         ...(agentId === undefined ? {} : { agentId }),
         config: draft,
         ...(Object.keys(typedSecrets).length === 0 ? {} : { secrets: typedSecrets }),
+        ...(Object.keys(bindingChanges).length === 0 ? {} : { credentialBindings: bindingChanges }),
       })
       // Typed secrets are never echoed back, so a save that changes only them leaves the stored config as it was.
       setSecretDrafts({})
+      setBindingDrafts({})
       setSubmitted(false)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
@@ -90,7 +122,18 @@ export function ExtensionConfigEditor({
         schema={schema}
         value={draft}
         onChange={setDraft}
-        secrets={{ value: secretDrafts, onChange: setSecretDrafts, configured: configuredSecrets }}
+        secrets={{
+          value: secretDrafts,
+          onChange: setSecretDrafts,
+          configured: configuredSecrets,
+          credentials: {
+            options: credentials.view?.credentials ?? [],
+            usable,
+            bound,
+            onBind: (key, id) => setBindingDrafts((current) => ({ ...current, [key]: id })),
+            onCreate: (key, title) => setCreating({ key, title }),
+          },
+        }}
         showIssues={submitted}
         disabled={busy}
       />
@@ -106,6 +149,7 @@ export function ExtensionConfigEditor({
           onClick={() => {
             setDraft(saved)
             setSecretDrafts({})
+            setBindingDrafts({})
           }}
         >
           还原
@@ -121,6 +165,21 @@ export function ExtensionConfigEditor({
           保存配置
         </Button>
       </div>
+      <AddCredentialDialog
+        open={creating !== undefined}
+        onOpenChange={(open) => !open && setCreating(undefined)}
+        view={credentials.view}
+        initial={{ name: creating?.title ?? '' }}
+        onCreated={({ view, credentialId }) => {
+          credentials.replace(view)
+          const key = creating?.key
+          if (key !== undefined) {
+            setBindingDrafts((current) => ({ ...current, [key]: credentialId }))
+            setSecretDrafts((current) => ({ ...current, [key]: '' }))
+          }
+          setCreating(undefined)
+        }}
+      />
     </div>
   )
 }

@@ -71,7 +71,6 @@ export function createProductStore(
     subConversations: [],
     extensionRequests: [],
     scheduledTasks: [],
-    commandAccounts: [],
     notificationSettings: {
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
@@ -537,22 +536,17 @@ export function createProductStore(
         agentId: targetAgentId,
       })
     },
-    updateExtensionConfig: async ({ extensionId, agentId, config, secrets }) => {
+    updateExtensionConfig: async ({ extensionId, agentId, config, secrets, credentialBindings }) => {
       const id = requireValue(extensionId, '缺少本地扩展标识，请刷新页面后重试。')
+      const credentials = {
+        ...(secrets === undefined ? {} : { secrets }),
+        ...(credentialBindings === undefined ? {} : { credentialBindings: { ...credentialBindings } }),
+      }
       if (agentId === undefined) {
-        await requireHost().actions['extensions.installationConfig']({
-          extensionId: id,
-          config,
-          ...(secrets === undefined ? {} : { secrets }),
-        })
+        await requireHost().actions['extensions.installationConfig']({ extensionId: id, config, ...credentials })
         return
       }
-      await requireHost().actions['extensions.activationConfig']({
-        extensionId: id,
-        agentId,
-        config,
-        ...(secrets === undefined ? {} : { secrets }),
-      })
+      await requireHost().actions['extensions.activationConfig']({ extensionId: id, agentId, config, ...credentials })
     },
     setHostExtensionInstalled: async (id, revisionId, approvals) => {
       const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
