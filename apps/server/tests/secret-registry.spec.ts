@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { HIDDEN_SECRET_TEXT, SecretRegistry } from '../src/secret-registry.ts'
 
-const SECRET = 'sk-fictional-0123456789abcdef'
+const SECRET = 'fictional-secret-0123456789abcdef'
 
 describe('SecretRegistry', () => {
   it('hides the raw value and its base64 and URL-encoded forms', () => {

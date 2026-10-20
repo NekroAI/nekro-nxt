@@ -808,14 +808,14 @@ describe('ChannelRuntime M1 lane', () => {
         ...event,
         parts: event.parts.map((part) =>
           part.type === 'text'
-            ? { ...part, text: part.text.replace('sk-fictional-0123456789abcdef', '[凭据已隐藏]') }
+            ? { ...part, text: part.text.replace('fictional-secret-0123456789abcdef', '[凭据已隐藏]') }
             : part,
         ),
       }),
     })
     const event = {
       ...inbound(harness.connection.id, harness.channel.id),
-      parts: [{ type: 'text' as const, text: '密钥 sk-fictional-0123456789abcdef' }],
+      parts: [{ type: 'text' as const, text: '密钥 fictional-secret-0123456789abcdef' }],
     }
 
     const commit = await harness.runtime.acceptChannelInbound(event)
