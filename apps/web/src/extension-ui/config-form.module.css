@@ -74,3 +74,9 @@
   color: var(--bad, var(--bad));
   font-size: var(--fs-xs);
 }
+
+.secretField {
+  display: grid;
+  gap: var(--s-2);
+  min-width: 0;
+}

@@ -1,6 +1,9 @@
 import { CircleCheck, CircleX, Plus, X } from 'lucide-react'
 import { useState } from 'react'
-import { HostApiContracts, type HostApiResponse, type McpServerForm } from '@nekro-nxt/contracts'
+import { HostApiContracts, type CredentialView, type HostApiResponse, type McpServerForm } from '@nekro-nxt/contracts'
+import { AddCredentialDialog } from '../../credentials/credential-form.js'
+import { CredentialPicker } from '../../credentials/credential-picker.js'
+import { credentialOpenTo, useCredentials } from '../../credentials/credentials-data.js'
 import { useExtensionActivation } from '../../extension-ui/index.js'
 import { callHostApi } from '../../host-api-client.js'
 import { useProductStore } from '../../product-runtime.js'
@@ -28,6 +31,8 @@ interface Row {
   readonly name: string
   readonly value: string
   readonly secret: boolean
+  /** A named credential the value comes from instead; `value` and `secret` are then unused. */
+  readonly credential?: string
 }
 
 const SERVER_NAME = /^[A-Za-z0-9_-]{1,32}$/u
@@ -63,11 +68,17 @@ function ValueRows({
   label,
   rows,
   namePlaceholder,
+  credentials,
+  usable,
+  onCreate,
   onChange,
 }: {
   readonly label: string
   readonly rows: readonly Row[]
   readonly namePlaceholder: string
+  readonly credentials: readonly CredentialView[]
+  readonly usable: (credential: CredentialView) => boolean
+  readonly onCreate: (row: Row) => void
   readonly onChange: (rows: readonly Row[]) => void
 }) {
   const update = (id: number, patch: Partial<Row>) =>
@@ -90,19 +101,46 @@ function ValueRows({
             aria-invalid={row.name !== '' && !ROW_NAME.test(row.name)}
             onChange={(event) => update(row.id, { name: event.target.value.trim() })}
           />
-          <Input
-            aria-label={`${label} ${index + 1} 值`}
-            type={row.secret ? 'password' : 'text'}
-            autoComplete="off"
-            value={row.value}
-            spellCheck={false}
-            onChange={(event) => update(row.id, { value: event.target.value })}
+          <CredentialPicker
+            label={`${label} ${index + 1} 来源`}
+            className={row.credential === undefined ? undefined : styles.mcpSourceWide}
+            value={row.credential === undefined ? { kind: 'private' } : { kind: 'credential', id: row.credential }}
+            credentials={credentials}
+            usable={usable}
+            allowUnset={false}
+            allowPrivate
+            privateLabel="直接填写"
+            onChange={(source) => {
+              const plain: Row = { id: row.id, name: row.name, value: row.value, secret: row.secret }
+              onChange(
+                rows.map((item) =>
+                  item.id !== row.id
+                    ? item
+                    : source.kind === 'credential'
+                      ? { ...plain, credential: source.id }
+                      : plain,
+                ),
+              )
+            }}
+            onCreate={() => onCreate(row)}
           />
-          <Switch
-            label={`${label} ${index + 1} 作为凭据保存`}
-            checked={row.secret}
-            onCheckedChange={(secret) => update(row.id, { secret })}
-          />
+          {row.credential === undefined ? (
+            <>
+              <Input
+                aria-label={`${label} ${index + 1} 值`}
+                type={row.secret ? 'password' : 'text'}
+                autoComplete="off"
+                value={row.value}
+                spellCheck={false}
+                onChange={(event) => update(row.id, { value: event.target.value })}
+              />
+              <Switch
+                label={`${label} ${index + 1} 作为凭据保存`}
+                checked={row.secret}
+                onCheckedChange={(secret) => update(row.id, { secret })}
+              />
+            </>
+          ) : null}
           <IconButton
             label={`删除${label} ${index + 1}`}
             size="small"
@@ -112,7 +150,9 @@ function ValueRows({
           </IconButton>
         </div>
       ))}
-      {rows.length > 0 ? <span className={styles.mcpRowsHint}>开关打开的值作为凭据保存，不写进扩展。</span> : null}
+      {rows.some((row) => row.credential === undefined) ? (
+        <span className={styles.mcpRowsHint}>开关打开的值作为凭据保存，不写进扩展。</span>
+      ) : null}
     </div>
   )
 }
@@ -133,6 +173,8 @@ export function McpServerDialog({
   const api = useProductApi()
   const activation = useExtensionActivation()
   const agents = useProductStore((state) => state.agents)
+  const credentials = useCredentials(open)
+  const [creatingFor, setCreatingFor] = useState<Row>()
   const [displayName, setDisplayName] = useState('')
   const [transport, setTransport] = useState<Transport>('streamable-http')
   const [url, setUrl] = useState('')
@@ -164,11 +206,11 @@ export function McpServerDialog({
 
   /** `withSecrets: false` blanks credential values: only the connection test needs them on the server. */
   const form = (withSecrets = true): McpServerForm => {
-    const values = filledRows.map(({ name: rowName, value, secret }) => ({
-      name: rowName,
-      value: secret && !withSecrets ? '' : value,
-      secret,
-    }))
+    const values = filledRows.map(({ name: rowName, value, secret, credential }) =>
+      credential === undefined
+        ? { name: rowName, value: secret && !withSecrets ? '' : value, secret }
+        : { name: rowName, value: '', secret: true, credential },
+    )
     return transport === 'stdio'
       ? {
           transport,
@@ -232,7 +274,9 @@ export function McpServerDialog({
         toast('已添加，尚未启用')
         return
       }
-      const typed = new Map(filledRows.map((row) => [row.name, row.value]))
+      const typed = new Map(
+        filledRows.filter((row) => row.credential === undefined).map((row) => [row.name, row.value]),
+      )
       const secrets = Object.fromEntries(
         created.secretFields.flatMap(({ key, name: rowName }) => {
           const value = typed.get(rowName)
@@ -326,6 +370,12 @@ export function McpServerDialog({
             label={transport === 'stdio' ? '环境变量' : '请求头'}
             namePlaceholder={transport === 'stdio' ? 'API_KEY' : 'Authorization'}
             rows={rows}
+            credentials={credentials.view?.credentials ?? []}
+            usable={(credential) =>
+              (transport === 'streamable-http' || credential.usage === 'program') &&
+              (agentId === NO_AGENT || credentialOpenTo(credential, agentId))
+            }
+            onCreate={setCreatingFor}
             onChange={setRows}
           />
           <Field label="工具前缀" hint={`工具名形如 mcp__${serverName || '前缀'}__工具名；只能用字母、数字、-、_`}>
@@ -369,6 +419,25 @@ export function McpServerDialog({
           ) : null}
         </div>
       </Dialog>
+      <AddCredentialDialog
+        open={creatingFor !== undefined}
+        onOpenChange={(next) => !next && setCreatingFor(undefined)}
+        view={credentials.view}
+        initial={{
+          name: creatingFor?.name ?? '',
+          ...(transport === 'stdio' ? { usage: 'program' as const } : {}),
+        }}
+        onCreated={({ view, credentialId }) => {
+          credentials.replace(view)
+          const target = creatingFor
+          if (target !== undefined) {
+            setRows((current) =>
+              current.map((row) => (row.id === target.id ? { ...row, credential: credentialId } : row)),
+            )
+          }
+          setCreatingFor(undefined)
+        }}
+      />
     </>
   )
 }

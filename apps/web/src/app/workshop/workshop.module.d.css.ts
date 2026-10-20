@@ -34,6 +34,7 @@ declare const styles: {
   readonly mcpRows: string
   readonly mcpRowsHead: string
   readonly mcpRowsHint: string
+  readonly mcpSourceWide: string
   readonly mcpTest: string
   readonly mcpTestHead: string
   readonly mcpTools: string
@@ -63,6 +64,7 @@ declare const styles: {
   readonly subgroup: string
   readonly taskGrid: string
   readonly taskSide: string
+  readonly testSecret: string
   readonly testSecrets: string
   readonly testSecretsActions: string
   readonly versionCell: string

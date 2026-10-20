@@ -7,6 +7,7 @@ declare const styles: {
   readonly issue: string
   readonly legend: string
   readonly nested: string
+  readonly secretField: string
   readonly switch: string
 }
 
