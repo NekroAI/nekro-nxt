@@ -20,6 +20,9 @@ import {
   runDshSettingsMaintenance,
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
+import { mountCredentialRedaction } from './credential-redaction.js'
+import { preloadCredentialDocument } from './logs/credentials.js'
+import { SecretRegistry } from './secret-registry.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
 import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { mountCodeRunRuntime } from './code-run.js'
@@ -211,6 +214,7 @@ import { memberNoteAttachments, visibleMemberNotes } from './member-notes.js'
 import { CHANNEL_PROMPT_MAX_CHARS, MEMBER_NOTE_MAX_CHARS, type ChannelPrompts } from './channel-prompts.js'
 import { projectSessionContext } from './channel-runtime-context.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
+import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
 import { DshPluginLifecycleCoordinator, disposeDshPluginFiber } from './dsh-plugin-lifecycle.js'
 import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
@@ -508,6 +512,13 @@ export interface DshHostRuntimeOptions {
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
   readonly llmCredentialPath?: string
+  /**
+   * Known secret values, hidden from tool results, arguments and extension context. Defaults to a private registry
+   * that still learns the DSH credential document.
+   */
+  readonly secrets?: SecretRegistry
+  /** Credential stores besides `llmCredentialPath` that tools must not touch (absolute). */
+  readonly credentialPaths?: readonly string[]
   readonly dshPlugins?: {
     readonly repository: DshPluginRepository
     readonly resolveModule: (packageId: DshPluginPackageId, moduleName: string) => string
@@ -3024,6 +3035,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
   readonly #authoring: DshHostRuntimeOptions['authoring']
   readonly #channelReplyGuard: ChannelReplyGuardController
+  readonly #secrets: SecretRegistry
   #disposed = false
   #disposePromise: Promise<void> | undefined
   readonly #subscriptions: SubscriptionLogins | undefined
@@ -3041,6 +3053,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     conversationScripts: ConversationScriptModel,
   ) {
     this.#context = context
+    this.#secrets = options.secrets ?? new SecretRegistry()
     this.#subConversationStore = options.subConversations?.store ?? memorySubConversationStore()
     this.#subConversations = new SubConversationManager({
       context,
@@ -3158,7 +3171,7 @@ export class DshHostRuntime implements AgentSessionDriver {
                   hostConfig: () => hostConfig,
                 },
                 extensionHost.activationBackends,
-                dshPromptRegistry(fiberContext, sessionId),
+                dshPromptRegistry(fiberContext, sessionId, (text) => this.#secrets.redact(text)),
               )
             },
             hostNxt: ({ revision, config }) => {
@@ -3347,11 +3360,19 @@ export class DshHostRuntime implements AgentSessionDriver {
         assetService: options.assetService,
         requestImageRoot: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'request-images'),
       })
+      const secrets = options.secrets ?? new SecretRegistry()
+      const observeSecret = (value: string): void => {
+        secrets.register(value)
+        options.logs?.registerSecret?.(value)
+      }
       await prepareDshHostProfile(context, {
+        observeSecret,
         ...(options.logs === undefined ? {} : { logs: options.logs }),
         ...(options.llmSettingsPath === undefined ? {} : { settingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { credentialPath: options.llmCredentialPath }),
       })
+      if (options.llmCredentialPath !== undefined)
+        await preloadCredentialDocument(options.llmCredentialPath, observeSecret)
       // DSH sign-in flows; subscription sign-in uses one when it offers a browser login for the provider.
       if (options.llmCredentialPath !== undefined) await context.plugin(AuthorizationService)
       await context.plugin(LlmRuntime)
@@ -3435,8 +3456,16 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
       await context.plugin(SessionCheckpointPolicy)
       await activateDshHostProfile(context)
+      // After the spill policy and the dispatch wrappers, so the ordering documented on the mount holds.
+      mountCredentialRedaction(context, {
+        secrets,
+        protectedPaths: [
+          ...(options.credentialPaths ?? []),
+          ...(options.llmCredentialPath === undefined ? [] : [options.llmCredentialPath]),
+        ],
+      })
       await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
-      const runtime = new DshHostRuntime(context, options, channelReplyGuard, conversationScripts)
+      const runtime = new DshHostRuntime(context, { ...options, secrets }, channelReplyGuard, conversationScripts)
       await runtime.#dshPluginLifecycle?.initialize()
       return runtime
     } catch (error) {
@@ -5036,7 +5065,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     if ((await this.#context.sessionPersistence.stat(SessionId(dshSessionId))) === undefined) return undefined
     const handle = await this.#context.sessionPersistence.open(SessionId(dshSessionId), 'read')
     try {
-      return { live: false, events: normalizeSessionEvents((await handle.read()).events) }
+      return { live: false, events: this.#redactCallArguments(normalizeSessionEvents((await handle.read()).events)) }
     } finally {
       await handle.close()
     }
@@ -5080,9 +5109,23 @@ export class DshHostRuntime implements AgentSessionDriver {
   normalizedSessionEvents(dshSessionId: string) {
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    return normalizeSessionEvents(sessionEvents(agent.session), (turn) =>
-      this.#channelReplyGuard.responseState(agent, turn),
+    return this.#redactCallArguments(
+      normalizeSessionEvents(sessionEvents(agent.session), (turn) =>
+        this.#channelReplyGuard.responseState(agent, turn),
+      ),
     )
+  }
+
+  /**
+   * DSH logs `run_code` sub-call arguments verbatim, including a call the credential guard denied for carrying a
+   * secret. The runtime view shows them with the secret hidden; the Session log itself keeps them.
+   */
+  #redactCallArguments(events: RuntimeProjectionEvent[]): RuntimeProjectionEvent[] {
+    return events.map((event) => {
+      if (event.type !== 'tool/call') return event
+      const redacted = this.#secrets.redact(event.arguments)
+      return redacted === event.arguments ? event : { ...event, arguments: redacted }
+    })
   }
 
   async compactSessionNow(dshSessionId: string, signal?: AbortSignal): Promise<boolean> {

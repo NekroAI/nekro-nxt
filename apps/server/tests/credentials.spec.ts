@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -38,6 +38,23 @@ describe('LocalCredentialStore', () => {
 
     expect((await stat(root)).mode & 0o777).toBe(0o755)
     expect(await store.resolve(reference)).toBe('windows-test-secret')
+  })
+
+  it('reports every stored value on preload and treats a missing store as empty', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-credentials-'))
+    temporaryDirectories.push(directory)
+    const root = path.join(directory, 'credentials')
+    await new LocalCredentialStore(path.join(directory, 'missing'), { onUse: () => undefined }).preload()
+    const writer = new LocalCredentialStore(root)
+    await writer.save('sk-fictional-first-0123456789')
+    await writer.save('sk-fictional-second-0123456789')
+    await writeFile(path.join(root, 'notes.txt'), 'not a credential')
+    await mkdir(path.join(root, `${'c'.repeat(32)}.secret`))
+
+    const seen: string[] = []
+    await new LocalCredentialStore(root, { onUse: (value) => seen.push(value) }).preload()
+
+    expect(seen.sort()).toEqual(['sk-fictional-first-0123456789', 'sk-fictional-second-0123456789'])
   })
 
   it('rejects forged references and deletes a committed credential', async () => {

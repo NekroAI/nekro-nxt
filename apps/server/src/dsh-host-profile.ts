@@ -59,6 +59,8 @@ export interface DshHostProfileOptions {
   /** The old settings document is read once and retained byte-for-byte. */
   readonly settingsPath?: string
   readonly credentialPath?: string
+  /** Receives every credential value the provider handles; defaults to registering it with `logs`. */
+  readonly observeSecret?: (value: string) => void
 }
 
 export interface DshHostProfileEntry {
@@ -181,9 +183,10 @@ export async function prepareDshHostProfile(context: Context, options: DshHostPr
   observeDshPluginDisposal(context)
   await context.plugin(Loader, { baseUrl: import.meta.url })
   if (options.credentialPath !== undefined) {
-    const provider = options.logs?.registerSecret
-      ? observedCredentialProvider((value) => options.logs?.registerSecret?.(value))
-      : LocalCredentialProvider
+    const observe =
+      options.observeSecret ??
+      (options.logs?.registerSecret ? (value: string) => options.logs?.registerSecret?.(value) : undefined)
+    const provider = observe ? observedCredentialProvider(observe) : LocalCredentialProvider
     await context.plugin(provider, { path: options.credentialPath })
   }
   profiles.set(context, {

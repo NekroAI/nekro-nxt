@@ -69,6 +69,8 @@ import { createProductionAdapterTransport } from './adapter-transport.js'
 import { AuthoringApplicationService } from './authoring-application.js'
 import { ConnectionApplicationService } from './connection-application.js'
 import { LocalCredentialStore } from './credentials.js'
+import { redactInboundEvent } from './credential-redaction.js'
+import { SecretRegistry } from './secret-registry.js'
 import { CommandAccountService } from './command-accounts.js'
 import { GithubCli } from './github-cli.js'
 import { CandidateVerifier } from './candidate-verifier.js'
@@ -568,10 +570,13 @@ export class NekroRuntime {
         new AuthoringArtifactStore(authoringWorkspaceRoot),
         { now, nextUlid },
       )
-      const credentials = new LocalCredentialStore(
-        options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
-        { ...(options.logs === undefined ? {} : { onUse: (value: string) => options.logs!.registerSecret(value) }) },
-      )
+      // Logs and model-facing redaction read the same registry, so one registration hides a value everywhere.
+      const secrets = options.logs?.secrets ?? new SecretRegistry()
+      const credentialRoot = options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials')
+      const credentials = new LocalCredentialStore(credentialRoot, {
+        onUse: (value: string) => secrets.register(value),
+      })
+      await credentials.preload()
       const authoringTestSecrets = new AuthoringTestSecrets({
         getTask: (taskId) => repository.getAuthoringTask(taskId),
         listTasks: (agentId) => repository.listAuthoringTasks(agentId),
@@ -1038,6 +1043,8 @@ export class NekroRuntime {
         },
         ...(options.llmSettingsPath === undefined ? {} : { llmSettingsPath: options.llmSettingsPath }),
         ...(options.llmCredentialPath === undefined ? {} : { llmCredentialPath: options.llmCredentialPath }),
+        secrets,
+        credentialPaths: [credentialRoot],
         ...(options.configureLlm === undefined ? {} : { configureLlm: options.configureLlm }),
         dshPlugins: {
           repository,
@@ -1112,6 +1119,7 @@ export class NekroRuntime {
       const commandReference: { current?: CommandService } = {}
       const channels = new ChannelRuntime(core, repository, repository, host, {
         inboundHooks,
+        sanitizeInbound: (event) => redactInboundEvent(secrets, event),
         commands: {
           commitInbound: (event) => commandReference.current?.commitInbound(event) ?? core.appendInbound(event),
           excludes: (event) => commandReference.current?.excludes(event) ?? false,

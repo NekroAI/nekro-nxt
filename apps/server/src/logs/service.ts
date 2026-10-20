@@ -19,6 +19,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import { normalizeLog } from './redact.js'
+import { SecretRegistry } from '../secret-registry.js'
 
 const MAX_QUEUE = 8 * 1024 * 1024
 const statsSchema = z.object({
@@ -70,12 +71,10 @@ export class HostLogService implements HostLogSink {
   #exportId: number | undefined
   #closing = false
   #settingsTail = Promise.resolve()
-  #secrets = new Set<string>()
+  /** Shared with everything that reaches the model, so one registration hides a value everywhere. */
+  readonly secrets = new SecretRegistry()
   registerSecret(value: string): void {
-    if (this.#secrets.has(value)) return
-    if (value.length < 4 || value.length > 16_384) return
-    if (this.#secrets.size >= 2048) this.#secrets.delete(this.#secrets.values().next().value!)
-    this.#secrets.add(value)
+    this.secrets.register(value)
   }
   private constructor(dataRoot: string, now: () => number) {
     this.#root = dataRoot
@@ -200,7 +199,7 @@ export class HostLogService implements HostLogSink {
         )
       )
         return
-      const entry = { ...normalizeLog(input, this.runId, this.#now(), [...this.#secrets]), receipt: randomUUID() }
+      const entry = { ...normalizeLog(input, this.runId, this.#now(), this.secrets.logValues()), receipt: randomUUID() }
       const bytes = Buffer.byteLength(JSON.stringify(entry))
       if (this.#bytes + bytes > MAX_QUEUE) {
         const expendable =

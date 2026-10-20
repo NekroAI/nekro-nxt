@@ -814,10 +814,17 @@ export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServ
   }
 }
 
-/** Adapts a DSH agent Context to {@link NxtPromptRegistry}; registrations are effects of that Context. */
-export const dshPromptRegistry = (context: Context, sessionId: string): NxtPromptRegistry => ({
-  section: (section) => context.systemPrompt.section(section),
-  context: (entry) => context.systemPrompt.context(entry),
+/**
+ * Adapts a DSH agent Context to {@link NxtPromptRegistry}; registrations are effects of that Context. `redact` hides
+ * known secrets in extension-supplied text: once for a static section, on every render for runtime context.
+ */
+export const dshPromptRegistry = (
+  context: Context,
+  sessionId: string,
+  redact: (text: string) => string,
+): NxtPromptRegistry => ({
+  section: (section) => context.systemPrompt.section({ ...section, text: redact(section.text) }),
+  context: (entry) => context.systemPrompt.context({ ...entry, text: () => redact(entry.text()) }),
   onTurnStart: (listener) =>
     context.on('agent/pre-step', async ({ agent, step }, next) => {
       if (step <= 1 && agent.id === sessionId) await listener()

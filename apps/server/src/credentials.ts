@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { lstat, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { lstat, mkdir, open, readdir, readFile, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 
 const REFERENCE_PATTERN = /^credential:local:([a-f0-9]{32})$/u
@@ -91,6 +91,30 @@ export class LocalCredentialStore {
       /* Diagnostic observers cannot interrupt credential use. */
     }
     return secret
+  }
+
+  /**
+   * Report every stored value to the observer, so redaction knows them before their first use. A missing store is
+   * empty; an unreadable or irregular entry is skipped, as `resolve` would refuse it.
+   */
+  async preload(): Promise<void> {
+    if (this.#onUse === undefined) return
+    let names: string[]
+    try {
+      names = await readdir(this.#root)
+    } catch (error) {
+      if (isNodeError(error, 'ENOENT')) return
+      throw error
+    }
+    for (const name of names) {
+      const match = /^([a-f0-9]{32})\.secret$/u.exec(name)
+      if (!match) continue
+      try {
+        await this.resolve(`credential:local:${match[1]}`)
+      } catch {
+        /* Skipped like a broken reference; its owner reports the failure when it is used. */
+      }
+    }
   }
 
   async delete(reference: string): Promise<void> {
