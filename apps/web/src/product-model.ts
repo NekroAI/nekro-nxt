@@ -109,6 +109,7 @@ export interface AgentSummary {
     readonly commandAccounts: CommandAccountGrant[]
     readonly extensionAutonomy: 'manual' | 'confirm' | 'autonomous'
     readonly extensionRequesters: 'everyone' | 'admins'
+    readonly extensionConfigRequesters: 'everyone' | 'admins'
   }
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'

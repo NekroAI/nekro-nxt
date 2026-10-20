@@ -757,6 +757,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
         commandAccounts: [],
         extensionAutonomy: 'manual',
         extensionRequesters: 'everyone',
+        extensionConfigRequesters: 'admins',
       },
       channels: [plan.channelId],
       appearance: {},

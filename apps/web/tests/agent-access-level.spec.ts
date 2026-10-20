@@ -21,6 +21,7 @@ const capabilities = (
   commandAccounts: [],
   extensionAutonomy: 'manual',
   extensionRequesters: 'everyone',
+  extensionConfigRequesters: 'admins',
   ...access,
 })
 

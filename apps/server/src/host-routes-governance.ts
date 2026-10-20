@@ -30,6 +30,46 @@ export async function handleGovernanceExtensionRoute(
   url: URL,
 ): Promise<boolean> {
   const { runtime, broadcastExtensionsChanged } = context
+  const versions = /^\/api\/extensions\/([^/]+)\/config-versions(?:\/([^/]+)\/revert)?$/u.exec(url.pathname)
+  if (versions) {
+    try {
+      if (versions[2] === undefined) {
+        if (req.method !== 'GET') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return true
+        }
+        const params = HostApiContracts.getExtensionConfigVersions.parseParams({
+          extensionId: decodeURIComponent(versions[1] ?? ''),
+        })
+        writeContractJson(res, 200, HostApiContracts.getExtensionConfigVersions, {
+          versions: runtime.extensionConfig
+            .versions({ extensionId: params.extensionId })
+            .map((record) => runtime.extensionConfig.view(record)),
+        })
+        return true
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return true
+      }
+      const params = HostApiContracts.revertExtensionConfig.parseParams({
+        extensionId: decodeURIComponent(versions[1] ?? ''),
+        versionId: decodeURIComponent(versions[2]),
+      })
+      const input = HostApiContracts.revertExtensionConfig.parseRequest(await readJsonBody(req))
+      if (runtime.extensionConfig.version(params.versionId).extensionId !== params.extensionId) {
+        throw new Error('没有这个配置版本。')
+      }
+      const version = await runtime.extensionConfig.revert(params.versionId, {
+        ...(input.reason === undefined ? {} : { reason: input.reason }),
+      })
+      writeContractJson(res, 200, HostApiContracts.revertExtensionConfig, { version })
+      broadcastExtensionsChanged()
+    } catch (error) {
+      failure(res, 'extension-config-version-failed', error)
+    }
+    return true
+  }
   const match =
     /^\/api\/extensions\/([^/]+)\/(lineage|branch|revert|data|data\/preview|data\/migrate|data\/snapshots|data\/export|data\/export-config)$/u.exec(
       url.pathname,
@@ -216,6 +256,7 @@ export function handleGovernanceAuthoringRoute(
 export function registerGovernanceRoutes(context: HostRouteContext): () => void {
   const { runtime, registerRoute, broadcast, broadcastExtensionsChanged } = context
   runtime.publishExtensionRequestChange = () => broadcast({ event: 'snapshot-changed', data: { changed: true } })
+  runtime.publishExtensionsChange = broadcastExtensionsChanged
   const expiry = setInterval(() => runtime.extensionRequests.expire(), 60_000)
   expiry.unref()
 
@@ -351,5 +392,6 @@ export function registerGovernanceRoutes(context: HostRouteContext): () => void 
   return () => {
     clearInterval(expiry)
     runtime.publishExtensionRequestChange = undefined
+    runtime.publishExtensionsChange = undefined
   }
 }

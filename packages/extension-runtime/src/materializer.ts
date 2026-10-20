@@ -1,7 +1,7 @@
 import {
   extensionContributionSchema,
   extensionIconSchema,
-  assertEnableableAgentConfig,
+  assertAgentAuthoredConfig,
   extensionManifestSchema,
   extensionProvides,
   normalizeSource,
@@ -126,6 +126,8 @@ export function materializeDynamicPackage(input: {
   readonly snapshot: DynamicPackageSnapshot
   /** Written into the Manifest; a lineage requires the governance SDK level. */
   readonly lineage?: ExtensionLineage
+  /** Configuration of the version a revise starts from: fields it leaves to administrators stay that way. */
+  readonly baseConfig?: ExtensionManifest['config'] | undefined
 }): MaterializedExtensionRevision {
   const parsed = inputSchema.parse({
     snapshot: input.snapshot,
@@ -173,7 +175,7 @@ export function materializeDynamicPackage(input: {
     ...(input.lineage === undefined ? {} : { lineage: input.lineage }),
     ...(parsed.snapshot.dataVersion === undefined ? {} : { dataVersion: parsed.snapshot.dataVersion }),
   })
-  assertEnableableAgentConfig(manifest)
+  assertAgentAuthoredConfig(manifest.config, input.baseConfig)
 
   const resources = revisionResourcesSchema.parse(parsed.snapshot.resources ?? {})
   validateRevisionResources(manifest, resources, '动态扩展')

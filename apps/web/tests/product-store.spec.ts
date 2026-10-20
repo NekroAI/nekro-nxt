@@ -161,6 +161,7 @@ describe('product store Host mutations', () => {
             commandAccounts: [],
             extensionAutonomy: 'manual',
             extensionRequesters: 'everyone',
+            extensionConfigRequesters: 'admins',
           },
           imagePolicy: defaultImageUnderstandingPolicy(),
           imageDiagnostics: {

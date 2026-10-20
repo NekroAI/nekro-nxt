@@ -28,5 +28,6 @@ export const createAgentDraft = (models: readonly ModelSummary[], webSearchAvail
     communityFeedbackAuto: false,
     extensionAutonomy: 'manual',
     extensionRequesters: 'everyone',
+    extensionConfigRequesters: 'admins',
   },
 })

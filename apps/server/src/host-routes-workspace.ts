@@ -17,7 +17,7 @@ import type { AgentRevisionContent } from '@nekro-nxt/core'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { z } from 'zod'
-import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from './extension-secret-config.js'
+import { maskExtensionSecrets } from './extension-secret-config.js'
 import {
   activationManifest,
   assembleChannelRuntime,
@@ -132,23 +132,20 @@ export function registerWorkspaceRoutes({
       try {
         const input = HostApiContracts.updateExtensionActivationConfig.parseRequest(await readJsonBody(req))
         const current = runtime.repository.getActivation(params.agentId, params.extensionId)
-        const manifest = activationManifest(runtime, current?.extensionRevisionId)
-        const activation = await commitExtensionConfigWithSecrets({
-          manifest,
-          layer: 'agent',
-          previous: current?.config,
+        if (!current) throw new Error('这个扩展尚未启用给该智能体。')
+        const manifest = activationManifest(runtime, current.extensionRevisionId)
+        const { stored } = await runtime.extensionConfig.write({
+          owner: { extensionId: params.extensionId, layer: 'agent', agentId: params.agentId },
           config: input.config,
           secrets: input.secrets,
           bindings: input.credentialBindings,
-          credentialExists: (id) => runtime.credentialLibrary.get(id) !== undefined,
-          credentials: runtime.credentials,
-          commit: (config) => runtime.extensions.updateAgentConfig(params.agentId, params.extensionId, config),
+          meta: { source: 'console' },
         })
         writeJson(
           res,
           200,
           HostApiContracts.updateExtensionActivationConfig.parseResponse(
-            maskExtensionSecrets(manifest, 'agent', activation.config),
+            maskExtensionSecrets(manifest, 'agent', stored),
           ),
         )
         broadcastExtensionsChanged()
@@ -584,6 +581,9 @@ export function registerWorkspaceRoutes({
           ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
           ...(parsed.extensionAutonomy === undefined ? {} : { extensionAutonomy: parsed.extensionAutonomy }),
           ...(parsed.extensionRequesters === undefined ? {} : { extensionRequesters: parsed.extensionRequesters }),
+          ...(parsed.extensionConfigRequesters === undefined
+            ? {}
+            : { extensionConfigRequesters: parsed.extensionConfigRequesters }),
           ...(parsed.commandAccounts === undefined
             ? {}
             : { commandAccounts: knownCommandAccounts(runtime, parsed.commandAccounts) }),

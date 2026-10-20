@@ -142,4 +142,30 @@ describe('materializeDynamicPackage', () => {
     expect(imported.contentDigest).toBe(saved.contentDigest)
     expect(imported.payloadDigest).toBe(saved.payloadDigest)
   })
+
+  it('refuses fields kept for administrators unless the revised version already had them', () => {
+    const config = {
+      agent: {
+        schema: {
+          type: 'object' as const,
+          dict: { plan: { type: 'string' as const, meta: { agentWritable: false } } },
+        },
+      },
+    }
+    expect(() => materialize({ hostCode: 'return {}', contributions: [tool], config })).toThrow('agentWritable: false')
+    expect(() =>
+      materializeDynamicPackage({
+        extensionId: ExtensionIdSchema.parse('ext_materializer'),
+        revisionId: ExtensionRevisionIdSchema.parse('xrv_materializer'),
+        snapshot: {
+          name: '物化探针',
+          purpose: '验证动态包规则。',
+          hostCode: 'return {}',
+          contributions: [tool],
+          config,
+        },
+        baseConfig: config,
+      }),
+    ).not.toThrow()
+  })
 })

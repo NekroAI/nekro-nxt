@@ -15,7 +15,6 @@ import {
   extensionEntrypointsSchema,
   extensionManifestContributionSchema,
   extensionDataVersionSchema,
-  assertEnableableAgentConfig,
   extensionManifestSchema,
   extensionProvides,
   type ExtensionManifest,
@@ -211,7 +210,6 @@ export function materializeImportedRevision(input: {
 }): MaterializedExtensionRevision {
   assertCurrentManifestFormat(input.manifest)
   const manifest = extensionManifestSchema.parse(input.manifest)
-  assertEnableableAgentConfig(manifest)
   const sources = revisionSourcesSchema.parse({
     ...(input.sources.host === undefined ? {} : { host: normalizeSource(input.sources.host) }),
     ...(input.sources.client === undefined ? {} : { client: normalizeSource(input.sources.client) }),

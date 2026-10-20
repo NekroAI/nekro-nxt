@@ -8,6 +8,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { layerConfigSchema, type ExtensionManifest } from '@nekro-nxt/extension-runtime'
 import type { NekroRuntime } from '../bootstrap.js'
+import type { ExtensionConfigWriteMeta } from './config-service.js'
 import { maskExtensionSecrets } from '../extension-secret-config.js'
 import { activationManifest } from '../host-queries.js'
 import type { ExtensionDataSource } from './data-service.js'
@@ -89,14 +90,24 @@ export class ExtensionConfigMigration {
     return this.#plan(plan).changes
   }
 
-  async apply(plan: ConfigMigrationPlan): Promise<ConfigMigrationChanges> {
+  /** Writes the moved configuration; each changed layer is recorded as a configuration version from `source`. */
+  async apply(
+    plan: ConfigMigrationPlan,
+    source: ExtensionConfigWriteMeta['source'] = 'console',
+  ): Promise<ConfigMigrationChanges> {
     const { changes, host, agents } = this.#plan(plan)
     const coordinator = this.#runtime.extensions
-    if (host !== undefined && changes.hostFields.length > 0)
+    const config = this.#runtime.extensionConfig
+    const meta = { source, reason: '随数据迁移' }
+    if (host !== undefined && changes.hostFields.length > 0) {
       await coordinator.updateHostConfig(plan.targetExtensionId, host)
+      config.recordCurrent({ extensionId: plan.targetExtensionId, layer: 'host' }, meta)
+    }
     for (const entry of agents) {
-      if (entry.fields.length > 0)
+      if (entry.fields.length > 0) {
         await coordinator.updateAgentConfig(entry.agentId, plan.targetExtensionId, entry.value)
+        config.recordCurrent({ extensionId: plan.targetExtensionId, layer: 'agent', agentId: entry.agentId }, meta)
+      }
     }
     return changes
   }

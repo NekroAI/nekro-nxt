@@ -639,7 +639,7 @@ describe('extension autonomy', () => {
           schema: {
             type: 'object',
             dict: {
-              nickname: { type: 'string', meta: { required: true, default: '虚构默认称呼' } },
+              nickname: { type: 'string', meta: { required: true } },
               agentKey: { type: 'string', meta: { required: true, role: 'secret' } },
             },
           },
@@ -676,12 +676,14 @@ describe('extension autonomy', () => {
         updatedAt: 1,
         quotaBytes: 1024,
       })
-      // With the shared configuration complete, only the agent's own credential is missing: it may enable and is told
-      // to have it filled afterwards.
+      // With the shared configuration complete, what is missing is the agent's own: a required value it passes when
+      // enabling, and its credential afterwards.
       const listed = tools.list(consumer.agentId)
       expect(listed).toMatchObject({
-        extensions: [{ enablement: { decision: 'run', note: expect.stringContaining('填写你的凭据') as unknown } }],
+        extensions: [{ enablement: { decision: 'run', note: expect.stringContaining('nickname') as unknown } }],
       })
+      await expect(runtime.extensionActions.perform(action, { kind: 'console' })).rejects.toThrow('启用前还要填写')
+      await expect(tools.act(consumer.agentId, consumer.channelId, action)).rejects.toThrow('values')
       const serialized = JSON.stringify(listed)
       for (const privateValue of [
         hostKey,
@@ -701,7 +703,7 @@ describe('extension autonomy', () => {
       })
       expect(runtime.extensionActions.enablementProblem(consumer.agentId, extension.id)).toBeUndefined()
       expect(tools.list(consumer.agentId)).toMatchObject({
-        extensions: [{ enablement: { note: expect.stringContaining('填写你的凭据') as unknown } }],
+        extensions: [{ enablement: { note: expect.stringContaining('你自己的凭据') as unknown } }],
       })
       const consumerKey = await runtime.credentials.save('fictional-consumer-secret')
       await runtime.extensions.updateAgentConfig(consumer.agentId, extension.id, {

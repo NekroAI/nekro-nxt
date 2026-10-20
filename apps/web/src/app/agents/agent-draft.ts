@@ -90,6 +90,7 @@ export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Ca
     commandAccounts?: Capabilities['commandAccounts']
     extensionAutonomy?: Capabilities['extensionAutonomy']
     extensionRequesters?: Capabilities['extensionRequesters']
+    extensionConfigRequesters?: Capabilities['extensionConfigRequesters']
   } = {}
   for (const key of CAPABILITY_KEYS) {
     if (draft.capabilities[key] !== base.capabilities[key]) patch[key] = draft.capabilities[key]
@@ -102,6 +103,9 @@ export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Ca
   }
   if (draft.capabilities.extensionRequesters !== base.capabilities.extensionRequesters) {
     patch.extensionRequesters = draft.capabilities.extensionRequesters
+  }
+  if (draft.capabilities.extensionConfigRequesters !== base.capabilities.extensionConfigRequesters) {
+    patch.extensionConfigRequesters = draft.capabilities.extensionConfigRequesters
   }
   // System access is one level: send all three switches together so the request states the whole level.
   if (ACCESS_KEYS.some((key) => key in patch)) {
@@ -126,6 +130,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if ('communityFeedbackAuto' in patch) changes.push('免确认提交反馈')
   if ('extensionAutonomy' in patch) changes.push('扩展自主权')
   if ('extensionRequesters' in patch) changes.push('谁可以让它做扩展')
+  if ('extensionConfigRequesters' in patch) changes.push('谁可以让它改配置')
   for (const key of OTHER_CAPABILITIES) {
     if (key in patch) changes.push(CAPABILITY_LABEL[key])
   }

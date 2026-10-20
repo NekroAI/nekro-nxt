@@ -47,7 +47,7 @@ import { knownCommandAccounts, syncGrantedAccounts } from './host-routes-command
 import { performHostUiNetworkRequest } from './host-ui-network.js'
 import { activationManifest } from './host-queries.js'
 import { handleGovernanceExtensionRoute } from './host-routes-governance.js'
-import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from './extension-secret-config.js'
+import { maskExtensionSecrets } from './extension-secret-config.js'
 
 /**
  * Resolves and checks where a panel call comes from (扩展形态统一 §5): agent panels need the agent to have the extension
@@ -316,6 +316,9 @@ export function registerExtensionsRoutes({
                 ...(parsed.extensionRequesters === undefined
                   ? {}
                   : { extensionRequesters: parsed.extensionRequesters }),
+                ...(parsed.extensionConfigRequesters === undefined
+                  ? {}
+                  : { extensionConfigRequesters: parsed.extensionConfigRequesters }),
                 ...(parsed.commandAccounts === undefined
                   ? {}
                   : { commandAccounts: knownCommandAccounts(runtime, parsed.commandAccounts) }),
@@ -732,23 +735,20 @@ export function registerExtensionsRoutes({
           })
           const input = HostApiContracts.updateHostExtensionConfig.parseRequest(await readJsonBody(req))
           const current = runtime.repository.getHostInstallation(params.extensionId)
-          const manifest = activationManifest(runtime, current?.extensionRevisionId)
-          const installation = await commitExtensionConfigWithSecrets({
-            manifest,
-            layer: 'host',
-            previous: current?.config,
+          if (!current) throw new Error('这个扩展尚未安装到本机。')
+          const manifest = activationManifest(runtime, current.extensionRevisionId)
+          const { stored } = await runtime.extensionConfig.write({
+            owner: { extensionId: params.extensionId, layer: 'host' },
             config: input.config,
             secrets: input.secrets,
             bindings: input.credentialBindings,
-            credentialExists: (id) => runtime.credentialLibrary.get(id) !== undefined,
-            credentials: runtime.credentials,
-            commit: (config) => runtime.updateHostExtensionConfig(params.extensionId, config),
+            meta: { source: 'console' },
           })
           writeContractJson(
             res,
             200,
             HostApiContracts.updateHostExtensionConfig,
-            maskExtensionSecrets(manifest, 'host', installation.config),
+            maskExtensionSecrets(manifest, 'host', stored),
           )
           broadcastExtensionsChanged()
         } catch (error) {

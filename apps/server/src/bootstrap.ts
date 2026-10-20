@@ -114,6 +114,7 @@ import { CommunityService } from './community.js'
 import { ExtensionActionService } from './extension-governance/actions.js'
 import { ExtensionCommandPort } from './extension-governance/commands.js'
 import { ExtensionGovernanceTools } from './extension-governance/tool-port.js'
+import { ExtensionConfigService } from './extension-governance/config-service.js'
 import { AdministratorService } from './extension-governance/administrators.js'
 import { CommunitySyncService } from './extension-governance/community-sync.js'
 import { ExtensionDataService } from './extension-governance/data-service.js'
@@ -242,6 +243,10 @@ export class NekroRuntime {
   readonly administrators: AdministratorService
   /** Set by the Host routes so request changes reach the Web. */
   publishExtensionRequestChange: (() => void) | undefined
+  /** Configuration writes of every source and their history. */
+  readonly extensionConfig: ExtensionConfigService
+  /** Set by the Host routes so configuration written outside a request reaches the Web. */
+  publishExtensionsChange: (() => void) | undefined
   readonly credentials: LocalCredentialStore
   readonly notifications: NotificationService
   readonly community: CommunityService
@@ -486,6 +491,7 @@ export class NekroRuntime {
       },
     })
     this.publishExtensionRequestChange = undefined
+    this.publishExtensionsChange = undefined
     this.extensions = new ExtensionLifecycleCoordinator(
       this.repository,
       this.extensionService,
@@ -511,6 +517,7 @@ export class NekroRuntime {
     })
     this.extensionActions = new ExtensionActionService(this)
     this.extensionRequests = new ExtensionRequestService(this, this.#now)
+    this.extensionConfig = new ExtensionConfigService(this, this.#now)
     this.#commandGovernance = new ExtensionCommandPort(this)
   }
 

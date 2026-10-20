@@ -362,6 +362,12 @@ const AgentCapabilitiesSchema = z
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).default('manual'),
     /** Whose requests make the agent develop or change extensions: anyone in the channel, or administrators only. */
     extensionRequesters: z.enum(['everyone', 'admins']).default('everyone'),
+    /**
+     * Whose requests make the agent change extension configuration. With `everyone`, members may only have it change
+     * ordinary fields of its own configuration; network fields, the host layer and credentials still need an
+     * administrator.
+     */
+    extensionConfigRequesters: z.enum(['everyone', 'admins']).default('admins'),
   })
   .strict()
 
@@ -513,6 +519,7 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).optional(),
     extensionRequesters: z.enum(['everyone', 'admins']).optional(),
+    extensionConfigRequesters: z.enum(['everyone', 'admins']).optional(),
   })
   .strict()
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), '至少提供一个能力。')
@@ -2716,6 +2723,43 @@ export const AdministratorSchema = z
   .strict()
 
 const extensionParam = z.object({ extensionId: ExtensionIdSchema }).strict()
+
+export const ExtensionConfigVersionSourceSchema = z.enum(['console', 'agent', 'chat-admin', 'revert', 'auto-revert'])
+export type ExtensionConfigVersionSource = z.output<typeof ExtensionConfigVersionSourceSchema>
+
+/**
+ * One saved state of an extension's host configuration or of one agent's configuration. Versions are numbered per
+ * extension, layer and agent; reverting writes an old one again as a new version. Secret fields only show whether
+ * they were set and which named credential they were bound to.
+ */
+export const ExtensionConfigVersionSchema = z
+  .object({
+    id: z.number().int().positive(),
+    extensionId: ExtensionIdSchema,
+    layer: z.enum(['host', 'agent']),
+    agentId: AgentIdSchema.nullable(),
+    version: z.number().int().positive(),
+    config: JsonValueSchema,
+    configuredSecrets: z.array(z.string()).optional(),
+    boundCredentials: z.record(z.string(), CredentialIdSchema).optional(),
+    source: ExtensionConfigVersionSourceSchema,
+    actorAgentId: AgentIdSchema.nullable(),
+    requesterMemberId: z.string().nullable(),
+    reason: z.string().nullable(),
+    createdAt: z.number().int().nonnegative(),
+  })
+  .strict()
+export type ExtensionConfigVersion = z.output<typeof ExtensionConfigVersionSchema>
+
+const extensionConfigVersionParam = z
+  .object({
+    extensionId: ExtensionIdSchema,
+    versionId: z
+      .string()
+      .regex(/^[1-9]\d{0,15}$/u)
+      .transform(Number),
+  })
+  .strict()
 const dshPluginPackageParam = z.object({ packageId: DshPluginPackageIdSchema }).strict()
 const dshPluginEntryParam = z.object({ entryId: DshPluginEntryIdSchema }).strict()
 const extensionRevisionParam = z
@@ -5086,6 +5130,26 @@ export const HostApiContracts = {
         boundCredentials: BoundCredentialsSchema.optional(),
       })
       .strict(),
+    error: HostApiErrorSchema,
+  }),
+  /** Configuration history of one extension, newest first: the host layer and every agent's configuration. */
+  getExtensionConfigVersions: defineContract({
+    method: 'GET',
+    path: '/api/extensions/:extensionId/config-versions',
+    params: extensionParam,
+    request: NoRequestBodySchema,
+    response: z.object({ versions: z.array(ExtensionConfigVersionSchema) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  /** Writes an earlier configuration again as a new version of the same layer (and agent). */
+  revertExtensionConfig: defineContract({
+    invalidatesSnapshot: true,
+    timeoutMs: 300_000,
+    method: 'POST',
+    path: '/api/extensions/:extensionId/config-versions/:versionId/revert',
+    params: extensionConfigVersionParam,
+    request: z.object({ reason: z.string().trim().max(500).optional() }).strict(),
+    response: z.object({ version: ExtensionConfigVersionSchema }).strict(),
     error: HostApiErrorSchema,
   }),
   installHostExtension: defineContract({

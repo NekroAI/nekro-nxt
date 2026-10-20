@@ -1,13 +1,16 @@
 import {
+  configFieldLevel,
   configSecretKeys,
   parseJsonValue,
   validateConfigValue,
   type AgentId,
   type ChannelId,
+  type ConfigFieldLevel,
   type CredentialId,
   type CredentialUsage,
   type EpisodeId,
   type ExtensionId,
+  type ExtensionLayeredConfig,
   type ExtensionRevisionId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
@@ -47,6 +50,9 @@ export interface RevisePreparation {
   readonly idPrefix: string
 }
 
+export type TurnRequester =
+  { readonly kind: 'admin' } | { readonly kind: 'member'; readonly memberId: string } | { readonly kind: 'self' }
+
 export interface ToolActionOutcome {
   readonly outcome: 'done' | 'scheduled' | 'requested' | 'console'
   readonly message: string
@@ -61,6 +67,11 @@ export interface ExtensionGovernanceToolPort {
     episodeId: EpisodeId,
   ): { readonly allowed: true } | { readonly allowed: false; readonly reason: string }
   /**
+   * Who asked for this turn: an administrator (also the console and the built-in channel), a channel member, or
+   * nobody (the agent woke up on its own, for example after a system notice).
+   */
+  requester(agentId: AgentId, episodeId: EpisodeId): TurnRequester
+  /**
    * Whether this agent's candidates run without anyone approving them: its extension autonomy is autonomous, or the
    * older automatic setting is on.
    */
@@ -70,7 +81,12 @@ export interface ExtensionGovernanceToolPort {
     agentId: AgentId,
     input: { readonly extension: string; readonly version?: string; readonly reference?: string },
   ): Promise<RevisePreparation>
-  act(agentId: AgentId, channelId: ChannelId, action: ExtensionAction): Promise<ToolActionOutcome>
+  act(
+    agentId: AgentId,
+    channelId: ChannelId,
+    action: ExtensionAction,
+    requester?: TurnRequester,
+  ): Promise<ToolActionOutcome>
   /** A task of this agent that can move into the current conversation: paused, interrupted or left in another one. */
   continuableTask(agentId: AgentId, episodeId: EpisodeId, reference: string | undefined): DynamicAuthoringTask
   resolveExtension(agentId: AgentId, reference: string): LocalExtension
@@ -86,7 +102,17 @@ export interface ExtensionGovernanceToolPort {
   inspect(
     agentId: AgentId,
     target: { readonly kind: 'extension' | 'task'; readonly reference: string | undefined },
+    requester?: TurnRequester,
   ): Promise<JsonValue>
+  /** A configuration version of this extension by its number in one layer, for `revert_config`. */
+  configVersion(
+    agentId: AgentId,
+    extensionId: ExtensionId,
+    layer: 'host' | 'agent',
+    version: number,
+  ): { readonly id: number }
+  /** The configuration declaration of a saved Revision; candidates revising it keep its administrator-only fields. */
+  revisionConfig(revisionId: ExtensionRevisionId): ExtensionLayeredConfig | undefined
   /**
    * Stores test values the agent provides for one of its tasks, checked against the task's latest candidate. Secret
    * fields bound to a credential whose automatic use is off file a request instead; the result says so.
@@ -125,6 +151,7 @@ interface NetworkDeclaration {
 }
 
 const INSPECT_LOG_LIMIT = 5
+const INSPECT_HISTORY = 5
 
 const asRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> =>
   value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -135,8 +162,9 @@ const networkFields = (permissions: NetworkDeclaration, layer: ConfigLayer): Rea
 }
 
 /**
- * One field as the agent sees it. `level` says how the value is handled: `secret` values are never shown, only whether
- * they are set; `network` values decide which addresses the extension may reach.
+ * One field as the agent sees it. `level` says how a change is handled: `secret` values are never shown, only whether
+ * they are set or which credential they are bound to; `network` values decide which addresses the extension may reach;
+ * `admin` fields are changed by an administrator in the console only.
  */
 const describeField = (
   field: CandidateConfigField,
@@ -144,8 +172,7 @@ const describeField = (
   current: { readonly values: Readonly<Record<string, JsonValue>> } | undefined,
   credentialName: (id: CredentialId) => string | undefined,
 ) => {
-  const level =
-    field.kind === 'secret' ? 'secret' : networkFields(permissions, field.layer).has(field.key) ? 'network' : 'normal'
+  const level = configFieldLevel(field, networkFields(permissions, field.layer))
   const stored = current?.values[field.key]
   return {
     layer: field.layer,
@@ -159,7 +186,7 @@ const describeField = (
     level,
     ...(current === undefined
       ? {}
-      : level === 'secret'
+      : field.kind === 'secret'
         ? secretState(stored, credentialName)
         : stored === undefined
           ? {}
@@ -200,6 +227,7 @@ const layerProblems = (
 /** Actions that change what is mounted for agents, so they wait until the agent is between turns. */
 const LANDS_AFTER_TURN: ReadonlySet<ExtensionAction['kind']> = new Set([
   'enable',
+  'revert-config',
   'disable',
   'switch',
   'revert',
@@ -229,31 +257,33 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
   }
 
   requesterAllowed(agentId: AgentId, episodeId: EpisodeId) {
-    const runtime = this.#runtime
-    const agent = runtime.repository.getAgent(agentId)
+    const agent = this.#runtime.repository.getAgent(agentId)
     if (agent?.revision.capabilities.extensionRequesters !== 'admins') return { allowed: true as const }
+    // A turn nobody asked for (the agent woke up on its own) continues work an administrator allowed earlier.
+    return this.requester(agentId, episodeId).kind === 'member'
+      ? {
+          allowed: false as const,
+          reason: '这个智能体只接受 NekroNXT 管理员提出的扩展制作和修改；请礼貌地告诉对方需要管理员来提。',
+        }
+      : { allowed: true as const }
+  }
+
+  requester(_agentId: AgentId, episodeId: EpisodeId): TurnRequester {
+    const runtime = this.#runtime
     const episode = runtime.repository.getEpisode(episodeId)
     const eventId = episode?.lastAdmittedEventId ?? episode?.openedAtEventId
     const event = eventId === undefined ? undefined : runtime.repository.getChannelEvent(eventId)
     const channel = episode === undefined ? undefined : runtime.repository.getChannel(episode.channelId)
     // The built-in channel and the console speak for an administrator.
-    if (
-      channel?.kind === 'internal' ||
-      event?.facts?.['consoleAnchor'] === true ||
-      event?.senderMemberId === undefined
-    ) {
-      return { allowed: true as const }
-    }
+    if (channel?.kind === 'internal' || event?.facts?.['consoleAnchor'] === true) return { kind: 'admin' }
+    if (event?.senderMemberId === undefined) return { kind: 'self' }
     const identity =
       channel === undefined
         ? undefined
         : runtime.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, event.senderMemberId)
     return runtime.administrators.isAdministrator(channel?.connectionId, identity?.platformUserId)
-      ? { allowed: true as const }
-      : {
-          allowed: false as const,
-          reason: '这个智能体只接受 NekroNXT 管理员提出的扩展制作和修改；请礼貌地告诉对方需要管理员来提。',
-        }
+      ? { kind: 'admin' }
+      : { kind: 'member', memberId: event.senderMemberId }
   }
 
   list(agentId: AgentId): JsonValue {
@@ -278,13 +308,16 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           { kind: 'enable', extensionId: extension.id, agentId },
           { kind: 'agent', agentId },
         )
-        const note = runtime.extensionActions.enablementNote(agentId, extension.id)
+        const enabled = runtime.repository.getActivation(agentId, extension.id) !== undefined
+        const note =
+          (enabled ? undefined : runtime.extensionActions.enablementMissing(agentId, extension.id)) ??
+          runtime.extensionActions.enablementNote(agentId, extension.id)
         return {
           id: extension.id,
           name: extension.displayName,
           slug: extension.slug,
           createdByYou: extension.createdByAgentId === agentId,
-          enabledForYou: runtime.repository.getActivation(agentId, extension.id) !== undefined,
+          enabledForYou: enabled,
           currentVersion: current === undefined ? null : (versions.get(current)?.label ?? null),
           installed: current !== undefined,
           availableVersion:
@@ -363,9 +396,46 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     }
   }
 
-  async act(agentId: AgentId, channelId: ChannelId, action: ExtensionAction): Promise<ToolActionOutcome> {
+  async act(
+    agentId: AgentId,
+    channelId: ChannelId,
+    action: ExtensionAction,
+    requester: TurnRequester = { kind: 'self' },
+  ): Promise<ToolActionOutcome> {
     const runtime = this.#runtime
-    const actor = { kind: 'agent' as const, agentId, channelId }
+    const actor = {
+      kind: 'agent' as const,
+      agentId,
+      channelId,
+      requester: requester.kind === 'admin' ? ('admin' as const) : ('member' as const),
+    }
+    // A configuration change keeps naming the agent it came from, also when an administrator carries it out later.
+    if (
+      (action.kind === 'configure' || action.kind === 'revert-config' || action.kind === 'enable') &&
+      action.actorAgentId === undefined
+    ) {
+      action = { ...action, actorAgentId: agentId }
+    }
+    if (action.kind === 'enable') {
+      // Missing values the agent can give itself are its to fix, not an administrator's.
+      const missing =
+        runtime.extensionActions.enablementProblem(action.agentId, action.extensionId) === undefined
+          ? runtime.extensionActions.enablementMissing(action.agentId, action.extensionId, action.values)
+          : undefined
+      if (missing !== undefined) throw new Error(missing)
+    }
+    if (action.kind === 'configure' || action.kind === 'revert-config') {
+      // Wrong fields, values or credential names fail here, before anything is asked or scheduled.
+      const plan = runtime.extensionActions.configPlan(action)
+      if (runtime.extensionConfig.stored(plan.owner) === undefined) {
+        throw new Error(
+          plan.owner.layer === 'host'
+            ? '这个扩展还没有安装到本机，本机配置要在安装后才能修改。'
+            : '还没有给你启用这个扩展；用 enable 启用，可以在 values 里一起带上配置。',
+        )
+      }
+      if (plan.change.changed.length === 0) return { outcome: 'done', message: '配置没有变化。' }
+    }
     const assessment = runtime.extensionActions.assess(action, actor)
     if (assessment.decision === 'console') {
       return { outcome: 'console', message: assessment.reason ?? '这件事需要管理员在 NekroNXT 后台操作。' }
@@ -376,6 +446,16 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
         outcome: 'requested',
         requestNumber: record.number,
         message: `${assessment.reason ?? '需要管理员确认。'}已在频道里发出请求 #${record.number}，管理员确认后会自动执行并通知你。`,
+      }
+    }
+    if (action.kind === 'configure') {
+      const scheduled = runtime.extensionRequests.scheduleConfigure({ action, actor })
+      return {
+        outcome: 'scheduled',
+        message:
+          scheduled === 'merged'
+            ? '已并入这次回复里前面的配置修改，回复结束后一起生效。'
+            : '会在这次回复结束后生效；同一次回复里对这一层配置的多次修改会合并成一次。完成后会以系统通知告诉你。',
       }
     }
     if (LANDS_AFTER_TURN.has(action.kind)) {
@@ -390,6 +470,23 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const result = await runtime.extensionActions.perform(action, actor)
     runtime.extensionRequests.recordAutonomous({ action, actor, assessment, result })
     return { outcome: 'done', message: result.message }
+  }
+
+  configVersion(agentId: AgentId, extensionId: ExtensionId, layer: 'host' | 'agent', version: number) {
+    const found = this.#runtime.extensionConfig
+      .versions({ extensionId, layer, ...(layer === 'agent' ? { agentId } : {}) })
+      .find((record) => record.version === version)
+    if (found === undefined) {
+      throw new Error(
+        `没有第 ${version} 版${layer === 'host' ? '本机' : '你的'}配置。用 nekro_nxt_extension_inspect 查看配置历史。`,
+      )
+    }
+    return { id: found.id }
+  }
+
+  revisionConfig(revisionId: ExtensionRevisionId): ExtensionLayeredConfig | undefined {
+    const revision = this.#runtime.repository.getExtensionRevision(revisionId)
+    return revision === undefined ? undefined : this.#runtime.extensionService.revisionManifest(revision)?.config
   }
 
   continuableTask(agentId: AgentId, episodeId: EpisodeId, reference: string | undefined): DynamicAuthoringTask {
@@ -474,20 +571,27 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
   async inspect(
     agentId: AgentId,
     target: { readonly kind: 'extension' | 'task'; readonly reference: string | undefined },
+    requester: TurnRequester = { kind: 'self' },
   ): Promise<JsonValue> {
     const runtime = this.#runtime
     const agent = runtime.repository.getAgent(agentId)?.revision.capabilities
     const credentialName = (id: CredentialId) => runtime.credentialLibrary.get(id)?.name
-    const authority = (actions: readonly ExtensionAction[]) => ({
+    const actor = {
+      kind: 'agent' as const,
+      agentId,
+      requester: requester.kind === 'admin' ? ('admin' as const) : ('member' as const),
+    }
+    const authority = (actions: readonly ExtensionAction[], configure?: JsonValue) => ({
       autonomy: agent?.extensionAutonomy ?? 'manual',
       requesters: agent?.extensionRequesters ?? 'everyone',
+      configRequesters: agent?.extensionConfigRequesters ?? 'admins',
+      requestedBy: requester.kind === 'admin' ? 'admin' : 'member',
       actions: Object.fromEntries(
-        actions.map((action) => [
-          action.kind,
-          runtime.extensionActions.assess(action, { kind: 'agent', agentId }).decision,
-        ]),
+        actions.map((action) => [action.kind, runtime.extensionActions.assess(action, actor).decision]),
       ),
-      meaning: 'run 由你直接完成，request 在频道里请管理员确认，console 需要管理员在后台处理。',
+      ...(configure === undefined ? {} : { configure }),
+      meaning:
+        'run 由你直接完成（configure 在这次回复结束后生效），request 在频道里请管理员确认，console 需要管理员在后台处理。configure 按配置层和字段级别列出，按这次是谁提出的请求判断。',
     })
     if (target.kind === 'task') {
       const task = this.resolveTask(agentId, target.reference)
@@ -530,6 +634,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
       activation === undefined
         ? [
             runtime.extensionActions.enablementProblem(agentId, extension.id),
+            runtime.extensionActions.enablementMissing(agentId, extension.id),
             runtime.extensionActions.enablementNote(agentId, extension.id),
           ].flatMap((line) => (line === undefined ? [] : [line]))
         : []
@@ -571,20 +676,70 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           ),
         recentLogs: await this.#recentLogs({ kind: 'extension', id: extension.id }, agentId),
       },
-      authority: authority([
-        { kind: 'enable', extensionId: extension.id, agentId },
-        { kind: 'disable', extensionId: extension.id, agentId },
-        { kind: 'revert', extensionId: extension.id },
-        {
-          kind: 'branch',
-          revisionId: this.currentRevision(extension.id),
-          name: extension.displayName,
-          copyData: false,
-        },
-        { kind: 'community-publish', extensionId: extension.id, notes: '' },
-        { kind: 'community-update', extensionId: extension.id },
-      ]),
+      configHistory: [
+        ...runtime.extensionConfig.versions({ extensionId: extension.id, layer: 'host' }).slice(0, INSPECT_HISTORY),
+        ...(activation === undefined
+          ? []
+          : runtime.extensionConfig
+              .versions({ extensionId: extension.id, layer: 'agent', agentId })
+              .slice(0, INSPECT_HISTORY)),
+      ].map((record) => ({
+        layer: record.layer,
+        version: record.version,
+        source: record.source,
+        time: record.createdAt,
+        ...(record.reason === null ? {} : { reason: record.reason }),
+      })),
+      authority: authority(
+        [
+          { kind: 'enable', extensionId: extension.id, agentId },
+          { kind: 'disable', extensionId: extension.id, agentId },
+          { kind: 'revert', extensionId: extension.id },
+          {
+            kind: 'branch',
+            revisionId: this.currentRevision(extension.id),
+            name: extension.displayName,
+            copyData: false,
+          },
+          { kind: 'community-publish', extensionId: extension.id, notes: '' },
+          { kind: 'community-update', extensionId: extension.id },
+        ],
+        this.#configureAuthority(fields, manifest?.permissions ?? {}, actor),
+      ),
     }
+  }
+
+  /**
+   * What configure would do for a field of each level present in each layer, judged like a real change; a credential
+   * field counts as bound to a credential you may use without asking.
+   */
+  #configureAuthority(
+    fields: readonly CandidateConfigField[],
+    permissions: NetworkDeclaration,
+    actor: Extract<Parameters<NekroRuntime['extensionActions']['assess']>[1], { readonly kind: 'agent' }>,
+  ): JsonValue {
+    const result: Record<string, Record<string, string>> = {}
+    for (const layer of ['host', 'agent'] as const) {
+      const byLevel = new Map<ConfigFieldLevel, CandidateConfigField>()
+      for (const field of fields.filter((entry) => entry.layer === layer)) {
+        const level = configFieldLevel(field, networkFields(permissions, layer))
+        if (!byLevel.has(level)) byLevel.set(level, field)
+      }
+      if (byLevel.size === 0) continue
+      result[layer] = Object.fromEntries(
+        [...byLevel].map(([level, field]) => [level, this.#configureDecision(layer, field, level, actor)]),
+      )
+    }
+    return result
+  }
+
+  #configureDecision(
+    layer: 'host' | 'agent',
+    field: CandidateConfigField,
+    level: ConfigFieldLevel,
+    actor: Extract<Parameters<NekroRuntime['extensionActions']['assess']>[1], { readonly kind: 'agent' }>,
+  ): string {
+    return this.#runtime.extensionActions.configureDecision(layer, { field, level }, actor)
   }
 
   async setTestConfig(

@@ -130,7 +130,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
   defineTool({
     name: 'nekro_nxt_extension_inspect',
     description:
-      '查看一个扩展或你自己的创造任务的配置和状态：每个配置项（本机层、智能体层）的说明、类型、默认值和当前值（凭据只显示是否已填写），配置问题和启用前提，安装的版本、给哪些智能体启用、最近的警告和错误日志，以及你对它的各项操作会直接完成、需要确认还是要到后台处理。扩展用不了、报错或用户问起配置时，先用它查清楚原因再回复。',
+      '查看一个扩展或你自己的创造任务的配置和状态：每个配置项（本机层、智能体层）的说明、类型、默认值、当前值（凭据只显示是否已填写或绑定的凭据名称）和级别，配置问题和启用前提，最近的配置版本，安装的版本、给哪些智能体启用、最近的警告和错误日志，以及你对它的各项操作（包括按级别修改配置）会直接完成、需要确认还是要到后台处理。扩展用不了、报错或用户问起配置时，先用它查清楚原因再回复。',
     parameters: {
       extension: { type: 'string', description: '扩展名称或编号。' },
       task: {
@@ -151,6 +151,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           input.extension === undefined
             ? { kind: 'task', reference: input.task }
             : { kind: 'extension', reference: input.extension },
+          port.requester(context.agentId, context.episodeId),
         ),
       )
     },
@@ -348,6 +349,8 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
       'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）；includeConfig 连同配置一起迁移（凭据不迁移）。总要管理员确认。',
       'publish：把当前版本发布到社区（notes 写更新说明）。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId）。withdraw：撤回一次发布（releaseId）。发布和撤回总要管理员确认。',
+      'configure：修改配置。layer 为 agent（你自己的，默认）或 host（本机，所有智能体共用）；values 写 { 字段名: 值 }，null 恢复默认；凭据字段用 credentials 按名称绑定 { 字段名: "凭据名称" }，null 解除。reason 写为什么改。在回复结束后生效，一次回复里的多次修改合并。enable 也可以带 values 和 credentials 作为初始配置。',
+      'revert_config：把某一层配置恢复到 inspect 的 configHistory 里的某个版本（layer、version），恢复本身也是一个新版本。',
     ].join('\n'),
     parameters: {
       action: {
@@ -365,6 +368,8 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           'update',
           'install',
           'withdraw',
+          'configure',
+          'revert_config',
         ],
       },
       extension: { type: 'string', description: '扩展名称或编号。' },
@@ -379,6 +384,18 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       notes: { type: 'string', description: 'publish 的更新说明。' },
       communityExtensionId: { type: 'string', description: 'install 的社区扩展编号。' },
       releaseId: { type: 'string', description: 'withdraw 的发布编号。' },
+      layer: {
+        type: 'string',
+        enum: ['agent', 'host'],
+        description: 'configure / revert_config 的配置层，默认 agent。',
+      },
+      values: { type: 'json', description: 'configure 或 enable 的配置值：{ 字段名: 值 }，null 恢复默认。' },
+      credentials: {
+        type: 'json',
+        description: 'configure 或 enable 的凭据绑定：{ 字段名: "凭据名称" }，null 解除绑定。',
+      },
+      configVersion: { type: 'number', description: 'revert_config 要恢复到的配置版本号。' },
+      reason: { type: 'string', description: 'configure / revert_config 的原因，会记在配置历史里。' },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args) {
@@ -396,6 +413,8 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
             'update',
             'install',
             'withdraw',
+            'configure',
+            'revert_config',
           ]),
           extension: z.string().trim().min(1).optional(),
           task: z.string().optional(),
@@ -409,9 +428,22 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           notes: z.string().max(2000).optional(),
           communityExtensionId: z.string().optional(),
           releaseId: z.string().optional(),
+          layer: z.enum(['agent', 'host']).optional(),
+          values: z.record(z.string(), JsonValueSchema).optional(),
+          credentials: z.record(z.string(), CredentialNameSchema.nullable()).optional(),
+          configVersion: z.number().int().positive().optional(),
+          reason: z.string().trim().max(500).optional(),
         })
         .parse(args)
-      const port = requireRequester(context)
+      // Configuration changes follow their own requester setting, judged with the change itself.
+      const configuring = input.action === 'configure' || input.action === 'revert_config'
+      const port = configuring ? requirePort(context) : requireRequester(context)
+      const requester = port.requester(context.agentId, context.episodeId)
+      const origin = {
+        actorAgentId: context.agentId,
+        ...(requester.kind === 'member' ? { requesterMemberId: requester.memberId } : {}),
+        ...(input.reason === undefined || input.reason === '' ? {} : { reason: input.reason }),
+      }
       const extension = () => {
         if (input.extension === undefined) throw new Error('请写上扩展名称。')
         return port.resolveExtension(context.agentId, input.extension)
@@ -433,9 +465,45 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           break
         }
         case 'enable':
-        case 'disable':
-          action = { kind: input.action, extensionId: extension().id, agentId: context.agentId }
+          action = {
+            kind: 'enable',
+            extensionId: extension().id,
+            agentId: context.agentId,
+            ...(input.values === undefined ? {} : { values: input.values }),
+            ...(input.credentials === undefined ? {} : { credentials: input.credentials }),
+            ...(input.values === undefined && input.credentials === undefined ? {} : origin),
+          }
           break
+        case 'disable':
+          action = { kind: 'disable', extensionId: extension().id, agentId: context.agentId }
+          break
+        case 'configure': {
+          const layer = input.layer ?? 'agent'
+          if (input.values === undefined && input.credentials === undefined) {
+            throw new Error('configure 要写 values 或 credentials。')
+          }
+          action = {
+            kind: 'configure',
+            extensionId: extension().id,
+            layer,
+            ...(layer === 'agent' ? { agentId: context.agentId } : {}),
+            values: input.values ?? {},
+            credentials: input.credentials ?? {},
+            ...origin,
+          }
+          break
+        }
+        case 'revert_config': {
+          const target = extension()
+          if (input.configVersion === undefined) throw new Error('请写上要恢复到的配置版本 configVersion。')
+          action = {
+            kind: 'revert-config',
+            extensionId: target.id,
+            versionId: port.configVersion(context.agentId, target.id, input.layer ?? 'agent', input.configVersion).id,
+            ...origin,
+          }
+          break
+        }
         case 'switch': {
           const target = extension()
           action = { kind: 'switch', extensionId: target.id, revisionId: revisionOf(target.id, input.version) }
@@ -487,7 +555,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           action = { kind: 'community-withdraw', releaseId: input.releaseId }
           break
       }
-      return json(await port.act(context.agentId, context.channelId, action))
+      return json(await port.act(context.agentId, context.channelId, action, requester))
     },
   }),
 ]
