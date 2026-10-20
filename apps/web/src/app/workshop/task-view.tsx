@@ -37,7 +37,7 @@ import { agentHue } from '../model/identity.js'
 import { useExtensionActivation } from '../../extension-ui/index.js'
 import { useProductApi } from '../model/store.js'
 import { SaveDialog } from './save-dialog.js'
-import { TestSecretsGroup } from './test-secrets.js'
+import { TestConfigGroup } from './test-config.js'
 import {
   LIFECYCLE,
   attemptPhaseLabel,
@@ -274,8 +274,8 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
             />
           </PropertyGroup>
 
-          {open && detail?.testSecrets !== undefined ? (
-            <TestSecretsGroup taskId={task.id} secrets={detail.testSecrets} />
+          {open && detail?.testConfig !== undefined ? (
+            <TestConfigGroup taskId={task.id} config={detail.testConfig} />
           ) : null}
 
           <PropertyGroup title="尝试记录">

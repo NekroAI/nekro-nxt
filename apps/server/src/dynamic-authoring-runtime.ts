@@ -400,10 +400,22 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     return hostLayerAsCapabilities(this.activeDeclaration()?.permissions.host)
   }
 
-  /** Schema defaults of one configuration layer of the running candidate; a candidate has no saved configuration. */
-  activeCandidateConfig(layer: 'host' | 'agent'): JsonValue {
-    const config = this.activeDeclaration()?.config
-    return validateConfigValue(layerConfigSchema({ config }, layer), {}).value
+  /**
+   * One configuration layer of the running candidate, which has no saved configuration: schema defaults, then the
+   * task's test values that belong to this layer.
+   */
+  activeCandidateConfig(layer: 'host' | 'agent', values: Readonly<Record<string, JsonValue>> = {}): JsonValue {
+    const schema = layerConfigSchema({ config: this.activeDeclaration()?.config }, layer)
+    return { ...validateConfigValue(schema, {}).value, ...this.activeCandidateLayerValues(layer, values) }
+  }
+
+  /** The values that belong to one configuration layer of the running candidate, without defaults. */
+  activeCandidateLayerValues(
+    layer: 'host' | 'agent',
+    values: Readonly<Record<string, JsonValue>>,
+  ): Readonly<Record<string, JsonValue>> {
+    const schema = layerConfigSchema({ config: this.activeDeclaration()?.config }, layer)
+    return Object.fromEntries(Object.entries(values).filter(([key]) => Object.hasOwn(schema.dict, key)))
   }
 
   // Not `#private`: callers reach this service through a Cordis proxy, which has no access to private members.

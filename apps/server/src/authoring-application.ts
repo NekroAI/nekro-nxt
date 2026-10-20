@@ -99,8 +99,8 @@ export class AuthoringApplicationService {
     if (this.#saving.has(input.taskId)) throw new Error('这个候选正在保存，请稍候。')
     const saving = this.#saveTask(input)
       .then(async (result) => {
-        // The saved extension asks for its own credentials when enabled; task test credentials end here.
-        await this.#runtime.authoringTestSecrets.clear(input.taskId)
+        // The saved extension is configured on its own; the task's test configuration ends here.
+        await this.#runtime.authoringTestConfig.clear(input.taskId)
         return result
       })
       .finally(() => this.#saving.delete(input.taskId))

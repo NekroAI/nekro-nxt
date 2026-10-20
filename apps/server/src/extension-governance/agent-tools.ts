@@ -1,6 +1,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   ExtensionIdSchema,
+  JsonValueSchema,
   parseJsonValue,
   type AgentId,
   type ChannelId,
@@ -110,8 +111,9 @@ const continueTask = (
 }
 
 /**
- * The agent's extension tools beyond defining candidates: see what it has, start a revise task from a saved version,
- * continue a task left in another conversation, and take lifecycle actions within its autonomy.
+ * The agent's extension tools beyond defining candidates: see what it has, inspect one extension or task, start a
+ * revise task from a saved version, continue a task left in another conversation, and take lifecycle actions within
+ * its autonomy.
  */
 export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
   defineTool({
@@ -121,6 +123,34 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
     parameters: {},
     output: { schema: { type: 'json' }, render: renderJson },
     execute: () => Promise.resolve(json(requireRequester(context).list(context.agentId))),
+  }),
+  defineTool({
+    name: 'nekro_nxt_extension_inspect',
+    description:
+      '查看一个扩展或你自己的创造任务的配置和状态：每个配置项（本机层、智能体层）的说明、类型、默认值和当前值（凭据只显示是否已填写），配置问题和启用前提，安装的版本、给哪些智能体启用、最近的警告和错误日志，以及你对它的各项操作会直接完成、需要确认还是要到后台处理。扩展用不了、报错或用户问起配置时，先用它查清楚原因再回复。',
+    parameters: {
+      extension: { type: 'string', description: '扩展名称或编号。' },
+      task: {
+        type: 'string',
+        description: '创造任务名称或编号；只有一个进行中的任务时可以不填。查看任务时不要填 extension。',
+      },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args) {
+      const input = z
+        .object({ extension: z.string().trim().min(1).optional(), task: z.string().optional() })
+        .parse(args)
+      if (input.extension !== undefined && input.task !== undefined) throw new Error('extension 和 task 只填一个。')
+      const port = requireRequester(context)
+      return json(
+        await port.inspect(
+          context.agentId,
+          input.extension === undefined
+            ? { kind: 'task', reference: input.task }
+            : { kind: 'extension', reference: input.extension },
+        ),
+      )
+    },
   }),
   defineTool({
     name: 'nekro_nxt_extension_revise',
@@ -220,12 +250,20 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       '把一个暂停、中断或留在别的对话里的创造任务接到这次对话继续做。接上后最新候选还没有运行，用 cordis_run 运行它，再接着修改。',
     parameters: {
       task: { type: 'string', description: '任务名称或编号；只有一个进行中的任务时可以不填。' },
+      testConfig: {
+        type: 'json',
+        description:
+          '可选，试运行用的配置值：{ 字段名: 值 }，和 nekro_nxt_extension_define 的 testConfig 相同，只能填非凭据字段。',
+      },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args) {
-      const input = z.object({ task: z.string().optional() }).parse(args)
+      const input = z
+        .object({ task: z.string().optional(), testConfig: z.record(z.string(), JsonValueSchema).optional() })
+        .parse(args)
       const port = requireRequester(context)
       const { task, attempt } = continueTask(context, port, input.task)
+      if (input.testConfig !== undefined) await port.setTestConfig(task.id, input.testConfig)
       const snapshot = await context.authoring!.snapshotForAttempt(attempt)
       const receipt = context.restore(snapshot)
       context.authoring!.resumeTask({

@@ -1,5 +1,7 @@
 import {
+  configSecretKeys,
   parseJsonValue,
+  validateConfigValue,
   type AgentId,
   type ChannelId,
   type EpisodeId,
@@ -14,7 +16,9 @@ import {
   type LocalExtension,
   type Revision,
 } from '@nekro-nxt/extension-runtime'
+import { candidateConfigFields, type CandidateConfigField } from '../authoring-test-config.js'
 import type { NekroRuntime } from '../bootstrap.js'
+import { redactLogText } from '../logs/redact.js'
 import type { ExtensionAction } from './actions.js'
 import { extensionVersions } from './versions.js'
 
@@ -71,6 +75,89 @@ export interface ExtensionGovernanceToolPort {
   revisionByLabel(extensionId: ExtensionId, label: string): ExtensionRevisionId
   /** The installed Revision, or the newest one when not installed. */
   currentRevision(extensionId: ExtensionId): ExtensionRevisionId
+  /**
+   * Configuration, problems, runtime state and the agent's authority for one extension it can see, or for one of its
+   * authoring tasks. Never returns credentials or another agent's own configuration.
+   */
+  inspect(
+    agentId: AgentId,
+    target: { readonly kind: 'extension' | 'task'; readonly reference: string | undefined },
+  ): Promise<JsonValue>
+  /** Stores test values the agent provides for one of its tasks, checked against the task's latest candidate. */
+  setTestConfig(taskId: DynamicAuthoringTask['id'], values: Readonly<Record<string, JsonValue>>): Promise<void>
+}
+
+type ConfigLayer = CandidateConfigField['layer']
+
+/** Permissions as both a saved Manifest and a candidate declare them; only network config fields matter here. */
+type NetworkLayer = { readonly network?: { readonly mode: string; readonly fields?: readonly string[] } | undefined }
+interface NetworkDeclaration {
+  readonly host?: NetworkLayer | undefined
+  readonly agent?: NetworkLayer | undefined
+}
+
+const INSPECT_LOG_LIMIT = 5
+
+const asRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> =>
+  value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
+
+const networkFields = (permissions: NetworkDeclaration, layer: ConfigLayer): ReadonlySet<string> => {
+  const network = permissions[layer]?.network
+  return new Set(network?.mode === 'config' ? (network.fields ?? []) : [])
+}
+
+/**
+ * One field as the agent sees it. `level` says how the value is handled: `secret` values are never shown, only whether
+ * they are set; `network` values decide which addresses the extension may reach.
+ */
+const describeField = (
+  field: CandidateConfigField,
+  permissions: NetworkDeclaration,
+  current: { readonly values: Readonly<Record<string, JsonValue>> } | undefined,
+) => {
+  const level =
+    field.kind === 'secret' ? 'secret' : networkFields(permissions, field.layer).has(field.key) ? 'network' : 'normal'
+  const stored = current?.values[field.key]
+  return {
+    layer: field.layer,
+    key: field.key,
+    title: field.title,
+    ...(field.hint === undefined ? {} : { hint: field.hint }),
+    type: field.kind === 'secret' ? 'string' : field.kind,
+    ...(field.options === undefined ? {} : { options: field.options.map((option) => option.value) }),
+    required: field.required,
+    ...(field.default === undefined ? {} : { default: field.default }),
+    level,
+    ...(current === undefined
+      ? {}
+      : level === 'secret'
+        ? { set: typeof stored === 'string' && stored !== '' }
+        : stored === undefined
+          ? {}
+          : { value: stored }),
+  }
+}
+
+/** What is wrong with one layer's values: validation issues and required credentials still missing. */
+const layerProblems = (
+  fields: readonly CandidateConfigField[],
+  layer: ConfigLayer,
+  values: Readonly<Record<string, JsonValue>>,
+  label: string,
+): string[] => {
+  const own = fields.filter((field) => field.layer === layer)
+  if (own.length === 0) return []
+  const schema = { type: 'object' as const, dict: Object.fromEntries(own.map((field) => [field.key, field.node])) }
+  const secrets = configSecretKeys(schema)
+  const plain = Object.fromEntries(
+    Object.entries(values).filter(([key]) => Object.hasOwn(schema.dict, key) && !secrets.includes(key)),
+  )
+  return [
+    ...validateConfigValue(schema, plain, { skipKeys: secrets }).issues.map((issue) => `${label}：${issue.message}`),
+    ...own
+      .filter((field) => field.kind === 'secret' && field.required && typeof values[field.key] !== 'string')
+      .map((field) => `${label}缺少凭据「${field.title}」。`),
+  ]
 }
 
 /** Actions that change what is mounted for agents, so they wait until the agent is between turns. */
@@ -345,6 +432,138 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const revision = revisions.find((candidate) => candidate.id === installed) ?? revisions.at(-1)
     if (!revision) throw new Error('这个扩展没有可用的版本。')
     return revision.id
+  }
+
+  async inspect(
+    agentId: AgentId,
+    target: { readonly kind: 'extension' | 'task'; readonly reference: string | undefined },
+  ): Promise<JsonValue> {
+    const runtime = this.#runtime
+    const agent = runtime.repository.getAgent(agentId)?.revision.capabilities
+    const authority = (actions: readonly ExtensionAction[]) => ({
+      autonomy: agent?.extensionAutonomy ?? 'manual',
+      requesters: agent?.extensionRequesters ?? 'everyone',
+      actions: Object.fromEntries(
+        actions.map((action) => [
+          action.kind,
+          runtime.extensionActions.assess(action, { kind: 'agent', agentId }).decision,
+        ]),
+      ),
+      meaning: 'run 由你直接完成，request 在频道里请管理员确认，console 需要管理员在后台处理。',
+    })
+    if (target.kind === 'task') {
+      const task = this.resolveTask(agentId, target.reference)
+      const candidate = await runtime.authoringTestConfig.candidate(task.id)
+      const fields = candidateConfigFields(candidate?.config)
+      const test = runtime.authoringTestConfig.values(task.id)
+      const defaults = Object.fromEntries(
+        fields.flatMap((field) => (field.default === undefined ? [] : [[field.key, field.default] as const])),
+      )
+      const effective = { ...defaults, ...test.agentProvided, ...test.userEntered }
+      const source = (key: string) =>
+        test.userEntered[key] !== undefined ? 'user' : test.agentProvided[key] !== undefined ? 'agent' : 'default'
+      return {
+        task: { id: task.id, title: task.title, kind: task.kind, status: task.status },
+        config: fields.map((field) => {
+          const described = describeField(field, candidate?.permissions ?? {}, { values: effective })
+          return field.kind === 'secret' || effective[field.key] === undefined
+            ? described
+            : { ...described, source: source(field.key) }
+        }),
+        problems: (['host', 'agent'] as const).flatMap((layer) =>
+          layerProblems(fields, layer, effective, layer === 'host' ? '本机配置' : '智能体配置'),
+        ),
+        recentLogs: await this.#recentLogs({ kind: 'system', id: `preview:authoring-${task.episodeId}` }, agentId),
+        authority: authority([{ kind: 'save', taskId: task.id }]),
+      }
+    }
+    if (target.reference === undefined) throw new Error('请写上扩展名称或编号。')
+    const extension = this.resolveExtension(agentId, target.reference)
+    const installedRevision = runtime.repository.getHostInstallation(extension.id)?.extensionRevisionId
+    const revision = runtime.repository.getExtensionRevision(this.currentRevision(extension.id))
+    const manifest = revision === undefined ? undefined : runtime.extensionService.revisionManifest(revision)
+    const fields = candidateConfigFields(manifest?.config)
+    const versions = extensionVersions(runtime.repository, runtime.extensionService, extension.id)
+    const hostValues = asRecord(runtime.repository.getHostInstallation(extension.id)?.config)
+    // Only this agent's own activation: other agents' configuration stays theirs.
+    const activation = runtime.repository.getActivation(agentId, extension.id)
+    const agentValues = asRecord(activation?.config)
+    const enablement =
+      activation === undefined
+        ? [
+            runtime.extensionActions.enablementProblem(agentId, extension.id),
+            runtime.extensionActions.enablementNote(agentId, extension.id),
+          ].flatMap((line) => (line === undefined ? [] : [line]))
+        : []
+    return {
+      extension: {
+        id: extension.id,
+        name: extension.displayName,
+        createdByYou: extension.createdByAgentId === agentId,
+      },
+      config: fields.map((field) =>
+        describeField(
+          field,
+          manifest?.permissions ?? {},
+          field.layer === 'host'
+            ? { values: hostValues }
+            : activation === undefined
+              ? undefined
+              : { values: agentValues },
+        ),
+      ),
+      ...(activation === undefined && fields.some((field) => field.layer === 'agent')
+        ? { agentConfigNote: '还没有给你启用，智能体配置在启用后才有值。' }
+        : {}),
+      problems: [
+        ...layerProblems(fields, 'host', hostValues, '本机配置'),
+        ...(activation === undefined ? [] : layerProblems(fields, 'agent', agentValues, '你的配置')),
+        ...enablement,
+      ],
+      runtime: {
+        installedVersion: installedRevision === undefined ? null : (versions.get(installedRevision)?.label ?? null),
+        enabledFor: runtime.repository
+          .listActivations()
+          .filter((candidate) => candidate.extensionId === extension.id)
+          .map((candidate) =>
+            candidate.agentId === agentId
+              ? '你'
+              : (runtime.repository.getAgent(candidate.agentId)?.revision.displayName ?? '智能体'),
+          ),
+        recentLogs: await this.#recentLogs({ kind: 'extension', id: extension.id }, agentId),
+      },
+      authority: authority([
+        { kind: 'enable', extensionId: extension.id, agentId },
+        { kind: 'disable', extensionId: extension.id, agentId },
+        { kind: 'revert', extensionId: extension.id },
+        {
+          kind: 'branch',
+          revisionId: this.currentRevision(extension.id),
+          name: extension.displayName,
+          copyData: false,
+        },
+        { kind: 'community-publish', extensionId: extension.id, notes: '' },
+        { kind: 'community-update', extensionId: extension.id },
+      ]),
+    }
+  }
+
+  setTestConfig(taskId: DynamicAuthoringTask['id'], values: Readonly<Record<string, JsonValue>>): Promise<void> {
+    return this.#runtime.authoringTestConfig.setAgentValues(taskId, values)
+  }
+
+  /**
+   * The latest warnings and errors of one log source, redacted again before the agent sees them. Lines that belong to
+   * another agent's runs are left out.
+   */
+  async #recentLogs(source: { readonly kind: 'extension' | 'system'; readonly id: string }, agentId: AgentId) {
+    const logs = this.#runtime.logs
+    if (logs === undefined) return []
+    const page = await logs.query({ sources: [source], levels: ['warn', 'error'], limit: 50 })
+    return page.entries
+      .filter((entry) => entry.scope?.agentId === undefined || entry.scope.agentId === agentId)
+      .slice(-INSPECT_LOG_LIMIT)
+      .map((entry) => ({ time: entry.timestamp, level: entry.level, message: redactLogText(entry.message) }))
   }
 
   async #definition(extension: LocalExtension, revision: Revision): Promise<RevisionDefinition> {

@@ -6,7 +6,12 @@ import { isPrivateNetworkAddress, normalizeUrlHostname, pinnedLookup } from './n
 
 export type ExtensionEgressPolicy =
   | { readonly mode: 'domains'; readonly domains: readonly string[] }
-  | { readonly mode: 'config'; readonly hosts: readonly string[] }
+  | {
+      readonly mode: 'config'
+      readonly hosts: readonly string[]
+      /** Hosts a person entered, which may resolve to private addresses; all of `hosts` when absent. */
+      readonly privateHosts?: readonly string[]
+    }
   | { readonly mode: 'unrestricted' }
 
 export interface ExtensionEgressOptions {
@@ -115,17 +120,8 @@ const isPolicyMatch = (policy: ExtensionEgressPolicy, hostname: string, configHo
   return false
 }
 
-const isPrivateNetworkAllowed = (policy: ExtensionEgressPolicy, _hostname: string, configHost?: string): boolean => {
-  if (policy.mode !== 'config') {
-    return false
-  }
-
-  if (configHost && policy.hosts.some((host) => host === configHost)) {
-    return true
-  }
-
-  return false
-}
+const isPrivateNetworkAllowed = (policy: ExtensionEgressPolicy, configHost?: string): boolean =>
+  policy.mode === 'config' && configHost !== undefined && (policy.privateHosts ?? policy.hosts).includes(configHost)
 
 const createNetworkRequest = async (
   url: URL,
@@ -269,7 +265,7 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
           options.policy.mode === 'config'
             ? options.policy.hosts.find((h) => h === `${hostname}${url.port ? `:${url.port}` : ''}`)
             : undefined
-        const canAccessPrivate = isPrivateNetworkAllowed(options.policy, hostname, configHost)
+        const canAccessPrivate = isPrivateNetworkAllowed(options.policy, configHost)
 
         if (!isPolicyMatch(options.policy, hostname, configHost)) {
           const suggestion =

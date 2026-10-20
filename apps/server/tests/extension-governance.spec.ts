@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { Context } from '@deepseek-ai/cordis'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -7,7 +8,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { materializeImportedRevision } from '@nekro-nxt/extension-format'
-import { ExtensionDataDowngradeError } from '@nekro-nxt/extension-runtime'
+import { ExtensionDataDowngradeError, hostPermissionRequirement } from '@nekro-nxt/extension-runtime'
 import {
   CommunityReleaseSchema,
   EpisodeIdSchema,
@@ -15,6 +16,7 @@ import {
   type ChannelId,
   type ExtensionId,
   type ExtensionLayeredConfig,
+  type ExtensionPermissions,
 } from '@nekro-nxt/contracts'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { ExtensionCommandPort } from '../src/extension-governance/commands.js'
@@ -23,6 +25,7 @@ import { extensionAgentTools } from '../src/extension-governance/agent-tools.js'
 import { CommunitySyncService, type SyncCommunity } from '../src/extension-governance/community-sync.js'
 import { ExtensionRequestService, EXTENSION_REQUEST_TTL_MS } from '../src/extension-governance/requests.js'
 import { extensionVersions, lineageGraph } from '../src/extension-governance/versions.js'
+import { HostLogService } from '../src/logs/service.js'
 import { extensionVerification } from './fixtures/extension-verification.js'
 
 const directories: string[] = []
@@ -72,10 +75,11 @@ class ScriptedModel extends LlmAdapter {
   }
 }
 
-const createRuntime = async (model?: LlmAdapter) => {
+const createRuntime = async (model?: LlmAdapter, logs?: HostLogService) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nxt-governance-'))
   directories.push(directory)
   const runtime = await NekroRuntime.create({
+    ...(logs === undefined ? {} : { logs }),
     coreDatabasePath: path.join(directory, 'core.sqlite'),
     sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
     assetRoot: path.join(directory, 'assets'),
@@ -214,7 +218,12 @@ const agentWithChannel = async (runtime: NekroRuntime, autonomy: 'manual' | 'con
   return Promise.resolve({ agentId: agent.definition.id, channelId: channel.id })
 }
 
-const saveSharedExtension = (runtime: NekroRuntime, creator: AgentId, config?: ExtensionLayeredConfig) =>
+const saveSharedExtension = (
+  runtime: NekroRuntime,
+  creator: AgentId,
+  config?: ExtensionLayeredConfig,
+  capabilities: Pick<ExtensionPermissions, 'host' | 'agent'> = {},
+) =>
   runtime.extensionService.saveDynamicPackage({
     slug: 'shared-probe',
     displayName: '共享探针',
@@ -226,7 +235,7 @@ const saveSharedExtension = (runtime: NekroRuntime, creator: AgentId, config?: E
       purpose: '验证扩展共享',
       hostCode: SOURCE_V1,
       codeFormat: 'module',
-      permissions: { permissions: [], networkOrigins: [] },
+      permissions: { permissions: [], networkOrigins: [], ...capabilities },
       contributions: [
         { kind: 'tool', name: 'gov_probe', description: '治理探针' },
         { kind: 'rpc', method: 'ping' },
@@ -719,6 +728,187 @@ describe('extension autonomy', () => {
         }).storage,
       ).toEqual([])
       expect(JSON.stringify(tools.list(consumer.agentId))).not.toContain(consumerKey)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('inspects configuration and state without exposing credentials or another agent’s settings', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nxt-governance-logs-'))
+    directories.push(root)
+    const logs = await HostLogService.open({ dataRoot: root })
+    const runtime = await createRuntime(undefined, logs)
+    try {
+      const creator = await agentWithChannel(runtime, 'autonomous')
+      const consumer = await agentWithChannel(runtime, 'confirm')
+      const { extension, revision } = await saveSharedExtension(
+        runtime,
+        creator.agentId,
+        {
+          host: {
+            schema: {
+              type: 'object',
+              dict: {
+                endpoint: { type: 'string', meta: { description: '服务地址', required: true } },
+                hostKey: { type: 'string', meta: { description: '服务密钥', required: true, role: 'secret' } },
+              },
+            },
+          },
+          agent: {
+            schema: {
+              type: 'object',
+              dict: {
+                nickname: { type: 'string', meta: { description: '称呼', required: true, default: '虚构默认称呼' } },
+                agentKey: { type: 'string', meta: { description: '个人密钥', role: 'secret' } },
+              },
+            },
+          },
+        },
+        { host: { network: { mode: 'config', fields: ['endpoint'] } } },
+      )
+      const hostKey = await runtime.credentials.save('fictional-shared-secret')
+      const creatorKey = await runtime.credentials.save('fictional-creator-secret')
+      await runtime.extensions.install({
+        extensionId: extension.id,
+        revisionId: revision.id,
+        config: { endpoint: 'https://service.example.test', hostKey },
+        permissionApproval: {
+          permissionDigest: hostPermissionRequirement(runtime.extensionService.revisionManifest(revision), undefined)
+            .permissionDigest,
+        },
+      })
+      await runtime.extensions.activate({
+        agentId: creator.agentId,
+        extensionId: extension.id,
+        revisionId: revision.id,
+        config: { nickname: '虚构私有设置', agentKey: creatorKey },
+      })
+      logs.write({
+        level: 'error',
+        message: '请求失败 token=fictional-log-token',
+        source: { kind: 'extension', id: extension.id, name: '共享探针' },
+        scope: { extensionId: extension.id },
+      })
+      logs.write({
+        level: 'error',
+        message: '虚构的创建者私有错误',
+        source: { kind: 'extension', id: extension.id, name: '共享探针' },
+        scope: { extensionId: extension.id, agentId: creator.agentId },
+      })
+      await logs.flush()
+
+      const tools = new ExtensionGovernanceTools(runtime)
+      const inspected = await tools.inspect(consumer.agentId, { kind: 'extension', reference: '共享探针' })
+      expect(inspected).toMatchObject({
+        extension: { id: extension.id, createdByYou: false },
+        config: [
+          { layer: 'host', key: 'endpoint', level: 'network', value: 'https://service.example.test' },
+          { layer: 'host', key: 'hostKey', level: 'secret', set: true },
+          { layer: 'agent', key: 'nickname', level: 'normal', default: '虚构默认称呼' },
+          { layer: 'agent', key: 'agentKey', level: 'secret' },
+        ],
+        agentConfigNote: expect.any(String) as unknown,
+        runtime: { installedVersion: 'v1', enabledFor: ['治理智能体'] },
+        authority: {
+          autonomy: 'confirm',
+          requesters: 'everyone',
+          actions: { enable: 'request', 'community-publish': 'request' },
+        },
+      })
+      const shape = z
+        .object({
+          config: z.array(z.record(z.string(), z.unknown())),
+          runtime: z.object({ recentLogs: z.array(z.object({ message: z.string() }).loose()) }).loose(),
+        })
+        .loose()
+        .parse(inspected)
+      expect(shape.config.find((field) => field['key'] === 'nickname')).not.toHaveProperty('value')
+      expect(shape.config.find((field) => field['key'] === 'agentKey')).not.toHaveProperty('set')
+      expect(shape.runtime.recentLogs.map((entry) => entry.message)).toEqual(['请求失败 token=[已隐藏]'])
+      const serialized = JSON.stringify(inspected)
+      for (const privateValue of [
+        hostKey,
+        creatorKey,
+        'fictional-shared-secret',
+        'fictional-creator-secret',
+        'fictional-log-token',
+        '虚构私有设置',
+        '虚构的创建者私有错误',
+      ])
+        expect(serialized).not.toContain(privateValue)
+
+      // Once enabled, the agent sees its own values and its own missing credential, still not the creator's.
+      await runtime.extensions.activate({
+        agentId: consumer.agentId,
+        extensionId: extension.id,
+        revisionId: revision.id,
+        config: { nickname: '虚构使用者' },
+      })
+      const own = await tools.inspect(consumer.agentId, { kind: 'extension', reference: extension.id })
+      expect(own).toMatchObject({
+        config: [{}, {}, { key: 'nickname', value: '虚构使用者' }, { key: 'agentKey', set: false }],
+        runtime: { enabledFor: expect.arrayContaining(['治理智能体', '你']) as unknown },
+      })
+      expect(JSON.stringify(own)).not.toContain('虚构私有设置')
+      expect(JSON.stringify(own)).not.toContain(creatorKey)
+    } finally {
+      await runtime.dispose()
+      await logs.close()
+    }
+  })
+
+  it('takes test values for the candidate from the define tool and refuses credentials there', async () => {
+    const host = `return { inject: ['tools'], apply(ctx) { ${PROBE_TOOL} } }`
+    const config = {
+      agent: {
+        schema: {
+          type: 'object',
+          dict: {
+            city: { type: 'string', meta: { description: '城市' } },
+            apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } },
+          },
+        },
+      },
+    }
+    const define = (testConfig: Record<string, unknown>) => ({
+      name: 'nekro_nxt_extension_define',
+      args: {
+        plugin: { kind: 'new', idPrefix: 'tcfg' },
+        name: '测试配置探针',
+        purpose: '验证测试配置。',
+        code: { host },
+        config,
+        testConfig,
+      },
+    })
+    const model = new ScriptedModel([define({ apiKey: 'fictional-agent-secret' }), define({ city: '虚构市' })])
+    const runtime = await createRuntime(model)
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '配置智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'test-config-request',
+        parts: [{ type: 'text', text: '做一个查天气的扩展。' }],
+      })
+      await expect
+        .poll(() => {
+          const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]
+          return task === undefined ? undefined : runtime.authoringTestConfig.values(task.id).agentProvided
+        }, NOTICE_POLL)
+        .toEqual({ city: '虚构市' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      // The definition that carried a credential was refused before anything was defined.
+      expect(runtime.repository.listAuthoringAttempts(task.id)).toHaveLength(1)
+      expect(JSON.stringify(runtime.authoringTestConfig.values(task.id))).not.toContain('fictional-agent-secret')
+      await expect(runtime.authoringTestConfig.setAgentValues(task.id, { apiKey: 'x' })).rejects.toThrow('是凭据')
+      await expect(runtime.authoringTestConfig.setAgentValues(task.id, { unknown: 'x' })).rejects.toThrow(
+        '没有这些字段',
+      )
     } finally {
       await runtime.dispose()
     }

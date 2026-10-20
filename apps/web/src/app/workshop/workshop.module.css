@@ -653,7 +653,7 @@
   inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
 
-/* 测试凭据 */
+/* 测试配置 */
 .testSecrets {
   display: grid;
   gap: var(--s-3);

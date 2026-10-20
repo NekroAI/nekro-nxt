@@ -62,6 +62,11 @@ export interface NxtServiceBinding {
   readonly config: () => JsonValue
   /** Host configuration of an agent binding; secrets declared in `config.host` resolve from it. */
   readonly hostConfig?: () => JsonValue
+  /**
+   * The part of `config` a person entered, when not all of it was: under `network.mode: 'config'` only addresses in
+   * these values may reach private networks. Dynamic runs set it, since the agent provides their other values.
+   */
+  readonly userEnteredConfig?: () => JsonValue
 }
 
 /** Every configuration value a binding's secrets may come from; field names are unique across both layers. */
@@ -89,7 +94,7 @@ export interface NxtStorageBackend {
 
 export type NxtEgressPolicy =
   | { readonly mode: 'domains'; readonly domains: readonly string[] }
-  | { readonly mode: 'config'; readonly hosts: readonly string[] }
+  | { readonly mode: 'config'; readonly hosts: readonly string[]; readonly privateHosts?: readonly string[] }
   | { readonly mode: 'unrestricted' }
 
 /** Product facts the service reads or writes; wired by the Server composition root or a verification fake. */
@@ -236,8 +241,7 @@ const requireCapability = <Key extends keyof ExtensionCapabilities>(
   return value
 }
 
-const configHosts = (binding: NxtServiceBinding, fields: readonly string[]): readonly string[] => {
-  const config = binding.config()
+const configHosts = (config: JsonValue, fields: readonly string[]): readonly string[] => {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) return []
   return fields.flatMap((field) => {
     const raw = (config as Readonly<Record<string, JsonValue>>)[field]
@@ -253,7 +257,15 @@ const configHosts = (binding: NxtServiceBinding, fields: readonly string[]): rea
 const egressPolicy = (binding: NxtServiceBinding): NxtEgressPolicy => {
   const network = requireCapability(binding, 'network', 'network（出站网络）')
   if (network.mode === 'domains') return { mode: 'domains', domains: network.domains }
-  if (network.mode === 'config') return { mode: 'config', hosts: configHosts(binding, network.fields) }
+  if (network.mode === 'config') {
+    return {
+      mode: 'config',
+      hosts: configHosts(binding.config(), network.fields),
+      ...(binding.userEnteredConfig === undefined
+        ? {}
+        : { privateHosts: configHosts(binding.userEnteredConfig(), network.fields) }),
+    }
+  }
   return { mode: 'unrestricted' }
 }
 

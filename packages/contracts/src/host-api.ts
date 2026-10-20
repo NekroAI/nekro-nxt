@@ -2946,11 +2946,18 @@ export const HostApiContracts = {
       .object({
         task: AuthoringTaskSummarySchema,
         attempts: z.array(AuthoringAttemptSummarySchema),
-        /** Secret fields of the latest candidate and which have a test value for this task's dynamic runs. */
-        testSecrets: z
+        /**
+         * Test configuration of this task's dynamic runs: fields of the latest candidate the user can type, which
+         * credentials are set, the user's values and the values the agent provided.
+         */
+        testConfig: z
           .object({
-            fields: z.array(z.object({ key: z.string(), title: z.string() }).strict()),
+            fields: z.array(
+              z.object({ key: z.string(), title: z.string(), kind: z.enum(['secret', 'string', 'number']) }).strict(),
+            ),
             configured: z.array(z.string()),
+            values: z.record(z.string(), z.union([z.string(), z.number()])),
+            agentValues: z.record(z.string(), JsonValueSchema),
           })
           .strict()
           .optional(),
@@ -3000,12 +3007,20 @@ export const HostApiContracts = {
     response: AuthoringTaskSummarySchema,
     error: HostApiErrorSchema,
   }),
-  setAuthoringTestSecrets: defineContract({
+  setAuthoringTestConfig: defineContract({
     method: 'PUT',
     path: '/api/authoring/tasks/:taskId/test-secrets',
     params: authoringTaskParam,
-    request: z.object({ secrets: z.record(z.string(), z.string().max(8192)) }).strict(),
-    response: z.object({ configured: z.array(z.string()) }).strict(),
+    request: z
+      .object({
+        secrets: z.record(z.string(), z.string().max(8192)),
+        /** Text and number values; an empty string goes back to the agent's value or the default. */
+        values: z.record(z.string(), z.union([z.string().max(8192), z.number()])).optional(),
+      })
+      .strict(),
+    response: z
+      .object({ configured: z.array(z.string()), values: z.record(z.string(), z.union([z.string(), z.number()])) })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   deleteAuthoringTask: defineContract({

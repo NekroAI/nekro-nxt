@@ -1,6 +1,7 @@
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
 import { extensionAgentTools, type ReviseIntent } from './extension-governance/agent-tools.js'
 import type { ExtensionGovernanceToolPort } from './extension-governance/tool-port.js'
+import { parseAgentTestConfig, type AuthoringTestConfigValues } from './authoring-test-config.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { renderChannelMessageResult } from './channel-message-result.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
@@ -536,8 +537,8 @@ export interface DshHostRuntimeOptions {
     }
     /** Registers an installed extension's adapter in the product Registry and mounts its connections. */
     readonly adapters?: PersistentAdapterPort
-    /** Config a dynamic candidate sees: secret references of the task's test credentials. */
-    readonly dynamicConfig?: (agentId: AgentId, episodeId: EpisodeId) => JsonValue
+    /** Test values of the task authoring in this Episode, kept apart by who provided them. */
+    readonly dynamicConfig?: (agentId: AgentId, episodeId: EpisodeId) => AuthoringTestConfigValues
     /** Scheduled tasks agents manage from chat; tools are offered when the agent's `scheduledTasks` is on. */
     readonly scheduledTasks?: ScheduledTaskPort
     /** Latest MCP connection attempt per Activation and server, shown on the extension's usage rows. */
@@ -1021,6 +1022,8 @@ const nekroNxtExtensionDefineTool = (
   runner: NekroNxtDynamicCordisRunner,
   sessionId: string,
   guard: () => void = () => undefined,
+  /** Keeps checked `testConfig` values for the task the definition is recorded in. */
+  keepTestConfig?: (packageId: string, values: Readonly<Record<string, JsonValue>>) => void,
 ) =>
   defineTool({
     name: 'nekro_nxt_extension_define',
@@ -1139,7 +1142,12 @@ const nekroNxtExtensionDefineTool = (
       config: {
         type: 'json',
         description:
-          '可选配置界面：{ host?: { schema }, agent?: { schema } }，schema 为序列化 Schemastery 对象，两层字段名不能重复。本机配置用 harness.config() 读取，智能体配置在挂载内用 ctx.config() 读取；动态运行阶段使用默认值。',
+          '可选配置界面：{ host?: { schema }, agent?: { schema } }，schema 为序列化 Schemastery 对象，两层字段名不能重复。本机配置用 harness.config() 读取，智能体配置在挂载内用 ctx.config() 读取；试运行时依次取默认值、testConfig 和用户在创造任务页填写的值。',
+      },
+      testConfig: {
+        type: 'json',
+        description:
+          '可选，试运行用的配置值：{ 字段名: 值 }，按候选的配置检查，填 null 清除一项。只能填非凭据字段，凭据请用户在创造任务页填写；用户在任务页填写的值优先。智能体填写的地址不能访问内网，内网地址要用户在任务页填写。',
       },
       verification: {
         type: 'json',
@@ -1170,8 +1178,16 @@ const nekroNxtExtensionDefineTool = (
     },
     async execute(args) {
       guard()
-      const definition = authoringDefinitionFromFacade(args)
-      return Promise.resolve(runner.defineAuthoringPackage(sessionId, definition))
+      const { testConfig, ...definitionArgs } = z
+        .object({ testConfig: z.record(z.string(), JsonValueSchema).optional() })
+        .loose()
+        .parse(args)
+      const definition = authoringDefinitionFromFacade(definitionArgs)
+      const values = testConfig === undefined ? undefined : parseAgentTestConfig(definition.config, testConfig)
+      if (values !== undefined && keepTestConfig === undefined) throw new Error('这台 NekroNXT 不能保存测试配置。')
+      const receipt = runner.defineAuthoringPackage(sessionId, definition)
+      if (values !== undefined) keepTestConfig?.(receipt.packageId, values)
+      return Promise.resolve(receipt)
     },
   })
 
@@ -4104,15 +4120,15 @@ export class DshHostRuntime implements AgentSessionDriver {
         runner.bindEpisode(input.episodeId)
         const extensionHost = this.#extensionHost
         if (extensionHost !== undefined) {
-          // A candidate has no saved configuration: schema defaults plus the test credentials typed for this task.
+          // A candidate has no saved configuration: schema defaults, then what the agent provided for this task, then
+          // what the user typed. Only the user's values may point the candidate at private networks.
+          const testConfig = () => extensionHost.dynamicConfig?.(revision.agentId, input.episodeId)
           const candidateConfig = (layer: 'host' | 'agent'): JsonValue => {
-            const record = (value: JsonValue | undefined) =>
-              value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
-            return {
-              ...record(runner.activeCandidateConfig(layer)),
-              ...record(extensionHost.dynamicConfig?.(revision.agentId, input.episodeId)),
-            }
+            const test = testConfig()
+            return runner.activeCandidateConfig(layer, { ...test?.agentProvided, ...test?.userEntered })
           }
+          const userEnteredConfig = (layer: 'host' | 'agent'): JsonValue =>
+            runner.activeCandidateLayerValues(layer, testConfig()?.userEntered ?? {})
           const ownerKey = `authoring-${input.episodeId}`
           const dynamicNxt = createNxtHostService(
             {
@@ -4124,6 +4140,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               capabilities: () => runner.activeCandidateCapabilities(),
               config: () => candidateConfig('agent'),
               hostConfig: () => candidateConfig('host'),
+              userEnteredConfig: () => userEnteredConfig('agent'),
             },
             extensionHost.dynamicBackends,
           )
@@ -4136,6 +4153,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               channelId: '',
               capabilities: () => runner.activeCandidateHostCapabilities(),
               config: () => candidateConfig('host'),
+              userEnteredConfig: () => userEnteredConfig('host'),
             },
             extensionHost.dynamicBackends,
           )
@@ -4167,8 +4185,10 @@ export class DshHostRuntime implements AgentSessionDriver {
         })
         // Set by nekro_nxt_extension_revise for the one define that starts a revise task.
         let reviseIntent: ReviseIntent | undefined
-        // The ledger write runs after define returns; the intent travels with the package it was defined for.
+        // The ledger write runs after define returns; the intent and test values travel with the package they were
+        // defined for.
         const reviseByPackage = new Map<string, ReviseIntent>()
+        const testConfigByPackage = new Map<string, Readonly<Record<string, JsonValue>>>()
         if (this.#authoring) {
           runner.configureAuthoringLedger({
             definition: async (_request, receipt, snapshot) => {
@@ -4191,6 +4211,15 @@ export class DshHostRuntime implements AgentSessionDriver {
                 runnerPackageId: receipt.packageId,
                 snapshot,
               })
+              const testValues = testConfigByPackage.get(receipt.packageId)
+              testConfigByPackage.delete(receipt.packageId)
+              const task =
+                testValues === undefined
+                  ? undefined
+                  : this.#authoring?.service.taskForRunner(input.episodeId, receipt.pluginId)
+              if (testValues !== undefined && task !== undefined) {
+                await this.#authoring?.governance?.()?.setTestConfig(task.id, testValues)
+              }
             },
             beforeRun: (pluginId) => {
               const task = this.#authoring?.service.taskForRunner(input.episodeId, pluginId)
@@ -4305,7 +4334,16 @@ export class DshHostRuntime implements AgentSessionDriver {
           const verdict = governance?.()?.requesterAllowed(revision.agentId, input.episodeId)
           if (verdict !== undefined && !verdict.allowed) throw new Error(verdict.reason)
         }
-        agentContext.tools.register(nekroNxtExtensionDefineTool(runner, sessionId, requesterGuard))
+        agentContext.tools.register(
+          nekroNxtExtensionDefineTool(
+            runner,
+            sessionId,
+            requesterGuard,
+            this.#authoring === undefined
+              ? undefined
+              : (packageId, values) => testConfigByPackage.set(packageId, values),
+          ),
+        )
         if (governance !== undefined) {
           for (const tool of extensionAgentTools({
             port: governance,

@@ -5,11 +5,13 @@ import { HostApiContracts, type ExtensionCapabilities } from '@nekro-nxt/contrac
 import { NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE } from '@nekro-nxt/extension-sdk'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
+import { ExtensionGovernanceTools } from '../src/extension-governance/tool-port.js'
 import { NekroJsonlSessionPersistence } from '../src/dsh-session-persistence.js'
 import { projectHistoryEntry } from '../src/host-route-support.js'
 import { createNekroHostApi } from '../src/host-api.js'
@@ -814,13 +816,15 @@ return { inject: ['nxt'], apply() {} }`
         }
         return recorded
       })
-      expect(await runtime.authoringTestSecrets.describe(task.id)).toEqual({
-        fields: [{ key: 'apiKey', title: 'API Key' }],
+      expect(await runtime.authoringTestConfig.describe(task.id)).toEqual({
+        fields: [{ key: 'apiKey', title: 'API Key', kind: 'secret' }],
         configured: [],
+        values: {},
+        agentValues: {},
       })
-      await expect(runtime.authoringTestSecrets.set(task.id, { other: 'x' })).rejects.toThrow(/没有这些凭据字段/u)
-      await runtime.authoringTestSecrets.set(task.id, { apiKey: 'fixture-test-key' })
-      expect((await runtime.authoringTestSecrets.describe(task.id)).configured).toEqual(['apiKey'])
+      await expect(runtime.authoringTestConfig.setSecrets(task.id, { other: 'x' })).rejects.toThrow(/没有这些凭据字段/u)
+      await runtime.authoringTestConfig.setSecrets(task.id, { apiKey: 'fixture-test-key' })
+      expect((await runtime.authoringTestConfig.describe(task.id)).configured).toEqual(['apiKey'])
 
       await expect(
         runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
@@ -838,13 +842,13 @@ return { inject: ['nxt'], apply() {} }`
           description: '验证测试凭据。',
         }),
       ).rejects.toThrow('test credential missing')
-      await runtime.authoringTestSecrets.clear(task.id)
-      expect((await runtime.authoringTestSecrets.describe(task.id)).configured).toEqual([])
+      await runtime.authoringTestConfig.clear(task.id)
+      expect((await runtime.authoringTestConfig.describe(task.id)).configured).toEqual([])
 
       // Deleting the agent removes its test credentials and takes its tasks out of the Workshop; the history stays.
-      await runtime.authoringTestSecrets.set(task.id, { apiKey: 'fixture-test-key' })
+      await runtime.authoringTestConfig.setSecrets(task.id, { apiKey: 'fixture-test-key' })
       await runtime.deleteAgent(entity.agentId, { deleteAutoCreatedBuiltInChannels: true })
-      expect((await runtime.authoringTestSecrets.describe(task.id)).configured).toEqual([])
+      expect((await runtime.authoringTestConfig.describe(task.id)).configured).toEqual([])
       expect(runtime.repository.getAuthoringTask(task.id)).toBeDefined()
       const webContext = new Context()
       try {
@@ -861,6 +865,130 @@ return { inject: ['nxt'], apply() {} }`
       await runtime.dispose()
     }
   })
+
+  it('layers test values as defaults, then the agent’s, then the user’s, and only the user’s reach a private network', async () => {
+    const server = createServer((_request, response) =>
+      response.writeHead(200, { 'content-type': 'text/plain' }).end('pong'),
+    )
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (address === null || typeof address === 'string') throw new Error('Fixture server has no TCP port.')
+    const endpoint = `http://127.0.0.1:${address.port}`
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    // The probe reports what it saw by failing with it, so each trial run returns the observation.
+    const host = `return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'config_probe',
+      description: 'Reports its configuration and whether its service answers.',
+      parameters: {},
+      output: { schema: { type: 'string' }, render(_a, v) { return [{ type: 'text', text: v }] } },
+      async execute() {
+        const c = ctx.config()
+        const fetched = await ctx.nxt.http.fetch(c.endpoint + '/ping').then(
+          (response) => response.text,
+          (error) => (String(error && error.message).includes('私网') ? 'private-blocked' : 'failed'),
+        )
+        throw new Error('observed ' + JSON.stringify({ unit: c.unit, label: c.label, retries: c.retries, fetched }))
+      }
+    }))
+  }
+}`
+    const definition = (plugin: { kind: 'new'; idPrefix: string } | { kind: 'existing'; pluginId: string }) => ({
+      plugin,
+      name: '配置探针',
+      purpose: '验证测试配置。',
+      code: { host },
+      resources: {},
+      permissions: {
+        permissions: [],
+        networkOrigins: [],
+        agent: { network: { mode: 'config' as const, fields: ['endpoint'] } },
+      },
+      config: {
+        host: {
+          schema: {
+            type: 'object' as const,
+            dict: { region: { type: 'string' as const, meta: { description: '区域', default: '示例区' } } },
+          },
+        },
+        agent: {
+          schema: {
+            type: 'object' as const,
+            dict: {
+              endpoint: { type: 'string' as const, meta: { description: '服务地址', default: 'https://example.test' } },
+              unit: { type: 'string' as const, meta: { description: '单位', default: '摄氏' } },
+              label: { type: 'string' as const, meta: { description: '标签', default: '默认标签' } },
+              retries: { type: 'number' as const, meta: { description: '重试次数', default: 1 } },
+              apiKey: { type: 'string' as const, meta: { description: 'API Key', role: 'secret' } },
+            },
+          },
+        },
+      },
+      contributions: [],
+    })
+    try {
+      const first = runtime.host.defineDynamicAuthoringPackage(
+        dshSessionId,
+        definition({ kind: 'new', idPrefix: 'cfg' }),
+      )
+      const task = await vi.waitFor(() => {
+        const recorded = runtime.repository.listAuthoringTasks(entity.agentId)[0]
+        if (recorded === undefined || runtime.repository.listAuthoringAttempts(recorded.id).length === 0) {
+          throw new Error('authoring task not recorded yet')
+        }
+        return recorded
+      })
+      await expect(runtime.authoringTestConfig.setAgentValues(task.id, { apiKey: 'fictional-key' })).rejects.toThrow(
+        '是凭据',
+      )
+      await expect(runtime.authoringTestConfig.setAgentValues(task.id, { retries: '五' })).rejects.toThrow('必须是数字')
+      await runtime.authoringTestConfig.setAgentValues(task.id, { endpoint, label: '智能体标签', retries: 5 })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, first.pluginId, first.packageId, 'run'),
+      ).rejects.toThrow('observed {"unit":"摄氏","label":"智能体标签","retries":5,"fetched":"private-blocked"}')
+
+      // The user's values win, and the same private address the user entered is reachable.
+      await runtime.authoringTestConfig.setUserValues(task.id, { endpoint, retries: '9' })
+      const second = runtime.host.defineDynamicAuthoringPackage(
+        dshSessionId,
+        definition({ kind: 'existing', pluginId: first.pluginId }),
+      )
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, second.pluginId, second.packageId, 'update'),
+      ).rejects.toThrow('observed {"unit":"摄氏","label":"智能体标签","retries":9,"fetched":"pong"}')
+
+      await runtime.authoringTestConfig.setSecrets(task.id, { apiKey: 'fictional-test-key' })
+      const inspected = await new ExtensionGovernanceTools(runtime).inspect(entity.agentId, {
+        kind: 'task',
+        reference: undefined,
+      })
+      expect(inspected).toMatchObject({
+        task: { id: task.id },
+        config: [
+          { layer: 'host', key: 'region', value: '示例区', source: 'default' },
+          { layer: 'agent', key: 'endpoint', level: 'network', value: endpoint, source: 'user' },
+          { key: 'unit', value: '摄氏', source: 'default' },
+          { key: 'label', value: '智能体标签', source: 'agent' },
+          { key: 'retries', value: 9, source: 'user' },
+          { key: 'apiKey', level: 'secret', set: true },
+        ],
+        problems: [],
+        authority: { actions: { save: 'console' } },
+      })
+      const reference = runtime.authoringTestConfig.values(task.id).userEntered['apiKey']
+      if (typeof reference !== 'string') throw new Error('The test credential has no reference.')
+      expect(JSON.stringify(inspected)).not.toContain(reference)
+      expect(JSON.stringify(inspected)).not.toContain('fictional-test-key')
+
+      await runtime.authoringTestConfig.clear(task.id)
+      expect(runtime.authoringTestConfig.values(task.id)).toEqual({ agentProvided: {}, userEntered: {} })
+    } finally {
+      await runtime.dispose()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  }, 60_000)
 
   it('refuses to save a Revision whose materialized artifact fails at runtime', async () => {
     const runtime = await createRuntime()
