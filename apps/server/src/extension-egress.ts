@@ -31,6 +31,16 @@ export interface ExtensionFetchInit {
   readonly bodyBase64?: string
 }
 
+/**
+ * A credential placeholder an extension put into a request, with the value the host fills in. `domains` are hostnames
+ * or `*.example.com` patterns the value may be sent to; absent means wherever the egress policy reaches.
+ */
+export interface ExtensionFetchSecret {
+  readonly token: string
+  readonly value: string
+  readonly domains?: readonly string[]
+}
+
 export interface ExtensionFetchResponse {
   readonly url: string
   readonly status: number
@@ -102,6 +112,43 @@ const matchesDomain = (pattern: string, targetHostname: string): boolean => {
   }
 
   return false
+}
+
+const PLACEHOLDER_PATTERN = /\{\{nxt-credential:[a-f0-9]{24}\}\}/gu
+
+/**
+ * Fills the placeholders whose credential may go to `hostname`; `blocked` reports any left unfilled, which are either
+ * unknown or not allowed there.
+ */
+const fillPlaceholders = (
+  text: string,
+  hostname: string,
+  secrets: readonly ExtensionFetchSecret[],
+): { readonly text: string; readonly blocked: boolean } => {
+  let blocked = false
+  const filled = text.replace(PLACEHOLDER_PATTERN, (token) => {
+    const secret = secrets.find((candidate) => candidate.token === token)
+    if (
+      secret === undefined ||
+      (secret.domains !== undefined && !secret.domains.some((domain) => matchesDomain(domain, hostname)))
+    ) {
+      blocked = true
+      return token
+    }
+    return secret.value
+  })
+  return { text: filled, blocked }
+}
+
+/** Puts placeholders back where a filled value would reach the extension (the final URL it is told). */
+const maskSecrets = (text: string, secrets: readonly ExtensionFetchSecret[]): string => {
+  let masked = text
+  for (const secret of secrets) {
+    for (const form of new Set([secret.value, encodeURIComponent(secret.value)])) {
+      if (form !== '') masked = masked.replaceAll(form, secret.token)
+    }
+  }
+  return masked
 }
 
 const isPolicyMatch = (policy: ExtensionEgressPolicy, hostname: string, configHost?: string): boolean => {
@@ -202,12 +249,39 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
   const isPrivateAddress = options.isPrivateAddress ?? isPrivateNetworkAddress
 
   return {
-    fetch: async (urlString: string, init?: ExtensionFetchInit): Promise<ExtensionFetchResponse> => {
+    /**
+     * `secrets` fill credential placeholders in the URL, headers and string body just before each hop is sent, only
+     * for hosts the credential allows. A placeholder that may not go to the first host fails the request; on a redirect
+     * to such a host, headers carrying it are dropped and a body carrying it fails the request.
+     */
+    fetch: async (
+      urlString: string,
+      init?: ExtensionFetchInit,
+      secrets: readonly ExtensionFetchSecret[] = [],
+    ): Promise<ExtensionFetchResponse> => {
       let url: URL
       try {
-        url = new URL(urlString)
-      } catch {
+        url = new URL(urlString.replaceAll(PLACEHOLDER_PATTERN, 'x'))
+        // A placeholder in the host part would let the credential decide where the request goes.
+        if (url.host !== new URL(urlString.replaceAll(PLACEHOLDER_PATTERN, 'y')).host) {
+          throw new ExtensionEgressError('invalid-url', '凭据占位符不能出现在主机名里。')
+        }
+      } catch (error) {
+        if (error instanceof ExtensionEgressError) throw error
         throw new ExtensionEgressError('invalid-url', `无效的 URL：${urlString}`)
+      }
+      const firstHostname = normalizeUrlHostname(url)
+      const filledUrl = fillPlaceholders(urlString, firstHostname, secrets)
+      if (filledUrl.blocked) {
+        throw new ExtensionEgressError('policy-denied', `访问被拒：凭据不允许发往 ${firstHostname}。`)
+      }
+      try {
+        url = new URL(filledUrl.text)
+      } catch {
+        throw new ExtensionEgressError('invalid-url', '填入凭据后 URL 无效。')
+      }
+      if (normalizeUrlHostname(url) !== firstHostname) {
+        throw new ExtensionEgressError('invalid-url', '填入凭据后主机名变了，请把占位符放在路径或查询参数里。')
       }
 
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -219,7 +293,8 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
       }
 
       const method = (init?.method ?? 'GET').toUpperCase()
-      const headers = new Headers()
+      // Header values as the extension wrote them; each hop fills them in for its own host.
+      const headerTemplates = new Map<string, string>()
 
       if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(method)) {
         throw new ExtensionEgressError('invalid-request', `不支持的 HTTP 方法：${method}`)
@@ -231,20 +306,28 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
           if (FORBIDDEN_HEADERS.has(lowerName)) {
             throw new ExtensionEgressError('invalid-request-header', `不允许发送 ${name} 请求头。`)
           }
-          headers.set(name, value)
+          headerTemplates.set(lowerName, value)
         }
       }
 
-      if (!headers.has('user-agent')) {
-        headers.set('user-agent', 'NekroNXT-Extension')
+      if (!headerTemplates.has('user-agent')) {
+        headerTemplates.set('user-agent', 'NekroNXT-Extension')
+      }
+
+      const firstHopHeaders = [...headerTemplates.values()].some(
+        (value) => fillPlaceholders(value, firstHostname, secrets).blocked,
+      )
+      if (firstHopHeaders) {
+        throw new ExtensionEgressError('policy-denied', `访问被拒：凭据不允许发往 ${firstHostname}。`)
       }
 
       let body: Buffer | undefined
+      let bodyTemplate: string | undefined
       if (init?.body !== undefined && init?.bodyBase64 !== undefined) {
         throw new ExtensionEgressError('invalid-request', `body 和 bodyBase64 不能同时指定。`)
       }
       if (init?.body !== undefined) {
-        body = Buffer.from(init.body, 'utf8')
+        bodyTemplate = init.body
       } else if (init?.bodyBase64 !== undefined) {
         if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(init.bodyBase64)) {
           throw new ExtensionEgressError('invalid-request', `无效的 base64 编码。`)
@@ -326,6 +409,20 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
           throw new ExtensionEgressError('invalid-request', `无效的地址族：${String(selected.family)}`)
         }
 
+        // Fill placeholders for this hop's host; a header whose credential may not go here is left out.
+        const headers = new Headers()
+        for (const [name, template] of headerTemplates) {
+          const filled = fillPlaceholders(template, hostname, secrets)
+          if (!filled.blocked) headers.set(name, filled.text)
+        }
+        if (bodyTemplate !== undefined) {
+          const filled = fillPlaceholders(bodyTemplate, hostname, secrets)
+          if (filled.blocked) {
+            throw new ExtensionEgressError('policy-denied', `访问被拒：重定向到 ${hostname}，凭据不允许发往这个地址。`)
+          }
+          body = Buffer.from(filled.text, 'utf8')
+        }
+
         const response = await createNetworkRequest(
           url,
           selected,
@@ -360,8 +457,8 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
           }
           // Credentials an extension attached for one service must not follow a redirect to another origin.
           if (next.origin !== url.origin) {
-            headers.delete('authorization')
-            headers.delete('cookie')
+            headerTemplates.delete('authorization')
+            headerTemplates.delete('cookie')
           }
           if (
             response.status === 303 ||
@@ -369,7 +466,8 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
           ) {
             currentMethod = currentMethod === 'HEAD' ? 'HEAD' : 'GET'
             body = undefined
-            headers.delete('content-type')
+            bodyTemplate = undefined
+            headerTemplates.delete('content-type')
           }
           url = next
           continue
@@ -401,7 +499,7 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
           text?: string
           base64?: string
         } = {
-          url: url.toString(),
+          url: maskSecrets(url.toString(), secrets),
           status: response.status,
           headers: Object.fromEntries(Array.from(response.headers.entries()).map(([k, v]) => [k.toLowerCase(), v])),
           contentType,

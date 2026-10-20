@@ -161,7 +161,11 @@ const emptySnapshot = (): ProductSnapshot => ({
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-    events: { 'dynamic-client-approval-requested': true, 'community-feedback-update': true },
+    events: {
+      'dynamic-client-approval-requested': true,
+      'community-feedback-update': true,
+      'credential-requested': true,
+    },
   },
   diagnosticNote: '正在连接 NekroNXT 服务…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },

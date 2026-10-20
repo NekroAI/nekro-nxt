@@ -1,6 +1,7 @@
 import type { NxtLogger } from '@nekro-nxt/contracts'
 import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
+import { randomBytes } from 'node:crypto'
 import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
 import {
   ChannelIdSchema,
@@ -67,13 +68,37 @@ export interface NxtServiceBinding {
    * these values may reach private networks. Dynamic runs set it, since the agent provides their other values.
    */
   readonly userEnteredConfig?: () => JsonValue
+  /**
+   * Fields the Manifest declares `meta.role: 'secret'`, per value source: `config` for this binding's own layer and
+   * `hostConfig` for the host layer of an agent binding. A secret resolves only from a field declared here.
+   */
+  readonly declaredSecrets: () => { readonly config: readonly string[]; readonly hostConfig: readonly string[] }
 }
 
-/** Every configuration value a binding's secrets may come from; field names are unique across both layers. */
-export const bindingSecretConfig = (binding: NxtServiceBinding): JsonValue => {
-  const record = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> =>
-    value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
-  return { ...record(binding.hostConfig?.()), ...record(binding.config()) }
+const configRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> =>
+  value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
+
+/**
+ * The stored reference of one secret field: from the layer that declares it as a secret, otherwise `undefined`. A value
+ * in an undeclared field is never treated as a credential reference.
+ */
+export const bindingSecretReference = (binding: NxtServiceBinding, key: string): JsonValue | undefined => {
+  const declared = binding.declaredSecrets()
+  if (declared.config.includes(key)) return configRecord(binding.config())[key]
+  if (declared.hostConfig.includes(key)) return configRecord(binding.hostConfig?.())[key]
+  return undefined
+}
+
+/** A credential cleared for a request: its value and, for named credentials, the domains it may be sent to. */
+export interface NxtRequestSecret {
+  readonly value: string
+  /** Hostnames or `*.example.com`; absent means wherever the extension's network policy reaches. */
+  readonly domains?: readonly string[]
+}
+
+/** A placeholder an `http.fetch` call carries, with what to fill in and where. */
+export interface NxtFetchSecret extends NxtRequestSecret {
+  readonly token: string
 }
 
 export interface NxtStoragePartition {
@@ -100,9 +125,30 @@ export type NxtEgressPolicy =
 /** Product facts the service reads or writes; wired by the Server composition root or a verification fake. */
 export interface NxtServiceBackends {
   readonly logger?: (binding: NxtServiceBinding) => NxtLogger
-  readonly fetch: (policy: NxtEgressPolicy, url: string, init: NxtFetchInit | undefined) => Promise<NxtFetchResponse>
+  readonly fetch: (
+    policy: NxtEgressPolicy,
+    url: string,
+    init: NxtFetchInit | undefined,
+    secrets?: readonly NxtFetchSecret[],
+  ) => Promise<NxtFetchResponse>
   readonly storage: NxtStorageBackend
+  /** A secret field's value for code to read (`secrets.get`). */
   readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
+  /**
+   * A secret field's value for one request the host sends (`secrets.placeholder`); `targetHost` is where the request
+   * starts. Absent backends reject placeholders.
+   */
+  readonly requestSecret?: (
+    binding: NxtServiceBinding,
+    key: string,
+    targetHost: string,
+  ) => Promise<NxtRequestSecret | undefined>
+  /** A named credential an MCP server declaration names by id or name, cleared for the binding's agent. */
+  readonly mcpCredential?: (
+    binding: NxtServiceBinding,
+    reference: string,
+    use: { readonly purpose: 'program' | 'request'; readonly targetHost?: string | undefined },
+  ) => Promise<NxtRequestSecret | undefined>
   readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
   readonly members: {
@@ -414,6 +460,64 @@ const indexService = (binding: NxtServiceBinding, backends: NxtServiceBackends):
   }
 }
 
+/** SDK level that introduced `secrets.placeholder`. */
+export const NXT_PLACEHOLDER_SDK_LEVEL = 12
+const PLACEHOLDER_PATTERN = /\{\{nxt-credential:[a-f0-9]{24}\}\}/gu
+
+/**
+ * `secrets.placeholder` and the lookup `http.fetch` uses to fill placeholders in. A token stands for one secret field
+ * of this `nxt` instance only, so a token copied into another extension resolves to nothing.
+ */
+const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtServiceBackends) => {
+  const tokens = new Map<string, string>()
+  const keys = new Map<string, string>()
+  return {
+    placeholder(key: string): string {
+      if (binding.mode !== 'dynamic' && (binding.sdk ?? 7) < NXT_PLACEHOLDER_SDK_LEVEL) {
+        throw new NxtCapabilityError(
+          `使用凭据占位符的扩展需要声明 requires.sdk 为 ${NXT_PLACEHOLDER_SDK_LEVEL} 或更高。`,
+        )
+      }
+      if (typeof key !== 'string' || key.trim() === '') throw new NxtCapabilityError('占位符需要凭据字段名。')
+      const existing = tokens.get(key)
+      if (existing !== undefined) return existing
+      const token = `{{nxt-credential:${randomBytes(12).toString('hex')}}}`
+      tokens.set(key, token)
+      keys.set(token, key)
+      return token
+    },
+    /** Placeholders in the URL, headers and string body, each with the credential it stands for. */
+    async secretsFor(url: string, init: NxtFetchInit | undefined): Promise<readonly NxtFetchSecret[]> {
+      const found = new Set<string>()
+      for (const text of [url, ...Object.values(init?.headers ?? {}), init?.body ?? '']) {
+        if (typeof text !== 'string') continue
+        for (const match of text.matchAll(PLACEHOLDER_PATTERN)) found.add(match[0])
+      }
+      if (found.size === 0) return []
+      let targetHost = ''
+      try {
+        targetHost = new URL(url.replaceAll(PLACEHOLDER_PATTERN, '')).hostname.toLowerCase()
+      } catch {
+        // The egress reports the invalid URL itself.
+      }
+      const secrets: NxtFetchSecret[] = []
+      for (const token of found) {
+        const key = keys.get(token)
+        if (key === undefined) {
+          throw new NxtCapabilityError('请求里有不属于这个扩展的凭据占位符，请用 secrets.placeholder 重新获取。')
+        }
+        if (backends.requestSecret === undefined) throw new NxtCapabilityError('这里不能使用凭据占位符。')
+        const secret = await backends.requestSecret(binding, key, targetHost)
+        if (secret === undefined) {
+          throw new NxtCapabilityError(`凭据字段 ${key} 还没有设置，或者绑定的凭据不对当前智能体开放。`)
+        }
+        secrets.push({ token, ...secret })
+      }
+      return secrets
+    },
+  }
+}
+
 /** Host-layer model calls: the caller names one of the Host's configured models by `ref`. */
 const modelService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtHostLayerService['models'] => {
   const calls: number[] = []
@@ -496,9 +600,12 @@ export const createNxtHostService = (
     },
   }
 
+  const placeholders = credentialPlaceholders(binding, backends)
   // Async so a missing declaration rejects like every other `nxt` call instead of throwing synchronously.
-  const fetchWithPolicy = async (url: string, init?: NxtFetchInit): Promise<NxtFetchResponse> =>
-    backends.fetch(egressPolicy(binding), url, init)
+  const fetchWithPolicy = async (url: string, init?: NxtFetchInit): Promise<NxtFetchResponse> => {
+    const policy = egressPolicy(binding)
+    return backends.fetch(policy, url, init, await placeholders.secretsFor(url, init))
+  }
 
   const renderApi = async (): Promise<NxtPromptRenderApi> => ({
     storage: { get: (key, options) => storage.get(key, options), list: (options) => storage.list(options) },
@@ -559,6 +666,7 @@ export const createNxtHostService = (
       async get(key) {
         return backends.secret(binding, key)
       },
+      placeholder: (key) => placeholders.placeholder(key),
     },
     assets: {
       async create(input, options) {
@@ -774,9 +882,18 @@ export const createNxtHostService = (
 export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtHostLayerService => {
   const quota = (): number => binding.capabilities()?.storage?.quotaBytes ?? EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES
   const location = () => storageLocation(binding, { scope: 'shared' }).location
+  const placeholders = credentialPlaceholders(binding, backends)
   return {
-    http: { fetch: async (url, init) => backends.fetch(egressPolicy(binding), url, init) },
-    secrets: { get: async (key) => backends.secret(binding, key) },
+    http: {
+      fetch: async (url, init) => {
+        const policy = egressPolicy(binding)
+        return backends.fetch(policy, url, init, await placeholders.secretsFor(url, init))
+      },
+    },
+    secrets: {
+      get: async (key) => backends.secret(binding, key),
+      placeholder: (key) => placeholders.placeholder(key),
+    },
     storage: {
       async get(key) {
         return backends.storage.get(binding.ownerKey, location(), checkedKey(key))

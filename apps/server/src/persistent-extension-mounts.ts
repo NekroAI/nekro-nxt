@@ -88,6 +88,8 @@ export type PersistentToolImagesFactory = (input: {
 export type PersistentHostNxtFactory = (input: {
   readonly revision: Revision
   readonly config: JsonValue
+  /** `requires.sdk` of the Revision; newer `nxt` interfaces check it. */
+  readonly sdk: number
 }) => NxtHostLayerService
 
 /** Connects the MCP servers an attachment declares inside its Session context; disposed with that context. */
@@ -166,7 +168,7 @@ const unavailableHostNxt = (): NxtHostLayerService => {
   }
   return {
     http: { fetch: unavailable },
-    secrets: { get: unavailable },
+    secrets: { get: unavailable, placeholder: unavailable },
     storage: { get: unavailable, set: unavailable, delete: unavailable, list: unavailable },
     render: { svg: unavailable },
     parse: { html: unavailable, feed: unavailable },
@@ -411,7 +413,7 @@ export class PersistentExtensionMounts {
             config: () => config,
           },
           config,
-          nxt: this.#hostNxt?.({ revision, config }) ?? unavailableHostNxt(),
+          nxt: this.#hostNxt?.({ revision, config, sdk: manifest.requires?.sdk ?? 7 }) ?? unavailableHostNxt(),
         })
       } finally {
         factoryOpen = false

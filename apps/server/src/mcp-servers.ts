@@ -47,6 +47,10 @@ export const mcpExtensionSnapshot = (input: {
   const dict: Record<string, ConfigSchemaNode> = {}
   const secretFields: { key: string; name: string }[] = []
   rowsOf(server).forEach((row, index) => {
+    if (row.credential !== undefined) {
+      values[row.name] = { credential: row.credential }
+      return
+    }
     if (!row.secret) {
       values[row.name] = row.value
       return
@@ -81,9 +85,32 @@ export const mcpExtensionSnapshot = (input: {
   }
 }
 
+/** A named credential cleared for an MCP server: its value and, for request-only ones, where it may be sent. */
+export interface McpCredentialValue {
+  readonly value: string
+  readonly domains?: readonly string[]
+}
+
+export interface McpValueReaders {
+  readonly readSecret: (key: string) => Promise<string | undefined>
+  /**
+   * A named credential by id or name. Environment variables hand the value to the server program (`program`);
+   * headers are sent by the host to the server's URL (`request`), so they also take request-only credentials whose
+   * domains include that host. Absent hosts treat such values as missing.
+   */
+  readonly readCredential?: (
+    reference: string,
+    use: { readonly purpose: 'program' | 'request'; readonly targetHost?: string },
+  ) => Promise<McpCredentialValue | undefined>
+}
+
+const domainMatches = (pattern: string, hostname: string): boolean =>
+  pattern.startsWith('*.') ? hostname.endsWith(pattern.slice(1)) : pattern === hostname
+
 const resolveValues = async (
   values: Readonly<Record<string, ExtensionMcpValue>>,
-  readSecret: (key: string) => Promise<string | undefined>,
+  readers: McpValueReaders,
+  target: { readonly purpose: 'program' | 'request'; readonly targetHost?: string },
 ): Promise<{ readonly values: Record<string, string>; readonly missing: readonly string[] }> => {
   const resolved: Record<string, string> = {}
   const missing: string[] = []
@@ -92,7 +119,18 @@ const resolveValues = async (
       resolved[name] = value
       continue
     }
-    const secret = await readSecret(value.secret)
+    let secret: string | undefined
+    if ('secret' in value) {
+      secret = await readers.readSecret(value.secret)
+    } else {
+      const credential = await readers.readCredential?.(value.credential, target)
+      const allowed =
+        credential !== undefined &&
+        (credential.domains === undefined ||
+          (target.targetHost !== undefined &&
+            credential.domains.some((domain) => domainMatches(domain, target.targetHost!))))
+      secret = allowed ? credential.value : undefined
+    }
     if (secret === undefined || secret === '') missing.push(name)
     else resolved[name] = secret
   }
@@ -104,10 +142,10 @@ export type McpPluginConfig = McpClientPlugin.Config
 /** DSH bridge configuration with credentials filled in; a server missing a credential is reported, not connected. */
 export const mcpPluginConfig = async (
   server: ExtensionMcpServer,
-  options: { readonly readSecret: (key: string) => Promise<string | undefined>; readonly cwd: string },
+  options: McpValueReaders & { readonly cwd: string },
 ): Promise<{ readonly config: McpPluginConfig } | { readonly missing: readonly string[] }> => {
   if (server.transport === 'stdio') {
-    const env = await resolveValues(server.env, options.readSecret)
+    const env = await resolveValues(server.env, options, { purpose: 'program' })
     if (env.missing.length > 0) return { missing: env.missing }
     return {
       config: {
@@ -122,7 +160,10 @@ export const mcpPluginConfig = async (
       },
     }
   }
-  const headers = await resolveValues(server.headers, options.readSecret)
+  const headers = await resolveValues(server.headers, options, {
+    purpose: 'request',
+    targetHost: new URL(server.url).hostname.toLowerCase(),
+  })
   if (headers.missing.length > 0) return { missing: headers.missing }
   return {
     config: {
@@ -168,8 +209,18 @@ export interface McpTestResult {
 }
 
 /** Connects once with the typed values, lists tools and disconnects; used by the form before saving. */
-export const testMcpServer = async (form: McpServerForm, cwd: string): Promise<McpTestResult> => {
-  const values = Object.fromEntries(rowsOf(form).map((row) => [row.name, row.value]))
+export const testMcpServer = async (
+  form: McpServerForm,
+  cwd: string,
+  /** The administrator tests the form, so rows that name a credential use its value directly. */
+  credentialValue: (reference: string) => string | undefined = () => undefined,
+): Promise<McpTestResult> => {
+  const values = Object.fromEntries(
+    rowsOf(form).map((row) => [
+      row.name,
+      row.credential === undefined ? row.value : (credentialValue(row.credential) ?? ''),
+    ]),
+  )
   const client = new Client({ name: 'nekro-nxt', version: '1.0.0' })
   const transport =
     form.transport === 'stdio'

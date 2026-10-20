@@ -33,7 +33,15 @@ export function registerMcpRoutes({
       }
       try {
         const input = HostApiContracts.testMcpServer.parseRequest(await readJsonBody(req))
-        writeContractJson(res, 200, HostApiContracts.testMcpServer, await testMcpServer(input.server, homedir()))
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.testMcpServer,
+          await testMcpServer(input.server, homedir(), (reference) => {
+            const record = runtime.credentialLibrary.find(reference)
+            return record === undefined ? undefined : runtime.credentialLibrary.valueOf(record.id)
+          }),
+        )
       } catch (error) {
         writeError(res, 400, 'mcp-test-failed', error instanceof Error ? error.message : String(error))
       }

@@ -10,6 +10,20 @@ import {
   hostLogStatusSchema,
 } from './logs.js'
 import { McpServerFormSchema } from './extension-capabilities.js'
+import {
+  BoundCredentialsSchema,
+  CommandCredentialGrantsSchema,
+  CredentialBindingsRequestSchema,
+  CreateCredentialRequestSchema,
+  CredentialsViewSchema,
+  CredentialUsesViewSchema,
+  LocalGithubLoginSchema,
+  RemoveCredentialRequestSchema,
+  RemoveCredentialResultSchema,
+  ReplaceCredentialValueRequestSchema,
+  SetModelProviderAccessRequestSchema,
+  UpdateCredentialRequestSchema,
+} from './credentials.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
 import {
   AgentIdSchema,
@@ -23,6 +37,7 @@ import {
   ChannelIdSchema,
   ChannelMemberIdSchema,
   ConnectionIdSchema,
+  CredentialIdSchema,
   ConnectionEventIdSchema,
   DshPluginEntryIdSchema,
   DshPluginPackageIdSchema,
@@ -336,8 +351,10 @@ const AgentCapabilitiesSchema = z
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
     communityFeedbackAuto: z.boolean().default(false),
-    /** Accounts this agent's commands may act as; absent in older clients means none. */
+    /** Accounts this agent's commands may act as; absent in older clients means none. Superseded by `commandCredentials`. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
+    /** Credentials this agent's commands receive as environment variables; absent in older clients means none. */
+    commandCredentials: CommandCredentialGrantsSchema.default([]),
     /**
      * What the agent may do with extensions without the console: `manual` only develops and test-runs, `confirm` asks
      * an administrator in the channel for every step, `autonomous` takes ordinary steps that only affect itself.
@@ -368,6 +385,7 @@ export const NotificationSettingsViewSchema = z
       .object({
         'dynamic-client-approval-requested': z.boolean(),
         'community-feedback-update': z.boolean().default(true),
+        'credential-requested': z.boolean().default(true),
       })
       .strict(),
   })
@@ -386,7 +404,11 @@ export const UpdateNotificationSettingsRequestSchema = z
       })
       .strict(),
     events: z
-      .object({ 'dynamic-client-approval-requested': z.boolean(), 'community-feedback-update': z.boolean().optional() })
+      .object({
+        'dynamic-client-approval-requested': z.boolean(),
+        'community-feedback-update': z.boolean().optional(),
+        'credential-requested': z.boolean().optional(),
+      })
       .strict(),
   })
   .strict()
@@ -489,6 +511,7 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
     commandNetwork: z.boolean().optional(),
     communityFeedbackAuto: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
+    commandCredentials: CommandCredentialGrantsSchema.optional(),
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).optional(),
     extensionRequesters: z.enum(['everyone', 'admins']).optional(),
   })
@@ -1518,9 +1541,6 @@ export const CommandAccountSchema = z
 
 export type CommandAccount = z.output<typeof CommandAccountSchema>
 
-/** A login the local `gh` holds, offered as a quick way to add an account. */
-export const LocalGithubLoginSchema = z.object({ login: NonEmptyStringSchema, active: z.boolean() }).strict()
-
 export const CommandAccountsViewSchema = z
   .object({
     accounts: z.array(CommandAccountSchema),
@@ -1740,6 +1760,7 @@ export const HostSnapshotSchema = z
           alias: ConnectionAliasOutputSchema.optional(),
           activityTriggerDefaults: z.array(AdapterActivityKeySchema).default([]),
           configuredSecrets: z.array(z.string()).optional(),
+          boundCredentials: BoundCredentialsSchema.optional(),
           status: z
             .object({
               state: z.enum(['stopped', 'connecting', 'connected', 'reconnecting', 'failed']),
@@ -1912,6 +1933,7 @@ export const HostSnapshotSchema = z
                 /** Secret fields are removed; `configuredSecrets` lists those the Host stores. */
                 config: JsonValueSchema,
                 configuredSecrets: z.array(z.string()).optional(),
+                boundCredentials: BoundCredentialsSchema.optional(),
                 activatedAt: z.number().int().safe().nonnegative(),
                 runtime: z
                   .object({
@@ -1947,6 +1969,7 @@ export const HostSnapshotSchema = z
               /** Secret fields are removed; `configuredSecrets` lists those the Host stores. */
               config: JsonValueSchema.default({}),
               configuredSecrets: z.array(z.string()).optional(),
+              boundCredentials: BoundCredentialsSchema.optional(),
               runtime: z
                 .object({
                   status: z.enum(['active', 'restore-failed', 'dispose-failed']),
@@ -2518,6 +2541,7 @@ const defineContract = <
 })
 
 const agentParam = z.object({ agentId: AgentIdSchema }).strict()
+const credentialParam = z.object({ credentialId: CredentialIdSchema }).strict()
 const agentRevisionParam = z.object({ agentId: AgentIdSchema, revisionId: AgentRevisionIdSchema }).strict()
 
 export const AgentRevisionChangedFieldSchema = z.enum([
@@ -3654,6 +3678,75 @@ export const HostApiContracts = {
     params: z.object({ accountId: NonEmptyStringSchema.max(64) }).strict(),
     request: NoRequestBodySchema,
     response: CommandAccountsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  getCredentials: defineContract({
+    method: 'GET',
+    path: '/api/settings/credentials',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: CredentialsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  createCredential: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/settings/credentials',
+    params: EmptyParamsSchema,
+    request: CreateCredentialRequestSchema,
+    response: CredentialsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateCredential: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PATCH',
+    path: '/api/settings/credentials/:credentialId',
+    params: credentialParam,
+    request: UpdateCredentialRequestSchema,
+    response: CredentialsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  replaceCredentialValue: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/settings/credentials/:credentialId/value',
+    params: credentialParam,
+    request: ReplaceCredentialValueRequestSchema,
+    response: CredentialsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  removeCredential: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/settings/credentials/:credentialId/remove',
+    params: credentialParam,
+    request: RemoveCredentialRequestSchema,
+    response: RemoveCredentialResultSchema,
+    error: HostApiErrorSchema,
+  }),
+  getCredentialUses: defineContract({
+    method: 'GET',
+    path: '/api/settings/credentials/:credentialId/uses',
+    params: credentialParam,
+    request: NoRequestBodySchema,
+    response: CredentialUsesViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  dismissCredentialRequest: defineContract({
+    method: 'DELETE',
+    path: '/api/settings/credentials/requests/:requestId',
+    params: z.object({ requestId: NonEmptyStringSchema.max(64) }).strict(),
+    request: NoRequestBodySchema,
+    response: CredentialsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  setModelProviderAccess: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/settings/credentials/model-providers/:provider',
+    params: z.object({ provider: NonEmptyStringSchema.max(128) }).strict(),
+    request: SetModelProviderAccessRequestSchema,
+    response: CredentialsViewSchema,
     error: HostApiErrorSchema,
   }),
   getChannelMemberNotes: defineContract({
@@ -4928,6 +5021,7 @@ export const HostApiContracts = {
             extensionRevisionId: ExtensionRevisionIdSchema,
             config: JsonValueSchema,
             configuredSecrets: z.array(z.string()).optional(),
+            boundCredentials: BoundCredentialsSchema.optional(),
             activatedAt: z.number().int().safe().nonnegative(),
           })
           .strict()
@@ -4958,9 +5052,17 @@ export const HostApiContracts = {
         config: JsonValueSchema,
         /** Write-only credential drafts keyed by secret field; an absent or empty draft keeps the stored one. */
         secrets: z.record(z.string(), z.string().max(8192)).optional(),
+        /** Secret fields to bind to named credentials instead of a typed value; a field takes one or the other. */
+        credentialBindings: CredentialBindingsRequestSchema.optional(),
       })
       .strict(),
-    response: z.object({ config: JsonValueSchema, configuredSecrets: z.array(z.string()).optional() }).strict(),
+    response: z
+      .object({
+        config: JsonValueSchema,
+        configuredSecrets: z.array(z.string()).optional(),
+        boundCredentials: BoundCredentialsSchema.optional(),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   updateHostExtensionConfig: defineContract({
@@ -4974,9 +5076,17 @@ export const HostApiContracts = {
         config: JsonValueSchema,
         /** Write-only credential drafts keyed by secret field; an absent or empty draft keeps the stored one. */
         secrets: z.record(z.string(), z.string().max(8192)).optional(),
+        /** Secret fields to bind to named credentials instead of a typed value; a field takes one or the other. */
+        credentialBindings: CredentialBindingsRequestSchema.optional(),
       })
       .strict(),
-    response: z.object({ config: JsonValueSchema, configuredSecrets: z.array(z.string()).optional() }).strict(),
+    response: z
+      .object({
+        config: JsonValueSchema,
+        configuredSecrets: z.array(z.string()).optional(),
+        boundCredentials: BoundCredentialsSchema.optional(),
+      })
+      .strict(),
     error: HostApiErrorSchema,
   }),
   installHostExtension: defineContract({

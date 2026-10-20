@@ -1,6 +1,7 @@
 import {
   AgentIdSchema,
   AuthoringTaskIdSchema,
+  CredentialIdSchema,
   configFields,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
@@ -29,6 +30,7 @@ import type { NekroRuntime } from '../bootstrap.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../dsh-version.js'
 import { createExtensionRevisionExport } from '../host-route-support.js'
 import { ExtensionConfigMigration } from './config-migration.js'
+import { namedCredentialReference } from '../credentials-library.js'
 import { extensionVersions } from './versions.js'
 
 /** Who asks for an extension action. Console and administrators act for themselves; agents are bound by autonomy. */
@@ -84,6 +86,13 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     agentId: AgentIdSchema.optional(),
   }),
   z.object({ kind: z.literal('community-withdraw'), releaseId: z.string() }),
+  /** Lets a creation task's test runs use a named credential whose automatic use is off (智能体扩展配置与凭据 C3). */
+  z.object({
+    kind: z.literal('use-credential'),
+    taskId: AuthoringTaskIdSchema,
+    key: z.string(),
+    credentialId: CredentialIdSchema,
+  }),
 ])
 export type ExtensionAction = z.output<typeof ExtensionActionSchema>
 
@@ -138,6 +147,13 @@ export class ExtensionActionService {
     const { summary, level, added, affectsOthers } = this.#describe(action, actor)
     const base = { summary, level, added }
     if (actor.kind === 'console') return { ...base, decision: 'run' }
+    // Test runs belong to dynamic creation, which every autonomy level allows; only the credential needs a yes.
+    if (action.kind === 'use-credential') {
+      if (actor.kind === 'administrator') return { ...base, decision: 'run' }
+      const scope = this.#agentScope(action, actor.agentId)
+      if (scope !== undefined) return { ...base, decision: 'console', reason: scope }
+      return { ...base, decision: 'request', reason: '这个凭据需要管理员同意后才能使用。' }
+    }
     if (actor.kind === 'administrator') {
       return level === 'high'
         ? { ...base, decision: 'console', reason: '涉及高风险权限，需要在 NekroNXT 后台确认。' }
@@ -345,6 +361,21 @@ export class ExtensionActionService {
       case 'community-withdraw': {
         await runtime.community.withdraw(action.releaseId)
         return { message: '已撤回这次发布。' }
+      }
+      case 'use-credential': {
+        const task = runtime.repository.getAuthoringTask(action.taskId)
+        const credential = runtime.credentialLibrary.get(action.credentialId)
+        if (task === undefined) throw new Error('这个创造任务已经不在了。')
+        if (credential === undefined) throw new Error('这个凭据已经被删除。')
+        if (!runtime.credentialLibrary.inScope(credential, task.agentId)) {
+          throw new Error(`凭据「${credential.name}」不对这个智能体开放。`)
+        }
+        await runtime.authoringTestConfig.bindCredential(
+          action.taskId,
+          action.key,
+          namedCredentialReference(action.credentialId),
+        )
+        return { message: `「${task.title}」的试运行可以使用凭据「${credential.name}」了。` }
       }
     }
   }
@@ -587,6 +618,14 @@ export class ExtensionActionService {
         return { ...normal, summary: '从社区安装扩展' }
       case 'community-withdraw':
         return { ...normal, summary: '撤回一次社区发布' }
+      case 'use-credential': {
+        const task = runtime.repository.getAuthoringTask(action.taskId)
+        const credential = runtime.credentialLibrary.get(action.credentialId)
+        return {
+          ...normal,
+          summary: `在「${task?.title ?? '创造任务'}」的试运行里使用凭据「${credential?.name ?? '已删除的凭据'}」`,
+        }
+      }
     }
   }
 
@@ -612,6 +651,10 @@ export class ExtensionActionService {
         return action.agentId === undefined || action.agentId === agentId ? undefined : '只能给自己安装启用。'
       case 'community-withdraw':
         return undefined
+      case 'use-credential': {
+        const task = runtime.repository.getAuthoringTask(action.taskId)
+        return task?.agentId === agentId ? undefined : '只能在自己的创造任务里使用凭据。'
+      }
     }
   }
 

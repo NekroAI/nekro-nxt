@@ -4,6 +4,8 @@ import {
   validateConfigValue,
   type AgentId,
   type ChannelId,
+  type CredentialId,
+  type CredentialUsage,
   type EpisodeId,
   type ExtensionId,
   type ExtensionRevisionId,
@@ -16,7 +18,9 @@ import {
   type LocalExtension,
   type Revision,
 } from '@nekro-nxt/extension-runtime'
-import { candidateConfigFields, type CandidateConfigField } from '../authoring-test-config.js'
+import { candidateConfigFields, testCredentialBinding, type CandidateConfigField } from '../authoring-test-config.js'
+import { namedCredentialId, namedCredentialReference } from '../credentials-library.js'
+import { modelProviderAccessList } from '../host-routes-credentials.js'
 import type { NekroRuntime } from '../bootstrap.js'
 import { redactLogText } from '../logs/redact.js'
 import type { ExtensionAction } from './actions.js'
@@ -83,8 +87,32 @@ export interface ExtensionGovernanceToolPort {
     agentId: AgentId,
     target: { readonly kind: 'extension' | 'task'; readonly reference: string | undefined },
   ): Promise<JsonValue>
-  /** Stores test values the agent provides for one of its tasks, checked against the task's latest candidate. */
-  setTestConfig(taskId: DynamicAuthoringTask['id'], values: Readonly<Record<string, JsonValue>>): Promise<void>
+  /**
+   * Stores test values the agent provides for one of its tasks, checked against the task's latest candidate. Secret
+   * fields bound to a credential whose automatic use is off file a request instead; the result says so.
+   */
+  setTestConfig(
+    taskId: DynamicAuthoringTask['id'],
+    values: Readonly<Record<string, JsonValue>>,
+  ): Promise<{ readonly notes: readonly string[] }>
+  /**
+   * Checks credential bindings in test values before a definition is recorded: unknown credentials and ones not open to
+   * the agent fail; the result notes the ones that will wait for an administrator.
+   */
+  checkTestCredentials(agentId: AgentId, values: Readonly<Record<string, JsonValue>>): readonly string[]
+  /** Named credentials and open model providers as the agent may know them: names and rules, never values. */
+  listCredentials(agentId: AgentId): Promise<JsonValue>
+  /** Asks an administrator to add a credential; the agent is woken in this channel once one with the name exists. */
+  requestCredential(
+    agentId: AgentId,
+    channelId: ChannelId,
+    input: {
+      readonly name: string
+      readonly purpose: string
+      readonly domains: readonly string[]
+      readonly usage: CredentialUsage
+    },
+  ): JsonValue
 }
 
 type ConfigLayer = CandidateConfigField['layer']
@@ -114,6 +142,7 @@ const describeField = (
   field: CandidateConfigField,
   permissions: NetworkDeclaration,
   current: { readonly values: Readonly<Record<string, JsonValue>> } | undefined,
+  credentialName: (id: CredentialId) => string | undefined,
 ) => {
   const level =
     field.kind === 'secret' ? 'secret' : networkFields(permissions, field.layer).has(field.key) ? 'network' : 'normal'
@@ -131,11 +160,19 @@ const describeField = (
     ...(current === undefined
       ? {}
       : level === 'secret'
-        ? { set: typeof stored === 'string' && stored !== '' }
+        ? secretState(stored, credentialName)
         : stored === undefined
           ? {}
           : { value: stored }),
   }
+}
+
+/** Whether a secret field is set, and the credential's name when it is bound to one; never the value. */
+const secretState = (stored: JsonValue | undefined, credentialName: (id: CredentialId) => string | undefined) => {
+  const id = namedCredentialId(stored)
+  if (id === undefined) return { set: typeof stored === 'string' && stored !== '' }
+  const name = credentialName(id)
+  return name === undefined ? { set: false, credentialRemoved: true } : { set: true, credential: name }
 }
 
 /** What is wrong with one layer's values: validation issues and required credentials still missing. */
@@ -440,6 +477,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
   ): Promise<JsonValue> {
     const runtime = this.#runtime
     const agent = runtime.repository.getAgent(agentId)?.revision.capabilities
+    const credentialName = (id: CredentialId) => runtime.credentialLibrary.get(id)?.name
     const authority = (actions: readonly ExtensionAction[]) => ({
       autonomy: agent?.extensionAutonomy ?? 'manual',
       requesters: agent?.extensionRequesters ?? 'everyone',
@@ -465,7 +503,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
       return {
         task: { id: task.id, title: task.title, kind: task.kind, status: task.status },
         config: fields.map((field) => {
-          const described = describeField(field, candidate?.permissions ?? {}, { values: effective })
+          const described = describeField(field, candidate?.permissions ?? {}, { values: effective }, credentialName)
           return field.kind === 'secret' || effective[field.key] === undefined
             ? described
             : { ...described, source: source(field.key) }
@@ -510,6 +548,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
             : activation === undefined
               ? undefined
               : { values: agentValues },
+          credentialName,
         ),
       ),
       ...(activation === undefined && fields.some((field) => field.layer === 'agent')
@@ -548,8 +587,112 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     }
   }
 
-  setTestConfig(taskId: DynamicAuthoringTask['id'], values: Readonly<Record<string, JsonValue>>): Promise<void> {
-    return this.#runtime.authoringTestConfig.setAgentValues(taskId, values)
+  async setTestConfig(
+    taskId: DynamicAuthoringTask['id'],
+    values: Readonly<Record<string, JsonValue>>,
+  ): Promise<{ readonly notes: readonly string[] }> {
+    const runtime = this.#runtime
+    const task = runtime.repository.getAuthoringTask(taskId)
+    if (task === undefined) throw new Error('创造任务不存在。')
+    const notes: string[] = []
+    await runtime.authoringTestConfig.setAgentValues(taskId, values, (key, name) => {
+      const credential = this.#testCredential(task.agentId, name)
+      if (credential.autoUse) return namedCredentialReference(credential.id)
+      const actor = { kind: 'agent' as const, agentId: task.agentId, channelId: task.channelId }
+      const action: ExtensionAction = { kind: 'use-credential', taskId, key, credentialId: credential.id }
+      const record = runtime.extensionRequests.create({
+        action,
+        actor,
+        assessment: runtime.extensionActions.assess(action, actor),
+      })
+      notes.push(
+        `凭据「${credential.name}」要管理员同意后才能用，已在频道里发出请求 #${record.number}；同意后会通知你，在那之前「${key}」保持原样。`,
+      )
+      return undefined
+    })
+    return { notes }
+  }
+
+  checkTestCredentials(agentId: AgentId, values: Readonly<Record<string, JsonValue>>): readonly string[] {
+    return Object.values(values).flatMap((value) => {
+      const name = testCredentialBinding(value)
+      if (name === undefined) return []
+      const credential = this.#testCredential(agentId, name)
+      return credential.autoUse
+        ? []
+        : [`凭据「${credential.name}」要管理员同意后才能用，记录候选后会在频道里发出请求。`]
+    })
+  }
+
+  /** A credential the agent may bind by name; a clear error tells it what to do otherwise. */
+  #testCredential(agentId: AgentId, name: string) {
+    const library = this.#runtime.credentialLibrary
+    const credential = library.find(name)
+    if (credential === undefined) {
+      throw new Error(
+        `没有名为「${name}」的凭据。用 nekro_nxt_credential_list 查看可用的凭据，缺少时用 nekro_nxt_credential_request 请管理员添加。`,
+      )
+    }
+    if (!library.inScope(credential, agentId)) throw new Error(`凭据「${credential.name}」不对你开放。`)
+    return credential
+  }
+
+  async listCredentials(agentId: AgentId): Promise<JsonValue> {
+    const runtime = this.#runtime
+    const library = runtime.credentialLibrary
+    const providers = (await modelProviderAccessList(runtime)).filter((provider) => provider.open)
+    let models: readonly { readonly provider: string; readonly name: string }[] = []
+    try {
+      models = await runtime.host.listAvailableLlmModels()
+    } catch {
+      // Hosts without model settings list no models.
+    }
+    return {
+      credentials: library.list().map((record) => ({
+        name: record.name,
+        ...(record.description === '' ? {} : { description: record.description }),
+        kind: record.kind,
+        usage: record.usage,
+        domains: [...record.domains],
+        autoUse: record.autoUse,
+        availableToYou: library.inScope(record, agentId) && library.available(record.id),
+      })),
+      modelProviders: providers.map((provider) => ({
+        name: provider.name,
+        models: models.filter((model) => model.provider === provider.provider).map((model) => model.name),
+      })),
+      meaning:
+        'usage 为 request 的凭据只能在扩展里用 secrets.placeholder 放进 http.fetch 请求，发往 domains 中的域名；program 的凭据代码能读到值。autoUse 为 false 的凭据要管理员同意后才能用。modelProviders 是扩展通过 nxt.models 可以调用的模型。',
+    }
+  }
+
+  requestCredential(
+    agentId: AgentId,
+    channelId: ChannelId,
+    input: {
+      readonly name: string
+      readonly purpose: string
+      readonly domains: readonly string[]
+      readonly usage: CredentialUsage
+    },
+  ): JsonValue {
+    const runtime = this.#runtime
+    const existing = runtime.credentialLibrary.find(input.name)
+    if (existing !== undefined) {
+      return {
+        requested: false,
+        message: runtime.credentialLibrary.inScope(existing, agentId)
+          ? `已经有凭据「${existing.name}」，可以直接使用。`
+          : `已经有凭据「${existing.name}」，但它不对你开放；请管理员在设置的「凭据」里把你加进可用范围。`,
+      }
+    }
+    const { request, repeated } = runtime.credentialRequests.create({ agentId, channelId, ...input })
+    return {
+      requested: true,
+      message: repeated
+        ? `之前已经请管理员添加凭据「${request.name}」，还在等待；添加后会通知你。`
+        : `已请管理员添加凭据「${request.name}」，添加后会通知你。在那之前告诉用户在等什么，不要让人把凭据发在聊天里。`,
+    }
   }
 
   /**

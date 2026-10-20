@@ -33,6 +33,7 @@ import { RESERVED_COMMAND_NAMES, extensionManifestContributionSchema } from '@ne
 import {
   CommandDefinitionSchema,
   CommandResultSchema,
+  configSecretKeys,
   ExtensionLayeredConfigSchema,
   ExtensionPermissionsSchema,
   HostPageContributionSchema,
@@ -406,7 +407,17 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
    */
   activeCandidateConfig(layer: 'host' | 'agent', values: Readonly<Record<string, JsonValue>> = {}): JsonValue {
     const schema = layerConfigSchema({ config: this.activeDeclaration()?.config }, layer)
-    return { ...validateConfigValue(schema, {}).value, ...this.activeCandidateLayerValues(layer, values) }
+    const secrets = configSecretKeys(schema)
+    // A default in a secret field would bind a credential nobody chose for this task.
+    const defaults = Object.fromEntries(
+      Object.entries(validateConfigValue(schema, {}).value).filter(([key]) => !secrets.includes(key)),
+    )
+    return { ...defaults, ...this.activeCandidateLayerValues(layer, values) }
+  }
+
+  /** Fields one configuration layer of the running candidate declares `meta.role: 'secret'`. */
+  activeCandidateSecretKeys(layer: 'host' | 'agent'): readonly string[] {
+    return configSecretKeys(layerConfigSchema({ config: this.activeDeclaration()?.config }, layer))
   }
 
   /** The values that belong to one configuration layer of the running candidate, without defaults. */

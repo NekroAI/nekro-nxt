@@ -893,6 +893,10 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(added.ok).toBe(true)
       const [account] = HostApiContracts.addCommandAccount.parseResponse(await added.json()).accounts
       expect(account).toMatchObject({ login: 'octo-fixture', source: 'token', usedBy: [] })
+      // The account routes now keep a GitHub credential, open to every agent as an account used to be.
+      expect(runtime.credentialLibrary.list()).toMatchObject([
+        { name: 'GitHub octo-fixture', kind: 'github', usage: 'program', agentScope: { all: true } },
+      ])
 
       const granted = HostApiContracts.updateAgentCapabilities.parseResponse(
         await (
@@ -910,7 +914,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
 
       const removed = await fetch(`${origin}/api/settings/command-accounts/${account!.id}`, { method: 'DELETE' })
       expect([removed.status, await removed.clone().text()]).toEqual([200, expect.any(String)])
-      expect(runtime.commandAccounts.tokenFor(account!.id)).toBeUndefined()
+      expect(runtime.credentialLibrary.list()).toEqual([])
     } finally {
       globalThis.fetch = realFetch
       api.dispose()
@@ -1461,7 +1465,11 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(snapshot.notificationSettings).toEqual({
         system: { enabled: true },
         bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-        events: { 'dynamic-client-approval-requested': true, 'community-feedback-update': true },
+        events: {
+          'dynamic-client-approval-requested': true,
+          'community-feedback-update': true,
+          'credential-requested': true,
+        },
       })
 
       const connected = HostApiContracts.listClientNotifications.parseResponse(

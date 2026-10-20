@@ -494,8 +494,17 @@ export interface NxtHostService {
     fetch(url: string, init?: NxtFetchInit): Promise<NxtFetchResponse>
   }
   readonly secrets: {
-    /** Reads a `meta.role: 'secret'` config field; `undefined` until the user sets it. */
+    /**
+     * Reads a `meta.role: 'secret'` config field; `undefined` until the user sets it, and for a named credential that
+     * is limited to network requests or not open to this agent.
+     */
     get(key: string): Promise<string | undefined>
+    /**
+     * SDK 12. An opaque token standing for the credential in a `meta.role: 'secret'` field. Put it in the URL, a
+     * header or a string body of `http.fetch`; the host fills in the value just before sending, only to the domains
+     * the credential allows, and checks again on every redirect. The value itself never reaches extension code.
+     */
+    placeholder(key: string): string
   }
   readonly assets: {
     /**
@@ -1458,7 +1467,8 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '能力分两层声明：智能体挂载内的 ctx.nxt 用 nekro_nxt_extension_define.permissions.agent（并在返回的插件 inject 中加入 nxt）；factory 顶层的本机层 nxt（http、secrets、storage、render、parse、assets、image、index、models）用 permissions.host。未声明的能力调用会抛出指明缺失字段的错误。',
     services: [
       "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。",
-      "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
+      'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
+      "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
       "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）、nxt.image.info、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library }, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
       'logger 与 ctx.logger 提供 debug/info/warn/error(message, details?)，来源由宿主绑定；需要 requires.sdk 至少为 9，动态创造会自动声明。记录状态、数量和错误即可，不记录凭据、聊天正文或模型请求。Debug 在用户开启临时调试时保存。',
       'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
@@ -1493,7 +1503,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '动态上下文禁止写入时间戳、随机数和精确计数，写“好感度：友好”这类粗粒度描述；保存时宿主会用相同输入渲染两次，结果不同则拒绝保存。',
       'render 只能读存储和调用上下文，不能联网或调用模型；大块内容改为提供查询工具，让智能体按需调用。',
       '缺少凭据、网络失败或外部服务报错时，工具应返回 { ok: false, message } 这样可读的结果，而不是抛出异常；保存验证会真实调用工具，凭据此时为空。',
-      '试运行时配置取默认值。非凭据字段可以在 nekro_nxt_extension_define 或 nekro_nxt_extension_continue 的 testConfig 里填测试值；凭据和内网服务地址要请用户在频道里打开这个创造任务页面，在「测试配置」中填写，不要让人把凭据发在聊天里。用户填的值优先；测试配置只在本任务的试运行中可见，保存时的验证没有凭据，用户启用扩展时再填写正式配置。',
+      '试运行时配置取默认值。非凭据字段可以在 nekro_nxt_extension_define 或 nekro_nxt_extension_continue 的 testConfig 里填测试值；凭据字段写 { "credential": "凭据名称" }，绑定一个对你开放的凭据（nekro_nxt_credential_list 查看，需要管理员同意的会自动发出请求）。没有合适的凭据时用 nekro_nxt_credential_request 请管理员添加，不要让人把凭据发在聊天里。内网服务地址要请用户在创造任务页的「测试配置」中填写。用户填的值优先；测试配置只在本任务的试运行中可见，保存时的验证没有凭据，用户启用扩展时再填写正式配置。',
       'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().latestInbound.sender、history 消息的 sender 或入站钩子的 message.sender；不要用平台账号或昵称作为存储键。',
       'channel.kind 取值为 internal（内置频道）、direct（私聊）或 group（群聊）；平台动作通常只在 direct 或 group 中可用，先用 platform.actions() 确认。',
       'history.list 每次返回 { messages, next }，messages 按时间从新到旧；要继续向前翻页，把 next 原样作为 before 传入。',

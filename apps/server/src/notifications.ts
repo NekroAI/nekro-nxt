@@ -10,7 +10,11 @@ import type { LocalCredentialStore } from './credentials.js'
 
 export const DYNAMIC_CLIENT_APPROVAL_NOTIFICATION = 'dynamic-client-approval-requested' as const
 export const COMMUNITY_FEEDBACK_NOTIFICATION = 'community-feedback-update' as const
-export type NotificationEventKey = typeof DYNAMIC_CLIENT_APPROVAL_NOTIFICATION | typeof COMMUNITY_FEEDBACK_NOTIFICATION
+export const CREDENTIAL_REQUEST_NOTIFICATION = 'credential-requested' as const
+export type NotificationEventKey =
+  | typeof DYNAMIC_CLIENT_APPROVAL_NOTIFICATION
+  | typeof COMMUNITY_FEEDBACK_NOTIFICATION
+  | typeof CREDENTIAL_REQUEST_NOTIFICATION
 
 const NOTIFICATION_SETTING_KEY = 'notifications'
 const DEFAULT_BARK_SERVER_URL = 'https://api.day.app'
@@ -30,6 +34,7 @@ const StoredNotificationSettingsSchema = z
       .object({
         [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: z.boolean(),
         [COMMUNITY_FEEDBACK_NOTIFICATION]: z.boolean().default(true),
+        [CREDENTIAL_REQUEST_NOTIFICATION]: z.boolean().default(true),
       })
       .strict(),
   })
@@ -60,6 +65,7 @@ export interface NotificationSettingsUpdate {
   readonly events: Readonly<{
     [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: boolean
     [COMMUNITY_FEEDBACK_NOTIFICATION]?: boolean | undefined
+    [CREDENTIAL_REQUEST_NOTIFICATION]?: boolean | undefined
   }>
 }
 
@@ -91,7 +97,11 @@ const defaultSettings = (): StoredNotificationSettings => ({
   version: 1,
   system: { enabled: true },
   bark: { enabled: false, serverUrl: DEFAULT_BARK_SERVER_URL },
-  events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true, [COMMUNITY_FEEDBACK_NOTIFICATION]: true },
+  events: {
+    [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true,
+    [COMMUNITY_FEEDBACK_NOTIFICATION]: true,
+    [CREDENTIAL_REQUEST_NOTIFICATION]: true,
+  },
 })
 
 const normalizeServerUrl = (raw: string): string => {
@@ -178,6 +188,8 @@ export class NotificationService {
         [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: input.events[DYNAMIC_CLIENT_APPROVAL_NOTIFICATION],
         [COMMUNITY_FEEDBACK_NOTIFICATION]:
           input.events[COMMUNITY_FEEDBACK_NOTIFICATION] ?? current.events[COMMUNITY_FEEDBACK_NOTIFICATION],
+        [CREDENTIAL_REQUEST_NOTIFICATION]:
+          input.events[CREDENTIAL_REQUEST_NOTIFICATION] ?? current.events[CREDENTIAL_REQUEST_NOTIFICATION],
       },
     }
     try {
@@ -233,6 +245,40 @@ export class NotificationService {
     if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
       const deviceKey = await this.#credentials.resolve(stored.bark.credentialRef)
       await this.#sendBark(stored.bark.serverUrl, deviceKey, { title, body })
+      sent = true
+    }
+    return sent ? 'sent' : 'skipped'
+  }
+
+  /** An agent asked for a credential; the link opens the add form pre-filled. */
+  async notifyCredentialRequest(input: {
+    readonly requestId: string
+    readonly agentDisplayName: string
+    readonly name: string
+    readonly purpose: string
+    readonly route: string
+  }): Promise<'sent' | 'skipped'> {
+    const stored = this.#readRecord()?.settings ?? defaultSettings()
+    if (!stored.events[CREDENTIAL_REQUEST_NOTIFICATION]) return 'skipped'
+    const title = '智能体需要凭据'
+    const body = `「${input.agentDisplayName}」需要凭据「${input.name}」。${input.purpose ? `用途：${input.purpose}` : ''}`
+    let sent = false
+    if (stored.system.enabled) {
+      this.#publishClientNotification({
+        id: `credential-request:${input.requestId}`,
+        kind: 'action-required',
+        title,
+        body: [...body].slice(0, 240).join(''),
+        occurredAt: this.#now(),
+        route: input.route,
+      })
+      sent = true
+    }
+    if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
+      await this.#sendBark(stored.bark.serverUrl, await this.#credentials.resolve(stored.bark.credentialRef), {
+        title,
+        body,
+      })
       sent = true
     }
     return sent ? 'sent' : 'skipped'

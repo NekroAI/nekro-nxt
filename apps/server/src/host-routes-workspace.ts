@@ -36,7 +36,7 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
-import { knownCommandAccounts } from './host-routes-command-accounts.js'
+import { knownCommandAccounts, knownCommandCredentials, openGrantedAccounts } from './host-routes-command-accounts.js'
 import { ChannelPromptConflictError } from '@nekro-nxt/storage-sqlite'
 import { ChannelPromptError, MEMBER_NOTE_MAX_CHARS } from './channel-prompts.js'
 /**
@@ -139,6 +139,8 @@ export function registerWorkspaceRoutes({
           previous: current?.config,
           config: input.config,
           secrets: input.secrets,
+          bindings: input.credentialBindings,
+          credentialExists: (id) => runtime.credentialLibrary.get(id) !== undefined,
           credentials: runtime.credentials,
           commit: (config) => runtime.extensions.updateAgentConfig(params.agentId, params.extensionId, config),
         })
@@ -585,6 +587,9 @@ export function registerWorkspaceRoutes({
           ...(parsed.commandAccounts === undefined
             ? {}
             : { commandAccounts: knownCommandAccounts(runtime, parsed.commandAccounts) }),
+          ...(parsed.commandCredentials === undefined
+            ? {}
+            : { commandCredentials: knownCommandCredentials(runtime, parsed.commandCredentials) }),
         }
         const updated = runtime.core.reviseAgent(agentId, revision.id, {
           displayName: revision.displayName,
@@ -595,6 +600,7 @@ export function registerWorkspaceRoutes({
           imagePolicy: revision.imagePolicy,
           dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
         })
+        await openGrantedAccounts(runtime, agentId, parsed.commandAccounts)
         writeJson(
           res,
           200,

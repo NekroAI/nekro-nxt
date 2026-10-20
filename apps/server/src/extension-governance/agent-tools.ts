@@ -1,5 +1,8 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
+  CredentialDomainsSchema,
+  CredentialNameSchema,
+  CredentialUsageSchema,
   ExtensionIdSchema,
   JsonValueSchema,
   parseJsonValue,
@@ -153,6 +156,55 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
     },
   }),
   defineTool({
+    name: 'nekro_nxt_credential_list',
+    description:
+      '查看这台 NekroNXT 上的凭据：名称、说明、使用方式、允许的域名、是否对你开放、是否需要管理员同意，以及扩展可以调用的模型供应商。看不到凭据的值。扩展要用 API 密钥或账号时先查这里，再在配置或 testConfig 里按名称绑定。',
+    parameters: {},
+    output: { schema: { type: 'json' }, render: renderJson },
+    execute: async () => json(await requirePort(context).listCredentials(context.agentId)),
+  }),
+  defineTool({
+    name: 'nekro_nxt_credential_request',
+    description:
+      '缺少凭据时请管理员添加：给出建议的名称、用途和需要访问的域名。管理员会收到通知，打开已填好的添加页面；添加后会通知你继续。不要让人把凭据发在聊天里。',
+    parameters: {
+      name: { type: 'string', required: true, description: '建议的凭据名称，例如「天气服务 API Key」。' },
+      purpose: { type: 'string', required: true, description: '用来做什么，管理员会看到。' },
+      domains: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '凭据要发往的域名，例如 api.example.com 或 *.example.com。',
+      },
+      usage: {
+        type: 'string',
+        enum: ['request', 'program'],
+        description: 'request：只在扩展发网络请求时由宿主填入（默认）；program：命令或代码需要读到值。',
+      },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    execute(args) {
+      const input = z
+        .object({
+          name: CredentialNameSchema,
+          purpose: z.string().trim().min(1).max(500),
+          domains: CredentialDomainsSchema.optional(),
+          usage: CredentialUsageSchema.optional(),
+        })
+        .parse(args)
+      const port = requireRequester(context)
+      return Promise.resolve(
+        json(
+          port.requestCredential(context.agentId, context.channelId, {
+            name: input.name,
+            purpose: input.purpose,
+            domains: input.domains ?? [],
+            usage: input.usage ?? 'request',
+          }),
+        ),
+      )
+    },
+  }),
+  defineTool({
     name: 'nekro_nxt_extension_revise',
     description:
       '修改一个已经保存的扩展：以它的某个版本（默认当前版本）为基线开始一个修改任务，返回基线的完整定义。只改需要改的部分，其余照原样带上，用 nekro_nxt_extension_define 的 { kind: "existing", pluginId } 提交，再用 cordis_run 试运行。保存时会成为这个扩展的下一个版本。合并本机修改和社区新版时，把一个作为 version、另一个作为 reference。',
@@ -253,7 +305,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       testConfig: {
         type: 'json',
         description:
-          '可选，试运行用的配置值：{ 字段名: 值 }，和 nekro_nxt_extension_define 的 testConfig 相同，只能填非凭据字段。',
+          '可选，试运行用的配置值：{ 字段名: 值 }，和 nekro_nxt_extension_define 的 testConfig 相同；凭据字段写 { "credential": "凭据名称" }。',
       },
     },
     output: { schema: { type: 'json' }, render: renderJson },
@@ -263,7 +315,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
         .parse(args)
       const port = requireRequester(context)
       const { task, attempt } = continueTask(context, port, input.task)
-      if (input.testConfig !== undefined) await port.setTestConfig(task.id, input.testConfig)
+      const notes = input.testConfig === undefined ? [] : (await port.setTestConfig(task.id, input.testConfig)).notes
       const snapshot = await context.authoring!.snapshotForAttempt(attempt)
       const receipt = context.restore(snapshot)
       context.authoring!.resumeTask({
@@ -279,6 +331,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
         pluginId: receipt.pluginId,
         packageId: receipt.packageId,
         message: `「${task.title}」已经接到这次对话。先用 cordis_run 运行 ${receipt.packageId}，有问题再用 nekro_nxt_extension_define 的 existing 修改。`,
+        ...(notes.length === 0 ? {} : { notes: [...notes] }),
       })
     },
   }),

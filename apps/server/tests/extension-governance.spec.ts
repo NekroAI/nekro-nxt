@@ -914,6 +914,176 @@ describe('extension autonomy', () => {
     }
   })
 
+  it('binds named credentials in test values, asking an administrator first when automatic use is off', async () => {
+    const host = `return { inject: ['tools'], apply(ctx) { ${PROBE_TOOL} } }`
+    const config = {
+      agent: {
+        schema: {
+          type: 'object',
+          dict: {
+            apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } },
+            backupKey: { type: 'string', meta: { description: '备用 Key', role: 'secret' } },
+          },
+        },
+      },
+    }
+    const model = new ScriptedModel([
+      {
+        name: 'nekro_nxt_extension_define',
+        args: {
+          plugin: { kind: 'new', idPrefix: 'cred' },
+          name: '凭据探针',
+          purpose: '验证凭据绑定。',
+          code: { host },
+          config,
+          testConfig: { apiKey: { credential: '天气服务' }, backupKey: { credential: '备用天气' } },
+        },
+      },
+    ])
+    const runtime = await createRuntime(model)
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '凭据智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        // Manual autonomy still develops and test-runs; only the credential needs a yes.
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'manual' },
+      })
+      const guarded = await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '天气服务',
+        value: 'fictional-weather-key',
+        domains: ['api.weather.test'],
+        autoUse: false,
+      })
+      const open = await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '备用天气',
+        value: 'fictional-backup-key',
+        domains: ['api.weather.test'],
+        agentScope: { agentIds: [entity.agentId] },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'credential-binding-request',
+        parts: [{ type: 'text', text: '做一个查天气的扩展。' }],
+      })
+      await expect
+        .poll(() => runtime.extensionRequests.list('pending').find((request) => request.kind === 'use-credential'))
+        .toBeDefined()
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      // The open credential is bound at once; the guarded one waits.
+      expect(runtime.authoringTestConfig.values(task.id).agentProvided).toEqual({
+        backupKey: `credential:named:${open.id}`,
+      })
+      const request = runtime.extensionRequests.list('pending').find((entry) => entry.kind === 'use-credential')!
+      expect(request).toMatchObject({
+        agentId: entity.agentId,
+        summary: expect.stringContaining('天气服务') as unknown,
+      })
+      await runtime.extensionRequests.approve(request.number, { kind: 'console' })
+      expect(runtime.authoringTestConfig.values(task.id).agentProvided).toEqual({
+        backupKey: `credential:named:${open.id}`,
+        apiKey: `credential:named:${guarded.id}`,
+      })
+      const inspected = JSON.stringify(
+        await new ExtensionGovernanceTools(runtime).inspect(entity.agentId, { kind: 'task', reference: task.id }),
+      )
+      expect(inspected).toContain('"credential":"天气服务"')
+      expect(inspected).not.toContain('fictional-weather-key')
+
+      // A credential that is not open to the agent, or does not exist, is refused with what to do.
+      await runtime.credentialLibrary.update(open.id, { agentScope: { agentIds: [] } })
+      const tools = new ExtensionGovernanceTools(runtime)
+      await expect(tools.setTestConfig(task.id, { backupKey: { credential: '备用天气' } })).rejects.toThrow(
+        '不对你开放',
+      )
+      await expect(tools.setTestConfig(task.id, { backupKey: { credential: '不存在' } })).rejects.toThrow(
+        'nekro_nxt_credential_request',
+      )
+      await expect(tools.setTestConfig(task.id, { backupKey: 'fictional-typed-key' })).rejects.toThrow('是凭据')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('lists credentials to the agent without values and wakes it once a requested one is added', async () => {
+    const runtime = await createRuntime()
+    try {
+      const entity = await agentWithChannel(runtime, 'manual')
+      const other = await agentWithChannel(runtime, 'manual')
+      await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '示例搜索',
+        description: '搜索接口',
+        value: 'fictional-search-key',
+        domains: ['api.search.test'],
+      })
+      await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '他人专用',
+        value: 'fictional-private-key',
+        usage: 'program',
+        agentScope: { agentIds: [other.agentId] },
+        autoUse: false,
+      })
+      const tools = new ExtensionGovernanceTools(runtime)
+      const listed = await tools.listCredentials(entity.agentId)
+      expect(listed).toMatchObject({
+        credentials: [
+          {
+            name: '示例搜索',
+            description: '搜索接口',
+            usage: 'request',
+            domains: ['api.search.test'],
+            availableToYou: true,
+          },
+          { name: '他人专用', usage: 'program', autoUse: false, availableToYou: false },
+        ],
+        modelProviders: [],
+      })
+      const serialized = JSON.stringify(listed)
+      for (const hidden of ['fictional-search-key', 'fictional-private-key', 'credential:local', 'crd_'])
+        expect(serialized).not.toContain(hidden)
+
+      const notify = vi.spyOn(runtime.host, 'notifyAgent')
+      expect(
+        tools.requestCredential(entity.agentId, entity.channelId, {
+          name: '示例搜索',
+          purpose: '查资料',
+          domains: [],
+          usage: 'request',
+        }),
+      ).toMatchObject({ requested: false })
+      expect(
+        tools.requestCredential(entity.agentId, entity.channelId, {
+          name: '天气服务',
+          purpose: '查天气',
+          domains: ['api.weather.test'],
+          usage: 'request',
+        }),
+      ).toMatchObject({ requested: true })
+      const [pending] = runtime.credentialRequests.list()
+      expect(pending).toMatchObject({ name: '天气服务', agentId: entity.agentId, channelId: entity.channelId })
+      expect(pending?.route).toBe(
+        `/settings/credentials?add=1&name=${encodeURIComponent('天气服务')}&request=${pending?.id}&usage=request&purpose=${encodeURIComponent('查天气')}&domains=api.weather.test`,
+      )
+      const added = await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '天气服务',
+        value: 'fictional-weather-key',
+        domains: ['api.weather.test'],
+      })
+      runtime.credentialRequests.fulfil(added.name)
+      expect(runtime.credentialRequests.list()).toEqual([])
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: entity.agentId, channelId: entity.channelId }),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('allows shared code management while requesting approval before copying private data', async () => {
     const runtime = await createRuntime()
     try {

@@ -133,6 +133,7 @@ const setup = async (options: { readonly vectors?: IndexVectorProvider } = {}) =
     channelId,
     capabilities: () => capabilities,
     config: () => ({}),
+    declaredSecrets: () => ({ config: [], hostConfig: [] }),
   })
   const inChannel = async (bytes: Buffer, channelId: typeof roomA.id) => {
     const prepared = await assetService.prepare({ bytes })
@@ -309,6 +310,7 @@ describe('host-layer model calls', () => {
           channelId: '',
           capabilities: () => ({ assets: { library: {} }, models: { maxCallsPerMinute, maxOutputTokens: 512 } }),
           config: () => ({}),
+          declaredSecrets: () => ({ config: [], hostConfig: [] }),
         },
         backends,
       )

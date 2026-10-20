@@ -57,6 +57,7 @@ const extensionOf = (action: ExtensionAction): ExtensionId | undefined => {
     case 'branch':
     case 'community-install':
     case 'community-withdraw':
+    case 'use-credential':
       return undefined
     case 'migrate-data':
       return action.targetExtensionId
