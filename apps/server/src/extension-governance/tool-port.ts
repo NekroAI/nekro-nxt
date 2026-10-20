@@ -71,6 +71,8 @@ export interface ExtensionGovernanceToolPort {
   revisionByLabel(extensionId: ExtensionId, label: string): ExtensionRevisionId
   /** The installed Revision, or the newest one when not installed. */
   currentRevision(extensionId: ExtensionId): ExtensionRevisionId
+  /** Stores test values the agent provides for one of its tasks, checked against the task's latest candidate. */
+  setTestConfig(taskId: DynamicAuthoringTask['id'], values: Readonly<Record<string, JsonValue>>): Promise<void>
 }
 
 /** Actions that change what is mounted for agents, so they wait until the agent is between turns. */
@@ -345,6 +347,10 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const revision = revisions.find((candidate) => candidate.id === installed) ?? revisions.at(-1)
     if (!revision) throw new Error('这个扩展没有可用的版本。')
     return revision.id
+  }
+
+  setTestConfig(taskId: DynamicAuthoringTask['id'], values: Readonly<Record<string, JsonValue>>): Promise<void> {
+    return this.#runtime.authoringTestConfig.setAgentValues(taskId, values)
   }
 
   async #definition(extension: LocalExtension, revision: Revision): Promise<RevisionDefinition> {

@@ -124,6 +124,12 @@ describe('extension egress', () => {
     )
     expect((await configured.fetch(`http://intranet.example.com:${port}/json`)).status).toBe(200)
     expect((await failure(configured.fetch(`http://other.example.com:${port}/json`))).code).toBe('policy-denied')
+    // A host only the agent provided may be reached on the public internet, never on a private network.
+    const provided = egressFor(
+      { mode: 'config', hosts: [`intranet.example.com:${port}`], privateHosts: [] },
+      { realPrivateCheck: true },
+    )
+    expect((await failure(provided.fetch(`http://intranet.example.com:${port}/json`))).code).toBe('private-address')
   })
 
   it('re-checks policy on every redirect hop and drops credentials across origins', async () => {

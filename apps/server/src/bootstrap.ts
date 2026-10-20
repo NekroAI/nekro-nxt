@@ -76,7 +76,7 @@ import { VerificationBrowser } from './verification-browser.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
 import type { PersistentAdapterPort } from './persistent-extension-mounts.js'
 import { verifyImportedExtensionRevision } from './imported-extension-verifier.js'
-import { AuthoringTestSecrets } from './authoring-test-secrets.js'
+import { AuthoringTestConfig } from './authoring-test-config.js'
 import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
@@ -250,7 +250,7 @@ export class NekroRuntime {
   readonly scheduledTasks: ScheduledTasks
   readonly channelPrompts: ChannelPrompts
   readonly mcpStatus: McpStatusRegistry
-  readonly authoringTestSecrets: AuthoringTestSecrets
+  readonly authoringTestConfig: AuthoringTestConfig
   readonly codeRunNode: CodeRunNode
   readonly githubCli: GithubCli
   readonly verificationBrowser: VerificationBrowser
@@ -308,7 +308,7 @@ export class NekroRuntime {
     readonly scheduledTasks: ScheduledTasks
     readonly channelPrompts: ChannelPrompts
     readonly mcpStatus: McpStatusRegistry
-    readonly authoringTestSecrets: AuthoringTestSecrets
+    readonly authoringTestConfig: AuthoringTestConfig
     readonly codeRunNode: CodeRunNode
     readonly githubCli: GithubCli
     readonly verificationBrowser: VerificationBrowser
@@ -436,7 +436,7 @@ export class NekroRuntime {
     this.retrieval = input.retrieval
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
-    this.authoringTestSecrets = input.authoringTestSecrets
+    this.authoringTestConfig = input.authoringTestConfig
     this.feedback = new CommunityFeedbackService(
       this.repository,
       this.community,
@@ -572,7 +572,7 @@ export class NekroRuntime {
         options.credentialRoot ?? path.join(path.dirname(options.coreDatabasePath), 'credentials'),
         { ...(options.logs === undefined ? {} : { onUse: (value: string) => options.logs!.registerSecret(value) }) },
       )
-      const authoringTestSecrets = new AuthoringTestSecrets({
+      const authoringTestConfig = new AuthoringTestConfig({
         getTask: (taskId) => repository.getAuthoringTask(taskId),
         listTasks: (agentId) => repository.listAuthoringTasks(agentId),
         listAttempts: (taskId) => repository.listAuthoringAttempts(taskId),
@@ -915,7 +915,7 @@ export class NekroRuntime {
             return adapterPort.current.mountConnections(adapterKey)
           },
         },
-        dynamicConfig: (agentId, episodeId) => authoringTestSecrets.configForEpisode(agentId, episodeId),
+        dynamicConfig: (agentId, episodeId) => authoringTestConfig.configForEpisode(agentId, episodeId),
         scheduledTasks,
         mcpStatus,
         onSessionMount: ({
@@ -1266,7 +1266,7 @@ export class NekroRuntime {
         retrieval,
         channelPrompts,
         mcpStatus,
-        authoringTestSecrets,
+        authoringTestConfig,
         compatibility,
         database,
         repository,
@@ -1591,8 +1591,8 @@ export class NekroRuntime {
     this.core.deleteAgent(agentId)
     this.#agents.delete(agentId)
     await this.#deleteCredentials(secretReferences)
-    // Its creation tasks can never run again; their test credentials go, the task history stays.
-    for (const task of this.repository.listAuthoringTasks(agentId)) await this.authoringTestSecrets.clear(task.id)
+    // Its creation tasks can never run again; their test configuration goes, the task history stays.
+    for (const task of this.repository.listAuthoringTasks(agentId)) await this.authoringTestConfig.clear(task.id)
     // Lanes are stopped and bindings gone, so nothing writes into the workspace any more.
     if (options.deleteWorkspace)
       await rm(agentWorkspacePath(this.workspaceRoot, agentId), { recursive: true, force: true })

@@ -724,6 +724,63 @@ describe('extension autonomy', () => {
     }
   })
 
+  it('takes test values for the candidate from the define tool and refuses credentials there', async () => {
+    const host = `return { inject: ['tools'], apply(ctx) { ${PROBE_TOOL} } }`
+    const config = {
+      agent: {
+        schema: {
+          type: 'object',
+          dict: {
+            city: { type: 'string', meta: { description: '城市' } },
+            apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } },
+          },
+        },
+      },
+    }
+    const define = (testConfig: Record<string, unknown>) => ({
+      name: 'nekro_nxt_extension_define',
+      args: {
+        plugin: { kind: 'new', idPrefix: 'tcfg' },
+        name: '测试配置探针',
+        purpose: '验证测试配置。',
+        code: { host },
+        config,
+        testConfig,
+      },
+    })
+    const model = new ScriptedModel([define({ apiKey: 'fictional-agent-secret' }), define({ city: '虚构市' })])
+    const runtime = await createRuntime(model)
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '配置智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'test-config-request',
+        parts: [{ type: 'text', text: '做一个查天气的扩展。' }],
+      })
+      await expect
+        .poll(() => {
+          const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]
+          return task === undefined ? undefined : runtime.authoringTestConfig.values(task.id).agentProvided
+        }, NOTICE_POLL)
+        .toEqual({ city: '虚构市' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      // The definition that carried a credential was refused before anything was defined.
+      expect(runtime.repository.listAuthoringAttempts(task.id)).toHaveLength(1)
+      expect(JSON.stringify(runtime.authoringTestConfig.values(task.id))).not.toContain('fictional-agent-secret')
+      await expect(runtime.authoringTestConfig.setAgentValues(task.id, { apiKey: 'x' })).rejects.toThrow('是凭据')
+      await expect(runtime.authoringTestConfig.setAgentValues(task.id, { unknown: 'x' })).rejects.toThrow(
+        '没有这些字段',
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('allows shared code management while requesting approval before copying private data', async () => {
     const runtime = await createRuntime()
     try {

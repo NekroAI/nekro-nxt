@@ -1,6 +1,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
   ExtensionIdSchema,
+  JsonValueSchema,
   parseJsonValue,
   type AgentId,
   type ChannelId,
@@ -220,12 +221,20 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       '把一个暂停、中断或留在别的对话里的创造任务接到这次对话继续做。接上后最新候选还没有运行，用 cordis_run 运行它，再接着修改。',
     parameters: {
       task: { type: 'string', description: '任务名称或编号；只有一个进行中的任务时可以不填。' },
+      testConfig: {
+        type: 'json',
+        description:
+          '可选，试运行用的配置值：{ 字段名: 值 }，和 nekro_nxt_extension_define 的 testConfig 相同，只能填非凭据字段。',
+      },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args) {
-      const input = z.object({ task: z.string().optional() }).parse(args)
+      const input = z
+        .object({ task: z.string().optional(), testConfig: z.record(z.string(), JsonValueSchema).optional() })
+        .parse(args)
       const port = requireRequester(context)
       const { task, attempt } = continueTask(context, port, input.task)
+      if (input.testConfig !== undefined) await port.setTestConfig(task.id, input.testConfig)
       const snapshot = await context.authoring!.snapshotForAttempt(attempt)
       const receipt = context.restore(snapshot)
       context.authoring!.resumeTask({

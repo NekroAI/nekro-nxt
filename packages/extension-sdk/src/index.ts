@@ -1493,7 +1493,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '动态上下文禁止写入时间戳、随机数和精确计数，写“好感度：友好”这类粗粒度描述；保存时宿主会用相同输入渲染两次，结果不同则拒绝保存。',
       'render 只能读存储和调用上下文，不能联网或调用模型；大块内容改为提供查询工具，让智能体按需调用。',
       '缺少凭据、网络失败或外部服务报错时，工具应返回 { ok: false, message } 这样可读的结果，而不是抛出异常；保存验证会真实调用工具，凭据此时为空。',
-      '需要凭据才能真实试运行时，请用户在频道里打开这个创造任务页面，在「测试凭据」中填写；测试凭据只在本任务的试运行中可见，保存时的验证仍然没有凭据，用户启用扩展时再填写正式凭据。',
+      '试运行时配置取默认值。非凭据字段可以在 nekro_nxt_extension_define 或 nekro_nxt_extension_continue 的 testConfig 里填测试值；凭据和内网服务地址要请用户在频道里打开这个创造任务页面，在「测试配置」中填写，不要让人把凭据发在聊天里。用户填的值优先；测试配置只在本任务的试运行中可见，保存时的验证没有凭据，用户启用扩展时再填写正式配置。',
       'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().latestInbound.sender、history 消息的 sender 或入站钩子的 message.sender；不要用平台账号或昵称作为存储键。',
       'channel.kind 取值为 internal（内置频道）、direct（私聊）或 group（群聊）；平台动作通常只在 direct 或 group 中可用，先用 platform.actions() 确认。',
       'history.list 每次返回 { messages, next }，messages 按时间从新到旧；要继续向前翻页，把 next 原样作为 before 传入。',
