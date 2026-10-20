@@ -19,7 +19,7 @@ import {
   SquareSlash,
   Upload,
   ShieldCheck,
-  UserRoundKey,
+  KeyRound,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -86,7 +86,7 @@ import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
 import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
-import { AccountsSection } from './accounts-section.js'
+import { CredentialsSection } from './credentials-section.js'
 import { AdministratorsSection } from './administrators-section.js'
 import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
@@ -108,7 +108,7 @@ const SECTIONS = [
   { key: 'conversations', label: '子对话', group: 'runtime', icon: <MessagesSquare size={16} /> },
   { key: 'verification', label: '界面检查', group: 'runtime', icon: <ScanEye size={16} /> },
   { key: 'adapters', label: '平台适配器', group: 'links', icon: <Plug size={16} /> },
-  { key: 'accounts', label: '账号与服务', group: 'links', icon: <UserRoundKey size={16} /> },
+  { key: 'credentials', label: '凭据', group: 'links', icon: <KeyRound size={16} /> },
   { key: 'administrators', label: '管理员', group: 'permission', icon: <ShieldCheck size={16} /> },
   { key: 'commands', label: '聊天命令', group: 'permission', icon: <SquareSlash size={16} /> },
   { key: 'access', label: '登录设备', group: 'permission', icon: <MonitorSmartphone size={16} /> },
@@ -154,6 +154,8 @@ export default function SettingsSpace() {
   }, [section])
   // 社区地址已移到「社区 → 账号」底部，旧地址直接带过去。
   if (section === 'community') return <Navigate to="/community/account" replace />
+  // 「账号与服务」改为「凭据」，旧地址直接带过去。
+  if (section === 'accounts') return <Navigate to="/settings/credentials" replace />
   if (!isSection(section)) return <Navigate to="/settings/models" replace />
 
   const selectProvider = (provider: string) =>
@@ -195,6 +197,8 @@ export default function SettingsSpace() {
           onRetry={() => void llm.load()}
           onSelect={selectProvider}
         />
+      ) : section === 'credentials' ? (
+        <CredentialsSection lead={<NarrowNav section="credentials" />} />
       ) : section === 'dsh' ? (
         <DshSection
           entry={dshEntry}
@@ -221,12 +225,6 @@ export default function SettingsSpace() {
           {section === 'conversations' ? <SubConversations /> : null}
           {section === 'verification' ? <InterfaceChecks /> : null}
           {section === 'retrieval' ? <Retrieval /> : null}
-          {section === 'accounts' ? (
-            <>
-              <SectionHead title="账号与服务" />
-              <AccountsSection />
-            </>
-          ) : null}
           {section === 'notifications' ? <Notifications /> : null}
           {section === 'feedback' ? <FeedbackSettingsSection /> : null}
           {section === 'access' ? (
@@ -864,6 +862,7 @@ function Notifications() {
   const [clearKey, setClearKey] = useState(false)
   const [approval, setApproval] = useState(settings.events['dynamic-client-approval-requested'] ?? true)
   const [feedback, setFeedback] = useState(settings.events['community-feedback-update'])
+  const [credentialRequested, setCredentialRequested] = useState(settings.events['credential-requested'])
   const [busy, setBusy] = useState<'' | 'save' | 'bark' | 'system'>('')
   const [saveError, setSaveError] = useState('')
 
@@ -875,6 +874,7 @@ function Notifications() {
     setClearKey(false)
     setApproval(settings.events['dynamic-client-approval-requested'] ?? true)
     setFeedback(settings.events['community-feedback-update'])
+    setCredentialRequested(settings.events['credential-requested'])
     setSaveError('')
   }
   // Saved settings changed (here or elsewhere): show them. Keyed by content, so a refresh that returns the same
@@ -891,6 +891,7 @@ function Notifications() {
       : []),
     ...(approval !== (settings.events['dynamic-client-approval-requested'] ?? true) ? ['通知事件'] : []),
     ...(feedback !== settings.events['community-feedback-update'] ? ['社区反馈更新'] : []),
+    ...(credentialRequested !== settings.events['credential-requested'] ? ['凭据申请'] : []),
   ]
 
   const run = async (kind: Exclude<typeof busy, ''>, action: () => Promise<unknown>, done: string) => {
@@ -920,7 +921,11 @@ function Notifications() {
             ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
             ...(clearKey ? { clearDeviceKey: true } : {}),
           },
-          events: { 'dynamic-client-approval-requested': approval, 'community-feedback-update': feedback },
+          events: {
+            'dynamic-client-approval-requested': approval,
+            'community-feedback-update': feedback,
+            'credential-requested': credentialRequested,
+          },
         }),
       '通知设置已保存',
     )
@@ -1022,6 +1027,9 @@ function Notifications() {
           </PropertyRow>
           <PropertyRow label="社区反馈更新" tip="反馈等待确认、收到回复或处理状态有变化时">
             <Switch label="社区反馈更新" checked={feedback} onCheckedChange={setFeedback} />
+          </PropertyRow>
+          <PropertyRow label="凭据申请" tip="智能体需要的凭据还没有添加时">
+            <Switch label="凭据申请" checked={credentialRequested} onCheckedChange={setCredentialRequested} />
           </PropertyRow>
         </PropertyList>
       </PropertyGroup>

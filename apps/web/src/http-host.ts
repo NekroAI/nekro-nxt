@@ -157,7 +157,6 @@ const emptySnapshot = (): ProductSnapshot => ({
   subConversations: [],
   extensionRequests: [],
   scheduledTasks: [],
-  commandAccounts: [],
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
@@ -652,6 +651,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
           activatedAt: candidate.activatedAt,
           config: candidate.config,
           configuredSecrets: candidate.configuredSecrets ?? [],
+          boundCredentials: candidate.boundCredentials ?? {},
           ...(candidate.mcpServers === undefined ? {} : { mcpServers: candidate.mcpServers }),
           ...(candidate.runtime === undefined
             ? {}
@@ -727,6 +727,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               installedAt: extension.installation.installedAt,
               config: extension.installation.config,
               configuredSecrets: extension.installation.configuredSecrets ?? [],
+              boundCredentials: extension.installation.boundCredentials ?? {},
               ...(extension.installation.runtime === undefined
                 ? {}
                 : {
@@ -834,7 +835,6 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     subConversations: json.subConversations,
     extensionRequests: json.extensionRequests,
     scheduledTasks: json.scheduledTasks,
-    commandAccounts: json.commandAccounts ?? [],
     communityFeedback: json.communityFeedback,
     notificationSettings: json.notificationSettings,
     diagnosticNote: `服务连接正常（${agents.length} 个智能体 · ${channels.length} 个频道 · ${extensionsLocal.length} 个本地扩展）。`,

@@ -393,6 +393,8 @@ export interface LocalExtensionSummary {
     readonly config: JsonValue
     /** Secret fields the Host stores for this Activation; their values never reach the client. */
     readonly configuredSecrets: readonly string[]
+    /** Secret fields bound to a named credential, by field. */
+    readonly boundCredentials: Readonly<Record<string, string>>
     /** Latest connection attempt of each declared MCP server. */
     readonly mcpServers?: HostApiResponse<'snapshot'>['extensions'][number]['activations'][number]['mcpServers']
     readonly runtime?: {
@@ -443,6 +445,7 @@ export interface LocalExtensionSummary {
     /** Host configuration without secret fields; `configuredSecrets` lists those the Host stores. */
     readonly config: JsonValue
     readonly configuredSecrets: readonly string[]
+    readonly boundCredentials: Readonly<Record<string, string>>
     readonly runtime?: {
       readonly status: 'active' | 'restore-failed' | 'dispose-failed'
       readonly message?: string
@@ -505,11 +508,11 @@ export interface SavedDynamicExtension {
   readonly revisionId: string
 }
 
-export type CommandAccount = HostApiResponse<'getCommandAccounts'>['accounts'][number]
 export type CommandAccountUsage = 'read' | 'issues' | 'pull-requests' | 'push'
 
+/** An older per-agent GitHub grant; read only, credentials now carry their own scope. */
 export interface CommandAccountGrant {
-  readonly service: CommandAccount['service']
+  readonly service: 'github'
   readonly accountId: string
   /** Guidance told to the agent; the token's own permissions are the only limit. */
   readonly usage: CommandAccountUsage[]
@@ -592,8 +595,6 @@ export interface ProductState {
   readonly productMetadata: ProductMetadataView | undefined
   readonly connectionAdapters: readonly AdapterConnectionDescriptor[]
   readonly capabilityAvailability: CapabilityAvailability
-  /** The host's account library; an account takes effect only for agents that grant it. */
-  readonly commandAccounts: readonly CommandAccount[]
   readonly communityFeedback?: HostApiResponse<'snapshot'>['communityFeedback']
   readonly models: readonly ModelSummary[]
   readonly agents: readonly AgentSummary[]
@@ -740,6 +741,8 @@ export interface ProductState {
     readonly config: JsonValue
     /** Write-only credential drafts; empty drafts keep the stored credential. */
     readonly secrets?: Readonly<Record<string, string>>
+    /** Secret fields bound to named credentials; `null` removes a binding. */
+    readonly credentialBindings?: Readonly<Record<string, string | null>>
   }): Promise<void>
   /** Installs (or switches) the extension on this machine; `null` uninstalls it and stops every agent's use. */
   setHostExtensionInstalled(id: string, revisionId: string | null, approvals?: ExtensionApprovals): Promise<void>
