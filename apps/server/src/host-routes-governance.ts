@@ -57,10 +57,11 @@ export async function handleGovernanceExtensionRoute(
         versionId: decodeURIComponent(versions[2]),
       })
       const input = HostApiContracts.revertExtensionConfig.parseRequest(await readJsonBody(req))
-      if (runtime.extensionConfig.version(params.versionId).extensionId !== params.extensionId) {
+      const versionId = Number(params.versionId)
+      if (runtime.extensionConfig.version(versionId).extensionId !== params.extensionId) {
         throw new Error('没有这个配置版本。')
       }
-      const version = await runtime.extensionConfig.revert(params.versionId, {
+      const version = await runtime.extensionConfig.revert(versionId, {
         ...(input.reason === undefined ? {} : { reason: input.reason }),
       })
       writeContractJson(res, 200, HostApiContracts.revertExtensionConfig, { version })

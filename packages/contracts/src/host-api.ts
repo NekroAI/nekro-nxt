@@ -2754,10 +2754,8 @@ export type ExtensionConfigVersion = z.output<typeof ExtensionConfigVersionSchem
 const extensionConfigVersionParam = z
   .object({
     extensionId: ExtensionIdSchema,
-    versionId: z
-      .string()
-      .regex(/^[1-9]\d{0,15}$/u)
-      .transform(Number),
+    /** Decimal text of the version id; the path builder only takes strings. */
+    versionId: z.string().regex(/^[1-9]\d{0,15}$/u),
   })
   .strict()
 const dshPluginPackageParam = z.object({ packageId: DshPluginPackageIdSchema }).strict()
