@@ -6,11 +6,13 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { AgentIdSchema, CredentialIdSchema, type AgentId } from '@nekro-nxt/contracts'
 import {
-  commandAccountEnvironment,
-  commandAccountPrompt,
+  commandCredentialEnvironment,
+  commandCredentialPrompt,
   createEnvForwardingExecutor,
-  type CommandAccountSources,
+  type CommandCredential,
+  type CommandCredentialSources,
 } from '../src/command-account-env.ts'
 import { createConfinedSandboxProvider } from '../src/command-confinement.ts'
 
@@ -20,55 +22,85 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
-const sources = (overrides: Partial<CommandAccountSources> = {}): CommandAccountSources => ({
-  tokenFor: (id) => (id === 'acct-a' ? 'tok-fixture' : undefined),
-  loginOf: (id) => (id === 'acct-a' ? 'octo-fixture' : undefined),
+const agent = AgentIdSchema.parse('agt_fixture')
+const github: CommandCredential = {
+  id: CredentialIdSchema.parse('crd_acct'),
+  name: 'GitHub octo-fixture',
+  description: '',
+  kind: 'github',
+  env: 'GH_TOKEN',
+  login: 'octo-fixture',
+  value: 'tok-fixture',
+}
+const weather: CommandCredential = {
+  id: CredentialIdSchema.parse('crd_weather'),
+  name: '天气服务',
+  description: '示例天气接口',
+  kind: 'generic',
+  env: 'WEATHER_KEY',
+  value: 'weather-fixture-key',
+}
+
+/** The library's answer for the fixture agent; other agents receive nothing. */
+const sources = (
+  cleared: readonly CommandCredential[],
+  overrides: Partial<CommandCredentialSources> = {},
+): CommandCredentialSources => ({
+  credentials: (agentId: AgentId) => (agentId === agent ? cleared : []),
   githubCliDirectory: () => undefined,
   githubCliAvailable: () => true,
   ...overrides,
 })
 
-const grant = { service: 'github', accountId: 'acct-a', usage: [] } as const
-
-describe('command account environment', () => {
-  it('gives commands the token for gh and, through an in-memory helper, for git', () => {
-    const env = commandAccountEnvironment('agent-1', [grant], sources(), '/usr/bin')
+describe('command credential environment', () => {
+  it('gives commands the GitHub token for gh and, through an in-memory helper, for git', () => {
+    const env = commandCredentialEnvironment(agent, sources([github]), '/usr/bin')
     expect(env['GH_TOKEN']).toBe('tok-fixture')
     expect(env['GIT_CONFIG_KEY_0']).toBe('credential.https://github.com.helper')
     expect(env['GIT_CONFIG_VALUE_0']).toContain('$GH_TOKEN')
     expect(env['GIT_CONFIG_VALUE_0']).not.toContain('tok-fixture')
-    expect(env['GH_CONFIG_DIR']).toBe(path.join(tmpdir(), 'nekro-nxt-gh', 'agent-1'))
+    expect(env['GH_CONFIG_DIR']).toBe(path.join(tmpdir(), 'nekro-nxt-gh', 'agt_fixture'))
     expect(env).not.toHaveProperty('PATH')
   })
 
+  it('gives a generic credential under its own variable and records the use', () => {
+    const used: string[] = []
+    const env = commandCredentialEnvironment(agent, sources([weather], { used: (id) => used.push(id) }), '/usr/bin')
+    expect(env).toEqual({ WEATHER_KEY: 'weather-fixture-key' })
+    expect(used).toEqual([weather.id])
+  })
+
   it('puts a downloaded gh in front of PATH', () => {
-    const env = commandAccountEnvironment(
-      'agent-1',
-      [grant],
-      sources({ githubCliDirectory: () => '/data/runtimes/gh/bin' }),
+    const env = commandCredentialEnvironment(
+      agent,
+      sources([github], { githubCliDirectory: () => '/data/runtimes/gh/bin' }),
       '/usr/bin',
     )
     expect(env['PATH']).toBe(`/data/runtimes/gh/bin${path.delimiter}/usr/bin`)
   })
 
-  it('adds nothing without a grant, for an account that was removed, or one without a token', () => {
-    expect(commandAccountEnvironment('agent-1', [], sources())).toEqual({})
-    expect(commandAccountEnvironment('agent-1', [{ ...grant, accountId: 'gone' }], sources())).toEqual({})
-    expect(commandAccountPrompt([], sources())).toBeUndefined()
-    expect(commandAccountPrompt([{ ...grant, accountId: 'gone' }], sources())).toBeUndefined()
+  it('adds nothing when the agent receives no credential', () => {
+    const other = AgentIdSchema.parse('agt_other')
+    expect(commandCredentialEnvironment(agent, sources([]))).toEqual({})
+    expect(commandCredentialEnvironment(other, sources([github, weather]))).toEqual({})
+    expect(commandCredentialPrompt(agent, sources([]))).toBeUndefined()
   })
 
-  it('tells the agent which account it acts as, and the usage hint as guidance', () => {
-    expect(commandAccountPrompt([grant], sources())).toBe(
+  it('tells the agent which account it acts as, the usage hint as guidance, and each variable it has', () => {
+    expect(commandCredentialPrompt(agent, sources([github]))).toBe(
       '命令里的 GitHub 已用账号 octo-fixture 登录：gh 可以直接用，git 走 https 也会带上这个账号。',
     )
-    const hinted = commandAccountPrompt([{ ...grant, usage: ['issues', 'read'] }], sources())
+    const hinted = commandCredentialPrompt(agent, sources([github]), () => ['issues', 'read'])
     expect(hinted).toContain('这个账号交给你的用途是：创建和评论 issue、查看仓库、issue 和 PR。')
     expect(hinted).toContain('先和管理员确认')
+    const generic = commandCredentialPrompt(agent, sources([weather]))
+    expect(generic).toContain('WEATHER_KEY')
+    expect(generic).toContain('天气服务')
+    expect(generic).not.toContain('weather-fixture-key')
   })
 
   it('says plainly when gh is not installed, without exposing the token', () => {
-    const prompt = commandAccountPrompt([grant], sources({ githubCliAvailable: () => false }))
+    const prompt = commandCredentialPrompt(agent, sources([github], { githubCliAvailable: () => false }))
     expect(prompt).toContain('没有 gh')
     expect(prompt).toContain('GH_TOKEN')
     expect(prompt).not.toContain('tok-fixture')
@@ -132,7 +164,7 @@ describe.skipIf(process.platform === 'win32')('commands receive the granted acco
   it.runIf(process.platform === 'darwin')(
     'leaves the scratch gh configuration writable inside the confined workspace mode',
     async () => {
-      const env = commandAccountEnvironment('agt_fixture', [grant], sources(), '/usr/bin')
+      const env = commandCredentialEnvironment(agent, sources([github]), '/usr/bin')
       expect(
         await runCommand(
           'workspace-write',

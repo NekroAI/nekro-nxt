@@ -6,8 +6,9 @@ import { z } from 'zod'
  * ships; never reuse a level for a different meaning. Level 7 is Manifest V7 (host instance + agent attachments); level 8 adds the asset library, image info, tool result
  * images, the search index and host-layer model calls. Level 9 adds the structured logger and explicit chat commands. Level 10 adds version lineage, the data version with its
  * migration hook and administrator-only commands. Level 11 lists the pictures of an inbound message to inbound hooks.
+ * Level 12 adds credential placeholders (`secrets.placeholder`) that `http.fetch` fills for the credential's domains.
  */
-export const EXTENSION_SDK_LEVEL = 11
+export const EXTENSION_SDK_LEVEL = 12
 
 /** Lineage, `dataVersion` and administrator-only commands need this level; packages that carry them declare it. */
 export const EXTENSION_GOVERNANCE_SDK_LEVEL = 10
@@ -23,6 +24,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 9, version: '0.6.0' },
   { level: 10, version: '0.6.0' },
   { level: 11, version: '0.6.0' },
+  { level: 12, version: '0.7.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
@@ -255,10 +257,14 @@ export const ExtensionModelsCapabilitySchema = z
   .strict()
 export type ExtensionModelsCapability = z.output<typeof ExtensionModelsCapabilitySchema>
 
-/** A header or environment value: literal text, or the current value of a `meta.role: 'secret'` config field. */
+/**
+ * A header or environment value: literal text, the current value of a `meta.role: 'secret'` config field, or a named
+ * credential (by id or name) that the agent may use.
+ */
 export const ExtensionMcpValueSchema = z.union([
   z.string().max(4096),
   z.object({ secret: z.string().trim().min(1).max(64) }).strict(),
+  z.object({ credential: z.string().trim().min(1).max(64) }).strict(),
 ])
 export type ExtensionMcpValue = z.output<typeof ExtensionMcpValueSchema>
 
@@ -315,6 +321,8 @@ const McpFormValueSchema = z
     name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_-]{0,127}$/u, '名称只能包含字母、数字、下划线和连字符。'),
     value: z.string().max(4096),
     secret: z.boolean().default(false),
+    /** Takes the value from this named credential instead; `value` and `secret` are then ignored. */
+    credential: z.string().trim().min(1).max(64).optional(),
   })
   .strict()
 
@@ -344,7 +352,7 @@ export const mcpSecretFields = (mcp: ExtensionMcpCapability | undefined): readon
   ...new Set(
     (mcp?.servers ?? []).flatMap((server) =>
       Object.values(server.transport === 'stdio' ? server.env : server.headers).flatMap((value) =>
-        typeof value === 'string' ? [] : [value.secret],
+        typeof value === 'string' || !('secret' in value) ? [] : [value.secret],
       ),
     ),
   ),

@@ -1244,7 +1244,7 @@ describe('Extension save', () => {
     expect(manifest.revisionId).toBe(saved.revision.id)
     expect(manifest).toEqual({
       schemaVersion: 7,
-      requires: { sdk: 11 },
+      requires: { sdk: 12 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
@@ -1692,7 +1692,7 @@ describe('Extension materialization and build policy', () => {
     expect(first.sources.host).toContain("from '@nekro-nxt/extension-sdk'")
     expect(first.manifest).toEqual({
       schemaVersion: 7,
-      requires: { sdk: 11 },
+      requires: { sdk: 12 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: extensionId('test'),
       revisionId: revisionId('test'),

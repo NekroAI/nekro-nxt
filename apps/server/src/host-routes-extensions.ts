@@ -43,7 +43,7 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
-import { knownCommandAccounts } from './host-routes-command-accounts.js'
+import { knownCommandAccounts, syncGrantedAccounts } from './host-routes-command-accounts.js'
 import { performHostUiNetworkRequest } from './host-ui-network.js'
 import { activationManifest } from './host-queries.js'
 import { handleGovernanceExtensionRoute } from './host-routes-governance.js'
@@ -329,6 +329,7 @@ export function registerExtensionsRoutes({
                 imagePolicy: current.revision.imagePolicy,
                 dynamicClientApprovalPolicy: current.revision.dynamicClientApprovalPolicy,
               })
+              await syncGrantedAccounts(runtime, request.agentId, parsed.commandAccounts)
               value = { currentRevisionId: updated.revision.id, capabilities: updated.revision.capabilities }
             } else if (input.method === 'connections.list') {
               value = runtime.core.listConnections().map((connection) => ({
@@ -738,6 +739,8 @@ export function registerExtensionsRoutes({
             previous: current?.config,
             config: input.config,
             secrets: input.secrets,
+            bindings: input.credentialBindings,
+            credentialExists: (id) => runtime.credentialLibrary.get(id) !== undefined,
             credentials: runtime.credentials,
             commit: (config) => runtime.updateHostExtensionConfig(params.extensionId, config),
           })

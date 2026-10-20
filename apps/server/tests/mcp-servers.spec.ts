@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
-import { mcpExtensionSnapshot, testMcpServer } from '../src/mcp-servers.js'
+import { mcpExtensionSnapshot, mcpPluginConfig, testMcpServer } from '../src/mcp-servers.js'
 
 const temporaryDirectories: string[] = []
 const fixtureServer = fileURLToPath(new URL('./fixtures/mcp-echo-server.mjs', import.meta.url))
@@ -116,6 +116,55 @@ describe('MCP capability declarations', () => {
         }).mcp,
       }),
     ).toBe(true)
+  })
+
+  it('fills named credentials: env needs program use, headers only go to allowed domains', async () => {
+    const uses: Array<{ reference: string; purpose: string; targetHost?: string }> = []
+    const readers = {
+      readSecret: () => Promise.resolve(undefined),
+      readCredential: (reference: string, use: { purpose: 'program' | 'request'; targetHost?: string }) => {
+        uses.push({ reference, ...use })
+        if (reference === '搜索服务')
+          return Promise.resolve({ value: 'search-fixture-key', domains: ['*.example.com'] })
+        if (reference === '本地程序' && use.purpose === 'program') return Promise.resolve({ value: 'program-key' })
+        return Promise.resolve(undefined)
+      },
+      cwd: tmpdir(),
+    }
+    const http = await mcpPluginConfig(
+      {
+        transport: 'streamable-http',
+        name: 'search',
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: { credential: '搜索服务' } },
+      },
+      readers,
+    )
+    expect(http).toMatchObject({ config: { headers: { Authorization: 'search-fixture-key' } } })
+    const elsewhere = await mcpPluginConfig(
+      {
+        transport: 'streamable-http',
+        name: 'search',
+        url: 'https://mcp.other.test/mcp',
+        headers: { Authorization: { credential: '搜索服务' } },
+      },
+      readers,
+    )
+    expect(elsewhere).toEqual({ missing: ['Authorization'] })
+    const stdio = await mcpPluginConfig(
+      {
+        transport: 'stdio',
+        name: 'local',
+        command: 'fixture',
+        args: [],
+        env: { PROGRAM_KEY: { credential: '本地程序' }, SEARCH_KEY: { credential: '搜索服务' } },
+      },
+      readers,
+    )
+    // Request-only credentials never reach a program's environment.
+    expect(stdio).toEqual({ missing: ['SEARCH_KEY'] })
+    expect(uses).toContainEqual({ reference: '搜索服务', purpose: 'request', targetHost: 'mcp.example.com' })
+    expect(uses).toContainEqual({ reference: '本地程序', purpose: 'program' })
   })
 
   it('rejects a credential reference that is not a secret config field', () => {

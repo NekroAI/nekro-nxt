@@ -6,6 +6,8 @@ import {
   ExtensionIdSchema,
   type AgentId,
   type ChannelId,
+  type CredentialId,
+  type CredentialUsage,
   type ExtensionId,
   type JsonValue,
   type MessagePart,
@@ -24,15 +26,36 @@ import type {
 } from '@nekro-nxt/extension-sdk'
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
 import {
-  bindingSecretConfig,
+  bindingSecretReference,
+  type NxtRequestSecret,
   type NxtServiceBackends,
   type NxtServiceBinding,
   type NxtStorageBackend,
   type NxtStoragePartition,
 } from './extension-host-service.js'
+import { namedCredentialId } from './credentials-library.js'
 
 /** Matches the opaque references `LocalCredentialStore` issues; anything else in a secret field is not resolved. */
 const CREDENTIAL_REFERENCE_PATTERN = /^credential:local:[a-f0-9]{32}$/u
+
+/** One use of a named credential an extension's secret field is bound to. */
+export interface NamedCredentialUse {
+  readonly id: CredentialId
+  /** Absent for the host instance of an installed extension, which serves every agent. */
+  readonly agentId: AgentId | undefined
+  /** `program`: code reads the value; `request`: the host fills it into a request. */
+  readonly purpose: CredentialUsage
+  readonly extensionId: string
+  readonly channelId: ChannelId | undefined
+  readonly targetHost: string | undefined
+  /** What uses it: extension code, or an MCP server the extension declares. */
+  readonly consumerKind: 'extension' | 'mcp'
+}
+
+/** Named credentials as extensions may use them; denied uses resolve to `undefined`. */
+export type NamedCredentialResolver = (
+  use: NamedCredentialUse,
+) => { readonly value: string; readonly usage: CredentialUsage; readonly domains: readonly string[] } | undefined
 
 export interface NxtProductFacts {
   readonly history: ChannelHistoryRepository & Pick<CoreRepository, 'getChannel' | 'getChannelMember'>
@@ -40,6 +63,10 @@ export interface NxtProductFacts {
   readonly getAgentName: (agentId: string) => string
   readonly createAsset: (channelId: ChannelId, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly resolveCredential: (reference: string) => Promise<string>
+  /** Named credentials; absent hosts treat bound fields as unset. */
+  readonly namedCredential?: NamedCredentialResolver
+  /** The credential a name or id refers to, for MCP values that name one directly. */
+  readonly findCredential?: (reference: string) => CredentialId | undefined
   /** Who members are relative to the agent; absent hosts describe every member plainly. */
   readonly members?: ChannelMemberRelations
   /** The platform user id a connection reported as its own account. */
@@ -116,15 +143,41 @@ const isConversationEntry = (entry: ChannelHistoryEntry): boolean =>
   entry.source === 'outbound-intent' ||
   (entry.facts?.['consoleAnchor'] !== true && entry.facts?.['extensionJob'] === undefined)
 
+/**
+ * Resolves one secret field of a binding (智能体扩展配置与凭据 C5). The field must be declared `meta.role: 'secret'`
+ * in the layer it is read from. A store reference (`credential:local:`) is the field's own value; a named credential
+ * (`credential:named:`) resolves only for an agent in its scope, and `program` reads need a credential that allows
+ * program use. Anything else is treated as unset. `targetHost` is recorded with a request use.
+ */
 export const resolveExtensionSecret = async (
-  facts: Pick<NxtProductFacts, 'resolveCredential'>,
-  config: JsonValue,
+  facts: Pick<NxtProductFacts, 'resolveCredential' | 'namedCredential'>,
+  binding: NxtServiceBinding,
   key: string,
-): Promise<string | undefined> => {
-  if (config === null || typeof config !== 'object' || Array.isArray(config)) return undefined
-  const reference = (config as Readonly<Record<string, JsonValue>>)[key]
-  if (typeof reference !== 'string' || !CREDENTIAL_REFERENCE_PATTERN.test(reference)) return undefined
-  return facts.resolveCredential(reference)
+  purpose: CredentialUsage,
+  targetHost?: string,
+): Promise<NxtRequestSecret | undefined> => {
+  const reference = bindingSecretReference(binding, key)
+  if (typeof reference !== 'string') return undefined
+  if (CREDENTIAL_REFERENCE_PATTERN.test(reference)) return { value: await facts.resolveCredential(reference) }
+  const id = namedCredentialId(reference)
+  if (id === undefined || facts.namedCredential === undefined) return undefined
+  const agent = AgentIdSchema.safeParse(binding.agentId)
+  const channel = ChannelIdSchema.safeParse(binding.channelId)
+  const resolved = facts.namedCredential({
+    id,
+    // The host instance of an installed extension serves every agent; its dynamic stand-in acts for the author.
+    agentId: binding.mode === 'host' && binding.agentId === '' ? undefined : agent.success ? agent.data : undefined,
+    purpose,
+    extensionId: binding.ownerKey,
+    channelId: channel.success ? channel.data : undefined,
+    targetHost,
+    consumerKind: 'extension',
+  })
+  if (resolved === undefined) return undefined
+  // Program-use credentials without domains go wherever the extension's own network policy reaches.
+  return resolved.usage === 'program' && resolved.domains.length === 0
+    ? { value: resolved.value }
+    : { value: resolved.value, domains: resolved.domains }
 }
 
 /**
@@ -156,7 +209,31 @@ export const createNxtProductBackends = (
       return Promise.resolve(member(facts, parsed.data))
     },
   },
-  secret: (binding: NxtServiceBinding, key: string) => resolveExtensionSecret(facts, bindingSecretConfig(binding), key),
+  secret: async (binding: NxtServiceBinding, key: string) =>
+    (await resolveExtensionSecret(facts, binding, key, 'program'))?.value,
+  requestSecret: (binding: NxtServiceBinding, key: string, targetHost: string) =>
+    resolveExtensionSecret(facts, binding, key, 'request', targetHost),
+  mcpCredential: (binding, reference, use) => {
+    const id = facts.findCredential?.(reference)
+    if (id === undefined || facts.namedCredential === undefined) return Promise.resolve(undefined)
+    const agent = AgentIdSchema.safeParse(binding.agentId)
+    const channel = ChannelIdSchema.safeParse(binding.channelId)
+    const resolved = facts.namedCredential({
+      id,
+      agentId: agent.success ? agent.data : undefined,
+      purpose: use.purpose,
+      extensionId: binding.ownerKey,
+      channelId: channel.success ? channel.data : undefined,
+      targetHost: use.targetHost,
+      consumerKind: 'mcp',
+    })
+    if (resolved === undefined) return Promise.resolve(undefined)
+    return Promise.resolve(
+      resolved.usage === 'program' && resolved.domains.length === 0
+        ? { value: resolved.value }
+        : { value: resolved.value, domains: resolved.domains },
+    )
+  },
   createAsset: (channelId, input) => facts.createAsset(ChannelIdSchema.parse(channelId), input),
   callContext(binding): Promise<NxtCallContext> {
     const channelId = ChannelIdSchema.parse(binding.channelId)

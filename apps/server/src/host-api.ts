@@ -30,6 +30,7 @@ import { readCompactionSettings, writeCompactionSettings } from './compaction-se
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerSubConversationRoutes } from './host-routes-sub-conversations.js'
 import { registerCommandAccountRoutes } from './host-routes-command-accounts.js'
+import { registerCredentialRoutes } from './host-routes-credentials.js'
 import { registerGovernanceRoutes } from './host-routes-governance.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
 import { registerMcpRoutes } from './host-routes-mcp.js'
@@ -723,6 +724,17 @@ export const createNekroHostApi = (
   )
   disposers.push(
     registerSubConversationRoutes({
+      runtime,
+      registerRoute,
+      broadcast,
+      broadcastExtensionsChanged,
+      readCursor: () => hub.cursor,
+      projections,
+      extensionImports,
+    }),
+  )
+  disposers.push(
+    registerCredentialRoutes({
       runtime,
       registerRoute,
       broadcast,

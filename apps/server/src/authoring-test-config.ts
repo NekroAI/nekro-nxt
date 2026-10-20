@@ -12,6 +12,7 @@ import type {
   DynamicAuthoringSnapshot,
   DynamicAuthoringTask,
 } from '@nekro-nxt/extension-runtime'
+import { z } from 'zod'
 
 const secretsKey = (taskId: string) => `authoring-test-secrets:${taskId}`
 const valuesKey = (taskId: string) => `authoring-test-config:${taskId}`
@@ -75,28 +76,38 @@ export const candidateConfigFields = (config: unknown): readonly CandidateConfig
 const fieldIssue = (field: ConfigField, value: JsonValue): string | undefined =>
   validateConfigValue({ type: 'object', dict: { [field.key]: field.node } }, { [field.key]: value }).issues[0]?.message
 
+const CredentialBindingSchema = z.object({ credential: z.string().trim().min(1).max(64) }).strict()
+
+/** The credential name a test value binds a secret field to, or `undefined` for any other value. */
+export const testCredentialBinding = (value: JsonValue | undefined): string | undefined => {
+  const parsed = CredentialBindingSchema.safeParse(value)
+  return parsed.success ? parsed.data.credential : undefined
+}
+
 /**
  * Checks test values the agent provides against a candidate's configuration and returns them; `null` clears a value.
- * Credentials are never among them: the user types those on the task page, or fills them in after saving.
+ * A secret field takes no typed value, only `{ credential: '名称' }`, which binds a named credential; whether the agent
+ * may use it is decided when the values are stored.
  */
 export const parseAgentTestConfig = (
   config: unknown,
   values: Readonly<Record<string, JsonValue>>,
 ): Readonly<Record<string, JsonValue>> => {
   const fields = new Map(candidateConfigFields(config).map((field) => [field.key, field]))
-  const secrets = Object.keys(values).flatMap((key) => {
-    const field = fields.get(key)
-    return field?.kind === 'secret' ? [field.title] : []
-  })
-  if (secrets.length > 0) {
-    throw new Error(
-      `「${secrets.join('」「')}」是凭据，不能写在测试配置里。请用户在创造任务页的「测试配置」里填写，或者保存后在扩展配置里填写。`,
-    )
-  }
   const unknown = Object.keys(values).filter((key) => !fields.has(key))
   if (unknown.length > 0) throw new Error(`候选的配置里没有这些字段：${unknown.join('、')}`)
+  const typedSecrets = Object.entries(values).flatMap(([key, value]) => {
+    const field = fields.get(key)!
+    return field.kind === 'secret' && value !== null && testCredentialBinding(value) === undefined ? [field.title] : []
+  })
+  if (typedSecrets.length > 0) {
+    throw new Error(
+      `「${typedSecrets.join('」「')}」是凭据，不能直接写值。用 { "credential": "凭据名称" } 绑定一个已添加的凭据（用 nekro_nxt_credential_list 查看），缺少时用 nekro_nxt_credential_request 请管理员添加。`,
+    )
+  }
   for (const [key, value] of Object.entries(values)) {
-    const issue = value === null ? undefined : fieldIssue(fields.get(key)!, value)
+    const field = fields.get(key)!
+    const issue = value === null || field.kind === 'secret' ? undefined : fieldIssue(field, value)
     if (issue !== undefined) throw new Error(`测试配置有误：${issue}`)
   }
   return values
@@ -136,10 +147,16 @@ export class AuthoringTestConfig {
     const secrets = references(this.#deps.getSetting(secretsKey(taskId))?.value)
     const stored = this.#values(taskId)
     const typed = new Set(fields.filter((field) => field.kind !== 'secret').map((field) => field.key))
+    const secretKeys = new Set(fields.filter((field) => field.kind === 'secret').map((field) => field.key))
     return {
       fields,
+      // A secret is set when the user typed one or the agent bound a named credential to it.
       configured: fields
-        .filter((field) => field.kind === 'secret' && secrets[field.key] !== undefined)
+        .filter(
+          (field) =>
+            field.kind === 'secret' &&
+            (secrets[field.key] !== undefined || typeof stored.agent[field.key] === 'string'),
+        )
         .map((field) => field.key),
       values: Object.fromEntries(
         Object.entries(stored.user).filter(
@@ -147,7 +164,7 @@ export class AuthoringTestConfig {
             typed.has(entry[0]) && (typeof entry[1] === 'string' || typeof entry[1] === 'number'),
         ),
       ),
-      agentValues: stored.agent,
+      agentValues: Object.fromEntries(Object.entries(stored.agent).filter(([key]) => !secretKeys.has(key))),
     }
   }
 
@@ -200,17 +217,39 @@ export class AuthoringTestConfig {
     this.#putValues(taskId, { user })
   }
 
-  /** Stores test values the agent provided, checked against the task's latest candidate; `null` clears one. */
-  async setAgentValues(taskId: DynamicAuthoringTask['id'], values: Readonly<Record<string, JsonValue>>): Promise<void> {
+  /**
+   * Stores test values the agent provided, checked against the task's latest candidate; `null` clears one. Credential
+   * bindings are not stored here: `resolveCredential` turns each into a stored reference, or `undefined` when it waits
+   * for an administrator (the field then keeps its previous value).
+   */
+  async setAgentValues(
+    taskId: DynamicAuthoringTask['id'],
+    values: Readonly<Record<string, JsonValue>>,
+    resolveCredential: (key: string, name: string) => string | undefined = () => {
+      throw new Error('这台 NekroNXT 不能在测试配置里绑定凭据。')
+    },
+  ): Promise<void> {
     const candidate = await this.candidate(taskId)
     if (candidate === undefined) throw new Error('这个任务还没有候选。')
     parseAgentTestConfig(candidate.config, values)
     const agent: Record<string, JsonValue> = { ...this.#values(taskId).agent }
     for (const [key, value] of Object.entries(values)) {
+      const name = testCredentialBinding(value)
       if (value === null) delete agent[key]
-      else agent[key] = value
+      else if (name === undefined) agent[key] = value
+      else {
+        const reference = resolveCredential(key, name)
+        if (reference !== undefined) agent[key] = reference
+      }
     }
     this.#putValues(taskId, { agent })
+  }
+
+  /** Binds one secret field of the task's test configuration to a named credential an administrator allowed. */
+  async bindCredential(taskId: DynamicAuthoringTask['id'], key: string, reference: string): Promise<void> {
+    const field = (await this.fields(taskId)).find((candidate) => candidate.key === key)
+    if (field?.kind !== 'secret') throw new Error(`当前候选没有凭据字段 ${key}。`)
+    this.#putValues(taskId, { agent: { ...this.#values(taskId).agent, [key]: reference } })
   }
 
   /** Test values of the task currently authoring in this Episode. */

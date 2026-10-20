@@ -37,6 +37,9 @@ import type {
   CommunityFeedbackDraft,
   CommunityFeedbackDraftId,
   CommunityFeedbackItem,
+  CredentialAgentScope,
+  CredentialId,
+  CredentialMetadata,
 } from '@nekro-nxt/contracts'
 import type { AgentCompactionPolicy, StoredAgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import type {
@@ -1857,5 +1860,60 @@ export const extensionIndexVectors = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.documentRowId, table.space] }),
     index('extension_index_vectors_space_idx').on(table.space, table.documentRowId),
+  ],
+)
+
+/**
+ * Named credentials. The value lives in the local credential store under `credential_ref`; this row is the metadata
+ * that decides who may use it and how. Names are unique as typed; the service also rejects case-only duplicates.
+ */
+export const credentials = sqliteTable(
+  'credentials',
+  {
+    id: text().$type<CredentialId>().primaryKey(),
+    name: text().notNull().unique(),
+    description: text().notNull().default(''),
+    kind: text({ enum: ['generic', 'github'] }).notNull(),
+    usage: text({ enum: ['request', 'program'] }).notNull(),
+    domains: jsonText<readonly string[]>('domains').notNull(),
+    agentScope: jsonText<CredentialAgentScope>('agent_scope').notNull(),
+    autoUse: integer('auto_use', { mode: 'boolean' }).notNull(),
+    /** Environment variable commands receive a program credential under; GitHub credentials use `GH_TOKEN`. */
+    envName: text('env_name'),
+    /** Agents an administrator let use the credential while automatic use is off. */
+    approvedAgentIds: jsonText<readonly AgentId[]>('approved_agent_ids').notNull(),
+    credentialRef: text('credential_ref').notNull(),
+    metadata: jsonText<CredentialMetadata>('metadata').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+  },
+  (table) => [
+    check('credentials_kind_ck', sql`${table.kind} IN ('generic', 'github')`),
+    check('credentials_usage_ck', sql`${table.usage} IN ('request', 'program')`),
+  ],
+)
+
+/** Recorded uses of a credential; the repository keeps the newest ones per credential and drops old ones. */
+export const credentialUses = sqliteTable(
+  'credential_uses',
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    credentialId: text('credential_id')
+      .$type<CredentialId>()
+      .notNull()
+      .references(() => credentials.id, { onDelete: 'cascade' }),
+    at: integer().notNull(),
+    // Not foreign keys: the record outlives agents and channels that are deleted later.
+    agentId: text('agent_id').$type<AgentId>(),
+    channelId: text('channel_id').$type<ChannelId>(),
+    requesterMemberId: text('requester_member_id'),
+    consumerKind: text('consumer_kind', { enum: ['extension', 'command', 'mcp', 'model'] }).notNull(),
+    consumerId: text('consumer_id').notNull(),
+    targetHost: text('target_host'),
+  },
+  (table) => [
+    index('credential_uses_credential_idx').on(table.credentialId, table.at),
+    check('credential_uses_consumer_kind_ck', sql`${table.consumerKind} IN ('extension', 'command', 'mcp', 'model')`),
   ],
 )

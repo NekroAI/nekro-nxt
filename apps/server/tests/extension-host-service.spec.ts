@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { configSchema, type ExtensionCapabilities, type JsonValue } from '@nekro-nxt/contracts'
+import { configSchema, CredentialIdSchema, type ExtensionCapabilities, type JsonValue } from '@nekro-nxt/contracts'
 import { extensionManifestSchema } from '@nekro-nxt/extension-runtime'
 import type { NxtCallContext, NxtPromptRenderApi } from '@nekro-nxt/extension-sdk'
-import { memoryNxtJobs, memoryNxtStorage, resolveExtensionSecret } from '../src/extension-host-backends.js'
+import {
+  memoryNxtJobs,
+  memoryNxtStorage,
+  resolveExtensionSecret,
+  type NamedCredentialResolver,
+  type NamedCredentialUse,
+} from '../src/extension-host-backends.js'
 import {
   createNxtHostService,
   NxtCapabilityError,
@@ -25,7 +31,14 @@ const callContext: NxtCallContext = {
   },
 }
 
-const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonValue = {}) => {
+/** Secret fields the fixture Manifest declares in the agent layer. */
+const DECLARED_SECRETS = ['token', 'plain', 'missing', 'named', 'requestOnly', 'foreign']
+
+const fixture = (
+  capabilities: ExtensionCapabilities | undefined,
+  config: JsonValue = {},
+  options: { readonly sdk?: number; readonly namedCredential?: NamedCredentialResolver } = {},
+) => {
   const fetch = vi.fn<NxtServiceBackends['fetch']>(() =>
     Promise.resolve({
       url: 'https://api.example.com/',
@@ -45,6 +58,10 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
   const complete = vi.fn<NxtServiceBackends['complete']>((_binding, request, maxOutputTokens) =>
     Promise.resolve({ text: `reply:${request.messages.length}:${maxOutputTokens}` }),
   )
+  const facts = {
+    resolveCredential: (reference: string) => Promise.resolve(`secret-of:${reference}`),
+    ...(options.namedCredential === undefined ? {} : { namedCredential: options.namedCredential }),
+  }
   const backends: NxtServiceBackends = {
     fetch,
     complete,
@@ -65,12 +82,8 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
       raw: (_binding, api) => Promise.resolve({ status: 'succeeded' as const, message: api }),
       selfPlatformUserId: () => Promise.resolve('10001'),
     },
-    secret: (binding, key) =>
-      resolveExtensionSecret(
-        { resolveCredential: (reference) => Promise.resolve(`secret-of:${reference}`) },
-        binding.config(),
-        key,
-      ),
+    secret: async (binding, key) => (await resolveExtensionSecret(facts, binding, key, 'program'))?.value,
+    requestSecret: (binding, key, targetHost) => resolveExtensionSecret(facts, binding, key, 'request', targetHost),
     createAsset,
     callContext: () => Promise.resolve(callContext),
     members: {
@@ -89,6 +102,7 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
     },
   }
   const binding: NxtServiceBinding = {
+    ...(options.sdk === undefined ? {} : { sdk: options.sdk }),
     mode: 'activation',
     agentId: 'agt_FIXTURE',
     ownerKey: 'ext_FIXTURE',
@@ -96,6 +110,7 @@ const fixture = (capabilities: ExtensionCapabilities | undefined, config: JsonVa
     channelId: 'chn_FIXTURE',
     capabilities: () => capabilities,
     config: () => config,
+    declaredSecrets: () => ({ config: DECLARED_SECRETS, hostConfig: [] }),
   }
   const sections: { name: string; text: string }[] = []
   const contexts = new Map<string, () => string>()
@@ -307,14 +322,77 @@ describe('nxt Host service', () => {
     })
   })
 
-  it('reads secrets only from Host credential references', async () => {
+  it('reads secrets only from Host credential references in declared secret fields', async () => {
     const { nxt } = fixture(undefined, {
       token: 'credential:local:0123456789abcdef0123456789abcdef',
       plain: 'not-a-reference',
+      undeclared: 'credential:local:0123456789abcdef0123456789abcdef',
     })
     expect(await nxt.secrets.get('token')).toBe('secret-of:credential:local:0123456789abcdef0123456789abcdef')
     expect(await nxt.secrets.get('plain')).toBeUndefined()
     expect(await nxt.secrets.get('missing')).toBeUndefined()
+    // A reference in a field the Manifest does not declare as a secret is never resolved.
+    expect(await nxt.secrets.get('undeclared')).toBeUndefined()
+  })
+
+  it('resolves a named credential only for an agent in scope, and program reads only for program use', async () => {
+    const uses: NamedCredentialUse[] = []
+    const namedCredential: NamedCredentialResolver = (use) => {
+      uses.push(use)
+      if (use.id === 'crd_FOREIGN') return undefined
+      if (use.id === 'crd_REQUEST' && use.purpose === 'program') return undefined
+      return {
+        value: `value-of:${use.id}`,
+        usage: use.id === 'crd_REQUEST' ? 'request' : 'program',
+        domains: use.id === 'crd_REQUEST' ? ['api.example.com'] : [],
+      }
+    }
+    const { nxt } = fixture(
+      undefined,
+      {
+        named: 'credential:named:crd_PROGRAM',
+        requestOnly: 'credential:named:crd_REQUEST',
+        foreign: 'credential:named:crd_FOREIGN',
+      },
+      { namedCredential },
+    )
+    expect(await nxt.secrets.get('named')).toBe('value-of:crd_PROGRAM')
+    expect(await nxt.secrets.get('requestOnly')).toBeUndefined()
+    expect(await nxt.secrets.get('foreign')).toBeUndefined()
+    expect(uses.map((use) => [use.id, use.agentId, use.purpose, use.extensionId])).toEqual([
+      ['crd_PROGRAM', 'agt_FIXTURE', 'program', 'ext_FIXTURE'],
+      ['crd_REQUEST', 'agt_FIXTURE', 'program', 'ext_FIXTURE'],
+      ['crd_FOREIGN', 'agt_FIXTURE', 'program', 'ext_FIXTURE'],
+    ])
+  })
+
+  it('fills credential placeholders in requests the host sends, never handing the value to code', async () => {
+    const namedCredential: NamedCredentialResolver = (use) =>
+      use.id === 'crd_REQUEST'
+        ? { value: 'request-only-fixture-key', usage: 'request', domains: ['api.example.com'] }
+        : undefined
+    const network = { network: { mode: 'domains' as const, domains: ['api.example.com'] } }
+    const { nxt, fetch } = fixture(
+      network,
+      { requestOnly: 'credential:named:crd_REQUEST', foreign: 'credential:named:crd_FOREIGN' },
+      { sdk: 12, namedCredential },
+    )
+    const token = nxt.secrets.placeholder('requestOnly')
+    expect(token).toMatch(/^\{\{nxt-credential:[a-f0-9]{24}\}\}$/u)
+    expect(nxt.secrets.placeholder('requestOnly')).toBe(token)
+    expect(token).not.toContain('request-only-fixture-key')
+
+    await nxt.http.fetch(`https://api.example.com/v1?key=${token}`, { headers: { authorization: `Bearer ${token}` } })
+    expect(fetch.mock.calls[0]?.[3]).toEqual([
+      { token, value: 'request-only-fixture-key', domains: ['api.example.com'] },
+    ])
+
+    const foreign = nxt.secrets.placeholder('foreign')
+    await expect(nxt.http.fetch(`https://api.example.com/?k=${foreign}`)).rejects.toThrow('还没有设置')
+    await expect(
+      nxt.http.fetch('https://api.example.com/?k={{nxt-credential:0123456789abcdef01234567}}'),
+    ).rejects.toThrow('不属于这个扩展')
+    expect(() => fixture(network, {}, { sdk: 11 }).nxt.secrets.placeholder('requestOnly')).toThrow('requires.sdk')
   })
 })
 
@@ -398,5 +476,62 @@ describe.each(['host', 'agent'] as const)('extension %s secret configuration', (
         commit: (config) => Promise.resolve(config),
       }),
     ).rejects.toThrow(/不是凭据字段/u)
+  })
+
+  it('binds a secret field to a named credential and lists the binding, never deleting the credential', async () => {
+    const deleted: string[] = []
+    const credentials = {
+      save: () => Promise.reject(new Error('nothing is typed')),
+      delete: (reference: string) => {
+        deleted.push(reference)
+        return Promise.resolve()
+      },
+    }
+    const known = CredentialIdSchema.parse('crd_WEATHER')
+    const bound = await commitExtensionConfigWithSecrets({
+      manifest,
+      layer,
+      previous: { city: '旧市', token: 'credential:local:old' },
+      config: { city: '新市' },
+      secrets: undefined,
+      bindings: { token: known },
+      credentialExists: (id) => id === known,
+      credentials,
+      commit: (config) => Promise.resolve(config),
+    })
+    expect(bound).toEqual({ city: '新市', token: 'credential:named:crd_WEATHER' })
+    expect(deleted).toEqual(['credential:local:old'])
+    expect(maskExtensionSecrets(manifest, layer, bound)).toEqual({
+      config: { city: '新市' },
+      configuredSecrets: ['token'],
+      boundCredentials: { token: known },
+    })
+
+    const cleared = await commitExtensionConfigWithSecrets({
+      manifest,
+      layer,
+      previous: bound,
+      config: { city: '新市' },
+      secrets: undefined,
+      bindings: { token: null },
+      credentialExists: () => true,
+      credentials,
+      commit: (config) => Promise.resolve(config),
+    })
+    expect(cleared).toEqual({ city: '新市' })
+    expect(deleted).toEqual(['credential:local:old'])
+    await expect(
+      commitExtensionConfigWithSecrets({
+        manifest,
+        layer,
+        previous: {},
+        config: {},
+        secrets: undefined,
+        bindings: { token: CredentialIdSchema.parse('crd_GONE') },
+        credentialExists: () => false,
+        credentials,
+        commit: (config) => Promise.resolve(config),
+      }),
+    ).rejects.toThrow('已不存在')
   })
 })

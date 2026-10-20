@@ -197,7 +197,7 @@ test.describe('workshop', () => {
     )
     await page.route(`**/api/authoring/tasks/${taskId}/test-secrets`, async (route) => {
       submitted = route.request().postDataJSON()
-      await route.fulfill({ json: { configured: ['apiKey'], values: { endpoint: 'http://192.0.2.10:8080' } } })
+      await route.fulfill({ json: { configured: ['apiKey'], values: { endpoint: 'http://nas.example.test:8080' } } })
     })
     try {
       await page.goto(`${baseUrl}/workshop/tasks/${taskId}`)
@@ -207,14 +207,14 @@ test.describe('workshop', () => {
       await expect(input).toBeVisible()
       const save = page.getByRole('button', { name: '保存测试配置' })
       await expect(save).toBeDisabled()
-      await endpoint.fill('http://192.0.2.10:8080')
+      await endpoint.fill('http://nas.example.test:8080')
       await input.fill('fixture-test-key')
       await page.screenshot({ path: '.local/browser-test-results/authoring-test-config.png' })
       await save.click()
       await expect
         .poll(() => submitted)
-        .toEqual({ secrets: { apiKey: 'fixture-test-key' }, values: { endpoint: 'http://192.0.2.10:8080' } })
-      await expect(endpoint).toHaveValue('http://192.0.2.10:8080')
+        .toEqual({ secrets: { apiKey: 'fixture-test-key' }, values: { endpoint: 'http://nas.example.test:8080' } })
+      await expect(endpoint).toHaveValue('http://nas.example.test:8080')
       await expect(save).toBeDisabled()
       await expect(input).toHaveValue('')
       await expect(input).toHaveAttribute('placeholder', '已保存，留空则不修改')

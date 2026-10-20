@@ -22,6 +22,7 @@ import {
   ChannelIdSchema,
   CommandDefinitionSchema,
   ConnectionIdSchema,
+  configSecretKeys,
   hostLayerAsCapabilities,
   parseJsonValue,
   type JsonValue,
@@ -50,6 +51,7 @@ import {
   ExtensionService,
   ExtensionSourceStore,
   hostUiPermissionDigest,
+  layerConfigSchema,
   type Revision,
 } from '@nekro-nxt/extension-runtime'
 import {
@@ -71,7 +73,9 @@ import { ConnectionApplicationService } from './connection-application.js'
 import { LocalCredentialStore } from './credentials.js'
 import { redactInboundEvent } from './credential-redaction.js'
 import { SecretRegistry } from './secret-registry.js'
-import { CommandAccountService } from './command-accounts.js'
+import { CredentialLibrary, namedCredentialId } from './credentials-library.js'
+import { CredentialRequests } from './credential-requests.js'
+import { ModelProviderAccess, openModelOptions } from './model-provider-access.js'
 import { GithubCli } from './github-cli.js'
 import { CandidateVerifier } from './candidate-verifier.js'
 import { VerificationBrowser } from './verification-browser.js'
@@ -260,7 +264,12 @@ export class NekroRuntime {
   #candidateVerifier: CandidateVerifier | undefined
   #subConversationChanges = new Set<() => void>()
   #subConversationSweep: ReturnType<typeof setInterval> | undefined
-  readonly commandAccounts: CommandAccountService
+  /** Named credentials; also the library behind the older command account routes. */
+  readonly credentialLibrary: CredentialLibrary
+  /** Credentials agents asked for that nobody has added yet. */
+  readonly credentialRequests: CredentialRequests
+  /** Which model providers agents and extensions may call through the host. */
+  readonly modelProviderAccess: ModelProviderAccess
   readonly retrieval: RetrievalRuntime
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
@@ -314,7 +323,9 @@ export class NekroRuntime {
     readonly codeRunNode: CodeRunNode
     readonly githubCli: GithubCli
     readonly verificationBrowser: VerificationBrowser
-    readonly commandAccounts: CommandAccountService
+    readonly credentialLibrary: CredentialLibrary
+    readonly credentialRequests: CredentialRequests
+    readonly modelProviderAccess: ModelProviderAccess
     readonly retrieval: RetrievalRuntime
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
@@ -434,7 +445,9 @@ export class NekroRuntime {
     this.codeRunNode = input.codeRunNode
     this.githubCli = input.githubCli
     this.verificationBrowser = input.verificationBrowser
-    this.commandAccounts = input.commandAccounts
+    this.credentialLibrary = input.credentialLibrary
+    this.credentialRequests = input.credentialRequests
+    this.modelProviderAccess = input.modelProviderAccess
     this.retrieval = input.retrieval
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
@@ -623,6 +636,11 @@ export class NekroRuntime {
       const hostReference: { current?: DshHostRuntime } = {}
       const memberRelations = channelMemberRelations(core, repository, now)
       const channelPrompts = new ChannelPrompts(repository, now)
+      // The library is prepared below, before any extension or command runs; facts reach it lazily.
+      const credentialPort: { current?: CredentialLibrary } = {}
+      // Created with the extension service below; Manifests are only read once extensions run.
+      const extensionServicePort: { current?: ExtensionService } = {}
+      const providerAccess = new ModelProviderAccess(repository, now)
       const nxtFacts: NxtProductFacts = {
         history: repository,
         getConnectionName: (connectionId) => {
@@ -645,12 +663,48 @@ export class NekroRuntime {
           return { assetId: asset.assetId, byteSize: asset.byteSize, mediaType: asset.mediaType }
         },
         resolveCredential: (reference) => credentials.resolve(reference),
+        namedCredential: (use) => {
+          const library = credentialPort.current
+          if (library === undefined) return undefined
+          const usable = library.usable(use.id, use.agentId, use.purpose)
+          if (usable === undefined) return undefined
+          if ('denied' in usable) {
+            const extension = ExtensionIdSchema.safeParse(use.extensionId)
+            options.logs?.write({
+              level: 'warn',
+              message: usable.denied,
+              source: extension.success
+                ? {
+                    kind: 'extension',
+                    id: extension.data,
+                    name: repository.getExtension(extension.data)?.displayName ?? '扩展',
+                  }
+                : { kind: 'system', id: 'credentials', name: '凭据' },
+              scope: {
+                ...(use.agentId === undefined ? {} : { agentId: use.agentId }),
+                ...(use.channelId === undefined ? {} : { channelId: use.channelId }),
+                ...(extension.success ? { extensionId: extension.data } : {}),
+              },
+            })
+            return undefined
+          }
+          library.recordUse({
+            credentialId: use.id,
+            agentId: use.agentId,
+            channelId: use.channelId,
+            consumerKind: use.consumerKind,
+            consumerId: use.extensionId,
+            targetHost: use.targetHost,
+          })
+          return { value: usable.value, usage: usable.record.usage, domains: usable.record.domains }
+        },
+        findCredential: (reference) => credentialPort.current?.find(reference)?.id,
         members: memberRelations,
         accountPlatformUserId: (connectionId) =>
           core.connectionAccountPlatformUserId(ConnectionIdSchema.parse(connectionId)),
       }
-      const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init) =>
-        createExtensionEgress({ policy }).fetch(url, init)
+      const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init, secrets) =>
+        createExtensionEgress({ policy }).fetch(url, init, secrets)
       // The model runtime lives in the DSH Host created below; extension calls only happen after it exists.
       const nxtComplete: NxtServiceBackends['complete'] = (binding, request, maxOutputTokens) => {
         if (!hostReference.current) return Promise.reject(new Error('DSH Host is not ready.'))
@@ -664,23 +718,7 @@ export class NekroRuntime {
       const nxtModels: NxtServiceBackends['models'] = {
         list: async () => {
           const host = hostReference.current
-          if (host === undefined) return []
-          // Only providers that can actually answer: active and, when they take a key, with one set.
-          const usable = new Set(
-            (await host.getLlmProviderSettings()).providers
-              .filter((provider) => provider.active && provider.credential?.configured !== false)
-              .map((provider) => provider.provider),
-          )
-          return (await host.listAvailableLlmModels())
-            .filter((model) => usable.has(model.provider))
-            .map((model) => ({
-              ref: `${model.provider}:${model.id}`,
-              provider: model.provider,
-              providerName: model.providerName,
-              model: model.id,
-              name: model.name,
-              vision: model.inputModalities?.includes('image') === true,
-            }))
+          return host === undefined ? [] : openModelOptions(host, providerAccess)
         },
         complete: (binding, request, maxOutputTokens) => {
           if (!hostReference.current) return Promise.reject(new Error('DSH Host is not ready.'))
@@ -766,6 +804,7 @@ export class NekroRuntime {
               channelId: job.channelId,
               capabilities: () => described.capabilities,
               config: () => registered.config,
+              declaredSecrets: () => ({ config: described.secretKeys.agent, hostConfig: [] }),
             },
             extensionHost.activationBackends,
           )
@@ -904,10 +943,14 @@ export class NekroRuntime {
         }),
         describeRevision: (revision: Revision) => {
           const permissions = repository.getExtensionRevisionVerification(revision.id)?.permissions
+          const manifest = extensionServicePort.current?.revisionManifest(revision)
+          const secretKeys = (layer: 'host' | 'agent') =>
+            manifest === undefined ? [] : configSecretKeys(layerConfigSchema(manifest, layer))
           return {
             displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
             capabilities: permissions?.agent,
             hostCapabilities: hostLayerAsCapabilities(permissions?.host),
+            secretKeys: { agent: secretKeys('agent'), host: secretKeys('host') },
           }
         },
         adapters: {
@@ -960,11 +1003,25 @@ export class NekroRuntime {
           : {}),
       })
       await verificationBrowser.prepare()
-      const commandAccounts = new CommandAccountService(repository, credentials, {
-        githubCli: () => githubCli.executable(),
+      const credentialLibrary = new CredentialLibrary(repository, credentials, {
+        secrets,
         now,
+        nextId: () => nextUlid(),
+        githubCli: () => githubCli.executable(),
+        // Agents that held a `commandAccounts` grant keep the migrated GitHub credential.
+        accountGrants: () => {
+          const grants = new Map<string, AgentId[]>()
+          for (const commit of core.listAgents()) {
+            for (const grant of commit.revision.capabilities.commandAccounts) {
+              grants.set(grant.accountId, [...(grants.get(grant.accountId) ?? []), commit.definition.id])
+            }
+          }
+          return grants
+        },
       })
-      await commandAccounts.prepare()
+      await credentialLibrary.prepare()
+      credentialPort.current = credentialLibrary
+      const notificationsPort: { current?: NotificationService } = {}
       const feedbackPort: { current?: CommunityFeedbackService } = {}
       const governancePort: { current?: ExtensionGovernanceTools } = {}
       const subConversationChanges = new Set<() => void>()
@@ -990,8 +1047,18 @@ export class NekroRuntime {
         },
         codeRunNode: () => codeRunNode.executable(),
         commandAccounts: {
-          tokenFor: (accountId) => commandAccounts.tokenFor(accountId),
-          loginOf: (accountId) => commandAccounts.loginOf(accountId),
+          credentials: (agentId) =>
+            credentialLibrary.commandCredentials(agentId).map(({ record, value, env }) => ({
+              id: record.id,
+              name: record.name,
+              description: record.description,
+              kind: record.kind,
+              env,
+              ...(record.metadata.login === undefined ? {} : { login: record.metadata.login }),
+              value,
+            })),
+          used: (credentialId, agentId) =>
+            credentialLibrary.recordUse({ credentialId, agentId, consumerKind: 'command', consumerId: 'shell' }),
           githubCliDirectory: () => githubCli.directoryForPath(),
           githubCliAvailable: () => githubCli.executable() !== undefined,
         },
@@ -1068,6 +1135,7 @@ export class NekroRuntime {
               channelId,
               capabilities: () => described.capabilities,
               config: () => handler.config,
+              declaredSecrets: () => ({ config: described.secretKeys.agent, hostConfig: [] }),
             },
             extensionHost.activationBackends,
           )
@@ -1189,10 +1257,48 @@ export class NekroRuntime {
         builder: extensionBuilder,
         importVerifier: verifyImportedExtensionRevision,
       })
+      extensionServicePort.current = extensionService
       const notifications = new NotificationService(repository, credentials, {
         ...(options.notifications?.fetch === undefined ? {} : { fetch: options.notifications.fetch }),
         now,
       })
+      notificationsPort.current = notifications
+      await providerAccess.prepare(async () => {
+        try {
+          return (await host.getLlmProviderSettings()).providers.map((provider) => provider.provider)
+        } catch {
+          // Hosts without model settings have no providers to open.
+          return []
+        }
+      })
+      const credentialRequests = new CredentialRequests(
+        repository,
+        {
+          notify: (request) => {
+            const agentDisplayName = repository.getAgent(request.agentId)?.revision.displayName ?? '智能体'
+            void notificationsPort.current
+              ?.notifyCredentialRequest({
+                requestId: request.id,
+                agentDisplayName,
+                name: request.name,
+                purpose: request.purpose,
+                route: request.route,
+              })
+              .catch((error: unknown) => {
+                console.warn('[nekro-nxt] 凭据申请通知发送失败：', error instanceof Error ? error.message : error)
+              })
+          },
+          wake: (request, name) =>
+            host.notifyAgent({
+              agentId: request.agentId,
+              ...(request.channelId === null ? {} : { channelId: request.channelId }),
+              identity: `credential-request:${request.id}:added`,
+              text: `〔系统通知〕你申请的凭据「${name}」已经添加。用 nekro_nxt_credential_list 确认它对你开放，再接着刚才的事。`,
+            }),
+        },
+        now,
+      )
+
       const community = new CommunityService(repository, credentials, {
         communityUrl: options.community?.url,
         ...(options.community?.fetch === undefined ? {} : { fetch: options.community.fetch }),
@@ -1270,7 +1376,9 @@ export class NekroRuntime {
         codeRunNode,
         githubCli,
         verificationBrowser,
-        commandAccounts,
+        credentialLibrary,
+        credentialRequests,
+        modelProviderAccess: providerAccess,
         retrieval,
         channelPrompts,
         mcpStatus,
@@ -1451,9 +1559,16 @@ export class NekroRuntime {
     })
   }
 
-  /** Failures are logged, not thrown: the product operation has already committed. */
+  /**
+   * Failures are logged, not thrown: the product operation has already committed. Bindings to named credentials are
+   * skipped; those credentials belong to the library.
+   */
   async #deleteCredentials(references: readonly string[]): Promise<void> {
-    const results = await Promise.allSettled(references.map((reference) => this.credentials.delete(reference)))
+    const results = await Promise.allSettled(
+      references
+        .filter((reference) => namedCredentialId(reference) === undefined)
+        .map((reference) => this.credentials.delete(reference)),
+    )
     for (const result of results) {
       if (result.status === 'rejected') console.warn('[nekro-nxt] 扩展凭据清理失败：', String(result.reason))
     }

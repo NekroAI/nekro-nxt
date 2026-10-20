@@ -866,6 +866,73 @@ return { inject: ['nxt'], apply() {} }`
     }
   })
 
+  it('gives a dynamic run a placeholder for a bound request-only credential, never its value', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    // The probe reports what it saw by failing with it, so the trial run returns the observation.
+    const host = `return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'placeholder_probe',
+      description: 'Reports what the bound credential looks like to code.',
+      parameters: {},
+      output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+      async execute() {
+        const token = ctx.nxt.secrets.placeholder('apiKey')
+        const read = await ctx.nxt.secrets.get('apiKey')
+        throw new Error('observed ' + JSON.stringify({ token, read: read ?? null }))
+      }
+    }))
+  }
+}`
+    try {
+      const credential = await runtime.credentialLibrary.create({
+        kind: 'generic',
+        name: '示例天气',
+        value: 'fictional-weather-key',
+        domains: ['api.weather.test'],
+      })
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'phd' },
+        name: '占位符探针',
+        purpose: '验证凭据占位符。',
+        code: { host },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        config: {
+          agent: {
+            schema: {
+              type: 'object',
+              dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
+            },
+          },
+        },
+        contributions: [],
+      })
+      const task = await vi.waitFor(() => {
+        const recorded = runtime.repository.listAuthoringTasks(entity.agentId)[0]
+        if (recorded === undefined || runtime.repository.listAuthoringAttempts(recorded.id).length === 0) {
+          throw new Error('authoring task not recorded yet')
+        }
+        return recorded
+      })
+      await new ExtensionGovernanceTools(runtime).setTestConfig(task.id, { apiKey: { credential: '示例天气' } })
+      expect(runtime.authoringTestConfig.values(task.id).agentProvided).toEqual({
+        apiKey: `credential:named:${credential.id}`,
+      })
+      const failure = await runtime.host
+        .runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+        .then(
+          () => '',
+          (error: unknown) => (error instanceof Error ? error.message : String(error)),
+        )
+      expect(failure).toMatch(/observed \{"token":"\{\{nxt-credential:[a-f0-9]{24}\}\}","read":null\}/u)
+      expect(failure).not.toContain('fictional-weather-key')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('layers test values as defaults, then the agent’s, then the user’s, and only the user’s reach a private network', async () => {
     const server = createServer((_request, response) =>
       response.writeHead(200, { 'content-type': 'text/plain' }).end('pong'),

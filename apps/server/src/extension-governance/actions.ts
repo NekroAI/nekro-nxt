@@ -1,6 +1,7 @@
 import {
   AgentIdSchema,
   AuthoringTaskIdSchema,
+  CredentialIdSchema,
   configFields,
   ExtensionIdSchema,
   ExtensionRevisionIdSchema,
@@ -29,6 +30,7 @@ import type { NekroRuntime } from '../bootstrap.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../dsh-version.js'
 import { createExtensionRevisionExport } from '../host-route-support.js'
 import { ExtensionConfigMigration } from './config-migration.js'
+import { namedCredentialReference } from '../credentials-library.js'
 import { extensionVersions } from './versions.js'
 
 /** Who asks for an extension action. Console and administrators act for themselves; agents are bound by autonomy. */
@@ -84,6 +86,17 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     agentId: AgentIdSchema.optional(),
   }),
   z.object({ kind: z.literal('community-withdraw'), releaseId: z.string() }),
+  /**
+   * Lets an agent use a named credential whose automatic use is off (智能体扩展配置与凭据 C3): the approval stays on the
+   * credential. With a task and a field, that field of the task's test configuration is bound to it as well.
+   */
+  z.object({
+    kind: z.literal('use-credential'),
+    credentialId: CredentialIdSchema,
+    agentId: AgentIdSchema,
+    taskId: AuthoringTaskIdSchema.optional(),
+    key: z.string().optional(),
+  }),
 ])
 export type ExtensionAction = z.output<typeof ExtensionActionSchema>
 
@@ -138,6 +151,13 @@ export class ExtensionActionService {
     const { summary, level, added, affectsOthers } = this.#describe(action, actor)
     const base = { summary, level, added }
     if (actor.kind === 'console') return { ...base, decision: 'run' }
+    // Using a credential is not extension work: every autonomy level may ask, and only the credential needs a yes.
+    if (action.kind === 'use-credential') {
+      if (actor.kind === 'administrator') return { ...base, decision: 'run' }
+      const scope = this.#agentScope(action, actor.agentId)
+      if (scope !== undefined) return { ...base, decision: 'console', reason: scope }
+      return { ...base, decision: 'request', reason: '这个凭据需要管理员同意后才能使用。' }
+    }
     if (actor.kind === 'administrator') {
       return level === 'high'
         ? { ...base, decision: 'console', reason: '涉及高风险权限，需要在 NekroNXT 后台确认。' }
@@ -345,6 +365,21 @@ export class ExtensionActionService {
       case 'community-withdraw': {
         await runtime.community.withdraw(action.releaseId)
         return { message: '已撤回这次发布。' }
+      }
+      case 'use-credential': {
+        const credential = runtime.credentialLibrary.get(action.credentialId)
+        if (credential === undefined) throw new Error('这个凭据已经被删除。')
+        await runtime.credentialLibrary.approve(action.credentialId, action.agentId)
+        const allowed = `${this.#agentName(action.agentId)}可以使用凭据「${credential.name}」了。`
+        if (action.taskId === undefined || action.key === undefined) return { message: allowed }
+        const task = runtime.repository.getAuthoringTask(action.taskId)
+        if (task === undefined) throw new Error('这个创造任务已经不在了。')
+        await runtime.authoringTestConfig.bindCredential(
+          action.taskId,
+          action.key,
+          namedCredentialReference(action.credentialId),
+        )
+        return { message: `${allowed}「${task.title}」的试运行已经用上它。` }
       }
     }
   }
@@ -587,6 +622,13 @@ export class ExtensionActionService {
         return { ...normal, summary: '从社区安装扩展' }
       case 'community-withdraw':
         return { ...normal, summary: '撤回一次社区发布' }
+      case 'use-credential': {
+        const credential = runtime.credentialLibrary.get(action.credentialId)
+        return {
+          ...normal,
+          summary: `让${this.#agentName(action.agentId)}使用凭据「${credential?.name ?? '已删除的凭据'}」`,
+        }
+      }
     }
   }
 
@@ -612,6 +654,13 @@ export class ExtensionActionService {
         return action.agentId === undefined || action.agentId === agentId ? undefined : '只能给自己安装启用。'
       case 'community-withdraw':
         return undefined
+      case 'use-credential': {
+        if (action.agentId !== agentId) return '只能为自己申请使用凭据。'
+        if (action.taskId === undefined) return undefined
+        return runtime.repository.getAuthoringTask(action.taskId)?.agentId === agentId
+          ? undefined
+          : '只能在自己的创造任务里使用凭据。'
+      }
     }
   }
 

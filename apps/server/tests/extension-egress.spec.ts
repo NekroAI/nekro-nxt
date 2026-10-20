@@ -47,6 +47,12 @@ beforeEach(async () => {
       } else if (url.startsWith('/redirect-to/')) {
         response.writeHead(302, { location: decodeURIComponent(url.slice('/redirect-to/'.length)) })
         response.end()
+      } else if (url.startsWith('/temporary-to/')) {
+        response.writeHead(307, { location: decodeURIComponent(url.slice('/temporary-to/'.length)) })
+        response.end()
+      } else if (url.startsWith('/json?')) {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end('{"ok":true}')
       } else if (url === '/see-other') {
         response.writeHead(303, { location: '/json' })
         response.end()
@@ -196,5 +202,70 @@ describe('extension egress', () => {
     await egress.fetch(`http://api.example.com:${port}/json`)
     await egress.fetch(`http://api.example.com:${port}/json`, { headers: { 'user-agent': 'FixtureAgent/1' } })
     expect(received.map(({ headers }) => headers['user-agent'])).toEqual(['NekroNXT-Extension', 'FixtureAgent/1'])
+  })
+})
+
+describe('credential placeholders', () => {
+  const token = '{{nxt-credential:0123456789abcdef01234567}}'
+  const other = '{{nxt-credential:fedcba9876543210fedcba98}}'
+  const secrets = [
+    { token, value: 'weather-fixture-key', domains: ['api.example.com'] },
+    { token: other, value: 'mirror-fixture-key', domains: ['*.mirror.example.org'] },
+  ]
+
+  it('fills a credential into the URL, headers and body only for its own domains', async () => {
+    const egress = egressFor({ mode: 'unrestricted' })
+    const response = await egress.fetch(
+      `http://api.example.com:${port}/echo`,
+      { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: `{"key":"${token}"}` },
+      secrets,
+    )
+    expect(received[0]?.headers['authorization']).toBe('Bearer weather-fixture-key')
+    expect(Buffer.from(response.base64 ?? '', 'base64').toString()).toBe('{"key":"weather-fixture-key"}')
+
+    const query = await egress.fetch(`http://api.example.com:${port}/json?key=${token}`, undefined, secrets)
+    expect(received[1]?.url).toBe('/json?key=weather-fixture-key')
+    // The final URL handed back to the extension carries the placeholder again, not the value.
+    expect(query.url).toContain(token)
+    expect(query.url).not.toContain('weather-fixture-key')
+
+    const wrongHost = await failure(
+      egress.fetch(`http://api.example.com:${port}/json`, { headers: { 'x-key': other } }, secrets),
+    )
+    expect(wrongHost.code).toBe('policy-denied')
+    expect(wrongHost.message).not.toContain('mirror-fixture-key')
+    await egress.fetch(`http://eu.mirror.example.org:${port}/json`, { headers: { 'x-key': other } }, secrets)
+    expect(received.at(-1)?.headers['x-key']).toBe('mirror-fixture-key')
+    expect((await failure(egress.fetch(`http://${token}.example.com:${port}/json`, undefined, secrets))).code).toBe(
+      'invalid-url',
+    )
+    expect(received).toHaveLength(3)
+  })
+
+  it('does not carry a filled credential to another host on a redirect', async () => {
+    const egress = egressFor({ mode: 'unrestricted' })
+    const away = encodeURIComponent(`http://elsewhere.example.net:${port}/json`)
+    await egress.fetch(
+      `http://api.example.com:${port}/redirect-to/${away}`,
+      { headers: { 'x-api-key': token, 'x-trace': 'kept' } },
+      secrets,
+    )
+    const [first, second] = received
+    expect(first?.headers['x-api-key']).toBe('weather-fixture-key')
+    expect(second?.headers['x-api-key']).toBeUndefined()
+    expect(second?.headers['x-trace']).toBe('kept')
+    expect(JSON.stringify(second?.headers)).not.toContain('weather-fixture-key')
+
+    received.length = 0
+    const withBody = await failure(
+      egress.fetch(
+        `http://api.example.com:${port}/temporary-to/${away}`,
+        { method: 'POST', body: `key=${token}` },
+        secrets,
+      ),
+    )
+    expect(withBody.code).toBe('policy-denied')
+    expect(received).toHaveLength(1)
+    expect(received[0]?.body.toString()).toBe('key=weather-fixture-key')
   })
 })

@@ -7,6 +7,7 @@ import type { SystemSettingRecord } from '@nekro-nxt/storage-sqlite'
 import { LocalCredentialStore } from '../src/credentials.js'
 import {
   COMMUNITY_FEEDBACK_NOTIFICATION,
+  CREDENTIAL_REQUEST_NOTIFICATION,
   DYNAMIC_CLIENT_APPROVAL_NOTIFICATION,
   NotificationService,
 } from '../src/notifications.js'
@@ -78,8 +79,46 @@ describe('NotificationService', () => {
     await expect(service.getSettings()).resolves.toEqual({
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
-      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true, [COMMUNITY_FEEDBACK_NOTIFICATION]: true },
+      events: {
+        [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true,
+        [COMMUNITY_FEEDBACK_NOTIFICATION]: true,
+        [CREDENTIAL_REQUEST_NOTIFICATION]: true,
+      },
     })
+  })
+
+  it('tells about a credential request with a link to the pre-filled form, unless that event is off', async () => {
+    const { service } = await createFixture()
+    await expect(
+      service.notifyCredentialRequest({
+        requestId: 'crq_fixture',
+        agentDisplayName: '示例智能体',
+        name: '天气服务',
+        purpose: '查天气',
+        route: '/settings/credentials?add=1&name=%E5%A4%A9%E6%B0%94',
+      }),
+    ).resolves.toBe('sent')
+    expect(service.readClientNotifications(0).notifications).toEqual([
+      expect.objectContaining({
+        id: 'credential-request:crq_fixture',
+        body: '「示例智能体」需要凭据「天气服务」。用途：查天气',
+        route: '/settings/credentials?add=1&name=%E5%A4%A9%E6%B0%94',
+      }),
+    ])
+    await service.updateSettings({
+      system: { enabled: true },
+      bark: { enabled: false, serverUrl: 'https://push.example.test' },
+      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true, [CREDENTIAL_REQUEST_NOTIFICATION]: false },
+    })
+    await expect(
+      service.notifyCredentialRequest({
+        requestId: 'crq_second',
+        agentDisplayName: '示例智能体',
+        name: '天气服务',
+        purpose: '',
+        route: '/settings/credentials?add=1',
+      }),
+    ).resolves.toBe('skipped')
   })
 
   it('keeps the Bark Device Key out of settings and fans one event out to both enabled channels', async () => {

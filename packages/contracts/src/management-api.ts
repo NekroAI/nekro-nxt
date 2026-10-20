@@ -124,7 +124,7 @@ export const ClientNotificationSchema = z
     route: z
       .string()
       .regex(
-        /^\/(?:(?:live|channels|agents|workshop|wiring|settings|community|apps|work|connections|users|extensions)(?:\/[^?#]*)?)?$/u,
+        /^\/(?:(?:live|channels|agents|workshop|wiring|settings|community|apps|work|connections|users|extensions)(?:\/[^?#]*)?)?(?:\?[^#]*)?$/u,
       )
       .optional(),
   })

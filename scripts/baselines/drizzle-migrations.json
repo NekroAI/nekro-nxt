@@ -53,6 +53,7 @@
     "0048_host_notices.sql": "1805bfca07dded1083034c3edad742dba9164c14d7278f36c5c737e95b8e9a34",
     "0049_sub_conversations.sql": "5e01ad3b288fee1ff7686bb041651a51d927207de20e9ba295ebea538f6464e5",
     "0050_agent_compaction.sql": "127dcd80fb147a81b2fe0bafb879a0599c797a15e0f726a512d2f1e6f6ac21dd",
+    "0051_credentials.sql": "f7ab22aaed1854a4f0fe1c81d4fe8c27bc4d06f0d1475ee6bcc51fa8af746300",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -103,6 +104,7 @@
     "meta/0048_snapshot.json": "1dc953fcfc0fa4887d909e45b7971a9258043806ec73479d24c24cbf1a944940",
     "meta/0049_snapshot.json": "9200d2c5f22004c82bcc0c3e7edd7954871641a5a78bc03f51a3f869ac6f62a2",
     "meta/0050_snapshot.json": "f3304ea6daac47556095882505ddeaf5601a9eee5fbc5b868d9301ab97d01a18",
-    "meta/_journal.json": "70260c71fb7cabb5b237c9eebb20bf54f212b38da0ad37c86278fb8a46e74fce"
+    "meta/0051_snapshot.json": "d530c272aa4a6848e1d6286bbf48a6dc78fbb8a3124f9792c3ad319289de5367",
+    "meta/_journal.json": "a8e03b72c38b5b87c78eb949be8ae6a5a69074d14747264870844fc133fb4c29"
   }
 }

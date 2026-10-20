@@ -1,5 +1,5 @@
 import { CommandRegistrations } from './commands/registrations.js'
-import { CommandDefinitionSchema, ChannelIdSchema } from '@nekro-nxt/contracts'
+import { CommandDefinitionSchema, ChannelIdSchema, configSecretKeys } from '@nekro-nxt/contracts'
 import { commandVerificationArguments } from './commands/verification.js'
 import { ExtensionLibrary, memoryLibraryRegistry } from './extension-library.js'
 import { memoryIndexEngine } from './extension-index.js'
@@ -514,7 +514,7 @@ const VERIFICATION_CALL_CONTEXT: NxtCallContext = {
  * Network requests are real, which is why `verificationInput` samples must be side-effect free.
  */
 const verificationBackends = (capabilities: ExtensionCapabilities | undefined): NxtServiceBackends => ({
-  fetch: (policy, url, init) => createExtensionEgress({ policy }).fetch(url, init),
+  fetch: (policy, url, init, secrets) => createExtensionEgress({ policy }).fetch(url, init, secrets),
   storage: memoryNxtStorage(),
   jobs: memoryNxtJobs(),
   platform: {
@@ -595,13 +595,17 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
   const backends = verificationBackends(agentCapabilities)
   const hostConfig = defaultConfig(input, 'host')
   const agentConfig = defaultConfig(input, 'agent')
+  const sdk = manifest.requires?.sdk ?? 7
+  const secretKeys = (layer: 'host' | 'agent') => configSecretKeys(layerConfigSchema(manifest, layer))
   const nxt = createNxtHostService(
     {
       ...verificationBinding,
+      sdk,
       mode: 'verification',
       capabilities: () => agentCapabilities,
       config: () => agentConfig,
       hostConfig: () => hostConfig,
+      declaredSecrets: () => ({ config: secretKeys('agent'), hostConfig: secretKeys('host') }),
     },
     backends,
     { section: () => () => undefined, context: () => () => undefined, onTurnStart: () => () => undefined },
@@ -609,9 +613,11 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
   const hostNxt = createHostLayerNxt(
     {
       ...verificationBinding,
+      sdk,
       mode: 'host',
       capabilities: () => hostLayerAsCapabilities(manifest.permissions.host),
       config: () => hostConfig,
+      declaredSecrets: () => ({ config: secretKeys('host'), hostConfig: [] }),
     },
     backends,
   )

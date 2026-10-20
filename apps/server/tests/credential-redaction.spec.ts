@@ -20,7 +20,7 @@ import { dshPromptRegistry } from '../src/extension-host-service.ts'
 import { DshHostRuntime } from '../src/index.ts'
 import { HIDDEN_SECRET_TEXT, SecretRegistry } from '../src/secret-registry.ts'
 
-const SECRET = 'sk-fictional-0123456789abcdef'
+const SECRET = 'fictional-secret-0123456789abcdef'
 const DATA_ROOT = path.resolve('/srv/nekro-fixture')
 const CREDENTIAL_ROOT = path.join(DATA_ROOT, 'credentials')
 const DSH_CREDENTIALS = path.join(DATA_ROOT, 'dsh', '.credentials.yaml')
@@ -345,8 +345,8 @@ describe('credential redaction in a live session', () => {
     }).event
     // The program assembles the secret itself, as one read from a file or the environment would arrive.
     const program = `
-const secret = ['sk-fictional', '0123456789abcdef'].join('-')
-const printed = await tools.bash({ description: '打印配置', command: "printf '%s%s' sk-fictional- 0123456789abcdef" })
+const secret = ['fictional-secret', '0123456789abcdef'].join('-')
+const printed = await tools.bash({ description: '打印配置', command: "printf '%s%s' fictional-secret- 0123456789abcdef" })
 const denied = await tools.bash({ description: '回显', command: 'echo ' + secret }).then(() => 'ran', (error) => 'denied: ' + String(error?.message ?? error))
 const filler = Array.from({ length: 4000 }, (_, index) => 'fictional log line ' + index).join('\\n')
 return { printed, denied, encoded: btoa(secret), log: secret + '\\n' + filler }

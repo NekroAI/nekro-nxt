@@ -45,6 +45,15 @@ export type {
 export type { ChannelMemberNoteRecord } from './repositories/channel-member-notes.js'
 export type { SubConversationRecord } from './repositories/sub-conversations.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
+import { createCredentialsRepository, type CredentialsRepository } from './repositories/credentials.js'
+export {
+  CREDENTIAL_USES_KEEP,
+  CREDENTIAL_USES_MAX_AGE_MS,
+  type CredentialConsumerKind,
+  type CredentialRecord,
+  type CredentialsRepository,
+  type CredentialUseRecord,
+} from './repositories/credentials.js'
 import {
   createCommunityFeedbackRepository,
   type CommunityFeedbackRepository,
@@ -149,6 +158,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly extensionLibrary: ExtensionLibraryRepository
   /** Extension search collections: documents, keywords, filter values and vectors. */
   readonly extensionIndex: ExtensionIndexRepository
+  /** Named credentials and their recorded uses. */
+  readonly credentials: CredentialsRepository
 
   constructor(
     database: CoreDatabase,
@@ -178,6 +189,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.#governance = createExtensionGovernanceRepository(database.db)
     this.projections = createProjectionRepository(database.db)
+    this.credentials = createCredentialsRepository(database.db)
   }
 
   getWorkTreeOrder(): WorkTreeOrderRecord {

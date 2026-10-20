@@ -36,10 +36,10 @@ import {
 import type { CommunityFeedbackService } from './community-feedback.js'
 import { WorkspaceFileSystem } from './workspace-file-system.js'
 import {
-  commandAccountEnvironment,
-  commandAccountPrompt,
+  commandCredentialEnvironment,
+  commandCredentialPrompt,
   createEnvForwardingExecutor,
-  type CommandAccountSources,
+  type CommandCredentialSources,
 } from './command-account-env.js'
 import {
   createConfinedSandboxProvider,
@@ -507,8 +507,8 @@ export interface DshHostRuntimeOptions {
    * separate executable, `undefined` means none is available and those agents keep ordinary tool calls.
    */
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
-  /** Where commands get the accounts an agent was granted, and whether the GitHub CLI is there to use them. */
-  readonly commandAccounts?: CommandAccountSources
+  /** Where commands get the credentials an agent was granted, and whether the GitHub CLI is there to use them. */
+  readonly commandAccounts?: CommandCredentialSources
   readonly configureLlm?: (context: Context) => Promise<void> | void
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
@@ -534,6 +534,8 @@ export interface DshHostRuntimeOptions {
       readonly capabilities: ExtensionCapabilities | undefined
       /** Host-layer capabilities (`permissions.host`) in the agent-capability shape. */
       readonly hostCapabilities: ExtensionCapabilities | undefined
+      /** Fields each configuration layer declares `meta.role: 'secret'`. */
+      readonly secretKeys: { readonly agent: readonly string[]; readonly host: readonly string[] }
     }
     /** Registers an installed extension's adapter in the product Registry and mounts its connections. */
     readonly adapters?: PersistentAdapterPort
@@ -1024,6 +1026,8 @@ const nekroNxtExtensionDefineTool = (
   guard: () => void = () => undefined,
   /** Keeps checked `testConfig` values for the task the definition is recorded in. */
   keepTestConfig?: (packageId: string, values: Readonly<Record<string, JsonValue>>) => void,
+  /** Checks credential bindings in `testConfig`; returns notes for ones that wait for an administrator. */
+  checkTestCredentials: (values: Readonly<Record<string, JsonValue>>) => readonly string[] = () => [],
 ) =>
   defineTool({
     name: 'nekro_nxt_extension_define',
@@ -1147,7 +1151,7 @@ const nekroNxtExtensionDefineTool = (
       testConfig: {
         type: 'json',
         description:
-          '可选，试运行用的配置值：{ 字段名: 值 }，按候选的配置检查，填 null 清除一项。只能填非凭据字段，凭据请用户在创造任务页填写；用户在任务页填写的值优先。智能体填写的地址不能访问内网，内网地址要用户在任务页填写。',
+          '可选，试运行用的配置值：{ 字段名: 值 }，按候选的配置检查，填 null 清除一项。凭据字段不能直接写值，写 { "credential": "凭据名称" } 绑定一个对你开放的凭据（nekro_nxt_credential_list 查看）；用户在任务页填写的值优先。智能体填写的地址不能访问内网，内网地址要用户在任务页填写。',
       },
       verification: {
         type: 'json',
@@ -1166,12 +1170,16 @@ const nekroNxtExtensionDefineTool = (
           purpose: { type: 'string', required: true },
           hasHostHalf: { type: 'boolean', required: true },
           hasClientHalf: { type: 'boolean', required: true },
+          notes: { type: 'array', items: { type: 'string' } },
         },
       },
       render: (_args, value) => [
         {
           type: 'text',
-          text: `已生成候选 ${value.name}（${value.pluginId}/${value.packageId}），尚未运行；接下来使用 cordis_run 启动并验证。`,
+          text: [
+            `已生成候选 ${value.name}（${value.pluginId}/${value.packageId}），尚未运行；接下来使用 cordis_run 启动并验证。`,
+            ...(value.notes ?? []),
+          ].join('\n'),
         },
       ],
       presentationMeta: (_args, value) => ({ pluginId: value.pluginId, packageId: value.packageId }),
@@ -1185,9 +1193,10 @@ const nekroNxtExtensionDefineTool = (
       const definition = authoringDefinitionFromFacade(definitionArgs)
       const values = testConfig === undefined ? undefined : parseAgentTestConfig(definition.config, testConfig)
       if (values !== undefined && keepTestConfig === undefined) throw new Error('这台 NekroNXT 不能保存测试配置。')
+      const notes = values === undefined ? [] : checkTestCredentials(values)
       const receipt = runner.defineAuthoringPackage(sessionId, definition)
       if (values !== undefined) keepTestConfig?.(receipt.packageId, values)
-      return Promise.resolve(receipt)
+      return Promise.resolve(notes.length === 0 ? receipt : { ...receipt, notes: [...notes] })
     },
   })
 
@@ -3034,7 +3043,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #resolveAdapterDisplayName: NonNullable<DshHostRuntimeOptions['resolveAdapterDisplayName']>
   readonly #developmentWorkspaceRoot: string | undefined
   readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
-  readonly #commandAccounts: CommandAccountSources | undefined
+  readonly #commandAccounts: CommandCredentialSources | undefined
   readonly #codeRunFallbackDirectory: string
   readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
   #codeRunMount: Promise<boolean> | undefined
@@ -3185,15 +3194,20 @@ export class DshHostRuntime implements AgentSessionDriver {
                   capabilities: () => described.capabilities,
                   config: () => config,
                   hostConfig: () => hostConfig,
+                  declaredSecrets: () => ({
+                    config: described.secretKeys.agent,
+                    hostConfig: described.secretKeys.host,
+                  }),
                 },
                 extensionHost.activationBackends,
                 dshPromptRegistry(fiberContext, sessionId, (text) => this.#secrets.redact(text)),
               )
             },
-            hostNxt: ({ revision, config }) => {
+            hostNxt: ({ revision, config, sdk }) => {
               const described = extensionHost.describeRevision(revision)
               return createHostLayerNxt(
                 {
+                  sdk,
                   mode: 'host',
                   agentId: '',
                   ownerKey: revision.extensionId,
@@ -3201,6 +3215,7 @@ export class DshHostRuntime implements AgentSessionDriver {
                   channelId: '',
                   capabilities: () => described.hostCapabilities,
                   config: () => config,
+                  declaredSecrets: () => ({ config: described.secretKeys.host, hostConfig: [] }),
                 },
                 extensionHost.activationBackends,
               )
@@ -3257,6 +3272,7 @@ export class DshHostRuntime implements AgentSessionDriver {
                 capabilities: () => described.capabilities,
                 config: () => config,
                 hostConfig: () => hostConfig,
+                declaredSecrets: () => ({ config: described.secretKeys.agent, hostConfig: described.secretKeys.host }),
               }
               const status = (name: string, update: Omit<McpServerStatus, 'name' | 'observedAt'>) =>
                 extensionHost.mcpStatus?.set(agentId, revision.extensionId, { name, ...update, observedAt: Date.now() })
@@ -3264,6 +3280,8 @@ export class DshHostRuntime implements AgentSessionDriver {
               for (const server of servers) {
                 const resolved = await mcpPluginConfig(server, {
                   readSecret: (key) => extensionHost.activationBackends.secret(binding, key),
+                  readCredential: async (reference, use) =>
+                    extensionHost.activationBackends.mcpCredential?.(binding, reference, use),
                   cwd,
                 })
                 if ('config' in resolved) {
@@ -4141,6 +4159,10 @@ export class DshHostRuntime implements AgentSessionDriver {
               config: () => candidateConfig('agent'),
               hostConfig: () => candidateConfig('host'),
               userEnteredConfig: () => userEnteredConfig('agent'),
+              declaredSecrets: () => ({
+                config: runner.activeCandidateSecretKeys('agent'),
+                hostConfig: runner.activeCandidateSecretKeys('host'),
+              }),
             },
             extensionHost.dynamicBackends,
           )
@@ -4154,6 +4176,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               capabilities: () => runner.activeCandidateHostCapabilities(),
               config: () => candidateConfig('host'),
               userEnteredConfig: () => userEnteredConfig('host'),
+              declaredSecrets: () => ({ config: runner.activeCandidateSecretKeys('host'), hostConfig: [] }),
             },
             extensionHost.dynamicBackends,
           )
@@ -4218,7 +4241,13 @@ export class DshHostRuntime implements AgentSessionDriver {
                   ? undefined
                   : this.#authoring?.service.taskForRunner(input.episodeId, receipt.pluginId)
               if (testValues !== undefined && task !== undefined) {
-                await this.#authoring?.governance?.()?.setTestConfig(task.id, testValues)
+                // Checked when the tool ran; a credential removed since then leaves the values as they were.
+                await this.#authoring
+                  ?.governance?.()
+                  ?.setTestConfig(task.id, testValues)
+                  .catch((error: unknown) => {
+                    console.warn('[nekro-nxt] 测试配置没有保存：', error instanceof Error ? error.message : error)
+                  })
               }
             },
             beforeRun: (pluginId) => {
@@ -4342,6 +4371,7 @@ export class DshHostRuntime implements AgentSessionDriver {
             this.#authoring === undefined
               ? undefined
               : (packageId, values) => testConfigByPackage.set(packageId, values),
+            (values) => governance?.()?.checkTestCredentials(revision.agentId, values) ?? [],
           ),
         )
         if (governance !== undefined) {
@@ -4897,15 +4927,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
-  /** The variables that give one agent's commands the accounts it was granted. */
+  /** The variables that give one agent's commands its credentials. */
   #commandEnvironmentOf(revision: AgentRevisionRecord): Record<string, string> {
     if (this.#commandAccounts === undefined) return {}
-    return commandAccountEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+    return commandCredentialEnvironment(revision.agentId, this.#commandAccounts)
   }
 
   #commandAccountPromptOf(revision: AgentRevisionRecord): string | undefined {
     if (this.#commandAccounts === undefined || !revision.capabilities.developmentShell) return undefined
-    return commandAccountPrompt(revision.capabilities.commandAccounts, this.#commandAccounts)
+    // Older account grants still carry usage hints for the GitHub credential they became.
+    const hints = new Map(revision.capabilities.commandAccounts.map((grant) => [`crd_${grant.accountId}`, grant.usage]))
+    return commandCredentialPrompt(revision.agentId, this.#commandAccounts, (id) => hints.get(id) ?? [])
   }
 
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */

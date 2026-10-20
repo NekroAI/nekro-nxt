@@ -1942,7 +1942,12 @@ describe('DSH Host and internal Channel vertical slice', () => {
       extensionHost: {
         activationBackends: unusedNxtBackends(),
         dynamicBackends: unusedNxtBackends(),
-        describeRevision: () => ({ displayName: '生命周期探针', capabilities: undefined, hostCapabilities: undefined }),
+        describeRevision: () => ({
+          displayName: '生命周期探针',
+          capabilities: undefined,
+          hostCapabilities: undefined,
+          secretKeys: { agent: [], host: [] },
+        }),
       },
       configureLlm: (context) => {
         context.llm.registerAdapter(['test-provider'], new ToolSchemaProbeModel())
