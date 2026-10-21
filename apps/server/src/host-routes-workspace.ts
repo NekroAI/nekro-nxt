@@ -36,7 +36,7 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
-import { knownCommandAccounts, syncGrantedAccounts } from './host-routes-command-accounts.js'
+import { clientCapabilities, knownAccountGrants } from './host-routes-linked-accounts.js'
 import { ChannelPromptConflictError } from '@nekro-nxt/storage-sqlite'
 import { ChannelPromptError, MEMBER_NOTE_MAX_CHARS } from './channel-prompts.js'
 /**
@@ -362,6 +362,15 @@ export function registerWorkspaceRoutes({
       let parsed: ReturnType<typeof HostApiContracts.createAgent.parseRequest>
       try {
         parsed = HostApiContracts.createAgent.parseRequest(await readJsonBody(req))
+        if (parsed.capabilities !== undefined) {
+          parsed = {
+            ...parsed,
+            capabilities: {
+              ...parsed.capabilities,
+              commandAccounts: knownAccountGrants(runtime, parsed.capabilities.commandAccounts),
+            },
+          }
+        }
       } catch (error) {
         writeError(res, 400, 'invalid-request', error instanceof Error ? error.message : String(error))
         return
@@ -586,7 +595,7 @@ export function registerWorkspaceRoutes({
             : { extensionConfigRequesters: parsed.extensionConfigRequesters }),
           ...(parsed.commandAccounts === undefined
             ? {}
-            : { commandAccounts: knownCommandAccounts(runtime, parsed.commandAccounts) }),
+            : { commandAccounts: knownAccountGrants(runtime, parsed.commandAccounts) }),
         }
         const updated = runtime.core.reviseAgent(agentId, revision.id, {
           displayName: revision.displayName,
@@ -597,13 +606,12 @@ export function registerWorkspaceRoutes({
           imagePolicy: revision.imagePolicy,
           dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
         })
-        await syncGrantedAccounts(runtime, agentId, parsed.commandAccounts)
         writeJson(
           res,
           200,
           HostApiContracts.updateAgentCapabilities.parseResponse({
             currentRevisionId: updated.revision.id,
-            capabilities: updated.revision.capabilities,
+            capabilities: clientCapabilities(runtime, updated.revision.capabilities),
           }),
         )
       } catch (error) {

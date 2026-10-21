@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { credentialsView, githubCredentialId, translateCredentialId } from '../e2e/fixtures/credentials.ts'
+import { credentialsView, deployCredentialId, translateCredentialId } from '../e2e/fixtures/credentials.ts'
 import { targetAgentId, sourceAgentId } from '../e2e/fixtures/product-quality.ts'
 import {
   commandCredentialsOf,
@@ -16,18 +16,18 @@ describe('credentials', () => {
     expect(commandCredentialsOf(credentials, targetAgentId).map(({ credential, env }) => [credential.id, env])).toEqual(
       [
         [translateCredentialId, 'TRANSLATE_API_KEY'],
-        [githubCredentialId, 'GH_TOKEN'],
+        [deployCredentialId, 'DEPLOY_TOKEN'],
       ],
     )
     // Not in the translation credential's scope; request-only credentials never reach commands.
-    expect(commandCredentialsOf(credentials, sourceAgentId).map(({ env }) => env)).toEqual(['GH_TOKEN'])
+    expect(commandCredentialsOf(credentials, sourceAgentId).map(({ env }) => env)).toEqual(['DEPLOY_TOKEN'])
   })
 
   it('says where a credential goes', () => {
     expect(credentials.map(credentialUsageText)).toEqual([
       'api.weather.example.com',
       '程序可读 · TRANSLATE_API_KEY',
-      '程序可读 · GH_TOKEN',
+      '程序可读 · DEPLOY_TOKEN',
     ])
   })
 
@@ -37,16 +37,17 @@ describe('credentials', () => {
       'b.example.com',
       'c.example.com',
     ])
-    expect(credentialDraftIssues({ ...emptyCredentialDraft, name: '天气' }, 'generic')).toEqual({
+    expect(credentialDraftIssues({ ...emptyCredentialDraft, name: '天气' })).toEqual({
       domains: '至少填写一个域名。',
     })
     expect(
-      credentialDraftIssues({ ...emptyCredentialDraft, name: '天气', domains: 'https://a.example.com' }, 'generic')
-        .domains,
+      credentialDraftIssues({ ...emptyCredentialDraft, name: '天气', domains: 'https://a.example.com' }).domains,
     ).toContain('不是有效的域名')
-    expect(
-      credentialDraftIssues({ ...emptyCredentialDraft, name: '天气', usage: 'program', envName: 'PATH' }, 'generic'),
-    ).toEqual({ envName: '这个环境变量名由系统使用，请换一个。' })
-    expect(credentialDraftIssues({ ...emptyCredentialDraft, name: '' }, 'github')).toEqual({ name: '名称不能为空。' })
+    expect(credentialDraftIssues({ ...emptyCredentialDraft, name: '天气', usage: 'program', envName: 'PATH' })).toEqual(
+      { envName: '这个环境变量名由系统使用，请换一个。' },
+    )
+    expect(credentialDraftIssues({ ...emptyCredentialDraft, name: '', domains: 'a.example.com' })).toEqual({
+      name: '名称不能为空。',
+    })
   })
 })

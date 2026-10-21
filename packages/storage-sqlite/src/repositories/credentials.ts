@@ -4,25 +4,20 @@ import {
   ChannelIdSchema,
   CredentialAgentScopeSchema,
   CredentialIdSchema,
-  CredentialMetadataSchema,
   type AgentId,
   type ChannelId,
   type CredentialAgentScope,
   type CredentialId,
-  type CredentialKind,
-  type CredentialMetadata,
   type CredentialUsage,
-  type JsonValue,
 } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { credentials, credentialUses, systemSettings } from '../schema.js'
+import { credentials, credentialUses } from '../schema.js'
 
 export interface CredentialRecord {
   readonly id: CredentialId
   readonly name: string
   readonly description: string
-  readonly kind: CredentialKind
   readonly usage: CredentialUsage
   readonly domains: readonly string[]
   readonly agentScope: CredentialAgentScope
@@ -32,7 +27,6 @@ export interface CredentialRecord {
   /** Agents an administrator let use it while automatic use is off. */
   readonly approvedAgentIds: readonly AgentId[]
   readonly credentialRef: string
-  readonly metadata: CredentialMetadata
   readonly createdAt: number
   readonly updatedAt: number
   readonly lastUsedAt?: number
@@ -64,7 +58,6 @@ const record = (row: Row): CredentialRecord => ({
   id: CredentialIdSchema.parse(row.id),
   name: row.name,
   description: row.description,
-  kind: row.kind,
   usage: row.usage,
   domains: DomainsSchema.parse(row.domains),
   agentScope: CredentialAgentScopeSchema.parse(row.agentScope),
@@ -72,7 +65,6 @@ const record = (row: Row): CredentialRecord => ({
   ...(row.envName === null ? {} : { envName: row.envName }),
   approvedAgentIds: z.array(AgentIdSchema).parse(row.approvedAgentIds),
   credentialRef: row.credentialRef,
-  metadata: CredentialMetadataSchema.parse(row.metadata),
   createdAt: row.createdAt,
   updatedAt: row.updatedAt,
   ...(row.lastUsedAt === null ? {} : { lastUsedAt: row.lastUsedAt }),
@@ -93,7 +85,7 @@ const values = (input: CredentialRecord) => ({
   id: input.id,
   name: input.name,
   description: input.description,
-  kind: input.kind,
+  kind: 'generic' as const,
   usage: input.usage,
   domains: input.domains,
   agentScope: input.agentScope,
@@ -101,20 +93,33 @@ const values = (input: CredentialRecord) => ({
   envName: input.envName ?? null,
   approvedAgentIds: input.approvedAgentIds,
   credentialRef: input.credentialRef,
-  metadata: input.metadata,
+  metadata: {},
   createdAt: input.createdAt,
   updatedAt: input.updatedAt,
   lastUsedAt: input.lastUsedAt ?? null,
 })
 
+/** Rows of older builds' GitHub credentials wait to become linked accounts and are not credentials any more. */
+const generic = eq(credentials.kind, 'generic')
+
 export function createCredentialsRepository(database: DrizzleCoreDatabase) {
   return {
     listCredentials(): readonly CredentialRecord[] {
-      return database.select().from(credentials).orderBy(credentials.createdAt, credentials.id).all().map(record)
+      return database
+        .select()
+        .from(credentials)
+        .where(generic)
+        .orderBy(credentials.createdAt, credentials.id)
+        .all()
+        .map(record)
     },
 
     getCredential(id: CredentialId): CredentialRecord | undefined {
-      const row = database.select().from(credentials).where(eq(credentials.id, id)).get()
+      const row = database
+        .select()
+        .from(credentials)
+        .where(and(eq(credentials.id, id), generic))
+        .get()
       return row === undefined ? undefined : record(row)
     },
 
@@ -127,37 +132,23 @@ export function createCredentialsRepository(database: DrizzleCoreDatabase) {
       const { id: _id, createdAt: _createdAt, ...rest } = values(input)
       void _id
       void _createdAt
-      return database.update(credentials).set(rest).where(eq(credentials.id, input.id)).run().changes === 1
+      return (
+        database
+          .update(credentials)
+          .set(rest)
+          .where(and(eq(credentials.id, input.id), generic))
+          .run().changes === 1
+      )
     },
 
     /** Removes the credential with its recorded uses. */
     deleteCredential(id: CredentialId): boolean {
-      return database.delete(credentials).where(eq(credentials.id, id)).run().changes === 1
-    },
-
-    /**
-     * Inserts credentials that do not exist yet and writes a system setting in the same transaction, so a one-time
-     * import (for example of the older command account library) either lands completely with its marker or not at all.
-     */
-    importCredentials(
-      inputs: readonly CredentialRecord[],
-      marker: { readonly key: string; readonly value: JsonValue; readonly updatedAt: number },
-    ): void {
-      database.transaction((transaction) => {
-        for (const input of inputs) {
-          transaction.insert(credentials).values(values(input)).onConflictDoNothing({ target: credentials.id }).run()
-        }
-        const current = transaction.select().from(systemSettings).where(eq(systemSettings.key, marker.key)).get()
-        const revision = (current?.revision ?? 0) + 1
-        transaction
-          .insert(systemSettings)
-          .values({ key: marker.key, value: marker.value, revision, updatedAt: marker.updatedAt })
-          .onConflictDoUpdate({
-            target: systemSettings.key,
-            set: { value: marker.value, revision, updatedAt: marker.updatedAt },
-          })
-          .run()
-      })
+      return (
+        database
+          .delete(credentials)
+          .where(and(eq(credentials.id, id), generic))
+          .run().changes === 1
+      )
     },
 
     /**

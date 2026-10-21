@@ -16,13 +16,22 @@ import {
   CreateCredentialRequestSchema,
   CredentialsViewSchema,
   CredentialUsesViewSchema,
-  LocalGithubLoginSchema,
   RemoveCredentialRequestSchema,
   RemoveCredentialResultSchema,
   ReplaceCredentialValueRequestSchema,
   SetModelProviderAccessRequestSchema,
   UpdateCredentialRequestSchema,
 } from './credentials.js'
+import {
+  AddLinkedAccountRequestSchema,
+  LinkedAccountMethodSchema,
+  LinkedAccountPlatformIdSchema,
+  LinkedAccountUsesViewSchema,
+  LinkedAccountViewSchema,
+  LocalGithubLoginSchema,
+  RemoveLinkedAccountRequestSchema,
+  ReplaceLinkedAccountTokenRequestSchema,
+} from './linked-accounts.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
 import {
   AgentIdSchema,
@@ -37,6 +46,7 @@ import {
   ChannelMemberIdSchema,
   ConnectionIdSchema,
   CredentialIdSchema,
+  LinkedAccountIdSchema,
   ConnectionEventIdSchema,
   DshPluginEntryIdSchema,
   DshPluginPackageIdSchema,
@@ -321,15 +331,18 @@ export const ImageUnderstandingPolicyApiSchema = z
   })
   .strict()
 
-export const CommandAccountServiceSchema = z.enum(['github'])
-export type CommandAccountService = z.output<typeof CommandAccountServiceSchema>
-
 export const CommandAccountUsageSchema = z.enum(['read', 'issues', 'pull-requests', 'push'])
+/** What the user wants a granted account used for; told to the agent only. */
+export type CommandAccountUsage = z.output<typeof CommandAccountUsageSchema>
 
+/**
+ * One linked account the agent's commands act as, at most one per platform (`service`). Grants saved before linked
+ * accounts name the account without its `acc_` prefix; both forms resolve to the same account.
+ */
 const CommandAccountGrantSchema = z
   .object({
-    service: CommandAccountServiceSchema,
-    accountId: NonEmptyStringSchema.max(64),
+    service: LinkedAccountPlatformIdSchema,
+    accountId: NonEmptyStringSchema.max(72),
     /** Told to the agent as guidance, not enforced; empty gives no hint. */
     usage: z.array(CommandAccountUsageSchema).max(4).default([]),
   })
@@ -350,10 +363,7 @@ const AgentCapabilitiesSchema = z
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
     communityFeedbackAuto: z.boolean().default(false),
-    /**
-     * Accounts this agent's commands may act as; absent in older clients means none. Kept for older agents: accounts are
-     * now GitHub credentials, which reach commands through their own scope.
-     */
+    /** Linked accounts this agent's commands act as, one per platform; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
     /**
      * What the agent may do with extensions without the console: `manual` only develops and test-runs, `confirm` asks
@@ -1527,50 +1537,41 @@ export type GithubCliAvailability = z.output<typeof GithubCliAvailabilitySchema>
 export const VerificationBrowserAvailabilitySchema = CodeRunAvailabilitySchema
 export type VerificationBrowserAvailability = z.output<typeof VerificationBrowserAvailabilitySchema>
 
-/**
- * One account in the host's library. The library only keeps accounts; an account takes effect only for the agents
- * whose capabilities grant it, which `usedBy` lists.
- */
-export const CommandAccountSchema = z
+/** A platform's own program that linked accounts work through, such as the GitHub CLI. */
+export const LinkedAccountPlatformToolSchema = z
   .object({
-    id: NonEmptyStringSchema.max(64),
-    service: CommandAccountServiceSchema,
-    /** The account name on the service. */
-    login: NonEmptyStringSchema,
-    source: z.enum(['token', 'gh-login']),
-    /** Token scopes where the service reports them (classic tokens); absent for fine-grained tokens. */
-    scopes: z.array(z.string()).optional(),
-    createdAt: z.number().int().nonnegative(),
-    usedBy: z.array(AgentIdSchema),
+    /** The runtime download routes it is managed by (`downloadGithubCli`, `removeGithubCli`). */
+    id: z.enum(['github-cli']),
+    name: z.string(),
+    availability: GithubCliAvailabilitySchema,
   })
   .strict()
 
-export type CommandAccount = z.output<typeof CommandAccountSchema>
-
-export const CommandAccountsViewSchema = z
+/** 设置 → 关联账号: every platform the host supports, with its accounts and tools. */
+export const LinkedAccountsViewSchema = z
   .object({
-    accounts: z.array(CommandAccountSchema),
+    platforms: z.array(
+      z
+        .object({
+          id: LinkedAccountPlatformIdSchema,
+          name: z.string(),
+          addMethods: z.array(LinkedAccountMethodSchema),
+          tool: LinkedAccountPlatformToolSchema.optional(),
+          accounts: z.array(LinkedAccountViewSchema),
+        })
+        .strict(),
+    ),
     /** Logins found in the local GitHub CLI; empty when it is missing or not logged in. */
-    localLogins: z.array(LocalGithubLoginSchema),
+    localGithubLogins: z.array(LocalGithubLoginSchema),
   })
   .strict()
+export type LinkedAccountsView = z.output<typeof LinkedAccountsViewSchema>
 
-export type CommandAccountsView = z.output<typeof CommandAccountsViewSchema>
-
-export const AddCommandAccountRequestSchema = z.discriminatedUnion('source', [
-  z
-    .object({ source: z.literal('token'), service: CommandAccountServiceSchema, token: NonEmptyStringSchema.max(512) })
-    .strict(),
-  z
-    .object({
-      source: z.literal('gh-login'),
-      service: CommandAccountServiceSchema,
-      login: NonEmptyStringSchema.max(128),
-    })
-    .strict(),
+export const RemoveLinkedAccountResultSchema = z.discriminatedUnion('removed', [
+  z.object({ removed: z.literal(true), view: LinkedAccountsViewSchema }).strict(),
+  z.object({ removed: z.literal(false), grantedAgentIds: z.array(AgentIdSchema) }).strict(),
 ])
-
-export type AddCommandAccountRequest = z.output<typeof AddCommandAccountRequestSchema>
+export type RemoveLinkedAccountResult = z.output<typeof RemoveLinkedAccountResultSchema>
 
 /** An extension action an agent asked an administrator to confirm, or one it took on its own. */
 export const ExtensionRequestSchema = z
@@ -1657,8 +1658,6 @@ export const HostSnapshotSchema = z
       .strict(),
     connectionAdapters: z.array(AdapterConnectionDescriptorSchema),
     notificationSettings: NotificationSettingsViewSchema,
-    /** Optional in older hosts, which have no account library. */
-    commandAccounts: z.array(CommandAccountSchema).optional(),
     agents: z.array(
       z
         .object({
@@ -2548,6 +2547,7 @@ const defineContract = <
 
 const agentParam = z.object({ agentId: AgentIdSchema }).strict()
 const credentialParam = z.object({ credentialId: CredentialIdSchema }).strict()
+const linkedAccountParam = z.object({ accountId: LinkedAccountIdSchema }).strict()
 const agentRevisionParam = z.object({ agentId: AgentIdSchema, revisionId: AgentRevisionIdSchema }).strict()
 
 export const AgentRevisionChangedFieldSchema = z.enum([
@@ -3694,39 +3694,47 @@ export const HostApiContracts = {
     response: VerificationBrowserAvailabilitySchema,
     error: HostApiErrorSchema,
   }),
-  getCommandAccounts: defineContract({
+  getLinkedAccounts: defineContract({
     method: 'GET',
-    path: '/api/settings/command-accounts',
+    path: '/api/settings/linked-accounts',
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
-    response: CommandAccountsViewSchema,
+    response: LinkedAccountsViewSchema,
     error: HostApiErrorSchema,
   }),
-  addCommandAccount: defineContract({
+  addLinkedAccount: defineContract({
     invalidatesSnapshot: true,
     method: 'POST',
-    path: '/api/settings/command-accounts',
+    path: '/api/settings/linked-accounts',
     params: EmptyParamsSchema,
-    request: AddCommandAccountRequestSchema,
-    response: CommandAccountsViewSchema,
+    request: AddLinkedAccountRequestSchema,
+    response: LinkedAccountsViewSchema,
     error: HostApiErrorSchema,
   }),
-  replaceCommandAccountToken: defineContract({
+  replaceLinkedAccountToken: defineContract({
     invalidatesSnapshot: true,
     method: 'PUT',
-    path: '/api/settings/command-accounts/:accountId',
-    params: z.object({ accountId: NonEmptyStringSchema.max(64) }).strict(),
-    request: AddCommandAccountRequestSchema,
-    response: CommandAccountsViewSchema,
+    path: '/api/settings/linked-accounts/:accountId/token',
+    params: linkedAccountParam,
+    request: ReplaceLinkedAccountTokenRequestSchema,
+    response: LinkedAccountsViewSchema,
     error: HostApiErrorSchema,
   }),
-  removeCommandAccount: defineContract({
+  removeLinkedAccount: defineContract({
     invalidatesSnapshot: true,
-    method: 'DELETE',
-    path: '/api/settings/command-accounts/:accountId',
-    params: z.object({ accountId: NonEmptyStringSchema.max(64) }).strict(),
+    method: 'POST',
+    path: '/api/settings/linked-accounts/:accountId/remove',
+    params: linkedAccountParam,
+    request: RemoveLinkedAccountRequestSchema,
+    response: RemoveLinkedAccountResultSchema,
+    error: HostApiErrorSchema,
+  }),
+  getLinkedAccountUses: defineContract({
+    method: 'GET',
+    path: '/api/settings/linked-accounts/:accountId/uses',
+    params: linkedAccountParam,
     request: NoRequestBodySchema,
-    response: CommandAccountsViewSchema,
+    response: LinkedAccountUsesViewSchema,
     error: HostApiErrorSchema,
   }),
   getCredentials: defineContract({

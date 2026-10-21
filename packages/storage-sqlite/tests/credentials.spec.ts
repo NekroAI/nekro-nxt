@@ -2,7 +2,7 @@ import path from 'node:path'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { AgentIdSchema, CredentialIdSchema } from '@nekro-nxt/contracts'
+import { AgentIdSchema, CredentialIdSchema, LinkedAccountIdSchema } from '@nekro-nxt/contracts'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   CREDENTIAL_USES_KEEP,
@@ -10,23 +10,24 @@ import {
   createCredentialsRepository,
   type CredentialRecord,
 } from '../src/repositories/credentials.js'
-import { coreSchema, systemSettings } from '../src/schema.js'
+import { createLinkedAccountsRepository } from '../src/repositories/linked-accounts.js'
+import { coreSchema, credentials, credentialUses, systemSettings } from '../src/schema.js'
 
 const id = CredentialIdSchema.parse('crd_FIXTURE1')
 const agentId = AgentIdSchema.parse('agt_FIXTURE')
+const legacyId = CredentialIdSchema.parse('crd_LEGACY1')
+const accountId = LinkedAccountIdSchema.parse('acc_LEGACY1')
 
 const credential = (overrides: Partial<CredentialRecord> = {}): CredentialRecord => ({
   id,
   name: '示例天气服务',
   description: '天气查询接口',
-  kind: 'generic',
   usage: 'request',
   domains: ['api.weather.test'],
   agentScope: { agentIds: [agentId] },
   autoUse: true,
   approvedAgentIds: [],
   credentialRef: 'credential:local:0123456789abcdef0123456789abcdef',
-  metadata: {},
   createdAt: 1_000,
   updatedAt: 1_000,
   ...overrides,
@@ -108,27 +109,79 @@ describe('credentials repository', () => {
     expect(repository.getCredential(id)?.lastUsedAt).toBe(start + CREDENTIAL_USES_KEEP + 4)
   })
 
-  it('imports credentials and their marker together, skipping ones that exist', () => {
+  it('keeps rows of older GitHub credentials out of the library until they move to linked accounts', () => {
     repository.insertCredential(credential())
-    const other = credential({ id: CredentialIdSchema.parse('crd_FIXTURE2'), name: 'GitHub octo-fixture' })
-    repository.importCredentials([credential({ name: '不会覆盖' }), other], {
-      key: 'credentials-import',
-      value: { done: true },
-      updatedAt: 5_000,
+    db.insert(credentials)
+      .values({
+        ...credential({ id: legacyId, name: 'GitHub octo-fixture', usage: 'program' }),
+        kind: 'github',
+        domains: [],
+        agentScope: { agentIds: [agentId] },
+        envName: null,
+        metadata: { login: 'octo-fixture', source: 'gh-login', scopes: ['repo'] },
+        lastUsedAt: 4_000,
+      })
+      .run()
+    db.insert(credentialUses)
+      .values([
+        { credentialId: legacyId, at: 3_000, agentId, consumerKind: 'command', consumerId: 'shell' },
+        { credentialId: legacyId, at: 3_500, consumerKind: 'extension', consumerId: 'ext_A' },
+      ])
+      .run()
+    expect(repository.listCredentials().map((entry) => entry.id)).toEqual([id])
+    expect(repository.getCredential(legacyId)).toBeUndefined()
+    expect(repository.deleteCredential(legacyId)).toBe(false)
+
+    const accounts = createLinkedAccountsRepository(db)
+    expect(accounts.listLegacyGithubCredentials()).toEqual([
+      {
+        id: legacyId,
+        credentialRef: credential().credentialRef,
+        login: 'octo-fixture',
+        scopes: ['repo'],
+        source: 'gh-login',
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        lastUsedAt: 4_000,
+      },
+    ])
+    const account = {
+      id: accountId,
+      platform: 'github',
+      login: 'octo-fixture',
+      scopes: ['repo'],
+      source: 'gh-login',
+      credentialRef: credential().credentialRef,
+      createdAt: 1_000,
+      updatedAt: 1_000,
+      lastUsedAt: 4_000,
+    }
+    accounts.importAccounts({
+      accounts: [account],
+      fromCredentials: [{ credentialId: legacyId, accountId }],
+      marker: { key: 'linked-accounts-import', value: { done: true }, updatedAt: 5_000 },
     })
-    expect(repository.listCredentials().map((entry) => entry.name)).toEqual(['示例天气服务', 'GitHub octo-fixture'])
+    expect(accounts.listAccounts()).toEqual([account])
+    // Only command uses move; the credential row and its uses are gone.
+    expect(accounts.listAccountUses(accountId, 10)).toEqual([
+      { accountId, at: 3_000, agentId, consumerKind: 'command', consumerId: 'shell' },
+    ])
+    expect(accounts.listLegacyGithubCredentials()).toEqual([])
+    expect(db.select().from(credentialUses).all()).toEqual([])
     expect(db.select().from(systemSettings).all()).toEqual([
-      { key: 'credentials-import', value: { done: true }, revision: 1, updatedAt: 5_000 },
+      { key: 'linked-accounts-import', value: { done: true }, revision: 1, updatedAt: 5_000 },
     ])
 
-    // A clash on the unique name rolls the marker back with the rows.
-    expect(() =>
-      repository.importCredentials([credential({ id: CredentialIdSchema.parse('crd_FIXTURE3') })], {
-        key: 'credentials-import',
-        value: { done: 'again' },
-        updatedAt: 6_000,
-      }),
-    ).toThrow()
-    expect(db.select().from(systemSettings).all()[0]?.value).toEqual({ done: true })
+    // Accounts keep uses like credentials do, and lose them with the account.
+    const start = 10 + CREDENTIAL_USES_MAX_AGE_MS + 1
+    for (let index = 0; index < CREDENTIAL_USES_KEEP + 2; index += 1) {
+      accounts.recordAccountUse({ accountId, at: start + index, agentId, consumerKind: 'command', consumerId: 'shell' })
+    }
+    expect(accounts.listAccountUses(accountId, 1_000)).toHaveLength(CREDENTIAL_USES_KEEP)
+    expect(accounts.getAccount(accountId)?.lastUsedAt).toBe(start + CREDENTIAL_USES_KEEP + 1)
+    expect(accounts.updateAccount({ ...account, login: 'Octo-Fixture', updatedAt: 6_000 })).toBe(true)
+    expect(accounts.getAccount(accountId)).toMatchObject({ login: 'Octo-Fixture', createdAt: 1_000 })
+    expect(accounts.deleteAccount(accountId)).toBe(true)
+    expect(accounts.listAccountUses(accountId, 10)).toEqual([])
   })
 })

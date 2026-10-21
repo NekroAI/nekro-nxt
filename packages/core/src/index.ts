@@ -387,11 +387,15 @@ export interface CoreServiceOptions {
 export const COMMAND_ACCOUNT_USAGES = ['read', 'issues', 'pull-requests', 'push'] as const
 export const CommandAccountUsageSchema = z.enum(COMMAND_ACCOUNT_USAGES)
 
-/** One account the agent's commands may act as. The account itself lives in the host's account library. */
+/**
+ * One linked account the agent's commands act as; the account itself lives in the host's 关联账号 library. `service`
+ * is the platform. Grants saved before linked accounts name the account without its `acc_` prefix; the host resolves
+ * both forms.
+ */
 export const CommandAccountGrantSchema = z
   .object({
     service: z.literal('github'),
-    accountId: z.string().trim().min(1).max(64),
+    accountId: z.string().trim().min(1).max(72),
     /** Empty gives the agent no hint about use. */
     usage: z.array(CommandAccountUsageSchema).max(4).default([]),
   })
@@ -428,12 +432,12 @@ export const AgentCapabilityGrantsSchema = z
      * fields of the agent's own configuration even with `everyone`.
      */
     extensionConfigRequesters: z.enum(['everyone', 'admins']).default('admins'),
-    /** Accounts commands may act as; empty unless the user grants one to this agent (absent before the field). */
+    /** Linked accounts commands act as, one per platform; empty unless the user grants one (absent before the field). */
     commandAccounts: z
       .array(CommandAccountGrantSchema)
       .max(8)
       .refine((grants) => new Set(grants.map((grant) => grant.service)).size === grants.length, {
-        message: '每个服务只能授权一个账号。',
+        message: '每个平台只能授权一个账号。',
       })
       .default([]),
   })

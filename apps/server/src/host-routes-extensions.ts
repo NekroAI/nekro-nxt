@@ -43,7 +43,7 @@ import {
   writeJson,
   type HostRouteContext,
 } from './host-route-support.js'
-import { knownCommandAccounts, syncGrantedAccounts } from './host-routes-command-accounts.js'
+import { clientCapabilities, knownAccountGrants } from './host-routes-linked-accounts.js'
 import { performHostUiNetworkRequest } from './host-ui-network.js'
 import { activationManifest } from './host-queries.js'
 import { handleGovernanceExtensionRoute } from './host-routes-governance.js'
@@ -239,7 +239,10 @@ export function registerExtensionsRoutes({
             } else if (input.method === 'agents.create') {
               const parsed = HostApiContracts.createAgent.parseRequest(input.input)
               const capabilities =
-                parsed.capabilities ??
+                (parsed.capabilities && {
+                  ...parsed.capabilities,
+                  commandAccounts: knownAccountGrants(runtime, parsed.capabilities.commandAccounts),
+                }) ??
                 ({
                   subagents: true,
                   fileTools: false,
@@ -321,7 +324,7 @@ export function registerExtensionsRoutes({
                   : { extensionConfigRequesters: parsed.extensionConfigRequesters }),
                 ...(parsed.commandAccounts === undefined
                   ? {}
-                  : { commandAccounts: knownCommandAccounts(runtime, parsed.commandAccounts) }),
+                  : { commandAccounts: knownAccountGrants(runtime, parsed.commandAccounts) }),
               }
               const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
                 displayName: current.revision.displayName,
@@ -332,8 +335,10 @@ export function registerExtensionsRoutes({
                 imagePolicy: current.revision.imagePolicy,
                 dynamicClientApprovalPolicy: current.revision.dynamicClientApprovalPolicy,
               })
-              await syncGrantedAccounts(runtime, request.agentId, parsed.commandAccounts)
-              value = { currentRevisionId: updated.revision.id, capabilities: updated.revision.capabilities }
+              value = {
+                currentRevisionId: updated.revision.id,
+                capabilities: clientCapabilities(runtime, updated.revision.capabilities),
+              }
             } else if (input.method === 'connections.list') {
               value = runtime.core.listConnections().map((connection) => ({
                 id: connection.id,

@@ -29,7 +29,8 @@ import { readMessagePacing, writeMessagePacing, type MessagePacingSettingsStore 
 import { readCompactionSettings, writeCompactionSettings } from './compaction-settings.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerSubConversationRoutes } from './host-routes-sub-conversations.js'
-import { registerCommandAccountRoutes } from './host-routes-command-accounts.js'
+import { registerLinkedAccountRoutes } from './host-routes-linked-accounts.js'
+import { registerRuntimeRoutes } from './host-routes-runtimes.js'
 import { registerCredentialRoutes } from './host-routes-credentials.js'
 import { registerGovernanceRoutes } from './host-routes-governance.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
@@ -745,7 +746,18 @@ export const createNekroHostApi = (
     }),
   )
   disposers.push(
-    registerCommandAccountRoutes({
+    registerLinkedAccountRoutes({
+      runtime,
+      registerRoute,
+      broadcast,
+      broadcastExtensionsChanged,
+      readCursor: () => hub.cursor,
+      projections,
+      extensionImports,
+    }),
+  )
+  disposers.push(
+    registerRuntimeRoutes({
       runtime,
       registerRoute,
       broadcast,

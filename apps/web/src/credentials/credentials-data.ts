@@ -42,11 +42,7 @@ export const credentialOpenTo = (credential: CredentialView, agentId: string | u
 
 /** The environment variable an agent's commands receive the credential under, or `undefined`. */
 export const commandEnvOf = (credential: CredentialView): string | undefined =>
-  credential.kind === 'github'
-    ? 'GH_TOKEN'
-    : credential.usage === 'program' && credential.envName !== null
-      ? credential.envName
-      : undefined
+  credential.usage === 'program' && credential.envName !== null ? credential.envName : undefined
 
 /** Credentials one agent's commands receive: open to it, with a variable, used automatically or approved for it. */
 export const commandCredentialsOf = (credentials: readonly CredentialView[], agentId: string) =>
@@ -110,15 +106,13 @@ export const parseDomains = (text: string): readonly string[] =>
 export const scopeOfDraft = (draft: CredentialDraft): CredentialAgentScope =>
   draft.allAgents ? { all: true } : { agentIds: draft.agentIds.map((id) => AgentIdSchema.parse(id)) }
 
-/** Field problems of a draft; GitHub credentials have no usage, domains or variable of their own. */
+/** Field problems of a draft. */
 export const credentialDraftIssues = (
   draft: CredentialDraft,
-  kind: 'generic' | 'github',
 ): Readonly<Partial<Record<'name' | 'domains' | 'envName', string>>> => {
   const issues: Partial<Record<'name' | 'domains' | 'envName', string>> = {}
   const name = CredentialNameSchema.safeParse(draft.name)
   if (!name.success) issues.name = name.error.issues[0]?.message ?? '名称无效。'
-  if (kind === 'github') return issues
   const domains = parseDomains(draft.domains)
   const invalid = domains.find((domain) => !ExtensionNetworkDomainSchema.safeParse(domain).success)
   if (invalid !== undefined) issues.domains = `「${invalid}」不是有效的域名，例如 api.example.com 或 *.example.com。`

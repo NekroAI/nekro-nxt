@@ -693,7 +693,7 @@ describe('CoreService', () => {
           { service: 'github', accountId: 'b' },
         ],
       }),
-    ).toThrow('每个服务只能授权一个账号')
+    ).toThrow('每个平台只能授权一个账号')
     expect(
       parseAgentCapabilityGrants({ commandAccounts: [{ service: 'github', accountId: 'a' }] }).commandAccounts,
     ).toEqual([{ service: 'github', accountId: 'a', usage: [] }])

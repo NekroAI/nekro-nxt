@@ -4,7 +4,8 @@ import { ExtensionNetworkDomainSchema } from './extension-capabilities.js'
 
 /**
  * Named credentials (智能体扩展配置与凭据 C1–C5): one entry is added once and reused by extensions, MCP servers and
- * commands. The value is write-only; every view below carries metadata only.
+ * commands. The value is write-only; every view below carries metadata only. Accounts on platforms such as GitHub are
+ * linked accounts (`linked-accounts.ts`), granted per agent, not credentials.
  */
 
 export const CREDENTIAL_NAME_MAX_CHARS = 64
@@ -16,10 +17,6 @@ export const CREDENTIAL_REDACTABLE_MIN_CHARS = 8
 /** How a credential reaches code: `request` only as a placeholder filled by `nxt.http.fetch`; `program` as the value. */
 export const CredentialUsageSchema = z.enum(['request', 'program'])
 export type CredentialUsage = z.output<typeof CredentialUsageSchema>
-
-/** `github` entries are verified against GitHub and give commands `gh` and `git` access; the rest are `generic`. */
-export const CredentialKindSchema = z.enum(['generic', 'github'])
-export type CredentialKind = z.output<typeof CredentialKindSchema>
 
 /** Agents that may use a credential: every agent, or the listed ones. */
 export const CredentialAgentScopeSchema = z.union([
@@ -44,7 +41,10 @@ export const CredentialDescriptionSchema = z
 
 export const CredentialDomainsSchema = z.array(ExtensionNetworkDomainSchema).max(32)
 
-/** Names a credential's environment variable cannot take: the shell and the tools' own configuration. */
+/**
+ * Names a credential's environment variable cannot take: the shell, the tools' own configuration, and the variables
+ * linked accounts give commands (`GH_TOKEN` and the `gh` settings).
+ */
 const RESERVED_COMMAND_ENV = new Set([
   'PATH',
   'HOME',
@@ -60,8 +60,11 @@ const RESERVED_COMMAND_ENV = new Set([
   'TERM',
   'NODE_OPTIONS',
   'NODE_PATH',
+  'GH_TOKEN',
   'GH_CONFIG_DIR',
   'GH_PROMPT_DISABLED',
+  'GH_NO_UPDATE_NOTIFIER',
+  'GH_NO_EXTENSION_UPDATE_NOTIFIER',
   'GIT_TERMINAL_PROMPT',
   'GIT_CONFIG_COUNT',
 ])
@@ -80,27 +83,6 @@ export const CredentialEnvNameSchema = z
   )
 
 export const CredentialValueSchema = z.string().min(1).max(CREDENTIAL_VALUE_MAX_CHARS)
-
-/** A login the local `gh` holds, offered as a quick way to add a GitHub credential. */
-export const LocalGithubLoginSchema = z.object({ login: z.string().trim().min(1), active: z.boolean() }).strict()
-
-/** Where a GitHub token comes from: typed, or read once from a login of the local `gh`. */
-export const GithubCredentialSourceSchema = z.discriminatedUnion('source', [
-  z.object({ source: z.literal('token'), token: z.string().trim().min(1).max(512) }).strict(),
-  z.object({ source: z.literal('gh-login'), login: z.string().trim().min(1).max(128) }).strict(),
-])
-export type GithubCredentialSource = z.output<typeof GithubCredentialSourceSchema>
-
-/** Facts recorded about a GitHub credential when it was verified. */
-export const CredentialMetadataSchema = z
-  .object({
-    login: z.string().optional(),
-    /** Token scopes where GitHub reports them (classic tokens). */
-    scopes: z.array(z.string()).optional(),
-    source: z.enum(['token', 'gh-login']).optional(),
-  })
-  .strict()
-export type CredentialMetadata = z.output<typeof CredentialMetadataSchema>
 
 /** What uses one credential right now: extension secret fields bound to it and agents whose commands receive it. */
 export const CredentialUsersSchema = z
@@ -127,15 +109,11 @@ export const CredentialViewSchema = z
     id: CredentialIdSchema,
     name: CredentialNameSchema,
     description: z.string(),
-    kind: CredentialKindSchema,
     usage: CredentialUsageSchema,
     domains: z.array(z.string()),
     agentScope: CredentialAgentScopeSchema,
     autoUse: z.boolean(),
-    /**
-     * Program credentials: the environment variable agents' commands receive it under, or `null` when commands do
-     * not receive it. GitHub credentials always reach commands as `GH_TOKEN`, with `gh` and `git` set up.
-     */
+    /** Program credentials: the environment variable agents' commands receive it under, or `null` when they do not. */
     envName: z.string().nullable(),
     /** Agents an administrator let use it while automatic use is off. */
     approvedAgentIds: z.array(AgentIdSchema),
@@ -143,7 +121,6 @@ export const CredentialViewSchema = z
     redactable: z.boolean(),
     /** False when the stored value cannot be read any more; the entry stays so it can be replaced. */
     available: z.boolean(),
-    metadata: CredentialMetadataSchema,
     usedBy: CredentialUsersSchema,
     createdAt: z.number().int().nonnegative(),
     updatedAt: z.number().int().nonnegative(),
@@ -187,48 +164,28 @@ export const CredentialsViewSchema = z
     credentials: z.array(CredentialViewSchema),
     modelProviders: z.array(ModelProviderAccessSchema),
     requests: z.array(CredentialRequestViewSchema),
-    /** Logins found in the local GitHub CLI; empty when it is missing or not logged in. */
-    localGithubLogins: z.array(LocalGithubLoginSchema),
   })
   .strict()
 export type CredentialsView = z.output<typeof CredentialsViewSchema>
 
-const credentialMetaFields = {
-  name: CredentialNameSchema,
-  description: CredentialDescriptionSchema.default(''),
-  agentScope: CredentialAgentScopeSchema.default({ all: true }),
-  autoUse: z.boolean().default(true),
-}
-
-export const CreateCredentialRequestSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('generic'),
-      ...credentialMetaFields,
-      usage: CredentialUsageSchema.default('request'),
-      domains: CredentialDomainsSchema.default([]),
-      /** Program credentials only. */
-      envName: CredentialEnvNameSchema.optional(),
-      value: CredentialValueSchema,
-      /** The agent request this form was opened from, if any. */
-      requestId: z.string().min(1).max(64).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal('github'),
-      ...credentialMetaFields,
-      /** Defaults to `GitHub <login>`. */
-      name: CredentialNameSchema.optional(),
-      domains: CredentialDomainsSchema.optional(),
-      github: GithubCredentialSourceSchema,
-      requestId: z.string().min(1).max(64).optional(),
-    })
-    .strict(),
-])
+export const CreateCredentialRequestSchema = z
+  .object({
+    name: CredentialNameSchema,
+    description: CredentialDescriptionSchema.default(''),
+    agentScope: CredentialAgentScopeSchema.default({ all: true }),
+    autoUse: z.boolean().default(true),
+    usage: CredentialUsageSchema.default('request'),
+    domains: CredentialDomainsSchema.default([]),
+    /** Program credentials only. */
+    envName: CredentialEnvNameSchema.optional(),
+    value: CredentialValueSchema,
+    /** The agent request this form was opened from, if any. */
+    requestId: z.string().min(1).max(64).optional(),
+  })
+  .strict()
 export type CreateCredentialRequest = z.input<typeof CreateCredentialRequestSchema>
 
-/** Metadata changes; omitted fields keep their value. GitHub credentials always allow program use. */
+/** Metadata changes; omitted fields keep their value. */
 export const UpdateCredentialRequestSchema = z
   .object({
     name: CredentialNameSchema.optional(),
@@ -237,7 +194,7 @@ export const UpdateCredentialRequestSchema = z
     domains: CredentialDomainsSchema.optional(),
     agentScope: CredentialAgentScopeSchema.optional(),
     autoUse: z.boolean().optional(),
-    /** `null` stops giving it to commands; only program credentials take one. GitHub credentials use `GH_TOKEN`. */
+    /** `null` stops giving it to commands; only program credentials take one. */
     envName: CredentialEnvNameSchema.nullable().optional(),
     /** Replaces the agents allowed to use it while automatic use is off, for example to withdraw an approval. */
     approvedAgentIds: z.array(AgentIdSchema).max(256).optional(),
@@ -245,11 +202,7 @@ export const UpdateCredentialRequestSchema = z
   .strict()
 export type UpdateCredentialRequest = z.output<typeof UpdateCredentialRequestSchema>
 
-/** A new value; GitHub credentials only take a token of the same GitHub account. */
-export const ReplaceCredentialValueRequestSchema = z.union([
-  z.object({ value: CredentialValueSchema }).strict(),
-  z.object({ github: GithubCredentialSourceSchema }).strict(),
-])
+export const ReplaceCredentialValueRequestSchema = z.object({ value: CredentialValueSchema }).strict()
 export type ReplaceCredentialValueRequest = z.output<typeof ReplaceCredentialValueRequestSchema>
 
 /** Removing a credential that is in use needs `confirm`; without it the result lists who uses it. */

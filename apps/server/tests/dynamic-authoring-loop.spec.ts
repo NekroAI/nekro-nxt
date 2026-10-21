@@ -829,7 +829,6 @@ return { inject: ['nxt'], apply() {} }`
 
       // Binding a named credential sets the field; unbinding and clearing never delete the credential itself.
       const named = await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '测试服务',
         value: 'fixture-named-test-key',
         domains: ['api.example.test'],
@@ -916,7 +915,6 @@ return { inject: ['nxt'], apply() {} }`
 }`
     try {
       const credential = await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '示例天气',
         value: 'fictional-weather-key',
         domains: ['api.weather.test'],

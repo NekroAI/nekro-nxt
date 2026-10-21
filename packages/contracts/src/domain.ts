@@ -51,10 +51,12 @@ export const AuthoringTaskIdSchema = brandedId('aut', 'AuthoringTaskId')
 export const AuthoringAttemptIdSchema = brandedId('aua', 'AuthoringAttemptId')
 export const SubConversationIdSchema = brandedId('cnv', 'SubConversationId')
 export const CredentialIdSchema = brandedId('crd', 'CredentialId')
+export const LinkedAccountIdSchema = brandedId('acc', 'LinkedAccountId')
 
 export type AgentId = z.infer<typeof AgentIdSchema>
 export type SubConversationId = z.infer<typeof SubConversationIdSchema>
 export type CredentialId = z.infer<typeof CredentialIdSchema>
+export type LinkedAccountId = z.infer<typeof LinkedAccountIdSchema>
 export type AgentRevisionId = z.infer<typeof AgentRevisionIdSchema>
 export type ConnectionId = z.infer<typeof ConnectionIdSchema>
 export type ConnectionEventId = z.infer<typeof ConnectionEventIdSchema>

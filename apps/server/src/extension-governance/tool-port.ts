@@ -804,6 +804,8 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const runtime = this.#runtime
     const library = runtime.credentialLibrary
     const providers = (await modelProviderAccessList(runtime)).filter((provider) => provider.open)
+    const grants = runtime.repository.getAgent(agentId)?.revision.capabilities.commandAccounts ?? []
+    const granted = new Set(runtime.linkedAccounts.grantedAccounts(grants).map(({ record }) => record.id))
     let models: readonly { readonly provider: string; readonly name: string }[] = []
     try {
       models = await runtime.host.listAvailableLlmModels()
@@ -816,7 +818,6 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
         return {
           name: record.name,
           ...(record.description === '' ? {} : { description: record.description }),
-          kind: record.kind,
           usage: record.usage,
           domains: [...record.domains],
           autoUse: record.autoUse,
@@ -825,12 +826,17 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           needsApproval: library.inScope(record, agentId) && library.needsApproval(record, agentId),
         }
       }),
+      accounts: runtime.linkedAccounts.list().map((record) => ({
+        platform: runtime.linkedAccounts.platforms.get(record.platform)?.name ?? record.platform,
+        login: record.login,
+        grantedToYou: granted.has(record.id),
+      })),
       modelProviders: providers.map((provider) => ({
         name: provider.name,
         models: models.filter((model) => model.provider === provider.provider).map((model) => model.name),
       })),
       meaning:
-        'usage 为 request 的凭据只能在扩展里用 secrets.placeholder 放进 http.fetch 请求，发往 domains 中的域名；program 的凭据代码能读到值，带 envName 的会以这个环境变量交给你的命令。needsApproval 为 true 的要先用 nekro_nxt_credential_request 请管理员同意。modelProviders 是扩展通过 nxt.models 可以调用的模型。',
+        'usage 为 request 的凭据只能在扩展里用 secrets.placeholder 放进 http.fetch 请求，发往 domains 中的域名；program 的凭据代码能读到值，带 envName 的会以这个环境变量交给你的命令。needsApproval 为 true 的要先用 nekro_nxt_credential_request 请管理员同意。accounts 是设置里关联的平台账号，grantedToYou 为 true 的已经授权给你，你的命令会以这个账号工作；没有授权的要请管理员在智能体的能力页授权。modelProviders 是扩展通过 nxt.models 可以调用的模型。',
     }
   }
 

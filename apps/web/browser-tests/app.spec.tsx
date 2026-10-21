@@ -398,7 +398,7 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
   await page.route('**/api/commands?*', (route) => route.fulfill({ json: { commands: [], problems: [] } }))
   await page.route('**/api/commands/members/*', (route) => route.fulfill({ json: { members: [] } }))
   await page.route('**/api/settings/credentials', (route) =>
-    route.fulfill({ json: { credentials: [], modelProviders: [], requests: [], localGithubLogins: [] } }),
+    route.fulfill({ json: { credentials: [], modelProviders: [], requests: [] } }),
   )
   await page.route('**/api/product/updates', (route) =>
     route.fulfill({
@@ -2139,7 +2139,7 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         const row = page.getByText('命令可用的凭据', { exact: true }).locator('..').locator('..')
         // Request-only credentials never reach commands; a program one without approval for this agent neither.
-        await playwrightExpect(page.getByText('团队 GitHub（GH_TOKEN）')).toBeVisible()
+        await playwrightExpect(page.getByText('部署令牌（DEPLOY_TOKEN）')).toBeVisible()
         await playwrightExpect(row).not.toContainText('天气服务')
         await playwrightExpect(row).not.toContainText('翻译服务')
         await row.scrollIntoViewIfNeeded()
