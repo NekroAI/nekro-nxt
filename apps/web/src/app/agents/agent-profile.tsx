@@ -1,5 +1,6 @@
 import { History, MessagesSquare, MoreHorizontal, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useProductStore, type AgentSummary, type ModelSummary } from '../../product-runtime.js'
 import {
   AgentAvatar,
@@ -155,6 +156,14 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
   const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   const [bindIntent, setBindIntent] = useState<BindIntent | null>(null)
   const [active, pinSection] = useActiveSection()
+  const { hash } = useLocation()
+  // A link to one section of the profile (e.g. `#profile-capabilities` from 设置 → 关联账号) opens there.
+  useEffect(() => {
+    const id = decodeURIComponent(hash.slice(1))
+    if (!SECTIONS.some((section) => section.id === id)) return
+    pinSection(id)
+    document.getElementById(id)?.scrollIntoView({ block: 'start' })
+  }, [agent.id, hash])
 
   const phase = agentPhase[agent.state]
   const owned = channels.filter((channel) => channel.agentId === agent.id)

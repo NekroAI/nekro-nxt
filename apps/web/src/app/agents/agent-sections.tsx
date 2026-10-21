@@ -49,6 +49,7 @@ import {
   type AgentDraft,
   type DraftUpdate,
 } from './agent-draft.js'
+import { CommandAccountRows } from './command-accounts.js'
 import { CommandCredentialRows } from './command-credentials.js'
 import { CodeRunNodeDownload, CodeRunNodeRemove } from './runtime-download.js'
 import { missingAgentModel, replacementModel } from './model-health.js'
@@ -535,6 +536,9 @@ export function CapabilitiesSection({
           />
         </PropertyRow>
         {caps.developmentShell ? <CommandNetworkRow caps={caps} update={update} /> : null}
+        {caps.developmentShell && !caps.unrestrictedFileAccess ? (
+          <CommandAccountRows agent={agent} caps={caps} update={update} />
+        ) : null}
         {caps.developmentShell ? <CommandCredentialRows agentId={agent.id} /> : null}
         {caps.developmentShell ? (
           <PropertyRow

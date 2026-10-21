@@ -34,7 +34,6 @@ declare const styles: {
   readonly sectionNav: string
   readonly srOnly: string
   readonly usageBar: string
-  readonly usageToggle: string
 }
 
 export default styles

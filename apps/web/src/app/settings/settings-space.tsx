@@ -20,6 +20,7 @@ import {
   Upload,
   ShieldCheck,
   KeyRound,
+  Link2,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -87,6 +88,7 @@ import { useCrumb } from '../shell/crumb.js'
 import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
 import { AccessSection, useManagementAccessAvailable } from './access-section.js'
 import { CredentialsSection } from './credentials-section.js'
+import { LinkedAccountsSection } from './linked-accounts-section.js'
 import { AdministratorsSection } from './administrators-section.js'
 import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
@@ -109,6 +111,7 @@ const SECTIONS = [
   { key: 'verification', label: '界面检查', group: 'runtime', icon: <ScanEye size={16} /> },
   { key: 'adapters', label: '平台适配器', group: 'links', icon: <Plug size={16} /> },
   { key: 'credentials', label: '凭据', group: 'links', icon: <KeyRound size={16} /> },
+  { key: 'accounts', label: '关联账号', group: 'links', icon: <Link2 size={16} /> },
   { key: 'administrators', label: '管理员', group: 'permission', icon: <ShieldCheck size={16} /> },
   { key: 'commands', label: '聊天命令', group: 'permission', icon: <SquareSlash size={16} /> },
   { key: 'access', label: '登录设备', group: 'permission', icon: <MonitorSmartphone size={16} /> },
@@ -154,8 +157,6 @@ export default function SettingsSpace() {
   }, [section])
   // 社区地址已移到「社区 → 账号」底部，旧地址直接带过去。
   if (section === 'community') return <Navigate to="/community/account" replace />
-  // 「账号与服务」改为「凭据」，旧地址直接带过去。
-  if (section === 'accounts') return <Navigate to="/settings/credentials" replace />
   if (!isSection(section)) return <Navigate to="/settings/models" replace />
 
   const selectProvider = (provider: string) =>
@@ -199,6 +200,8 @@ export default function SettingsSpace() {
         />
       ) : section === 'credentials' ? (
         <CredentialsSection lead={<NarrowNav section="credentials" />} />
+      ) : section === 'accounts' ? (
+        <LinkedAccountsSection lead={<NarrowNav section="accounts" />} />
       ) : section === 'dsh' ? (
         <DshSection
           entry={dshEntry}

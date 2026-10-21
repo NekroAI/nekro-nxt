@@ -58,15 +58,17 @@ const rememberRecent = (id: string): void => {
   }
 }
 
-const SETTINGS_SECTIONS = [
+const SETTINGS_SECTIONS: readonly { readonly key: string; readonly label: string; readonly keywords?: string }[] = [
   { key: 'logs', label: '日志保存' },
   { key: 'models', label: '模型' },
   { key: 'adapters', label: '平台适配器' },
+  { key: 'credentials', label: '凭据', keywords: 'API 密钥 token' },
+  { key: 'accounts', label: '关联账号', keywords: 'GitHub gh token' },
   { key: 'dsh', label: 'DSH 插件' },
   { key: 'notifications', label: '通知' },
   { key: 'appearance', label: '外观' },
   { key: 'about', label: '关于' },
-] as const
+]
 
 /** Debounced Host search over platform members; empty input clears the results. */
 function useMemberSearch(query: string): readonly Member[] {
@@ -178,7 +180,7 @@ export function CommandPalette({
         group: '设置',
         label: `设置 · ${section.label}`,
         icon: <Settings />,
-        keywords: `设置 ${section.label}`,
+        keywords: `设置 ${section.label} ${section.keywords ?? ''}`,
         run: go(`/settings/${section.key}`),
       })),
       {

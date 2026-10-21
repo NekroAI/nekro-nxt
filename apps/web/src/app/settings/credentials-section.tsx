@@ -48,7 +48,6 @@ import {
   toast,
   type Column,
 } from '../../ui-kit/index.js'
-import { CodeRunNodeDownload, CodeRunNodeRemove } from '../agents/runtime-download.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { SectionHead } from './section-head.js'
 import own from './credentials-section.module.css'
@@ -95,7 +94,6 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
   const [params, setParams] = useSearchParams()
   const { view, error, load, replace } = useCredentials()
   const agents = useProductStore((state) => state.agents)
-  const cli = useProductStore((state) => state.capabilityAvailability.githubCli)
   const [adding, setAdding] = useState(false)
   const prefill = prefillFromParams(params)
   const selectedId = params.get('credential') ?? ''
@@ -277,48 +275,22 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
     </>
   )
 
-  // Model access and the GitHub CLI belong to the whole page, not to one credential: hidden while one is open.
+  // Model access belongs to the whole page, not to one credential: hidden while one is open.
   const overview =
-    (view !== undefined && view.modelProviders.length > 0) || cli !== undefined ? (
-      <>
-        {view !== undefined && view.modelProviders.length > 0 ? (
-          <PropertyGroup title="模型供应商" description="打开的供应商可以被智能体和扩展调用。">
-            <PropertyList>
-              {view.modelProviders.map((provider) => (
-                <PropertyRow key={provider.provider} label={provider.name}>
-                  <Switch
-                    label={`${provider.name} 开放给智能体和扩展`}
-                    checked={provider.open}
-                    onCheckedChange={(open) => setProviderOpen(provider.provider, open)}
-                  />
-                </PropertyRow>
-              ))}
-            </PropertyList>
-          </PropertyGroup>
-        ) : null}
-        {cli === undefined ? null : (
-          <PropertyGroup title="GitHub CLI">
-            <PropertyList>
-              <PropertyRow
-                label="gh"
-                description={
-                  cli.available
-                    ? `${cli.version ?? ''}，${cli.source === 'downloaded' ? '由 NekroNXT 下载' : '来自这台设备'}`
-                    : cli.download === undefined
-                      ? '这台设备没有 gh'
-                      : '这台设备没有 gh，下载后智能体的命令里可以直接使用'
-                }
-              >
-                {cli.available ? (
-                  <CodeRunNodeRemove availability={cli} kind="github-cli" />
-                ) : (
-                  <CodeRunNodeDownload availability={cli} kind="github-cli" />
-                )}
-              </PropertyRow>
-            </PropertyList>
-          </PropertyGroup>
-        )}
-      </>
+    view !== undefined && view.modelProviders.length > 0 ? (
+      <PropertyGroup title="模型供应商" description="打开的供应商可以被智能体和扩展调用。">
+        <PropertyList>
+          {view.modelProviders.map((provider) => (
+            <PropertyRow key={provider.provider} label={provider.name}>
+              <Switch
+                label={`${provider.name} 开放给智能体和扩展`}
+                checked={provider.open}
+                onCheckedChange={(open) => setProviderOpen(provider.provider, open)}
+              />
+            </PropertyRow>
+          ))}
+        </PropertyList>
+      </PropertyGroup>
     ) : undefined
 
   return (

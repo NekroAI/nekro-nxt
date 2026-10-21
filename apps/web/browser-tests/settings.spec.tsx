@@ -5,7 +5,11 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer, type ViteDevServer } from 'vite'
 import {
+  AddLinkedAccountRequestSchema,
   CredentialsViewSchema,
+  LinkedAccountsViewSchema,
+  RemoveLinkedAccountRequestSchema,
+  type LinkedAccountsView,
   RemoveCredentialRequestSchema,
   SetModelProviderAccessRequestSchema,
   UpdateCredentialRequestSchema,
@@ -19,6 +23,7 @@ import {
   weatherUses,
 } from '../e2e/fixtures/credentials.js'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
+import { addedAccountId, linkedAccountsView, octoAccountId, octoUses } from '../e2e/fixtures/linked-accounts.js'
 import { productSnapshot, targetAgentId } from '../e2e/fixtures/product-quality.js'
 
 const provider = (id: string, displayName: string, configured: boolean) => ({
@@ -160,7 +165,7 @@ test.describe('settings space', () => {
     try {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
-      await expect(list.getByRole('link')).toHaveCount(15)
+      await expect(list.getByRole('link')).toHaveCount(16)
       await expect(list.getByRole('link', { name: '聊天命令', exact: true })).toBeVisible()
       await expect(list.getByRole('link', { name: '日志保存' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
@@ -458,7 +463,7 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(16)
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(17)
       const table = page.getByRole('table', { name: '已登录设备' })
       await expect(table).toContainText('浏览器 · Chrome · macOS')
       await expect(table).toContainText('此设备')
@@ -722,9 +727,9 @@ test.describe('settings space', () => {
     }
   })
 
-  test('takes the old accounts address to credentials and keeps the GitHub CLI controls there', async () => {
+  test('keeps GitHub out of the credentials page', async () => {
     const state = { view: credentialsView(), calls: [] as { method: string; path: string; body: unknown }[] }
-    const { page, errors } = await open('/settings/accounts', {
+    const { page, errors } = await open('/settings/credentials', {
       before: async (target) => {
         await credentialRoutes(state)(target)
         await target.route('**/api/snapshot', (request) =>
@@ -741,9 +746,204 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page).toHaveURL(/\/settings\/credentials$/u)
-      await expect(page.getByRole('heading', { name: '凭据', level: 1 })).toBeVisible()
-      await expect(page.getByText('2.90.0，来自这台设备')).toBeVisible()
+      await expect(page.getByRole('heading', { name: '模型供应商' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'GitHub CLI' })).toHaveCount(0)
+      await expect(page.getByRole('main')).not.toContainText(/GitHub|\bgh\b/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  /** Stubs the linked account routes over a mutable view and records every change request. */
+  const linkedAccountRoutes =
+    (state: { view: LinkedAccountsView; calls: { method: string; path: string; body: unknown }[] }) =>
+    async (target: Page) => {
+      await target.route('**/api/settings/linked-accounts**', async (request) => {
+        const method = request.request().method()
+        const path = new URL(request.request().url()).pathname.replace('/api/settings/linked-accounts', '')
+        if (method === 'GET' && path === '') return request.fulfill({ json: state.view })
+        if (method === 'GET' && path.endsWith('/uses')) {
+          return request.fulfill({ json: { uses: path.includes(octoAccountId) ? octoUses() : [] } })
+        }
+        const body: unknown = request.request().postDataJSON()
+        state.calls.push({ method, path, body })
+        const github = state.view.platforms[0]!
+        if (method === 'POST' && path === '') {
+          const added = AddLinkedAccountRequestSchema.parse(body)
+          if (added.method === 'token' && added.token === 'github_pat_rejected') {
+            return request.fulfill({
+              status: 400,
+              json: { error: { code: 'linked-account-failed', message: 'GitHub 没有接受这个 token。' } },
+            })
+          }
+          state.view = LinkedAccountsViewSchema.parse({
+            ...state.view,
+            platforms: [
+              {
+                ...github,
+                accounts: [
+                  ...github.accounts,
+                  {
+                    ...github.accounts[1]!,
+                    id: addedAccountId,
+                    login: added.method === 'gh-login' ? added.login : 'new-fixture',
+                    source: added.method,
+                  },
+                ],
+              },
+            ],
+          })
+          return request.fulfill({ json: state.view })
+        }
+        if (method === 'POST' && path.endsWith('/remove')) {
+          const confirmed = RemoveLinkedAccountRequestSchema.parse(body).confirm
+          const id = path.split('/')[1]
+          const account = github.accounts.find((candidate) => candidate.id === id)!
+          if (!confirmed && account.grantedAgentIds.length > 0) {
+            return request.fulfill({ json: { removed: false, grantedAgentIds: account.grantedAgentIds } })
+          }
+          state.view = {
+            ...state.view,
+            platforms: [{ ...github, accounts: github.accounts.filter((candidate) => candidate.id !== id) }],
+          }
+          return request.fulfill({ json: { removed: true, view: state.view } })
+        }
+        return request.fulfill({ json: state.view })
+      })
+    }
+
+  test('lists linked accounts by platform with the GitHub CLI below them', async () => {
+    const state = { view: linkedAccountsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open('/settings/accounts', { before: linkedAccountRoutes(state) })
+    try {
+      await expect(page.getByRole('heading', { name: '关联账号', level: 1 })).toBeVisible()
+      await expect(page.getByRole('link', { name: '关联账号', exact: true })).toHaveAttribute('aria-current', 'page')
+      const table = page.getByRole('table', { name: 'GitHub 账号' })
+      await expect(table).toContainText('octo-fixture')
+      await expect(table).toContainText('repo、read:org')
+      await expect(table).toContainText('资料员')
+      await expect(table).toContainText('12 分钟前')
+      await expect(table).toContainText('由 GitHub 上这个 token 的设置决定')
+      await expect(table).toContainText('未使用')
+      const cli = page.getByRole('region', { name: 'GitHub CLI' })
+      await expect(cli).toContainText('2.90.0，来自这台设备')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('shows one line and the link action for a platform without accounts', async () => {
+    const state = {
+      view: linkedAccountsView({ empty: true }),
+      calls: [] as { method: string; path: string; body: unknown }[],
+    }
+    const { page, errors } = await open('/settings/accounts', { before: linkedAccountRoutes(state) })
+    try {
+      const github = page.getByRole('region', { name: 'GitHub', exact: true })
+      await expect(github).toContainText('还没有关联账号。')
+      await expect(github.getByRole('button', { name: '关联账号' })).toBeVisible()
+      await expect(page.getByRole('table', { name: 'GitHub 账号' })).toHaveCount(0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('links a GitHub account with a token or a login of the local gh, and opens it', async () => {
+    const state = { view: linkedAccountsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open('/settings/accounts', { before: linkedAccountRoutes(state) })
+    try {
+      const github = page.getByRole('region', { name: 'GitHub', exact: true })
+      await github.getByRole('button', { name: '关联账号' }).click()
+      const dialog = page.getByRole('dialog', { name: '关联 GitHub 账号' })
+      await expect(dialog.getByRole('radio', { name: '填写 token' })).toBeChecked()
+      await expect(dialog.getByRole('link', { name: '创建专用 token' })).toHaveAttribute(
+        'href',
+        'https://github.com/settings/personal-access-tokens/new',
+      )
+      const link = dialog.getByRole('button', { name: '关联', exact: true })
+      await expect(link).toBeDisabled()
+      await dialog.getByLabel('Token').fill('github_pat_rejected')
+      await link.click()
+      await expect(dialog).toContainText('GitHub 没有接受这个 token。')
+
+      await dialog.getByRole('radio', { name: '本机 gh 已登录账号' }).click()
+      await expect(dialog.getByRole('combobox', { name: 'gh 账号' })).toContainText('example-bot')
+      await expect(dialog.getByText('授权的智能体会获得该账号在 gh 里的全部权限。')).toBeVisible()
+      await dialog.getByRole('combobox', { name: 'gh 账号' }).click()
+      await page.getByRole('option', { name: 'example-helper' }).click()
+      await link.click()
+      await expect(dialog).toBeHidden()
+      expect(state.calls.map(({ method, path, body }) => [method, path, body])).toEqual([
+        ['POST', '', { platform: 'github', method: 'token', token: 'github_pat_rejected' }],
+        ['POST', '', { platform: 'github', method: 'gh-login', login: 'example-helper' }],
+      ])
+      await expect(page).toHaveURL(new RegExp(`account=${addedAccountId}`, 'u'))
+      await expect(page.getByRole('heading', { name: 'example-helper' })).toBeVisible()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('opens an account beside the list, hides the GitHub CLI and closes back', async () => {
+    const state = { view: linkedAccountsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open('/settings/accounts', { width: 1680, before: linkedAccountRoutes(state) })
+    try {
+      const table = page.getByRole('table', { name: 'GitHub 账号' })
+      const cli = page.getByRole('heading', { name: 'GitHub CLI' })
+      await expect(cli).toBeVisible()
+      await table.getByText('octo-fixture', { exact: true }).click()
+      await expect(page).toHaveURL(new RegExp(`account=${octoAccountId}`, 'u'))
+      await expect(page.getByRole('heading', { name: 'octo-fixture' })).toBeVisible()
+      await expect(cli).toHaveCount(0)
+      await expect(table).toBeVisible()
+      const account = page.getByRole('region', { name: '账号', exact: true })
+      await expect(account).toContainText('填写的 token')
+      await expect(account).toContainText('repo、read:org')
+      const uses = page.getByRole('table', { name: '使用记录' })
+      await expect(uses).toContainText('资料员')
+      await expect(uses).toContainText('资料员的内置频道')
+
+      // Granting lives on the agent; the name leads there.
+      const granted = page.getByRole('region', { name: '已授权的智能体' })
+      await expect(granted.getByRole('link', { name: '资料员' })).toHaveAttribute(
+        'href',
+        `/agents/${targetAgentId}#profile-capabilities`,
+      )
+
+      await page.getByRole('button', { name: '更换 token' }).click()
+      const replace = page.getByRole('dialog', { name: '更换 octo-fixture 的 token' })
+      await expect(replace).toContainText('需要属于同一个 GitHub 账号。')
+      await replace.getByRole('button', { name: '取消' }).click()
+
+      await page.getByRole('button', { name: '关闭' }).click()
+      await expect(page).not.toHaveURL(/account=/u)
+      await expect(cli).toBeVisible()
+      expect(state.calls).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('removes a granted account only after naming the agents it is granted to', async () => {
+    const state = { view: linkedAccountsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open(`/settings/accounts?account=${octoAccountId}`, {
+      before: linkedAccountRoutes(state),
+    })
+    try {
+      await page.getByRole('button', { name: '移除', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: '移除「octo-fixture」？' })
+      await expect(dialog).toContainText('以下智能体的命令会失去这个账号：')
+      await expect(dialog).toContainText('资料员')
+      await dialog.getByRole('button', { name: '移除' }).click()
+      await expect(dialog).toBeHidden()
+      expect(state.calls).toEqual([{ method: 'POST', path: `/${octoAccountId}/remove`, body: { confirm: true } }])
+      await expect(page).not.toHaveURL(/account=/u)
+      await expect(page.getByRole('table', { name: 'GitHub 账号' })).not.toContainText('octo-fixture')
       expect(errors).toEqual([])
     } finally {
       await page.close()
