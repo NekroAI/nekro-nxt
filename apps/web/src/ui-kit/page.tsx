@@ -224,10 +224,13 @@ export function MasterDetail({
   const [previous, setPrevious] = useState({ open, key: selectedKey })
   const [leaving, setLeaving] = useState(false)
   const [switched, setSwitched] = useState(false)
+  // Opened here rather than arriving open, so the list settles with a fade after it has moved.
+  const [opening, setOpening] = useState(false)
   if (previous.open !== open || previous.key !== selectedKey) {
     setPrevious({ open, key: selectedKey })
     if (previous.open !== open) {
       setLeaving(!open)
+      setOpening(open)
       setSwitched(false)
     } else if (open) setSwitched(true)
   }
@@ -242,7 +245,11 @@ export function MasterDetail({
     if (!key || element.offsetParent === null) return
     const row = element.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)
     if (!row) return
-    row.scrollIntoView({ block: 'nearest' })
+    // Only vertically: while the list moves it is wider than its column, and scrolling it sideways would jump.
+    const bounds = element.getBoundingClientRect()
+    const box = row.getBoundingClientRect()
+    if (box.top < bounds.top) element.scrollTop += box.top - bounds.top
+    else if (box.bottom > bounds.bottom) element.scrollTop += box.bottom - bounds.bottom
     if (!open) row.focus({ preventScroll: true })
   }, [open])
 
@@ -291,7 +298,12 @@ export function MasterDetail({
   const shown = open ? detail : leaving ? lastDetail.current : null
   return (
     <div className={styles.split}>
-      <div className={styles.splitGrid} data-open={open ? '' : undefined} data-leaving={leaving ? '' : undefined}>
+      <div
+        className={styles.splitGrid}
+        data-open={open ? '' : undefined}
+        data-leaving={leaving ? '' : undefined}
+        data-opening={opening ? '' : undefined}
+      >
         <div
           ref={master}
           className={styles.master}

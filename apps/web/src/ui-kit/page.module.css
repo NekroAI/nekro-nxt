@@ -267,14 +267,38 @@
     border-right: 1px solid var(--line);
   }
 
+  .master {
+    overflow-x: hidden;
+  }
+
+  /* The list keeps one layout while it moves: it slides from the centre to the left edge and the narrowing column
+     clips it, then settles into the compact columns in one step (open). Closing switches to the full layout first
+     and the widening column uncovers it. Its left edge always moves continuously. */
   .masterInner {
-    transition: padding var(--dur-1) var(--ease-in);
+    width: calc(var(--reader-width) + 2 * var(--s-7));
+    max-width: none;
+    /* Measured on the whole split rather than the list column, so the slide follows its own easing instead of
+       the column's width. */
+    --list-centre: max(0px, (100cqw - var(--reader-width)) / 2 - var(--s-7));
+    margin-inline: var(--list-centre) 0;
+    transition:
+      margin-inline-start var(--dur-1) var(--ease-in),
+      padding-inline-start var(--dur-1) var(--ease-in);
   }
 
   .splitGrid[data-open] .masterInner {
+    width: 100%;
+    margin-inline-start: 0;
     padding: var(--s-6) var(--s-4) var(--s-8) var(--s-6);
-    transition-duration: var(--dur-2);
-    transition-timing-function: var(--ease);
+    transition:
+      margin-inline-start var(--dur-2) var(--ease),
+      padding-inline-start var(--dur-2) var(--ease),
+      width 0s linear var(--dur-2),
+      padding-inline-end 0s linear var(--dur-2);
+  }
+
+  .splitGrid[data-open][data-opening] .masterInner {
+    animation: swapIn var(--dur-1) var(--ease) var(--dur-2);
   }
 
   .detailColumn {
