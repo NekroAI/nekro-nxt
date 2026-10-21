@@ -1,7 +1,10 @@
 declare const styles: {
   readonly board: string
+  readonly detailBody: string
+  readonly detailClose: string
   readonly detailColumn: string
   readonly detailInner: string
+  readonly detailScroll: string
   readonly fill: string
   readonly full: string
   readonly list: string
@@ -16,6 +19,7 @@ declare const styles: {
   readonly master: string
   readonly masterInner: string
   readonly narrowBack: string
+  readonly overview: string
   readonly pageActions: string
   readonly pageHead: string
   readonly pageHeading: string

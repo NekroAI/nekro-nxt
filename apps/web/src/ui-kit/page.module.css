@@ -154,6 +154,7 @@
 }
 
 .splitGrid {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   height: 100%;
@@ -161,16 +162,34 @@
 }
 
 .master,
-.detailColumn {
+.detailScroll {
   min-height: 0;
   overflow: auto;
 }
 
+.detailColumn {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.detailScroll {
+  flex: 1;
+}
+
 .masterInner,
-.detailInner {
+.detailInner,
+.detailBody,
+.overview {
   display: grid;
   align-content: start;
   gap: var(--s-6);
+  min-width: 0;
+}
+
+.masterInner,
+.detailInner {
   width: 100%;
   margin-inline: auto;
   padding: var(--s-6) var(--s-7) var(--s-8);
@@ -184,32 +203,161 @@
   max-width: calc(var(--content-width) + 2 * var(--s-7));
 }
 
+/* Another item while the detail is open: only its content fades in, never from an empty pane. */
+.detailBody[data-switched] {
+  animation: swapIn var(--dur-1) var(--ease);
+}
+
+.overview[data-returning] {
+  animation: fadeIn var(--dur-2) var(--ease);
+}
+
 .splitBack {
   justify-self: start;
   margin-inline-start: calc(-1 * var(--s-2));
 }
 
-/* Narrow: the open detail replaces the list. */
-.splitGrid[data-open] > .master {
+.detailClose {
   display: none;
 }
 
+/* Narrow: the open detail replaces the list, and a closed one goes at once while the list slides back. */
+.splitGrid[data-open] > .master,
+.splitGrid:not([data-open]) > .detailColumn {
+  display: none;
+}
+
+@container (width < 1080px) {
+  .master {
+    animation: listIn var(--dur-1) var(--ease);
+  }
+
+  /* The section picker above stays put; only what changed slides in. */
+  .detailInner > .splitBack,
+  .detailBody {
+    animation: narrowIn var(--dur-2) var(--ease);
+  }
+}
+
+/* Wide: the list narrows to a column above the detail, which sits in its final place and is uncovered as the list
+   recedes, so no text is ever drawn over other text. Closing runs on --ease-in, one step shorter. */
 @container (min-width: 1080px) {
+  .splitGrid {
+    grid-template-columns: 100%;
+    transition: grid-template-columns var(--dur-1) var(--ease-in);
+  }
+
   .splitGrid[data-open] {
-    grid-template-columns: var(--pane-master) minmax(0, 1fr);
+    grid-template-columns: var(--pane-master);
+    transition-duration: var(--dur-2);
+    transition-timing-function: var(--ease);
+  }
+
+  .master {
+    position: relative;
+    z-index: 1;
+    background: var(--bg);
   }
 
   .splitGrid[data-open] > .master {
     display: block;
+  }
+
+  .splitGrid:is([data-open], [data-leaving]) > .master {
     border-right: 1px solid var(--line);
+  }
+
+  .masterInner {
+    transition: padding var(--dur-1) var(--ease-in);
   }
 
   .splitGrid[data-open] .masterInner {
     padding: var(--s-6) var(--s-4) var(--s-8) var(--s-6);
+    transition-duration: var(--dur-2);
+    transition-timing-function: var(--ease);
+  }
+
+  .detailColumn {
+    animation: detailIn var(--dur-2) var(--ease);
+    position: absolute;
+    /* Its own stack, so nothing inside (close button, selection indicators) shows through the list above it. */
+    z-index: 0;
+    inset-block: 0;
+    inset-inline: var(--pane-master) 0;
+  }
+
+  .splitGrid:not([data-open]) > .detailColumn {
+    display: flex;
+    animation: detailOut var(--dur-1) var(--ease-in) forwards;
+  }
+
+  .detailClose {
+    position: absolute;
+    top: var(--s-5);
+    right: var(--s-4);
+    z-index: 1;
+    display: block;
+  }
+
+  .detailInner {
+    padding-inline-end: calc(var(--s-4) + var(--control) + var(--s-3));
   }
 
   .splitBack {
     display: none;
+  }
+}
+
+/* Reduced motion: the panes jump straight to their place, without a single in-between frame. */
+html[data-nxt-motion='off'] :is(.splitGrid, .masterInner, .master, .detailColumn, .detailBody, .splitBack) {
+  transition: none !important;
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.splitGrid, .masterInner, .master, .detailColumn, .detailBody, .splitBack) {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@keyframes detailIn {
+  from {
+    opacity: 0;
+    transform: translateX(var(--s-4));
+  }
+}
+
+@keyframes detailOut {
+  to {
+    opacity: 0;
+    transform: translateX(var(--s-3));
+  }
+}
+
+@keyframes narrowIn {
+  from {
+    opacity: 0.4;
+    transform: translateX(var(--s-4));
+  }
+}
+
+@keyframes listIn {
+  from {
+    opacity: 0.4;
+    transform: translateX(calc(-1 * var(--s-3)));
+  }
+}
+
+@keyframes swapIn {
+  from {
+    opacity: 0.4;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
   }
 }
 

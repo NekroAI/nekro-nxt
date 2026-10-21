@@ -258,14 +258,57 @@ test.describe('settings space', () => {
       await expect(overview).toBeVisible()
       await expect(overview.getByRole('row', { selected: true })).toContainText('示例供应商乙')
       await expect(page.getByRole('button', { name: '全部供应商' })).toBeHidden()
-      const [listBox, titleBox] = await Promise.all([
-        overview.boundingBox(),
-        page.getByRole('heading', { name: '示例供应商乙' }).boundingBox(),
-      ])
-      expect((titleBox?.x ?? 0) > (listBox?.x ?? 0) + (listBox?.width ?? 0)).toBe(true)
+      // Once the list has narrowed, the detail sits to its right.
+      await expect
+        .poll(async () => {
+          const [listBox, titleBox] = await Promise.all([
+            overview.boundingBox(),
+            page.getByRole('heading', { name: '示例供应商乙' }).boundingBox(),
+          ])
+          return (titleBox?.x ?? 0) > (listBox?.x ?? 0) + (listBox?.width ?? 0)
+        })
+        .toBe(true)
       await overview.getByText('示例供应商甲', { exact: true }).click()
       await expect(page.getByRole('heading', { name: '示例供应商甲' })).toBeVisible()
       await expect(overview.getByRole('row', { selected: true })).toContainText('示例供应商甲')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('closes the open provider on a wide window with the close button or Escape', async () => {
+    const { page, errors } = await open('/settings/models', { width: 1680 })
+    try {
+      const overview = page.getByRole('table', { name: '模型供应商' })
+      const close = page.getByRole('button', { name: '关闭', exact: true })
+      await expect(close).toHaveCount(0)
+      await overview.getByText('示例供应商乙', { exact: true }).click()
+      await expect(page.getByRole('heading', { name: '示例供应商乙' })).toBeVisible()
+      await expect(close).toBeVisible()
+      await close.click()
+      await expect(page).not.toHaveURL(/provider=/u)
+      // The closing detail leaves the focus order at once and the opened row takes the focus back.
+      await expect(overview.getByRole('row', { name: /示例供应商乙/u })).toBeFocused()
+      await expect(page.getByRole('heading', { name: '示例供应商乙' })).toHaveCount(0)
+      await expect(close).toHaveCount(0)
+
+      // The browser's back button reopens it, Escape closes it again.
+      await page.goBack()
+      await expect(page.getByRole('heading', { name: '示例供应商乙' })).toBeVisible()
+      await page.goForward()
+      await expect(page).not.toHaveURL(/provider=/u)
+      await overview.getByText('示例供应商甲', { exact: true }).click()
+      await expect(page.getByRole('heading', { name: '示例供应商甲' })).toBeVisible()
+      // Escape inside a field belongs to the field.
+      const id = page.getByRole('textbox', { name: '模型 ID' }).first()
+      await id.focus()
+      await page.keyboard.press('Escape')
+      await expect(page).toHaveURL(/provider=example-a/u)
+      await page.getByRole('heading', { name: '示例供应商甲' }).click()
+      await page.keyboard.press('Escape')
+      await expect(page).not.toHaveURL(/provider=/u)
+      await expect(overview.getByRole('row', { name: /示例供应商甲/u })).toBeFocused()
       expect(errors).toEqual([])
     } finally {
       await page.close()
@@ -549,6 +592,28 @@ test.describe('settings space', () => {
       await expect(page).toHaveURL(new RegExp(`credential=${mapCredentialId}`, 'u'))
       await expect(page.getByRole('heading', { name: '地图服务' })).toBeVisible()
       await expect(page.getByRole('region', { name: '凭据申请' })).toHaveCount(0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('keeps only the credential list beside an open credential', async () => {
+    const state = { view: credentialsView(), calls: [] as { method: string; path: string; body: unknown }[] }
+    const { page, errors } = await open('/settings/credentials', { width: 1680, before: credentialRoutes(state) })
+    try {
+      const table = page.getByRole('table', { name: '凭据' })
+      const providers = page.getByRole('heading', { name: '模型供应商' })
+      await expect(providers).toBeVisible()
+      await table.getByText('天气服务', { exact: true }).click()
+      await expect(page.getByRole('heading', { name: '天气服务' })).toBeVisible()
+      // Page-wide groups wait until the credential closes; requests and the list stay.
+      await expect(providers).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: '凭据申请' })).toBeVisible()
+      await expect(table).toBeVisible()
+      await page.keyboard.press('Escape')
+      await expect(page).not.toHaveURL(/credential=/u)
+      await expect(providers).toBeVisible()
       expect(errors).toEqual([])
     } finally {
       await page.close()
