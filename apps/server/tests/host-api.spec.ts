@@ -839,7 +839,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
-  it('keeps command network and account grants through the capabilities API, and rejects unknown accounts', async () => {
+  it('keeps command network and linked account grants through the capabilities API, and rejects unknown accounts', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-accounts-api-'))
     temporaryDirectories.push(directory)
     // GitHub answers for one fictional token; every other request, the test's own included, goes out as usual.
@@ -884,19 +884,23 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(unknown.ok).toBe(false)
       expect(runtime.repository.getAgent(agentId)?.revision.capabilities.commandAccounts).toEqual([])
 
-      // The account library: a token GitHub accepts becomes an account, granted to one agent and shown as used.
-      const added = await fetch(`${origin}/api/settings/command-accounts`, {
+      // 关联账号: a token GitHub accepts becomes an account; the library grants nothing by itself.
+      const json = { 'content-type': 'application/json' }
+      const added = await fetch(`${origin}/api/settings/linked-accounts`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ source: 'token', service: 'github', token: 'tok-fixture' }),
+        headers: json,
+        body: JSON.stringify({ platform: 'github', method: 'token', token: 'tok-fixture' }),
       })
       expect(added.ok).toBe(true)
-      const [account] = HostApiContracts.addCommandAccount.parseResponse(await added.json()).accounts
-      expect(account).toMatchObject({ login: 'octo-fixture', source: 'token', usedBy: [] })
-      // The account routes now keep a GitHub credential, open only to the agents it is granted to.
-      expect(runtime.credentialLibrary.list()).toMatchObject([
-        { name: 'GitHub octo-fixture', kind: 'github', usage: 'program', agentScope: { agentIds: [] } },
+      const addedView = HostApiContracts.addLinkedAccount.parseResponse(await added.json())
+      expect(addedView.platforms.map((platform) => [platform.id, platform.name, platform.addMethods])).toEqual([
+        ['github', 'GitHub', ['token', 'gh-login']],
       ])
+      expect(addedView.platforms[0]?.tool).toMatchObject({ id: 'github-cli', name: 'GitHub CLI' })
+      const [account] = addedView.platforms[0]!.accounts
+      expect(account).toMatchObject({ login: 'octo-fixture', source: 'token', grantedAgentIds: [], available: true })
+      // Credentials stay generic: the account is not one of them.
+      expect(runtime.credentialLibrary.list()).toEqual([])
 
       const granted = HostApiContracts.updateAgentCapabilities.parseResponse(
         await (
@@ -906,16 +910,37 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(granted.capabilities.commandAccounts).toEqual([
         { service: 'github', accountId: account!.id, usage: ['issues'] },
       ])
-      const listed = HostApiContracts.getCommandAccounts.parseResponse(
-        await (await fetch(`${origin}/api/settings/command-accounts`)).json(),
+      const listed = HostApiContracts.getLinkedAccounts.parseResponse(
+        await (await fetch(`${origin}/api/settings/linked-accounts`)).json(),
       )
-      expect(listed.accounts[0]?.usedBy).toEqual([agentId])
-      expect(runtime.credentialLibrary.list()[0]?.agentScope).toEqual({ agentIds: [agentId] })
+      expect(listed.platforms[0]?.accounts[0]?.grantedAgentIds).toEqual([agentId])
       expect(JSON.stringify(listed)).not.toContain('tok-fixture')
+      const uses = await fetch(`${origin}/api/settings/linked-accounts/${account!.id}/uses`)
+      expect(HostApiContracts.getLinkedAccountUses.parseResponse(await uses.json())).toEqual({ uses: [] })
 
-      const removed = await fetch(`${origin}/api/settings/command-accounts/${account!.id}`, { method: 'DELETE' })
-      expect([removed.status, await removed.clone().text()]).toEqual([200, expect.any(String)])
-      expect(runtime.credentialLibrary.list()).toEqual([])
+      // Another account's token does not replace this one's.
+      const replaced = await fetch(`${origin}/api/settings/linked-accounts/${account!.id}/token`, {
+        method: 'PUT',
+        headers: json,
+        body: JSON.stringify({ method: 'token', token: 'tok-unknown' }),
+      })
+      expect(replaced.status).toBe(400)
+
+      // Removing a granted account first lists who has it, then goes once confirmed.
+      const remove = (confirm: boolean) =>
+        fetch(`${origin}/api/settings/linked-accounts/${account!.id}/remove`, {
+          method: 'POST',
+          headers: json,
+          body: JSON.stringify({ confirm }),
+        })
+      expect(HostApiContracts.removeLinkedAccount.parseResponse(await (await remove(false)).json())).toEqual({
+        removed: false,
+        grantedAgentIds: [agentId],
+      })
+      const removed = HostApiContracts.removeLinkedAccount.parseResponse(await (await remove(true)).json())
+      expect(removed.removed && removed.view.platforms[0]?.accounts).toEqual([])
+      expect(runtime.linkedAccounts.list()).toEqual([])
+      expect((await fetch(`${origin}/api/settings/command-accounts`)).ok).toBe(false)
     } finally {
       globalThis.fetch = realFetch
       api.dispose()

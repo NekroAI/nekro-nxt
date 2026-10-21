@@ -17,7 +17,6 @@ import {
   Pressable,
   SecretInput,
   Segmented,
-  Select,
   SwitchRow,
   ToggleChip,
   toast,
@@ -31,8 +30,6 @@ import {
   type CredentialDraft,
 } from './credentials-data.js'
 import styles from './credentials.module.css'
-
-const TOKEN_PAGE = 'https://github.com/settings/personal-access-tokens/new'
 
 export const USAGE_OPTIONS = [
   { value: 'request', label: '仅用于网络请求' },
@@ -169,12 +166,11 @@ export interface CreatedCredential {
 
 /**
  * Adds a named credential. `initial` pre-fills the form, for example from an agent's request (`requestId`) or from
- * the secret field it is added for. The GitHub variant takes a token or a login of the local `gh`.
+ * the secret field it is added for.
  */
 export function AddCredentialDialog({
   open,
   onOpenChange,
-  kind = 'generic',
   view,
   initial,
   requestId,
@@ -182,7 +178,6 @@ export function AddCredentialDialog({
 }: {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
-  readonly kind?: 'generic' | 'github'
   readonly view: CredentialsView | undefined
   readonly initial?: Partial<CredentialDraft> | undefined
   readonly requestId?: string | undefined
@@ -190,8 +185,6 @@ export function AddCredentialDialog({
 }) {
   const [draft, setDraft] = useState<CredentialDraft>({ ...emptyCredentialDraft, ...initial })
   const [value, setValue] = useState('')
-  const [source, setSource] = useState<'token' | 'gh-login'>('token')
-  const [login, setLogin] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -200,49 +193,29 @@ export function AddCredentialDialog({
     if (!open) return
     setDraft({ ...emptyCredentialDraft, ...initial })
     setValue('')
-    setSource('token')
-    setLogin('')
     setSubmitted(false)
     setError('')
   }, [open, initialKey])
 
-  const logins = view?.localGithubLogins ?? []
-  const chosenLogin = login || (logins.find((entry) => entry.active)?.login ?? logins[0]?.login ?? '')
-  const issues = kind === 'github' ? {} : credentialDraftIssues(draft, 'generic')
-  const ready =
-    kind === 'github'
-      ? source === 'token'
-        ? value.trim() !== ''
-        : chosenLogin !== ''
-      : draft.name.trim() !== '' && value.trim() !== ''
+  const issues = credentialDraftIssues(draft)
+  const ready = draft.name.trim() !== '' && value.trim() !== ''
 
   const submit = async () => {
     setSubmitted(true)
     if (Object.keys(issues).length > 0) return
     setBusy(true)
     setError('')
-    const shared = {
+    const request: CreateCredentialRequest = {
       description: draft.description.trim(),
       agentScope: scopeOfDraft(draft),
       autoUse: draft.autoUse,
       ...(requestId === undefined ? {} : { requestId }),
+      name: draft.name.trim(),
+      usage: draft.usage,
+      domains: [...parseDomains(draft.domains)],
+      ...(draft.usage === 'program' && draft.envName.trim() !== '' ? { envName: draft.envName.trim() } : {}),
+      value: value.trim(),
     }
-    const request: CreateCredentialRequest =
-      kind === 'github'
-        ? {
-            kind: 'github',
-            ...shared,
-            github: source === 'token' ? { source, token: value.trim() } : { source, login: chosenLogin },
-          }
-        : {
-            kind: 'generic',
-            ...shared,
-            name: draft.name.trim(),
-            usage: draft.usage,
-            domains: [...parseDomains(draft.domains)],
-            ...(draft.usage === 'program' && draft.envName.trim() !== '' ? { envName: draft.envName.trim() } : {}),
-            value: value.trim(),
-          }
     try {
       const known = new Set(view?.credentials.map((credential) => credential.id) ?? [])
       const next = await callHostApi(HostApiContracts.createCredential, {}, request)
@@ -264,7 +237,7 @@ export function AddCredentialDialog({
     <Dialog
       open={open}
       onOpenChange={(next) => !busy && onOpenChange(next)}
-      title={kind === 'github' ? '添加 GitHub 账号' : '添加凭据'}
+      title="添加凭据"
       wide
       actions={
         <>
@@ -278,81 +251,29 @@ export function AddCredentialDialog({
       }
     >
       <div className={styles.form}>
-        {kind === 'github' ? (
-          <>
-            <Segmented
-              className={styles.segmented}
-              label="账号来源"
-              value={source}
-              options={[
-                { value: 'token', label: '填写 token' },
-                { value: 'gh-login', label: '本机 gh 已登录账号' },
-              ]}
-              onChange={(next) => {
-                setSource(next)
-                setError('')
-              }}
-            />
-            {source === 'token' ? (
-              <Field
-                label="Token"
-                hint={
-                  <>
-                    建议
-                    <a href={TOKEN_PAGE} target="_blank" rel="noreferrer">
-                      创建专用 token
-                    </a>
-                    ，只开启需要的权限。
-                  </>
-                }
-              >
-                <SecretInput
-                  configured={false}
-                  value={value}
-                  placeholder="github_pat_…"
-                  onChange={(event) => setValue(event.target.value)}
-                />
-              </Field>
-            ) : logins.length === 0 ? (
-              <p className={styles.note}>这台设备上没有已登录的 gh 账号。</p>
-            ) : (
-              <Field label="账号" hint="该账号在 gh 里的全部权限都会交给智能体。">
-                <Select
-                  aria-label="gh 账号"
-                  value={chosenLogin}
-                  options={logins.map((entry) => ({ value: entry.login, label: entry.login }))}
-                  onValueChange={setLogin}
-                />
-              </Field>
-            )}
-          </>
-        ) : (
-          <>
-            <Field label="名称" error={shownIssues.name}>
-              <Input
-                value={draft.name}
-                placeholder="例如：天气服务"
-                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-              />
-            </Field>
-            <Field label="说明">
-              <Input
-                value={draft.description}
-                onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-              />
-            </Field>
-            <Field label="值">
-              <SecretInput
-                configured={false}
-                value={value}
-                autoComplete="off"
-                onChange={(event) => setValue(event.target.value)}
-              />
-            </Field>
-            <ShortValueWarning value={value} />
-            <CredentialUsageFields draft={draft} issues={shownIssues} onChange={setDraft} />
-          </>
-        )}
+        <Field label="名称" error={shownIssues.name}>
+          <Input
+            value={draft.name}
+            placeholder="例如：天气服务"
+            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+          />
+        </Field>
+        <Field label="说明">
+          <Input
+            value={draft.description}
+            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+          />
+        </Field>
+        <Field label="值">
+          <SecretInput
+            configured={false}
+            value={value}
+            autoComplete="off"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </Field>
+        <ShortValueWarning value={value} />
+        <CredentialUsageFields draft={draft} issues={shownIssues} onChange={setDraft} />
         <SwitchRow
           title="自动使用"
           tip="关闭后，智能体每次使用前要先申请。"
@@ -372,13 +293,13 @@ export function AddCredentialDialog({
   )
 }
 
-/** Replaces a credential's value; a GitHub credential takes a token of the same account. */
+/** Replaces a credential's value. */
 export function ReplaceCredentialValueDialog({
   credential,
   onOpenChange,
   onReplaced,
 }: {
-  readonly credential: { readonly id: string; readonly name: string; readonly kind: 'generic' | 'github' } | undefined
+  readonly credential: { readonly id: string; readonly name: string } | undefined
   readonly onOpenChange: (open: boolean) => void
   readonly onReplaced: (view: CredentialsView) => void
 }) {
@@ -397,7 +318,7 @@ export function ReplaceCredentialValueDialog({
       const view = await callHostApi(
         HostApiContracts.replaceCredentialValue,
         { credentialId: credential.id },
-        credential.kind === 'github' ? { github: { source: 'token', token: value.trim() } } : { value: value.trim() },
+        { value: value.trim() },
       )
       toast('值已更换')
       onReplaced(view)
@@ -424,11 +345,7 @@ export function ReplaceCredentialValueDialog({
         </>
       }
     >
-      <Field
-        label={credential?.kind === 'github' ? '新的 token' : '新的值'}
-        hint={credential?.kind === 'github' ? '需要属于同一个 GitHub 账号。' : undefined}
-        error={error || undefined}
-      >
+      <Field label="新的值" error={error || undefined}>
         <SecretInput
           configured={false}
           value={value}
@@ -436,7 +353,7 @@ export function ReplaceCredentialValueDialog({
           onChange={(event) => setValue(event.target.value)}
         />
       </Field>
-      {credential?.kind === 'github' ? null : <ShortValueWarning value={value} />}
+      <ShortValueWarning value={value} />
     </Dialog>
   )
 }

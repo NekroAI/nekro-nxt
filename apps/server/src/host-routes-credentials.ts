@@ -60,7 +60,6 @@ export const credentialView = (runtime: NekroRuntime, record: CredentialRecord):
   id: record.id,
   name: record.name,
   description: record.description,
-  kind: record.kind,
   usage: record.usage,
   domains: [...record.domains],
   agentScope: 'all' in record.agentScope ? { all: true } : { agentIds: [...record.agentScope.agentIds] },
@@ -69,11 +68,6 @@ export const credentialView = (runtime: NekroRuntime, record: CredentialRecord):
   approvedAgentIds: [...record.approvedAgentIds],
   redactable: runtime.credentialLibrary.redactable(record.id),
   available: runtime.credentialLibrary.available(record.id),
-  metadata: {
-    ...(record.metadata.login === undefined ? {} : { login: record.metadata.login }),
-    ...(record.metadata.scopes === undefined ? {} : { scopes: [...record.metadata.scopes] }),
-    ...(record.metadata.source === undefined ? {} : { source: record.metadata.source }),
-  },
   usedBy: credentialUsers(runtime, record.id),
   createdAt: record.createdAt,
   updatedAt: record.updatedAt,
@@ -102,7 +96,6 @@ export const credentialsView = async (runtime: NekroRuntime): Promise<Credential
   credentials: runtime.credentialLibrary.list().map((record) => credentialView(runtime, record)),
   modelProviders: await modelProviderAccessList(runtime),
   requests: [...runtime.credentialRequests.list()],
-  localGithubLogins: await runtime.credentialLibrary.localGithubLogins(),
 })
 
 /** A saved credential answers the agent requests filed under its name. */

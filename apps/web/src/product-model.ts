@@ -105,7 +105,7 @@ export interface AgentSummary {
     /** Network for commands and `run_code` programs. */
     readonly commandNetwork: boolean
     readonly communityFeedbackAuto: boolean
-    /** Accounts this agent's commands act as; each names an account of the host's library. */
+    /** Linked accounts this agent's commands act as; each names an account in 设置 → 关联账号. */
     readonly commandAccounts: CommandAccountGrant[]
     readonly extensionAutonomy: 'manual' | 'confirm' | 'autonomous'
     readonly extensionRequesters: 'everyone' | 'admins'
@@ -511,7 +511,7 @@ export interface SavedDynamicExtension {
 
 export type CommandAccountUsage = 'read' | 'issues' | 'pull-requests' | 'push'
 
-/** An older per-agent GitHub grant; read only, credentials now carry their own scope. */
+/** A linked account this agent's commands act as, one per platform (`service`). */
 export interface CommandAccountGrant {
   readonly service: 'github'
   readonly accountId: string

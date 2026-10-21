@@ -96,7 +96,7 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
   const { view, error, load, replace } = useCredentials()
   const agents = useProductStore((state) => state.agents)
   const cli = useProductStore((state) => state.capabilityAvailability.githubCli)
-  const [adding, setAdding] = useState<'generic' | 'github'>()
+  const [adding, setAdding] = useState(false)
   const prefill = prefillFromParams(params)
   const selectedId = params.get('credential') ?? ''
   const selected = view?.credentials.find((credential) => credential.id === selectedId)
@@ -136,9 +136,6 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
             <b>{credential.name}</b>
             {credential.available ? null : <Chip tone="bad">无法读取</Chip>}
           </span>
-          {credential.kind === 'github' && !credential.name.includes(credential.metadata.login ?? '\u0000') ? (
-            <span className={styles.muted}>GitHub · {credential.metadata.login ?? '未知账号'}</span>
-          ) : null}
         </span>
       ),
     },
@@ -197,10 +194,7 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
         title="凭据"
         actions={
           <>
-            <Button size="small" onClick={() => setAdding('github')}>
-              添加 GitHub 账号
-            </Button>
-            <Button size="small" icon={<Plus size={14} aria-hidden="true" />} onClick={() => setAdding('generic')}>
+            <Button size="small" icon={<Plus size={14} aria-hidden="true" />} onClick={() => setAdding(true)}>
               添加凭据
             </Button>
           </>
@@ -247,7 +241,7 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
           icon={<KeyRound size={22} />}
           title="还没有凭据"
           action={
-            <Button variant="primary" onClick={() => setAdding('generic')}>
+            <Button variant="primary" onClick={() => setAdding(true)}>
               添加凭据
             </Button>
           }
@@ -265,19 +259,18 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
         />
       )}
       <AddCredentialDialog
-        open={adding !== undefined || prefill !== undefined}
-        kind={adding ?? 'generic'}
+        open={adding || prefill !== undefined}
         view={view}
-        initial={adding === undefined ? prefill?.initial : undefined}
-        requestId={adding === undefined ? prefill?.requestId : undefined}
+        initial={adding ? undefined : prefill?.initial}
+        requestId={adding ? undefined : prefill?.requestId}
         onOpenChange={(open) => {
           if (open) return
-          setAdding(undefined)
+          setAdding(false)
           if (prefill !== undefined) setParams(selectedId ? { credential: selectedId } : {})
         }}
         onCreated={({ view: next, credentialId }) => {
           replace(next)
-          setAdding(undefined)
+          setAdding(false)
           select(credentialId)
         }}
       />
@@ -366,14 +359,12 @@ const formatTime = (time: number) => {
   return `${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-const draftChanges = (base: CredentialDraft, draft: CredentialDraft, kind: CredentialView['kind']) => [
+const draftChanges = (base: CredentialDraft, draft: CredentialDraft) => [
   ...(draft.name.trim() !== base.name ? ['名称'] : []),
   ...(draft.description.trim() !== base.description ? ['说明'] : []),
-  ...(kind === 'generic' && draft.usage !== base.usage ? ['使用方式'] : []),
-  ...(kind === 'generic' && parseDomains(draft.domains).join(',') !== parseDomains(base.domains).join(',')
-    ? ['允许的域名']
-    : []),
-  ...(kind === 'generic' && draft.envName.trim() !== base.envName ? ['环境变量名'] : []),
+  ...(draft.usage !== base.usage ? ['使用方式'] : []),
+  ...(parseDomains(draft.domains).join(',') !== parseDomains(base.domains).join(',') ? ['允许的域名'] : []),
+  ...(draft.envName.trim() !== base.envName ? ['环境变量名'] : []),
   ...(draft.autoUse !== base.autoUse ? ['自动使用'] : []),
   ...(JSON.stringify(scopeOfDraft(draft)) !== JSON.stringify(scopeOfDraft(base)) ? ['可用智能体'] : []),
 ]
@@ -420,9 +411,8 @@ function CredentialDetail({
     const channel = channels.find((candidate) => candidate.id === id)
     return channel === undefined ? '—' : (channel.customName ?? channel.name)
   }
-  const generic = credential.kind === 'generic'
-  const issues = credentialDraftIssues(draft, credential.kind)
-  const changes = draftChanges(base, draft, credential.kind)
+  const issues = credentialDraftIssues(draft)
+  const changes = draftChanges(base, draft)
 
   const save = async () => {
     if (Object.keys(issues).length > 0) {
@@ -442,17 +432,13 @@ function CredentialDetail({
             description: draft.description.trim(),
             autoUse: draft.autoUse,
             agentScope: scopeOfDraft(draft),
-            ...(generic
-              ? {
-                  usage: draft.usage,
-                  domains: [...parseDomains(draft.domains)],
-                  ...(draft.usage === 'program'
-                    ? { envName: envName === '' ? null : envName }
-                    : base.envName === ''
-                      ? {}
-                      : { envName: null }),
-                }
-              : {}),
+            usage: draft.usage,
+            domains: [...parseDomains(draft.domains)],
+            ...(draft.usage === 'program'
+              ? { envName: envName === '' ? null : envName }
+              : base.envName === ''
+                ? {}
+                : { envName: null }),
           },
         ),
       )
@@ -552,7 +538,6 @@ function CredentialDetail({
         }
         meta={
           <>
-            {credential.kind === 'github' ? <span>GitHub · {credential.metadata.login ?? '未知账号'}</span> : null}
             <span>{credentialUsageText(credential)}</span>
             <span>
               {credential.lastUsedAt === null ? '尚未使用' : `最近使用：${relativeTime(credential.lastUsedAt)}`}
@@ -578,7 +563,7 @@ function CredentialDetail({
             />
           </PropertyRow>
           <PropertyRow
-            label={generic ? '值' : 'Token'}
+            label="值"
             description={
               !credential.available
                 ? '无法读取已保存的值，请更换。'
@@ -588,59 +573,53 @@ function CredentialDetail({
             }
           >
             <Button size="small" onClick={() => setReplacing(true)}>
-              {generic ? '更换值' : '更换 token'}
+              更换值
             </Button>
           </PropertyRow>
-          {generic ? (
-            <>
-              <PropertyRow
+          <>
+            <PropertyRow
+              label="使用方式"
+              description={
+                draft.usage === 'program' ? <span className={own.warn}>智能体运行的程序可以读到原文。</span> : undefined
+              }
+            >
+              <Segmented
                 label="使用方式"
-                description={
-                  draft.usage === 'program' ? (
-                    <span className={own.warn}>智能体运行的程序可以读到原文。</span>
-                  ) : undefined
-                }
-              >
-                <Segmented
-                  label="使用方式"
-                  value={draft.usage}
-                  options={USAGE_OPTIONS}
-                  onChange={(usage) => setDraft({ ...draft, usage })}
-                />
-              </PropertyRow>
+                value={draft.usage}
+                options={USAGE_OPTIONS}
+                onChange={(usage) => setDraft({ ...draft, usage })}
+              />
+            </PropertyRow>
+            <PropertyRow
+              label="允许的域名"
+              width="md"
+              description={issues.domains ? <span className={own.warn}>{issues.domains}</span> : undefined}
+            >
+              <Input
+                aria-label="允许的域名"
+                value={draft.domains}
+                spellCheck={false}
+                placeholder="api.example.com"
+                onChange={(event) => setDraft({ ...draft, domains: event.target.value })}
+              />
+            </PropertyRow>
+            {draft.usage === 'program' ? (
               <PropertyRow
-                label="允许的域名"
+                label="环境变量名"
                 width="md"
-                description={issues.domains ? <span className={own.warn}>{issues.domains}</span> : undefined}
+                tip="填写后，智能体运行的命令可以通过这个变量读取。"
+                description={issues.envName ? <span className={own.warn}>{issues.envName}</span> : undefined}
               >
                 <Input
-                  aria-label="允许的域名"
-                  value={draft.domains}
+                  aria-label="环境变量名"
+                  value={draft.envName}
                   spellCheck={false}
-                  placeholder="api.example.com"
-                  onChange={(event) => setDraft({ ...draft, domains: event.target.value })}
+                  placeholder="EXAMPLE_API_KEY"
+                  onChange={(event) => setDraft({ ...draft, envName: event.target.value.toUpperCase() })}
                 />
               </PropertyRow>
-              {draft.usage === 'program' ? (
-                <PropertyRow
-                  label="环境变量名"
-                  width="md"
-                  tip="填写后，智能体运行的命令可以通过这个变量读取。"
-                  description={issues.envName ? <span className={own.warn}>{issues.envName}</span> : undefined}
-                >
-                  <Input
-                    aria-label="环境变量名"
-                    value={draft.envName}
-                    spellCheck={false}
-                    placeholder="EXAMPLE_API_KEY"
-                    onChange={(event) => setDraft({ ...draft, envName: event.target.value.toUpperCase() })}
-                  />
-                </PropertyRow>
-              ) : null}
-            </>
-          ) : (
-            <PropertyRow label="环境变量名" description="GH_TOKEN，命令中的 gh 和 git 使用这个账号" />
-          )}
+            ) : null}
+          </>
           <PropertyRow label="自动使用" tip="关闭后，智能体每次使用前要先申请。">
             <Switch
               label="自动使用"

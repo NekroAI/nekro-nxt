@@ -6,22 +6,15 @@ import {
   type ChannelId,
   type CredentialId,
   type CredentialUsage,
-  type GithubCredentialSource,
-  type JsonValue,
   type ReplaceCredentialValueRequest,
   type UpdateCredentialRequest,
 } from '@nekro-nxt/contracts'
-import type {
-  CredentialConsumerKind,
-  CredentialRecord,
-  CredentialsRepository,
-  SystemSettingRecord,
-} from '@nekro-nxt/storage-sqlite'
-import { z } from 'zod'
+import type { CredentialConsumerKind, CredentialRecord, CredentialsRepository } from '@nekro-nxt/storage-sqlite'
+import type { z } from 'zod'
 import type { SecretRegistry } from './secret-registry.js'
-import { CredentialError, githubTokenOf, localGithubLogins, verifyGithubToken } from './github-account.js'
 
-export { CredentialError }
+/** A message safe to show the user: what failed, without the value. */
+export class CredentialError extends Error {}
 
 /** Secret config fields bound to a named credential hold this reference instead of a store reference. */
 export const NAMED_CREDENTIAL_PREFIX = 'credential:named:'
@@ -35,32 +28,8 @@ export const namedCredentialId = (value: unknown): CredentialId | undefined => {
   return parsed.success ? parsed.data : undefined
 }
 
-/** The setting of the older command account library; its accounts become GitHub credentials once. */
-const COMMAND_ACCOUNTS_SETTING_KEY = 'command-accounts'
-const GITHUB_DOMAINS = ['github.com', 'api.github.com'] as const
 /** Command use is recorded at most this often per agent and credential: every command reads the environment. */
 const COMMAND_USE_RECORD_INTERVAL_MS = 10 * 60 * 1000
-
-const StoredAccountSchema = z
-  .object({
-    id: z.string().regex(/^[A-Za-z0-9]{1,64}$/u),
-    service: z.literal('github'),
-    login: z.string().min(1),
-    source: z.enum(['token', 'gh-login']),
-    scopes: z.array(z.string()).optional(),
-    credentialRef: z.string().min(1),
-    createdAt: z.number().int().nonnegative(),
-  })
-  .strict()
-const StoredAccountsSchema = z.object({ version: z.literal(1), accounts: z.array(StoredAccountSchema) }).strict()
-
-/** A migrated command account keeps its id inside the credential id, so grants of `commandAccounts` still resolve. */
-export const credentialIdOfAccount = (accountId: string): CredentialId | undefined => {
-  const parsed = CredentialIdSchema.safeParse(`crd_${accountId}`)
-  return parsed.success ? parsed.data : undefined
-}
-/** The command account id the older account routes show for a GitHub credential. */
-export const accountIdOfCredential = (id: CredentialId): string => id.slice('crd_'.length)
 
 export interface CredentialStore {
   save(secret: string): Promise<string>
@@ -70,18 +39,12 @@ export interface CredentialStore {
 
 export interface CredentialLibraryRepository {
   readonly credentials: CredentialsRepository
-  getSystemSetting(key: string): SystemSettingRecord | undefined
 }
 
 export interface CredentialLibraryOptions {
   readonly secrets: SecretRegistry
   readonly now?: () => number
   readonly nextId?: () => string
-  readonly fetch?: typeof fetch
-  /** The GitHub CLI program, when there is one; reads the logins the local `gh` holds. */
-  readonly githubCli?: () => string | undefined
-  /** Agents that hold a `commandAccounts` grant per account id; read once when the older library is migrated. */
-  readonly accountGrants?: () => ReadonlyMap<string, readonly AgentId[]>
 }
 
 export interface CredentialUseInput {
@@ -102,9 +65,9 @@ export interface UsableCredential {
 
 const sameName = (left: string, right: string): boolean => left.trim().toLowerCase() === right.trim().toLowerCase()
 
-/** The variable commands receive a credential under: GitHub always `GH_TOKEN`, other program credentials their own. */
-export const commandEnvName = (record: Pick<CredentialRecord, 'kind' | 'usage' | 'envName'>): string | undefined =>
-  record.usage !== 'program' ? undefined : record.kind === 'github' ? 'GH_TOKEN' : record.envName
+/** The variable commands receive a credential under: program credentials that have one. */
+export const commandEnvName = (record: Pick<CredentialRecord, 'usage' | 'envName'>): string | undefined =>
+  record.usage !== 'program' ? undefined : record.envName
 
 const scopesOverlap = (left: CredentialRecord['agentScope'], right: CredentialRecord['agentScope']): boolean =>
   'all' in left || 'all' in right || left.agentIds.some((agentId) => right.agentIds.includes(agentId))
@@ -128,9 +91,6 @@ export class CredentialLibrary {
   readonly #secrets: SecretRegistry
   readonly #now: () => number
   readonly #nextId: () => string
-  readonly #fetch: typeof fetch
-  readonly #githubCli: () => string | undefined
-  readonly #accountGrants: () => ReadonlyMap<string, readonly AgentId[]>
   readonly #values = new Map<CredentialId, string>()
   readonly #listeners = new Set<() => void>()
   readonly #commandUses = new Map<string, number>()
@@ -143,17 +103,10 @@ export class CredentialLibrary {
     this.#secrets = options.secrets
     this.#now = options.now ?? Date.now
     this.#nextId = options.nextId ?? (() => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`)
-    this.#fetch = options.fetch ?? fetch
-    this.#githubCli = options.githubCli ?? (() => undefined)
-    this.#accountGrants = options.accountGrants ?? (() => new Map())
   }
 
-  /**
-   * Moves accounts of the older command account library in (idempotent), then loads every value. A credential whose
-   * value cannot be read stays listed but unusable.
-   */
+  /** Loads every value. A credential whose value cannot be read stays listed but unusable. */
   async prepare(): Promise<void> {
-    this.#migrateCommandAccounts()
     this.#records = this.#repository.credentials.listCredentials()
     this.#values.clear()
     for (const record of this.#records) {
@@ -231,8 +184,8 @@ export class CredentialLibrary {
 
   /**
    * Credentials this agent's commands receive (智能体扩展配置与凭据 C2、C3): program credentials in its scope that have
-   * an environment variable (GitHub ones always do), used automatically or approved for this agent. When two claim the
-   * same variable (possible only for data written before the check), the older one wins.
+   * an environment variable, used automatically or approved for this agent. When two claim the same variable (possible
+   * only for data written before the check), the older one wins. Linked accounts the agent is granted come on top.
    */
   commandCredentials(agentId: AgentId): Array<UsableCredential & { readonly env: string }> {
     const claimed = new Set<string>()
@@ -298,42 +251,15 @@ export class CredentialLibrary {
     return this.#repository.credentials.listCredentialUses(id, limit)
   }
 
-  localGithubLogins(): Promise<Array<{ login: string; active: boolean }>> {
-    return localGithubLogins(this.#githubCli())
-  }
-
   create(input: z.input<typeof CreateCredentialRequestSchema>): Promise<CredentialRecord> {
     return this.#serialized(async () => {
       const request = CreateCredentialRequestSchema.parse(input)
-      let value: string
-      let name: string
-      let metadata: CredentialRecord['metadata'] = {}
-      let usage: CredentialUsage
-      let domains: readonly string[]
-      let envName: string | undefined
-      if (request.kind === 'github') {
-        value = await githubTokenOf(request.github, this.#githubCli())
-        const identity = await verifyGithubToken(this.#fetch, value)
-        metadata = {
-          login: identity.login,
-          source: request.github.source,
-          ...(identity.scopes === undefined ? {} : { scopes: identity.scopes }),
-        }
-        name = request.name ?? this.#freeName(`GitHub ${identity.login}`)
-        usage = 'program'
-        domains = request.domains ?? GITHUB_DOMAINS
-      } else {
-        value = request.value
-        name = request.name
-        usage = request.usage
-        domains = request.domains
-        envName = request.envName
-      }
+      const { value, name, usage, domains, envName } = request
       if (value.trim() === '') throw new CredentialError('凭据的值不能为空。')
       assertRequestDomains(usage, domains)
       this.#assertFreeName(name)
       this.#assertFreeEnv(
-        { kind: request.kind, usage, agentScope: request.agentScope, ...(envName === undefined ? {} : { envName }) },
+        { usage, agentScope: request.agentScope, ...(envName === undefined ? {} : { envName }) },
         undefined,
       )
       const reference = await this.#store.save(value)
@@ -342,7 +268,6 @@ export class CredentialLibrary {
         id: CredentialIdSchema.parse(`crd_${this.#nextId()}`),
         name,
         description: request.description,
-        kind: request.kind,
         usage,
         domains: [...new Set(domains)],
         agentScope: request.agentScope,
@@ -350,7 +275,6 @@ export class CredentialLibrary {
         ...(envName === undefined ? {} : { envName }),
         approvedAgentIds: [],
         credentialRef: reference,
-        metadata,
         createdAt: now,
         updatedAt: now,
       }
@@ -370,12 +294,6 @@ export class CredentialLibrary {
   update(id: CredentialId, patch: UpdateCredentialRequest): Promise<CredentialRecord> {
     return this.#serialized(() => {
       const current = this.#require(id)
-      if (current.kind === 'github' && patch.usage === 'request') {
-        throw new CredentialError('GitHub 账号给命令使用，需要允许程序读取。')
-      }
-      if (current.kind === 'github' && patch.envName !== undefined && patch.envName !== null) {
-        throw new CredentialError('GitHub 账号固定以 GH_TOKEN 给命令使用。')
-      }
       if (patch.name !== undefined && !sameName(patch.name, current.name)) this.#assertFreeName(patch.name)
       const usage = patch.usage ?? current.usage
       assertRequestDomains(usage, patch.domains ?? current.domains)
@@ -405,31 +323,13 @@ export class CredentialLibrary {
     })
   }
 
-  /** Stores a new value; a GitHub credential only takes a token of the same GitHub account. */
   replaceValue(id: CredentialId, request: ReplaceCredentialValueRequest): Promise<CredentialRecord> {
     return this.#serialized(async () => {
       const current = this.#require(id)
-      let value: string
-      let metadata = current.metadata
-      if ('github' in request) {
-        if (current.kind !== 'github') throw new CredentialError('这个凭据不是 GitHub 账号。')
-        value = await this.#githubToken(request.github)
-        const identity = await verifyGithubToken(this.#fetch, value)
-        if (current.metadata.login !== undefined && identity.login !== current.metadata.login) {
-          throw new CredentialError(`新的 token 属于 ${identity.login}，请添加为新的凭据。`)
-        }
-        metadata = {
-          login: identity.login,
-          source: request.github.source,
-          ...(identity.scopes === undefined ? {} : { scopes: identity.scopes }),
-        }
-      } else {
-        if (current.kind === 'github') throw new CredentialError('GitHub 账号要用 token 或本机登录更换。')
-        value = request.value
-      }
+      const value = request.value
       if (value.trim() === '') throw new CredentialError('凭据的值不能为空。')
       const reference = await this.#store.save(value)
-      const next: CredentialRecord = { ...current, credentialRef: reference, metadata, updatedAt: this.#now() }
+      const next: CredentialRecord = { ...current, credentialRef: reference, updatedAt: this.#now() }
       try {
         if (!this.#repository.credentials.updateCredential(next)) throw new CredentialError('没有找到这个凭据。')
       } catch (error) {
@@ -456,10 +356,6 @@ export class CredentialLibrary {
     })
   }
 
-  #githubToken(source: GithubCredentialSource): Promise<string> {
-    return githubTokenOf(source, this.#githubCli())
-  }
-
   #require(id: CredentialId): CredentialRecord {
     const record = this.get(id)
     if (record === undefined) throw new CredentialError('没有找到这个凭据。')
@@ -474,7 +370,7 @@ export class CredentialLibrary {
 
   /** Two credentials one agent's commands both receive cannot share a variable. */
   #assertFreeEnv(
-    candidate: Pick<CredentialRecord, 'kind' | 'usage' | 'envName' | 'agentScope'>,
+    candidate: Pick<CredentialRecord, 'usage' | 'envName' | 'agentScope'>,
     self: CredentialId | undefined,
   ): void {
     const env = commandEnvName(candidate)
@@ -488,62 +384,6 @@ export class CredentialLibrary {
         `凭据「${other.name}」已经以 ${env} 给同一批智能体的命令使用，请换一个环境变量名或调整可用范围。`,
       )
     }
-  }
-
-  #freeName(base: string, taken: readonly string[] = this.#records.map((record) => record.name)): string {
-    let name = base
-    for (let index = 2; taken.some((existing) => sameName(existing, name)); index += 1) name = `${base} (${index})`
-    return name
-  }
-
-  /**
-   * The older library kept GitHub accounts in a system setting and granted them per agent. Each account becomes a
-   * GitHub credential with the same id suffix and the same stored token, open to the agents that had a grant, and
-   * the setting is emptied in the same transaction. Accounts found there later (an older build wrote them) are moved
-   * the same way; ones already moved are skipped.
-   */
-  #migrateCommandAccounts(): void {
-    const setting = this.#repository.getSystemSetting(COMMAND_ACCOUNTS_SETTING_KEY)
-    const parsed = setting === undefined ? undefined : StoredAccountsSchema.safeParse(setting.value)
-    const accounts = parsed?.success ? parsed.data.accounts : []
-    if (accounts.length === 0) return
-    const grants = this.#accountGrants()
-    const existing = this.#repository.credentials.listCredentials()
-    const taken = existing.map((record) => record.name)
-    const now = this.#now()
-    const records = accounts.flatMap((account): CredentialRecord[] => {
-      const id = credentialIdOfAccount(account.id)
-      if (id === undefined || existing.some((record) => record.id === id)) return []
-      const name = this.#freeName(`GitHub ${account.login}`, taken)
-      taken.push(name)
-      return [
-        {
-          id,
-          name,
-          description: '',
-          kind: 'github',
-          usage: 'program',
-          domains: [...GITHUB_DOMAINS],
-          agentScope: { agentIds: [...new Set(grants.get(account.id) ?? [])] },
-          autoUse: true,
-          approvedAgentIds: [],
-          credentialRef: account.credentialRef,
-          metadata: {
-            login: account.login,
-            source: account.source,
-            ...(account.scopes === undefined ? {} : { scopes: account.scopes }),
-          },
-          createdAt: account.createdAt,
-          updatedAt: now,
-        },
-      ]
-    })
-    const emptied: JsonValue = { version: 1, accounts: [] }
-    this.#repository.credentials.importCredentials(records, {
-      key: COMMAND_ACCOUNTS_SETTING_KEY,
-      value: emptied,
-      updatedAt: now,
-    })
   }
 
   #reload(): void {

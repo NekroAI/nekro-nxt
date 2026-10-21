@@ -562,7 +562,7 @@ test.describe('settings space', () => {
       await expect(table).toContainText('天气服务')
       await expect(table).toContainText('api.weather.example.com')
       await expect(table).toContainText('程序可读 · TRANSLATE_API_KEY')
-      await expect(table).toContainText('GitHub · octo-fixture')
+      await expect(table).toContainText('程序可读 · DEPLOY_TOKEN')
       await expect(table).toContainText('5 分钟前')
       const requests = page.getByRole('region', { name: '凭据申请' })
       await expect(requests).toContainText('资料员申请：查询路线规划')
@@ -578,7 +578,6 @@ test.describe('settings space', () => {
       await dialog.getByRole('button', { name: '添加', exact: true }).click()
       await expect.poll(() => state.calls.map(({ method, path }) => `${method} ${path}`)).toEqual(['POST '])
       expect(state.calls[0]!.body).toEqual({
-        kind: 'generic',
         name: '地图服务',
         description: '查询路线规划',
         usage: 'request',
@@ -745,10 +744,6 @@ test.describe('settings space', () => {
       await expect(page).toHaveURL(/\/settings\/credentials$/u)
       await expect(page.getByRole('heading', { name: '凭据', level: 1 })).toBeVisible()
       await expect(page.getByText('2.90.0，来自这台设备')).toBeVisible()
-      await page.getByRole('button', { name: '添加 GitHub 账号' }).click()
-      const dialog = page.getByRole('dialog', { name: '添加 GitHub 账号' })
-      await dialog.getByRole('radio', { name: '本机 gh 已登录账号' }).click()
-      await expect(dialog.getByRole('combobox', { name: 'gh 账号' })).toContainText('octo-fixture')
       expect(errors).toEqual([])
     } finally {
       await page.close()

@@ -6,6 +6,7 @@ export * from './management-api.js'
 export * from './runtime-compatibility.js'
 export * from './extension-capabilities.js'
 export * from './credentials.js'
+export * from './linked-accounts.js'
 export * from './community.js'
 export * from './community-personas.js'
 

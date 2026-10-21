@@ -123,7 +123,6 @@ describe('credentials API', () => {
       const created = HostApiContracts.createCredential.parseResponse(
         (
           await call('', 'POST', {
-            kind: 'generic',
             name: '天气服务',
             description: '天气查询',
             domains: ['api.weather.test'],
@@ -145,7 +144,7 @@ describe('credentials API', () => {
       expect(created.requests).toEqual([])
       expect(notify).toHaveBeenCalledWith(expect.objectContaining({ agentId, channelId: seeded.channel.id }))
 
-      const duplicate = await call('', 'POST', { kind: 'generic', name: '天气服务', value: 'another-fixture-value' })
+      const duplicate = await call('', 'POST', { name: '天气服务', value: 'another-fixture-value' })
       expect(duplicate.status).toBe(400)
 
       const updated = HostApiContracts.updateCredential.parseResponse(

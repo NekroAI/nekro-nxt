@@ -9,12 +9,13 @@ import { productSnapshot, targetAgentId, targetChannelId, summaryExtensionId } f
 
 export const weatherCredentialId = CredentialIdSchema.parse('crd_weatherfixture')
 export const translateCredentialId = CredentialIdSchema.parse('crd_translatefixture')
-export const githubCredentialId = CredentialIdSchema.parse('crd_githubfixture')
+export const deployCredentialId = CredentialIdSchema.parse('crd_deployfixture')
 export const mapCredentialId = CredentialIdSchema.parse('crd_mapfixture')
 
 const minute = 60_000
 
-/** Named credentials of a fictional host: a request-only one in use, a program one waiting for approval, GitHub. */
+/** Named credentials of a fictional host: a request-only one in use, a program one approved for one agent, and one
+ * program credential every agent's commands receive. */
 export const credentialsView = (now = Date.now()): CredentialsView => {
   const request = {
     id: 'req_fixture1',
@@ -29,7 +30,6 @@ export const credentialsView = (now = Date.now()): CredentialsView => {
         id: weatherCredentialId,
         name: '天气服务',
         description: '天气查询扩展使用的 API 密钥',
-        kind: 'generic',
         usage: 'request',
         domains: ['api.weather.example.com'],
         agentScope: { all: true },
@@ -38,7 +38,6 @@ export const credentialsView = (now = Date.now()): CredentialsView => {
         approvedAgentIds: [],
         redactable: true,
         available: true,
-        metadata: {},
         usedBy: {
           extensions: [
             {
@@ -58,7 +57,6 @@ export const credentialsView = (now = Date.now()): CredentialsView => {
         id: translateCredentialId,
         name: '翻译服务',
         description: '',
-        kind: 'generic',
         usage: 'program',
         domains: [],
         agentScope: { agentIds: [targetAgentId] },
@@ -67,26 +65,23 @@ export const credentialsView = (now = Date.now()): CredentialsView => {
         approvedAgentIds: [targetAgentId],
         redactable: true,
         available: true,
-        metadata: {},
         usedBy: { extensions: [], commandAgents: [targetAgentId] },
         createdAt: now - 2 * 86_400_000,
         updatedAt: now - 2 * 86_400_000,
         lastUsedAt: null,
       },
       {
-        id: githubCredentialId,
-        name: '团队 GitHub',
+        id: deployCredentialId,
+        name: '部署令牌',
         description: '',
-        kind: 'github',
         usage: 'program',
-        domains: ['github.com', 'api.github.com'],
+        domains: [],
         agentScope: { all: true },
         autoUse: true,
-        envName: null,
+        envName: 'DEPLOY_TOKEN',
         approvedAgentIds: [],
         redactable: true,
         available: true,
-        metadata: { login: 'octo-fixture', source: 'token' },
         usedBy: { extensions: [], commandAgents: [] },
         createdAt: now - 86_400_000,
         updatedAt: now - 86_400_000,
@@ -106,7 +101,6 @@ export const credentialsView = (now = Date.now()): CredentialsView => {
         route: credentialRequestRoute(request),
       },
     ],
-    localGithubLogins: [{ login: 'octo-fixture', active: true }],
   })
 }
 

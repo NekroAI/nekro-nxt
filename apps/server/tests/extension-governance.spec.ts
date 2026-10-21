@@ -12,6 +12,7 @@ import { ExtensionDataDowngradeError, hostPermissionRequirement } from '@nekro-n
 import {
   CommunityReleaseSchema,
   EpisodeIdSchema,
+  LinkedAccountIdSchema,
   type AgentId,
   type ChannelId,
   type ExtensionId,
@@ -1265,14 +1266,12 @@ describe('extension autonomy', () => {
         capabilities: { dynamicCreation: true, extensionAutonomy: 'manual' },
       })
       const guarded = await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '天气服务',
         value: 'fictional-weather-key',
         domains: ['api.weather.test'],
         autoUse: false,
       })
       const open = await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '备用天气',
         value: 'fictional-backup-key',
         domains: ['api.weather.test'],
@@ -1330,19 +1329,46 @@ describe('extension autonomy', () => {
       const entity = await agentWithChannel(runtime, 'manual')
       const other = await agentWithChannel(runtime, 'manual')
       await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '示例搜索',
         description: '搜索接口',
         value: 'fictional-search-key',
         domains: ['api.search.test'],
       })
       await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '他人专用',
         value: 'fictional-private-key',
         usage: 'program',
         agentScope: { agentIds: [other.agentId] },
         autoUse: false,
+      })
+      // Linked accounts are listed by platform and login, with whether this agent's commands act as them.
+      for (const [suffix, login] of [
+        ['LISTED1', 'octo-fixture'],
+        ['LISTED2', 'second-fixture'],
+      ] as const) {
+        runtime.repository.linkedAccounts.insertAccount({
+          id: LinkedAccountIdSchema.parse(`acc_${suffix}`),
+          platform: 'github',
+          login,
+          source: 'token',
+          credentialRef: await runtime.credentials.save(`fictional-account-token-${suffix}`),
+          createdAt: 1,
+          updatedAt: 1,
+        })
+      }
+      await runtime.linkedAccounts.prepare()
+      const revision = runtime.repository.getAgent(entity.agentId)!.revision
+      runtime.core.reviseAgent(entity.agentId, revision.id, {
+        displayName: revision.displayName,
+        persona: revision.persona,
+        personaDocument: revision.personaDocument,
+        model: revision.model,
+        capabilities: {
+          ...revision.capabilities,
+          commandAccounts: [{ service: 'github', accountId: 'acc_LISTED1', usage: [] }],
+        },
+        imagePolicy: revision.imagePolicy,
+        dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
       })
       const tools = new ExtensionGovernanceTools(runtime)
       const listed = await tools.listCredentials(entity.agentId)
@@ -1357,15 +1383,28 @@ describe('extension autonomy', () => {
           },
           { name: '他人专用', usage: 'program', autoUse: false, availableToYou: false },
         ],
+        accounts: [
+          { platform: 'GitHub', login: 'octo-fixture', grantedToYou: true },
+          { platform: 'GitHub', login: 'second-fixture', grantedToYou: false },
+        ],
         modelProviders: [],
       })
+      expect(await tools.listCredentials(other.agentId)).toMatchObject({
+        accounts: [{ grantedToYou: false }, { grantedToYou: false }],
+      })
       const serialized = JSON.stringify(listed)
-      for (const hidden of ['fictional-search-key', 'fictional-private-key', 'credential:local', 'crd_'])
+      for (const hidden of [
+        'fictional-search-key',
+        'fictional-private-key',
+        'fictional-account-token',
+        'credential:local',
+        'crd_',
+        'acc_',
+      ])
         expect(serialized).not.toContain(hidden)
 
       // An existing credential whose automatic use is off: asking files an approval request instead.
       const guarded = await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '受控搜索',
         value: 'fictional-guarded-key',
         usage: 'program',
@@ -1422,7 +1461,6 @@ describe('extension autonomy', () => {
         `/settings/credentials?add=1&name=${encodeURIComponent('天气服务')}&request=${pending?.id}&usage=request&purpose=${encodeURIComponent('查天气')}&domains=api.weather.test`,
       )
       const added = await runtime.credentialLibrary.create({
-        kind: 'generic',
         name: '天气服务',
         value: 'fictional-weather-key',
         domains: ['api.weather.test'],

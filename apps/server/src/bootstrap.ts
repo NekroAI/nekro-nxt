@@ -77,6 +77,9 @@ import { CredentialLibrary, namedCredentialId } from './credentials-library.js'
 import { CredentialRequests } from './credential-requests.js'
 import { ModelProviderAccess, openModelOptions } from './model-provider-access.js'
 import { GithubCli } from './github-cli.js'
+import { createGithubPlatform } from './linked-accounts/github.js'
+import { commandAccountsOf, LinkedAccountLibrary } from './linked-accounts/library.js'
+import { LinkedAccountPlatforms } from './linked-accounts/platform.js'
 import { CandidateVerifier } from './candidate-verifier.js'
 import { VerificationBrowser } from './verification-browser.js'
 import { DshPluginPackageInstaller } from './dsh-plugin-installer.js'
@@ -269,8 +272,10 @@ export class NekroRuntime {
   #candidateVerifier: CandidateVerifier | undefined
   #subConversationChanges = new Set<() => void>()
   #subConversationSweep: ReturnType<typeof setInterval> | undefined
-  /** Named credentials; also the library behind the older command account routes. */
+  /** Named credentials. */
   readonly credentialLibrary: CredentialLibrary
+  /** Linked third-party accounts, granted to agents' commands per agent. */
+  readonly linkedAccounts: LinkedAccountLibrary
   /** Credentials agents asked for that nobody has added yet. */
   readonly credentialRequests: CredentialRequests
   /** Which model providers agents and extensions may call through the host. */
@@ -329,6 +334,7 @@ export class NekroRuntime {
     readonly githubCli: GithubCli
     readonly verificationBrowser: VerificationBrowser
     readonly credentialLibrary: CredentialLibrary
+    readonly linkedAccounts: LinkedAccountLibrary
     readonly credentialRequests: CredentialRequests
     readonly modelProviderAccess: ModelProviderAccess
     readonly retrieval: RetrievalRuntime
@@ -451,6 +457,7 @@ export class NekroRuntime {
     this.githubCli = input.githubCli
     this.verificationBrowser = input.verificationBrowser
     this.credentialLibrary = input.credentialLibrary
+    this.linkedAccounts = input.linkedAccounts
     this.credentialRequests = input.credentialRequests
     this.modelProviderAccess = input.modelProviderAccess
     this.retrieval = input.retrieval
@@ -1014,20 +1021,16 @@ export class NekroRuntime {
         secrets,
         now,
         nextId: () => nextUlid(),
-        githubCli: () => githubCli.executable(),
-        // Agents that held a `commandAccounts` grant keep the migrated GitHub credential.
-        accountGrants: () => {
-          const grants = new Map<string, AgentId[]>()
-          for (const commit of core.listAgents()) {
-            for (const grant of commit.revision.capabilities.commandAccounts) {
-              grants.set(grant.accountId, [...(grants.get(grant.accountId) ?? []), commit.definition.id])
-            }
-          }
-          return grants
-        },
       })
       await credentialLibrary.prepare()
       credentialPort.current = credentialLibrary
+      const linkedAccounts = new LinkedAccountLibrary(repository, credentials, {
+        secrets,
+        platforms: new LinkedAccountPlatforms([createGithubPlatform({ cli: githubCli })]),
+        now,
+        nextId: () => nextUlid(),
+      })
+      await linkedAccounts.prepare()
       const notificationsPort: { current?: NotificationService } = {}
       const feedbackPort: { current?: CommunityFeedbackService } = {}
       const governancePort: { current?: ExtensionGovernanceTools } = {}
@@ -1059,15 +1062,13 @@ export class NekroRuntime {
               id: record.id,
               name: record.name,
               description: record.description,
-              kind: record.kind,
               env,
-              ...(record.metadata.login === undefined ? {} : { login: record.metadata.login }),
               value,
             })),
+          accounts: commandAccountsOf(linkedAccounts),
           used: (credentialId, agentId) =>
             credentialLibrary.recordUse({ credentialId, agentId, consumerKind: 'command', consumerId: 'shell' }),
-          githubCliDirectory: () => githubCli.directoryForPath(),
-          githubCliAvailable: () => githubCli.executable() !== undefined,
+          accountUsed: (accountId, agentId) => linkedAccounts.recordUse({ accountId, agentId, consumerId: 'shell' }),
         },
         providerRemoval,
         providerTestResults: new LlmProviderTestResults(repository, now),
@@ -1386,6 +1387,7 @@ export class NekroRuntime {
         githubCli,
         verificationBrowser,
         credentialLibrary,
+        linkedAccounts,
         credentialRequests,
         modelProviderAccess: providerAccess,
         retrieval,

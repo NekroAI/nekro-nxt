@@ -46,6 +46,14 @@ export type { ChannelMemberNoteRecord } from './repositories/channel-member-note
 export type { SubConversationRecord } from './repositories/sub-conversations.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
 import { createCredentialsRepository, type CredentialsRepository } from './repositories/credentials.js'
+import { createLinkedAccountsRepository, type LinkedAccountsRepository } from './repositories/linked-accounts.js'
+export type {
+  LegacyGithubCredentialRecord,
+  LinkedAccountImport,
+  LinkedAccountRecord,
+  LinkedAccountsRepository,
+  LinkedAccountUseRecord,
+} from './repositories/linked-accounts.js'
 import {
   createExtensionConfigVersionsRepository,
   type ExtensionConfigVersionsRepository,
@@ -170,6 +178,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly extensionIndex: ExtensionIndexRepository
   /** Named credentials and their recorded uses. */
   readonly credentials: CredentialsRepository
+  /** Linked third-party accounts and their recorded uses. */
+  readonly linkedAccounts: LinkedAccountsRepository
   /** Saved states of extension configuration. */
   readonly extensionConfigVersions: ExtensionConfigVersionsRepository
 
@@ -202,6 +212,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#governance = createExtensionGovernanceRepository(database.db)
     this.projections = createProjectionRepository(database.db)
     this.credentials = createCredentialsRepository(database.db)
+    this.linkedAccounts = createLinkedAccountsRepository(database.db)
     this.extensionConfigVersions = createExtensionConfigVersionsRepository(database.db)
   }
 

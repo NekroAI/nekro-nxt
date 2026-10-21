@@ -142,7 +142,6 @@ const agentWithChannel = (
 
 const addCredential = (runtime: NekroRuntime, name: string, autoUse: boolean) =>
   runtime.credentialLibrary.create({
-    kind: 'generic',
     name,
     domains: ['api.weather.test'],
     value: `fictional-${autoUse ? 'auto' : 'asked'}-weather-value`,

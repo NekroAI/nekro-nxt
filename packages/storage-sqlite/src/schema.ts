@@ -39,7 +39,7 @@ import type {
   CommunityFeedbackItem,
   CredentialAgentScope,
   CredentialId,
-  CredentialMetadata,
+  LinkedAccountId,
 } from '@nekro-nxt/contracts'
 import type { AgentCompactionPolicy, StoredAgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
 import type {
@@ -1913,17 +1913,19 @@ export const credentials = sqliteTable(
     id: text().$type<CredentialId>().primaryKey(),
     name: text().notNull().unique(),
     description: text().notNull().default(''),
+    /** Always `generic` now; `github` rows predate linked accounts and are moved out when the host starts. */
     kind: text({ enum: ['generic', 'github'] }).notNull(),
     usage: text({ enum: ['request', 'program'] }).notNull(),
     domains: jsonText<readonly string[]>('domains').notNull(),
     agentScope: jsonText<CredentialAgentScope>('agent_scope').notNull(),
     autoUse: integer('auto_use', { mode: 'boolean' }).notNull(),
-    /** Environment variable commands receive a program credential under; GitHub credentials use `GH_TOKEN`. */
+    /** Environment variable commands receive a program credential under. */
     envName: text('env_name'),
     /** Agents an administrator let use the credential while automatic use is off. */
     approvedAgentIds: jsonText<readonly AgentId[]>('approved_agent_ids').notNull(),
     credentialRef: text('credential_ref').notNull(),
-    metadata: jsonText<CredentialMetadata>('metadata').notNull(),
+    /** Verified GitHub facts on rows that predate linked accounts; `{}` otherwise. */
+    metadata: jsonText<JsonValue>('metadata').notNull(),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
     lastUsedAt: integer('last_used_at'),
@@ -1956,4 +1958,47 @@ export const credentialUses = sqliteTable(
     index('credential_uses_credential_idx').on(table.credentialId, table.at),
     check('credential_uses_consumer_kind_ck', sql`${table.consumerKind} IN ('extension', 'command', 'mcp', 'model')`),
   ],
+)
+
+/**
+ * Third-party accounts agents' commands act as (设置 → 关联账号). The token lives in the local credential store under
+ * `credential_ref`; which agents receive an account is decided by their `commandAccounts` grants, not here.
+ */
+export const linkedAccounts = sqliteTable(
+  'linked_accounts',
+  {
+    id: text().$type<LinkedAccountId>().primaryKey(),
+    /** A platform id of the host's registry, such as `github`. */
+    platform: text().notNull(),
+    login: text().notNull(),
+    displayName: text('display_name'),
+    /** Token scopes where the platform reports them; `null` when it does not. */
+    scopes: jsonText<readonly string[]>('scopes'),
+    /** How the token was given: `token`, or a platform method such as `gh-login`. */
+    source: text().notNull(),
+    credentialRef: text('credential_ref').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+  },
+  (table) => [index('linked_accounts_platform_idx').on(table.platform, table.createdAt)],
+)
+
+/** Recorded uses of a linked account; kept like credential uses. */
+export const linkedAccountUses = sqliteTable(
+  'linked_account_uses',
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    accountId: text('account_id')
+      .$type<LinkedAccountId>()
+      .notNull()
+      .references(() => linkedAccounts.id, { onDelete: 'cascade' }),
+    at: integer().notNull(),
+    // Not foreign keys: the record outlives agents and channels that are deleted later.
+    agentId: text('agent_id').$type<AgentId>(),
+    channelId: text('channel_id').$type<ChannelId>(),
+    consumerKind: text('consumer_kind', { enum: ['command'] }).notNull(),
+    consumerId: text('consumer_id').notNull(),
+  },
+  (table) => [index('linked_account_uses_account_idx').on(table.accountId, table.at)],
 )

@@ -509,7 +509,7 @@ export interface DshHostRuntimeOptions {
    * separate executable, `undefined` means none is available and those agents keep ordinary tool calls.
    */
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
-  /** Where commands get the credentials an agent was granted, and whether the GitHub CLI is there to use them. */
+  /** Where commands get the credentials open to an agent and the linked accounts it is granted. */
   readonly commandAccounts?: CommandCredentialSources
   readonly configureLlm?: (context: Context) => Promise<void> | void
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
@@ -4967,14 +4967,12 @@ export class DshHostRuntime implements AgentSessionDriver {
   /** The variables that give one agent's commands its credentials. */
   #commandEnvironmentOf(revision: AgentRevisionRecord): Record<string, string> {
     if (this.#commandAccounts === undefined) return {}
-    return commandCredentialEnvironment(revision.agentId, this.#commandAccounts)
+    return commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
   }
 
   #commandAccountPromptOf(revision: AgentRevisionRecord): string | undefined {
     if (this.#commandAccounts === undefined || !revision.capabilities.developmentShell) return undefined
-    // Older account grants still carry usage hints for the GitHub credential they became.
-    const hints = new Map(revision.capabilities.commandAccounts.map((grant) => [`crd_${grant.accountId}`, grant.usage]))
-    return commandCredentialPrompt(revision.agentId, this.#commandAccounts, (id) => hints.get(id) ?? [])
+    return commandCredentialPrompt(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
   }
 
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */

@@ -51,6 +51,8 @@ Host 的完整恢复点通过本包公开的 `readBackupAgentIds(databasePath)` 
 命令持久化由 `repository.commands` 拥有：命令策略、频道身份授权、频道命令设置、执行账本（状态、命令名、起止时间与恢复标记为列）与升级截止点；每频道保留最近 500 条已结算执行的完整内容。命令 Outbox 关联频道、执行记录与回复序号，`(command_execution_id, command_ordinal)` 唯一，Episode 可空；原 Episode 出站继续保留外键。迁移 0045 复制原 Outbox 时给新增来源列填 NULL 并保留物理回执，按新旧来源检查约束防止混用。频道绑定的 `paused` 与响应规则相互独立。恢复不重跑 running 命令，详见[命令系统](../../docs/10-命令系统.md)。
 `0043_browser_composer_asset_grants` 扩展频道资源授权来源以承载客户端附件；保留既有授权、外键与索引。浏览器草稿移除只撤销未使用的 `browser-composer` 授权；已被入站或出站消息引用的资源及其他来源授权保持可用。完整生命周期见[客户端附件](../../docs/03-消息内容与投递协议.md#01-客户端附件)。
 
-`0051_credentials` 增加具名凭据（[智能体扩展配置与凭据](../../docs/decisions/accepted/2026-10-20-智能体扩展配置与凭据.md)）。`credentials` 只保存名称、使用方式、域名、可用范围和凭据存储引用，值不入库；`credential_uses` 随凭据级联删除，`repository.credentials.recordCredentialUse` 每次写入时只保留该凭据最近 500 条且不超过 90 天的记录。`importCredentials` 在同一事务里插入凭据并写入一个系统设置，用于一次性导入；按编号已存在的凭据跳过，名称冲突则整体回滚。
+`0051_credentials` 增加具名凭据（[智能体扩展配置与凭据](../../docs/decisions/accepted/2026-10-20-智能体扩展配置与凭据.md)）。`credentials` 只保存名称、使用方式、域名、可用范围和凭据存储引用，值不入库；`credential_uses` 随凭据级联删除，`repository.credentials.recordCredentialUse` 每次写入时只保留该凭据最近 500 条且不超过 90 天的记录。凭据仓储只读写 `kind = 'generic'` 的行；`github` 的行来自关联账号之前的版本，由 0053 之后的启动迁移移走。
 
 `0052_extension_config_versions` 增加扩展配置历史：每次写入扩展的本机配置或某个智能体的配置都追加一个版本，按扩展、层与智能体单调编号（本机层 `agent_id` 为空），保存写入后的配置（凭据字段只有引用）、来源、发起的智能体、提出请求的成员与原因。随扩展或智能体删除级联删除；`repository.extensionConfigVersions` 在一个事务里计算下一个版本号并写入。
+
+`0053_linked_accounts` 增加关联账号（[智能体扩展配置与凭据](../../docs/decisions/accepted/2026-10-20-智能体扩展配置与凭据.md) C16）。`linked_accounts` 保存平台、账号名、权限范围、添加方式和凭据存储引用，token 不入库；`linked_account_uses` 随账号级联删除，保留规则与凭据使用记录相同。`repository.linkedAccounts.importAccounts` 在一个事务里插入账号、把来源 GitHub 凭据的命令使用记录移过来、删除这些凭据行并写入标记设置。
