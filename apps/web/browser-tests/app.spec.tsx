@@ -404,6 +404,9 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
   await page.route('**/api/settings/linked-accounts', (route) =>
     route.fulfill({ json: linkedAccountsView({ empty: true }) }),
   )
+  await page.route('**/api/settings/model-fallback', (route) =>
+    route.fulfill({ json: { unavailableCooldownMinutes: 10, quotaCooldownMinutes: 60 } }),
+  )
   await page.route('**/api/product/updates', (route) =>
     route.fulfill({
       json: { channel: 'development', currentVersion: 'fixture', state: 'unsupported', autoCheck: true },

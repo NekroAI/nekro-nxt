@@ -97,6 +97,9 @@ test.describe('settings space', () => {
     await page.route('**/api/attention', (request) => request.fulfill({ json: { revision: 'fixture', items: [] } }))
     await page.route('**/api/commands', (request) => request.fulfill({ json: { commands: [], problems: [] } }))
     await page.route('**/api/llm/providers', (request) => request.fulfill({ json: providers }))
+    await page.route('**/api/settings/model-fallback', (request) =>
+      request.fulfill({ json: { unavailableCooldownMinutes: 10, quotaCooldownMinutes: 60 } }),
+    )
     await page.route('**/api/dsh/plugins', (request) => request.fulfill({ json: { plugins: [] } }))
     await page.route('**/api/dsh/settings', (request) => request.fulfill({ json: { namespaces: [] } }))
     await installSnapshotHealthRoutes(page, productSnapshot)

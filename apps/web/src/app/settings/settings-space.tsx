@@ -611,8 +611,7 @@ function FallbackCooldowns() {
     })
   }
   return (
-    <>
-      <SectionHead title="备用模型" />
+    <PropertyGroup title="备用模型">
       <PropertyList>
         <PropertyRow
           label="限流或出错后"
@@ -645,7 +644,7 @@ function FallbackCooldowns() {
           )}
         </PropertyRow>
       </PropertyList>
-    </>
+    </PropertyGroup>
   )
 }
 
