@@ -24,6 +24,7 @@ export interface SubConversationRecord {
   readonly closeReason?: NonNullable<SubConversation['closeReason']>
   readonly summary?: string
   readonly authoringTaskId?: AuthoringTaskId
+  readonly model?: NonNullable<SubConversation['model']>
   readonly createdAt: number
   readonly closedAt?: number
 }
@@ -44,6 +45,7 @@ const record = (row: Row): SubConversationRecord => ({
   ...(row.closeReason === null ? {} : { closeReason: row.closeReason }),
   ...(row.summary === null ? {} : { summary: row.summary }),
   ...(row.authoringTaskId === null ? {} : { authoringTaskId: row.authoringTaskId }),
+  ...(row.model === null ? {} : { model: row.model }),
   createdAt: row.createdAt,
   ...(row.closedAt === null ? {} : { closedAt: row.closedAt }),
 })
@@ -58,6 +60,7 @@ export function createSubConversationsRepository(database: DrizzleCoreDatabase) 
           closeReason: input.closeReason ?? null,
           summary: input.summary ?? null,
           authoringTaskId: input.authoringTaskId ?? null,
+          model: input.model ?? null,
           closedAt: input.closedAt ?? null,
         })
         .run()

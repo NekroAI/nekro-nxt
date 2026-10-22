@@ -3008,9 +3008,16 @@ function mountDelegationCapabilities(
   revision: AgentRevisionRecord,
   manager: SubConversationManager,
   store: Pick<SubConversationStore, 'listSubConversations' | 'getSubConversationBySession'>,
+  listModels: () => Promise<readonly AvailableLlmModel[]>,
 ): void {
   if (!revision.capabilities.subagents) return
-  for (const tool of subConversationTools(manager, store)) agentContext.tools.register(tool)
+  const tools = subConversationTools(manager, store, {
+    policy: revision.subConversationModels,
+    main: revision.model,
+    isAvailable: async (model) =>
+      (await listModels()).some((item) => item.provider === model.provider && item.id === model.model),
+  })
+  for (const tool of tools) agentContext.tools.register(tool)
 }
 
 async function mountWebCapabilities(agentContext: Context, revision: AgentRevisionRecord): Promise<void> {
@@ -4444,7 +4451,9 @@ export class DshHostRuntime implements AgentSessionDriver {
           }
         }, 'nekro-nxt: dynamic session ownership')
       }
-      mountDelegationCapabilities(agentContext, revision, this.#subConversations, this.#subConversationStore)
+      mountDelegationCapabilities(agentContext, revision, this.#subConversations, this.#subConversationStore, () =>
+        this.listAvailableLlmModels(),
+      )
       await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(
         agentContext,

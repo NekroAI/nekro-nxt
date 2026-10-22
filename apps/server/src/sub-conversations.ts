@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import {
@@ -83,6 +84,12 @@ export class SubConversationError extends Error {
  * Each is a direct DSH child session of the channel's root session, so DSH owns running, messaging and releasing
  * it; this records what it is for, who opened it and how it ended, and removes ended ones after the retention time.
  */
+const agentOptionsOf = (model: NonNullable<SubConversationRecord['model']>) => ({
+  provider: model.provider,
+  model: model.model,
+  ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(model.reasoningEffort) }),
+})
+
 export class SubConversationManager {
   readonly #options: SubConversationManagerOptions
   readonly #nextId = monotonicFactory()
@@ -109,6 +116,7 @@ export class SubConversationManager {
     readonly openedBy: SubConversation['openedBy']
     readonly driver: SubConversation['driver']
     readonly authoringTaskId?: AuthoringTaskId
+    readonly model?: NonNullable<SubConversationRecord['model']>
   }): SubConversationRecord {
     const owner = this.#owner(input.parent)
     const id = SubConversationIdSchema.parse(`cnv_${this.#nextId()}`)
@@ -122,6 +130,7 @@ export class SubConversationManager {
       driver: input.driver,
       status: 'open',
       ...(input.authoringTaskId === undefined ? {} : { authoringTaskId: input.authoringTaskId }),
+      ...(input.model === undefined ? {} : { model: input.model }),
       createdAt: this.#now(),
     }
     this.#options.store.insertSubConversation(record)
@@ -144,13 +153,25 @@ export class SubConversationManager {
     return closed ?? this.#options.store.getSubConversation(record.id) ?? record
   }
 
-  /** Opens a sub-conversation the agent's model talks in; what it replies is delivered to `parent`. */
+  /**
+   * Opens a sub-conversation a model talks in; what it replies is delivered to `parent`. Without `model` it inherits
+   * the parent's route, and `inheritedModel` is only what the record shows for it.
+   */
   async open(input: {
     readonly parent: Agent
     readonly title: string
     readonly task: string
+    readonly model?: NonNullable<SubConversationRecord['model']>
+    readonly inheritedModel?: NonNullable<SubConversationRecord['model']>
   }): Promise<SubConversationRecord> {
-    const record = this.#record({ parent: input.parent, title: input.title, openedBy: 'agent', driver: 'model' })
+    const shown = input.model ?? input.inheritedModel
+    const record = this.#record({
+      parent: input.parent,
+      title: input.title,
+      openedBy: 'agent',
+      driver: 'model',
+      ...(shown === undefined ? {} : { model: shown }),
+    })
     try {
       await this.#options.context.subagents.startActivation({
         provider: 'spawn',
@@ -160,6 +181,8 @@ export class SubConversationManager {
           prompt: [{ type: 'text', text: input.task }],
           // The tools it may use and its output limit come from the Host's child composition (agentPresets).
           parent: input.parent,
+          // DSH keeps the chosen route in the child's log, so a cold resume talks in the same model.
+          ...(input.model === undefined ? {} : { agentOptions: agentOptionsOf(input.model) }),
         },
         signal: new AbortController().signal,
         delivery: 'parent',

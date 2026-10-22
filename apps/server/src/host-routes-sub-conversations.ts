@@ -20,6 +20,7 @@ export const projectSubConversation = (record: SubConversationRecord): SubConver
   ...(record.closeReason === undefined ? {} : { closeReason: record.closeReason }),
   ...(record.summary === undefined ? {} : { summary: record.summary }),
   ...(record.authoringTaskId === undefined ? {} : { authoringTaskId: record.authoringTaskId }),
+  ...(record.model === undefined ? {} : { model: record.model }),
   createdAt: record.createdAt,
   ...(record.closedAt === undefined ? {} : { closedAt: record.closedAt }),
 })
