@@ -143,6 +143,7 @@ describe('product store Host mutations', () => {
           state: 'idle',
           model: '测试模型',
           compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
+          subConversationModels: { candidates: [] },
           dynamicClientApprovalPolicy: 'manual',
           personaDocument: { version: 1, segments: [] },
           channels: [],

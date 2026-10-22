@@ -16,6 +16,7 @@ const FIELD_LABEL: Record<SavedConfig['changedFields'][number], string> = {
   imagePolicy: '图片理解',
   approvalPolicy: '运行确认',
   compaction: '压缩模型',
+  subConversationModels: '子对话模型',
 }
 
 /** `10月4日 14:20`, with the year when it is not this year. */

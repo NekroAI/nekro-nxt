@@ -1,0 +1,16 @@
+.candidate {
+  display: grid;
+  gap: var(--s-3);
+  width: 100%;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.name {
+  width: min(100%, var(--field));
+}

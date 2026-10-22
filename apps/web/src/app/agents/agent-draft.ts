@@ -2,6 +2,7 @@ import { promptDocumentPlainText, type PromptDocumentV1 } from '@nekro-nxt/contr
 import type { AgentAccessLevel } from '../../agent-access-level.js'
 import type {
   AgentCompactionPolicy,
+  AgentSubConversationModels,
   AgentSummary,
   ImageUnderstandingPolicy,
   ModelSummary,
@@ -27,6 +28,8 @@ export interface AgentDraft {
   readonly visionKey: string
   /** Which model writes each kind of compaction summary. */
   readonly compaction: AgentCompactionPolicy
+  /** Models it may open sub-conversations with; names may be untrimmed while being typed. */
+  readonly subConversationModels: AgentSubConversationModels
   readonly capabilities: Capabilities
 }
 
@@ -44,8 +47,25 @@ export const draftOf = (agent: AgentSummary): AgentDraft => ({
         })
       : '',
   compaction: agent.compaction,
+  subConversationModels: agent.subConversationModels,
   capabilities: agent.capabilities,
 })
+
+/** The candidates as they are saved: names and guidance trimmed, the default following its candidate. */
+export const savedSubConversationModels = (policy: AgentSubConversationModels): AgentSubConversationModels => {
+  const candidates = policy.candidates.map((candidate) => ({
+    ...candidate,
+    name: candidate.name.trim(),
+    guidance: candidate.guidance.trim(),
+  }))
+  const chosen = policy.default?.trim()
+  return chosen !== undefined && candidates.some((candidate) => candidate.name === chosen)
+    ? { candidates, default: chosen }
+    : { candidates }
+}
+
+const sameSubConversationModels = (left: AgentSubConversationModels, right: AgentSubConversationModels) =>
+  JSON.stringify(savedSubConversationModels(left)) === JSON.stringify(savedSubConversationModels(right))
 
 const CAPABILITY_KEYS = [
   'subagents',
@@ -82,7 +102,8 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
   draft.modelKey !== base.modelKey ||
   draft.effort !== base.effort ||
   draft.visionKey !== base.visionKey ||
-  JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction)
+  JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction) ||
+  !sameSubConversationModels(draft.subConversationModels, base.subConversationModels)
 
 /** Capabilities that differ from the saved ones, as the partial patch the Host expects. */
 export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Capabilities> => {
@@ -122,6 +143,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if (draft.effort !== base.effort) changes.push('思考强度')
   if (draft.visionKey !== base.visionKey) changes.push('视觉模型')
   if (JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction)) changes.push('压缩模型')
+  if (!sameSubConversationModels(draft.subConversationModels, base.subConversationModels)) changes.push('子对话模型')
   const patch = capabilityPatch(base, draft)
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')
   if ('codeRun' in patch) changes.push('编排模式')

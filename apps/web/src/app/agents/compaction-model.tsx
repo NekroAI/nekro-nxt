@@ -16,7 +16,7 @@ export interface CompactionModel {
 
 /**
  * Follow a default, or pick a model from the live catalog. A picked model that offers thinking levels shows the same
- * stepped scale as the main model.
+ * stepped scale as the main model. Without `followLabel` a model must be picked.
  */
 export function CompactionModelField({
   label,
@@ -27,7 +27,7 @@ export function CompactionModelField({
 }: {
   readonly label: string
   /** What following means here, for example the main model or the host's default. */
-  readonly followLabel: string
+  readonly followLabel?: string
   /** Undefined follows the default. */
   readonly value: CompactionModel | undefined
   readonly onChange: (value: CompactionModel | undefined) => void
@@ -44,7 +44,7 @@ export function CompactionModelField({
         value={chosen ? key : ''}
         disabled={disabled}
         options={[
-          { value: '', label: followLabel },
+          ...(followLabel === undefined ? [] : [{ value: '', label: followLabel }]),
           ...models.map((model) => ({ value: agentModelKey(model), label: modelLabel(model) })),
         ]}
         onValueChange={(next) => {

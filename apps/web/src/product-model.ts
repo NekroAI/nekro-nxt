@@ -28,6 +28,11 @@ export const FOLLOW_COMPACTION: AgentCompactionPolicy = {
   inSession: { mode: 'follow' },
   newSession: { mode: 'follow' },
 }
+export type AgentSubConversationModels = NonNullable<
+  HostApiResponse<'snapshot'>['agents'][number]['subConversationModels']
+>
+export type SubConversationModelCandidate = AgentSubConversationModels['candidates'][number]
+export const NO_SUB_CONVERSATION_MODELS: AgentSubConversationModels = { candidates: [] }
 export type { ThemeChoice } from './theme-preference.js'
 export type AgentRuntimeState = ChannelRuntimePhase
 
@@ -115,6 +120,8 @@ export interface AgentSummary {
   readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
   /** Which model writes each kind of compaction summary. */
   readonly compaction: AgentCompactionPolicy
+  /** Models it may open sub-conversations with, besides its main model. */
+  readonly subConversationModels: AgentSubConversationModels
   readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
   /** Non-versioned identity look; absent fields fall back to values derived from the id. */
   readonly appearance?: { readonly hue?: number; readonly avatarUrl?: string }
@@ -639,6 +646,7 @@ export interface ProductState {
     readonly imagePolicy: ImageUnderstandingPolicy
     readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
     readonly compaction?: AgentCompactionPolicy
+    readonly subConversationModels?: AgentSubConversationModels
   }): Promise<void>
   updateNotificationSettings(
     input: HostApiRequest<'updateNotificationSettings'>,
