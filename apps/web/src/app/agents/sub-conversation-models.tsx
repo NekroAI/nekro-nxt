@@ -80,7 +80,13 @@ export function SubConversationModelRows({
           enabled ? (policy.candidates.length === 0 ? '子对话都用主模型' : undefined) : '先在「能力」中开启子对话'
         }
       >
-        <Button size="small" variant="ghost" disabled={!enabled || full || models.length === 0} onClick={add}>
+        <Button
+          size="small"
+          variant="ghost"
+          aria-label="添加子对话模型"
+          disabled={!enabled || full || models.length === 0}
+          onClick={add}
+        >
           <Plus aria-hidden />
           添加
         </Button>

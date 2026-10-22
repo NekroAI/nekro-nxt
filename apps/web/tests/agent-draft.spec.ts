@@ -12,6 +12,7 @@ import {
 } from '../src/app/agents/agent-draft.js'
 import { changeSummary, savedAt } from '../src/app/agents/agent-restore.js'
 import { subConversationModelsProblem } from '../src/app/agents/sub-conversation-models.js'
+import { fallbackModelsProblem } from '../src/app/agents/fallback-models.js'
 import { defaultImageUnderstandingPolicy } from '../src/product-model.js'
 
 const base: AgentDraft = {
@@ -22,6 +23,7 @@ const base: AgentDraft = {
   effort: '',
   compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
   subConversationModels: { candidates: [] },
+  fallbackModels: [],
   visionKey: '',
   capabilities: {
     subagents: true,
@@ -102,6 +104,18 @@ describe('agent draft', () => {
     expect(subConversationModelsProblem({ candidates: [named('快速'), named('快速 ')] })).toBe(
       '子对话模型的名称不能重复',
     )
+  })
+
+  it('saves fallback models with the identity and refuses the main model or a repeat among them', () => {
+    const backup = { provider: 'fixture', model: 'fast-model' }
+    const edited: AgentDraft = { ...base, fallbackModels: [backup] }
+    expect(draftChanges(base, edited)).toEqual(['备用模型'])
+    expect(identityChanged(base, edited)).toBe(true)
+    expect(fallbackModelsProblem(edited)).toBeUndefined()
+    expect(fallbackModelsProblem({ ...base, fallbackModels: [{ provider: 'fixture', model: 'text-model' }] })).toBe(
+      '备用模型不能和主模型相同',
+    )
+    expect(fallbackModelsProblem({ ...base, fallbackModels: [backup, backup] })).toBe('备用模型不能重复')
   })
 
   it('ignores surrounding spaces in the name', () => {

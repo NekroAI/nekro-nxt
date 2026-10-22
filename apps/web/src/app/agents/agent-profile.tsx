@@ -35,6 +35,7 @@ import {
   type AgentDraft,
 } from './agent-draft.js'
 import { subConversationModelsProblem } from './sub-conversation-models.js'
+import { fallbackModelsProblem } from './fallback-models.js'
 import { PersonaPublishDialog } from '../community/persona-publish-dialog.js'
 import { RestoreDialog } from './agent-restore.js'
 import {
@@ -178,7 +179,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
       setSaveError('名称不能为空')
       return
     }
-    const candidatesProblem = subConversationModelsProblem(draft.subConversationModels)
+    const candidatesProblem = subConversationModelsProblem(draft.subConversationModels) ?? fallbackModelsProblem(draft)
     if (candidatesProblem !== undefined) {
       setSaveError(candidatesProblem)
       return
@@ -202,6 +203,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
           compaction: draft.compaction,
           subConversationModels: savedSubConversationModels(draft.subConversationModels),
+          fallbackModels: draft.fallbackModels,
         })
       }
       const patch = capabilityPatch(base, draft)

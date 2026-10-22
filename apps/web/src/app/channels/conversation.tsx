@@ -8,6 +8,7 @@ import {
   type AgentSummary,
   type ChannelSummary,
   type ConnectionSummary,
+  type ChannelRuntimeView,
   type ConversationMessage,
   type ModelSummary,
 } from '../../product-runtime.js'
@@ -22,6 +23,7 @@ import {
   MemberAvatar,
   StatusDot,
   toast,
+  Tooltip,
   Pressable,
 } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
@@ -225,6 +227,7 @@ export function Conversation({
               <Chip>未接线</Chip>
             )}
             {channel.bindings[0]?.paused ? <Chip tone="warn">已暂停</Chip> : null}
+            {runtime?.modelFallback ? <ModelFallbackChip fallback={runtime.modelFallback} /> : null}
           </h1>
           <div className={styles.subline}>
             {connection ? <StatusDot tone={connectionStatus(connection).tone} /> : null}
@@ -366,6 +369,31 @@ const SUB_CONVERSATION_POLL_MS = 2000
  * One sub-conversation under its channel (docs/NekroNxt界面交互模型.md §5.6): what it was opened for, how it ended and
  * everything that happened in it. It is read only; agents pass messages in and out of it.
  */
+const FALLBACK_REASON: Readonly<Record<NonNullable<ChannelRuntimeView['modelFallback']>['reason'], string>> = {
+  quota: '主模型额度用完',
+  'rate-limit': '主模型持续限流',
+  unavailable: '主模型暂时不可用',
+}
+
+/** The conversation runs on a fallback model: which, why, and when it tries the main model again. */
+function ModelFallbackChip({ fallback }: { readonly fallback: NonNullable<ChannelRuntimeView['modelFallback']> }) {
+  const models = useProductStore((state) => state.models)
+  const known = models.find((item) => item.provider === fallback.model.provider && item.id === fallback.model.model)
+  const retry =
+    fallback.retryMainAt <= Date.now()
+      ? '收到新消息时换回主模型'
+      : `${new Date(fallback.retryMainAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 后收到新消息时换回主模型`
+  return (
+    <Tooltip
+      content={`${FALLBACK_REASON[fallback.reason]}，正在用「${known?.name ?? fallback.model.model}」；${retry}`}
+    >
+      <span tabIndex={0} className={styles.fallbackChip}>
+        <Chip tone="warn">备用模型</Chip>
+      </span>
+    </Tooltip>
+  )
+}
+
 /** The model a sub-conversation talks in, by the catalog's names while it is still configured. */
 const subConversationModelLabel = (
   model: NonNullable<SubConversationRead['conversation']['model']>,
