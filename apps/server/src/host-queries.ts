@@ -539,6 +539,7 @@ export class HostQueries {
         imagePolicy: commit.revision.imagePolicy,
         dynamicClientApprovalPolicy: commit.revision.dynamicClientApprovalPolicy,
         compaction: commit.revision.compaction,
+        subConversationModels: commit.revision.subConversationModels,
         ...(diagnosticsByRevision.has(commit.revision.id)
           ? { imageDiagnostics: diagnosticsByRevision.get(commit.revision.id) }
           : {}),

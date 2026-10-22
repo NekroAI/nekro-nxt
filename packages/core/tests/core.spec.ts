@@ -38,6 +38,7 @@ import {
   CoreService,
   DEFAULT_IMAGE_UNDERSTANDING_POLICY,
   canonicalJson,
+  diffAgentRevisions,
   digestRevision,
   parseAgentCapabilityGrants,
   parseStoredAgentCapabilityGrants,
@@ -547,6 +548,42 @@ describe('CoreService', () => {
       model: { provider: 'deepseek', model: 'v4' },
     })
     expect(renamed.revision.compaction).toEqual(compaction)
+  })
+
+  it('keeps the sub-conversation models when a revision leaves them out, and rejects ones the agent could not pick', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const base = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const first = core.createAgent(base)
+    expect(first.revision.subConversationModels).toEqual({ candidates: [] })
+    // Offering none is what every earlier revision meant, so it is no change.
+    expect(
+      core.reviseAgent(first.definition.id, first.revision.id, { ...base, subConversationModels: { candidates: [] } })
+        .revision.id,
+    ).toBe(first.revision.id)
+
+    const subConversationModels = {
+      candidates: [{ name: '快速', model: { provider: 'deepseek', model: 'flash' }, guidance: '适合翻记录。' }],
+      default: '快速',
+    }
+    const custom = core.reviseAgent(first.definition.id, first.revision.id, { ...base, subConversationModels })
+    expect(custom.revision.subConversationModels).toEqual(subConversationModels)
+    expect(diffAgentRevisions(first.revision, custom.revision)).toEqual(['subConversationModels'])
+    const renamed = core.reviseAgent(first.definition.id, custom.revision.id, { ...base, displayName: '小奈二号' })
+    expect(renamed.revision.subConversationModels).toEqual(subConversationModels)
+
+    const candidate = (name: string) => ({ name, model: { provider: 'deepseek', model: 'flash' }, guidance: '' })
+    for (const invalid of [
+      { candidates: [candidate('快速'), candidate('快速')] },
+      { candidates: [candidate('主模型')] },
+      { candidates: [candidate('快速，便宜')] },
+      { candidates: [candidate('快速')], default: '深度' },
+    ]) {
+      expect(() =>
+        core.reviseAgent(first.definition.id, renamed.revision.id, { ...base, subConversationModels: invalid }),
+      ).toThrow()
+    }
   })
 
   it('uses canonical content digests independent of object key order', () => {

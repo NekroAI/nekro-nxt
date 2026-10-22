@@ -31,8 +31,10 @@ import {
   draftOf,
   identityChanged,
   imagePolicyFor,
+  savedSubConversationModels,
   type AgentDraft,
 } from './agent-draft.js'
+import { subConversationModelsProblem } from './sub-conversation-models.js'
 import { PersonaPublishDialog } from '../community/persona-publish-dialog.js'
 import { RestoreDialog } from './agent-restore.js'
 import {
@@ -176,6 +178,11 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
       setSaveError('名称不能为空')
       return
     }
+    const candidatesProblem = subConversationModelsProblem(draft.subConversationModels)
+    if (candidatesProblem !== undefined) {
+      setSaveError(candidatesProblem)
+      return
+    }
     setSaving(true)
     setSaveError('')
     try {
@@ -194,6 +201,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           imagePolicy: imagePolicyFor(agent.imagePolicy, chosen, vision),
           dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
           compaction: draft.compaction,
+          subConversationModels: savedSubConversationModels(draft.subConversationModels),
         })
       }
       const patch = capabilityPatch(base, draft)

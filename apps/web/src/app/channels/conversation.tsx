@@ -9,6 +9,7 @@ import {
   type ChannelSummary,
   type ConnectionSummary,
   type ConversationMessage,
+  type ModelSummary,
 } from '../../product-runtime.js'
 import {
   AgentAvatar,
@@ -365,6 +366,15 @@ const SUB_CONVERSATION_POLL_MS = 2000
  * One sub-conversation under its channel (docs/NekroNxt界面交互模型.md §5.6): what it was opened for, how it ended and
  * everything that happened in it. It is read only; agents pass messages in and out of it.
  */
+/** The model a sub-conversation talks in, by the catalog's names while it is still configured. */
+const subConversationModelLabel = (
+  model: NonNullable<SubConversationRead['conversation']['model']>,
+  models: readonly ModelSummary[],
+): string => {
+  const known = models.find((item) => item.provider === model.provider && item.id === model.model)
+  return known ? `${known.providerName} · ${known.name}` : model.model
+}
+
 export function SubConversationView({
   channel,
   agent,
@@ -377,6 +387,7 @@ export function SubConversationView({
   const summary = useProductStore((state) =>
     state.subConversations.find((conversation) => conversation.id === conversationId),
   )
+  const models = useProductStore((state) => state.models)
   const [read, setRead] = useState<SubConversationRead>()
   const [missing, setMissing] = useState(false)
   const [confirm, setConfirm] = useState<'close' | 'delete' | null>(null)
@@ -449,6 +460,9 @@ export function SubConversationView({
                   : 'NekroNXT 开启 · 验证扩展候选'}
               {` · ${relativeTime(conversation.createdAt)}`}
             </span>
+            {conversation.model === undefined ? null : (
+              <span>{subConversationModelLabel(conversation.model, models)}</span>
+            )}
             {conversation.authoringTaskId === undefined ? null : (
               <Link to={`/workshop/tasks/${conversation.authoringTaskId}`} className={subStyles.channelLink}>
                 查看创造任务

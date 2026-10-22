@@ -344,10 +344,11 @@ export const assertReasoningEffort = async (
 export const assertAvailableModel = async (
   runtime: NekroRuntime,
   model: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string | undefined },
+  label = '压缩模型',
 ): Promise<void> => {
   const models = await runtime.host.listAvailableLlmModels()
   if (!models.some((item) => item.provider === model.provider && item.id === model.model)) {
-    throw new Error('所选的压缩模型不在可用模型里，请重新选择。')
+    throw new Error(`所选的${label}不在可用模型里，请重新选择。`)
   }
   await assertReasoningEffort(runtime, model)
 }
@@ -365,6 +366,15 @@ export const assertCompactionPolicy = async (
   for (const choice of [policy?.inSession, policy?.newSession]) {
     if (choice?.mode === 'custom' && choice.model) await assertAvailableModel(runtime, choice.model)
   }
+}
+
+/** Every model an agent may open sub-conversations with must be available when the candidates are saved. */
+export const assertSubConversationModels = async (
+  runtime: NekroRuntime,
+  policy:
+    { readonly candidates: readonly { readonly model: Parameters<typeof assertAvailableModel>[1] }[] } | undefined,
+): Promise<void> => {
+  for (const candidate of policy?.candidates ?? []) await assertAvailableModel(runtime, candidate.model, '子对话模型')
 }
 
 export const writeContractJson = <Contract extends HostApiContract>(

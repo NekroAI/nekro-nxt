@@ -477,6 +477,51 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
   timeoutSeconds: 180,
 }
 
+/** The name an agent passes to open a sub-conversation on its main model; no candidate may take it. */
+export const SUB_CONVERSATION_MAIN_MODEL = '主模型'
+
+export const SUB_CONVERSATION_MODEL_LIMITS = { candidates: 8, name: 20, guidance: 200 } as const
+
+/**
+ * Models an agent may open sub-conversations with, each named so the agent can pick it and described so it knows
+ * when to. Without a `default`, a sub-conversation opened without naming a model follows the main model.
+ */
+export const AgentSubConversationModelsSchema = z
+  .object({
+    candidates: z
+      .array(
+        z
+          .object({
+            // Names are listed to the agent separated by commas, so they carry none and no line breaks.
+            name: z
+              .string()
+              .trim()
+              .min(1, '请填写子对话模型的名称。')
+              .max(SUB_CONVERSATION_MODEL_LIMITS.name)
+              .regex(/^[^\s,，、]+(?: [^\s,，、]+)*$/u, '子对话模型的名称不能含换行、逗号或顿号。')
+              .refine((name) => name !== SUB_CONVERSATION_MAIN_MODEL, `「${SUB_CONVERSATION_MAIN_MODEL}」是保留名称。`),
+            model: AgentModelSchema,
+            guidance: z.string().trim().max(SUB_CONVERSATION_MODEL_LIMITS.guidance),
+          })
+          .strict(),
+      )
+      .max(SUB_CONVERSATION_MODEL_LIMITS.candidates),
+    default: z.string().trim().min(1).optional(),
+  })
+  .strict()
+  .superRefine((policy, context) => {
+    const names = policy.candidates.map((candidate) => candidate.name)
+    if (new Set(names).size !== names.length)
+      context.addIssue({ code: 'custom', message: '子对话模型的名称不能重复。' })
+    if (policy.default !== undefined && !names.includes(policy.default)) {
+      context.addIssue({ code: 'custom', message: '默认的子对话模型不在候选里。' })
+    }
+  })
+
+export type AgentSubConversationModels = z.output<typeof AgentSubConversationModelsSchema>
+
+export const NO_SUB_CONVERSATION_MODELS: AgentSubConversationModels = { candidates: [] }
+
 const AgentRevisionRequestContentSchema = z
   .object({
     displayName: z.string().trim().min(1).max(80),
@@ -489,6 +534,7 @@ const AgentRevisionRequestContentSchema = z
     imagePolicy: ImageUnderstandingPolicyApiSchema.optional(),
     dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema.optional(),
     compaction: AgentCompactionPolicySchema.optional(),
+    subConversationModels: AgentSubConversationModelsSchema.optional(),
   })
   .strict()
 
@@ -1123,6 +1169,8 @@ export const SubConversationSchema = z
     /** What it handed back to the channel's conversation when it ended. */
     summary: z.string().max(4000).optional(),
     authoringTaskId: AuthoringTaskIdSchema.optional(),
+    /** The model a model-driven sub-conversation talks in; absent for scripts and ones opened before it was kept. */
+    model: AgentModelSchema.optional(),
     createdAt: z.number().int().nonnegative(),
     closedAt: z.number().int().nonnegative().optional(),
   })
@@ -1671,6 +1719,8 @@ export const HostSnapshotSchema = z
           dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
           /** Optional for older hosts, whose agents always follow both defaults. */
           compaction: AgentCompactionPolicySchema.optional(),
+          /** Optional for older hosts, whose agents offer no candidates. */
+          subConversationModels: AgentSubConversationModelsSchema.optional(),
           imageDiagnostics: z
             .object({
               route: z
@@ -2558,6 +2608,7 @@ export const AgentRevisionChangedFieldSchema = z.enum([
   'imagePolicy',
   'approvalPolicy',
   'compaction',
+  'subConversationModels',
 ])
 
 export const AgentRevisionHistorySchema = z

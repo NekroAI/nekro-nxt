@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
+import { resolveSubConversationModel } from '../src/sub-conversation-tools.js'
 
 const temporaryDirectories: string[] = []
 
@@ -46,6 +47,12 @@ class DelegatingModel extends LlmAdapter {
   conversationId: string | undefined
   /** Whether the channel conversation ends the sub-conversation once it heard back. */
   closes = true
+  /** Extra arguments of the `conversation_open` call, such as the model it names. */
+  openWith: Record<string, unknown> = {}
+  /** The model of every request, and whether the sub-conversation made it. */
+  readonly requests: { readonly model: string; readonly child: boolean }[] = []
+  /** `conversation_open` as the channel conversation saw it. */
+  openSchema: unknown
   #opened = false
   #closed = false
 
@@ -53,7 +60,10 @@ class DelegatingModel extends LlmAdapter {
     return { id: provider, name: 'delegating model' }
   }
   override listModels(provider: string) {
-    return Promise.resolve([{ provider, id: 'chat-model', name: 'chat', inputModalities: ['text'] as const }])
+    return Promise.resolve([
+      { provider, id: 'chat-model', name: 'chat', inputModalities: ['text'] as const },
+      { provider, id: 'fast-model', name: 'fast', inputModalities: ['text'] as const },
+    ])
   }
   override resolveModel(provider: string, model: string) {
     return Promise.resolve({
@@ -67,6 +77,7 @@ class DelegatingModel extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     const tools = new Set(options.tools?.map((tool) => tool.name) ?? [])
+    this.requests.push({ model: options.model, child: !tools.has('conversation_open') })
     if (!tools.has('conversation_open')) {
       yield* text('三个要点：日程、预算、分工。')
       this.childReplied.resolve()
@@ -75,7 +86,12 @@ class DelegatingModel extends LlmAdapter {
     const transcript = JSON.stringify(options.messages)
     if (!this.#opened) {
       this.#opened = true
-      yield* toolCall('conversation_open', 'open-1', { title: '整理活动要点', task: '列出这次活动的三个要点。' })
+      this.openSchema = options.tools?.find((tool) => tool.name === 'conversation_open')
+      yield* toolCall('conversation_open', 'open-1', {
+        title: '整理活动要点',
+        task: '列出这次活动的三个要点。',
+        ...this.openWith,
+      })
       return
     }
     const opened = /(cnv_[0-9A-Za-z]+)/u.exec(transcript)?.[1]
@@ -210,4 +226,104 @@ describe('sub-conversations', () => {
       await runtime.dispose()
     }
   }, 60_000)
+
+  it('opens one on the candidate the agent names, and keeps the channel conversation on its own model', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-sub-conversations-'))
+    temporaryDirectories.push(directory)
+    const model = new DelegatingModel()
+    model.openWith = { model: '快速' }
+    const runtime = await createRuntime(directory, model)
+    try {
+      await runtime.start()
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '委派智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { subagents: true },
+        subConversationModels: {
+          candidates: [
+            { name: '快速', model: { provider: 'test-provider', model: 'fast-model' }, guidance: '适合整理和归纳。' },
+          ],
+        },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'delegate',
+        parts: [{ type: 'text', text: '帮我整理一下活动要点。' }],
+      })
+      await model.childReplied.promise
+      await model.closed.promise
+
+      expect(JSON.stringify(model.openSchema)).toContain('适合整理和归纳。')
+      expect(JSON.stringify(model.openSchema)).toContain('不填时用「主模型」')
+      expect(model.requests.filter((request) => request.child).map((request) => request.model)).toEqual(['fast-model'])
+      expect(new Set(model.requests.filter((request) => !request.child).map((request) => request.model))).toEqual(
+        new Set(['chat-model']),
+      )
+      const [record] = runtime.repository.listSubConversations({ channelId: entity.channelId })
+      expect(record?.model).toEqual({ provider: 'test-provider', model: 'fast-model' })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+
+  it('offers no model choice without candidates and records the main model it inherits', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-sub-conversations-'))
+    temporaryDirectories.push(directory)
+    const model = new DelegatingModel()
+    const runtime = await createRuntime(directory, model)
+    try {
+      await runtime.start()
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '委派智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { subagents: true },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'delegate',
+        parts: [{ type: 'text', text: '帮我整理一下活动要点。' }],
+      })
+      await model.childReplied.promise
+      await model.closed.promise
+
+      expect(JSON.stringify(model.openSchema)).not.toContain('"model"')
+      expect(model.requests.every((request) => request.model === 'chat-model')).toBe(true)
+      const [record] = runtime.repository.listSubConversations({ channelId: entity.channelId })
+      expect(record?.model).toEqual({ provider: 'test-provider', model: 'chat-model' })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+})
+
+describe('sub-conversation model choice', () => {
+  const policy = {
+    candidates: [
+      { name: '快速', model: { provider: 'p', model: 'fast' }, guidance: '' },
+      { name: '深度', model: { provider: 'p', model: 'deep', reasoningEffort: 'high' }, guidance: '' },
+    ],
+  }
+
+  it('uses the named candidate, the default when none is named, and the main model otherwise', () => {
+    expect(resolveSubConversationModel(policy, '深度')).toEqual({
+      provider: 'p',
+      model: 'deep',
+      reasoningEffort: 'high',
+    })
+    expect(resolveSubConversationModel(policy, undefined)).toBeUndefined()
+    expect(resolveSubConversationModel(policy, '主模型')).toBeUndefined()
+    expect(resolveSubConversationModel({ ...policy, default: '快速' }, undefined)).toEqual({
+      provider: 'p',
+      model: 'fast',
+    })
+    expect(resolveSubConversationModel({ ...policy, default: '快速' }, '主模型')).toBeUndefined()
+  })
+
+  it('names the choices when the agent asks for one that does not exist', () => {
+    expect(() => resolveSubConversationModel(policy, '最强')).toThrow(
+      '没有叫「最强」的子对话模型，可以选：主模型、快速、深度。',
+    )
+  })
 })

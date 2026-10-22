@@ -41,7 +41,13 @@ import type {
   CredentialId,
   LinkedAccountId,
 } from '@nekro-nxt/contracts'
-import type { AgentCompactionPolicy, StoredAgentCapabilityGrants, ImageUnderstandingPolicy } from '@nekro-nxt/core'
+import type {
+  AgentCompactionPolicy,
+  AgentModelSelection,
+  StoredAgentCapabilityGrants,
+  ImageUnderstandingPolicy,
+  SubConversationModelPolicy,
+} from '@nekro-nxt/core'
 import type {
   AuthoringAttemptFailure,
   AuthoringHalfState,
@@ -92,6 +98,8 @@ export const agentRevisions = sqliteTable(
       .default('manual'),
     /** Null follows both compaction defaults, which is every Revision written before the field existed. */
     compaction: jsonText<AgentCompactionPolicy>('compaction'),
+    /** Null offers no sub-conversation model candidates, which is every Revision written before the field existed. */
+    subConversationModels: jsonText<SubConversationModelPolicy>('sub_conversation_models'),
     contentDigest: text('content_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },
@@ -1773,6 +1781,8 @@ export const subConversations = sqliteTable(
     }),
     summary: text(),
     authoringTaskId: text('authoring_task_id').$type<AuthoringTaskId>(),
+    /** The model a model-driven sub-conversation was opened with; null for scripts and rows written before it. */
+    model: jsonText<AgentModelSelection>('model'),
     createdAt: integer('created_at').notNull(),
     closedAt: integer('closed_at'),
   },

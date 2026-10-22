@@ -7,6 +7,7 @@ import {
   CHANNEL_MESSAGE_PAGE_SIZE,
   connectionDisplayName,
   FOLLOW_COMPACTION,
+  NO_SUB_CONVERSATION_MODELS,
   type AgentRuntimeState,
   type AgentSummary,
   type ChannelRuntimeView,
@@ -428,6 +429,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     imagePolicy: agent.imagePolicy,
     dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
     compaction: agent.compaction ?? FOLLOW_COMPACTION,
+    subConversationModels: agent.subConversationModels ?? NO_SUB_CONVERSATION_MODELS,
     imageDiagnostics: agent.imageDiagnostics,
     appearance: {
       ...(agent.appearance?.hue === undefined ? {} : { hue: agent.appearance.hue }),

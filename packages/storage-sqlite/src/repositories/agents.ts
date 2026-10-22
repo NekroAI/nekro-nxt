@@ -9,6 +9,8 @@ import type {
 import {
   AgentCompactionPolicySchema,
   DEFAULT_AGENT_COMPACTION_POLICY,
+  DEFAULT_SUB_CONVERSATION_MODEL_POLICY,
+  parseSubConversationModelPolicy,
   parseAgentCapabilityGrants,
   parseImageUnderstandingPolicy,
   storedAgentCapabilityGrants,
@@ -63,6 +65,10 @@ const toRevision = (input: typeof agentRevisions.$inferSelect): AgentRevisionRec
     dynamicClientApprovalPolicy: row.dynamicClientApprovalPolicy,
     compaction:
       row.compaction === null ? DEFAULT_AGENT_COMPACTION_POLICY : AgentCompactionPolicySchema.parse(row.compaction),
+    subConversationModels:
+      row.subConversationModels === null
+        ? DEFAULT_SUB_CONVERSATION_MODEL_POLICY
+        : parseSubConversationModelPolicy(row.subConversationModels),
     contentDigest: row.contentDigest,
     createdAt: row.createdAt,
   }
@@ -110,6 +116,9 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
   ...(record.compaction.inSession.mode === 'follow' && record.compaction.newSession.mode === 'follow'
     ? {}
     : { compaction: record.compaction }),
+  ...(record.subConversationModels.candidates.length === 0
+    ? {}
+    : { subConversationModels: record.subConversationModels }),
   contentDigest: record.contentDigest,
   createdAt: record.createdAt,
 })

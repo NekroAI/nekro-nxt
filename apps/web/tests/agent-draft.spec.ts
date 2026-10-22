@@ -6,10 +6,12 @@ import {
   draftChanges,
   identityChanged,
   imagePolicyFor,
+  savedSubConversationModels,
   toggleAccess,
   type AgentDraft,
 } from '../src/app/agents/agent-draft.js'
 import { changeSummary, savedAt } from '../src/app/agents/agent-restore.js'
+import { subConversationModelsProblem } from '../src/app/agents/sub-conversation-models.js'
 import { defaultImageUnderstandingPolicy } from '../src/product-model.js'
 
 const base: AgentDraft = {
@@ -19,6 +21,7 @@ const base: AgentDraft = {
   modelKey: 'fixture/text-model',
   effort: '',
   compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
+  subConversationModels: { candidates: [] },
   visionKey: '',
   capabilities: {
     subagents: true,
@@ -75,6 +78,30 @@ describe('agent draft', () => {
     }
     expect(draftChanges(base, edited)).toEqual(['压缩模型'])
     expect(identityChanged(base, edited)).toBe(true)
+  })
+
+  it('saves sub-conversation models with the identity, trimmed, and keeps the default on its candidate', () => {
+    const candidate = { name: ' 快速 ', model: { provider: 'fixture', model: 'fast-model' }, guidance: ' 翻记录 ' }
+    const edited: AgentDraft = { ...base, subConversationModels: { candidates: [candidate], default: ' 快速 ' } }
+    expect(draftChanges(base, edited)).toEqual(['子对话模型'])
+    expect(identityChanged(base, edited)).toBe(true)
+    expect(savedSubConversationModels(edited.subConversationModels)).toEqual({
+      candidates: [{ name: '快速', model: candidate.model, guidance: '翻记录' }],
+      default: '快速',
+    })
+    // Spaces alone are not a change.
+    const saved = { ...base, subConversationModels: savedSubConversationModels(edited.subConversationModels) }
+    expect(identityChanged(saved, edited)).toBe(false)
+  })
+
+  it('names what keeps sub-conversation models from being saved', () => {
+    const named = (name: string) => ({ name, model: { provider: 'fixture', model: 'fast-model' }, guidance: '' })
+    expect(subConversationModelsProblem({ candidates: [named('快速'), named('深度')] })).toBeUndefined()
+    expect(subConversationModelsProblem({ candidates: [named(' ')] })).toBe('子对话模型需要名称')
+    expect(subConversationModelsProblem({ candidates: [named('主模型')] })).toBe('「主模型」是保留名称')
+    expect(subConversationModelsProblem({ candidates: [named('快速'), named('快速 ')] })).toBe(
+      '子对话模型的名称不能重复',
+    )
   })
 
   it('ignores surrounding spaces in the name', () => {

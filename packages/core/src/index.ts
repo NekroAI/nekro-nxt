@@ -18,6 +18,7 @@ import type {
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
+  AgentSubConversationModelsSchema,
   ChannelEventIdSchema,
   AdapterActivityKeySchema,
   ChannelIdSchema,
@@ -82,6 +83,23 @@ export interface AgentCompactionPolicy {
   readonly newSession: AgentCompactionModelChoice
 }
 
+/** One model this agent may open a sub-conversation with, named so the agent can pick it. */
+export interface SubConversationModelCandidate {
+  readonly name: string
+  readonly model: AgentModelSelection
+  /** What it is good for, shown to the agent when it chooses. */
+  readonly guidance: string
+}
+
+/**
+ * Models this agent may open sub-conversations with. Without a `default`, a sub-conversation the agent opens without
+ * naming a model follows the main model, as it did before candidates existed.
+ */
+export interface SubConversationModelPolicy {
+  readonly candidates: readonly SubConversationModelCandidate[]
+  readonly default?: string
+}
+
 export interface AgentRevisionContent {
   readonly displayName: string
   readonly persona: string
@@ -92,6 +110,8 @@ export interface AgentRevisionContent {
   readonly dynamicClientApprovalPolicy?: DynamicClientApprovalPolicy
   /** Omitted on revise keeps the current choices; omitted on create follows both defaults. */
   readonly compaction?: AgentCompactionPolicy
+  /** Omitted on revise keeps the current candidates; omitted on create offers none. */
+  readonly subConversationModels?: SubConversationModelPolicy
 }
 
 /** Non-versioned presentation of an intelligent agent; never part of an AgentRevision. */
@@ -110,7 +130,7 @@ export interface AgentDefinitionRecord {
 
 export interface AgentRevisionRecord extends Omit<
   AgentRevisionContent,
-  'capabilities' | 'imagePolicy' | 'personaDocument' | 'compaction'
+  'capabilities' | 'imagePolicy' | 'personaDocument' | 'compaction' | 'subConversationModels'
 > {
   readonly id: AgentRevisionId
   readonly agentId: AgentId
@@ -119,6 +139,7 @@ export interface AgentRevisionRecord extends Omit<
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
   readonly compaction: AgentCompactionPolicy
+  readonly subConversationModels: SubConversationModelPolicy
   readonly personaDocument: PromptDocumentV1
   readonly contentDigest: string
   readonly createdAt: number
@@ -554,6 +575,25 @@ export const AgentCompactionPolicySchema = z
   .strict()
   .default(DEFAULT_AGENT_COMPACTION_POLICY)
 
+export const DEFAULT_SUB_CONVERSATION_MODEL_POLICY: SubConversationModelPolicy = { candidates: [] }
+
+export const SubConversationModelPolicySchema = AgentSubConversationModelsSchema.default(() => ({ candidates: [] }))
+
+const subConversationModelPolicy = (
+  parsed: z.infer<typeof SubConversationModelPolicySchema>,
+): SubConversationModelPolicy => ({
+  candidates: parsed.candidates.map((candidate) => ({
+    name: candidate.name,
+    model: modelSelection(candidate.model),
+    guidance: candidate.guidance,
+  })),
+  ...(parsed.default === undefined ? {} : { default: parsed.default }),
+})
+
+export function parseSubConversationModelPolicy(input: unknown): SubConversationModelPolicy {
+  return subConversationModelPolicy(SubConversationModelPolicySchema.parse(input))
+}
+
 export function parseImageUnderstandingPolicy(input: unknown): ImageUnderstandingPolicy {
   return ImageUnderstandingPolicySchema.parse(input)
 }
@@ -578,6 +618,7 @@ const agentRevisionContentSchema = z
     imagePolicy: ImageUnderstandingPolicySchema,
     dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
     compaction: AgentCompactionPolicySchema,
+    subConversationModels: SubConversationModelPolicySchema,
   })
   .strict()
 
@@ -680,13 +721,19 @@ const canonicalJson = (value: JsonValue): string => {
 
 type NormalizedAgentRevisionContent = Omit<
   AgentRevisionContent,
-  'capabilities' | 'imagePolicy' | 'personaDocument' | 'dynamicClientApprovalPolicy' | 'compaction'
+  | 'capabilities'
+  | 'imagePolicy'
+  | 'personaDocument'
+  | 'dynamicClientApprovalPolicy'
+  | 'compaction'
+  | 'subConversationModels'
 > & {
   readonly capabilities: AgentCapabilityGrants
   readonly imagePolicy: ImageUnderstandingPolicy
   readonly personaDocument: PromptDocumentV1
   readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
   readonly compaction: AgentCompactionPolicy
+  readonly subConversationModels: SubConversationModelPolicy
 }
 
 const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgentRevisionContent => {
@@ -712,6 +759,15 @@ const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgent
       inSession: compactionChoice(parsed.compaction.inSession),
       newSession: compactionChoice(parsed.compaction.newSession),
     },
+    subConversationModels: subConversationModelPolicy(parsed.subConversationModels),
+  }
+}
+
+function modelSelection(model: z.infer<typeof AgentModelSelectionSchema>): AgentModelSelection {
+  return {
+    provider: model.provider,
+    model: model.model,
+    ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
   }
 }
 
@@ -812,6 +868,23 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
           newSession: compactionChoicePayload(content.compaction.newSession),
         },
       }),
+  // Offering no candidates leaves the digest of every earlier Revision unchanged.
+  ...(content.subConversationModels.candidates.length === 0
+    ? {}
+    : {
+        subConversationModels: {
+          candidates: content.subConversationModels.candidates.map((candidate) => ({
+            name: candidate.name,
+            model: {
+              provider: candidate.model.provider,
+              model: candidate.model.model,
+              reasoningEffort: candidate.model.reasoningEffort ?? null,
+            },
+            guidance: candidate.guidance,
+          })),
+          default: content.subConversationModels.default ?? null,
+        },
+      }),
 })
 
 const digestRevision = (input: AgentRevisionContent): string => {
@@ -831,11 +904,19 @@ const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevision
   imagePolicy: revision.imagePolicy,
   dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
   compaction: revision.compaction,
+  subConversationModels: revision.subConversationModels,
 })
 
 /** Revision fields an administrator can tell apart in history; `approvalPolicy` is the dynamic client approval policy. */
 export type AgentRevisionChangedField =
-  'name' | 'persona' | 'model' | 'capabilities' | 'imagePolicy' | 'approvalPolicy' | 'compaction'
+  | 'name'
+  | 'persona'
+  | 'model'
+  | 'capabilities'
+  | 'imagePolicy'
+  | 'approvalPolicy'
+  | 'compaction'
+  | 'subConversationModels'
 
 const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, string])[] = [
   ['name', 'displayName'],
@@ -845,6 +926,7 @@ const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, stri
   ['imagePolicy', 'imagePolicy'],
   ['approvalPolicy', 'dynamicClientApprovalPolicy'],
   ['compaction', 'compaction'],
+  ['subConversationModels', 'subConversationModels'],
 ]
 
 const payloadField = (payload: JsonValue, key: string): JsonValue =>
@@ -959,10 +1041,12 @@ export class CoreService {
     if (current.definition.currentRevisionId !== expectedCurrentRevisionId) {
       throw new Error(`Agent revision conflict: expected ${expectedCurrentRevisionId}.`)
     }
-    // Callers that rebuild a revision without compaction choices (a capability change, a persona import) keep them.
-    const content = parseAgentRevisionContent(
-      input.compaction === undefined ? { ...input, compaction: current.revision.compaction } : input,
-    )
+    // Callers that rebuild a revision without these choices (a capability change, a persona import) keep them.
+    const content = parseAgentRevisionContent({
+      ...input,
+      compaction: input.compaction ?? current.revision.compaction,
+      subConversationModels: input.subConversationModels ?? current.revision.subConversationModels,
+    })
     if (equivalentRevisionContent(content, revisionContent(current.revision))) return current
     const digest = digestRevision(content)
     const existing =

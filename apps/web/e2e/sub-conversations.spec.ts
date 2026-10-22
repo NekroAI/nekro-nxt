@@ -21,6 +21,7 @@ const conversations: SubConversation[] = [
     openedBy: 'agent',
     driver: 'model',
     status: 'open',
+    model: { provider: 'test-provider', model: 'text-model' },
     createdAt: at,
   },
   {
@@ -151,6 +152,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.getByRole('heading', { name: /整理本周活动要点/u })).toBeVisible()
       await expect(page.getByText('搜索聊天记录').first()).toBeVisible()
       await expect(page.getByText('这里只能查看')).toBeVisible()
+      await expect(page.getByText('测试供应商 · 纯文本模型')).toBeVisible()
       await expect(page.getByRole('button', { name: '结束', exact: true })).toBeVisible()
       await page.screenshot({
         path: testInfo.outputPath(`sub-conversation-open-${theme}-${width}.png`),

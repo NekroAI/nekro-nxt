@@ -57,6 +57,7 @@ import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
 import { EffortSlider } from './effort-slider.js'
 import { CompactionModelField, type CompactionModel } from './compaction-model.js'
+import { SubConversationModelRows } from './sub-conversation-models.js'
 
 /** What each extension autonomy level lets the agent do without opening the console. */
 const EXTENSION_AUTONOMY_HINT: Record<'manual' | 'confirm' | 'autonomous', string> = {
@@ -229,6 +230,7 @@ export function ModelSection({
             }
           />
         </PropertyRow>
+        <SubConversationModelRows draft={draft} update={update} />
       </PropertyList>
     </PropertyGroup>
   )
