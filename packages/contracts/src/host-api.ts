@@ -477,6 +477,41 @@ export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
   timeoutSeconds: 180,
 }
 
+export const FALLBACK_MODEL_LIMIT = 3
+
+/**
+ * Models an agent switches to, in order, when its main model has used up its quota or stays unavailable after the
+ * usual retries. Empty leaves the main model alone, as before fallback models existed.
+ */
+export const AgentFallbackModelsSchema = z
+  .array(AgentModelSchema)
+  .max(FALLBACK_MODEL_LIMIT)
+  .refine(
+    (models) => new Set(models.map((model) => `${model.provider}\0${model.model}`)).size === models.length,
+    '备用模型不能重复。',
+  )
+
+/** Why a channel conversation left its main model. */
+export const ModelFallbackReasonSchema = z.enum(['quota', 'rate-limit', 'unavailable'])
+export type ModelFallbackReason = z.output<typeof ModelFallbackReasonSchema>
+
+/** How long a model that failed is passed over before conversations try it again. */
+export const ModelFallbackSettingsSchema = z
+  .object({
+    /** After rate limits, server errors, timeouts or empty replies that outlasted the usual retries. */
+    unavailableCooldownMinutes: z.number().int().min(1).max(240),
+    /** After the quota or balance ran out. */
+    quotaCooldownMinutes: z.number().int().min(5).max(1440),
+  })
+  .strict()
+
+export type ModelFallbackSettings = z.output<typeof ModelFallbackSettingsSchema>
+
+export const DEFAULT_MODEL_FALLBACK_SETTINGS: ModelFallbackSettings = {
+  unavailableCooldownMinutes: 10,
+  quotaCooldownMinutes: 60,
+}
+
 /** The name an agent passes to open a sub-conversation on its main model; no candidate may take it. */
 export const SUB_CONVERSATION_MAIN_MODEL = '主模型'
 
@@ -535,6 +570,7 @@ const AgentRevisionRequestContentSchema = z
     dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema.optional(),
     compaction: AgentCompactionPolicySchema.optional(),
     subConversationModels: AgentSubConversationModelsSchema.optional(),
+    fallbackModels: AgentFallbackModelsSchema.optional(),
   })
   .strict()
 
@@ -997,6 +1033,16 @@ export const ChannelRuntimeProjectionSchema = z
     /** A compaction under way: inside the current session, or before a new session opens. */
     compaction: z
       .object({ kind: z.enum(['in-session', 'new-session']), startedAt: z.number().int().nonnegative() })
+      .strict()
+      .optional(),
+    /** The conversation runs on a fallback model; it tries the main model again at a new message after `retryMainAt`. */
+    modelFallback: z
+      .object({
+        model: AgentModelSchema,
+        reason: ModelFallbackReasonSchema,
+        since: z.number().int().nonnegative(),
+        retryMainAt: z.number().int().nonnegative(),
+      })
       .strict()
       .optional(),
     pendingInjectCount: z.number().int().nonnegative(),
@@ -1721,6 +1767,8 @@ export const HostSnapshotSchema = z
           compaction: AgentCompactionPolicySchema.optional(),
           /** Optional for older hosts, whose agents offer no candidates. */
           subConversationModels: AgentSubConversationModelsSchema.optional(),
+          /** Optional for older hosts, whose agents have no fallback models. */
+          fallbackModels: AgentFallbackModelsSchema.optional(),
           imageDiagnostics: z
             .object({
               route: z
@@ -2609,6 +2657,7 @@ export const AgentRevisionChangedFieldSchema = z.enum([
   'approvalPolicy',
   'compaction',
   'subConversationModels',
+  'fallbackModels',
 ])
 
 export const AgentRevisionHistorySchema = z
@@ -3639,6 +3688,22 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: CompactionSettingsSchema,
     response: CompactionSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  getModelFallbackSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/model-fallback',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ModelFallbackSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateModelFallbackSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/model-fallback',
+    params: EmptyParamsSchema,
+    request: ModelFallbackSettingsSchema,
+    response: ModelFallbackSettingsSchema,
     error: HostApiErrorSchema,
   }),
   getUpgradeBackupSettings: defineContract({

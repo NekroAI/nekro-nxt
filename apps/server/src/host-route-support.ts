@@ -377,6 +377,18 @@ export const assertSubConversationModels = async (
   for (const candidate of policy?.candidates ?? []) await assertAvailableModel(runtime, candidate.model, '子对话模型')
 }
 
+/** Every fallback model must be available, and none may be the main model. */
+export const assertFallbackModels = async (
+  runtime: NekroRuntime,
+  main: { readonly provider: string; readonly model: string },
+  models: readonly Parameters<typeof assertAvailableModel>[1][] | undefined,
+): Promise<void> => {
+  for (const model of models ?? []) {
+    if (model.provider === main.provider && model.model === main.model) throw new Error('备用模型不能和主模型相同。')
+    await assertAvailableModel(runtime, model, '备用模型')
+  }
+}
+
 export const writeContractJson = <Contract extends HostApiContract>(
   res: ServerResponse,
   status: number,

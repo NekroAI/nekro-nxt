@@ -100,6 +100,8 @@ export const agentRevisions = sqliteTable(
     compaction: jsonText<AgentCompactionPolicy>('compaction'),
     /** Null offers no sub-conversation model candidates, which is every Revision written before the field existed. */
     subConversationModels: jsonText<SubConversationModelPolicy>('sub_conversation_models'),
+    /** Null has no fallback models, which is every Revision written before the field existed. */
+    fallbackModels: jsonText<readonly AgentModelSelection[]>('fallback_models'),
     contentDigest: text('content_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },

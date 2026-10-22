@@ -130,6 +130,7 @@ import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
 import { messageGapMs, readMessagePacing } from './message-pacing.js'
 import { readCompactionSettings } from './compaction-settings.js'
+import { readModelFallbackSettings } from './model-fallback-settings.js'
 import { readSubConversationRetention } from './sub-conversation-settings.js'
 
 /** How often ended sub-conversations past their retention are removed. */
@@ -1039,6 +1040,9 @@ export class NekroRuntime {
         compaction: {
           settings: () => readCompactionSettings({ get: (key) => repository.getSystemSetting(key) }),
           currentRevision: (agentId) => repository.getAgent(agentId)?.revision,
+        },
+        modelFallback: {
+          settings: () => readModelFallbackSettings({ get: (key) => repository.getSystemSetting(key) }),
         },
         subConversations: {
           store: repository,

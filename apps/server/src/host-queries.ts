@@ -61,6 +61,7 @@ export const assembleChannelRuntime = (
   const metrics =
     episode?.dshSessionId === undefined ? undefined : runtime.host.sessionRuntimeMetrics(episode.dshSessionId)
   const compactionStartedAt = runtime.host.newSessionCompactionStartedAt(channelId)
+  const modelFallback = runtime.host.modelFallbackOf(channelId)
   return projectChannelRuntime({
     channelId,
     agentId: binding.agentId,
@@ -68,6 +69,7 @@ export const assembleChannelRuntime = (
     sessionStatus: live?.status ?? 'missing',
     pendingInjectCount,
     ...(compactionStartedAt === undefined ? {} : { newSessionCompactionStartedAt: compactionStartedAt }),
+    ...(modelFallback === undefined ? {} : { modelFallback }),
     ...(metrics?.occupancy === undefined ? {} : { occupancy: metrics.occupancy }),
     ...(metrics?.performanceTotals === undefined ? {} : { performanceTotals: metrics.performanceTotals }),
     events:
@@ -540,6 +542,7 @@ export class HostQueries {
         dynamicClientApprovalPolicy: commit.revision.dynamicClientApprovalPolicy,
         compaction: commit.revision.compaction,
         subConversationModels: commit.revision.subConversationModels,
+        fallbackModels: commit.revision.fallbackModels,
         ...(diagnosticsByRevision.has(commit.revision.id)
           ? { imageDiagnostics: diagnosticsByRevision.get(commit.revision.id) }
           : {}),

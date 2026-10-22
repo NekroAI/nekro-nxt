@@ -586,6 +586,36 @@ describe('CoreService', () => {
     }
   })
 
+  it('keeps fallback models when a revision leaves them out, and refuses the main model among them', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const base = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const first = core.createAgent(base)
+    expect(first.revision.fallbackModels).toEqual([])
+    expect(core.reviseAgent(first.definition.id, first.revision.id, { ...base, fallbackModels: [] }).revision.id).toBe(
+      first.revision.id,
+    )
+    const fallbackModels = [{ provider: 'deepseek', model: 'flash', reasoningEffort: 'off' }]
+    const custom = core.reviseAgent(first.definition.id, first.revision.id, { ...base, fallbackModels })
+    expect(custom.revision.fallbackModels).toEqual(fallbackModels)
+    expect(diffAgentRevisions(first.revision, custom.revision)).toEqual(['fallbackModels'])
+    const renamed = core.reviseAgent(first.definition.id, custom.revision.id, { ...base, displayName: '小奈二号' })
+    expect(renamed.revision.fallbackModels).toEqual(fallbackModels)
+    expect(() =>
+      core.reviseAgent(first.definition.id, renamed.revision.id, {
+        ...base,
+        fallbackModels: [{ provider: 'deepseek', model: 'v4' }],
+      }),
+    ).toThrow('备用模型不能和主模型相同')
+    expect(() =>
+      core.reviseAgent(first.definition.id, renamed.revision.id, {
+        ...base,
+        fallbackModels: [fallbackModels[0]!, fallbackModels[0]!],
+      }),
+    ).toThrow()
+  })
+
   it('uses canonical content digests independent of object key order', () => {
     const first = digestRevision({
       displayName: '小奈',

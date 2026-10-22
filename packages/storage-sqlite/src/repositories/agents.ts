@@ -10,6 +10,7 @@ import {
   AgentCompactionPolicySchema,
   DEFAULT_AGENT_COMPACTION_POLICY,
   DEFAULT_SUB_CONVERSATION_MODEL_POLICY,
+  parseFallbackModels,
   parseSubConversationModelPolicy,
   parseAgentCapabilityGrants,
   parseImageUnderstandingPolicy,
@@ -69,6 +70,7 @@ const toRevision = (input: typeof agentRevisions.$inferSelect): AgentRevisionRec
       row.subConversationModels === null
         ? DEFAULT_SUB_CONVERSATION_MODEL_POLICY
         : parseSubConversationModelPolicy(row.subConversationModels),
+    fallbackModels: row.fallbackModels === null ? [] : parseFallbackModels(row.fallbackModels),
     contentDigest: row.contentDigest,
     createdAt: row.createdAt,
   }
@@ -119,6 +121,7 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
   ...(record.subConversationModels.candidates.length === 0
     ? {}
     : { subConversationModels: record.subConversationModels }),
+  ...(record.fallbackModels.length === 0 ? {} : { fallbackModels: record.fallbackModels }),
   contentDigest: record.contentDigest,
   createdAt: record.createdAt,
 })

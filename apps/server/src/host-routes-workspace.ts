@@ -13,7 +13,7 @@ import {
   type ChannelId,
   type ExtensionId,
 } from '@nekro-nxt/contracts'
-import { parseSubConversationModelPolicy, type AgentRevisionContent } from '@nekro-nxt/core'
+import { parseFallbackModels, parseSubConversationModelPolicy, type AgentRevisionContent } from '@nekro-nxt/core'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { z } from 'zod'
@@ -30,6 +30,7 @@ import {
   assertReasoningEffort,
   assertCompactionPolicy,
   assertSubConversationModels,
+  assertFallbackModels,
   buildSnapshotMessage,
   readJsonBody,
   writeContractJson,
@@ -393,6 +394,7 @@ export function registerWorkspaceRoutes({
       await assertReasoningEffort(runtime, parsed.model)
       await assertCompactionPolicy(runtime, parsed.compaction)
       await assertSubConversationModels(runtime, parsed.subConversationModels)
+      await assertFallbackModels(runtime, parsed.model, parsed.fallbackModels)
       const content: AgentRevisionContent = {
         displayName: parsed.displayName,
         persona: parsed.persona,
@@ -411,6 +413,7 @@ export function registerWorkspaceRoutes({
         ...(parsed.subConversationModels === undefined
           ? {}
           : { subConversationModels: parseSubConversationModelPolicy(parsed.subConversationModels) }),
+        ...(parsed.fallbackModels === undefined ? {} : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
       }
       const entity = await runtime.createAgentWithInternalChannel(content)
       writeJson(
@@ -556,6 +559,7 @@ export function registerWorkspaceRoutes({
           await assertReasoningEffort(runtime, parsed.model)
           await assertCompactionPolicy(runtime, parsed.compaction)
           await assertSubConversationModels(runtime, parsed.subConversationModels)
+          await assertFallbackModels(runtime, parsed.model, parsed.fallbackModels)
           const updated = runtime.core.reviseAgent(agentId, revision.id, {
             displayName: parsed.displayName,
             persona: parsed.persona,
@@ -572,6 +576,9 @@ export function registerWorkspaceRoutes({
             ...(parsed.subConversationModels === undefined
               ? {}
               : { subConversationModels: parseSubConversationModelPolicy(parsed.subConversationModels) }),
+            ...(parsed.fallbackModels === undefined
+              ? {}
+              : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
           })
           writeJson(res, 200, HostApiContracts.reviseAgent.parseResponse({ currentRevisionId: updated.revision.id }))
           return

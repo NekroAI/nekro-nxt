@@ -27,6 +27,7 @@ import {
 import { ProductUpdates } from './product-updates.js'
 import { readMessagePacing, writeMessagePacing, type MessagePacingSettingsStore } from './message-pacing.js'
 import { readCompactionSettings, writeCompactionSettings } from './compaction-settings.js'
+import { readModelFallbackSettings, writeModelFallbackSettings } from './model-fallback-settings.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerSubConversationRoutes } from './host-routes-sub-conversations.js'
 import { registerLinkedAccountRoutes } from './host-routes-linked-accounts.js'
@@ -395,6 +396,36 @@ export const createNekroHostApi = (
         )
       } catch (error) {
         writeError(res, 400, 'compaction-settings-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/model-fallback',
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.getModelFallbackSettings,
+          readModelFallbackSettings(pacingSettings),
+        )
+        return
+      }
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.updateModelFallbackSettings.parseRequest(await readJsonBody(req))
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.updateModelFallbackSettings,
+          writeModelFallbackSettings(pacingSettings, parsed),
+        )
+      } catch (error) {
+        writeError(res, 400, 'model-fallback-settings-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })
