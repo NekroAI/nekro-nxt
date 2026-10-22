@@ -32,6 +32,7 @@ export type AgentSubConversationModels = NonNullable<
   HostApiResponse<'snapshot'>['agents'][number]['subConversationModels']
 >
 export type SubConversationModelCandidate = AgentSubConversationModels['candidates'][number]
+export type AgentFallbackModel = NonNullable<HostApiResponse<'snapshot'>['agents'][number]['fallbackModels']>[number]
 export const NO_SUB_CONVERSATION_MODELS: AgentSubConversationModels = { candidates: [] }
 export type { ThemeChoice } from './theme-preference.js'
 export type AgentRuntimeState = ChannelRuntimePhase
@@ -122,6 +123,8 @@ export interface AgentSummary {
   readonly compaction: AgentCompactionPolicy
   /** Models it may open sub-conversations with, besides its main model. */
   readonly subConversationModels: AgentSubConversationModels
+  /** Models it switches to, in order, when the main model fails. */
+  readonly fallbackModels: readonly AgentFallbackModel[]
   readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
   /** Non-versioned identity look; absent fields fall back to values derived from the id. */
   readonly appearance?: { readonly hue?: number; readonly avatarUrl?: string }
@@ -187,6 +190,8 @@ export interface ChannelRuntimeView {
   readonly summary: string
   /** A compaction under way, shown as its own row until the summary is written. */
   readonly compaction?: HostApiResponse<'getChannelRuntime'>['compaction']
+  /** The conversation runs on a fallback model. */
+  readonly modelFallback?: HostApiResponse<'getChannelRuntime'>['modelFallback']
   readonly pendingInjectCount: number
   readonly occupancy?: HostApiResponse<'getChannelRuntime'>['occupancy']
   readonly cache?: HostApiResponse<'getChannelRuntime'>['cache']
@@ -647,6 +652,7 @@ export interface ProductState {
     readonly dynamicClientApprovalPolicy: 'manual' | 'automatic'
     readonly compaction?: AgentCompactionPolicy
     readonly subConversationModels?: AgentSubConversationModels
+    readonly fallbackModels?: readonly AgentFallbackModel[]
   }): Promise<void>
   updateNotificationSettings(
     input: HostApiRequest<'updateNotificationSettings'>,

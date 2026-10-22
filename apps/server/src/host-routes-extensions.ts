@@ -32,6 +32,7 @@ import {
   assertReasoningEffort,
   assertCompactionPolicy,
   assertSubConversationModels,
+  assertFallbackModels,
   buildSnapshotMessage,
   createExtensionRevisionExport,
   HOST_UI_PRODUCT_MUTATIONS,
@@ -49,7 +50,7 @@ import { performHostUiNetworkRequest } from './host-ui-network.js'
 import { activationManifest } from './host-queries.js'
 import { handleGovernanceExtensionRoute } from './host-routes-governance.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
-import { parseSubConversationModelPolicy } from '@nekro-nxt/core'
+import { parseFallbackModels, parseSubConversationModelPolicy } from '@nekro-nxt/core'
 
 /**
  * Resolves and checks where a panel call comes from (扩展形态统一 §5): agent panels need the agent to have the extension
@@ -259,6 +260,7 @@ export function registerExtensionsRoutes({
               await assertReasoningEffort(runtime, parsed.model)
               await assertCompactionPolicy(runtime, parsed.compaction)
               await assertSubConversationModels(runtime, parsed.subConversationModels)
+              await assertFallbackModels(runtime, parsed.model, parsed.fallbackModels)
               const entity = await runtime.createAgentWithInternalChannel({
                 displayName: parsed.displayName,
                 persona: parsed.persona,
@@ -273,6 +275,9 @@ export function registerExtensionsRoutes({
                 ...(parsed.subConversationModels === undefined
                   ? {}
                   : { subConversationModels: parseSubConversationModelPolicy(parsed.subConversationModels) }),
+                ...(parsed.fallbackModels === undefined
+                  ? {}
+                  : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
               })
               value = { agentId: entity.agentId, channelId: entity.channelId, connectionId: entity.connectionId }
             } else if (input.method === 'agents.revise') {
@@ -286,6 +291,7 @@ export function registerExtensionsRoutes({
               await assertReasoningEffort(runtime, parsed.model)
               await assertCompactionPolicy(runtime, parsed.compaction)
               await assertSubConversationModels(runtime, parsed.subConversationModels)
+              await assertFallbackModels(runtime, parsed.model, parsed.fallbackModels)
               const updated = runtime.core.reviseAgent(request.agentId, current.revision.id, {
                 displayName: parsed.displayName,
                 persona: parsed.persona,
@@ -299,6 +305,9 @@ export function registerExtensionsRoutes({
                 ...(parsed.subConversationModels === undefined
                   ? {}
                   : { subConversationModels: parseSubConversationModelPolicy(parsed.subConversationModels) }),
+                ...(parsed.fallbackModels === undefined
+                  ? {}
+                  : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
               })
               value = { currentRevisionId: updated.revision.id }
             } else if (input.method === 'agents.capabilities') {

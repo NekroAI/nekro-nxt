@@ -40,6 +40,7 @@ declare const styles: {
   readonly emptyCanvas: string
   readonly emptyTimeline: string
   readonly expand: string
+  readonly fallbackChip: string
   readonly filter: string
   readonly filterRow: string
   readonly fresh: string

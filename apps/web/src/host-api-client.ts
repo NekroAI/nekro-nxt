@@ -261,6 +261,10 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.getCompactionSettings, {}, undefined, options),
   updateCompactionSettings: (request: HostApiRequest<'updateCompactionSettings'>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.updateCompactionSettings, {}, request, options),
+  getModelFallbackSettings: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getModelFallbackSettings, {}, undefined, options),
+  updateModelFallbackSettings: (request: HostApiRequest<'updateModelFallbackSettings'>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.updateModelFallbackSettings, {}, request, options),
   getMessagePacingSettings: (options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getMessagePacingSettings, {}, undefined, options),
   updateMessagePacingSettings: (request: HostApiRequest<'updateMessagePacingSettings'>, options?: HostRequestOptions) =>

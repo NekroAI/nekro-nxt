@@ -108,6 +108,7 @@ export function createProductStore(
       dynamicClientApprovalPolicy,
       compaction,
       subConversationModels,
+      fallbackModels,
     }) => {
       await requireHost().actions['agents.revise']({
         agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
@@ -124,6 +125,7 @@ export function createProductStore(
         dynamicClientApprovalPolicy,
         ...(compaction === undefined ? {} : { compaction }),
         ...(subConversationModels === undefined ? {} : { subConversationModels }),
+        ...(fallbackModels === undefined ? {} : { fallbackModels: [...fallbackModels] }),
       })
     },
     updateNotificationSettings: async (input) => {

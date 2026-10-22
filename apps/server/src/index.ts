@@ -171,9 +171,13 @@ import {
   DEFAULT_COMPACTION_SETTINGS,
   type CompactionSettings,
   type ExtensionLayeredConfig,
+  DEFAULT_MODEL_FALLBACK_SETTINGS,
+  type ModelFallbackReason,
+  type ModelFallbackSettings,
 } from '@nekro-nxt/contracts'
 import { assertAgentAuthoredConfig } from '@nekro-nxt/extension-format'
 import type {
+  AgentModelSelection,
   AgentRevisionRecord,
   AssetRecord,
   AssetService,
@@ -204,6 +208,14 @@ import { Buffer } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { CONVERSATION_SCRIPT_PROVIDER, ConversationScriptModel } from './sub-conversation-script.js'
 import { PARENT_ONLY_CONVERSATION_TOOLS, subConversationTools } from './sub-conversation-tools.js'
+import {
+  cooldownMs,
+  fallbackReasonOf,
+  firstHealthyRoute,
+  ModelRouteHealth,
+  routeForRequest,
+  sameRoute,
+} from './model-fallback.js'
 import { SubConversationManager, memorySubConversationStore, type SubConversationStore } from './sub-conversations.js'
 import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -490,6 +502,8 @@ export interface DshHostRuntimeOptions {
     readonly settings: () => CompactionSettings
     readonly currentRevision: (agentId: AgentId) => AgentRevisionRecord | undefined
   }
+  /** How long a model that failed is passed over; the defaults without it. */
+  readonly modelFallback?: { readonly settings: () => ModelFallbackSettings }
   /** Where sub-conversations are recorded and how long ended ones are kept; in memory without it. */
   readonly subConversations?: {
     readonly store: SubConversationStore
@@ -2984,6 +2998,12 @@ async function mountDevelopmentCapabilities(
   }
 }
 
+const FALLBACK_REASON_TEXT: Readonly<Record<ModelFallbackReason, string>> = {
+  quota: '额度已用完',
+  'rate-limit': '持续限流',
+  unavailable: '暂时不可用',
+}
+
 const CHILD_MAX_TOKENS = 4096
 
 const CHILD_DENIED_TOOL_NAMES = [
@@ -3082,6 +3102,13 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #compaction: DshHostRuntimeOptions['compaction']
   /** Channels waiting for a new-session compaction summary, with when they started. */
   readonly #newSessionCompactions = new Map<string, number>()
+  readonly #modelFallbackSettings: () => ModelFallbackSettings
+  readonly #routeHealth = new ModelRouteHealth()
+  /** Sessions running on a fallback model, with why and since when; a session on its main model has no entry. */
+  readonly #fallbackRoutes = new Map<
+    string,
+    { readonly route: AgentModelSelection; readonly reason: ModelFallbackReason; readonly since: number }
+  >()
   readonly #subscriptionListeners = new Set<() => void>()
   /** One pending quiet-time review per live session, re-armed by each admission. */
   readonly #idleReviews = new Map<string, ReturnType<typeof setTimeout>>()
@@ -3147,6 +3174,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       options.providerTestResults,
     )
     this.#compaction = options.compaction
+    this.#modelFallbackSettings = options.modelFallback?.settings ?? (() => DEFAULT_MODEL_FALLBACK_SETTINGS)
     this.#subscriptions =
       options.llmCredentialPath === undefined
         ? undefined
@@ -3348,6 +3376,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     compaction.setVisualRestore((result, agent) =>
       this.#imageContext.restoreVisualContext(agent, String(result.compactionId)),
     )
+    this.#mountModelFallback(context)
     compaction.setModelChoice((agent) => {
       const revision = this.#sessions.get(String(agent.id))?.revision
       if (!revision) return undefined
@@ -4871,6 +4900,148 @@ export class DshHostRuntime implements AgentSessionDriver {
   /** When the channel started waiting for a new-session compaction summary, while it waits. */
   newSessionCompactionStartedAt(channelId: string): number | undefined {
     return this.#newSessionCompactions.get(channelId)
+  }
+
+  /** The fallback model the channel's conversation runs on, while it does. */
+  modelFallbackOf(channelId: string):
+    | {
+        readonly model: AgentModelSelection
+        readonly reason: ModelFallbackReason
+        readonly since: number
+        readonly retryMainAt: number
+      }
+    | undefined {
+    for (const [sessionId, state] of this.#fallbackRoutes) {
+      const owned = this.#sessions.get(sessionId)
+      if (owned?.channelId !== channelId) continue
+      const main = this.#fallbackChain(sessionId)?.[0]
+      const now = Date.now()
+      return {
+        model: state.route,
+        reason: state.reason,
+        since: state.since,
+        retryMainAt: main === undefined ? now : (this.#routeHealth.coolingUntil(main, now) ?? now),
+      }
+    }
+    return undefined
+  }
+
+  /**
+   * The main model and its fallbacks for a session's requests, or undefined when it has none. A sub-conversation
+   * follows its channel conversation's chain only while it talks in the main model; one opened on a model of its own
+   * keeps that model.
+   */
+  #fallbackChain(sessionId: string): readonly AgentModelSelection[] | undefined {
+    const owned = this.#sessions.get(sessionId)
+    let revision = owned?.revision
+    if (owned === undefined) {
+      const child = this.#subConversationStore.getSubConversationBySession(sessionId)
+      if (child?.driver !== 'model') return undefined
+      revision = this.#sessions.get(child.parentDshSessionId)?.revision
+      if (revision === undefined || (child.model !== undefined && !sameRoute(child.model, revision.model)))
+        return undefined
+    }
+    if (revision === undefined) return undefined
+    const current = this.#compaction?.currentRevision(revision.agentId) ?? revision
+    return current.fallbackModels.length === 0 ? undefined : [current.model, ...current.fallbackModels]
+  }
+
+  /**
+   * Fallback models: a request that failed with a used-up quota, or stayed unavailable after the usual retries, is
+   * retried on the next model of the agent's chain. DSH settles a failed attempt where the model cannot see it and runs
+   * tools only after a complete reply, so retrying the step repeats no side effect.
+   */
+  #mountModelFallback(context: Context): void {
+    context.on('agent/request', async (payload, next) => {
+      const config = await next()
+      const sessionId = String(payload.agent.id)
+      const chain = this.#fallbackChain(sessionId)
+      if (chain === undefined) {
+        // The fallback models were removed while the session ran on one: back to the main model.
+        this.#fallbackRoutes.delete(sessionId)
+        return config
+      }
+      const main = chain[0]!
+      const current = this.#fallbackRoutes.get(sessionId)?.route ?? main
+      const route = routeForRequest({
+        chain,
+        current,
+        startsTurn: payload.step === 1,
+        health: this.#routeHealth,
+        now: Date.now(),
+      })
+      if (!sameRoute(route, current)) this.#useRoute(sessionId, route, chain, undefined)
+      if (sameRoute(route, config)) return config
+      // The thinking level belongs to the model it was chosen for.
+      const rest: Omit<typeof config, 'reasoningEffort'> & { reasoningEffort?: typeof config.reasoningEffort } = {
+        ...config,
+      }
+      delete rest.reasoningEffort
+      return {
+        ...rest,
+        provider: route.provider,
+        model: route.model,
+        ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) }),
+      }
+    })
+    context.on('agent/request-error', async (payload, next) => {
+      const sessionId = String(payload.agent.id)
+      const chain = this.#fallbackChain(sessionId)
+      const reason = fallbackReasonOf(payload.failure.code)
+      if (chain === undefined || reason === undefined || payload.signal.aborted) return next()
+      // A used-up quota will not come back within the retries; anything else gets the usual retries first.
+      if (reason !== 'quota') {
+        const action = await next()
+        if (action !== undefined) return action
+      }
+      const now = Date.now()
+      const current = this.#fallbackRoutes.get(sessionId)?.route ?? chain[0]!
+      this.#routeHealth.markFailed(current, reason, now + cooldownMs(reason, this.#modelFallbackSettings()))
+      const target = firstHealthyRoute(chain, this.#routeHealth, now, current)
+      if (target === undefined) return reason === 'quota' ? next() : undefined
+      this.#useRoute(sessionId, target, chain, { reason, code: payload.failure.code, from: current })
+      return { kind: 'retry' as const }
+    })
+  }
+
+  /** Moves a session to `route`, noting it in the logs and on its channel. */
+  #useRoute(
+    sessionId: string,
+    route: AgentModelSelection,
+    chain: readonly AgentModelSelection[],
+    failure:
+      { readonly reason: ModelFallbackReason; readonly code: string; readonly from: AgentModelSelection } | undefined,
+  ): void {
+    const previous = this.#fallbackRoutes.get(sessionId)
+    const from = failure?.from ?? previous?.route ?? chain[0]!
+    const backToMain = sameRoute(route, chain[0]!)
+    if (backToMain) this.#fallbackRoutes.delete(sessionId)
+    else {
+      this.#fallbackRoutes.set(sessionId, {
+        route,
+        reason: failure?.reason ?? previous?.reason ?? 'unavailable',
+        since: Date.now(),
+      })
+    }
+    const owned = this.#sessions.get(sessionId)
+    const child = owned === undefined ? this.#subConversationStore.getSubConversationBySession(sessionId) : undefined
+    const channelId = owned?.channelId ?? child?.channelId
+    const agentId = owned?.revision.agentId ?? child?.agentId
+    this.#logs?.write({
+      level: 'warn',
+      message: backToMain
+        ? `换回主模型 ${route.model}`
+        : `${from.model} ${failure === undefined ? '仍在冷却' : FALLBACK_REASON_TEXT[failure.reason]}，改用备用模型 ${route.model}`,
+      source: { kind: 'system', id: 'model-fallback', name: '备用模型' },
+      scope: {
+        sessionId,
+        ...(agentId === undefined ? {} : { agentId }),
+        ...(channelId === undefined ? {} : { channelId }),
+      },
+      ...(failure === undefined ? {} : { code: failure.code }),
+      details: { from, to: route },
+    })
+    if (owned !== undefined) this.#runtimeProjection.touchChannel(owned.channelId)
   }
 
   /**

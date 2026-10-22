@@ -2,6 +2,7 @@ import { promptDocumentPlainText, type PromptDocumentV1 } from '@nekro-nxt/contr
 import type { AgentAccessLevel } from '../../agent-access-level.js'
 import type {
   AgentCompactionPolicy,
+  AgentFallbackModel,
   AgentSubConversationModels,
   AgentSummary,
   ImageUnderstandingPolicy,
@@ -30,6 +31,8 @@ export interface AgentDraft {
   readonly compaction: AgentCompactionPolicy
   /** Models it may open sub-conversations with; names may be untrimmed while being typed. */
   readonly subConversationModels: AgentSubConversationModels
+  /** Models to switch to, in order, when the main model fails. */
+  readonly fallbackModels: readonly AgentFallbackModel[]
   readonly capabilities: Capabilities
 }
 
@@ -48,6 +51,7 @@ export const draftOf = (agent: AgentSummary): AgentDraft => ({
       : '',
   compaction: agent.compaction,
   subConversationModels: agent.subConversationModels,
+  fallbackModels: agent.fallbackModels,
   capabilities: agent.capabilities,
 })
 
@@ -103,7 +107,8 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
   draft.effort !== base.effort ||
   draft.visionKey !== base.visionKey ||
   JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction) ||
-  !sameSubConversationModels(draft.subConversationModels, base.subConversationModels)
+  !sameSubConversationModels(draft.subConversationModels, base.subConversationModels) ||
+  JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels)
 
 /** Capabilities that differ from the saved ones, as the partial patch the Host expects. */
 export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Capabilities> => {
@@ -141,6 +146,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if (draft.name.trim() !== base.name) changes.push('名称')
   if (draft.modelKey !== base.modelKey) changes.push('主模型')
   if (draft.effort !== base.effort) changes.push('思考强度')
+  if (JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels)) changes.push('备用模型')
   if (draft.visionKey !== base.visionKey) changes.push('视觉模型')
   if (JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction)) changes.push('压缩模型')
   if (!sameSubConversationModels(draft.subConversationModels, base.subConversationModels)) changes.push('子对话模型')

@@ -46,6 +46,7 @@ import {
 import { CompactionModelField } from '../agents/compaction-model.js'
 import type {
   CompactionSettings,
+  ModelFallbackSettings,
   MessagePacing,
   RetrievalStatus,
   SubConversationRetention,
@@ -357,6 +358,7 @@ function ModelsSection({
           智能体需要至少一个可用的模型供应商才能回复。
         </EmptyState>
       )}
+      {ready ? <FallbackCooldowns /> : null}
       <AddProviderDialog open={adding} onOpenChange={setAdding} providers={providers} onPick={onSelect} />
     </>
   )
@@ -570,6 +572,82 @@ const PACING_OPTIONS: readonly { readonly value: MessagePacing; readonly label: 
   { value: 'normal', label: '适中' },
   { value: 'slow', label: '长' },
 ]
+
+const minutesLabel = (minutes: number) => (minutes < 60 ? `${minutes} 分钟` : `${minutes / 60} 小时`)
+const UNAVAILABLE_COOLDOWN_OPTIONS = [5, 10, 30, 60].map((minutes) => ({
+  value: String(minutes),
+  label: minutesLabel(minutes),
+}))
+const QUOTA_COOLDOWN_OPTIONS = [30, 60, 180, 360, 1440].map((minutes) => ({
+  value: String(minutes),
+  label: minutesLabel(minutes),
+}))
+/** The saved value stays selectable when it is not one of the presets. */
+const withCurrent = (options: readonly { value: string; label: string }[], minutes: number) =>
+  options.some((option) => option.value === String(minutes))
+    ? options
+    : [...options, { value: String(minutes), label: minutesLabel(minutes) }]
+
+/**
+ * How long a model that failed is passed over before conversations try it again. Which models an agent falls back to
+ * is chosen on the agent; this only decides when it goes back.
+ */
+function FallbackCooldowns() {
+  const [settings, setSettings] = useState<ModelFallbackSettings>()
+  useEffect(() => {
+    const controller = new AbortController()
+    workspaceApi
+      .getModelFallbackSettings({ signal: controller.signal })
+      .then(setSettings)
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [])
+  const save = (next: ModelFallbackSettings) => {
+    const previous = settings
+    setSettings(next)
+    workspaceApi.updateModelFallbackSettings(next).catch((error: unknown) => {
+      setSettings(previous)
+      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+    })
+  }
+  return (
+    <>
+      <SectionHead title="备用模型" />
+      <PropertyList>
+        <PropertyRow
+          label="限流或出错后"
+          tip="主模型持续限流、服务出错或超时，重试几次仍失败后，智能体改用备用模型；过了这段时间，收到新消息时再试主模型。"
+        >
+          {settings === undefined ? (
+            <Skeleton width={160} height={28} />
+          ) : (
+            <Select
+              aria-label="限流或出错后多久再试主模型"
+              value={String(settings.unavailableCooldownMinutes)}
+              options={withCurrent(UNAVAILABLE_COOLDOWN_OPTIONS, settings.unavailableCooldownMinutes)}
+              onValueChange={(value) => save({ ...settings, unavailableCooldownMinutes: Number(value) })}
+            />
+          )}
+        </PropertyRow>
+        <PropertyRow
+          label="额度用完后"
+          tip="主模型额度或余额用完时，智能体立即改用备用模型；过了这段时间，收到新消息时再试主模型。"
+        >
+          {settings === undefined ? (
+            <Skeleton width={160} height={28} />
+          ) : (
+            <Select
+              aria-label="额度用完后多久再试主模型"
+              value={String(settings.quotaCooldownMinutes)}
+              options={withCurrent(QUOTA_COOLDOWN_OPTIONS, settings.quotaCooldownMinutes)}
+              onValueChange={(value) => save({ ...settings, quotaCooldownMinutes: Number(value) })}
+            />
+          )}
+        </PropertyRow>
+      </PropertyList>
+    </>
+  )
+}
 
 const COMPACTION_WAIT_OPTIONS = [60, 120, 180, 300, 600].map((seconds) => ({
   value: String(seconds),

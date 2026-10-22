@@ -29,7 +29,7 @@ for (const width of [375, 1440]) {
 
     await page.goto(`/agents/${targetAgentId}`)
     await expect(page.getByText('子对话都用主模型')).toBeVisible()
-    await page.getByRole('button', { name: '添加', exact: true }).click()
+    await page.getByRole('button', { name: '添加子对话模型', exact: true }).click()
     const name = page.getByRole('textbox', { name: '模型 1的名称', exact: true })
     await name.fill('快速')
     await page.getByRole('combobox', { name: '快速的模型', exact: true }).click()
@@ -73,5 +73,5 @@ test('sub-conversation models wait until sub-conversations are on', async ({ pag
   await page.route('**/api/snapshot', (route) => route.fulfill({ json: snapshot }))
   await page.goto(`/agents/${targetAgentId}`)
   await expect(page.getByText('先在「能力」中开启子对话')).toBeVisible()
-  await expect(page.getByRole('button', { name: '添加', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: '添加子对话模型', exact: true })).toBeDisabled()
 })

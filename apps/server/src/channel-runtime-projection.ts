@@ -163,6 +163,8 @@ export interface ChannelRuntimeProjectionInput {
   readonly events: readonly RuntimeProjectionEvent[]
   /** Set while the channel waits for a compaction summary before its new session opens. */
   readonly newSessionCompactionStartedAt?: number
+  /** Set while the channel's conversation runs on a fallback model. */
+  readonly modelFallback?: ChannelRuntimeProjection['modelFallback']
 }
 
 type ProjectedTool = {
@@ -791,6 +793,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
     ...(input.episodeId === undefined ? {} : { episodeId: input.episodeId }),
     ...(compaction === undefined ? {} : { compaction }),
+    ...(input.modelFallback === undefined ? {} : { modelFallback: input.modelFallback }),
     phase,
     summary,
     pendingInjectCount: input.pendingInjectCount,

@@ -430,6 +430,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
     compaction: agent.compaction ?? FOLLOW_COMPACTION,
     subConversationModels: agent.subConversationModels ?? NO_SUB_CONVERSATION_MODELS,
+    fallbackModels: agent.fallbackModels ?? [],
     imageDiagnostics: agent.imageDiagnostics,
     appearance: {
       ...(agent.appearance?.hue === undefined ? {} : { hue: agent.appearance.hue }),
@@ -1512,6 +1513,7 @@ export class HttpProductHost implements ProductHostPort {
       | 'phase'
       | 'summary'
       | 'compaction'
+      | 'modelFallback'
       | 'pendingInjectCount'
       | 'occupancy'
       | 'cache'
@@ -1527,6 +1529,7 @@ export class HttpProductHost implements ProductHostPort {
       phase: raw.phase,
       summary: raw.summary,
       ...(raw.compaction === undefined ? {} : { compaction: raw.compaction }),
+      ...(raw.modelFallback === undefined ? {} : { modelFallback: raw.modelFallback }),
       pendingInjectCount: raw.pendingInjectCount,
       ...(raw.occupancy === undefined ? {} : { occupancy: raw.occupancy }),
       ...(raw.memory === undefined ? {} : { memory: raw.memory }),

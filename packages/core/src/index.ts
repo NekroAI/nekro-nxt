@@ -18,6 +18,7 @@ import type {
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
+  AgentFallbackModelsSchema,
   AgentSubConversationModelsSchema,
   ChannelEventIdSchema,
   AdapterActivityKeySchema,
@@ -112,6 +113,8 @@ export interface AgentRevisionContent {
   readonly compaction?: AgentCompactionPolicy
   /** Omitted on revise keeps the current candidates; omitted on create offers none. */
   readonly subConversationModels?: SubConversationModelPolicy
+  /** Models to switch to, in order, when the main model fails; omitted on revise keeps them, on create none. */
+  readonly fallbackModels?: readonly AgentModelSelection[]
 }
 
 /** Non-versioned presentation of an intelligent agent; never part of an AgentRevision. */
@@ -130,7 +133,7 @@ export interface AgentDefinitionRecord {
 
 export interface AgentRevisionRecord extends Omit<
   AgentRevisionContent,
-  'capabilities' | 'imagePolicy' | 'personaDocument' | 'compaction' | 'subConversationModels'
+  'capabilities' | 'imagePolicy' | 'personaDocument' | 'compaction' | 'subConversationModels' | 'fallbackModels'
 > {
   readonly id: AgentRevisionId
   readonly agentId: AgentId
@@ -140,6 +143,7 @@ export interface AgentRevisionRecord extends Omit<
   readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
   readonly compaction: AgentCompactionPolicy
   readonly subConversationModels: SubConversationModelPolicy
+  readonly fallbackModels: readonly AgentModelSelection[]
   readonly personaDocument: PromptDocumentV1
   readonly contentDigest: string
   readonly createdAt: number
@@ -594,6 +598,12 @@ export function parseSubConversationModelPolicy(input: unknown): SubConversation
   return subConversationModelPolicy(SubConversationModelPolicySchema.parse(input))
 }
 
+export const FallbackModelsSchema = AgentFallbackModelsSchema.default(() => [])
+
+export function parseFallbackModels(input: unknown): readonly AgentModelSelection[] {
+  return FallbackModelsSchema.parse(input).map(modelSelection)
+}
+
 export function parseImageUnderstandingPolicy(input: unknown): ImageUnderstandingPolicy {
   return ImageUnderstandingPolicySchema.parse(input)
 }
@@ -619,8 +629,16 @@ const agentRevisionContentSchema = z
     dynamicClientApprovalPolicy: DynamicClientApprovalPolicySchema,
     compaction: AgentCompactionPolicySchema,
     subConversationModels: SubConversationModelPolicySchema,
+    fallbackModels: FallbackModelsSchema,
   })
   .strict()
+  .refine(
+    (content) =>
+      !content.fallbackModels.some(
+        (model) => model.provider === content.model.provider && model.model === content.model.model,
+      ),
+    { message: '备用模型不能和主模型相同。', path: ['fallbackModels'] },
+  )
 
 export function parseAgentCapabilityGrants(input: unknown): AgentCapabilityGrants {
   return AgentCapabilityGrantsSchema.parse(input)
@@ -727,6 +745,7 @@ type NormalizedAgentRevisionContent = Omit<
   | 'dynamicClientApprovalPolicy'
   | 'compaction'
   | 'subConversationModels'
+  | 'fallbackModels'
 > & {
   readonly capabilities: AgentCapabilityGrants
   readonly imagePolicy: ImageUnderstandingPolicy
@@ -734,6 +753,7 @@ type NormalizedAgentRevisionContent = Omit<
   readonly dynamicClientApprovalPolicy: DynamicClientApprovalPolicy
   readonly compaction: AgentCompactionPolicy
   readonly subConversationModels: SubConversationModelPolicy
+  readonly fallbackModels: readonly AgentModelSelection[]
 }
 
 const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgentRevisionContent => {
@@ -760,6 +780,7 @@ const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgent
       newSession: compactionChoice(parsed.compaction.newSession),
     },
     subConversationModels: subConversationModelPolicy(parsed.subConversationModels),
+    fallbackModels: parsed.fallbackModels.map(modelSelection),
   }
 }
 
@@ -885,6 +906,16 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
           default: content.subConversationModels.default ?? null,
         },
       }),
+  // No fallback models leaves the digest of every earlier Revision unchanged.
+  ...(content.fallbackModels.length === 0
+    ? {}
+    : {
+        fallbackModels: content.fallbackModels.map((model) => ({
+          provider: model.provider,
+          model: model.model,
+          reasoningEffort: model.reasoningEffort ?? null,
+        })),
+      }),
 })
 
 const digestRevision = (input: AgentRevisionContent): string => {
@@ -905,6 +936,7 @@ const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevision
   dynamicClientApprovalPolicy: revision.dynamicClientApprovalPolicy,
   compaction: revision.compaction,
   subConversationModels: revision.subConversationModels,
+  fallbackModels: revision.fallbackModels,
 })
 
 /** Revision fields an administrator can tell apart in history; `approvalPolicy` is the dynamic client approval policy. */
@@ -917,6 +949,7 @@ export type AgentRevisionChangedField =
   | 'approvalPolicy'
   | 'compaction'
   | 'subConversationModels'
+  | 'fallbackModels'
 
 const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, string])[] = [
   ['name', 'displayName'],
@@ -927,6 +960,7 @@ const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, stri
   ['approvalPolicy', 'dynamicClientApprovalPolicy'],
   ['compaction', 'compaction'],
   ['subConversationModels', 'subConversationModels'],
+  ['fallbackModels', 'fallbackModels'],
 ]
 
 const payloadField = (payload: JsonValue, key: string): JsonValue =>
@@ -1046,6 +1080,7 @@ export class CoreService {
       ...input,
       compaction: input.compaction ?? current.revision.compaction,
       subConversationModels: input.subConversationModels ?? current.revision.subConversationModels,
+      fallbackModels: input.fallbackModels ?? current.revision.fallbackModels,
     })
     if (equivalentRevisionContent(content, revisionContent(current.revision))) return current
     const digest = digestRevision(content)
