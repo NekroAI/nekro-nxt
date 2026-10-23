@@ -44,6 +44,19 @@ export default tseslint.config(
     },
   },
   {
+    // Plain-HTTP LAN access is not a secure context, so `crypto.randomUUID` is missing there; use `randomId()`.
+    files: ['apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "MemberExpression[property.name='randomUUID']",
+          message: 'crypto.randomUUID 只在 HTTPS 或 localhost 下存在，请改用 apps/web/src/random-id.ts 的 randomId()。',
+        },
+      ],
+    },
+  },
+  {
     files: ['**/*.mjs', '**/*.js'],
     languageOptions: {
       globals: {

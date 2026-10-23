@@ -1,4 +1,5 @@
 import { AssetIdSchema } from '@nekro-nxt/contracts'
+import { randomId } from './random-id.js'
 import type { ChannelDraft, ChannelAttachment } from './channel-drafts.js'
 
 const key = 'nekro-nxt.channel-drafts.v1'
@@ -29,7 +30,7 @@ const parseAttachments = (value: unknown): readonly ChannelAttachment[] =>
         return [
           {
             // Regenerate per occurrence: stale or duplicated ids in storage cannot collide.
-            id: crypto.randomUUID(),
+            id: randomId(),
             name: record['name'],
             mediaType: record['mediaType'],
             partType: record['partType'],

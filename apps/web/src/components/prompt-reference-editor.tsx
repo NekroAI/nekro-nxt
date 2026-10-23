@@ -36,6 +36,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -575,7 +576,7 @@ export function PromptReferenceEditor({
   const [userCandidates, setUserCandidates] = useState<readonly PlatformUser[]>([])
   const [category, setCategory] = useState<'all' | ReferenceKind>('all')
   const [query, setQuery] = useState('')
-  const fieldId = useMemo(() => `prompt-reference-${crypto.randomUUID()}`, [])
+  const fieldId = `prompt-reference-${useId()}`
   const descriptionId = `${fieldId}-description`
 
   const userReferences = useMemo(

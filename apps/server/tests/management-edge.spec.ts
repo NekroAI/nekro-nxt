@@ -105,6 +105,8 @@ describe('automatic TLS management edge', () => {
         transport: 'auto-tls-pinned-v1',
       })
       expect((await request(edge.port, '/api/private')).status).toBe(401)
+      for (const pathname of ['/site.webmanifest', '/pwa-192.png', '/pwa-maskable-512.png'])
+        expect((await request(edge.port, pathname)).status, pathname).toBe(200)
       for (const [pathname, method] of [
         ['/api/commands', 'GET'],
         ['/api/commands/execute', 'POST'],

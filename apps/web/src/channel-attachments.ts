@@ -1,5 +1,6 @@
 import { CHANNEL_COMPOSER_MAX_ATTACHMENTS, CHANNEL_COMPOSER_MAX_BYTES } from '@nekro-nxt/contracts'
 import { workspaceApi } from './host-api-client.js'
+import { randomId } from './random-id.js'
 import type { ChannelAttachment, ChannelDraftState } from './channel-drafts.js'
 
 export interface ChannelAttachmentActions {
@@ -61,7 +62,7 @@ export function createChannelAttachmentActions(get: () => ChannelDraftState): Ch
       )
         throw new Error('附件总大小不能超过 64 MiB。')
       const added: ChannelAttachment[] = files.map((file) => ({
-        id: crypto.randomUUID(),
+        id: randomId(),
         name: file.name,
         file,
         byteSize: file.size,

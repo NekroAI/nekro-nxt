@@ -13,6 +13,7 @@ import {
 import { FileChooser, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { useProductApi } from '../model/store.js'
+import { randomId } from '../../random-id.js'
 import { ResourcePreviewDialog } from './resource-preview.js'
 import styles from './channels.module.css'
 
@@ -212,7 +213,7 @@ export function Composer({
     try {
       if (commandMode) {
         if (commandRequest.current?.channelId !== channel.id || commandRequest.current.revision !== token.revision)
-          commandRequest.current = { channelId: channel.id, revision: token.revision, id: crypto.randomUUID() }
+          commandRequest.current = { channelId: channel.id, revision: token.revision, id: randomId() }
         await commandApi.execute(channel.id, token.text, commandRequest.current.id)
         commandRequest.current = undefined
       } else await api.getState().sendMessage(channel.id, token.text, token.attachments)

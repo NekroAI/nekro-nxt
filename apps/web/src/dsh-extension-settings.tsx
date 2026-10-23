@@ -13,6 +13,7 @@ import { ChevronDown, ChevronUp, Download, KeyRound, Plus, RotateCcw, Trash2, Up
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useProductRuntime, useProductStore } from './product-runtime.js'
 import { useUnsavedDraft } from './unsaved-drafts.js'
+import { randomId } from './random-id.js'
 import {
   Banner,
   Button,
@@ -1155,7 +1156,7 @@ export function InstallDshPluginDialog({
     setError('')
   }, [open])
   const begin = (message: string): string => {
-    const id = crypto.randomUUID()
+    const id = randomId()
     setOperationId(id)
     setProgress(message)
     setError('')
