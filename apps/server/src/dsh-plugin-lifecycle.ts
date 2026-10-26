@@ -401,11 +401,6 @@ export class DshPluginLifecycleCoordinator {
           activation,
           ...(input.hostUi === undefined ? {} : { hostUi: input.hostUi }),
         })
-        const phase =
-          probePhase ??
-          ([...mountedPhases.values()].every((candidatePhase) => candidatePhase === 'active') ? 'active' : 'pending')
-        this.#diagnoseMounted(entry.id, targetKey, phase, 'apply')
-        await Promise.all([...changed.keys()].map((loader) => this.#refreshLoaderDiagnostics(loader)))
       } catch (error) {
         const rollback = await Promise.allSettled(
           [...changed].map(([loader, existed]) =>
@@ -419,6 +414,11 @@ export class DshPluginLifecycleCoordinator {
           throw new AggregateError([error, ...failures], '修改失败，部分功能可能没有恢复，请重启后检查。')
         throw error
       }
+      const phase =
+        probePhase ??
+        ([...mountedPhases.values()].every((candidatePhase) => candidatePhase === 'active') ? 'active' : 'pending')
+      this.#diagnoseMounted(entry.id, targetKey, phase, 'apply')
+      await Promise.all([...changed.keys()].map((loader) => this.#refreshLoaderDiagnostics(loader)))
       return activation
     })
   }
@@ -462,7 +462,6 @@ export class DshPluginLifecycleCoordinator {
       }
       try {
         this.#repository.deleteDshPluginActivationState({ entryId, targetKey, now: this.#timestamp() })
-        await Promise.all(loaders.map((loader) => this.#refreshLoaderDiagnostics(loader)))
       } catch (error) {
         const rollback = await Promise.allSettled(unmounted.map((loader) => this.#mount(loader, entry)))
         const failures = rollback
@@ -473,6 +472,7 @@ export class DshPluginLifecycleCoordinator {
         }
         throw error
       }
+      await Promise.all(loaders.map((loader) => this.#refreshLoaderDiagnostics(loader)))
     })
   }
 
