@@ -65,6 +65,7 @@
     "@deepseek-ai/dsh-settings": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-shell-env": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-skill": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-skill-filesystem": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-spill": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-spill-local": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-spill-policy": "0.2.1-alpha.2",

@@ -246,7 +246,7 @@ import {
   type DynamicPackageDefinitionInput,
   type RunScriptedConversation,
 } from './dynamic-authoring-runtime.js'
-import { isolatePrivateExtensionServices } from './extension-context.js'
+import { isolateManagedDshPluginServices, isolatePrivateExtensionServices } from './extension-context.js'
 import {
   HostModelSettings,
   type AvailableLlmModel,
@@ -3360,7 +3360,7 @@ export class DshHostRuntime implements AgentSessionDriver {
             ...(options.logs === undefined ? {} : { logs: options.logs }),
             repository: options.dshPlugins.repository,
             rootContext: context,
-            isolateContext: isolatePrivateExtensionServices,
+            isolateContext: isolateManagedDshPluginServices,
             resolveModule: options.dshPlugins.resolveModule,
             listAgentSessions: (agentId) =>
               [...this.#sessions.handles()]
@@ -4174,6 +4174,9 @@ export class DshHostRuntime implements AgentSessionDriver {
           }),
         )
       }
+      // The registry is always present and installed DSH providers can join it later in this setup.
+      // The official tool resolves the live catalog per request, so it is safe to mount before providers.
+      await agentContext.plugin(SkillTool)
       if (revision.capabilities.dynamicCreation) {
         const skills = agentContext.get('skills')
         if (!(skills instanceof SkillRegistry)) throw new Error('DSH Skill registry is unavailable.')
@@ -4186,7 +4189,6 @@ export class DshHostRuntime implements AgentSessionDriver {
           invocation: { modelInvocable: true, userInvocable: true },
           content: renderNekroNxtExtensionDevelopmentSkill(),
         })
-        await agentContext.plugin(SkillTool)
         const dynamicContext = isolatePrivateExtensionServices(agentContext)
           .isolate('dynamicCordisRunner')
           .isolate('cordisInspect')
