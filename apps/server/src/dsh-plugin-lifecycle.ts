@@ -28,7 +28,7 @@ interface OwnedLoader {
 }
 
 type MountedPluginPhase = 'active' | 'pending'
-const DSH_PLUGIN_LOAD_POLICY_REVISION = 2
+const DSH_PLUGIN_LOAD_POLICY_REVISION = 3
 
 export type DshPluginConfigInspection =
   | { readonly mode: 'schema'; readonly schema: JsonValue }

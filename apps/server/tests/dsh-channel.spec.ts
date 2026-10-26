@@ -2326,6 +2326,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         'nekro_nxt_channel_context',
         'notes_update',
         'send_channel_message',
+        'skill',
       ])
       expect(systemText(model.calls[0])).toContain(channel.id)
       expect(systemText(model.calls[0])).toContain('主测试频道')
@@ -2355,7 +2356,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
         required: ['outcome', 'reason'],
       })
       expect(context.instructions).toEqual([{ role: 'system', text: systemText(model.calls[0]), truncated: false }])
-      expect(context.changes).toEqual([expect.objectContaining({ reason: 'initial', toolCount: 10 })])
+      expect(context.changes).toEqual([expect.objectContaining({ reason: 'initial', toolCount: 11 })])
       const eventText = JSON.stringify(host.sessionEvents(episode.dshSessionId!))
       expect(eventText).toContain('这段模型原始文字只能留在运行轨迹。')
       expect(eventText).toContain('工具完成后的原始结束文字也不会发送。')
