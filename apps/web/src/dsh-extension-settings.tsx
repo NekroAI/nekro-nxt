@@ -93,9 +93,9 @@ export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label
           item.activations.some((activation) => activation.diagnostic?.status === 'pending'),
         )
       ? { label: '等待依赖', tone: 'warn' }
-    : entry.plugin?.entries?.some((item) => item.activations.length > 0)
-      ? { label: '已启用', tone: 'ok' }
-      : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
+      : entry.plugin?.entries?.some((item) => item.activations.length > 0)
+        ? { label: '已启用', tone: 'ok' }
+        : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
 
 export const dshPackageLabel = (name: string): string => {
   if (name === '@deepseek-ai/dsh-web-search-deepseek') return 'DeepSeek 网页搜索'
