@@ -13,6 +13,7 @@ const packageRoot = path.join(root, 'packages/storage-sqlite')
 const migrationsRoot = path.join(packageRoot, 'migrations')
 const schemaPath = path.join(packageRoot, 'src/schema.ts')
 const baselinePath = 'scripts/baselines/drizzle-migrations.json'
+const cliPath = (value) => (process.platform === 'win32' ? value.replaceAll(path.sep, path.posix.sep) : value)
 
 async function filesBelow(directory, prefix = '') {
   const result = []
@@ -27,7 +28,7 @@ async function filesBelow(directory, prefix = '') {
 async function hashes(directory) {
   const result = {}
   for (const file of await filesBelow(directory)) {
-    const content = await readFile(path.join(directory, file))
+    const content = (await readFile(path.join(directory, file), 'utf8')).replaceAll('\r\n', '\n')
     result[file] = createHash('sha256').update(content).digest('hex')
   }
   return result
@@ -43,9 +44,9 @@ async function generate(out, name) {
     '--dialect',
     'sqlite',
     '--schema',
-    schemaPath,
+    cliPath(schemaPath),
     '--out',
-    out,
+    cliPath(out),
     '--name',
     name,
   ]

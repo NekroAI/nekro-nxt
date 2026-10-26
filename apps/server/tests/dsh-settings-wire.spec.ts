@@ -379,11 +379,11 @@ describe('DSH plugin compatibility lifecycle', () => {
   it('restores a service consumer before its provider and follows provider disable and re-enable', async () => {
     const f = await fixture()
     try {
-      const consumer = f.seed('A_CONSUMER')
-      const provider = f.seed('B_PROVIDER')
+      const consumer = f.seed('ACONSUMER')
+      const provider = f.seed('BPROVIDER')
       const coordinator = f.create((_packageId, name) => {
         const source =
-          name === 'A_CONSUMER'
+          name === 'ACONSUMER'
             ? `
               export default {
                 inject: ['fixtureDependency'],

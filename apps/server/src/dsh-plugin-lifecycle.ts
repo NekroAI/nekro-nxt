@@ -646,14 +646,7 @@ export class DshPluginLifecycleCoordinator {
     activePhase: DshPluginDiagnosticRecord['phase'],
   ): void {
     if (mountedPhase === 'pending') {
-      this.#diagnose(
-        entryId,
-        targetKey,
-        'pending',
-        'dependency',
-        undefined,
-        '正在等待其他 DSH 插件提供所需服务。',
-      )
+      this.#diagnose(entryId, targetKey, 'pending', 'dependency', undefined, '正在等待其他 DSH 插件提供所需服务。')
       return
     }
     this.#diagnose(entryId, targetKey, 'active', activePhase)
