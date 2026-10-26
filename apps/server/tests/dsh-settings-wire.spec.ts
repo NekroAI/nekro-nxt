@@ -376,6 +376,44 @@ describe('DSH plugin compatibility lifecycle', () => {
     }
   })
 
+  it('restores a service consumer before its provider and follows provider disable and re-enable', async () => {
+    const f = await fixture()
+    try {
+      const consumer = f.seed('A_CONSUMER')
+      const provider = f.seed('B_PROVIDER')
+      const coordinator = f.create((_packageId, name) => {
+        const source =
+          name === 'A_CONSUMER'
+            ? `
+              export default {
+                inject: ['fixtureDependency'],
+                apply(ctx) { ctx.provide('fixtureConsumer', true) }
+              }
+            `
+            : `export default function(ctx) { ctx.provide('fixtureDependency', true) }`
+        return `data:text/javascript,${encodeURIComponent(source)}`
+      })
+
+      expect(await coordinator.initialize()).toEqual({ restored: 2, failed: 0 })
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({ status: 'active' }),
+      )
+
+      await coordinator.disable(provider, 'host')
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({ status: 'pending', phase: 'dependency' }),
+      )
+
+      await coordinator.activate({ entryId: provider, target: 'host', config: {} })
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({ status: 'active', phase: 'dependency' }),
+      )
+      await coordinator.dispose()
+    } finally {
+      f.database.close()
+    }
+  })
+
   it('retains enablement and propagates disposer errors when disabling an active plugin', async () => {
     const f = await fixture()
     try {

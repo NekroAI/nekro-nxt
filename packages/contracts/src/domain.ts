@@ -232,8 +232,8 @@ export interface DshPluginActivationRecord {
 export interface DshPluginDiagnosticRecord {
   readonly entryId: DshPluginEntryId
   readonly targetKey: string
-  readonly status: 'active' | 'load-failed' | 'restore-failed' | 'dispose-failed'
-  readonly phase: 'import' | 'apply' | 'update' | 'dispose' | 'restore'
+  readonly status: 'active' | 'pending' | 'load-failed' | 'restore-failed' | 'dispose-failed'
+  readonly phase: 'import' | 'dependency' | 'apply' | 'update' | 'dispose' | 'restore'
   readonly message?: string
   readonly observedAt: number
 }

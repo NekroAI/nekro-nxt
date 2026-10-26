@@ -2308,8 +2308,8 @@ export const DshPluginCatalogEntrySchema = z
                   activatedAt: z.number().int().safe().nonnegative(),
                   diagnostic: z
                     .object({
-                      status: z.enum(['active', 'load-failed', 'restore-failed', 'dispose-failed']),
-                      phase: z.enum(['import', 'apply', 'update', 'dispose', 'restore']),
+                      status: z.enum(['active', 'pending', 'load-failed', 'restore-failed', 'dispose-failed']),
+                      phase: z.enum(['import', 'dependency', 'apply', 'update', 'dispose', 'restore']),
                       message: z.string().optional(),
                       observedAt: z.number().int().safe().nonnegative(),
                     })

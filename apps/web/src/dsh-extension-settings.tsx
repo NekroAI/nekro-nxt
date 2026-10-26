@@ -89,6 +89,10 @@ const pluginGroup = (origin: DshPluginCatalogEntry['origin']): DshSettingsCatalo
 export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label: string; readonly tone: Tone } =>
   entry.plugin?.loadError
     ? { label: '加载失败', tone: 'bad' }
+    : entry.plugin?.entries?.some((item) =>
+          item.activations.some((activation) => activation.diagnostic?.status === 'pending'),
+        )
+      ? { label: '等待依赖', tone: 'warn' }
     : entry.plugin?.entries?.some((item) => item.activations.length > 0)
       ? { label: '已启用', tone: 'ok' }
       : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
@@ -1484,17 +1488,23 @@ export function DshPluginDetail({
               <div className={styles.entry} key={item.id}>
                 <div className={styles.entryHead}>
                   <b title={item.moduleName}>{item.entryKey}</b>
-                  {item.activations.map((activation) => (
-                    <Chip
-                      key={activation.targetKey}
-                      tone={activation.diagnostic?.status === 'active' ? 'ok' : 'warn'}
-                      dot
-                    >
-                      {activation.target === 'host'
-                        ? '本机已启用'
-                        : `${agents.find((agent) => agent.id === activation.agentId)?.name ?? '智能体'}已启用`}
-                    </Chip>
-                  ))}
+                  {item.activations.map((activation) => {
+                    const suffix = activation.diagnostic?.status === 'pending' ? '等待依赖' : '已启用'
+                    const owner =
+                      activation.target === 'host'
+                        ? '本机'
+                        : (agents.find((agent) => agent.id === activation.agentId)?.name ?? '智能体')
+                    return (
+                      <Chip
+                        key={activation.targetKey}
+                        tone={activation.diagnostic?.status === 'active' ? 'ok' : 'warn'}
+                        dot
+                      >
+                        {owner}
+                        {suffix}
+                      </Chip>
+                    )
+                  })}
                 </div>
                 <div className={styles.entryFields}>
                   <Field label="启用范围">
