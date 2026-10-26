@@ -676,7 +676,10 @@ export const projectDshPlugins = (runtime: NekroRuntime) => [
     const failure = entries
       .flatMap((entry) => entry.activations)
       .map((activation) => activation.diagnostic)
-      .find((diagnostic) => diagnostic !== undefined && diagnostic.status !== 'active')
+      .find(
+        (diagnostic) =>
+          diagnostic !== undefined && diagnostic.status !== 'active' && diagnostic.status !== 'pending',
+      )
     const hostUi = DshNxtHostUiSchema.safeParse(
       'nekroNxt' in manifest && typeof manifest['nekroNxt'] === 'object' && manifest['nekroNxt'] !== null
         ? Reflect.get(manifest['nekroNxt'], 'hostUi')
