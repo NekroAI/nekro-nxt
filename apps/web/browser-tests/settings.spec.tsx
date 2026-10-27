@@ -1031,6 +1031,65 @@ test.describe('settings space', () => {
     }
   })
 
+  test('shows the services a pending DSH plugin is waiting for', async () => {
+    const packageId = 'dsp_fixturewait'
+    const { page, errors } = await open(`/settings/dsh?entry=${encodeURIComponent(`plugin:${packageId}`)}`, {
+      before: async (target) => {
+        await target.route('**/api/dsh/plugins', (request) =>
+          request.fulfill({
+            json: {
+              plugins: [
+                {
+                  packageName: '@example/dsh-waiting-plugin',
+                  packageVersion: '1.0.0',
+                  origin: 'installed',
+                  settingsNamespaces: [],
+                  packageId,
+                  installSource: 'registry',
+                  installedAt: 1,
+                  clientUiDetected: false,
+                  approvedBuilds: [],
+                  entries: [
+                    {
+                      id: 'dse_fixturewait',
+                      entryKey: 'main',
+                      moduleName: '@example/dsh-waiting-plugin',
+                      suggestedScope: 'host',
+                      selectedScope: 'host',
+                      config: {},
+                      activations: [
+                        {
+                          targetKey: 'host',
+                          target: 'host',
+                          activatedAt: 1,
+                          diagnostic: {
+                            status: 'pending',
+                            phase: 'dependency',
+                            message: '等待依赖服务：skills、tools',
+                            observedAt: 1,
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        )
+      },
+    })
+    try {
+      await expect(page.getByRole('heading', { name: '@example/dsh-waiting-plugin' })).toBeVisible()
+      await expect(page.getByText('本机等待依赖', { exact: true })).toBeVisible()
+      await expect(page.getByText('等待依赖服务：skills、tools', { exact: true })).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/settings-dsh-pending-services.png' })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('clears sent feedback on account changes and discards a late response from the previous account', async () => {
     let account = 'alpha'
     let hold = false

@@ -28,6 +28,10 @@ interface OwnedLoader {
 }
 
 type MountedPluginPhase = 'active' | 'pending'
+interface MountedPluginState {
+  readonly phase: MountedPluginPhase
+  readonly waitingFor: readonly string[]
+}
 const DSH_PLUGIN_LOAD_POLICY_REVISION = 3
 
 export type DshPluginConfigInspection =
@@ -256,8 +260,8 @@ export class DshPluginLifecycleCoordinator {
           failed += 1
           continue
         }
-        const phase = await this.#mount(this.#hostLoader, entry)
-        this.#diagnoseMounted(entry.id, activation.targetKey, phase, 'restore')
+        const state = await this.#mount(this.#hostLoader, entry)
+        this.#diagnoseMounted(entry.id, activation.targetKey, state, 'restore')
         await this.#refreshLoaderDiagnostics(this.#hostLoader)
         restored += 1
       } catch (error) {
@@ -293,8 +297,8 @@ export class DshPluginLifecycleCoordinator {
         if (!entry) continue
         try {
           if (this.#previousIsolation(entry, activation.targetKey)) continue
-          const phase = await this.#mount(owned, entry)
-          this.#diagnoseMounted(entry.id, activation.targetKey, phase, 'restore')
+          const state = await this.#mount(owned, entry)
+          this.#diagnoseMounted(entry.id, activation.targetKey, state, 'restore')
           await this.#refreshLoaderDiagnostics(owned)
         } catch (error) {
           if (error instanceof DshPluginQuiescenceError) throw error
@@ -342,13 +346,13 @@ export class DshPluginLifecycleCoordinator {
       }
       const candidate = { ...entry, selectedScope: input.target, config: input.config }
       const changed = new Map<OwnedLoader, boolean>()
-      const mountedPhases = new Map<OwnedLoader, MountedPluginPhase>()
-      let probePhase: MountedPluginPhase | undefined
+      const mountedStates = new Map<OwnedLoader, MountedPluginState>()
+      let probeState: MountedPluginState | undefined
       try {
         if (input.target === 'host') {
           if (!this.#hostLoader) throw new Error('DSH host loader is not initialized.')
           changed.set(this.#hostLoader, this.#hostLoader.loaderIds.has(entry.id))
-          mountedPhases.set(this.#hostLoader, await this.#mountOrUpdate(this.#hostLoader, candidate))
+          mountedStates.set(this.#hostLoader, await this.#mountOrUpdate(this.#hostLoader, candidate))
         } else {
           const agentIds = new Set(
             existingActivations
@@ -361,7 +365,7 @@ export class DshPluginLifecycleCoordinator {
           if (sessions.length === 0) {
             if (!this.#agentProbeLoader) throw new Error('DSH agent probe loader is not initialized.')
             changed.set(this.#agentProbeLoader, false)
-            probePhase = await this.#mount(this.#agentProbeLoader, candidate)
+            probeState = await this.#mount(this.#agentProbeLoader, candidate)
             await this.#unmount(this.#agentProbeLoader, candidate.id)
             changed.delete(this.#agentProbeLoader)
           } else {
@@ -370,7 +374,7 @@ export class DshPluginLifecycleCoordinator {
               if (!loader) throw new Error(`智能体 Session 缺少 DSH 插件 Loader：${session.sessionId}`)
               if (changed.has(loader)) continue
               changed.set(loader, loader.loaderIds.has(entry.id))
-              mountedPhases.set(loader, await this.#mountOrUpdate(loader, candidate))
+              mountedStates.set(loader, await this.#mountOrUpdate(loader, candidate))
             }
           }
         }
@@ -414,10 +418,15 @@ export class DshPluginLifecycleCoordinator {
           throw new AggregateError([error, ...failures], '修改失败，部分功能可能没有恢复，请重启后检查。')
         throw error
       }
-      const phase =
-        probePhase ??
-        ([...mountedPhases.values()].every((candidatePhase) => candidatePhase === 'active') ? 'active' : 'pending')
-      this.#diagnoseMounted(entry.id, targetKey, phase, 'apply')
+      const state =
+        probeState ??
+        ([...mountedStates.values()].every((candidate) => candidate.phase === 'active')
+          ? { phase: 'active' as const, waitingFor: [] }
+          : {
+              phase: 'pending' as const,
+              waitingFor: [...new Set([...mountedStates.values()].flatMap((candidate) => candidate.waitingFor))].sort(),
+            })
+      this.#diagnoseMounted(entry.id, targetKey, state, 'apply')
       await Promise.all([...changed.keys()].map((loader) => this.#refreshLoaderDiagnostics(loader)))
       return activation
     })
@@ -520,9 +529,9 @@ export class DshPluginLifecycleCoordinator {
     if (failures.length) throw new AggregateError(failures, 'DSH plugin Loader disposal failed.')
   }
 
-  async #mount(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginPhase> {
+  async #mount(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
     const existingLoaderId = loader.loaderIds.get(entry.id)
-    if (existingLoaderId) return this.#settledPhase(loader, existingLoaderId, entry.entryKey)
+    if (existingLoaderId) return this.#settledState(loader, existingLoaderId, entry.entryKey)
     this.#preflight(entry)
     const packageRecord = this.#repository.getDshPluginPackage(entry.packageId)
     if (!packageRecord) throw new Error(`DSH 插件包不存在：${entry.packageId}`)
@@ -539,34 +548,45 @@ export class DshPluginLifecycleCoordinator {
         version: packageRecord.packageVersion,
       })
     try {
-      const phase = await this.#settledPhase(loader, loaderId, entry.entryKey)
+      const state = await this.#settledState(loader, loaderId, entry.entryKey)
       const configInspection = serializedConfigSchema(loader.services.loader.resolve(loaderId).fiber?.runtime?.Config)
       if (configInspection.mode === 'incompatible') throw new Error(configInspection.reason)
-      return phase
+      return state
     } catch (error) {
       await this.#unmount(loader, entry.id)
       throw error
     }
   }
 
-  async #mountOrUpdate(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginPhase> {
+  async #mountOrUpdate(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
     const loaderId = loader.loaderIds.get(entry.id)
     if (!loaderId) return this.#mount(loader, entry)
     await loader.services.loader.update(loaderId, { config: entry.config })
     await loader.services.loader.await()
-    return this.#settledPhase(loader, loaderId, entry.entryKey)
+    return this.#settledState(loader, loaderId, entry.entryKey)
   }
 
-  async #settledPhase(loader: OwnedLoader, loaderId: string, entryKey: string): Promise<MountedPluginPhase> {
+  async #settledState(loader: OwnedLoader, loaderId: string, entryKey: string): Promise<MountedPluginState> {
     const observed = await inventoryEntry(loader, loaderId)
     // Cordis keeps an entry pending while declared inject services are absent.
     // It activates the same mounted entry when providers appear.
     if (observed?.enabled && (observed.fiberPhase === 'active' || observed.fiberPhase === 'pending')) {
-      return observed.fiberPhase
+      return this.#mountedState(loader, loaderId, observed.fiberPhase)
     }
     // Fiber.await is public and retains the actual plugin error for the existing diagnostic UI.
     await loader.services.loader.resolve(loaderId).fiber?.await()
     throw new Error(`DSH Loader Inventory 未确认入口进入 active 或 pending：${entryKey}`)
+  }
+
+  #mountedState(loader: OwnedLoader, loaderId: string, phase: MountedPluginPhase): MountedPluginState {
+    if (phase === 'active') return { phase, waitingFor: [] }
+    const fiber = loader.services.loader.resolve(loaderId).fiber
+    const waitingFor = fiber
+      ? Object.keys(fiber.inject)
+          .filter((service) => fiber.ctx.get(service) === undefined)
+          .sort()
+      : []
+    return { phase, waitingFor }
   }
 
   async #unmount(loader: OwnedLoader, entryId: DshPluginEntryId): Promise<void> {
@@ -623,8 +643,10 @@ export class DshPluginLifecycleCoordinator {
       if (!observed?.enabled) continue
       const previous = this.#repository.getDshPluginDiagnostic(entryId, targetKey)
       if (observed.fiberPhase === 'active' || observed.fiberPhase === 'pending') {
-        if (previous?.status !== observed.fiberPhase) {
-          this.#diagnoseMounted(entryId, targetKey, observed.fiberPhase, 'dependency')
+        const state = this.#mountedState(loader, loaderId, observed.fiberPhase)
+        const message = this.#mountedMessage(state)
+        if (previous?.status !== state.phase || previous.message !== message) {
+          this.#diagnoseMounted(entryId, targetKey, state, 'dependency')
         }
         continue
       }
@@ -642,14 +664,19 @@ export class DshPluginLifecycleCoordinator {
   #diagnoseMounted(
     entryId: DshPluginEntryId,
     targetKey: string,
-    mountedPhase: MountedPluginPhase,
+    state: MountedPluginState,
     activePhase: DshPluginDiagnosticRecord['phase'],
   ): void {
-    if (mountedPhase === 'pending') {
-      this.#diagnose(entryId, targetKey, 'pending', 'dependency', undefined, '正在等待其他 DSH 插件提供所需服务。')
+    if (state.phase === 'pending') {
+      this.#diagnose(entryId, targetKey, 'pending', 'dependency', undefined, this.#mountedMessage(state))
       return
     }
     this.#diagnose(entryId, targetKey, 'active', activePhase)
+  }
+
+  #mountedMessage(state: MountedPluginState): string | undefined {
+    if (state.phase !== 'pending') return undefined
+    return state.waitingFor.length > 0 ? `等待依赖服务：${state.waitingFor.join('、')}` : '等待依赖服务'
   }
 
   #preflight(entry: DshPluginEntryRecord): void {
