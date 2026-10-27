@@ -380,34 +380,60 @@ describe('DSH plugin compatibility lifecycle', () => {
     const f = await fixture()
     try {
       const consumer = f.seed('ACONSUMER')
-      const provider = f.seed('BPROVIDER')
+      const alphaProvider = f.seed('BPROVIDER')
+      const betaProvider = f.seed('CPROVIDER')
       const coordinator = f.create((_packageId, name) => {
         const source =
           name === 'ACONSUMER'
             ? `
               export default {
-                inject: ['fixtureDependency'],
+                inject: ['fixtureAlpha', 'fixtureBeta'],
                 apply(ctx) { ctx.provide('fixtureConsumer', true) }
               }
             `
-            : `export default function(ctx) { ctx.provide('fixtureDependency', true) }`
+            : name === 'BPROVIDER'
+              ? `export default function(ctx) { ctx.provide('fixtureAlpha', true) }`
+              : `export default function(ctx) { ctx.provide('fixtureBeta', true) }`
         return `data:text/javascript,${encodeURIComponent(source)}`
       })
 
-      expect(await coordinator.initialize()).toEqual({ restored: 2, failed: 0 })
+      expect(await coordinator.initialize()).toEqual({ restored: 3, failed: 0 })
       expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
         expect.objectContaining({ status: 'active' }),
       )
 
-      await coordinator.disable(provider, 'host')
+      await coordinator.disable(betaProvider, 'host')
       expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
-        expect.objectContaining({ status: 'pending', phase: 'dependency' }),
+        expect.objectContaining({
+          status: 'pending',
+          phase: 'dependency',
+          message: '等待依赖服务：fixtureBeta',
+        }),
       )
 
-      await coordinator.activate({ entryId: provider, target: 'host', config: {} })
+      await coordinator.disable(alphaProvider, 'host')
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          phase: 'dependency',
+          message: '等待依赖服务：fixtureAlpha、fixtureBeta',
+        }),
+      )
+
+      await coordinator.activate({ entryId: alphaProvider, target: 'host', config: {} })
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          phase: 'dependency',
+          message: '等待依赖服务：fixtureBeta',
+        }),
+      )
+
+      await coordinator.activate({ entryId: betaProvider, target: 'host', config: {} })
       expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
         expect.objectContaining({ status: 'active', phase: 'dependency' }),
       )
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).not.toHaveProperty('message')
       await coordinator.dispose()
     } finally {
       f.database.close()
