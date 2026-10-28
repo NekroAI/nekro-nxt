@@ -12,6 +12,7 @@ import {
   DshPluginPackageIdSchema,
   RuntimeCompatibilityDiagnosticSchema,
   type DshPluginEntryId,
+  type DshPluginPackageId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
@@ -376,13 +377,13 @@ describe('DSH plugin compatibility lifecycle', () => {
     }
   })
 
-  it('restores a service consumer before its provider and follows provider disable and re-enable', async () => {
+  it('keeps a pending consumer mounted while providers disable and re-enable', async () => {
     const f = await fixture()
     try {
       const consumer = f.seed('ACONSUMER')
       const alphaProvider = f.seed('BPROVIDER')
       const betaProvider = f.seed('CPROVIDER')
-      const coordinator = f.create((_packageId, name) => {
+      const resolve = vi.fn((_packageId: DshPluginPackageId, name: string) => {
         const source =
           name === 'ACONSUMER'
             ? `
@@ -396,6 +397,7 @@ describe('DSH plugin compatibility lifecycle', () => {
               : `export default function(ctx) { ctx.provide('fixtureBeta', true) }`
         return `data:text/javascript,${encodeURIComponent(source)}`
       })
+      const coordinator = f.create(resolve)
 
       expect(await coordinator.initialize()).toEqual({ restored: 3, failed: 0 })
       expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
@@ -434,6 +436,10 @@ describe('DSH plugin compatibility lifecycle', () => {
         expect.objectContaining({ status: 'active', phase: 'dependency' }),
       )
       expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).not.toHaveProperty('message')
+      const resolvedNames = resolve.mock.calls.map(([, name]) => name)
+      expect(resolvedNames.filter((name) => name === 'ACONSUMER')).toHaveLength(1)
+      expect(resolvedNames.filter((name) => name === 'BPROVIDER')).toHaveLength(2)
+      expect(resolvedNames.filter((name) => name === 'CPROVIDER')).toHaveLength(2)
       await coordinator.dispose()
     } finally {
       f.database.close()

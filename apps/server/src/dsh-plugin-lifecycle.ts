@@ -531,6 +531,9 @@ export class DshPluginLifecycleCoordinator {
 
   async #mount(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
     const existingLoaderId = loader.loaderIds.get(entry.id)
+    // Cordis can activate a pending entry in place after its injected services appear. A retained
+    // loader ID already passed Config schema inspection when it was created, so re-mount only
+    // observes the current phase instead of treating that automatic activation as a fresh load.
     if (existingLoaderId) return this.#settledState(loader, existingLoaderId, entry.entryKey)
     this.#preflight(entry)
     const packageRecord = this.#repository.getDshPluginPackage(entry.packageId)

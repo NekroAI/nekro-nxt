@@ -1071,6 +1071,27 @@ test.describe('settings space', () => {
                         },
                       ],
                     },
+                    {
+                      id: 'dse_fixtureactive',
+                      entryKey: 'agent-tools',
+                      moduleName: '@example/dsh-waiting-plugin/agent-tools',
+                      suggestedScope: 'agent',
+                      selectedScope: 'agent',
+                      config: {},
+                      activations: [
+                        {
+                          targetKey: 'agt_fixtureone',
+                          target: 'agent',
+                          agentId: 'agt_fixtureone',
+                          activatedAt: 1,
+                          diagnostic: {
+                            status: 'active',
+                            phase: 'apply',
+                            observedAt: 1,
+                          },
+                        },
+                      ],
+                    },
                   ],
                 },
               ],
@@ -1081,6 +1102,7 @@ test.describe('settings space', () => {
     })
     try {
       await expect(page.getByRole('heading', { name: '@example/dsh-waiting-plugin' })).toBeVisible()
+      await expect(page.getByText('1 个已启用 / 1 个等待依赖', { exact: true })).toBeVisible()
       await expect(page.getByText('本机等待依赖', { exact: true })).toBeVisible()
       await expect(page.getByText('等待依赖服务：skills、tools', { exact: true })).toBeVisible()
       await page.screenshot({ path: '.local/browser-test-results/settings-dsh-pending-services.png' })
