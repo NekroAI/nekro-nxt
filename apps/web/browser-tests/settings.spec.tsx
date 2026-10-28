@@ -1065,7 +1065,7 @@ test.describe('settings space', () => {
                           diagnostic: {
                             status: 'pending',
                             phase: 'dependency',
-                            message: '等待依赖服务：skills、tools',
+                            message: '等待 skills、tools 服务',
                             observedAt: 1,
                           },
                         },
@@ -1102,9 +1102,8 @@ test.describe('settings space', () => {
     })
     try {
       await expect(page.getByRole('heading', { name: '@example/dsh-waiting-plugin' })).toBeVisible()
-      await expect(page.getByText('1 个已启用 / 1 个等待依赖', { exact: true })).toBeVisible()
-      await expect(page.getByText('本机等待依赖', { exact: true })).toBeVisible()
-      await expect(page.getByText('等待依赖服务：skills、tools', { exact: true })).toBeVisible()
+      await expect(page.getByText('1 个已启用 / 1 个等待 skills、tools 服务', { exact: true })).toBeVisible()
+      await expect(page.getByText('本机等待 skills、tools 服务', { exact: true })).toBeVisible()
       await page.screenshot({ path: '.local/browser-test-results/settings-dsh-pending-services.png' })
       expect(errors).toEqual([])
     } finally {

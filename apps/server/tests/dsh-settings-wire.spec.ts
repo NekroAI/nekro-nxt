@@ -409,7 +409,7 @@ describe('DSH plugin compatibility lifecycle', () => {
         expect.objectContaining({
           status: 'pending',
           phase: 'dependency',
-          message: '等待依赖服务：fixtureBeta',
+          message: '等待 fixtureBeta 服务',
         }),
       )
 
@@ -418,7 +418,7 @@ describe('DSH plugin compatibility lifecycle', () => {
         expect.objectContaining({
           status: 'pending',
           phase: 'dependency',
-          message: '等待依赖服务：fixtureAlpha、fixtureBeta',
+          message: '等待 fixtureAlpha、fixtureBeta 服务',
         }),
       )
 
@@ -427,7 +427,7 @@ describe('DSH plugin compatibility lifecycle', () => {
         expect.objectContaining({
           status: 'pending',
           phase: 'dependency',
-          message: '等待依赖服务：fixtureBeta',
+          message: '等待 fixtureBeta 服务',
         }),
       )
 

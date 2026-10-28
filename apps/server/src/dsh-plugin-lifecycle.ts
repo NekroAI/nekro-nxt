@@ -531,9 +531,10 @@ export class DshPluginLifecycleCoordinator {
 
   async #mount(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
     const existingLoaderId = loader.loaderIds.get(entry.id)
-    // Cordis can activate a pending entry in place after its injected services appear. A retained
-    // loader ID already passed Config schema inspection when it was created, so re-mount only
-    // observes the current phase instead of treating that automatic activation as a fresh load.
+    // Cordis activates a pending entry in place after its injected services appear, retaining the
+    // same Fiber and Runtime Config that passed schema inspection when this Loader entry was created.
+    // Intentionally do not repeat config inspection here: this path only observes that retained
+    // entry's current phase and does not treat automatic dependency activation as a fresh load.
     if (existingLoaderId) return this.#settledState(loader, existingLoaderId, entry.entryKey)
     this.#preflight(entry)
     const packageRecord = this.#repository.getDshPluginPackage(entry.packageId)
@@ -679,7 +680,7 @@ export class DshPluginLifecycleCoordinator {
 
   #mountedMessage(state: MountedPluginState): string | undefined {
     if (state.phase !== 'pending') return undefined
-    return state.waitingFor.length > 0 ? `等待依赖服务：${state.waitingFor.join('、')}` : '等待依赖服务'
+    return state.waitingFor.length > 0 ? `等待 ${state.waitingFor.join('、')} 服务` : '等待依赖服务'
   }
 
   #preflight(entry: DshPluginEntryRecord): void {
@@ -800,7 +801,7 @@ export class DshPluginLifecycleCoordinator {
         error !== undefined
           ? `插件操作失败（${phase}）：${messageOf(error)}`
           : status === 'pending'
-            ? '插件正在等待依赖'
+            ? (message ?? '插件正在等待依赖服务')
             : '插件已启用',
       source: {
         kind: 'dsh-plugin',
