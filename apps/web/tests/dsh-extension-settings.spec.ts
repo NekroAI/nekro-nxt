@@ -43,14 +43,24 @@ describe('DSH extension status', () => {
                 target: 'agent',
                 agentId: 'agt_one',
                 activatedAt: 1,
-                diagnostic: { status: 'pending', phase: 'dependency', observedAt: 1 },
+                diagnostic: {
+                  status: 'pending',
+                  phase: 'dependency',
+                  message: '等待 skills 服务',
+                  observedAt: 1,
+                },
               },
               {
                 targetKey: 'agt_two',
                 target: 'agent',
                 agentId: 'agt_two',
                 activatedAt: 1,
-                diagnostic: { status: 'pending', phase: 'dependency', observedAt: 1 },
+                diagnostic: {
+                  status: 'pending',
+                  phase: 'dependency',
+                  message: '等待 tools、skills 服务',
+                  observedAt: 1,
+                },
               },
             ],
           },
@@ -58,6 +68,6 @@ describe('DSH extension status', () => {
       },
     } satisfies Entry
 
-    expect(dshEntryStatus(entry)).toEqual({ label: '1 个已启用 / 2 个等待依赖', tone: 'warn' })
+    expect(dshEntryStatus(entry)).toEqual({ label: '1 个已启用 / 2 个等待 skills、tools 服务', tone: 'warn' })
   })
 })
