@@ -86,16 +86,16 @@ const pluginGroup = (origin: DshPluginCatalogEntry['origin']): DshSettingsCatalo
   origin === 'builtin' ? 'builtin' : 'installed'
 
 /** State shown next to an entry in lists and headers. */
-export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label: string; readonly tone: Tone } =>
-  entry.plugin?.loadError
-    ? { label: '加载失败', tone: 'bad' }
-    : entry.plugin?.entries?.some((item) =>
-          item.activations.some((activation) => activation.diagnostic?.status === 'pending'),
-        )
-      ? { label: '等待依赖', tone: 'warn' }
-      : entry.plugin?.entries?.some((item) => item.activations.length > 0)
-        ? { label: '已启用', tone: 'ok' }
-        : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
+export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label: string; readonly tone: Tone } => {
+  if (entry.plugin?.loadError) return { label: '加载失败', tone: 'bad' }
+  const activations = entry.plugin?.entries?.flatMap((item) => item.activations) ?? []
+  const pending = activations.filter((activation) => activation.diagnostic?.status === 'pending').length
+  const active = activations.length - pending
+  if (pending > 0 && active > 0) return { label: `${active} 个已启用 / ${pending} 个等待依赖`, tone: 'warn' }
+  if (pending > 0) return { label: '等待依赖', tone: 'warn' }
+  if (active > 0) return { label: '已启用', tone: 'ok' }
+  return { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
+}
 
 export const dshPackageLabel = (name: string): string => {
   if (name === '@deepseek-ai/dsh-web-search-deepseek') return 'DeepSeek 网页搜索'
