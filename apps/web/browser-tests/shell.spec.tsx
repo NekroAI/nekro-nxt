@@ -320,7 +320,10 @@ test.describe('shell, channels and live', () => {
       await list.getByRole('button', { name: '收起「未接线」' }).click()
       await expect(list.locator(`a[href="/channels/${externalChannelId}"]`)).toHaveCount(0)
       await expect(list.getByTitle('4 条未读')).toBeVisible()
-      expect(arrangement?.saved.at(-1)).toEqual({ pinnedChannelIds: [], collapsedGroupIds: [sourceAgentId, 'unbound'] })
+      // The second save reaches the stub a moment after the list redraws.
+      await expect
+        .poll(() => arrangement?.saved.at(-1))
+        .toEqual({ pinnedChannelIds: [], collapsedGroupIds: [sourceAgentId, 'unbound'] })
 
       const search = list.getByRole('searchbox', { name: '搜索频道' })
       await search.fill('记录员')
