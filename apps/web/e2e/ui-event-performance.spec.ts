@@ -16,7 +16,7 @@ import {
 test.use({ trace: 'off' })
 
 const output = process.env['NEKRO_UI_PERF_OUTPUT']
-const base = process.env['NEKRO_UI_PERF_URL'] ?? 'http://127.0.0.1:4970'
+const base = process.env['NEKRO_UI_PERF_URL'] ?? `http://127.0.0.1:${process.env['NEKRO_E2E_PORT'] ?? 4970}`
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 async function withEventFixture(page: Page, use: (emit: (channel: number) => void) => Promise<void>) {

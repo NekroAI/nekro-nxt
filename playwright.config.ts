@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const productPort = 4970
+// Parallel worktrees each run the journey on their own port and data directory.
+const productPort = Number(process.env['NEKRO_E2E_PORT'] ?? 4970)
 
 export default defineConfig({
   testDir: './apps/web/e2e',
@@ -24,7 +25,7 @@ export default defineConfig({
     command: 'pnpm --filter @nekro-nxt/server start',
     env: {
       ...process.env,
-      NEKRO_DATA: '.local/playwright-data',
+      NEKRO_DATA: process.env['NEKRO_E2E_DATA'] ?? '.local/playwright-data',
       NEKRO_LLM_PROVIDERS: '',
       NEKRO_PORT: String(productPort),
     },

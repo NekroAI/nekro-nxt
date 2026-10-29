@@ -20,7 +20,7 @@ test.use({ trace: 'off' })
 
 const output = process.env['NEKRO_UI_PERF_OUTPUT']
 const mixed = process.env['NEKRO_UI_PERF_MIXED'] === '1'
-const base = process.env['NEKRO_UI_PERF_URL'] ?? 'http://127.0.0.1:4970'
+const base = process.env['NEKRO_UI_PERF_URL'] ?? `http://127.0.0.1:${process.env['NEKRO_E2E_PORT'] ?? 4970}`
 
 test('records repeatable production interaction costs with fictional history', async ({ page, browser }, testInfo) => {
   test.skip(!output, 'Set NEKRO_UI_PERF_OUTPUT to record a production comparison.')
