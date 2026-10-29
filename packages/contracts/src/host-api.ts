@@ -2300,6 +2300,8 @@ export const DshPluginCatalogEntrySchema = z
     loadError: z.object({ code: NonEmptyStringSchema, message: NonEmptyStringSchema }).strict().optional(),
     packageId: DshPluginPackageIdSchema.optional(),
     installSource: z.enum(['registry', 'tarball', 'imported']).optional(),
+    /** Published by the DSH maintainers on npm for the DSH release this build runs. */
+    official: z.boolean().optional(),
     installedAt: z.number().int().safe().nonnegative().optional(),
     clientUiDetected: z.boolean().optional(),
     hostUi: DshNxtHostUiSchema.optional(),
@@ -2314,6 +2316,8 @@ export const DshPluginCatalogEntrySchema = z
             suggestedScope: z.enum(['host', 'agent']),
             selectedScope: z.enum(['host', 'agent']).optional(),
             config: JsonValueSchema,
+            /** Host services this official entry declared and received; known once it has loaded. */
+            grantedServices: z.array(NonEmptyStringSchema).optional(),
             activations: z.array(
               z
                 .object({
@@ -2323,9 +2327,13 @@ export const DshPluginCatalogEntrySchema = z
                   activatedAt: z.number().int().safe().nonnegative(),
                   diagnostic: z
                     .object({
-                      status: z.enum(['active', 'load-failed', 'restore-failed', 'dispose-failed']),
-                      phase: z.enum(['import', 'apply', 'update', 'dispose', 'restore']),
+                      status: z.enum(['active', 'pending', 'load-failed', 'restore-failed', 'dispose-failed']),
+                      phase: z.enum(['import', 'dependency', 'apply', 'update', 'dispose', 'restore']),
                       message: z.string().optional(),
+                      /** Services a pending entry still waits for. */
+                      waitingFor: z.array(NonEmptyStringSchema).optional(),
+                      /** The waited-for services this entry can never receive, since only official plugins get them. */
+                      restrictedServices: z.array(NonEmptyStringSchema).optional(),
                       observedAt: z.number().int().safe().nonnegative(),
                     })
                     .optional(),

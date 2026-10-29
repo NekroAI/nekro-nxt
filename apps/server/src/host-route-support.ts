@@ -29,6 +29,7 @@ import { z } from 'zod'
 import type { NekroRuntime } from './bootstrap.js'
 import type { ExtensionImportStaging } from './extension-import-staging.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
+import { isOfficialDshPluginPackage } from './dsh-plugin-access.js'
 import { unzipTransferArchive } from '@nekro-nxt/extension-format'
 
 export {
@@ -664,9 +665,12 @@ export const projectDshPlugins = (runtime: NekroRuntime) => [
       !Array.isArray(packageRecord.manifest)
         ? packageRecord.manifest
         : {}
+    const official = isOfficialDshPluginPackage(packageRecord)
     const entries = runtime.repository.listDshPluginEntries(packageRecord.id).map((entry) => {
+      const granted = runtime.host.installedDshPluginServiceView(entry.id).granted
       const activations = runtime.repository.listDshPluginActivations(entry.id).map((activation) => {
         const diagnostic = runtime.repository.getDshPluginDiagnostic(entry.id, activation.targetKey)
+        const live = runtime.host.installedDshPluginServiceView(entry.id, activation.targetKey)
         return {
           targetKey: activation.targetKey,
           target: activation.target,
@@ -680,6 +684,9 @@ export const projectDshPlugins = (runtime: NekroRuntime) => [
                   phase: diagnostic.phase,
                   observedAt: diagnostic.observedAt,
                   ...(diagnostic.message === undefined ? {} : { message: diagnostic.message }),
+                  ...(diagnostic.status === 'pending' && live.waitingFor !== undefined
+                    ? { waitingFor: [...live.waitingFor], restrictedServices: [...(live.restricted ?? [])] }
+                    : {}),
                 },
               }),
         }
@@ -691,13 +698,16 @@ export const projectDshPlugins = (runtime: NekroRuntime) => [
         suggestedScope: entry.suggestedScope,
         ...(entry.selectedScope === undefined ? {} : { selectedScope: entry.selectedScope }),
         config: entry.config,
+        ...(official && granted !== undefined && granted.length > 0 ? { grantedServices: [...granted] } : {}),
         activations,
       }
     })
     const failure = entries
       .flatMap((entry) => entry.activations)
       .map((activation) => activation.diagnostic)
-      .find((diagnostic) => diagnostic !== undefined && diagnostic.status !== 'active')
+      .find(
+        (diagnostic) => diagnostic !== undefined && diagnostic.status !== 'active' && diagnostic.status !== 'pending',
+      )
     const hostUi = DshNxtHostUiSchema.safeParse(
       'nekroNxt' in manifest && typeof manifest['nekroNxt'] === 'object' && manifest['nekroNxt'] !== null
         ? Reflect.get(manifest['nekroNxt'], 'hostUi')
@@ -710,6 +720,7 @@ export const projectDshPlugins = (runtime: NekroRuntime) => [
       settingsNamespaces: [],
       packageId: packageRecord.id,
       installSource: packageRecord.source,
+      official,
       installedAt: packageRecord.installedAt,
       clientUiDetected:
         'dsh' in manifest &&

@@ -85,13 +85,45 @@ export const DSH_GROUP_LABEL: Record<DshSettingsCatalogEntry['group'], string> =
 const pluginGroup = (origin: DshPluginCatalogEntry['origin']): DshSettingsCatalogEntry['group'] =>
   origin === 'builtin' ? 'builtin' : 'installed'
 
+type DshPluginDiagnostic = DshPluginEntry['activations'][number]['diagnostic']
+
+const restrictedServices = (diagnostic: DshPluginDiagnostic): readonly string[] =>
+  diagnostic?.status === 'pending' ? (diagnostic.restrictedServices ?? []) : []
+
+const waitingServices = (diagnostic: DshPluginDiagnostic): readonly string[] =>
+  diagnostic?.status === 'pending' ? (diagnostic.waitingFor ?? []) : []
+
+const waitingLabel = (services: readonly string[]): string =>
+  services.length > 0 ? `等待 ${services.join('、')} 服务` : '等待依赖服务'
+
+/** Why a third-party entry cannot load: it needs services only official plugins receive. */
+export const dshRestrictedReason = (services: readonly string[]): string =>
+  `需要 ${services.join('、')} 服务，只对官方插件开放。`
+
 /** State shown next to an entry in lists and headers. */
-export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label: string; readonly tone: Tone } =>
-  entry.plugin?.loadError
-    ? { label: '加载失败', tone: 'bad' }
-    : entry.plugin?.entries?.some((item) => item.activations.length > 0)
-      ? { label: '已启用', tone: 'ok' }
-      : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
+export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label: string; readonly tone: Tone } => {
+  if (entry.plugin?.loadError) return { label: '加载失败', tone: 'bad' }
+  const activations = entry.plugin?.entries?.flatMap((item) => item.activations) ?? []
+  const pendingActivations = activations.filter((activation) => activation.diagnostic?.status === 'pending')
+  const restricted = pendingActivations.filter((activation) => restrictedServices(activation.diagnostic).length > 0)
+  const waiting = pendingActivations.filter((activation) => restrictedServices(activation.diagnostic).length === 0)
+  const active = activations.length - pendingActivations.length
+  const waitingText = waitingLabel([
+    ...new Set(waiting.flatMap((activation) => waitingServices(activation.diagnostic))),
+  ])
+  const parts = [
+    active > 0 ? `${active} 个已启用` : '',
+    restricted.length > 0 ? `${restricted.length} 个缺少服务` : '',
+    waiting.length > 0 ? `${waiting.length} 个${waitingText}` : '',
+  ].filter(Boolean)
+  if (pendingActivations.length === 0) {
+    return active > 0 ? { label: '已启用', tone: 'ok' } : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
+  }
+  if (parts.length === 1 && pendingActivations.length === 1) {
+    return { label: restricted.length > 0 ? '缺少服务' : waitingText, tone: 'warn' }
+  }
+  return { label: parts.join(' / '), tone: 'warn' }
+}
 
 export const dshPackageLabel = (name: string): string => {
   if (name === '@deepseek-ai/dsh-web-search-deepseek') return 'DeepSeek 网页搜索'
@@ -1449,6 +1481,7 @@ export function DshPluginDetail({
         meta={
           <>
             {status.label === DSH_GROUP_LABEL[entry.group] ? null : <span>{DSH_GROUP_LABEL[entry.group]}</span>}
+            {plugin?.official ? <span>官方插件</span> : null}
             <span>{entry.version}</span>
             {applies ? <span>{applies}</span> : null}
           </>
@@ -1480,22 +1513,40 @@ export function DshPluginDetail({
           {(plugin.entries ?? []).map((item) => {
             const scope = entryScope[item.id] ?? item.selectedScope ?? item.suggestedScope
             const inspection = configInspections[item.id]
+            const restricted = [
+              ...new Set(item.activations.flatMap((activation) => restrictedServices(activation.diagnostic))),
+            ]
             return (
               <div className={styles.entry} key={item.id}>
                 <div className={styles.entryHead}>
                   <b title={item.moduleName}>{item.entryKey}</b>
-                  {item.activations.map((activation) => (
-                    <Chip
-                      key={activation.targetKey}
-                      tone={activation.diagnostic?.status === 'active' ? 'ok' : 'warn'}
-                      dot
-                    >
-                      {activation.target === 'host'
-                        ? '本机已启用'
-                        : `${agents.find((agent) => agent.id === activation.agentId)?.name ?? '智能体'}已启用`}
-                    </Chip>
-                  ))}
+                  {item.activations.map((activation) => {
+                    const suffix =
+                      activation.diagnostic?.status !== 'pending'
+                        ? '已启用'
+                        : restrictedServices(activation.diagnostic).length > 0
+                          ? '缺少服务'
+                          : waitingLabel(waitingServices(activation.diagnostic))
+                    const owner =
+                      activation.target === 'host'
+                        ? '本机'
+                        : (agents.find((agent) => agent.id === activation.agentId)?.name ?? '智能体')
+                    return (
+                      <Chip
+                        key={activation.targetKey}
+                        tone={activation.diagnostic?.status === 'active' ? 'ok' : 'warn'}
+                        dot
+                      >
+                        {owner}
+                        {suffix}
+                      </Chip>
+                    )
+                  })}
+                  {item.grantedServices?.length ? (
+                    <Chip tone="neutral">已开放 {item.grantedServices.join('、')} 服务</Chip>
+                  ) : null}
                 </div>
+                {restricted.length > 0 ? <p className={styles.muted}>{dshRestrictedReason(restricted)}</p> : null}
                 <div className={styles.entryFields}>
                   <Field label="启用范围">
                     <Select
@@ -1582,10 +1633,14 @@ export function DshPluginDetail({
                     </Button>
                   ))}
                 </div>
-                {item.activations.some((activation) => activation.diagnostic?.message) ? (
+                {item.activations.some(
+                  (activation) => activation.diagnostic?.status !== 'pending' && activation.diagnostic?.message,
+                ) ? (
                   <p className={styles.muted}>
                     {item.activations
-                      .map((activation) => activation.diagnostic?.message)
+                      .map((activation) =>
+                        activation.diagnostic?.status === 'pending' ? undefined : activation.diagnostic?.message,
+                      )
                       .filter(Boolean)
                       .join('；')}
                   </p>

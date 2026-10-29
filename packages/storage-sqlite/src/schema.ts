@@ -1304,8 +1304,8 @@ export const dshPluginDiagnostics = sqliteTable(
       .notNull()
       .references(() => dshPluginEntries.id, { onDelete: 'cascade' }),
     targetKey: text('target_key').notNull(),
-    status: text({ enum: ['active', 'load-failed', 'restore-failed', 'dispose-failed'] }).notNull(),
-    phase: text({ enum: ['import', 'apply', 'update', 'dispose', 'restore'] }).notNull(),
+    status: text({ enum: ['active', 'pending', 'load-failed', 'restore-failed', 'dispose-failed'] }).notNull(),
+    phase: text({ enum: ['import', 'dependency', 'apply', 'update', 'dispose', 'restore'] }).notNull(),
     message: text(),
     observedAt: integer('observed_at').notNull(),
   },

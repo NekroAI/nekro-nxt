@@ -1031,6 +1031,151 @@ test.describe('settings space', () => {
     }
   })
 
+  const dshPluginCatalog = (
+    packageId: string,
+    packageName: string,
+    official: boolean,
+    entries: readonly {
+      readonly id: string
+      readonly entryKey: string
+      readonly scope: 'host' | 'agent'
+      readonly grantedServices?: readonly string[]
+      readonly diagnostic: Record<string, unknown>
+    }[],
+  ) => ({
+    plugins: [
+      {
+        packageName,
+        packageVersion: '1.0.0',
+        origin: 'installed',
+        settingsNamespaces: [],
+        packageId,
+        installSource: official ? 'registry' : 'tarball',
+        official,
+        installedAt: 1,
+        clientUiDetected: false,
+        approvedBuilds: [],
+        entries: entries.map((entry) => ({
+          id: entry.id,
+          entryKey: entry.entryKey,
+          moduleName: `${packageName}/${entry.entryKey}`,
+          suggestedScope: entry.scope,
+          selectedScope: entry.scope,
+          config: {},
+          ...(entry.grantedServices ? { grantedServices: entry.grantedServices } : {}),
+          activations: [
+            {
+              targetKey: entry.scope === 'host' ? 'host' : 'agt_fixtureone',
+              target: entry.scope,
+              ...(entry.scope === 'agent' ? { agentId: 'agt_fixtureone' } : {}),
+              activatedAt: 1,
+              diagnostic: { observedAt: 1, ...entry.diagnostic },
+            },
+          ],
+        })),
+      },
+    ],
+  })
+
+  for (const width of [1440, 375]) {
+    test(`shows the services a pending DSH plugin is waiting for at ${width}px`, async () => {
+      const packageId = 'dsp_fixturewait'
+      const catalog = dshPluginCatalog(packageId, '@example/dsh-waiting-plugin', false, [
+        {
+          id: 'dse_fixturewait',
+          entryKey: 'main',
+          scope: 'host',
+          diagnostic: {
+            status: 'pending',
+            phase: 'dependency',
+            message: '等待 fixtureAlpha、fixtureBeta 服务',
+            waitingFor: ['fixtureAlpha', 'fixtureBeta'],
+            restrictedServices: [],
+          },
+        },
+        {
+          id: 'dse_fixtureactive',
+          entryKey: 'agent-tools',
+          scope: 'agent',
+          diagnostic: { status: 'active', phase: 'apply' },
+        },
+      ])
+      const { page, errors } = await open(`/settings/dsh?entry=${encodeURIComponent(`plugin:${packageId}`)}`, {
+        width,
+        before: async (target) => {
+          await target.route('**/api/dsh/plugins', (request) => request.fulfill({ json: catalog }))
+        },
+      })
+      try {
+        await expect(page.getByRole('heading', { name: '@example/dsh-waiting-plugin' })).toBeVisible()
+        await expect(
+          page
+            .getByText('1 个已启用 / 1 个等待 fixtureAlpha、fixtureBeta 服务', { exact: true })
+            .filter({ visible: true })
+            .first(),
+        ).toBeVisible()
+        await expect(page.getByText('本机等待 fixtureAlpha、fixtureBeta 服务', { exact: true })).toBeVisible()
+        await expect(page.getByText('官方插件', { exact: true })).toHaveCount(0)
+        await page.screenshot({ path: `.local/screenshots-63/dsh-pending-${width}.png`, fullPage: true })
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    })
+
+    test(`labels official grants and services a third-party plugin cannot receive at ${width}px`, async () => {
+      const officialId = 'dsp_fixtureofficial'
+      const uploadedId = 'dsp_fixtureupload'
+      const official = dshPluginCatalog(officialId, '@deepseek-ai/dsh-fixture-offload', true, [
+        {
+          id: 'dse_fixtureofficial',
+          entryKey: 'main',
+          scope: 'host',
+          grantedServices: ['agents', 'sessions'],
+          diagnostic: { status: 'active', phase: 'apply' },
+        },
+      ])
+      const uploaded = dshPluginCatalog(uploadedId, '@example/dsh-fixture-offload', false, [
+        {
+          id: 'dse_fixtureupload',
+          entryKey: 'main',
+          scope: 'host',
+          diagnostic: {
+            status: 'pending',
+            phase: 'dependency',
+            message: '需要 agents 服务，只对官方插件开放',
+            waitingFor: ['agents'],
+            restrictedServices: ['agents'],
+          },
+        },
+      ])
+      const { page, errors } = await open(`/settings/dsh?entry=${encodeURIComponent(`plugin:${officialId}`)}`, {
+        width,
+        before: async (target) => {
+          await target.route('**/api/dsh/plugins', (request) =>
+            request.fulfill({ json: { plugins: [...official.plugins, ...uploaded.plugins] } }),
+          )
+        },
+      })
+      try {
+        await expect(page.getByRole('heading', { name: 'fixture-offload' })).toBeVisible()
+        await expect(page.getByText('官方插件', { exact: true })).toBeVisible()
+        await expect(page.getByText('已开放 agents、sessions 服务', { exact: true })).toBeVisible()
+        await page.screenshot({ path: `.local/screenshots-63/dsh-official-${width}.png`, fullPage: true })
+
+        await page.goto(`${baseUrl}/settings/dsh?entry=${encodeURIComponent(`plugin:${uploadedId}`)}`)
+        await expect(page.getByRole('heading', { name: '@example/dsh-fixture-offload' })).toBeVisible()
+        await expect(page.getByText('本机缺少服务', { exact: true })).toBeVisible()
+        await expect(page.getByText('需要 agents 服务，只对官方插件开放。', { exact: true })).toBeVisible()
+        await expect(page.getByText('官方插件', { exact: true })).toHaveCount(0)
+        await page.screenshot({ path: `.local/screenshots-63/dsh-restricted-${width}.png`, fullPage: true })
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    })
+  }
+
   test('clears sent feedback on account changes and discards a late response from the previous account', async () => {
     let account = 'alpha'
     let hold = false

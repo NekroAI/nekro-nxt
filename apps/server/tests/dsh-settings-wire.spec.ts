@@ -308,7 +308,6 @@ describe('DSH plugin compatibility lifecycle', () => {
       return new DshPluginLifecycleCoordinator({
         repository,
         rootContext: context,
-        isolateContext: (ctx) => ctx,
         resolveModule,
         listAgentSessions: () => [],
       })
@@ -370,6 +369,75 @@ describe('DSH plugin compatibility lifecycle', () => {
         expect.objectContaining({ status: 'compatible', objectId: entryId }),
       ])
       expect(f.repository.listDshPluginActivations(entryId)).toHaveLength(1)
+      await coordinator.dispose()
+    } finally {
+      f.database.close()
+    }
+  })
+
+  it('keeps a pending consumer mounted while providers disable and re-enable', async () => {
+    const f = await fixture()
+    try {
+      const consumer = f.seed('ACONSUMER')
+      const alphaProvider = f.seed('BPROVIDER')
+      const betaProvider = f.seed('CPROVIDER')
+      const resolve = vi.fn((_packageId: unknown, name: string) => {
+        const source =
+          name === 'ACONSUMER'
+            ? `
+              export default {
+                inject: ['fixtureAlpha', 'fixtureBeta'],
+                apply(ctx) { ctx.provide('fixtureConsumer', true) }
+              }
+            `
+            : name === 'BPROVIDER'
+              ? `export default function(ctx) { ctx.provide('fixtureAlpha', true) }`
+              : `export default function(ctx) { ctx.provide('fixtureBeta', true) }`
+        return `data:text/javascript,${encodeURIComponent(source)}`
+      })
+      const coordinator = f.create(resolve)
+
+      expect(await coordinator.initialize()).toEqual({ restored: 3, failed: 0 })
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({ status: 'active' }),
+      )
+
+      await coordinator.disable(betaProvider, 'host')
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          phase: 'dependency',
+          message: '等待 fixtureBeta 服务',
+        }),
+      )
+
+      await coordinator.disable(alphaProvider, 'host')
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          phase: 'dependency',
+          message: '等待 fixtureAlpha、fixtureBeta 服务',
+        }),
+      )
+
+      await coordinator.activate({ entryId: alphaProvider, target: 'host', config: {} })
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({
+          status: 'pending',
+          phase: 'dependency',
+          message: '等待 fixtureBeta 服务',
+        }),
+      )
+
+      await coordinator.activate({ entryId: betaProvider, target: 'host', config: {} })
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).toEqual(
+        expect.objectContaining({ status: 'active', phase: 'dependency' }),
+      )
+      expect(f.repository.getDshPluginDiagnostic(consumer, 'host')).not.toHaveProperty('message')
+      const resolvedNames = resolve.mock.calls.map(([, name]) => name)
+      expect(resolvedNames.filter((name) => name === 'ACONSUMER')).toHaveLength(1)
+      expect(resolvedNames.filter((name) => name === 'BPROVIDER')).toHaveLength(2)
+      expect(resolvedNames.filter((name) => name === 'CPROVIDER')).toHaveLength(2)
       await coordinator.dispose()
     } finally {
       f.database.close()

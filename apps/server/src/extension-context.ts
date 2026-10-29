@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-const EXTENSION_PRIVATE_SERVICE_KEYS = [
+export const EXTENSION_PRIVATE_SERVICE_KEYS = [
   'agentPresets',
   'agents',
   'attachments',
