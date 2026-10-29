@@ -8,6 +8,7 @@ import {
   EpisodeIdSchema,
   ExtensionCapabilitiesSchema,
   ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
   LogicalMessageIdSchema,
   type ExtensionCapabilities,
   type ExtensionId,
@@ -60,7 +61,17 @@ const extension = (
 
 const asHandler = (fake: FakeExtension, agent = agentId): PersistentOutboundHandler => ({
   agentId: agent,
-  revision: { id: `xrv_${fake.id}`, extensionId: fake.id } as unknown as Revision,
+  revision: {
+    id: ExtensionRevisionIdSchema.parse(`xrv_${fake.id.slice(4)}`),
+    extensionId: fake.id,
+    revisionNumber: 1,
+    contentDigest: 'a'.repeat(64),
+    payloadDigest: 'b'.repeat(64),
+    ancestry: [],
+    origin: 'authored',
+    dataVersion: 1,
+    createdAt: 1,
+  } satisfies Revision,
   config: {},
   hostConfig: {},
   handler: fake.handler,
@@ -119,6 +130,7 @@ const processor = (
         extensions.map(({ id }) => id),
         ids,
       ),
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- These handlers never touch nxt.
     nxtFor: () => ({}) as NxtHostService,
     channel: (id) => ({ id, kind: 'group', displayName: '示例频道' }),
     triggeredBy: () => 'msg_TRIGGER',
@@ -301,6 +313,7 @@ describe('outbound processing before sending', () => {
     ]
     for (const [index, answer] of answers.entries()) {
       const { processor: target, store } = processor([
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- Deliberately malformed answers.
         extension('BAD', '坏扩展', { transform: true }, () => answer as never),
       ])
       await send(target, [text('原样')], `bad-${index}`)
@@ -521,7 +534,9 @@ describe('outbound processing with the channel runtime', () => {
       outbound.putAgentOutboundOrder(fixture.agent.definition.id, ids, 10)
       outbound.putAgentOutboundOrder(fixture.agent.definition.id, [...ids].reverse(), 20)
       expect(outbound.getAgentOutboundOrder(fixture.agent.definition.id)).toEqual(['ext_A', 'ext_B'])
-      expect(resolveOutboundOrder(['ext_C' as ExtensionId], ['ext_A', 'ext_B'] as ExtensionId[], ids)).toEqual([
+      const extensionA = ExtensionIdSchema.parse('ext_A')
+      const extensionB = ExtensionIdSchema.parse('ext_B')
+      expect(resolveOutboundOrder([ExtensionIdSchema.parse('ext_C')], [extensionA, extensionB], ids)).toEqual([
         'ext_A',
         'ext_B',
       ])
