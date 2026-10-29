@@ -436,7 +436,8 @@ export const collectVisibleImageResidency = (
   const baseline = effectiveImageDetail(baselineDetail)
   const visit = (blocks: readonly ContentBlock[]): void => {
     for (const block of blocks) {
-      if (block.type === 'image') {
+      // An offloaded image reaches the model as a placeholder, so the model no longer has it in view.
+      if (block.type === 'image' && block.offloaded !== true) {
         const parsed = parseNekroImageAttachmentId(block.attachment?.attachmentId)
         if (!parsed) continue
         const asset = assets.getAssetById(parsed.assetId)

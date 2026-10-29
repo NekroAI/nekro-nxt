@@ -1,4 +1,6 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+// Declares the `image/offload` session event.
+import type {} from '@deepseek-ai/dsh-compaction-image-offload/projection'
 import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
 import {
   deliveryStateFromToolResult,
@@ -25,6 +27,7 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'tool/ptc-dispatch',
   'assistant/message',
   'user/message',
+  'image/offload',
   'llm/retry',
   'llm/retry-started',
   'nekro-nxt/memory',
@@ -55,24 +58,51 @@ const reasoningFromBlocks = (
   return text.length > 0 ? text : undefined
 }
 
-/** Model-visible text of an input message; an image block keeps its place as a marker. */
-export const inputText = (blocks: readonly { readonly type: string; readonly text?: string }[]): string =>
-  blocks
-    .flatMap((block) =>
-      block.type === 'text' && typeof block.text === 'string'
-        ? [block.text]
-        : block.type === 'image'
-          ? ['［图片］']
-          : [],
-    )
+export const OFFLOADED_IMAGE_MARKER = '［图片已省略（超出模型的图片上限）］'
+
+/**
+ * Which image occurrences of each message event `image/offload` replaced with a placeholder, by event seq. Indexes
+ * count every image block of the message in order, as the event records them.
+ */
+export const offloadedImageIndexes = (events: readonly SessionEvent[]): ReadonlyMap<number, ReadonlySet<number>> => {
+  const result = new Map<number, Set<number>>()
+  for (const event of events) {
+    if (event.type !== 'image/offload') continue
+    for (const target of event.data.targets) {
+      const indexes = result.get(target.seq) ?? new Set<number>()
+      for (const index of target.imageIndexes) indexes.add(index)
+      result.set(target.seq, indexes)
+    }
+  }
+  return result
+}
+
+/**
+ * Model-visible text of an input message; an image block keeps its place as a marker, and an image the model no
+ * longer receives says so.
+ */
+export const inputText = (
+  blocks: readonly { readonly type: string; readonly text?: string; readonly offloaded?: boolean }[],
+  offloaded?: ReadonlySet<number>,
+): string => {
+  let imageIndex = 0
+  return blocks
+    .flatMap((block) => {
+      if (block.type === 'text' && typeof block.text === 'string') return [block.text]
+      if (block.type !== 'image') return []
+      const omitted = block.offloaded === true || offloaded?.has(imageIndex) === true
+      imageIndex += 1
+      return [omitted ? OFFLOADED_IMAGE_MARKER : '［图片］']
+    })
     .join('\n')
     .trim()
+}
 
 /** The full text of one `user/message` in the log, for the runtime input detail. */
 export const findInputDetail = (events: readonly SessionEvent[], messageId: string) => {
   for (const event of events) {
     if (event.type !== 'user/message' || String(event.data.id) !== messageId) continue
-    const text = boundedDetail(inputText(event.data.content))
+    const text = boundedDetail(inputText(event.data.content, offloadedImageIndexes(events).get(event.seq)))
     return { messageId, available: true, source: event.data.source.kind, text: text.text, truncated: text.truncated }
   }
   return undefined
@@ -136,6 +166,7 @@ export const normalizeSessionEvents = (
   }
   // Where each direct call sits, so the calls a `run_code` program makes join that program's step.
   const toolSteps = new Map<string, { readonly turn: number; readonly step: number }>()
+  const offloaded = offloadedImageIndexes(events)
   for (const event of events) {
     const at = event.time
     if (event.type === 'compaction/start' || event.type === 'compaction/end') {
@@ -169,7 +200,7 @@ export const normalizeSessionEvents = (
     }
     if (event.type === 'user/message') {
       const source = event.data.source
-      const text = inputText(event.data.content)
+      const text = inputText(event.data.content, offloaded.get(event.seq))
       const input = {
         type: 'turn/input' as const,
         turn: openTurn ?? -1,

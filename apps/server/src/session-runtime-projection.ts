@@ -74,7 +74,11 @@ export class SessionRuntimeProjection {
       messageTokens: snapshot.values.contextBreakdown?.messageTokens,
       imageCount: agent.session
         .deriveMessages()
-        .reduce((count, message) => count + message.content.filter((block) => block.type === 'image').length, 0),
+        .reduce(
+          (count, message) =>
+            count + message.content.filter((block) => block.type === 'image' && block.offloaded !== true).length,
+          0,
+        ),
     })
     const performanceTotals = snapshot.values.sessionStats
     if (occupancy === undefined && performanceTotals === undefined) return undefined
