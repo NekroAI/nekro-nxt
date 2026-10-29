@@ -99,6 +99,7 @@ test('production bundle keeps every space usable and retired links land on æ¦‚è§
     '/settings/dsh',
     '/settings/notifications',
     '/settings/appearance',
+    '/settings/storage',
     '/settings/about',
   ]) {
     await page.goto(route)

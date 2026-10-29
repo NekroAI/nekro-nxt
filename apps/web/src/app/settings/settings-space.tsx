@@ -5,6 +5,7 @@ import {
   Blocks,
   ChevronRight,
   Cpu,
+  HardDrive,
   Inbox,
   Info,
   MessageCircle,
@@ -50,7 +51,6 @@ import type {
   MessagePacing,
   RetrievalStatus,
   SubConversationRetention,
-  UpgradeBackupSettings,
 } from '@nekro-nxt/contracts'
 import { CodeRunNodeDownload, CodeRunNodeRemove } from '../agents/runtime-download.js'
 import { workspaceApi } from '../../host-api-client.js'
@@ -93,6 +93,7 @@ import { LinkedAccountsSection } from './linked-accounts-section.js'
 import { AdministratorsSection } from './administrators-section.js'
 import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
+import { StorageSection } from './storage-section.js'
 import styles from './settings.module.css'
 
 // Four groups (docs/NekroNxt界面交互模型.md §9); the order inside a group is the order people need them.
@@ -118,6 +119,7 @@ const SECTIONS = [
   { key: 'access', label: '登录设备', group: 'permission', icon: <MonitorSmartphone size={16} /> },
   { key: 'notifications', label: '通知', group: 'system', icon: <Bell size={16} /> },
   { key: 'appearance', label: '外观', group: 'system', icon: <Palette size={16} /> },
+  { key: 'storage', label: '存储', group: 'system', icon: <HardDrive size={16} /> },
   { key: 'logs', label: '日志保存', group: 'system', icon: <ScrollText size={16} /> },
   { key: 'feedback', label: '社区反馈', group: 'system', icon: <Inbox size={16} /> },
   { key: 'about', label: '关于', group: 'system', icon: <Info size={16} /> },
@@ -238,6 +240,7 @@ export default function SettingsSpace() {
             </>
           ) : null}
           {section === 'appearance' ? <Appearance /> : null}
+          {section === 'storage' ? <StorageSection /> : null}
           {section === 'about' ? <About /> : null}
         </MainContent>
       )}
@@ -1282,100 +1285,6 @@ function ProductUpdateRows({ updates }: { readonly updates: ReturnType<typeof us
   )
 }
 
-const gigabytes = (bytes: number) => `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
-
-const BACKUP_MODES = [
-  { value: 'data', label: '保存在数据目录' },
-  { value: 'directory', label: '保存到其他位置' },
-  { value: 'off', label: '不备份' },
-] as const
-
-/** Restore points taken before an upgrade: where they go, or none. */
-function UpgradeBackupRows() {
-  const [settings, setSettings] = useState<UpgradeBackupSettings>()
-  const [mode, setMode] = useState<UpgradeBackupSettings['mode']>('data')
-  const [directory, setDirectory] = useState('')
-  const [busy, setBusy] = useState(false)
-  const apply = (next: UpgradeBackupSettings) => {
-    setSettings(next)
-    setMode(next.mode)
-    setDirectory(next.directory ?? '')
-  }
-  useEffect(() => {
-    const controller = new AbortController()
-    workspaceApi
-      .getUpgradeBackupSettings({ signal: controller.signal })
-      .then(apply)
-      .catch(() => undefined)
-    return () => controller.abort()
-  }, [])
-  if (settings === undefined) return null
-  const save = async (next: UpgradeBackupSettings['mode'], path?: string) => {
-    setBusy(true)
-    try {
-      apply(
-        await workspaceApi.updateUpgradeBackupSettings({
-          mode: next,
-          ...(next === 'directory' && path ? { directory: path.trim() } : {}),
-        }),
-      )
-      toast('已保存')
-    } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-    } finally {
-      setBusy(false)
-    }
-  }
-  const usage =
-    settings.mode === 'off'
-      ? '升级时不备份'
-      : settings.usage.count === 0
-        ? `升级前备份全部数据，保留最近 ${settings.keep} 份`
-        : `已保留 ${settings.usage.count} 份，共 ${gigabytes(settings.usage.bytes)}；保留最近 ${settings.keep} 份`
-  return (
-    <>
-      <PropertyRow label="升级前备份" description={settings.locked ? '由服务端环境变量设置' : usage}>
-        <Select
-          aria-label="升级前备份"
-          value={mode}
-          disabled={settings.locked || busy}
-          options={BACKUP_MODES.map((option) => ({ ...option }))}
-          onValueChange={(value) => {
-            const next = BACKUP_MODES.find((option) => option.value === value)?.value
-            if (next === undefined) return
-            setMode(next)
-            if (next !== 'directory') void save(next)
-          }}
-        />
-      </PropertyRow>
-      {mode === 'directory' ? (
-        <PropertyRow label="备份位置" description="例如外置盘上的目录；已有的备份留在原位置">
-          <div className={styles.inlineForm}>
-            <Input
-              value={directory}
-              spellCheck={false}
-              disabled={settings.locked}
-              placeholder="/mnt/nekro-nxt-backups"
-              aria-label="备份位置"
-              onChange={(event) => setDirectory(event.target.value)}
-            />
-            {settings.locked ? null : (
-              <Button
-                size="small"
-                busy={busy}
-                disabled={!directory.trim() || (settings.mode === 'directory' && directory === settings.directory)}
-                onClick={() => void save('directory', directory)}
-              >
-                保存
-              </Button>
-            )}
-          </div>
-        </PropertyRow>
-      ) : null}
-    </>
-  )
-}
-
 function About() {
   const metadata = useProductStore((state) => state.productMetadata)
   const updates = useProductUpdates()
@@ -1403,7 +1312,6 @@ function About() {
       </Ambient>
       <PropertyList>
         <ProductUpdateRows updates={updates} />
-        <UpgradeBackupRows />
         <PropertyRow label="DSH">{metadata?.dshVersion?.trim() || '—'}</PropertyRow>
         <PropertyRow label="Release">{metadata?.releaseId?.trim() || '—'}</PropertyRow>
         <PropertyRow label="许可证">

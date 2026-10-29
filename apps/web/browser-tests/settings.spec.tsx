@@ -26,6 +26,10 @@ import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import { addedAccountId, linkedAccountsView, octoAccountId, octoUses } from '../e2e/fixtures/linked-accounts.js'
 import { productSnapshot, targetAgentId } from '../e2e/fixtures/product-quality.js'
 
+// Fictional home and volume paths, assembled so no literal personal path appears in the source.
+const USERS = '/Users'
+const VOLUMES = '/Volumes'
+
 const provider = (id: string, displayName: string, configured: boolean) => ({
   provider: id,
   displayName,
@@ -121,7 +125,7 @@ test.describe('settings space', () => {
       keep: 2,
       usage: { count: 2, bytes: 16 * 1024 * 1024 * 1024 },
     }
-    const { page, errors } = await open('/settings/about', {
+    const { page, errors } = await open('/settings/storage', {
       before: async (target) => {
         await target.route('**/api/settings/upgrade-backup', async (request) => {
           if (request.request().method() === 'PUT') {
@@ -163,12 +167,146 @@ test.describe('settings space', () => {
     }
   })
 
+  test('moves the Desktop data directory from Settings → 存储 and shows what is left behind', async () => {
+    const backup = { mode: 'data', directory: null, locked: false, keep: 2, usage: { count: 1, bytes: 2 * 1024 ** 3 } }
+    const install = async (page: Page, status: Record<string, unknown>, choice: Record<string, unknown>) => {
+      await page.route('**/api/settings/upgrade-backup', (request) => request.fulfill({ json: backup }))
+      await page.addInitScript(
+        ({ status, choice }) => {
+          const calls: unknown[] = []
+          Object.assign(window, {
+            __storageCalls: calls,
+            nekroDesktopStorage: {
+              status: () => Promise.resolve({ supported: true, status }),
+              sizes: () => Promise.resolve({ current: 3.4 * 1024 ** 3, oldDirectory: 3.1 * 1024 ** 3 }),
+              chooseDirectory: () => Promise.resolve(choice),
+              startMove: (target: string) => {
+                calls.push(['start', target])
+                return Promise.resolve(choice)
+              },
+              revealOldDirectory: () => {
+                calls.push(['reveal'])
+                return Promise.resolve()
+              },
+              dismissNotice: () => {
+                calls.push(['dismiss'])
+                return Promise.resolve()
+              },
+            },
+          })
+        },
+        { status, choice },
+      )
+    }
+    const current = `${USERS}/example/Library/Application Support/NekroNxt`
+    const target = `${VOLUMES}/Example Disk/NekroNXT`
+    for (const width of [1440, 375]) {
+      const { page, errors } = await open('/settings/storage', {
+        width,
+        before: (target) =>
+          install(
+            target,
+            { available: true, path: current },
+            {
+              kind: 'ready',
+              target: `${VOLUMES}/Example Disk/NekroNXT`,
+              method: 'copy',
+              bytes: 3.4 * 1024 ** 3,
+              estimatedSeconds: 95,
+            },
+          ),
+      })
+      try {
+        await expect(page.getByRole('heading', { name: '存储', level: 1 })).toBeVisible()
+        await expect(page.getByTestId('data-directory-path')).toHaveText(current)
+        await expect(page.getByText('占用 3.4 GB')).toBeVisible()
+        await expect(page.getByText('已保留 1 份，共 2.0 GB；保留最近 2 份')).toBeVisible()
+        await page.screenshot({ path: `.local/browser-test-results/settings-storage-${width}.png`, fullPage: true })
+        await page.getByRole('button', { name: '更改', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: '更改数据目录' })
+        await expect(dialog).toContainText(target)
+        await expect(dialog).toContainText('复制到新位置并校验，原目录保留')
+        await expect(dialog).toContainText('约 2 分钟')
+        await expect(dialog).toContainText('迁移期间应用会重启，本机实例暂停。')
+        // Let the dialog finish opening so the screenshot shows it, not its fade-in.
+        await dialog.evaluate((element) =>
+          Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
+        )
+        await page.screenshot({ path: `.local/browser-test-results/settings-storage-move-${width}.png` })
+        await dialog.getByRole('button', { name: '开始迁移' }).click()
+        await expect
+          .poll(() => page.evaluate((): unknown => Reflect.get(window, '__storageCalls')))
+          .toEqual([['start', target]])
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }
+
+    const after = await open('/settings/storage', {
+      before: (page) =>
+        install(
+          page,
+          { available: true, path: target, oldDirectory: { path: current, method: 'copy' } },
+          {
+            kind: 'rejected',
+            target: `${USERS}/example/OneDrive/NXT`,
+            problem: { code: 'sync', provider: 'onedrive' },
+          },
+        ),
+    })
+    try {
+      await expect(
+        after.page.getByText('原来的数据还在这里。确认新目录正常后，可以手动删除。', { exact: false }),
+      ).toBeVisible()
+      await expect(after.page.getByText('3.1 GB', { exact: false })).toBeVisible()
+      await after.page.screenshot({
+        path: '.local/browser-test-results/settings-storage-old-directory.png',
+        fullPage: true,
+      })
+      await after.page.getByRole('button', { name: '在文件夹中显示' }).click()
+      await after.page.getByRole('button', { name: '我已删除，不再提示' }).click()
+      await after.page.getByRole('button', { name: '更改', exact: true }).click()
+      await expect(after.page.getByText('这个文件夹由OneDrive同步，数据目录不能放在同步文件夹里。')).toBeVisible()
+      await expect
+        .poll(() => after.page.evaluate((): unknown => Reflect.get(window, '__storageCalls')))
+        .toEqual([['reveal'], ['dismiss']])
+      expect(after.errors).toEqual([])
+    } finally {
+      await after.page.close()
+    }
+
+    const locked = await open('/settings/storage', {
+      before: (page) =>
+        install(page, { available: false, lockedBy: 'environment', path: current }, { kind: 'cancelled' }),
+    })
+    try {
+      await expect(locked.page.getByText('数据目录由环境变量指定')).toBeVisible()
+      await expect(locked.page.getByRole('button', { name: '更改', exact: true })).toBeDisabled()
+    } finally {
+      await locked.page.close()
+    }
+
+    // Without the Desktop bridge (a browser, or a remote instance) only the backup settings show.
+    const browserOnly = await open('/settings/storage', {
+      before: async (page) => {
+        await page.route('**/api/settings/upgrade-backup', (request) => request.fulfill({ json: backup }))
+      },
+    })
+    try {
+      await expect(browserOnly.page.getByRole('combobox', { name: '升级前备份' })).toBeVisible()
+      await expect(browserOnly.page.getByText('数据目录', { exact: true })).toHaveCount(0)
+    } finally {
+      await browserOnly.page.close()
+    }
+  })
+
   test('lists sections one level deep, overviews providers and opens one in the main area', async () => {
     const { page, errors } = await open('/settings/models')
     try {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
-      await expect(list.getByRole('link')).toHaveCount(16)
+      await expect(list.getByRole('link')).toHaveCount(17)
       await expect(list.getByRole('link', { name: '聊天命令', exact: true })).toBeVisible()
       await expect(list.getByRole('link', { name: '日志保存' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
@@ -466,7 +604,7 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(17)
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(18)
       const table = page.getByRole('table', { name: '已登录设备' })
       await expect(table).toContainText('浏览器 · Chrome · macOS')
       await expect(table).toContainText('此设备')

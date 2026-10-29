@@ -298,3 +298,26 @@
   color: var(--muted);
   font: var(--t-caption);
 }
+
+/* Data directory paths are long and unbroken; they wrap anywhere and read as paths. */
+.path {
+  display: block;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.movePlan {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--s-2) var(--s-4);
+  margin: 0 0 var(--s-4);
+  font: var(--t-body);
+}
+
+.movePlan dt {
+  color: var(--muted);
+}
+
+.movePlan dd {
+  margin: 0;
+}

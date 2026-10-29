@@ -12,6 +12,7 @@ declare const styles: {
   readonly inlineForm: string
   readonly link: string
   readonly loading: string
+  readonly movePlan: string
   readonly muted: string
   readonly narrowNav: string
   readonly navGroup: string
@@ -19,6 +20,7 @@ declare const styles: {
   readonly note: string
   readonly noteWarn: string
   readonly notice: string
+  readonly path: string
   readonly pickInfo: string
   readonly pickList: string
   readonly providerStatus: string

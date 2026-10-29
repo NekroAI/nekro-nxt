@@ -39,6 +39,7 @@ const PAGES = [
   { name: '设置·DSH 插件', path: '/settings/dsh' },
   { name: '设置·通知', path: '/settings/notifications' },
   { name: '设置·外观', path: '/settings/appearance' },
+  { name: '设置·存储', path: '/settings/storage' },
   { name: '设置·关于', path: '/settings/about' },
 ] as const
 
