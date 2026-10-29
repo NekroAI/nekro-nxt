@@ -81,6 +81,23 @@ export function verifySqliteSnapshot(filename: string): void {
   }
 }
 
+/**
+ * Runs the full `integrity_check` on a SQLite file, reading its WAL too, without writing to the database. Used after a
+ * Desktop data-directory copy; throws with SQLite's first finding.
+ */
+export function verifySqliteIntegrity(filename: string): void {
+  const database = new DatabaseSync(filename, { readOnly: true })
+  try {
+    const checks = z
+      .array(z.object({ integrity_check: z.string() }))
+      .parse(database.prepare('PRAGMA integrity_check').all())
+    if (checks.length !== 1 || checks[0]?.integrity_check !== 'ok')
+      throw new Error(`SQLite integrity_check failed: ${checks[0]?.integrity_check ?? 'no result'}`)
+  } finally {
+    database.close()
+  }
+}
+
 export interface SqliteBackupSource {
   readonly name: string
   readonly filename: string

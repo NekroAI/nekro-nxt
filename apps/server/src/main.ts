@@ -25,6 +25,7 @@ import {
   createSqliteBackupSet,
   readBackupAgentIds,
   preflightDshSessionStorage,
+  verifySqliteIntegrity,
   type SqliteBackupSource,
 } from '@nekro-nxt/storage-sqlite'
 import { createHash, randomUUID } from 'node:crypto'
@@ -998,6 +999,14 @@ if (isEntryPoint()) {
     try {
       const dataRoot = process.env['NEKRO_DATA'] ?? defaultDataRoot()
       const developmentWorkspaceRoot = process.env['NEKRO_DEVELOPMENT_WORKSPACE_ROOT']
+      // Desktop checks the databases of a copied data directory before switching to it; nothing else is started.
+      const checkIndex = process.argv.indexOf('--check-sqlite')
+      if (checkIndex >= 0) {
+        const files = process.argv.slice(checkIndex + 1)
+        if (files.length === 0) throw new Error('--check-sqlite 需要数据库文件路径。')
+        for (const file of files) verifySqliteIntegrity(resolveRoot(file))
+        return
+      }
       const restoreIndex = process.argv.indexOf('--restore-upgrade')
       if (restoreIndex >= 0) {
         const backupId = process.argv[restoreIndex + 1]
