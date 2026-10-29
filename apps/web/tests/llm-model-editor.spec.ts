@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  appendModels,
   emptyModelRow,
+  matchesModelQuery,
   formatTokenCount,
   modelPayload,
   modelRowFromModel,
@@ -52,6 +54,29 @@ describe('model list editor', () => {
     expect(modelsToAdd(rows, [{ id: 'listed' }, { id: 'new-model', inputModalities: ['text', 'image'] }])).toEqual([
       { id: 'new-model', inputModalities: ['text', 'image'] },
     ])
+  })
+
+  it('offers a model the provider lists twice only once', () => {
+    expect(modelsToAdd([], [{ id: 'twice' }, { id: 'once' }, { id: 'twice', name: 'Twice' }])).toEqual([
+      { id: 'twice' },
+      { id: 'once' },
+    ])
+  })
+
+  it('matches every word of a search against the id or display name', () => {
+    expect(matchesModelQuery('', 'synthetic-flash')).toBe(true)
+    expect(matchesModelQuery('FLASH', 'synthetic-flash')).toBe(true)
+    expect(matchesModelQuery('synthetic 快速', 'synthetic-flash', '快速模型')).toBe(true)
+    expect(matchesModelQuery('synthetic pro', 'synthetic-flash')).toBe(false)
+  })
+
+  it('appends picked models and counts the ones already listed', () => {
+    const listed = modelRowFromModel({ id: 'listed' })
+    const result = appendModels([listed], [{ id: 'listed' }, { id: 'fresh', contextWindow: 8192 }])
+    expect(result.added).toBe(1)
+    expect(result.skipped).toBe(1)
+    expect(result.rows.map((row) => row.id)).toEqual(['listed', 'fresh'])
+    expect(result.rows[1]).toMatchObject({ contextWindow: '8192' })
   })
 
   it('reads token counts the way people say them', () => {

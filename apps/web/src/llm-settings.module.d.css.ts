@@ -15,6 +15,8 @@ declare const styles: {
   readonly discoveredHead: string
   readonly fieldError: string
   readonly fields: string
+  readonly listActions: string
+  readonly listTools: string
   readonly loading: string
   readonly modelEditor: string
   readonly muted: string
@@ -24,6 +26,7 @@ declare const styles: {
   readonly removal: string
   readonly removalBlock: string
   readonly removalTitle: string
+  readonly selectBox: string
   readonly srOnly: string
   readonly status: string
   readonly tag: string
