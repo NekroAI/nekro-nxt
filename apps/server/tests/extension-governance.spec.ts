@@ -1603,6 +1603,31 @@ describe('extension autonomy', () => {
     }
   })
 
+  it('settles a waiting request once the agent carries out the same action on its own', async () => {
+    const runtime = await createRuntime()
+    try {
+      const { extensionId } = await importBoth(runtime)
+      const entity = await agentWithChannel(runtime, 'confirm')
+      const actor = { kind: 'agent', agentId: entity.agentId, channelId: entity.channelId } as const
+      const action = { kind: 'enable', extensionId, agentId: entity.agentId } as const
+      const requests = runtime.extensionRequests
+      const asked = requests.create({ action, actor, assessment: runtime.extensionActions.assess(action, actor) })
+      const done = requests.recordAutonomous({
+        action: { ...action, reason: '群友想试试' },
+        actor,
+        assessment: runtime.extensionActions.assess(action, actor),
+        result: { message: '已启用。' },
+      })
+      expect(requests.get(asked.number)).toMatchObject({
+        status: 'completed',
+        result: { message: `智能体已自主完成（#${done.number}）` },
+      })
+      await expect(requests.approve(asked.number, { kind: 'console' })).rejects.toThrow('已经被处理')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('expires requests after a day and rejects with a reason', async () => {
     const runtime = await createRuntime()
     try {
