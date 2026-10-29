@@ -143,6 +143,12 @@
   gap: var(--s-2);
 }
 
+.orderActions {
+  display: inline-flex;
+  flex: none;
+  gap: var(--s-1);
+}
+
 /* The name edits in place in the header; empty names fall back to the saved one on save. */
 .renameForm {
   display: flex;

@@ -380,6 +380,7 @@ const projectConversationMessage = (
     ...(message.scheduledTask === undefined ? {} : { scheduledTask: { ...message.scheduledTask } }),
     ...(message.extensionNotice === undefined ? {} : { extensionNotice: { ...message.extensionNotice } }),
     ...(message.inboundHook === undefined ? {} : { inboundHook: message.inboundHook }),
+    ...(message.outboundProcessing === undefined ? {} : { outboundProcessing: message.outboundProcessing }),
   }
 }
 
@@ -431,6 +432,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     compaction: agent.compaction ?? FOLLOW_COMPACTION,
     subConversationModels: agent.subConversationModels ?? NO_SUB_CONVERSATION_MODELS,
     fallbackModels: agent.fallbackModels ?? [],
+    outboundOrder: agent.outboundOrder ?? [],
     imageDiagnostics: agent.imageDiagnostics,
     appearance: {
       ...(agent.appearance?.hue === undefined ? {} : { hue: agent.appearance.hue }),
@@ -1123,6 +1125,8 @@ export class HttpProductHost implements ProductHostPort {
     'bindings.create': async (body) => this.#mutate(HostApiContracts.createBinding, {}, body),
     'bindings.clear': async ({ channelId }) => this.#mutate(HostApiContracts.clearBinding, { channelId }, undefined),
     'workTreeOrder.put': async (body) => this.#mutate(HostApiContracts.putWorkTreeOrder, {}, body),
+    'agents.putOutboundOrder': async ({ agentId, ...body }) =>
+      this.#mutate(HostApiContracts.putAgentOutboundOrder, { agentId }, body),
     'connections.test': async ({ connectionId, ...body }) =>
       this.#mutate(HostApiContracts.testConnection, { connectionId }, body),
     'dynamic.approve': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.dynamicApprove, { agentId }, body),

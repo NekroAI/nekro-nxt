@@ -13,6 +13,7 @@ import {
   ExtensionRevisionIdSchema,
   HostApiContracts,
   HostUiPageEntrySchema,
+  OutboundIntentIdSchema,
 } from '@nekro-nxt/contracts'
 import { chromium, expect, expect as playwrightExpect, test, type Browser, type Page } from '@playwright/test'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
@@ -2000,6 +2001,106 @@ test.describe('NekroNxt browser projections', () => {
         await page.screenshot({ path: '.local/browser-test-results/channel-inbound-hooks.png' })
       },
       snapshot,
+    )
+  })
+
+  test('marks agent messages an outbound extension changed or appended', async () => {
+    const snapshot = {
+      ...browserSnapshot,
+      messages: [
+        ...browserSnapshot.messages,
+        {
+          id: OutboundIntentIdSchema.parse('out_signed'),
+          channelId: browserChannelId,
+          role: 'agent' as const,
+          parts: [{ type: 'text' as const, text: '明天上午十点开会。（示例署名）' }],
+          occurredAt: 1_725_000_000_600,
+          deliveryState: 'sent' as const,
+          outboundProcessing: { extensions: ['示例署名', '示例翻译'], rewritten: true },
+        },
+        {
+          id: OutboundIntentIdSchema.parse('out_appended'),
+          channelId: browserChannelId,
+          role: 'agent' as const,
+          parts: [{ type: 'text' as const, text: '附：会议室在三楼。' }],
+          occurredAt: 1_725_000_000_700,
+          deliveryState: 'sent' as const,
+          outboundProcessing: { extensions: ['示例补充'], rewritten: false, followUp: true as const },
+        },
+      ],
+    }
+    await withProductPage(
+      `/channels/${browserChannelId}`,
+      async (page) => {
+        await playwrightExpect(page.locator('[data-message-id="out_signed"]')).toContainText(
+          '经 示例署名、示例翻译 处理',
+        )
+        await playwrightExpect(page.locator('[data-message-id="out_appended"]')).toContainText('由 示例补充 追加')
+        await page.screenshot({ path: '.local/screenshots/channel-outbound-processing-1440.png' })
+        await page.setViewportSize({ width: 375, height: 812 })
+        const closeInspector = page.getByRole('button', { name: /^关闭/u }).first()
+        if (await closeInspector.isVisible()) await closeInspector.click()
+        await playwrightExpect(page.locator('[data-message-id="out_signed"]')).toContainText('经 示例署名')
+        await page.locator('[data-message-id="out_appended"]').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: '.local/screenshots/channel-outbound-processing-375.png' })
+      },
+      snapshot,
+    )
+  })
+
+  test('reorders the extensions that process the agent messages before sending', async () => {
+    const [document] = browserSnapshot.extensions
+    const secondId = ExtensionIdSchema.parse('ext_signoff')
+    const secondRevisionId = ExtensionRevisionIdSchema.parse('xrv_signoff')
+    const snapshot = {
+      ...browserSnapshot,
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId ? { ...agent, outboundOrder: [browserExtensionId, secondId] } : agent,
+      ),
+      extensions: [
+        ...browserSnapshot.extensions,
+        {
+          ...document!,
+          id: secondId,
+          slug: 'sign-off',
+          displayName: '示例署名',
+          description: '给消息加上署名',
+          revisions: document!.revisions.map((revision) => ({ ...revision, id: secondRevisionId })).slice(-1),
+          activations: [
+            {
+              agentId: browserAgentId,
+              extensionRevisionId: secondRevisionId,
+              config: {},
+              activatedAt: 1_725_000_000_100,
+            },
+          ],
+        },
+      ],
+    }
+    const saved: unknown[] = []
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        await playwrightExpect(page.getByText('消息处理顺序')).toBeVisible()
+        await playwrightExpect(page.getByText('1. 文档复核')).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '上移文档复核' })).toBeDisabled()
+        await playwrightExpect(page.getByRole('button', { name: '下移示例署名' })).toBeDisabled()
+        await page.getByText('消息处理顺序').scrollIntoViewIfNeeded()
+        await page.screenshot({ path: '.local/screenshots/agent-outbound-order-1440.png' })
+        await page.setViewportSize({ width: 375, height: 812 })
+        await page.getByText('2. 示例署名').evaluate((element) => element.scrollIntoView({ block: 'center' }))
+        await page.screenshot({ path: '.local/screenshots/agent-outbound-order-375.png' })
+        await page.getByRole('button', { name: '下移文档复核' }).click()
+        await playwrightExpect.poll(() => saved).toEqual([{ extensionIds: [secondId, browserExtensionId] }])
+      },
+      snapshot,
+      async (page) => {
+        await page.route('**/api/agents/*/outbound-order', async (request) => {
+          const body: unknown = request.request().postDataJSON()
+          saved.push(body)
+          await request.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+        })
+      },
     )
   })
 
