@@ -15,6 +15,7 @@ import {
   type AdapterTransportService,
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
+import { prepareDataRootMoveRollover } from './data-root-move.js'
 import { ChannelRuntime, type ExtensionJobFiring, type InboundHookDecision } from '@nekro-nxt/channel-runtime'
 import { adapterSupportsPart, isAdminConsoleOutbound, UNSUPPORTED_PART } from '@nekro-nxt/channel-runtime'
 import { ExtensionOutboundProcessor, outboundOrderFor } from './extension-outbound.js'
@@ -595,6 +596,16 @@ export class NekroRuntime {
       if (sessionStoragePreparation.kind === 'archived') {
         await completeDshSessionStoragePreparation(options.sessionDatabasePath, sessionStoragePreparation.migrationId)
       }
+      const dataRootMoveRollover = await prepareDataRootMoveRollover({
+        dataRoot: path.dirname(options.coreDatabasePath),
+        store: {
+          getSystemSetting: (key) => repository.getSystemSetting(key),
+          putSystemSetting: (key, value, revision, updatedAt) =>
+            repository.putSystemSetting(key, value, revision, updatedAt),
+          listRecoverableEpisodes: () => repository.listRecoverableEpisodes(),
+        },
+        now,
+      })
       const assetService = new AssetService(repository, options.assetRoot)
       const authoringWorkspaceRoot =
         options.developmentWorkspaceRoot ?? path.join(path.dirname(options.coreDatabasePath), 'workspaces')
@@ -1283,6 +1294,7 @@ export class NekroRuntime {
         now,
         nextUlid,
         idleRolloverMs: options.idleRolloverMs ?? 6 * 60 * 60 * 1000,
+        pendingRollover: dataRootMoveRollover,
         messageGapMs: (_channelId, parts) =>
           messageGapMs(readMessagePacing({ get: (key) => repository.getSystemSetting(key) }), parts),
         resolveAdapter: (id): AdapterConnectionRuntime | undefined => adapterRuntimes.get(id),

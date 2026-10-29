@@ -16,5 +16,7 @@ await Promise.all(
     'startup.html',
     'startup.css',
     'startup.js',
+    'data-move-view.html',
+    'data-move-view.js',
   ].map((name) => copyFile(path.join(root, 'src', name), path.join(root, 'dist', name))),
 )

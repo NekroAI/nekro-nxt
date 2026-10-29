@@ -428,6 +428,14 @@ export interface ChannelRuntimeOptions {
     overrides: Readonly<Record<string, boolean>>,
   ) => void
   readonly idleRolloverMs?: number | false
+  /**
+   * Episodes the Host wants handed off on their next message, such as every live one after the data directory moved.
+   * `settle` runs once the handoff is committed.
+   */
+  readonly pendingRollover?: {
+    readonly reasonFor: (episode: EpisodeRecord) => EpisodeCloseReason | undefined
+    readonly settle: (episodeId: EpisodeId) => void
+  }
   /** Pause before a message that follows another one in the same channel, counted from when the earlier one was sent. */
   readonly messageGapMs?: (channelId: ChannelId, parts: readonly MessagePart[]) => number
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
@@ -605,6 +613,7 @@ export class ChannelRuntime {
   readonly #now: () => number
   readonly #nextUlid: () => string
   readonly #idleRolloverMs: number | false
+  readonly #pendingRollover: ChannelRuntimeOptions['pendingRollover']
   readonly #lanes = new Map<string, Promise<void>>()
   readonly #bindingTransitions = new Map<ChannelId, Promise<void>>()
   readonly #factListeners = new Set<(fact: ChannelFact) => void>()
@@ -633,6 +642,7 @@ export class ChannelRuntime {
     this.#now = options.now ?? Date.now
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
     this.#idleRolloverMs = options.idleRolloverMs ?? 6 * 60 * 60 * 1000
+    this.#pendingRollover = options.pendingRollover
     this.#interactions = new ChannelInteractions(
       core,
       coreRepository,
@@ -1778,7 +1788,7 @@ export class ChannelRuntime {
     if (!current) throw new Error(`Episode agent no longer exists: ${episode.agentId}`)
     const previousRevision = this.#coreRepository.getAgentRevision(episode.agentRevisionId)
     if (!previousRevision) throw new Error(`Episode Agent Revision no longer exists: ${episode.agentRevisionId}`)
-    let reason: EpisodeCloseReason | undefined = forcedReason
+    let reason: EpisodeCloseReason | undefined = forcedReason ?? this.#pendingRollover?.reasonFor(episode)
     if (reason === undefined && !isSessionCompatibleRevision(previousRevision, current.revision)) {
       reason = 'incompatible-revision'
     }
@@ -1853,6 +1863,7 @@ export class ChannelRuntime {
       nextEpisode,
       handoff,
     })
+    this.#pendingRollover?.settle(episode.id)
     this.#feedback.markEndReason(episode.id, reason === 'idle-timeout' ? 'timeout' : 'cancelled')
     await this.#sessionDriver.cancelSession(episode.dshSessionId, reason)
     await this.#feedback.cleanupEpisodeFeedback(episode.id)

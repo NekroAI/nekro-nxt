@@ -1,12 +1,27 @@
-import { app, dialog, utilityProcess, type BrowserWindow, type UtilityProcess } from 'electron'
-import { readFileSync } from 'node:fs'
+import { app, dialog, shell, utilityProcess, type BrowserWindow, type UtilityProcess } from 'electron'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { DataDirectoryService } from './data-directory-service.js'
+import { dataLocationFiles, resolveDesktopUserData } from './data-location.js'
+import {
+  decideStartup,
+  moveOwnerAlive,
+  parseDataMoveRecord,
+  processAlive,
+  removeMigrationSession,
+  serializeDataMoveRecord,
+  type DataMoveRecord,
+  withoutRewrites,
+  type StartupDecision,
+} from './data-move.js'
+import { runDataMoveMode } from './data-move-mode.js'
+import { DataMoveWindow, type DataMoveViewState } from './data-move-window.js'
+import { systemStorageFacts } from './storage-location.js'
 import {
   desktopDataRoot,
-  desktopUserDataRoot,
   getDesktopDistribution,
   parseProductRelease,
   resolveProductReleasePath,
@@ -267,13 +282,185 @@ const stopProductHost = async (): Promise<void> => {
 const productRelease = readProductRelease()
 const desktopDistribution = getDesktopDistribution(productRelease.channel)
 app.setName(desktopDistribution.productName)
-app.setPath(
-  'userData',
-  desktopUserDataRoot(app.getPath('appData'), desktopDistribution, process.env['NEKRO_DESKTOP_USER_DATA']),
-)
 
-const gotLock = app.requestSingleInstanceLock()
-if (!gotLock) app.quit()
+// The data directory is decided here, before anything opens it: environment override, then the pointer written by
+// Settings → 存储, then the default. An unfinished move is finished or undone first (docs/guide/desktop.md).
+const MOVE_FLAG = '--nxt-move-data'
+const locationFiles = dataLocationFiles(app.getPath('appData'), desktopDistribution)
+const readTextSync = (file: string): string | undefined => {
+  try {
+    return readFileSync(file, 'utf8')
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+const writeTextSync = (file: string, text: string): void => {
+  const temporary = `${file}.tmp-${process.pid}`
+  writeFileSync(temporary, text, { mode: 0o600 })
+  renameSync(temporary, file)
+}
+const userDataResolution = resolveDesktopUserData({
+  appDataRoot: app.getPath('appData'),
+  distribution: desktopDistribution,
+  override: process.env['NEKRO_DESKTOP_USER_DATA'],
+  readText: readTextSync,
+})
+const readMoveRecordSync = (): DataMoveRecord | undefined => {
+  try {
+    const text = readTextSync(locationFiles.record)
+    return text === undefined ? undefined : parseDataMoveRecord(text)
+  } catch (error) {
+    // A damaged record is ignored: the pointer alone decides where to start.
+    console.error('[desktop] 数据目录迁移记录无法读取，按当前目录启动。', error)
+    return undefined
+  }
+}
+const startupMove: StartupDecision = (() => {
+  if (userDataResolution.source === 'environment') return { kind: 'normal' }
+  const record = readMoveRecordSync()
+  return decideStartup({
+    record,
+    migrationFlag: process.argv.includes(MOVE_FLAG),
+    pointerRoot: userDataResolution.root,
+    ownerAlive: record !== undefined && moveOwnerAlive(record, Date.now(), processAlive),
+  })
+})()
+const dataMoveMode = startupMove.kind === 'migrate' || startupMove.kind === 'undo'
+const exitBeforeStart = (title: string, detail: string): void => {
+  dialog.showErrorBox(title, detail)
+  app.exit(0)
+}
+let startupBlocked = false
+if (userDataResolution.pointerProblem !== undefined) {
+  startupBlocked = true
+  exitBeforeStart(
+    'NekroNXT 无法确定数据目录',
+    `无法读取 ${locationFiles.pointer}。修复或删除这个文件后重新打开；删除后会从默认位置 ${userDataResolution.defaultRoot} 启动。`,
+  )
+} else if (startupMove.kind === 'busy') {
+  startupBlocked = true
+  exitBeforeStart('NekroNXT 正在更改数据目录', '完成后会自动打开。')
+} else if (startupMove.kind === 'finish' || startupMove.kind === 'abandon') {
+  const record = withoutRewrites(startupMove.record)
+  try {
+    writeTextSync(
+      locationFiles.record,
+      serializeDataMoveRecord(
+        startupMove.kind === 'finish'
+          ? { ...record, phase: 'completed', finishedAt: record.finishedAt ?? Date.now() }
+          : {
+              ...record,
+              phase: 'failed',
+              failure: { message: '更改数据目录没有开始，数据目录没有变化。' },
+              finishedAt: Date.now(),
+            },
+      ),
+    )
+  } catch (error) {
+    console.error('[desktop] 无法更新数据目录迁移记录。', error)
+  }
+}
+if (
+  !startupBlocked &&
+  !dataMoveMode &&
+  userDataResolution.source === 'pointer' &&
+  !existsSync(userDataResolution.root)
+) {
+  startupBlocked = true
+  exitBeforeStart(
+    'NekroNXT 找不到数据目录',
+    `数据目录 ${userDataResolution.root} 不存在。如果它在外置盘上，连接后重新打开 NekroNXT。`,
+  )
+}
+app.setPath('userData', dataMoveMode ? locationFiles.migrationSession : userDataResolution.root)
+
+const gotLock = !startupBlocked && app.requestSingleInstanceLock()
+if (!gotLock && !startupBlocked) app.quit()
+
+/** Starts the app again without the migration flag and ends this process. */
+const relaunchNormally = (extra: readonly string[] = []): void => {
+  app.releaseSingleInstanceLock()
+  app.relaunch({ args: [...process.argv.slice(1).filter((arg) => arg !== MOVE_FLAG), ...extra] })
+  app.exit(0)
+}
+
+const dataDirectory = new DataDirectoryService({
+  userData: userDataResolution.root,
+  source: userDataResolution.source,
+  files: locationFiles,
+  storage: systemStorageFacts(),
+  pickDirectory: async () => {
+    const options = {
+      title: '选择新的数据目录',
+      buttonLabel: '选择',
+      properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+    }
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
+    return result.canceled ? undefined : result.filePaths[0]
+  },
+  stopHost: stopProductHost,
+  relaunchForMove: () => relaunchNormally([MOVE_FLAG]),
+  showItemInFolder: (target) => shell.showItemInFolder(target),
+})
+
+/**
+ * Runs `integrity_check` on a copied database in the bundled server runtime, which owns SQLite access; the main process
+ * opens no database itself.
+ */
+const checkSqliteWithServer = (file: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const child = utilityProcess.fork(serverEntry(), ['--check-sqlite', file], {
+      serviceName: 'NekroNXT Data Check',
+      stdio: 'pipe',
+      env: { ...process.env, NEKRO_DATA: path.dirname(file) },
+    })
+    let output = ''
+    child.stderr?.on('data', (chunk: Uint8Array) => {
+      output += Buffer.from(chunk).toString('utf8')
+    })
+    child.once('exit', (code) => {
+      if (code === 0) resolve()
+      else {
+        const reason = output
+          .trim()
+          .split('\n')
+          .at(-1)
+          ?.replace(/^\[nekro-nxt\] 启动失败：\s*/u, '')
+        reject(new Error(reason || `exit ${code}`))
+      }
+    })
+  })
+
+const runMigrationWindow = async (decision: Extract<StartupDecision, { kind: 'migrate' | 'undo' }>): Promise<void> => {
+  const record = decision.record
+  const diagnostics = [
+    `迁移记录：${locationFiles.record}`,
+    `编号：${record.id}`,
+    `方式：${record.method === 'move' ? '同盘移动' : '复制并校验'}`,
+    `原目录：${record.source}`,
+    `新目录：${record.target}`,
+  ].join('\n')
+  const initial: DataMoveViewState = {
+    mode: decision.kind === 'undo' ? 'undoing' : 'moving',
+    method: record.method,
+    source: record.source,
+    target: record.target,
+    diagnostics,
+  }
+  const moveWindow = new DataMoveWindow(initial, () => relaunchNormally())
+  await moveWindow.load()
+  moveWindow.window.show()
+  const result = await runDataMoveMode({
+    files: locationFiles,
+    record,
+    kind: decision.kind,
+    publish: (state) => moveWindow.update({ ...state, diagnostics }),
+    checkSqlite: checkSqliteWithServer,
+    relaunch: () => relaunchNormally(),
+  })
+  if (result === 'stopped') moveWindow.allowClose()
+}
 
 app.on('second-instance', () => {
   windowLifecycle?.show()
@@ -289,6 +476,7 @@ const launchProduct = async (): Promise<void> => {
       localOrigin: origin,
       release: productRelease,
       localHostStatus: localHostLifecycle.status,
+      dataDirectory,
     })
     if (cancelled || quitting) {
       manager.dispose()
@@ -372,6 +560,11 @@ void app
   .then(async () => {
     if (!gotLock || quitting) return
     app.setAppUserModelId(desktopDistribution.appId)
+    if (startupMove.kind === 'migrate' || startupMove.kind === 'undo') {
+      await runMigrationWindow(startupMove)
+      return
+    }
+    if (userDataResolution.source !== 'environment') void removeMigrationSession(locationFiles.migrationSession)
     windowLifecycle = new DesktopWindowLifecycle({
       platform: process.platform,
       isQuitting: () => quitting,
@@ -396,7 +589,7 @@ app.on('activate', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin' || dataMoveMode) app.quit()
 })
 
 app.on('before-quit', (event) => {

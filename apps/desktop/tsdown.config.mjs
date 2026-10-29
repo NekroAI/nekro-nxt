@@ -10,7 +10,7 @@ export default defineConfig([
     sourcemap: true,
   },
   {
-    entry: ['src/product-preload.ts', 'src/overlay-preload.ts', 'src/startup-preload.ts'],
+    entry: ['src/product-preload.ts', 'src/overlay-preload.ts', 'src/startup-preload.ts', 'src/data-move-preload.ts'],
     deps: { neverBundle: ['electron'] },
     format: ['cjs'],
     clean: false,
