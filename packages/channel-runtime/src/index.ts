@@ -33,6 +33,7 @@ import type {
 import { canonicalJson } from '@nekro-nxt/core'
 import { monotonicFactory } from 'ulid'
 import { ChannelDelivery } from './channel-delivery.js'
+export { supportsPart as adapterSupportsPart, UNSUPPORTED_PART } from './channel-delivery.js'
 import { ChannelInteractions } from './channel-interactions.js'
 import { ProcessingFeedback } from './processing-feedback.js'
 
@@ -435,6 +436,11 @@ export interface ChannelRuntimeOptions {
   readonly inboundHooks?: InboundHookGate
   /** Rewrites an inbound event before it is stored, such as hiding known secrets the sender pasted. */
   readonly sanitizeInbound?: (event: AdapterChannelInboundEvent) => AdapterChannelInboundEvent
+  /**
+   * Called each time an outbound message's delivery settles, including messages recovered after a restart and
+   * redispatched ones; the callee keeps its own once-only marker. Must not throw or block.
+   */
+  readonly onOutboundSettled?: (snapshot: OutboundSnapshot) => void
 }
 
 export type ContextResetMode = 'clear' | 'compact'
@@ -483,6 +489,11 @@ export interface SendMessageInput {
   readonly sourceTurnId?: string
   readonly clientRequestId?: string
   readonly signal?: AbortSignal
+  /** Called synchronously once the message is planned, before delivery starts; not called for a repeated request. */
+  readonly onIntentPlanned?: (intent: {
+    readonly id: OutboundIntentId
+    readonly logicalMessageId: LogicalMessageId
+  }) => void
 }
 
 export interface SendMessageResult {
@@ -643,6 +654,7 @@ export class ChannelRuntime {
       this.#nextUlid,
       (fact) => this.#publishFact(fact),
       { gapMs: options.messageGapMs ?? (() => 0), ...(options.sleep === undefined ? {} : { sleep: options.sleep }) },
+      options.onOutboundSettled,
     )
     if (this.#idleRolloverMs !== false && (!Number.isSafeInteger(this.#idleRolloverMs) || this.#idleRolloverMs <= 0)) {
       throw new TypeError('idleRolloverMs must be a positive integer or false.')

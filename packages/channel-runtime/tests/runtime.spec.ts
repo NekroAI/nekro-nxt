@@ -649,6 +649,7 @@ const setup = async (
     | 'messageGapMs'
     | 'sleep'
     | 'sanitizeInbound'
+    | 'onOutboundSettled'
   > = {},
 ) => {
   const coreRepository = new MemoryCoreRepository()
@@ -2214,6 +2215,42 @@ describe('ChannelRuntime M1 lane', () => {
     })
     expect(context.runtimeRepository.getOutbound(outbound.intent.id).intent.state).toBe('unknown')
     expect(context.adapter.deliveries).toHaveLength(deliveriesBeforeRecovery)
+  })
+
+  it('reports each settled delivery, recovered ones too, and tells the sender which message it planned', async () => {
+    const settled: string[] = []
+    const context = await setup(true, undefined, undefined, undefined, {
+      onOutboundSettled: (snapshot) => settled.push(`${snapshot.intent.id}:${snapshot.intent.state}`),
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const planned: string[] = []
+    const result = await context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts: [{ type: 'text', text: '第一条' }],
+      clientRequestId: 'settled-outbound',
+      onIntentPlanned: (intent) => planned.push(intent.logicalMessageId),
+    })
+    expect(planned).toEqual([result.logicalMessageId])
+    const outbound = [...context.runtimeRepository.outbounds.values()][0]!
+    expect(settled).toEqual([`${outbound.intent.id}:sent`])
+
+    // A repeated request is answered from the stored message and plans nothing.
+    await context.runtime.sendMessage({
+      episodeId: episode.id,
+      parts: [{ type: 'text', text: '第一条' }],
+      clientRequestId: 'settled-outbound',
+      onIntentPlanned: (intent) => planned.push(intent.logicalMessageId),
+    })
+    expect(planned).toHaveLength(1)
+
+    context.runtimeRepository.outbounds.set(outbound.intent.id, {
+      intent: { ...outbound.intent, state: 'sending' },
+      deliveries: outbound.deliveries.map((delivery) => ({ ...delivery, state: 'sending' as const })),
+      receipts: [],
+    })
+    await context.runtime.recover()
+    expect(settled).toEqual([`${outbound.intent.id}:sent`, `${outbound.intent.id}:unknown`])
   })
 
   it('closes only the Episode whose stored conversation cannot be read and keeps recovering the rest', async () => {

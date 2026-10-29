@@ -17,7 +17,8 @@ import type {
   SendMessageResult,
 } from './index.js'
 import type { ProcessingFeedback } from './processing-feedback.js'
-const supportsPart = (adapter: AdapterConnectionRuntime, part: MessagePart): boolean => {
+/** Whether the connection can send this kind of part; the agent never sends `rich` parts. */
+export const supportsPart = (adapter: AdapterConnectionRuntime, part: MessagePart): boolean => {
   switch (part.type) {
     case 'text':
       return adapter.capabilities.outbound.text
@@ -36,7 +37,7 @@ const supportsPart = (adapter: AdapterConnectionRuntime, part: MessagePart): boo
   }
 }
 /** What the agent reads when a platform cannot carry a part; it says what to do instead. */
-const UNSUPPORTED_PART: Readonly<Record<MessagePart['type'], string>> = {
+export const UNSUPPORTED_PART: Readonly<Record<MessagePart['type'], string>> = {
   text: '这个平台不能发送文字消息。',
   mention: '这个平台不支持在消息里 @ 成员，请直接写对方的名字。',
   image: '这个平台不能发送图片，请改用文字说明。',
@@ -60,6 +61,7 @@ export class ChannelDelivery {
   readonly #publishFact: (fact: ChannelFact) => void
   readonly #pacing: DeliveryPacing
   readonly #lastSentAt = new Map<ChannelId, number>()
+  readonly #settled: ((snapshot: OutboundSnapshot) => void) | undefined
   constructor(
     repository: CoreRepository,
     runtime: RuntimeRepository,
@@ -69,7 +71,9 @@ export class ChannelDelivery {
     nextUlid: () => string,
     publish: (fact: ChannelFact) => void,
     pacing: DeliveryPacing = { gapMs: () => 0 },
+    settled?: (snapshot: OutboundSnapshot) => void,
   ) {
+    this.#settled = settled
     this.#coreRepository = repository
     this.#runtimeRepository = runtime
     this.#resolveAdapter = resolveAdapter
@@ -130,6 +134,7 @@ export class ChannelDelivery {
       readonly sourceTurnId?: string
       readonly clientRequestId?: string
       readonly signal?: AbortSignal
+      readonly onIntentPlanned?: SendMessageInput['onIntentPlanned']
     },
     channelId: ChannelId,
     episode?: EpisodeRecord,
@@ -237,6 +242,7 @@ export class ChannelDelivery {
     )
     this.#runtimeRepository.createOutboundPlan(intent, deliveries)
     command?.onPlanned(intent.id)
+    input.onIntentPlanned?.({ id: intent.id, logicalMessageId: intent.logicalMessageId })
     this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: intent.id })
     const settled = await this.dispatchOutbound(intent.id, input.signal ?? new AbortController().signal)
     this.#lastSentAt.set(channel.id, this.#timestamp())
@@ -338,7 +344,13 @@ export class ChannelDelivery {
     const state = this.#aggregate(this.#runtimeRepository.getOutbound(id).receipts)
     this.#runtimeRepository.completeOutboundIntent(id, state)
     this.#publishFact({ channelId: channel.id, kind: 'outbound', sourceId: id })
-    return { snapshot: this.#runtimeRepository.getOutbound(id), unknownDeliveries }
+    const completed = this.#runtimeRepository.getOutbound(id)
+    try {
+      this.#settled?.(completed)
+    } catch {
+      // Observers keep their own error reporting; a failing one never affects delivery.
+    }
+    return { snapshot: completed, unknownDeliveries }
   }
 
   #aggregate(receipts: readonly DeliveryReceiptRecord[]): OutboundState {
