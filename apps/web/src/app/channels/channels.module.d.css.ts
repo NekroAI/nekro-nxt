@@ -142,6 +142,8 @@ declare const styles: {
   readonly toolStep: string
   readonly turn: string
   readonly turnHead: string
+  readonly turnRecovery: string
+  readonly turnRecoveryActions: string
   readonly turnRunning: string
   readonly turnStop: string
   readonly turnTrigger: string

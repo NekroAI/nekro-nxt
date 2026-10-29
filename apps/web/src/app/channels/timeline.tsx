@@ -20,6 +20,7 @@ import { AgentAvatar, Button, Chip, Pressable, ShimmerText, Spinner, cssVars } f
 import { MemberAvatar } from '../../ui-kit/avatar.js'
 import { agentAccent, agentHue } from '../model/identity.js'
 import styles from './channels.module.css'
+import type { ContextReset } from './context-reset-dialog.js'
 import { ToolDetail } from './tool-detail.js'
 import { toolSummary } from './tool-presenter.js'
 import { formatDuration, formatTokens, isTurnRunning, isUnconfirmed, type RuntimeTurn } from './timeline-model.js'
@@ -489,6 +490,30 @@ export function CompactionRow({
   )
 }
 
+export interface TurnRecovery {
+  /** Failed turns in a row, counting this one. */
+  readonly failedInARow: number
+  readonly onReset: (reset: ContextReset) => void
+}
+
+/** The way out of a failure that repeats: after two in a row, clearing is offered first. */
+function RecoveryActions({ recovery }: { readonly recovery: TurnRecovery }) {
+  const repeated = recovery.failedInARow >= 2
+  return (
+    <div className={styles.turnRecovery}>
+      {repeated ? <p>连续 {recovery.failedInARow} 轮失败，清空上下文通常能恢复。</p> : null}
+      <span className={styles.turnRecoveryActions}>
+        <Button size="small" variant={repeated ? 'default' : 'primary'} onClick={() => recovery.onReset('compact')}>
+          压缩上下文
+        </Button>
+        <Button size="small" variant={repeated ? 'primary' : 'default'} onClick={() => recovery.onReset('clear')}>
+          清空上下文
+        </Button>
+      </span>
+    </div>
+  )
+}
+
 export function TurnRow({
   turn,
   agent,
@@ -498,6 +523,7 @@ export function TurnRow({
   animateXray,
   startedAt,
   onStop,
+  recovery,
 }: {
   readonly turn: RuntimeTurn
   readonly agent: AgentSummary | undefined
@@ -509,6 +535,8 @@ export function TurnRow({
   readonly animateXray: boolean
   readonly startedAt?: number | undefined
   readonly onStop?: (() => void) | undefined
+  /** Offered on the failed turn that left the agent unavailable. */
+  readonly recovery?: TurnRecovery | undefined
 }) {
   const running = isTurnRunning(turn)
   const tools = turn.steps.flatMap((step) => step.tools)
@@ -550,6 +578,7 @@ export function TurnRow({
           </Button>
         ) : null}
       </div>
+      {recovery ? <RecoveryActions recovery={recovery} /> : null}
       {xray ? (
         <div className={[styles.xray, animateXray ? styles.xrayIn : ''].join(' ')}>
           {(turn.inputs ?? []).map((input) => (
