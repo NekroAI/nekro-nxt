@@ -64,6 +64,9 @@ const hostUiPage = (id: string, visible = true) =>
     createdAt: 1,
     updatedAt: 1,
   })
+/** Community catalog reads carry when the instance fetched them. */
+const freshRead = { fetchedAt: 1_790_000_000_000, stale: false }
+
 const browserSnapshot = HostApiContracts.snapshot.response.parse({
   cursor: { epoch: 'fixture', sequence: 0 },
   diagnosticsSampledAt: 0,
@@ -549,12 +552,14 @@ test.describe('NekroNxt browser projections', () => {
     verify: (page: Page) => Promise<void>,
     snapshot: unknown = browserSnapshot,
     setup?: (page: Page) => Promise<void>,
+    /** Failed responses the test serves on purpose; the browser logs them as console errors. */
+    expectedFailure?: RegExp,
   ): Promise<void> => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     const runtimeErrors: string[] = []
     page.on('pageerror', (error) => runtimeErrors.push(error.message))
     page.on('console', (message) => {
-      if (message.type() === 'error') {
+      if (message.type() === 'error' && !expectedFailure?.test(message.text())) {
         const location = message.location().url
         runtimeErrors.push(location ? `${message.text()} (${location})` : message.text())
       }
@@ -1350,15 +1355,16 @@ test.describe('NekroNxt browser projections', () => {
         )
         await page.route('**/api/community/extensions?**', (request) => {
           listRequests.push(request.request().url())
-          return request.fulfill({ json: { items: [summary], nextCursor: null } })
+          return request.fulfill({ json: { items: [summary], nextCursor: null, ...freshRead } })
         })
         await page.route('**/api/community/extensions', (request) =>
-          request.fulfill({ json: { items: [summary], nextCursor: null } }),
+          request.fulfill({ json: { items: [summary], nextCursor: null, ...freshRead } }),
         )
         await page.route('**/api/community/extensions/ext_communityweather', (request) =>
           request.fulfill({
             json: {
               ...summary,
+              ...freshRead,
               description: '## 用法\n\n问 **示例市** 的天气。<script>alert(1)</script>',
               sourceUrl: 'https://example.com/community-weather',
               review: {
@@ -1442,15 +1448,192 @@ test.describe('NekroNxt browser projections', () => {
           }),
         )
         await page.route('**/api/community/extensions?**', (request) =>
-          request.fulfill({ json: { items: [future], nextCursor: null } }),
+          request.fulfill({ json: { items: [future], nextCursor: null, ...freshRead } }),
         )
         await page.route('**/api/community/extensions', (request) =>
-          request.fulfill({ json: { items: [future], nextCursor: null } }),
+          request.fulfill({ json: { items: [future], nextCursor: null, ...freshRead } }),
         )
         await page.route('**/api/community/extensions/ext_communityfuture', (request) =>
-          request.fulfill({ json: { ...future, description: '', sourceUrl: null, review: null } }),
+          request.fulfill({ json: { ...future, ...freshRead, description: '', sourceUrl: null, review: null } }),
         )
       },
+    )
+  })
+
+  const catalogItem = (id: string, displayName: string) => ({
+    id,
+    provides: ['agent'],
+    displayName,
+    summary: '示例扩展。',
+    tags: [],
+    iconUrl: null,
+    official: false,
+    publisher: { handle: 'demo-author', displayName: '示例作者', avatarUrl: null },
+    latest: null,
+    downloads: 0,
+    updatedAt: 1_790_000_000_000,
+    pageUrl: `https://community.example.test/extensions/${id}`,
+  })
+  const signedOutStatus = {
+    communityUrl: 'https://community.example.test',
+    environment: 'staging',
+    account: null,
+    signedInAt: null,
+    updatesAvailable: 0,
+  }
+
+  test('marks community extensions installed here, and updatable only when a newer release is offered', async () => {
+    const local = browserSnapshot.extensions[0]!
+    const installed = ['ext_catalogsame', 'ext_catalognewer', 'ext_catalogdiverged', 'ext_catalogdismissed']
+    const snapshot = {
+      ...browserSnapshot,
+      extensions: [
+        ...browserSnapshot.extensions,
+        ...installed.map((id) => ({ ...local, id, slug: id.slice(4), displayName: id })),
+      ],
+    }
+    const syncItem = (extensionId: string, status: string, dismissed = false) => ({
+      extensionId,
+      displayName: extensionId,
+      communityUrl: 'https://community.example.test',
+      role: 'subscriber',
+      currentRevisionId: 'xrv_catalogcurrent',
+      currentVersionLabel: 'v1',
+      currentRelease: null,
+      status,
+      found: true,
+      delisted: false,
+      delistedReason: null,
+      releaseWithdrawn: false,
+      latest: null,
+      dismissed,
+      addedPermissions: [],
+    })
+    const card = (page: Page, name: string) => page.getByRole('link', { name: new RegExp(name, 'u') })
+    await withProductPage(
+      '/community',
+      async (page) => {
+        await playwrightExpect(card(page, '有更新的扩展')).toContainText('可更新')
+        await playwrightExpect(card(page, '有更新的扩展')).not.toContainText('已安装')
+        for (const name of ['同步的扩展', '两边都改过的扩展', '保留本地修改的扩展']) {
+          await playwrightExpect(card(page, name)).toContainText('已安装')
+          await playwrightExpect(card(page, name)).not.toContainText('可更新')
+        }
+        await playwrightExpect(card(page, '未安装的扩展')).not.toContainText(/已安装|可更新/u)
+        await page.screenshot({ path: '.local/community-discover-1440.png' })
+        await page.setViewportSize({ width: 375, height: 812 })
+        await playwrightExpect(card(page, '有更新的扩展')).toBeVisible()
+        await page.screenshot({ path: '.local/community-discover-375.png', fullPage: true })
+      },
+      snapshot,
+      async (page) => {
+        await page.route('**/api/community/status', (request) =>
+          request.fulfill({ json: { ...signedOutStatus, updatesAvailable: 2 } }),
+        )
+        await page.route('**/api/community/sync', (request) =>
+          request.fulfill({
+            json: {
+              checkedAt: 1_790_000_000_000,
+              items: [
+                syncItem('ext_catalogsame', 'same'),
+                syncItem('ext_catalognewer', 'remote-ahead'),
+                syncItem('ext_catalogdiverged', 'diverged'),
+                syncItem('ext_catalogdismissed', 'remote-ahead', true),
+              ],
+            },
+          }),
+        )
+        await page.route('**/api/community/extensions**', (request) =>
+          request.fulfill({
+            json: {
+              items: [
+                catalogItem('ext_catalogsame', '同步的扩展'),
+                catalogItem('ext_catalognewer', '有更新的扩展'),
+                catalogItem('ext_catalogdiverged', '两边都改过的扩展'),
+                catalogItem('ext_catalogdismissed', '保留本地修改的扩展'),
+                catalogItem('ext_catalogremote', '未安装的扩展'),
+              ],
+              nextCursor: null,
+              ...freshRead,
+            },
+          }),
+        )
+      },
+    )
+  })
+
+  test('explains why the community could not be read, retries, and marks an older copy with its time', async () => {
+    const listRequests: string[] = []
+    const detailRequests: string[] = []
+    let listReplies = 0
+    const olderCopy = new Date()
+    olderCopy.setHours(14, 5, 0, 0)
+    await withProductPage(
+      '/community',
+      async (page) => {
+        await playwrightExpect(page.getByText('无法连接社区')).toBeVisible()
+        await page.screenshot({ path: '.local/community-discover-failure-1440.png' })
+        await page.setViewportSize({ width: 375, height: 812 })
+        await page.screenshot({ path: '.local/community-discover-failure-375.png' })
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await page.getByRole('button', { name: '重试' }).click()
+        await playwrightExpect(page.getByText('显示的是 14:05 的内容')).toBeVisible()
+        await playwrightExpect(page.getByRole('link', { name: /缓存里的扩展/u })).toBeVisible()
+        expect(listRequests.at(-1)).toContain('refresh=1')
+        await page.screenshot({ path: '.local/community-discover-stale-1440.png' })
+        await page.setViewportSize({ width: 375, height: 812 })
+        await page.screenshot({ path: '.local/community-discover-stale-375.png' })
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await page.getByRole('button', { name: '刷新' }).click()
+        await playwrightExpect(page.getByText(/显示的是/u)).toBeHidden()
+        expect(listRequests.filter((url) => url.includes('refresh=1'))).toHaveLength(2)
+
+        await page.getByRole('link', { name: /缓存里的扩展/u }).click()
+        await playwrightExpect(page.getByText('社区响应超时')).toBeVisible()
+        await page.getByRole('button', { name: '重试' }).click()
+        await playwrightExpect(page.getByRole('heading', { name: '缓存里的扩展' })).toBeVisible()
+        expect(detailRequests).toEqual(['', '?refresh=1'])
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/community/status', (request) => request.fulfill({ json: signedOutStatus }))
+        await page.route('**/api/community/extensions**', (request) => {
+          const url = new URL(request.request().url())
+          if (url.pathname !== '/api/community/extensions') {
+            detailRequests.push(url.search)
+            return url.search
+              ? request.fulfill({
+                  json: {
+                    ...catalogItem('ext_catalogcached', '缓存里的扩展'),
+                    ...freshRead,
+                    description: '',
+                    sourceUrl: null,
+                    review: null,
+                  },
+                })
+              : request.fulfill({
+                  status: 502,
+                  json: { error: { code: 'community-timeout', message: '连接社区超时，请稍后再试。' } },
+                })
+          }
+          listRequests.push(url.search)
+          listReplies += 1
+          if (listReplies === 1)
+            return request.fulfill({
+              status: 502,
+              json: { error: { code: 'community-unreachable', message: '无法连接社区，请检查网络后再试。' } },
+            })
+          return request.fulfill({
+            json: {
+              items: [catalogItem('ext_catalogcached', '缓存里的扩展')],
+              nextCursor: null,
+              fetchedAt: listReplies === 2 ? olderCopy.getTime() : Date.now(),
+              stale: listReplies === 2,
+            },
+          })
+        })
+      },
+      /status of 502/u,
     )
   })
 
@@ -1468,6 +1651,7 @@ test.describe('NekroNxt browser projections', () => {
   }
   const personaDetail = {
     ...personaSummary,
+    ...freshRead,
     description: '## 适合读书会\n会推荐书目，**不会剧透**。',
     persona: '你是一位温柔的图书管理员，说话轻声细语。\n'.repeat(10),
     revision: { id: 'prv_01REV', notes: '', createdAt: 1_790_000_000_000 },
@@ -1486,10 +1670,10 @@ test.describe('NekroNxt browser projections', () => {
       }),
     )
     await page.route('**/api/community/personas?**', (request) =>
-      request.fulfill({ json: { items: [personaSummary], nextCursor: null } }),
+      request.fulfill({ json: { items: [personaSummary], nextCursor: null, ...freshRead } }),
     )
     await page.route('**/api/community/personas', (request) =>
-      request.fulfill({ json: { items: [personaSummary], nextCursor: null } }),
+      request.fulfill({ json: { items: [personaSummary], nextCursor: null, ...freshRead } }),
     )
     await page.route('**/api/community/personas/psn_01LIBRARIAN', (request) => request.fulfill({ json: personaDetail }))
     await page.route('**/api/community/personas/psn_01LIBRARIAN/avatar*', (request) =>

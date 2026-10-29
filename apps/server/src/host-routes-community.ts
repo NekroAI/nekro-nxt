@@ -253,8 +253,15 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
             ...(url.searchParams.get('official') ? { official: url.searchParams.get('official') } : {}),
             ...(url.searchParams.get('sort') ? { sort: url.searchParams.get('sort') } : {}),
             ...(url.searchParams.get('cursor') ? { cursor: url.searchParams.get('cursor') } : {}),
+            ...(url.searchParams.get('refresh') ? { refresh: url.searchParams.get('refresh') } : {}),
           })
-          writeContractJson(res, 200, HostApiContracts.listCommunityExtensions, await community.listExtensions(params))
+          const { refresh, ...query } = params
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.listCommunityExtensions,
+            await community.cachedRead('extensions', query, refresh === '1', () => community.listExtensions(query)),
+          )
           return
         }
         const extensionMatch = /^\/api\/community\/extensions\/([^/]+)$/u.exec(url.pathname)
@@ -264,7 +271,14 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
             return
           }
           const extensionId = ExtensionIdSchema.parse(decodeURIComponent(extensionMatch[1] ?? ''))
-          writeContractJson(res, 200, HostApiContracts.getCommunityExtension, await community.getExtension(extensionId))
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.getCommunityExtension,
+            await community.cachedRead('extension', { extensionId }, url.searchParams.get('refresh') === '1', () =>
+              community.getExtension(extensionId),
+            ),
+          )
           return
         }
         const reviewMatch = /^\/api\/community\/releases\/([^/]+)\/review$/u.exec(url.pathname)

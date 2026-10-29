@@ -258,11 +258,14 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
   )
 }
 
+const needsAction = (item: CommunitySyncItem): boolean =>
+  !item.dismissed && (item.status === 'remote-ahead' || item.status === 'diverged')
+
 /**
- * Lines with something to do (a newer community release, or both sides changed), for the workshop list. Reads the
- * last check without asking the community again.
+ * Lines with something to do (by default a newer community release, or both sides changed), for the workshop list.
+ * Reads the last check without asking the community again.
  */
-export function useCommunityUpdates(): ReadonlySet<string> {
+export function useCommunityUpdates(include: (item: CommunitySyncItem) => boolean = needsAction): ReadonlySet<string> {
   const [ids, setIds] = useState<ReadonlySet<string>>(new Set())
   const extensions = useProductStore((state) => state.extensions.length)
   // The community status already counts lines with updates; the list is only asked for when there are some.
@@ -276,18 +279,12 @@ export function useCommunityUpdates(): ReadonlySet<string> {
     callHostApi(HostApiContracts.listCommunitySync, {}, undefined)
       .then((sync) => {
         if (!live) return
-        setIds(
-          new Set(
-            sync.items
-              .filter((item) => !item.dismissed && (item.status === 'remote-ahead' || item.status === 'diverged'))
-              .map((item) => item.extensionId),
-          ),
-        )
+        setIds(new Set(sync.items.filter(include).map((item) => item.extensionId)))
       })
       .catch(() => undefined)
     return () => {
       live = false
     }
-  }, [extensions, available])
+  }, [extensions, available, include])
   return ids
 }

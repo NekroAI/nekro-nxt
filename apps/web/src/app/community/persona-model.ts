@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { COMMUNITY_PERSONA_AVATAR_MAX_BYTES, HostApiContracts, type CommunityPersonaDetail } from '@nekro-nxt/contracts'
+import { COMMUNITY_PERSONA_AVATAR_MAX_BYTES, HostApiContracts } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
-import { errorMessage } from './community-model.js'
+import { useCommunityRead } from './community-read.js'
 
 /** 与工作台布局一致：1100px 以下列表栏收起，人设详情改为整页。 */
 const WIDE_QUERY = '(min-width: 1100px)'
@@ -21,26 +21,16 @@ export const useWideLayout = (): boolean => {
   return wide
 }
 
-export const usePersonaDetail = (personaId: string) => {
-  const [detail, setDetail] = useState<CommunityPersonaDetail>()
-  const [error, setError] = useState<string>()
-  useEffect(() => {
-    let cancelled = false
-    setDetail(undefined)
-    setError(undefined)
-    callHostApi(HostApiContracts.getCommunityPersona, { personaId }, undefined)
-      .then((result) => {
-        if (!cancelled) setDetail(result)
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) setError(errorMessage(caught))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [personaId])
-  return { detail, error }
-}
+export const usePersonaDetail = (personaId: string) =>
+  useCommunityRead(
+    (refresh) =>
+      callHostApi(
+        HostApiContracts.getCommunityPersona,
+        { personaId, ...(refresh ? { refresh: '1' as const } : {}) },
+        undefined,
+      ),
+    [personaId],
+  )
 
 /** 「温柔, 图书 ，陪伴」→ 去重后的标签。 */
 export const parseTags = (value: string): string[] => [

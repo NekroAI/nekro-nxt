@@ -243,6 +243,9 @@ const createCommunity = () => {
       }
       return new Response(packageBytes)
     }
+    if (url.pathname === '/api/v1/releases/rel_01demo/withdraw' && init.method === 'POST') {
+      return Response.json({ ok: true })
+    }
     if (url.pathname === '/api/v1/releases' && init.method === 'POST') {
       if (new Headers(init.headers).get('authorization') !== `Bearer nxtc_at_${issued}`) {
         return Response.json({ error: { code: 'invalid_token', message: '访问令牌无效。' } }, { status: 401 })
@@ -608,6 +611,55 @@ describe('CommunityService catalog', () => {
       new LocalCredentialStore(path.join(root, 'credentials')),
       { communityUrl: COMMUNITY, fetch: () => Promise.reject(new TypeError('fetch failed')) },
     )
-    await expect(service.listExtensions({})).rejects.toThrow('无法连接社区')
+    await expect(service.listExtensions({})).rejects.toMatchObject({
+      message: '无法连接社区，请检查网络后再试。',
+      code: 'community-unreachable',
+    })
+  })
+})
+
+describe('CommunityService catalog cache', () => {
+  const listingRequests = (requests: { url: URL }[]) =>
+    requests.filter((request) => request.url.pathname === '/api/v1/extensions').length
+
+  it('keys reads by the full query and keeps them until the five minutes run out', async () => {
+    const { service, community, advance } = await createFixture()
+    const list = (query: Record<string, string | undefined>, refresh = false) =>
+      service.cachedRead('extensions', query, refresh, () => service.listExtensions(query))
+    const first = await list({ query: '天气', sort: 'score' })
+    expect(first).toMatchObject({ fetchedAt: 1_790_000_000_000, stale: false })
+    await list({ sort: 'score', query: '天气', cursor: undefined })
+    expect(listingRequests(community.requests)).toBe(1)
+    await list({ query: '天气', sort: 'score', cursor: 'next' })
+    await list({ query: '天气' })
+    expect(listingRequests(community.requests)).toBe(3)
+    advance(5 * 60_000)
+    await list({ query: '天气', sort: 'score' })
+    expect(listingRequests(community.requests)).toBe(4)
+    await list({ query: '天气', sort: 'score' }, true)
+    expect(listingRequests(community.requests)).toBe(5)
+  })
+
+  it('starts over after the address, the sign-in, a publish or a withdrawal changes', async () => {
+    const { service, community, signIn } = await createFixture()
+    const list = () => service.cachedRead('extensions', {}, false, () => service.listExtensions({}))
+    const expectFetched = async (count: number) => {
+      await list()
+      await list()
+      expect(listingRequests(community.requests)).toBe(count)
+    }
+    await expectFetched(1)
+    service.setEndpoint(COMMUNITY, false)
+    await expectFetched(2)
+    await signIn()
+    await expectFetched(3)
+    await service.publish({ filename: 'weather.nxt-extension', body: new Uint8Array([1]), notes: '' })
+    await expectFetched(4)
+    await service.withdraw('rel_01demo')
+    await expectFetched(5)
+    service.invalidateReads()
+    await expectFetched(6)
+    await service.logout()
+    await expectFetched(7)
   })
 })
