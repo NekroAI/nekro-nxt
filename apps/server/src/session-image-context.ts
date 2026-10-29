@@ -7,6 +7,7 @@ import { type Agent } from '@deepseek-ai/dsh-agent'
 import AttachmentStore, {
   AttachmentError,
   AttachmentId,
+  ImageVariantId,
   type ImageAttachmentRef,
   type ImageRequestTarget,
   type RequestImageAttachment,
@@ -87,6 +88,34 @@ export interface AgentImageDiagnostics {
     readonly error?: string
   }
   readonly blockers: readonly string[]
+}
+
+/**
+ * Small pictures reach the request unchanged, and some routes (Grok) reject GIF outright. Every route takes PNG and
+ * WebP, so a GIF goes as its first frame; in chat that is nearly always a sticker, which reads fine as a still.
+ */
+export const stillRequestImage = async (
+  version: RequestImageAttachment,
+  policy: ImageRequestTarget,
+): Promise<RequestImageAttachment> => {
+  if (version.mediaType !== 'image/gif') return version
+  const frame = sharp(version.data, { pages: 1 })
+  let encoded = await frame.clone().png().toBuffer({ resolveWithObject: true })
+  let mediaType: 'image/png' | 'image/webp' = 'image/png'
+  if (encoded.data.byteLength > policy.maxBytes) {
+    encoded = await frame.clone().webp({ quality: 80 }).toBuffer({ resolveWithObject: true })
+    mediaType = 'image/webp'
+  }
+  return {
+    ...version,
+    variantId: ImageVariantId(`${version.variantId}:still-${mediaType === 'image/png' ? 'png' : 'webp'}`),
+    data: new Uint8Array(encoded.data),
+    mediaType,
+    bytes: encoded.data.byteLength,
+    width: encoded.info.width,
+    height: encoded.info.height,
+    hasAlpha: encoded.info.channels === 4,
+  }
 }
 
 export const DSH_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const
@@ -207,7 +236,10 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
         ? { ...policy, width: Math.min(policy.width, 512), height: Math.min(policy.height, 512) }
         : policy
     const stored = await this.readImage(ref, signal)
-    const version = await readRequestImageFile(this.requestImageRoot, stored, effectivePolicy, signal)
+    const version = await stillRequestImage(
+      await readRequestImageFile(this.requestImageRoot, stored, effectivePolicy, signal),
+      effectivePolicy,
+    )
     // The DeepSeek upload index only accepts `sha256:` attachment IDs and drops the whole index when one record
     // does not match, which re-uploads every image on every step. The variant ID is already computed from the
     // Asset reference, so only the identity handed to the provider adapter switches to the content digest.

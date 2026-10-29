@@ -175,6 +175,25 @@ export interface ReleaseSqliteBackupRecord {
 
 const isMissing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT'
 
+const errorCode = (error: unknown): unknown => {
+  for (let current = error, depth = 0; current instanceof Error && depth < 4; current = current.cause, depth += 1) {
+    if ('code' in current && current.code !== undefined) return current.code
+  }
+  return undefined
+}
+
+/**
+ * With a management key the internal web server listens on 127.0.0.1 only, behind the management edge. Some hosts
+ * (Android containers) refuse loopback binds; say so instead of a bare `listen EPERM`.
+ */
+export const explainLoopbackBindFailure = (error: unknown): unknown => {
+  const code = errorCode(error)
+  if (code !== 'EPERM' && code !== 'EACCES') return error
+  return new Error('这台设备不允许监听本机地址 127.0.0.1，设置管理密钥后服务无法启动。这类设备暂不支持。', {
+    cause: error,
+  })
+}
+
 const parseReleaseBackupRecord = (input: unknown, expectedReleaseId: string): ReleaseSqliteBackupRecord => {
   if (
     typeof input !== 'object' ||
@@ -678,10 +697,14 @@ const startLeasedServer = async (
     // the static dist fallback. The DSH Session runtime stays inside NekroRuntime.
     const webContext = new Context()
     owner.web = webContext
-    await webContext.plugin(WebServer, {
-      host: managementKey === undefined ? host : '127.0.0.1',
-      port: managementKey === undefined ? port : 0,
-    })
+    try {
+      await webContext.plugin(WebServer, {
+        host: managementKey === undefined ? host : '127.0.0.1',
+        port: managementKey === undefined ? port : 0,
+      })
+    } catch (error) {
+      throw managementKey === undefined ? error : explainLoopbackBindFailure(error)
+    }
     // The headless browser that checks creation candidates opens this Host's own page on its loopback listener.
     runtime.setVerificationOrigin(`http://127.0.0.1:${webContext.webServer.port}`)
     // Public static helper; NXT's management edge owns authentication. The upstream
@@ -929,7 +952,11 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
         await closeLogs()
         await release()
         options.signal?.throwIfAborted()
-        throw new AggregateError([error, recoveryError], 'Recovery listener failed to start.')
+        // The startup failure is the cause; the recovery page failing too comes second.
+        throw new AggregateError(
+          [error, recoveryError],
+          `${error instanceof Error ? error.message : '启动失败。'}（恢复页也没能启动：${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}）`,
+        )
       }
     }
     await closeLogs()

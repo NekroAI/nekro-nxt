@@ -11,6 +11,7 @@ import {
   parseManagementKey,
   parseReleaseId,
   startNekroServer,
+  explainLoopbackBindFailure,
 } from '../src/main.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
 import {
@@ -39,6 +40,16 @@ describe('Server production entry', () => {
     expect(() => parseManagementKey(undefined, true)).toThrow('NEKRO_MANAGEMENT_KEY')
     expect(() => parseManagementKey('short')).toThrow('至少需要 32 个字符')
     expect(parseManagementKey('a'.repeat(32), true)).toBe('a'.repeat(32))
+  })
+
+  it('explains a refused loopback bind and leaves other listen errors alone', () => {
+    const refused = Object.assign(new Error('listen EPERM: operation not permitted 127.0.0.1'), { code: 'EPERM' })
+    const explained = explainLoopbackBindFailure(refused)
+    expect(explained).toBeInstanceOf(Error)
+    expect((explained as Error).message).toContain('不允许监听本机地址 127.0.0.1')
+    expect((explained as Error).cause).toBe(refused)
+    const taken = Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' })
+    expect(explainLoopbackBindFailure(taken)).toBe(taken)
   })
 
   it('uses the package identity by default and validates an injected release identity', async () => {
