@@ -5719,9 +5719,11 @@ const buildValidatedHostApiPath = (
   const consumed = new Set<string>()
   const pathname = contract.path.replace(pathParameterPattern, (_placeholder, key: string) => {
     const value = params[key]
-    if (typeof value !== 'string') throw new TypeError(`Host API path parameter ${key} must be a string.`)
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      throw new TypeError(`Host API path parameter ${key} must be a string or number.`)
+    }
     consumed.add(key)
-    return encodeURIComponent(value)
+    return encodeURIComponent(String(value))
   })
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {

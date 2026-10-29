@@ -64,7 +64,10 @@ describe('public ID boundaries', () => {
         enabled: true,
       }),
     ).toBe('/api/example/value%2Fwith%20spaces?text=hello&count=2&enabled=true')
-    expect(() => buildHostApiContractPath(contract, { id: 1 })).toThrow('path parameter id')
+    expect(() => buildHostApiContractPath(contract, { id: true })).toThrow('path parameter id')
+    expect(buildHostApiContractPath(HostApiContracts.approveExtensionRequest, { number: 7 })).toBe(
+      '/api/extension-requests/7/approve',
+    )
     expect(
       buildHostApiContractPath(HostApiContracts.revertExtensionConfig, { extensionId: 'ext_example', versionId: '12' }),
     ).toBe('/api/extensions/ext_example/config-versions/12/revert')
