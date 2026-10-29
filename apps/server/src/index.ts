@@ -175,6 +175,7 @@ import {
   DEFAULT_MODEL_FALLBACK_SETTINGS,
   type ModelFallbackReason,
   type ModelFallbackSettings,
+  type HostLogScope,
 } from '@nekro-nxt/contracts'
 import { assertAgentAuthoredConfig } from '@nekro-nxt/extension-format'
 import type {
@@ -3408,10 +3409,16 @@ export class DshHostRuntime implements AgentSessionDriver {
       throw new TypeError('DSH LLM settings and credential paths must be absolute.')
     }
     const context = new Context()
+    // Filled once the runtime exists; until then failures log without a session scope.
+    let scopeOfSession: ((sessionId: string) => HostLogScope | undefined) | undefined
+    const llmRuntime =
+      options.logs === undefined
+        ? LlmRuntime
+        : diagnosedLlmRuntime({ logs: options.logs, scopeOf: (sessionId) => scopeOfSession?.(sessionId) })
     try {
       if (options.logs) {
         for (const [plugin, name] of [
-          [LlmRuntime, 'llm'],
+          [llmRuntime, 'llm'],
           [SessionStore, 'session'],
           [ToolRuntime, 'tools'],
           [AgentRegistry, 'agent'],
@@ -3455,7 +3462,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         await preloadCredentialDocument(options.llmCredentialPath, observeSecret)
       // DSH sign-in flows; subscription sign-in uses one when it offers a browser login for the provider.
       if (options.llmCredentialPath !== undefined) await context.plugin(AuthorizationService)
-      await context.plugin(LlmRuntime)
+      await context.plugin(llmRuntime)
       await options.configureLlm?.(context)
       const conversationScripts = new ConversationScriptModel()
       context.llm.registerAdapter([CONVERSATION_SCRIPT_PROVIDER], conversationScripts)
@@ -3549,6 +3556,12 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
       await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
       const runtime = new DshHostRuntime(context, { ...options, secrets }, channelReplyGuard, conversationScripts)
+      scopeOfSession = (sessionId) => {
+        const record = runtime.#sessions.get(sessionId)
+        return record === undefined
+          ? { sessionId }
+          : { agentId: record.revision.agentId, channelId: record.channelId, sessionId, episodeId: record.episodeId }
+      }
       await runtime.#dshPluginLifecycle?.initialize()
       return runtime
     } catch (error) {
@@ -5900,3 +5913,4 @@ export { HOST_DSH_PACKAGE_VERSIONS }
 import { attachCordisLogs, bindLogOwner, registerLogModule } from './logs/bridge.js'
 import type { HostLogSink } from './logs/service.js'
 import { attachSessionLogs } from './logs/session.js'
+import { diagnosedLlmRuntime } from './llm-failure-diagnostics.js'

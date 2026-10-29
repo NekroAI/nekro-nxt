@@ -11,6 +11,9 @@ interface SessionLogLabels {
   model?: string
 }
 
+/** Model-call failures and their underlying causes share this source, so they group together. */
+export const MODEL_RUNTIME_LOG_SOURCE = { kind: 'system', id: 'model-runtime', name: '模型调用' } as const
+
 /** Read only diagnostic fields, never messages, arguments, tool results or replay metadata. */
 export function attachSessionLogs(
   context: Context,
@@ -112,7 +115,7 @@ export function attachSessionLogs(
           logs.write({
             level: failure ? 'error' : 'warn',
             message: failure ? `${modelLabel} 调用失败：${failureSummary(failure)}` : `${modelLabel} 响应达到输出上限`,
-            source: { kind: 'system', id: 'model-runtime', name: '模型调用' },
+            source: MODEL_RUNTIME_LOG_SOURCE,
             scope: { ...scope, operationId: `${scope.sessionId}:model-event:${event.seq}` },
             ...(failure ? { code: failure.code } : {}),
             details: {

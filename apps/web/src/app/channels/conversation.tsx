@@ -36,6 +36,7 @@ import styles from './channels.module.css'
 import { subConversationStatus } from './sub-conversation-rows.js'
 import subStyles from './sub-conversations.module.css'
 import { CompactionRow, MessageRow, TurnRow } from './timeline.js'
+import { ContextResetDialog, type ContextReset } from './context-reset-dialog.js'
 import { buildTimeline, relativeTime } from './timeline-model.js'
 
 const EMPTY: readonly ConversationMessage[] = []
@@ -128,6 +129,7 @@ export function Conversation({
   const agents = useProductStore((state) => state.agents)
   const [xray, setXrayState] = useState(readXray)
   const [stopping, setStopping] = useState(false)
+  const [reset, setReset] = useState<ContextReset | null>(null)
   const [xrayAnimated, setXrayAnimated] = useState(false)
   const scroll = useStickToBottom(`${channel.id}:next`, true)
   const known = useRef(new Set<string>())
@@ -187,6 +189,13 @@ export function Conversation({
 
   const items = useMemo(() => buildTimeline(messages, runtime?.turns ?? []), [messages, runtime?.turns])
   const messageById = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages])
+  const recoverable = agent !== undefined && runtime?.phase === 'unavailable' && runtime.episodeId !== undefined
+  const failedInARow = useMemo(() => {
+    const turns = runtime?.turns ?? []
+    let count = 0
+    while (count < turns.length && turns[turns.length - 1 - count]!.state === 'error') count += 1
+    return count
+  }, [runtime?.turns])
   const phaseKey = agent ? (runtime?.phase ?? channel.runtimePhase ?? agent.state) : undefined
   const phase = phaseKey ? agentPhase[phaseKey] : undefined
   const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
@@ -322,6 +331,7 @@ export function Conversation({
                 animateXray={xrayAnimated}
                 startedAt={item.turn.startedAt}
                 onStop={item.latest ? () => setStopping(true) : undefined}
+                recovery={item.latest && recoverable ? { failedInARow, onReset: setReset } : undefined}
               />
             ),
           )}
@@ -339,6 +349,12 @@ export function Conversation({
         <Queue channelId={channel.id} count={runtime?.pendingInjectCount ?? 0} />
         <Composer key={channel.id} channel={channel} agent={agent} connection={connection} />
       </div>
+      <ContextResetDialog
+        channelId={channel.id}
+        episodeId={runtime?.episodeId}
+        reset={reset}
+        onClose={() => setReset(null)}
+      />
       <ConfirmDialog
         open={stopping}
         onOpenChange={setStopping}

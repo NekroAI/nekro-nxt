@@ -37,6 +37,7 @@ import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { BindingRows } from './binding-fields.js'
 import { ChannelMemory } from './channel-memory.js'
 import { ContextSheet } from './context-sheet.js'
+import { ContextResetDialog, type ContextReset } from './context-reset-dialog.js'
 import { ChannelPromptSheet, type ChannelPromptView } from './channel-prompt-sheet.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { useProductApi } from '../model/store.js'
@@ -75,7 +76,7 @@ export function ChannelInspector({
   const agents = useProductStore((state) => state.agents)
   const runtime = useProductStore((state) => state.channelRuntimes[channel.id])
   const [intent, setIntent] = useState<BindIntent | null>(null)
-  const [reset, setReset] = useState<'compact' | 'clear' | null>(null)
+  const [reset, setReset] = useState<ContextReset | null>(null)
   const [removing, setRemoving] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
@@ -487,22 +488,12 @@ export function ChannelInspector({
       {agent ? (
         <ContextSheet open={contextOpen} onOpenChange={setContextOpen} channelId={channel.id} agentName={agent.name} />
       ) : null}
-      <ConfirmDialog
-        open={reset !== null}
-        onOpenChange={(open) => !open && setReset(null)}
-        title={reset === 'clear' ? '清空上下文？' : '压缩上下文？'}
-        confirmLabel={reset === 'clear' ? '清空' : '压缩'}
-        danger={reset === 'clear'}
-        onConfirm={async () => {
-          if (!runtime?.episodeId || !reset) return
-          await api.getState().resetChannelContext(channel.id, runtime.episodeId, reset)
-          toast(reset === 'clear' ? '已清空上下文' : '已压缩上下文')
-        }}
-      >
-        <p>
-          {reset === 'clear' ? '当前任务会停止，从空白开始。聊天记录保留。' : '当前任务会停止，对话整理成摘要后继续。'}
-        </p>
-      </ConfirmDialog>
+      <ContextResetDialog
+        channelId={channel.id}
+        episodeId={runtime?.episodeId}
+        reset={reset}
+        onClose={() => setReset(null)}
+      />
       <ConfirmDialog
         open={removing}
         onOpenChange={setRemoving}
