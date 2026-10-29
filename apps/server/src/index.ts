@@ -55,6 +55,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { AgentRegistry, type Agent, type AgentOptions, type AgentStatus } from '@deepseek-ai/dsh-agent'
 import '@deepseek-ai/dsh-agent-loop'
 import { type ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import * as ImageOffload from '@deepseek-ai/dsh-compaction-image-offload'
 import ToolResultPruner from '@deepseek-ai/dsh-compaction-tool-result-pruner'
 import {
   type CordisDynamicRunMode,
@@ -3424,6 +3425,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           [SessionStats, 'session-stats'],
           [SessionCheckpointPolicy, 'session-checkpoint-policy'],
           [ToolResultPruner, 'compaction-tool-result-pruner'],
+          [ImageOffload, 'compaction-image-offload'],
         ] as const)
           registerLogModule(plugin, {
             kind: 'dsh-plugin',
@@ -3494,6 +3496,9 @@ export class DshHostRuntime implements AgentSessionDriver {
         headChars: 4096,
         tailChars: 1024,
       })
+      // A route over its image budget asks for the oldest images to be replaced by placeholders and the request retried;
+      // without this the turn ends with that error and every later turn of the session hits it again.
+      await context.plugin(ImageOffload)
       await context.plugin(NekroNxtCompactionEngine, { auto: true })
       registerDshHostProfileEntry(context, {
         id: 'agent-loop',

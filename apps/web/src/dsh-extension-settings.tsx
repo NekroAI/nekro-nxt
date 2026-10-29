@@ -106,6 +106,7 @@ export const dshPackageLabel = (name: string): string => {
   if (name.includes('subagent')) return '子智能体组件'
   if (name.includes('cordis-host-runner')) return '动态扩展运行组件'
   if (name.includes('compaction-tool-result-pruner')) return '工具结果裁剪'
+  if (name.includes('compaction-image-offload')) return '超限图片省略'
   if (name.includes('llm-retry')) return '模型请求重试'
   if (name.includes('timeout-policy')) return '工具超时控制'
   if (name.includes('spill-policy')) return '大型结果持久化'

@@ -13,6 +13,7 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-authorization',
   '@deepseek-ai/dsh-bash-sandbox',
   '@deepseek-ai/dsh-compaction-basic',
+  '@deepseek-ai/dsh-compaction-image-offload',
   '@deepseek-ai/dsh-compaction-tool-result-pruner',
   '@deepseek-ai/dsh-config-editor',
   '@deepseek-ai/dsh-cordis-host-runner',
@@ -129,6 +130,9 @@ export const DSH_BUILTIN_EXTENSION_ROSTER: readonly DshBuiltinExtensionEntry[] =
   },
   {
     packageName: '@deepseek-ai/dsh-compaction-tool-result-pruner',
+  },
+  {
+    packageName: '@deepseek-ai/dsh-compaction-image-offload',
   },
   {
     packageName: '@deepseek-ai/dsh-llm-retry',
