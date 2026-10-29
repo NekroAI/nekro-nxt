@@ -59,23 +59,8 @@ export const latestPerId = <T extends { readonly id: string }>(items: readonly T
   return [...latest.values()]
 }
 
-/**
- * Whether to tell about an instance losing or regaining the connection. Each instance stores its own switch; Desktop
- * remembers the last answer, because the notice matters most while the instance cannot be asked.
- */
-export class ConnectionNoticeSwitches {
-  readonly #known = new Map<string, boolean>()
-
-  /** `undefined` means the instance did not answer (older versions have no such switch); the last answer stays. */
-  remember(profileId: string, enabled: boolean | undefined): void {
-    if (enabled !== undefined) this.#known.set(profileId, enabled)
-  }
-
-  forget(profileId: string): void {
-    this.#known.delete(profileId)
-  }
-
-  allows(profile: { readonly id: string; readonly notificationsEnabled: boolean }): boolean {
-    return profile.notificationsEnabled && (this.#known.get(profile.id) ?? true)
-  }
-}
+/** Connection reminders follow the Desktop-wide switch and the instance's own system notification switch. */
+export const connectionNoticeAllowed = (
+  connectionNotices: boolean,
+  profile: { readonly notificationsEnabled: boolean },
+): boolean => connectionNotices && profile.notificationsEnabled

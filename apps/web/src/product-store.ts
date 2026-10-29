@@ -79,7 +79,6 @@ export function createProductStore(
         'community-feedback-update': true,
         'credential-requested': true,
         'extension-notification': true,
-        'instance-connection': true,
       },
     },
     diagnosticNote: '正在连接 NekroNXT Host…',

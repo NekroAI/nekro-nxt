@@ -389,7 +389,6 @@ export const NotificationEventKeySchema = z.enum([
   'community-feedback-update',
   'credential-requested',
   'extension-notification',
-  'instance-connection',
 ])
 export type NotificationEventKey = z.output<typeof NotificationEventKeySchema>
 
@@ -410,7 +409,6 @@ export const NotificationSettingsViewSchema = z
         'community-feedback-update': z.boolean().default(true),
         'credential-requested': z.boolean().default(true),
         'extension-notification': z.boolean().default(true),
-        'instance-connection': z.boolean().default(true),
       })
       .strict(),
   })
@@ -434,7 +432,6 @@ export const UpdateNotificationSettingsRequestSchema = z
         'community-feedback-update': z.boolean().optional(),
         'credential-requested': z.boolean().optional(),
         'extension-notification': z.boolean().optional(),
-        'instance-connection': z.boolean().optional(),
       })
       .strict(),
   })
@@ -454,9 +451,6 @@ export const ClientNotificationFeedResponseSchema = z
     notifications: z.array(ClientNotificationSchema),
   })
   .strict()
-
-/** What a Desktop connected to this instance may pop up on its own, such as losing or regaining the connection. */
-export const ClientNotificationPreferencesResponseSchema = z.object({ instanceConnection: z.boolean() }).strict()
 
 /** Which model writes one kind of compaction summary: that kind's default, or a model chosen for this agent. */
 export const AgentCompactionModelChoiceSchema = z.discriminatedUnion('mode', [
@@ -3265,14 +3259,6 @@ export const HostApiContracts = {
     params: z.object({ cursor: z.number().int().nonnegative().optional() }).strict(),
     request: NoRequestBodySchema,
     response: ClientNotificationFeedResponseSchema,
-    error: HostApiErrorSchema,
-  }),
-  getClientNotificationPreferences: defineContract({
-    method: 'GET',
-    path: '/api/client-notifications/preferences',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: ClientNotificationPreferencesResponseSchema,
     error: HostApiErrorSchema,
   }),
   updateNotificationSettings: defineContract({

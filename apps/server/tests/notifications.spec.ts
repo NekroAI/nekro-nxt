@@ -10,7 +10,6 @@ import {
   CREDENTIAL_REQUEST_NOTIFICATION,
   DYNAMIC_CLIENT_APPROVAL_NOTIFICATION,
   EXTENSION_NOTIFICATION,
-  INSTANCE_CONNECTION_NOTIFICATION,
   NotificationService,
 } from '../src/notifications.js'
 
@@ -96,10 +95,8 @@ describe('NotificationService', () => {
         [COMMUNITY_FEEDBACK_NOTIFICATION]: true,
         [CREDENTIAL_REQUEST_NOTIFICATION]: true,
         [EXTENSION_NOTIFICATION]: true,
-        [INSTANCE_CONNECTION_NOTIFICATION]: true,
       },
     })
-    expect(service.readClientPreferences()).toEqual({ instanceConnection: true })
   })
 
   it('tells about a credential request with a link to the pre-filled form, unless that event is off', async () => {
@@ -188,7 +185,7 @@ describe('NotificationService', () => {
     expect(saved.revision).toBe(1)
   })
 
-  it('reads settings saved before the extension and connection switches existed as both on', async () => {
+  it('reads settings saved before the extension switch existed as on', async () => {
     const { service, record } = await createFixture()
     record.set({
       version: 1,
@@ -198,17 +195,13 @@ describe('NotificationService', () => {
     })
     const view = await service.getSettings()
     expect(view.events[EXTENSION_NOTIFICATION]).toBe(true)
-    expect(view.events[INSTANCE_CONNECTION_NOTIFICATION]).toBe(true)
     await service.updateSettings({
       expectedRevision: view.revision!,
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app' },
       events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true },
     })
-    expect((await service.getSettings()).events).toMatchObject({
-      [EXTENSION_NOTIFICATION]: true,
-      [INSTANCE_CONNECTION_NOTIFICATION]: true,
-    })
+    expect((await service.getSettings()).events[EXTENSION_NOTIFICATION]).toBe(true)
   })
 
   it('sends extension notifications to the system and Bark channels unless the extension switch is off', async () => {
@@ -298,22 +291,5 @@ describe('NotificationService', () => {
       'notice:extension:ext_weather',
     ])
     expect(ids[7]).toMatch(/^notice:[a-f0-9]{64}$/u)
-  })
-
-  it('tells a connected Desktop whether to report connection changes', async () => {
-    const { service } = await createFixture()
-    const off = await service.updateSettings({
-      system: { enabled: true },
-      bark: { enabled: false, serverUrl: 'https://api.day.app' },
-      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true, [INSTANCE_CONNECTION_NOTIFICATION]: false },
-    })
-    expect(service.readClientPreferences()).toEqual({ instanceConnection: false })
-    await service.updateSettings({
-      expectedRevision: off.revision!,
-      system: { enabled: false },
-      bark: { enabled: false, serverUrl: 'https://api.day.app' },
-      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true, [INSTANCE_CONNECTION_NOTIFICATION]: true },
-    })
-    expect(service.readClientPreferences()).toEqual({ instanceConnection: false })
   })
 })

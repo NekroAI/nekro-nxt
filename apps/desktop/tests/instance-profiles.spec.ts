@@ -203,6 +203,19 @@ describe('Desktop instance profiles', () => {
     expect(reopened.get(profile.id)).toMatchObject({ displayName: '更新后', notificationsEnabled: false })
   })
 
+  it('keeps the Desktop-wide connection reminder switch, reading older files as on', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-connection-notices-'))
+    roots.push(root)
+    const file = path.join(root, 'profiles.json')
+    const store = await InstanceProfileStore.open(file, 'http://127.0.0.1:41007', 100)
+    expect(store.connectionNoticesEnabled).toBe(true)
+    expect(JSON.parse(await readFile(file, 'utf8'))).not.toHaveProperty('connectionNotices')
+    await store.setConnectionNotices(false)
+    const reopened = await InstanceProfileStore.open(file, 'http://127.0.0.1:41007', 200)
+    expect(reopened.connectionNoticesEnabled).toBe(false)
+    expect(reopened.list().map(({ id }) => id)).toEqual(['local'])
+  })
+
   it('updates reauthentication security without changing the Profile endpoint or identity', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-instance-immutable-'))
     roots.push(root)

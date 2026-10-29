@@ -155,23 +155,6 @@ export function registerSettingsRoutes({
 
   registerRoute({
     kind: 'exact',
-    path: '/api/client-notifications/preferences',
-    handler: (req, res) => {
-      if (req.method !== 'GET') {
-        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
-        return
-      }
-      writeContractJson(
-        res,
-        200,
-        HostApiContracts.getClientNotificationPreferences,
-        runtime.notifications.readClientPreferences(),
-      )
-    },
-  })
-
-  registerRoute({
-    kind: 'exact',
     path: '/api/settings/notifications',
     handler: async (req, res) => {
       if (req.method !== 'PUT') {

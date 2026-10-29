@@ -1496,14 +1496,8 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
           'community-feedback-update': true,
           'credential-requested': true,
           'extension-notification': true,
-          'instance-connection': true,
         },
       })
-      expect(
-        HostApiContracts.getClientNotificationPreferences.parseResponse(
-          await (await fetch(`${origin}/api/client-notifications/preferences`)).json(),
-        ),
-      ).toEqual({ instanceConnection: true })
 
       const connected = HostApiContracts.listClientNotifications.parseResponse(
         await (await fetch(`${origin}/api/client-notifications`)).json(),
@@ -1520,18 +1514,14 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
             serverUrl: 'https://push.example.test',
             deviceKey: 'host-api-test-device-key',
           },
-          events: { 'dynamic-client-approval-requested': true, 'instance-connection': false },
+          events: { 'dynamic-client-approval-requested': true, 'extension-notification': false },
         }),
       })
       expect(updatedResponse.ok).toBe(true)
-      expect(
-        HostApiContracts.getClientNotificationPreferences.parseResponse(
-          await (await fetch(`${origin}/api/client-notifications/preferences`)).json(),
-        ),
-      ).toEqual({ instanceConnection: false })
       expect(HostApiContracts.updateNotificationSettings.parseResponse(await updatedResponse.json())).toMatchObject({
         revision: 1,
         bark: { serverUrl: 'https://push.example.test', deviceKeyConfigured: true },
+        events: { 'extension-notification': false },
       })
 
       const testResponse = await fetch(`${origin}/api/settings/notifications/test-system`, { method: 'POST' })

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { ConnectionNoticeSwitches, DesktopNotifier, latestPerId, type DesktopNotice } from '../src/desktop-notifier.js'
+import { DesktopNotifier, connectionNoticeAllowed, latestPerId, type DesktopNotice } from '../src/desktop-notifier.js'
 
 class FakeNotice implements DesktopNotice {
   readonly title: string
@@ -106,25 +106,10 @@ describe('DesktopNotifier', () => {
   })
 })
 
-describe('ConnectionNoticeSwitches', () => {
-  it('follows the instance switch, keeps the last answer and defaults to on', () => {
-    const switches = new ConnectionNoticeSwitches()
-    const remote = { id: 'remote_a', notificationsEnabled: true }
-    expect(switches.allows(remote)).toBe(true)
-    switches.remember(remote.id, false)
-    expect(switches.allows(remote)).toBe(false)
-    // An unreachable or older instance gives no answer; the last one stays.
-    switches.remember(remote.id, undefined)
-    expect(switches.allows(remote)).toBe(false)
-    switches.remember(remote.id, true)
-    expect(switches.allows(remote)).toBe(true)
-    switches.forget(remote.id)
-    expect(switches.allows(remote)).toBe(true)
-  })
-
-  it('stays off for an instance whose Desktop notifications are off', () => {
-    const switches = new ConnectionNoticeSwitches()
-    switches.remember('remote_a', true)
-    expect(switches.allows({ id: 'remote_a', notificationsEnabled: false })).toBe(false)
+describe('connectionNoticeAllowed', () => {
+  it('needs both the Desktop-wide switch and the instance system notification switch', () => {
+    expect(connectionNoticeAllowed(true, { notificationsEnabled: true })).toBe(true)
+    expect(connectionNoticeAllowed(false, { notificationsEnabled: true })).toBe(false)
+    expect(connectionNoticeAllowed(true, { notificationsEnabled: false })).toBe(false)
   })
 })

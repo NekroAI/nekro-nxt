@@ -13,14 +13,11 @@ export const DYNAMIC_CLIENT_APPROVAL_NOTIFICATION = 'dynamic-client-approval-req
 export const COMMUNITY_FEEDBACK_NOTIFICATION = 'community-feedback-update' as const
 export const CREDENTIAL_REQUEST_NOTIFICATION = 'credential-requested' as const
 export const EXTENSION_NOTIFICATION = 'extension-notification' as const
-/** Desktop's own notice when an instance it watches loses or regains the connection; this instance only stores the switch. */
-export const INSTANCE_CONNECTION_NOTIFICATION = 'instance-connection' as const
 export type NotificationEventKey =
   | typeof DYNAMIC_CLIENT_APPROVAL_NOTIFICATION
   | typeof COMMUNITY_FEEDBACK_NOTIFICATION
   | typeof CREDENTIAL_REQUEST_NOTIFICATION
   | typeof EXTENSION_NOTIFICATION
-  | typeof INSTANCE_CONNECTION_NOTIFICATION
 
 const NOTIFICATION_SETTING_KEY = 'notifications'
 const DEFAULT_BARK_SERVER_URL = 'https://api.day.app'
@@ -42,7 +39,6 @@ const StoredNotificationSettingsSchema = z
         [COMMUNITY_FEEDBACK_NOTIFICATION]: z.boolean().default(true),
         [CREDENTIAL_REQUEST_NOTIFICATION]: z.boolean().default(true),
         [EXTENSION_NOTIFICATION]: z.boolean().default(true),
-        [INSTANCE_CONNECTION_NOTIFICATION]: z.boolean().default(true),
       })
       .strict(),
   })
@@ -75,7 +71,6 @@ export interface NotificationSettingsUpdate {
     [COMMUNITY_FEEDBACK_NOTIFICATION]?: boolean | undefined
     [CREDENTIAL_REQUEST_NOTIFICATION]?: boolean | undefined
     [EXTENSION_NOTIFICATION]?: boolean | undefined
-    [INSTANCE_CONNECTION_NOTIFICATION]?: boolean | undefined
   }>
 }
 
@@ -115,7 +110,6 @@ const defaultSettings = (): StoredNotificationSettings => ({
     [COMMUNITY_FEEDBACK_NOTIFICATION]: true,
     [CREDENTIAL_REQUEST_NOTIFICATION]: true,
     [EXTENSION_NOTIFICATION]: true,
-    [INSTANCE_CONNECTION_NOTIFICATION]: true,
   },
 })
 
@@ -225,8 +219,6 @@ export class NotificationService {
         [CREDENTIAL_REQUEST_NOTIFICATION]:
           input.events[CREDENTIAL_REQUEST_NOTIFICATION] ?? current.events[CREDENTIAL_REQUEST_NOTIFICATION],
         [EXTENSION_NOTIFICATION]: input.events[EXTENSION_NOTIFICATION] ?? current.events[EXTENSION_NOTIFICATION],
-        [INSTANCE_CONNECTION_NOTIFICATION]:
-          input.events[INSTANCE_CONNECTION_NOTIFICATION] ?? current.events[INSTANCE_CONNECTION_NOTIFICATION],
       },
     }
     try {
@@ -341,12 +333,6 @@ export class NotificationService {
       ...(route === undefined ? {} : { route }),
       barkGroup: `NekroNXT · ${input.sourceName?.trim() || '扩展'}`,
     })
-  }
-
-  /** Read by a connected Desktop on every poll; it keeps the last answer while this instance is unreachable. */
-  readClientPreferences(): { readonly instanceConnection: boolean } {
-    const stored = this.#readRecord()?.settings ?? defaultSettings()
-    return { instanceConnection: stored.system.enabled && stored.events[INSTANCE_CONNECTION_NOTIFICATION] }
   }
 
   readClientNotifications(cursor: number | undefined): {

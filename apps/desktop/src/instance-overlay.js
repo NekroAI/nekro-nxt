@@ -160,6 +160,13 @@ const startOverlay = () => {
   const header = (title, back = false) =>
     `<header class="head"><div>${back ? '<button class="back" data-action="back" aria-label="返回">←</button>' : ''}<span class="heading"><h1>${escapeHtml(title)}</h1><small>${back ? '完成后返回实例列表' : '选择 NekroNXT 工作区来源'}</small></span></div>${back ? '' : `<span class="count">${snapshot.profiles.length} 个</span>`}</header>`
 
+  // Older snapshots carry no switch; it is on unless turned off.
+  const connectionNoticesOn = (value) => value?.connectionNotices !== false
+  const connectionNoticesToggle = () => {
+    const on = connectionNoticesOn(snapshot)
+    return `<button class="quiet wide toggle" role="switch" aria-checked="${on ? 'true' : 'false'}" aria-label="连接状态通知" data-action="connection-notices"><span>连接状态通知</span><span class="toggle-track" aria-hidden="true"></span></button>`
+  }
+
   const renderList = () => {
     const rows = snapshot.profiles
       .map((profile) => {
@@ -178,7 +185,7 @@ const startOverlay = () => {
       })
       .join('')
     mountPanel(
-      `<section class="panel" role="dialog" aria-modal="true" aria-label="服务实例" tabindex="-1">${header('服务实例')}<ul class="list" aria-label="服务实例列表"><li class="instance-selection-mark" data-selection-mark aria-hidden="true"></li>${rows}</ul><footer class="foot"><button class="quiet wide" data-action="add">＋ 添加远程实例</button></footer></section>`,
+      `<section class="panel" role="dialog" aria-modal="true" aria-label="服务实例" tabindex="-1">${header('服务实例')}<ul class="list" aria-label="服务实例列表"><li class="instance-selection-mark" data-selection-mark aria-hidden="true"></li>${rows}</ul><footer class="foot stacked"><button class="quiet wide" data-action="add">＋ 添加远程实例</button>${connectionNoticesToggle()}</footer></section>`,
     )
     syncSelectionMark(false)
   }
@@ -464,6 +471,9 @@ const startOverlay = () => {
       const more = item.querySelector('[data-action="more"]')
       if (more) more.setAttribute('aria-label', `${profile.displayName}的更多操作`)
     }
+    const toggle = root.querySelector('[data-action="connection-notices"]')
+    const on = connectionNoticesOn(next)
+    toggle?.setAttribute('aria-checked', on ? 'true' : 'false')
     snapshot = next
     syncSelectionMark(true)
     return true
@@ -598,6 +608,9 @@ const startOverlay = () => {
         mode = { kind: 'list' }
         render()
         await bridge.retry(id)
+      }
+      if (action === 'connection-notices') {
+        await bridge.setConnectionNotices(!connectionNoticesOn(snapshot))
       }
       if (action === 'notifications') {
         const profile = snapshot.profiles.find((item) => item.id === id)

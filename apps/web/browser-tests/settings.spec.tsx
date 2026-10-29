@@ -164,7 +164,7 @@ test.describe('settings space', () => {
     }
   })
 
-  test('turns extension and instance connection notifications off and saves them with the other switches', async () => {
+  test('turns extension notifications off and saves them with the other switches', async () => {
     const saved: unknown[] = []
     let notificationSettings: unknown = productSnapshot.notificationSettings
     const { page, errors } = await open('/settings/notifications', {
@@ -184,7 +184,6 @@ test.describe('settings space', () => {
               'community-feedback-update': body.events['community-feedback-update'] ?? true,
               'credential-requested': body.events['credential-requested'] ?? true,
               'extension-notification': body.events['extension-notification'] ?? true,
-              'instance-connection': body.events['instance-connection'] ?? true,
             },
           }
           await request.fulfill({ json: notificationSettings })
@@ -192,14 +191,13 @@ test.describe('settings space', () => {
       },
     })
     try {
-      // The fixture snapshot predates both switches; they read as on.
+      // The fixture snapshot predates the switch; it reads as on.
       const extension = page.getByRole('switch', { name: '扩展通知' })
-      const connection = page.getByRole('switch', { name: '实例连接状态' })
       await expect(extension).toBeChecked()
-      await expect(connection).toBeChecked()
       await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
+      // Desktop keeps its own connection reminder switch; the instance settings do not show one.
+      await expect(page.getByRole('switch', { name: '实例连接状态' })).toHaveCount(0)
       await extension.click()
-      await connection.click()
       await page.getByRole('button', { name: '保存', exact: true }).click()
       await expect
         .poll(() => saved)
@@ -209,12 +207,10 @@ test.describe('settings space', () => {
             'community-feedback-update': true,
             'credential-requested': true,
             'extension-notification': false,
-            'instance-connection': false,
           },
         ])
       await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
       await expect(extension).not.toBeChecked()
-      await expect(connection).not.toBeChecked()
       expect(errors).toEqual([])
     } finally {
       await page.close()
