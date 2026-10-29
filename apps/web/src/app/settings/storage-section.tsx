@@ -80,7 +80,6 @@ function DataDirectoryRows() {
     <>
       <PropertyRow
         label="数据目录"
-        layout="stacked"
         description={
           <>
             <span className={styles.path} data-testid="data-directory-path">
