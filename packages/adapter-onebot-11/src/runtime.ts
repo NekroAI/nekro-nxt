@@ -101,6 +101,19 @@ const byteSizeLabel = (bytes: number | undefined): string | undefined => {
   return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MiB`
 }
 
+/**
+ * A file segment's display name. NapCat and similar endpoints put the name in `file` and the id in `file_id`; `file`
+ * may also be a URL, a path or a hash, which are not names.
+ */
+const fileSegmentName = (data: OneBotObject): string | undefined => {
+  const named = compactNoticeText(data['name'], 200) ?? compactNoticeText(data['file_name'], 200)
+  if (named) return named
+  const file = compactNoticeText(data['file'], 200)
+  if (!file || /^[a-z][a-z0-9+.-]*:/iu.test(file) || /[\\/]/u.test(file) || /^[0-9a-f]{32,}$/iu.test(file))
+    return undefined
+  return file
+}
+
 const segment = (input: unknown): Segment | undefined => {
   const object = oneBotObject(input)
   const type = textValue(object?.['type'])
@@ -886,6 +899,35 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
         }
         continue
       }
+      if (item.type === 'file') {
+        const name = fileSegmentName(item.data)
+        const size = byteSizeLabel(numberValue(item.data['file_size']))
+        const label = `文件${name ? `「${name}」` : ''}${size ? `（${size}）` : ''}`
+        const url = textValue(item.data['url']) ?? (await this.#fileUrl(item.data, channelId))
+        if (!url) {
+          parts.push({
+            type: 'rich',
+            adapterKey: ONEBOT_11_ADAPTER_KEY,
+            kind: 'file',
+            summary: `${label}：协议端没有提供下载地址。`,
+          })
+          continue
+        }
+        try {
+          const asset = await this.#downloadAsset(url)
+          const partIndex = parts.length
+          parts.push({ type: 'file', assetId: asset.assetId, ...(name ? { name } : {}) })
+          assetOccurrences.push({ partIndex, assetId: asset.assetId })
+        } catch {
+          parts.push({
+            type: 'rich',
+            adapterKey: ONEBOT_11_ADAPTER_KEY,
+            kind: 'file',
+            summary: `${label}下载失败。`,
+          })
+        }
+        continue
+      }
       if (item.type === 'forward') {
         const part = await this.#forwardPart(item.data)
         const partIndex = parts.length
@@ -893,7 +935,7 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
         for (const assetId of new Set(messagePartAssetIds(part))) assetOccurrences.push({ partIndex, assetId })
         continue
       }
-      if (['json', 'xml', 'markdown', 'keyboard', 'face', 'file'].includes(item.type)) {
+      if (['json', 'xml', 'markdown', 'keyboard', 'face'].includes(item.type)) {
         parts.push({
           type: 'rich',
           adapterKey: ONEBOT_11_ADAPTER_KEY,
@@ -969,8 +1011,10 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
       const senderInfo = oneBotObject(object?.['sender'])
       const sender = compactNoticeText(senderInfo?.['card']) ?? compactNoticeText(senderInfo?.['nickname'])
       const identity = sender === undefined ? {} : { sender }
-      const segments = Array.isArray(object?.['content'])
-        ? object['content'].map(segment).filter((item): item is Segment => item !== undefined)
+      // Most implementations put a node's segments in `content`; some return the full message event with `message`.
+      const body = Array.isArray(object?.['content']) ? object['content'] : object?.['message']
+      const segments = Array.isArray(body)
+        ? body.map(segment).filter((item): item is Segment => item !== undefined)
         : []
       let remainingText = 500
       if (segments.length === 0) append({ ...identity, text: '转发节点没有可显示内容。' })
@@ -986,7 +1030,9 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
           const isImage = item.type === 'image' || item.type === 'mface'
           const label = isImage ? '图片' : item.type === 'record' ? '语音' : item.type === 'video' ? '视频' : '文件'
           const url = textValue(item.data['url'])
-          const name = compactNoticeText(item.data['name']) ?? (item.type === 'video' ? '转发视频' : '转发文件')
+          const name =
+            (item.type === 'file' ? fileSegmentName(item.data) : compactNoticeText(item.data['name'])) ??
+            (item.type === 'video' ? '转发视频' : '转发文件')
           if (!url) append({ ...identity, text: `${label}${item.type === 'file' ? `：${name}` : ''}暂时不可下载。` })
           else if (budget.images >= FORWARD_MEDIA_LIMIT) {
             budget.truncated = true
@@ -1063,7 +1109,7 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
       return id === undefined ? '表情（编号未知）' : `表情（编号 ${id}）`
     }
     const raw = textValue(data['data']) ?? textValue(data['content']) ?? textValue(data['text'])
-    if (type === 'file') return `文件：${textValue(data['name']) ?? '未命名文件'}`
+    if (type === 'file') return `文件：${fileSegmentName(data) ?? '未命名文件'}`
     if (raw) {
       try {
         const parsed = z.json().parse(JSON.parse(raw))
@@ -1467,6 +1513,29 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
       ...(displayName ? { displayName } : {}),
       observedAt: this.#context.now(),
     })
+  }
+
+  /** Asks the protocol endpoint for a file's download address when the segment only carries its id. */
+  async #fileUrl(data: OneBotObject, channelId: ChannelId): Promise<string | undefined> {
+    const fileId = oneBotStringId(data['file_id'])
+    if (!fileId) return undefined
+    const target = await this.#resolveTarget(channelId)
+    if (!target) return undefined
+    const busid = oneBotStringId(data['busid'])
+    try {
+      const response = oneBotObject(
+        target.kind === 'group'
+          ? await this.#requireClient().call('get_group_file_url', {
+              group_id: target.id,
+              file_id: fileId,
+              ...(busid ? { busid } : {}),
+            })
+          : await this.#requireClient().call('get_private_file_url', { file_id: fileId }),
+      )
+      return textValue(response?.['url'])
+    } catch {
+      return undefined
+    }
   }
 
   async #downloadAsset(rawUrl: string) {
