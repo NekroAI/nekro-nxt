@@ -1,6 +1,16 @@
 import { Plus, Trash2 } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
-import { Button, DataTable, IconButton, Input, Switch, type Column } from './ui-kit/index.js'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  Button,
+  DataTable,
+  IconButton,
+  Input,
+  SearchField,
+  Switch,
+  ToggleChip,
+  toast,
+  type Column,
+} from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
 
 export interface EditableModel {
@@ -101,11 +111,42 @@ export const enrichRows = (rows: readonly ModelRow[], discovered: readonly Edita
     }
   })
 
-/** Discovered models not yet in the list, in discovery order. */
+/** Discovered models not yet in the list, in discovery order; an id the provider repeats is offered once. */
 export const modelsToAdd = (rows: readonly ModelRow[], discovered: readonly EditableModel[]): EditableModel[] => {
-  const present = new Set(rows.map((row) => row.id.trim()))
-  return discovered.filter((model) => !present.has(model.id))
+  const seen = new Set(rows.map((row) => row.id.trim()))
+  return discovered.filter((model) => {
+    if (seen.has(model.id)) return false
+    seen.add(model.id)
+    return true
+  })
 }
+
+/** Whether a model id or display name contains every space-separated word of the query, ignoring case. */
+export const matchesModelQuery = (query: string, id: string, name?: string): boolean => {
+  const words = query.trim().toLowerCase().split(/\s+/u).filter(Boolean)
+  if (words.length === 0) return true
+  const text = `${id} ${name ?? ''}`.toLowerCase()
+  return words.every((word) => text.includes(word))
+}
+
+/** Rows with the chosen models appended; models whose id is already listed are skipped and counted. */
+export const appendModels = (
+  rows: readonly ModelRow[],
+  models: readonly EditableModel[],
+): { readonly rows: readonly ModelRow[]; readonly added: number; readonly skipped: number } => {
+  const fresh = modelsToAdd(rows, models)
+  return {
+    rows: [...rows, ...fresh.map(modelRowFromModel)],
+    added: fresh.length,
+    skipped: models.length - fresh.length,
+  }
+}
+
+/** Lists longer than this show search and bulk selection. */
+export const BULK_TOOLS_FROM = 10
+/** Most matches drawn at once; long catalogs ask for a narrower search instead. */
+export const SHOWN_MATCHES = 200
+const NARROW_HINT = `只显示前 ${SHOWN_MATCHES} 个，输入关键词缩小范围。`
 
 /** Token counts the way people read them: 1000000 → 100 万, 8192 → 8,192. */
 export const formatTokenCount = (value: number | string | undefined): string => {
@@ -135,9 +176,133 @@ export const visibleModelRowsError = (
   return relevant.length > 0 ? modelRowsError(relevant) : undefined
 }
 
+/** A row or "all matching rows" checkbox; `mixed` draws the partly selected state. */
+function SelectBox({
+  label,
+  checked,
+  mixed = false,
+  disabled,
+  onChange,
+}: {
+  readonly label: string
+  readonly checked: boolean
+  readonly mixed?: boolean
+  readonly disabled: boolean
+  readonly onChange: (checked: boolean) => void
+}): ReactNode {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = mixed
+  }, [mixed])
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className={styles.selectBox}
+      aria-label={label}
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  )
+}
+
+const notifyAdded = (added: number, skipped: number): void => {
+  const skippedText = skipped > 0 ? `，跳过 ${skipped} 个已在列表中的模型` : ''
+  toast(`已加入 ${added} 个模型${skippedText}，保存后生效。`, { group: 'llm-model-add' })
+}
+
+/**
+ * Discovered models the list does not have yet. Nothing is added until the person picks: chips toggle a selection that
+ * survives a new search, and "全部加入" takes every current match. Only the first matches are drawn.
+ */
+function ModelCandidates({
+  rows,
+  addable,
+  disabled,
+  onChange,
+}: {
+  readonly rows: readonly ModelRow[]
+  readonly addable: readonly EditableModel[]
+  readonly disabled: boolean
+  readonly onChange: (rows: readonly ModelRow[]) => void
+}): ReactNode {
+  const [query, setQuery] = useState('')
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set())
+  const matches = useMemo(
+    () => addable.filter((model) => matchesModelQuery(query, model.id, model.name)),
+    [addable, query],
+  )
+  // Picks the list gained in the meantime, or a refresh no longer offers, drop out of the selection.
+  const selected = addable.filter((model) => chosen.has(model.id))
+  const add = (models: readonly EditableModel[]): void => {
+    const next = appendModels(rows, models)
+    onChange(next.rows)
+    setChosen(new Set())
+    notifyAdded(next.added, next.skipped)
+  }
+  const toggle = (id: string, on: boolean): void => {
+    const next = new Set(chosen)
+    if (on) next.add(id)
+    else next.delete(id)
+    setChosen(next)
+  }
+  return (
+    <div className={styles.discovered}>
+      <div className={styles.discoveredHead}>
+        <span>供应商提供、尚未加入的模型（{addable.length}）</span>
+      </div>
+      <div className={styles.listTools}>
+        <SearchField value={query} onChange={setQuery} label="搜索可加入的模型" placeholder="搜索模型 ID 或名称" />
+        <div className={styles.listActions}>
+          {selected.length > 0 ? (
+            <Button size="small" variant="ghost" disabled={disabled} onClick={() => setChosen(new Set())}>
+              取消选择
+            </Button>
+          ) : null}
+          <Button size="small" disabled={disabled || selected.length === 0} onClick={() => add(selected)}>
+            加入所选（{selected.length}）
+          </Button>
+          <Button
+            size="small"
+            disabled={disabled || matches.length === 0}
+            onClick={() => {
+              add(matches)
+              setQuery('')
+            }}
+          >
+            全部加入（{matches.length}）
+          </Button>
+        </div>
+      </div>
+      {matches.length === 0 ? (
+        <p className={styles.muted}>没有匹配的模型</p>
+      ) : (
+        <div className={styles.chipList} role="group" aria-label="可加入的模型">
+          {matches.slice(0, SHOWN_MATCHES).map((model) => (
+            <ToggleChip
+              key={model.id}
+              pressed={chosen.has(model.id)}
+              onPressedChange={(on) => {
+                if (!disabled) toggle(model.id, on)
+              }}
+            >
+              {model.id}
+              {model.name && model.name !== model.id ? ` · ${model.name}` : ''}
+              {model.inputModalities?.includes('image') ? ' · 视觉' : ''}
+            </ToggleChip>
+          ))}
+        </div>
+      )}
+      {matches.length > SHOWN_MATCHES ? <p className={styles.muted}>{NARROW_HINT}</p> : null}
+    </div>
+  )
+}
+
 /**
  * Editable model catalog of one provider. Narrow containers drop the display name and output columns first; the id,
- * context size and image switch always stay.
+ * context size and image switch always stay. Long lists gain a search box and bulk selection. Every edit, bulk
+ * deletes included, takes effect only when the provider is saved.
  */
 export function ModelListEditor({
   rows,
@@ -158,16 +323,74 @@ export function ModelListEditor({
 }): ReactNode {
   const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set())
   const [listTouched, setListTouched] = useState(false)
+  const [query, setQuery] = useState('')
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set())
+  // Rows added by hand, and rows edited under the current search, stay in view even when they stop matching.
+  const [added, setAdded] = useState<ReadonlySet<string>>(() => new Set())
+  const [edited, setEdited] = useState<ReadonlySet<string>>(() => new Set())
+  const pinned = (key: string): boolean => added.has(key) || edited.has(key)
   const touch = (key: string): void => {
     if (!touched.has(key)) setTouched(new Set([...touched, key]))
   }
   const update = (key: string, patch: Partial<Omit<ModelRow, 'key'>>): void => {
     touch(key)
+    if (query && !edited.has(key)) setEdited(new Set([...edited, key]))
     onChange(rows.map((row) => (row.key === key ? { ...row, ...patch } : row)))
   }
   const error = validate ? visibleModelRowsError(rows, touched, { revealAll: revealErrors, listTouched }) : undefined
-  const addable = modelsToAdd(rows, discovered)
+  const addable = useMemo(() => modelsToAdd(rows, discovered), [rows, discovered])
+  const bulk = rows.length >= BULK_TOOLS_FROM
+  const matches = bulk ? rows.filter((row) => pinned(row.key) || matchesModelQuery(query, row.id, row.name)) : rows
+  const shown = bulk ? matches.filter((row, index) => index < SHOWN_MATCHES || pinned(row.key)) : rows
+  const selected = rows.filter((row) => chosen.has(row.key))
+  const matchesSelected = matches.filter((row) => chosen.has(row.key)).length
+  const search = (next: string): void => {
+    setQuery(next)
+    setEdited(new Set())
+  }
+  const select = (keys: readonly string[], on: boolean): void => {
+    const next = new Set(chosen)
+    for (const key of keys) {
+      if (on) next.add(key)
+      else next.delete(key)
+    }
+    setChosen(next)
+  }
+  const removeSelected = (): void => {
+    setListTouched(true)
+    setChosen(new Set())
+    onChange(rows.filter((row) => !chosen.has(row.key)))
+    toast(`已删除 ${selected.length} 个模型，保存后生效。`, { group: 'llm-model-remove' })
+  }
+  const selectColumn: Column<ModelRow> = {
+    key: 'select',
+    header: (
+      <SelectBox
+        label="选择全部匹配的模型"
+        checked={matches.length > 0 && matchesSelected === matches.length}
+        mixed={matchesSelected > 0 && matchesSelected < matches.length}
+        disabled={disabled || matches.length === 0}
+        onChange={(on) =>
+          select(
+            matches.map((row) => row.key),
+            on,
+          )
+        }
+      />
+    ),
+    width: '32px',
+    align: 'center',
+    render: (row) => (
+      <SelectBox
+        label={`选择模型 ${label(row)}`}
+        checked={chosen.has(row.key)}
+        disabled={disabled}
+        onChange={(on) => select([row.key], on)}
+      />
+    ),
+  }
   const columns: readonly Column<ModelRow>[] = [
+    ...(bulk ? [selectColumn] : []),
     {
       key: 'id',
       header: '模型 ID',
@@ -272,60 +495,62 @@ export function ModelListEditor({
   ]
   return (
     <div className={styles.modelEditor}>
+      {bulk ? (
+        <div className={styles.listTools}>
+          <SearchField value={query} onChange={search} label="搜索模型列表" placeholder="搜索模型 ID 或名称" />
+          {selected.length > 0 ? (
+            <div className={styles.listActions}>
+              <span className={styles.muted}>已选 {selected.length} 个</span>
+              <Button size="small" variant="ghost" disabled={disabled} onClick={() => setChosen(new Set())}>
+                取消选择
+              </Button>
+              <Button
+                size="small"
+                variant="danger"
+                icon={<Trash2 size={14} aria-hidden="true" />}
+                disabled={disabled}
+                onClick={removeSelected}
+              >
+                删除所选
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       <DataTable
         label="模型列表"
         columns={columns}
-        rows={rows}
+        rows={shown}
         rowKey={(row) => row.key}
-        empty="还没有模型"
+        empty={rows.length === 0 ? '还没有模型' : '没有匹配的模型'}
         footer={
           <>
-            <span>{rows.length} 个模型</span>
+            <span>
+              {query && bulk ? `匹配 ${matches.length} 个，共 ${rows.length} 个模型` : `${rows.length} 个模型`}
+            </span>
             <Button
               size="small"
               icon={<Plus size={14} aria-hidden="true" />}
               disabled={disabled}
-              onClick={() => onChange([...rows, emptyModelRow()])}
+              onClick={() => {
+                const row = emptyModelRow()
+                setAdded(new Set([...added, row.key]))
+                onChange([...rows, row])
+              }}
             >
               添加模型
             </Button>
           </>
         }
       />
+      {matches.length > shown.length ? <p className={styles.muted}>{NARROW_HINT}</p> : null}
       {error ? (
         <p className={styles.fieldError} role="alert">
           {error}
         </p>
       ) : null}
       {addable.length > 0 ? (
-        <div className={styles.discovered}>
-          <div className={styles.discoveredHead}>
-            <span>供应商提供、尚未加入的模型（{addable.length}）</span>
-            <Button
-              size="small"
-              disabled={disabled}
-              onClick={() => onChange([...rows, ...addable.map(modelRowFromModel)])}
-            >
-              全部加入
-            </Button>
-          </div>
-          <div className={styles.chipList}>
-            {addable.map((model) => (
-              <Button
-                size="small"
-                variant="ghost"
-                key={model.id}
-                icon={<Plus size={12} aria-hidden="true" />}
-                disabled={disabled}
-                onClick={() => onChange([...rows, modelRowFromModel(model)])}
-              >
-                {model.id}
-                {model.name && model.name !== model.id ? ` · ${model.name}` : ''}
-                {model.inputModalities?.includes('image') ? ' · 视觉' : ''}
-              </Button>
-            ))}
-          </div>
-        </div>
+        <ModelCandidates rows={rows} addable={addable} disabled={disabled} onChange={onChange} />
       ) : null}
     </div>
   )

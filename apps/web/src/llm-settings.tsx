@@ -319,11 +319,8 @@ export function ModelProviderDetail({
           ...(apiKey ? { apiKey } : {}),
         },
       )
+      // Candidates only: the person picks which ones join the list.
       setDiscovered(result.models)
-      if (customEditor && rows.length === 0 && result.models.length > 0) {
-        setRows(result.models.map(modelRowFromModel))
-        setModelsDirty(true)
-      }
       const missing = modelsToAdd(rows, result.models).length
       // Models already listed take the thinking levels and context length the provider reports for them.
       const enriched = enrichRows(rows, result.models)
