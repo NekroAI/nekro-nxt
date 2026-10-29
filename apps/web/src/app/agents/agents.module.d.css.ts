@@ -14,6 +14,7 @@ declare const styles: {
   readonly note: string
   readonly noteWarn: string
   readonly oneLine: string
+  readonly orderActions: string
   readonly persona: string
   readonly personaCard: string
   readonly personaEditor: string

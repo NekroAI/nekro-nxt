@@ -196,6 +196,7 @@ export const MessageRow = memo(function MessageRow({
         <MessageContent message={message} />
       </div>
       {message.inboundHook ? <HookNote hook={message.inboundHook} /> : null}
+      {message.outboundProcessing ? <OutboundNote processing={message.outboundProcessing} /> : null}
       {unconfirmed ? (
         <div className={styles.unsentBar} role="status">
           <CircleAlert aria-hidden="true" />
@@ -242,6 +243,17 @@ function HookNote({ hook }: { readonly hook: NonNullable<ConversationMessage['in
   )
 }
 
+/** Which extensions changed the agent's message before it was sent, or appended it. */
+function OutboundNote({ processing }: { readonly processing: NonNullable<ConversationMessage['outboundProcessing']> }) {
+  const names = processing.extensions.join('、')
+  return (
+    <div className={styles.hookNote} data-outbound="">
+      <Blocks aria-hidden="true" />
+      {processing.followUp === true ? `由 ${names} 追加` : `经 ${names} 处理`}
+    </div>
+  )
+}
+
 function Elapsed({ since }: { readonly since: number }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -263,6 +275,8 @@ const toolState = (tool: RuntimeTool) => {
     }
   if (tool.deliveryState === 'failed')
     return { className: styles.stepFail, icon: <X />, tone: 'bad' as const, label: '未送达' }
+  if (tool.deliveryState === 'cancelled')
+    return { className: styles.stepWarn, icon: <CircleAlert />, tone: 'warn' as const, label: '已取消' }
   if (tool.deliveryState === 'sent')
     return { className: styles.stepOk, icon: <Check />, tone: 'ok' as const, label: '已送达' }
   if (tool.state === 'succeeded')

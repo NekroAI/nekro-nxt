@@ -1,4 +1,4 @@
-import { Maximize2, MessagesSquare, Minimize2, MoreHorizontal, Plus, Unplug } from 'lucide-react'
+import { ArrowDown, ArrowUp, Maximize2, MessagesSquare, Minimize2, MoreHorizontal, Plus, Unplug } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
@@ -820,8 +820,67 @@ export function ExtensionsSection({ agent }: { readonly agent: AgentSummary }) {
       ) : (
         <p className={styles.note}>还没有可用的扩展。在频道里请智能体做一个新能力，或在工坊导入。</p>
       )}
+      <OutboundOrder agent={agent} />
       <PanelSlot anchor={{ kind: 'agent', id: agent.id }} density="full" />
     </PropertyGroup>
+  )
+}
+
+/** The order in which the agent's enabled extensions process each message before it is sent. */
+function OutboundOrder({ agent }: { readonly agent: AgentSummary }) {
+  const product = useProductRuntime()
+  const extensions = useProductStore((state) => state.extensions)
+  const order = agent.outboundOrder
+  if (order.length < 2) return null
+  const move = async (index: number, offset: -1 | 1) => {
+    const next = [...order]
+    const [item] = next.splice(index, 1)
+    if (item === undefined) return
+    next.splice(index + offset, 0, item)
+    try {
+      await product.store.getState().putAgentOutboundOrder(agent.id, next)
+    } catch (error) {
+      failure(error)
+    }
+  }
+  return (
+    <PropertyList>
+      <PropertyRow
+        label="消息处理顺序"
+        tip="智能体的每条消息发出前，按这个顺序交给扩展处理，后一个拿到的是前一个处理过的内容。"
+      />
+      {order.map((extensionId, index) => {
+        const extension = extensions.find((item) => item.id === extensionId)
+        const name = extension?.name ?? '扩展'
+        return (
+          <PropertyRow
+            key={extensionId}
+            depth={1}
+            label={
+              <span className={styles.extensionLabel}>
+                {extension ? (
+                  <ExtensionIcon id={extension.id} name={extension.name} iconUrl={extension.iconUrl} size="sm" />
+                ) : null}
+                {`${index + 1}. ${name}`}
+              </span>
+            }
+          >
+            <span className={styles.orderActions}>
+              <IconButton label={`上移${name}`} disabled={index === 0} onClick={() => void move(index, -1)}>
+                <ArrowUp aria-hidden />
+              </IconButton>
+              <IconButton
+                label={`下移${name}`}
+                disabled={index === order.length - 1}
+                onClick={() => void move(index, 1)}
+              >
+                <ArrowDown aria-hidden />
+              </IconButton>
+            </span>
+          </PropertyRow>
+        )
+      })}
+    </PropertyList>
   )
 }
 

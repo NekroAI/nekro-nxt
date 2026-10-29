@@ -1644,6 +1644,71 @@ export const inboundHookDecisions = sqliteTable(
   ],
 )
 
+/**
+ * What the agent's outbound processors did to one message it sent: which extensions ran, whether the content changed,
+ * the messages they appended and, for a cancelled draft, who cancelled it and why. One row per agent send request
+ * (`episodeId` + `clientRequestId`, as on the intent) and one per appended message; `outboundIntentId` links the row
+ * to the message once it is planned. `notifiedAt` marks the single after-delivery notification.
+ */
+export const outboundProcessing = sqliteTable(
+  'outbound_processing',
+  {
+    id: text().primaryKey(),
+    agentId: text('agent_id')
+      .$type<AgentId>()
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+    channelId: text('channel_id')
+      .$type<ChannelId>()
+      .notNull()
+      .references(() => channels.id, { onDelete: 'cascade' }),
+    episodeId: text('episode_id').$type<EpisodeId>().notNull(),
+    clientRequestId: text('client_request_id').notNull(),
+    outboundIntentId: text('outbound_intent_id')
+      .$type<OutboundIntentId>()
+      .references(() => outboundIntents.id, { onDelete: 'cascade' }),
+    /** The agent's message this one was appended to. */
+    followUpOf: text('follow_up_of'),
+    processedBy:
+      jsonText<readonly { readonly extensionId: ExtensionId; readonly displayName: string; readonly changed?: true }[]>(
+        'processed_by',
+      ).notNull(),
+    rewritten: integer().notNull(),
+    /** The content the agent submitted. */
+    draftParts: jsonText<readonly MessagePart[]>('draft_parts').notNull(),
+    /** The content to send; absent when the draft was cancelled. */
+    finalParts: jsonText<readonly MessagePart[]>('final_parts'),
+    followUps:
+      jsonText<readonly { readonly extensionId: ExtensionId; readonly parts: readonly MessagePart[] }[]>(
+        'follow_ups',
+      ).notNull(),
+    cancelledBy: text('cancelled_by').$type<ExtensionId>(),
+    cancelReason: text('cancel_reason'),
+    diagnostics: jsonText<readonly { readonly extensionId: ExtensionId; readonly message: string }[]>('diagnostics'),
+    createdAt: integer('created_at').notNull(),
+    notifiedAt: integer('notified_at'),
+  },
+  (table) => [
+    uniqueIndex('outbound_processing_request_uq').on(table.episodeId, table.clientRequestId),
+    uniqueIndex('outbound_processing_intent_uq').on(table.outboundIntentId),
+    index('outbound_processing_channel_idx').on(table.channelId, table.createdAt),
+    check(
+      'outbound_processing_cancel_ck',
+      sql`(${table.cancelledBy} IS NULL AND ${table.finalParts} IS NOT NULL) OR (${table.cancelledBy} IS NOT NULL AND ${table.finalParts} IS NULL AND ${table.outboundIntentId} IS NULL)`,
+    ),
+  ],
+)
+
+/** The order in which the agent's outbound processors run; extensions missing from the list follow by enable time. */
+export const agentOutboundOrders = sqliteTable('agent_outbound_orders', {
+  agentId: text('agent_id')
+    .$type<AgentId>()
+    .primaryKey()
+    .references(() => agentDefinitions.id, { onDelete: 'cascade' }),
+  extensionIds: jsonText<readonly ExtensionId[]>('extension_ids').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
 export const coreSchema = {
   commandSystem,
   commandPolicies,
@@ -1708,6 +1773,8 @@ export const coreSchema = {
   extensionStorageEntries,
   extensionJobs,
   inboundHookDecisions,
+  outboundProcessing,
+  agentOutboundOrders,
 } as const
 
 /**

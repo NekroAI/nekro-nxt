@@ -79,16 +79,21 @@ import {
 import {
   COMMAND_DYNAMIC_PROBE_METHOD,
   INBOUND_DYNAMIC_PROBE_METHOD,
+  OUTBOUND_DYNAMIC_PROBE_METHOD,
   MIGRATION_DYNAMIC_PROBE_METHOD,
   wrapDynamicHostSource,
 } from './inbound-dynamic-harness.js'
+import { verifyOutboundHandler } from './extension-outbound.js'
 import { commandVerificationArguments } from './commands/verification.js'
 import { moduleToFactoryBody } from '@nekro-nxt/extension-runtime'
 import { z } from 'zod'
 
 /** Verifier-only RPC methods the dynamic wrapper adds; never part of a candidate's interface. */
+const OutboundProbeSchema = z.object({ registered: z.boolean(), result: z.unknown().optional() }).passthrough()
+
 const PRIVATE_DYNAMIC_METHODS = new Set([
   INBOUND_DYNAMIC_PROBE_METHOD,
+  OUTBOUND_DYNAMIC_PROBE_METHOD,
   COMMAND_DYNAMIC_PROBE_METHOD,
   MIGRATION_DYNAMIC_PROBE_METHOD,
 ])
@@ -342,6 +347,8 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   >()
   private readonly adapterPackages = new Set<string>()
   private readonly inboundPackages = new Set<string>()
+  /** Packages wrapped with the saved factory contract, which expose the outbound probe. */
+  private readonly factoryPackages = new Set<string>()
   /** What each candidate Package declared; `nxt` calls of a running candidate check against these. */
   private readonly declarationsByPackage = new Map<
     string,
@@ -630,6 +637,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       )
       if (registersAdapter) this.adapterPackages.add(receipt.packageId)
       if (declaresInbound && snapshot !== undefined) this.inboundPackages.add(receipt.packageId)
+      if (snapshot !== undefined && host !== undefined) this.factoryPackages.add(receipt.packageId)
       // Inspection shows the source the agent wrote: the module itself when it submitted a whole module.
       const authoredHost = snapshot?.codeFormat === 'module' ? snapshot.code.host : host
       if (authoredHost !== undefined && wrappedHost !== authoredHost) {
@@ -681,6 +689,10 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
 
   isInboundPackage(packageId: string): boolean {
     return this.inboundPackages.has(packageId)
+  }
+
+  hasFactoryContract(packageId: string): boolean {
+    return this.factoryPackages.has(packageId)
   }
 
   override async run(
@@ -876,6 +888,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         this.clientRpcMethodsByPackage.delete(pkg.packageId)
         this.adapterPackages.delete(pkg.packageId)
         this.inboundPackages.delete(pkg.packageId)
+        this.factoryPackages.delete(pkg.packageId)
         this.originalHostByPackage.delete(pkg.packageId)
       }
     }
@@ -1441,6 +1454,26 @@ export class DynamicAuthoringRuntime {
       }
       if (decision.data?.trigger === 'force' && declared?.mayForceTrigger !== true) {
         throw new Error('入站处理函数返回了 force，但没有声明 mayForceTrigger。')
+      }
+    }
+    if (runner.hasFactoryContract(packageId)) {
+      const registered = await invoke(OUTBOUND_DYNAMIC_PROBE_METHOD, null)
+      if (!registered.ok) throw new Error(`出站处理函数验证失败：${registered.message}`)
+      const probed = OutboundProbeSchema.safeParse(registered.value)
+      const declaredOutbound = permissions.agent?.outbound
+      if (probed.success && probed.data.registered && declaredOutbound === undefined) {
+        throw new Error('注册 harness.onOutbound 需要声明 permissions.agent.outbound。')
+      }
+      if (declaredOutbound !== undefined) {
+        if (!probed.success || !probed.data.registered) {
+          throw new Error('声明了 outbound，但 Host 没有调用 harness.onOutbound 注册处理函数。')
+        }
+        await verifyOutboundHandler(async (message) => {
+          const probe = await invoke(OUTBOUND_DYNAMIC_PROBE_METHOD, JsonValueSchema.parse(message))
+          if (!probe.ok) throw new Error(`出站处理函数验证失败：${probe.message}`)
+          const parsed = OutboundProbeSchema.safeParse(probe.value)
+          return parsed.success ? parsed.data.result : undefined
+        }, declaredOutbound)
       }
     }
     for (const contribution of snapshot?.contributions ?? []) {

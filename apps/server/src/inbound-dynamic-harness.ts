@@ -4,6 +4,8 @@ import type { JsonValue } from '@nekro-nxt/contracts'
 export const INBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_inbound_probe_v1'
 /** Verifier-only RPC that runs one registered chat command with sample arguments. */
 export const COMMAND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_command_probe_v1'
+/** Verifier-only RPC that calls the registered outbound handler with one synthetic message. */
+export const OUTBOUND_DYNAMIC_PROBE_METHOD = '__nekro_nxt_outbound_probe_v1'
 /** Verifier-only RPC that runs the registered data migration against empty storage. */
 export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
 
@@ -11,8 +13,9 @@ export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
  * Wraps a dynamic candidate's Host half so it runs with the same factory contract as a saved Revision (扩展形态统一
  * §5). The DSH dynamic sandbox only provides `harness`; the wrapper adds:
  *
- * - `harness.onInbound` and `harness.onJob`, recorded at factory time. With an inbound hook, a private RPC lets the
- *   verifier call the handler with a synthetic message; jobs never fire in dynamic runs, so their handler is recorded.
+ * - `harness.onInbound`, `harness.onOutbound` and `harness.onJob`, recorded at factory time. With an inbound hook, a
+ *   private RPC lets the verifier call the handler with a synthetic message; another one calls the outbound handler
+ *   with a synthetic draft or delivered message. Jobs never fire in dynamic runs, so their handler is recorded.
  * - the factory's host-layer `nxt`, which resolves once the candidate is mounted (call it from RPC handlers or tools).
  * - `ctx.config()` inside the agent attachment, returning the agent configuration the candidate runs with.
  *
@@ -24,7 +27,7 @@ export const wrapDynamicHostSource = (
 ): string => `
 const __nxtHostConfig = ${JSON.stringify(options.hostConfig)}
 harness.config = () => JSON.parse(JSON.stringify(__nxtHostConfig))
-const __nxtFactory = { handler: undefined, job: undefined, migration: undefined, nxt: undefined, host: undefined, factoryOpen: true }
+const __nxtFactory = { handler: undefined, outbound: undefined, job: undefined, migration: undefined, nxt: undefined, host: undefined, factoryOpen: true }
 const __nxtCommands = new Map()
 const __nxtLogs = []
 let __nxtLogger
@@ -41,6 +44,21 @@ harness.onInbound = (handler) => {
   __nxtFactory.handler = handler
   return () => { __nxtFactory.handler = undefined }
 }
+harness.onOutbound = (handler) => {
+  if (!__nxtFactory.factoryOpen) {
+    throw new Error('harness.onOutbound 必须在 factory 阶段（Host 源码顶层、return 之前）注册，不能在 apply 或工具里注册。')
+  }
+  if (typeof handler !== 'function') throw new TypeError('harness.onOutbound 需要一个处理函数。')
+  if (__nxtFactory.outbound !== undefined) throw new Error('一个扩展只能注册一个出站处理函数。')
+  __nxtFactory.outbound = handler
+  return () => { __nxtFactory.outbound = undefined }
+}
+harness.handle('${OUTBOUND_DYNAMIC_PROBE_METHOD}', async (message) => {
+  if (__nxtFactory.outbound === undefined) return { registered: false }
+  if (!message) return { registered: true }
+  const result = await __nxtFactory.outbound(message, __nxtFactory.nxt)
+  return { registered: true, result: result === undefined ? null : JSON.parse(JSON.stringify(result)) }
+})
 harness.onJob = (handler) => {
   if (!__nxtFactory.factoryOpen) {
     throw new Error('harness.onJob 必须在 factory 阶段（Host 源码顶层、return 之前）注册，不能在 apply 或工具里注册。')

@@ -410,6 +410,66 @@ export type NxtInboundHandler = (
   nxt: NxtHostService,
 ) => NxtInboundDecision | undefined | Promise<NxtInboundDecision | undefined>
 
+/**
+ * SDK 13. A message the agent is about to send. Only extensions declaring `outbound.transform` or `outbound.cancel`
+ * receive drafts; they run one after another in the order the user set for the agent, and each sees the content the
+ * previous one produced.
+ */
+export interface NxtOutboundDraft {
+  readonly stage: 'draft'
+  readonly channel: {
+    readonly id: string
+    readonly kind: 'internal' | 'direct' | 'group'
+    readonly displayName?: string
+  }
+  /** The message content in order; may already be changed by an earlier extension. */
+  readonly parts: readonly MessagePart[]
+  /** The text parts joined, for quick checks. */
+  readonly text: string
+  /** The message this one quotes, when the agent replies to a specific message. */
+  readonly replyTo?: string
+  /** The latest message that woke the agent for this reply, if any. */
+  readonly triggeredBy?: string
+}
+
+/**
+ * SDK 13. A message of the agent after delivery settled, sent once to every extension declaring `outbound.read`.
+ * `parts` is what was actually sent, after all processing.
+ */
+export interface NxtOutboundDelivered {
+  readonly stage: 'delivered'
+  readonly channel: NxtOutboundDraft['channel']
+  readonly logicalMessageId: string
+  readonly parts: readonly MessagePart[]
+  readonly text: string
+  readonly deliveryState: 'sent' | 'partially-sent' | 'failed' | 'unknown'
+  /** Ids the platform assigned, in delivery order; platforms that confirm without an id leave this empty. */
+  readonly platformMessageIds: readonly string[]
+  /** Set when an extension appended this message after the agent's own. */
+  readonly followUp?: true
+}
+
+export type NxtOutboundMessage = NxtOutboundDraft | NxtOutboundDelivered
+
+/**
+ * What to do with a draft. Returning nothing or `{}` sends it unchanged. `parts` and `followUps` need
+ * `outbound.transform`; `cancel` needs `outbound.cancel`. Answers about delivered messages are ignored.
+ */
+export interface NxtOutboundResult {
+  /** Replaces the whole content. Assets must be usable in this channel, e.g. created with `nxt.assets.create`. */
+  readonly parts?: readonly MessagePart[]
+  /** Messages sent after this one, in order; later extensions do not process them. */
+  readonly followUps?: readonly { readonly parts: readonly MessagePart[] }[]
+  /** Stops the message; the agent is told the reason and can revise and send again. */
+  readonly cancel?: { readonly reason: string }
+}
+
+/** `nxt` here is bound to the message's channel; it has no prompt registration. */
+export type NxtOutboundHandler = (
+  message: NxtOutboundMessage,
+  nxt: NxtHostService,
+) => NxtOutboundResult | undefined | void | Promise<NxtOutboundResult | undefined | void>
+
 /** A job of this extension that came due in one channel. */
 export interface NxtJobDue {
   readonly jobId: string
@@ -738,6 +798,12 @@ export interface ExtensionHostEnvironment {
      * agent is woken; its `nxt` is bound to that agent and channel.
      */
     onInbound?(handler: NxtInboundHandler): () => void
+    /**
+     * SDK 13. Extensions that declare `permissions.agent.outbound` register one outbound handler during factory
+     * evaluation. With `transform` or `cancel` it receives each draft of the agent's messages before sending; with
+     * `read` it receives each message once delivery settled. Its `nxt` is bound to that agent and channel.
+     */
+    onOutbound?(handler: NxtOutboundHandler): () => void
     /**
      * Extensions with `permissions.agent.jobs` register one due-job handler during factory evaluation. It runs before
      * the agent is woken for this extension's jobs and can decide not to wake it; without a handler every due job
@@ -1484,6 +1550,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
       "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
       "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；message 含 text、images（[{ assetId, sticker }]，sticker 是平台的表情包标记，只作参考，拖进来的表情包和不支持标记的平台都是 false）、mentionsAgent、wouldTrigger；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
+      "harness.onOutbound((message, nxt) => result)：在 factory 阶段注册唯一的出站处理函数，处理智能体用 send_channel_message 发出的消息（管理员消息、命令回复不经过这里）。需要 requires.sdk 至少为 13，并声明 outbound: { read?: true, transform?: true, cancel?: true, timeoutMs, onTimeout?: 'send' | 'cancel' }。声明了 transform 或 cancel 时，发出前收到 message.stage === 'draft' 的草稿（channel、parts、text、replyTo、triggeredBy），多个扩展按用户在智能体扩展列表里排的顺序依次处理，后一个看到前一个的结果；返回 { parts } 替换整条内容（需要 transform，素材必须是当前频道能用的，例如自己用 nxt.assets.create 生成的语音），{ followUps: [{ parts }] } 在后面追加消息（需要 transform，追加的不再经过出站处理），{ cancel: { reason } } 取消这条（需要 cancel，reason 会原样告诉智能体，它可以改了再发），不返回则原样发出。声明了 read 时，投递有结果后收到一次 message.stage === 'delivered'（最终 parts、logicalMessageId、deliveryState、platformMessageIds、追加消息带 followUp: true），返回值被忽略，也不会拖慢发送。超时或抛错按 onTimeout 处理，默认照常发出。nxt 绑定到消息所在频道。",
       'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
       'harness.onJob((job, nxt) => ({ wake, note }))：声明了 jobs 的扩展可在 factory 阶段注册唯一的到期处理函数，本扩展的任务到期时先运行它（job 含 jobId、label、payload、scheduledAt、declaredId、channel），nxt 绑定到任务所在频道；返回 { wake: false } 则这次不唤醒智能体（例如订阅检查没有新内容），返回 note 会随到期事件交给智能体（例如新文章列表，最多 2000 字）。15 秒内未返回或抛错时按默认唤醒。轮询类需求一定要用它，避免每次检查都消耗一次模型调用。',
       'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。对拿不到真实身份的机器人账号执行动作会明确失败。platform.selfPlatformUserId() 返回机器人账号的平台 ID（拿不到时为 undefined），只给声明了该适配器 raw 的扩展。',
@@ -1492,7 +1559,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
     ],
     rules: [
-      '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载：Host 源码顶层（factory）只在本机执行一次，在这里注册 harness.handle（RPC）、harness.registerAdapter、harness.onInbound、harness.onJob；return 的插件挂载到每个智能体，在它的 apply 里注册工具。一个扩展可以同时提供工具、页面、面板、适配器，不需要拆成多个扩展。',
+      '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载：Host 源码顶层（factory）只在本机执行一次，在这里注册 harness.handle（RPC）、harness.registerAdapter、harness.onInbound、harness.onOutbound、harness.onJob；return 的插件挂载到每个智能体，在它的 apply 里注册工具。一个扩展可以同时提供工具、页面、面板、适配器，不需要拆成多个扩展。',
       '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。config.agent 的必填项可以不给默认值，启用时在 enable 的 values 里提供。',
       "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }。不要写 properties、required 数组或 additionalProperties。",
       'meta.agentWritable: false 表示这一项只能由管理员在后台修改，只用于计费、内容审核这类开关。动态创造的扩展不能使用这个标记；修改导入或社区安装的扩展时，带这个标记的项原样保留。',
@@ -1514,6 +1581,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
       '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
       '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
       '显式斜杠命令使用 SDK 9 的 command Contribution 和 factory 级 harness.registerCommand(definition, handler)：动态创造把命令定义放进 nekro_nxt_extension_define.commands，保存验证会用宿主按参数定义生成的样例真实执行一次，处理器不能有副作用；源码包导入时同样执行隔离验证。命令名不能用 ext、admin 等内置命令名。不能把命令放进 Session apply 或用 onInbound 模拟。参数来自 context.arguments，媒体仅引用当前频道授权的 assetId，监听 context.signal 清理；耗时命令可用 context.reply 先发过程回复（最多 5 条），返回值是终态结果；默认控制台执行的结果不发往外部频道，需要时在定义里把 consoleReply 设为 channel；处理器默认 60 秒超时（timeoutSeconds 可声明，最长 600），超时会通过 signal 取消。模型不直接调用聊天命令。',
+      '出站处理适合这些需求：记录实际发了什么（统计话题、记下发过的表情包）用 read；翻译、Markdown 转纯文本、敏感词打码、统一署名这类改写用 transform 返回 parts；文字转语音、按语气补一张表情包、把公式渲染成图片，可以替换内容，也可以用 followUps 追加；同步到 Webhook 或别的系统在 delivered 阶段做；防泄密、静默时段这类把关用 cancel，并在 reason 里写清为什么、怎么改。草稿处理会让每条消息等它返回，所以要快：本地判断优先，需要模型或网络时控制 timeoutMs。只在发出后记录、不改内容的需求只声明 read，不参与发送前的处理。',
       '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息；定时检查类需求在 onJob 里先检查，没有新内容就返回 { wake: false }。',
     ],
   },

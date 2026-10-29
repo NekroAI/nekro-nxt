@@ -9,6 +9,7 @@ import {
   finishOutcome,
   messageText,
   messageDeliverySummary,
+  messageProcessing,
   readArguments,
   searchQueries,
   searchSources,
@@ -200,25 +201,39 @@ export function ToolDetail({
   } else if (kind === 'message') {
     const message = messageText(args, inputText)
     const delivery = messageDeliverySummary(resultText)
-    const state = tool.deliveryState ?? delivery?.status ?? (tool.state === 'failed' ? 'failed' : undefined)
+    const processing = messageProcessing(resultText)
+    const state =
+      tool.deliveryState ??
+      (processing?.cancelled ? 'cancelled' : undefined) ??
+      delivery?.status ??
+      (tool.state === 'failed' ? 'failed' : undefined)
     body = (
       <>
         {message ? (
-          <Block title="发出的内容">
+          <Block title={processing?.sentText || state === 'cancelled' ? '智能体写的内容' : '发出的内容'}>
             <blockquote className={styles.quote}>{message}</blockquote>
+          </Block>
+        ) : null}
+        {processing?.sentText ? (
+          <Block title="实际发出的内容">
+            <blockquote className={styles.quote}>{processing.sentText}</blockquote>
           </Block>
         ) : null}
         {running ? null : (
           <p className={styles.lead}>
-            {state === 'sent'
-              ? '已送达频道'
-              : state === 'unknown'
-                ? '送达结果未确认，请先查看频道中的消息。'
-                : state === 'partially-sent'
-                  ? '部分内容已送达频道'
-                  : state === 'failed'
-                    ? '没有发出'
-                    : '已写入频道'}
+            {state === 'cancelled'
+              ? `没有发出：${processing?.cancelled ?? '扩展取消了这条消息'}`
+              : state === 'sent' && processing?.processedBy
+                ? `已送达频道，内容经${processing.processedBy}处理`
+                : state === 'sent'
+                  ? '已送达频道'
+                  : state === 'unknown'
+                    ? '送达结果未确认，请先查看频道中的消息。'
+                    : state === 'partially-sent'
+                      ? '部分内容已送达频道'
+                      : state === 'failed'
+                        ? '没有发出'
+                        : '已写入频道'}
           </p>
         )}
         {!running &&

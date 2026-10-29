@@ -1,5 +1,5 @@
 import { extensionManifestSchema } from '@nekro-nxt/extension-runtime'
-import type { HostApiResponse, DshPluginPackageIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
+import type { HostApiResponse, DshPluginPackageIdSchema, EpisodeIdSchema, OutboundIntentId } from '@nekro-nxt/contracts'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import {
@@ -461,6 +461,22 @@ const inboundHookFact = (
   }
 }
 
+/** Which outbound processors changed the agent's message or appended it; absent when none did. */
+const outboundProcessingFact = (
+  runtime: NekroRuntime,
+  intentId: OutboundIntentId,
+): HostSnapshotMessage['outboundProcessing'] => {
+  const record = runtime.repository.outboundProcessing.getOutboundProcessingByIntent(intentId)
+  if (record === undefined) return undefined
+  const extensions = record.processedBy.filter((entry) => entry.changed === true).map((entry) => entry.displayName)
+  if (extensions.length === 0) return undefined
+  return {
+    extensions,
+    rewritten: record.rewritten,
+    ...(record.followUpOf === undefined ? {} : { followUp: true as const }),
+  }
+}
+
 /** The agent whose account on another local connection sent this message, when the host can tell. */
 const localAgentOf = (
   runtime: NekroRuntime,
@@ -525,6 +541,10 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
     OutboundIntentIdSchema.parse(entry.sourceId),
   )
   const notice = entry.noticeKey === undefined ? undefined : parseNoticeKey(entry.noticeKey)
+  const outboundProcessing =
+    command === undefined && notice === undefined
+      ? outboundProcessingFact(runtime, OutboundIntentIdSchema.parse(entry.sourceId))
+      : undefined
   return {
     id: entry.sourceId,
     channelId: entry.channelId,
@@ -538,6 +558,7 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
       ? {}
       : { deliveryResolution: { action: resolution.action, resolvedAt: resolution.createdAt } }),
     ...(isAdminConsoleOutbound(entry.sourceTurnId) ? { origin: 'admin-console' as const } : {}),
+    ...(outboundProcessing === undefined ? {} : { outboundProcessing }),
   }
 }
 

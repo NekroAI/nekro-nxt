@@ -35,6 +35,7 @@ import type {
   ExtensionToolDefinition,
   NxtCallContext,
   NxtInboundHandler,
+  NxtOutboundHandler,
   NxtJobHandler,
   NxtDataMigrationHandler,
   NxtInboundMessage,
@@ -628,6 +629,7 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
   const toolInvocations: Array<{ name: string; succeeded: boolean }> = []
   let disposePlugin: (() => void | Promise<void>) | undefined
   let inbound: NxtInboundHandler | undefined
+  let outbound: NxtOutboundHandler | undefined
   let migration: NxtDataMigrationHandler | undefined
   let adapterContribution: AdapterHostContributionV2 | undefined
   const registry = new AdapterRegistry()
@@ -669,6 +671,20 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
               }
               if (inbound !== undefined) throw new Error('一个扩展只能注册一个入站处理函数。')
               inbound = handler
+              return () => undefined
+            },
+            onOutbound: (handler: NxtOutboundHandler) => {
+              if ((manifest.requires?.sdk ?? 7) < EXTENSION_OUTBOUND_SDK_LEVEL) {
+                throw new Error(
+                  `使用 harness.onOutbound 的扩展需要声明 requires.sdk 为 ${EXTENSION_OUTBOUND_SDK_LEVEL} 或更高。`,
+                )
+              }
+              if (agentCapabilities?.outbound === undefined) {
+                throw new Error('注册 harness.onOutbound 需要声明 permissions.agent.outbound。')
+              }
+              if (typeof handler !== 'function') throw new TypeError('harness.onOutbound 需要一个处理函数。')
+              if (outbound !== undefined) throw new Error('一个扩展只能注册一个出站处理函数。')
+              outbound = handler
               return () => undefined
             },
             // Run once below against empty storage: a migration must at least not fail on no data.
@@ -781,6 +797,12 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
         }
       }
     }
+    const declaredOutbound = agentCapabilities?.outbound
+    if (declaredOutbound !== undefined) {
+      const handler = outbound
+      if (handler === undefined) throw new Error('声明了 outbound，但 Host 没有调用 harness.onOutbound 注册处理函数。')
+      await verifyOutboundHandler((message) => handler(message, nxt), declaredOutbound)
+    }
     // Context cache discipline: the same storage and call context must render byte-identical dynamic context.
     const first = await nxt.renderDynamicContext()
     const second = await nxt.renderDynamicContext()
@@ -819,3 +841,5 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
   }
 }
 import { extensionLogger } from './extension-logger.js'
+import { verifyOutboundHandler } from './extension-outbound.js'
+import { EXTENSION_OUTBOUND_SDK_LEVEL } from '@nekro-nxt/contracts'

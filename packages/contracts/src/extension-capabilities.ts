@@ -7,8 +7,12 @@ import { z } from 'zod'
  * images, the search index and host-layer model calls. Level 9 adds the structured logger and explicit chat commands. Level 10 adds version lineage, the data version with its
  * migration hook and administrator-only commands. Level 11 lists the pictures of an inbound message to inbound hooks.
  * Level 12 adds credential placeholders (`secrets.placeholder`) that `http.fetch` fills for the credential's domains.
+ * Level 13 adds outbound processing (`harness.onOutbound`, `permissions.agent.outbound`).
  */
-export const EXTENSION_SDK_LEVEL = 12
+export const EXTENSION_SDK_LEVEL = 13
+
+/** Outbound processing needs this level; packages that declare `permissions.agent.outbound` declare it. */
+export const EXTENSION_OUTBOUND_SDK_LEVEL = 13
 
 /** Lineage, `dataVersion` and administrator-only commands need this level; packages that carry them declare it. */
 export const EXTENSION_GOVERNANCE_SDK_LEVEL = 10
@@ -25,6 +29,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 10, version: '0.6.0' },
   { level: 11, version: '0.6.0' },
   { level: 12, version: '0.7.0' },
+  { level: 13, version: '0.7.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
@@ -129,6 +134,32 @@ export const ExtensionInboundHookCapabilitySchema = z
   })
   .strict()
 export type ExtensionInboundHookCapability = z.output<typeof ExtensionInboundHookCapabilitySchema>
+
+export const EXTENSION_OUTBOUND_MAX_TIMEOUT_MS = 15_000
+
+/**
+ * Outbound processing of the agent's own messages. `read` sees each message after it was delivered; `transform` may
+ * replace its content or append messages before it is sent; `cancel` may stop it. `onTimeout` decides what happens
+ * when the handler times out or throws before sending: `send` (default) sends the message as it is.
+ */
+export const ExtensionOutboundCapabilitySchema = z
+  .object({
+    read: z.literal(true).optional(),
+    transform: z.literal(true).optional(),
+    cancel: z.literal(true).optional(),
+    timeoutMs: z.number().int().min(100).max(EXTENSION_OUTBOUND_MAX_TIMEOUT_MS),
+    onTimeout: z.enum(['send', 'cancel']).optional(),
+  })
+  .strict()
+  .refine(
+    (value) => value.read === true || value.transform === true || value.cancel === true,
+    'outbound 至少声明 read、transform 或 cancel 中的一项。',
+  )
+export type ExtensionOutboundCapability = z.output<typeof ExtensionOutboundCapabilitySchema>
+
+/** Whether the extension takes part before sending (and so in the agent's processing order). */
+export const outboundProcessesBeforeSend = (outbound: ExtensionOutboundCapability | undefined): boolean =>
+  outbound?.transform === true || outbound?.cancel === true
 
 export const EXTENSION_JOB_MAX_RUNTIME = 50
 
@@ -381,6 +412,7 @@ export const ExtensionCapabilitiesSchema = z
       .strict()
       .optional(),
     inboundHook: ExtensionInboundHookCapabilitySchema.optional(),
+    outbound: ExtensionOutboundCapabilitySchema.optional(),
     jobs: ExtensionJobsCapabilitySchema.optional(),
     platform: ExtensionPlatformCapabilitySchema.optional(),
     llm: ExtensionLlmCapabilitySchema.optional(),
@@ -489,6 +521,18 @@ export const extensionCapabilitiesExpand = (
       (hook.reads === 'all' && previousHook.reads === 'triggered') ||
       (hook.mayHide && !previousHook.mayHide) ||
       (hook.mayForceTrigger && !previousHook.mayForceTrigger))
+  ) {
+    return true
+  }
+  const outbound = next.outbound
+  const previousOutbound = previous?.outbound
+  if (
+    outbound !== undefined &&
+    (previousOutbound === undefined ||
+      (outbound.read === true && previousOutbound.read !== true) ||
+      (outbound.transform === true && previousOutbound.transform !== true) ||
+      (outbound.cancel === true && previousOutbound.cancel !== true) ||
+      (outbound.onTimeout === 'cancel' && previousOutbound.onTimeout !== 'cancel'))
   ) {
     return true
   }
@@ -605,6 +649,21 @@ export const summarizeExtensionCapabilities = (
       label: hook.reads === 'all' ? '查看频道里的全部消息' : '在智能体回应前查看要回应的消息',
       ...(effects === '' ? {} : { detail: `可以${effects}` }),
     })
+  }
+  const outbound = capabilities.outbound
+  if (outbound !== undefined) {
+    if (outbound.transform === true) {
+      items.push({ key: 'outbound.transform', risk: 'high', label: '在智能体的消息发出前修改内容或追加消息' })
+    }
+    if (outbound.cancel === true) {
+      items.push({ key: 'outbound.cancel', risk: 'high', label: '取消智能体要发出的消息' })
+    }
+    if (outbound.read === true) {
+      items.push({ key: 'outbound.read', risk: 'sensitive', label: '查看智能体发出的每条消息' })
+    }
+    if (outbound.onTimeout === 'cancel' && (outbound.transform === true || outbound.cancel === true)) {
+      items.push({ key: 'outbound.onTimeout', risk: 'high', label: '这个扩展出错时，智能体的消息会发不出去' })
+    }
   }
   const jobs = capabilities.jobs
   if (jobs?.declared !== undefined && jobs.declared.length > 0) {

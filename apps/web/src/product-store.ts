@@ -271,6 +271,20 @@ export function createProductStore(
         paused,
       })
     },
+    putAgentOutboundOrder: async (agentId, extensionIds) => {
+      const previous = useProductStore.getState().agents
+      useProductStore.setState({
+        agents: previous.map((agent) =>
+          agent.id === agentId ? { ...agent, outboundOrder: [...extensionIds] } : agent,
+        ),
+      })
+      try {
+        await requireHost().actions['agents.putOutboundOrder']({ agentId, extensionIds: [...extensionIds] })
+      } catch (error) {
+        useProductStore.setState({ agents: previous })
+        throw error
+      }
+    },
     putWorkTreeOrder: async (order) => {
       const previous = useProductStore.getState().workTreeOrder
       const next = {

@@ -1,5 +1,6 @@
 import { recognizeCommand } from '@nekro-nxt/contracts'
 import { viewerKeyFromRequest } from './viewer.js'
+import { agentOutboundOrder } from './extension-outbound.js'
 import { expireComposerAssets, uploadComposerAsset, validateComposerAssets } from './channel-composer-assets.js'
 import {
   AgentIdSchema,
@@ -435,6 +436,32 @@ export function registerWorkspaceRoutes({
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (/^\/api\/agents\/[^/]+\/extensions\/[^/]+\/activation(?:\/config)?$/u.test(url.pathname)) {
         await handleExtensionActivationRoute(req, res)
+        return
+      }
+      const outboundOrderMatch = /^\/api\/agents\/([^/]+)\/outbound-order$/u.exec(url.pathname)
+      if (outboundOrderMatch) {
+        if (req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        try {
+          const { agentId } = HostApiContracts.putAgentOutboundOrder.params.parse({
+            agentId: decodeURIComponent(outboundOrderMatch[1] ?? ''),
+          })
+          if (!runtime.repository.getAgent(agentId)) {
+            writeError(res, 404, 'agent-not-found', 'Unknown agent.')
+            return
+          }
+          const parsed = HostApiContracts.putAgentOutboundOrder.parseRequest(await readJsonBody(req))
+          const current = agentOutboundOrder(runtime.repository, agentId)
+          const requested = parsed.extensionIds.filter((id) => current.includes(id))
+          const extensionIds = [...new Set([...requested, ...current])]
+          runtime.repository.outboundProcessing.putAgentOutboundOrder(agentId, extensionIds, Date.now())
+          writeJson(res, 200, HostApiContracts.putAgentOutboundOrder.parseResponse({ extensionIds }))
+          broadcastExtensionsChanged()
+        } catch (error) {
+          writeError(res, 400, 'outbound-order-failed', error instanceof Error ? error.message : String(error))
+        }
         return
       }
       const revisionsMatch = /^\/api\/agents\/([^/]+)\/revisions(?:\/([^/]+)\/restore)?$/u.exec(url.pathname)

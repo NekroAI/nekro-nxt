@@ -125,6 +125,8 @@ export interface AgentSummary {
   readonly subConversationModels: AgentSubConversationModels
   /** Models it switches to, in order, when the main model fails. */
   readonly fallbackModels: readonly AgentFallbackModel[]
+  /** Enabled extensions that process its messages before sending, in the order they run. */
+  readonly outboundOrder: readonly string[]
   readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
   /** Non-versioned identity look; absent fields fall back to values derived from the id. */
   readonly appearance?: { readonly hue?: number; readonly avatarUrl?: string }
@@ -260,6 +262,8 @@ export interface ConversationMessage {
   readonly localAgentId?: string
   /** What the agent's inbound hooks decided, when it differs from the default. */
   readonly inboundHook?: NonNullable<HostApiResponse<'snapshot'>['messages'][number]['inboundHook']>
+  /** Extensions that changed the agent's message before it was sent, or appended it. */
+  readonly outboundProcessing?: NonNullable<HostApiResponse<'snapshot'>['messages'][number]['outboundProcessing']>
   /** A scheduled task came due; shown as a notice instead of a member message. */
   readonly scheduledTask?: {
     readonly label: string
@@ -708,6 +712,8 @@ export interface ProductState {
   /** Pauses or resumes every automatic response in the channel; the response rule is kept. */
   setChannelPaused(channelId: string, paused: boolean): Promise<void>
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
+  /** Saves the order in which the agent's outbound processors run. */
+  putAgentOutboundOrder(agentId: string, extensionIds: readonly string[]): Promise<void>
   sendMessage(
     channelId: string,
     body: string,

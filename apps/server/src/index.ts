@@ -4,6 +4,7 @@ import type { ExtensionGovernanceToolPort } from './extension-governance/tool-po
 import { parseAgentTestConfig, type AuthoringTestConfigValues } from './authoring-test-config.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { renderChannelMessageResult } from './channel-message-result.js'
+import type { AgentSendResult } from './extension-outbound.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
 import AuthorizationService from '@deepseek-ai/dsh-authorization'
 import {
@@ -277,6 +278,7 @@ import {
   PersistentExtensionMounts,
   type PersistentAdapterPort,
   type PersistentInboundHandler,
+  type PersistentOutboundHandler,
 } from './persistent-extension-mounts.js'
 import {
   mcpPluginConfig,
@@ -451,7 +453,7 @@ export function assertHostDshPackageVersions(): void {
 }
 
 export interface AgentCommunicationPort {
-  sendMessage(input: SendMessageInput): Promise<SendMessageResult>
+  sendMessage(input: SendMessageInput): Promise<SendMessageResult | AgentSendResult>
   supportsRetraction?(channelId: ChannelId): boolean
   supportsNudge?(channelId: ChannelId): boolean
   retractMessage?(input: {
@@ -1157,7 +1159,7 @@ const nekroNxtExtensionDefineTool = (
           agent: {
             type: 'json',
             description:
-              '智能体层能力：挂载内 ctx.nxt 使用的 network、storage、assets、history、context、llm、inboundHook、jobs、platform。',
+              '智能体层能力：挂载内 ctx.nxt 使用的 network、storage、assets、history、context、llm、inboundHook、outbound、jobs、platform。',
           },
         },
         description:
@@ -2018,9 +2020,29 @@ const channelContextTool = (
 
 const ChannelMessageResultSchema = z
   .object({
-    logicalMessageId: z.string(),
-    status: z.enum(['sent', 'partially-sent', 'failed', 'unknown']),
+    /** Absent when an extension cancelled the message before it was sent. */
+    logicalMessageId: z.string().optional(),
+    status: z.enum(['sent', 'partially-sent', 'failed', 'unknown', 'cancelled']),
     receipts: z.array(JsonValueSchema),
+    processing: z
+      .object({
+        processedBy: z.array(z.string()),
+        rewritten: z.boolean(),
+        parts: z.array(JsonValueSchema).optional(),
+        followUps: z.array(
+          z
+            .object({
+              extension: z.string(),
+              logicalMessageId: z.string().optional(),
+              status: z.string(),
+              message: z.string().optional(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .optional(),
+    cancel: z.object({ extension: z.string(), reason: z.string() }).strict().optional(),
   })
   .strict()
 
@@ -2107,19 +2129,21 @@ export const channelCommunicationTool = (
         type: 'object',
         additionalProperties: false,
         properties: {
-          logicalMessageId: { type: 'string', required: true },
+          logicalMessageId: { type: 'string' },
           status: {
             type: 'string',
-            enum: ['sent', 'partially-sent', 'failed', 'unknown'],
+            enum: ['sent', 'partially-sent', 'failed', 'unknown', 'cancelled'],
             required: true,
           },
           receipts: { type: 'array', required: true },
+          processing: { type: 'json' },
+          cancel: { type: 'json' },
         },
       },
       render: (_arguments, value) => [
         {
           type: 'text',
-          text: renderChannelMessageResult(value),
+          text: renderChannelMessageResult(ChannelMessageResultSchema.parse(value)),
         },
       ],
       presentationMeta: (_arguments, value) => ({
@@ -2138,7 +2162,15 @@ export const channelCommunicationTool = (
         clientRequestId: args.clientRequestId ?? `${episodeId}:${exec.callId}`,
         signal: exec.signal,
       })
-      return ChannelMessageResultSchema.parse(JSON.parse(JSON.stringify(result)))
+      const { logicalMessageId, processing, cancel, ...settled } = ChannelMessageResultSchema.parse(
+        JSON.parse(JSON.stringify(result)),
+      )
+      return {
+        ...settled,
+        ...(logicalMessageId === undefined ? {} : { logicalMessageId }),
+        ...(processing === undefined ? {} : { processing: JsonValueSchema.parse(processing) }),
+        ...(cancel === undefined ? {} : { cancel: JsonValueSchema.parse(cancel) }),
+      }
     },
   })
 
@@ -5537,6 +5569,10 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   inboundHandlers(agentId: AgentId): readonly PersistentInboundHandler[] {
     return this.#extensionMounts.inboundHandlers(agentId)
+  }
+
+  outboundHandlers(agentId: AgentId): readonly PersistentOutboundHandler[] {
+    return this.#extensionMounts.outboundHandlers(agentId)
   }
 
   /** One completion for an extension with the agent's current model; budgets are enforced by the `nxt` service. */

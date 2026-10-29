@@ -16,6 +16,33 @@ export const messageDeliverySummary = (text: string | undefined) => {
   }
 }
 
+/**
+ * What outbound processors did, read back from the send tool's rendered result: who cancelled it and why, or who
+ * changed it and the text actually sent.
+ */
+export const messageProcessing = (
+  text: string | undefined,
+): { readonly cancelled?: string; readonly processedBy?: string; readonly sentText?: string } | undefined => {
+  if (!text) return undefined
+  const cancelled = /^这条消息没有发出：(.+?)。可以按原因改一下再发。$/u.exec(text.trim())
+  if (cancelled?.[1]) return { cancelled: cancelled[1] }
+  const summary = messageDeliverySummary(text)
+  const processedBy =
+    /，内容经(.+?)处理。/u.exec(text)?.[1] ?? summary?.processing?.processedBy.map((name) => `「${name}」`).join('、')
+  const sentLine = /^实际发出的内容：(.+)$/mu.exec(text)?.[1]
+  let parts: unknown = summary?.processing?.parts
+  if (sentLine) {
+    try {
+      parts = JSON.parse(sentLine)
+    } catch {
+      parts = undefined
+    }
+  }
+  const sentText = messageText(Array.isArray(parts) ? { parts } : undefined)
+  if (!processedBy && !sentText) return undefined
+  return { ...(processedBy ? { processedBy } : {}), ...(sentText ? { sentText } : {}) }
+}
+
 export type ToolKind = 'search' | 'command' | 'fetch' | 'message' | 'finish' | 'script' | 'other'
 
 export const toolKind = (name: string): ToolKind => {

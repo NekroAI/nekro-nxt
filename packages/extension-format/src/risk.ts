@@ -117,6 +117,7 @@ const KNOWN_CAPABILITIES = new Set([
   'index',
   'history',
   'inboundHook',
+  'outbound',
   'jobs',
   'platform',
   'llm',
@@ -211,6 +212,22 @@ const capabilityItems = (declaredCapabilities: Json, layer: PermissionLayer): Pe
       label: hook['reads'] === 'all' ? '查看频道内每条新消息' : '查看会唤醒智能体的新消息',
       ...(effects ? { detail: effects } : {}),
     })
+  }
+  const outbound = asObject(capabilities['outbound'])
+  if (outbound !== undefined) {
+    // Wording matches what NekroNXT shows when approving the same capability.
+    if (outbound['transform'] === true) {
+      items.push({ key: 'outbound.transform', level: 'high', label: '在智能体的消息发出前修改内容或追加消息' })
+    }
+    if (outbound['cancel'] === true) {
+      items.push({ key: 'outbound.cancel', level: 'high', label: '取消智能体要发出的消息' })
+    }
+    if (outbound['read'] === true) {
+      items.push({ key: 'outbound.read', level: 'elevated', label: '查看智能体发出的每条消息' })
+    }
+    if (outbound['onTimeout'] === 'cancel' && (outbound['transform'] === true || outbound['cancel'] === true)) {
+      items.push({ key: 'outbound.onTimeout', level: 'high', label: '这个扩展出错时，智能体的消息会发不出去' })
+    }
   }
   const jobs = asObject(capabilities['jobs'])
   if (jobs !== undefined) {

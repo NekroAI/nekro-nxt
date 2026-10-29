@@ -24,6 +24,10 @@ import { createExtensionIndexRepository, type ExtensionIndexRepository } from '.
 import { createExtensionJobsRepository, type ExtensionJobsRepository } from './repositories/extension-jobs.js'
 import { createInboundHooksRepository, type InboundHooksRepository } from './repositories/inbound-hooks.js'
 import {
+  createOutboundProcessingRepository,
+  type OutboundProcessingRepository,
+} from './repositories/outbound-processing.js'
+import {
   createChannelMemberNotesRepository,
   type ChannelMemberNotesRepository,
 } from './repositories/channel-member-notes.js'
@@ -103,6 +107,7 @@ export {
 } from './repositories/extension-index.js'
 export type { ExtensionJobsRepository, ExtensionJobRecord } from './repositories/extension-jobs.js'
 export type { InboundHooksRepository, InboundHookDecisionRecord } from './repositories/inbound-hooks.js'
+export type { OutboundProcessingRepository, OutboundProcessingRecord } from './repositories/outbound-processing.js'
 export {
   ChannelPromptConflictError,
   type ChannelPromptAuthor,
@@ -182,6 +187,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly linkedAccounts: LinkedAccountsRepository
   /** Saved states of extension configuration. */
   readonly extensionConfigVersions: ExtensionConfigVersionsRepository
+  /** What outbound processors did to the agent's messages, and the order they run in for each agent. */
+  readonly outboundProcessing: OutboundProcessingRepository
 
   constructor(
     database: CoreDatabase,
@@ -211,6 +218,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.#governance = createExtensionGovernanceRepository(database.db)
     this.projections = createProjectionRepository(database.db)
+    this.outboundProcessing = createOutboundProcessingRepository(database.db)
     this.credentials = createCredentialsRepository(database.db)
     this.linkedAccounts = createLinkedAccountsRepository(database.db)
     this.extensionConfigVersions = createExtensionConfigVersionsRepository(database.db)

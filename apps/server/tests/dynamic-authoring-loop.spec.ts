@@ -732,6 +732,105 @@ return { inject: ['nxt'], apply() {} }`
     }
   })
 
+  it('verifies an outbound handler in the dynamic run and processes the agent messages once enabled', async () => {
+    const { runtime, entity, dshSessionId } = await startAuthoringSession()
+    const host = `harness.onOutbound(async (message, nxt) => {
+  if (message.stage === 'delivered') {
+    await nxt.storage.set('last', message.text)
+    return
+  }
+  if (message.text.includes('机密')) return { cancel: { reason: '含有机密词' } }
+  return { parts: [...message.parts, { type: 'text', text: '（示例署名）' }] }
+})
+return { inject: ['nxt'], apply() {} }`
+    const capabilities: ExtensionCapabilities = {
+      storage: { scopes: ['agent'] },
+      outbound: { read: true, transform: true, cancel: true, timeoutMs: 1000 },
+    }
+    try {
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'sign' },
+        name: '示例署名',
+        purpose: '给智能体的消息加上署名。',
+        code: { host },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [], agent: capabilities },
+        contributions: [],
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('ready')
+      expect(JSON.stringify(attempt.verification ?? {})).not.toContain('__nekro_nxt_outbound_probe')
+
+      const saved = await runtime.authoring.save({
+        taskId: task.id,
+        attemptId: attempt.id,
+        displayName: '示例署名',
+        slug: 'sign-off',
+        description: '给消息加上署名。',
+      })
+      const requirement = runtime.extensions.agentRequirement(entity.agentId, saved.extension.id, saved.revision.id)
+      await runtime.extensions.activate({
+        agentId: entity.agentId,
+        extensionId: saved.extension.id,
+        revisionId: saved.revision.id,
+        permissionApproval: { permissionDigest: requirement.permissionDigest },
+      })
+      const episode = runtime.repository.listActiveEpisodesForAgent(entity.agentId)[0]!
+      const send = (text: string, clientRequestId: string) =>
+        runtime.outbound.send(
+          {
+            agentId: entity.agentId,
+            channelId: entity.channelId,
+            episodeId: episode.id,
+            parts: [{ type: 'text', text }],
+            clientRequestId,
+          },
+          (message) => runtime.channels.sendMessage(message),
+        )
+
+      await expect(send('今天见', 'outbound-sign')).resolves.toMatchObject({
+        status: 'sent',
+        processing: { processedBy: ['示例署名'], rewritten: true },
+      })
+      const sent = runtime.repository.findOutboundByClientRequest(entity.agentId, entity.channelId, 'outbound-sign')!
+      expect(sent.intent.parts).toEqual([
+        { type: 'text', text: '今天见' },
+        { type: 'text', text: '（示例署名）' },
+      ])
+      expect(
+        projectHistoryEntry(runtime, {
+          source: 'outbound-intent',
+          sourceId: sent.intent.id,
+          logicalMessageId: sent.intent.logicalMessageId,
+          channelId: entity.channelId,
+          occurredAt: sent.intent.createdAt,
+          parts: sent.intent.parts,
+          state: sent.intent.state,
+        }).outboundProcessing,
+      ).toEqual({ extensions: ['示例署名'], rewritten: true })
+      expect(
+        runtime.repository.outboundProcessing.getOutboundProcessingByIntent(sent.intent.id)?.notifiedAt,
+      ).toBeDefined()
+
+      await expect(send('这是机密', 'outbound-cancel')).resolves.toMatchObject({
+        status: 'cancelled',
+        cancel: { extension: '示例署名', reason: '含有机密词' },
+      })
+      expect(runtime.repository.findOutboundByClientRequest(entity.agentId, entity.channelId, 'outbound-cancel')).toBe(
+        undefined,
+      )
+      expect(
+        runtime.repository.outboundProcessing.getOutboundProcessingByRequest(episode.id, 'outbound-cancel')?.cancelled,
+      ).toEqual({ extensionId: saved.extension.id, reason: '含有机密词' })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('accepts a due-job handler in the dynamic run of a candidate that declares jobs', async () => {
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
     const host = `harness.onJob(async () => ({ wake: false }))
