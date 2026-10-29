@@ -18,6 +18,7 @@ import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { z } from 'zod'
 import { maskExtensionSecrets } from './extension-secret-config.js'
+import { readChannelListView, writeChannelListView, type ChannelListKnownIds } from './channel-list-view.js'
 import {
   activationManifest,
   assembleChannelRuntime,
@@ -316,6 +317,51 @@ export function registerWorkspaceRoutes({
         writeJson(res, 200, HostApiContracts.clearBinding.parseResponse({ channelId, cleared: true }))
       } catch (error) {
         writeError(res, 400, 'binding-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  const channelListKnownIds = (): ChannelListKnownIds => ({
+    agentIds: new Set(runtime.core.listAgents().map((commit) => commit.definition.id)),
+    channelIds: new Set(
+      runtime.core
+        .listConnections()
+        .flatMap((connection) => runtime.core.listChannelsByConnection(connection.id).map((channel) => channel.id)),
+    ),
+  })
+  const channelListSettings = {
+    get: (key: string) => runtime.repository.getSystemSetting(key),
+    put: (key: string, value: Parameters<typeof runtime.repository.putSystemSetting>[1], revision?: number) => {
+      runtime.repository.putSystemSetting(key, value, revision, Date.now())
+    },
+  }
+  registerRoute({
+    kind: 'exact',
+    path: '/api/channel-list-view',
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.getChannelListView,
+          readChannelListView(channelListSettings, channelListKnownIds()),
+        )
+        return
+      }
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.updateChannelListView.parseRequest(await readJsonBody(req))
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.updateChannelListView,
+          writeChannelListView(channelListSettings, parsed, channelListKnownIds()),
+        )
+      } catch (error) {
+        writeError(res, 400, 'channel-list-view-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })

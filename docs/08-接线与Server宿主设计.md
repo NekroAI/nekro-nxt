@@ -47,6 +47,7 @@
 | 创建绑定 | `POST /api/bindings` | 智能体可多频道；一频道一个当前智能体；已绑定时为换绑 |
 | 解除绑定 | `DELETE /api/bindings/:channelId` | 若该频道有活动工作则先 `stopEpisode`，再删除 Binding |
 | 工作树顺序 | `PUT /api/work-tree-order` | 智能体 / 频道展示序，未知 id 丢弃，新对象追加 |
+| 频道列表排列 | `GET/PUT /api/channel-list-view` | 置顶频道顺序与收起的分组（智能体 id 或 `unbound`），实例内所有设备共用；去重，已删除的频道与智能体丢弃；快照字段 `channelListView` 同步下发 |
 | 启用扩展 | `POST /api/agents/:agentId/extensions/:extensionId/activation` | AgentActivation，使用本机安装的 Revision，尚未安装时先安装（需要时附本机批准）；智能体正在回复时返回 `pending`，回复结束后生效 |
 | 停用扩展 | `DELETE /api/agents/:agentId/extensions/:extensionId/activation` | 去掉该智能体的启用关系；正在回复时同样返回 `pending` |
 | 修改能力 | `POST /api/agents/:id/capabilities` | 六字段授权 |

@@ -732,11 +732,11 @@ test('the composer sends with Enter, keeps Shift+Enter for a new line and binds 
   await expect.poll(() => sent.length).toBe(2)
   // Switch channels inside the app while the send is still in flight.
   const list = page.getByRole('complementary', { name: '频道', exact: true })
-  await list.getByRole('button', { name: /记录员的内置频道/u }).click()
+  await list.locator(`a[href="/channels/${sourceChannelId}"]`).click()
   await expect(page).toHaveURL(new RegExp(`/channels/${sourceChannelId}$`, 'u'))
   await expect(page.getByRole('textbox', { name: '消息' })).toHaveValue('')
   release()
-  await list.getByRole('button', { name: /资料员的内置频道/u }).click()
+  await list.locator(`a[href="/channels/${targetChannelId}"]`).click()
   await expect(page).toHaveURL(new RegExp(`/channels/${targetChannelId}$`, 'u'))
   await expect(page.getByRole('textbox', { name: '消息' })).toHaveValue('')
   expect(sent.map((item) => item.channelId)).toEqual([targetChannelId, targetChannelId])

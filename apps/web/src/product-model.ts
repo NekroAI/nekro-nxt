@@ -693,6 +693,10 @@ export interface ProductState {
     readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
     readonly unboundChannelIds: readonly string[]
   }
+  channelListView: {
+    readonly pinnedChannelIds: readonly string[]
+    readonly collapsedGroupIds: readonly string[]
+  }
   createInternalChannel(input: { readonly displayName: string }): Promise<{ readonly channelId: string }>
   createBinding(input: {
     readonly agentId: string
@@ -708,6 +712,8 @@ export interface ProductState {
   /** Pauses or resumes every automatic response in the channel; the response rule is kept. */
   setChannelPaused(channelId: string, paused: boolean): Promise<void>
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
+  /** Shows the new pins and collapsed groups at once and puts them back if saving fails. */
+  putChannelListView(view: ProductState['channelListView']): Promise<void>
   sendMessage(
     channelId: string,
     body: string,

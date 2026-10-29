@@ -355,15 +355,13 @@ test('channel list keeps rows stable while pointer and keyboard drags reorder, b
 
   await page.goto(`/channels/${mapleChannelId}`)
   const list = page.getByRole('complementary', { name: '频道', exact: true })
-  // Rows are sortable buttons (dnd-kit) that also navigate; groups are headed by the agent.
-  const row = (name: RegExp) => list.getByRole('button', { name })
+  // Rows are sortable links (dnd-kit) beside their more-menu; groups are headed by the agent.
+  const row = (name: RegExp) => list.locator('a[aria-roledescription="可拖动的频道"]', { hasText: name })
   const mapleChannel = row(/规划员的内置频道/u)
   const mapleSpare = row(/规划员的备用地/u)
-  const mapleHeader = list
-    .getByRole('button', { name: /^规划员/u })
-    .filter({ hasNot: page.locator('a') })
-    .first()
-  const clerkHeader = list.getByRole('button', { name: /^资料员\s*空闲/u })
+  const header = (name: RegExp) => list.locator('[aria-roledescription="可拖动的智能体分组"]').filter({ hasText: name })
+  const mapleHeader = header(/规划员/u)
+  const clerkHeader = header(/资料员\s*空闲/u)
   const unbound = list.getByText('未接线').first()
   const top = async (locator: Locator): Promise<number> => {
     const box = await locator.boundingBox()

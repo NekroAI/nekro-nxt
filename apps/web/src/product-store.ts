@@ -82,6 +82,7 @@ export function createProductStore(
     },
     diagnosticNote: '正在连接 NekroNXT Host…',
     workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
+    channelListView: { pinnedChannelIds: [], collapsedGroupIds: [] },
     refreshHost: async () => {
       await requireHost().actions['host.refresh']()
     },
@@ -286,6 +287,19 @@ export function createProductStore(
       } catch (error) {
         if (error instanceof StaleHostReadError) return
         useProductStore.setState({ workTreeOrder: previous })
+        throw error
+      }
+    },
+    putChannelListView: async (view) => {
+      const previous = useProductStore.getState().channelListView
+      const next = { pinnedChannelIds: [...view.pinnedChannelIds], collapsedGroupIds: [...view.collapsedGroupIds] }
+      useProductStore.setState({ channelListView: next })
+      try {
+        await requireHost().actions['channelListView.put'](next)
+      } catch (error) {
+        if (error instanceof StaleHostReadError) return
+        // Only undo this change; a later toggle that already replaced it stays.
+        if (useProductStore.getState().channelListView === next) useProductStore.setState({ channelListView: previous })
         throw error
       }
     },
