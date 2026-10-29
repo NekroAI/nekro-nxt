@@ -9,6 +9,9 @@ import {
   summarizeExtensionCapabilities,
   hostLayerAsCapabilities,
   type ExtensionCapabilities,
+  EXTENSION_OUTBOUND_SDK_LEVEL,
+  outboundProcessesBeforeSend,
+  requiredExtensionSdkLevel,
 } from '../src/index.js'
 
 const caps = (value: unknown): ExtensionCapabilities => ExtensionCapabilitiesSchema.parse(value)
@@ -367,5 +370,100 @@ describe('asset library, search index and host model capabilities', () => {
         detail: '每分钟最多 30 次，计入所选模型的用量',
       },
     ])
+  })
+})
+
+describe('outbound processing capability', () => {
+  const outbound = (value: Record<string, unknown>) => caps({ outbound: { timeoutMs: 2000, ...value } })
+
+  it('needs at least one effect and a bounded timeout', () => {
+    expect(ExtensionCapabilitiesSchema.safeParse({ outbound: { timeoutMs: 2000 } }).success).toBe(false)
+    expect(ExtensionCapabilitiesSchema.safeParse({ outbound: { read: true, timeoutMs: 50 } }).success).toBe(false)
+    expect(ExtensionCapabilitiesSchema.safeParse({ outbound: { read: true, timeoutMs: 20_000 } }).success).toBe(false)
+    expect(ExtensionCapabilitiesSchema.safeParse({ outbound: { read: false, timeoutMs: 2000 } }).success).toBe(false)
+    expect(outbound({ transform: true, onTimeout: 'cancel' }).outbound).toEqual({
+      transform: true,
+      timeoutMs: 2000,
+      onTimeout: 'cancel',
+    })
+    expect(outboundProcessesBeforeSend(outbound({ read: true }).outbound)).toBe(false)
+    expect(outboundProcessesBeforeSend(outbound({ cancel: true }).outbound)).toBe(true)
+  })
+
+  it('rates reading as sensitive, changing and cancelling as high, and warns about cancel on timeout', () => {
+    expect(summarizeExtensionCapabilities(outbound({ read: true }))).toEqual([
+      { key: 'outbound.read', risk: 'sensitive', label: '查看智能体发出的每条消息' },
+    ])
+    expect(
+      summarizeExtensionCapabilities(outbound({ read: true, transform: true, cancel: true, onTimeout: 'cancel' })),
+    ).toEqual([
+      { key: 'outbound.transform', risk: 'high', label: '在智能体的消息发出前修改内容或追加消息' },
+      { key: 'outbound.cancel', risk: 'high', label: '取消智能体要发出的消息' },
+      { key: 'outbound.read', risk: 'sensitive', label: '查看智能体发出的每条消息' },
+      { key: 'outbound.onTimeout', risk: 'high', label: '这个扩展出错时，智能体的消息会发不出去' },
+    ])
+    // A read-only extension never holds a message back, so cancelling on timeout has nothing to stop.
+    expect(summarizeExtensionCapabilities(outbound({ read: true, onTimeout: 'cancel' })).map(({ key }) => key)).toEqual(
+      ['outbound.read'],
+    )
+  })
+
+  it.each([
+    ['added', {}, { outbound: { read: true, timeoutMs: 1000 } }, true],
+    [
+      'read to transform',
+      { outbound: { read: true, timeoutMs: 1000 } },
+      { outbound: { transform: true, timeoutMs: 1000 } },
+      true,
+    ],
+    [
+      'cancel added',
+      { outbound: { transform: true, timeoutMs: 1000 } },
+      { outbound: { transform: true, cancel: true, timeoutMs: 1000 } },
+      true,
+    ],
+    [
+      'read added',
+      { outbound: { cancel: true, timeoutMs: 1000 } },
+      { outbound: { cancel: true, read: true, timeoutMs: 1000 } },
+      true,
+    ],
+    [
+      'cancel on timeout',
+      { outbound: { cancel: true, timeoutMs: 1000 } },
+      { outbound: { cancel: true, timeoutMs: 1000, onTimeout: 'cancel' } },
+      true,
+    ],
+    [
+      'timeout only',
+      { outbound: { cancel: true, timeoutMs: 1000 } },
+      { outbound: { cancel: true, timeoutMs: 9000 } },
+      false,
+    ],
+    [
+      'narrowed',
+      { outbound: { read: true, transform: true, timeoutMs: 1000 } },
+      { outbound: { read: true, timeoutMs: 1000 } },
+      false,
+    ],
+    [
+      'send on timeout again',
+      { outbound: { cancel: true, timeoutMs: 1000, onTimeout: 'cancel' } },
+      { outbound: { cancel: true, timeoutMs: 1000, onTimeout: 'send' } },
+      false,
+    ],
+  ])('approval covers %s', (_name, previous, next, expands) => {
+    expect(extensionCapabilitiesExpand(caps(previous), caps(next))).toBe(expands)
+  })
+
+  it('needs SDK level 13', () => {
+    expect(
+      requiredExtensionSdkLevel({
+        permissions: [],
+        networkOrigins: [],
+        agent: caps({ outbound: { read: true, timeoutMs: 1000 } }),
+      }),
+    ).toEqual({ level: EXTENSION_OUTBOUND_SDK_LEVEL, capabilities: ['出站处理'] })
+    expect(EXTENSION_OUTBOUND_SDK_LEVEL).toBe(13)
   })
 })

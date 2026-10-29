@@ -706,6 +706,15 @@ export const HostSnapshotMessageSchema = z
       })
       .strict()
       .optional(),
+    /** Extensions that processed the agent's message before it was sent; `followUp` marks a message one appended. */
+    outboundProcessing: z
+      .object({
+        extensions: z.array(z.string()),
+        rewritten: z.boolean(),
+        followUp: z.literal(true).optional(),
+      })
+      .strict()
+      .optional(),
     /** A scheduled task came due: a Host fact shown as a notice, not a member message. */
     scheduledTask: z
       .object({ label: z.string(), extensionName: z.string().optional(), note: z.string().optional() })
@@ -825,7 +834,8 @@ const channelRuntimeToolFields = {
   inputPreview: z.string().optional(),
   resultPreview: z.string().optional(),
   wroteToChannel: z.boolean().optional(),
-  deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown']).optional(),
+  /** `cancelled`: an extension stopped the message before it was sent. */
+  deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown', 'cancelled']).optional(),
   durationMs: z.number().int().nonnegative().optional(),
 }
 
@@ -1773,6 +1783,11 @@ export const HostSnapshotSchema = z
           subConversationModels: AgentSubConversationModelsSchema.optional(),
           /** Optional for older hosts, whose agents have no fallback models. */
           fallbackModels: AgentFallbackModelsSchema.optional(),
+          /**
+           * Enabled extensions that process the agent's messages before they are sent, in the order they run. Absent
+           * when none does.
+           */
+          outboundOrder: z.array(ExtensionIdSchema).optional(),
           imageDiagnostics: z
             .object({
               route: z
@@ -5227,6 +5242,16 @@ export const HostApiContracts = {
     request: NoRequestBodySchema,
     /** `pending` is present when the agent is still replying; the Activation is removed at its next safe gap. */
     response: z.object({ disabled: z.literal(true), pending: ExtensionActivationTransitionSchema.optional() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  putAgentOutboundOrder: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/agents/:agentId/outbound-order',
+    params: agentParam,
+    /** Every enabled extension that processes the agent's messages before sending, in the new order. */
+    request: z.object({ extensionIds: z.array(ExtensionIdSchema).max(64) }).strict(),
+    response: z.object({ extensionIds: z.array(ExtensionIdSchema) }).strict(),
     error: HostApiErrorSchema,
   }),
   updateExtensionActivationConfig: defineContract({

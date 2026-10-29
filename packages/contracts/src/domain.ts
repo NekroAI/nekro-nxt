@@ -18,6 +18,15 @@ export const MessageDeliverySummarySchema = z
       )
       .max(20),
     omittedIssues: z.number().int().nonnegative().optional(),
+    /** Extensions that changed the message before it was sent, the content they produced and what they appended. */
+    processing: z
+      .object({
+        processedBy: z.array(z.string()),
+        parts: z.array(z.unknown()).optional(),
+        followUps: z.array(z.string()).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
