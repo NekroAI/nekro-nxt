@@ -151,3 +151,69 @@ test('mobile extension page navigation remains reachable after selection, reload
     expect((await request.delete(`/api/extensions/${fixture.extensionId}`)).ok()).toBe(true)
   }
 })
+
+for (const objectPane of ['hidden', 'navigation'] as const) {
+  test(`tall extension page scrolls inside its viewport (${objectPane})`, async ({ page, request }, testInfo) => {
+    const definition = {
+      kind: 'host-page' as const,
+      entryId: 'scroll-probe',
+      title: '虚构长页面',
+      icon: { kind: 'host-icon' as const, name: 'layout-dashboard' as const },
+      objectPane,
+      startPath: objectPane === 'navigation' ? 'list' : '',
+    }
+    const navigation =
+      objectPane === 'navigation'
+        ? `, navigation: { getSnapshot: () => ({ revision: 0, groups: [{ id: 'main', items: [{ id: 'list', label: '虚构列表', path: 'list' }] }] }), subscribe: () => () => undefined }`
+        : ''
+    const fixture = createStylesArchive(randomUUID().replaceAll('-', ''), {
+      name: '虚构长页面',
+      purpose: '验证内容超出一屏时页面可以滚动。',
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [definition],
+      clientCode: `return { inject: ['pages', 'ui'], apply(ctx) { return ctx.pages.register({ page: ${JSON.stringify(definition)}${navigation} }, () => React.createElement('div', {}, Array.from({ length: 80 }, (_, index) => React.createElement('p', { key: index, style: { height: '40px', margin: 0 } }, '虚构条目 ' + (index + 1))))) } }`,
+    })
+    const inspection = HostApiContracts.inspectExtensionImport.parseResponse(
+      await (
+        await request.post('/api/extensions/imports/inspect', {
+          data: Buffer.from(fixture.archive),
+          headers: { 'content-type': 'application/octet-stream' },
+        })
+      ).json(),
+    )
+    expect((await request.post(`/api/extensions/imports/${inspection.token}/commit`, { data: {} })).ok()).toBe(true)
+    expect(
+      (
+        await request.put(`/api/extensions/${fixture.extensionId}/installation`, {
+          data: { revisionId: fixture.revisionId },
+        })
+      ).ok(),
+    ).toBe(true)
+    try {
+      const snapshot = HostApiContracts.snapshot.parseResponse(await (await request.get('/api/snapshot')).json())
+      const entry = snapshot.hostUi.pages.find(
+        (item) => item.owner.kind === 'extension' && item.owner.extensionId === fixture.extensionId,
+      )!
+      await page.setViewportSize({ width: 1280, height: 720 })
+      await page.goto(entry.routeBase)
+      const last = page.getByText('虚构条目 80', { exact: true })
+      await expect(page.getByText('虚构条目 1', { exact: true })).toBeVisible()
+      // The viewport is the page's own scroller: it must stop at the window instead of growing with the content.
+      const viewport = page.locator(`[data-host-ui-page="${entry.pageInstanceId}"]`)
+      const box = await viewport.evaluate((element) => ({
+        clientHeight: element.clientHeight,
+        scrollHeight: element.scrollHeight,
+      }))
+      expect(box.clientHeight).toBeLessThan(720)
+      expect(box.scrollHeight).toBeGreaterThan(box.clientHeight)
+      await viewport.hover()
+      await page.mouse.wheel(0, 10_000)
+      await expect(last).toBeInViewport()
+      await page.screenshot({ path: testInfo.outputPath(`extension-scroll-${objectPane}.png`) })
+    } finally {
+      await page.goto('about:blank')
+      expect((await request.delete(`/api/extensions/${fixture.extensionId}/installation`)).ok()).toBe(true)
+      expect((await request.delete(`/api/extensions/${fixture.extensionId}`)).ok()).toBe(true)
+    }
+  })
+}
