@@ -66,6 +66,19 @@ test.afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true })
 })
 
+test('copies log details where the Clipboard API is missing, as on plain HTTP LAN addresses', async ({ page }) => {
+  await page.addInitScript(() => {
+    Reflect.deleteProperty(Navigator.prototype, 'clipboard')
+  })
+  await page.goto(`${origin}/logs`)
+  await page.getByRole('textbox', { name: '搜索日志' }).fill('虚构连接请求超时')
+  await page.getByRole('gridcell', { name: '错误 示例扩展 虚构连接请求超时' }).click()
+  expect(await page.evaluate(() => 'clipboard' in navigator)).toBe(false)
+  await page.getByRole('complementary', { name: '日志详情' }).getByRole('button', { name: '复制详情' }).click()
+  await expect(page.getByText('已复制', { exact: true })).toBeVisible()
+  await expect(page.getByText(/复制失败/u)).toHaveCount(0)
+})
+
 test('production log journey: history, details, repeats, export, live pause, settings and responsive themes', async ({
   page,
   request,

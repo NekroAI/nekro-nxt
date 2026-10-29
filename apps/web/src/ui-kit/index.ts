@@ -66,6 +66,7 @@ export {
   type GaugeSegment,
 } from './layout.js'
 export { cssVars } from './css-vars.js'
+export { copyText } from './clipboard.js'
 export { PageHeader, ReaderPage, BoardPage, WorkbenchPage, ListPane, MainContent, MasterDetail } from './page.js'
 export {
   ObjectHeader,

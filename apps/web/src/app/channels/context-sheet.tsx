@@ -12,6 +12,7 @@ import {
   Sheet,
   Spinner,
   toast,
+  copyText,
 } from '../../ui-kit/index.js'
 import { formatTokens } from './timeline-model.js'
 import styles from './context-sheet.module.css'
@@ -42,13 +43,11 @@ function CopyButton({ value, label }: { readonly value: string; readonly label: 
       label={label}
       size="small"
       onClick={() => {
-        void navigator.clipboard.writeText(value).then(
-          () => {
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1200)
-          },
-          () => toast('复制失败', { tone: 'bad' }),
-        )
+        void copyText(value).then((done) => {
+          if (!done) return toast('复制失败，请选择文字后复制。', { tone: 'bad' })
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1200)
+        })
       }}
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}

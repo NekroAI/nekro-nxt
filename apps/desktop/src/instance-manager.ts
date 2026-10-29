@@ -754,8 +754,21 @@ export class DesktopInstanceManager {
   }
 
   #configureSession(profile: InstanceProfile, profileSession: Session): void {
-    profileSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-    profileSession.setPermissionCheckHandler(() => false)
+    // Only the instance's own pages may write to the clipboard (copy buttons); every other permission stays refused.
+    const ownOrigin = (url: string | undefined): boolean => {
+      try {
+        return url !== undefined && new URL(url).origin === new URL(profile.origin).origin
+      } catch {
+        return false
+      }
+    }
+    profileSession.setPermissionRequestHandler((_contents, permission, callback, details) =>
+      callback(permission === 'clipboard-sanitized-write' && ownOrigin(details.requestingUrl)),
+    )
+    profileSession.setPermissionCheckHandler(
+      (_contents, permission, requestingOrigin) =>
+        permission === 'clipboard-sanitized-write' && ownOrigin(requestingOrigin),
+    )
     if (profile.kind === 'local') {
       profileSession.setCertificateVerifyProc(null)
       return
