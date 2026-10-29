@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import {
   ClientNotificationSchema,
@@ -11,10 +12,12 @@ import type { LocalCredentialStore } from './credentials.js'
 export const DYNAMIC_CLIENT_APPROVAL_NOTIFICATION = 'dynamic-client-approval-requested' as const
 export const COMMUNITY_FEEDBACK_NOTIFICATION = 'community-feedback-update' as const
 export const CREDENTIAL_REQUEST_NOTIFICATION = 'credential-requested' as const
+export const EXTENSION_NOTIFICATION = 'extension-notification' as const
 export type NotificationEventKey =
   | typeof DYNAMIC_CLIENT_APPROVAL_NOTIFICATION
   | typeof COMMUNITY_FEEDBACK_NOTIFICATION
   | typeof CREDENTIAL_REQUEST_NOTIFICATION
+  | typeof EXTENSION_NOTIFICATION
 
 const NOTIFICATION_SETTING_KEY = 'notifications'
 const DEFAULT_BARK_SERVER_URL = 'https://api.day.app'
@@ -35,6 +38,7 @@ const StoredNotificationSettingsSchema = z
         [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: z.boolean(),
         [COMMUNITY_FEEDBACK_NOTIFICATION]: z.boolean().default(true),
         [CREDENTIAL_REQUEST_NOTIFICATION]: z.boolean().default(true),
+        [EXTENSION_NOTIFICATION]: z.boolean().default(true),
       })
       .strict(),
   })
@@ -66,6 +70,7 @@ export interface NotificationSettingsUpdate {
     [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: boolean
     [COMMUNITY_FEEDBACK_NOTIFICATION]?: boolean | undefined
     [CREDENTIAL_REQUEST_NOTIFICATION]?: boolean | undefined
+    [EXTENSION_NOTIFICATION]?: boolean | undefined
   }>
 }
 
@@ -76,6 +81,9 @@ export interface BarkTestInput {
 
 export interface DynamicApprovalNotification {
   readonly requestId: string
+  readonly agentId: string
+  /** The dynamic plugin being built; repeated candidates of it share one notification. */
+  readonly pluginId: string
   readonly agentDisplayName: string
   readonly extensionName: string
   readonly purpose: string
@@ -101,8 +109,28 @@ const defaultSettings = (): StoredNotificationSettings => ({
     [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true,
     [COMMUNITY_FEEDBACK_NOTIFICATION]: true,
     [CREDENTIAL_REQUEST_NOTIFICATION]: true,
+    [EXTENSION_NOTIFICATION]: true,
   },
 })
+
+/**
+ * One live notification per source: a client shows a newer notification with the same id in place of the older one.
+ * Long parts are hashed so the id stays within the contract limit.
+ */
+const sourceId = (kind: string, ...parts: readonly string[]): string => {
+  const id = [kind, ...parts].join(':')
+  if (id.length <= 160) return id
+  return `${kind}:${createHash('sha256').update(parts.join(':')).digest('hex')}`
+}
+
+interface OutgoingNotification {
+  readonly id: string
+  readonly title: string
+  readonly body: string
+  readonly route?: string
+  /** Bark groups pushes with the same group together. */
+  readonly barkGroup: string
+}
 
 const normalizeServerUrl = (raw: string): string => {
   const url = new URL(raw.trim())
@@ -190,6 +218,7 @@ export class NotificationService {
           input.events[COMMUNITY_FEEDBACK_NOTIFICATION] ?? current.events[COMMUNITY_FEEDBACK_NOTIFICATION],
         [CREDENTIAL_REQUEST_NOTIFICATION]:
           input.events[CREDENTIAL_REQUEST_NOTIFICATION] ?? current.events[CREDENTIAL_REQUEST_NOTIFICATION],
+        [EXTENSION_NOTIFICATION]: input.events[EXTENSION_NOTIFICATION] ?? current.events[EXTENSION_NOTIFICATION],
       },
     }
     try {
@@ -226,28 +255,13 @@ export class NotificationService {
   }
 
   async notifyDynamicApproval(input: DynamicApprovalNotification): Promise<'sent' | 'skipped'> {
-    const stored = this.#readRecord()?.settings ?? defaultSettings()
-    if (!stored.events[DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]) return 'skipped'
-    const title = '有扩展等你试运行'
-    const body = `「${input.agentDisplayName}」做的「${input.extensionName}」需要你允许运行。${input.purpose ? `用途：${input.purpose}` : ''}`
-    let sent = false
-    if (stored.system.enabled) {
-      this.#publishClientNotification({
-        id: `dynamic-approval:${input.requestId}`,
-        kind: 'action-required',
-        title,
-        body: [...body].slice(0, 240).join(''),
-        occurredAt: this.#now(),
-        route: '/workshop',
-      })
-      sent = true
-    }
-    if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
-      const deviceKey = await this.#credentials.resolve(stored.bark.credentialRef)
-      await this.#sendBark(stored.bark.serverUrl, deviceKey, { title, body })
-      sent = true
-    }
-    return sent ? 'sent' : 'skipped'
+    return await this.#deliver(DYNAMIC_CLIENT_APPROVAL_NOTIFICATION, {
+      id: sourceId('dynamic-approval', input.agentId, input.pluginId),
+      title: '有扩展等你试运行',
+      body: `「${input.agentDisplayName}」做的「${input.extensionName}」需要你允许运行。${input.purpose ? `用途：${input.purpose}` : ''}`,
+      route: '/workshop',
+      barkGroup: `NekroNXT · ${input.extensionName}`,
+    })
   }
 
   /** An agent asked for a credential; the link opens the add form pre-filled. */
@@ -258,65 +272,31 @@ export class NotificationService {
     readonly purpose: string
     readonly route: string
   }): Promise<'sent' | 'skipped'> {
-    const stored = this.#readRecord()?.settings ?? defaultSettings()
-    if (!stored.events[CREDENTIAL_REQUEST_NOTIFICATION]) return 'skipped'
-    const title = '智能体需要凭据'
-    const body = `「${input.agentDisplayName}」需要凭据「${input.name}」。${input.purpose ? `用途：${input.purpose}` : ''}`
-    let sent = false
-    if (stored.system.enabled) {
-      this.#publishClientNotification({
-        id: `credential-request:${input.requestId}`,
-        kind: 'action-required',
-        title,
-        body: [...body].slice(0, 240).join(''),
-        occurredAt: this.#now(),
-        route: input.route,
-      })
-      sent = true
-    }
-    if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
-      await this.#sendBark(stored.bark.serverUrl, await this.#credentials.resolve(stored.bark.credentialRef), {
-        title,
-        body,
-      })
-      sent = true
-    }
-    return sent ? 'sent' : 'skipped'
+    return await this.#deliver(CREDENTIAL_REQUEST_NOTIFICATION, {
+      id: sourceId('credential-request', input.requestId),
+      title: '智能体需要凭据',
+      body: `「${input.agentDisplayName}」需要凭据「${input.name}」。${input.purpose ? `用途：${input.purpose}` : ''}`,
+      route: input.route,
+      barkGroup: 'NekroNXT · 凭据申请',
+    })
   }
 
   async notifyCommunityFeedback(input: {
     readonly kind: 'draft' | 'update'
     readonly ref?: string
   }): Promise<'sent' | 'skipped'> {
-    const stored = this.#readRecord()?.settings ?? defaultSettings()
-    if (!stored.events[COMMUNITY_FEEDBACK_NOTIFICATION]) return 'skipped'
-    const title = input.kind === 'draft' ? '有反馈等你确认' : '社区反馈有更新'
-    const body = input.kind === 'draft' ? '可以在社区反馈页查看并发送。' : `反馈 ${input.ref ?? ''} 有了新进展。`
-    let sent = false
-    if (stored.system.enabled) {
-      this.#publishClientNotification({
-        id: `feedback:${input.ref ?? 'draft'}:${this.#now()}:${this.#notificationCursor + 1}`,
-        kind: 'action-required',
-        title,
-        body,
-        occurredAt: this.#now(),
-        route: '/community/feedback',
-      })
-      sent = true
-    }
-    if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
-      await this.#sendBark(stored.bark.serverUrl, await this.#credentials.resolve(stored.bark.credentialRef), {
-        title,
-        body,
-      })
-      sent = true
-    }
-    return sent ? 'sent' : 'skipped'
+    return await this.#deliver(COMMUNITY_FEEDBACK_NOTIFICATION, {
+      id: sourceId('feedback', input.ref ?? 'draft'),
+      title: input.kind === 'draft' ? '有反馈等你确认' : '社区反馈有更新',
+      body: input.kind === 'draft' ? '可以在社区反馈页查看并发送。' : `反馈 ${input.ref ?? ''} 有了新进展。`,
+      route: '/community/feedback',
+      barkGroup: 'NekroNXT · 社区反馈',
+    })
   }
 
   publishSystemTest(): void {
     this.#publishClientNotification({
-      id: `system-test:${this.#now()}:${this.#notificationCursor + 1}`,
+      id: 'system-test',
       kind: 'action-required',
       title: 'NekroNXT 测试通知',
       body: '系统通知渠道已连接。',
@@ -325,12 +305,18 @@ export class NotificationService {
     })
   }
 
+  /**
+   * A notification an extension page published. Invalid input throws right away; delivery runs afterwards, so a
+   * failing Bark push never reaches the extension.
+   */
   publishExtensionNotification(input: {
     readonly owner: string
+    /** Shown as the Bark group; usually the extension page title. */
+    readonly sourceName?: string
     readonly title: string
     readonly body: string
     readonly route?: string
-  }): void {
+  }): Promise<'sent' | 'skipped'> {
     const title = z.string().trim().min(1).max(80).parse(input.title)
     const body = z.string().trim().min(1).max(240).parse(input.body)
     const route =
@@ -340,13 +326,12 @@ export class NotificationService {
             .string()
             .regex(/^\/(?!\/)[a-z0-9/_?=&.-]*$/u)
             .parse(input.route)
-    this.#publishClientNotification({
-      id: `extension:${input.owner}:${this.#now()}:${this.#notificationCursor + 1}`,
-      kind: 'action-required',
+    return this.#deliver(EXTENSION_NOTIFICATION, {
+      id: sourceId('notice', input.owner),
       title,
       body,
-      occurredAt: this.#now(),
       ...(route === undefined ? {} : { route }),
+      barkGroup: `NekroNXT · ${input.sourceName?.trim() || '扩展'}`,
     })
   }
 
@@ -361,6 +346,32 @@ export class NotificationService {
         .filter((entry) => entry.cursor > cursor)
         .map((entry) => entry.notification),
     }
+  }
+
+  async #deliver(event: NotificationEventKey, notification: OutgoingNotification): Promise<'sent' | 'skipped'> {
+    const stored = this.#readRecord()?.settings ?? defaultSettings()
+    if (!stored.events[event]) return 'skipped'
+    let sent = false
+    if (stored.system.enabled) {
+      this.#publishClientNotification({
+        id: notification.id,
+        kind: 'action-required',
+        title: notification.title,
+        body: [...notification.body].slice(0, 240).join(''),
+        occurredAt: this.#now(),
+        ...(notification.route === undefined ? {} : { route: notification.route }),
+      })
+      sent = true
+    }
+    if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
+      await this.#sendBark(stored.bark.serverUrl, await this.#credentials.resolve(stored.bark.credentialRef), {
+        title: notification.title,
+        body: notification.body,
+        group: notification.barkGroup,
+      })
+      sent = true
+    }
+    return sent ? 'sent' : 'skipped'
   }
 
   #readRecord(): { readonly settings: StoredNotificationSettings; readonly revision: number } | undefined {
@@ -379,7 +390,7 @@ export class NotificationService {
   async #sendBark(
     serverUrl: string,
     deviceKey: string,
-    message: { readonly title: string; readonly body: string },
+    message: { readonly title: string; readonly body: string; readonly group?: string },
   ): Promise<void> {
     const response = await this.#fetch(`${normalizeServerUrl(serverUrl)}/push`, {
       method: 'POST',
@@ -388,7 +399,7 @@ export class NotificationService {
         device_key: deviceKey,
         title: message.title,
         body: message.body,
-        group: 'NekroNXT',
+        group: message.group ?? 'NekroNXT',
       }),
       signal: AbortSignal.timeout(10_000),
     })

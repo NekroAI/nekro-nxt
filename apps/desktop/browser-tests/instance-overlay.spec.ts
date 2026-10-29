@@ -13,7 +13,13 @@ interface OverlayControl {
   reauthenticateCalls: number
   closeCalls: number
   closePayload?: unknown
-  snapshot: { revision: number; currentProfileId: string; profiles: readonly OverlayProfile[] }
+  connectionNoticeCalls: boolean[]
+  snapshot: {
+    revision: number
+    currentProfileId: string
+    profiles: readonly OverlayProfile[]
+    connectionNotices?: boolean
+  }
   snapshotListener?: (snapshot: OverlayControl['snapshot']) => void
   visibilityListener?: (visibility: unknown) => void
   payload?: Record<string, unknown>
@@ -97,6 +103,7 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
       editConnectionCalls: 0,
       reauthenticateCalls: 0,
       closeCalls: 0,
+      connectionNoticeCalls: [],
       snapshot: { revision: 1, currentProfileId: 'local', profiles: providedProfiles },
     }
     window.__overlayControl = control
@@ -121,6 +128,10 @@ const openOverlayPage = async (profiles: readonly OverlayProfile[] = [localProfi
       switchTo: () => Promise.resolve(),
       retry: () => Promise.resolve(),
       update: () => Promise.resolve(),
+      setConnectionNotices: (enabled: boolean) => {
+        control.connectionNoticeCalls.push(enabled)
+        return Promise.resolve()
+      },
       reauthenticate: (payload: Record<string, unknown>) => {
         control.reauthenticateCalls += 1
         control.payload = payload
@@ -488,6 +499,28 @@ test.describe('Desktop instance overlay accessibility contract', () => {
     await page.close()
   })
 
+  test('turns the Desktop-wide connection reminder off and back on, following later snapshots', async () => {
+    const page = await openOverlayPage([localProfile, remoteProfile])
+    const toggle = page.getByRole('switch', { name: '连接状态通知' })
+    // Snapshots from before the switch existed read as on.
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await page.screenshot({ path: '.local/browser-test-results/desktop-connection-notices-on.png' })
+    await toggle.click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.connectionNoticeCalls)).toEqual([false])
+    await page.evaluate(() => {
+      const control = window.__overlayControl
+      control.snapshot = { ...control.snapshot, revision: control.snapshot.revision + 1, connectionNotices: false }
+      control.snapshotListener?.(control.snapshot)
+    })
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await toggle.blur()
+    await page.mouse.move(900, 40)
+    await page.screenshot({ path: '.local/browser-test-results/desktop-connection-notices-off.png' })
+    await toggle.click()
+    await expect.poll(() => page.evaluate(() => window.__overlayControl.connectionNoticeCalls)).toEqual([false, true])
+    await page.close()
+  })
+
   test('opens on the dialog surface without drawing a second selected-looking row', async () => {
     const page = await openOverlayPage([localProfile, remoteProfile])
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('role'))).toBe('dialog')
@@ -563,8 +596,8 @@ test.describe('Desktop instance overlay accessibility contract', () => {
     await expect(page.locator('#key').inputValue()).resolves.toBe('')
     await page.keyboard.press('Escape')
 
-    const add = page.getByRole('button', { name: /添加远程实例/u })
-    await add.focus()
+    // The connection reminder switch is the last control; Tab wraps to the first one.
+    await page.getByRole('switch', { name: '连接状态通知' }).focus()
     await page.keyboard.press('Tab')
     await flushOverlayAnimationFrames(page)
     await expect(page.evaluate(() => document.activeElement?.getAttribute('data-action'))).resolves.toBe('switch')

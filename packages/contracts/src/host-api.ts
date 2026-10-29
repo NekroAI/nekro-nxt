@@ -384,7 +384,12 @@ const AgentCapabilitiesSchema = z
 
 export const DynamicClientApprovalPolicySchema = z.enum(['manual', 'automatic'])
 
-export const NotificationEventKeySchema = z.enum(['dynamic-client-approval-requested', 'community-feedback-update'])
+export const NotificationEventKeySchema = z.enum([
+  'dynamic-client-approval-requested',
+  'community-feedback-update',
+  'credential-requested',
+  'extension-notification',
+])
 export type NotificationEventKey = z.output<typeof NotificationEventKeySchema>
 
 export const NotificationSettingsViewSchema = z
@@ -403,6 +408,7 @@ export const NotificationSettingsViewSchema = z
         'dynamic-client-approval-requested': z.boolean(),
         'community-feedback-update': z.boolean().default(true),
         'credential-requested': z.boolean().default(true),
+        'extension-notification': z.boolean().default(true),
       })
       .strict(),
   })
@@ -425,6 +431,7 @@ export const UpdateNotificationSettingsRequestSchema = z
         'dynamic-client-approval-requested': z.boolean(),
         'community-feedback-update': z.boolean().optional(),
         'credential-requested': z.boolean().optional(),
+        'extension-notification': z.boolean().optional(),
       })
       .strict(),
   })

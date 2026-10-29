@@ -78,6 +78,7 @@ export function createProductStore(
         'dynamic-client-approval-requested': true,
         'community-feedback-update': true,
         'credential-requested': true,
+        'extension-notification': true,
       },
     },
     diagnosticNote: '正在连接 NekroNXT Host…',

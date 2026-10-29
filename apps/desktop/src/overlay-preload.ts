@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('nxtInstances', {
   switchTo: (profileId: string) => invoke('switch', { profileId }),
   retry: (profileId: string) => invoke('retry', { profileId }),
   update: (input: unknown) => invoke('update', input),
+  setConnectionNotices: (enabled: boolean) => invoke('setConnectionNotices', { enabled }),
   editConnection: (input: unknown) => invoke('editConnection', input),
   reauthenticate: (input: unknown) => invoke('reauthenticate', input),
   remove: (profileId: string) => invoke('remove', { profileId }),

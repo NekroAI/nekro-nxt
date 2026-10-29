@@ -30,6 +30,8 @@ interface ProfileEnvelopeV1 {
   readonly version: 1
   readonly selectedProfileId: string
   readonly profiles: readonly InstanceProfile[]
+  /** Desktop-wide: notify when an instance loses or regains the connection. Missing means on. */
+  readonly connectionNotices?: boolean
 }
 
 const LOCAL_PROFILE_ID = 'local'
@@ -176,6 +178,7 @@ const parseEnvelope = (value: unknown): ProfileEnvelopeV1 => {
     version: 1,
     selectedProfileId: value['selectedProfileId'],
     profiles,
+    ...(typeof value['connectionNotices'] === 'boolean' ? { connectionNotices: value['connectionNotices'] } : {}),
   }
 }
 
@@ -229,6 +232,23 @@ export class InstanceProfileStore {
 
   get selectedProfileId(): string {
     return this.#envelope.selectedProfileId
+  }
+
+  get connectionNoticesEnabled(): boolean {
+    return this.#envelope.connectionNotices ?? true
+  }
+
+  async setConnectionNotices(enabled: boolean): Promise<void> {
+    await this.#mutations.run(async () => {
+      const previous = this.#envelope
+      this.#envelope = { ...previous, connectionNotices: enabled }
+      try {
+        await this.#save()
+      } catch (error) {
+        this.#envelope = previous
+        throw error
+      }
+    })
   }
 
   list(): readonly InstanceProfile[] {

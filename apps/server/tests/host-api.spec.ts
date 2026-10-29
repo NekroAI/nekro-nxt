@@ -1495,6 +1495,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
           'dynamic-client-approval-requested': true,
           'community-feedback-update': true,
           'credential-requested': true,
+          'extension-notification': true,
         },
       })
 
@@ -1513,13 +1514,14 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
             serverUrl: 'https://push.example.test',
             deviceKey: 'host-api-test-device-key',
           },
-          events: { 'dynamic-client-approval-requested': true },
+          events: { 'dynamic-client-approval-requested': true, 'extension-notification': false },
         }),
       })
       expect(updatedResponse.ok).toBe(true)
       expect(HostApiContracts.updateNotificationSettings.parseResponse(await updatedResponse.json())).toMatchObject({
         revision: 1,
         bark: { serverUrl: 'https://push.example.test', deviceKeyConfigured: true },
+        events: { 'extension-notification': false },
       })
 
       const testResponse = await fetch(`${origin}/api/settings/notifications/test-system`, { method: 'POST' })

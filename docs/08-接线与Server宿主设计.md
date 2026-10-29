@@ -21,7 +21,7 @@
 | 新建内置频道 | `POST /api/channels` | 在系统托管内置连接上创建未绑定内置频道 |
 | 删除 / 移除频道 | `DELETE /api/channels/:channelId` | 携带预期 Binding；立即停止运行、解除绑定并写 Channel tombstone，保留全部历史；外部频道不影响平台真实对象 |
 | 通知设置 | `PUT /api/settings/notifications` | Core SQLite 保存系统/Bark 渠道和功能开关；Bark Device Key 只保存本机凭据引用 |
-| 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取 |
+| 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取；同一来源使用同一 id，客户端用新通知替换旧通知 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅内置频道入站 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页；首载、翻页、重连对账 |
 | 单次工具调用 | `GET /api/channels/:channelId/runtime/tools/:callId` | 当前会话中一次工具调用的完整参数与结果：参数格式化为 JSON 并对疑似密钥的键打码，结果为模型收到的文本；两者各上限 64,000 字并标记是否截断。会话已不在内存时返回 404 |

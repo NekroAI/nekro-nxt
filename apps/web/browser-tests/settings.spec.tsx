@@ -13,6 +13,7 @@ import {
   RemoveCredentialRequestSchema,
   SetModelProviderAccessRequestSchema,
   UpdateCredentialRequestSchema,
+  UpdateNotificationSettingsRequestSchema,
   type CredentialsView,
 } from '@nekro-nxt/contracts'
 import {
@@ -298,6 +299,57 @@ test.describe('settings space', () => {
       await expect(browserOnly.page.getByText('数据目录', { exact: true })).toHaveCount(0)
     } finally {
       await browserOnly.page.close()
+
+  test('turns extension notifications off and saves them with the other switches', async () => {
+    const saved: unknown[] = []
+    let notificationSettings: unknown = productSnapshot.notificationSettings
+    const { page, errors } = await open('/settings/notifications', {
+      before: async (target) => {
+        await target.route('**/api/snapshot', (request) =>
+          request.fulfill({ json: { ...productSnapshot, notificationSettings } }),
+        )
+        await target.route('**/api/settings/notifications', async (request) => {
+          const body = UpdateNotificationSettingsRequestSchema.parse(request.request().postDataJSON())
+          saved.push(body.events)
+          notificationSettings = {
+            revision: 1,
+            system: body.system,
+            bark: { enabled: false, serverUrl: body.bark.serverUrl, deviceKeyConfigured: false },
+            events: {
+              'dynamic-client-approval-requested': body.events['dynamic-client-approval-requested'],
+              'community-feedback-update': body.events['community-feedback-update'] ?? true,
+              'credential-requested': body.events['credential-requested'] ?? true,
+              'extension-notification': body.events['extension-notification'] ?? true,
+            },
+          }
+          await request.fulfill({ json: notificationSettings })
+        })
+      },
+    })
+    try {
+      // The fixture snapshot predates the switch; it reads as on.
+      const extension = page.getByRole('switch', { name: '扩展通知' })
+      await expect(extension).toBeChecked()
+      await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
+      // Desktop keeps its own connection reminder switch; the instance settings do not show one.
+      await expect(page.getByRole('switch', { name: '实例连接状态' })).toHaveCount(0)
+      await extension.click()
+      await page.getByRole('button', { name: '保存', exact: true }).click()
+      await expect
+        .poll(() => saved)
+        .toEqual([
+          {
+            'dynamic-client-approval-requested': true,
+            'community-feedback-update': true,
+            'credential-requested': true,
+            'extension-notification': false,
+          },
+        ])
+      await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
+      await expect(extension).not.toBeChecked()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
     }
   })
 
