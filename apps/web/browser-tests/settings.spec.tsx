@@ -299,6 +299,8 @@ test.describe('settings space', () => {
       await expect(browserOnly.page.getByText('数据目录', { exact: true })).toHaveCount(0)
     } finally {
       await browserOnly.page.close()
+    }
+  })
 
   test('turns extension notifications off and saves them with the other switches', async () => {
     const saved: unknown[] = []
