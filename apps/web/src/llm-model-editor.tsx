@@ -1,7 +1,8 @@
 import { Plus, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   Button,
+  Checkbox,
   DataTable,
   IconButton,
   Input,
@@ -176,37 +177,6 @@ export const visibleModelRowsError = (
   return relevant.length > 0 ? modelRowsError(relevant) : undefined
 }
 
-/** A row or "all matching rows" checkbox; `mixed` draws the partly selected state. */
-function SelectBox({
-  label,
-  checked,
-  mixed = false,
-  disabled,
-  onChange,
-}: {
-  readonly label: string
-  readonly checked: boolean
-  readonly mixed?: boolean
-  readonly disabled: boolean
-  readonly onChange: (checked: boolean) => void
-}): ReactNode {
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = mixed
-  }, [mixed])
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      className={styles.selectBox}
-      aria-label={label}
-      checked={checked}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.checked)}
-    />
-  )
-}
-
 const notifyAdded = (added: number, skipped: number): void => {
   const skippedText = skipped > 0 ? `，跳过 ${skipped} 个已在列表中的模型` : ''
   toast(`已加入 ${added} 个模型${skippedText}，保存后生效。`, { group: 'llm-model-add' })
@@ -365,7 +335,7 @@ export function ModelListEditor({
   const selectColumn: Column<ModelRow> = {
     key: 'select',
     header: (
-      <SelectBox
+      <Checkbox
         label="选择全部匹配的模型"
         checked={matches.length > 0 && matchesSelected === matches.length}
         mixed={matchesSelected > 0 && matchesSelected < matches.length}
@@ -381,7 +351,7 @@ export function ModelListEditor({
     width: '32px',
     align: 'center',
     render: (row) => (
-      <SelectBox
+      <Checkbox
         label={`选择模型 ${label(row)}`}
         checked={chosen.has(row.key)}
         disabled={disabled}

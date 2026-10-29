@@ -129,7 +129,7 @@ describe('model call failure causes', () => {
   })
 
   it('keeps three causes, steps into AggregateError and drops URL queries', () => {
-    const inner = Object.assign(new Error('connect ETIMEDOUT 192.0.2.1:443'), {
+    const inner = Object.assign(new Error('connect ETIMEDOUT model.example.invalid:443'), {
       code: 'ETIMEDOUT',
       errno: -60,
       syscall: 'connect',
@@ -145,7 +145,13 @@ describe('model call failure causes', () => {
     expect(causeChain(error)).toEqual([
       { name: 'TypeError', message: 'fetch to https://model.example.invalid/v1/messages failed' },
       { name: 'AggregateError', message: 'all attempts failed' },
-      { name: 'Error', code: 'ETIMEDOUT', errno: -60, syscall: 'connect', message: 'connect ETIMEDOUT 192.0.2.1:443' },
+      {
+        name: 'Error',
+        code: 'ETIMEDOUT',
+        errno: -60,
+        syscall: 'connect',
+        message: 'connect ETIMEDOUT model.example.invalid:443',
+      },
     ])
     expect(causeChain(deeper)).toHaveLength(3)
     expect(JSON.stringify(causeChain(error))).not.toContain('PRIVATE')

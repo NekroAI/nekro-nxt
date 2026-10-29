@@ -31,6 +31,7 @@ export {
   Select,
   Switch,
   type SwitchChange,
+  Checkbox,
   SwitchRow,
   SecretInput,
   FileChooser,

@@ -26,7 +26,6 @@ declare const styles: {
   readonly removal: string
   readonly removalBlock: string
   readonly removalTitle: string
-  readonly selectBox: string
   readonly srOnly: string
   readonly status: string
   readonly tag: string

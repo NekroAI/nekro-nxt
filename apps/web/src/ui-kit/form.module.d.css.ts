@@ -1,4 +1,5 @@
 declare const styles: {
+  readonly checkbox: string
   readonly control: string
   readonly error: string
   readonly field: string

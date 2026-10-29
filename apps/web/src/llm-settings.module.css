@@ -162,13 +162,6 @@
   gap: var(--s-2);
 }
 
-.selectBox {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
 .tag {
   padding: 0 var(--s-2);
   border: 1px solid var(--line);

@@ -45,9 +45,9 @@ describe('Server production entry', () => {
   it('explains a refused loopback bind and leaves other listen errors alone', () => {
     const refused = Object.assign(new Error('listen EPERM: operation not permitted 127.0.0.1'), { code: 'EPERM' })
     const explained = explainLoopbackBindFailure(refused)
-    expect(explained).toBeInstanceOf(Error)
-    expect((explained as Error).message).toContain('不允许监听本机地址 127.0.0.1')
-    expect((explained as Error).cause).toBe(refused)
+    if (!(explained instanceof Error)) throw new Error('Expected an explained Error.')
+    expect(explained.message).toContain('不允许监听本机地址 127.0.0.1')
+    expect(explained.cause).toBe(refused)
     const taken = Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' })
     expect(explainLoopbackBindFailure(taken)).toBe(taken)
   })

@@ -206,10 +206,10 @@ describe('request images', () => {
     space: 'srgb',
     hasAlpha: false,
   })
-  const pixels = (format: 'gif' | 'png') =>
-    sharp({ create: { width: 8, height: 8, channels: 3, background: '#3366cc' } })
-      [format]()
-      .toBuffer()
+  const pixels = (format: 'gif' | 'png') => {
+    const image = sharp({ create: { width: 8, height: 8, channels: 3, background: '#3366cc' } })
+    return (format === 'gif' ? image.gif() : image.png()).toBuffer()
+  }
 
   it('sends a GIF as a still first frame under its own variant', async () => {
     const still = await stillRequestImage(version(new Uint8Array(await pixels('gif')), 'image/gif'), {
