@@ -16,9 +16,11 @@ import {
   type RegisteredAdapterHandle,
 } from '@nekro-nxt/adapter-sdk'
 import { ChannelRuntime, type ExtensionJobFiring, type InboundHookDecision } from '@nekro-nxt/channel-runtime'
-import { isAdminConsoleOutbound } from '@nekro-nxt/channel-runtime'
+import { adapterSupportsPart, isAdminConsoleOutbound, UNSUPPORTED_PART } from '@nekro-nxt/channel-runtime'
+import { ExtensionOutboundProcessor, outboundOrderFor } from './extension-outbound.js'
 import {
   AgentIdSchema,
+  AssetIdSchema,
   ChannelIdSchema,
   CommandDefinitionSchema,
   ConnectionIdSchema,
@@ -265,6 +267,8 @@ export class NekroRuntime {
   readonly scheduledTasks: ScheduledTasks
   readonly channelPrompts: ChannelPrompts
   readonly mcpStatus: McpStatusRegistry
+  /** The agent's outbound processors: every agent message passes them before sending and after delivery. */
+  readonly outbound: ExtensionOutboundProcessor
   readonly authoringTestConfig: AuthoringTestConfig
   readonly codeRunNode: CodeRunNode
   readonly githubCli: GithubCli
@@ -330,6 +334,7 @@ export class NekroRuntime {
     readonly scheduledTasks: ScheduledTasks
     readonly channelPrompts: ChannelPrompts
     readonly mcpStatus: McpStatusRegistry
+    readonly outbound: ExtensionOutboundProcessor
     readonly authoringTestConfig: AuthoringTestConfig
     readonly codeRunNode: CodeRunNode
     readonly githubCli: GithubCli
@@ -464,6 +469,7 @@ export class NekroRuntime {
     this.retrieval = input.retrieval
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
+    this.outbound = input.outbound
     this.authoringTestConfig = input.authoringTestConfig
     this.feedback = new CommunityFeedbackService(
       this.repository,
@@ -649,6 +655,7 @@ export class NekroRuntime {
       // Adapter inbound and Channel Runtime delivery reference each other lazily.
       const settled: { current?: ChannelRuntime } = {}
       const hostReference: { current?: DshHostRuntime } = {}
+      const outboundReference: { current?: ExtensionOutboundProcessor } = {}
       const memberRelations = channelMemberRelations(core, repository, now)
       const channelPrompts = new ChannelPrompts(repository, now)
       // The library is prepared below, before any extension or command runs; facts reach it lazily.
@@ -1082,8 +1089,16 @@ export class NekroRuntime {
           : { developmentWorkspaceRoot: options.developmentWorkspaceRoot }),
         communication: {
           sendMessage: (input) => {
-            if (!settled.current) return Promise.reject(new Error('Channel Runtime is not ready.'))
-            return settled.current.sendMessage(input)
+            const runtime = settled.current
+            if (!runtime) return Promise.reject(new Error('Channel Runtime is not ready.'))
+            const episode = repository.getEpisode(input.episodeId)
+            const outbound = outboundReference.current
+            // Agent messages pass the agent's outbound processors after the asset checks and before pacing.
+            return outbound === undefined || episode === undefined
+              ? runtime.sendMessage(input)
+              : outbound.send({ ...input, agentId: episode.agentId, channelId: episode.channelId }, (message) =>
+                  runtime.sendMessage(message),
+                )
           },
           supportsRetraction: (channelId) => {
             const channel = core.getChannel(channelId)
@@ -1133,25 +1148,82 @@ export class NekroRuntime {
       })
       hostReference.current = host
 
+      /** `nxt` of one agent attachment bound to a channel, for hooks that run outside a model turn. */
+      const attachmentNxt = (
+        handler: { readonly agentId: AgentId; readonly revision: Revision; readonly config: JsonValue },
+        channelId: ChannelId,
+      ) => {
+        const described = extensionHost.describeRevision(handler.revision)
+        return createNxtHostService(
+          {
+            mode: 'activation',
+            agentId: handler.agentId,
+            ownerKey: handler.revision.extensionId,
+            displayName: described.displayName,
+            channelId,
+            capabilities: () => described.capabilities,
+            config: () => handler.config,
+            declaredSecrets: () => ({ config: described.secretKeys.agent, hostConfig: [] }),
+          },
+          extensionHost.activationBackends,
+        )
+      }
+      const outboundChannel = (channelId: ChannelId) => {
+        const channel = repository.getChannel(channelId)
+        return {
+          id: channelId,
+          kind: channel?.kind ?? ('group' as const),
+          ...(channel?.displayName === undefined ? {} : { displayName: channel.displayName }),
+        }
+      }
+      const outboundProcessor = new ExtensionOutboundProcessor({
+        handlers: (agentId) => host.outboundHandlers(agentId),
+        describe: (handler) => extensionHost.describeRevision(handler.revision),
+        order: (agentId, extensionIds) => outboundOrderFor(repository, agentId, extensionIds),
+        nxtFor: attachmentNxt,
+        channel: outboundChannel,
+        triggeredBy: (episodeId) => {
+          const eventId = repository.getEpisode(episodeId)?.lastAdmittedEventId
+          return eventId === undefined ? undefined : repository.getChannelEvent(eventId)?.logicalMessageId
+        },
+        unsupported: (channelId, part) => {
+          const connectionId = repository.getChannel(channelId)?.connectionId
+          const adapter = connectionId === undefined ? undefined : adapterRuntimes.get(connectionId)
+          return adapter === undefined || adapterSupportsPart(adapter, part) ? undefined : UNSUPPORTED_PART[part.type]
+        },
+        canUseAsset: (assetId, channelId) => {
+          const parsed = AssetIdSchema.safeParse(assetId)
+          return parsed.success && repository.canAccessAsset(parsed.data, channelId)
+        },
+        textOf: (parts) => messagePartsText(nxtFacts, parts),
+        store: repository.outboundProcessing,
+        now,
+        nextId: nextUlid,
+        log: ({ level, handler, displayName, message, error, channelId }) => {
+          const text = `出站处理（${displayName}）：${message}`
+          if (options.logs)
+            options.logs.write({
+              level,
+              message: text,
+              source: { kind: 'extension', id: handler.revision.extensionId, name: displayName },
+              scope: {
+                extensionId: handler.revision.extensionId,
+                revisionId: handler.revision.id,
+                agentId: handler.agentId,
+                channelId,
+              },
+              ...(error === undefined ? {} : { details: { error } }),
+            })
+          else console.warn(`[nekro-nxt] ${text}`)
+        },
+      })
+
+      outboundReference.current = outboundProcessor
+
       const inboundHooks = new ExtensionInboundHookGate({
         handlers: (agentId) => host.inboundHandlers(agentId),
         describe: (handler) => extensionHost.describeRevision(handler.revision),
-        nxtFor: (handler, channelId) => {
-          const described = extensionHost.describeRevision(handler.revision)
-          return createNxtHostService(
-            {
-              mode: 'activation',
-              agentId: handler.agentId,
-              ownerKey: handler.revision.extensionId,
-              displayName: described.displayName,
-              channelId,
-              capabilities: () => described.capabilities,
-              config: () => handler.config,
-              declaredSecrets: () => ({ config: described.secretKeys.agent, hostConfig: [] }),
-            },
-            extensionHost.activationBackends,
-          )
-        },
+        nxtFor: (handler, channelId) => attachmentNxt(handler, ChannelIdSchema.parse(channelId)),
         message: (event, defaultTriggered) => {
           const channel = repository.getChannel(event.channelId)
           const senderId = event.senderMemberId
@@ -1199,6 +1271,7 @@ export class NekroRuntime {
       const commandReference: { current?: CommandService } = {}
       const channels = new ChannelRuntime(core, repository, repository, host, {
         inboundHooks,
+        onOutboundSettled: (snapshot) => outboundReference.current?.settled(snapshot),
         sanitizeInbound: (event) => redactInboundEvent(secrets, event),
         commands: {
           commitInbound: (event) => commandReference.current?.commitInbound(event) ?? core.appendInbound(event),
@@ -1397,6 +1470,7 @@ export class NekroRuntime {
         retrieval,
         channelPrompts,
         mcpStatus,
+        outbound: outboundProcessor,
         authoringTestConfig,
         compatibility,
         database,

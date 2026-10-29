@@ -26,7 +26,8 @@ export const FINISH_CHANNEL_TURN_TOOL = 'finish_channel_turn'
 export const MAX_RESPONSE_CORRECTIONS = 2
 export const CHANNEL_PROCESSING_REMINDER_THRESHOLD_MS = 60_000
 
-export type ChannelDeliveryState = 'sent' | 'partially-sent' | 'failed' | 'unknown'
+/** `cancelled`: an outbound processor stopped the message before it was sent; it counts as not sent. */
+export type ChannelDeliveryState = 'sent' | 'partially-sent' | 'failed' | 'unknown' | 'cancelled'
 export type ChannelResponseState = 'not-required' | 'pending' | 'sent' | 'finished' | 'protocol-failed' | 'interrupted'
 
 export interface ResponseObligationState {
@@ -67,7 +68,13 @@ const successfulToolResult = (event: SessionEvent): { readonly callId: string } 
 const deliveryStateFromMeta = (meta: unknown): ChannelDeliveryState | undefined => {
   if (!isRecord(meta)) return undefined
   const value = meta['deliveryState']
-  return value === 'sent' || value === 'partially-sent' || value === 'failed' || value === 'unknown' ? value : undefined
+  return value === 'sent' ||
+    value === 'partially-sent' ||
+    value === 'failed' ||
+    value === 'unknown' ||
+    value === 'cancelled'
+    ? value
+    : undefined
 }
 
 export const deliveryStateFromToolResult = (event: SessionEvent): ChannelDeliveryState | undefined =>

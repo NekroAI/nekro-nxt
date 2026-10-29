@@ -1,7 +1,7 @@
 import { createAssistantMessage, createToolResultMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { SessionSeq, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
-import { ChannelProcessingReminderProjection } from '../src/channel-reply-guard.js'
+import { ChannelProcessingReminderProjection, responseObligationState } from '../src/channel-reply-guard.js'
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
@@ -104,7 +104,7 @@ describe('channel processing reminder event projection', () => {
     }
   })
 
-  it.each(['failed', 'unknown'])('does not count %s as a confirmed send', (status) => {
+  it.each(['failed', 'unknown', 'cancelled'])('does not count %s as a confirmed send', (status) => {
     const f = fixture()
     f.start()
     f.call('send_channel_message', { target: { type: 'current' } })
@@ -179,5 +179,22 @@ describe('channel processing reminder event projection', () => {
     expect(f.projection.previousStepAttemptedToStop(1, 2)).toBe(true)
     f.append({ type: 'turn/end', time: 63_000, data: { turn: 1, reason: { kind: 'completed' } } })
     expect(f.projection.shouldRemind(1)).toBe(false)
+  })
+})
+
+describe('reply obligation after an outbound processor cancelled the message', () => {
+  it('keeps the reply pending: a cancelled send is not a reply', () => {
+    for (const [state, expected] of [
+      ['cancelled', 'pending'],
+      ['sent', 'sent'],
+    ] as const) {
+      const f = fixture()
+      f.start()
+      f.call('send_channel_message', { target: { type: 'current' } })
+      f.result(2_000, state)
+      const obligation = responseObligationState(f.events, 1, [], () => true)
+      expect(obligation.responseState).toBe(expected)
+      expect(obligation.producedReply).toBe(state === 'sent')
+    }
   })
 })

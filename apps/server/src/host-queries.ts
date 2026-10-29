@@ -26,8 +26,9 @@ import { unavailableSessionContext } from './channel-runtime-context.js'
 import type { NekroRuntime } from './bootstrap.js'
 import { extensionVersions } from './extension-governance/versions.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
-import { commandConfinementSupport } from './command-confinement.js'
 import { optionalProjection, unavailableImageDiagnostics } from './auxiliary-projections.js'
+import { agentOutboundOrder } from './extension-outbound.js'
+import { commandConfinementSupport } from './command-confinement.js'
 import {
   emptyChannelRuntimeProjection,
   findToolCallDetail,
@@ -543,6 +544,10 @@ export class HostQueries {
         compaction: commit.revision.compaction,
         subConversationModels: commit.revision.subConversationModels,
         fallbackModels: commit.revision.fallbackModels,
+        ...(() => {
+          const outboundOrder = agentOutboundOrder(runtime.repository, agentId)
+          return outboundOrder.length === 0 ? {} : { outboundOrder }
+        })(),
         ...(diagnosticsByRevision.has(commit.revision.id)
           ? { imageDiagnostics: diagnosticsByRevision.get(commit.revision.id) }
           : {}),

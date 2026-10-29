@@ -1,5 +1,5 @@
 import { CommandRegistrations } from './commands/registrations.js'
-import { CommandDefinitionSchema } from '@nekro-nxt/contracts'
+import { CommandDefinitionSchema, EXTENSION_OUTBOUND_SDK_LEVEL } from '@nekro-nxt/contracts'
 import type { Context } from '@deepseek-ai/cordis'
 import { type Fiber } from '@deepseek-ai/cordis'
 import type { ToolRuntime } from '@deepseek-ai/dsh-tools'
@@ -26,6 +26,7 @@ import {
   type NxtHostLayerService,
   type NxtHostService,
   type NxtInboundHandler,
+  type NxtOutboundHandler,
   type NxtJobHandler,
   type NxtDataMigration,
   type NxtDataMigrationHandler,
@@ -134,6 +135,7 @@ interface Instance {
   readonly plugin?: ExtensionPluginDefinition
   readonly handlers: Map<string, ExtensionRpcHandler>
   readonly inbound?: NxtInboundHandler
+  readonly outbound?: NxtOutboundHandler
   readonly job?: NxtJobHandler
   readonly attachments: Map<AgentId, Attachment>
   active: boolean
@@ -145,6 +147,14 @@ export interface PersistentInboundHandler {
   readonly config: JsonValue
   readonly hostConfig: JsonValue
   readonly handler: NxtInboundHandler
+}
+
+export interface PersistentOutboundHandler {
+  readonly agentId: AgentId
+  readonly revision: Revision
+  readonly config: JsonValue
+  readonly hostConfig: JsonValue
+  readonly handler: NxtOutboundHandler
 }
 
 const ExtensionHostFactorySchema = z.custom<ExtensionPluginFactory<ExtensionHostEnvironment>>(
@@ -289,6 +299,27 @@ export class PersistentExtensionMounts {
       })
   }
 
+  /** Outbound handlers of the Extensions attached to the agent, in stable Extension order; the caller orders them. */
+  outboundHandlers(agentId: AgentId): readonly PersistentOutboundHandler[] {
+    return [...this.#instances.values()]
+      .filter((instance) => instance.active && instance.outbound !== undefined)
+      .sort((left, right) => left.revision.extensionId.localeCompare(right.revision.extensionId))
+      .flatMap((instance) => {
+        const attachment = instance.attachments.get(agentId)
+        return attachment?.active === true && instance.outbound !== undefined
+          ? [
+              {
+                agentId,
+                revision: instance.revision,
+                config: attachment.config,
+                hostConfig: instance.config,
+                handler: instance.outbound,
+              },
+            ]
+          : []
+      })
+  }
+
   /** Runs the Host factory once and registers the Extension's adapter; the result is the live host instance. */
   async load(input: {
     readonly revision: Revision
@@ -346,6 +377,7 @@ export class PersistentExtensionMounts {
     const handlers = new Map<string, ExtensionRpcHandler>()
     const expectedAdapter = manifestAdapter(manifest)
     let inbound: NxtInboundHandler | undefined
+    let outbound: NxtOutboundHandler | undefined
     let job: NxtJobHandler | undefined
     let migration: NxtDataMigrationHandler | undefined
     let plugin: ExtensionPluginDefinition | undefined
@@ -399,6 +431,20 @@ export class PersistentExtensionMounts {
               inbound = handler
               return () => {
                 inbound = undefined
+              }
+            },
+            onOutbound: (handler: NxtOutboundHandler) => {
+              whileFactoryOpen('harness.onOutbound')
+              if ((manifest.requires?.sdk ?? 7) < EXTENSION_OUTBOUND_SDK_LEVEL) {
+                throw new Error(
+                  `使用 harness.onOutbound 的扩展需要声明 requires.sdk 为 ${EXTENSION_OUTBOUND_SDK_LEVEL} 或更高。`,
+                )
+              }
+              if (typeof handler !== 'function') throw new TypeError('harness.onOutbound 需要一个处理函数。')
+              if (outbound !== undefined) throw new Error('一个扩展只能注册一个出站处理函数。')
+              outbound = handler
+              return () => {
+                outbound = undefined
               }
             },
             onJob: (handler: NxtJobHandler) => {
@@ -473,6 +519,7 @@ export class PersistentExtensionMounts {
       ...(plugin === undefined ? {} : { plugin }),
       handlers,
       ...(inbound === undefined ? {} : { inbound }),
+      ...(outbound === undefined ? {} : { outbound }),
       ...(job === undefined ? {} : { job }),
       attachments: new Map(),
       active: true,
