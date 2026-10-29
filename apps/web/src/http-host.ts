@@ -165,6 +165,8 @@ const emptySnapshot = (): ProductSnapshot => ({
       'dynamic-client-approval-requested': true,
       'community-feedback-update': true,
       'credential-requested': true,
+      'extension-notification': true,
+      'instance-connection': true,
     },
   },
   diagnosticNote: '正在连接 NekroNXT 服务…',

@@ -1006,6 +1006,8 @@ function Notifications() {
   const [approval, setApproval] = useState(settings.events['dynamic-client-approval-requested'] ?? true)
   const [feedback, setFeedback] = useState(settings.events['community-feedback-update'])
   const [credentialRequested, setCredentialRequested] = useState(settings.events['credential-requested'])
+  const [extensionNotices, setExtensionNotices] = useState(settings.events['extension-notification'])
+  const [instanceConnection, setInstanceConnection] = useState(settings.events['instance-connection'])
   const [busy, setBusy] = useState<'' | 'save' | 'bark' | 'system'>('')
   const [saveError, setSaveError] = useState('')
 
@@ -1018,6 +1020,8 @@ function Notifications() {
     setApproval(settings.events['dynamic-client-approval-requested'] ?? true)
     setFeedback(settings.events['community-feedback-update'])
     setCredentialRequested(settings.events['credential-requested'])
+    setExtensionNotices(settings.events['extension-notification'])
+    setInstanceConnection(settings.events['instance-connection'])
     setSaveError('')
   }
   // Saved settings changed (here or elsewhere): show them. Keyed by content, so a refresh that returns the same
@@ -1035,6 +1039,8 @@ function Notifications() {
     ...(approval !== (settings.events['dynamic-client-approval-requested'] ?? true) ? ['通知事件'] : []),
     ...(feedback !== settings.events['community-feedback-update'] ? ['社区反馈更新'] : []),
     ...(credentialRequested !== settings.events['credential-requested'] ? ['凭据申请'] : []),
+    ...(extensionNotices !== settings.events['extension-notification'] ? ['扩展通知'] : []),
+    ...(instanceConnection !== settings.events['instance-connection'] ? ['实例连接状态'] : []),
   ]
 
   const run = async (kind: Exclude<typeof busy, ''>, action: () => Promise<unknown>, done: string) => {
@@ -1068,6 +1074,8 @@ function Notifications() {
             'dynamic-client-approval-requested': approval,
             'community-feedback-update': feedback,
             'credential-requested': credentialRequested,
+            'extension-notification': extensionNotices,
+            'instance-connection': instanceConnection,
           },
         }),
       '通知设置已保存',
@@ -1173,6 +1181,12 @@ function Notifications() {
           </PropertyRow>
           <PropertyRow label="凭据申请" tip="智能体需要的凭据还没有添加时">
             <Switch label="凭据申请" checked={credentialRequested} onCheckedChange={setCredentialRequested} />
+          </PropertyRow>
+          <PropertyRow label="扩展通知" tip="扩展发出的提醒">
+            <Switch label="扩展通知" checked={extensionNotices} onCheckedChange={setExtensionNotices} />
+          </PropertyRow>
+          <PropertyRow label="实例连接状态" tip="桌面版连接中断或恢复时">
+            <Switch label="实例连接状态" checked={instanceConnection} onCheckedChange={setInstanceConnection} />
           </PropertyRow>
         </PropertyList>
       </PropertyGroup>

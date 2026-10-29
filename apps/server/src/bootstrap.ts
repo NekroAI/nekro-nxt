@@ -1323,6 +1323,8 @@ export class NekroRuntime {
         void notifications
           .notifyDynamicApproval({
             requestId: event.requestId,
+            agentId: event.agentId,
+            pluginId: event.pluginId,
             agentDisplayName: displayName,
             extensionName: event.name,
             purpose: event.purpose,

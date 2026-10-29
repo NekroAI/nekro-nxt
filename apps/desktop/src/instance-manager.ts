@@ -12,7 +12,7 @@ import {
   type IpcMainInvokeEvent,
   type Session,
 } from 'electron'
-import { ClientNotificationFeedResponseSchema } from '@nekro-nxt/contracts'
+import { ClientNotificationFeedResponseSchema, ClientNotificationPreferencesResponseSchema } from '@nekro-nxt/contracts'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CredentialVault } from './credential-vault.js'
@@ -54,6 +54,7 @@ import { desktopTitleBarCss, desktopWindowChrome, titleBarOverlayFor } from './w
 import { detachAndCloseView } from './view-lifecycle.js'
 import type { LocalHostStatus } from './local-host-state.js'
 import { SerialProfileMonitor, type ProfileMonitorTarget } from './serial-profile-monitor.js'
+import { ConnectionNoticeSwitches, DesktopNotifier, latestPerId } from './desktop-notifier.js'
 import { bringChildViewToFront, desktopViewBounds } from './view-layout.js'
 import { SnapshotRevisionClock } from './snapshot-revision.js'
 import { ProfileGenerationRegistry } from './profile-generation.js'
@@ -85,7 +86,11 @@ import {
 
 const OVERLAY_EXIT_MS = 100
 const FALLBACK_EXIT_MS = FALLBACK_TRANSITION_MS
-type ClientNotificationFeed = ReturnType<(typeof ClientNotificationFeedResponseSchema)['parse']>
+interface ClientNotificationFeed {
+  readonly feed: ReturnType<(typeof ClientNotificationFeedResponseSchema)['parse']>
+  /** `undefined` when the instance has no such switch (older versions) or the request failed. */
+  readonly instanceConnection: boolean | undefined
+}
 type DesktopHandleListener = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown
 type DesktopEventListener = (event: IpcMainEvent, ...args: unknown[]) => void
 
@@ -166,6 +171,8 @@ export class DesktopInstanceManager {
   readonly #statuses = new Map<string, InstanceStatus>()
   readonly #memoryCredentials = new RuntimeCredentialStore()
   readonly #notificationCursors = new Map<string, number>()
+  readonly #notifier: DesktopNotifier
+  readonly #connectionNotices = new ConnectionNoticeSwitches()
   readonly #profileGenerations = new ProfileGenerationRegistry()
   readonly #switchingProfiles = new Map<string, number>()
   readonly #observedRemoteAvailability = new Map<string, boolean>()
@@ -210,6 +217,15 @@ export class DesktopInstanceManager {
     this.#vault = input.vault
     this.#currentProfileId = input.profiles.selectedProfileId
     this.#localHostStatus = input.localHostStatus
+    this.#notifier = new DesktopNotifier({
+      isSupported: () => Notification.isSupported(),
+      create: (notice) => new Notification(notice),
+      isForeground: () =>
+        !this.#window.isDestroyed() &&
+        this.#window.isVisible() &&
+        !this.#window.isMinimized() &&
+        this.#window.isFocused(),
+    })
     for (const profile of input.profiles.list()) {
       this.#profileGenerations.register(profile.id)
       this.#statuses.set(profile.id, profile.kind === 'local' ? input.localHostStatus : 'connecting')
@@ -648,6 +664,7 @@ export class DesktopInstanceManager {
           if (profile.credentialRef !== undefined) await this.#vault.remove(profile.credentialRef)
           this.#memoryCredentials.delete(profile.id)
           this.#notificationCursors.delete(profile.id)
+          this.#connectionNotices.forget(profile.id)
           this.#observedRemoteAvailability.delete(profile.id)
           await this.#profiles.remove(profile.id)
           this.#statuses.delete(profile.id)
@@ -1240,19 +1257,19 @@ export class DesktopInstanceManager {
       this.#statuses.set(target.id, status)
       this.#publishPresentationChange()
     }
-    if (previousAvailable === undefined || previousAvailable === available || !Notification.isSupported()) return
+    if (previousAvailable === undefined || previousAvailable === available) return
     const profile = this.#profiles.get(target.id)
-    if (profile === undefined) return
-    const notice = new Notification({
+    if (profile === undefined || !this.#connectionNotices.allows(profile)) return
+    // Recovery replaces the earlier failure notice of the same instance.
+    this.#notifier.show(`${profile.id}:connection`, {
       title: `NekroNXT · ${profile.displayName}`,
       body: available ? '服务实例已经恢复连接。' : '服务实例持续无法连接。',
+      onClick: () => {
+        this.#window.show()
+        this.#window.focus()
+        this.#runBackgroundAction('通知实例切换', this.switchTo(profile.id))
+      },
     })
-    notice.on('click', () => {
-      this.#window.show()
-      this.#window.focus()
-      this.#runBackgroundAction('通知实例切换', this.switchTo(profile.id))
-    })
-    notice.show()
   }
 
   async #readNotifications(target: ProfileMonitorTarget, signal: AbortSignal): Promise<ClientNotificationFeed> {
@@ -1268,26 +1285,44 @@ export class DesktopInstanceManager {
       { credentials: 'include', signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]) },
     )
     if (!response.ok) throw new Error(`系统通知请求失败（HTTP ${response.status}）。`)
-    return ClientNotificationFeedResponseSchema.parse(await response.json())
+    const feed = ClientNotificationFeedResponseSchema.parse(await response.json())
+    let instanceConnection: boolean | undefined
+    try {
+      const preferences = await fetchSameOriginRemote(
+        profileSession.fetch.bind(profileSession),
+        profile.origin,
+        '/api/client-notifications/preferences',
+        { credentials: 'include', signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]) },
+      )
+      // Older instances have no such route; the switch then stays at its last known value.
+      if (preferences.ok) {
+        instanceConnection = ClientNotificationPreferencesResponseSchema.parse(
+          await preferences.json(),
+        ).instanceConnection
+      }
+    } catch (cause) {
+      if (signal.aborted) throw cause
+    }
+    return { feed, instanceConnection }
   }
 
-  #commitNotifications(target: ProfileMonitorTarget, feed: ClientNotificationFeed): void {
+  #commitNotifications(target: ProfileMonitorTarget, { feed, instanceConnection }: ClientNotificationFeed): void {
     if (!this.#isCurrentMonitorTarget(target)) return
     const profile = this.#profiles.get(target.id)
     if (profile === undefined) return
     this.#notificationCursors.set(profile.id, feed.cursor)
-    for (const item of feed.notifications) {
-      if (!Notification.isSupported()) continue
-      const notice = new Notification({
+    this.#connectionNotices.remember(profile.id, instanceConnection)
+    // The instance gives one id per source; a newer notification of the same source replaces the older one.
+    for (const item of latestPerId(feed.notifications)) {
+      this.#notifier.show(`${profile.id}:${item.id}`, {
         title: `NekroNXT · ${profile.displayName} · ${item.title}`,
         body: item.body,
+        onClick: () => {
+          this.#window.show()
+          this.#window.focus()
+          this.#runBackgroundAction('通知路由打开', this.#openProfileRoute(profile.id, item.route ?? '/'))
+        },
       })
-      notice.on('click', () => {
-        this.#window.show()
-        this.#window.focus()
-        this.#runBackgroundAction('通知路由打开', this.#openProfileRoute(profile.id, item.route ?? '/'))
-      })
-      notice.show()
     }
   }
 

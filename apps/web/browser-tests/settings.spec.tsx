@@ -13,6 +13,7 @@ import {
   RemoveCredentialRequestSchema,
   SetModelProviderAccessRequestSchema,
   UpdateCredentialRequestSchema,
+  UpdateNotificationSettingsRequestSchema,
   type CredentialsView,
 } from '@nekro-nxt/contracts'
 import {
@@ -157,6 +158,63 @@ test.describe('settings space', () => {
       expect(requests.at(-1)).toEqual({ mode: 'off' })
       await expect(row).toBeVisible()
       await page.screenshot({ path: '.local/browser-test-results/settings-upgrade-backup.png' })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('turns extension and instance connection notifications off and saves them with the other switches', async () => {
+    const saved: unknown[] = []
+    let notificationSettings: unknown = productSnapshot.notificationSettings
+    const { page, errors } = await open('/settings/notifications', {
+      before: async (target) => {
+        await target.route('**/api/snapshot', (request) =>
+          request.fulfill({ json: { ...productSnapshot, notificationSettings } }),
+        )
+        await target.route('**/api/settings/notifications', async (request) => {
+          const body = UpdateNotificationSettingsRequestSchema.parse(request.request().postDataJSON())
+          saved.push(body.events)
+          notificationSettings = {
+            revision: 1,
+            system: body.system,
+            bark: { enabled: false, serverUrl: body.bark.serverUrl, deviceKeyConfigured: false },
+            events: {
+              'dynamic-client-approval-requested': body.events['dynamic-client-approval-requested'],
+              'community-feedback-update': body.events['community-feedback-update'] ?? true,
+              'credential-requested': body.events['credential-requested'] ?? true,
+              'extension-notification': body.events['extension-notification'] ?? true,
+              'instance-connection': body.events['instance-connection'] ?? true,
+            },
+          }
+          await request.fulfill({ json: notificationSettings })
+        })
+      },
+    })
+    try {
+      // The fixture snapshot predates both switches; they read as on.
+      const extension = page.getByRole('switch', { name: '扩展通知' })
+      const connection = page.getByRole('switch', { name: '实例连接状态' })
+      await expect(extension).toBeChecked()
+      await expect(connection).toBeChecked()
+      await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
+      await extension.click()
+      await connection.click()
+      await page.getByRole('button', { name: '保存', exact: true }).click()
+      await expect
+        .poll(() => saved)
+        .toEqual([
+          {
+            'dynamic-client-approval-requested': true,
+            'community-feedback-update': true,
+            'credential-requested': true,
+            'extension-notification': false,
+            'instance-connection': false,
+          },
+        ])
+      await expect(page.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
+      await expect(extension).not.toBeChecked()
+      await expect(connection).not.toBeChecked()
       expect(errors).toEqual([])
     } finally {
       await page.close()

@@ -560,12 +560,17 @@ export function registerExtensionsRoutes({
                 .object({ title: z.string(), body: z.string(), route: z.string().optional() })
                 .strict()
                 .parse(input.input)
-              runtime.notifications.publishExtensionNotification({
-                owner: ownerKey,
-                title: request.title,
-                body: request.body,
-                ...(request.route === undefined ? {} : { route: request.route }),
-              })
+              void runtime.notifications
+                .publishExtensionNotification({
+                  owner: ownerKey,
+                  sourceName: page.title,
+                  title: request.title,
+                  body: request.body,
+                  ...(request.route === undefined ? {} : { route: request.route }),
+                })
+                .catch((error: unknown) => {
+                  console.warn('[nekro-nxt] 扩展通知发送失败：', error instanceof Error ? error.message : error)
+                })
               value = { published: true }
             } else if (input.method === 'network.request') {
               value = await performHostUiNetworkRequest(input.input, grant.declaration.networkOrigins)
