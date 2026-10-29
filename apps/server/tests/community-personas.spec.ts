@@ -180,6 +180,7 @@ const createFixture = async () => {
   })
   const personas = new CommunityPersonaService(service, repository)
   return {
+    service,
     personas,
     community,
     signIn: async () => service.completeLogin(community.approve(service.startLogin(INSTANCE))),
@@ -248,7 +249,9 @@ describe('CommunityPersonaService catalog', () => {
       '陪伴',
       '1',
     ])
-    expect(() => HostApiContracts.listCommunityPersonas.response.parse(list)).not.toThrow()
+    expect(() =>
+      HostApiContracts.listCommunityPersonas.response.parse({ ...list, fetchedAt: 1, stale: false }),
+    ).not.toThrow()
   })
 
   it('reads details with the persona body and light review, and reports missing personas', async () => {
@@ -260,7 +263,9 @@ describe('CommunityPersonaService catalog', () => {
       review: { status: 'approved', summary: '内容合规。' },
     })
     expect(detail.review).not.toHaveProperty('model')
-    expect(() => HostApiContracts.getCommunityPersona.response.parse(detail)).not.toThrow()
+    expect(() =>
+      HostApiContracts.getCommunityPersona.response.parse({ ...detail, fetchedAt: 1, stale: false }),
+    ).not.toThrow()
     await expect(personas.get('psn_MISSING')).rejects.toMatchObject({ status: 404, message: '人设不存在或尚未公开。' })
   })
 
@@ -351,10 +356,17 @@ describe('installCommunityPersona', () => {
 
 describe('CommunityPersonaService authoring', () => {
   it('requires sign-in, publishes with a verified avatar and remembers which agent it came from', async () => {
-    const { personas, community, signIn } = await createFixture()
+    const { service, personas, community, signIn } = await createFixture()
     const agentId = AgentIdSchema.parse('agt_01author')
     await expect(personas.mine()).rejects.toMatchObject({ code: 'community-signed-out' })
     await signIn()
+    const browse = () => service.cachedRead('personas', {}, false, () => personas.list({}))
+    const listings = () =>
+      community.requests.filter((request) => request.url.pathname === '/api/v1/personas' && request.method === 'GET')
+        .length
+    await browse()
+    await browse()
+    expect(listings()).toBe(1)
     const input = HostApiContracts.publishCommunityPersona.parseRequest({
       agentId,
       name: '图书管理员',
@@ -370,6 +382,9 @@ describe('CommunityPersonaService authoring', () => {
     expect(form.get('tags')).toBe('["陪伴"]')
     expect(form.get('avatar')).toBeInstanceOf(Blob)
     expect(form.get('personaId')).toBeNull()
+    // 发布后再浏览会读到新人设。
+    await browse()
+    expect(listings()).toBe(2)
     expect(personas.agentLinks()).toEqual({ [agentId]: 'psn_01NEW' })
 
     await expect(

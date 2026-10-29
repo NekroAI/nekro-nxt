@@ -30,6 +30,8 @@ export class HostRequestError extends Error {
     message: string,
     readonly status?: number,
     readonly commitState: 'not-applicable' | 'rejected' | 'unknown' = 'not-applicable',
+    /** The service's error code, for failures the page tells apart. */
+    readonly code?: string,
   ) {
     super(message)
     this.name = 'HostRequestError'
@@ -154,6 +156,7 @@ export async function callHostApi<Contract extends HostApiContract, Output>(
         error.success ? readableFailure(error.data.error.message) : `操作失败（服务返回 ${response.status}）。`,
         response.status,
         mutation ? (response.status >= 500 ? 'unknown' : 'rejected') : 'not-applicable',
+        error.success ? error.data.error.code : undefined,
       )
     }
     if (path === '/api/snapshot' && typeof json === 'object' && json !== null && 'productMetadata' in json) {

@@ -1,11 +1,10 @@
 import { HostApiContracts, type CommunityPersonaSummary } from '@nekro-nxt/contracts'
-import { ArrowLeft, ExternalLink, UsersRound, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, ExternalLink, RefreshCw, UsersRound, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MarkdownDocument } from '../../components/markdown-document.js'
 import { callHostApi } from '../../host-api-client.js'
 import {
-  Banner,
   Button,
   Chip,
   DetailPane,
@@ -18,12 +17,12 @@ import {
   Pressable,
   PropertyGroup,
   SearchField,
-  Skeleton,
   toast,
   spotlight,
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { errorMessage, openExternal, publisherName } from './community-model.js'
+import { CommunityFailureState, CommunityLoading, StaleNotice, useCommunityRead } from './community-read.js'
 import { PersonaInstallDialog } from './persona-install-dialog.js'
 import { usePersonaDetail } from './persona-model.js'
 import styles from './personas.module.css'
@@ -52,9 +51,6 @@ export function PersonaAvatar({
 export function PersonaCatalog({ selectedId }: { readonly selectedId: string | undefined }) {
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState('')
-  const [items, setItems] = useState<readonly CommunityPersonaSummary[]>()
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [error, setError] = useState<string>()
   const [loadingMore, setLoadingMore] = useState(false)
   const [seenTags, setSeenTags] = useState<ReadonlyMap<string, number>>(new Map())
 
@@ -71,34 +67,38 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
       return next
     })
 
-  useEffect(() => {
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      setError(undefined)
-      callHostApi(HostApiContracts.listCommunityPersonas, params(), undefined)
-        .then((result) => {
-          if (cancelled) return
-          setItems(result.items)
-          setCursor(result.nextCursor)
-          if (!tag) remember(result.items)
-        })
-        .catch((caught: unknown) => {
-          if (!cancelled) setError(errorMessage(caught))
-        })
-    }, 250)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [query, tag])
+  const list = useCommunityRead(
+    async (refresh) => {
+      const result = await callHostApi(
+        HostApiContracts.listCommunityPersonas,
+        { ...params(), ...(refresh ? { refresh: '1' as const } : {}) },
+        undefined,
+      )
+      if (!tag) remember(result.items)
+      return result
+    },
+    [query, tag],
+    { delayMs: 250, keepWhileLoading: true },
+  )
+  const page = list.data
+  const items = page?.items
+  const cursor = page?.nextCursor
 
   const loadMore = async () => {
     if (!cursor) return
     setLoadingMore(true)
     try {
       const result = await callHostApi(HostApiContracts.listCommunityPersonas, params(cursor), undefined)
-      setItems((current) => [...(current ?? []), ...result.items])
-      setCursor(result.nextCursor)
+      list.setData((current) =>
+        current
+          ? {
+              items: [...current.items, ...result.items],
+              nextCursor: result.nextCursor,
+              fetchedAt: Math.min(current.fetchedAt, result.fetchedAt),
+              stale: current.stale || result.stale,
+            }
+          : current,
+      )
     } catch (caught) {
       toast(errorMessage(caught), { tone: 'bad' })
     } finally {
@@ -122,6 +122,11 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
             <InfoTip label="人设">人设包含名称、头像和设定。可以用它新建智能体，或替换现有智能体的设定。</InfoTip>
           </span>
         }
+        actions={
+          <Button size="small" icon={<RefreshCw size={14} />} busy={list.reloading} onClick={list.reload}>
+            刷新
+          </Button>
+        }
       />
       <div className={styles.tools}>
         <SearchField value={query} onChange={setQuery} label="搜索社区人设" placeholder="搜索名称、简介或标签" />
@@ -141,10 +146,13 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
           </div>
         ) : null}
       </div>
-      {error ? (
-        <Banner tone="bad">{error}</Banner>
+      {page?.stale && !list.failure ? (
+        <StaleNotice fetchedAt={page.fetchedAt} busy={list.reloading} onRetry={list.reload} />
+      ) : null}
+      {list.failure ? (
+        <CommunityFailureState failure={list.failure} busy={list.reloading} onRetry={list.reload} />
       ) : items === undefined ? (
-        <Skeleton height={120} />
+        <CommunityLoading height={120} />
       ) : items.length === 0 ? (
         <EmptyState
           icon={<UsersRound size={22} />}
@@ -184,7 +192,7 @@ export function PersonaCatalog({ selectedId }: { readonly selectedId: string | u
           ))}
         </div>
       )}
-      {cursor ? (
+      {cursor && !list.failure ? (
         <div>
           <Button busy={loadingMore} onClick={() => void loadMore()}>
             加载更多
@@ -208,7 +216,8 @@ export function PersonaDetail({
   readonly mode: 'pane' | 'page'
   readonly onClose?: () => void
 }) {
-  const { detail, error } = usePersonaDetail(personaId)
+  const read = usePersonaDetail(personaId)
+  const detail = read.data
   const [expanded, setExpanded] = useState(false)
   const [installing, setInstalling] = useState(false)
 
@@ -245,15 +254,16 @@ export function PersonaDetail({
       }
     />
   ) : (
-    <ObjectHeader size="compact" title={error ? '无法读取人设' : '正在读取…'} />
+    <ObjectHeader size="compact" title={read.failure ? '无法读取人设' : '正在读取…'} />
   )
 
-  const body = error ? (
-    <Banner tone="bad">{error}</Banner>
+  const body = read.failure ? (
+    <CommunityFailureState failure={read.failure} busy={read.reloading} onRetry={read.reload} />
   ) : !detail ? (
-    <Skeleton height={160} />
+    <CommunityLoading height={160} />
   ) : (
     <div className={styles.detail}>
+      {detail.stale ? <StaleNotice fetchedAt={detail.fetchedAt} busy={read.reloading} onRetry={read.reload} /> : null}
       {detail.summary ? <p className={styles.lead}>{detail.summary}</p> : null}
       {detail.tags.length > 0 ? (
         <div className={styles.tagRow}>

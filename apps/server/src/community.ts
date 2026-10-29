@@ -33,6 +33,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { CommunityReadCache, type CommunityCachedRead } from './community-cache.js'
 import type { LocalCredentialStore } from './credentials.js'
 
 /** 正式社区。测试时用 `NEKRO_COMMUNITY_URL` 指向测试站或本地开发服务。 */
@@ -217,6 +218,7 @@ export class CommunityService {
   readonly #meta = new Map<string, { readonly value: CommunityMeta | null; readonly expiresAt: number }>()
   /** Extensions with something to do after the last sync check, for the navigation badge; per community address. */
   #attention: { readonly url: string; readonly count: number } | undefined
+  readonly #reads: CommunityReadCache
   #authGeneration = 0
   #refreshing: { readonly generation: number; readonly promise: Promise<string> } | undefined
 
@@ -237,6 +239,10 @@ export class CommunityService {
     this.#instanceName = options.instanceName ?? 'NekroNXT'
     this.#fetch = options.fetch ?? fetch
     this.#now = options.now ?? Date.now
+    this.#reads = new CommunityReadCache({
+      now: this.#now,
+      isGone: (error) => error instanceof CommunityError && error.code === 'community-not-found',
+    })
   }
 
   #storedEndpoint(): z.output<typeof StoredEndpointSchema> | undefined {
@@ -472,7 +478,9 @@ export class CommunityService {
     await this.#credentials.delete(stored.refreshTokenRef)
   }
 
+  /** 社区地址或登录变化时，目录缓存一并作废。 */
   #invalidateAuth(): void {
+    this.#reads.clear()
     this.#authGeneration += 1
     this.#access = undefined
     this.#refreshing = undefined
@@ -579,7 +587,9 @@ export class CommunityService {
     } catch (error) {
       init.signal?.throwIfAborted()
       const timedOut = error instanceof Error && error.name === 'TimeoutError'
-      throw new CommunityError(502, timedOut ? '连接社区超时，请稍后再试。' : '无法连接社区，请检查网络后再试。')
+      throw timedOut
+        ? new CommunityError(502, '连接社区超时，请稍后再试。', 'community-timeout')
+        : new CommunityError(502, '无法连接社区，请检查网络后再试。', 'community-unreachable')
     }
   }
 
@@ -734,6 +744,7 @@ export class CommunityService {
         findings: z.array(z.object({ severity: z.string(), title: z.string() }).passthrough()),
       })
       .parse(await this.#api('/api/v1/releases', { method: 'POST', body: form }, true))
+    this.#reads.clear()
     return {
       releaseId: body.release.id,
       releaseNumber: body.release.number,
@@ -877,6 +888,28 @@ export class CommunityService {
 
   async withdraw(releaseId: string): Promise<void> {
     await this.#api(`/api/v1/releases/${encodeURIComponent(releaseId)}/withdraw`, { method: 'POST' }, true)
+    this.#reads.clear()
+  }
+
+  /**
+   * 公开目录读取（扩展与人设的列表、详情）走进程内缓存：按社区地址、种类与完整查询区分，5 分钟内直接返回。
+   * `refresh` 跳过缓存并替换；社区读取失败时退回较早的一份并标记 `stale`。
+   */
+  async cachedRead(
+    kind: string,
+    query: Readonly<Record<string, string | undefined>>,
+    refresh: boolean,
+    load: () => Promise<object>,
+  ): Promise<CommunityCachedRead> {
+    const params = Object.entries(query)
+      .filter((entry): entry is [string, string] => entry[1] !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+    return this.#reads.read(JSON.stringify([this.communityUrl, kind, params]), refresh, load)
+  }
+
+  /** 本实例发布了社区内容后调用，下次浏览时读到新内容。 */
+  invalidateReads(): void {
+    this.#reads.clear()
   }
 
   /** 同一社区通道上的其他资源（如人设）读取开放接口：沿用地址、登录、超时与出错格式。 */

@@ -204,6 +204,13 @@ export const CommunityExtensionDetailSchema = CommunityExtensionSummarySchema.ex
 export type CommunityExtensionDetail = z.output<typeof CommunityExtensionDetailSchema>
 
 /**
+ * 本机缓存的社区目录读取附带的时间：`fetchedAt` 是这份内容从社区取回的时间；`stale` 表示社区这次没能读取，
+ * 返回的是较早的一份。
+ */
+export const CommunityFreshnessSchema = z.object({ fetchedAt: z.number().int().nonnegative(), stale: z.boolean() })
+export type CommunityFreshness = z.output<typeof CommunityFreshnessSchema>
+
+/**
  * 发布时随包提交的条目信息（作者自己写的介绍）。首次发布用于建条目；之后提供了哪项就覆盖哪项，未提供的保持不变。
  */
 export const COMMUNITY_LISTING_LIMITS = { summary: 160, description: 20_000, tags: 8, tag: 40 } as const
