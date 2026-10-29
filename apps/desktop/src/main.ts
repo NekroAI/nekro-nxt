@@ -1,5 +1,4 @@
 import { app, dialog, utilityProcess, type BrowserWindow, type UtilityProcess } from 'electron'
-import { createServer } from 'node:net'
 import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -17,6 +16,7 @@ import { HostSupervisor, type SupervisedHostProcess } from './host-supervisor.js
 import { waitForHostShutdown, type HostStopWaitReason } from './host-shutdown.js'
 import { DesktopInstanceManager } from './instance-manager.js'
 import { LocalHostLifecycleRelay } from './local-host-state.js'
+import { readRememberedPort, rememberPort, reserveLoopbackPort } from './local-port.js'
 import {
   parseHostUpgradeProgress,
   restoreHostBackup,
@@ -78,22 +78,8 @@ const serverEntry = (): string =>
     ? path.join(process.resourcesPath, 'server-runtime', 'dist', 'main.mjs')
     : fileURLToPath(new URL('./runtime/dist/main.mjs', import.meta.url))
 
-const reserveLoopbackPort = (): Promise<number> =>
-  new Promise((resolve, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen({ host: LOOPBACK_HOST, port: 0, exclusive: true }, () => {
-      const address = server.address()
-      if (address === null || typeof address === 'string') {
-        server.close(() => reject(new Error('无法分配本地 Host 端口。')))
-        return
-      }
-      server.close((error) => {
-        if (error) reject(error)
-        else resolve(address.port)
-      })
-    })
-  })
+/** The port the local Host used last, so its pages keep the same origin and their browser storage. */
+const localPortPath = (): string => path.join(app.getPath('userData'), 'local-host-port.json')
 
 const dataRoot = (): string => desktopDataRoot(app.getPath('userData'))
 const progressPath = (): string => path.join(dataRoot(), 'backups', 'upgrade-progress.json')
@@ -173,7 +159,10 @@ const forkServer = (
 
 let retryUpgradeOnce = false
 const startProductHost = async (release: ProductRelease): Promise<string> => {
-  const port = await reserveLoopbackPort()
+  const port = await reserveLoopbackPort(LOOPBACK_HOST, await readRememberedPort(localPortPath()))
+  await rememberPort(localPortPath(), port).catch((error: unknown) => {
+    console.warn('[desktop] 无法记录本地 Host 端口。', error)
+  })
   if (cancelled || quitting) throw new Error('启动已取消。')
   const origin = `http://${LOOPBACK_HOST}:${port}`
   let identity: { releaseId: string; runId: string; pid: number | undefined } = {
