@@ -55,6 +55,100 @@
   background: transparent;
 }
 
+.groupHeadRow {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--s-1) / 2);
+}
+
+.groupHeadRow > .groupHead {
+  flex: 1;
+  min-width: 0;
+}
+
+.groupToggle {
+  flex: none;
+  color: var(--muted);
+}
+
+.groupToggle svg {
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.groupToggle[data-collapsed='true'] svg {
+  transform: rotate(-90deg);
+}
+
+.groupBadge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 var(--s-1);
+  border-radius: 9px;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+.pinnedIcon {
+  display: inline-flex;
+  width: 22px;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.rowWrap {
+  position: relative;
+}
+
+/* The more-menu sits over the time and unread badge, which step aside while it shows. */
+.rowMenu {
+  position: absolute;
+  top: 50%;
+  right: var(--s-1);
+  transform: translateY(-50%);
+}
+
+.rowMenu > button {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-1);
+}
+
+.rowWrap:hover .rowMenu > button,
+.rowWrap:focus-within .rowMenu > button,
+.rowMenu > button[data-state='open'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.rowWrap:hover .rowTime,
+.rowWrap:hover .rowBadge,
+.rowWrap:focus-within .rowTime,
+.rowWrap:focus-within .rowBadge,
+.rowWrap:has([data-state='open']) .rowTime,
+.rowWrap:has([data-state='open']) .rowBadge {
+  visibility: hidden;
+}
+
+@media (hover: none) {
+  .rowWrap > .row {
+    padding-right: calc(var(--s-2) + var(--control-sm));
+  }
+
+  .rowMenu > button {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .rowWrap .rowTime,
+  .rowWrap .rowBadge {
+    visibility: visible;
+  }
+}
+
 .row {
   position: relative;
   display: grid;

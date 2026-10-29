@@ -77,6 +77,7 @@ describe('product host wiring', () => {
       notificationSettings: state.notificationSettings,
       diagnosticNote: 'projection-v1',
       workTreeOrder: state.workTreeOrder,
+      channelListView: state.channelListView,
     }
     let listener: (() => void) | undefined
     const coordinator = new ProductHostCoordinator({
@@ -121,6 +122,7 @@ describe('product host wiring', () => {
           notificationSettings: state.notificationSettings,
           diagnosticNote: state.diagnosticNote,
           workTreeOrder: state.workTreeOrder,
+          channelListView: state.channelListView,
         }
       },
       subscribe: () => () => undefined,

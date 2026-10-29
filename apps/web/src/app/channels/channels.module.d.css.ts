@@ -45,9 +45,12 @@ declare const styles: {
   readonly filterRow: string
   readonly fresh: string
   readonly group: string
+  readonly groupBadge: string
   readonly groupDrop: string
   readonly groupHead: string
+  readonly groupHeadRow: string
   readonly groupMeta: string
+  readonly groupToggle: string
   readonly head: string
   readonly hiddenFromAgent: string
   readonly hookNote: string
@@ -95,6 +98,7 @@ declare const styles: {
   readonly older: string
   readonly paneHeader: string
   readonly paneMeta: string
+  readonly pinnedIcon: string
   readonly queue: string
   readonly queueBar: string
   readonly queueList: string
@@ -105,10 +109,12 @@ declare const styles: {
   readonly rowBadge: string
   readonly rowControl: string
   readonly rowDragging: string
+  readonly rowMenu: string
   readonly rowName: string
   readonly rowSource: string
   readonly rowSub: string
   readonly rowTime: string
+  readonly rowWrap: string
   readonly runDot: string
   readonly scheduledNotice: string
   readonly scheduledNoticeNote: string

@@ -467,6 +467,15 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
   })
   await page.route('**/api/dsh/plugins', (route) => route.fulfill({ json: { plugins: [] } }))
   await page.route('**/api/dsh/settings', (route) => route.fulfill({ json: { namespaces: [] } }))
+  // Saving the channel list arrangement answers with what was sent; tests that read it back serve their own snapshot.
+  await page.route('**/api/channel-list-view', (route) =>
+    route.fulfill({
+      json:
+        route.request().method() === 'PUT'
+          ? HostApiContracts.updateChannelListView.request.parse(route.request().postDataJSON())
+          : { pinnedChannelIds: [], collapsedGroupIds: [] },
+    }),
+  )
 }
 
 const workshopTask = {

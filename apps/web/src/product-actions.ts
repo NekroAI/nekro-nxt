@@ -50,6 +50,7 @@ export interface ProductActions {
   'bindings.clear': Action<'clearBinding'>
   'workTreeOrder.put': Action<'putWorkTreeOrder'>
   'agents.putOutboundOrder': Action<'putAgentOutboundOrder'>
+  'channelListView.put': Action<'updateChannelListView'>
   'connections.test': Action<'testConnection'>
   'dynamic.approve': Action<'dynamicApprove'>
   'dynamic.decline': Action<'dynamicDecline'>

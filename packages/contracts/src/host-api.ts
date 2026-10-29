@@ -632,6 +632,22 @@ export const WorkTreeOrderSchema = z
 
 export type WorkTreeOrder = z.output<typeof WorkTreeOrderSchema>
 
+/** The group key of 「未接线」 in `collapsedGroupIds`; agent groups use the agent id. */
+export const UNBOUND_CHANNEL_GROUP_ID = 'unbound'
+
+/**
+ * How the console arranges its channel list: pinned channels in their order and the groups it has collapsed. Shared
+ * by every device signed in to the console; it never changes bindings.
+ */
+export const ChannelListViewSchema = z
+  .object({
+    pinnedChannelIds: z.array(ChannelIdSchema).max(200),
+    collapsedGroupIds: z.array(z.union([AgentIdSchema, z.literal(UNBOUND_CHANNEL_GROUP_ID)])).max(500),
+  })
+  .strict()
+
+export type ChannelListView = z.output<typeof ChannelListViewSchema>
+
 const SnapshotMessagePartSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text'), text: z.string() }).strict(),
   z
@@ -1873,6 +1889,7 @@ export const HostSnapshotSchema = z
       channelIdsByAgent: {},
       unboundChannelIds: [],
     }),
+    channelListView: ChannelListViewSchema.default({ pinnedChannelIds: [], collapsedGroupIds: [] }),
     messages: z.array(HostSnapshotMessageSchema),
     connections: z.array(
       z
@@ -3450,6 +3467,23 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: WorkTreeOrderSchema,
     response: WorkTreeOrderSchema,
+    error: HostApiErrorSchema,
+  }),
+  getChannelListView: defineContract({
+    method: 'GET',
+    path: '/api/channel-list-view',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ChannelListViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateChannelListView: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/channel-list-view',
+    params: EmptyParamsSchema,
+    request: ChannelListViewSchema,
+    response: ChannelListViewSchema,
     error: HostApiErrorSchema,
   }),
   listChannelMessages: defineContract({

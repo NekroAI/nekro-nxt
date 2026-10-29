@@ -1,4 +1,5 @@
-import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
+import { HostApiContracts } from '@nekro-nxt/contracts'
+import { chromium, expect, test, type Browser, type Locator, type Page } from '@playwright/test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,11 +10,66 @@ import {
   externalChannelId,
   externalConnectionId,
   productSnapshot,
+  sourceAgentId,
   sourceChannelId,
+  targetAgentId,
   targetChannelId,
 } from '../e2e/fixtures/product-quality.js'
 
 type Snapshot = typeof productSnapshot
+type ListView = Snapshot['channelListView']
+
+const emptyView: ListView = { pinnedChannelIds: [], collapsedGroupIds: [] }
+
+/** The product snapshot with unread messages in 记录员's channel (3) and the unbound one (4), arranged as `view`. */
+const arrangedSnapshot = (view: ListView): Snapshot => ({
+  ...productSnapshot,
+  channels: productSnapshot.channels.map((channel) => ({
+    ...channel,
+    activity: {
+      ...channel.activity,
+      unreadCount: channel.id === sourceChannelId ? 3 : channel.id === externalChannelId ? 4 : 0,
+    },
+  })),
+  channelListView: view,
+})
+
+/**
+ * Serves the channel list arrangement like the host: a save comes back in the next snapshot. `writes` records every
+ * other mutating request, so a test can show the list arrangement never touched bindings.
+ */
+const serveArrangement = async (page: Page, initial: ListView = emptyView) => {
+  let view = initial
+  const saved: ListView[] = []
+  const writes: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (request.method() !== 'GET' && path !== '/api/channel-list-view' && !path.endsWith('/read')) {
+      writes.push(`${request.method()} ${path}`)
+    }
+  })
+  await page.route('**/api/snapshot', (route) => route.fulfill({ json: arrangedSnapshot(view) }))
+  await page.route('**/api/channel-list-view', (route) => {
+    view = HostApiContracts.updateChannelListView.request.parse(route.request().postDataJSON())
+    saved.push(view)
+    return route.fulfill({ json: view })
+  })
+  return { saved, writes }
+}
+
+const dragTo = async (page: Page, source: Locator, target: Locator): Promise<void> => {
+  const from = await source.boundingBox()
+  const to = await target.boundingBox()
+  if (!from || !to) throw new Error('拖拽目标没有几何尺寸。')
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2 + 8, { steps: 6 })
+  // Aim at the target's leading edge: sortable rows shift away from the pointer while they make room.
+  const y = to.y + (to.y < from.y ? to.height * 0.25 : to.height * 0.75)
+  await page.mouse.move(to.x + to.width / 2, y, { steps: 12 })
+  await page.mouse.up()
+  await page.mouse.move(8, 8)
+}
 
 const attentionItem = (id: string, severity: 'critical' | 'warning', title: string) => ({
   id,
@@ -108,6 +164,7 @@ test.describe('shell, channels and live', () => {
     await page.route('**/api/platform-users*', (request) =>
       request.fulfill({ json: { total: 0, items: [], facets: { adapters: [], connections: [] } } }),
     )
+    await page.route('**/api/channel-list-view', (request) => request.fulfill({ json: snapshot.channelListView }))
     await installSnapshotHealthRoutes(page, snapshot)
     await page.route('**/api/snapshot', (request) => request.fulfill({ json: snapshot }))
     await page.route('**/api/events', (request) =>
@@ -171,7 +228,7 @@ test.describe('shell, channels and live', () => {
   test('searches and filters channels into a flat result list', async () => {
     const { page } = await open(`/channels/${targetChannelId}`)
     try {
-      const list = page.getByRole('complementary', { name: '频道' })
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
       await list.getByRole('searchbox', { name: '搜索频道' }).fill('产品')
       await expect(list.getByRole('link', { name: /产品讨论群/u })).toBeVisible()
       await expect(list.getByRole('link', { name: /资料员的内置频道/u })).toHaveCount(0)
@@ -182,6 +239,130 @@ test.describe('shell, channels and live', () => {
       await page.getByRole('option', { name: '示例群聊平台', exact: true }).click()
       await expect(list.getByRole('link', { name: /产品讨论群/u })).toBeVisible()
       await expect(list.getByRole('link', { name: /资料员的内置频道/u })).toHaveCount(0)
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('pins channels above the groups, reorders them by menu and drag, and unpins them', async () => {
+    let arrangement: Awaited<ReturnType<typeof serveArrangement>> | undefined
+    const { page, errors } = await open(`/channels/${targetChannelId}`, {
+      before: async (page) => {
+        arrangement = await serveArrangement(page)
+      },
+    })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const pinned = list.getByRole('group', { name: '置顶' })
+      const openRowMenu = async (name: string) => {
+        await list.locator('a[href^="/channels/"]', { hasText: name }).hover()
+        await list.getByRole('button', { name: `${name} 的更多操作` }).click()
+      }
+      const pinnedOrder = () =>
+        pinned.locator('a[href^="/channels/"]').evaluateAll((links) => links.map((link) => link.getAttribute('href')))
+
+      await openRowMenu('记录员的内置频道')
+      await page.getByRole('menuitem', { name: '置顶', exact: true }).click()
+      await expect(pinned.locator(`a[href="/channels/${sourceChannelId}"]`)).toBeVisible()
+      // The channel leaves its group instead of showing twice.
+      await expect(list.locator(`a[href="/channels/${sourceChannelId}"]`)).toHaveCount(1)
+      await openRowMenu('产品讨论群')
+      await page.getByRole('menuitem', { name: '置顶', exact: true }).click()
+      await expect.poll(pinnedOrder).toEqual([`/channels/${sourceChannelId}`, `/channels/${externalChannelId}`])
+      expect(arrangement?.saved.at(-1)).toEqual({
+        pinnedChannelIds: [sourceChannelId, externalChannelId],
+        collapsedGroupIds: [],
+      })
+
+      await openRowMenu('产品讨论群')
+      await expect(page.getByRole('menuitem', { name: '下移' })).toHaveCount(0)
+      await page.getByRole('menuitem', { name: '上移' }).click()
+      await expect.poll(pinnedOrder).toEqual([`/channels/${externalChannelId}`, `/channels/${sourceChannelId}`])
+
+      // A press during the menu's closing animation does not reach the row.
+      await expect(page.getByRole('menu')).toHaveCount(0)
+      await dragTo(
+        page,
+        pinned.locator(`a[href="/channels/${sourceChannelId}"]`),
+        pinned.locator(`a[href="/channels/${externalChannelId}"]`),
+      )
+      await expect.poll(pinnedOrder).toEqual([`/channels/${sourceChannelId}`, `/channels/${externalChannelId}`])
+      await expect(page).toHaveURL(new RegExp(`/channels/${targetChannelId}$`, 'u'))
+
+      await openRowMenu('产品讨论群')
+      await page.getByRole('menuitem', { name: '取消置顶' }).click()
+      await expect.poll(pinnedOrder).toEqual([`/channels/${sourceChannelId}`])
+      await expect(list.locator(`a[href="/channels/${externalChannelId}"]`)).toHaveCount(1)
+      await openRowMenu('记录员的内置频道')
+      await page.getByRole('menuitem', { name: '取消置顶' }).click()
+      await expect(pinned).toHaveCount(0)
+      expect(arrangement?.saved.at(-1)).toEqual(emptyView)
+      expect(arrangement?.writes).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('collapses groups behind their unread totals and searches inside them without expanding them', async () => {
+    let arrangement: Awaited<ReturnType<typeof serveArrangement>> | undefined
+    const { page, errors } = await open(`/channels/${targetChannelId}`, {
+      before: async (page) => {
+        arrangement = await serveArrangement(page)
+      },
+    })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      await list.getByRole('button', { name: '收起「记录员」' }).click()
+      await expect(list.getByRole('button', { name: '展开「记录员」' })).toHaveAttribute('aria-expanded', 'false')
+      await expect(list.locator(`a[href="/channels/${sourceChannelId}"]`)).toHaveCount(0)
+      await expect(list.getByTitle('3 条未读')).toBeVisible()
+      await list.getByRole('button', { name: '收起「未接线」' }).click()
+      await expect(list.locator(`a[href="/channels/${externalChannelId}"]`)).toHaveCount(0)
+      await expect(list.getByTitle('4 条未读')).toBeVisible()
+      expect(arrangement?.saved.at(-1)).toEqual({ pinnedChannelIds: [], collapsedGroupIds: [sourceAgentId, 'unbound'] })
+
+      const search = list.getByRole('searchbox', { name: '搜索频道' })
+      await search.fill('记录员')
+      await expect(list.getByRole('link', { name: /记录员的内置频道/u })).toBeVisible()
+      await search.fill('产品')
+      await expect(list.getByRole('link', { name: /产品讨论群/u })).toBeVisible()
+      await search.fill('')
+      await expect(list.locator(`a[href="/channels/${sourceChannelId}"]`)).toHaveCount(0)
+      await expect(list.getByRole('button', { name: '展开「记录员」' })).toBeVisible()
+      expect(arrangement?.saved).toHaveLength(2)
+
+      await list.getByRole('button', { name: '展开「记录员」' }).click()
+      await expect(list.locator(`a[href="/channels/${sourceChannelId}"]`)).toBeVisible()
+      await expect(list.getByTitle('3 条未读')).toHaveCount(0)
+      // The group name still opens the agent.
+      await list.locator('[aria-roledescription="可拖动的智能体分组"]', { hasText: '资料员' }).click()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}`, 'u'))
+      expect(arrangement?.writes).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('drops a channel onto a collapsed group to bind or unbind it', async () => {
+    const { page, errors } = await open(`/channels/${targetChannelId}`, {
+      before: async (page) => {
+        await serveArrangement(page, { pinnedChannelIds: [], collapsedGroupIds: [targetAgentId, 'unbound'] })
+      },
+    })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const row = list.locator(`a[href="/channels/${sourceChannelId}"]`)
+      await dragTo(page, row, list.getByRole('button', { name: '展开「资料员」' }).locator('..'))
+      await expect(page.getByRole('dialog', { name: '让资料员响应「记录员的内置频道」' })).toBeVisible()
+      await page.getByRole('button', { name: '取消' }).click()
+      await dragTo(page, row, list.getByRole('button', { name: '展开「未接线」' }).locator('..'))
+      await expect(page.getByRole('dialog', { name: '断开「记录员的内置频道」与记录员？' })).toBeVisible()
+      await page.getByRole('button', { name: '取消' }).click()
+      // Dropping never opens the group.
+      await expect(list.getByRole('button', { name: '展开「资料员」' })).toBeVisible()
+      expect(errors).toEqual([])
     } finally {
       await page.close()
     }

@@ -74,6 +74,7 @@ export class ProductHostCoordinator implements TestProductHost {
         notificationSettings: snapshot.notificationSettings,
         diagnosticNote: snapshot.diagnosticNote,
         workTreeOrder: snapshot.workTreeOrder,
+        channelListView: snapshot.channelListView,
       })
     }
     apply()

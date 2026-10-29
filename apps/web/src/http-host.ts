@@ -169,6 +169,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   },
   diagnosticNote: '正在连接 NekroNXT 服务…',
   workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
+  channelListView: { pinnedChannelIds: [], collapsedGroupIds: [] },
 })
 
 type SnapshotJson = HostApiResponse<'snapshot'>
@@ -776,6 +777,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     connections,
     archivedConnections,
     workTreeOrder: json.workTreeOrder,
+    channelListView: json.channelListView,
     extensions: extensionsLocal,
     hostUi: json.hostUi,
     platformUsersRevision: 0,
@@ -1127,6 +1129,7 @@ export class HttpProductHost implements ProductHostPort {
     'workTreeOrder.put': async (body) => this.#mutate(HostApiContracts.putWorkTreeOrder, {}, body),
     'agents.putOutboundOrder': async ({ agentId, ...body }) =>
       this.#mutate(HostApiContracts.putAgentOutboundOrder, { agentId }, body),
+    'channelListView.put': async (body) => this.#mutate(HostApiContracts.updateChannelListView, {}, body),
     'connections.test': async ({ connectionId, ...body }) =>
       this.#mutate(HostApiContracts.testConnection, { connectionId }, body),
     'dynamic.approve': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.dynamicApprove, { agentId }, body),

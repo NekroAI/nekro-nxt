@@ -697,6 +697,10 @@ export interface ProductState {
     readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
     readonly unboundChannelIds: readonly string[]
   }
+  channelListView: {
+    readonly pinnedChannelIds: readonly string[]
+    readonly collapsedGroupIds: readonly string[]
+  }
   createInternalChannel(input: { readonly displayName: string }): Promise<{ readonly channelId: string }>
   createBinding(input: {
     readonly agentId: string
@@ -714,6 +718,8 @@ export interface ProductState {
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
   /** Saves the order in which the agent's outbound processors run. */
   putAgentOutboundOrder(agentId: string, extensionIds: readonly string[]): Promise<void>
+  /** Shows the new pins and collapsed groups at once and puts them back if saving fails. */
+  putChannelListView(view: ProductState['channelListView']): Promise<void>
   sendMessage(
     channelId: string,
     body: string,

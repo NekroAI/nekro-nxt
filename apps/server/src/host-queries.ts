@@ -26,6 +26,7 @@ import { unavailableSessionContext } from './channel-runtime-context.js'
 import type { NekroRuntime } from './bootstrap.js'
 import { extensionVersions } from './extension-governance/versions.js'
 import type { WorkspaceProjections } from './workspace-projections.js'
+import { readChannelListView } from './channel-list-view.js'
 import { optionalProjection, unavailableImageDiagnostics } from './auxiliary-projections.js'
 import { agentOutboundOrder } from './extension-outbound.js'
 import { commandConfinementSupport } from './command-confinement.js'
@@ -708,6 +709,10 @@ export class HostQueries {
         }),
       },
       workTreeOrder: runtime.repository.getWorkTreeOrder(),
+      channelListView: readChannelListView(
+        { get: (key) => runtime.repository.getSystemSetting(key) },
+        { channelIds: new Set(channels.map(({ id }) => id)), agentIds },
+      ),
       dynamic: [...agentIds].flatMap((agentId) => projectDynamicInventory(runtime, agentId)),
       // A deleted agent's creation tasks stay as history but leave the Workshop with the agent.
       authoringTasks: runtime.repository

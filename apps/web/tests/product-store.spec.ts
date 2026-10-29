@@ -45,6 +45,7 @@ const resetBusinessFacts = (): void => {
     authoringTasks: [],
     diagnosticNote: '正在连接 NekroNxt Host…',
     workTreeOrder: { agentIds: [], channelIdsByAgent: {}, unboundChannelIds: [] },
+    channelListView: { pinnedChannelIds: [], collapsedGroupIds: [] },
   })
 }
 
@@ -540,6 +541,37 @@ describe('product store Host mutations', () => {
       channelIdsByAgent: {},
       unboundChannelIds: [],
     })
+  })
+
+  it('shows channel pins and collapsed groups at once and undoes only the rejected change', async () => {
+    const rejections: Array<(error: Error) => void> = []
+    const execute = vi.fn(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejections.push(reject)
+        }),
+    )
+    setActiveProductHost({
+      getSnapshot: () => useProductStore.getState(),
+      subscribe: () => () => undefined,
+      execute,
+    })
+    const pinned = { pinnedChannelIds: ['chn_a'], collapsedGroupIds: [] }
+    const pending = useProductStore.getState().putChannelListView(pinned)
+    expect(useProductStore.getState().channelListView).toEqual(pinned)
+    expect(execute).toHaveBeenCalledWith('channelListView.put', pinned)
+    rejections[0]?.(new Error('保存失败'))
+    await expect(pending).rejects.toThrow('保存失败')
+    expect(useProductStore.getState().channelListView).toEqual({ pinnedChannelIds: [], collapsedGroupIds: [] })
+
+    const first = useProductStore.getState().putChannelListView(pinned)
+    const collapsed = { pinnedChannelIds: ['chn_a'], collapsedGroupIds: ['unbound'] }
+    const second = useProductStore.getState().putChannelListView(collapsed)
+    rejections[1]?.(new Error('第一次失败'))
+    await expect(first).rejects.toThrow('第一次失败')
+    expect(useProductStore.getState().channelListView).toEqual(collapsed)
+    rejections[2]?.(new Error('第二次失败'))
+    await expect(second).rejects.toThrow('第二次失败')
   })
 
   it('forwards context reset and intelligent-agent deletion with concurrency guards', async () => {

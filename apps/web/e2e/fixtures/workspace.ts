@@ -14,6 +14,10 @@ export async function installWorkspaceRoutes(page: Page, snapshot: () => Snapsho
   await page.route('**/api/commands?*', (route) => json(route, { commands: [], problems: [] }))
   await page.route('**/api/commands/members/*', (route) => json(route, { members: [] }))
   await page.route('**/api/attention', (route) => json(route, { revision: 'fixture', items: [] }))
+  // The synthetic snapshot's channels are unknown to the real host, which would drop them from a saved arrangement.
+  await page.route('**/api/channel-list-view', (route) =>
+    json(route, route.request().method() === 'PUT' ? route.request().postDataJSON() : snapshot().channelListView),
+  )
   await page.route('**/api/attention/*/dismiss', (route) => json(route, { dismissed: true, revision: 'fixture' }))
   await page.route('**/api/activity?*', (route) => {
     const now = Date.now()

@@ -47,6 +47,11 @@ export interface ProductSnapshot {
     readonly channelIdsByAgent: Readonly<Record<string, readonly string[]>>
     readonly unboundChannelIds: readonly string[]
   }
+  /** Pinned channels in order and collapsed channel-list groups; agent id or `unbound`. */
+  readonly channelListView: {
+    readonly pinnedChannelIds: readonly string[]
+    readonly collapsedGroupIds: readonly string[]
+  }
 }
 
 export interface DynamicPackageSummary {
