@@ -1,4 +1,10 @@
-import { AssetIdSchema, type JsonValue, type MessagePart } from '@nekro-nxt/contracts'
+import {
+  AssetIdSchema,
+  CompactionSettingsSchema,
+  DEFAULT_COMPACTION_SETTINGS,
+  type JsonValue,
+  type MessagePart,
+} from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import { readCompactionSettings, writeCompactionSettings } from '../src/compaction-settings.ts'
 import { messageGapMs, readMessagePacing, writeMessagePacing } from '../src/message-pacing.ts'
@@ -51,17 +57,34 @@ describe('compaction settings', () => {
         rows.set(key, { value, revision: (rows.get(key)?.revision ?? 0) + 1 })
       },
     }
-    expect(readCompactionSettings(settings)).toEqual({ newSessionModel: { mode: 'main' }, timeoutSeconds: 180 })
+    expect(readCompactionSettings(settings)).toEqual(DEFAULT_COMPACTION_SETTINGS)
     const saved = {
       newSessionModel: {
         mode: 'custom' as const,
         model: { provider: 'fixture', model: 'fast', reasoningEffort: 'low' },
       },
       timeoutSeconds: 300,
+      idleThresholdPercent: 60,
     }
     writeCompactionSettings(settings, saved)
     expect(readCompactionSettings(settings)).toEqual(saved)
+    const legacy = { newSessionModel: saved.newSessionModel, timeoutSeconds: saved.timeoutSeconds }
+    rows.set('channel.compaction', { value: legacy, revision: 8 })
+    expect(readCompactionSettings(settings)).toEqual({ ...saved, idleThresholdPercent: 50 })
     rows.set('channel.compaction', { value: { timeoutSeconds: 5 }, revision: 9 })
     expect(readCompactionSettings(settings).timeoutSeconds).toBe(180)
+  })
+
+  it('accepts integer percentages outside the recommendation but rejects invalid values', () => {
+    for (const idleThresholdPercent of [1, 30, 50, 60, 100]) {
+      expect(CompactionSettingsSchema.safeParse({ ...DEFAULT_COMPACTION_SETTINGS, idleThresholdPercent }).success).toBe(
+        true,
+      )
+    }
+    for (const idleThresholdPercent of [0, 101, 49.5, '50', null]) {
+      expect(CompactionSettingsSchema.safeParse({ ...DEFAULT_COMPACTION_SETTINGS, idleThresholdPercent }).success).toBe(
+        false,
+      )
+    }
   })
 })

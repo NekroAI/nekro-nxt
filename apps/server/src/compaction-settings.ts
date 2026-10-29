@@ -21,6 +21,7 @@ export const writeCompactionSettings = (
   const parsed = CompactionSettingsSchema.parse(value)
   const model = parsed.newSessionModel
   const stored: JsonValue = {
+    idleThresholdPercent: parsed.idleThresholdPercent,
     timeoutSeconds: parsed.timeoutSeconds,
     newSessionModel:
       model.mode === 'main'

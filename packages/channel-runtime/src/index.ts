@@ -299,6 +299,8 @@ export interface AgentSessionDriver {
     readonly targetRevision: AgentRevisionRecord
   }): Promise<void>
   sessionStatus(dshSessionId: string): 'idle' | 'running'
+  /** Whether context occupancy warrants idle rollover. Without a measurement, keep the current session. */
+  shouldCompactIdleSession?(dshSessionId: string): boolean
   /** Resolves after the current DSH turn and all injected work become idle. */
   whenIdle?(dshSessionId: string): Promise<void>
   findAdmissionMessage(dshSessionId: string, admissionId: AdmissionId): string | undefined
@@ -1771,7 +1773,12 @@ export class ChannelRuntime {
     if (reason === undefined && this.#idleRolloverMs !== false && episode.lastAdmittedEventId !== undefined) {
       const lastEvent = this.#coreRepository.getChannelEvent(episode.lastAdmittedEventId)
       if (!lastEvent) throw new Error(`Episode last admitted Event no longer exists: ${episode.lastAdmittedEventId}`)
-      if (event.receivedAt - lastEvent.receivedAt >= this.#idleRolloverMs) reason = 'idle-timeout'
+      if (
+        event.receivedAt - lastEvent.receivedAt >= this.#idleRolloverMs &&
+        episode.dshSessionId !== undefined &&
+        this.#sessionDriver.shouldCompactIdleSession?.(episode.dshSessionId) === true
+      )
+        reason = 'idle-timeout'
     }
     if (reason === undefined) return episode
     if (!episode.dshSessionId) throw new Error(`Episode has no DSH Session for rollover: ${episode.id}`)

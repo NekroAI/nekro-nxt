@@ -215,7 +215,7 @@ export function ModelSection({
         <PropertyRow
           label="开新会话时压缩"
           layout="stacked"
-          tip="闲置后再被唤醒、或手动压缩时，先把上一段对话整理成摘要再开新会话。这一步用不上缓存，可以换成更快的模型。"
+          tip="开新会话需要摘要时，使用此模型整理上一段对话。选择更快的模型可缩短等待时间。"
         >
           <CompactionModelField
             label="开新会话时压缩"

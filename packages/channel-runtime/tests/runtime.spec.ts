@@ -684,6 +684,7 @@ const setup = async (
       return Promise.resolve()
     },
     sessionStatus: () => sessionStatus,
+    shouldCompactIdleSession: () => true,
     whenIdle: () => Promise.resolve(),
     findAdmissionMessage: (_sessionId, admissionId) => persistedAdmissionMessages.get(admissionId),
     createHandoffSummary: (input) => {
@@ -2294,6 +2295,44 @@ describe('ChannelRuntime M1 lane', () => {
       closeReason: 'idle-timeout',
     })
     expect([...context.runtimeRepository.episodes.values()].filter(({ status }) => status === 'active')).toHaveLength(1)
+  })
+
+  it('keeps an idle session below its occupancy threshold and checks again on the next idle wake', async () => {
+    const context = await setup(true, 1000)
+    context.sessionDriver.shouldCompactIdleSession = () => false
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'low-1', 100))
+    const first = [...context.runtimeRepository.episodes.values()][0]!
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'low-2', 1100))
+    expect(context.runtimeRepository.getEpisode(first.id)?.status).toBe('active')
+    expect(context.handoffInputs).toHaveLength(0)
+    expect(context.admissionCalls.at(-1)?.dshSessionId).toBe(first.dshSessionId)
+
+    context.sessionDriver.shouldCompactIdleSession = () => true
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'high-1', 1200))
+    expect(context.runtimeRepository.getEpisode(first.id)?.status).toBe('active')
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'high-2', 2200))
+    expect(context.runtimeRepository.getEpisode(first.id)?.closeReason).toBe('idle-timeout')
+    expect(context.handoffInputs).toHaveLength(1)
+  })
+
+  it('keeps idle sessions without occupancy support while still allowing manual and incompatible rollovers', async () => {
+    const context = await setup(true, 1000)
+    delete context.sessionDriver.shouldCompactIdleSession
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'unknown-1', 100))
+    const first = [...context.runtimeRepository.episodes.values()][0]!
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'unknown-2', 1100))
+    expect(context.runtimeRepository.getEpisode(first.id)?.status).toBe('active')
+    expect(context.handoffInputs).toHaveLength(0)
+    const next = await context.runtime.rolloverEpisode(first.id)
+    expect(context.runtimeRepository.getEpisode(first.id)?.closeReason).toBe('manual')
+
+    context.core.reviseAgent(context.agent.definition.id, context.agent.revision.id, {
+      displayName: context.agent.revision.displayName,
+      model: context.agent.revision.model,
+      persona: '新的设定',
+    })
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'revised', 1200))
+    expect(context.runtimeRepository.getEpisode(next.id)?.closeReason).toBe('incompatible-revision')
   })
 
   it('supports an explicit new Session without fabricating a new Channel Event', async () => {

@@ -11,7 +11,7 @@ import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/stora
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DshHostRuntime } from '../src/index.js'
 
 /** Records what each request asked for; `hang` keeps compaction summaries from ever finishing. */
@@ -48,6 +48,7 @@ class RecordingModel extends LlmAdapter {
 
 const disposers: Array<() => void | Promise<void>> = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const dispose of disposers.splice(0).reverse()) await dispose()
 })
 
@@ -141,6 +142,26 @@ const asked = (call: GenerateOptions | undefined) => ({
 })
 
 describe('compaction into a new session', () => {
+  it('requires measured occupancy at the configured threshold and reads setting changes without a new session', async () => {
+    const settings = { ...DEFAULT_COMPACTION_SETTINGS }
+    const f = await fixture({ settings })
+    expect(f.host.shouldCompactIdleSession('unknown-session')).toBe(false)
+    const metrics = vi.spyOn(f.host, 'sessionRuntimeMetrics')
+    metrics.mockReturnValue({ occupancy: { projectedTokens: 66_800, contextWindow: 1_000_000 } })
+    expect(f.host.shouldCompactIdleSession('fixture-session')).toBe(false)
+    metrics.mockReturnValue({ occupancy: { projectedTokens: 499_999, contextWindow: 1_000_000 } })
+    expect(f.host.shouldCompactIdleSession('fixture-session')).toBe(false)
+    metrics.mockReturnValue({ occupancy: { projectedTokens: 500_000, contextWindow: 1_000_000 } })
+    expect(f.host.shouldCompactIdleSession('fixture-session')).toBe(true)
+    settings.idleThresholdPercent = 60
+    expect(f.host.shouldCompactIdleSession('fixture-session')).toBe(false)
+    settings.idleThresholdPercent = 30
+    expect(f.host.shouldCompactIdleSession('fixture-session')).toBe(true)
+    metrics.mockReturnValue({})
+    expect(f.host.shouldCompactIdleSession('fixture-session')).toBe(false)
+    expect(f.summaryCalls()).toHaveLength(0)
+  })
+
   it('uses the main model by default, then the host default, then the agent’s own choice', async () => {
     const plain = await fixture({ reasoningEffort: 'high' })
     await plain.summarize()
@@ -148,6 +169,7 @@ describe('compaction into a new session', () => {
 
     const hosted = await fixture({
       settings: {
+        ...DEFAULT_COMPACTION_SETTINGS,
         newSessionModel: {
           mode: 'custom',
           model: { provider: 'test-provider', model: 'fast-model', reasoningEffort: 'low' },
@@ -161,6 +183,7 @@ describe('compaction into a new session', () => {
 
     const own = await fixture({
       settings: {
+        ...DEFAULT_COMPACTION_SETTINGS,
         newSessionModel: { mode: 'custom', model: { provider: 'test-provider', model: 'fast-model' } },
         timeoutSeconds: 180,
       },
@@ -190,7 +213,7 @@ describe('compaction into a new session', () => {
   })
 
   it('stops waiting at the configured limit and shows the channel as compacting meanwhile', async () => {
-    const f = await fixture({ settings: { newSessionModel: { mode: 'main' }, timeoutSeconds: 0.2 } })
+    const f = await fixture({ settings: { ...DEFAULT_COMPACTION_SETTINGS, timeoutSeconds: 0.2 } })
     f.model.hang = true
     const started = Date.now()
     const pending = f.summarize()

@@ -458,9 +458,11 @@ export const AgentCompactionPolicySchema = z
   .object({ inSession: AgentCompactionModelChoiceSchema, newSession: AgentCompactionModelChoiceSchema })
   .strict()
 
-/** The host's model for compaction into a new session, and how long a new session may wait for its summary. */
+/** The host's idle compaction threshold, summary model and wait limit. */
 export const CompactionSettingsSchema = z
   .object({
+    /** Minimum context occupancy for idle rollover; older settings inherit 50%. */
+    idleThresholdPercent: z.number().int().min(1).max(100).default(50),
     newSessionModel: z.discriminatedUnion('mode', [
       z.object({ mode: z.literal('main') }).strict(),
       z.object({ mode: z.literal('custom'), model: AgentModelSchema }).strict(),
@@ -473,6 +475,7 @@ export const CompactionSettingsSchema = z
 export type CompactionSettings = z.output<typeof CompactionSettingsSchema>
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
+  idleThresholdPercent: 50,
   newSessionModel: { mode: 'main' },
   timeoutSeconds: 180,
 }

@@ -22,7 +22,7 @@ import {
   KeyRound,
   Link2,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   DSH_GROUP_LABEL,
@@ -656,6 +656,9 @@ const COMPACTION_WAIT_OPTIONS = [60, 120, 180, 300, 600].map((seconds) => ({
 function Chat() {
   const [pacing, setPacing] = useState<MessagePacing>()
   const [compaction, setCompaction] = useState<CompactionSettings>()
+  const [idleThreshold, setIdleThreshold] = useState('')
+  const [compactionSaving, setCompactionSaving] = useState(false)
+  const compactionSavePending = useRef(false)
   useEffect(() => {
     const controller = new AbortController()
     workspaceApi
@@ -664,17 +667,44 @@ function Chat() {
       .catch(() => undefined)
     workspaceApi
       .getCompactionSettings({ signal: controller.signal })
-      .then(setCompaction)
+      .then((settings) => {
+        setCompaction(settings)
+        setIdleThreshold(String(settings.idleThresholdPercent))
+      })
       .catch(() => undefined)
     return () => controller.abort()
   }, [])
   const saveCompaction = (next: CompactionSettings) => {
+    if (compactionSavePending.current) return
+    compactionSavePending.current = true
+    setCompactionSaving(true)
     const previous = compaction
-    setCompaction(next)
-    workspaceApi.updateCompactionSettings(next).catch((error: unknown) => {
-      setCompaction(previous)
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-    })
+    workspaceApi
+      .updateCompactionSettings(next)
+      .then((settings) => {
+        setCompaction(settings)
+        setIdleThreshold(String(settings.idleThresholdPercent))
+        toast('已保存')
+      })
+      .catch((error: unknown) => {
+        setIdleThreshold(String(previous?.idleThresholdPercent ?? 50))
+        toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+      })
+      .finally(() => {
+        compactionSavePending.current = false
+        setCompactionSaving(false)
+      })
+  }
+  const saveIdleThreshold = () => {
+    if (compaction === undefined || compactionSavePending.current) return
+    const value = Number(idleThreshold)
+    if (!Number.isInteger(value) || value < 1 || value > 100) {
+      setIdleThreshold(String(compaction.idleThresholdPercent))
+      toast('请输入 1–100 之间的整数。', { tone: 'bad' })
+      return
+    }
+    setIdleThreshold(String(value))
+    if (value !== compaction.idleThresholdPercent) saveCompaction({ ...compaction, idleThresholdPercent: value })
   }
   const change = (next: MessagePacing) => {
     const previous = pacing
@@ -696,15 +726,47 @@ function Chat() {
           )}
         </PropertyRow>
         <PropertyRow
+          label="闲置压缩阈值"
+          width="sm"
+          description="建议 30%–60%。数值越高，闲置后越少触发压缩。"
+          tip="会话闲置满 6 小时后，下次唤醒时，上下文占用达到此比例才会先压缩并开启新会话；低于此比例则继续原会话。上下文接近容量上限时仍会自动压缩。"
+        >
+          {compaction === undefined ? (
+            <Skeleton width={160} height={28} />
+          ) : (
+            <div className={styles.inlineForm}>
+              <Input
+                aria-label="闲置压缩阈值（%）"
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                value={idleThreshold}
+                disabled={compactionSaving}
+                onChange={(event) => setIdleThreshold(event.target.value)}
+                onBlur={saveIdleThreshold}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    event.currentTarget.blur()
+                  }
+                }}
+              />
+              <span aria-hidden="true">%</span>
+            </div>
+          )}
+        </PropertyRow>
+        <PropertyRow
           label="开新会话时的压缩模型"
           layout="stacked"
-          tip="闲置后再被唤醒、或手动压缩时，先用它把上一段对话整理成摘要，再开新会话。这一步用不上缓存，换成更快的模型能少等一会儿。智能体可以另外指定。"
+          tip="开新会话需要摘要时，使用此模型整理上一段对话。选择更快的模型可缩短等待时间。智能体可以单独指定。"
         >
           {compaction === undefined ? (
             <Skeleton width={320} height={28} />
           ) : (
             <CompactionModelField
               label="开新会话时的压缩模型"
+              disabled={compactionSaving}
               followLabel="跟随智能体的主模型"
               value={compaction.newSessionModel.mode === 'custom' ? compaction.newSessionModel.model : undefined}
               onChange={(model) =>
@@ -725,6 +787,7 @@ function Chat() {
           ) : (
             <Select
               aria-label="压缩最多等待"
+              disabled={compactionSaving}
               value={String(compaction.timeoutSeconds)}
               options={
                 COMPACTION_WAIT_OPTIONS.some((option) => option.value === String(compaction.timeoutSeconds))

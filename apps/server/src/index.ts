@@ -5366,6 +5366,14 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#runtimeProjection.sessionRuntimeMetrics(dshSessionId)
   }
 
+  /** Idle compaction uses the same unrounded occupancy as the channel inspector. */
+  shouldCompactIdleSession(dshSessionId: string): boolean {
+    const occupancy = this.sessionRuntimeMetrics(dshSessionId)?.occupancy
+    if (occupancy === undefined) return false
+    const threshold = (this.#compaction?.settings() ?? DEFAULT_COMPACTION_SETTINGS).idleThresholdPercent
+    return occupancy.projectedTokens >= (occupancy.contextWindow * threshold) / 100
+  }
+
   subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
     this.#assertActive()
     return this.#runtimeProjection.subscribeChannelRuntime(listener)
