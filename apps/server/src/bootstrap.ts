@@ -1536,6 +1536,7 @@ export class NekroRuntime {
     const packageRecord = this.repository.getDshPluginPackage(packageId)
     if (!packageRecord) throw new Error('DSH 插件包不存在。')
     const entryIds = this.repository.listDshPluginEntries(packageId).map(({ id }) => id)
+    await this.host.assertInstalledDshPluginConversationsIndependent(entryIds, '移除')
     await this.host.disableInstalledDshPluginPackage(packageId)
     for (const entryId of entryIds) {
       this.repository.deleteHostUiDshPages(entryId)

@@ -498,6 +498,7 @@ export function registerSettingsRoutes({
         }
         if (req.method === 'DELETE') {
           const input = HostApiContracts.deactivateDshPluginEntry.parseRequest(await readJsonBody(req))
+          await runtime.host.assertInstalledDshPluginConversationsIndependent([entryId], '关闭')
           await runtime.host.disableInstalledDshPlugin(entryId, input.targetKey)
           broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
           broadcastExtensionsChanged()

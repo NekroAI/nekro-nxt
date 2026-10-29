@@ -87,32 +87,42 @@ const pluginGroup = (origin: DshPluginCatalogEntry['origin']): DshSettingsCatalo
 
 type DshPluginDiagnostic = DshPluginEntry['activations'][number]['diagnostic']
 
-const waitingServices = (diagnostic: DshPluginDiagnostic): readonly string[] => {
-  if (diagnostic?.status !== 'pending' || !diagnostic.message) return []
-  const current = /^等待 (.+) 服务$/u.exec(diagnostic.message)?.[1]
-  const legacy = /^等待依赖服务：(.+)$/u.exec(diagnostic.message)?.[1]
-  return (current ?? legacy)?.split('、').filter(Boolean) ?? []
-}
+const restrictedServices = (diagnostic: DshPluginDiagnostic): readonly string[] =>
+  diagnostic?.status === 'pending' ? (diagnostic.restrictedServices ?? []) : []
 
-const pendingStatusLabel = (diagnostic: DshPluginDiagnostic): string => {
-  const services = waitingServices(diagnostic)
-  return services.length > 0 ? `等待 ${services.join('、')} 服务` : '等待依赖服务'
-}
+const waitingServices = (diagnostic: DshPluginDiagnostic): readonly string[] =>
+  diagnostic?.status === 'pending' ? (diagnostic.waitingFor ?? []) : []
+
+const waitingLabel = (services: readonly string[]): string =>
+  services.length > 0 ? `等待 ${services.join('、')} 服务` : '等待依赖服务'
+
+/** Why a third-party entry cannot load: it needs services only official plugins receive. */
+export const dshRestrictedReason = (services: readonly string[]): string =>
+  `需要 ${services.join('、')} 服务，只对官方插件开放。`
 
 /** State shown next to an entry in lists and headers. */
 export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label: string; readonly tone: Tone } => {
   if (entry.plugin?.loadError) return { label: '加载失败', tone: 'bad' }
   const activations = entry.plugin?.entries?.flatMap((item) => item.activations) ?? []
   const pendingActivations = activations.filter((activation) => activation.diagnostic?.status === 'pending')
-  const pending = pendingActivations.length
-  const active = activations.length - pending
-  const services = [...new Set(pendingActivations.flatMap((activation) => waitingServices(activation.diagnostic)))]
-  const pendingLabel = services.length > 0 ? `等待 ${services.join('、')} 服务` : '等待依赖服务'
-  if (pending > 0 && active > 0) return { label: `${active} 个已启用 / ${pending} 个${pendingLabel}`, tone: 'warn' }
-  if (pending > 1) return { label: `${pending} 个${pendingLabel}`, tone: 'warn' }
-  if (pending > 0) return { label: pendingLabel, tone: 'warn' }
-  if (active > 0) return { label: '已启用', tone: 'ok' }
-  return { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
+  const restricted = pendingActivations.filter((activation) => restrictedServices(activation.diagnostic).length > 0)
+  const waiting = pendingActivations.filter((activation) => restrictedServices(activation.diagnostic).length === 0)
+  const active = activations.length - pendingActivations.length
+  const waitingText = waitingLabel([
+    ...new Set(waiting.flatMap((activation) => waitingServices(activation.diagnostic))),
+  ])
+  const parts = [
+    active > 0 ? `${active} 个已启用` : '',
+    restricted.length > 0 ? `${restricted.length} 个缺少服务` : '',
+    waiting.length > 0 ? `${waiting.length} 个${waitingText}` : '',
+  ].filter(Boolean)
+  if (pendingActivations.length === 0) {
+    return active > 0 ? { label: '已启用', tone: 'ok' } : { label: DSH_GROUP_LABEL[entry.group], tone: 'neutral' }
+  }
+  if (parts.length === 1 && pendingActivations.length === 1) {
+    return { label: restricted.length > 0 ? '缺少服务' : waitingText, tone: 'warn' }
+  }
+  return { label: parts.join(' / '), tone: 'warn' }
 }
 
 export const dshPackageLabel = (name: string): string => {
@@ -1471,6 +1481,7 @@ export function DshPluginDetail({
         meta={
           <>
             {status.label === DSH_GROUP_LABEL[entry.group] ? null : <span>{DSH_GROUP_LABEL[entry.group]}</span>}
+            {plugin?.official ? <span>官方插件</span> : null}
             <span>{entry.version}</span>
             {applies ? <span>{applies}</span> : null}
           </>
@@ -1502,13 +1513,20 @@ export function DshPluginDetail({
           {(plugin.entries ?? []).map((item) => {
             const scope = entryScope[item.id] ?? item.selectedScope ?? item.suggestedScope
             const inspection = configInspections[item.id]
+            const restricted = [
+              ...new Set(item.activations.flatMap((activation) => restrictedServices(activation.diagnostic))),
+            ]
             return (
               <div className={styles.entry} key={item.id}>
                 <div className={styles.entryHead}>
                   <b title={item.moduleName}>{item.entryKey}</b>
                   {item.activations.map((activation) => {
                     const suffix =
-                      activation.diagnostic?.status === 'pending' ? pendingStatusLabel(activation.diagnostic) : '已启用'
+                      activation.diagnostic?.status !== 'pending'
+                        ? '已启用'
+                        : restrictedServices(activation.diagnostic).length > 0
+                          ? '缺少服务'
+                          : waitingLabel(waitingServices(activation.diagnostic))
                     const owner =
                       activation.target === 'host'
                         ? '本机'
@@ -1524,7 +1542,11 @@ export function DshPluginDetail({
                       </Chip>
                     )
                   })}
+                  {item.grantedServices?.length ? (
+                    <Chip tone="neutral">已开放 {item.grantedServices.join('、')} 服务</Chip>
+                  ) : null}
                 </div>
+                {restricted.length > 0 ? <p className={styles.muted}>{dshRestrictedReason(restricted)}</p> : null}
                 <div className={styles.entryFields}>
                   <Field label="启用范围">
                     <Select

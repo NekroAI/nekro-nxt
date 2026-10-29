@@ -1,4 +1,6 @@
-import { Context, type FiberState, type Fiber } from '@deepseek-ai/cordis'
+import { Context, Inject, type FiberState, type Fiber } from '@deepseek-ai/cordis'
+import { SessionStore } from '@deepseek-ai/dsh-session'
+import '@deepseek-ai/dsh-session-persistence'
 import type { HostLogSink } from './logs/service.js'
 import { bindLogOwner } from './logs/bridge.js'
 import { createHash } from 'node:crypto'
@@ -15,16 +17,22 @@ import type {
   DshPluginEntryId,
   DshPluginEntryRecord,
   DshPluginPackageId,
+  DshPluginPackageRecord,
   JsonValue,
   RuntimeCompatibilityDiagnostic,
 } from '@nekro-nxt/contracts'
 import type { DshPluginRepository, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
+import type { DshPluginServiceAccess } from './dsh-plugin-access.js'
 
 interface OwnedLoader {
   readonly context: Context
   readonly services: Context
   readonly loaderIds: Map<DshPluginEntryId, string>
   readonly targetKey?: string
+  /** Official entries load beside the isolated Loader, in one that sees the host's own services. */
+  readonly official: boolean
+  /** Every Loader serving the same target, this one included. */
+  readonly peers: OwnedLoader[]
 }
 
 type MountedPluginPhase = 'active' | 'pending'
@@ -32,15 +40,25 @@ interface MountedPluginState {
   readonly phase: MountedPluginPhase
   readonly waitingFor: readonly string[]
 }
-const DSH_PLUGIN_LOAD_POLICY_REVISION = 3
+// 4: official plugins receive the host services they declare; others keep the isolated set.
+const DSH_PLUGIN_LOAD_POLICY_REVISION = 4
 
 export type DshPluginConfigInspection =
   | { readonly mode: 'schema'; readonly schema: JsonValue }
   | { readonly mode: 'json' }
   | { readonly mode: 'incompatible'; readonly reason: string }
 
+const isInjectDeclaration = (value: unknown): value is Inject =>
+  Array.isArray(value) ? value.every((item) => typeof item === 'string') : typeof value === 'object' && value !== null
+
+/**
+ * Only this Loader's own entries are read. The official Loader sees the host's `agentPresets`, whose composition rows
+ * belong to the host, so the inventory reads through a scope without it.
+ */
+const loaderInventory = (loader: OwnedLoader) => readPluginInventory(loader.services.isolate('agentPresets'))
+
 const inventoryEntry = async (loader: OwnedLoader, loaderId: string) =>
-  (await readPluginInventory(loader.services)).entries.find((candidate) => candidate.entryId === loaderId)
+  (await loaderInventory(loader)).entries.find((candidate) => candidate.entryId === loaderId)
 
 export interface DshPluginCompatibilityFailure {
   readonly entryId: DshPluginEntryId
@@ -126,6 +144,17 @@ export async function disposeDshPluginFiber(context: Context, fiber: Fiber): Pro
   }
 }
 
+/** Raised before closing or removing a plugin whose recorded content some conversations still need. */
+export class DshPluginSessionDependencyError extends Error {
+  constructor(
+    readonly sessions: number,
+    readonly eventTypes: readonly string[],
+    action: '关闭' | '移除',
+  ) {
+    super(`不能${action}：${sessions} 个对话里有这个插件写入的内容，${action}后这些对话将无法恢复。`)
+  }
+}
+
 class DshPluginCompatibilityError extends Error {
   constructor(readonly failure: DshPluginCompatibilityFailure) {
     super(failure.reason)
@@ -137,7 +166,13 @@ export interface DshPluginLifecycleOptions {
   readonly repository: DshPluginRepository &
     Partial<Pick<SqliteCoreRepository, 'getSystemSetting' | 'putSystemSetting'>>
   readonly rootContext: Context
-  readonly isolateContext: (context: Context) => Context
+  /** Which host services one entry may see; without it every entry shares one Loader per target. */
+  readonly serviceAccess?: (
+    packageRecord: DshPluginPackageRecord,
+    declaredInject: readonly string[],
+  ) => DshPluginServiceAccess
+  /** Host services hidden from the Loader that third-party entries share. */
+  readonly isolatedServices?: readonly string[]
   readonly resolveModule: (packageId: DshPluginPackageId, moduleName: string) => string
   readonly listAgentSessions: (agentId: AgentId) => readonly {
     readonly sessionId: string
@@ -215,11 +250,19 @@ const phaseOf = (error: unknown, fallback: DshPluginDiagnosticRecord['phase']): 
   return fallback
 }
 
+export interface DshPluginServiceView {
+  readonly official?: boolean
+  readonly granted?: readonly string[]
+  readonly waitingFor?: readonly string[]
+  readonly restricted?: readonly string[]
+}
+
 export class DshPluginLifecycleCoordinator {
   readonly #logs: HostLogSink | undefined
   readonly #repository: DshPluginLifecycleOptions['repository']
   readonly #rootContext: Context
-  readonly #isolateContext: (context: Context) => Context
+  readonly #serviceAccess: DshPluginLifecycleOptions['serviceAccess']
+  readonly #isolatedServices: readonly string[]
   readonly #resolveModule: DshPluginLifecycleOptions['resolveModule']
   readonly #listAgentSessions: DshPluginLifecycleOptions['listAgentSessions']
   readonly #now: () => number
@@ -227,6 +270,10 @@ export class DshPluginLifecycleCoordinator {
   readonly #compatibilityFailures = new Map<string, DshPluginCompatibilityError>()
   readonly #agentLoaders = new Map<string, OwnedLoader>()
   readonly #transitions = new Map<DshPluginEntryId, Promise<void>>()
+  readonly #access = new Map<DshPluginEntryId, DshPluginServiceAccess>()
+  readonly #waiting = new Map<string, readonly string[]>()
+  /** Message projection types seen at the last observation; anything new belongs to what just became active. */
+  #projectionSnapshot = new Set<string>()
   #hostLoader: OwnedLoader | undefined
   #agentProbeLoader: OwnedLoader | undefined
   #disposed = false
@@ -235,7 +282,8 @@ export class DshPluginLifecycleCoordinator {
     this.#logs = options.logs
     this.#repository = options.repository
     this.#rootContext = options.rootContext
-    this.#isolateContext = options.isolateContext
+    this.#serviceAccess = options.serviceAccess
+    this.#isolatedServices = options.isolatedServices ?? []
     this.#resolveModule = options.resolveModule
     this.#listAgentSessions = options.listAgentSessions
     this.#now = options.now ?? Date.now
@@ -244,10 +292,9 @@ export class DshPluginLifecycleCoordinator {
 
   async initialize(): Promise<{ readonly restored: number; readonly failed: number }> {
     this.#assertActive()
-    const context = this.#isolateContext(this.#rootContext).isolate('loader').isolate('pluginInventory')
-    this.#hostLoader = await this.#createLoader(context, 'host')
-    const probeContext = this.#isolateContext(this.#rootContext).isolate('loader').isolate('pluginInventory')
-    this.#agentProbeLoader = await this.#createLoader(probeContext)
+    this.#projectionSnapshot = this.#projectionTypes()
+    this.#hostLoader = await this.#createLoaders(this.#rootContext, 'host')
+    this.#agentProbeLoader = await this.#createLoaders(this.#rootContext)
     let restored = 0
     let failed = 0
     for (const activation of this.#repository
@@ -286,8 +333,9 @@ export class DshPluginLifecycleCoordinator {
   async mountAgentSession(agentId: AgentId, sessionId: string, agentContext: Context): Promise<void> {
     this.#assertActive()
     if (this.#agentLoaders.has(sessionId)) throw new Error(`DSH plugin Loader already exists for Session: ${sessionId}`)
-    const context = this.#isolateContext(agentContext).isolate('loader').isolate('pluginInventory')
-    const owned = await this.#createLoader(context, agentId)
+    const owned = await this.#createLoaders(agentContext, agentId)
+    // Both Loaders live under the agent context; its fiber owns their lifetime.
+    const context = agentContext
     this.#agentLoaders.set(sessionId, owned)
     try {
       for (const activation of this.#repository
@@ -351,7 +399,7 @@ export class DshPluginLifecycleCoordinator {
       try {
         if (input.target === 'host') {
           if (!this.#hostLoader) throw new Error('DSH host loader is not initialized.')
-          changed.set(this.#hostLoader, this.#hostLoader.loaderIds.has(entry.id))
+          changed.set(this.#hostLoader, this.#hasEntry(this.#hostLoader, entry.id))
           mountedStates.set(this.#hostLoader, await this.#mountOrUpdate(this.#hostLoader, candidate))
         } else {
           const agentIds = new Set(
@@ -373,7 +421,7 @@ export class DshPluginLifecycleCoordinator {
               const loader = this.#agentLoaders.get(session.sessionId)
               if (!loader) throw new Error(`智能体 Session 缺少 DSH 插件 Loader：${session.sessionId}`)
               if (changed.has(loader)) continue
-              changed.set(loader, loader.loaderIds.has(entry.id))
+              changed.set(loader, this.#hasEntry(loader, entry.id))
               mountedStates.set(loader, await this.#mountOrUpdate(loader, candidate))
             }
           }
@@ -454,7 +502,7 @@ export class DshPluginLifecycleCoordinator {
       const unmounted: OwnedLoader[] = []
       try {
         for (const loader of loaders) {
-          const existed = loader.loaderIds.has(entryId)
+          const existed = this.#hasEntry(loader, entryId)
           await this.#unmount(loader, entryId)
           if (existed) unmounted.push(loader)
         }
@@ -471,6 +519,7 @@ export class DshPluginLifecycleCoordinator {
       }
       try {
         this.#repository.deleteDshPluginActivationState({ entryId, targetKey, now: this.#timestamp() })
+        this.#waiting.delete(this.#waitingKey(entryId, targetKey))
       } catch (error) {
         const rollback = await Promise.allSettled(unmounted.map((loader) => this.#mount(loader, entry)))
         const failures = rollback
@@ -514,11 +563,9 @@ export class DshPluginLifecycleCoordinator {
     if (this.#disposed) return
     this.#disposed = true
     await Promise.allSettled([...this.#transitions.values()])
-    const contexts = [
-      this.#hostLoader?.context,
-      this.#agentProbeLoader?.context,
-      ...[...this.#agentLoaders.values()].map(({ context }) => context),
-    ].filter((context): context is Context => context !== undefined)
+    const contexts = [this.#hostLoader, this.#agentProbeLoader, ...this.#agentLoaders.values()]
+      .filter((loader): loader is OwnedLoader => loader !== undefined)
+      .flatMap((loader) => loader.peers.map(({ context }) => context))
     this.#hostLoader = undefined
     this.#agentProbeLoader = undefined
     this.#agentLoaders.clear()
@@ -529,20 +576,37 @@ export class DshPluginLifecycleCoordinator {
     if (failures.length) throw new AggregateError(failures, 'DSH plugin Loader disposal failed.')
   }
 
-  async #mount(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
-    const existingLoaderId = loader.loaderIds.get(entry.id)
+  async #mount(target: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
+    const existing = this.#ownerOf(target, entry.id)
+    const existingLoaderId = existing?.loaderIds.get(entry.id)
     // Cordis activates a pending entry in place after its injected services appear, retaining the
     // same Fiber and Runtime Config that passed schema inspection when this Loader entry was created.
     // Intentionally do not repeat config inspection here: this path only observes that retained
     // entry's current phase and does not treat automatic dependency activation as a fresh load.
-    if (existingLoaderId) return this.#settledState(loader, existingLoaderId, entry.entryKey)
+    if (existing && existingLoaderId) return this.#settledState(existing, existingLoaderId, entry.entryKey)
     this.#preflight(entry)
     const packageRecord = this.#repository.getDshPluginPackage(entry.packageId)
     if (!packageRecord) throw new Error(`DSH 插件包不存在：${entry.packageId}`)
     const name = this.#resolveModule(packageRecord.id, entry.moduleName)
-    const loaderId = await loader.services.loader.create({ name, config: entry.config })
+    const access = this.#serviceAccess?.(packageRecord, await this.#declaredInject(target, name))
+    if (access) this.#access.set(entry.id, access)
+    const loader = target.peers.find((peer) => peer.official === (access?.official ?? false)) ?? target
+    const activeBefore = await this.#activeEntries(loader)
+    const loaderId = await loader.services.loader.create({
+      name,
+      config: entry.config,
+      // The isolated Loader already hides these; an official entry hides only what it did not declare.
+      ...(loader.official && access && access.isolated.length > 0
+        ? { isolate: Object.fromEntries(access.isolated.map((key) => [key, true] as const)) }
+        : {}),
+    })
     await loader.services.loader.await()
     loader.loaderIds.set(entry.id, loaderId)
+    const activeAfter = await this.#activeEntries(loader)
+    this.#attributeProjections(
+      [...activeAfter].filter((id) => !activeBefore.has(id)),
+      entry.id,
+    )
     const fiber = loader.services.loader.resolve(loaderId).fiber
     if (fiber && this.#logs)
       bindLogOwner(fiber.ctx, this.#logs, {
@@ -562,11 +626,18 @@ export class DshPluginLifecycleCoordinator {
     }
   }
 
-  async #mountOrUpdate(loader: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
-    const loaderId = loader.loaderIds.get(entry.id)
-    if (!loaderId) return this.#mount(loader, entry)
+  async #mountOrUpdate(target: OwnedLoader, entry: DshPluginEntryRecord): Promise<MountedPluginState> {
+    const loader = this.#ownerOf(target, entry.id)
+    const loaderId = loader?.loaderIds.get(entry.id)
+    if (!loader || !loaderId) return this.#mount(target, entry)
+    const activeBefore = await this.#activeEntries(loader)
     await loader.services.loader.update(loaderId, { config: entry.config })
     await loader.services.loader.await()
+    const activeAfter = await this.#activeEntries(loader)
+    this.#attributeProjections(
+      [...activeAfter].filter((id) => !activeBefore.has(id)),
+      entry.id,
+    )
     return this.#settledState(loader, loaderId, entry.entryKey)
   }
 
@@ -593,9 +664,10 @@ export class DshPluginLifecycleCoordinator {
     return { phase, waitingFor }
   }
 
-  async #unmount(loader: OwnedLoader, entryId: DshPluginEntryId): Promise<void> {
-    const loaderId = loader.loaderIds.get(entryId)
-    if (!loaderId) return
+  async #unmount(target: OwnedLoader, entryId: DshPluginEntryId): Promise<void> {
+    const loader = this.#ownerOf(target, entryId)
+    const loaderId = loader?.loaderIds.get(entryId)
+    if (!loader || !loaderId) return
     try {
       // remove() is void and detaches the entry immediately; its tree no longer owns the pending disposer.
       // Await the public Fiber disposal before allowing Loader to unlink it.
@@ -607,6 +679,7 @@ export class DshPluginLifecycleCoordinator {
       throw new DshPluginQuiescenceError(cause)
     }
     loader.loaderIds.delete(entryId)
+    this.#projectionSnapshot = this.#projectionTypes()
   }
 
   #requireEntry(entryId: DshPluginEntryId): DshPluginEntryRecord {
@@ -615,7 +688,35 @@ export class DshPluginLifecycleCoordinator {
     return entry
   }
 
-  async #createLoader(context: Context, targetKey?: string): Promise<OwnedLoader> {
+  #ownerOf(target: OwnedLoader, entryId: DshPluginEntryId): OwnedLoader | undefined {
+    return target.peers.find((peer) => peer.loaderIds.has(entryId))
+  }
+
+  #hasEntry(target: OwnedLoader, entryId: DshPluginEntryId): boolean {
+    return this.#ownerOf(target, entryId) !== undefined
+  }
+
+  /** The isolated Loader for third-party entries and, when access rules exist, its official peer. */
+  async #createLoaders(base: Context, targetKey?: string): Promise<OwnedLoader> {
+    const peers: OwnedLoader[] = []
+    const isolated = this.#isolatedServices.reduce((context, key) => context.isolate(key), base)
+    const primary = await this.#createLoader(
+      isolated.isolate('loader').isolate('pluginInventory'),
+      peers,
+      false,
+      targetKey,
+    )
+    if (this.#serviceAccess)
+      await this.#createLoader(base.isolate('loader').isolate('pluginInventory'), peers, true, targetKey)
+    return primary
+  }
+
+  async #createLoader(
+    context: Context,
+    peers: OwnedLoader[],
+    official: boolean,
+    targetKey?: string,
+  ): Promise<OwnedLoader> {
     observeDshPluginDisposal(context)
     // AgentLoop now lives in a Profile entry. A child Loader must own a fresh tree,
     // rather than inherit that entry's metadata and overwrite its subtree pointer.
@@ -626,18 +727,27 @@ export class DshPluginLifecycleCoordinator {
       services = injected
     })
     if (!services) throw new Error('DSH loader services are not injected.')
-    return {
+    const loader: OwnedLoader = {
       context: ownedContext,
       services,
       loaderIds: new Map(),
       ...(targetKey === undefined ? {} : { targetKey }),
+      official,
+      peers,
     }
+    peers.push(loader)
+    return loader
   }
 
-  async #refreshLoaderDiagnostics(loader: OwnedLoader): Promise<void> {
+  /** A provider in one peer can wake or suspend consumers in the other, so both are read. */
+  async #refreshLoaderDiagnostics(target: OwnedLoader): Promise<void> {
+    for (const loader of target.peers) await this.#refreshPeerDiagnostics(loader)
+  }
+
+  async #refreshPeerDiagnostics(loader: OwnedLoader): Promise<void> {
     const targetKey = loader.targetKey
     if (targetKey === undefined) return
-    const inventory = await readPluginInventory(loader.services)
+    const inventory = await loaderInventory(loader)
     for (const [entryId, loaderId] of loader.loaderIds) {
       const activation = this.#repository
         .listDshPluginActivations(entryId)
@@ -648,7 +758,7 @@ export class DshPluginLifecycleCoordinator {
       const previous = this.#repository.getDshPluginDiagnostic(entryId, targetKey)
       if (observed.fiberPhase === 'active' || observed.fiberPhase === 'pending') {
         const state = this.#mountedState(loader, loaderId, observed.fiberPhase)
-        const message = this.#mountedMessage(state)
+        const message = this.#mountedMessage(entryId, state)
         if (previous?.status !== state.phase || previous.message !== message) {
           this.#diagnoseMounted(entryId, targetKey, state, 'dependency')
         }
@@ -672,15 +782,135 @@ export class DshPluginLifecycleCoordinator {
     activePhase: DshPluginDiagnosticRecord['phase'],
   ): void {
     if (state.phase === 'pending') {
-      this.#diagnose(entryId, targetKey, 'pending', 'dependency', undefined, this.#mountedMessage(state))
+      this.#diagnose(entryId, targetKey, 'pending', 'dependency', undefined, this.#mountedMessage(entryId, state))
+      this.#waiting.set(this.#waitingKey(entryId, targetKey), state.waitingFor)
       return
     }
     this.#diagnose(entryId, targetKey, 'active', activePhase)
   }
 
-  #mountedMessage(state: MountedPluginState): string | undefined {
+  #mountedMessage(entryId: DshPluginEntryId, state: MountedPluginState): string | undefined {
     if (state.phase !== 'pending') return undefined
+    const isolated = new Set(this.#access.get(entryId)?.isolated ?? [])
+    const restricted = state.waitingFor.filter((service) => isolated.has(service))
+    if (restricted.length > 0) return `需要 ${restricted.join('、')} 服务，只对官方插件开放`
     return state.waitingFor.length > 0 ? `等待 ${state.waitingFor.join('、')} 服务` : '等待依赖服务'
+  }
+
+  /** Reads the declaration Cordis will use, through the same Loader import the entry is about to use. */
+  async #declaredInject(loader: OwnedLoader, name: string): Promise<readonly string[]> {
+    if (!this.#serviceAccess) return []
+    try {
+      const plugin: unknown = loader.services.loader.unwrapExports(await loader.services.loader.import(name))
+      if ((typeof plugin !== 'object' || plugin === null) && typeof plugin !== 'function') return []
+      const inject: unknown = Reflect.get(plugin, 'inject')
+      return isInjectDeclaration(inject) ? Object.keys(Inject.resolve(inject)) : []
+    } catch {
+      // The Loader import below reports the real failure through the existing diagnostics.
+      return []
+    }
+  }
+
+  async #activeEntries(target: OwnedLoader): Promise<Set<DshPluginEntryId>> {
+    const active = new Set<DshPluginEntryId>()
+    for (const loader of target.peers) {
+      const inventory = await loaderInventory(loader)
+      for (const [entryId, loaderId] of loader.loaderIds) {
+        if (inventory.entries.find((candidate) => candidate.entryId === loaderId)?.fiberPhase === 'active')
+          active.add(entryId)
+      }
+    }
+    return active
+  }
+
+  #projectionTypes(): Set<string> {
+    const sessions: unknown = this.#rootContext.get('sessions')
+    if (!(sessions instanceof SessionStore)) return new Set()
+    return new Set(sessions.messageProjections.map((projection) => projection.type))
+  }
+
+  /**
+   * DSH keeps no owner beside a message projection, so ownership is observed: projection types that appear while
+   * entries become active belong to those entries. Several entries activating together all receive the new types,
+   * which only makes closing them stricter.
+   */
+  #attributeProjections(activated: readonly DshPluginEntryId[], fallback: DshPluginEntryId): void {
+    const current = this.#projectionTypes()
+    const added = [...current].filter((type) => !this.#projectionSnapshot.has(type))
+    this.#projectionSnapshot = current
+    if (added.length === 0) return
+    for (const entryId of activated.length > 0 ? activated : [fallback]) {
+      const owned = new Set([...this.#sessionEventTypes(entryId), ...added])
+      this.#repository.putSystemSetting?.(
+        this.#sessionEventsKey(entryId),
+        [...owned].sort(),
+        this.#repository.getSystemSetting?.(this.#sessionEventsKey(entryId))?.revision,
+        this.#timestamp(),
+      )
+    }
+  }
+
+  #sessionEventsKey(entryId: DshPluginEntryId): string {
+    return `dsh.plugins.sessionEvents.${entryId}`
+  }
+
+  #sessionEventTypes(entryId: DshPluginEntryId): readonly string[] {
+    const value = this.#repository.getSystemSetting?.(this.#sessionEventsKey(entryId))?.value
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  }
+
+  /** Counts stored conversations that contain session events interpreted by these entries. */
+  async sessionDependence(
+    entryIds: readonly DshPluginEntryId[],
+  ): Promise<{ readonly sessions: number; readonly eventTypes: readonly string[] }> {
+    const types = new Set(entryIds.flatMap((entryId) => this.#sessionEventTypes(entryId)))
+    if (types.size === 0) return { sessions: 0, eventTypes: [] }
+    const persistence = this.#rootContext.get('sessionPersistence')
+    if (!persistence) return { sessions: 0, eventTypes: [...types].sort() }
+    const found = new Set<string>()
+    let sessions = 0
+    for (const snapshot of await persistence.list()) {
+      let events: readonly { readonly type: string }[]
+      try {
+        const handle = await persistence.open(snapshot.header.id, 'read')
+        try {
+          events = (await handle.read()).events
+        } finally {
+          await handle.close()
+        }
+      } catch {
+        // A log this build cannot read cannot be restored either way.
+        continue
+      }
+      const matches = events.filter((event) => types.has(event.type)).map((event) => event.type)
+      if (matches.length === 0) continue
+      sessions += 1
+      for (const type of matches) found.add(type)
+    }
+    return { sessions, eventTypes: [...found].sort() }
+  }
+
+  async assertSessionIndependent(entryIds: readonly DshPluginEntryId[], action: '关闭' | '移除'): Promise<void> {
+    const dependence = await this.sessionDependence(entryIds)
+    if (dependence.sessions > 0)
+      throw new DshPluginSessionDependencyError(dependence.sessions, dependence.eventTypes, action)
+  }
+
+  /** Live view for settings: services an entry received and what each activation still waits for. */
+  serviceView(entryId: DshPluginEntryId, targetKey?: string): DshPluginServiceView {
+    const access = this.#access.get(entryId)
+    const waitingFor = targetKey === undefined ? undefined : this.#waiting.get(this.#waitingKey(entryId, targetKey))
+    const isolated = new Set(access?.isolated ?? [])
+    return {
+      ...(access === undefined ? {} : { official: access.official, granted: access.granted }),
+      ...(waitingFor === undefined
+        ? {}
+        : { waitingFor, restricted: waitingFor.filter((service) => isolated.has(service)) }),
+    }
+  }
+
+  #waitingKey(entryId: DshPluginEntryId, targetKey: string): string {
+    return `${entryId}\u0000${targetKey}`
   }
 
   #preflight(entry: DshPluginEntryRecord): void {
@@ -787,6 +1017,7 @@ export class DshPluginLifecycleCoordinator {
   ): void {
     if (error instanceof DshPluginCompatibilityError) phase = 'import'
     if (error instanceof DshPluginQuiescenceError) phase = 'dispose'
+    this.#waiting.delete(this.#waitingKey(entryId, targetKey))
     this.#repository.upsertDshPluginDiagnostic({
       entryId,
       targetKey,

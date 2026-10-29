@@ -246,7 +246,8 @@ import {
   type DynamicPackageDefinitionInput,
   type RunScriptedConversation,
 } from './dynamic-authoring-runtime.js'
-import { isolateManagedDshPluginServices, isolatePrivateExtensionServices } from './extension-context.js'
+import { isolatePrivateExtensionServices } from './extension-context.js'
+import { DSH_PLUGIN_ISOLATED_SERVICE_KEYS, dshPluginServiceAccess } from './dsh-plugin-access.js'
 import {
   HostModelSettings,
   type AvailableLlmModel,
@@ -3360,7 +3361,8 @@ export class DshHostRuntime implements AgentSessionDriver {
             ...(options.logs === undefined ? {} : { logs: options.logs }),
             repository: options.dshPlugins.repository,
             rootContext: context,
-            isolateContext: isolateManagedDshPluginServices,
+            serviceAccess: dshPluginServiceAccess,
+            isolatedServices: DSH_PLUGIN_ISOLATED_SERVICE_KEYS,
             resolveModule: options.dshPlugins.resolveModule,
             listAgentSessions: (agentId) =>
               [...this.#sessions.handles()]
@@ -3800,6 +3802,23 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#assertActive()
     if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
     return this.#dshPluginLifecycle.disablePackage(packageId)
+  }
+
+  /** Refuses when stored conversations contain content only these plugin entries can read back. */
+  assertInstalledDshPluginConversationsIndependent(
+    entryIds: readonly DshPluginEntryId[],
+    action: '关闭' | '移除',
+  ): Promise<void> {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.resolve()
+    return this.#dshPluginLifecycle.assertSessionIndependent(entryIds, action)
+  }
+
+  installedDshPluginServiceView(
+    entryId: DshPluginEntryId,
+    targetKey?: string,
+  ): ReturnType<DshPluginLifecycleCoordinator['serviceView']> {
+    return this.#dshPluginLifecycle?.serviceView(entryId, targetKey) ?? {}
   }
   listDshSettings(): readonly DshSettingsNamespaceView[] {
     this.#assertActive()

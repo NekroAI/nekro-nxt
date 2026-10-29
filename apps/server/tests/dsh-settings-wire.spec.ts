@@ -12,7 +12,6 @@ import {
   DshPluginPackageIdSchema,
   RuntimeCompatibilityDiagnosticSchema,
   type DshPluginEntryId,
-  type DshPluginPackageId,
   type JsonValue,
 } from '@nekro-nxt/contracts'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
@@ -309,7 +308,6 @@ describe('DSH plugin compatibility lifecycle', () => {
       return new DshPluginLifecycleCoordinator({
         repository,
         rootContext: context,
-        isolateContext: (ctx) => ctx,
         resolveModule,
         listAgentSessions: () => [],
       })
@@ -383,7 +381,7 @@ describe('DSH plugin compatibility lifecycle', () => {
       const consumer = f.seed('ACONSUMER')
       const alphaProvider = f.seed('BPROVIDER')
       const betaProvider = f.seed('CPROVIDER')
-      const resolve = vi.fn((_packageId: DshPluginPackageId, name: string) => {
+      const resolve = vi.fn((_packageId: unknown, name: string) => {
         const source =
           name === 'ACONSUMER'
             ? `

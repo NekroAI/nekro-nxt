@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { isolateManagedDshPluginServices, isolatePrivateExtensionServices } from '../src/extension-context.js'
+import { DSH_PLUGIN_ISOLATED_SERVICE_KEYS } from '../src/dsh-plugin-access.js'
+import { isolatePrivateExtensionServices } from '../src/extension-context.js'
 
 const moduleUrl = (source: string): string => `data:text/javascript,${encodeURIComponent(source)}`
 const temporaryDirectories: string[] = []
@@ -145,7 +146,10 @@ describe('DSH Loader/Profile compatibility spike', () => {
 
     const root = new Context()
     await root.plugin(SkillRegistry)
-    const managed = isolateManagedDshPluginServices(root).isolate('loader')
+    // The Loader every installed third-party entry shares.
+    const managed = DSH_PLUGIN_ISOLATED_SERVICE_KEYS.reduce((context, key) => context.isolate(key), root).isolate(
+      'loader',
+    )
     await managed.plugin(Loader, { baseUrl: import.meta.url })
     try {
       const id = PluginEntryIdSchema.parse(
