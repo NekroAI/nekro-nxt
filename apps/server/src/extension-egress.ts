@@ -255,10 +255,12 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
      * to such a host, headers carrying it are dropped and a body carrying it fails the request.
      */
     fetch: async (
-      urlString: string,
+      requestedUrl: string,
       init?: ExtensionFetchInit,
       secrets: readonly ExtensionFetchSecret[] = [],
     ): Promise<ExtensionFetchResponse> => {
+      // Pages often give protocol-relative addresses (`//host/path`); outside a page they mean HTTPS.
+      const urlString = requestedUrl.startsWith('//') ? `https:${requestedUrl}` : requestedUrl
       let url: URL
       try {
         url = new URL(urlString.replaceAll(PLACEHOLDER_PATTERN, 'x'))
@@ -268,7 +270,10 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
         }
       } catch (error) {
         if (error instanceof ExtensionEgressError) throw error
-        throw new ExtensionEgressError('invalid-url', `无效的 URL：${urlString}`)
+        throw new ExtensionEgressError(
+          'invalid-url',
+          `无效的 URL：${requestedUrl}。需要 http:// 或 https:// 开头的完整地址。`,
+        )
       }
       const firstHostname = normalizeUrlHostname(url)
       const filledUrl = fillPlaceholders(urlString, firstHostname, secrets)
