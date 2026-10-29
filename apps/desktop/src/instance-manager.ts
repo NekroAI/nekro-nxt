@@ -14,6 +14,7 @@ import {
 } from 'electron'
 import { ClientNotificationFeedResponseSchema } from '@nekro-nxt/contracts'
 import path from 'node:path'
+import type { DesktopDataDirectory } from './data-directory-service.js'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CredentialVault } from './credential-vault.js'
 import { trustedInstanceFailure, trustedInstanceSuccess } from './instance-operation-error.js'
@@ -196,6 +197,7 @@ export class DesktopInstanceManager {
   #localHostStatus: LocalHostStatus
   #lastCurrentPresentationSignature: string | undefined
   #disposed = false
+  readonly #dataDirectory: DesktopDataDirectory | undefined
 
   private constructor(input: {
     window: BrowserWindow
@@ -203,8 +205,10 @@ export class DesktopInstanceManager {
     profiles: InstanceProfileStore
     vault: CredentialVault
     localHostStatus: LocalHostStatus
+    dataDirectory: DesktopDataDirectory | undefined
   }) {
     this.#window = input.window
+    this.#dataDirectory = input.dataDirectory
     this.#release = input.release
     this.#profiles = input.profiles
     this.#vault = input.vault
@@ -232,6 +236,8 @@ export class DesktopInstanceManager {
     readonly localOrigin: string
     readonly release: ProductRelease
     readonly localHostStatus: LocalHostStatus
+    /** Settings → 存储 for the local instance; absent in builds or modes that cannot move the data directory. */
+    readonly dataDirectory?: DesktopDataDirectory
   }): Promise<DesktopInstanceManager> {
     const userData = app.getPath('userData')
     const profiles = await InstanceProfileStore.open(path.join(userData, 'instance-profiles.json'), input.localOrigin)
@@ -255,6 +261,7 @@ export class DesktopInstanceManager {
           profiles,
           vault,
           localHostStatus: input.localHostStatus,
+          dataDirectory: input.dataDirectory,
         }),
       async (manager) => {
         manager.#registerIpc()
@@ -484,6 +491,7 @@ export class DesktopInstanceManager {
       this.#ipcRegistrations.registerListener('nxt:shell:content-pointer', (event) => {
         if (event.sender.id === this.#productView?.webContents.id) this.closeOverlay(false, true, false)
       })
+      this.#registerStorageIpc()
       this.#registerOverlayIpc('list', () => this.#snapshot())
       this.#registerOverlayIpc('close', (value) =>
         this.closeOverlay(false, true, isRecord(value) && value['restoreControl'] === true),
@@ -673,6 +681,43 @@ export class DesktopInstanceManager {
         return trustedInstanceFailure(cause)
       }
     })
+  }
+
+  /**
+   * Settings → 存储 belongs to the local instance only: a remote server's page in the same view must not reach the
+   * local data directory, so both the current profile and the sender's origin are checked.
+   */
+  #registerStorageIpc(): void {
+    const local = (event: Electron.IpcMainInvokeEvent): DesktopDataDirectory | undefined => {
+      this.#assertProductSender(event.sender.id)
+      const profile = this.#profiles.get(this.#currentProfileId)
+      if (profile?.kind !== 'local') return undefined
+      let origin: string | undefined
+      try {
+        origin = new URL(event.sender.getURL()).origin
+      } catch {
+        origin = undefined
+      }
+      return origin === new URL(profile.origin).origin ? this.#dataDirectory : undefined
+    }
+    const required = (event: Electron.IpcMainInvokeEvent): DesktopDataDirectory => {
+      const service = local(event)
+      if (service === undefined) throw new Error('The data directory belongs to the local instance.')
+      return service
+    }
+    this.#ipcRegistrations.registerHandle('nxt:storage:status', async (event) => {
+      const service = local(event)
+      return service === undefined ? { supported: false } : { supported: true, status: await service.status() }
+    })
+    this.#ipcRegistrations.registerHandle('nxt:storage:sizes', (event) => required(event).sizes())
+    this.#ipcRegistrations.registerHandle('nxt:storage:choose', (event) => required(event).choose())
+    this.#ipcRegistrations.registerHandle('nxt:storage:start', (event, target: unknown) => {
+      if (typeof target !== 'string' || target.length === 0 || target.length > 4096)
+        throw new Error('Invalid data directory target.')
+      return required(event).start(target)
+    })
+    this.#ipcRegistrations.registerHandle('nxt:storage:reveal-old', (event) => required(event).revealOldDirectory())
+    this.#ipcRegistrations.registerHandle('nxt:storage:dismiss', (event) => required(event).dismissNotice())
   }
 
   #assertProductSender(senderId: number): void {

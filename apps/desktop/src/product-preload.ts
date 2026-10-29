@@ -60,3 +60,13 @@ contextBridge.exposeInMainWorld('nekroDesktopShell', {
     return () => ipcRenderer.removeListener('nxt:shell:current-changed', handler)
   },
 })
+
+// Settings → 存储. The main process answers only the local instance's own page.
+contextBridge.exposeInMainWorld('nekroDesktopStorage', {
+  status: () => ipcRenderer.invoke('nxt:storage:status'),
+  sizes: () => ipcRenderer.invoke('nxt:storage:sizes'),
+  chooseDirectory: () => ipcRenderer.invoke('nxt:storage:choose'),
+  startMove: (target: string) => ipcRenderer.invoke('nxt:storage:start', target),
+  revealOldDirectory: () => ipcRenderer.invoke('nxt:storage:reveal-old'),
+  dismissNotice: () => ipcRenderer.invoke('nxt:storage:dismiss'),
+})
