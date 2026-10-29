@@ -206,6 +206,54 @@ describe('OneBot 11 normalized inbound', () => {
     }
   })
 
+  it('reads forward nodes returned as message events with their segments in message', async () => {
+    const protocol = await protocolEndpoint((request) =>
+      request['action'] === 'get_forward_msg'
+        ? {
+            status: 'ok',
+            retcode: 0,
+            data: {
+              messages: [
+                {
+                  post_type: 'message',
+                  message_format: 'array',
+                  sender: { user_id: 10001, nickname: '虚构甲' },
+                  time: 1761000000,
+                  message: [{ type: 'text', data: { text: '事件形状的正文' } }],
+                },
+              ],
+            },
+          }
+        : undefined,
+    )
+    const fake = createFakeContext()
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+    })
+    try {
+      await runtime.start()
+      await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+      ;[...protocol.server.clients][0]!.send(
+        JSON.stringify({
+          post_type: 'message',
+          message_type: 'group',
+          group_id: '70001',
+          user_id: '80001',
+          message_id: 'event-shaped-forward-fixture',
+          message: [{ type: 'forward', data: { id: 'root' } }],
+        }),
+      )
+      await waitFor(() => fake.events.length === 1)
+      const part = MessagePartSchema.parse(fake.events[0]!.parts[0])
+      if (part.type !== 'rich') throw new Error('Expected forwarded content')
+      expect(richPartContextText(part)).toContain('事件形状的正文')
+      expect(richPartContextText(part)).not.toContain('转发节点没有可显示内容')
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   it('keeps useful forwarded content when images or nested requests fail and limits image downloads', async () => {
     const protocol = await protocolEndpoint((request) =>
       request['action'] === 'get_forward_msg'
@@ -675,13 +723,60 @@ describe('OneBot 11 normalized inbound', () => {
         expect.objectContaining({ type: 'rich', kind: 'record', summary: '语音下载失败。' }),
         expect.objectContaining({ type: 'rich', kind: 'forward' }),
         expect.objectContaining({ type: 'rich', kind: 'json', summary: 'JSON 卡片：卡片标题' }),
-        expect.objectContaining({ type: 'rich', kind: 'file', summary: '文件：资料.txt' }),
+        expect.objectContaining({ type: 'rich', kind: 'file', summary: '文件「资料.txt」：协议端没有提供下载地址。' }),
         expect.objectContaining({ type: 'rich', kind: 'segment-custom_fixture' }),
       ]),
     )
     expect(fake.events[1]!.parts).toEqual([expect.objectContaining({ type: 'rich', kind: 'empty-message' })])
     expect(fake.states.size).toBeGreaterThan(1)
     await runtime.stop()
+  })
+
+  it('names a file by its file field and fetches it through the endpoint when the segment has only an id', async () => {
+    const actions: unknown[] = []
+    const protocol = await protocolEndpoint((request) => {
+      if (request['action'] !== 'get_private_file_url') return undefined
+      actions.push(request['params'])
+      return { status: 'ok', retcode: 0, data: { url: 'https://media.example.test/private-note' } }
+    })
+    const fake = createFakeContext()
+    const fetched: string[] = []
+    Object.defineProperty(fake.context.assets, 'fetchRemoteBytes', {
+      value: ({ url }: { url: string }) => {
+        fetched.push(url)
+        return Promise.resolve({ bytes: new Uint8Array([35, 32, 49]), declaredMediaType: 'text/markdown' })
+      },
+    })
+    const runtime = new OneBot11Runtime({
+      context: fake.context,
+      config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+    })
+    try {
+      await runtime.start()
+      await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+      ;[...protocol.server.clients][0]!.send(
+        JSON.stringify({
+          post_type: 'message',
+          message_type: 'private',
+          user_id: '80001',
+          message_id: 'file-by-id-fixture',
+          message: [
+            { type: 'file', data: { file: '笔记.md', file_id: 'fixture-file-id', file_size: '1024' } },
+            { type: 'file', data: { file: '0123456789abcdef0123456789abcdef', file_size: '2048' } },
+          ],
+        }),
+      )
+      await waitFor(() => fake.events.length === 1)
+      expect(actions).toEqual([{ file_id: 'fixture-file-id' }])
+      expect(fetched).toEqual(['https://media.example.test/private-note'])
+      expect(fake.events[0]!.parts).toEqual([
+        { type: 'file', assetId: 'ast_TEST1', name: '笔记.md' },
+        expect.objectContaining({ type: 'rich', kind: 'file', summary: '文件（2.0 KiB）：协议端没有提供下载地址。' }),
+      ])
+      expect(fake.events[0]!.assetOccurrences).toEqual([{ partIndex: 0, assetId: 'ast_TEST1' }])
+    } finally {
+      await runtime.stop()
+    }
   })
 
   it('marks pictures the endpoint reports as stickers and leaves ordinary pictures unmarked', async () => {

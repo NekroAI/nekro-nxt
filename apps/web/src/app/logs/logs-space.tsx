@@ -46,6 +46,7 @@ import {
   PageHeader,
   WorkbenchPage,
   toast,
+  copyText,
   cssVars,
 } from '../../ui-kit/index.js'
 import { useCrumb } from '../shell/crumb.js'
@@ -86,14 +87,7 @@ const time = (value: string) =>
 const localDate = (value?: string) =>
   value ? new Date(Date.parse(value) - new Date(value).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : ''
 const copy = (text: string) => {
-  if (!navigator.clipboard) {
-    toast('当前浏览器不允许自动复制，请选择文字后复制。', { tone: 'bad' })
-    return
-  }
-  void navigator.clipboard
-    .writeText(text)
-    .then(() => toast('已复制'))
-    .catch(() => toast('复制失败，请选择文字后复制。', { tone: 'bad' }))
+  void copyText(text).then((done) => (done ? toast('已复制') : toast('复制失败，请选择文字后复制。', { tone: 'bad' })))
 }
 
 export default function LogsSpace() {

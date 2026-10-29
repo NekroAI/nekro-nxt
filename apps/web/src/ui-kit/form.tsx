@@ -5,7 +5,9 @@ import {
   cloneElement,
   forwardRef,
   isValidElement,
+  useEffect,
   useId,
+  useRef,
   useState,
   type InputHTMLAttributes,
   type ReactElement,
@@ -323,3 +325,34 @@ export const SecretInput = forwardRef<
     </div>
   )
 })
+
+/** A plain checkbox for row selection; `mixed` draws the partly selected state of a "select all" box. */
+export function Checkbox({
+  label,
+  checked,
+  mixed = false,
+  disabled,
+  onChange,
+}: {
+  readonly label: string
+  readonly checked: boolean
+  readonly mixed?: boolean
+  readonly disabled?: boolean
+  readonly onChange: (checked: boolean) => void
+}): ReactNode {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = mixed
+  }, [mixed])
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className={styles.checkbox}
+      aria-label={label}
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.checked)}
+    />
+  )
+}

@@ -64,13 +64,19 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
         const search = new URL(req.url ?? '/', 'http://localhost').searchParams
         const params = HostApiContracts.listCommunityPersonas.parseParams(
           Object.fromEntries(
-            ['query', 'tag', 'official', 'cursor'].flatMap((key) => {
+            ['query', 'tag', 'official', 'cursor', 'refresh'].flatMap((key) => {
               const value = search.get(key)
               return value ? [[key, value]] : []
             }),
           ),
         )
-        writeContractJson(res, 200, HostApiContracts.listCommunityPersonas, await personas.list(params))
+        const { refresh, ...query } = params
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.listCommunityPersonas,
+          await runtime.community.cachedRead('personas', query, refresh === '1', () => personas.list(query)),
+        )
       } catch (error) {
         failure(res, error, 'community-request-failed')
       }
@@ -132,7 +138,14 @@ export function registerCommunityPersonaRoutes({ runtime, registerRoute, project
             writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
             return
           }
-          writeContractJson(res, 200, HostApiContracts.getCommunityPersona, await personas.get(personaId))
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.getCommunityPersona,
+            await runtime.community.cachedRead('persona', { personaId }, url.searchParams.get('refresh') === '1', () =>
+              personas.get(personaId),
+            ),
+          )
           return
         }
         if (match[2] === 'avatar') {

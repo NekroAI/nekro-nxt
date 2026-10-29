@@ -42,6 +42,7 @@ declare const styles: {
   readonly ratingScore: string
   readonly ratingSign: string
   readonly ratingTop: string
+  readonly readState: string
   readonly release: string
   readonly releases: string
   readonly reviewCap: string
@@ -56,6 +57,7 @@ declare const styles: {
   readonly rowSub: string
   readonly sortSelect: string
   readonly stack: string
+  readonly staleNotice: string
   readonly stars: string
   readonly starsOff: string
   readonly starsOn: string

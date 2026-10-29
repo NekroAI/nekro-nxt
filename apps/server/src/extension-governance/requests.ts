@@ -98,6 +98,13 @@ const RequestResultSchema = z.object({
 })
 const toJson = (value: unknown): JsonValue => parseJsonValue(JSON.parse(JSON.stringify(value)))
 
+/** The action without who asked for it and why, so the same change asked twice compares equal. */
+const ORIGIN_FIELDS = new Set(['actorAgentId', 'requesterMemberId', 'reason'])
+const actionKey = (action: ExtensionAction | undefined): string =>
+  action === undefined
+    ? ''
+    : JSON.stringify(Object.fromEntries(Object.entries(action).filter(([field]) => !ORIGIN_FIELDS.has(field))))
+
 /**
  * Administrator-confirmed extension actions and the record of what agents did on their own. Every request gets a
  * short number people type in chat (`/ext approve 12`); the host posts the request and its outcome as notices, never as
@@ -193,6 +200,7 @@ export class ExtensionRequestService {
       decidedBy: this.#agentName(input.actor.agentId),
       decidedAt: now,
     })
+    this.#settleAnswered(input.actor.agentId, input.action, record.number, now)
     const undo = this.#undoHint(input.action)
     this.#notice(
       input.actor.channelId,
@@ -446,6 +454,23 @@ export class ExtensionRequestService {
     if (record.status === 'expired') throw new Error(`请求 #${number} 已过期，请让智能体重新发起。`)
     if (record.status !== 'pending') throw new Error(`请求 #${number} 已经被处理。`)
     return record
+  }
+
+  /** A request the agent has since carried out on its own no longer waits for an administrator. */
+  #settleAnswered(agentId: AgentId, action: ExtensionAction, doneBy: number, now: number): void {
+    const key = actionKey(action)
+    for (const request of this.#runtime.repository.listExtensionRequests({ status: 'pending' })) {
+      if (request.agentId !== agentId || request.number === doneBy) continue
+      if (actionKey(StoredPayloadSchema.safeParse(request.payload).data?.action) !== key) continue
+      this.#runtime.repository.updateExtensionRequest({
+        number: request.number,
+        from: 'pending',
+        status: 'completed',
+        result: { message: `智能体已自主完成（#${doneBy}）` },
+        decidedBy: this.#agentName(agentId),
+        decidedAt: now,
+      })
+    }
   }
 
   #action(record: ExtensionRequestRecord): ExtensionAction {

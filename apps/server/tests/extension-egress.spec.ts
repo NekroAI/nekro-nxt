@@ -194,7 +194,16 @@ describe('extension egress', () => {
     expect(
       (await failure(egress.fetch(`http://api.example.com:${port}/json`, { body: 'a', bodyBase64: 'YQ==' }))).code,
     ).toBe('invalid-request')
+    expect((await failure(egress.fetch('/relative/path'))).message).toContain('https:// 开头的完整地址')
     expect(received).toHaveLength(0)
+  })
+
+  it('reads protocol-relative addresses as HTTPS', async () => {
+    const egress = egressFor({ mode: 'domains', domains: ['api.example.com'] })
+    // The policy check runs on the resolved host, so a denial proves the address was understood.
+    const denied = await failure(egress.fetch('//img.example.org/shot.jpg'))
+    expect(denied.code).toBe('policy-denied')
+    expect(denied.message).toContain('img.example.org')
   })
 
   it('sets a default user agent that the extension may override', async () => {

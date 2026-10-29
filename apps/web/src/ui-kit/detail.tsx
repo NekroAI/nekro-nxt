@@ -3,7 +3,8 @@ import { createContext, useContext, useEffect, useId, useRef, useState, type Rea
 import { Input } from './form.js'
 import { IconButton, Pressable } from './primitives.js'
 import { Disclosure } from './layout.js'
-import { InfoTip } from './overlay.js'
+import { InfoTip, toast } from './overlay.js'
+import { copyText } from './clipboard.js'
 import styles from './detail.module.css'
 
 /** Heading level for object headers: the main area owns the page's h1, detail panes sit one level below. */
@@ -228,7 +229,8 @@ export function KeyValueCopy({ label, value }: { readonly label: string; readonl
         label={copied ? '已复制' : `复制${label}`}
         size="small"
         onClick={() =>
-          void navigator.clipboard.writeText(value).then(() => {
+          void copyText(value).then((done) => {
+            if (!done) return toast('复制失败，请选择文字后复制。', { tone: 'bad' })
             setCopied(true)
             window.setTimeout(() => setCopied(false), 1200)
           })

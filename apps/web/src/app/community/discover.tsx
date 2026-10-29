@@ -8,10 +8,11 @@ import {
   type CommunityExtensionDetail,
   type CommunityExtensionSummary,
   type CommunityReviewStatus,
+  type CommunitySyncItem,
   type HostApiResponse,
 } from '@nekro-nxt/contracts'
-import { ArrowLeft, Code2, ExternalLink, Store } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ArrowLeft, Code2, ExternalLink, RefreshCw, Store } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { callHostApi } from '../../host-api-client.js'
 import { useGo } from '../model/nav.js'
@@ -30,7 +31,6 @@ import {
   PropertyRow,
   SearchField,
   Select,
-  Skeleton,
   TabStrip,
   ToggleChip,
   toast,
@@ -40,7 +40,9 @@ import { MarkdownDocument } from '../../components/markdown-document.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { RatingCard, RatingMark } from './community-rating.js'
 import { openExternal, publisherName } from './community-model.js'
+import { CommunityFailureState, CommunityLoading, StaleNotice, useCommunityRead } from './community-read.js'
 import { providesLabel } from '../workshop/workshop-model.js'
+import { useCommunityUpdates } from '../workshop/updates-view.js'
 import styles from './community.module.css'
 
 type Inspection = HostApiResponse<'inspectExtensionImport'>
@@ -113,62 +115,61 @@ export function CommunityView({
   )
 }
 
+/** Only a newer community release counts as an update on the cards; diverged lines stay「已安装」. */
+const updateOffered = (item: CommunitySyncItem): boolean => !item.dismissed && item.status === 'remote-ahead'
+
+function InstalledChip({ updatable }: { readonly updatable: boolean }) {
+  return updatable ? <Chip tone="accent">可更新</Chip> : <Chip>已安装</Chip>
+}
+
 function CommunityCatalog() {
   const [query, setQuery] = useState('')
   const [provides, setProvides] = useState<Provides>('')
   const [officialOnly, setOfficialOnly] = useState(false)
   const [sort, setSort] = useState<CommunityExtensionSort>('updated')
-  const [items, setItems] = useState<readonly CommunityExtensionSummary[]>()
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [error, setError] = useState<string>()
   const [loadingMore, setLoadingMore] = useState(false)
+  const installedIds = useProductStore((state) => state.extensions.map((item) => item.id).join('\n'))
+  const installed = useMemo(() => new Set(installedIds.split('\n')), [installedIds])
+  const updatable = useCommunityUpdates(updateOffered)
 
-  useEffect(() => {
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      setError(undefined)
+  const filters = {
+    ...(query.trim() ? { query: query.trim() } : {}),
+    ...(provides ? { provides } : {}),
+    ...(officialOnly ? { official: '1' as const } : {}),
+    ...(sort === 'updated' ? {} : { sort }),
+  }
+  const list = useCommunityRead(
+    (refresh) =>
       callHostApi(
         HostApiContracts.listCommunityExtensions,
-        {
-          ...(query.trim() ? { query: query.trim() } : {}),
-          ...(provides ? { provides } : {}),
-          ...(officialOnly ? { official: '1' as const } : {}),
-          ...(sort === 'updated' ? {} : { sort }),
-        },
+        { ...filters, ...(refresh ? { refresh: '1' as const } : {}) },
         undefined,
-      )
-        .then((result) => {
-          if (cancelled) return
-          setItems(result.items)
-          setCursor(result.nextCursor)
-        })
-        .catch((caught: unknown) => {
-          if (!cancelled) setError(message(caught))
-        })
-    }, 250)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [query, provides, officialOnly, sort])
+      ),
+    [query, provides, officialOnly, sort],
+    { delayMs: 250, keepWhileLoading: true },
+  )
+  const page = list.data
+  const items = page?.items
 
   const loadMore = async () => {
-    if (!cursor) return
+    if (!page?.nextCursor) return
     setLoadingMore(true)
     try {
       const result = await callHostApi(
         HostApiContracts.listCommunityExtensions,
-        {
-          ...(query.trim() ? { query: query.trim() } : {}),
-          ...(provides ? { provides } : {}),
-          ...(officialOnly ? { official: '1' as const } : {}),
-          ...(sort === 'updated' ? {} : { sort }),
-          cursor,
-        },
+        { ...filters, cursor: page.nextCursor },
         undefined,
       )
-      setItems((current) => [...(current ?? []), ...result.items])
-      setCursor(result.nextCursor)
+      list.setData((current) =>
+        current
+          ? {
+              items: [...current.items, ...result.items],
+              nextCursor: result.nextCursor,
+              fetchedAt: Math.min(current.fetchedAt, result.fetchedAt),
+              stale: current.stale || result.stale,
+            }
+          : current,
+      )
     } catch (caught) {
       toast(message(caught), { tone: 'bad' })
     } finally {
@@ -178,7 +179,15 @@ function CommunityCatalog() {
 
   return (
     <MainContent width="full">
-      <PageHeader title="发现" subtitle="由社区作者发布，均经过自动审查" />
+      <PageHeader
+        title="发现"
+        subtitle="由社区作者发布，均经过自动审查"
+        actions={
+          <Button size="small" icon={<RefreshCw size={14} />} busy={list.reloading} onClick={list.reload}>
+            刷新
+          </Button>
+        }
+      />
       <TabStrip<Provides> label="提供什么" value={provides} onChange={setProvides} options={PROVIDES} />
       <div className={styles.communityTools}>
         <SearchField value={query} onChange={setQuery} label="搜索社区扩展" placeholder="搜索名称、介绍或标签" />
@@ -196,10 +205,13 @@ function CommunityCatalog() {
           options={COMMUNITY_EXTENSION_SORTS.map(({ key, label }) => ({ value: key, label }))}
         />
       </div>
-      {error ? (
-        <Banner tone="bad">{error}</Banner>
+      {page?.stale && !list.failure ? (
+        <StaleNotice fetchedAt={page.fetchedAt} busy={list.reloading} onRetry={list.reload} />
+      ) : null}
+      {list.failure ? (
+        <CommunityFailureState failure={list.failure} busy={list.reloading} onRetry={list.reload} />
       ) : items === undefined ? (
-        <Skeleton height={96} />
+        <CommunityLoading />
       ) : items.length === 0 ? (
         <EmptyState icon={<Store size={22} />} title={query.trim() ? '没有找到相关扩展' : '社区里还没有扩展'}>
           {query.trim() ? '换个关键词试试。' : '在扩展详情中选择「发布到社区」，就可以分享你的扩展。'}
@@ -223,6 +235,7 @@ function CommunityCatalog() {
               <span className={styles.communitySummary}>{item.summary || '作者还没有填写介绍。'}</span>
               <span className={styles.communityCardFoot}>
                 {item.official ? <Chip tone="accent">官方</Chip> : null}
+                {installed.has(item.id) ? <InstalledChip updatable={updatable.has(item.id)} /> : null}
                 <UpgradeChip requiresSdk={item.latest?.requiresSdk} />
                 <ReviewChip status={item.latest} />
                 <RatingMark rating={item.latest?.rating ?? null} />
@@ -234,7 +247,7 @@ function CommunityCatalog() {
           ))}
         </div>
       )}
-      {cursor ? (
+      {page?.nextCursor && !list.failure ? (
         <div>
           <Button busy={loadingMore} onClick={() => void loadMore()}>
             加载更多
@@ -252,25 +265,19 @@ function CommunityDetail({
   readonly extensionId: string
   readonly onInspected: (inspection: Inspection, detail: CommunityExtensionDetail) => void
 }) {
-  const [detail, setDetail] = useState<CommunityExtensionDetail>()
-  const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const installed = useProductStore((state) => state.extensions.some((item) => item.id === extensionId))
   const go = useGo()
-
-  useEffect(() => {
-    let cancelled = false
-    callHostApi(HostApiContracts.getCommunityExtension, { extensionId }, undefined)
-      .then((result) => {
-        if (!cancelled) setDetail(result)
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) setError(message(caught))
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [extensionId])
+  const read = useCommunityRead(
+    (refresh) =>
+      callHostApi(
+        HostApiContracts.getCommunityExtension,
+        { extensionId, ...(refresh ? { refresh: '1' as const } : {}) },
+        undefined,
+      ),
+    [extensionId],
+  )
+  const detail = read.data
 
   const back = (
     <Link to="/community" className={styles.backLink}>
@@ -278,11 +285,11 @@ function CommunityDetail({
       发现
     </Link>
   )
-  if (error) {
+  if (read.failure) {
     return (
       <MainContent>
         {back}
-        <Banner tone="bad">{error}</Banner>
+        <CommunityFailureState failure={read.failure} busy={read.reloading} onRetry={read.reload} />
       </MainContent>
     )
   }
@@ -290,7 +297,7 @@ function CommunityDetail({
     return (
       <MainContent>
         {back}
-        <Skeleton height={160} />
+        <CommunityLoading height={160} />
       </MainContent>
     )
   }
@@ -359,6 +366,7 @@ function CommunityDetail({
           </>
         }
       />
+      {detail.stale ? <StaleNotice fetchedAt={detail.fetchedAt} busy={read.reloading} onRetry={read.reload} /> : null}
       {detail.summary ? <p className={styles.lead}>{detail.summary}</p> : null}
       {detail.tags.length > 0 || sourceUrl ? (
         <div className={styles.listingMeta}>

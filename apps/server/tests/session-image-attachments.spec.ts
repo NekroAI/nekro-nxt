@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import { AttachmentId } from '@deepseek-ai/dsh-attachment'
+import { AttachmentId, ImageVariantId, type RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { AssetService } from '@nekro-nxt/core'
@@ -16,6 +16,7 @@ import {
   SessionImageContext,
   NekroAssetAttachmentStore,
   parseNekroImageAttachmentId,
+  stillRequestImage,
 } from '../src/session-image-context.ts'
 
 const roots: string[] = []
@@ -183,5 +184,46 @@ describe('NekroAssetAttachmentStore', () => {
     } finally {
       database.close()
     }
+  })
+})
+
+describe('request images', () => {
+  const version = (data: Uint8Array, mediaType: RequestImageAttachment['mediaType']): RequestImageAttachment => ({
+    variantId: ImageVariantId('variant-fixture'),
+    attachment: {
+      attachmentId: AttachmentId('attachment-fixture'),
+      mediaType,
+      bytes: data.byteLength,
+      width: 8,
+      height: 8,
+    },
+    data,
+    mediaType,
+    bytes: data.byteLength,
+    width: 8,
+    height: 8,
+    depth: 'uchar',
+    space: 'srgb',
+    hasAlpha: false,
+  })
+  const pixels = (format: 'gif' | 'png') => {
+    const image = sharp({ create: { width: 8, height: 8, channels: 3, background: '#3366cc' } })
+    return (format === 'gif' ? image.gif() : image.png()).toBuffer()
+  }
+
+  it('sends a GIF as a still first frame under its own variant', async () => {
+    const still = await stillRequestImage(version(new Uint8Array(await pixels('gif')), 'image/gif'), {
+      width: 1024,
+      height: 1024,
+      maxBytes: 1024 * 1024,
+    })
+    expect(still).toMatchObject({ mediaType: 'image/png', width: 8, height: 8, variantId: 'variant-fixture:still-png' })
+    expect((await sharp(still.data).metadata()).format).toBe('png')
+    expect(still.bytes).toBe(still.data.byteLength)
+  })
+
+  it('leaves formats every route accepts unchanged', async () => {
+    const png = version(new Uint8Array(await pixels('png')), 'image/png')
+    expect(await stillRequestImage(png, { width: 1024, height: 1024, maxBytes: 1024 })).toBe(png)
   })
 })

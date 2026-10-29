@@ -2,7 +2,7 @@ import { Check, Copy, ExternalLink } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { HostApiResponse } from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
-import { Button, Diagnostics, IconButton, Spinner, toast } from '../../ui-kit/index.js'
+import { Button, copyText, Diagnostics, IconButton, Spinner, toast } from '../../ui-kit/index.js'
 import styles from './tool-detail.module.css'
 import {
   commandOutput,
@@ -73,13 +73,11 @@ function CopyButton({ value, label }: { readonly value: string; readonly label: 
       label={label}
       size="small"
       onClick={() => {
-        void navigator.clipboard.writeText(value).then(
-          () => {
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1200)
-          },
-          () => toast('复制失败', { tone: 'bad' }),
-        )
+        void copyText(value).then((done) => {
+          if (!done) return toast('复制失败，请选择文字后复制。', { tone: 'bad' })
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1200)
+        })
       }}
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}

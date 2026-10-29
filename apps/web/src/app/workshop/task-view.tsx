@@ -100,7 +100,12 @@ export function TaskView({ task }: { readonly task: AuthoringTask }) {
   const status = taskStatus(task)
   const open = isTaskOpen(task)
   const candidate = task.candidateAttempt
-  const settling = agent !== undefined && agent.state !== 'idle'
+  // Only a turn still running in the task's own channel can change the candidate; a failed earlier turn or work in
+  // the agent's other channels does not, and the host itself waits for the turn to end before saving.
+  const settling =
+    channel?.runtimePhase === 'thinking' ||
+    channel?.runtimePhase === 'using-tool' ||
+    channel?.runtimePhase === 'compacting'
   const restorable =
     open && task.verifiedAttempt && task.verifiedAttempt.id !== candidate?.id ? task.verifiedAttempt : undefined
 

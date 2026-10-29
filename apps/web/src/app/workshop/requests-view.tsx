@@ -38,7 +38,14 @@ const failure = (error: unknown) => toast(error instanceof Error ? error.message
  * requests can be answered in chat with `/ext approve N`; answering here posts the same notice in the channel.
  */
 export function RequestsView() {
-  const pending = useProductStore((state) => state.extensionRequests)
+  const waiting = useProductStore((state) => state.extensionRequests)
+  // The host sweeps expired requests once a minute; until then a request past its deadline is no longer answerable.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const pending = waiting.filter((request) => request.expiresAt > now)
   const agents = useProductStore((state) => state.agents)
   const extensions = useProductStore((state) => state.extensions)
   const [history, setHistory] = useState<readonly ExtensionRequestView[]>()
@@ -49,7 +56,7 @@ export function RequestsView() {
     callHostApi(HostApiContracts.listExtensionRequests, {}, undefined)
       .then((result) => setHistory(result.requests.filter((request) => request.status !== 'pending').slice(0, 30)))
       .catch(() => setHistory([]))
-  }, [pending.length])
+  }, [waiting.length])
 
   const approve = async (request: ExtensionRequestView) => {
     setBusy(request.number)

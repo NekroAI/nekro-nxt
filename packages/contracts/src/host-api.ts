@@ -69,6 +69,7 @@ import {
   CommunityExtensionDetailSchema,
   CommunityExtensionSummarySchema,
   CommunityExtensionSortSchema,
+  CommunityFreshnessSchema,
   CommunityListingInputSchema,
   CommunityReleaseIdSchema,
   CommunityReviewStatusSchema,
@@ -4417,19 +4418,24 @@ export const HostApiContracts = {
         /** 排序方式，默认最近更新；游标只在同一种排序下有效。 */
         sort: CommunityExtensionSortSchema.optional(),
         cursor: z.string().max(200).optional(),
+        /** 跳过本机缓存，重新向社区读取。 */
+        refresh: z.enum(['1']).optional(),
       })
       .strict(),
     request: NoRequestBodySchema,
-    response: z.object({ items: z.array(CommunityExtensionSummarySchema), nextCursor: z.string().nullable() }).strict(),
+    response: z
+      .object({ items: z.array(CommunityExtensionSummarySchema), nextCursor: z.string().nullable() })
+      .extend(CommunityFreshnessSchema.shape)
+      .strict(),
     error: HostApiErrorSchema,
   }),
   getCommunityExtension: defineContract({
     timeoutMs: 30_000,
     method: 'GET',
     path: '/api/community/extensions/:extensionId',
-    params: z.object({ extensionId: ExtensionIdSchema }).strict(),
+    params: z.object({ extensionId: ExtensionIdSchema, refresh: z.enum(['1']).optional() }).strict(),
     request: NoRequestBodySchema,
-    response: CommunityExtensionDetailSchema,
+    response: CommunityExtensionDetailSchema.extend(CommunityFreshnessSchema.shape),
     error: HostApiErrorSchema,
   }),
   /** 下载社区发布并按包摘要校验，结果与本地文件导入的检查相同，再经 `commitExtensionImport` 确认。 */
@@ -4556,19 +4562,24 @@ export const HostApiContracts = {
         tag: z.string().trim().min(1).max(40).optional(),
         official: z.literal('1').optional(),
         cursor: z.string().min(1).max(500).optional(),
+        /** 跳过本机缓存，重新向社区读取。 */
+        refresh: z.enum(['1']).optional(),
       })
       .strict(),
     request: NoRequestBodySchema,
-    response: z.object({ items: z.array(CommunityPersonaSummarySchema), nextCursor: z.string().nullable() }).strict(),
+    response: z
+      .object({ items: z.array(CommunityPersonaSummarySchema), nextCursor: z.string().nullable() })
+      .extend(CommunityFreshnessSchema.shape)
+      .strict(),
     error: HostApiErrorSchema,
   }),
   getCommunityPersona: defineContract({
     timeoutMs: 30_000,
     method: 'GET',
     path: '/api/community/personas/:personaId',
-    params: z.object({ personaId: CommunityPersonaIdSchema }).strict(),
+    params: z.object({ personaId: CommunityPersonaIdSchema, refresh: z.enum(['1']).optional() }).strict(),
     request: NoRequestBodySchema,
-    response: CommunityPersonaDetailSchema,
+    response: CommunityPersonaDetailSchema.extend(CommunityFreshnessSchema.shape),
     error: HostApiErrorSchema,
   }),
   /**
@@ -5722,9 +5733,11 @@ const buildValidatedHostApiPath = (
   const consumed = new Set<string>()
   const pathname = contract.path.replace(pathParameterPattern, (_placeholder, key: string) => {
     const value = params[key]
-    if (typeof value !== 'string') throw new TypeError(`Host API path parameter ${key} must be a string.`)
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      throw new TypeError(`Host API path parameter ${key} must be a string or number.`)
+    }
     consumed.add(key)
-    return encodeURIComponent(value)
+    return encodeURIComponent(String(value))
   })
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {

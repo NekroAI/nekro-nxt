@@ -142,6 +142,26 @@
   gap: var(--s-1);
 }
 
+/* Search box with the actions on the current matches or selection beside it; wraps below it on narrow widths. */
+.listTools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+
+.listTools > :first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.listActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
 .tag {
   padding: 0 var(--s-2);
   border: 1px solid var(--line);

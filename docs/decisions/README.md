@@ -30,6 +30,7 @@
 ## 消息、频道与运行轨迹
 
 - [统一命令执行与独立回复](implemented/2026-10-12-统一命令执行与独立回复.md)：命令门禁、授权与无 Episode 回复。
+- 智能体发出消息前后的读取、加工、取消（扩展出站处理，修订扩展形态统一 K9）：[智能体出站处理](accepted/2026-10-29-智能体出站处理.md)。
 
 - Channel Runtime、Episode、Admission 与 Outbox：[Channel Runtime 与会话组织](implemented/2026-08-15-Channel-Runtime与会话组织.md)。
 - 用户可见发送的唯一出口：[统一使用通信工具发送用户消息](implemented/2026-08-15-统一使用通信工具发送用户消息.md)。

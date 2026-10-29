@@ -284,9 +284,9 @@ export class CommunityPersonaService {
       const extension = input.avatar.mediaType.slice('image/'.length)
       form.set('avatar', new Blob([Uint8Array.from(bytes)], { type: input.avatar.mediaType }), `avatar.${extension}`)
     }
-    const published = this.#mine(
-      await this.#community.apiJson('/api/v1/personas', { method: 'POST', body: form }, true),
-    )
+    const raw = await this.#community.apiJson('/api/v1/personas', { method: 'POST', body: form }, true)
+    this.#community.invalidateReads()
+    const published = this.#mine(raw)
     this.#link(input.agentId, published.id)
     return published
   }

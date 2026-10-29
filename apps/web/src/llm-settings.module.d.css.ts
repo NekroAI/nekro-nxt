@@ -15,6 +15,8 @@ declare const styles: {
   readonly discoveredHead: string
   readonly fieldError: string
   readonly fields: string
+  readonly listActions: string
+  readonly listTools: string
   readonly loading: string
   readonly modelEditor: string
   readonly muted: string
