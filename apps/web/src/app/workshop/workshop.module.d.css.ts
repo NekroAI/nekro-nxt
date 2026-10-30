@@ -63,6 +63,7 @@ declare const styles: {
   readonly recordHead: string
   readonly records: string
   readonly row: string
+  readonly rowCount: string
   readonly rowGlyph: string
   readonly rowName: string
   readonly rowState: string
@@ -78,6 +79,7 @@ declare const styles: {
   readonly testSecret: string
   readonly testSecrets: string
   readonly testSecretsActions: string
+  readonly updateMark: string
   readonly versionCell: string
 }
 

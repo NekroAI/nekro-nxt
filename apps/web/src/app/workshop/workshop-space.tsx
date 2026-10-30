@@ -249,7 +249,9 @@ export default function WorkshopSpace() {
             <span className={styles.rowName}>社区更新</span>
             {updates.size > 0 ? (
               <span className={styles.rowState}>
-                <StatusDot tone="accent" />
+                <span className={styles.rowCount} aria-label={`${updates.size} 个扩展有更新`}>
+                  {updates.size}
+                </span>
               </span>
             ) : null}
             <span className={styles.rowSub}>
@@ -279,12 +281,13 @@ export default function WorkshopSpace() {
                 <ExtensionIcon id={item.id} name={item.name} iconUrl={item.iconUrl} size="md" />
                 <span className={styles.rowName}>{item.name}</span>
                 <span className={styles.rowState}>
-                  <StatusDot tone={usage.tone} />
+                  {updates.has(item.id) ? (
+                    <span className={styles.rowUpdate}>有更新</span>
+                  ) : (
+                    <StatusDot tone={usage.tone} />
+                  )}
                 </span>
-                <span className={styles.rowSub}>
-                  {usage.label}
-                  {updates.has(item.id) ? <span className={styles.rowUpdate}> · 有更新</span> : null}
-                </span>
+                <span className={styles.rowSub}>{usage.label}</span>
               </Link>
             )
           })}

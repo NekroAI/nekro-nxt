@@ -1,10 +1,15 @@
 import { useGo } from '../model/nav.js'
 import { LogsButton } from '../logs/logs-button.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
-import { Download, GitBranch, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
+import { ArrowUpCircle, Download, GitBranch, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { communityPublisherLabel, HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
+import {
+  communityPublisherLabel,
+  HostApiContracts,
+  type CommunitySyncItem,
+  type HostApiResponse,
+} from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import {
   useHostActions,
@@ -33,6 +38,7 @@ import {
   PropertyGroup,
   PropertyList,
   PropertyRow,
+  Pressable,
   Select,
   Switch,
   SwitchRow,
@@ -67,6 +73,7 @@ import { ConfigHistory, useConfigVersions } from './config-history.js'
 import { ExtensionData } from './extension-data.js'
 import { LineageView } from './lineage-view.js'
 import { PublishDialog } from './publish-dialog.js'
+import { needsAction, useCommunitySync, useCommunityUpdate } from './updates-view.js'
 import { useVersionText, type VersionText } from './version-text.js'
 import styles from './workshop.module.css'
 
@@ -74,6 +81,17 @@ type Revision = LocalExtensionSummary['revisions'][number]
 type Tab = 'overview' | 'config' | 'versions' | 'data' | 'diagnostics'
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+
+const INSTALLATION_ID = 'extension-installation'
+
+/** Release notes as one short line; the whole text stays on the community page. */
+const clipNotes = (notes: string): string => {
+  const line = notes
+    .replaceAll(/\s+/gu, ' ')
+    .trim()
+    .replace(/[。；;，,]$/u, '')
+  return line.length > 90 ? `${line.slice(0, 89)}…` : line
+}
 
 const usable = (revision: Revision): boolean => revision.format === undefined || revision.format === 'current'
 
@@ -129,6 +147,9 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   const current = installed ?? extension.revisions.findLast(usable) ?? latest
   const unsupported = extension.revisions.filter((item) => !usable(item)).length
   const communityRelease = current?.releases.find((release) => release.via === 'install')
+  const sync = useCommunitySync()
+  const offered = sync.items.find((item) => item.extensionId === extension.id && needsAction(item))
+  const communityUpdate = useCommunityUpdate(sync.reload)
   // Revising goes through an agent that can create: the one that made it, or else the first one with a channel.
   const reviser =
     agents.find(
@@ -141,9 +162,23 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         visual={<ExtensionIcon id={extension.id} name={extension.name} iconUrl={extension.iconUrl} size="lg" />}
         title={extension.name}
         status={
-          <Chip tone={usage.tone} dot>
-            {usage.label}
-          </Chip>
+          <>
+            <Chip tone={usage.tone} dot>
+              {usage.label}
+            </Chip>
+            {offered ? (
+              <Pressable
+                className={styles.updateMark}
+                onClick={() => {
+                  openTab('overview')
+                  document.getElementById(INSTALLATION_ID)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                }}
+              >
+                <ArrowUpCircle size={13} aria-hidden="true" />
+                {offered.status === 'remote-ahead' ? '有新版本' : '社区有新版本'}
+              </Pressable>
+            ) : null}
+          </>
         }
         meta={
           <>
@@ -214,6 +249,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
       />
       <BranchDialog extension={extension} revision={branching} onClose={() => setBranching(undefined)} />
       {switching.dialog}
+      {communityUpdate.dialog}
       {extension.description ? <p className={styles.lead}>{extension.description}</p> : null}
       <CompatibilityNotices extensionId={extension.id} />
       {extension.openRevisionTaskId ? (
@@ -246,6 +282,8 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
             switching={switching}
             title={versionOf(extension.revisions.find((item) => item.id === extension.installation?.revisionId))}
             onVersions={() => openTab('versions')}
+            offered={offered}
+            update={communityUpdate}
           />
           {hasAgentLayer(extension) ? <AgentUsage extension={extension} /> : null}
           {extension.installation ? (
@@ -953,18 +991,23 @@ function Installation({
   switching,
   title,
   onVersions,
+  offered,
+  update,
 }: {
   readonly extension: LocalExtensionSummary
   readonly switching: ReturnType<typeof useVersionSwitch>
   readonly title: VersionText | undefined
   readonly onVersions: () => void
+  /** The community release waiting here, if any; taking it is offered right in this row. */
+  readonly offered: CommunitySyncItem | undefined
+  readonly update: ReturnType<typeof useCommunityUpdate>
 }) {
   const installed = extension.installation
   const newest = extension.revisions.findLast(usable)
   const onlyAgents =
     hasAgentLayer(extension) && !extension.provides.some((item) => item === 'page' || item === 'adapter')
   return (
-    <PropertyGroup title="安装">
+    <PropertyGroup title="安装" id={INSTALLATION_ID}>
       {installed?.runtime && installed.runtime.status !== 'active' ? (
         <Banner tone="bad">
           {installed.runtime.status === 'restore-failed' ? '启动恢复失败' : '停止失败'}
@@ -972,12 +1015,49 @@ function Installation({
         </Banner>
       ) : null}
       <PropertyList>
+        {offered?.latest ? (
+          <PropertyRow
+            label={
+              offered.status === 'remote-ahead'
+                ? `社区有新版本${offered.latest.number === undefined ? '' : ` #${offered.latest.number}`}`
+                : '社区有新版本，本机也有修改'
+            }
+            description={[
+              `${relativeTime(offered.latest.createdAt)}发布`,
+              clipNotes(offered.latest.notes),
+              offered.addedPermissions.length > 0
+                ? `新增权限：${offered.addedPermissions.map((permission) => permission.label).join('、')}`
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          >
+            {offered.status === 'diverged' ? (
+              <Button
+                size="small"
+                variant="ghost"
+                busy={update.busy === extension.id}
+                onClick={() => void update.dismiss(offered, offered.latest!.id)}
+              >
+                保留本机
+              </Button>
+            ) : null}
+            <Button
+              size="small"
+              variant={offered.status === 'remote-ahead' ? 'primary' : 'default'}
+              busy={update.busy === extension.id}
+              onClick={() => update.request(offered)}
+            >
+              {offered.status === 'remote-ahead' ? '更新' : '改用社区版本'}
+            </Button>
+          </PropertyRow>
+        ) : null}
         <PropertyRow
           label={installed && title ? title.title : '还没有安装到本机'}
           description={
             installed
               ? installed.revisionId === newest?.id
-                ? `${title?.source ?? ''} · 已是最新保存的版本`
+                ? `${title?.source ?? ''} · ${offered ? '当前安装的版本' : '已是最新保存的版本'}`
                 : `${title?.source ?? ''} · 有更新保存的版本`
               : onlyAgents
                 ? '给智能体启用时会自动安装'

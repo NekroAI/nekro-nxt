@@ -1,6 +1,6 @@
 import { communityReviewLabel, HostApiContracts, type CommunitySyncItem } from '@nekro-nxt/contracts'
 import { RefreshCw, Repeat2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { callHostApi } from '../../host-api-client.js'
 import { useProductStore } from '../../product-runtime.js'
 import {
@@ -17,6 +17,7 @@ import {
   type Tone,
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
+import { useAttention } from '../model/attention.js'
 import { useGo } from '../model/nav.js'
 import { errorMessage, useCommunityStatus } from '../community/community-model.js'
 import styles from '../community/community.module.css'
@@ -72,8 +73,6 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
   const [sync, setSync] = useState<Sync>()
   const [error, setError] = useState<string>()
   const [checking, setChecking] = useState(false)
-  const [busy, setBusy] = useState<string>()
-  const [confirming, setConfirming] = useState<CommunitySyncItem>()
 
   const load = async (refresh: boolean) => {
     setChecking(refresh)
@@ -91,37 +90,12 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
     void load(false)
   }, [])
 
-  const update = async (item: CommunitySyncItem) => {
-    setBusy(item.extensionId)
-    try {
-      const result = await callHostApi(
-        HostApiContracts.updateFromCommunity,
-        { extensionId: item.extensionId },
-        undefined,
-      )
-      toast(result.message)
-      await load(true)
-    } catch (caught) {
-      toast(errorMessage(caught), { tone: 'bad' })
-    } finally {
-      setBusy(undefined)
-    }
-  }
-  const dismiss = async (item: CommunitySyncItem, releaseId: string | null) => {
-    setBusy(item.extensionId)
-    try {
-      await callHostApi(HostApiContracts.dismissCommunityRelease, { extensionId: item.extensionId }, { releaseId })
-      await load(false)
-    } catch (caught) {
-      toast(errorMessage(caught), { tone: 'bad' })
-    } finally {
-      setBusy(undefined)
-    }
-  }
+  const { busy, request, dismiss, dialog } = useCommunityUpdate(
+    () => load(true),
+    () => load(false),
+  )
 
-  const attention = sync?.items.filter(
-    (item) => !item.dismissed && (item.status === 'remote-ahead' || item.status === 'diverged'),
-  ).length
+  const attention = sync?.items.filter(needsAction).length
   return (
     <MainContent>
       <PageHeader
@@ -229,7 +203,7 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
                       size="small"
                       variant={item.status === 'remote-ahead' ? 'primary' : 'default'}
                       busy={busy === item.extensionId}
-                      onClick={() => setConfirming(item)}
+                      onClick={() => request(item)}
                     >
                       {item.status === 'remote-ahead' ? '更新' : '改用社区版本'}
                     </Button>
@@ -240,51 +214,105 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
           })}
         </div>
       )}
-      <ConfirmDialog
-        open={confirming !== undefined}
-        onOpenChange={(open) => !open && setConfirming(undefined)}
-        title={confirming?.status === 'diverged' ? '改用社区版本？' : `更新「${confirming?.displayName ?? ''}」？`}
-        confirmLabel={confirming?.status === 'diverged' ? '改用社区版本' : '更新'}
-        onConfirm={() => (confirming ? update(confirming) : undefined)}
-      >
-        {confirming?.status === 'diverged'
-          ? '社区的发布会作为新版本导入并切换过去，所有在用的智能体一起切换。本机的修改留在原来的版本里，之后还能切回或让智能体合并。'
-          : '社区的发布会作为新版本导入并切换过去，所有在用的智能体一起切换；需要时可以在扩展详情里回滚。'}
-        {confirming && confirming.addedPermissions.length > 0
-          ? `新发布新增权限：${confirming.addedPermissions.map((permission) => permission.label).join('、')}。确认即同意这些权限。`
-          : ''}
-      </ConfirmDialog>
+      {dialog}
     </MainContent>
   )
 }
 
-const needsAction = (item: CommunitySyncItem): boolean =>
+export const needsAction = (item: CommunitySyncItem): boolean =>
   !item.dismissed && (item.status === 'remote-ahead' || item.status === 'diverged')
+
+/**
+ * Updating from the community and keeping the local version, with the confirmation both ask for. Shared by this list
+ * and the extension's own page, so an update can be taken wherever it is noticed.
+ */
+export function useCommunityUpdate(onUpdated: () => unknown, onDismissed: () => unknown = onUpdated) {
+  const [busy, setBusy] = useState<string>()
+  const [confirming, setConfirming] = useState<CommunitySyncItem>()
+  const update = async (item: CommunitySyncItem) => {
+    setBusy(item.extensionId)
+    try {
+      const result = await callHostApi(
+        HostApiContracts.updateFromCommunity,
+        { extensionId: item.extensionId },
+        undefined,
+      )
+      toast(result.message)
+      await onUpdated()
+    } catch (caught) {
+      toast(errorMessage(caught), { tone: 'bad' })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+  const dismiss = async (item: CommunitySyncItem, releaseId: string | null) => {
+    setBusy(item.extensionId)
+    try {
+      await callHostApi(HostApiContracts.dismissCommunityRelease, { extensionId: item.extensionId }, { releaseId })
+      await onDismissed()
+    } catch (caught) {
+      toast(errorMessage(caught), { tone: 'bad' })
+    } finally {
+      setBusy(undefined)
+    }
+  }
+  const dialog = (
+    <ConfirmDialog
+      open={confirming !== undefined}
+      onOpenChange={(open) => !open && setConfirming(undefined)}
+      title={confirming?.status === 'diverged' ? '改用社区版本？' : `更新「${confirming?.displayName ?? ''}」？`}
+      confirmLabel={confirming?.status === 'diverged' ? '改用社区版本' : '更新'}
+      onConfirm={() => (confirming ? update(confirming) : undefined)}
+    >
+      {confirming?.status === 'diverged'
+        ? '社区的发布会作为新版本导入并切换过去，所有在用的智能体一起切换。本机的修改留在原来的版本里，之后还能切回或让智能体合并。'
+        : '社区的发布会作为新版本导入并切换过去，所有在用的智能体一起切换；需要时可以在扩展详情里回滚。'}
+      {confirming && confirming.addedPermissions.length > 0
+        ? `新发布新增权限：${confirming.addedPermissions.map((permission) => permission.label).join('、')}。确认即同意这些权限。`
+        : ''}
+    </ConfirmDialog>
+  )
+  return { busy, request: setConfirming, dismiss, dialog }
+}
+
+/**
+ * The sync state of every followed line, for marking updates outside the updates list. The community status already
+ * counts lines that need attention, and the bell learns of new ones as they come; the list is only asked for when
+ * there are some, and asked again after a new or switched version, or a new count.
+ */
+export function useCommunitySync(): { readonly items: readonly CommunitySyncItem[]; readonly reload: () => void } {
+  const [items, setItems] = useState<readonly CommunitySyncItem[]>([])
+  const [asked, setAsked] = useState(0)
+  const installed = useProductStore((state) =>
+    state.extensions
+      .map((extension) => `${extension.id}:${extension.revisions.length}:${extension.installation?.revisionId ?? ''}`)
+      .join(),
+  )
+  const available = useCommunityStatus().status?.updatesAvailable ?? 0
+  const noticed = useAttention().find((item) => item.kind === 'extension-update')?.id
+  useEffect(() => {
+    if (available === 0 && noticed === undefined) {
+      setItems([])
+      return undefined
+    }
+    let live = true
+    callHostApi(HostApiContracts.listCommunitySync, {}, undefined)
+      .then((sync) => {
+        if (live) setItems(sync.items)
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [installed, available, noticed, asked])
+  return { items, reload: () => setAsked((count) => count + 1) }
+}
 
 /**
  * Lines with something to do (by default a newer community release, or both sides changed), for the workshop list.
  * Reads the last check without asking the community again.
  */
 export function useCommunityUpdates(include: (item: CommunitySyncItem) => boolean = needsAction): ReadonlySet<string> {
-  const [ids, setIds] = useState<ReadonlySet<string>>(new Set())
-  const extensions = useProductStore((state) => state.extensions.length)
-  // The community status already counts lines with updates; the list is only asked for when there are some.
-  const available = useCommunityStatus().status?.updatesAvailable ?? 0
-  useEffect(() => {
-    if (available === 0) {
-      setIds(new Set())
-      return undefined
-    }
-    let live = true
-    callHostApi(HostApiContracts.listCommunitySync, {}, undefined)
-      .then((sync) => {
-        if (!live) return
-        setIds(new Set(sync.items.filter(include).map((item) => item.extensionId)))
-      })
-      .catch(() => undefined)
-    return () => {
-      live = false
-    }
-  }, [extensions, available, include])
-  return ids
+  const { items } = useCommunitySync()
+  return useMemo(() => new Set(items.filter(include).map((item) => item.extensionId)), [items, include])
 }

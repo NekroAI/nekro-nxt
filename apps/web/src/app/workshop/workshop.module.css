@@ -759,8 +759,45 @@
   gap: var(--s-2);
 }
 
+.rowUpdate,
+.rowCount {
+  align-self: center;
+  border-radius: 999px;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
 .rowUpdate {
-  color: var(--accent);
+  padding: 0 var(--s-2);
+}
+
+.rowCount {
+  min-width: 18px;
+  padding: 0 var(--s-1);
+  text-align: center;
+}
+
+.updateMark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 0 var(--s-2);
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent-fill);
+  color: var(--on-accent-fill);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.updateMark:hover {
+  background: var(--accent-fill-grad-hover);
 }
 
 .versionCell {

@@ -39,6 +39,8 @@ function hrefOf(item: HostAttentionItem): string {
       return related.agentId ? `/agents/${related.agentId}` : '/agents'
     case 'open-community-feedback':
       return '/community/feedback'
+    case 'open-extension-updates':
+      return '/workshop/updates'
   }
 }
 
