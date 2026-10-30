@@ -2,6 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import {
+  CommunitySyncItemSchema,
   HostApiContracts,
   LogicalMessageIdSchema,
   OutboundIntentIdSchema,
@@ -378,6 +379,44 @@ describe('workspace projections', () => {
       deliveryState: 'sent',
       deliveryResolution: { action: 'retry' },
     })
+  })
+
+  it('lists community extension updates in attention as soon as a sync check finds them', async () => {
+    const f = await fixture()
+    const pending = vi.spyOn(f.runtime.communitySync, 'pending')
+    const before = HostApiContracts.listAttention.parseResponse(await (await fetch(`${f.origin}/api/attention`)).json())
+    expect(before.items.some(({ kind }) => kind === 'extension-update')).toBe(false)
+
+    const item = (extensionId: string, displayName: string) =>
+      CommunitySyncItemSchema.parse({
+        extensionId,
+        displayName,
+        communityUrl: 'https://community.example.test',
+        role: 'subscriber',
+        currentRevisionId: 'xrv_01LOCAL',
+        currentVersionLabel: 'v1',
+        currentRelease: null,
+        status: 'remote-ahead',
+        found: true,
+        delisted: false,
+        delistedReason: null,
+        releaseWithdrawn: false,
+        latest: null,
+        dismissed: false,
+        addedPermissions: [],
+      })
+    pending.mockReturnValue([item('ext_01one', '表情包'), item('ext_01two', '节日提醒')])
+    const listed = HostApiContracts.listAttention.parseResponse(await (await fetch(`${f.origin}/api/attention`)).json())
+    expect(listed.items.find(({ kind }) => kind === 'extension-update')).toMatchObject({
+      severity: 'info',
+      title: '2 个扩展有新版本',
+      detail: '「表情包」「节日提醒」在社区发布了新版本。',
+      action: { kind: 'open-extension-updates', label: '查看更新' },
+    })
+
+    pending.mockReturnValue([item('ext_01one', '表情包')])
+    const single = HostApiContracts.listAttention.parseResponse(await (await fetch(`${f.origin}/api/attention`)).json())
+    expect(single.items.find(({ kind }) => kind === 'extension-update')?.title).toBe('「表情包」有新版本')
   })
 
   it('dismisses attention items persistently and keeps agent appearance outside revisions', async () => {

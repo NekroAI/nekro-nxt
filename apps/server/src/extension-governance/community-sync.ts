@@ -13,6 +13,9 @@ export interface SyncCommunity {
   setAttention(count: number): void
 }
 
+const needsAction = (item: CommunitySyncItem): boolean =>
+  !item.dismissed && (item.status === 'remote-ahead' || item.status === 'diverged')
+
 /**
  * Keeps this machine and the community in step for every extension line it follows or publishes: which release each
  * local version is, whether this machine may publish the line, and what the newest public release means here.
@@ -23,6 +26,7 @@ export class CommunitySyncService {
   readonly #lineage: LineageReader
   readonly #now: () => number
   #cache: { readonly url: string; readonly checkedAt: number; readonly items: readonly CommunitySyncItem[] } | undefined
+  readonly #listeners = new Set<() => void>()
 
   constructor(input: {
     readonly repository: SqliteCoreRepository
@@ -39,6 +43,23 @@ export class CommunitySyncService {
   cached(): { readonly checkedAt: number; readonly items: readonly CommunitySyncItem[] } | undefined {
     const cache = this.#cache
     return cache?.url === this.#community.communityUrl ? { checkedAt: cache.checkedAt, items: cache.items } : undefined
+  }
+
+  /** Called whenever the known sync state changes: after a check, a dismissal or a publish. */
+  subscribe(listener: () => void): () => void {
+    this.#listeners.add(listener)
+    return () => {
+      this.#listeners.delete(listener)
+    }
+  }
+
+  /** Lines whose newest release waits for the user here: an update, or a release that both sides moved past. */
+  pending(): readonly CommunitySyncItem[] {
+    return (this.cached()?.items ?? []).filter(needsAction)
+  }
+
+  #changed(): void {
+    for (const listener of this.#listeners) listener()
   }
 
   /** The cached entry of one extension, for actions that need its latest release without a network round trip. */
@@ -96,6 +117,7 @@ export class CommunitySyncService {
       force: true,
     })
     this.#cache = undefined
+    this.#changed()
   }
 
   /** Keep the local changes over `releaseId` (or stop doing so with null); the release is not offered again. */
@@ -107,6 +129,7 @@ export class CommunitySyncService {
       now: this.#now(),
     })
     this.#cache = undefined
+    this.#changed()
   }
 
   /**
@@ -182,11 +205,9 @@ export class CommunitySyncService {
     const checkedAt = this.#now()
     this.#cache = { url, checkedAt, items }
     this.#community.setAttention(
-      items.filter(
-        (item) =>
-          !item.dismissed && (item.status === 'remote-ahead' || item.status === 'diverged' || item.releaseWithdrawn),
-      ).length,
+      items.filter((item) => needsAction(item) || (!item.dismissed && item.releaseWithdrawn)).length,
     )
+    this.#changed()
     return { checkedAt, items }
   }
 

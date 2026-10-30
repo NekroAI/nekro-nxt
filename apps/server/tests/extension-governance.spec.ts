@@ -1753,6 +1753,10 @@ describe('community sync', () => {
       })
       sync.recordInstall(v1, { releaseId: 'rel_01one', number: 1, publisherHandle: 'demo-author' })
       const status = async () => (await sync.check()).items[0]?.status
+      let changes = 0
+      sync.subscribe(() => {
+        changes += 1
+      })
 
       expect(await status()).toBe('local-ahead')
       expect(attention).toBe(0)
@@ -1761,11 +1765,16 @@ describe('community sync', () => {
       latest = { id: 'rel_01three', revisionId: 'xrv_REMOTETHREE', parentRevisionId: v2.id, ancestry: [v2.id, v1.id] }
       expect(await status()).toBe('remote-ahead')
       expect(attention).toBe(1)
+      expect(sync.pending().map((item) => item.extensionId)).toEqual([extensionId])
       latest = { id: 'rel_01other', revisionId: 'xrv_REMOTEOTHER', parentRevisionId: v1.id, ancestry: [v1.id] }
       expect(await status()).toBe('diverged')
       sync.dismiss(extensionId, 'rel_01other')
+      expect(sync.pending()).toEqual([])
       expect((await sync.check()).items[0]?.dismissed).toBe(true)
       expect(attention).toBe(0)
+      expect(sync.pending()).toEqual([])
+      // Every check and the dismissal told the listeners, so attention is recomputed without waiting.
+      expect(changes).toBe(6)
 
       expect(runtime.repository.getExtensionCommunityLink(extensionId, communityUrl)?.role).toBe('subscriber')
       sync.recordPublish(v2, { releaseId: 'rel_01mine', number: 4, publisherHandle: 'demo-author' })

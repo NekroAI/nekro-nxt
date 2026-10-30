@@ -1486,11 +1486,21 @@ export const AttentionItemSchema = z
       'agent-vision-unavailable',
       'logs-unavailable',
       'community-feedback',
+      'extension-update',
     ]),
     severity: z.enum(['critical', 'warning', 'info']),
     subject: z
       .object({
-        kind: z.enum(['outbound', 'channel', 'authoring-task', 'connection', 'agent', 'logs', 'community-feedback']),
+        kind: z.enum([
+          'outbound',
+          'channel',
+          'authoring-task',
+          'connection',
+          'agent',
+          'logs',
+          'community-feedback',
+          'extension-update',
+        ]),
         id: NonEmptyStringSchema,
       })
       .strict(),
@@ -1515,6 +1525,7 @@ export const AttentionItemSchema = z
           'open-agent',
           'open-logs',
           'open-community-feedback',
+          'open-extension-updates',
         ]),
         label: z.string().min(1).max(40),
       })

@@ -2,7 +2,12 @@ import { ExtensionIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import type { ServerResponse } from 'node:http'
 import { registerCommunityPersonaRoutes } from './host-routes-community-personas.js'
 import { registerCommunityFeedbackRoutes } from './host-routes-feedback.js'
-import { COMMUNITY_CALLBACK_PATH, CommunityError, UPDATE_CHECK_INTERVAL_MS } from './community.js'
+import {
+  COMMUNITY_CALLBACK_PATH,
+  CommunityError,
+  FIRST_UPDATE_CHECK_DELAY_MS,
+  UPDATE_CHECK_INTERVAL_MS,
+} from './community.js'
 import { readJsonBody, writeContractJson, writeError, type HostRouteContext } from './host-route-support.js'
 
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/gu, (char) => `&#${char.charCodeAt(0)};`)
@@ -71,6 +76,12 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
     void runtime.feedback.sync().catch(() => undefined)
   }, UPDATE_CHECK_INTERVAL_MS)
   timer.unref()
+  // 启动后先查一次，不必等满一天；稍等片刻，不和启动时的其他工作抢网络。没有和社区关联的扩展时不查。
+  const first = setTimeout(() => {
+    if (runtime.repository.listExtensionCommunityLinks().length === 0) return
+    void checkSync().catch(() => undefined)
+  }, FIRST_UPDATE_CHECK_DELAY_MS)
+  first.unref()
 
   registerRoute({
     kind: 'exact',
@@ -342,6 +353,7 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
 
   return () => {
     clearInterval(timer)
+    clearTimeout(first)
     disposeFeedback()
   }
 }

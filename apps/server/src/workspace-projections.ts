@@ -113,6 +113,7 @@ export class WorkspaceProjections {
   #logFailureAt: number | undefined
   readonly #safetyTimer: ReturnType<typeof setInterval>
   readonly #unsubscribeFeedback: () => void
+  readonly #unsubscribeSync: () => void
   #disposed = false
 
   constructor(runtime: NekroRuntime, broadcast: (event: HostSseEvent) => void, now: () => number = Date.now) {
@@ -120,6 +121,7 @@ export class WorkspaceProjections {
     this.#broadcast = broadcast
     this.#now = now
     this.#unsubscribeFeedback = runtime.feedback.subscribe(() => this.scheduleAttentionCheck())
+    this.#unsubscribeSync = runtime.communitySync.subscribe(() => this.scheduleAttentionCheck())
     this.#safetyTimer = setInterval(() => this.scheduleAttentionCheck(), ATTENTION_SAFETY_INTERVAL_MS)
     this.#safetyTimer.unref?.()
   }
@@ -127,6 +129,7 @@ export class WorkspaceProjections {
   dispose(): void {
     this.#disposed = true
     this.#unsubscribeFeedback()
+    this.#unsubscribeSync()
     clearInterval(this.#safetyTimer)
     if (this.#attentionTimer !== undefined) clearTimeout(this.#attentionTimer)
   }
@@ -472,6 +475,27 @@ export class WorkspaceProjections {
         detail: '查看社区回复和处理进展。',
         action: { kind: 'open-community-feedback', label: '查看反馈' },
         occurredAt: Math.max(...unreadFeedback.map((item) => item.updatedAt)),
+      })
+    }
+    const updates = runtime.communitySync.pending()
+    if (updates.length > 0) {
+      const version = createHash('sha256')
+        .update(JSON.stringify(updates.map((item) => [item.extensionId, item.latest?.id ?? null])))
+        .digest('hex')
+        .slice(0, 20)
+      items.push({
+        id: `extension-updates:${version}`,
+        kind: 'extension-update',
+        severity: 'info',
+        subject: { kind: 'extension-update', id: 'community' },
+        related: {},
+        title: updates.length === 1 ? `「${updates[0]!.displayName}」有新版本` : `${updates.length} 个扩展有新版本`,
+        detail:
+          updates.length === 1
+            ? '作者在社区发布了新版本，确认后更新。'
+            : `${updates.map((item) => `「${item.displayName}」`).join('')}在社区发布了新版本。`,
+        action: { kind: 'open-extension-updates', label: '查看更新' },
+        occurredAt: Math.max(...updates.map((item) => item.latest?.createdAt ?? 0)),
       })
     }
 
