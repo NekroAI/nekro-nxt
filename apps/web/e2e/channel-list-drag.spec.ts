@@ -407,7 +407,10 @@ test('channel list keeps rows stable while pointer and keyboard drags reorder, b
   await expect.poll(async () => Math.abs((await top(mapleSpare)) - spareTopBefore)).toBeLessThan(2)
   await expect(page).toHaveURL(routeBeforeDrag)
 
-  // Keyboard reorder: Space picks up, Arrow moves, Space drops.
+  // Keyboard reorder: Space picks up, Arrow moves, Space drops. The cancelled drag's overlay and the rows sliding
+  // back must finish first: the keyboard sensor measures rows when it picks one up, and mid-animation rows overlap.
+  await expect(page.locator('[class*="dragOverlay"]')).toHaveCount(0)
+  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== 'running'))
   expect(await top(mapleChannel)).toBeLessThan(await top(mapleSpare))
   await mapleChannel.focus()
   await page.keyboard.press('Space')
