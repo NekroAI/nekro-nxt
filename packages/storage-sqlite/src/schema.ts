@@ -1043,7 +1043,9 @@ export const extensionRequests = sqliteTable(
     extensionId: text('extension_id').$type<ExtensionId>(),
     summary: text().notNull(),
     payload: jsonText<JsonValue>('payload').notNull(),
-    status: text({ enum: ['pending', 'approved', 'rejected', 'expired', 'completed', 'failed'] }).notNull(),
+    status: text({
+      enum: ['pending', 'approved', 'rejected', 'expired', 'completed', 'failed', 'superseded', 'withdrawn'],
+    }).notNull(),
     result: jsonText<JsonValue>('result'),
     decidedBy: text('decided_by'),
     createdAt: integer('created_at').notNull(),

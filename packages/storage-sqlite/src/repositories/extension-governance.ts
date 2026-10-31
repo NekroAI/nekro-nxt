@@ -28,7 +28,8 @@ import {
 
 export type InstanceAdministratorRecord = typeof instanceAdministrators.$inferSelect
 
-export type ExtensionRequestStatus = 'pending' | 'approved' | 'rejected' | 'expired' | 'completed' | 'failed'
+export type ExtensionRequestStatus =
+  'pending' | 'approved' | 'rejected' | 'expired' | 'completed' | 'failed' | 'superseded' | 'withdrawn'
 
 export interface ExtensionRequestRecord {
   readonly number: number

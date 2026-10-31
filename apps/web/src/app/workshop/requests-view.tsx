@@ -29,13 +29,16 @@ const STATUS: Record<ExtensionRequestView['status'], { readonly label: string; r
   failed: { label: '执行失败', tone: 'bad' },
   rejected: { label: '已拒绝', tone: 'neutral' },
   expired: { label: '已过期', tone: 'neutral' },
+  superseded: { label: '已被取代', tone: 'neutral' },
+  withdrawn: { label: '已撤回', tone: 'neutral' },
 }
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
 
 /**
  * Extension actions agents asked an administrator to confirm, and the record of what they did on their own. The same
- * requests can be answered in chat with `/ext approve N`; answering here posts the same notice in the channel.
+ * requests can be answered in chat with `/ext approve N`; an answer given here is reported here and to the agent, not
+ * posted in the channel.
  */
 export function RequestsView() {
   const waiting = useProductStore((state) => state.extensionRequests)

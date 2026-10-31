@@ -128,6 +128,8 @@ export interface ExtensionGovernanceToolPort {
   checkTestCredentials(agentId: AgentId, values: Readonly<Record<string, JsonValue>>): readonly string[]
   /** Named credentials and open model providers as the agent may know them: names and rules, never values. */
   listCredentials(agentId: AgentId): Promise<JsonValue>
+  /** Takes back one of the agent's own requests that still waits for an administrator. */
+  withdrawRequest(agentId: AgentId, number: number): JsonValue
   /** Asks an administrator to add a credential; the agent is woken in this channel once one with the name exists. */
   requestCredential(
     agentId: AgentId,
@@ -838,6 +840,11 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
       meaning:
         'usage 为 request 的凭据只能在扩展里用 secrets.placeholder 放进 http.fetch 请求，发往 domains 中的域名；program 的凭据代码能读到值，带 envName 的会以这个环境变量交给你的命令。needsApproval 为 true 的要先用 nekro_nxt_credential_request 请管理员同意。accounts 是设置里关联的平台账号，grantedToYou 为 true 的已经授权给你，你的命令会以这个账号工作；没有授权的要请管理员在智能体的能力页授权。modelProviders 是扩展通过 nxt.models 可以调用的模型。',
     }
+  }
+
+  withdrawRequest(agentId: AgentId, number: number): JsonValue {
+    const record = this.#runtime.extensionRequests.withdraw(number, agentId)
+    return { withdrawn: true, number: record.number, summary: record.summary }
   }
 
   requestCredential(

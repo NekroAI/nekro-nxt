@@ -67,7 +67,6 @@ export class ExtensionCommandPort implements CommandGovernancePort {
           const result = await this.#runtime.extensionRequests.approve(
             number,
             actor.kind === 'console' ? actor : decider,
-            context.channelId,
           )
           return `已同意请求 #${number}：${result.message}`
         } catch (error) {
@@ -77,12 +76,7 @@ export class ExtensionCommandPort implements CommandGovernancePort {
       }
       case 'reject': {
         const number = this.#number(input.target)
-        this.#runtime.extensionRequests.reject(
-          number,
-          actor.kind === 'console' ? actor : decider,
-          input.value,
-          context.channelId,
-        )
+        this.#runtime.extensionRequests.reject(number, actor.kind === 'console' ? actor : decider, input.value)
         return `已拒绝请求 #${number}。`
       }
       case 'save': {

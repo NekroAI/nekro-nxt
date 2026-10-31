@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { materializeImportedRevision } from '@nekro-nxt/extension-format'
 import { ExtensionDataDowngradeError, hostPermissionRequirement } from '@nekro-nxt/extension-runtime'
 import {
+  AgentIdSchema,
   CommunityReleaseSchema,
   EpisodeIdSchema,
   LinkedAccountIdSchema,
@@ -1522,7 +1523,7 @@ describe('extension autonomy', () => {
     }
   })
 
-  it('posts a request, carries it out on approval and tells the channel how it ended', async () => {
+  it('posts a request, carries it out on approval and answers only where it was approved', async () => {
     const runtime = await createRuntime()
     try {
       const { extensionId } = await importBoth(runtime)
@@ -1564,18 +1565,67 @@ describe('extension autonomy', () => {
       // The command's reply already told the channel; no second notice is posted there.
       expect(runtime.repository.findOutboundByNoticeKey(`ext-request:${asked.number}:done`)).toBeUndefined()
 
-      // Approved from the console, the channel hears the outcome as a notice.
+      // Approved from the console, the console has the answer; the channel is not told.
       const disable = { kind: 'disable', extensionId, agentId: entity.agentId } as const
       const second = requests.create({
         action: disable,
         actor,
         assessment: runtime.extensionActions.assess(disable, actor),
       })
-      await requests.approve(second.number, { kind: 'console' })
-      await expect
-        .poll(() => runtime.repository.findOutboundByNoticeKey(`ext-request:${second.number}:done`), NOTICE_POLL)
-        .toBeDefined()
+      await expect(requests.approve(second.number, { kind: 'console' })).resolves.toMatchObject({
+        message: expect.stringContaining('停用') as unknown,
+      })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(runtime.repository.findOutboundByNoticeKey(`ext-request:${second.number}:done`)).toBeUndefined()
       await expect(requests.approve(asked.number, { kind: 'console' })).rejects.toThrow('已经被处理')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('supersedes an older pending request for the same thing and lets the agent withdraw its own', async () => {
+    const runtime = await createRuntime()
+    try {
+      const { extensionId } = await importBoth(runtime)
+      const entity = await agentWithChannel(runtime, 'confirm')
+      const actor = { kind: 'agent', agentId: entity.agentId, channelId: entity.channelId } as const
+      const requests = runtime.extensionRequests
+      const ask = (action: Parameters<typeof requests.create>[0]['action']) =>
+        requests.create({ action, actor, assessment: runtime.extensionActions.assess(action, actor) })
+      const enable = ask({ kind: 'enable', extensionId, agentId: entity.agentId })
+      // Disabling the same extension for the same agent is a newer answer to the same question.
+      const disable = ask({ kind: 'disable', extensionId, agentId: entity.agentId })
+      expect(requests.get(enable.number)).toMatchObject({
+        status: 'superseded',
+        result: { message: `已被请求 #${disable.number} 取代` },
+      })
+      await expect(requests.approve(enable.number, { kind: 'console' })).rejects.toThrow(
+        `请求 #${enable.number} 已被请求 #${disable.number} 取代`,
+      )
+      await expect
+        .poll(
+          () => runtime.repository.findOutboundByNoticeKey(`ext-request:${disable.number}:asked`)?.intent.parts,
+          NOTICE_POLL,
+        )
+        .toEqual([expect.objectContaining({ text: expect.stringContaining(`（取代 #${enable.number}）`) as unknown })])
+
+      expect(() => requests.withdraw(disable.number, AgentIdSchema.parse('agt_someoneelse'))).toThrow('不是你发起的')
+      expect(requests.withdraw(disable.number, entity.agentId)).toMatchObject({
+        status: 'withdrawn',
+        result: { message: '发起方已撤回' },
+      })
+      await expect(requests.approve(disable.number, { kind: 'console' })).rejects.toThrow('发起方已撤回')
+
+      // Configuration changes single fields: a newer request replaces an older one only when it covers every field.
+      const configure = (values: Record<string, string>) =>
+        ask({ kind: 'configure', extensionId, layer: 'agent', agentId: entity.agentId, values, credentials: {} })
+      const city = configure({ city: '甲市' })
+      const unit = configure({ unit: '摄氏' })
+      expect(requests.get(city.number)).toMatchObject({ status: 'pending' })
+      const both = configure({ city: '乙市', unit: '华氏' })
+      expect(requests.get(city.number)).toMatchObject({ status: 'superseded' })
+      expect(requests.get(unit.number)).toMatchObject({ status: 'superseded' })
+      expect(requests.get(both.number)).toMatchObject({ status: 'pending' })
     } finally {
       await runtime.dispose()
     }
@@ -1638,7 +1688,6 @@ describe('extension autonomy', () => {
       const actor = { kind: 'agent', agentId: entity.agentId, channelId: entity.channelId } as const
       const action = { kind: 'enable', extensionId, agentId: entity.agentId } as const
       const assessment = runtime.extensionActions.assess(action, actor)
-      const stale = requests.create({ action, actor, assessment })
       const disable = { kind: 'disable', extensionId, agentId: entity.agentId } as const
       const rejected = requests.create({
         action: disable,
@@ -1647,6 +1696,8 @@ describe('extension autonomy', () => {
       })
       requests.reject(rejected.number, { kind: 'console' }, '先别启用')
       expect(requests.get(rejected.number)).toMatchObject({ status: 'rejected', decidedBy: '控制台管理员' })
+      // Filed after the rejection, so there is nothing pending for it to supersede.
+      const stale = requests.create({ action, actor, assessment })
       now += EXTENSION_REQUEST_TTL_MS + 1
       expect(requests.get(stale.number)?.status).toBe('expired')
       await expect(requests.approve(stale.number, { kind: 'console' })).rejects.toThrow('已过期')

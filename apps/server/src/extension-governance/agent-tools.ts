@@ -157,6 +157,17 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
     },
   }),
   defineTool({
+    name: 'nekro_nxt_extension_request_withdraw',
+    description:
+      '撤回你发出、还在等管理员确认的扩展请求（编号见频道里的请求通知，例如 #12）。改主意了、请求已经过时，或者要换个做法时用它，免得管理员批准了不再需要的操作。对同一个扩展的同一件事发出新请求时，旧请求会自动作废，不用另外撤回。',
+    parameters: { number: { type: 'number', required: true, description: '请求编号，不带 #。' } },
+    output: { schema: { type: 'json' }, render: renderJson },
+    execute: (args) => {
+      const input = z.object({ number: z.number().int().positive() }).parse(args)
+      return Promise.resolve(json(requirePort(context).withdrawRequest(context.agentId, input.number)))
+    },
+  }),
+  defineTool({
     name: 'nekro_nxt_credential_list',
     description:
       '查看这台 NekroNXT 上的凭据：名称、说明、使用方式、允许的域名、是否对你开放、是否需要管理员同意，以及扩展可以调用的模型供应商。看不到凭据的值。扩展要用 API 密钥或账号时先查这里，再在配置或 testConfig 里按名称绑定。',

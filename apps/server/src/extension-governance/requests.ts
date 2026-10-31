@@ -73,6 +73,51 @@ const extensionOf = (action: ExtensionAction): ExtensionId | undefined => {
   }
 }
 
+/**
+ * The thing a request changes. A newer request for the same thing supersedes an older pending one, so an
+ * administrator never approves an outdated version switch or configuration by mistake.
+ */
+const objectKey = (action: ExtensionAction | undefined): string | undefined => {
+  switch (action?.kind) {
+    case 'enable':
+    case 'disable':
+      return `activation|${action.extensionId}|${action.agentId}`
+    case 'switch':
+    case 'revert':
+      return `version|${action.extensionId}`
+    case 'configure':
+      return `config|${action.extensionId}|${action.layer}|${action.agentId ?? ''}`
+    case 'revert-config':
+      return `config-revert|${action.extensionId}`
+    case 'migrate-data':
+      return `data|${action.targetExtensionId}`
+    case 'community-publish':
+    case 'community-update':
+      return `${action.kind}|${action.extensionId}`
+    case undefined:
+    case 'save':
+    case 'branch':
+    case 'community-install':
+    case 'community-withdraw':
+    case 'use-credential':
+      return undefined
+  }
+}
+
+/**
+ * Whether `newer` replaces everything `older` asks for. Configuration requests change single fields, so a newer one
+ * for other fields of the same layer leaves the older one standing instead of dropping its changes.
+ */
+const covers = (newer: ExtensionAction, older: ExtensionAction): boolean => {
+  if (newer.kind !== 'configure' || older.kind !== 'configure') return true
+  const fields = (action: ConfigureAction) => [
+    ...Object.keys(action.values).map((name) => `value:${name}`),
+    ...Object.keys(action.credentials).map((name) => `credential:${name}`),
+  ]
+  const replaced = new Set(fields(newer))
+  return fields(older).every((field) => replaced.has(field))
+}
+
 type ConfigureAction = Extract<ExtensionAction, { readonly kind: 'configure' }>
 
 /** Two changes to the same layer as one: later values and bindings win, reasons are kept together. */
@@ -164,11 +209,13 @@ export class ExtensionRequestService {
       input.assessment.added.length === 0
         ? ''
         : `（新增权限：${input.assessment.added.map((item) => item.label + (item.detail ? ` ${item.detail}` : '')).join('；')}）`
+    const superseded = this.#supersede(input.action, record.number, now)
+    const replaces = superseded.length === 0 ? '' : `（取代 ${superseded.map((number) => `#${number}`).join('、')}）`
     const prefix = this.#commandPrefix(input.actor.channelId)
     this.#notice(
       input.actor.channelId,
       `ext-request:${record.number}:asked`,
-      `${this.#agentName(input.actor.agentId)}请求${input.assessment.summary}${added}。管理员发送 ${prefix}/ext approve ${record.number} 同意，或 ${prefix}/ext reject ${record.number} 拒绝；24 小时内有效。`,
+      `${this.#agentName(input.actor.agentId)}请求${input.assessment.summary}${added}${replaces}。管理员发送 ${prefix}/ext approve ${record.number} 同意，或 ${prefix}/ext reject ${record.number} 拒绝；24 小时内有效。`,
     )
     this.#runtime.publishExtensionRequestChange?.()
     return record
@@ -288,16 +335,11 @@ export class ExtensionRequestService {
     return 'scheduled'
   }
 
-  /** Confirms a pending request and carries it out; the outcome is posted and reported to the agent. */
   /**
-   * `answeredIn` is the channel a chat command came from: the command's own reply already tells that channel the
-   * outcome, so no separate notice is posted there.
+   * Confirms a pending request and carries it out. The outcome goes back where the answer was given (the console's
+   * response, or the chat command's reply) and to the agent; the request's channel gets no separate notice.
    */
-  async approve(
-    number: number,
-    decider: ExtensionRequestDecider,
-    answeredIn?: ChannelId,
-  ): Promise<ExtensionActionResult> {
+  async approve(number: number, decider: ExtensionRequestDecider): Promise<ExtensionActionResult> {
     const record = this.#pending(number)
     const action = this.#action(record)
     const actor = decider.kind === 'console' ? ({ kind: 'console' } as const) : decider
@@ -324,11 +366,6 @@ export class ExtensionRequestService {
         status: 'completed',
         result: toJson(resultOf(result)),
       })
-      this.#notice(
-        record.channelId === answeredIn ? undefined : (record.channelId ?? undefined),
-        `ext-request:${number}:done`,
-        `请求 #${number} 已由${label}同意：${result.message}`,
-      )
       this.#tellAgent(
         record,
         'done',
@@ -344,11 +381,6 @@ export class ExtensionRequestService {
         status: 'failed',
         result: { message },
       })
-      this.#notice(
-        record.channelId === answeredIn ? undefined : (record.channelId ?? undefined),
-        `ext-request:${number}:failed`,
-        `请求 #${number} 已同意，但没有完成：${message}`,
-      )
       this.#tellAgent(
         record,
         'failed',
@@ -359,7 +391,7 @@ export class ExtensionRequestService {
     }
   }
 
-  reject(number: number, decider: ExtensionRequestDecider, reason?: string, answeredIn?: ChannelId): void {
+  reject(number: number, decider: ExtensionRequestDecider, reason?: string): void {
     const record = this.#pending(number)
     const label = decider.kind === 'console' ? '控制台管理员' : decider.label
     if (
@@ -374,11 +406,6 @@ export class ExtensionRequestService {
     ) {
       throw new Error(`请求 #${number} 已经被处理。`)
     }
-    this.#notice(
-      record.channelId === answeredIn ? undefined : (record.channelId ?? undefined),
-      `ext-request:${number}:rejected`,
-      `请求 #${number} 已被${label}拒绝${reason ? `：${reason}` : '。'}`,
-    )
     this.#tellAgent(
       record,
       'rejected',
@@ -442,6 +469,46 @@ export class ExtensionRequestService {
     }
   }
 
+  /** Takes back a request its agent filed, while it still waits; the record stays as withdrawn. */
+  withdraw(number: number, agentId: AgentId): ExtensionRequestRecord {
+    const record = this.#pending(number)
+    if (record.agentId !== agentId) throw new Error(`请求 #${number} 不是你发起的，不能撤回。`)
+    this.#runtime.repository.updateExtensionRequest({
+      number,
+      from: 'pending',
+      status: 'withdrawn',
+      result: { message: '发起方已撤回' },
+      decidedBy: this.#agentName(agentId),
+      decidedAt: this.#now(),
+    })
+    this.#runtime.publishExtensionRequestChange?.()
+    return this.#runtime.repository.getExtensionRequest(number) ?? record
+  }
+
+  /** Marks older pending requests for the same thing as superseded by `by`; returns their numbers. */
+  #supersede(action: ExtensionAction, by: number, now: number): number[] {
+    const key = objectKey(action)
+    if (key === undefined) return []
+    const superseded: number[] = []
+    for (const request of this.#runtime.repository.listExtensionRequests({ status: 'pending' })) {
+      if (request.number === by) continue
+      const older = StoredPayloadSchema.safeParse(request.payload).data?.action
+      if (older === undefined || objectKey(older) !== key || !covers(action, older)) continue
+      if (
+        this.#runtime.repository.updateExtensionRequest({
+          number: request.number,
+          from: 'pending',
+          status: 'superseded',
+          result: { message: `已被请求 #${by} 取代` },
+          decidedAt: now,
+        })
+      ) {
+        superseded.push(request.number)
+      }
+    }
+    return superseded
+  }
+
   expire(): void {
     if (this.#runtime.repository.expireExtensionRequests(this.#now()) > 0)
       this.#runtime.publishExtensionRequestChange?.()
@@ -452,6 +519,10 @@ export class ExtensionRequestService {
     const record = this.#runtime.repository.getExtensionRequest(number)
     if (!record) throw new Error(`没有编号为 #${number} 的扩展请求。`)
     if (record.status === 'expired') throw new Error(`请求 #${number} 已过期，请让智能体重新发起。`)
+    if (record.status === 'superseded' || record.status === 'withdrawn') {
+      const message = RequestResultSchema.safeParse(record.result).data?.message
+      throw new Error(`请求 #${number} ${message ?? (record.status === 'withdrawn' ? '已撤回' : '已被新请求取代')}。`)
+    }
     if (record.status !== 'pending') throw new Error(`请求 #${number} 已经被处理。`)
     return record
   }

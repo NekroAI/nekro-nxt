@@ -1743,7 +1743,7 @@ export const ExtensionRequestSchema = z
     channelId: ChannelIdSchema.nullable(),
     extensionId: ExtensionIdSchema.nullable(),
     summary: z.string(),
-    status: z.enum(['pending', 'approved', 'rejected', 'expired', 'completed', 'failed']),
+    status: z.enum(['pending', 'approved', 'rejected', 'expired', 'completed', 'failed', 'superseded', 'withdrawn']),
     autonomous: z.boolean(),
     resultMessage: z.string().nullable(),
     decidedBy: z.string().nullable(),
