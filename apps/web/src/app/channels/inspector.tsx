@@ -285,6 +285,7 @@ export function ChannelInspector({
           ) : null}
           {agent && binding ? (
             <ResponseTimingRows
+              key={channel.id}
               triggerPolicy={binding.triggerPolicy}
               settings={binding.responseTiming}
               onChange={(responseTiming) => void updateBinding({ responseTiming })}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   RESPONSE_TIMING_LIMITS,
   resolveResponseTiming,
@@ -70,10 +70,25 @@ export function ResponseTimingRows({
   readonly settings: ResponseTimingSettings
   readonly onChange: (next: ResponseTimingSettings) => void
 }) {
+  // Edits build on the last value sent, not on the props: a second edit made before the saved binding comes back
+  // would otherwise start from the old settings and undo the first. The props take over once they match.
+  const [local, setLocal] = useState(settings)
+  const sent = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    const incoming = JSON.stringify(settings)
+    if (sent.current !== undefined && incoming !== sent.current) return
+    sent.current = undefined
+    setLocal(settings)
+  }, [settings])
+  const save = (next: ResponseTimingSettings) => {
+    setLocal(next)
+    sent.current = JSON.stringify(next)
+    onChange(next)
+  }
   if (triggerPolicy === 'command' || triggerPolicy === 'observe-only') return null
-  const resolved = resolveResponseTiming(settings)
+  const resolved = resolveResponseTiming(local)
   const set = <K extends keyof ResolvedResponseTiming>(key: K, value: ResolvedResponseTiming[K]) =>
-    onChange({ ...settings, [key]: value })
+    save({ ...local, [key]: value })
   const number = (key: NumericKey, label: string, unit = '秒') => (
     <NumberSetting label={label} value={resolved[key]} field={key} unit={unit} onSave={(value) => set(key, value)} />
   )
@@ -145,9 +160,9 @@ export function ResponseTimingRows({
           </PropertyRow>
         </>
       ) : null}
-      {Object.keys(settings).length > 0 ? (
+      {Object.keys(local).length > 0 ? (
         <PropertyRow label="响应时机" description="已单独调整过">
-          <Button size="small" onClick={() => onChange({})}>
+          <Button size="small" onClick={() => save({})}>
             恢复默认
           </Button>
         </PropertyRow>
