@@ -1404,6 +1404,93 @@ describe('ChannelRuntime M1 lane', () => {
     expect(starts).toEqual([])
   })
 
+  it('drops a feedback start that definitely failed and reports it until the next success', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const calls: string[] = []
+      let failNext = true
+      const context = await setup(true, undefined, undefined, {
+        startProcessingFeedback: ({ platformMessageId }) => {
+          calls.push(`start:${platformMessageId}`)
+          if (!failNext) return Promise.resolve({ status: 'succeeded' })
+          failNext = false
+          return Promise.resolve({ status: 'failed', message: '消息不存在' })
+        },
+        finishProcessingFeedback: ({ platformMessageId }) => {
+          calls.push(`finish:${platformMessageId}`)
+          return Promise.resolve({ status: 'succeeded' })
+        },
+      })
+      const statusChanges: ConnectionId[] = []
+      context.runtime.subscribeProcessingFeedbackStatus((connectionId) => statusChanges.push(connectionId))
+      await context.runtime.acceptChannelInbound({
+        ...inbound(context.connection.id, context.channel.id, 'feedback-failed'),
+        platformMessageId: 'platform-failed',
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      // Nothing was put on the message, so nothing is taken off it.
+      expect(calls).toEqual(['start:platform-failed'])
+      expect(context.runtime.processingFeedbackStatus(context.connection.id)).toEqual({
+        state: 'degraded',
+        reason: '最近一次没挂上：消息不存在',
+      })
+      expect(warn.mock.calls.flat().join('\n')).toContain('消息不存在')
+
+      await context.runtime.acceptChannelInbound({
+        ...inbound(context.connection.id, context.channel.id, 'feedback-recovered', 103),
+        platformMessageId: 'platform-recovered',
+      })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(calls.slice(1)).toEqual(['start:platform-recovered', 'finish:platform-recovered'])
+      expect(context.runtime.processingFeedbackStatus(context.connection.id)).toBeUndefined()
+      expect(statusChanges).toEqual([context.connection.id, context.connection.id])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('gives up on one stuck reaction without switching feedback off for the connection', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const starts: string[] = []
+      const context = await setup(true, undefined, undefined, {
+        startProcessingFeedback: ({ platformMessageId }) => {
+          starts.push(platformMessageId)
+          return Promise.resolve({ status: 'succeeded' })
+        },
+        finishProcessingFeedback: ({ platformMessageId }) =>
+          platformMessageId === 'platform-stuck'
+            ? Promise.resolve({ status: 'failed', message: '协议端超时' })
+            : Promise.resolve({ status: 'succeeded' }),
+      })
+      context.adapterStateRows.set('host/processing-feedback-leases', [
+        {
+          id: 'feedback:stuck',
+          connectionId: context.connection.id,
+          channelId: context.channel.id,
+          episodeId: EpisodeIdSchema.parse('eps_STUCK'),
+          platformMessageId: 'platform-stuck',
+          state: 'cleanup-pending',
+          attempts: 6,
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      ])
+      await context.runtime.recoverProcessingFeedback()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(context.adapterStateRows.has('host/processing-feedback-leases')).toBe(false)
+      expect(context.runtime.processingFeedbackStatus(context.connection.id)).toMatchObject({ state: 'degraded' })
+
+      await context.runtime.acceptChannelInbound({
+        ...inbound(context.connection.id, context.channel.id, 'feedback-after-stuck'),
+        platformMessageId: 'platform-after-stuck',
+      })
+      expect(starts).toEqual(['platform-after-stuck'])
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('persists failed feedback starts and stops retrying after the durable attempt budget', async () => {
     const context = await setup(true, undefined, undefined, {
       startProcessingFeedback: () => Promise.reject(new Error('start failed')),
@@ -3407,10 +3494,11 @@ describe('ChannelRuntime response timing (Decision 2026-10-31)', () => {
   const harness = async (
     triggerPolicy: 'always' | 'mentioned-or-replied' | 'smart',
     responseTiming: Record<string, number | boolean> = {},
+    feedback?: AdapterConnectionInteractions,
   ) => {
     let setNow: (value: number) => void = () => undefined
     const timers = manualTimers(1_000, (value) => setNow(value))
-    const context = await setup(true, false, undefined, undefined, { timers: timers.port })
+    const context = await setup(true, false, undefined, feedback, { timers: timers.port })
     setNow = context.setNow
     context.setNow(1_000)
     context.core.reportConnectionAccount({ connectionId: context.connection.id, platformUserId: 'bot', observedAt: 1 })
@@ -3439,6 +3527,7 @@ describe('ChannelRuntime response timing (Decision 2026-10-31)', () => {
       sequence += 1
       await context.runtime.acceptChannelInbound({
         ...inbound(context.connection.id, context.channel.id, `timing-${sequence}`, 1_000 + sequence),
+        platformMessageId: `timing-message-${sequence}`,
         parts: [{ type: 'text', text }],
         senderMemberId: alice.id === sender.id ? alice.id : bob.id,
         ...(options.mention === true ? { facts: { mentionedBot: true } } : {}),
@@ -3478,6 +3567,36 @@ describe('ChannelRuntime response timing (Decision 2026-10-31)', () => {
     expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 15 })).toMatchObject({ accepted: false })
     await h.say(h.alice, '@荧 在吗', { mention: true })
     expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 15 })).toMatchObject({ accepted: true })
+  })
+
+  it('puts the processing reaction for a finished wait on what the awaited speaker said last', async () => {
+    const calls: string[] = []
+    const h = await harness(
+      'mentioned-or-replied',
+      {},
+      {
+        startProcessingFeedback: ({ platformMessageId }) => {
+          calls.push(`start:${platformMessageId}`)
+          return Promise.resolve({ status: 'succeeded' })
+        },
+        finishProcessingFeedback: ({ platformMessageId }) => {
+          calls.push(`finish:${platformMessageId}`)
+          return Promise.resolve({ status: 'succeeded' })
+        },
+      },
+    )
+    await h.say(h.alice, '荧，我想问一下', { mention: true })
+    h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 15 })
+    await h.timers.advance(5_000)
+    await h.say(h.alice, '就是那个配置')
+    await h.timers.advance(15_000)
+    expect(h.admissionCalls).toHaveLength(2)
+    expect(calls).toEqual([
+      'start:timing-message-1',
+      'finish:timing-message-1',
+      'start:timing-message-2',
+      'finish:timing-message-2',
+    ])
   })
 
   it('waits for whoever woke the agent, not for a remark that joined the running turn', async () => {

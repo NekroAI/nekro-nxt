@@ -1,4 +1,4 @@
-import type { AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
+import type { AdapterCapabilityState, AdapterRuntimeStateStore } from '@nekro-nxt/adapter-sdk'
 import type { ChannelId, ConnectionId, EpisodeId } from '@nekro-nxt/contracts'
 import {
   ChannelIdSchema,
@@ -60,6 +60,9 @@ const parseFeedbackLease = (candidate: unknown): ProcessingFeedbackLease | undef
     updatedAt: row['updatedAt'],
   }
 }
+type FeedbackStatus =
+  { readonly kind: 'unsupported'; readonly message: string } | { readonly kind: 'failed'; readonly message: string }
+
 export class ProcessingFeedback {
   #stopping = false
   readonly #retryTimers = new Map<ReturnType<typeof setTimeout>, () => void>()
@@ -89,6 +92,20 @@ export class ProcessingFeedback {
     'idle' | 'error' | 'cancelled' | 'timeout' | 'shutdown' | 'recovery'
   >()
   readonly #feedbackPersistence = new Map<ConnectionId, Promise<void>>()
+  // The latest problem per connection, cleared by the next success; shown next to the channel's feedback switch.
+  readonly #feedbackStatus = new Map<ConnectionId, FeedbackStatus>()
+  readonly #statusListeners = new Set<(connectionId: ConnectionId) => void>()
+  status(connectionId: ConnectionId): AdapterCapabilityState | undefined {
+    const status = this.#feedbackStatus.get(connectionId)
+    if (status === undefined) return undefined
+    return status.kind === 'unsupported'
+      ? { state: 'unsupported', reason: `协议端不支持处理中回应，重启后再试：${status.message}` }
+      : { state: 'degraded', reason: `最近一次没挂上：${status.message}` }
+  }
+  subscribeStatus(listener: (connectionId: ConnectionId) => void): () => void {
+    this.#statusListeners.add(listener)
+    return () => this.#statusListeners.delete(listener)
+  }
   markEndReason(episodeId: EpisodeId, reason: 'cancelled' | 'timeout'): void {
     this.#feedbackEndReasons.set(episodeId, reason)
   }
@@ -166,7 +183,8 @@ export class ProcessingFeedback {
     if (!adapter?.interactions?.startProcessingFeedback) return undefined
     const now = this.#timestamp()
     const lease: ProcessingFeedbackLease = {
-      id: `feedback:${episode.id}:${event.id}`,
+      // A finished wait can react to a message an earlier cycle already used, so the time keeps leases apart.
+      id: `feedback:${episode.id}:${event.id}:${now}`,
       connectionId: channel.connectionId,
       channelId: channel.id,
       episodeId: episode.id,
@@ -192,18 +210,26 @@ export class ProcessingFeedback {
           message: error instanceof Error ? error.message : String(error),
         }))
       if (outcome.status === 'unsupported') {
-        this.#feedbackDisabledConnections.add(channel.connectionId)
+        this.#disable(channel.connectionId, outcome.message)
         this.#feedbackLeases.delete(lease.id)
         if (this.#feedbackCycles.get(episode.id) === cycle) this.#feedbackCycles.delete(episode.id)
         await this.#persistFeedbackLeases(channel.connectionId)
         return undefined
       }
-      this.#feedbackLeases.set(lease.id, {
-        ...lease,
-        state: outcome.status === 'succeeded' ? 'active' : 'cleanup-pending',
-        updatedAt: this.#timestamp(),
-      })
+      if (outcome.status === 'succeeded') {
+        this.#recordStatus(channel.connectionId, undefined)
+        this.#feedbackLeases.set(lease.id, { ...lease, state: 'active', updatedAt: this.#timestamp() })
+      } else {
+        console.warn(
+          `[nekro-nxt] 连接 ${channel.connectionId} 没能给消息 ${event.platformMessageId} 挂处理中回应：${outcome.message}`,
+        )
+        this.#recordStatus(channel.connectionId, { kind: 'failed', message: outcome.message })
+        // A definite failure left nothing on the message; only an unknown outcome may still need removing.
+        if (outcome.status === 'failed') this.#feedbackLeases.delete(lease.id)
+        else this.#feedbackLeases.set(lease.id, { ...lease, state: 'cleanup-pending', updatedAt: this.#timestamp() })
+      }
       await this.#persistFeedbackLeases(channel.connectionId)
+      // The cycle stays claimed either way, so one message is never retried within the same turn.
       return lease.id
     } catch (error) {
       if (this.#feedbackCycles.get(episode.id) === cycle) this.#feedbackCycles.delete(episode.id)
@@ -261,7 +287,7 @@ export class ProcessingFeedback {
         message: error instanceof Error ? error.message : String(error),
       }))
     if (outcome.status === 'succeeded' || outcome.status === 'unsupported') {
-      if (outcome.status === 'unsupported') this.#feedbackDisabledConnections.add(lease.connectionId)
+      if (outcome.status === 'unsupported') this.#disable(lease.connectionId, outcome.message)
       this.#feedbackLeases.delete(lease.id)
       await this.#persistFeedbackLeases(lease.connectionId)
       return
@@ -277,7 +303,13 @@ export class ProcessingFeedback {
     if (this.#stopping) return
     const delay = FEEDBACK_RETRY_DELAYS_MS[attempts - 1]
     if (delay === undefined) {
-      this.#feedbackDisabledConnections.add(lease.connectionId)
+      // Give up on this one message only; a stuck reaction must not switch feedback off for the whole connection.
+      console.warn(
+        `[nekro-nxt] 连接 ${lease.connectionId} 重试 ${attempts} 次仍没能撤下消息 ${lease.platformMessageId} 的处理中回应：${outcome.message}`,
+      )
+      this.#recordStatus(lease.connectionId, { kind: 'failed', message: `撤下回应失败：${outcome.message}` })
+      this.#feedbackLeases.delete(lease.id)
+      await this.#persistFeedbackLeases(lease.connectionId)
       return
     }
     this.#trackFeedbackTask(
@@ -310,6 +342,21 @@ export class ProcessingFeedback {
     } finally {
       if (this.#feedbackPersistence.get(connectionId) === next) this.#feedbackPersistence.delete(connectionId)
     }
+  }
+
+  #disable(connectionId: ConnectionId, message: string): void {
+    this.#feedbackDisabledConnections.add(connectionId)
+    console.warn(`[nekro-nxt] 连接 ${connectionId} 的协议端不支持处理中回应，重启前不再尝试：${message}`)
+    this.#recordStatus(connectionId, { kind: 'unsupported', message })
+  }
+
+  #recordStatus(connectionId: ConnectionId, status: FeedbackStatus | undefined): void {
+    const previous = this.#feedbackStatus.get(connectionId)
+    if (previous?.kind === 'unsupported') return
+    if (previous?.kind === status?.kind && previous?.message === status?.message) return
+    if (status === undefined) this.#feedbackStatus.delete(connectionId)
+    else this.#feedbackStatus.set(connectionId, status)
+    for (const listener of this.#statusListeners) listener(connectionId)
   }
 
   #trackFeedbackTask(task: Promise<void>): void {

@@ -1,4 +1,5 @@
 import type {
+  AdapterCapabilityState,
   AdapterChannelInboundEvent,
   AdapterConnectionRuntime,
   AdapterDeliveryReceipt,
@@ -585,6 +586,8 @@ interface AdmissionWake {
   readonly replyRequired?: boolean
   readonly fromWait?: boolean
   readonly note?: string
+  /** The message that carries the processing reaction when the waking event is not one, such as a finished wait. */
+  readonly feedbackEvent?: ChannelEventRecord
 }
 
 export type WaitForMoreResult =
@@ -978,7 +981,20 @@ export class ChannelRuntime {
     })
     if (!commit.inserted) return
     this.#publishFact({ channelId, kind: 'inbound', sourceId: commit.event.id })
-    await this.#admit(binding, commit.event, undefined, { replyRequired: true, fromWait: true })
+    // The wait's own fact is no platform message, so the reaction goes on what the member said last.
+    const feedbackEvent = this.#coreRepository
+      .listChannelEvents(channelId, { limit: 50 })
+      .findLast(
+        (candidate) =>
+          candidate.kind === 'message-created' &&
+          candidate.senderMemberId === memberId &&
+          candidate.platformMessageId !== undefined,
+      )
+    await this.#admit(binding, commit.event, undefined, {
+      replyRequired: true,
+      fromWait: true,
+      ...(feedbackEvent === undefined ? {} : { feedbackEvent }),
+    })
   }
 
   async #decideInboundHooks(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
@@ -1161,6 +1177,15 @@ export class ChannelRuntime {
 
   async stopProcessingFeedback(): Promise<void> {
     await this.#feedback.stopProcessingFeedback()
+  }
+
+  /** The host's own view of processing feedback on a Connection: undefined while nothing has gone wrong. */
+  processingFeedbackStatus(connectionId: ConnectionId): AdapterCapabilityState | undefined {
+    return this.#feedback.status(connectionId)
+  }
+
+  subscribeProcessingFeedbackStatus(listener: (connectionId: ConnectionId) => void): () => void {
+    return this.#feedback.subscribeStatus(listener)
   }
 
   /** Waits for all current Session work on the supplied Connections to reach an idle checkpoint. */
@@ -1947,7 +1972,7 @@ export class ChannelRuntime {
     )
     // Hidden facts still advance the Admission cursor with visible ones, but never form an Admission on their own.
     if (this.#visibleEvents(binding, candidateEvents).length === 0) return
-    const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, event)
+    const feedbackLeaseId = await this.#feedback.startProcessingFeedback(binding, episode, wake.feedbackEvent ?? event)
     if (!this.#admissionAllowed(binding.agentId)) {
       if (feedbackLeaseId !== undefined) await this.#feedback.cleanupEpisodeFeedback(episode.id, 'cancelled')
       return

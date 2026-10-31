@@ -119,6 +119,7 @@ export class ConnectionApplicationService {
       credentialConfigured: true,
       proactiveSend: true,
     })
+    ports.channels.subscribeProcessingFeedbackStatus(() => this.#notifyConnectionChanges())
   }
   localChannel(id: ConnectionId) {
     return this.#adapterRuntimes.get(id)?.localChannel
@@ -814,7 +815,12 @@ export class ConnectionApplicationService {
     }
   }
   connectionCapabilities(connectionId: ConnectionId) {
-    return this.#adapterRuntimes.get(connectionId)?.capabilities
+    const capabilities = this.#adapterRuntimes.get(connectionId)?.capabilities
+    // A failure the host saw outranks the adapter's static claim until the next success clears it.
+    const feedback = this.ports.channels.processingFeedbackStatus(connectionId)
+    return capabilities?.processingFeedback === undefined || feedback === undefined
+      ? capabilities
+      : { ...capabilities, processingFeedback: feedback }
   }
   #recordConnectionTest(connectionId: ConnectionId, direction: 'send' | 'receive', result: ConnectionTestResult): void {
     this.#connectionTests.set(connectionId, { ...this.#connectionTests.get(connectionId), [direction]: result })

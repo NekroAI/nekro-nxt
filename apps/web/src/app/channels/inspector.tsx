@@ -127,11 +127,11 @@ export function ChannelInspector({
     )
   })
   const feedbackCapability = connection?.processingFeedbackCapability
+  // An unsupported endpoint keeps the row so its reason stays visible; the setting applies again after a restart.
   const showFeedback =
     channel.kind !== 'internal' &&
     descriptor?.features.processingFeedback?.channelKinds.includes(channel.kind) === true &&
-    feedbackCapability?.state !== 'disabled' &&
-    feedbackCapability?.state !== 'unsupported'
+    feedbackCapability?.state !== 'disabled'
   const overrides = binding ? Object.keys(binding.activityTriggerOverrides).length : 0
   const localAgentNames = channel.localAgentIds.flatMap((agentId) => {
     const name = agents.find((candidate) => candidate.id === agentId)?.name

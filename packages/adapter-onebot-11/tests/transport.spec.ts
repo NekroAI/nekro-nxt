@@ -172,6 +172,31 @@ describe('OneBot forward WebSocket transport', () => {
     await client.stop()
   })
 
+  it('keeps an optional action available when the Endpoint only says its target is missing', async () => {
+    const endpoint = await serve((socket) => {
+      socket.on('message', (raw) => {
+        const request = decodeRequest(raw)
+        const action = request['action']
+        const response =
+          action === 'get_login_info'
+            ? { status: 'ok', retcode: 0, data: { user_id: '90003' }, echo: request['echo'] }
+            : action === 'get_version_info'
+              ? { status: 'ok', retcode: 0, data: {}, echo: request['echo'] }
+              : { status: 'failed', retcode: 1200, message: '消息不存在', data: null, echo: request['echo'] }
+        socket.send(JSON.stringify(response))
+      })
+    })
+    const fake = createFakeContext()
+    const client = new OneBotWebSocketClient({ context: fake.context, endpoint, onEvent: () => Promise.resolve() })
+    await client.start()
+    await waitFor(() => client.connected)
+    await expect(client.callOptional('set_msg_emoji_like', {})).rejects.toMatchObject({
+      kind: 'permanent',
+    } satisfies Partial<OneBotActionError>)
+    expect(client.optionalCapability('set_msg_emoji_like')).not.toBe('unsupported')
+    await client.stop()
+  })
+
   it('rejects an Endpoint that changes the locked self account', async () => {
     const endpoint = await serve((socket) => {
       socket.on('message', (raw) => {

@@ -69,10 +69,9 @@ const responseFailure = (input: OneBotObject, action: string, secret?: string): 
     .filter((value): value is string => typeof value === 'string')
     .join(' ')
   const normalized = wording.toLowerCase()
+  // Only wording about the action itself counts; "消息不存在" is about the target and must stay a plain failure.
   const unsupported =
-    retcode === 1404 ||
-    retcode === 404 ||
-    /unsupported|not support|unknown action|不支持|未实现|不存在/u.test(normalized)
+    retcode === 1404 || retcode === 404 || /unsupported|not support|unknown action|不支持|未实现/u.test(normalized)
   const kind: OneBotActionError['kind'] = unsupported
     ? 'unsupported'
     : retcode === 1401 || /token|auth|unauthor/u.test(normalized)
