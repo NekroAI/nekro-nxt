@@ -190,6 +190,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
+      # Preview must not ship an extension capability level the community cannot validate yet (docs/09 §5).
+      - name: Require the extension capability level on npm
+        run: node scripts/check-published-extension-sdk.mjs
       - name: Compare against last successful Preview
         id: changes
         env:
