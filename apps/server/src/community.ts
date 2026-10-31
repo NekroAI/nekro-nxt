@@ -124,6 +124,25 @@ export class CommunityError extends Error {
   }
 }
 
+/**
+ * A community that runs older shared packages than this NekroNXT rejects new capability levels with the shared
+ * "please upgrade NekroNXT" text. When the community is the one behind, say so: neither the extension nor this
+ * NekroNXT needs to change.
+ */
+export const explainCommunityLevelRejection = (error: unknown): unknown => {
+  if (!(error instanceof CommunityError)) return error
+  const match = /扩展能力等级\s*(\d+)[，,]\s*当前为\s*(\d+)/u.exec(error.message)
+  if (!match) return error
+  const needed = Number(match[1])
+  const supported = Number(match[2])
+  if (supported >= EXTENSION_SDK_LEVEL || needed > EXTENSION_SDK_LEVEL) return error
+  return new CommunityError(
+    error.status,
+    `社区还不支持这个扩展用到的能力（需要能力等级 ${needed}，社区目前支持到 ${supported}）。等社区更新后再发布，扩展和 NekroNXT 都不用改。`,
+    error.code,
+  )
+}
+
 const base64Url = (bytes: Buffer): string => bytes.toString('base64url')
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
@@ -744,7 +763,11 @@ export class CommunityService {
           .passthrough(),
         findings: z.array(z.object({ severity: z.string(), title: z.string() }).passthrough()),
       })
-      .parse(await this.#api('/api/v1/releases', { method: 'POST', body: form }, true))
+      .parse(
+        await this.#api('/api/v1/releases', { method: 'POST', body: form }, true).catch((error: unknown) => {
+          throw explainCommunityLevelRejection(error)
+        }),
+      )
     this.#reads.clear()
     return {
       releaseId: body.release.id,

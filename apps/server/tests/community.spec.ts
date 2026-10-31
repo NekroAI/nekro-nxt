@@ -10,6 +10,7 @@ import {
   CommunityError,
   CommunityService,
   DEFAULT_COMMUNITY_URL,
+  explainCommunityLevelRejection,
   normalizeCommunityUrl,
   normalizeReturnOrigin,
 } from '../src/community.js'
@@ -661,5 +662,33 @@ describe('CommunityService catalog cache', () => {
     await expectFetched(6)
     await service.logout()
     await expectFetched(7)
+  })
+})
+
+describe('community capability-level rejections', () => {
+  const rejection = (needed: number, supported: number) =>
+    new CommunityError(
+      422,
+      `这个扩展需要更新版本的 NekroNXT（扩展能力等级 ${needed}，当前为 ${supported}）。请先升级 NekroNXT。`,
+      'package-invalid',
+    )
+
+  it('says the community is behind when it supports less than this NekroNXT', () => {
+    const explained = explainCommunityLevelRejection(rejection(EXTENSION_SDK_LEVEL, EXTENSION_SDK_LEVEL - 1))
+    expect(explained).toBeInstanceOf(CommunityError)
+    expect(explained).toMatchObject({
+      status: 422,
+      code: 'package-invalid',
+      message: `社区还不支持这个扩展用到的能力（需要能力等级 ${EXTENSION_SDK_LEVEL}，社区目前支持到 ${EXTENSION_SDK_LEVEL - 1}）。等社区更新后再发布，扩展和 NekroNXT 都不用改。`,
+    })
+  })
+
+  it('keeps the upgrade advice when this NekroNXT is the one behind and leaves other errors alone', () => {
+    const ahead = rejection(EXTENSION_SDK_LEVEL + 1, EXTENSION_SDK_LEVEL + 1)
+    expect(explainCommunityLevelRejection(ahead)).toBe(ahead)
+    const unrelated = new CommunityError(400, '标签太多。')
+    expect(explainCommunityLevelRejection(unrelated)).toBe(unrelated)
+    const plain = new Error('扩展能力等级 12，当前为 11')
+    expect(explainCommunityLevelRejection(plain)).toBe(plain)
   })
 })
