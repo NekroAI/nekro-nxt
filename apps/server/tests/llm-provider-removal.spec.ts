@@ -416,6 +416,18 @@ describe('LLM provider removal', () => {
     await expect(runtime.host.removeLlmProvider('deepseek', before.expectedRevision)).resolves.toBeDefined()
   })
 
+  it('reports a shared-settings change between the check and the write as the same removal conflict', async () => {
+    await save('deepseek')
+    const before = await preview('deepseek')
+    const conflict = Object.assign(new Error('settings namespace "llm-pi-ai" changed since it was read'), {
+      code: 'SETTINGS_CONFLICT',
+    })
+    vi.spyOn(settingsService, 'mutate').mockRejectedValueOnce(conflict)
+    await expect(runtime.host.removeLlmProvider('deepseek', before.expectedRevision)).rejects.toThrow(
+      '供应商配置已变化，请重新检查影响后确认。',
+    )
+  })
+
   it('reports a committed deletion with a failed result read as unknown, not rejected', async () => {
     await save('deepseek')
     const before = await preview('deepseek')

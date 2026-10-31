@@ -659,11 +659,20 @@ export class HostModelSettings {
         if (impact.expectedRevision !== expectedRevision || impact.blockedReason) {
           throw new LlmProviderRemovalConflict(impact.blockedReason || '供应商配置已变化，请重新检查影响后确认。')
         }
-        await this.#context.settings.mutate(
-          'llm-pi-ai',
-          [{ op: 'unset', path: ['providers', provider] }],
-          expectedRevision,
-        )
+        try {
+          await this.#context.settings.mutate(
+            'llm-pi-ai',
+            [{ op: 'unset', path: ['providers', provider] }],
+            expectedRevision,
+          )
+        } catch (error) {
+          // Another provider's change between the check and this write moves the shared namespace on; the person
+          // sees the same conflict as a changed provider instead of DSH's own wording.
+          if (error instanceof Error && 'code' in error && error.code === 'SETTINGS_CONFLICT') {
+            throw new LlmProviderRemovalConflict('供应商配置已变化，请重新检查影响后确认。')
+          }
+          throw error
+        }
         try {
           this.#testResults?.forget(provider)
         } catch {
