@@ -12,6 +12,7 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { startCommandPlatform } from '../../server/tests/fixtures/command-platform.js'
+import { saveProvider } from './fixtures/provider-settings.js'
 
 test('production command journey: authorization, completion, denial, delivery failure and extension removal', async ({
   browser,
@@ -62,16 +63,12 @@ test('production command journey: authorization, completion, denial, delivery fa
       data: { parts: [{ type: 'text', text: '/off' }] },
     })
     expect(missingRequestId.status()).toBe(400)
-    const settings = HostApiContracts.llmProviders.parseResponse(await (await request.get('/api/llm/providers')).json())
-    const modelResponse = await request.post('/api/llm/providers/command-fixture', {
-      data: {
-        expectedRevision: settings.providers.find((p) => p.provider === 'command-fixture')?.settingsRevision ?? 0,
-        displayName: '命令测试模型',
-        baseURL: 'https://command-model.example.test/v1',
-        api: 'openai-completions',
-        apiKey: 'synthetic-command-fixture-key',
-        models: [{ id: 'command-model', name: '命令测试模型' }],
-      },
+    const modelResponse = await saveProvider(request, 'command-fixture', {
+      displayName: '命令测试模型',
+      baseURL: 'https://command-model.example.test/v1',
+      api: 'openai-completions',
+      apiKey: 'synthetic-command-fixture-key',
+      models: [{ id: 'command-model', name: '命令测试模型' }],
     })
     expect(modelResponse.ok(), await modelResponse.text()).toBe(true)
     const agentResponse = await request.post('/api/agents', {

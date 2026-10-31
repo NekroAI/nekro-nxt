@@ -1,5 +1,6 @@
-import { expect, test, type APIRequestContext } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Locator } from '@playwright/test'
 import { HostApiContracts } from '@nekro-nxt/contracts'
+import { saveProvider as saveProviderSettings } from './fixtures/provider-settings.js'
 
 const settings = async (request: APIRequestContext) => {
   const response = await request.get('/api/llm/providers')
@@ -34,22 +35,46 @@ const removeReferenceFixtureAgents = async (request: APIRequestContext): Promise
 }
 
 const saveProvider = async (request: APIRequestContext, provider: string, custom: boolean) => {
-  const before = await settings(request)
-  const response = await request.post(`/api/llm/providers/${provider}`, {
-    data: {
-      expectedRevision: before.providers.find((entry) => entry.settingsNs === 'llm-pi-ai')!.settingsRevision,
-      apiKey: 'synthetic-journey-key',
-      ...(custom
-        ? {
-            displayName: customProviderLabels[provider],
-            baseURL: 'https://gateway.example.test/v1',
-            api: 'openai-completions',
-            models: [{ id: 'synthetic-chat' }],
-          }
-        : {}),
-    },
+  const response = await saveProviderSettings(request, provider, {
+    apiKey: 'synthetic-journey-key',
+    ...(custom
+      ? {
+          displayName: customProviderLabels[provider],
+          baseURL: 'https://gateway.example.test/v1',
+          api: 'openai-completions',
+          models: [{ id: 'synthetic-chat' }],
+        }
+      : {}),
   })
   expect(response.ok(), await response.text()).toBe(true)
+}
+
+/**
+ * Confirms a removal. Other journeys share this Host's provider settings and may change them between the preview and
+ * the click; the dialog then asks for a fresh preview, which is what a person would do too.
+ */
+const confirmRemoval = async (dialog: Locator, label: string): Promise<number> => {
+  const conflict = dialog.getByRole('alert').filter({ hasText: '供应商配置已变化' })
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await dialog.getByRole('button', { name: label }).click()
+    const outcome = async () =>
+      !(await dialog.isVisible()) ? 'closed' : (await conflict.isVisible()) ? 'conflict' : 'pending'
+    await expect.poll(outcome).not.toBe('pending')
+    if ((await outcome()) === 'closed') return attempt
+    await dialog.getByRole('button', { name: '重新检查影响' }).click()
+    await expect(dialog.getByRole('button', { name: label })).toBeEnabled()
+  }
+  throw new Error('供应商配置连续三次在确认前被改动。')
+}
+
+/** Drops one browser network-error line per conflict the dialog reported and recovered from. */
+const withoutRecoveredConflicts = (failures: readonly string[], conflicts: number): string[] => {
+  let left = conflicts
+  return failures.filter((failure) => {
+    if (left === 0 || !failure.includes('status of 409')) return true
+    left -= 1
+    return false
+  })
 }
 
 for (const theme of ['light', 'dark'] as const) {
@@ -81,14 +106,14 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(dialog).toBeHidden()
     expect((await settings(request)).providers.some((entry) => entry.provider === provider)).toBe(true)
     await page.getByRole('button', { name: '删除供应商', exact: true }).click()
-    await dialog.getByRole('button', { name: '确认删除供应商' }).click()
+    const conflicts = await confirmRemoval(dialog, '确认删除供应商')
     await expect(dialog).toBeHidden()
     await expect(page.getByRole('row', { name: providerName })).toHaveCount(0)
     expect((await settings(request)).providers.some((entry) => entry.provider === provider)).toBe(false)
     await page.reload()
     await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
     await expect(page.getByRole('row', { name: providerName })).toHaveCount(0)
-    expect(failures).toEqual([])
+    expect(withoutRecoveredConflicts(failures, conflicts)).toEqual([])
   })
 }
 
@@ -132,20 +157,14 @@ test('built-in removal blocks references, requires a fresh preview after conflic
     expect(removedAgent.ok(), await removedAgent.text()).toBe(true)
     await dialog.getByRole('button', { name: '重新检查影响' }).click()
     await expect(dialog.getByRole('button', { name: '确认移除配置' })).toBeEnabled()
-    const current = await settings(request)
-    const changed = await request.post('/api/llm/providers/deepseek', {
-      data: {
-        expectedRevision: current.providers.find((entry) => entry.provider === 'deepseek')!.settingsRevision,
-        baseURL: 'https://changed.example.test/v1',
-      },
-    })
+    const changed = await saveProviderSettings(request, 'deepseek', { baseURL: 'https://changed.example.test/v1' })
     expect(changed.ok()).toBe(true)
     await dialog.getByRole('button', { name: '确认移除配置' }).click()
     await expect(dialog.getByRole('alert')).toContainText('供应商配置已变化')
     await expect(dialog.getByRole('button', { name: '确认移除配置' })).toBeDisabled()
     await dialog.getByRole('button', { name: '重新检查影响' }).click()
     await expect(dialog.getByRole('button', { name: '确认移除配置' })).toBeEnabled()
-    await dialog.getByRole('button', { name: '确认移除配置' }).click()
+    await confirmRemoval(dialog, '确认移除配置')
     await expect(dialog).toBeHidden()
     await expect(providerButton).toHaveCount(0)
     expect((await settings(request)).providers.find((entry) => entry.provider === 'deepseek')).toMatchObject({

@@ -1,6 +1,7 @@
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { expect, test } from '@playwright/test'
 import { createOneBotProtocolFixture } from '../../../packages/adapter-onebot-11/tests/protocol-fixture.js'
+import { removeProvider, saveProvider } from './fixtures/provider-settings.js'
 
 test('platform updates preserve local names and rebinding preserves the processing feedback choice', async ({
   page,
@@ -50,22 +51,12 @@ test('platform updates preserve local names and rebinding preserves the processi
     protocol.emit(group, '平台再次更新')
     await expect(page.getByRole('button', { name: '修改频道名称' })).toContainText('平台再次更新')
     // A configured synthetic catalog is enough for binding; observe-only never calls the fake model endpoint.
-    const providers = HostApiContracts.llmProviders.parseResponse(
-      await (await request.get('/api/llm/providers')).json(),
-    )
-    // Providers share one settings namespace; an unrelated first entry may carry another namespace's revision.
-    const provider =
-      providers.providers.find((item) => item.provider === 'synthetic-fixture') ??
-      providers.providers.find((item) => item.settingsNs === 'llm-pi-ai')
-    const saved = await request.post('/api/llm/providers/synthetic-fixture', {
-      data: {
-        expectedRevision: provider?.settingsRevision ?? 0,
-        apiKey: 'synthetic-fixture-key',
-        displayName: '虚构模型供应商',
-        baseURL: 'https://models.example.test/v1',
-        api: 'openai-completions',
-        models: [{ id: 'unavailable-test-model', name: '虚构模型', contextWindow: 64_000, maxTokens: 8000 }],
-      },
+    const saved = await saveProvider(request, 'synthetic-fixture', {
+      apiKey: 'synthetic-fixture-key',
+      displayName: '虚构模型供应商',
+      baseURL: 'https://models.example.test/v1',
+      api: 'openai-completions',
+      models: [{ id: 'unavailable-test-model', name: '虚构模型', contextWindow: 64_000, maxTokens: 8000 }],
     })
     expect(saved.ok()).toBe(true)
     providerConfigured = true
@@ -143,16 +134,7 @@ test('platform updates preserve local names and rebinding preserves the processi
         (await request.delete(`/api/connections/${createdConnectionId}`, { data: { deleteChannelData: true } })).ok(),
       ).toBe(true)
     if (providerConfigured) {
-      const impact = HostApiContracts.llmProviderRemovalImpact.parseResponse(
-        await (await request.get('/api/llm/providers/synthetic-fixture/removal-impact')).json(),
-      )
-      expect(
-        (
-          await request.delete('/api/llm/providers/synthetic-fixture', {
-            data: { expectedRevision: impact.expectedRevision },
-          })
-        ).ok(),
-      ).toBe(true)
+      expect((await removeProvider(request, 'synthetic-fixture')).ok()).toBe(true)
     }
     await protocol.stop()
   }

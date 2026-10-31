@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { answering } from './fixtures/route.js'
+import { providerRevision, removeProvider, retryOnSettingsConflict } from './fixtures/provider-settings.js'
 
 test('an unconfigured ChatGPT account reports discovery failure rather than offering the installed directory', async ({
   page,
@@ -18,9 +19,11 @@ test('an unconfigured ChatGPT account reports discovery failure rather than offe
   const initial = HostApiContracts.llmProviders.parseResponse(await (await request.get('/api/llm/providers')).json())
   const openai = initial.providers.find((provider) => provider.provider === 'openai')!
   expect(openai.configured).toBe(false)
-  const switched = await request.post('/api/llm/subscriptions/openai', {
-    data: { action: 'use-subscription', expectedRevision: openai.settingsRevision },
-  })
+  const switched = await retryOnSettingsConflict(async () =>
+    request.post('/api/llm/subscriptions/openai', {
+      data: { action: 'use-subscription', expectedRevision: await providerRevision(request, 'openai') },
+    }),
+  )
   expect(switched.ok(), await switched.text()).toBe(true)
   try {
     await page.goto('/settings/models?provider=openai')
@@ -37,12 +40,7 @@ test('an unconfigured ChatGPT account reports discovery failure rather than offe
     await page.screenshot({ path: '.local/model-discovery-no-account.png', animations: 'disabled' })
     expect(failures).toEqual([])
   } finally {
-    const impact = HostApiContracts.llmProviderRemovalImpact.parseResponse(
-      await (await request.get('/api/llm/providers/openai/removal-impact')).json(),
-    )
-    const removed = await request.delete('/api/llm/providers/openai', {
-      data: { expectedRevision: impact.expectedRevision },
-    })
+    const removed = await removeProvider(request, 'openai')
     expect(removed.ok(), await removed.text()).toBe(true)
   }
 })

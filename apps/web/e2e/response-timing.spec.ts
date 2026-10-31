@@ -1,6 +1,7 @@
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { expect, test } from '@playwright/test'
 import { createOneBotProtocolFixture } from '../../../packages/adapter-onebot-11/tests/protocol-fixture.js'
+import { removeProvider, saveProvider } from './fixtures/provider-settings.js'
 
 test('smart response settings save per channel and agent aliases save with the persona', async ({
   page,
@@ -31,22 +32,12 @@ test('smart response settings save per channel and agent aliases save with the p
       .poll(async () => (await snapshot()).channels.some((channel) => channel.connectionId === connectionId))
       .toBe(true)
     const channel = (await snapshot()).channels.find((candidate) => candidate.connectionId === connectionId)!
-    const providers = HostApiContracts.llmProviders.parseResponse(
-      await (await request.get('/api/llm/providers')).json(),
-    )
-    // Providers share one settings namespace; an unrelated first entry may carry another namespace's revision.
-    const provider =
-      providers.providers.find((item) => item.provider === 'synthetic-fixture') ??
-      providers.providers.find((item) => item.settingsNs === 'llm-pi-ai')
-    const saved = await request.post('/api/llm/providers/synthetic-fixture', {
-      data: {
-        expectedRevision: provider?.settingsRevision ?? 0,
-        apiKey: 'synthetic-fixture-key',
-        displayName: '虚构模型供应商',
-        baseURL: 'https://models.example.test/v1',
-        api: 'openai-completions',
-        models: [{ id: 'unavailable-test-model', name: '虚构模型', contextWindow: 64_000, maxTokens: 8000 }],
-      },
+    const saved = await saveProvider(request, 'synthetic-fixture', {
+      apiKey: 'synthetic-fixture-key',
+      displayName: '虚构模型供应商',
+      baseURL: 'https://models.example.test/v1',
+      api: 'openai-completions',
+      models: [{ id: 'unavailable-test-model', name: '虚构模型', contextWindow: 64_000, maxTokens: 8000 }],
     })
     expect(saved.ok(), await saved.text()).toBe(true)
     providerConfigured = true
@@ -131,16 +122,7 @@ test('smart response settings save per channel and agent aliases save with the p
         (await request.delete(`/api/connections/${createdConnectionId}`, { data: { deleteChannelData: true } })).ok(),
       ).toBe(true)
     if (providerConfigured) {
-      const impact = HostApiContracts.llmProviderRemovalImpact.parseResponse(
-        await (await request.get('/api/llm/providers/synthetic-fixture/removal-impact')).json(),
-      )
-      expect(
-        (
-          await request.delete('/api/llm/providers/synthetic-fixture', {
-            data: { expectedRevision: impact.expectedRevision },
-          })
-        ).ok(),
-      ).toBe(true)
+      expect((await removeProvider(request, 'synthetic-fixture')).ok()).toBe(true)
     }
     await protocol.stop()
   }
