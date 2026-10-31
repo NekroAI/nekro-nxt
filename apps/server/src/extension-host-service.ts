@@ -417,6 +417,22 @@ const channelOf = (binding: NxtServiceBinding) => {
   return parsed.data
 }
 
+/** SDK level that introduced `assets.read` and `http.fetch` forms. */
+const NXT_ASSETS_READ_SDK_LEVEL = 14
+
+const requireSdk = (binding: NxtServiceBinding, level: number, what: string): void => {
+  if (binding.mode !== 'dynamic' && (binding.sdk ?? 7) < level) {
+    throw new NxtCapabilityError(`${what}的扩展需要声明 requires.sdk 为 ${level} 或更高。`)
+  }
+}
+
+const requireRead = (binding: NxtServiceBinding): void => {
+  requireSdk(binding, NXT_ASSETS_READ_SDK_LEVEL, '读取附件内容')
+  if (requireCapability(binding, 'assets', 'assets（读取附件内容）').read === undefined) {
+    throw new NxtCapabilityError(`读取图片和文件的内容需要在 ${layerField(binding)}.assets 中声明 read: true。`)
+  }
+}
+
 const requireWrite = (binding: NxtServiceBinding): void => {
   if (requireCapability(binding, 'assets', 'assets（生成频道文件）').write === undefined) {
     throw new NxtCapabilityError(`在当前频道生成文件需要在 ${layerField(binding)}.assets 中声明 write: true。`)
@@ -602,9 +618,27 @@ export const createNxtHostService = (
 
   const placeholders = credentialPlaceholders(binding, backends)
   // Async so a missing declaration rejects like every other `nxt` call instead of throwing synchronously.
+  const readAsset = (assetId: string) => {
+    requireRead(binding)
+    return backends.library.read(binding.ownerKey, channelOf(binding), assetId)
+  }
   const fetchWithPolicy = async (url: string, init?: NxtFetchInit): Promise<NxtFetchResponse> => {
     const policy = egressPolicy(binding)
-    return backends.fetch(policy, url, init, await placeholders.secretsFor(url, init))
+    let request = init
+    if (init?.form !== undefined) {
+      requireSdk(binding, NXT_ASSETS_READ_SDK_LEVEL, '用 form 上传文件')
+      // Files named by attachment are read here, under the extension's own read permission.
+      const files = await Promise.all(
+        (init.form.files ?? []).map(async (file) => ({
+          name: file.name,
+          ...(file.filename === undefined ? {} : { filename: file.filename }),
+          ...(file.contentType === undefined ? {} : { contentType: file.contentType }),
+          base64: file.assetId === undefined ? file.base64 : (await readAsset(file.assetId)).base64,
+        })),
+      )
+      request = { ...init, form: { ...(init.form.fields === undefined ? {} : { fields: init.form.fields }), files } }
+    }
+    return backends.fetch(policy, url, request, await placeholders.secretsFor(url, init))
   }
 
   const renderApi = async (): Promise<NxtPromptRenderApi> => ({
@@ -694,6 +728,7 @@ export const createNxtHostService = (
           libraryQuota(binding)
           return backends.library.attach(binding.ownerKey, channelOf(binding), assetId)
         }),
+      read: (assetId) => settle(() => readAsset(assetId)),
       async fromUrl(url, options) {
         requireWrite(binding)
         const response = await fetchWithPolicy(url)

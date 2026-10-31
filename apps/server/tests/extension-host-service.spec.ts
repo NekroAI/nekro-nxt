@@ -131,6 +131,7 @@ const fixture = (
   }
   return {
     nxt: createNxtHostService(binding, backends, prompt),
+    library: backends.library,
     fetch,
     complete,
     createAsset,
@@ -209,6 +210,34 @@ describe('nxt Host service', () => {
       'chn_FIXTURE',
       { text: 'ok', mediaType: 'text/plain', name: 'image.png' },
     ])
+  })
+
+  it('reads attachment contents with assets.read and fills form files named by attachment', async () => {
+    const declared: Parameters<typeof fixture>[0] = {
+      assets: { read: true },
+      network: { mode: 'domains', domains: ['api.example.com'] },
+    }
+    const content = { base64: 'AAEC', mediaType: 'audio/amr', byteSize: 3 }
+    const { nxt, library, fetch } = fixture(declared, {}, { sdk: 14 })
+    const read = vi.spyOn(library, 'read').mockResolvedValue(content)
+    await expect(nxt.assets.read('ast_VOICE')).resolves.toEqual(content)
+    expect(read).toHaveBeenCalledWith('ext_FIXTURE', 'chn_FIXTURE', 'ast_VOICE')
+    await nxt.http.fetch('https://api.example.com/asr', {
+      method: 'POST',
+      form: { fields: { language: 'zh' }, files: [{ name: 'file', filename: 'voice.amr', assetId: 'ast_VOICE' }] },
+    })
+    expect(fetch.mock.calls[0]?.[2]).toEqual({
+      method: 'POST',
+      form: { fields: { language: 'zh' }, files: [{ name: 'file', filename: 'voice.amr', base64: 'AAEC' }] },
+    })
+
+    const undeclared = fixture({ assets: { write: true } }, {}, { sdk: 14 })
+    await expect(undeclared.nxt.assets.read('ast_VOICE')).rejects.toThrow('read: true')
+    const older = fixture(declared, {}, { sdk: 13 })
+    await expect(older.nxt.assets.read('ast_VOICE')).rejects.toThrow('requires.sdk 为 14')
+    await expect(
+      older.nxt.http.fetch('https://api.example.com/asr', { form: { fields: { language: 'zh' } } }),
+    ).rejects.toThrow('requires.sdk 为 14')
   })
 
   it('labels static sections and renders dynamic context once per turn within its budget', async () => {

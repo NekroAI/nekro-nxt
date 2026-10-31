@@ -4,6 +4,7 @@ import {
   HostLayerCapabilitiesSchema,
   hostLayerAsCapabilities,
   EXTENSION_SDK_BASE_LEVEL,
+  EXTENSION_ASSETS_READ_SDK_LEVEL,
   EXTENSION_OUTBOUND_SDK_LEVEL,
 } from './extension-capabilities.js'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageInstanceIdSchema } from './domain.js'
@@ -555,6 +556,8 @@ export const requiredExtensionSdkLevel = (
     permissions?.host?.index === undefined && permissions?.agent?.index === undefined ? undefined : '检索索引',
     permissions?.host?.models === undefined ? undefined : '本机层模型调用',
   ].filter((name): name is string => name !== undefined)
+  if (permissions?.agent?.assets?.read !== undefined)
+    return { level: EXTENSION_ASSETS_READ_SDK_LEVEL, capabilities: ['读取附件内容'] }
   if (permissions?.agent?.outbound !== undefined)
     return { level: EXTENSION_OUTBOUND_SDK_LEVEL, capabilities: ['出站处理'] }
   return level8.length > 0

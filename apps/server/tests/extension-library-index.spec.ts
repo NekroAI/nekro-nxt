@@ -178,6 +178,20 @@ describe('extension asset library', () => {
     await expect(fromB.assets.attach(asset.id)).rejects.toThrow('不在这个扩展的资源库里')
   })
 
+  it('reads the contents of files the channel can see or the library holds, and nothing else', async () => {
+    const { backends, binding, roomA, roomB, inChannel } = await setup()
+    const bytes = Buffer.from('虚构的语音内容')
+    const asset = await inChannel(bytes, roomA.id)
+    const reader = (channelId: typeof roomA.id) =>
+      createNxtHostService({ ...binding(channelId, { assets: { read: true } }), sdk: 14 }, backends)
+    expect(await reader(roomA.id).assets.read(asset.id)).toEqual({
+      base64: bytes.toString('base64'),
+      mediaType: asset.mediaType,
+      byteSize: bytes.byteLength,
+    })
+    await expect(reader(roomB.id).assets.read(asset.id)).rejects.toThrow('不在当前频道或扩展资源库里')
+  })
+
   it('stores created pictures straight into the library and enforces the quota', async () => {
     const { repository, backends, binding, roomA } = await setup()
     const small = createNxtHostService(

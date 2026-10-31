@@ -12,6 +12,7 @@ import {
   EXTENSION_OUTBOUND_SDK_LEVEL,
   outboundProcessesBeforeSend,
   requiredExtensionSdkLevel,
+  EXTENSION_ASSETS_READ_SDK_LEVEL,
 } from '../src/index.js'
 
 const caps = (value: unknown): ExtensionCapabilities => ExtensionCapabilitiesSchema.parse(value)
@@ -323,7 +324,7 @@ describe('asset library, search index and host model capabilities', () => {
   it('accepts library and index declarations and keeps write separate from the library', () => {
     const declared = caps({ assets: { library: { quotaBytes: 64 * 1024 * 1024 } }, index: { collections: [stickers] } })
     expect(declared.index?.collections[0]?.fields[1]).toEqual({ name: 'caption', weight: 1 })
-    expect(() => caps({ assets: {} })).toThrow('assets 至少声明 write 或 library')
+    expect(() => caps({ assets: {} })).toThrow('assets 至少声明 write、read 或 library')
     expect(() =>
       caps({ index: { collections: [{ name: 'stickers', fields: [{ name: 'scope' }], filters: ['scope'] }] } }),
     ).toThrow('不能重名')
@@ -465,5 +466,22 @@ describe('outbound processing capability', () => {
       }),
     ).toEqual({ level: EXTENSION_OUTBOUND_SDK_LEVEL, capabilities: ['出站处理'] })
     expect(EXTENSION_OUTBOUND_SDK_LEVEL).toBe(13)
+  })
+})
+
+describe('reading attachment contents', () => {
+  it('needs SDK level 14 and asks for approval again when a new version starts reading', () => {
+    expect(
+      requiredExtensionSdkLevel({
+        permissions: [],
+        networkOrigins: [],
+        agent: caps({ assets: { read: true }, outbound: { read: true, timeoutMs: 1000 } }),
+      }),
+    ).toEqual({ level: EXTENSION_ASSETS_READ_SDK_LEVEL, capabilities: ['读取附件内容'] })
+    expect(EXTENSION_ASSETS_READ_SDK_LEVEL).toBe(14)
+    expect(
+      extensionCapabilitiesExpand(caps({ assets: { write: true } }), caps({ assets: { write: true, read: true } })),
+    ).toBe(true)
+    expect(extensionCapabilitiesExpand(caps({ assets: { read: true } }), caps({ assets: { read: true } }))).toBe(false)
   })
 })

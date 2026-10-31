@@ -170,6 +170,9 @@ const capabilityItems = (declaredCapabilities: Json, layer: PermissionLayer): Pe
   if (assets !== undefined) {
     // Wording matches what NekroNXT shows when approving the same capability.
     if (assets['write'] === true) items.push({ key: 'assets', level: 'normal', label: '生成图片与文件' })
+    if (assets['read'] === true) {
+      items.push({ key: 'assets.read', level: 'elevated', label: '读取频道里的图片和文件内容' })
+    }
     if (asObject(assets['library']) !== undefined) {
       items.push({
         key: 'assets.library',

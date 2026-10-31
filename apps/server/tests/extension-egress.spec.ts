@@ -175,6 +175,45 @@ describe('extension egress', () => {
     expect(Buffer.from(response.base64 ?? '', 'base64')).toEqual(bytes)
   })
 
+  it('assembles form uploads the way a standard multipart parser reads them', async () => {
+    const egress = egressFor({ mode: 'unrestricted' })
+    const audio = Buffer.from([0, 1, 2, 255, 13, 10, 45, 45])
+    await egress.fetch(`http://api.example.com:${port}/echo`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      form: {
+        fields: { model: '虚构识别模型', language: 'zh' },
+        files: [{ name: 'file', filename: '语音 "1".amr', contentType: 'audio/amr', base64: audio.toString('base64') }],
+      },
+    })
+    const sent = received.at(-1)!
+    expect(sent.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/u)
+    const form = await new Request('http://parse.example', {
+      method: 'POST',
+      headers: { 'content-type': String(sent.headers['content-type']) },
+      body: new Uint8Array(sent.body),
+    }).formData()
+    expect(form.get('model')).toBe('虚构识别模型')
+    expect(form.get('language')).toBe('zh')
+    const file = form.get('file')
+    if (!(file instanceof File)) throw new Error('The form has no file part.')
+    expect(file.type).toBe('audio/amr')
+    expect(Buffer.from(await file.arrayBuffer())).toEqual(audio)
+
+    expect(
+      (await failure(egress.fetch(`http://api.example.com:${port}/echo`, { body: 'a', form: { fields: {} } }))).code,
+    ).toBe('invalid-request')
+    expect(
+      (
+        await failure(
+          egress.fetch(`http://api.example.com:${port}/echo`, {
+            form: { files: [{ name: 'file', assetId: 'ast_x' }] },
+          }),
+        )
+      ).message,
+    ).toContain('不能用 assetId')
+  })
+
   it('enforces response size and timeout limits', async () => {
     const egress = egressFor({ mode: 'unrestricted' })
     expect((await failure(egress.fetch(`http://api.example.com:${port}/large`))).code).toBe('response-too-large')

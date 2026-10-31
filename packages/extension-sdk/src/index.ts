@@ -116,11 +116,37 @@ export interface ExtensionHostContext {
 }
 
 /** Request accepted by `ctx.nxt.http.fetch`; `body` and `bodyBase64` are mutually exclusive. */
+/** One file of a form upload: its bytes as base64, or an `assetId` the host reads (needs `assets.read`). */
+export type NxtFetchFormFile = {
+  /** The form field name, e.g. `file`. */
+  readonly name: string
+  readonly filename?: string
+  readonly contentType?: string
+} & ({ readonly base64: string; readonly assetId?: never } | { readonly assetId: string; readonly base64?: never })
+
+/**
+ * A `multipart/form-data` body the host assembles (SDK 14): text fields and files. Use it instead of `body` for APIs
+ * that take uploads, such as speech-to-text; the host sets the content type with its boundary.
+ */
+export interface NxtFetchForm {
+  readonly fields?: Readonly<Record<string, string>>
+  readonly files?: readonly NxtFetchFormFile[]
+}
+
 export interface NxtFetchInit {
   readonly method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'
   readonly headers?: Readonly<Record<string, string>>
+  /** At most one of `body`, `bodyBase64` and `form`. */
   readonly body?: string
   readonly bodyBase64?: string
+  readonly form?: NxtFetchForm
+}
+
+/** The contents of a picture or file, read with `assets.read`. */
+export interface NxtAssetContent {
+  readonly base64: string
+  readonly mediaType: string
+  readonly byteSize: number
 }
 
 export interface NxtFetchResponse {
@@ -583,6 +609,11 @@ export interface NxtHostService {
     release(assetId: string): Promise<boolean>
     /** Makes a library Asset usable in the current channel and returns the `assetId` to send. */
     attach(assetId: string): Promise<NxtAssetRecord>
+    /**
+     * Requires `assets.read` (SDK 14). The contents of a picture or file the current channel can see or the library
+     * holds, as base64, up to 32 MiB. Hand them to `http.fetch` (`bodyBase64`, or a `form` file) or back to `create`.
+     */
+    read(assetId: string): Promise<NxtAssetContent>
   }
   readonly image: {
     /** Size, frames and difference hash of a picture the current channel can see or the library holds. */

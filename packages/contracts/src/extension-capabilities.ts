@@ -8,8 +8,12 @@ import { z } from 'zod'
  * migration hook and administrator-only commands. Level 11 lists the pictures of an inbound message to inbound hooks.
  * Level 12 adds credential placeholders (`secrets.placeholder`) that `http.fetch` fills for the credential's domains.
  * Level 13 adds outbound processing (`harness.onOutbound`, `permissions.agent.outbound`).
+ * Level 14 adds reading attachment contents (`assets.read`) and form uploads through `http.fetch` (`form`).
  */
-export const EXTENSION_SDK_LEVEL = 13
+export const EXTENSION_SDK_LEVEL = 14
+
+/** Reading attachment contents and `http.fetch` form uploads need this level. */
+export const EXTENSION_ASSETS_READ_SDK_LEVEL = 14
 
 /** Outbound processing needs this level; packages that declare `permissions.agent.outbound` declare it. */
 export const EXTENSION_OUTBOUND_SDK_LEVEL = 13
@@ -30,6 +34,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 11, version: '0.6.0' },
   { level: 12, version: '0.7.0' },
   { level: 13, version: '0.7.0' },
+  { level: 14, version: '0.8.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
@@ -230,10 +235,15 @@ export type ExtensionAssetLibraryCapability = z.output<typeof ExtensionAssetLibr
 export const ExtensionAssetsCapabilitySchema = z
   .object({
     write: z.literal(true).optional(),
+    /** Reads the contents of pictures and files the current channel can see or the library holds (`assets.read`). */
+    read: z.literal(true).optional(),
     library: ExtensionAssetLibraryCapabilitySchema.optional(),
   })
   .strict()
-  .refine((value) => value.write !== undefined || value.library !== undefined, 'assets 至少声明 write 或 library。')
+  .refine(
+    (value) => value.write !== undefined || value.read !== undefined || value.library !== undefined,
+    'assets 至少声明 write、read 或 library。',
+  )
 export type ExtensionAssetsCapability = z.output<typeof ExtensionAssetsCapabilitySchema>
 
 const IndexNameSchema = z
@@ -498,6 +508,7 @@ export const extensionCapabilitiesExpand = (
   if (networkExpands(previous?.network, next.network)) return true
   if (next.storage?.scopes.some((scope) => !(previous?.storage?.scopes ?? []).includes(scope))) return true
   if (next.assets?.write !== undefined && previous?.assets?.write === undefined) return true
+  if (next.assets?.read !== undefined && previous?.assets?.read === undefined) return true
   if (next.assets?.library !== undefined && previous?.assets?.library === undefined) return true
   if (
     next.models !== undefined &&

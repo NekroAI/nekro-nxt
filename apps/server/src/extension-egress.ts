@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
@@ -24,11 +25,70 @@ export interface ExtensionEgressOptions {
   readonly isPrivateAddress?: (address: string) => boolean
 }
 
+/**
+ * A form upload. Files named by `assetId` are read by the agent-layer service before they get here; anywhere else
+ * (the host layer has no channel to read attachments from) a file has to bring its bytes.
+ */
+export interface ExtensionFetchForm {
+  readonly fields?: Readonly<Record<string, string>>
+  readonly files?: readonly {
+    readonly name: string
+    readonly filename?: string
+    readonly contentType?: string
+    readonly base64?: string
+    readonly assetId?: string
+  }[]
+}
+
 export interface ExtensionFetchInit {
   readonly method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD'
   readonly headers?: Readonly<Record<string, string>>
   readonly body?: string
   readonly bodyBase64?: string
+  readonly form?: ExtensionFetchForm
+}
+
+/** Form uploads carry attachments; the cap keeps one request from holding unbounded memory. */
+const MAX_FORM_BYTES = 40 * 1024 * 1024
+const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/u
+
+/** A quoted multipart header parameter: quotes and line breaks would end the header early. */
+const formParameter = (value: string): string => value.replaceAll(/["\r\n]/gu, (char) => encodeURIComponent(char))
+
+/** Assembles a `multipart/form-data` body: text fields first, then files, under a random boundary. */
+export const multipartBody = (form: ExtensionFetchForm): { readonly body: Buffer; readonly contentType: string } => {
+  const boundary = `----NekroNXTForm${randomUUID().replaceAll('-', '')}`
+  const parts: Buffer[] = []
+  for (const [name, value] of Object.entries(form.fields ?? {})) {
+    parts.push(
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${formParameter(name)}"\r\n\r\n${value}\r\n`),
+    )
+  }
+  for (const file of form.files ?? []) {
+    if (file.base64 === undefined) {
+      throw new ExtensionEgressError(
+        'invalid-request',
+        `表单文件 ${file.name} 需要 base64 内容，这里不能用 assetId 指定。`,
+      )
+    }
+    if (!BASE64_PATTERN.test(file.base64)) {
+      throw new ExtensionEgressError('invalid-request', `表单文件 ${file.name} 的 base64 编码无效。`)
+    }
+    const filename = file.filename === undefined ? '' : `; filename="${formParameter(file.filename)}"`
+    parts.push(
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${formParameter(file.name)}"${filename}\r\nContent-Type: ${file.contentType ?? 'application/octet-stream'}\r\n\r\n`,
+      ),
+      Buffer.from(file.base64, 'base64'),
+      Buffer.from('\r\n'),
+    )
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`))
+  const body = Buffer.concat(parts)
+  if (body.byteLength > MAX_FORM_BYTES) {
+    throw new ExtensionEgressError('invalid-request', `表单内容超过 ${MAX_FORM_BYTES / 1024 / 1024} MB。`)
+  }
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` }
 }
 
 /**
@@ -328,10 +388,14 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
 
       let body: Buffer | undefined
       let bodyTemplate: string | undefined
-      if (init?.body !== undefined && init?.bodyBase64 !== undefined) {
-        throw new ExtensionEgressError('invalid-request', `body 和 bodyBase64 不能同时指定。`)
+      if ([init?.body, init?.bodyBase64, init?.form].filter((value) => value !== undefined).length > 1) {
+        throw new ExtensionEgressError('invalid-request', `body、bodyBase64 和 form 只能指定一个。`)
       }
-      if (init?.body !== undefined) {
+      if (init?.form !== undefined) {
+        const form = multipartBody(init.form)
+        body = form.body
+        headerTemplates.set('content-type', form.contentType)
+      } else if (init?.body !== undefined) {
         bodyTemplate = init.body
       } else if (init?.bodyBase64 !== undefined) {
         if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(init.bodyBase64)) {

@@ -4,6 +4,10 @@ import type { NxtAssetRecord, NxtImageInfo, NxtLibraryAsset } from '@nekro-nxt/e
 import { ExtensionLibraryQuotaError, type ExtensionLibraryRepository } from '@nekro-nxt/storage-sqlite'
 import { inspectImage } from './extension-image-info.js'
 import { NxtCapabilityError } from './extension-host-service.js'
+import { readFile } from 'node:fs/promises'
+
+/** `assets.read` hands the whole file to the extension; larger attachments stay out of its memory. */
+export const ASSET_READ_LIMIT_BYTES = 32 * 1024 * 1024
 
 /** Where library rows live: the database for installed extensions, memory for dynamic runs and verification. */
 export interface LibraryRegistry {
@@ -166,6 +170,22 @@ export class ExtensionLibrary {
       (channelId !== undefined && this.#assets.canAccessAsset(asset.id, channelId))
     if (!visible) throw new NxtCapabilityError(`资源 ${assetId} 不在当前频道或扩展资源库里。`)
     return asset
+  }
+
+  /** The contents of an Asset the extension may read, as base64; larger ones than the read limit are refused. */
+  async read(
+    owner: string,
+    channelId: ChannelId | undefined,
+    assetId: string,
+  ): Promise<{ readonly base64: string; readonly mediaType: string; readonly byteSize: number }> {
+    const asset = this.readable(owner, channelId, assetId)
+    if (asset.byteSize > ASSET_READ_LIMIT_BYTES) {
+      throw new NxtCapabilityError(
+        `资源 ${assetId} 有 ${(asset.byteSize / 1024 / 1024).toFixed(1)} MB，超过读取上限 ${ASSET_READ_LIMIT_BYTES / 1024 / 1024} MB。`,
+      )
+    }
+    const bytes = await readFile(this.#assetService.blobPath(asset))
+    return { base64: bytes.toString('base64'), mediaType: asset.mediaType, byteSize: asset.byteSize }
   }
 
   imageInfo(owner: string, channelId: ChannelId | undefined, assetId: string): Promise<NxtImageInfo> {
