@@ -98,7 +98,13 @@ export function ChannelInspector({
   }, [channel.id, boundAgentId, runtime?.turns.at(-1)?.endedAt])
   const allTasks = useProductStore((state) => state.scheduledTasks)
   const tasks = sortTasks(
-    allTasks.filter((task) => task.channelId === channel.id && task.agentId === agent?.id && task.state !== 'finished'),
+    allTasks.filter(
+      (task) =>
+        task.channelId === channel.id &&
+        task.agentId === agent?.id &&
+        task.state !== 'finished' &&
+        task.state !== 'inactive',
+    ),
   )
   const taskActions = useScheduledTaskActions()
   const binding = channel.bindings[0]

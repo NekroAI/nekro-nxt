@@ -34,6 +34,8 @@ declare const styles: {
   readonly sectionLink: string
   readonly sectionNav: string
   readonly srOnly: string
+  readonly taskGroup: string
+  readonly taskGroupHead: string
   readonly usageBar: string
 }
 

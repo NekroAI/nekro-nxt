@@ -319,3 +319,43 @@
     padding: 0 var(--s-2);
   }
 }
+
+/* —— 定时任务分组 —— */
+.taskGroup {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.taskGroup + .taskGroup {
+  margin-top: var(--s-3);
+}
+
+.taskGroupHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-2);
+  justify-self: start;
+  max-width: 100%;
+  padding: var(--s-1) var(--s-2);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskGroupHead:hover {
+  background: var(--hover);
+}
+
+.taskGroupHead svg {
+  flex: none;
+  color: var(--muted);
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.taskGroupHead svg[data-open='true'] {
+  transform: rotate(90deg);
+}

@@ -69,9 +69,6 @@ export const stateLabel: Record<ScheduledTaskView['state'], string> = {
   inactive: '扩展已停用',
 }
 
-export const sourceLabel = (task: ScheduledTaskView): string =>
-  task.source === 'chat' ? '对话创建' : `${task.extensionName ?? '扩展'}${task.source === 'declared' ? '固定计划' : ''}`
-
 /** What an administrator may do from the client; mirrors the server's source rules (Decision 定时任务 §2). */
 export const allowedActions = (task: ScheduledTaskView): readonly ScheduledTaskAction[] => {
   if (task.state === 'finished') return task.source === 'declared' ? [] : ['delete']
@@ -88,3 +85,35 @@ export const sortTasks = (tasks: readonly ScheduledTaskView[]): ScheduledTaskVie
       (left.nextRunAt ?? Number.MAX_SAFE_INTEGER) - (right.nextRunAt ?? Number.MAX_SAFE_INTEGER) ||
       left.createdAt - right.createdAt,
   )
+
+/** Tasks of an extension that is disabled or uninstalled stay saved but out of the list until it is enabled again. */
+export const shownTasks = (tasks: readonly ScheduledTaskView[]): ScheduledTaskView[] =>
+  tasks.filter((task) => task.state !== 'inactive')
+
+export interface TaskGroup {
+  readonly key: string
+  readonly label: string
+  /** Set for tasks an extension created; it decides when they exist. */
+  readonly extensionName?: string
+  readonly tasks: readonly ScheduledTaskView[]
+}
+
+/** Tasks by where they came from: ones made in chat first, then each extension's, every group in run order. */
+export const groupTasksBySource = (tasks: readonly ScheduledTaskView[]): TaskGroup[] => {
+  const groups = new Map<string, { label: string; extensionName?: string; tasks: ScheduledTaskView[] }>()
+  for (const task of sortTasks(tasks)) {
+    const key = task.source === 'chat' ? 'chat' : `extension:${task.extensionId ?? ''}`
+    const name = task.extensionName ?? '扩展'
+    const group =
+      groups.get(key) ??
+      (task.source === 'chat' ? { label: '对话创建', tasks: [] } : { label: name, extensionName: name, tasks: [] })
+    group.tasks.push(task)
+    groups.set(key, group)
+  }
+  return [...groups.entries()]
+    .map(([key, group]) => ({ key, ...group }))
+    .sort(
+      (left, right) =>
+        Number(left.key !== 'chat') - Number(right.key !== 'chat') || left.label.localeCompare(right.label, 'zh-CN'),
+    )
+}

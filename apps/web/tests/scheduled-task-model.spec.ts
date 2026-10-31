@@ -1,9 +1,11 @@
-import { AgentIdSchema, ChannelIdSchema } from '@nekro-nxt/contracts'
+import { AgentIdSchema, ChannelIdSchema, ExtensionIdSchema } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   allowedActions,
   describeCron,
   formatWhen,
+  groupTasksBySource,
+  shownTasks,
   type ScheduledTaskView,
 } from '../src/app/agents/scheduled-task-model.js'
 
@@ -43,5 +45,46 @@ describe('scheduled task wording', () => {
     expect(allowedActions(task({ source: 'declared', state: 'paused' }))).toEqual(['resume', 'run'])
     expect(allowedActions(task({ source: 'runtime', state: 'inactive' }))).toEqual(['pause', 'delete'])
     expect(allowedActions(task({ state: 'finished' }))).toEqual(['delete'])
+  })
+
+  it('hides tasks of disabled extensions and groups the rest by where they came from', () => {
+    const tasks = [
+      task({
+        id: 'job_weather',
+        source: 'declared',
+        extensionId: ExtensionIdSchema.parse('ext_weather'),
+        extensionName: '天气',
+        nextRunAt: 30,
+      }),
+      task({ id: 'job_chat_late', nextRunAt: 20 }),
+      task({ id: 'job_chat_soon', nextRunAt: 10 }),
+      task({
+        id: 'job_album',
+        source: 'runtime',
+        extensionId: ExtensionIdSchema.parse('ext_album'),
+        extensionName: '相册',
+        nextRunAt: 5,
+      }),
+      task({
+        id: 'job_off',
+        source: 'declared',
+        extensionId: ExtensionIdSchema.parse('ext_off'),
+        extensionName: '已停用',
+        state: 'inactive',
+      }),
+    ]
+    const shown = shownTasks(tasks)
+    expect(shown.map(({ id }) => id)).not.toContain('job_off')
+    expect(
+      groupTasksBySource(shown).map((group) => ({
+        label: group.label,
+        extension: group.extensionName !== undefined,
+        ids: group.tasks.map(({ id }) => id),
+      })),
+    ).toEqual([
+      { label: '对话创建', extension: false, ids: ['job_chat_soon', 'job_chat_late'] },
+      { label: '天气', extension: true, ids: ['job_weather'] },
+      { label: '相册', extension: true, ids: ['job_album'] },
+    ])
   })
 })

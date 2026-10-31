@@ -2247,12 +2247,13 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         const section = page.locator('#profile-schedules')
         await section.scrollIntoViewIfNeeded()
-        const table = section.getByRole('table', { name: '资料员的定时任务' })
-        await playwrightExpect(table).toContainText('工作日早报')
-        await playwrightExpect(table).toContainText('工作日 08:00')
-        await playwrightExpect(table).toContainText('文档复核固定计划')
-        await playwrightExpect(table).toContainText('已暂停')
-        await playwrightExpect(table).toContainText('已触发')
+        // Tasks are grouped by where they came from: ones made in chat, then each extension's.
+        const chat = section.getByRole('table', { name: '对话创建的定时任务' })
+        await playwrightExpect(chat).toContainText('工作日早报')
+        await playwrightExpect(chat).toContainText('工作日 08:00')
+        await playwrightExpect(chat).toContainText('已触发')
+        await playwrightExpect(section.getByRole('button', { name: /^文档复核/u })).toContainText('只能暂停')
+        await playwrightExpect(section.getByRole('table', { name: '文档复核的定时任务' })).toContainText('已暂停')
         // Row actions sit in each task's menu. Declared plans cannot be deleted; finished tasks can only be cleared.
         const menuOf = async (label: string) => {
           await playwrightExpect(page.getByRole('menu')).toHaveCount(0)

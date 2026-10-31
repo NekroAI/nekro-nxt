@@ -1,12 +1,14 @@
-import { MoreHorizontal, Pause, Play, Trash2, Zap } from 'lucide-react'
+import { ChevronRight, MoreHorizontal, Pause, Play, Trash2, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { useProductStore, type AgentSummary } from '../../product-runtime.js'
 import {
   Chip,
   ConfirmDialog,
   DataTable,
+  Disclosure,
   IconButton,
   Menu,
+  Pressable,
   PropertyGroup,
   toast,
   type Tone,
@@ -16,8 +18,8 @@ import {
   allowedActions,
   describeSchedule,
   formatWhen,
-  sortTasks,
-  sourceLabel,
+  groupTasksBySource,
+  shownTasks,
   stateLabel,
   type ScheduledTaskAction,
   type ScheduledTaskView,
@@ -128,66 +130,105 @@ export const nextRunText = (task: ScheduledTaskView): string =>
       ? `${formatWhen(task.lastFiredAt)} 已触发`
       : stateLabel[task.state]
 
-/** Every scheduled task of the agent across its channels; created and changed by talking to the agent. */
+/**
+ * Every scheduled task of the agent across its channels, grouped by where it came from. Tasks of a disabled or
+ * uninstalled extension stay saved but out of the list; enabling the extension again brings them back as they were.
+ */
 export function ScheduledTasksSection({ agent }: { readonly agent: AgentSummary }) {
   const allTasks = useProductStore((state) => state.scheduledTasks)
   const channels = useProductStore((state) => state.channels)
-  const tasks = sortTasks(allTasks.filter((task) => task.agentId === agent.id))
+  const own = allTasks.filter((task) => task.agentId === agent.id)
+  const groups = groupTasksBySource(shownTasks(own))
+  const hidden = own.length - shownTasks(own).length
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
   const { act, dialog } = useScheduledTaskActions()
   const channelName = (channelId: string) =>
     channels.find((channel) => channel.id === channelId)?.name ?? '已移除的频道'
+  const toggle = (key: string) =>
+    setCollapsed((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  const table = (label: string, tasks: readonly ScheduledTaskView[]) => (
+    <DataTable
+      label={label}
+      rows={tasks}
+      rowKey={(task) => task.id}
+      empty="还没有定时任务。在频道里请它设置提醒或定时任务。"
+      columns={[
+        {
+          key: 'label',
+          header: '任务',
+          width: 'minmax(180px, 2fr)',
+          render: (task) => (
+            <span className={styles.cellStack}>
+              <span className={styles.cellTitle}>{task.label}</span>
+              <span className={styles.cellSub}>{channelName(task.channelId)}</span>
+            </span>
+          ),
+        },
+        {
+          key: 'schedule',
+          header: '计划',
+          width: 'minmax(140px, 1fr)',
+          render: (task) => <span className={styles.cellSub}>{describeSchedule(task)}</span>,
+        },
+        {
+          key: 'next',
+          header: '下次',
+          width: 'minmax(112px, 0.8fr)',
+          priority: 2,
+          render: (task) =>
+            task.state === 'paused' ? (
+              <Chip tone={stateTone[task.state]}>{stateLabel[task.state]}</Chip>
+            ) : (
+              <span className={styles.cellSub}>{nextRunText(task)}</span>
+            ),
+        },
+        {
+          key: 'actions',
+          header: <span className={styles.srOnly}>操作</span>,
+          width: '40px',
+          align: 'end',
+          render: (task) => <TaskActions task={task} act={act} />,
+        },
+      ]}
+    />
+  )
   return (
     <PropertyGroup
       id="profile-schedules"
       title="定时任务"
       description={agent.capabilities.scheduledTasks ? undefined : '定时任务能力已关闭，已有任务仍按计划触发'}
     >
-      <DataTable
-        label={`${agent.name}的定时任务`}
-        rows={tasks}
-        rowKey={(task) => task.id}
-        empty="还没有定时任务。在频道里请它设置提醒或定时任务。"
-        columns={[
-          {
-            key: 'label',
-            header: '任务',
-            width: 'minmax(180px, 2fr)',
-            render: (task) => (
-              <span className={styles.cellStack}>
-                <span className={styles.cellTitle}>{task.label}</span>
-                <span className={styles.cellSub}>
-                  {channelName(task.channelId)} · {sourceLabel(task)}
-                </span>
+      {groups.length === 0 ? table(`${agent.name}的定时任务`, []) : null}
+      {groups.map((group) => {
+        const open = !collapsed.has(group.key)
+        const id = `task-group-${group.key.replaceAll(/[^a-z0-9]/giu, '-')}`
+        return (
+          <div key={group.key} className={styles.taskGroup}>
+            <Pressable
+              className={styles.taskGroupHead}
+              aria-expanded={open}
+              aria-controls={id}
+              onClick={() => toggle(group.key)}
+            >
+              <ChevronRight size={15} data-open={open} aria-hidden />
+              <span className={styles.cellTitle}>{group.label}</span>
+              <span className={styles.cellSub}>
+                {group.tasks.length} 个
+                {group.extensionName === undefined ? '' : ' · 由这个扩展创建，在扩展配置中关闭；这里只能暂停'}
               </span>
-            ),
-          },
-          {
-            key: 'schedule',
-            header: '计划',
-            width: 'minmax(140px, 1fr)',
-            render: (task) => <span className={styles.cellSub}>{describeSchedule(task)}</span>,
-          },
-          {
-            key: 'next',
-            header: '下次',
-            width: 'minmax(112px, 0.8fr)',
-            priority: 2,
-            render: (task) =>
-              task.state === 'paused' || task.state === 'inactive' ? (
-                <Chip tone={stateTone[task.state]}>{stateLabel[task.state]}</Chip>
-              ) : (
-                <span className={styles.cellSub}>{nextRunText(task)}</span>
-              ),
-          },
-          {
-            key: 'actions',
-            header: <span className={styles.srOnly}>操作</span>,
-            width: '40px',
-            align: 'end',
-            render: (task) => <TaskActions task={task} act={act} />,
-          },
-        ]}
-      />
+            </Pressable>
+            <Disclosure open={open} id={id}>
+              {table(`${group.label}的定时任务`, group.tasks)}
+            </Disclosure>
+          </div>
+        )
+      })}
+      {hidden > 0 ? <p className={styles.note}>另有 {hidden} 个任务来自已停用的扩展，重新启用扩展后恢复。</p> : null}
       {dialog}
     </PropertyGroup>
   )
