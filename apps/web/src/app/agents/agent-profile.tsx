@@ -31,6 +31,7 @@ import {
   draftOf,
   identityChanged,
   imagePolicyFor,
+  withImageRestore,
   savedAliases,
   savedSubConversationModels,
   type AgentDraft,
@@ -200,7 +201,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           ...(draft.effort && chosen.reasoning?.efforts.some((effort) => effort.id === draft.effort)
             ? { reasoningEffort: draft.effort }
             : {}),
-          imagePolicy: imagePolicyFor(agent.imagePolicy, chosen, vision),
+          imagePolicy: withImageRestore(imagePolicyFor(agent.imagePolicy, chosen, vision), draft.imageRestore),
           dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
           compaction: draft.compaction,
           subConversationModels: savedSubConversationModels(draft.subConversationModels),

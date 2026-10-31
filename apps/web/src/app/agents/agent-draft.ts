@@ -27,6 +27,8 @@ export interface AgentDraft {
   /** Thinking level for the main model; empty uses the model's own default. */
   readonly effort: string
   readonly visionKey: string
+  /** Recent images put back into the conversation after compaction. */
+  readonly imageRestore: ImageRestorePolicy
   /** Which model writes each kind of compaction summary. */
   readonly compaction: AgentCompactionPolicy
   /** Models it may open sub-conversations with; names may be untrimmed while being typed. */
@@ -48,6 +50,14 @@ export const savedAliases = (text: string): readonly string[] => [
   ),
 ]
 
+export type ImageRestorePolicy = ImageUnderstandingPolicy['history']['restoreAfterCompaction']
+
+/** The saved image policy with the restore choice from the draft. */
+export const withImageRestore = (
+  policy: ImageUnderstandingPolicy,
+  restore: ImageRestorePolicy,
+): ImageUnderstandingPolicy => ({ ...policy, history: { ...policy.history, restoreAfterCompaction: { ...restore } } })
+
 export const draftOf = (agent: AgentSummary): AgentDraft => ({
   name: agent.name,
   persona: agent.personaDocument,
@@ -61,6 +71,7 @@ export const draftOf = (agent: AgentSummary): AgentDraft => ({
           id: agent.imagePolicy.textModel.model.model,
         })
       : '',
+  imageRestore: { ...agent.imagePolicy.history.restoreAfterCompaction },
   compaction: agent.compaction,
   subConversationModels: agent.subConversationModels,
   fallbackModels: agent.fallbackModels,
@@ -119,6 +130,7 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
   draft.modelKey !== base.modelKey ||
   draft.effort !== base.effort ||
   draft.visionKey !== base.visionKey ||
+  JSON.stringify(draft.imageRestore) !== JSON.stringify(base.imageRestore) ||
   JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction) ||
   !sameSubConversationModels(draft.subConversationModels, base.subConversationModels) ||
   JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels) ||
@@ -163,6 +175,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if (draft.effort !== base.effort) changes.push('思考强度')
   if (JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels)) changes.push('备用模型')
   if (draft.visionKey !== base.visionKey) changes.push('视觉模型')
+  if (JSON.stringify(draft.imageRestore) !== JSON.stringify(base.imageRestore)) changes.push('压缩后附回图片')
   if (JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction)) changes.push('压缩模型')
   if (!sameSubConversationModels(draft.subConversationModels, base.subConversationModels)) changes.push('子对话模型')
   const patch = capabilityPatch(base, draft)

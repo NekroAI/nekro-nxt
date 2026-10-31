@@ -315,7 +315,7 @@ export const ImageUnderstandingPolicyApiSchema = z
         restoreAfterCompaction: z
           .object({
             recentMessages: z.number().int().min(1).max(100),
-            maxImages: z.number().int().min(1).max(50),
+            maxImages: z.number().int().min(0).max(50),
           })
           .strict(),
       })

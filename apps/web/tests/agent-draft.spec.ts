@@ -8,6 +8,7 @@ import {
   imagePolicyFor,
   savedSubConversationModels,
   toggleAccess,
+  withImageRestore,
   type AgentDraft,
 } from '../src/app/agents/agent-draft.js'
 import { changeSummary, savedAt } from '../src/app/agents/agent-restore.js'
@@ -26,6 +27,7 @@ const base: AgentDraft = {
   fallbackModels: [],
   aliases: '',
   visionKey: '',
+  imageRestore: { recentMessages: 32, maxImages: 12 },
   capabilities: {
     subagents: true,
     fileTools: false,
@@ -81,6 +83,15 @@ describe('agent draft', () => {
     }
     expect(draftChanges(base, edited)).toEqual(['压缩模型'])
     expect(identityChanged(base, edited)).toBe(true)
+  })
+
+  it('saves how many images come back after compaction with the identity, zero meaning none', () => {
+    const edited: AgentDraft = { ...base, imageRestore: { recentMessages: 64, maxImages: 0 } }
+    expect(draftChanges(base, edited)).toEqual(['压缩后附回图片'])
+    expect(identityChanged(base, edited)).toBe(true)
+    const saved = withImageRestore(defaultImageUnderstandingPolicy(), edited.imageRestore)
+    expect(saved.history.restoreAfterCompaction).toEqual({ recentMessages: 64, maxImages: 0 })
+    expect(saved.textModel).toEqual(defaultImageUnderstandingPolicy().textModel)
   })
 
   it('saves sub-conversation models with the identity, trimmed, and keeps the default on its candidate', () => {

@@ -58,6 +58,7 @@ import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
 import { EffortSlider } from './effort-slider.js'
 import { CompactionModelField, type CompactionModel } from './compaction-model.js'
+import { ImageRestoreRow } from './image-restore.js'
 import { SubConversationModelRows } from './sub-conversation-models.js'
 import { FallbackModelRows } from './fallback-models.js'
 
@@ -213,6 +214,7 @@ export function ModelSection({
             }
           />
         </PropertyRow>
+        {model && supportsImages(model) ? <ImageRestoreRow value={draft.imageRestore} update={update} /> : null}
         <PropertyRow
           label="开新会话时压缩"
           layout="stacked"

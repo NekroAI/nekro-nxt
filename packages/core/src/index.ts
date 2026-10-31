@@ -539,7 +539,7 @@ export const ImageUnderstandingPolicySchema = z
         restoreAfterCompaction: z
           .object({
             recentMessages: z.number().int().min(1).max(100).default(32),
-            maxImages: z.number().int().min(1).max(50).default(20),
+            maxImages: z.number().int().min(0).max(50).default(12),
           })
           .strict()
           .default({ recentMessages: 32, maxImages: 20 }),
@@ -548,7 +548,7 @@ export const ImageUnderstandingPolicySchema = z
       .default({
         mode: 'persistent-distinct',
         detail: 'auto',
-        restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+        restoreAfterCompaction: { recentMessages: 32, maxImages: 12 },
       }),
     textModel: z
       .discriminatedUnion('mode', [
@@ -568,7 +568,7 @@ export const ImageUnderstandingPolicySchema = z
     history: {
       mode: 'persistent-distinct',
       detail: 'auto',
-      restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+      restoreAfterCompaction: { recentMessages: 32, maxImages: 12 },
     },
     textModel: { mode: 'disabled' },
   })

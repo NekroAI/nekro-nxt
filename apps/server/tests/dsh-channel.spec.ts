@@ -3267,105 +3267,120 @@ describe('DSH Host and internal Channel vertical slice', () => {
     }
   })
 
-  it('restores recent channel images after a committed DSH compaction without creating channel facts', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-image-restore-'))
-    temporaryDirectories.push(directory)
-    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
-    const repository = new SqliteCoreRepository(database)
-    let coreId = 0
-    let runtimeId = 0
-    const core = new CoreService(repository, { now: () => 4000, nextUlid: () => `C${++coreId}` })
-    const agent = core.createAgent({
-      displayName: '压缩识图智能体',
-      persona: '',
-      model: { provider: 'vision-provider', model: 'vision-model' },
-      imagePolicy: {
-        history: {
-          mode: 'persistent-distinct',
-          detail: 'auto',
-          restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+  it.each([
+    { maxImages: 12, restored: 1 },
+    { maxImages: 0, restored: 0 },
+  ])(
+    'restores up to $maxImages recent channel images after a committed DSH compaction without creating channel facts',
+    async ({ maxImages, restored }) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dsh-image-restore-'))
+      temporaryDirectories.push(directory)
+      const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+      const repository = new SqliteCoreRepository(database)
+      let coreId = 0
+      let runtimeId = 0
+      const core = new CoreService(repository, { now: () => 4000, nextUlid: () => `C${++coreId}` })
+      const agent = core.createAgent({
+        displayName: '压缩识图智能体',
+        persona: '',
+        model: { provider: 'vision-provider', model: 'vision-model' },
+        imagePolicy: {
+          history: {
+            mode: 'persistent-distinct',
+            detail: 'auto',
+            restoreAfterCompaction: { recentMessages: 32, maxImages },
+          },
+          textModel: { mode: 'disabled' },
         },
-        textModel: { mode: 'disabled' },
-      },
-    })
-    const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
-    const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'restore', kind: 'internal' })
-    const assetService = new AssetService(repository, path.join(directory, 'assets'))
-    const imageAsset = await assetService.prepare({
-      bytes: new Uint8Array(
-        Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
-          'base64',
-        ),
-      ),
-      declaredMediaType: 'image/png',
-    })
-    repository.grantAssetAccess({
-      assetId: imageAsset.asset.id,
-      channelId: channel.id,
-      source: 'agent-tool',
-      grantedAt: 4000,
-    })
-    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
-    const model = new ScriptedCommunicationModel(true)
-    const runtimeRef: { current?: ChannelRuntime } = {}
-    const web = createFakeLocalChannelConnection(connection.id, (event) =>
-      runtimeRef.current!.acceptChannelInbound(event),
-    )
-    const host = await DshHostRuntime.create({
-      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
-      communication: { sendMessage: (input) => runtimeRef.current!.sendMessage(input) },
-      history: repository,
-      assets: repository,
-      assetService,
-      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
-      configureLlm: (context) => {
-        context.llm.registerAdapter(['vision-provider'], model)
-      },
-    })
-    const runtime = new ChannelRuntime(core, repository, repository, host, {
-      now: () => 4001 + runtimeId,
-      nextUlid: () => `CR${++runtimeId}`,
-      resolveAdapter: () => web,
-    })
-    runtimeRef.current = runtime
-    try {
-      await web.start()
-      await web.postMessage({
-        channelId: channel.id,
-        clientEventId: 'restore-image',
-        parts: [{ type: 'image', assetId: imageAsset.asset.id, alt: '需要恢复的图片' }],
       })
-      const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
-      await host.whenIdle(episode.dshSessionId!)
-      for (let index = 0; index < 5; index += 1) {
+      const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+      const channel = core.createChannel({
+        connectionId: connection.id,
+        platformChannelId: 'restore',
+        kind: 'internal',
+      })
+      const assetService = new AssetService(repository, path.join(directory, 'assets'))
+      const imageAsset = await assetService.prepare({
+        bytes: new Uint8Array(
+          Buffer.from(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==',
+            'base64',
+          ),
+        ),
+        declaredMediaType: 'image/png',
+      })
+      repository.grantAssetAccess({
+        assetId: imageAsset.asset.id,
+        channelId: channel.id,
+        source: 'agent-tool',
+        grantedAt: 4000,
+      })
+      core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+      const model = new ScriptedCommunicationModel(true)
+      const runtimeRef: { current?: ChannelRuntime } = {}
+      const web = createFakeLocalChannelConnection(connection.id, (event) =>
+        runtimeRef.current!.acceptChannelInbound(event),
+      )
+      const host = await DshHostRuntime.create({
+        sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+        communication: { sendMessage: (input) => runtimeRef.current!.sendMessage(input) },
+        history: repository,
+        assets: repository,
+        assetService,
+        resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+        configureLlm: (context) => {
+          context.llm.registerAdapter(['vision-provider'], model)
+        },
+      })
+      const runtime = new ChannelRuntime(core, repository, repository, host, {
+        now: () => 4001 + runtimeId,
+        nextUlid: () => `CR${++runtimeId}`,
+        resolveAdapter: () => web,
+      })
+      runtimeRef.current = runtime
+      try {
+        await web.start()
         await web.postMessage({
           channelId: channel.id,
-          clientEventId: `restore-text-${index}`,
-          parts: [{ type: 'text', text: `后续消息 ${index}` }],
+          clientEventId: 'restore-image',
+          parts: [{ type: 'image', assetId: imageAsset.asset.id, alt: '需要恢复的图片' }],
         })
+        const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
         await host.whenIdle(episode.dshSessionId!)
+        for (let index = 0; index < 5; index += 1) {
+          await web.postMessage({
+            channelId: channel.id,
+            clientEventId: `restore-text-${index}`,
+            parts: [{ type: 'text', text: `后续消息 ${index}` }],
+          })
+          await host.whenIdle(episode.dshSessionId!)
+        }
+        const beforeHistory = repository.listChannelHistory(channel.id, { limit: 100 }).length
+        expect(await host.compactSessionNow(episode.dshSessionId!)).toBe(true)
+        const events = host.sessionEvents(episode.dshSessionId!)
+        const restoration = events.find(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-visual-restore',
+        )
+        if (restored === 0) {
+          // Set to none: compaction leaves only the text summary.
+          expect(restoration).toBeUndefined()
+        } else {
+          expect(restoration?.type).toBe('user/message')
+          if (restoration?.type === 'user/message') {
+            expect(restoration.data.content.filter((block) => block.type === 'image')).toHaveLength(restored)
+            expect(restoration.data.source).toMatchObject({
+              kind: 'nekro-nxt-visual-restore',
+              policyVersion: 1,
+            })
+          }
+          expect(events.filter((event) => event.type === 'nekro-nxt/image-restoration')).toHaveLength(1)
+        }
+        expect(repository.listChannelHistory(channel.id, { limit: 100 })).toHaveLength(beforeHistory)
+      } finally {
+        await web.stop()
+        await host.dispose()
+        database.close()
       }
-      const beforeHistory = repository.listChannelHistory(channel.id, { limit: 100 }).length
-      expect(await host.compactSessionNow(episode.dshSessionId!)).toBe(true)
-      const events = host.sessionEvents(episode.dshSessionId!)
-      const restoration = events.find(
-        (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-visual-restore',
-      )
-      expect(restoration?.type).toBe('user/message')
-      if (restoration?.type === 'user/message') {
-        expect(restoration.data.content.filter((block) => block.type === 'image')).toHaveLength(1)
-        expect(restoration.data.source).toMatchObject({
-          kind: 'nekro-nxt-visual-restore',
-          policyVersion: 1,
-        })
-      }
-      expect(repository.listChannelHistory(channel.id, { limit: 100 })).toHaveLength(beforeHistory)
-      expect(events.filter((event) => event.type === 'nekro-nxt/image-restoration')).toHaveLength(1)
-    } finally {
-      await web.stop()
-      await host.dispose()
-      database.close()
-    }
-  })
+    },
+  )
 })

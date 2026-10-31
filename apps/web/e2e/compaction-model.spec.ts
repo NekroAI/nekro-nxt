@@ -94,6 +94,43 @@ for (const width of [375, 1440]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     expect(failures).toEqual([])
   })
+  test(`an agent chooses how many recent images come back after compaction (${width}px)`, async ({ page }) => {
+    const failures: string[] = []
+    page.on('pageerror', (error) => failures.push(error.message))
+    await page.setViewportSize({ width, height: 900 })
+    let revised: unknown
+    await page.route('**/api/agents/*/revision', async (route) => {
+      revised = route.request().postDataJSON()
+      await route.fulfill({ json: { currentRevisionId: 'arev_revisedimages' } })
+    })
+
+    await page.goto(`/agents/${targetAgentId}`)
+    const count = page.getByRole('combobox', { name: '附回图片数量', exact: true })
+    const range = page.getByRole('combobox', { name: '附回图片的消息范围', exact: true })
+    await expect(count).toHaveText('最多 20 张')
+    await expect(range).toHaveText('最近 32 条消息')
+    await expect(page.getByText('压缩后从最近 32 条消息里附回最多 20 张图片')).toBeVisible()
+    await count.click()
+    await page.getByRole('option', { name: '最多 8 张', exact: true }).click()
+    await range.click()
+    await page.getByRole('option', { name: '最近 64 条消息', exact: true }).click()
+    await expect(page.getByText('压缩后从最近 64 条消息里附回最多 8 张图片')).toBeVisible()
+    await count.click()
+    await page.getByRole('option', { name: '不附回', exact: true }).click()
+    await expect(page.getByText('压缩后只留文字摘要')).toBeVisible()
+    await expect(range).toBeDisabled()
+    await page.screenshot({ path: `.local/image-restore-agent-${width}.png`, animations: 'disabled' })
+    await page
+      .getByText('1 项未保存的修改')
+      .locator('xpath=../..')
+      .getByRole('button', { name: '保存', exact: true })
+      .click()
+    await expect
+      .poll(() => revised)
+      .toMatchObject({ imagePolicy: { history: { restoreAfterCompaction: { recentMessages: 64, maxImages: 0 } } } })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    expect(failures).toEqual([])
+  })
 }
 
 test('idle threshold persists through the real API, validates input and recovers from a failed save', async ({

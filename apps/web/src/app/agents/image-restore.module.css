@@ -1,0 +1,9 @@
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.controls > * {
+  width: min(180px, 100%);
+}

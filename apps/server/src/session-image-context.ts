@@ -53,6 +53,16 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { z } from 'zod'
 import type { SessionRegistry } from './session-registry.js'
+import {
+  CompactionStall,
+  compactionBudget,
+  FALLBACK_IMAGE_TOKENS,
+  imageTokenEstimate,
+  relievePressure,
+  roomyTarget,
+  visibleImageCount,
+  type CompactionBudget,
+} from './compaction-pressure.js'
 import { projectTokenUsage } from './token-usage.js'
 export interface AssetAccessRepository {
   getAssetById(id: AssetRecord['id']): AssetRecord | undefined
@@ -537,6 +547,64 @@ export interface InSessionCompactionModel {
 export class NekroNxtCompactionEngine extends BasicCompactionEngine {
   private visualRestoreDepth = 0
   private modelChoice: ((agent: Agent) => InSessionCompactionModel | undefined) | undefined
+  private readonly stall = new CompactionStall()
+  /** Per conversation, the price of one image and how many were in view just before the latest compaction. */
+  private readonly imagesBeforeCompaction = new WeakMap<
+    object,
+    { readonly perImage: number; readonly visible: number }
+  >()
+
+  /** What one image costs and how many were in view before this conversation's latest compaction, if known. */
+  imagesBefore(session: object): { readonly perImage: number; readonly visible: number } | undefined {
+    return this.imagesBeforeCompaction.get(session)
+  }
+
+  /** The threshold and retained tail of a model window under this engine's policy for that model. */
+  budgetFor(provider: string, model: string, contextWindow: number): CompactionBudget {
+    const policy = this.config.modelPolicies.find(
+      (candidate) => candidate.provider === provider && candidate.model === model,
+    )
+    const retention =
+      policy?.retainTokens !== undefined
+        ? { retainTokens: policy.retainTokens }
+        : policy?.retainRatio !== undefined
+          ? { retainRatio: policy.retainRatio }
+          : this.config.retainTokens !== undefined
+            ? { retainTokens: this.config.retainTokens }
+            : { retainRatio: this.config.retainRatio }
+    return compactionBudget(
+      { thresholdRatio: policy?.thresholdRatio ?? this.config.thresholdRatio, ...retention },
+      contextWindow,
+    )
+  }
+
+  /**
+   * Pressure compaction that stops paying for summaries it cannot use. When the old part of the conversation is
+   * already shorter than any summary (images filling the retained tail), it waits until the conversation has grown
+   * by a retained tail and omits the oldest images instead, so the conversation gets back under the threshold.
+   */
+  private async compactUnderPressure(
+    agent: Agent,
+    trigger: Parameters<BasicCompactionEngine['compactIfNeeded']>[1],
+    signal: AbortSignal,
+  ): ReturnType<BasicCompactionEngine['compactIfNeeded']> {
+    const target = agent.session.requestHeader()?.config
+    if (trigger !== 'pressure' || target === undefined || target.provider === '' || target.model === '') {
+      return super.compactIfNeeded(agent, trigger, signal)
+    }
+    const contextWindow = (await this.ctx.llm.resolveModelInfo(target.provider, target.model, signal)).context
+      ?.contextWindow
+    if (contextWindow === undefined) return super.compactIfNeeded(agent, trigger, signal)
+    const session = agent.session
+    return relievePressure({
+      session,
+      budget: this.budgetFor(target.provider, target.model, contextWindow),
+      stall: this.stall,
+      measure: () => this.ctx.tokenMeter.measure(session),
+      compact: () => super.compactIfNeeded(agent, trigger, signal),
+      log: (message) => this.ctx.logger.info(message),
+    })
+  }
 
   /** Which model an agent's in-session compaction uses; without one the conversation's own model is used. */
   setModelChoice(choose: (agent: Agent) => InSessionCompactionModel | undefined): void {
@@ -629,7 +697,7 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
     trigger: Parameters<BasicCompactionEngine['compactIfNeeded']>[1],
     signal: Parameters<BasicCompactionEngine['compactIfNeeded']>[2],
   ): ReturnType<BasicCompactionEngine['compactIfNeeded']> {
-    return this.runWithVisualRestore(() => super.compactIfNeeded(agent, trigger, signal), agent)
+    return this.runWithVisualRestore(() => this.compactUnderPressure(agent, trigger, signal), agent)
   }
 
   override async compactNow(
@@ -656,6 +724,15 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
     agent: Agent,
   ): Promise<T> {
     this.visualRestoreDepth += 1
+    if (this.visualRestoreDepth === 1) {
+      // Taken before compaction removes them: afterwards the meter still counts these images until the provider
+      // answers again, and restoring needs both figures to price what it puts back.
+      const visible = visibleImageCount(agent.session)
+      this.imagesBeforeCompaction.set(agent.session, {
+        perImage: imageTokenEstimate(this.ctx.tokenMeter.measure(agent.session), visible),
+        visible,
+      })
+    }
     try {
       const result = await operation()
       if (this.visualRestoreDepth === 1 && result && this.visualRestoreHandler) {
@@ -827,6 +904,7 @@ export class SessionImageContext {
     const skippedAssetIds: string[] = []
     try {
       const policy = revision.imagePolicy.history.restoreAfterCompaction
+      if (policy.maxImages === 0) return
       const entries = [...this.#history.listEpisodeHistory(episodeId, { limit: policy.recentMessages })].reverse()
       const byDigest = new Map<
         string,
@@ -930,16 +1008,22 @@ export class SessionImageContext {
         const contextWindow = modelInfo.context?.contextWindow
         const compaction = this.#context.compaction
         if (contextWindow !== undefined && compaction instanceof NekroNxtCompactionEngine) {
-          const modelPolicy = compaction.config.modelPolicies.find(
-            (candidate) => candidate.provider === revision.model.provider && candidate.model === revision.model.model,
+          // Restored images stop a retained tail below the threshold; filling up to it would make the very next
+          // turn compact again, with only images left to compact.
+          const limitTokens = roomyTarget(
+            compaction.budgetFor(revision.model.provider, revision.model.model, contextWindow),
           )
-          const thresholdRatio = modelPolicy?.thresholdRatio ?? compaction.config.thresholdRatio
-          const thresholdTokens = Math.floor(contextWindow * thresholdRatio)
-          const currentTokens = this.#context.tokenMeter.measure(agent.session).totalTokens
+          // The meter prices an image as its small reference and keeps counting compacted images at their real size
+          // until the provider answers again, so both are corrected with the price learned before compaction.
+          const before = compaction.imagesBefore(agent.session) ?? { perImage: FALLBACK_IMAGE_TOKENS, visible: 0 }
+          const removed = Math.max(0, before.visible - visibleImageCount(agent.session))
+          const currentTokens = this.#context.tokenMeter.measure(agent.session).totalTokens - removed * before.perImage
           while (
             restoredAssets.length > 0 &&
-            currentTokens + this.#context.tokenMeter.estimateMessage(makeRestoreMessage(restoredAssets)) >
-              thresholdTokens
+            currentTokens +
+              this.#context.tokenMeter.estimateMessage(makeRestoreMessage(restoredAssets)) +
+              restoredAssets.length * before.perImage >
+              limitTokens
           ) {
             const omitted = restoredAssets.shift()
             if (omitted) skippedAssetIds.push(omitted.assetId)

@@ -79,7 +79,7 @@ export const defaultImageUnderstandingPolicy = (): ImageUnderstandingPolicy => (
   history: {
     mode: 'persistent-distinct',
     detail: 'auto',
-    restoreAfterCompaction: { recentMessages: 32, maxImages: 20 },
+    restoreAfterCompaction: { recentMessages: 32, maxImages: 12 },
   },
   textModel: { mode: 'disabled' },
 })

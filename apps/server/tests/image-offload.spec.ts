@@ -18,6 +18,7 @@ import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
 import { OFFLOADED_IMAGE_MARKER } from '../src/channel-runtime-events.js'
 import { DshHostRuntime } from '../src/index.js'
+import { oldestImageTargets, visibleImageCount, type PressureMeasurement } from '../src/compaction-pressure.js'
 
 const RETAINED_IMAGE_LIMIT = 1
 
@@ -115,8 +116,8 @@ const fixture = async () => {
     disposers.push(() => host.dispose())
     const sessionId = await host.createSession(session)
     const live = context?.agents.get(SessionId(sessionId))
-    if (!live) throw new Error('Missing live agent')
-    return { host, sessionId, agent: live }
+    if (!live || !context) throw new Error('Missing live agent')
+    return { host, sessionId, agent: live, context }
   }
   const send = async (
     host: DshHostRuntime,
@@ -181,5 +182,27 @@ describe('image offload', () => {
       [true, true, false, false],
       [true, true, true, false],
     ])
+  })
+
+  it('omits images in the same records DSH writes, counting earlier omissions in the indexes', async () => {
+    const f = await fixture()
+    const live = await f.start()
+    await f.send(live.host, live.sessionId, 'gallery3', [{ type: 'text', text: '看看这三张' }, ...f.images])
+    // The route already had DSH omit the first two.
+    expect(imageFlags(live.agent.session.deriveMessages())).toEqual([true, true, false])
+    expect(visibleImageCount(live.agent.session)).toBe(1)
+    const targets = oldestImageTargets(live.agent.session, 5)
+    expect(targets.map((target) => target.imageIndexes)).toEqual([[2]])
+    live.agent.session.append('image/offload', {
+      targets: targets.map((target) => ({ ...target, imageIndexes: [...target.imageIndexes] })),
+    })
+    expect(imageFlags(live.agent.session.deriveMessages())).toEqual([true, true, true])
+    expect(visibleImageCount(live.agent.session)).toBe(0)
+    // NekroNXT reads these fields of DSH's measurement.
+    const measurement: PressureMeasurement = live.context.tokenMeter.measure(live.agent.session)
+    // This fixture route reports no usage, so the reading is the heuristic; offloading waits for real usage.
+    expect(measurement.baseline.kind).toBe('estimated')
+    expect(measurement.totalTokens).toBe(measurement.baseline.tokens + measurement.surfaceDeltaTokens)
+    expect(measurement.surfaceTokens).toBeGreaterThan(0)
   })
 })
