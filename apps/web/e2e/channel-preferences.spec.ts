@@ -53,7 +53,10 @@ test('platform updates preserve local names and rebinding preserves the processi
     const providers = HostApiContracts.llmProviders.parseResponse(
       await (await request.get('/api/llm/providers')).json(),
     )
-    const provider = providers.providers.find((item) => item.provider === 'synthetic-fixture') ?? providers.providers[0]
+    // Providers share one settings namespace; an unrelated first entry may carry another namespace's revision.
+    const provider =
+      providers.providers.find((item) => item.provider === 'synthetic-fixture') ??
+      providers.providers.find((item) => item.settingsNs === 'llm-pi-ai')
     const saved = await request.post('/api/llm/providers/synthetic-fixture', {
       data: {
         expectedRevision: provider?.settingsRevision ?? 0,
