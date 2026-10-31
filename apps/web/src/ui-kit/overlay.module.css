@@ -112,6 +112,8 @@
   outline: none;
   background: var(--surface);
   box-shadow: var(--sh-3);
+  /* The sheet covers the top bar, which is the desktop window's drag region; its buttons must stay clickable. */
+  -webkit-app-region: no-drag;
 }
 
 .sheet[data-state='open'] {
@@ -126,7 +128,10 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding: var(--s-4) var(--s-5);
+  /* Desktop injects the width of the native caption buttons, which sit over the sheet's top-right corner. */
+  --wc-right: var(--window-controls-right, 0px);
+
+  padding: var(--s-4) calc(var(--s-5) + var(--wc-right)) var(--s-4) var(--s-5);
   border-bottom: 1px solid var(--line);
 }
 

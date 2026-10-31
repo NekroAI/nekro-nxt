@@ -234,6 +234,15 @@
   outline: none;
   background: var(--surface);
   box-shadow: var(--sh-3);
+  -webkit-app-region: no-drag;
+}
+
+/* On desktop the native caption buttons overlap the top-right corner; keep the exit button clear of them. */
+.personaOverlay > .personaEditorBar {
+  --wc-right: var(--window-controls-right, 0px);
+
+  /* Without caption buttons the difference is negative and padding clamps it to zero. */
+  padding-right: calc(var(--wc-right) - var(--s-6));
 }
 
 /* —— 恢复之前的配置 —— */

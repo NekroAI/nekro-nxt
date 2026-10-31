@@ -12,7 +12,7 @@ const harnessModule = `
   import { createRoot } from 'react-dom/client'
   import { installStableCursorIntent } from '/src/cursor-stability.ts'
   import {
-    Button, ConfirmDialog, Dialog, IconButton, Popover, Segmented, Select, Toaster, TooltipProvider, toast,
+    Button, ConfirmDialog, Dialog, IconButton, Popover, Segmented, Select, Sheet, Toaster, TooltipProvider, toast,
   } from '/src/ui-kit/index.ts'
   import '/src/ui-kit/tokens.css'
 
@@ -23,6 +23,7 @@ const harnessModule = `
     const [dialog, setDialog] = useState(false)
     const [media, setMedia] = useState(false)
     const [confirm, setConfirm] = useState(false)
+    const [sheet, setSheet] = useState(false)
     const [fail, setFail] = useState(true)
     const [choice, setChoice] = useState('')
     const [mode, setMode] = useState('a')
@@ -31,6 +32,7 @@ const harnessModule = `
       <Button id="open-dialog" onClick={() => setDialog(true)}>打开对话框</Button>
       <Button id="open-media" onClick={() => setMedia(true)}>打开预览</Button>
       <Button id="open-confirm" onClick={() => setConfirm(true)}>删除</Button>
+      <Button id="open-sheet" onClick={() => setSheet(true)}>打开侧栏</Button>
       <Button id="cursor-control"><span id="cursor-copy">稳定指针</span></Button>
       <input id="cursor-text" aria-label="指针测试输入框" />
       <IconButton id="icon" label="新建内置频道"><span>+</span></IconButton>
@@ -57,6 +59,7 @@ const harnessModule = `
         onConfirm={() => new Promise((resolve, reject) => setTimeout(() => fail ? (setFail(false), reject(new Error('频道正在使用'))) : resolve(undefined), 300))}>
         <p>删除后无法恢复。</p>
       </ConfirmDialog>
+      <Sheet open={sheet} onOpenChange={setSheet} title="测试侧栏"><p>侧栏内容</p></Sheet>
       <Toaster />
     </main></TooltipProvider>
   }
@@ -149,6 +152,22 @@ test.describe('ui-kit browser behaviour', () => {
     await dialog.getByRole('button', { name: '关闭预览' }).click()
     await expect(dialog).toHaveCount(0)
     await expect(page.locator('#open-media')).toBeFocused()
+  })
+
+  test('a side sheet keeps its close button clear of the desktop caption buttons', async () => {
+    // What the desktop shell injects on Windows; the caption buttons cover this width of the top-right corner.
+    await page.addStyleTag({ content: ':root{--window-controls-right:138px}' })
+    await page.locator('#open-sheet').click()
+    const close = page.getByRole('dialog', { name: '测试侧栏' }).getByRole('button', { name: '关闭' })
+    // Measured once the slide-in has settled.
+    await expect
+      .poll(async () => {
+        const box = await close.boundingBox()
+        return box === null ? Infinity : box.x + box.width
+      })
+      .toBeLessThanOrEqual(1280 - 138)
+    await close.click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 
   test('a confirmation stays open while it runs and shows a failure in place', async () => {
