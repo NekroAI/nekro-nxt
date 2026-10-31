@@ -399,8 +399,12 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
     }),
   )
   await page.route('**/api/attention', (route) => route.fulfill({ json: { revision: 'fixture', items: [] } }))
-  await page.route('**/api/commands', (route) => route.fulfill({ json: { commands: [], problems: [] } }))
-  await page.route('**/api/commands?*', (route) => route.fulfill({ json: { commands: [], problems: [] } }))
+  await page.route('**/api/commands', (route) =>
+    route.fulfill({ json: { commands: [], problems: [], settings: { unauthorizedFeedback: false } } }),
+  )
+  await page.route('**/api/commands?*', (route) =>
+    route.fulfill({ json: { commands: [], problems: [], settings: { unauthorizedFeedback: false } } }),
+  )
   await page.route('**/api/commands/members/*', (route) => route.fulfill({ json: { members: [] } }))
   await page.route('**/api/settings/credentials', (route) =>
     route.fulfill({ json: { credentials: [], modelProviders: [], requests: [] } }),

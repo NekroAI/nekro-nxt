@@ -516,6 +516,9 @@ test('three desktop viewports keep every space usable in both themes and with re
   expect(failures, failures.join('\n')).toEqual([])
 })
 
+/** A stub that no longer matches its contract shows a decode error instead of failing; keep it out of baselines. */
+const expectNoUnreadableResponse = (page: Page) => expect(page.getByText(/服务返回的数据无法识别/u)).toHaveCount(0)
+
 test('representative product surfaces match committed visual baselines', async ({ page }) => {
   test.setTimeout(120_000)
   const failures = installRuntimeFailureGate(page)
@@ -531,6 +534,7 @@ test('representative product surfaces match committed visual baselines', async (
     await page.goto(path)
     await ready()
     await settle(page)
+    await expectNoUnreadableResponse(page)
     await expect(page).toHaveScreenshot(`${name}-${theme}-1440.png`, {
       animations: 'disabled',
       caret: 'hide',
@@ -627,6 +631,7 @@ test('every space matches its baseline at 1280 and 1920 in both themes', async (
         await page.goto(surface.path)
         await surface.ready()
         await settle(page)
+        await expectNoUnreadableResponse(page)
         await expect(page).toHaveScreenshot(`space-${surface.name}-${theme}-${width}.png`, {
           animations: 'disabled',
           caret: 'hide',

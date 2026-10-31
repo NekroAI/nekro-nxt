@@ -269,10 +269,13 @@ test.describe('shell, channels and live', () => {
       await openRowMenu('产品讨论群')
       await page.getByRole('menuitem', { name: '置顶', exact: true }).click()
       await expect.poll(pinnedOrder).toEqual([`/channels/${sourceChannelId}`, `/channels/${externalChannelId}`])
-      expect(arrangement?.saved.at(-1)).toEqual({
-        pinnedChannelIds: [sourceChannelId, externalChannelId],
-        collapsedGroupIds: [],
-      })
+      // A save reaches the stub a moment after the list redraws.
+      await expect
+        .poll(() => arrangement?.saved.at(-1))
+        .toEqual({
+          pinnedChannelIds: [sourceChannelId, externalChannelId],
+          collapsedGroupIds: [],
+        })
 
       await openRowMenu('产品讨论群')
       await expect(page.getByRole('menuitem', { name: '下移' })).toHaveCount(0)
@@ -296,7 +299,7 @@ test.describe('shell, channels and live', () => {
       await openRowMenu('记录员的内置频道')
       await page.getByRole('menuitem', { name: '取消置顶' }).click()
       await expect(pinned).toHaveCount(0)
-      expect(arrangement?.saved.at(-1)).toEqual(emptyView)
+      await expect.poll(() => arrangement?.saved.at(-1)).toEqual(emptyView)
       expect(arrangement?.writes).toEqual([])
       expect(errors).toEqual([])
     } finally {

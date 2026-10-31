@@ -100,7 +100,9 @@ test.describe('settings space', () => {
       request.fulfill({ status: 501, json: { error: { code: 'unstubbed', message: 'unstubbed' } } }),
     )
     await page.route('**/api/attention', (request) => request.fulfill({ json: { revision: 'fixture', items: [] } }))
-    await page.route('**/api/commands', (request) => request.fulfill({ json: { commands: [], problems: [] } }))
+    await page.route('**/api/commands', (request) =>
+      request.fulfill({ json: { commands: [], problems: [], settings: { unauthorizedFeedback: false } } }),
+    )
     await page.route('**/api/llm/providers', (request) => request.fulfill({ json: providers }))
     await page.route('**/api/settings/model-fallback', (request) =>
       request.fulfill({ json: { unavailableCooldownMinutes: 10, quotaCooldownMinutes: 60 } }),
