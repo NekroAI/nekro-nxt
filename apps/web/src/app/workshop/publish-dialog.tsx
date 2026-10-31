@@ -106,9 +106,17 @@ export function PublishDialog({
   const [listing, setListing] = useState<ListingDraft>(EMPTY_LISTING)
   const [initialListing, setInitialListing] = useState<ListingDraft>(EMPTY_LISTING)
   const [listingLoaded, setListingLoaded] = useState(false)
+  // The extension whose listing the fields hold, and whether the author has typed into them since loading it.
+  const [draftFor, setDraftFor] = useState<string>()
+  const [edited, setEdited] = useState(false)
+  const [failure, setFailure] = useState<string>()
   useEffect(() => {
     if (open) setPublished(undefined)
   }, [open])
+  useEffect(() => {
+    setNotes('')
+    setFailure(undefined)
+  }, [extension.id])
   const account = community.status?.account ?? null
   const communityUrl = community.status?.communityUrl
   // Someone else's line: this machine only follows it on this community and may not publish new versions of it.
@@ -123,6 +131,8 @@ export function PublishDialog({
   // 已发布过的扩展带出社区上的条目信息，供作者修改；首次发布用本机描述作为一句话简介的起点。
   useEffect(() => {
     if (!open || !account) return
+    // A publish that failed, for example on an outdated client, keeps what the author typed for the next attempt.
+    if (edited && draftFor === extension.id) return
     let cancelled = false
     setListingLoaded(false)
     callHostApi(HostApiContracts.getCommunityExtension, { extensionId: extension.id }, undefined)
@@ -136,6 +146,8 @@ export function PublishDialog({
         }
         setInitialListing(current)
         setListing(current)
+        setDraftFor(extension.id)
+        setEdited(false)
       })
       .catch(() => {
         if (cancelled) return
@@ -144,6 +156,8 @@ export function PublishDialog({
           ...EMPTY_LISTING,
           summary: extension.description.trim().slice(0, COMMUNITY_LISTING_LIMITS.summary),
         })
+        setDraftFor(extension.id)
+        setEdited(false)
       })
       .finally(() => {
         if (!cancelled) setListingLoaded(true)
@@ -157,18 +171,24 @@ export function PublishDialog({
     : undefined
   const errors = listingErrors(listing)
   const invalid = errors.tags !== undefined || errors.sourceUrl !== undefined
-  const edit = (key: keyof ListingDraft) => (event: { readonly target: { readonly value: string } }) =>
+  const edit = (key: keyof ListingDraft) => (event: { readonly target: { readonly value: string } }) => {
+    setEdited(true)
     setListing((current) => ({ ...current, [key]: event.target.value }))
+  }
 
   const close = () => {
     if (busy) return
     onOpenChange(false)
-    if (published) setNotes('')
+    if (published) {
+      setNotes('')
+      setEdited(false)
+    }
   }
 
   const publish = async () => {
     if (!revision) return
     setBusy(true)
+    setFailure(undefined)
     try {
       setPublished(
         await callHostApi(
@@ -183,7 +203,7 @@ export function PublishDialog({
         ),
       )
     } catch (error) {
-      toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+      setFailure(error instanceof Error ? error.message : String(error))
       void community.refresh()
     } finally {
       setBusy(false)
@@ -331,6 +351,7 @@ export function PublishDialog({
           <Field label="更新说明" hint="可选。告诉使用者这次改了什么。">
             <Textarea value={notes} maxLength={2000} rows={3} onChange={(event) => setNotes(event.target.value)} />
           </Field>
+          {failure === undefined ? null : <Banner tone="bad">{failure}</Banner>}
           <Banner tone="info">社区会自动审查源码和权限，审查完成前标为「风险未知」。</Banner>
         </>
       ) : (

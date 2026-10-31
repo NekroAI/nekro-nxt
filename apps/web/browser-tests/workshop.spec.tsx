@@ -544,6 +544,56 @@ test.describe('workshop', () => {
     }
   })
 
+  test('keeps the listing typed for a publish the community refused and shows why inside the dialog', async () => {
+    const page = await openWorkshop(productSnapshot)
+    let publishes = 0
+    await page.route('**/api/community/status', (route) =>
+      route.fulfill({
+        json: {
+          communityUrl: 'https://community.example.test',
+          environment: null,
+          account: { handle: 'fixture-author', displayName: '虚构作者', avatarUrl: null },
+          signedInAt: 1,
+          updatesAvailable: 0,
+        },
+      }),
+    )
+    await page.route(`**/api/community/extensions/${summaryExtensionId}`, (route) =>
+      route.fulfill({ status: 404, json: { error: { code: 'not-found', message: '社区上还没有这个扩展。' } } }),
+    )
+    await page.route('**/api/community/publish', (route) => {
+      publishes += 1
+      return route.fulfill({
+        status: 400,
+        json: { error: { code: 'publish-failed', message: '这个扩展需要更新版本的 NekroNXT，请先升级。' } },
+      })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      const openPublish = async () => {
+        await page.getByRole('button', { name: '更多' }).click()
+        await page.getByRole('menuitem', { name: '发布到社区' }).click()
+      }
+      await openPublish()
+      const dialog = page.getByRole('dialog')
+      await dialog.getByLabel('详细介绍').fill('虚构的详细介绍')
+      await dialog.getByLabel('标签').fill('虚构、示例')
+      await dialog.getByLabel('更新说明').fill('虚构的更新说明')
+      await dialog.getByRole('button', { name: '发布', exact: true }).click()
+      await expect(dialog.getByRole('alert')).toContainText('请先升级')
+      expect(publishes).toBe(1)
+      await dialog.getByRole('button', { name: '取消' }).click()
+      await expect(dialog).toBeHidden()
+
+      await openPublish()
+      await expect(dialog.getByLabel('详细介绍')).toHaveValue('虚构的详细介绍')
+      await expect(dialog.getByLabel('标签')).toHaveValue('虚构、示例')
+      await expect(dialog.getByLabel('更新说明')).toHaveValue('虚构的更新说明')
+    } finally {
+      await page.close()
+    }
+  })
+
   test('shows the package icon of an extension in the list, its detail and the agent capabilities', async () => {
     const iconPath = `/api/extensions/${summaryExtensionId}/revisions/xrv_summary/icon/${'c'.repeat(64)}.png`
     const snapshot = {
