@@ -226,7 +226,11 @@
 
 .dimension {
   display: grid;
+  /* A card stretched to its row keeps its lines together at the top, and a long URL or code wraps inside it. */
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: var(--s-1);
+  overflow-wrap: anywhere;
   padding: var(--s-3);
   border: 1px solid var(--line);
   border-radius: var(--r-2);
@@ -242,7 +246,9 @@
 
 .finding {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-1);
+  overflow-wrap: anywhere;
   padding: var(--s-3) 0;
   border-bottom: 1px solid var(--line);
   font: var(--t-body);
