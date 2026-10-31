@@ -15,6 +15,8 @@ import {
   type ChannelActivitySummary,
   type ChannelId,
   type ChannelPendingContext,
+  type ConnectionId,
+  type HostApiRequest,
   type HostApiResponse,
   type HostSseEvent,
   type MessagePart,
@@ -41,6 +43,17 @@ const PREVIEW_MAX = 80
 const ATTENTION_DELIVERY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 const ATTENTION_DELIVERY_LIMIT = 50
 const ATTENTION_DISMISSAL_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+/** Dismissal fingerprints of causes kept quiet until they recover, next to the item fingerprints. */
+const QUIET_CAUSE_PREFIX = 'cause:'
+
+/**
+ * Whether a cause is still there. A connection recovers when it is connected again, whatever deliveries it failed
+ * meanwhile; an agent recovers once none of its problems remain.
+ */
+export const causeOngoing = (key: string, items: readonly AttentionItem[]): boolean =>
+  items.some(
+    (item) => item.cause?.key === key && (!key.startsWith('connection:') || item.kind === 'connection-unhealthy'),
+  )
 const ATTENTION_RECHECK_DEBOUNCE_MS = 400
 const ATTENTION_SAFETY_INTERVAL_MS = 30_000
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
@@ -354,9 +367,18 @@ export class WorkspaceProjections {
   // ---------------------------------------------------------------- attention
 
   async listAttention(): Promise<HostApiResponse<'listAttention'>> {
-    const dismissed = this.#runtime.repository.projections.listAttentionDismissals()
-    const items = (await this.#collectAttention())
-      .filter((item) => !dismissed.has(item.id))
+    const projections = this.#runtime.repository.projections
+    const dismissed = projections.listAttentionDismissals()
+    const collected = await this.#collectAttention()
+    const quiet = new Set<string>()
+    for (const fingerprint of dismissed) {
+      if (!fingerprint.startsWith(QUIET_CAUSE_PREFIX)) continue
+      const key = fingerprint.slice(QUIET_CAUSE_PREFIX.length)
+      if (causeOngoing(key, collected)) quiet.add(key)
+      else projections.forgetAttentionDismissal(fingerprint)
+    }
+    const items = collected
+      .filter((item) => !dismissed.has(item.id) && (item.cause === undefined || !quiet.has(item.cause.key)))
       .sort(
         (left, right) =>
           severityRank(left.severity) - severityRank(right.severity) || right.occurredAt - left.occurredAt,
@@ -367,6 +389,21 @@ export class WorkspaceProjections {
       .digest('hex')
       .slice(0, 16)
     return { revision, items }
+  }
+
+  /** Dismisses items and keeps their causes quiet: new items of a cause stay hidden until it recovers. */
+  async dismissAttentionBatch(
+    input: HostApiRequest<'dismissAttentionBatch'>,
+  ): Promise<HostApiResponse<'dismissAttentionBatch'>> {
+    const now = this.#now()
+    const retainSince = now - ATTENTION_DISMISSAL_RETENTION_MS
+    for (const id of input.ids) this.#runtime.repository.projections.dismissAttention(id, now, retainSince)
+    for (const cause of input.causes) {
+      this.#runtime.repository.projections.dismissAttention(`${QUIET_CAUSE_PREFIX}${cause}`, now, retainSince)
+    }
+    const { revision } = await this.listAttention()
+    this.#publishAttention(revision)
+    return { dismissed: true, revision }
   }
 
   async dismissAttention(fingerprint: string): Promise<HostApiResponse<'dismissAttention'>> {
@@ -413,6 +450,19 @@ export class WorkspaceProjections {
     if (this.#disposed || revision === this.#attentionRevision) return
     this.#attentionRevision = revision
     this.#broadcast({ event: 'attention-changed', data: { revision } })
+  }
+
+  #connectionCause(connectionId: ConnectionId | undefined): AttentionItem['cause'] {
+    if (connectionId === undefined) return undefined
+    const connection = this.#runtime.core.getConnection(connectionId)
+    if (connection === undefined) return undefined
+    const adapterName =
+      this.#runtime.adapters.get(connection.adapterKey)?.descriptor.displayName ?? connection.adapterKey
+    return { key: `connection:${connection.id}`, label: connection.alias ?? adapterName }
+  }
+
+  #agentCause(agentId: AgentId): NonNullable<AttentionItem['cause']> {
+    return { key: `agent:${agentId}`, label: agentDisplayName(this.#runtime, agentId) }
   }
 
   async #collectAttention(): Promise<AttentionItem[]> {
@@ -509,6 +559,7 @@ export class WorkspaceProjections {
       const channelName = channelDisplayName(runtime, record.channelId)
       const agentId = AgentIdSchema.parse(record.agentId)
       const author = isAdminConsoleOutbound(record.intent.sourceTurnId) ? '管理员' : agentDisplayName(runtime, agentId)
+      const cause = this.#connectionCause(runtime.core.getChannel(record.channelId)?.connectionId)
       items.push({
         id: `delivery:${record.intent.id}:${record.resolutionCount}`,
         kind: unconfirmed ? 'delivery-unconfirmed' : 'delivery-failed',
@@ -521,6 +572,7 @@ export class WorkspaceProjections {
           400,
         ),
         action: { kind: 'resolve-delivery', label: '处理' },
+        ...(cause === undefined ? {} : { cause }),
         occurredAt: record.intent.createdAt,
       })
     }
@@ -550,6 +602,7 @@ export class WorkspaceProjections {
             400,
           ),
           action: { kind: 'open-channel', label: '查看' },
+          cause: this.#agentCause(binding.agentId),
           occurredAt: now,
         })
       }
@@ -570,6 +623,7 @@ export class WorkspaceProjections {
           detail:
             status === 'failed' ? `${adapterName} 连接异常，收不到新消息。` : `${adapterName} 连接中断，正在重连。`,
           action: { kind: 'open-connection', label: '查看连接' },
+          cause: { key: `connection:${connection.id}`, label: connection.alias ?? adapterName },
           occurredAt: since,
         })
       } else {
@@ -616,6 +670,7 @@ export class WorkspaceProjections {
               ? '模型列表暂时无法读取，请稍后重试。'
               : `主模型 ${commit.revision.model.provider}/${commit.revision.model.model} 当前不可用，${name}无法回复。`,
           action: { kind: 'open-agent', label: models === undefined ? '查看智能体' : '选择模型' },
+          cause: { key: `agent:${agentId}`, label: name },
           occurredAt: commit.revision.createdAt,
         })
         continue
@@ -634,6 +689,7 @@ export class WorkspaceProjections {
           title: name,
           detail: truncate(diagnostics.blockers[0] ?? '主模型看不懂图片，群里的图片会被跳过。', 400),
           action: { kind: 'open-agent', label: '添加视觉模型' },
+          cause: { key: `agent:${agentId}`, label: name },
           occurredAt: commit.revision.createdAt,
         })
       }
@@ -761,6 +817,12 @@ export class WorkspaceProjections {
           if (url.pathname === '/api/attention') {
             if (!requireMethod(req, res, 'GET')) return
             writeContractJson(res, 200, HostApiContracts.listAttention, await this.listAttention())
+            return
+          }
+          if (url.pathname === '/api/attention/dismiss') {
+            if (!requireMethod(req, res, 'POST')) return
+            const body = HostApiContracts.dismissAttentionBatch.parseRequest(await readJsonBody(req))
+            writeContractJson(res, 200, HostApiContracts.dismissAttentionBatch, await this.dismissAttentionBatch(body))
             return
           }
           const match = /^\/api\/attention\/([^/]+)\/dismiss$/u.exec(url.pathname)

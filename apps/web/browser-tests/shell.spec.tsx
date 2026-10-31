@@ -429,6 +429,72 @@ test.describe('shell, channels and live', () => {
     }
   })
 
+  test('one cause shows as one row, and dismissing it or everything keeps those causes quiet', async () => {
+    const connectionCause = { key: `connection:${externalConnectionId}`, label: '示例群聊平台' }
+    const item = (id: string, kind: string, extra: Record<string, unknown> = {}) => ({
+      ...attentionItem(id, 'critical', '示例群'),
+      kind,
+      cause: connectionCause,
+      ...extra,
+    })
+    const attention = [
+      item('att-outage', 'connection-unhealthy'),
+      item('att-send-1', 'delivery-failed', { action: { kind: 'resolve-delivery', label: '处理' } }),
+      item('att-send-2', 'delivery-failed', { action: { kind: 'resolve-delivery', label: '处理' } }),
+      {
+        ...attentionItem('att-turn', 'warning', '资料员的内置频道'),
+        cause: { key: 'agent:agt_fixture', label: '资料员' },
+      },
+    ]
+    const batches: unknown[] = []
+    const { page } = await open('/channels', {
+      attention,
+      before: async (page) => {
+        await page.route('**/api/attention/dismiss', async (request) => {
+          batches.push(request.request().postDataJSON())
+          await request.fulfill({ json: { dismissed: true, revision: 'fixture-after' } })
+        })
+      },
+    })
+    try {
+      await page.getByRole('button', { name: /项需要关注/u }).click()
+      const panel = page.getByRole('dialog', { name: '需要关注' })
+      await expect(panel.getByText('示例群聊平台')).toBeVisible()
+      await expect(panel.getByText('1 个连接问题，2 条消息发送失败')).toBeVisible()
+      await expect(panel.getByText('忽略后，同一原因恢复前不再提醒')).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/attention-causes.png' })
+      await panel.getByRole('button', { name: '忽略', exact: true }).first().click()
+      await expect
+        .poll(() => batches.at(-1))
+        .toEqual({ ids: ['att-outage', 'att-send-1', 'att-send-2'], causes: [connectionCause.key] })
+      await expect(panel.getByText('示例群聊平台')).toHaveCount(0)
+    } finally {
+      await page.close()
+    }
+
+    const second = await open('/channels', {
+      attention,
+      before: async (page) => {
+        await page.route('**/api/attention/dismiss', async (request) => {
+          batches.push(request.request().postDataJSON())
+          await request.fulfill({ json: { dismissed: true, revision: 'fixture-after' } })
+        })
+      },
+    })
+    try {
+      await second.page.getByRole('button', { name: /项需要关注/u }).click()
+      await second.page.getByRole('dialog', { name: '需要关注' }).getByRole('button', { name: '全部忽略' }).click()
+      await expect
+        .poll(() => batches.at(-1))
+        .toEqual({
+          ids: ['att-outage', 'att-send-1', 'att-send-2', 'att-turn'],
+          causes: [connectionCause.key, 'agent:agt_fixture'],
+        })
+    } finally {
+      await second.page.close()
+    }
+  })
+
   test('the palette remembers recent commands and switches density', async () => {
     const { page } = await open('/live')
     try {

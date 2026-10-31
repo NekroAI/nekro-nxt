@@ -21,19 +21,27 @@ const SOURCE_NOUN: Partial<Record<AttentionItem['kind'], string>> = {
   'turn-failed': '次回复失败',
   'authoring-approval': '个请求等待确认',
   'connection-unhealthy': '个连接问题',
+  'agent-model-unavailable': '个模型不可用',
+  'agent-vision-unavailable': '个识图问题',
 }
 
 /**
- * Collapses repeats so a single cause does not drown the rest: three or more agent-level items of one kind become one
- * row, and two or more items of one kind from the same place (one channel's failed deliveries) become one row.
+ * Collapses repeats so a single cause does not drown the rest: items sharing a cause (a connection's outage and the
+ * deliveries it failed, an agent's problems) become one row; otherwise three or more agent-level items of one kind
+ * become one row, and two or more items of one kind from the same place (one channel's failed deliveries) become one.
  */
 export function groupAttention(items: readonly AttentionItem[]): readonly AttentionGroup[] {
+  const causeCount = new Map<string, number>()
+  for (const item of items) {
+    if (item.cause) causeCount.set(item.cause.key, (causeCount.get(item.cause.key) ?? 0) + 1)
+  }
   const agentLevel = new Set<AttentionItem['kind']>([
     'agent-model-unavailable',
     'agent-vision-unavailable',
     'delivery-unconfirmed',
   ])
   const keyOf = (item: AttentionItem) => {
+    if (item.cause && (causeCount.get(item.cause.key) ?? 0) >= 2) return `cause:${item.cause.key}`
     const kindCount = items.filter((other) => other.kind === item.kind).length
     if (agentLevel.has(item.kind) && kindCount >= 3) return `kind:${item.kind}`
     const placeCount = items.filter((other) => other.kind === item.kind && other.href === item.href).length
@@ -49,6 +57,22 @@ export function groupAttention(items: readonly AttentionItem[]): readonly Attent
     const ids = members.map((item) => item.id)
     if (members.length === 1) return { ...first, key, ids }
     const count = members.length
+    if (key.startsWith('cause:')) {
+      // The outage itself leads the row, so its action opens the connection rather than one channel.
+      const lead =
+        members.find((item) => item.kind === 'connection-unhealthy') ??
+        [...members].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])[0]!
+      const kinds = new Map<AttentionItem['kind'], number>()
+      for (const item of members) kinds.set(item.kind, (kinds.get(item.kind) ?? 0) + 1)
+      return {
+        ...lead,
+        key,
+        ids,
+        severity: [...members].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity])[0]!.severity,
+        title: first.cause?.label ?? lead.title,
+        detail: [...kinds].map(([kind, number]) => `${number} ${SOURCE_NOUN[kind] ?? '项需要处理'}`).join('，'),
+      }
+    }
     if (key.startsWith('kind:'))
       return {
         ...first,
@@ -122,6 +146,18 @@ export function AttentionList({
     )
   return (
     <div className={[styles.list, compact ? styles.compact : ''].join(' ')}>
+      {!focused && rows.length >= 2 ? (
+        <div className={styles.focusHead}>
+          <span>忽略后，同一原因恢复前不再提醒</span>
+          <Button
+            size="small"
+            variant="ghost"
+            onClick={() => void attentionSource(runtime).dismissWithCauses(rawAttention.map((item) => item.id))}
+          >
+            全部忽略
+          </Button>
+        </div>
+      ) : null}
       {focused ? (
         <div className={styles.focusHead}>
           <span>
@@ -151,9 +187,7 @@ export function AttentionList({
           <IconButton
             label="忽略"
             size="small"
-            onClick={() => {
-              for (const id of item.ids) void attentionSource(runtime).dismiss(id)
-            }}
+            onClick={() => void attentionSource(runtime).dismissWithCauses(item.ids)}
           >
             <X size={14} />
           </IconButton>

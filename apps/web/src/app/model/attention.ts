@@ -15,6 +15,8 @@ export interface AttentionItem {
   readonly actionLabel: string
   readonly href: string
   readonly outboundId?: string
+  /** The connection or agent several items share; dismissing by it keeps the cause quiet until it recovers. */
+  readonly cause?: { readonly key: string; readonly label: string }
 }
 
 const severity: Record<HostAttentionItem['severity'], AttentionSeverity> = {
@@ -53,6 +55,7 @@ export const toAttentionItem = (item: HostAttentionItem): AttentionItem => ({
   actionLabel: item.action.label,
   href: hrefOf(item),
   ...(item.related.outboundId ? { outboundId: item.related.outboundId } : {}),
+  ...(item.cause ? { cause: { ...item.cause } } : {}),
 })
 
 /** One shared attention list per runtime: fetched once, refreshed on SSE invalidation and reconnects. */
@@ -110,6 +113,17 @@ class AttentionSource {
     this.#items = this.#items.filter((item) => item.id !== id)
     this.#listeners.forEach((listener) => listener())
     await workspaceApi.dismissAttention(id)
+  }
+
+  /** Dismisses these items and keeps their causes quiet until each recovers. */
+  async dismissWithCauses(ids: readonly string[]): Promise<void> {
+    const gone = new Set(ids)
+    const causes = [
+      ...new Set(this.#items.flatMap((item) => (gone.has(item.id) && item.cause ? [item.cause.key] : []))),
+    ]
+    this.#items = this.#items.filter((item) => !gone.has(item.id))
+    this.#listeners.forEach((listener) => listener())
+    await workspaceApi.dismissAttentionBatch(ids, causes)
   }
 }
 

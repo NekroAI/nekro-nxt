@@ -7,6 +7,7 @@ import {
   LogicalMessageIdSchema,
   OutboundIntentIdSchema,
   PhysicalDeliveryIdSchema,
+  type AttentionItem,
 } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -14,6 +15,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
+import { causeOngoing } from '../src/workspace-projections.js'
 
 const temporaryDirectories: string[] = []
 const cleanups: Array<() => Promise<void> | void> = []
@@ -461,6 +463,36 @@ describe('workspace projections', () => {
 
     const snapshot = HostApiContracts.snapshot.parseResponse(await (await fetch(`${f.origin}/api/snapshot`)).json())
     expect(snapshot.agents[0]).toMatchObject({ appearance: { hue: 268 }, currentRevisionId: f.seeded.revision.id })
+  })
+
+  it('dismisses by cause and keeps the cause quiet until it recovers', async () => {
+    const f = await fixture()
+    const listed = HostApiContracts.listAttention.parseResponse(await (await fetch(`${f.origin}/api/attention`)).json())
+    const vision = listed.items.find(({ kind }) => kind === 'agent-vision-unavailable')
+    expect(vision?.cause).toEqual({ key: `agent:${f.seeded.definition.id}`, label: f.seeded.revision.displayName })
+    const dismissed = await f.post('/api/attention/dismiss', { ids: [vision!.id], causes: [vision!.cause!.key] })
+    expect(HostApiContracts.dismissAttentionBatch.parseResponse(await dismissed.json()).dismissed).toBe(true)
+    const after = HostApiContracts.listAttention.parseResponse(await (await fetch(`${f.origin}/api/attention`)).json())
+    expect(after.items.some(({ cause }) => cause?.key === vision!.cause!.key)).toBe(false)
+  })
+
+  it('treats a connection as recovered once it is connected, and an agent once none of its problems remain', () => {
+    const item = (kind: AttentionItem['kind'], key: string): AttentionItem => ({
+      id: `${kind}:${key}`,
+      kind,
+      severity: 'warning',
+      subject: { kind: 'channel', id: 'chn_fixture' },
+      related: {},
+      title: '示例',
+      detail: '',
+      action: { kind: 'open-channel', label: '查看' },
+      cause: { key, label: '示例' },
+      occurredAt: 1,
+    })
+    expect(causeOngoing('connection:con_a', [item('delivery-failed', 'connection:con_a')])).toBe(false)
+    expect(causeOngoing('connection:con_a', [item('connection-unhealthy', 'connection:con_a')])).toBe(true)
+    expect(causeOngoing('agent:agt_a', [item('turn-failed', 'agent:agt_a')])).toBe(true)
+    expect(causeOngoing('agent:agt_a', [item('turn-failed', 'agent:agt_b')])).toBe(false)
   })
 
   it('lists revision history with changed fields and restores an earlier revision without copying it', async () => {

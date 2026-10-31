@@ -237,6 +237,11 @@ export function createProjectionRepository(database: DrizzleCoreDatabase) {
       )
     },
 
+    /** Forgets one dismissal, e.g. a cause kept quiet until it recovered. */
+    forgetAttentionDismissal(fingerprint: string): void {
+      database.delete(attentionDismissals).where(eq(attentionDismissals.fingerprint, fingerprint)).run()
+    },
+
     /** Records a dismissal and forgets dismissals older than `retainSince`. */
     dismissAttention(fingerprint: string, now: number, retainSince: number): void {
       if (fingerprint.length === 0 || fingerprint.length > 200) throw new TypeError('Invalid attention fingerprint.')

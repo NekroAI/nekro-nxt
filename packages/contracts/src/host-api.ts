@@ -1541,6 +1541,14 @@ export const AttentionItemSchema = z
         label: z.string().min(1).max(40),
       })
       .strict(),
+    /**
+     * The shared cause several items come from: a connection (its outage and the deliveries it failed) or an agent
+     * (its failed turns and unusable models). Dismissing by cause keeps it quiet until the cause recovers.
+     */
+    cause: z
+      .object({ key: z.string().min(1).max(200), label: z.string().min(1).max(120) })
+      .strict()
+      .optional(),
     occurredAt: z.number().int().safe().nonnegative(),
   })
   .strict()
@@ -5505,6 +5513,20 @@ export const HostApiContracts = {
     path: '/api/attention/:attentionId/dismiss',
     params: z.object({ attentionId: z.string().min(1).max(200) }).strict(),
     request: NoRequestBodySchema,
+    response: z.object({ dismissed: z.literal(true), revision: z.string().min(1) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  dismissAttentionBatch: defineContract({
+    method: 'POST',
+    path: '/api/attention/dismiss',
+    params: EmptyParamsSchema,
+    request: z
+      .object({
+        ids: z.array(z.string().min(1).max(200)).max(200),
+        /** Causes to keep quiet until they recover; new items of these causes are not shown meanwhile. */
+        causes: z.array(z.string().min(1).max(200)).max(200),
+      })
+      .strict(),
     response: z.object({ dismissed: z.literal(true), revision: z.string().min(1) }).strict(),
     error: HostApiErrorSchema,
   }),

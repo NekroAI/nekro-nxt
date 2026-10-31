@@ -202,6 +202,8 @@ describe('client workspace projections', () => {
       expect([...repository.projections.listAttentionDismissals()]).toEqual(['new'])
       repository.projections.dismissAttention('new', 600, 100)
       expect(repository.projections.listAttentionDismissals().size).toBe(1)
+      repository.projections.forgetAttentionDismissal('new')
+      expect(repository.projections.listAttentionDismissals().size).toBe(0)
     } finally {
       database.close()
     }

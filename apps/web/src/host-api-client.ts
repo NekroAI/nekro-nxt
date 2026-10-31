@@ -206,6 +206,8 @@ export const workspaceApi = {
   listAttention: (options?: HostRequestOptions) => callHostApi(HostApiContracts.listAttention, {}, undefined, options),
   dismissAttention: (attentionId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.dismissAttention, { attentionId }, undefined, options),
+  dismissAttentionBatch: (ids: readonly string[], causes: readonly string[], options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.dismissAttentionBatch, {}, { ids: [...ids], causes: [...causes] }, options),
   getChannelPending: (channelId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getChannelPending, { channelId }, undefined, options),
   stopChannelTask: (channelId: string, expectedEpisodeId?: string, options?: HostRequestOptions) =>
