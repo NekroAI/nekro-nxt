@@ -98,7 +98,12 @@ describe('imported Extension Runtime verification', () => {
     })
   })
 
-  const verifyAgent = async (name: string, clientCode: string, permissions: readonly HostUiPermission[]) => {
+  const verifyAgent = async (
+    name: string,
+    clientCode: string,
+    permissions: readonly HostUiPermission[],
+    execute = "return 'sunny'",
+  ) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-import-agent-'))
     directories.push(directory)
     const extensionId = ExtensionIdSchema.parse(`ext_IMPORT${name.toUpperCase()}`)
@@ -116,7 +121,7 @@ describe('imported Extension Runtime verification', () => {
       name: 'weather_lookup',
       description: '查询天气。',
       parameters: {},
-      execute() { return 'sunny' }
+      execute() { ${execute} }
     }))
   }
 }`,
@@ -191,6 +196,18 @@ return {
       renderedMessageRenderers: [],
       permissions: { permissions: ['agents.read'], networkOrigins: [] },
     })
+  })
+
+  it('checks a tool result as it crosses the wire, so undefined fields pass as they did in the trial run', async () => {
+    await expect(
+      verifyAgent('undefinedfield', panelClient, ['agents.read'], 'return { ok: true, detail: undefined }'),
+    ).resolves.toMatchObject({ toolInvocations: [{ name: 'weather_lookup', succeeded: true }] })
+    await expect(verifyAgent('noresult', panelClient, ['agents.read'], 'return undefined')).resolves.toMatchObject({
+      toolInvocations: [{ name: 'weather_lookup', succeeded: true }],
+    })
+    await expect(verifyAgent('bigint', panelClient, ['agents.read'], 'return { count: 1n }')).rejects.toThrow(
+      '工具 weather_lookup 的返回值不能转成 JSON',
+    )
   })
 
   it('rejects a data hook whose permission the Manifest did not declare', async () => {

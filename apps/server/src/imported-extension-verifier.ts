@@ -73,6 +73,18 @@ const callableOf = (
 
 const errorOf = (value: unknown): Error => (value instanceof Error ? value : new Error(String(value)))
 
+/**
+ * A result as it crosses the RPC wire during the dynamic run: undefined fields drop out and nothing becomes null.
+ * Checking the raw in-process value instead failed saves that the trial run had passed.
+ */
+const wireResult = (value: unknown, label: string): JsonValue => {
+  try {
+    return value === undefined ? null : JsonValueSchema.parse(JSON.parse(JSON.stringify(value)))
+  } catch {
+    throw new Error(`${label} 的返回值不能转成 JSON，请只返回文字、数字、布尔值、数组和普通对象。`)
+  }
+}
+
 const importFactory = async (entry: string, buildKey: string, label: string) => {
   const loaded: unknown = await import(`${pathToFileURL(entry).href}?import-verify=${buildKey}`)
   return callableOf(recordOf(loaded, `${label}模块`)['default'], `${label}默认导出`)
@@ -328,7 +340,7 @@ const verifyClient = async (
   const call = async (method: string, value: JsonValue = null): Promise<JsonValue> => {
     const handler = handlers.get(method)
     if (!handler) throw new Error(`Client 调用了未注册的 Host RPC：${method}`)
-    return JsonValueSchema.parse(await handler(value, { surface: 'verification' }))
+    return wireResult(await handler(value, { surface: 'verification' }), `Host RPC ${method}`)
   }
   const track = (unregister: () => void) => {
     let active = true
@@ -777,11 +789,11 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       })
     }
     for (const tool of tools.values()) {
-      JsonValueSchema.parse(await tool.execute(toolInputs.get(tool.name) ?? {}))
+      wireResult(await tool.execute(toolInputs.get(tool.name) ?? {}), `工具 ${tool.name}`)
       toolInvocations.push({ name: tool.name, succeeded: true })
     }
     for (const [method, handler] of handlers) {
-      JsonValueSchema.parse(await handler(rpcInputs.get(method) ?? null, { surface: 'verification' }))
+      wireResult(await handler(rpcInputs.get(method) ?? null, { surface: 'verification' }), `RPC ${method}`)
     }
     if (inbound !== undefined) {
       const declared = agentCapabilities?.inboundHook

@@ -19,6 +19,17 @@ import {
   type DynamicRunResolution,
   type HostRouteContext,
 } from './host-route-support.js'
+import { z } from 'zod'
+
+/** A schema failure deep inside saving is a bug to report, not something to read: one sentence, details in the log. */
+const saveFailureMessage = (error: unknown): string => {
+  if (!(error instanceof z.ZodError)) return error instanceof Error ? error.message : String(error)
+  console.warn('[nekro-nxt] 保存候选扩展时数据校验失败', JSON.stringify(error.issues))
+  const issue = error.issues[0]
+  const where = issue === undefined || issue.path.length === 0 ? '' : `（位置：${issue.path.join('.')}）`
+  return `保存失败：候选的数据格式不符合要求${where}。详细信息已写入日志。`
+}
+
 export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: HostRouteContext): () => void {
   registerRoute({
     kind: 'prefix',
@@ -386,7 +397,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           }),
         )
       } catch (error) {
-        writeError(res, 400, 'save-failed', error instanceof Error ? error.message : String(error))
+        writeError(res, 400, 'save-failed', saveFailureMessage(error))
       }
     },
   })
