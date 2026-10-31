@@ -467,6 +467,8 @@ export interface AgentCommunicationPort {
     readonly memberId: ChannelMemberId
     readonly clientRequestId: string
   }): Promise<ChannelInteractionResult>
+  /** Ends the turn waiting for the latest speaker to finish (Decision 2026-10-31 R2). */
+  waitForMore?: ChannelWaitRequester
 }
 
 export interface DshHostRuntimeOptions {
@@ -1231,6 +1233,8 @@ const ROOT_CHANNEL_MESSAGE_POLICY = `你在一个真实的聊天频道里。大�
 
 照你的人设和这里的气氛说话。聊天时一两句就够，像朋友随口回答：问什么答什么，不铺垫，不补充对方没问的建议和提醒，不列一二三，不总结。对方追问，或者明确要你详细讲、写一段东西（文案、代码、设定）时再展开，但也别写成文章。话多时像平常聊天一样分成几条发，在同一次回复里连着调用几次 send_channel_message。聊天软件不显示 Markdown，别用加粗、标题和表格，列几项就直接换行。
 
+群友常把一句话拆成几条发。对方看起来话还没说完，比如只叫了你一声、一句话只说了一半，就用 finish_channel_turn 的 waiting-for-more 先等他说完，他停下来以后会再叫你。
+
 要花一阵子的事（查资料、写东西、跑命令），先随口应一声再去做，做完把结果发出来。结果以实际做成的为准，没做成就直说。查到的东西用自己的话讲，别人要出处时再给链接。
 
 有人在等你回话时，这一轮结束前要么回他，要么调用 finish_channel_turn 写下为什么不回。发完消息还可以继续用工具、继续发。几件互不相关的事（发几条消息、查几样东西）可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。
@@ -1636,31 +1640,52 @@ export const assetReadTextTool = (channelId: ChannelId, assets: AssetAccessRepos
       }),
   })
 
+const FINISH_OUTCOMES = ['response-complete', 'no-response-needed', 'cannot-respond', 'waiting-for-more'] as const
+
 const FinishChannelTurnInputSchema = z
   .object({
-    outcome: z.enum(['response-complete', 'no-response-needed', 'cannot-respond']),
+    outcome: z.enum(FINISH_OUTCOMES),
     reason: z.string().trim().min(1).max(500),
+    seconds: z.number().finite().optional(),
   })
   .strict()
 
-const FinishChannelTurnResultSchema = FinishChannelTurnInputSchema.extend({ status: z.literal('finished') }).strict()
+const FinishChannelTurnResultSchema = FinishChannelTurnInputSchema.omit({ seconds: true })
+  .extend({
+    status: z.literal('finished'),
+    /** Set for `waiting-for-more`: who the agent waits for and the quiet period the channel allowed. */
+    waiting: z.object({ displayName: z.string().optional(), seconds: z.number().int() }).strict().optional(),
+  })
+  .strict()
+
+/** Starts a wait for the turn's latest speaker; a refusal says why, in words the agent can act on. */
+export type ChannelWaitRequester = (input: { readonly episodeId: EpisodeId; readonly seconds: number }) =>
+  | { readonly accepted: true; readonly displayName?: string; readonly seconds: number }
+  | {
+      readonly accepted: false
+      readonly reason: string
+    }
 
 /**
  * `awaitingReply` lets the tool refuse a claimed reply that was never sent: models sometimes write the answer as
  * plain text, which nobody in the channel sees, and then report the turn as answered.
  */
-export const finishChannelTurnTool = (awaitingReply?: (agent: Agent) => boolean) =>
+export const finishChannelTurnTool = (
+  awaitingReply?: (agent: Agent) => boolean,
+  wait?: { readonly episodeId: EpisodeId; readonly request: ChannelWaitRequester },
+) =>
   defineTool({
     name: 'finish_channel_turn',
     description:
-      '结束这一轮，放在最后调用。已经回复完用 response-complete，不需要回复用 no-response-needed，做不到或不能做用 cannot-respond。reason 写真实原因，只有后台看得到，不会发到频道里。',
+      '结束这一轮，放在最后调用。已经回复完用 response-complete，不需要回复用 no-response-needed，做不到或不能做用 cannot-respond。对方明显话还没说完时用 waiting-for-more，并在 seconds 里写他停下来多少秒后再叫你（一般 10–30）；到时你必须回复他。reason 写真实原因，只有后台看得到，不会发到频道里。',
     parameters: {
       outcome: {
         type: 'string',
-        enum: ['response-complete', 'no-response-needed', 'cannot-respond'],
+        enum: [...FINISH_OUTCOMES],
         required: true,
       },
       reason: { type: 'string', required: true, description: '原因，1–500 字。' },
+      seconds: { type: 'number', description: '只用于 waiting-for-more：对方安静多少秒后再叫你。' },
     },
     output: {
       schema: {
@@ -1670,18 +1695,32 @@ export const finishChannelTurnTool = (awaitingReply?: (agent: Agent) => boolean)
           status: { type: 'string', const: 'finished', required: true },
           outcome: {
             type: 'string',
-            enum: ['response-complete', 'no-response-needed', 'cannot-respond'],
+            enum: [...FINISH_OUTCOMES],
             required: true,
           },
           reason: { type: 'string', required: true },
+          waiting: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              displayName: { type: 'string' },
+              seconds: { type: 'integer', required: true },
+            },
+          },
         },
       },
-      render: (_arguments, value) => [
-        {
-          type: 'text',
-          text: `本轮已结束：${FinishChannelTurnResultSchema.parse(value).reason}`,
-        },
-      ],
+      render: (_arguments, value) => {
+        const parsed = FinishChannelTurnResultSchema.parse(value)
+        return [
+          {
+            type: 'text',
+            text:
+              parsed.waiting === undefined
+                ? `本轮已结束：${parsed.reason}`
+                : `本轮已结束，等${parsed.waiting.displayName ?? '对方'}安静 ${parsed.waiting.seconds} 秒后再叫你：${parsed.reason}`,
+          },
+        ]
+      },
       presentationMeta: (_arguments, value) => {
         const parsed = FinishChannelTurnResultSchema.parse(value)
         return { outcome: parsed.outcome }
@@ -1695,8 +1734,23 @@ export const finishChannelTurnTool = (awaitingReply?: (agent: Agent) => boolean)
           '你还没有发出任何消息，刚才直接写的文字大家看不到。要回复就先用 send_channel_message 发出去，再结束这一轮。',
         )
       }
+      let waiting: { readonly displayName?: string; readonly seconds: number } | undefined
+      if (parsed.outcome === 'waiting-for-more') {
+        if (wait === undefined) throw new Error('这里用不了 waiting-for-more，直接回复或者结束这一轮。')
+        const started = wait.request({ episodeId: wait.episodeId, seconds: parsed.seconds ?? 20 })
+        if (!started.accepted) throw new Error(started.reason)
+        waiting = {
+          ...(started.displayName === undefined ? {} : { displayName: started.displayName }),
+          seconds: started.seconds,
+        }
+      }
       exec.concludeTurn()
-      return Promise.resolve(FinishChannelTurnResultSchema.parse({ status: 'finished', ...parsed }))
+      return Promise.resolve({
+        status: 'finished' as const,
+        outcome: parsed.outcome,
+        reason: parsed.reason,
+        ...(waiting === undefined ? {} : { waiting }),
+      })
     },
   })
 
@@ -4195,7 +4249,13 @@ export class DshHostRuntime implements AgentSessionDriver {
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
-      agentContext.tools.register(finishChannelTurnTool((agent) => this.#channelReplyGuard.awaitingReply(agent)))
+      const requestWait = this.#communication.waitForMore
+      agentContext.tools.register(
+        finishChannelTurnTool(
+          (agent) => this.#channelReplyGuard.awaitingReply(agent),
+          requestWait === undefined ? undefined : { episodeId: input.episodeId, request: requestWait },
+        ),
+      )
       const scheduledTasks = this.#extensionHost?.scheduledTasks
       if (scheduledTasks !== undefined && revision.capabilities.scheduledTasks) {
         for (const tool of scheduledTaskTools(revision.agentId, input.channelId, scheduledTasks))
@@ -4748,6 +4808,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       const annotation = input.annotations?.get(event.id)
       if (annotation !== undefined) projectedEvents.push({ type: 'text', text: `[扩展标注] ${annotation}` })
     }
+    if (input.wakeNote !== undefined) projectedEvents.push({ type: 'text', text: `〔${input.wakeNote}〕` })
     const message = freezeMessage({
       id: dshMessageId,
       role: 'user',

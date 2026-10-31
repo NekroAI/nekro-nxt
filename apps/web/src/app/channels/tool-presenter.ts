@@ -136,6 +136,7 @@ export const messageText = (args: Readonly<Record<string, unknown>> | undefined,
 const FINISH_OUTCOME: Readonly<Record<string, string>> = {
   'response-complete': '已回复完毕',
   'no-response-needed': '无需回复',
+  'waiting-for-more': '等对方说完',
   'cannot-respond': '无法回复',
 }
 

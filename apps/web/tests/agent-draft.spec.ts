@@ -24,6 +24,7 @@ const base: AgentDraft = {
   compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
   subConversationModels: { candidates: [] },
   fallbackModels: [],
+  aliases: '',
   visionKey: '',
   capabilities: {
     subagents: true,

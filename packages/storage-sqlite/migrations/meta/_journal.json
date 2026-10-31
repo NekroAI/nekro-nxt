@@ -400,6 +400,20 @@
       "when": 1793263060114,
       "tag": "0056_outbound_processing",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1793430123453,
+      "tag": "0057_response_timing_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1793430130660,
+      "tag": "0058_smart_trigger_policy",
+      "breakpoints": true
     }
   ]
 }

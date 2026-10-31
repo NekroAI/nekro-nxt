@@ -22,6 +22,7 @@ import {
   DataTable,
   ExtensionIcon,
   IconButton,
+  Input,
   Menu,
   Overlay,
   PropertyGroup,
@@ -977,6 +978,21 @@ export function PersonaSection({
   return (
     <PropertyGroup id="profile-persona" title="设定">
       {body}
+      <PropertyList>
+        <PropertyRow
+          label="别名"
+          layout="stacked"
+          description="响应方式是智能响应时，消息里提到名称或这些别名也会叫醒它"
+          tip="多个别名用逗号、顿号或空格隔开。按字面匹配，单字别名容易误触，尽量用两个字以上。"
+        >
+          <Input
+            aria-label="别名"
+            value={draft.aliases}
+            placeholder="例如：小荧、水母"
+            onChange={(event) => update((current) => ({ ...current, aliases: event.target.value }))}
+          />
+        </PropertyRow>
+      </PropertyList>
     </PropertyGroup>
   )
 }

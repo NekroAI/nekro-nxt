@@ -5,6 +5,7 @@ import { textResult, type RegisteredCommand } from './types.js'
 export const RESPONSE_MODE_LABELS: Record<BindingRecord['triggerPolicy'], string> = {
   always: '始终响应',
   'mentioned-or-replied': '提及或回复时响应',
+  smart: '智能响应',
   command: '平台命令事件',
   'observe-only': '仅观察',
 }

@@ -70,11 +70,12 @@ export const connectionFullLabel = (connection: Pick<ConnectionSummary, 'alias' 
   return primary === connection.adapter ? primary : `${primary} · ${connection.adapter}`
 }
 
-export type TriggerPolicy = 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+export type TriggerPolicy = 'always' | 'mentioned-or-replied' | 'smart' | 'command' | 'observe-only'
 
 const TRIGGER_POLICIES: readonly string[] = [
   'always',
   'mentioned-or-replied',
+  'smart',
   'command',
   'observe-only',
 ] satisfies TriggerPolicy[]
@@ -84,6 +85,7 @@ export const isTriggerPolicy = (value: string): value is TriggerPolicy => TRIGGE
 export const triggerLabel: Record<string, string> = {
   always: '每条消息',
   'mentioned-or-replied': '被提及时',
+  smart: '智能响应',
   command: '平台命令事件',
   'observe-only': '仅观察',
 }

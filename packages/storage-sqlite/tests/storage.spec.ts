@@ -221,6 +221,7 @@ describe('Core SQLite baseline', () => {
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD compaction text')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD sub_conversation_models text')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD fallback_models text')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD aliases text')
     mutateSqlite(filename, "ALTER TABLE channels ADD preferred_processing_feedback text NOT NULL DEFAULT 'auto'")
     const old = openCoreDatabase(filename)
     const repository = new SqliteCoreRepository(old)
@@ -258,6 +259,7 @@ describe('Core SQLite baseline', () => {
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN compaction')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN sub_conversation_models')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN fallback_models')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN aliases')
     mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN preferred_processing_feedback')
     const migrated = await openMigratedCoreDatabase(filename)
     try {
@@ -294,6 +296,7 @@ describe('Core SQLite baseline', () => {
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD compaction text')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD sub_conversation_models text')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD fallback_models text')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD aliases text')
     mutateSqlite(filename, "ALTER TABLE channels ADD preferred_processing_feedback text NOT NULL DEFAULT 'auto'")
     const old = openCoreDatabase(filename)
     const repository = new SqliteCoreRepository(old)
@@ -308,6 +311,7 @@ describe('Core SQLite baseline', () => {
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN compaction')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN sub_conversation_models')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN fallback_models')
+    mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN aliases')
     mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN preferred_processing_feedback')
     mutateSqlite(
       filename,
@@ -1447,6 +1451,7 @@ describe('Core SQLite baseline', () => {
         processingFeedback: 'auto',
         localAgentMessages: 'observe',
         activityTriggerOverrides: {},
+        responseTiming: {},
         boundAt: 1,
       }
       Object.defineProperty(invalidBinding, 'triggerPolicy', { value: 'invalid' })
@@ -3705,6 +3710,7 @@ it('upgrades pre-command data with a durable cutoff and preserves existing outbo
   mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD compaction text')
   mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD sub_conversation_models text')
   mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD fallback_models text')
+  mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD aliases text')
   const old = openCoreDatabase(filename)
   const repository = new SqliteCoreRepository(old)
   let seq = 0
@@ -3760,6 +3766,7 @@ it('upgrades pre-command data with a durable cutoff and preserves existing outbo
   mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN compaction')
   mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN sub_conversation_models')
   mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN fallback_models')
+  mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN aliases')
   const upgraded = await openMigratedCoreDatabase(filename)
   try {
     const next = new SqliteCoreRepository(upgraded)

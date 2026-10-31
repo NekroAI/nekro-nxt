@@ -45,6 +45,7 @@ import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
 import { describeSchedule, sortTasks } from '../agents/scheduled-task-model.js'
 import { nextRunText, TaskActions, useScheduledTaskActions } from '../agents/scheduled-tasks-section.js'
+import { ResponseTimingRows } from './response-timing-rows.js'
 
 const INSPECTOR_TASKS = 3
 
@@ -139,7 +140,10 @@ export function ChannelInspector({
 
   const updateBinding = async (
     patch: Partial<
-      Pick<NonNullable<typeof binding>, 'processingFeedback' | 'localAgentMessages' | 'activityTriggerOverrides'>
+      Pick<
+        NonNullable<typeof binding>,
+        'processingFeedback' | 'localAgentMessages' | 'activityTriggerOverrides' | 'responseTiming'
+      >
     >,
   ) => {
     if (!agent || !binding) return
@@ -151,6 +155,7 @@ export function ChannelInspector({
         processingFeedback: patch.processingFeedback ?? binding.processingFeedback,
         localAgentMessages: patch.localAgentMessages ?? binding.localAgentMessages,
         activityTriggerOverrides: patch.activityTriggerOverrides ?? binding.activityTriggerOverrides,
+        responseTiming: patch.responseTiming ?? binding.responseTiming,
       })
     } catch (error) {
       failure(error)
@@ -277,6 +282,13 @@ export function ChannelInspector({
                 onCheckedChange={(checked) => updateBinding({ localAgentMessages: checked ? 'trigger' : 'observe' })}
               />
             </PropertyRow>
+          ) : null}
+          {agent && binding ? (
+            <ResponseTimingRows
+              triggerPolicy={binding.triggerPolicy}
+              settings={binding.responseTiming}
+              onChange={(responseTiming) => void updateBinding({ responseTiming })}
+            />
           ) : null}
           {agent && binding && activities.length > 0 ? (
             <PropertyRow label="特殊事件" description={overrides > 0 ? `${overrides} 项单独设置` : '跟随账号'}>

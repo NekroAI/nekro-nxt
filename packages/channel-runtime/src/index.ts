@@ -21,7 +21,15 @@ import type {
   OutboundIntentId,
   PhysicalDeliveryId,
 } from '@nekro-nxt/contracts'
-import { AdmissionIdSchema, ChannelMemberIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
+import {
+  AdmissionIdSchema,
+  ChannelMemberIdSchema,
+  EpisodeHandoffIdSchema,
+  EpisodeIdSchema,
+  RESPONSE_WAIT_MIN_QUIET_SECONDS,
+  resolveResponseTiming,
+  type ResolvedResponseTiming,
+} from '@nekro-nxt/contracts'
 import type {
   AgentRevisionRecord,
   AppendChannelEventCommit,
@@ -36,6 +44,7 @@ import { ChannelDelivery } from './channel-delivery.js'
 export { supportsPart as adapterSupportsPart, UNSUPPORTED_PART } from './channel-delivery.js'
 import { ChannelInteractions } from './channel-interactions.js'
 import { ProcessingFeedback } from './processing-feedback.js'
+import { ResponseTiming, systemTimers, type ResponseTimerPort, type WaitEndCause } from './response-timing.js'
 
 export type EpisodeStatus = 'opening' | 'active' | 'closed' | 'failed'
 
@@ -333,6 +342,8 @@ export interface AgentSessionDriver {
     readonly replyRequired: boolean
     /** Extension inbound-hook annotations keyed by Channel Event, rendered next to that event. */
     readonly annotations?: ReadonlyMap<ChannelEventId, string>
+    /** Why a smart-mode wake happened when it does not oblige a reply; rendered after the events. */
+    readonly wakeNote?: string
   }): Promise<{ readonly dshMessageId: string }>
   notifyConsoleOutbound(input: {
     readonly dshSessionId: string
@@ -439,6 +450,8 @@ export interface ChannelRuntimeOptions {
   /** Pause before a message that follows another one in the same channel, counted from when the earlier one was sent. */
   readonly messageGapMs?: (channelId: ChannelId, parts: readonly MessagePart[]) => number
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>
+  /** Timers for waits and debounce; tests pass a manual clock. */
+  readonly timers?: ResponseTimerPort
   readonly adapterState?: AdapterRuntimeStateStore
   readonly commands?: CommandGate
   readonly inboundHooks?: InboundHookGate
@@ -542,6 +555,7 @@ const isTriggered = (
     case 'observe-only':
       return false
     case 'mentioned-or-replied':
+    case 'smart':
       return event.facts?.['mentionedBot'] === true || event.facts?.['replyToBot'] === true
     case 'command':
       return typeof event.facts?.['command'] === 'string' && event.facts['command'].length > 0
@@ -556,6 +570,37 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
   previous.model.model === target.model.model &&
   previous.model.reasoningEffort === target.model.reasoningEffort &&
   canonicalJson({ ...previous.capabilities }) === canonicalJson({ ...target.capabilities })
+
+const laneKey = (channelId: ChannelId, agentId: AgentId): string => `${channelId}\u0000${agentId}`
+
+type MidSignal = { readonly kind: 'attention' } | { readonly kind: 'name'; readonly name: string }
+
+const midWakeNote = (signal: MidSignal): string =>
+  signal.kind === 'name'
+    ? `有人提到了「${signal.name}」，所以叫醒了你。这不一定是在跟你说话；不想接话就用 finish_channel_turn 结束，不回也可以。`
+    : '刚才跟你聊天的人接着说了话，所以叫醒了你。这不一定是对你说的；不想接话就用 finish_channel_turn 结束，不回也可以。'
+
+interface AdmissionWake {
+  /** A finished wait obliges a reply even though its fact is no trigger. */
+  readonly replyRequired?: boolean
+  readonly fromWait?: boolean
+  readonly note?: string
+}
+
+export type WaitForMoreResult =
+  | {
+      readonly accepted: true
+      readonly memberId: ChannelMemberId
+      readonly displayName?: string
+      readonly seconds: number
+    }
+  | { readonly accepted: false; readonly reason: string }
+
+/** A finished wait (Decision 2026-10-31 R2): a Host fact that opens the turn in which the agent must answer. */
+export const isResponseWaitEvent = (event: Pick<ChannelEventRecord, 'facts'>): boolean => {
+  const wait = event.facts?.['responseWait']
+  return wait !== null && typeof wait === 'object' && !Array.isArray(wait)
+}
 
 export class ChannelStopConflictError extends Error {
   constructor(message: string) {
@@ -617,6 +662,7 @@ export class ChannelRuntime {
   readonly #lanes = new Map<string, Promise<void>>()
   readonly #bindingTransitions = new Map<ChannelId, Promise<void>>()
   readonly #factListeners = new Set<(fact: ChannelFact) => void>()
+  readonly #timing: ResponseTiming
 
   constructor(
     core: CoreService,
@@ -643,6 +689,7 @@ export class ChannelRuntime {
     this.#nextUlid = options.nextUlid ?? monotonicFactory()
     this.#idleRolloverMs = options.idleRolloverMs ?? 6 * 60 * 60 * 1000
     this.#pendingRollover = options.pendingRollover
+    this.#timing = new ResponseTiming(() => this.#timestamp(), options.timers ?? systemTimers)
     this.#interactions = new ChannelInteractions(
       core,
       coreRepository,
@@ -685,21 +732,7 @@ export class ChannelRuntime {
         .filter((binding) => this.#admissionState === 'open' && this.#canAdmitAgent(binding.agentId))
       // Hooks see the committed fact; their decision is stored before any Admission can reference the event.
       await Promise.all(bindings.map((binding) => this.#decideInboundHooks(binding, commit.event)))
-      await Promise.all(
-        bindings
-          .filter((binding) => {
-            if (this.#hookDecision(binding, commit.event)?.hidden === true) return false
-            if (this.#triggered(binding, commit.event)) return true
-            const episode = this.#runtimeRepository.getActiveEpisode(binding.channelId, binding.agentId)
-            return (
-              episode?.dshSessionId !== undefined &&
-              this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'running'
-            )
-          })
-          .map((binding) =>
-            this.#withLane(binding.channelId, binding.agentId, () => this.#admit(binding, commit.event)),
-          ),
-      )
+      await Promise.all(bindings.map((binding) => this.#route(binding, commit.event)))
     }
     return {
       channelEventId: commit.event.id,
@@ -739,6 +772,213 @@ export class ChannelRuntime {
         },
       },
     })
+  }
+
+  /**
+   * Decides what one committed message does for one binding (Decision 2026-10-31 响应时机与智能响应): it extends a
+   * wait for its sender, wakes the agent (at once or after the sender's burst), joins a running turn, or stays context.
+   */
+  async #route(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
+    if (this.#hookDecision(binding, event)?.hidden === true) return
+    const lane = laneKey(binding.channelId, binding.agentId)
+    const timing = resolveResponseTiming(binding.responseTiming)
+    const sender = event.senderMemberId
+    const running = this.#sessionRunning(binding)
+    if (
+      sender !== undefined &&
+      event.kind === 'message-created' &&
+      !isExtensionJobEvent(event) &&
+      this.#timing.waitingFor(lane) === sender
+    ) {
+      this.#timing.extendWait(lane)
+      return
+    }
+    const burst = sender === undefined ? undefined : `${lane}\u0000${sender}`
+    const strong = this.#triggered(binding, event)
+    const mid = strong ? undefined : this.#midSignal(binding, event, lane, timing)
+    if (
+      !strong &&
+      mid === undefined &&
+      burst !== undefined &&
+      event.kind === 'message-created' &&
+      this.#timing.debouncing(burst)
+    ) {
+      // A plain follow-up from someone whose burst is collecting joins it and restarts the quiet period.
+      this.#timing.debounce(
+        burst,
+        timing.debounceSeconds * 1000,
+        timing.debounceMaxSeconds * 1000,
+        timing.debounceMaxMessages,
+      )
+      return
+    }
+    if (!strong && mid === undefined) {
+      if (running) await this.#withLane(binding.channelId, binding.agentId, () => this.#admit(binding, event))
+      return
+    }
+    this.#timing.cancelWait(lane)
+    const wake = (): Promise<void> =>
+      this.#withLane(binding.channelId, binding.agentId, () => this.#wake(binding, event, mid, timing))
+    if (
+      binding.triggerPolicy === 'smart' &&
+      timing.debounceSeconds > 0 &&
+      sender !== undefined &&
+      event.kind === 'message-created' &&
+      !isExtensionJobEvent(event) &&
+      !running
+    ) {
+      // Collected messages stay unadmitted and join the turn the newest one opens.
+      this.#timing.debounce(
+        burst!,
+        timing.debounceSeconds * 1000,
+        timing.debounceMaxSeconds * 1000,
+        timing.debounceMaxMessages,
+        () => {
+          void wake().catch((error: unknown) => {
+            console.warn(`[nekro-nxt] 频道 ${binding.channelId} 的合并消息没能交给智能体：${String(error)}`)
+          })
+        },
+      )
+      return
+    }
+    await wake()
+  }
+
+  async #wake(
+    binding: BindingRecord,
+    event: ChannelEventRecord,
+    mid: MidSignal | undefined,
+    timing: ResolvedResponseTiming,
+  ): Promise<void> {
+    const current = this.#coreRepository.getBinding(binding.channelId)
+    if (!current || current.agentId !== binding.agentId || current.paused) return
+    const lane = laneKey(binding.channelId, binding.agentId)
+    if (mid !== undefined) this.#timing.recordMidWake(lane)
+    if (
+      current.triggerPolicy === 'smart' &&
+      timing.attentionWake &&
+      event.senderMemberId !== undefined &&
+      this.#core.describeChannelMember(event.channelId, event.senderMemberId)?.kind === 'member'
+    ) {
+      this.#timing.noteAttention(lane, event.senderMemberId)
+    }
+    await this.#admit(current, event, undefined, mid === undefined ? {} : { note: midWakeNote(mid) })
+  }
+
+  /** Smart mode's optional wakes: the agent's name or an alias, or someone who was just talking with it. */
+  #midSignal(
+    binding: BindingRecord,
+    event: ChannelEventRecord,
+    lane: string,
+    timing: ResolvedResponseTiming,
+  ): MidSignal | undefined {
+    if (binding.triggerPolicy !== 'smart' || binding.paused) return undefined
+    if (event.kind !== 'message-created' || event.activityKey !== undefined || event.senderMemberId === undefined)
+      return undefined
+    if (this.#commands?.excludes(event) || this.#hookDecision(binding, event)?.trigger === 'suppress') return undefined
+    if (this.#core.describeChannelMember(event.channelId, event.senderMemberId)?.kind !== 'member') return undefined
+    if (!this.#timing.midWakeAvailable(lane, timing.midWakesPerMinute)) return undefined
+    if (timing.attentionWake && this.#timing.inAttention(lane, event.senderMemberId, timing.attentionSeconds * 1000)) {
+      return { kind: 'attention' }
+    }
+    if (timing.nameWake) {
+      const agent = this.#coreRepository.getAgent(binding.agentId)
+      const names = agent === undefined ? [] : [agent.revision.displayName, ...agent.revision.aliases]
+      const text = event.parts
+        .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+        .join('\n')
+        .toLocaleLowerCase()
+      const name = names.find((candidate) => candidate !== '' && text.includes(candidate.toLocaleLowerCase()))
+      if (name !== undefined) return { kind: 'name', name }
+    }
+    return undefined
+  }
+
+  #sessionRunning(binding: BindingRecord): boolean {
+    const episode = this.#runtimeRepository.getActiveEpisode(binding.channelId, binding.agentId)
+    return episode?.dshSessionId !== undefined && this.#sessionDriver.sessionStatus(episode.dshSessionId) === 'running'
+  }
+
+  /**
+   * The agent ended its turn with `waiting-for-more`: wake it once the latest speaker has been quiet for `seconds`,
+   * within the channel's limits. Refused when the channel turned waiting off or the turn itself came from a wait.
+   */
+  requestWaitForMore(input: { readonly episodeId: EpisodeId; readonly seconds: number }): WaitForMoreResult {
+    const episode = this.#runtimeRepository.getEpisode(input.episodeId)
+    const binding = episode === undefined ? undefined : this.#coreRepository.getBinding(episode.channelId)
+    if (episode === undefined || binding === undefined || binding.agentId !== episode.agentId) {
+      return { accepted: false, reason: '这个频道已经不由你负责了。' }
+    }
+    if (binding.triggerPolicy === 'command' || binding.triggerPolicy === 'observe-only' || binding.paused) {
+      return { accepted: false, reason: '这个频道现在不会自动叫你，用不了等待。' }
+    }
+    const timing = resolveResponseTiming(binding.responseTiming)
+    if (!timing.waitEnabled) return { accepted: false, reason: '这个频道关闭了等待，直接回复或者结束这一轮。' }
+    const lane = laneKey(binding.channelId, binding.agentId)
+    if (this.#timing.blocked(lane)) {
+      return { accepted: false, reason: '这一轮是等待结束后开始的，不能再等，现在就回复。' }
+    }
+    const memberId = this.#timing.lastSpeaker(lane)
+    if (memberId === undefined) return { accepted: false, reason: '找不到要等的人。' }
+    const seconds = Math.min(
+      timing.waitMaxQuietSeconds,
+      Math.max(RESPONSE_WAIT_MIN_QUIET_SECONDS, Math.round(Number.isFinite(input.seconds) ? input.seconds : 0)),
+    )
+    const displayName = this.#coreRepository.getChannelMember(memberId)?.displayName
+    this.#timing.startWait(lane, memberId, seconds * 1000, timing.waitMaxTotalSeconds * 1000, (cause, waitedMs) => {
+      void this.#withLane(binding.channelId, binding.agentId, () =>
+        this.#endWait(binding.channelId, binding.agentId, memberId, cause, waitedMs, seconds),
+      ).catch((error: unknown) => {
+        console.warn(`[nekro-nxt] 频道 ${binding.channelId} 的等待结束后没能叫醒智能体：${String(error)}`)
+      })
+    })
+    return { accepted: true, memberId, ...(displayName === undefined ? {} : { displayName }), seconds }
+  }
+
+  /** The member the agent is waiting for in a channel, if any. */
+  responseWait(channelId: ChannelId): { readonly memberId: ChannelMemberId; readonly until: number } | undefined {
+    const binding = this.#coreRepository.getBinding(channelId)
+    return binding === undefined ? undefined : this.#timing.waitState(laneKey(channelId, binding.agentId))
+  }
+
+  async #endWait(
+    channelId: ChannelId,
+    agentId: AgentId,
+    memberId: ChannelMemberId,
+    cause: WaitEndCause,
+    waitedMs: number,
+    quietSeconds: number,
+  ): Promise<void> {
+    const binding = this.#coreRepository.getBinding(channelId)
+    const channel = this.#coreRepository.getChannel(channelId)
+    if (!binding || binding.agentId !== agentId || binding.paused || !channel) return
+    const connection = this.#coreRepository.getConnection(channel.connectionId)
+    if (!connection) return
+    const displayName = this.#coreRepository.getChannelMember(memberId)?.displayName ?? '对方'
+    const waitedSeconds = Math.round(waitedMs / 1000)
+    const at = this.#timestamp()
+    const commit = this.#core.appendInbound({
+      connectionId: channel.connectionId,
+      channelId,
+      adapterKey: connection.adapterKey,
+      kind: 'control',
+      parts: [
+        {
+          type: 'text',
+          text:
+            cause === 'quiet'
+              ? `${displayName} 已经 ${quietSeconds} 秒没再说话`
+              : `已经等了 ${displayName} ${waitedSeconds} 秒`,
+        },
+      ],
+      platformTimestamp: at,
+      receivedAt: at,
+      dedupeKey: `response-wait:${agentId}:${memberId}:${at}`,
+      facts: { responseWait: { memberId, cause, waitedSeconds, quietSeconds } },
+    })
+    if (!commit.inserted) return
+    this.#publishFact({ channelId, kind: 'inbound', sourceId: commit.event.id })
+    await this.#admit(binding, commit.event, undefined, { replyRequired: true, fromWait: true })
   }
 
   async #decideInboundHooks(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
@@ -892,6 +1132,7 @@ export class ChannelRuntime {
   dispose(): Promise<void> {
     if (this.#disposing !== undefined) return this.#disposing
     this.#admissionState = 'disposed'
+    this.#timing.dispose()
     this.#disposing = (async () => {
       await Promise.allSettled([
         ...(this.#openingAdmission === undefined ? [] : [this.#openingAdmission]),
@@ -1025,6 +1266,7 @@ export class ChannelRuntime {
         throw new Error('频道绑定已变化，请重新操作。')
       const changed = current.paused !== paused
       if (changed) this.#coreRepository.replaceBinding({ ...current, paused })
+      if (paused) this.#timing.clearLane(laneKey(channelId, current.agentId))
       const stopped = paused
         ? (await this.#interruptActiveTurn(channelId, current.agentId)).result === 'stopped'
         : false
@@ -1039,6 +1281,7 @@ export class ChannelRuntime {
     readonly processingFeedback?: BindingRecord['processingFeedback']
     readonly localAgentMessages?: BindingRecord['localAgentMessages']
     readonly activityTriggerOverrides?: BindingRecord['activityTriggerOverrides']
+    readonly responseTiming?: BindingRecord['responseTiming']
   }): Promise<BindingRecord> {
     if (input.activityTriggerOverrides !== undefined)
       this.#validateActivityTriggerOverrides(input.channelId, input.activityTriggerOverrides)
@@ -1060,12 +1303,15 @@ export class ChannelRuntime {
             )
           }
         }
-        return this.#core.replaceBinding({
+        const next = this.#core.replaceBinding({
           ...input,
           processingFeedback: input.processingFeedback ?? current?.processingFeedback ?? 'auto',
           localAgentMessages: input.localAgentMessages ?? current?.localAgentMessages ?? 'observe',
           activityTriggerOverrides: input.activityTriggerOverrides ?? current?.activityTriggerOverrides ?? {},
+          responseTiming: input.responseTiming ?? current?.responseTiming ?? {},
         })
+        this.#timing.clearLane(laneKey(input.channelId, laneAgentId))
+        return next
       })
     })
   }
@@ -1075,6 +1321,7 @@ export class ChannelRuntime {
       const current = this.#coreRepository.getBinding(channelId)
       if (!current) return
       await this.#withLane(channelId, current.agentId, async () => {
+        this.#timing.clearLane(laneKey(channelId, current.agentId))
         const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
         if (episode?.status === 'active' && episode.dshSessionId !== undefined) {
           this.#feedback.markEndReason(episode.id, 'cancelled')
@@ -1144,8 +1391,19 @@ export class ChannelRuntime {
       })
     })
   }
-  sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
-    return this.#delivery.sendMessage(input)
+  async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
+    const result = await this.#delivery.sendMessage(input)
+    if (result.status === 'sent' || result.status === 'partially-sent') {
+      const episode = this.#runtimeRepository.getEpisode(input.episodeId)
+      const binding = episode === undefined ? undefined : this.#coreRepository.getBinding(episode.channelId)
+      if (episode !== undefined && binding?.agentId === episode.agentId) {
+        this.#timing.agentSpoke(
+          laneKey(episode.channelId, episode.agentId),
+          resolveResponseTiming(binding.responseTiming).attentionSeconds * 1000,
+        )
+      }
+    }
+    return result
   }
 
   async sendAdminConsoleMessage(input: {
@@ -1667,6 +1925,7 @@ export class ChannelRuntime {
     binding: BindingRecord,
     event: ChannelEventRecord,
     backlog?: readonly ChannelEventRecord[],
+    wake: AdmissionWake = {},
   ): Promise<void> {
     if (!this.#admissionAllowed(binding.agentId) || this.#commands?.excludes(event)) return
     const currentBinding = this.#coreRepository.getBinding(binding.channelId)
@@ -1720,13 +1979,27 @@ export class ChannelRuntime {
       })
       const visible = this.#visibleEvents(binding, admitted)
       const annotations = this.#annotations(binding, visible)
+      const lane = laneKey(binding.channelId, binding.agentId)
+      // A wait is for whoever woke the agent, not for someone whose remark merely joined the running turn.
+      const speaker = event.senderMemberId
+      if (
+        speaker !== undefined &&
+        wake.fromWait !== true &&
+        (wake.note !== undefined || this.#triggered(binding, event)) &&
+        this.#core.describeChannelMember(event.channelId, speaker)?.kind === 'member'
+      ) {
+        this.#timing.noteSpeaker(lane, speaker)
+      }
+      // Only the turn a finished wait opened may not wait again; any later turn may.
+      if (wake.fromWait !== true && admission.mode === 'followup') this.#timing.unblock(lane)
       const result = await this.#sessionDriver.admit({
         dshSessionId,
         admissionId: admission.id,
         events: visible,
         mode: admission.mode,
-        replyRequired: this.#replyRequired(binding, visible),
+        replyRequired: wake.replyRequired === true || this.#replyRequired(binding, visible),
         ...(annotations.size === 0 ? {} : { annotations }),
+        ...(wake.note === undefined ? {} : { wakeNote: wake.note }),
       })
       const lastEventId = admission.eventIds.at(-1)
       if (lastEventId === undefined) throw new Error(`Admission has no events: ${admission.id}`)
@@ -1958,3 +2231,4 @@ export class ChannelRuntime {
 }
 
 export { isTriggered }
+export { ResponseTiming, systemTimers, type ResponseTimerPort, type WaitEndCause } from './response-timing.js'

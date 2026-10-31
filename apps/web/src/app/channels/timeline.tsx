@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  Hourglass,
   BellOff,
   Blocks,
   BellRing,
@@ -114,6 +115,22 @@ export const MessageRow = memo(function MessageRow({
             <DeliveryActions message={message} onResolve={onResolve} />
           </div>
         ) : null}
+      </div>
+    )
+  }
+  if (message.responseWait !== undefined) {
+    const wait = message.responseWait
+    const who = wait.displayName ?? '对方'
+    return (
+      <div className={styles.scheduledNotice} data-message-id={message.id}>
+        <Hourglass size={14} aria-hidden="true" />
+        <span className={styles.scheduledNoticeText}>
+          <span className={styles.scheduledNoticeTitle}>等对方说完</span>
+          <span>
+            {wait.cause === 'quiet' ? `${who}停下来了，开始回复` : `已经等了${who} ${wait.waitedSeconds} 秒，开始回复`}
+          </span>
+        </span>
+        <span className={styles.time}>{message.time}</span>
       </div>
     )
   }

@@ -174,6 +174,7 @@ const toBinding = (input: typeof channelBindings.$inferSelect): BindingRecord =>
       ...row.activityTriggerOverridesEnabled.map((key) => [key, true] as const),
       ...row.activityTriggerSuppressions.map((key) => [key, false] as const),
     ]),
+    responseTiming: row.responseTiming,
     boundAt: row.boundAt,
   }
 }
@@ -730,6 +731,7 @@ export function createChannelsRepository(database: DrizzleCoreDatabase): Channel
               localAgentMessages: record.localAgentMessages,
               activityTriggerOverridesEnabled,
               activityTriggerSuppressions,
+              responseTiming: record.responseTiming,
               boundAt: record.boundAt,
             },
           })

@@ -40,6 +40,7 @@ import type {
   CredentialAgentScope,
   CredentialId,
   LinkedAccountId,
+  ResponseTimingSettings,
 } from '@nekro-nxt/contracts'
 import type {
   AgentCompactionPolicy,
@@ -102,6 +103,8 @@ export const agentRevisions = sqliteTable(
     subConversationModels: jsonText<SubConversationModelPolicy>('sub_conversation_models'),
     /** Null has no fallback models, which is every Revision written before the field existed. */
     fallbackModels: jsonText<readonly AgentModelSelection[]>('fallback_models'),
+    /** Null has no aliases, which is every Revision written before the field existed. */
+    aliases: jsonText<readonly string[]>('aliases'),
     contentDigest: text('content_digest').notNull(),
     createdAt: integer('created_at').notNull(),
   },
@@ -275,7 +278,7 @@ export const channelBindings = sqliteTable(
       .notNull()
       .references(() => agentDefinitions.id, { onDelete: 'restrict' }),
     triggerPolicy: text('trigger_policy', {
-      enum: ['always', 'mentioned-or-replied', 'command', 'observe-only'],
+      enum: ['always', 'mentioned-or-replied', 'smart', 'command', 'observe-only'],
     }).notNull(),
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
     localAgentMessages: text('local_agent_messages', { enum: ['observe', 'trigger'] })
@@ -288,13 +291,15 @@ export const channelBindings = sqliteTable(
     activityTriggerSuppressions: jsonText<readonly AdapterActivityKey[]>('activity_trigger_suppressions')
       .notNull()
       .default([]),
+    /** Response timing overrides; an empty object uses every default. */
+    responseTiming: jsonText<ResponseTimingSettings>('response_timing').notNull().default({}),
     boundAt: integer('bound_at').notNull(),
   },
   (table) => [
     index('channel_bindings_agent_idx').on(table.agentId, table.boundAt),
     check(
       'channel_bindings_trigger_policy_ck',
-      sql`${table.triggerPolicy} IN ('always', 'mentioned-or-replied', 'command', 'observe-only')`,
+      sql`${table.triggerPolicy} IN ('always', 'mentioned-or-replied', 'smart', 'command', 'observe-only')`,
     ),
     check('channel_bindings_processing_feedback_ck', sql`${table.processingFeedback} IN ('auto', 'off')`),
     check('channel_bindings_local_agent_messages_ck', sql`${table.localAgentMessages} IN ('observe', 'trigger')`),

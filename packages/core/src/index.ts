@@ -14,11 +14,14 @@ import type {
   MessagePart,
   PlatformIdentityId,
   PromptDocumentV1,
+  ResponseTimingSettings,
 } from '@nekro-nxt/contracts'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
   AgentFallbackModelsSchema,
+  AgentAliasesSchema,
+  ResponseTimingSettingsSchema,
   AgentSubConversationModelsSchema,
   ChannelEventIdSchema,
   AdapterActivityKeySchema,
@@ -115,6 +118,8 @@ export interface AgentRevisionContent {
   readonly subConversationModels?: SubConversationModelPolicy
   /** Models to switch to, in order, when the main model fails; omitted on revise keeps them, on create none. */
   readonly fallbackModels?: readonly AgentModelSelection[]
+  /** Extra names that wake the agent in smart mode; omitted on revise keeps them, on create none. */
+  readonly aliases?: readonly string[]
 }
 
 /** Non-versioned presentation of an intelligent agent; never part of an AgentRevision. */
@@ -133,7 +138,13 @@ export interface AgentDefinitionRecord {
 
 export interface AgentRevisionRecord extends Omit<
   AgentRevisionContent,
-  'capabilities' | 'imagePolicy' | 'personaDocument' | 'compaction' | 'subConversationModels' | 'fallbackModels'
+  | 'capabilities'
+  | 'imagePolicy'
+  | 'personaDocument'
+  | 'compaction'
+  | 'subConversationModels'
+  | 'fallbackModels'
+  | 'aliases'
 > {
   readonly id: AgentRevisionId
   readonly agentId: AgentId
@@ -144,6 +155,7 @@ export interface AgentRevisionRecord extends Omit<
   readonly compaction: AgentCompactionPolicy
   readonly subConversationModels: SubConversationModelPolicy
   readonly fallbackModels: readonly AgentModelSelection[]
+  readonly aliases: readonly string[]
   readonly personaDocument: PromptDocumentV1
   readonly contentDigest: string
   readonly createdAt: number
@@ -228,7 +240,7 @@ export interface PlatformUserDirectoryRecord {
   readonly historicalOnly: boolean
 }
 
-export type BindingTriggerPolicy = 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+export type BindingTriggerPolicy = 'always' | 'mentioned-or-replied' | 'smart' | 'command' | 'observe-only'
 
 export interface BindingRecord {
   readonly channelId: ChannelId
@@ -244,6 +256,8 @@ export interface BindingRecord {
   readonly localAgentMessages: 'observe' | 'trigger'
   /** Missing keys inherit the concrete Connection default. */
   readonly activityTriggerOverrides: Readonly<Record<AdapterActivityKey, boolean>>
+  /** When the agent speaks: waiting for a speaker to finish, and smart-mode wakes. Missing keys use the defaults. */
+  readonly responseTiming: ResponseTimingSettings
   readonly boundAt: number
 }
 
@@ -630,6 +644,7 @@ const agentRevisionContentSchema = z
     compaction: AgentCompactionPolicySchema,
     subConversationModels: SubConversationModelPolicySchema,
     fallbackModels: FallbackModelsSchema,
+    aliases: AgentAliasesSchema.default(() => []),
   })
   .strict()
   .refine(
@@ -693,10 +708,11 @@ const bindingInputSchema = z
   .object({
     channelId: z.string().trim().min(1),
     agentId: z.string().trim().min(1),
-    triggerPolicy: z.enum(['always', 'mentioned-or-replied', 'command', 'observe-only']),
+    triggerPolicy: z.enum(['always', 'mentioned-or-replied', 'smart', 'command', 'observe-only']),
     processingFeedback: z.enum(['auto', 'off']).default('auto'),
     localAgentMessages: z.enum(['observe', 'trigger']).default('observe'),
     activityTriggerOverrides: z.record(AdapterActivityKeySchema, z.boolean()).default({}),
+    responseTiming: ResponseTimingSettingsSchema.default({}),
   })
   .strict()
 
@@ -746,6 +762,7 @@ type NormalizedAgentRevisionContent = Omit<
   | 'compaction'
   | 'subConversationModels'
   | 'fallbackModels'
+  | 'aliases'
 > & {
   readonly capabilities: AgentCapabilityGrants
   readonly imagePolicy: ImageUnderstandingPolicy
@@ -754,6 +771,7 @@ type NormalizedAgentRevisionContent = Omit<
   readonly compaction: AgentCompactionPolicy
   readonly subConversationModels: SubConversationModelPolicy
   readonly fallbackModels: readonly AgentModelSelection[]
+  readonly aliases: readonly string[]
 }
 
 const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgentRevisionContent => {
@@ -781,6 +799,7 @@ const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgent
     },
     subConversationModels: subConversationModelPolicy(parsed.subConversationModels),
     fallbackModels: parsed.fallbackModels.map(modelSelection),
+    aliases: parsed.aliases,
   }
 }
 
@@ -916,6 +935,8 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
           reasoningEffort: model.reasoningEffort ?? null,
         })),
       }),
+  // Likewise for aliases.
+  ...(content.aliases.length === 0 ? {} : { aliases: [...content.aliases] }),
 })
 
 const digestRevision = (input: AgentRevisionContent): string => {
@@ -937,6 +958,7 @@ const revisionContent = (revision: AgentRevisionRecord): NormalizedAgentRevision
   compaction: revision.compaction,
   subConversationModels: revision.subConversationModels,
   fallbackModels: revision.fallbackModels,
+  aliases: revision.aliases,
 })
 
 /** Revision fields an administrator can tell apart in history; `approvalPolicy` is the dynamic client approval policy. */
@@ -950,6 +972,7 @@ export type AgentRevisionChangedField =
   | 'compaction'
   | 'subConversationModels'
   | 'fallbackModels'
+  | 'aliases'
 
 const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, string])[] = [
   ['name', 'displayName'],
@@ -961,6 +984,7 @@ const AGENT_REVISION_FIELDS: readonly (readonly [AgentRevisionChangedField, stri
   ['compaction', 'compaction'],
   ['subConversationModels', 'subConversationModels'],
   ['fallbackModels', 'fallbackModels'],
+  ['aliases', 'aliases'],
 ]
 
 const payloadField = (payload: JsonValue, key: string): JsonValue =>
@@ -1062,6 +1086,7 @@ export class CoreService {
       processingFeedback: 'auto',
       localAgentMessages: 'observe',
       activityTriggerOverrides: {},
+      responseTiming: {},
       boundAt: createdAt,
     }
     const commit = { definition, revision, channel, binding }
@@ -1081,6 +1106,7 @@ export class CoreService {
       compaction: input.compaction ?? current.revision.compaction,
       subConversationModels: input.subConversationModels ?? current.revision.subConversationModels,
       fallbackModels: input.fallbackModels ?? current.revision.fallbackModels,
+      aliases: input.aliases ?? current.revision.aliases,
     })
     if (equivalentRevisionContent(content, revisionContent(current.revision))) return current
     const digest = digestRevision(content)
@@ -1601,6 +1627,7 @@ export class CoreService {
     readonly processingFeedback?: 'auto' | 'off'
     readonly localAgentMessages?: 'observe' | 'trigger'
     readonly activityTriggerOverrides?: Readonly<Record<AdapterActivityKey, boolean>>
+    readonly responseTiming?: ResponseTimingSettings
   }): BindingRecord {
     const parsed = bindingInputSchema.parse(input)
     if (!this.#repository.getChannel(input.channelId)) throw new Error(`Unknown channel: ${input.channelId}`)
@@ -1616,6 +1643,7 @@ export class CoreService {
         input.processingFeedback ?? this.#repository.getChannel(input.channelId)?.preferredProcessingFeedback ?? 'auto',
       localAgentMessages: parsed.localAgentMessages,
       activityTriggerOverrides: parsed.activityTriggerOverrides,
+      responseTiming: parsed.responseTiming,
       boundAt: this.#timestamp(),
     }
     return this.#repository.replaceBinding(record)
@@ -1628,6 +1656,7 @@ export class CoreService {
     readonly processingFeedback?: 'auto' | 'off'
     readonly localAgentMessages?: 'observe' | 'trigger'
     readonly activityTriggerOverrides?: Readonly<Record<AdapterActivityKey, boolean>>
+    readonly responseTiming?: ResponseTimingSettings
   }): BindingRecord {
     const parsed = bindingInputSchema.parse(input)
     if (!this.#repository.getChannel(input.channelId)) throw new Error(`Unknown channel: ${input.channelId}`)
@@ -1643,6 +1672,7 @@ export class CoreService {
         input.processingFeedback ?? this.#repository.getChannel(input.channelId)?.preferredProcessingFeedback ?? 'auto',
       localAgentMessages: parsed.localAgentMessages,
       activityTriggerOverrides: parsed.activityTriggerOverrides,
+      responseTiming: parsed.responseTiming,
       boundAt: this.#timestamp(),
     })
   }

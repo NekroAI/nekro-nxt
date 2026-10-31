@@ -33,6 +33,7 @@ import {
   ReplaceLinkedAccountTokenRequestSchema,
 } from './linked-accounts.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
+import { AgentAliasesSchema, ResponseTimingSettingsSchema } from './response-timing.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -582,6 +583,7 @@ const AgentRevisionRequestContentSchema = z
     compaction: AgentCompactionPolicySchema.optional(),
     subConversationModels: AgentSubConversationModelsSchema.optional(),
     fallbackModels: AgentFallbackModelsSchema.optional(),
+    aliases: AgentAliasesSchema.optional(),
   })
   .strict()
 
@@ -627,7 +629,7 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
   .strict()
   .refine((value) => Object.values(value).some((entry) => entry !== undefined), '至少提供一个能力。')
 
-const TriggerPolicySchema = z.enum(['always', 'mentioned-or-replied', 'command', 'observe-only'])
+const TriggerPolicySchema = z.enum(['always', 'mentioned-or-replied', 'smart', 'command', 'observe-only'])
 
 export const WorkTreeOrderSchema = z
   .object({
@@ -741,6 +743,15 @@ export const HostSnapshotMessageSchema = z
     /** A scheduled task came due: a Host fact shown as a notice, not a member message. */
     scheduledTask: z
       .object({ label: z.string(), extensionName: z.string().optional(), note: z.string().optional() })
+      .strict()
+      .optional(),
+    /** The agent finished waiting for someone to finish speaking: a Host fact shown as a notice. */
+    responseWait: z
+      .object({
+        displayName: z.string().optional(),
+        cause: z.enum(['quiet', 'limit']),
+        waitedSeconds: z.number().int().nonnegative(),
+      })
       .strict()
       .optional(),
   })
@@ -1817,6 +1828,8 @@ export const HostSnapshotSchema = z
           subConversationModels: AgentSubConversationModelsSchema.optional(),
           /** Optional for older hosts, whose agents have no fallback models. */
           fallbackModels: AgentFallbackModelsSchema.optional(),
+          /** Optional for older hosts, whose agents have no aliases. */
+          aliases: AgentAliasesSchema.optional(),
           /**
            * Enabled extensions that process the agent's messages before they are sent, in the order they run. Absent
            * when none does.
@@ -1895,6 +1908,8 @@ export const HostSnapshotSchema = z
                 /** Absent means `observe`. */
                 localAgentMessages: z.enum(['observe', 'trigger']).optional(),
                 activityTriggerOverrides: ActivityTriggerOverridesSchema.default({}),
+                /** Absent on older hosts; missing keys use the defaults. */
+                responseTiming: ResponseTimingSettingsSchema.optional(),
                 boundAt: z.number().int().safe().nonnegative(),
               })
               .strict(),
@@ -2720,6 +2735,7 @@ export const AgentRevisionChangedFieldSchema = z.enum([
   'compaction',
   'subConversationModels',
   'fallbackModels',
+  'aliases',
 ])
 
 export const AgentRevisionHistorySchema = z
@@ -3453,6 +3469,8 @@ export const HostApiContracts = {
         /** Messages from another local agent's account: `observe` keeps them as context unless they @ this agent. */
         localAgentMessages: z.enum(['observe', 'trigger']).optional(),
         activityTriggerOverrides: ActivityTriggerOverridesSchema.optional(),
+        /** Omitted keeps the binding's current timing; `{}` resets every field to its default. */
+        responseTiming: ResponseTimingSettingsSchema.optional(),
       })
       .strict(),
     response: z
@@ -3464,6 +3482,7 @@ export const HostApiContracts = {
         processingFeedback: z.enum(['auto', 'off']).default('auto'),
         localAgentMessages: z.enum(['observe', 'trigger']).optional(),
         activityTriggerOverrides: ActivityTriggerOverridesSchema.default({}),
+        responseTiming: ResponseTimingSettingsSchema.optional(),
         boundAt: z.number().int().safe().nonnegative(),
       })
       .strict(),

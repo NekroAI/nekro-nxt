@@ -11,10 +11,12 @@ export type BindIntent =
   | { readonly kind: 'bind' | 'replace'; readonly channelId: string; readonly agentId: string }
   | { readonly kind: 'unbind'; readonly channelId: string }
 
-const triggerOptions = (['mentioned-or-replied', 'always', 'command', 'observe-only'] as const).map((value) => ({
-  value,
-  label: triggerLabel[value] ?? value,
-}))
+const triggerOptions = (['mentioned-or-replied', 'smart', 'always', 'command', 'observe-only'] as const).map(
+  (value) => ({
+    value,
+    label: triggerLabel[value] ?? value,
+  }),
+)
 
 /** Shared confirmation for binding, rebinding and unbinding a channel (drag, inspector and wiring all use it). */
 export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | null; readonly onClose: () => void }) {
@@ -29,7 +31,8 @@ export function BindDialog({ intent, onClose }: { readonly intent: BindIntent | 
   const connection = channel ? connections.find((item) => item.id === channel.connectionId) : undefined
   const [trigger, setTrigger] = useState<TriggerPolicy>('mentioned-or-replied')
   useEffect(() => {
-    setTrigger(current?.triggerPolicy ?? (channel?.kind === 'internal' ? 'always' : 'mentioned-or-replied'))
+    // Everything in a private chat or the built-in channel is said to the agent; groups answer when addressed.
+    setTrigger(current?.triggerPolicy ?? (channel?.kind === 'group' ? 'mentioned-or-replied' : 'always'))
   }, [intent, current?.triggerPolicy, channel?.kind])
   // The channel's own instructions follow it to the next agent unless the admin clears them here.
   const [prompt, setPrompt] = useState<

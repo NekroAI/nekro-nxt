@@ -545,6 +545,7 @@ export class HostQueries {
         compaction: commit.revision.compaction,
         subConversationModels: commit.revision.subConversationModels,
         fallbackModels: commit.revision.fallbackModels,
+        aliases: commit.revision.aliases,
         ...(() => {
           const outboundOrder = agentOutboundOrder(runtime.repository, agentId)
           return outboundOrder.length === 0 ? {} : { outboundOrder }
@@ -590,6 +591,7 @@ export class HostQueries {
           processingFeedback: binding.processingFeedback,
           localAgentMessages: binding.localAgentMessages,
           activityTriggerOverrides: binding.activityTriggerOverrides,
+          responseTiming: binding.responseTiming,
           boundAt: binding.boundAt,
         })),
       }

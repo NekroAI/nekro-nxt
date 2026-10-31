@@ -359,15 +359,17 @@ const projectConversationMessage = (
         ? (sourceAgent?.name ?? '智能体')
         : message.scheduledTask !== undefined
           ? '定时任务'
-          : message.extensionNotice !== undefined
-            ? '扩展'
-            : message.role === 'system'
-              ? '频道事件'
-              : message.sender !== undefined
-                ? nonEmptyLabel(message.sender.displayName, '群成员')
-                : sourceChannel?.kind === 'internal'
-                  ? '你'
-                  : '群成员',
+          : message.responseWait !== undefined
+            ? '等待结束'
+            : message.extensionNotice !== undefined
+              ? '扩展'
+              : message.role === 'system'
+                ? '频道事件'
+                : message.sender !== undefined
+                  ? nonEmptyLabel(message.sender.displayName, '群成员')
+                  : sourceChannel?.kind === 'internal'
+                    ? '你'
+                    : '群成员',
     body: renderConversationBody(message.parts),
     parts,
     mentionedConnectionAccount: message.mentionedConnectionAccount === true,
@@ -380,6 +382,7 @@ const projectConversationMessage = (
     ...(message.command === undefined ? {} : { command: message.command }),
     ...(message.sender?.localAgentId === undefined ? {} : { localAgentId: message.sender.localAgentId }),
     ...(message.scheduledTask === undefined ? {} : { scheduledTask: { ...message.scheduledTask } }),
+    ...(message.responseWait === undefined ? {} : { responseWait: { ...message.responseWait } }),
     ...(message.extensionNotice === undefined ? {} : { extensionNotice: { ...message.extensionNotice } }),
     ...(message.inboundHook === undefined ? {} : { inboundHook: message.inboundHook }),
     ...(message.outboundProcessing === undefined ? {} : { outboundProcessing: message.outboundProcessing }),
@@ -434,6 +437,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     compaction: agent.compaction ?? FOLLOW_COMPACTION,
     subConversationModels: agent.subConversationModels ?? NO_SUB_CONVERSATION_MODELS,
     fallbackModels: agent.fallbackModels ?? [],
+    aliases: agent.aliases ?? [],
     outboundOrder: agent.outboundOrder ?? [],
     imageDiagnostics: agent.imageDiagnostics,
     appearance: {
@@ -479,11 +483,13 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     trigger:
       channel.bindings[0]?.triggerPolicy === 'mentioned-or-replied'
         ? '被提及或回复时'
-        : channel.bindings[0]?.triggerPolicy === 'observe-only'
-          ? '仅观察'
-          : channel.bindings[0]?.triggerPolicy === 'command'
-            ? '平台命令事件'
-            : '始终响应',
+        : channel.bindings[0]?.triggerPolicy === 'smart'
+          ? '智能响应'
+          : channel.bindings[0]?.triggerPolicy === 'observe-only'
+            ? '仅观察'
+            : channel.bindings[0]?.triggerPolicy === 'command'
+              ? '平台命令事件'
+              : '始终响应',
     bindings: channel.bindings.map((binding) => ({
       id: `${binding.channelId}:${binding.agentId}:${binding.boundAt}`,
       agentId: binding.agentId,
@@ -492,6 +498,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
       processingFeedback: binding.processingFeedback,
       localAgentMessages: binding.localAgentMessages ?? 'observe',
       activityTriggerOverrides: binding.activityTriggerOverrides,
+      responseTiming: binding.responseTiming ?? {},
     })),
     localAgentIds: channel.localAgentIds ?? [],
     unread: channel.activity?.unreadCount ?? 0,

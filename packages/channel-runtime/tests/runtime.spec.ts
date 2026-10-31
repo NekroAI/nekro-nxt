@@ -650,6 +650,7 @@ const setup = async (
     | 'sleep'
     | 'sanitizeInbound'
     | 'onOutboundSettled'
+    | 'timers'
   > = {},
 ) => {
   const coreRepository = new MemoryCoreRepository()
@@ -2405,6 +2406,7 @@ describe('ChannelRuntime M1 lane', () => {
       processingFeedback: 'auto',
       localAgentMessages: 'observe',
       activityTriggerOverrides: {},
+      responseTiming: {},
       boundAt: 1,
     })
 
@@ -3362,5 +3364,240 @@ describe('ChannelRuntime extension inbound hooks and scheduled jobs', () => {
     expect((await fire({ payload: null, extensionName: '示例扩展' }, 4_000)).text).toBe('示例任务')
     expect((await fire({ payload: {} }, 5_000)).text).toBe('示例任务')
     expect((await fire({ payload: ['a'] }, 6_000)).text).toBe('示例任务\n["a"]')
+  })
+})
+
+describe('ChannelRuntime response timing (Decision 2026-10-31)', () => {
+  /** Timers the test advances by hand, sharing the runtime clock. */
+  const manualTimers = (start: number, setNow: (value: number) => void) => {
+    let now = start
+    let sequence = 0
+    const tasks = new Map<number, { readonly at: number; readonly callback: () => void }>()
+    return {
+      port: {
+        set: (callback: () => void, ms: number) => {
+          sequence += 1
+          tasks.set(sequence, { at: now + ms, callback })
+          return sequence
+        },
+        clear: (handle: unknown) => {
+          if (typeof handle === 'number') tasks.delete(handle)
+        },
+      },
+      /** Moves the clock, running due timers in order, then lets their lane work settle. */
+      advance: async (ms: number) => {
+        const target = now + ms
+        for (;;) {
+          const due = [...tasks.entries()].filter(([, task]) => task.at <= target).sort((a, b) => a[1].at - b[1].at)[0]
+          if (due === undefined) break
+          tasks.delete(due[0])
+          now = due[1].at
+          setNow(now)
+          due[1].callback()
+          for (let index = 0; index < 20; index += 1) await new Promise((resolve) => setImmediate(resolve))
+        }
+        now = target
+        setNow(now)
+        for (let index = 0; index < 20; index += 1) await new Promise((resolve) => setImmediate(resolve))
+      },
+      pending: () => tasks.size,
+    }
+  }
+
+  const harness = async (
+    triggerPolicy: 'always' | 'mentioned-or-replied' | 'smart',
+    responseTiming: Record<string, number | boolean> = {},
+  ) => {
+    let setNow: (value: number) => void = () => undefined
+    const timers = manualTimers(1_000, (value) => setNow(value))
+    const context = await setup(true, false, undefined, undefined, { timers: timers.port })
+    setNow = context.setNow
+    context.setNow(1_000)
+    context.core.reportConnectionAccount({ connectionId: context.connection.id, platformUserId: 'bot', observedAt: 1 })
+    const observe = (platformUserId: string) =>
+      context.core.observeChannelMember({
+        connectionId: context.connection.id,
+        channelId: context.channel.id,
+        platformUserId,
+        displayName: platformUserId === 'alice' ? '阿离' : platformUserId,
+        observedAt: 1,
+      }).member
+    const alice = observe('alice')
+    const bob = observe('bob')
+    await context.runtime.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy,
+      responseTiming,
+    })
+    let sequence = 0
+    const say = async (
+      sender: typeof alice,
+      text: string,
+      options: { readonly mention?: boolean } = {},
+    ): Promise<void> => {
+      sequence += 1
+      await context.runtime.acceptChannelInbound({
+        ...inbound(context.connection.id, context.channel.id, `timing-${sequence}`, 1_000 + sequence),
+        parts: [{ type: 'text', text }],
+        senderMemberId: alice.id === sender.id ? alice.id : bob.id,
+        ...(options.mention === true ? { facts: { mentionedBot: true } } : {}),
+      })
+    }
+    const episodeId = () => [...context.runtimeRepository.episodes.values()][0]!.id
+    const texts = (call: Parameters<AgentSessionDriver['admit']>[0]) =>
+      call.events.map((event) => event.parts.map((part) => (part.type === 'text' ? part.text : '')).join(''))
+    return { ...context, timers, alice, bob, say, episodeId, texts }
+  }
+
+  it('waits for the latest speaker to go quiet, collects what they add, then obliges a reply', async () => {
+    const h = await harness('mentioned-or-replied')
+    await h.say(h.alice, '荧，我想问一下', { mention: true })
+    expect(h.admissionCalls).toHaveLength(1)
+    expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 15 })).toMatchObject({
+      accepted: true,
+      memberId: h.alice.id,
+      displayName: '阿离',
+      seconds: 15,
+    })
+    await h.timers.advance(5_000)
+    await h.say(h.alice, '就是那个配置')
+    await h.timers.advance(10_000)
+    await h.say(h.alice, '怎么改端口')
+    // Someone else talking does not end the wait, and the awaited speaker's messages open no turn.
+    await h.say(h.bob, '路过')
+    await h.timers.advance(14_000)
+    expect(h.admissionCalls).toHaveLength(1)
+    await h.timers.advance(1_000)
+    expect(h.admissionCalls).toHaveLength(2)
+    const fired = h.admissionCalls[1]!
+    expect(fired.replyRequired).toBe(true)
+    expect(h.texts(fired)).toEqual(['就是那个配置', '怎么改端口', '路过', '阿离 已经 15 秒没再说话'])
+    expect(fired.events.at(-1)?.facts).toMatchObject({ responseWait: { cause: 'quiet', memberId: h.alice.id } })
+    // The turn a finished wait opened may not wait again.
+    expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 15 })).toMatchObject({ accepted: false })
+    await h.say(h.alice, '@荧 在吗', { mention: true })
+    expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 15 })).toMatchObject({ accepted: true })
+  })
+
+  it('waits for whoever woke the agent, not for a remark that joined the running turn', async () => {
+    const h = await harness('mentioned-or-replied')
+    await h.say(h.alice, '@荧 帮我看个东西', { mention: true })
+    h.setSessionStatus('running')
+    await h.say(h.bob, '我也想看')
+    expect(h.admissionCalls.map((call) => call.mode)).toEqual(['followup', 'inject'])
+    h.setSessionStatus('idle')
+    expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 10 })).toMatchObject({
+      memberId: h.alice.id,
+    })
+  })
+
+  it('stops waiting at the total limit and clamps the quiet period to the channel bounds', async () => {
+    const h = await harness('mentioned-or-replied', { waitMaxQuietSeconds: 20, waitMaxTotalSeconds: 30 })
+    await h.say(h.alice, '等下', { mention: true })
+    expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 90 })).toMatchObject({ seconds: 20 })
+    for (let index = 0; index < 3; index += 1) {
+      await h.timers.advance(10_000)
+      if (h.admissionCalls.length === 1) await h.say(h.alice, `第 ${index + 1} 句`)
+    }
+    expect(h.admissionCalls).toHaveLength(2)
+    expect(h.admissionCalls[1]!.events.at(-1)?.facts).toMatchObject({
+      responseWait: { cause: 'limit', waitedSeconds: 30 },
+    })
+    expect(h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 1 })).toMatchObject({ accepted: false })
+  })
+
+  it('lets another signal end the wait, and refuses when the channel turned waiting off', async () => {
+    const h = await harness('mentioned-or-replied')
+    await h.say(h.alice, '荧', { mention: true })
+    h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 10 })
+    await h.say(h.bob, '@荧 帮我看看', { mention: true })
+    expect(h.admissionCalls).toHaveLength(2)
+    // The wait is gone: the awaited speaker's plain message is context again, and no timer is left.
+    await h.say(h.alice, '算了')
+    await h.timers.advance(60_000)
+    expect(h.admissionCalls).toHaveLength(2)
+
+    const off = await harness('mentioned-or-replied', { waitEnabled: false })
+    await off.say(off.alice, '荧', { mention: true })
+    expect(off.runtime.requestWaitForMore({ episodeId: off.episodeId(), seconds: 10 })).toMatchObject({
+      accepted: false,
+    })
+  })
+
+  it("merges the awaited speaker's messages in an always channel instead of opening a turn for each", async () => {
+    const h = await harness('always')
+    await h.say(h.alice, '我说')
+    h.runtime.requestWaitForMore({ episodeId: h.episodeId(), seconds: 10 })
+    await h.say(h.alice, '一件事')
+    await h.say(h.alice, '很长的事')
+    expect(h.admissionCalls).toHaveLength(1)
+    await h.timers.advance(10_000)
+    expect(h.texts(h.admissionCalls[1]!)).toEqual(['一件事', '很长的事', '阿离 已经 10 秒没再说话'])
+  })
+
+  it('wakes a smart agent by name or alias without obliging a reply, within the rate limit', async () => {
+    const h = await harness('smart', { debounceSeconds: 0, midWakesPerMinute: 2 })
+    h.core.reviseAgent(h.agent.definition.id, h.agent.revision.id, {
+      displayName: '小奈',
+      persona: '',
+      model: { provider: 'deepseek', model: 'v4' },
+      aliases: ['奈奈子'],
+    })
+    await h.say(h.bob, '今天吃什么')
+    expect(h.admissionCalls).toHaveLength(0)
+    await h.say(h.bob, '小奈觉得呢')
+    expect(h.admissionCalls).toHaveLength(1)
+    expect(h.admissionCalls[0]).toMatchObject({ replyRequired: false })
+    expect(h.admissionCalls[0]!.wakeNote).toContain('小奈')
+    expect(h.texts(h.admissionCalls[0]!)).toEqual(['今天吃什么', '小奈觉得呢'])
+    await h.say(h.bob, '问问奈奈子')
+    expect(h.admissionCalls).toHaveLength(2)
+    await h.say(h.bob, '小奈？')
+    expect(h.admissionCalls).toHaveLength(2)
+    // A strong signal is never limited.
+    await h.say(h.bob, '@小奈', { mention: true })
+    expect(h.admissionCalls).toHaveLength(3)
+    expect(h.admissionCalls[2]).toMatchObject({ replyRequired: true })
+  })
+
+  it('keeps listening to whoever just talked with a smart agent, for the attention window only', async () => {
+    const h = await harness('smart', { debounceSeconds: 0, nameWake: false, attentionSeconds: 60 })
+    await h.say(h.alice, '@荧 早', { mention: true })
+    expect(h.admissionCalls).toHaveLength(1)
+    await h.timers.advance(30_000)
+    await h.say(h.bob, '早啊')
+    expect(h.admissionCalls).toHaveLength(1)
+    await h.say(h.alice, '今天好冷')
+    expect(h.admissionCalls).toHaveLength(2)
+    expect(h.admissionCalls[1]).toMatchObject({ replyRequired: false })
+    expect(h.admissionCalls[1]!.wakeNote).toContain('接着说')
+    await h.timers.advance(61_000)
+    await h.say(h.alice, '我去忙了')
+    expect(h.admissionCalls).toHaveLength(2)
+  })
+
+  it('debounces a smart burst into one turn, flushing at the message cap', async () => {
+    const h = await harness('smart', { debounceSeconds: 3, debounceMaxMessages: 3 })
+    await h.say(h.alice, '@荧', { mention: true })
+    await h.timers.advance(2_000)
+    await h.say(h.alice, '问个事')
+    // The plain follow-up restarted the quiet period.
+    await h.timers.advance(2_000)
+    expect(h.admissionCalls).toHaveLength(0)
+    await h.timers.advance(1_000)
+    expect(h.admissionCalls).toHaveLength(1)
+    expect(h.texts(h.admissionCalls[0]!)).toEqual(['@荧', '问个事'])
+    expect(h.admissionCalls[0]).toMatchObject({ replyRequired: true })
+
+    await h.say(h.bob, '@荧 一', { mention: true })
+    await h.say(h.bob, '二')
+    expect(h.admissionCalls).toHaveLength(1)
+    // A plain message can fill the burst too; it still opens the turn the first @ asked for.
+    await h.say(h.bob, '三')
+    await h.timers.advance(0)
+    expect(h.admissionCalls).toHaveLength(2)
+    expect(h.texts(h.admissionCalls[1]!)).toEqual(['@荧 一', '二', '三'])
+    expect(h.admissionCalls[1]).toMatchObject({ replyRequired: true })
   })
 })

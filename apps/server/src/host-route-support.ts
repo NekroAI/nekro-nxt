@@ -4,6 +4,7 @@ import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import { isAdminConsoleOutbound, type ChannelFact, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import {
   ChannelEventIdSchema,
+  ChannelMemberIdSchema,
   DshNxtHostUiSchema,
   ExtensionIdSchema,
   type ExtensionRevisionIdSchema,
@@ -428,6 +429,21 @@ const scheduledTaskFact = (
   }
 }
 
+const responseWaitFact = (
+  runtime: NekroRuntime,
+  facts: Extract<ChannelHistoryEntry, { source: 'channel-event' }>['facts'],
+): HostSnapshotMessage['responseWait'] => {
+  const wait = facts?.['responseWait']
+  if (wait === null || wait === undefined || typeof wait !== 'object' || Array.isArray(wait)) return undefined
+  const memberId = ChannelMemberIdSchema.safeParse(wait['memberId'])
+  const displayName = memberId.success ? runtime.repository.getChannelMember(memberId.data)?.displayName : undefined
+  return {
+    ...(displayName === undefined ? {} : { displayName }),
+    cause: wait['cause'] === 'limit' ? 'limit' : 'quiet',
+    waitedSeconds: typeof wait['waitedSeconds'] === 'number' ? Math.max(0, Math.round(wait['waitedSeconds'])) : 0,
+  }
+}
+
 /** The responding agent's stored hook decision, only when it changed something or reported a problem. */
 const inboundHookFact = (
   runtime: NekroRuntime,
@@ -496,7 +512,9 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
     const sender =
       entry.senderMemberId === undefined ? undefined : runtime.repository.getChannelMember(entry.senderMemberId)
     const scheduledTask = scheduledTaskFact(entry.facts)
-    const inboundHook = scheduledTask === undefined ? inboundHookFact(runtime, entry) : undefined
+    const responseWait = responseWaitFact(runtime, entry.facts)
+    const inboundHook =
+      scheduledTask === undefined && responseWait === undefined ? inboundHookFact(runtime, entry) : undefined
     const command = runtime.repository.commands.forEvent(entry.sourceId)
     // Replies that never reached the platform (kept in the console on purpose, or never planned) show here.
     const localReplies =
@@ -506,9 +524,13 @@ export const projectHistoryEntry = (runtime: NekroRuntime, entry: ChannelHistory
     return {
       id: entry.sourceId,
       channelId: entry.channelId,
-      role: entry.activityKey === undefined && scheduledTask === undefined ? 'member' : 'system',
+      role:
+        entry.activityKey === undefined && scheduledTask === undefined && responseWait === undefined
+          ? 'member'
+          : 'system',
       ...(command === undefined ? {} : { command }),
       ...(scheduledTask === undefined ? {} : { scheduledTask }),
+      ...(responseWait === undefined ? {} : { responseWait }),
       ...(inboundHook === undefined ? {} : { inboundHook }),
       parts:
         localReplies.length > 0

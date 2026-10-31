@@ -1,6 +1,7 @@
 import { createSelectSchema } from 'drizzle-zod'
 import { z } from 'zod'
 import {
+  ResponseTimingSettingsSchema,
   AdmissionIdSchema,
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -150,6 +151,7 @@ export const ChannelBindingRowSchema = createSelectSchema(channelBindings, {
   agentId: AgentIdSchema,
   activityTriggerOverridesEnabled: z.array(AdapterActivityKeySchema),
   activityTriggerSuppressions: z.array(AdapterActivityKeySchema),
+  responseTiming: ResponseTimingSettingsSchema,
 })
 export const ChannelEventRowSchema = createSelectSchema(channelEvents, {
   id: ChannelEventIdSchema,

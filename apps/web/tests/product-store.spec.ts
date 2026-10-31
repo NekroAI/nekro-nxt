@@ -146,6 +146,7 @@ describe('product store Host mutations', () => {
           compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
           subConversationModels: { candidates: [] },
           fallbackModels: [],
+          aliases: [],
           outboundOrder: [],
           dynamicClientApprovalPolicy: 'manual',
           personaDocument: { version: 1, segments: [] },

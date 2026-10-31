@@ -9,12 +9,13 @@ import type { BindIntent } from './bind-dialog.js'
  * Who answers a channel and when (interaction model §1.2). Wiring, the agent page and the channel inspector all edit
  * a binding with these controls, so the choices, words and consequences are the same wherever it is changed.
  */
-export const TRIGGERS = ['mentioned-or-replied', 'always', 'command', 'observe-only'] as const
+export const TRIGGERS = ['mentioned-or-replied', 'smart', 'always', 'command', 'observe-only'] as const
 
 /** What each trigger policy means in practice (packages/channel-runtime shouldTrigger). */
 export const triggerHint: Record<TriggerPolicy, string> = {
   always: '频道里的每条消息都会交给它处理',
   'mentioned-or-replied': '有人 @它或回复它的消息时',
+  smart: '被 @ 或回复时，以及有人提到它的名字、刚跟它聊过的人接着说时；花费更高',
   command: '平台上报原生命令事件时（不是这里的聊天命令）',
   'observe-only': '长期只记录消息、不回复；临时停一下请用暂停回应',
 }

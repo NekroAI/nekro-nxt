@@ -16,7 +16,7 @@ import {
   parseImageUnderstandingPolicy,
   storedAgentCapabilityGrants,
 } from '@nekro-nxt/core'
-import { normalizePromptDocument, promptDocumentFromText } from '@nekro-nxt/contracts'
+import { AgentAliasesSchema, normalizePromptDocument, promptDocumentFromText } from '@nekro-nxt/contracts'
 import type { AgentId, AgentRevisionId } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
 import {
@@ -71,6 +71,7 @@ const toRevision = (input: typeof agentRevisions.$inferSelect): AgentRevisionRec
         ? DEFAULT_SUB_CONVERSATION_MODEL_POLICY
         : parseSubConversationModelPolicy(row.subConversationModels),
     fallbackModels: row.fallbackModels === null ? [] : parseFallbackModels(row.fallbackModels),
+    aliases: row.aliases === null ? [] : AgentAliasesSchema.parse(row.aliases),
     contentDigest: row.contentDigest,
     createdAt: row.createdAt,
   }
@@ -122,6 +123,7 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
     ? {}
     : { subConversationModels: record.subConversationModels }),
   ...(record.fallbackModels.length === 0 ? {} : { fallbackModels: record.fallbackModels }),
+  ...(record.aliases.length === 0 ? {} : { aliases: record.aliases }),
   contentDigest: record.contentDigest,
   createdAt: record.createdAt,
 })

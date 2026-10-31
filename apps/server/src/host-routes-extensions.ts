@@ -278,6 +278,7 @@ export function registerExtensionsRoutes({
                 ...(parsed.fallbackModels === undefined
                   ? {}
                   : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
+                ...(parsed.aliases === undefined ? {} : { aliases: parsed.aliases }),
               })
               value = { agentId: entity.agentId, channelId: entity.channelId, connectionId: entity.connectionId }
             } else if (input.method === 'agents.revise') {
@@ -308,6 +309,7 @@ export function registerExtensionsRoutes({
                 ...(parsed.fallbackModels === undefined
                   ? {}
                   : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
+                ...(parsed.aliases === undefined ? {} : { aliases: parsed.aliases }),
               })
               value = { currentRevisionId: updated.revision.id }
             } else if (input.method === 'agents.capabilities') {
@@ -486,6 +488,7 @@ export function registerExtensionsRoutes({
                 ...(parsed.activityTriggerOverrides === undefined
                   ? {}
                   : { activityTriggerOverrides: parsed.activityTriggerOverrides }),
+                ...(parsed.responseTiming === undefined ? {} : { responseTiming: parsed.responseTiming }),
               })
             } else if (input.method === 'channels.unbind') {
               const request = z.object({ channelId: ChannelIdSchema }).strict().parse(input.input)

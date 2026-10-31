@@ -280,6 +280,7 @@ export function registerWorkspaceRoutes({
             ...(parsed.activityTriggerOverrides === undefined
               ? {}
               : { activityTriggerOverrides: parsed.activityTriggerOverrides }),
+            ...(parsed.responseTiming === undefined ? {} : { responseTiming: parsed.responseTiming }),
           })
           emit('write-binding', 'done', kind === 'replace' ? '已改由新智能体响应。' : '频道已绑定。')
           writeJson(res, 201, HostApiContracts.createBinding.parseResponse(binding))
@@ -461,6 +462,7 @@ export function registerWorkspaceRoutes({
           ? {}
           : { subConversationModels: parseSubConversationModelPolicy(parsed.subConversationModels) }),
         ...(parsed.fallbackModels === undefined ? {} : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
+        ...(parsed.aliases === undefined ? {} : { aliases: parsed.aliases }),
       }
       const entity = await runtime.createAgentWithInternalChannel(content)
       writeJson(
@@ -652,6 +654,7 @@ export function registerWorkspaceRoutes({
             ...(parsed.fallbackModels === undefined
               ? {}
               : { fallbackModels: parseFallbackModels(parsed.fallbackModels) }),
+            ...(parsed.aliases === undefined ? {} : { aliases: parsed.aliases }),
           })
           writeJson(res, 200, HostApiContracts.reviseAgent.parseResponse({ currentRevisionId: updated.revision.id }))
           return

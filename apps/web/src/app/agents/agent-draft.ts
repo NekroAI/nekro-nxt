@@ -33,8 +33,20 @@ export interface AgentDraft {
   readonly subConversationModels: AgentSubConversationModels
   /** Models to switch to, in order, when the main model fails. */
   readonly fallbackModels: readonly AgentFallbackModel[]
+  /** Extra names that wake it in smart mode, as typed: separated by commas, 、 or spaces. */
+  readonly aliases: string
   readonly capabilities: Capabilities
 }
+
+/** Aliases as they are saved: split, trimmed and without repeats. */
+export const savedAliases = (text: string): readonly string[] => [
+  ...new Set(
+    text
+      .split(/[,，、\s]+/u)
+      .map((alias) => alias.trim())
+      .filter((alias) => alias !== ''),
+  ),
+]
 
 export const draftOf = (agent: AgentSummary): AgentDraft => ({
   name: agent.name,
@@ -52,6 +64,7 @@ export const draftOf = (agent: AgentSummary): AgentDraft => ({
   compaction: agent.compaction,
   subConversationModels: agent.subConversationModels,
   fallbackModels: agent.fallbackModels,
+  aliases: agent.aliases.join('、'),
   capabilities: agent.capabilities,
 })
 
@@ -108,7 +121,8 @@ export const identityChanged = (base: AgentDraft, draft: AgentDraft): boolean =>
   draft.visionKey !== base.visionKey ||
   JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction) ||
   !sameSubConversationModels(draft.subConversationModels, base.subConversationModels) ||
-  JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels)
+  JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels) ||
+  JSON.stringify(savedAliases(draft.aliases)) !== JSON.stringify(savedAliases(base.aliases))
 
 /** Capabilities that differ from the saved ones, as the partial patch the Host expects. */
 export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Capabilities> => {
@@ -144,6 +158,7 @@ export const capabilityPatch = (base: AgentDraft, draft: AgentDraft): Partial<Ca
 export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly string[] => {
   const changes: string[] = []
   if (draft.name.trim() !== base.name) changes.push('名称')
+  if (JSON.stringify(savedAliases(draft.aliases)) !== JSON.stringify(savedAliases(base.aliases))) changes.push('别名')
   if (draft.modelKey !== base.modelKey) changes.push('主模型')
   if (draft.effort !== base.effort) changes.push('思考强度')
   if (JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels)) changes.push('备用模型')

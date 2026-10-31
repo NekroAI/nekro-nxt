@@ -111,6 +111,7 @@ export function createProductStore(
       compaction,
       subConversationModels,
       fallbackModels,
+      aliases,
     }) => {
       await requireHost().actions['agents.revise']({
         agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
@@ -128,6 +129,7 @@ export function createProductStore(
         ...(compaction === undefined ? {} : { compaction }),
         ...(subConversationModels === undefined ? {} : { subConversationModels }),
         ...(fallbackModels === undefined ? {} : { fallbackModels: [...fallbackModels] }),
+        ...(aliases === undefined ? {} : { aliases: [...aliases] }),
       })
     },
     updateNotificationSettings: async (input) => {
@@ -236,6 +238,7 @@ export function createProductStore(
       processingFeedback,
       localAgentMessages,
       activityTriggerOverrides,
+      responseTiming,
     }) => {
       await requireHost().actions['bindings.create']({
         agentId: requireValue(agentId, '缺少智能体标识，请刷新页面后重试。'),
@@ -244,6 +247,7 @@ export function createProductStore(
         ...(processingFeedback === undefined ? {} : { processingFeedback }),
         ...(localAgentMessages === undefined ? {} : { localAgentMessages }),
         ...(activityTriggerOverrides === undefined ? {} : { activityTriggerOverrides }),
+        ...(responseTiming === undefined ? {} : { responseTiming }),
       })
     },
     clearBinding: async (channelId) => {

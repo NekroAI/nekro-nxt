@@ -1894,3 +1894,21 @@ button.step:hover {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+/* —— 响应时机 —— */
+.unitField {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.unitField > :first-child {
+  width: 80px;
+  flex: none;
+}
+
+.unitField > span {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}

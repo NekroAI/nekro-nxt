@@ -391,6 +391,13 @@ const extensionJobHeader = (event: ChannelEventRecord): string | undefined => {
   return `〔定时任务到时间了〕来源：${source}${task}；计划时间 ${scheduledAt}${delay}。要不要在群里说话由你决定：`
 }
 
+/** Header for a finished wait; the event's own text says how long the speaker has been quiet. */
+const responseWaitHeader = (event: ChannelEventRecord): string | undefined => {
+  const wait = event.facts?.['responseWait']
+  if (wait === null || typeof wait !== 'object' || Array.isArray(wait)) return undefined
+  return '〔等待结束〕你刚才在等对方说完。现在回复他，这一轮不能再选择等待：'
+}
+
 export const DirectImageInspectionValueSchema = z
   .object({
     mode: z.literal('direct'),
@@ -1110,7 +1117,7 @@ export class SessionImageContext {
       (part) => part.type === 'mention' && this.#members?.describe(part.memberId).kind === 'self',
     )
     const mentionDescription = event.facts?.['mentionedBot'] === true && !mentionsSelf ? '（提到了你）' : ''
-    const job = extensionJobHeader(event)
+    const job = extensionJobHeader(event) ?? responseWaitHeader(event)
     const time = formatContextTime(event.receivedAt, previousAt)
     const blocks: ContentBlock[] = [
       {

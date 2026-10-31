@@ -18,6 +18,7 @@ const FIELD_LABEL: Record<SavedConfig['changedFields'][number], string> = {
   compaction: '压缩模型',
   subConversationModels: '子对话模型',
   fallbackModels: '备用模型',
+  aliases: '别名',
 }
 
 /** `10月4日 14:20`, with the year when it is not this year. */

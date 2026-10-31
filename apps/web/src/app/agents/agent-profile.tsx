@@ -31,6 +31,7 @@ import {
   draftOf,
   identityChanged,
   imagePolicyFor,
+  savedAliases,
   savedSubConversationModels,
   type AgentDraft,
 } from './agent-draft.js'
@@ -204,6 +205,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           compaction: draft.compaction,
           subConversationModels: savedSubConversationModels(draft.subConversationModels),
           fallbackModels: draft.fallbackModels,
+          aliases: savedAliases(draft.aliases),
         })
       }
       const patch = capabilityPatch(base, draft)

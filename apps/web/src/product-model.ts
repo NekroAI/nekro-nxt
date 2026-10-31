@@ -16,6 +16,7 @@ import type {
   ExtensionUiContributions,
   JsonValue,
   PromptDocumentV1,
+  ResponseTimingSettings,
 } from '@nekro-nxt/contracts'
 import type { ExtensionJsonValue } from '@nekro-nxt/extension-sdk'
 import type { DynamicPackageSummary } from './product-port.js'
@@ -125,6 +126,8 @@ export interface AgentSummary {
   readonly subConversationModels: AgentSubConversationModels
   /** Models it switches to, in order, when the main model fails. */
   readonly fallbackModels: readonly AgentFallbackModel[]
+  /** Extra names that wake it in smart mode; its name always counts. */
+  readonly aliases: readonly string[]
   /** Enabled extensions that process its messages before sending, in the order they run. */
   readonly outboundOrder: readonly string[]
   readonly imageDiagnostics: HostApiResponse<'snapshot'>['agents'][number]['imageDiagnostics']
@@ -160,12 +163,14 @@ export interface ChannelSummary {
   readonly bindings: readonly {
     readonly id: string
     readonly agentId: string
-    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'smart' | 'command' | 'observe-only'
     /** Channel pause, independent of the response rule. */
     readonly paused: boolean
     readonly processingFeedback: 'auto' | 'off'
     readonly localAgentMessages: 'observe' | 'trigger'
     readonly activityTriggerOverrides: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
+    /** Missing keys use the defaults. */
+    readonly responseTiming: ResponseTimingSettings
   }[]
   /** Other agents on this host that answer the same platform channel through another connection. */
   readonly localAgentIds: readonly string[]
@@ -270,6 +275,8 @@ export interface ConversationMessage {
     readonly extensionName?: string | undefined
     readonly note?: string | undefined
   }
+  /** The agent finished waiting for someone to finish speaking; shown as a notice. */
+  readonly responseWait?: NonNullable<HostApiResponse<'snapshot'>['messages'][number]['responseWait']>
   readonly resources: readonly {
     readonly assetId: string
     readonly name: string
@@ -657,6 +664,7 @@ export interface ProductState {
     readonly compaction?: AgentCompactionPolicy
     readonly subConversationModels?: AgentSubConversationModels
     readonly fallbackModels?: readonly AgentFallbackModel[]
+    readonly aliases?: readonly string[]
   }): Promise<void>
   updateNotificationSettings(
     input: HostApiRequest<'updateNotificationSettings'>,
@@ -705,10 +713,11 @@ export interface ProductState {
   createBinding(input: {
     readonly agentId: string
     readonly channelId: string
-    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'command' | 'observe-only'
+    readonly triggerPolicy: 'always' | 'mentioned-or-replied' | 'smart' | 'command' | 'observe-only'
     readonly processingFeedback?: 'auto' | 'off'
     readonly localAgentMessages?: 'observe' | 'trigger'
     readonly activityTriggerOverrides?: HostApiResponse<'snapshot'>['channels'][number]['bindings'][number]['activityTriggerOverrides']
+    readonly responseTiming?: ResponseTimingSettings
   }): Promise<void>
   clearBinding(channelId: string): Promise<void>
   deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
