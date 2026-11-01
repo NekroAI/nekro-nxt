@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { JsonValue, RetrievalMode, RetrievalStatus } from '@nekro-nxt/contracts'
 import type { ExtensionIndexRepository } from '@nekro-nxt/storage-sqlite'
@@ -15,6 +15,7 @@ import {
   ONNXRUNTIME_VERSION,
   type PinnedFile,
 } from './retrieval-model-files.js'
+import { downloadPinnedFile } from './runtime-download.js'
 
 const SETTING_KEY = 'retrieval'
 /** Bumped when the text a document is embedded from changes, so old vectors are rebuilt. */
@@ -299,7 +300,14 @@ export class RetrievalRuntime implements IndexVectorProvider {
           report(doneBytes)
           continue
         }
-        await this.#fetchFile(entry, (received) => report(doneBytes + received))
+        await downloadPinnedFile({
+          target: entry.target,
+          bytes: entry.file[1],
+          sha256: entry.file[2],
+          urls: entry.urls,
+          ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+          onProgress: (received) => report(doneBytes + received),
+        })
         doneBytes += entry.file[1]
         report(doneBytes)
       }
@@ -318,47 +326,6 @@ export class RetrievalRuntime implements IndexVectorProvider {
     } catch {
       return false
     }
-  }
-
-  /** Tries each source in turn; a file is published only after its size and hash match. */
-  async #fetchFile(
-    entry: { readonly target: string; readonly file: PinnedFile; readonly urls: readonly string[] },
-    onProgress: (received: number) => void,
-  ): Promise<void> {
-    const [, size, digest] = entry.file
-    await mkdir(path.dirname(entry.target), { recursive: true })
-    const failures: string[] = []
-    for (const url of entry.urls) {
-      const staging = `${entry.target}.${randomUUID()}.part`
-      try {
-        const response = await (this.#options.fetch ?? fetch)(url, { signal: AbortSignal.timeout(10 * 60 * 1000) })
-        if (!response.ok || response.body === null) throw new Error(`HTTP ${response.status}`)
-        const hash = createHash('sha256')
-        let received = 0
-        const file = await open(staging, 'w')
-        try {
-          const reader = response.body.getReader()
-          for (;;) {
-            const { done, value } = await reader.read()
-            if (done) break
-            received += value.byteLength
-            if (received > size) throw new Error('文件比预期大')
-            hash.update(value)
-            await file.write(value)
-            onProgress(received)
-          }
-        } finally {
-          await file.close()
-        }
-        if (received !== size || hash.digest('hex') !== digest) throw new Error('校验不通过')
-        await rename(staging, entry.target)
-        return
-      } catch (error) {
-        await rm(staging, { force: true })
-        failures.push(`${new URL(url).host}：${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
-    throw new Error(`${path.basename(entry.target)} 下载失败（${failures.join('；')}）`)
   }
 
   async #load(): Promise<LoadedModel> {
