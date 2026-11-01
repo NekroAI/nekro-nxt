@@ -87,10 +87,10 @@ export const LOCAL_SPEECH_MODELS: Readonly<Record<LocalSpeechModelId, LocalSpeec
     id: 'sense-voice-small',
     kind: 'sense-voice',
     name: 'sense-voice-small-int8',
-    repository: 'csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09',
-    revision: '355f4d4884d8afd08aef04b9007a8556d7b463b2',
+    repository: 'csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17',
+    revision: '2365baeacb507f821a0c8120fcee3d484dba7a07',
     files: [
-      ['model.int8.onnx', 237115547, '12ca1a2ae7ecf3e0019ef2822307ee0b5cadc9196569e379b4c4026f8205276d'],
+      ['model.int8.onnx', 239233841, 'c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51'],
       ['tokens.txt', 315894, 'f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc'],
     ],
     memoryBytes: 900 * MB,

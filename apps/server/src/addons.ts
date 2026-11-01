@@ -653,7 +653,6 @@ export const speechAddon = (local: LocalSpeech, cloud: SpeechCloud): AddonCapabi
           name: 'FunASR Model License',
           url: 'https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE',
         },
-        { component: 'WSYue-ASR', name: 'Apache-2.0', url: 'https://huggingface.co/ASLP-lab/WSYue-ASR' },
       ],
     }),
     {
