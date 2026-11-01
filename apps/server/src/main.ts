@@ -989,6 +989,17 @@ const isEntryPoint = (): boolean => {
   }
 }
 
+/** Desktop reads this line to know the databases passed even if the process were slow to exit. */
+const SQLITE_CHECK_PASSED = 'nxt:check-sqlite:passed'
+
+/**
+ * Ends a one-shot maintenance command. An Electron utility process keeps running after its script finishes, and
+ * Desktop waits for the exit code, so these commands must exit explicitly once their output is flushed.
+ */
+const exitAfterOutput = (code: number): void => {
+  process.stdout.write('', () => process.exit(code))
+}
+
 // Only auto-start when invoked as an entry point (pnpm dev/start), not on import.
 if (isEntryPoint()) {
   // Inside Electron's utility process, DSH's local runner starts children with process.execPath (the Electron
@@ -1005,6 +1016,8 @@ if (isEntryPoint()) {
         const files = process.argv.slice(checkIndex + 1)
         if (files.length === 0) throw new Error('--check-sqlite 需要数据库文件路径。')
         for (const file of files) verifySqliteIntegrity(resolveRoot(file))
+        console.log(SQLITE_CHECK_PASSED)
+        exitAfterOutput(0)
         return
       }
       const restoreIndex = process.argv.indexOf('--restore-upgrade')
@@ -1024,6 +1037,7 @@ if (isEntryPoint()) {
         } finally {
           await release()
         }
+        exitAfterOutput(0)
         return
       }
       const distIndexEnv = process.env['NEKRO_DIST_INDEX']

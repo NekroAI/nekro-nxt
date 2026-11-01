@@ -6,24 +6,36 @@ import { installF12DevToolsShortcut } from './devtools-shortcut.js'
 import { assertTrustedOverlayIpcEvent, installExactTrustedNavigationGuard } from './trusted-view-navigation.js'
 import { desktopWindowChrome } from './window-chrome.js'
 
-export type DataMoveViewMode = 'moving' | 'undoing' | 'failed' | 'interrupted' | 'switching'
+export type DataMoveViewMode = 'moving' | 'undoing' | 'failed' | 'interrupted' | 'cancelled' | 'switching'
 
 export interface DataMoveViewState {
   readonly mode: DataMoveViewMode
   readonly method: MoveMethod
   readonly source: string
   readonly target: string
+  /** When copying or moving began, for the elapsed time. */
+  readonly startedAt?: number
   readonly progress?: DataMoveProgress
   readonly failure?: DataMoveFailure
   readonly diagnostics: string
 }
 
-export type DataMoveAction = 'open'
+export type DataMoveAction = 'open' | 'cancel'
 
-export const allowedDataMoveActions = (state: Pick<DataMoveViewState, 'mode'>): readonly DataMoveAction[] =>
-  state.mode === 'failed' || state.mode === 'interrupted' ? ['open'] : []
+/** The move has stopped and the old directory is in use again. */
+const stopped = (state: Pick<DataMoveViewState, 'mode'>): boolean =>
+  state.mode === 'failed' || state.mode === 'interrupted' || state.mode === 'cancelled'
 
-/** The only window of a migration-mode launch. It exposes the move's progress and, once it has stopped, one action. */
+export const allowedDataMoveActions = (
+  state: Pick<DataMoveViewState, 'mode' | 'progress'>,
+): readonly DataMoveAction[] => {
+  if (stopped(state)) return ['open']
+  // Cancel is offered only while copying or verifying; rewriting paths and switching run to the end.
+  const step = state.progress?.step ?? 'transferring'
+  return state.mode === 'moving' && (step === 'transferring' || step === 'verifying') ? ['cancel'] : []
+}
+
+/** The only window of a migration-mode launch: the move's progress, a cancel while copying, and one action once it stopped. */
 export class DataMoveWindow {
   readonly window: BrowserWindow
   readonly #url = pathToFileURL(fileURLToPath(new URL('./data-move-view.html', import.meta.url))).href
@@ -53,7 +65,7 @@ export class DataMoveWindow {
     installF12DevToolsShortcut(this.window.webContents)
     // Closing mid-move would leave the data half-moved; the window closes itself when there is something to do next.
     this.window.on('close', (event) => {
-      if (!this.#closable && allowedDataMoveActions(this.#state).length === 0) event.preventDefault()
+      if (!this.#closable && !stopped(this.#state)) event.preventDefault()
     })
     ipcMain.handle('nxt:data-move:snapshot', (event) => {
       assertTrustedOverlayIpcEvent(event, this.window.webContents.id, this.#url)

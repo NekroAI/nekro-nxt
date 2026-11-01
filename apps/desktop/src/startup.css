@@ -93,11 +93,47 @@ progress {
   height: 8px;
   accent-color: var(--accent);
 }
-#progress-label {
+#progress-label,
+#elapsed {
   margin: 8px 0 0;
   color: var(--muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
+#steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+#steps li::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  vertical-align: 1px;
+}
+#steps li[data-state='done']::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+#steps li[aria-current='step'] {
+  color: var(--text);
+  font-weight: 600;
+}
+#steps li[aria-current='step']::before {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--canvas);
+  background: var(--accent);
+}
+#stall,
 #notice,
 #action-error {
   color: var(--notice);

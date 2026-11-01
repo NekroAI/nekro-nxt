@@ -15,12 +15,16 @@
       <h1 id="title">正在准备</h1>
       <p id="body" role="status" aria-live="polite"></p>
       <section id="progress-section" hidden aria-label="迁移进度">
+        <ol id="steps"></ol>
         <progress id="progress" aria-label="已迁移的数据"></progress>
         <p id="progress-label"></p>
+        <p id="elapsed"></p>
       </section>
+      <p id="stall" hidden></p>
       <p id="notice" hidden></p>
       <div class="actions">
         <button type="button" data-action="open" class="primary" hidden>打开 NekroNXT</button>
+        <button type="button" data-action="cancel" hidden>取消更改</button>
       </div>
       <details>
         <summary>查看诊断</summary>

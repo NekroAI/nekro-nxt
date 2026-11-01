@@ -15,6 +15,7 @@ import {
   type DataMoveRecord,
 } from '../src/data-move.ts'
 import { runDataMoveMode } from '../src/data-move-mode.ts'
+import { allowedDataMoveActions } from '../src/data-move-window.ts'
 import { isRebuildable, listMoveUnits, preflightMove, type MovePlan } from '../src/data-move-plan.ts'
 import { getDesktopDistribution } from '../src/distribution.ts'
 import { checkSqliteIntegrity, createUserDataFixture, localStorageFacts } from './data-move-fixture.ts'
@@ -279,6 +280,26 @@ describe('data move copy', () => {
     expect(await readFile(path.join(userData, 'Local State'), 'utf8')).toContain('encrypted_key')
   })
 
+  it('reports which database it is verifying and hands the check the cancel signal', async () => {
+    const { root, userData } = await fixture()
+    const plan = await planFor(userData, path.join(root, 'new', 'NXT'), 'copy')
+    const steps: string[] = []
+    const signals: (AbortSignal | undefined)[] = []
+    const controller = new AbortController()
+    await runDataMove(recordFor(plan), {
+      ...io(),
+      signal: controller.signal,
+      onProgress: (progress) => steps.push(`${progress.step}:${progress.current ?? ''}`),
+      checkSqlite: (file, signal) => {
+        signals.push(signal)
+        checkSqliteIntegrity(file)
+      },
+    })
+    expect(steps).toContain('verifying:data/core.sqlite')
+    expect(steps.indexOf('verifying:data/core.sqlite')).toBeLessThan(steps.indexOf('rewriting:'))
+    expect(signals).toEqual([controller.signal])
+  })
+
   it('detects a real SQLite corruption in the copy', async () => {
     const { root } = await fixture()
     const broken = path.join(root, 'broken.sqlite')
@@ -536,6 +557,62 @@ describe('migration mode', () => {
     expect(await tree(userData)).toEqual(before)
     expect(published).toEqual(['undoing', 'interrupted'])
     expect(await readDataMoveRecord(files.record)).toMatchObject({ phase: 'failed' })
+  })
+})
+
+describe('cancelling a move', () => {
+  it('stops during verification, removes the copy and records the move as cancelled', async () => {
+    const { root, userData } = await fixture()
+    const before = await tree(userData)
+    const files = dataLocationFiles(path.join(root, 'app-data'), getDesktopDistribution('preview'))
+    const target = path.join(root, 'new', 'NXT')
+    const plan = await planFor(userData, target, 'copy')
+    const requested = createDataMoveRecord(plan, 1_000, 4242)
+    await writeDataMoveRecord(files.record, requested)
+    const controller = new AbortController()
+    const published: { mode: string; startedAt?: number }[] = []
+    await expect(
+      runDataMoveMode({
+        files,
+        record: requested,
+        kind: 'migrate',
+        publish: (state) => published.push(state),
+        signal: controller.signal,
+        // A check that never finishes on its own, like the hung check of #105, ends only through the signal.
+        checkSqlite: (_file, signal) =>
+          new Promise<void>((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+            controller.abort()
+          }),
+        relaunch: () => {
+          throw new Error('must not relaunch after a cancel')
+        },
+      }),
+    ).resolves.toBe('stopped')
+    expect(await tree(userData)).toEqual(before)
+    await expect(lstat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(files.pointer)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readDataMoveRecord(files.record)).toMatchObject({
+      phase: 'failed',
+      failure: { message: '已取消更改数据目录。' },
+    })
+    expect(published.find((state) => state.mode === 'moving')?.startedAt).toEqual(expect.any(Number))
+    expect(published.at(-1)?.mode).toBe('cancelled')
+  })
+
+  it('offers cancel only while copying or verifying, and the open action once the move stopped', () => {
+    const progress = (step: 'transferring' | 'verifying' | 'rewriting' | 'switching') => ({
+      step,
+      completedBytes: 0,
+      totalBytes: 1,
+    })
+    expect(allowedDataMoveActions({ mode: 'moving' })).toEqual(['cancel'])
+    expect(allowedDataMoveActions({ mode: 'moving', progress: progress('verifying') })).toEqual(['cancel'])
+    expect(allowedDataMoveActions({ mode: 'moving', progress: progress('rewriting') })).toEqual([])
+    expect(allowedDataMoveActions({ mode: 'switching' })).toEqual([])
+    expect(allowedDataMoveActions({ mode: 'undoing' })).toEqual([])
+    for (const mode of ['failed', 'interrupted', 'cancelled'] as const)
+      expect(allowedDataMoveActions({ mode })).toEqual(['open'])
   })
 })
 

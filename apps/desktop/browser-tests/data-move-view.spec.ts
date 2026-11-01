@@ -32,8 +32,13 @@ declare global {
 }
 
 /** Loads the packaged progress page with a fake preload bridge; the page itself is the shipped file. */
-const open = async (state: Record<string, unknown>, theme: 'light' | 'dark' = 'light'): Promise<Page> => {
+const open = async (
+  state: Record<string, unknown>,
+  theme: 'light' | 'dark' = 'light',
+  prepare?: (page: Page) => Promise<void>,
+): Promise<Page> => {
   const page = await browser.newPage({ viewport: { width: 720, height: 520 } })
+  await prepare?.(page)
   await page.addInitScript(
     ({ initial }) => {
       let listener: ((state: unknown) => void) | undefined
@@ -134,6 +139,89 @@ test('an interrupted move tells where the data is now', async () => {
     await expect(page.getByRole('heading', { name: '上次更改没有完成' })).toBeVisible()
     await expect(page.getByText(`数据已回到 ${base.source}。可以在“设置 → 存储”里重新更改。`)).toBeVisible()
     await expect(page.locator('#notice')).toBeHidden()
+  } finally {
+    await page.close()
+  }
+})
+
+test('shows the steps, the database being checked and the elapsed time, and offers to cancel', async () => {
+  const startedAt = new Date('2026-11-01T14:00:00+08:00').getTime()
+  const page = await open(
+    {
+      mode: 'moving',
+      startedAt,
+      actions: ['cancel'],
+      progress: { step: 'verifying', completedBytes: 1, totalBytes: 1, current: 'data/core.sqlite' },
+    },
+    'light',
+    (page) => page.clock.install({ time: startedAt + 95_000 }),
+  )
+  try {
+    await expect(page.getByRole('heading', { name: '正在校验数据' })).toBeVisible()
+    await expect(page.locator('#steps [aria-current="step"]')).toHaveText('校验数据库')
+    await expect(page.locator('#steps [data-state="done"]')).toHaveText(['复制数据'])
+    await expect(page.locator('#progress-label')).toHaveText('正在检查 data/core.sqlite')
+    await expect(page.locator('#elapsed')).toHaveText('已用时 1 分 35 秒')
+    await expect(page.locator('#stall')).toBeHidden()
+    await page.getByRole('button', { name: '取消更改' }).click()
+    await expect.poll(() => page.evaluate(() => window.__moveActions)).toEqual(['cancel'])
+    await expect(page.getByRole('button', { name: '取消更改' })).toBeDisabled()
+  } finally {
+    await page.close()
+  }
+})
+
+test('explains a step with no progress for two minutes and what cancelling does', async () => {
+  for (const theme of ['light', 'dark'] as const) {
+    const startedAt = new Date('2026-11-01T14:00:00+08:00').getTime()
+    const page = await open(
+      {
+        mode: 'moving',
+        startedAt,
+        actions: ['cancel'],
+        progress: { step: 'verifying', completedBytes: 1, totalBytes: 1, current: 'data/core.sqlite' },
+      },
+      theme,
+      (page) => page.clock.install({ time: startedAt }),
+    )
+    try {
+      await expect(page.locator('#stall')).toBeHidden()
+      await page.clock.fastForward('02:05')
+      await expect(page.locator('#stall')).toHaveText(
+        '已经 2 分钟没有新的进展。数据很多或数据库很大时，这一步需要较长时间，可以继续等待。原目录里的数据没有改动；点“取消更改”会删除新目录里这次复制的文件，继续使用原目录。',
+      )
+      await page.locator('summary').click()
+      await expect(page.locator('#diagnostics')).toContainText('当前步骤：校验数据库（data/core.sqlite）')
+      await expect(page.locator('#diagnostics')).toContainText('最后进展：')
+      await page.screenshot({ path: `.local/browser-test-results/data-move-stalled-${theme}.png` })
+    } finally {
+      await page.close()
+    }
+  }
+})
+
+test('a step that can no longer be cancelled asks to wait instead', async () => {
+  const page = await open(
+    { mode: 'moving', progress: { step: 'rewriting', completedBytes: 1, totalBytes: 1 } },
+    'light',
+    (page) => page.clock.install({ time: new Date('2026-11-01T14:00:00+08:00').getTime() }),
+  )
+  try {
+    await page.clock.fastForward('02:05')
+    await expect(page.locator('#stall')).toContainText('请保持应用开启，这一步结束后会自动打开 NekroNXT')
+    await expect(page.getByRole('button', { name: '取消更改' })).toBeHidden()
+  } finally {
+    await page.close()
+  }
+})
+
+test('a cancelled move says the data stayed where it was', async () => {
+  const page = await open({ mode: 'cancelled', actions: ['open'] })
+  try {
+    await expect(page.getByRole('heading', { name: '已取消更改' })).toBeVisible()
+    await expect(page.getByText(`数据仍在 ${base.source}，新目录里这次创建的文件已删除。`)).toBeVisible()
+    await expect(page.locator('#progress-section')).toBeHidden()
+    await expect(page.getByRole('button', { name: '打开 NekroNXT' })).toBeVisible()
   } finally {
     await page.close()
   }

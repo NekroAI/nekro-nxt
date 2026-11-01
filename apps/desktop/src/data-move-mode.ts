@@ -21,7 +21,9 @@ export interface DataMoveModeOptions {
   readonly record: DataMoveRecord
   readonly kind: 'migrate' | 'undo'
   readonly publish: (state: Omit<DataMoveViewState, 'diagnostics'>) => void
-  readonly checkSqlite: (file: string) => void | Promise<void>
+  readonly checkSqlite: (file: string, signal?: AbortSignal) => void | Promise<void>
+  /** Aborted when the user cancels; honored until paths are rewritten. */
+  readonly signal?: AbortSignal
   /** Starts the app normally and exits this process. */
   readonly relaunch: () => void
   readonly now?: () => number
@@ -29,6 +31,7 @@ export interface DataMoveModeOptions {
 }
 
 const INTERRUPTED: DataMoveFailure = { message: '上次更改数据目录没有完成，数据已回到原来的目录。' }
+const CANCELLED: DataMoveFailure = { message: '已取消更改数据目录。' }
 
 export const runDataMoveMode = async (options: DataMoveModeOptions): Promise<'relaunched' | 'stopped'> => {
   const now = options.now ?? Date.now
@@ -45,7 +48,7 @@ export const runDataMoveMode = async (options: DataMoveModeOptions): Promise<'re
     void writeRecord({ ...current, heartbeatAt: now() }).catch(() => undefined)
   }, options.heartbeatMs ?? 5_000)
   const base = { method: current.method, source: current.source, target: current.target }
-  const undo = async (failure: DataMoveFailure, mode: 'failed' | 'interrupted'): Promise<'stopped'> => {
+  const undo = async (failure: DataMoveFailure, mode: 'failed' | 'interrupted' | 'cancelled'): Promise<'stopped'> => {
     options.publish({ ...base, mode: 'undoing' })
     try {
       await undoDataMove(current)
@@ -67,19 +70,22 @@ export const runDataMoveMode = async (options: DataMoveModeOptions): Promise<'re
     await writeRecord(current)
     if (options.kind === 'undo') return await undo(INTERRUPTED, 'interrupted')
     await writeRecord({ ...current, phase: 'moving' })
-    options.publish({ ...base, mode: 'moving' })
+    const startedAt = now()
+    options.publish({ ...base, mode: 'moving', startedAt })
     let moved: DataMoveRecord
     try {
       moved = await runDataMove(current, {
         writeRecord,
         checkSqlite: options.checkSqlite,
         now,
-        onProgress: (progress: DataMoveProgress) => options.publish({ ...base, mode: 'moving', progress }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        onProgress: (progress: DataMoveProgress) => options.publish({ ...base, mode: 'moving', startedAt, progress }),
       })
     } catch (error) {
+      if (options.signal?.aborted === true) return await undo(CANCELLED, 'cancelled')
       return await undo(describeFailure(error), 'failed')
     }
-    options.publish({ ...base, mode: 'switching' })
+    options.publish({ ...base, mode: 'switching', startedAt })
     // The pointer is the switch-over point: once it names the target, every later launch opens the new directory.
     try {
       await writeDataLocationPointer(options.files.pointer, serializeDataLocationPointer(moved.target))

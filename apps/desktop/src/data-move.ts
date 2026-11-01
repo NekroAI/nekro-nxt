@@ -190,9 +190,10 @@ export interface DataMoveProgress {
 export interface DataMoveIo {
   readonly writeRecord: (record: DataMoveRecord) => Promise<void>
   readonly onProgress?: (progress: DataMoveProgress) => void
-  /** Throws when the SQLite file at the path fails `integrity_check`. */
-  readonly checkSqlite: (file: string) => void | Promise<void>
+  /** Throws when the SQLite file at the path fails `integrity_check`; stops early when the signal aborts. */
+  readonly checkSqlite: (file: string, signal?: AbortSignal) => void | Promise<void>
   readonly now?: () => number
+  /** Cancels the copy or verification; once paths are being rewritten the move runs to the end. */
   readonly signal?: AbortSignal
 }
 
@@ -267,14 +268,20 @@ const sourcePrefixes = async (source: string): Promise<readonly string[]> => {
   return [...prefixes].sort((left, right) => right.length - left.length)
 }
 
+/** How often byte progress is reported while one large file is copied. */
+const PROGRESS_INTERVAL_MS = 250
+const NEVER_ABORTED = new AbortController().signal
+
 class Transfer {
   completedBytes = 0
+  #reportedAt = 0
   constructor(
     readonly record: DataMoveRecord,
     readonly io: DataMoveIo,
   ) {}
 
   report(step: DataMoveProgress['step'], current?: string): void {
+    this.#reportedAt = Date.now()
     this.io.onProgress?.({
       step,
       completedBytes: this.completedBytes,
@@ -317,10 +324,13 @@ class Transfer {
         transform: (chunk: Buffer, _encoding, callback) => {
           hash.update(chunk)
           this.completedBytes += chunk.length
+          if (Date.now() - this.#reportedAt >= PROGRESS_INTERVAL_MS) this.report('transferring', relative)
           callback(null, chunk)
         },
       })
-      await pipeline(createReadStream(from), counter, createWriteStream(to, { flags: 'wx', mode: info.mode & 0o777 }))
+      await pipeline(createReadStream(from), counter, createWriteStream(to, { flags: 'wx', mode: info.mode & 0o777 }), {
+        signal: this.io.signal ?? NEVER_ABORTED,
+      })
       await chmod(to, info.mode & 0o777)
       await utimes(to, info.atime, info.mtime)
       const expected = hash.digest('hex')
@@ -328,7 +338,7 @@ class Transfer {
       if (written.size !== info.size) throw new Error(`size ${written.size} differs from ${info.size}`)
       if ((await sha256File(to)) !== expected) throw new Error('SHA-256 differs from the source')
     } catch (error) {
-      if (error instanceof DataMoveError) throw error
+      if (error instanceof DataMoveError || this.io.signal?.aborted === true) throw error
       throw new DataMoveError(`复制失败：${describe(error)}`, relative, { cause: error })
     }
   }
@@ -384,20 +394,24 @@ export const runDataMove = async (initial: DataMoveRecord, io: DataMoveIo): Prom
     transfer.completedBytes = record.bytes
   } else {
     for (const unit of record.units) await transfer.copyEntry(nativeRelative(unit))
-    transfer.report('verifying')
     const dataDirectory = path.join(record.target, 'data')
     const databases = (await readdir(dataDirectory).catch(() => [] as string[])).filter((name) =>
       name.endsWith('.sqlite'),
     )
     for (const name of databases) {
+      io.signal?.throwIfAborted()
+      transfer.report('verifying', `data/${name}`)
       try {
-        await io.checkSqlite(path.join(dataDirectory, name))
+        await io.checkSqlite(path.join(dataDirectory, name), io.signal)
       } catch (error) {
+        if (io.signal?.aborted === true) throw error
         throw new DataMoveError(`数据库检查未通过：${describe(error)}`, `data/${name}`, { cause: error })
       }
     }
   }
 
+  // The last point a cancel is honored: rewriting paths and switching run to the end.
+  io.signal?.throwIfAborted()
   transfer.report('rewriting')
   const prefixes = await sourcePrefixes(record.source)
   const replacement = path.join(record.target, 'data')

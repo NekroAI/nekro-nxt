@@ -441,30 +441,62 @@ const desktopUpdates =
           openInstaller(file, platform, (execPath) => app.relaunch({ execPath, args: [] })),
       })
 
+/** The line the Server prints once every database passed; matches `SQLITE_CHECK_PASSED` in the Server entry. */
+const SQLITE_CHECK_PASSED = 'nxt:check-sqlite:passed'
+/** How long a check that already reported success may take to exit before it is ended. */
+const CHECK_EXIT_GRACE_MS = 5_000
+
 /**
  * Runs `integrity_check` on a copied database in the bundled server runtime, which owns SQLite access; the main process
- * opens no database itself.
+ * opens no database itself. A check that reported success but does not exit is ended rather than waited on forever.
  */
-const checkSqliteWithServer = (file: string): Promise<void> =>
+const checkSqliteWithServer = (file: string, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
+    signal?.throwIfAborted()
     const child = utilityProcess.fork(serverEntry(), ['--check-sqlite', file], {
       serviceName: 'NekroNXT Data Check',
       stdio: 'pipe',
       env: { ...process.env, NEKRO_DATA: path.dirname(file) },
     })
     let output = ''
+    let stdout = ''
+    let settled = false
+    let graceTimer: NodeJS.Timeout | undefined
+    const settle = (error?: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(graceTimer)
+      signal?.removeEventListener('abort', abort)
+      if (error === undefined) resolve()
+      else reject(error)
+    }
+    const abort = (): void => {
+      child.kill()
+      settle(signal?.reason instanceof Error ? signal.reason : new Error('已取消'))
+    }
+    signal?.addEventListener('abort', abort, { once: true })
+    child.stdout?.on('data', (chunk: Uint8Array) => {
+      stdout += Buffer.from(chunk).toString('utf8')
+      if (graceTimer === undefined && stdout.includes(SQLITE_CHECK_PASSED))
+        graceTimer = setTimeout(() => {
+          console.warn('[desktop] 数据库检查已通过，但检查进程没有退出，已将其结束。')
+          child.kill()
+          settle()
+        }, CHECK_EXIT_GRACE_MS)
+    })
     child.stderr?.on('data', (chunk: Uint8Array) => {
       output += Buffer.from(chunk).toString('utf8')
     })
+    child.once('error', (type, location) => settle(new Error(`检查进程异常退出：${type}（${location}）`)))
     child.once('exit', (code) => {
-      if (code === 0) resolve()
+      if (code === 0 || stdout.includes(SQLITE_CHECK_PASSED)) settle()
       else {
         const reason = output
           .trim()
           .split('\n')
           .at(-1)
           ?.replace(/^\[nekro-nxt\] 启动失败：\s*/u, '')
-        reject(new Error(reason || `exit ${code}`))
+        settle(new Error(reason || `exit ${code}`))
       }
     })
   })
@@ -485,7 +517,11 @@ const runMigrationWindow = async (decision: Extract<StartupDecision, { kind: 'mi
     target: record.target,
     diagnostics,
   }
-  const moveWindow = new DataMoveWindow(initial, () => relaunchNormally())
+  const cancel = new AbortController()
+  const moveWindow = new DataMoveWindow(initial, (action) => {
+    if (action === 'cancel') cancel.abort()
+    else relaunchNormally()
+  })
   await moveWindow.load()
   moveWindow.window.show()
   const result = await runDataMoveMode({
@@ -494,6 +530,7 @@ const runMigrationWindow = async (decision: Extract<StartupDecision, { kind: 'mi
     kind: decision.kind,
     publish: (state) => moveWindow.update({ ...state, diagnostics }),
     checkSqlite: checkSqliteWithServer,
+    signal: cancel.signal,
     relaunch: () => relaunchNormally(),
   })
   if (result === 'stopped') moveWindow.allowClose()
