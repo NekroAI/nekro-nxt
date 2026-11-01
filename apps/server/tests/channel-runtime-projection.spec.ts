@@ -4,6 +4,7 @@ import { SessionSeq } from '@deepseek-ai/dsh-session'
 import {
   AgentIdSchema,
   ChannelIdSchema,
+  ChannelRuntimeToolSchema,
   EpisodeIdSchema,
   HostApiContracts,
   HostSseEventSchema,
@@ -317,6 +318,36 @@ describe('channel runtime projection', () => {
       state: 'running',
       inputPreview: '{"query":"天气"}',
     })
+  })
+
+  it('shows the latest progress of a running tool and drops it once the call returns', () => {
+    const toolProgress = new Map([['call_clip', { text: '已取 12/40 帧', fraction: 0.3 }]])
+    const running = projectChannelRuntime({
+      channelId,
+      agentId,
+      sessionStatus: 'running',
+      pendingInjectCount: 0,
+      toolProgress,
+      events: [
+        { type: 'turn/start', turn: 1 },
+        { type: 'tool/call', turn: 1, step: 1, callId: 'call_clip', name: 'clip_frames', arguments: '{}' },
+      ],
+    })
+    expect(running.turns[0]?.steps[0]?.tools[0]?.progress).toEqual({ text: '已取 12/40 帧', fraction: 0.3 })
+    expect(ChannelRuntimeToolSchema.parse(running.turns[0]?.steps[0]?.tools[0])).toHaveProperty('progress')
+    const finished = projectChannelRuntime({
+      channelId,
+      agentId,
+      sessionStatus: 'running',
+      pendingInjectCount: 0,
+      toolProgress,
+      events: [
+        { type: 'turn/start', turn: 1 },
+        { type: 'tool/call', turn: 1, step: 1, callId: 'call_clip', name: 'clip_frames', arguments: '{}' },
+        { type: 'tool/result', turn: 1, step: 1, callId: 'call_clip', failed: false },
+      ],
+    })
+    expect(finished.turns[0]?.steps[0]?.tools[0]).not.toHaveProperty('progress')
   })
 
   it('returns one tool call in full, masks secret arguments and bounds a runaway result', () => {

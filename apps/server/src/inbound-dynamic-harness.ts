@@ -1,3 +1,4 @@
+import { EXTENSION_TOOL_MAX_TIMEOUT_SECONDS } from './extension-tool-context.js'
 import type { JsonValue } from '@nekro-nxt/contracts'
 
 /** Host RPC a dynamic candidate with an inbound hook exposes only to the Host verifier; never saved or shown. */
@@ -18,6 +19,8 @@ export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
  *   with a synthetic draft or delivered message. Jobs never fire in dynamic runs, so their handler is recorded.
  * - the factory's host-layer `nxt`, which resolves once the candidate is mounted (call it from RPC handlers or tools).
  * - `ctx.config()` inside the agent attachment, returning the agent configuration the candidate runs with.
+ * - `harness.defineTool` that turns `timeoutSeconds` into DSH's time limit and hands the body `{ signal, progress }`,
+ *   as saved Revisions get.
  *
  * The saved Revision keeps the original source.
  */
@@ -116,6 +119,26 @@ harness.handle('${MIGRATION_DYNAMIC_PROBE_METHOD}', async (input) => {
   })
   return { registered: true }
 })
+const __nxtDefineTool = harness.defineTool
+harness.defineTool = (options) => {
+  if (options === null || typeof options !== 'object' || typeof options.execute !== 'function') return __nxtDefineTool(options)
+  const { timeoutSeconds, ...rest } = options
+  if (timeoutSeconds !== undefined && (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > ${EXTENSION_TOOL_MAX_TIMEOUT_SECONDS})) {
+    throw new Error('工具 ' + options.name + ' 的 timeoutSeconds 必须是 1 到 ${EXTENSION_TOOL_MAX_TIMEOUT_SECONDS} 之间的整数。')
+  }
+  const execute = options.execute
+  return __nxtDefineTool({
+    ...rest,
+    ...(timeoutSeconds === undefined ? {} : { timeoutMs: timeoutSeconds * 1000 }),
+    execute: (args, exec) => execute(args, {
+      signal: exec && exec.signal,
+      progress: (update) => {
+        const host = __nxtFactory.nxt
+        if (exec && exec.callId && host && typeof host.reportToolProgress === 'function') host.reportToolProgress(exec.callId, update)
+      },
+    }),
+  })
+}
 const nxt = new Proxy({}, {
   get(_target, key) {
     const host = __nxtFactory.host

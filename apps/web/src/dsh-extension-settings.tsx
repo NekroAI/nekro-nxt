@@ -1386,6 +1386,7 @@ export function DshPluginDetail({
   const [configInspecting, setConfigInspecting] = useState<Record<string, boolean>>({})
   const [operationError, setOperationError] = useState('')
   const [removeOpen, setRemoveOpen] = useState(false)
+  const [imageSubmissionPending, setImageSubmissionPending] = useState(false)
   const [permissionApproval, setPermissionApproval] = useState<{
     readonly entryId: string
     readonly digest: string
@@ -1451,6 +1452,19 @@ export function DshPluginDetail({
       setOperationError(failure(cause))
     } finally {
       setConfigInspecting((current) => ({ ...current, [entryId]: false }))
+    }
+  }
+
+  const setImageSubmission = async (packageId: string, allowed: boolean): Promise<void> => {
+    setImageSubmissionPending(true)
+    setOperationError('')
+    try {
+      await callHostApi(HostApiContracts.setDshPluginImageSubmission, { packageId }, { allowed })
+      await onRefresh()
+    } catch (cause) {
+      setOperationError(failure(cause))
+    } finally {
+      setImageSubmissionPending(false)
     }
   }
 
@@ -1546,7 +1560,14 @@ export function DshPluginDetail({
                     <Chip tone="neutral">已开放 {item.grantedServices.join('、')} 服务</Chip>
                   ) : null}
                 </div>
-                {restricted.length > 0 ? <p className={styles.muted}>{dshRestrictedReason(restricted)}</p> : null}
+                {restricted.length > 0 ? (
+                  <p className={styles.muted}>
+                    {dshRestrictedReason(restricted)}
+                    {restricted.includes('attachments') && plugin.imageSubmission === false
+                      ? '打开下方的「允许提交图片」后可以使用 attachments 服务。'
+                      : null}
+                  </p>
+                ) : null}
                 <div className={styles.entryFields}>
                   <Field label="启用范围">
                     <Select
@@ -1648,6 +1669,18 @@ export function DshPluginDetail({
               </div>
             )
           })}
+        </PropertyGroup>
+      ) : null}
+
+      {plugin?.origin === 'installed' && plugin.packageId && plugin.imageSubmission !== undefined ? (
+        <PropertyGroup title="权限">
+          <SwitchRow
+            title="允许提交图片"
+            description="插件工具返回的图片存为当前频道的文件，交给智能体查看。"
+            checked={plugin.imageSubmission}
+            pending={imageSubmissionPending}
+            onCheckedChange={(allowed) => void setImageSubmission(plugin.packageId!, allowed)}
+          />
         </PropertyGroup>
       ) : null}
 

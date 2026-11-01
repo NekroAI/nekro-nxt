@@ -32,6 +32,18 @@ export const unusedNxtBackends = (): NxtServiceBackends => {
     complete: unused,
     history: { list: unused, search: unused },
     library: emptyExtensionLibrary(),
+    files: {
+      write: unused,
+      importPath: unused,
+      resolvePath: unused,
+      fromAsset: unused,
+      read: unused,
+      stat: unused,
+      delete: unused,
+      cacheGet: unused,
+      cachePut: unused,
+      cacheDelete: unused,
+    },
     index: memoryIndexEngine(),
     models: { list: unused, complete: unused },
   }

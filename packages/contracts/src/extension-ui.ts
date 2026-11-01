@@ -4,6 +4,7 @@ import {
   HostLayerCapabilitiesSchema,
   hostLayerAsCapabilities,
   EXTENSION_SDK_BASE_LEVEL,
+  EXTENSION_FILES_SDK_LEVEL,
   EXTENSION_OUTBOUND_SDK_LEVEL,
 } from './extension-capabilities.js'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageInstanceIdSchema } from './domain.js'
@@ -549,8 +550,16 @@ export type ExtensionDataHookName = keyof typeof EXTENSION_DATA_HOOK_PERMISSIONS
 export const requiredExtensionSdkLevel = (
   permissions: ExtensionPermissions | undefined,
 ): { readonly level: number; readonly capabilities: readonly string[] } => {
+  const level14 = [
+    permissions?.host?.files === undefined && permissions?.agent?.files === undefined ? undefined : '工作文件',
+    permissions?.host?.assets?.read === undefined && permissions?.agent?.assets?.read === undefined
+      ? undefined
+      : '读取频道文件',
+    permissions?.agent?.toolImages === undefined ? undefined : '高细节图片',
+  ].filter((name): name is string => name !== undefined)
+  if (level14.length > 0) return { level: EXTENSION_FILES_SDK_LEVEL, capabilities: level14 }
   const level8 = [
-    permissions?.host?.assets === undefined ? undefined : '扩展资源库',
+    permissions?.host?.assets?.library === undefined ? undefined : '扩展资源库',
     permissions?.agent?.assets?.library === undefined ? undefined : '扩展资源库',
     permissions?.host?.index === undefined && permissions?.agent?.index === undefined ? undefined : '检索索引',
     permissions?.host?.models === undefined ? undefined : '本机层模型调用',

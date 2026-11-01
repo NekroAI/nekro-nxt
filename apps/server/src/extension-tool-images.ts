@@ -8,6 +8,7 @@ import type {
   ExtensionToolDefinition,
   ExtensionToolResultBlock,
 } from '@nekro-nxt/extension-sdk'
+import type { DshBoundTool, DshToolExecution } from './extension-tool-context.js'
 
 /** At most this many pictures per tool result; the rest are named in text. */
 export const TOOL_RESULT_MAX_IMAGES = 6
@@ -20,21 +21,25 @@ export type ToolImagePlan =
   /** The model has no vision, or the picture cannot be read. */
   | { readonly state: 'text'; readonly reason: string }
 
+/** One picture of a tool result; `high` is only honoured when the extension declared `toolImages.highDetail`. */
+export interface ToolResultImage {
+  readonly assetId: string
+  readonly label?: string
+  readonly detail: 'low' | 'high'
+}
+
 /** Decides, for one Session, how each picture of a tool result reaches the model. */
 export interface ToolImageResolver {
-  plan(
-    images: readonly { readonly assetId: string; readonly label?: string }[],
-    agent: Agent | undefined,
-  ): Promise<readonly ToolImagePlan[]>
+  plan(images: readonly ToolResultImage[], agent: Agent | undefined): Promise<readonly ToolImagePlan[]>
 }
 
 /** An extension Tool whose rendered result may carry pictures for the model. */
-export type ImageAwareTool = Omit<ExtensionToolDefinition, 'output' | 'execute'> & {
+export type ImageAwareTool = Omit<DshBoundTool, 'output' | 'execute'> & {
   readonly output: {
     readonly schema: ExtensionToolDefinition['output']['schema']
     render(args: ExtensionJsonObject, value: ExtensionJsonValue): readonly (ExtensionToolResultBlock | ContentBlock)[]
   }
-  execute(args: ExtensionJsonObject, exec?: { readonly agent?: Agent }): Promise<ExtensionJsonValue>
+  execute(args: ExtensionJsonObject, exec?: DshToolExecution & { readonly agent?: Agent }): Promise<ExtensionJsonValue>
 }
 
 const resultKey = (toolName: string, args: unknown, value: unknown): string =>
@@ -48,7 +53,7 @@ const resultKey = (toolName: string, args: unknown, value: unknown): string =>
  * The Tool's value is left untouched (scripts in programmatic mode read it as-is), so the plan is computed in
  * `execute`, where the Session is known, and kept briefly for the synchronous `render` that follows.
  */
-export const withToolImages = (tool: ExtensionToolDefinition, resolver: ToolImageResolver): ImageAwareTool => {
+export const withToolImages = (tool: DshBoundTool, resolver: ToolImageResolver): ImageAwareTool => {
   const plans = new Map<string, readonly ToolImagePlan[]>()
   return {
     ...tool,
@@ -82,14 +87,18 @@ export const withToolImages = (tool: ExtensionToolDefinition, resolver: ToolImag
       },
     },
     async execute(args, exec) {
-      const value = await tool.execute(args)
-      const images = tool.output
-        .render(args, value)
-        .flatMap((block) =>
-          block.type === 'image'
-            ? [{ assetId: block.assetId, ...(block.label === undefined ? {} : { label: block.label }) }]
-            : [],
-        )
+      const value = await tool.execute(args, exec)
+      const images = tool.output.render(args, value).flatMap((block): ToolResultImage[] =>
+        block.type === 'image'
+          ? [
+              {
+                assetId: block.assetId,
+                ...(block.label === undefined ? {} : { label: block.label }),
+                detail: block.detail === 'high' ? 'high' : 'low',
+              },
+            ]
+          : [],
+      )
       if (images.length > 0) {
         const planned = await resolver.plan(images.slice(0, TOOL_RESULT_MAX_IMAGES), exec?.agent)
         const overflow = images.slice(TOOL_RESULT_MAX_IMAGES).map(() => ({

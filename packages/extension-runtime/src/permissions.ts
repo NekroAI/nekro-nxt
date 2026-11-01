@@ -40,6 +40,8 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
           },
         }),
     ...(capabilities.assets === undefined ? {} : { assets: capabilities.assets }),
+    ...(capabilities.files === undefined ? {} : { files: capabilities.files }),
+    ...(capabilities.toolImages === undefined ? {} : { toolImages: capabilities.toolImages }),
     ...(capabilities.index === undefined
       ? {}
       : {

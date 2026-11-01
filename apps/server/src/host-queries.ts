@@ -78,6 +78,9 @@ export const assembleChannelRuntime = (
       live === undefined || episode?.dshSessionId === undefined
         ? []
         : runtime.host.normalizedSessionEvents(episode.dshSessionId),
+    ...(live === undefined || episode?.dshSessionId === undefined
+      ? {}
+      : { toolProgress: runtime.host.toolProgress(episode.dshSessionId) }),
   })
 }
 

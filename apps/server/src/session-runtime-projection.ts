@@ -1,12 +1,49 @@
 import { sessionEvents } from './session-event-history.js'
+import { z } from 'zod'
 import type { Context } from '@deepseek-ai/cordis'
 import type { AgentStatus } from '@deepseek-ai/dsh-agent'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { AgentRevisionRecord } from '@nekro-nxt/core'
-import { ChannelIdSchema, type ChannelId, type ChannelRuntimeOccupancy } from '@nekro-nxt/contracts'
+import {
+  ChannelIdSchema,
+  type ChannelId,
+  type ChannelRuntimeOccupancy,
+  type ChannelRuntimeToolProgress,
+} from '@nekro-nxt/contracts'
 import type { SessionRegistry } from './session-registry.js'
 import { shouldBroadcastChannelRuntime } from './channel-runtime-events.js'
 import { projectSessionOccupancy, type RuntimePerformanceTotals } from './channel-runtime-projection.js'
+
+/** A running tool's progress reaches the channel at most this often. */
+export const TOOL_PROGRESS_INTERVAL_MS = 500
+const TOOL_PROGRESS_MAX_CHARS = 200
+
+/** A progress report as a tool sent it, or undefined when it is not one. */
+const ProgressInputSchema = z.object({ text: z.string(), fraction: z.unknown().optional() })
+
+export const toolProgressUpdate = (update: unknown): ChannelRuntimeToolProgress | undefined => {
+  const parsed = ProgressInputSchema.safeParse(update)
+  if (!parsed.success || parsed.data.text.trim() === '') return undefined
+  const { fraction } = parsed.data
+  const trimmed = parsed.data.text.trim()
+  return {
+    text: trimmed.length <= TOOL_PROGRESS_MAX_CHARS ? trimmed : `${trimmed.slice(0, TOOL_PROGRESS_MAX_CHARS - 1)}…`,
+    ...(typeof fraction === 'number' && Number.isFinite(fraction)
+      ? { fraction: Math.min(1, Math.max(0, fraction)) }
+      : {}),
+  }
+}
+
+const CallIdSchema = z.union([z.string(), z.number()]).transform(String)
+const ToolResultDataSchema = z.object({ message: z.object({ toolCallId: CallIdSchema }) })
+const PtcDispatchDataSchema = z.object({ subCallId: CallIdSchema })
+
+/** The call a `tool/result` or a `run_code` sub-call result event closes. */
+const returnedCallId = (event: { readonly type?: string; readonly data?: unknown } | undefined): string | undefined => {
+  if (event?.type === 'tool/result') return ToolResultDataSchema.safeParse(event.data).data?.message.toolCallId
+  if (event?.type === 'tool/ptc-dispatch') return PtcDispatchDataSchema.safeParse(event.data).data?.subCallId
+  return undefined
+}
 
 /** Projects live Session facts and owns the lifetime of projection subscriptions. */
 export class SessionRuntimeProjection {
@@ -14,10 +51,74 @@ export class SessionRuntimeProjection {
   readonly #sessions: SessionRegistry<unknown>
   readonly #subscriptions = new Set<() => void>()
   readonly #channelNotifiers = new Set<(channelId: ChannelId) => void>()
+  /** Latest progress of running tools per Session, kept in memory until the call returns or the Session idles. */
+  readonly #toolProgress = new Map<string, Map<string, ChannelRuntimeToolProgress>>()
+  readonly #progressPublishedAt = new Map<string, number>()
+  readonly #progressTimers = new Map<string, NodeJS.Timeout>()
+  readonly #now: () => number
 
-  constructor(context: Context, sessions: SessionRegistry<unknown>) {
+  constructor(context: Context, sessions: SessionRegistry<unknown>, now: () => number = Date.now) {
     this.#context = context
     this.#sessions = sessions
+    this.#now = now
+    const offStatus = context.on('agent/status', ({ agent }) => {
+      if (agent.status !== 'running') this.#clearProgress(String(agent.id))
+    })
+    const offResult = context.on(
+      'session/event',
+      (session: { readonly id: string }, event?: { readonly type?: string; readonly data?: unknown }) => {
+        const callId = returnedCallId(event)
+        if (callId !== undefined) this.#toolProgress.get(String(session.id))?.delete(callId)
+      },
+    )
+    this.#subscriptions.add(() => {
+      offStatus()
+      offResult()
+    })
+  }
+
+  /**
+   * Records the latest progress of one running tool call and republishes its channel, at most every
+   * {@link TOOL_PROGRESS_INTERVAL_MS}; reports in between replace each other and the last one is published.
+   */
+  reportToolProgress(sessionId: string, callId: string, update: unknown): void {
+    const progress = toolProgressUpdate(update)
+    const channelId = this.#sessions.get(sessionId)?.channelId
+    if (progress === undefined || channelId === undefined) return
+    let calls = this.#toolProgress.get(sessionId)
+    if (calls === undefined) this.#toolProgress.set(sessionId, (calls = new Map<string, ChannelRuntimeToolProgress>()))
+    calls.set(callId, progress)
+    const key = `${sessionId}\0${callId}`
+    if (this.#progressTimers.has(key)) return
+    const wait = (this.#progressPublishedAt.get(key) ?? 0) + TOOL_PROGRESS_INTERVAL_MS - this.#now()
+    const publish = (): void => {
+      this.#progressTimers.delete(key)
+      this.#progressPublishedAt.set(key, this.#now())
+      this.touchChannel(channelId)
+    }
+    if (wait <= 0) publish()
+    else {
+      const timer = setTimeout(publish, wait)
+      timer.unref()
+      this.#progressTimers.set(key, timer)
+    }
+  }
+
+  /** Latest progress of the Session's running tool calls, by call id. */
+  toolProgress(sessionId: string): ReadonlyMap<string, ChannelRuntimeToolProgress> {
+    return this.#toolProgress.get(sessionId) ?? new Map<string, ChannelRuntimeToolProgress>()
+  }
+
+  #clearProgress(sessionId: string): void {
+    this.#toolProgress.delete(sessionId)
+    for (const [key, timer] of this.#progressTimers) {
+      if (!key.startsWith(`${sessionId}\0`)) continue
+      clearTimeout(timer)
+      this.#progressTimers.delete(key)
+    }
+    for (const key of this.#progressPublishedAt.keys()) {
+      if (key.startsWith(`${sessionId}\0`)) this.#progressPublishedAt.delete(key)
+    }
   }
 
   /** Aggregate the public DSH status of every live Session owned by one product intelligent-agent. */
@@ -151,5 +252,8 @@ export class SessionRuntimeProjection {
 
   dispose(): void {
     for (const dispose of this.#subscriptions) dispose()
+    for (const timer of this.#progressTimers.values()) clearTimeout(timer)
+    this.#progressTimers.clear()
+    this.#toolProgress.clear()
   }
 }

@@ -22,6 +22,8 @@ import {
   runDshSettingsMaintenance,
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
+import { assetSaveToWorkspaceTool } from './asset-save-tool.js'
+import { channelImageSubmission, trackToolCallSessions } from './dsh-plugin-images.js'
 import { mountCredentialRedaction } from './credential-redaction.js'
 import { mountSandboxHints } from './command-sandbox-hints.js'
 import { preloadCredentialDocument } from './logs/credentials.js'
@@ -3354,6 +3356,8 @@ export class DshHostRuntime implements AgentSessionDriver {
               )
             },
             ...(extensionHost.adapters === undefined ? {} : { adapters: extensionHost.adapters }),
+            toolProgress: (sessionId, callId, update) =>
+              this.#runtimeProjection.reportToolProgress(sessionId, callId, update),
             toolImages: ({ revision, sessionId }) => ({
               plan: async (images, agent) => {
                 const record = this.#sessions.require(sessionId)
@@ -3365,6 +3369,24 @@ export class DshHostRuntime implements AgentSessionDriver {
                   agent === undefined
                     ? new Map<string, EffectiveImageDetail>()
                     : collectVisibleImageResidency(agent, this.#assets)
+                const described = extensionHost.describeRevision(revision)
+                const highDetail = described.capabilities?.toolImages?.highDetail === true
+                if (!highDetail && images.some(({ detail }) => detail === 'high')) {
+                  extensionHost.activationBackends
+                    .logger?.({
+                      mode: 'activation',
+                      agentId: record.revision.agentId,
+                      ownerKey: revision.extensionId,
+                      displayName: described.displayName,
+                      channelId: record.channelId,
+                      capabilities: () => described.capabilities,
+                      config: () => null,
+                      declaredSecrets: () => ({ config: [], hostConfig: [] }),
+                    })
+                    .warn(
+                      '工具结果里的图片写了 detail: high，但没有声明 permissions.agent.toolImages.highDetail，已按低细节展示。',
+                    )
+                }
                 const plans: ToolImagePlan[] = []
                 for (const image of images) {
                   try {
@@ -3377,9 +3399,16 @@ export class DshHostRuntime implements AgentSessionDriver {
                       plans.push({ state: 'visible' })
                       continue
                     }
-                    // Low detail: enough to tell what a picture shows, at a fraction of the tokens.
-                    plans.push({ state: 'shown', attachment: await attachments.refForAsset(asset, undefined, 'low') })
-                    residency.set(asset.contentDigest, 'low')
+                    // Low detail by default: enough to tell what a picture shows, at a fraction of the tokens.
+                    const detail = image.detail === 'high' && highDetail ? 'high' : 'low'
+                    plans.push({
+                      state: 'shown',
+                      attachment:
+                        detail === 'high'
+                          ? await attachments.refForHighDetail(asset)
+                          : await attachments.refForAsset(asset, undefined, 'low'),
+                    })
+                    residency.set(asset.contentDigest, detail === 'high' ? 'auto' : 'low')
                   } catch {
                     plans.push({ state: 'text', reason: '图片暂时读不到' })
                   }
@@ -3441,6 +3470,8 @@ export class DshHostRuntime implements AgentSessionDriver {
             },
           },
     )
+    // Third-party plugins allowed to submit images put them in the channel of the tool call that runs.
+    trackToolCallSessions(context)
     this.#dshPluginLifecycle =
       options.dshPlugins === undefined
         ? undefined
@@ -3450,6 +3481,14 @@ export class DshHostRuntime implements AgentSessionDriver {
             rootContext: context,
             serviceAccess: dshPluginServiceAccess,
             isolatedServices: DSH_PLUGIN_ISOLATED_SERVICE_KEYS,
+            imageSubmission: {
+              attachments: channelImageSubmission({
+                store: () => requireNekroAssetAttachmentStore(this.#context.attachments),
+                channelOf: (sessionId) => this.#sessions.get(sessionId)?.channelId,
+                assets: this.#assets,
+                assetService: this.#assetService,
+              }),
+            },
             resolveModule: options.dshPlugins.resolveModule,
             listAgentSessions: (agentId) =>
               [...this.#sessions.handles()]
@@ -3917,6 +3956,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#dshPluginLifecycle.assertSessionIndependent(entryIds, action)
   }
 
+  /** Whether third-party plugins of this package may submit images; undefined when this Host cannot offer it. */
+  dshPluginImageSubmission(packageName: string): boolean | undefined {
+    return this.#dshPluginLifecycle?.imageSubmissionAllowed(packageName)
+  }
+
+  setDshPluginImageSubmission(packageId: DshPluginPackageId, allowed: boolean): Promise<void> {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
+    return this.#dshPluginLifecycle.setImageSubmission(packageId, allowed)
+  }
+
   installedDshPluginServiceView(
     entryId: DshPluginEntryId,
     targetKey?: string,
@@ -4260,6 +4310,11 @@ export class DshHostRuntime implements AgentSessionDriver {
       agentContext.tools.register(
         assetCreateTool(input.channelId, this.#assets, this.#assetService, { workspace: developmentWorkspace }),
       )
+      if (developmentWorkspace !== undefined) {
+        agentContext.tools.register(
+          assetSaveToWorkspaceTool(input.channelId, this.#assets, this.#assetService, developmentWorkspace),
+        )
+      }
       if (this.#assets.revokeUnusedAgentAsset !== undefined) {
         agentContext.tools.register(assetDeleteTool(input.channelId, this.#assets))
       }
@@ -4378,6 +4433,7 @@ export class DshHostRuntime implements AgentSessionDriver {
             createNxtDynamicFacade(
               () => dynamicNxt,
               () => dynamicHostNxt,
+              (callId, update) => this.#runtimeProjection.reportToolProgress(sessionId, callId, update),
             ),
           )
         }
@@ -5513,6 +5569,11 @@ export class DshHostRuntime implements AgentSessionDriver {
   sessionRuntimeMetrics(dshSessionId: string) {
     this.#assertActive()
     return this.#runtimeProjection.sessionRuntimeMetrics(dshSessionId)
+  }
+
+  /** Latest progress running extension tools of the Session reported, by call id. */
+  toolProgress(dshSessionId: string) {
+    return this.#runtimeProjection.toolProgress(dshSessionId)
   }
 
   /** Idle compaction uses the same unrounded occupancy as the channel inspector. */

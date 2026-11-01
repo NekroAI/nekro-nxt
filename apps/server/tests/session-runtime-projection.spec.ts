@@ -1,3 +1,4 @@
+import { createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Context, type Message } from '@deepseek-ai/cordis'
 import { Session, SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -6,7 +7,7 @@ import { CoreService } from '@nekro-nxt/core'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionRegistry } from '../src/session-registry.ts'
-import { SessionRuntimeProjection } from '../src/session-runtime-projection.ts'
+import { SessionRuntimeProjection, toolProgressUpdate } from '../src/session-runtime-projection.ts'
 
 describe('SessionRuntimeProjection channel runtime subscription', () => {
   it('logs a failed runtime listener once, continues other channels, and cancels pending work on disposal', async () => {
@@ -77,5 +78,67 @@ describe('SessionRuntimeProjection channel runtime subscription', () => {
       await context.fiber.dispose()
       database.close()
     }
+  })
+
+  it('publishes tool progress at most twice a second, keeps the latest and forgets it when the call returns', async () => {
+    const context = new Context()
+    const database = await openMigratedCoreDatabase(':memory:')
+    const sessions = new SessionRegistry<unknown>()
+    vi.useFakeTimers()
+    const projection = new SessionRuntimeProjection(context, sessions)
+    try {
+      await context.plugin(SessionProjectionRegistry)
+      const core = new CoreService(new SqliteCoreRepository(database))
+      const { revision } = core.createAgent({
+        displayName: '测试智能体',
+        persona: '',
+        model: { provider: 'synthetic-provider', model: 'synthetic-model' },
+      })
+      const session = Session.create(SessionId('synthetic-progress'))
+      const channelId = ChannelIdSchema.parse('chn_progress')
+      sessions.register({ sessionId: session.id, revision, channelId, episodeId: EpisodeIdSchema.parse('eps_test') })
+      const listener = vi.fn()
+      projection.subscribeChannelRuntime(listener)
+      projection.reportToolProgress(session.id, 'call_1', { text: '第 1 段', fraction: 0.1 })
+      vi.advanceTimersByTime(100)
+      expect(listener).toHaveBeenCalledTimes(1)
+      projection.reportToolProgress(session.id, 'call_1', { text: '第 2 段', fraction: 0.2 })
+      projection.reportToolProgress(session.id, 'call_1', { text: '第 3 段', fraction: 2 })
+      vi.advanceTimersByTime(200)
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(projection.toolProgress(session.id).get('call_1')).toEqual({ text: '第 3 段', fraction: 1 })
+      vi.advanceTimersByTime(400)
+      expect(listener).toHaveBeenCalledTimes(2)
+      projection.reportToolProgress(session.id, 'call_1', { fraction: 0.5 })
+      projection.reportToolProgress('unknown-session', 'call_1', { text: '无主' })
+      expect(projection.toolProgress('unknown-session').size).toBe(0)
+      context.emit('session/event', session, {
+        type: 'tool/result',
+        surfaceOp: 'append',
+        seq: SessionSeq(1),
+        time: 2000,
+        data: {
+          turn: 1,
+          step: 1,
+          message: createToolResultMessage({ callId: ToolCallId('call_1'), content: [], isError: false }),
+        },
+      })
+      expect(projection.toolProgress(session.id).size).toBe(0)
+    } finally {
+      projection.dispose()
+      vi.useRealTimers()
+      await context.fiber.dispose()
+      database.close()
+    }
+  })
+
+  it('accepts only a sentence and a share as progress', () => {
+    expect(toolProgressUpdate({ text: '  处理中  ' })).toEqual({ text: '处理中' })
+    expect(toolProgressUpdate({ text: 'x'.repeat(300), fraction: -1 })).toEqual({
+      text: `${'x'.repeat(199)}…`,
+      fraction: 0,
+    })
+    for (const value of [undefined, null, 'text', { text: '' }, { text: 3 }])
+      expect(toolProgressUpdate(value)).toBeUndefined()
   })
 })

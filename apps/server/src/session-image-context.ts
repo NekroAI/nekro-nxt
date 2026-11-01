@@ -132,14 +132,20 @@ export const DSH_IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/webp', '
 
 export const DshImageMediaTypeSchema = z.enum(DSH_IMAGE_MEDIA_TYPES)
 
+/** Long side of a picture an extension tool returns at high detail. */
+export const TOOL_IMAGE_HIGH_DETAIL_MAX_SIDE = 2048
+
+/** `high`: an extension tool picture at high detail, at most {@link TOOL_IMAGE_HIGH_DETAIL_MAX_SIDE} on the long side. */
+export type AttachmentImageDetail = EffectiveImageDetail | 'high'
+
 export const nekroImageAttachmentId = (
   assetId: AssetId,
-  detail: EffectiveImageDetail,
+  detail: AttachmentImageDetail,
 ): ReturnType<typeof AttachmentId> => AttachmentId(`nxt-asset:${assetId}:${detail}`)
 
 export const parseNekroImageAttachmentId = (
   attachmentId: unknown,
-): { readonly assetId: AssetId; readonly detail?: EffectiveImageDetail } | undefined => {
+): { readonly assetId: AssetId; readonly detail?: AttachmentImageDetail } | undefined => {
   if (typeof attachmentId !== 'string') return undefined
   if (!attachmentId.startsWith('nxt-asset:')) {
     const legacy = AssetIdSchema.safeParse(attachmentId)
@@ -148,7 +154,7 @@ export const parseNekroImageAttachmentId = (
   const separator = attachmentId.lastIndexOf(':')
   const detail = attachmentId.slice(separator + 1)
   const assetId = AssetIdSchema.safeParse(attachmentId.slice('nxt-asset:'.length, separator))
-  if (!assetId.success || (detail !== 'low' && detail !== 'auto')) return undefined
+  if (!assetId.success || (detail !== 'low' && detail !== 'auto' && detail !== 'high')) return undefined
   return { assetId: assetId.data, detail }
 }
 
@@ -221,6 +227,12 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
     }
   }
 
+  /** A tool result picture at high detail: the original, at most 2048 px on the long side. */
+  async refForHighDetail(asset: AssetRecord): Promise<ImageAttachmentRef> {
+    const ref = await this.refForAsset(asset)
+    return { ...ref, attachmentId: nekroImageAttachmentId(asset.id, 'high') }
+  }
+
   async readImage(input: unknown, signal?: AbortSignal): Promise<StoredImageAttachment> {
     signal?.throwIfAborted()
     const { ref, decoded } = requireNekroImageReference(input)
@@ -241,10 +253,12 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
   ): Promise<RequestImageAttachment> {
     signal?.throwIfAborted()
     const { ref, decoded } = requireNekroImageReference(input)
+    const side =
+      decoded.detail === 'low' ? 512 : decoded.detail === 'high' ? TOOL_IMAGE_HIGH_DETAIL_MAX_SIDE : undefined
     const effectivePolicy =
-      decoded.detail === 'low'
-        ? { ...policy, width: Math.min(policy.width, 512), height: Math.min(policy.height, 512) }
-        : policy
+      side === undefined
+        ? policy
+        : { ...policy, width: Math.min(policy.width, side), height: Math.min(policy.height, side) }
     const stored = await this.readImage(ref, signal)
     const version = await stillRequestImage(
       await readRequestImageFile(this.requestImageRoot, stored, effectivePolicy, signal),
@@ -458,7 +472,7 @@ export const collectVisibleImageResidency = (
         const parsed = parseNekroImageAttachmentId(block.attachment?.attachmentId)
         if (!parsed) continue
         const asset = assets.getAssetById(parsed.assetId)
-        const detail = parsed.detail ?? baseline
+        const detail = parsed.detail === undefined ? baseline : effectiveImageDetail(parsed.detail)
         if (asset && !residency.has(asset.contentDigest)) residency.set(asset.contentDigest, detail)
       }
     }

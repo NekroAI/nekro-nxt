@@ -860,6 +860,12 @@ export const ChannelRuntimeUsageSchema = z
   })
   .strict()
 
+/** The latest progress a running extension tool reported. */
+export const ChannelRuntimeToolProgressSchema = z
+  .object({ text: z.string().min(1).max(200), fraction: z.number().min(0).max(1).optional() })
+  .strict()
+export type ChannelRuntimeToolProgress = z.output<typeof ChannelRuntimeToolProgressSchema>
+
 const channelRuntimeToolFields = {
   callId: NonEmptyStringSchema,
   name: NonEmptyStringSchema,
@@ -871,6 +877,8 @@ const channelRuntimeToolFields = {
   /** `cancelled`: an extension stopped the message before it was sent. */
   deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown', 'cancelled']).optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  /** Set while the tool runs and has reported progress. */
+  progress: ChannelRuntimeToolProgressSchema.optional(),
 }
 
 export const ChannelRuntimeToolSchema = z
@@ -2417,6 +2425,8 @@ export const DshPluginCatalogEntrySchema = z
     installSource: z.enum(['registry', 'tarball', 'imported']).optional(),
     /** Published by the DSH maintainers on npm for the DSH release this build runs. */
     official: z.boolean().optional(),
+    /** Third-party installed plugins: whether an administrator allowed them to submit images to the model. */
+    imageSubmission: z.boolean().optional(),
     installedAt: z.number().int().safe().nonnegative().optional(),
     clientUiDetected: z.boolean().optional(),
     hostUi: DshNxtHostUiSchema.optional(),
@@ -4342,6 +4352,14 @@ export const HostApiContracts = {
     params: dshPluginEntryParam,
     request: z.object({ targetKey: NonEmptyStringSchema }).strict(),
     response: z.object({ disabled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  setDshPluginImageSubmission: defineContract({
+    method: 'PUT',
+    path: '/api/dsh/plugin-installs/:packageId/image-submission',
+    params: dshPluginPackageParam,
+    request: z.object({ allowed: z.boolean() }).strict(),
+    response: z.object({ allowed: z.boolean() }).strict(),
     error: HostApiErrorSchema,
   }),
   removeDshPluginPackage: defineContract({

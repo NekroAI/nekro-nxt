@@ -77,11 +77,33 @@ export type ExtensionToolParameter = Omit<ExtensionJsonSchema, 'required'> & {
 /**
  * What the agent sees as the tool result. An image block shows a picture from the extension's asset library or the
  * current channel; the Host skips pictures the agent can already see and describes them in text for models without
- * vision.
+ * vision. Pictures go at low detail; SDK 14 `detail: 'high'` (needs `permissions.agent.toolImages.highDetail`) sends
+ * them at up to 2048 px on the long side. At most 6 pictures per call reach the model.
  */
 export type ExtensionToolResultBlock =
   | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'image'; readonly assetId: string; readonly label?: string }
+  | {
+      readonly type: 'image'
+      readonly assetId: string
+      readonly label?: string
+      readonly detail?: 'low' | 'high'
+    }
+
+/** One progress report of a running tool, shown on the tool's status in the channel timeline. */
+export interface ExtensionToolProgress {
+  /** One short sentence, at most 200 characters. */
+  readonly text: string
+  /** Share done, 0–1. */
+  readonly fraction?: number
+}
+
+/** SDK 14: the second argument of `execute`. */
+export interface ExtensionToolExecutionContext {
+  /** Aborted when the call is cancelled or runs past `timeoutSeconds`; pass it on to `nxt` calls and `fetch`. */
+  readonly signal: AbortSignal
+  /** Reports progress; the channel shows the latest report, at most two per second. */
+  progress(update: ExtensionToolProgress): void
+}
 
 export interface ExtensionToolDefinition<
   Args extends ExtensionJsonObject = ExtensionJsonObject,
@@ -94,7 +116,9 @@ export interface ExtensionToolDefinition<
     readonly schema: ExtensionJsonSchema
     render(args: Args, value: Output): readonly ExtensionToolResultBlock[]
   }
-  execute(args: Args): Output | Promise<Output>
+  /** SDK 14: time limit of one call, 1–900 seconds; without it the call has no time limit of its own. */
+  readonly timeoutSeconds?: number
+  execute(args: Args, context: ExtensionToolExecutionContext): Output | Promise<Output>
 }
 
 export interface ExtensionToolRegistry {
@@ -220,6 +244,78 @@ export interface NxtImageInfo {
   readonly byteSize: number
   /** 64-bit difference hash as 16 hex digits; near-identical pictures differ in few bits. */
   readonly dhash: string
+}
+
+/** SDK 14: one chunk of `assets.read` or `files.read`. */
+export interface NxtByteChunk {
+  readonly base64: string
+  /** Whether the chunk reaches the end of the content. */
+  readonly eof: boolean
+}
+
+/** SDK 14: options every work-file and Asset-read call accepts; pass the Tool's `signal` so a cancelled call stops. */
+export interface NxtCallOptions {
+  readonly signal?: AbortSignal
+}
+
+export interface NxtByteRange extends NxtCallOptions {
+  readonly offset?: number
+  /** At most 4 MiB per read; default 4 MiB. */
+  readonly length?: number
+}
+
+export interface NxtAssetStat {
+  readonly byteSize: number
+  readonly mediaType: string
+}
+
+/** SDK 14: an opaque work file of this extension, passed between services instead of host paths. */
+export interface NxtFileRecord {
+  readonly fileId: string
+  readonly byteSize: number
+  readonly mediaType: string
+  readonly name?: string
+  /** `temp` files expire at `expiresAt`, a day after they were written; `cache` files stay under `cacheKey`. */
+  readonly kind: 'temp' | 'cache'
+  /** Set for a read-only file made with `fromAsset`. */
+  readonly assetId?: string
+  readonly cacheKey?: string
+  readonly createdAt: number
+  readonly expiresAt?: number
+}
+
+export interface NxtFileWriteInput {
+  readonly base64?: string
+  readonly text?: string
+  readonly name?: string
+  readonly mediaType?: string
+}
+
+/**
+ * SDK 14 work files (`permissions.*.files`). A `fileId` belongs to this extension only. Temporary files count against
+ * `tempQuotaBytes` and expire after 24 hours; putting a file into the cache keeps it (against `cacheQuotaBytes`, least
+ * recently used first out when full) until it is replaced or deleted.
+ */
+export interface NxtFilesService {
+  /** At most 128 MiB per file; write bigger results in services that return a `fileId`. */
+  write(input: NxtFileWriteInput, options?: NxtCallOptions): Promise<NxtFileRecord>
+  read(fileId: string, range?: NxtByteRange): Promise<NxtByteChunk>
+  stat(fileId: string): Promise<NxtFileRecord | undefined>
+  delete(fileId: string): Promise<boolean>
+  /** A read-only file of an Asset the current channel can see or the library holds; the bytes are not copied. */
+  fromAsset(assetId: string, options?: NxtCallOptions): Promise<NxtFileRecord>
+  /**
+   * Saves the file as an Asset of the current channel (needs `assets.write`), or of the library with
+   * `{ library: true }` (needs `assets.library`; the host instance always saves into the library).
+   */
+  toAsset(fileId: string, options?: NxtCallOptions & { readonly library?: boolean }): Promise<NxtAssetRecord>
+  readonly cache: {
+    /** The cached file of `key`, or undefined. Reading it counts as use. */
+    get(key: string): Promise<NxtFileRecord | undefined>
+    /** Keeps the file under `key`; it no longer expires. Replacing a key releases the previous file. */
+    put(key: string, fileId: string): Promise<NxtFileRecord>
+    delete(key: string): Promise<boolean>
+  }
 }
 
 export interface NxtLibraryAsset {
@@ -583,11 +679,20 @@ export interface NxtHostService {
     release(assetId: string): Promise<boolean>
     /** Makes a library Asset usable in the current channel and returns the `assetId` to send. */
     attach(assetId: string): Promise<NxtAssetRecord>
+    /**
+     * SDK 14. Requires `assets.read`. Reads up to 4 MiB of an Asset the current channel can see or the library holds;
+     * continue at `offset + bytes read` until `eof`.
+     */
+    read(assetId: string, range?: NxtByteRange): Promise<NxtByteChunk & NxtAssetStat>
+    /** SDK 14. Requires `assets.read`. */
+    stat(assetId: string): Promise<NxtAssetStat>
   }
   readonly image: {
     /** Size, frames and difference hash of a picture the current channel can see or the library holds. */
     info(assetId: string): Promise<NxtImageInfo>
   }
+  /** SDK 14. Requires `permissions.agent.files`. */
+  readonly files: NxtFilesService
   /** Requires `permissions.agent.index`; the collections are shared with the host instance. */
   readonly index: NxtIndexService
   readonly storage: {
@@ -713,7 +818,7 @@ export interface NxtHostLayerService {
   }
   readonly render: NxtHostService['render']
   readonly parse: NxtHostService['parse']
-  /** Requires `permissions.host.assets.library`; the same library agent attachments use. */
+  /** Requires `permissions.host.assets.library` (or `read` for `read` and `stat`); the same library agent attachments use. */
   readonly assets: {
     /** Newest first. */
     list(options?: {
@@ -722,11 +827,16 @@ export interface NxtHostLayerService {
     }): Promise<{ readonly assets: readonly NxtLibraryAsset[]; readonly next?: string }>
     get(assetId: string): Promise<NxtLibraryAsset | undefined>
     release(assetId: string): Promise<boolean>
+    /** SDK 14. Requires `permissions.host.assets.read`; library Assets only. */
+    read(assetId: string, range?: NxtByteRange): Promise<NxtByteChunk & NxtAssetStat>
+    stat(assetId: string): Promise<NxtAssetStat>
   }
   readonly image: {
     /** Library Assets only. */
     info(assetId: string): Promise<NxtImageInfo>
   }
+  /** SDK 14. Requires `permissions.host.files`; the same files the agent attachments use. `fromAsset` reads library Assets, `toAsset` saves into the library. */
+  readonly files: NxtFilesService
   /** Requires `permissions.host.index`. */
   readonly index: NxtIndexService
   /** Requires `permissions.host.models`. */
@@ -1530,18 +1640,21 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
   hostCapabilities: {
     sdkLevel: EXTENSION_SDK_LEVEL,
     declaration:
-      '能力分两层声明：智能体挂载内的 ctx.nxt 用 nekro_nxt_extension_define.permissions.agent（并在返回的插件 inject 中加入 nxt）；factory 顶层的本机层 nxt（http、secrets、storage、render、parse、assets、image、index、models）用 permissions.host。未声明的能力调用会抛出指明缺失字段的错误。',
+      '能力分两层声明：智能体挂载内的 ctx.nxt 用 nekro_nxt_extension_define.permissions.agent（并在返回的插件 inject 中加入 nxt）；factory 顶层的本机层 nxt（http、secrets、storage、render、parse、assets、image、files、index、models）用 permissions.host。未声明的能力调用会抛出指明缺失字段的错误。',
     services: [
       "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。",
       'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
       "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
-      "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）、nxt.image.info、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library }, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
+      "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）与 read/stat、nxt.image.info、nxt.files、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library?, read? }, files?, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
       'logger 与 ctx.logger 提供 debug/info/warn/error(message, details?)，来源由宿主绑定；需要 requires.sdk 至少为 9，动态创造会自动声明。记录状态、数量和错误即可，不记录凭据、聊天正文或模型请求。Debug 在用户开启临时调试时保存。',
       'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
       'ctx.nxt.assets.keep(assetId) / release(assetId) / attach(assetId)：扩展资源库。keep 把当前频道看得到的 Asset 收进本扩展的资源库，之后可以在别的频道使用（同一张图重复 keep 不变，超出配额报错）；release 移出资源库；attach 让资源库里的 Asset 在当前频道可以发送并返回 assetId。create(input, { library: true }) 生成后直接存进资源库。需要 assets: { library: { quotaBytes? } }（默认 2 GiB），本机层与挂载两层共用同一个资源库。本机层用 nxt.assets.list({ limit, after }) / get(assetId) / release(assetId) 管理。',
+      'ctx.nxt.assets.read(assetId, { offset, length }) → { base64, eof, byteSize, mediaType } / stat(assetId) → { byteSize, mediaType }：读取当前频道看得到的或资源库中的文件内容，用来解析 PDF、表格、压缩包或处理音视频。每次最多读 4 MiB，从 offset 0 开始，每次加上读到的字节数，直到 eof。需要 assets: { read: true } 和 requires.sdk 至少为 14；本机层只能读资源库中的文件。',
+      'ctx.nxt.files / nxt.files：工作文件，用文件编号 fileId 在服务之间传递数据，不接触本机路径。write({ base64 | text, name, mediaType }) → { fileId, byteSize, … }（单个最多 128 MiB）；read(fileId, { offset, length }) → { base64, eof }（每次最多 4 MiB）；stat、delete；fromAsset(assetId) 把频道或资源库里的文件变成 fileId，不复制内容，可读范围与 assets.read 相同；toAsset(fileId) 存为当前频道的 Asset（需要 assets.write），toAsset(fileId, { library: true }) 存进资源库（需要 assets.library，本机层总是存进资源库）。临时文件 24 小时后删除；cache.put(key, fileId) 把文件留作缓存，不再过期，cache.get(key) 取回，cache.delete(key) 删除，同一个键再 put 会替换旧文件，缓存满了先删最久没用的。fileId 只在本扩展内有效，本机层和智能体挂载共用。需要 files: { tempQuotaBytes?, cacheQuotaBytes? }（默认各 1 GiB，最多 16 GiB）和 requires.sdk 至少为 14；动态试运行的文件单独存放，各最多 64 MiB。',
       'ctx.nxt.image.info(assetId) → { mediaType, width, height, frames, byteSize, dhash }：读取当前频道看得到的或资源库中的图片尺寸、帧数和差异哈希（dhash 是 16 位十六进制，几乎相同的图只差几位）；本机层 nxt.image.info 只能读资源库中的图。需要 assets.library。',
       "ctx.nxt.index / nxt.index：宿主维护的检索索引。在 index: { collections: [{ name, fields: [{ name, weight }], filters }] } 中声明集合（最多 4 个文本字段、4 个过滤字段；两层都声明时定义必须一致）。upsert(collection, id, { fields, filters }) / delete(collection, id) / count(collection) / query(collection, text, { limit, filter: [[{ field, value }]] }) → { hits: [{ id, score }], mode, degraded? }；filter 的每组都要满足，组内满足一个即可。宿主按关键词检索，管理员在「设置 → 检索」下载语义模型后自动加入语义检索（mode: 'hybrid'），扩展不需要处理向量。",
-      "工具的 output.render 可以返回图片块 { type: 'image', assetId, label }（资源库或当前频道的 Asset）：宿主把图片交给有视觉能力的模型查看，当前上下文已经看得到的图不重复附上，单次最多 6 张；模型没有视觉能力时只给文字。execute 的返回值不受影响，编排模式的程序照常拿到它。",
+      "工具的 output.render 可以返回图片块 { type: 'image', assetId, label, detail }（资源库或当前频道的 Asset）：宿主把图片交给有视觉能力的模型查看，当前上下文已经看得到的图不重复附上，单次最多 6 张；模型没有视觉能力时只给文字。图片默认按低细节交给模型，够看清画面内容；要模型看清文字、细节或拼好的宫格图时写 detail: 'high'（长边最多 2048 像素，更耗用量），需要 toolImages: { highDetail: true } 和 requires.sdk 至少为 14，没有声明时按低细节展示。execute 的返回值不受影响，编排模式的程序照常拿到它。",
+      '长任务：defineTool 可以写 timeoutSeconds（1–900），不写时没有单独的时限。execute(args, { signal, progress }) 的第二个参数里，signal 在调用被取消或超时时中止，把它传给 files、assets 的调用（{ signal }），自己的耗时循环也要检查它；progress({ text, fraction }) 汇报进度（一句话，fraction 是 0–1 的完成比例），频道时间线的工具状态上显示最新一条，每秒最多更新两次。timeoutSeconds 需要 requires.sdk 至少为 14。',
       "nxt.models.list() → [{ ref, providerName, name, vision, … }] / nxt.models.complete({ model: ref, system, messages: [{ role: 'user', content: [{ type: 'text', text } | { type: 'image', assetId }] }], maxOutputTokens }) → { text }：本机层调用用户在「设置 → 模型」里配置好的模型，适合页面发起的批量任务（例如给导入的图片写描述），由页面让用户选择模型，不要写死；图片必须在扩展资源库中。只能在 permissions.host 声明 models: { maxCallsPerMinute, maxOutputTokens }。",
       'Client 端 host.upload(files, { onProgress }) 把用户选择的图片或 zip 上传进扩展资源库，返回 { added, skipped }；host.assetUrl(assetId, { thumbnail }) 返回资源库图片的地址，用于 <img>。需要 permissions.host.assets.library。',
       'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享，也是页面 RPC 用的本机分区）。单值不超过 256 KiB，默认配额 8 MiB。',

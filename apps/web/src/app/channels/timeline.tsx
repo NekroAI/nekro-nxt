@@ -314,17 +314,21 @@ function ToolStep({
   const [open, setOpen] = useState(false)
   const state = toolState(tool)
   const summary = toolSummary(tool.name, tool.inputPreview, tool.wroteToChannel === true)
+  const progress = tool.state === 'running' ? tool.progress : undefined
+  const percent = progress?.fraction === undefined ? undefined : `${Math.round(progress.fraction * 100)}%`
   return (
     <div className={styles.toolStep} data-open={open || undefined}>
       <Pressable
         className={[styles.step, state.className].join(' ')}
         aria-expanded={open}
-        aria-label={`${tool.displayName}${summary ? `：${summary}` : ''}，${open ? '收起详情' : '查看详情'}`}
+        aria-label={`${tool.displayName}${summary ? `：${summary}` : ''}${progress ? `，${progress.text}${percent ? ` ${percent}` : ''}` : ''}，${open ? '收起详情' : '查看详情'}`}
         onClick={() => setOpen(!open)}
       >
         {state.icon}
         <b>{tool.displayName}</b>
-        {summary ? <span className={styles.stepArg}>{summary}</span> : null}
+        {summary && !progress ? <span className={styles.stepArg}>{summary}</span> : null}
+        {progress ? <span className={styles.stepProgress}>{progress.text}</span> : null}
+        {percent ? <span className={styles.stepTime}>{percent}</span> : null}
         {tool.durationMs !== undefined ? (
           <span className={styles.stepTime}>{formatDuration(tool.durationMs)}</span>
         ) : null}

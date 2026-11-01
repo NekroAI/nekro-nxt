@@ -1707,6 +1707,62 @@ test.describe('settings space', () => {
     })
   }
 
+  test('lets an administrator allow a third-party plugin to submit images', async () => {
+    const packageId = 'dsp_fixtureimages'
+    const catalog = (allowed: boolean) => {
+      const base = dshPluginCatalog(packageId, '@example/dsh-fixture-charts', false, [
+        {
+          id: 'dse_fixtureimages',
+          entryKey: 'main',
+          scope: 'host',
+          diagnostic: allowed
+            ? { status: 'active', phase: 'apply' }
+            : {
+                status: 'pending',
+                phase: 'dependency',
+                message: '需要 attachments 服务，只对官方插件开放',
+                waitingFor: ['attachments'],
+                restrictedServices: ['attachments'],
+              },
+        },
+      ])
+      return { plugins: base.plugins.map((plugin) => ({ ...plugin, imageSubmission: allowed })) }
+    }
+    let allowed = false
+    const requests: unknown[] = []
+    const { page, errors } = await open(`/settings/dsh?entry=${encodeURIComponent(`plugin:${packageId}`)}`, {
+      before: async (target) => {
+        await target.route('**/api/dsh/plugins', (request) => request.fulfill({ json: catalog(allowed) }))
+        await target.route(`**/api/dsh/plugin-installs/${packageId}/image-submission`, (request) => {
+          const body: unknown = request.request().postDataJSON()
+          requests.push({ method: request.request().method(), body })
+          allowed = typeof body === 'object' && body !== null && 'allowed' in body && body.allowed === true
+          return request.fulfill({ json: { allowed } })
+        })
+      },
+    })
+    try {
+      await expect(page.getByRole('heading', { name: '@example/dsh-fixture-charts' })).toBeVisible()
+      await expect(
+        page.getByText(
+          '需要 attachments 服务，只对官方插件开放。打开下方的「允许提交图片」后可以使用 attachments 服务。',
+          { exact: true },
+        ),
+      ).toBeVisible()
+      const allow = page.getByRole('switch', { name: '允许提交图片' })
+      await expect(allow).not.toBeChecked()
+      await page.screenshot({ path: '.local/screenshots-addons/dsh-image-submission-off.png', fullPage: true })
+      await allow.click()
+      await expect(allow).toBeChecked()
+      expect(requests).toEqual([{ method: 'PUT', body: { allowed: true } }])
+      await expect(page.getByText('本机已启用', { exact: true })).toBeVisible()
+      await page.screenshot({ path: '.local/screenshots-addons/dsh-image-submission-on.png', fullPage: true })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('clears sent feedback on account changes and discards a late response from the previous account', async () => {
     let account = 'alpha'
     let hold = false

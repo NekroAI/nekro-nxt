@@ -31,6 +31,8 @@ interface OwnedLoader {
   readonly targetKey?: string
   /** Official entries load beside the isolated Loader, in one that sees the host's own services. */
   readonly official: boolean
+  /** Third-party entries an administrator allowed to submit images load here, with the channel image service. */
+  readonly images: boolean
   /** Every Loader serving the same target, this one included. */
   readonly peers: OwnedLoader[]
 }
@@ -42,6 +44,8 @@ interface MountedPluginState {
 }
 // 4: official plugins receive the host services they declare; others keep the isolated set.
 const DSH_PLUGIN_LOAD_POLICY_REVISION = 4
+/** Package names whose third-party plugins an administrator allowed to submit images. */
+const IMAGE_SUBMISSION_KEY = 'dsh.plugins.imageSubmission'
 
 export type DshPluginConfigInspection =
   | { readonly mode: 'schema'; readonly schema: JsonValue }
@@ -173,6 +177,11 @@ export interface DshPluginLifecycleOptions {
   ) => DshPluginServiceAccess
   /** Host services hidden from the Loader that third-party entries share. */
   readonly isolatedServices?: readonly string[]
+  /**
+   * The `attachments` service third-party plugins receive once an administrator allows them to submit images; without
+   * it the switch is unavailable.
+   */
+  readonly imageSubmission?: { readonly attachments: object }
   readonly resolveModule: (packageId: DshPluginPackageId, moduleName: string) => string
   readonly listAgentSessions: (agentId: AgentId) => readonly {
     readonly sessionId: string
@@ -263,6 +272,7 @@ export class DshPluginLifecycleCoordinator {
   readonly #rootContext: Context
   readonly #serviceAccess: DshPluginLifecycleOptions['serviceAccess']
   readonly #isolatedServices: readonly string[]
+  readonly #imageSubmission: DshPluginLifecycleOptions['imageSubmission']
   readonly #resolveModule: DshPluginLifecycleOptions['resolveModule']
   readonly #listAgentSessions: DshPluginLifecycleOptions['listAgentSessions']
   readonly #now: () => number
@@ -284,6 +294,7 @@ export class DshPluginLifecycleCoordinator {
     this.#rootContext = options.rootContext
     this.#serviceAccess = options.serviceAccess
     this.#isolatedServices = options.isolatedServices ?? []
+    this.#imageSubmission = options.imageSubmission
     this.#resolveModule = options.resolveModule
     this.#listAgentSessions = options.listAgentSessions
     this.#now = options.now ?? Date.now
@@ -590,7 +601,9 @@ export class DshPluginLifecycleCoordinator {
     const name = this.#resolveModule(packageRecord.id, entry.moduleName)
     const access = this.#serviceAccess?.(packageRecord, await this.#declaredInject(target, name))
     if (access) this.#access.set(entry.id, access)
-    const loader = target.peers.find((peer) => peer.official === (access?.official ?? false)) ?? target
+    const official = access?.official ?? false
+    const images = !official && this.imageSubmissionAllowed(packageRecord.packageName)
+    const loader = target.peers.find((peer) => peer.official === official && peer.images === images) ?? target
     const activeBefore = await this.#activeEntries(loader)
     const loaderId = await loader.services.loader.create({
       name,
@@ -696,25 +709,43 @@ export class DshPluginLifecycleCoordinator {
     return this.#ownerOf(target, entryId) !== undefined
   }
 
-  /** The isolated Loader for third-party entries and, when access rules exist, its official peer. */
+  /**
+   * The isolated Loader for third-party entries and, when access rules exist, its official peer. With image submission
+   * configured, a second isolated peer sees only the channel image service in place of `attachments`.
+   */
   async #createLoaders(base: Context, targetKey?: string): Promise<OwnedLoader> {
     const peers: OwnedLoader[] = []
-    const isolated = this.#isolatedServices.reduce((context, key) => context.isolate(key), base)
+    const isolate = () => this.#isolatedServices.reduce((context, key) => context.isolate(key), base)
     const primary = await this.#createLoader(
-      isolated.isolate('loader').isolate('pluginInventory'),
+      isolate().isolate('loader').isolate('pluginInventory'),
       peers,
-      false,
+      { official: false, images: false },
       targetKey,
     )
     if (this.#serviceAccess)
-      await this.#createLoader(base.isolate('loader').isolate('pluginInventory'), peers, true, targetKey)
+      await this.#createLoader(
+        base.isolate('loader').isolate('pluginInventory'),
+        peers,
+        { official: true, images: false },
+        targetKey,
+      )
+    if (this.#imageSubmission) {
+      const imaged = isolate().isolate('attachments')
+      imaged.provide('attachments', this.#imageSubmission.attachments)
+      await this.#createLoader(
+        imaged.isolate('loader').isolate('pluginInventory'),
+        peers,
+        { official: false, images: true },
+        targetKey,
+      )
+    }
     return primary
   }
 
   async #createLoader(
     context: Context,
     peers: OwnedLoader[],
-    official: boolean,
+    kind: { readonly official: boolean; readonly images: boolean },
     targetKey?: string,
   ): Promise<OwnedLoader> {
     observeDshPluginDisposal(context)
@@ -732,7 +763,8 @@ export class DshPluginLifecycleCoordinator {
       services,
       loaderIds: new Map(),
       ...(targetKey === undefined ? {} : { targetKey }),
-      official,
+      official: kind.official,
+      images: kind.images,
       peers,
     }
     peers.push(loader)
@@ -848,6 +880,45 @@ export class DshPluginLifecycleCoordinator {
         this.#timestamp(),
       )
     }
+  }
+
+  /** Whether third-party plugins of this package may submit images; official plugins use the host's own service. */
+  imageSubmissionAllowed(packageName: string): boolean {
+    if (this.#imageSubmission === undefined) return false
+    const value = this.#repository.getSystemSetting?.(IMAGE_SUBMISSION_KEY)?.value
+    return Array.isArray(value) && value.includes(packageName)
+  }
+
+  /** Allows or stops image submission for a package and reloads its enabled entries so the change applies now. */
+  async setImageSubmission(packageId: DshPluginPackageId, allowed: boolean): Promise<void> {
+    this.#assertActive()
+    if (this.#imageSubmission === undefined || !this.#repository.putSystemSetting) {
+      throw new Error('Image submission is not configured on this Host.')
+    }
+    const packageRecord = this.#repository.getDshPluginPackage(packageId)
+    if (!packageRecord) throw new Error(`DSH 插件包不存在：${packageId}`)
+    if (allowed === this.imageSubmissionAllowed(packageRecord.packageName)) return
+    const previous = this.#repository.getSystemSetting?.(IMAGE_SUBMISSION_KEY)
+    const current = Array.isArray(previous?.value)
+      ? previous.value.filter((item): item is string => typeof item === 'string')
+      : []
+    const next = allowed
+      ? [...new Set([...current, packageRecord.packageName])].sort()
+      : current.filter((name) => name !== packageRecord.packageName)
+    this.#repository.putSystemSetting(IMAGE_SUBMISSION_KEY, next, previous?.revision, this.#timestamp())
+    const loaders = [this.#hostLoader, ...this.#agentLoaders.values()].filter(
+      (loader): loader is OwnedLoader => loader !== undefined,
+    )
+    for (const entry of this.#repository.listDshPluginEntries(packageId)) {
+      await this.#exclusive(entry.id, async () => {
+        for (const loader of loaders) {
+          if (!this.#hasEntry(loader, entry.id)) continue
+          await this.#unmount(loader, entry.id)
+          await this.#mount(loader, entry)
+        }
+      })
+    }
+    await Promise.all(loaders.map((loader) => this.#refreshLoaderDiagnostics(loader)))
   }
 
   #sessionEventsKey(entryId: DshPluginEntryId): string {
