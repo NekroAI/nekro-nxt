@@ -609,11 +609,14 @@ export const mediaAddon = (media: MediaFfmpeg): AddonCapability => {
         sources: ['GitHub Releases', 'npmmirror'],
         programs: MEDIA_PROGRAMS,
         directories: [media.directory],
-        state: () =>
-          downloadState(media.download(), media.downloaded(), {
-            version: media.releaseVersion,
+        state: () => {
+          const downloaded = media.downloaded()
+          // One build carries a different ffmpeg version per platform, so the version shows once the programs run.
+          return downloadState(media.download(), downloaded, {
+            ...(downloaded === undefined ? {} : { version: downloaded.version }),
             ...(downloadBytes === undefined ? {} : { downloadBytes }),
-          }),
+          })
+        },
         install: () => media.startDownload(),
         remove: () => media.removeDownloaded(),
         program: (name) => mediaProgram(media.downloaded(), name),
@@ -742,9 +745,9 @@ const localSpeechProvider = (
   sources: ['npm', 'npmmirror', 'Hugging Face', 'hf-mirror.com', 'GitHub Releases'],
   directories: local.directories(id),
   state: () => {
-    const { name: version, memoryBytes } = LOCAL_SPEECH_MODELS[id]
+    const { memoryBytes } = LOCAL_SPEECH_MODELS[id]
     const install = local.install(id)
-    const base = { version, memoryBytes, downloadBytes: local.downloadBytes(id) }
+    const base = { memoryBytes, downloadBytes: local.downloadBytes(id) }
     if (install.state === 'installed') return { ...base, state: 'installed', source: 'downloaded', removable: true }
     if (!local.supported) return { ...base, state: 'unsupported', removable: false }
     if (install.state === 'downloading') {
