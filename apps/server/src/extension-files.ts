@@ -13,6 +13,7 @@ export const EXTENSION_TEMP_FILE_TTL_MS = 24 * 60 * 60 * 1000
 export const EXTENSION_FILE_MAX_BYTES = 128 * 1024 * 1024
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000
 const FILE_ID_PATTERN = /^file_[a-f0-9]{32}$/u
+const WORK_DIRECTORY_PREFIX = 'work-'
 const CACHE_KEY_PATTERN = /^[\p{L}\p{N}._:/-]{1,256}$/u
 
 /** One file as stored next to its bytes; `asset` files point at an Asset blob and own no bytes. */
@@ -71,6 +72,7 @@ export type ExtensionFiles = Pick<
   | 'cacheGet'
   | 'cachePut'
   | 'cacheDelete'
+  | 'workDirectory'
 >
 
 /**
@@ -115,6 +117,11 @@ export class ExtensionFileStore {
           continue
         }
         for (const name of names) {
+          // Work folders of calls cut short by a crash or restart.
+          if (name.startsWith(WORK_DIRECTORY_PREFIX)) {
+            await rm(path.join(ownerRoot, name), { recursive: true, force: true })
+            continue
+          }
           if (!name.endsWith('.json')) continue
           try {
             const parsed = StoredFileSchema.parse(JSON.parse(await readFile(path.join(ownerRoot, name), 'utf8')))
@@ -201,6 +208,20 @@ export class ExtensionFileStore {
     }
     await this.#persist(file)
     return this.#view(file)
+  }
+
+  /**
+   * A new empty folder for one host service call that writes output files, beside the owner's files so
+   * {@link importPath} with `move` renames instead of copying. `dispose` removes it with whatever was not imported.
+   */
+  async workDirectory(owner: string): Promise<{ readonly path: string; dispose(): Promise<void> }> {
+    await this.start()
+    const directory = path.join(
+      this.#ownerDirectory(owner),
+      `${WORK_DIRECTORY_PREFIX}${randomBytes(8).toString('hex')}`,
+    )
+    await mkdir(directory, { recursive: true, mode: 0o700 })
+    return { path: directory, dispose: () => rm(directory, { recursive: true, force: true }) }
   }
 
   /**

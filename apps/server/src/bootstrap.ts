@@ -34,7 +34,9 @@ import {
   AuthoringTaskIdSchema,
   HostApiContracts,
   OutboundIntentIdSchema,
+  EXTENSION_COMMAND_PROFILES,
   ExtensionIdSchema,
+  ExtensionCommandProfileIdSchema,
   HostUiPageInstanceIdSchema,
   type AgentId,
   type ChannelId,
@@ -91,6 +93,7 @@ import { verifyImportedExtensionRevision } from './imported-extension-verifier.j
 import { AuthoringTestConfig } from './authoring-test-config.js'
 import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
+import { voiceTranscriptionAnnotator } from './voice-transcription.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
 import { ScheduledTasks, type JobFireOutcome } from './scheduled-tasks.js'
 import { CodeRunNode } from './code-run-node.js'
@@ -233,6 +236,9 @@ const inboundDecision = (record: InboundHookDecisionRecord): InboundHookDecision
   trigger: record.trigger,
   hidden: record.hidden,
   ...(record.annotation === null ? {} : { annotation: record.annotation }),
+  ...(record.hostAnnotations === null || record.hostAnnotations === undefined || record.hostAnnotations.length === 0
+    ? {}
+    : { hostAnnotations: record.hostAnnotations }),
 })
 
 export class NekroRuntime {
@@ -987,107 +993,6 @@ export class NekroRuntime {
                   ...(binding.mode === 'dynamic' ? {} : { extensionId: binding.ownerKey }),
                 },
               )
-      const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
-        migrationStorage: (revision) => createMigrationStorage(repository, revision.extensionId),
-        activationBackends: createNxtProductBackends(nxtFacts, {
-          ...(loggerFor === undefined ? {} : { logger: loggerFor }),
-          fetch: nxtFetch,
-          complete: nxtComplete,
-          library: libraryFor(sqliteLibraryRegistry(repository.extensionLibrary)),
-          files: extensionFiles,
-          index: extensionIndex,
-          models: nxtModels,
-          storage: sqliteNxtStorage(repository, now),
-          jobs: sqliteNxtJobs(repository, { now, nextId: nextUlid }),
-          platform: {
-            catalog: platformCatalog,
-            invoke: async (binding, action, args) => {
-              const { episode, channels } = activeEpisode(binding)
-              return platformResult(
-                await channels.invokeChannelPlatformAction({
-                  episodeId: episode.id,
-                  action,
-                  args,
-                  clientRequestId: `nxt-${binding.ownerKey}-${nextUlid()}`,
-                }),
-              )
-            },
-            raw: async (binding, api, params) => {
-              const { episode, channels } = activeEpisode(binding)
-              return platformResult(
-                await channels.invokeChannelRawApi({
-                  episodeId: episode.id,
-                  api,
-                  params,
-                  clientRequestId: `nxt-${binding.ownerKey}-${nextUlid()}`,
-                }),
-              )
-            },
-          },
-        }),
-        dynamicBackends: createNxtProductBackends(nxtFacts, {
-          ...(loggerFor === undefined ? {} : { logger: loggerFor }),
-          fetch: nxtFetch,
-          complete: nxtComplete,
-          // Dynamic runs keep their library and index in memory; pictures and channel grants stay real.
-          library: libraryFor(memoryLibraryRegistry()),
-          files: previewFiles,
-          index: memoryIndexEngine(),
-          models: nxtModels,
-          storage: memoryNxtStorage(now),
-          jobs: memoryNxtJobs(),
-          platform: {
-            catalog: platformCatalog,
-            invoke: (_binding, action) => Promise.resolve(previewPlatformResult('平台动作', action)),
-            raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
-          },
-        }),
-        describeRevision: (revision: Revision) => {
-          const permissions = repository.getExtensionRevisionVerification(revision.id)?.permissions
-          const manifest = extensionServicePort.current?.revisionManifest(revision)
-          const secretKeys = (layer: 'host' | 'agent') =>
-            manifest === undefined ? [] : configSecretKeys(layerConfigSchema(manifest, layer))
-          return {
-            displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
-            capabilities: permissions?.agent,
-            hostCapabilities: hostLayerAsCapabilities(permissions?.host),
-            secretKeys: { agent: secretKeys('agent'), host: secretKeys('host') },
-          }
-        },
-        adapters: {
-          register: (owner, contribution) => {
-            if (!adapterPort.current) return Promise.reject(new Error('Adapter registry is not ready.'))
-            return adapterPort.current.register(owner, contribution)
-          },
-          mountConnections: (adapterKey) => {
-            if (!adapterPort.current) return Promise.reject(new Error('Adapter connections are not ready.'))
-            return adapterPort.current.mountConnections(adapterKey)
-          },
-        },
-        dynamicConfig: (agentId, episodeId) => authoringTestConfig.configForEpisode(agentId, episodeId),
-        scheduledTasks,
-        mcpStatus,
-        onSessionMount: ({
-          agentId,
-          revision,
-          channelId,
-        }: {
-          agentId: AgentId
-          revision: Revision
-          channelId: ChannelId
-        }) => {
-          const declared =
-            repository.getExtensionRevisionVerification(revision.id)?.permissions?.agent?.jobs?.declared ?? []
-          syncDeclaredJobs(repository, {
-            agentId,
-            extensionId: revision.extensionId,
-            channelId,
-            declared,
-            now: now(),
-            nextId: nextUlid,
-          })
-        },
-      }
 
       const runtimesRoot = path.join(path.dirname(options.coreDatabasePath), 'runtimes')
       const codeRunNode = new CodeRunNode({
@@ -1169,7 +1074,14 @@ export class NekroRuntime {
           return ffmpeg === undefined || ffprobe === undefined ? undefined : { ffmpeg, ffprobe }
         },
       })
-      const commandProfiles = new CommandProfiles({ runner: programRunner, programs: () => addons.programs() })
+      const commandProfiles = new CommandProfiles({
+        runner: programRunner,
+        programs: () => addons.programs(),
+        addonTitle: (profileId) => {
+          const known = ExtensionCommandProfileIdSchema.safeParse(profileId)
+          return known.success ? addons.status(EXTENSION_COMMAND_PROFILES[known.data]).title : undefined
+        },
+      })
       const speechService = new SpeechService({
         active: () => addons.active('speech'),
         titles: Object.fromEntries(speech.providers.map((provider) => [provider.id, provider.title])),
@@ -1185,6 +1097,115 @@ export class NekroRuntime {
             )
             .then(() => undefined),
       })
+      const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
+        migrationStorage: (revision) => createMigrationStorage(repository, revision.extensionId),
+        activationBackends: createNxtProductBackends(nxtFacts, {
+          ...(loggerFor === undefined ? {} : { logger: loggerFor }),
+          fetch: nxtFetch,
+          complete: nxtComplete,
+          library: libraryFor(sqliteLibraryRegistry(repository.extensionLibrary)),
+          files: extensionFiles,
+          media,
+          commands: commandProfiles,
+          speech: speechService,
+          index: extensionIndex,
+          models: nxtModels,
+          storage: sqliteNxtStorage(repository, now),
+          jobs: sqliteNxtJobs(repository, { now, nextId: nextUlid }),
+          platform: {
+            catalog: platformCatalog,
+            invoke: async (binding, action, args) => {
+              const { episode, channels } = activeEpisode(binding)
+              return platformResult(
+                await channels.invokeChannelPlatformAction({
+                  episodeId: episode.id,
+                  action,
+                  args,
+                  clientRequestId: `nxt-${binding.ownerKey}-${nextUlid()}`,
+                }),
+              )
+            },
+            raw: async (binding, api, params) => {
+              const { episode, channels } = activeEpisode(binding)
+              return platformResult(
+                await channels.invokeChannelRawApi({
+                  episodeId: episode.id,
+                  api,
+                  params,
+                  clientRequestId: `nxt-${binding.ownerKey}-${nextUlid()}`,
+                }),
+              )
+            },
+          },
+        }),
+        dynamicBackends: createNxtProductBackends(nxtFacts, {
+          ...(loggerFor === undefined ? {} : { logger: loggerFor }),
+          fetch: nxtFetch,
+          complete: nxtComplete,
+          // Dynamic runs keep their library and index in memory; pictures and channel grants stay real.
+          library: libraryFor(memoryLibraryRegistry()),
+          files: previewFiles,
+          // Media, programs and speech run for real; outputs count against the dynamic run's small file quota.
+          media,
+          commands: commandProfiles,
+          speech: speechService,
+          index: memoryIndexEngine(),
+          models: nxtModels,
+          storage: memoryNxtStorage(now),
+          jobs: memoryNxtJobs(),
+          platform: {
+            catalog: platformCatalog,
+            invoke: (_binding, action) => Promise.resolve(previewPlatformResult('平台动作', action)),
+            raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
+          },
+        }),
+        describeRevision: (revision: Revision) => {
+          const permissions = repository.getExtensionRevisionVerification(revision.id)?.permissions
+          const manifest = extensionServicePort.current?.revisionManifest(revision)
+          const secretKeys = (layer: 'host' | 'agent') =>
+            manifest === undefined ? [] : configSecretKeys(layerConfigSchema(manifest, layer))
+          return {
+            displayName: repository.getExtension(revision.extensionId)?.displayName ?? '扩展',
+            capabilities: permissions?.agent,
+            hostCapabilities: hostLayerAsCapabilities(permissions?.host),
+            secretKeys: { agent: secretKeys('agent'), host: secretKeys('host') },
+          }
+        },
+        adapters: {
+          register: (owner, contribution) => {
+            if (!adapterPort.current) return Promise.reject(new Error('Adapter registry is not ready.'))
+            return adapterPort.current.register(owner, contribution)
+          },
+          mountConnections: (adapterKey) => {
+            if (!adapterPort.current) return Promise.reject(new Error('Adapter connections are not ready.'))
+            return adapterPort.current.mountConnections(adapterKey)
+          },
+        },
+        dynamicConfig: (agentId, episodeId) => authoringTestConfig.configForEpisode(agentId, episodeId),
+        scheduledTasks,
+        mcpStatus,
+        onSessionMount: ({
+          agentId,
+          revision,
+          channelId,
+        }: {
+          agentId: AgentId
+          revision: Revision
+          channelId: ChannelId
+        }) => {
+          const declared =
+            repository.getExtensionRevisionVerification(revision.id)?.permissions?.agent?.jobs?.declared ?? []
+          syncDeclaredJobs(repository, {
+            agentId,
+            extensionId: revision.extensionId,
+            channelId,
+            declared,
+            now: now(),
+            nextId: nextUlid,
+          })
+        },
+      }
+
       const credentialLibrary = new CredentialLibrary(repository, credentials, {
         secrets,
         now,
@@ -1398,6 +1419,22 @@ export class NekroRuntime {
 
       const inboundHooks = new ExtensionInboundHookGate({
         handlers: (agentId) => host.inboundHandlers(agentId),
+        hostAnnotators: [
+          voiceTranscriptionAnnotator({
+            enabled: (agentId) => repository.getAgent(agentId)?.revision.capabilities.voiceTranscription === true,
+            audio: (assetId) => {
+              const asset = repository.getAssetById(assetId)
+              return asset === undefined
+                ? undefined
+                : { path: assetService.blobPath(asset), digest: asset.contentDigest }
+            },
+            speech: speechService,
+            warn: (message, error) =>
+              options.logs?.logger({ kind: 'system', id: 'speech', name: '语音识别' }).warn(message, {
+                error: error instanceof Error ? error.message : String(error),
+              }),
+          }),
+        ],
         describe: (handler) => extensionHost.describeRevision(handler.revision),
         nxtFor: (handler, channelId) => attachmentNxt(handler, ChannelIdSchema.parse(channelId)),
         message: (event, defaultTriggered) => {
@@ -1436,6 +1473,7 @@ export class NekroRuntime {
                 trigger: decision.trigger,
                 hidden: decision.hidden,
                 annotation: decision.annotation ?? null,
+                hostAnnotations: decision.hostAnnotations === undefined ? null : [...decision.hostAnnotations],
                 decidedBy: decidedBy.map((extensionId) => ExtensionIdSchema.parse(extensionId)),
                 diagnostics: diagnostics.length === 0 ? null : diagnostics.map((item) => ({ ...item })),
                 decidedAt,

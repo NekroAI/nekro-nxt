@@ -365,6 +365,8 @@ const AgentCapabilitiesSchema = z
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
     communityFeedbackAuto: z.boolean().default(false),
+    /** Voice messages reach the agent with a transcript (附加功能 F10). */
+    voiceTranscription: z.boolean().default(false),
     /** Linked accounts this agent's commands act as, one per platform; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
     /**
@@ -621,6 +623,7 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
     codeRun: z.boolean().optional(),
     commandNetwork: z.boolean().optional(),
     communityFeedbackAuto: z.boolean().optional(),
+    voiceTranscription: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).optional(),
     extensionRequesters: z.enum(['everyone', 'admins']).optional(),
@@ -726,6 +729,8 @@ export const HostSnapshotMessageSchema = z
         trigger: z.enum(['default', 'suppress', 'force']),
         hidden: z.boolean(),
         annotation: z.string().optional(),
+        /** What NekroNXT itself added for the agent, such as the transcript of a voice message. */
+        hostAnnotations: z.array(z.object({ label: z.string(), text: z.string() }).strict()).optional(),
         extensions: z.array(z.string()),
         problems: z.array(z.string()).optional(),
       })
@@ -1733,6 +1738,8 @@ export const AddonProviderStatusSchema = z
     sources: z.array(z.string()).default([]),
     progress: AddonProgressSchema.optional(),
     error: z.string().optional(),
+    /** Other add-ons it needs to work. */
+    dependsOn: z.array(AddonIdSchema).default([]),
     installable: z.boolean(),
     removable: z.boolean(),
   })
@@ -1889,6 +1896,8 @@ export const HostSnapshotSchema = z
         githubCli: AddonAvailabilitySchema.optional(),
         /** The `browser` add-on that checks candidates when no page is open. */
         verificationBrowser: AddonAvailabilitySchema.optional(),
+        /** The `speech` add-on that voice message transcription needs. */
+        speechRecognition: AddonAvailabilitySchema.optional(),
         /** What this host can confine for commands beyond file writes; optional in older hosts. */
         commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
         webSearch: z

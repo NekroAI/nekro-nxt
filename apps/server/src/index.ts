@@ -4881,8 +4881,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       )
       const note = memberNotes.get(event.id)
       if (note !== undefined) projectedEvents.push({ type: 'text', text: note })
-      const annotation = input.annotations?.get(event.id)
-      if (annotation !== undefined) projectedEvents.push({ type: 'text', text: `[扩展标注] ${annotation}` })
+      for (const annotation of input.annotations?.get(event.id) ?? []) {
+        projectedEvents.push({ type: 'text', text: `[${annotation.label}] ${annotation.text}` })
+      }
     }
     if (input.wakeNote !== undefined) projectedEvents.push({ type: 'text', text: `〔${input.wakeNote}〕` })
     const message = freezeMessage({

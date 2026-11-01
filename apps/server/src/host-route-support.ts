@@ -466,13 +466,23 @@ const inboundHookFact = (
           : [],
       )
     : []
-  if (decision.trigger === 'default' && !decision.hidden && decision.annotation === null && problems.length === 0) {
+  const hostAnnotations = decision.hostAnnotations ?? []
+  if (
+    decision.trigger === 'default' &&
+    !decision.hidden &&
+    decision.annotation === null &&
+    hostAnnotations.length === 0 &&
+    problems.length === 0
+  ) {
     return undefined
   }
   return {
     trigger: decision.trigger,
     hidden: decision.hidden,
     ...(decision.annotation === null ? {} : { annotation: decision.annotation }),
+    ...(hostAnnotations.length === 0
+      ? {}
+      : { hostAnnotations: hostAnnotations.map(({ label, text }) => ({ label, text })) }),
     extensions: decision.decidedBy.map(name),
     ...(problems.length === 0 ? {} : { problems }),
   }

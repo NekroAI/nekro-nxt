@@ -1625,6 +1625,11 @@ export const extensionJobs = sqliteTable(
   ],
 )
 
+export interface InboundHostAnnotationRow {
+  readonly label: string
+  readonly text: string
+}
+
 export const inboundHookDecisions = sqliteTable(
   'inbound_hook_decisions',
   {
@@ -1639,6 +1644,8 @@ export const inboundHookDecisions = sqliteTable(
     trigger: text('trigger', { enum: ['default', 'suppress', 'force'] }).notNull(),
     hidden: integer().notNull(),
     annotation: text(),
+    /** Labelled notes NekroNXT itself adds, such as a voice message transcript; `[{ label, text }]`. */
+    hostAnnotations: jsonText<InboundHostAnnotationRow[]>('host_annotations'),
     decidedBy: jsonText<ExtensionId[]>('decided_by').notNull(),
     diagnostics: jsonText<JsonValue>('diagnostics'),
     decidedAt: integer('decided_at').notNull(),

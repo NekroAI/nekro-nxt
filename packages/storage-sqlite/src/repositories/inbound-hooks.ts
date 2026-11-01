@@ -1,7 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { AgentId, ChannelEventId, ExtensionId, JsonValue } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../database.js'
-import { inboundHookDecisions } from '../schema.js'
+import { inboundHookDecisions, type InboundHostAnnotationRow } from '../schema.js'
 
 export type InboundHookDecisionRecord = {
   channelEventId: ChannelEventId
@@ -9,6 +9,8 @@ export type InboundHookDecisionRecord = {
   trigger: 'default' | 'suppress' | 'force'
   hidden: boolean
   annotation: string | null
+  /** Absent when saving a decision without NekroNXT's own notes; read back as `null`. */
+  hostAnnotations?: InboundHostAnnotationRow[] | null
   decidedBy: ExtensionId[]
   diagnostics: JsonValue | null
   decidedAt: number
@@ -27,7 +29,17 @@ export function createInboundHooksRepository(database: DrizzleCoreDatabase) {
     },
 
     saveInboundHookDecision(record: InboundHookDecisionRecord): InboundHookDecisionRecord {
-      const { channelEventId, agentId, trigger, hidden, annotation, decidedBy, diagnostics, decidedAt } = record
+      const {
+        channelEventId,
+        agentId,
+        trigger,
+        hidden,
+        annotation,
+        hostAnnotations,
+        decidedBy,
+        diagnostics,
+        decidedAt,
+      } = record
 
       // Insert or ignore - insert only if not exists
       database
@@ -38,6 +50,7 @@ export function createInboundHooksRepository(database: DrizzleCoreDatabase) {
           trigger,
           hidden: hidden ? 1 : 0,
           annotation,
+          hostAnnotations: hostAnnotations ?? null,
           decidedBy,
           diagnostics,
           decidedAt,
@@ -78,6 +91,7 @@ function mapRowToRecord(row: {
   trigger: 'default' | 'suppress' | 'force'
   hidden: number
   annotation: string | null
+  hostAnnotations: InboundHostAnnotationRow[] | null
   decidedBy: ExtensionId[]
   diagnostics: JsonValue | null
   decidedAt: number
@@ -88,6 +102,7 @@ function mapRowToRecord(row: {
     trigger: row.trigger,
     hidden: row.hidden === 1,
     annotation: row.annotation,
+    hostAnnotations: row.hostAnnotations,
     decidedBy: row.decidedBy,
     diagnostics: row.diagnostics,
     decidedAt: row.decidedAt,

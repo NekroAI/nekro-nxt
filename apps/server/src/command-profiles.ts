@@ -437,13 +437,17 @@ const filesIn = async (directory: string): Promise<Set<string>> => {
 export class CommandProfiles {
   readonly #programs: () => readonly ActiveAddonProgram[]
   readonly #runner: ConfinedProgramRunner
+  readonly #addonTitle: (profileId: string) => string | undefined
 
   constructor(options: {
     readonly programs: () => readonly ActiveAddonProgram[]
     readonly runner: ConfinedProgramRunner
+    /** Name of the add-on that provides a profile's program, for the message while it is unavailable. */
+    readonly addonTitle?: (profileId: string) => string | undefined
   }) {
     this.#programs = options.programs
     this.#runner = options.runner
+    this.#addonTitle = options.addonTitle ?? (() => undefined)
   }
 
   /** Profiles whose program a current provider offers. */
@@ -464,9 +468,10 @@ export class CommandProfiles {
     const program = this.#programs().find((candidate) => candidate.profile?.id === profileId)
     const profile = program?.profile
     if (program === undefined || profile === undefined) {
+      const addon = this.#addonTitle(profileId)
       throw new CommandProfileError(
         'profile-unavailable',
-        `${profileId} 不可用，请管理员到「设置 → 附加功能」安装提供它的附加功能。`,
+        `${profileId} 不可用，请管理员到「设置 → 附加功能」安装${addon ?? '提供它的附加功能'}。`,
       )
     }
     if (!path.isAbsolute(options.workDir)) throw new Error('Command work folders must be absolute host paths.')

@@ -341,8 +341,8 @@ export interface AgentSessionDriver {
     readonly events: readonly ChannelEventRecord[]
     readonly mode: 'followup' | 'inject'
     readonly replyRequired: boolean
-    /** Extension inbound-hook annotations keyed by Channel Event, rendered next to that event. */
-    readonly annotations?: ReadonlyMap<ChannelEventId, string>
+    /** Labelled notes keyed by Channel Event, rendered next to that event: NekroNXT's own first, then extensions'. */
+    readonly annotations?: ReadonlyMap<ChannelEventId, readonly InboundAnnotation[]>
     /** Why a smart-mode wake happened when it does not oblige a reply; rendered after the events. */
     readonly wakeNote?: string
   }): Promise<{ readonly dshMessageId: string }>
@@ -354,11 +354,24 @@ export interface AgentSessionDriver {
   }): Promise<void>
 }
 
-/** What extension inbound hooks decided for one Channel Event and one agent; persisted once and never rewritten. */
+/** A note shown to the agent next to a message, under its own label such as `语音转写`. */
+export interface InboundAnnotation {
+  readonly label: string
+  readonly text: string
+}
+
+/** Label of the annotations extensions add. */
+export const EXTENSION_ANNOTATION_LABEL = '扩展标注'
+
+/**
+ * What inbound hooks decided for one Channel Event and one agent; persisted once and never rewritten. `annotation` is
+ * what extensions added; `hostAnnotations` are NekroNXT's own notes, such as a voice message transcript.
+ */
 export interface InboundHookDecision {
   readonly trigger: 'default' | 'suppress' | 'force'
   readonly hidden: boolean
   readonly annotation?: string
+  readonly hostAnnotations?: readonly InboundAnnotation[]
 }
 
 /**
@@ -1093,11 +1106,20 @@ export class ChannelRuntime {
       .map((event) => this.#commands?.project(event) ?? event)
   }
 
-  #annotations(binding: BindingRecord, events: readonly ChannelEventRecord[]): ReadonlyMap<ChannelEventId, string> {
-    const annotations = new Map<ChannelEventId, string>()
+  #annotations(
+    binding: BindingRecord,
+    events: readonly ChannelEventRecord[],
+  ): ReadonlyMap<ChannelEventId, readonly InboundAnnotation[]> {
+    const annotations = new Map<ChannelEventId, readonly InboundAnnotation[]>()
     for (const event of events) {
-      const annotation = this.#hookDecision(binding, event)?.annotation
-      if (annotation !== undefined && annotation !== '') annotations.set(event.id, annotation)
+      const decision = this.#hookDecision(binding, event)
+      const notes = [
+        ...(decision?.hostAnnotations ?? []),
+        ...(decision?.annotation === undefined || decision.annotation === ''
+          ? []
+          : [{ label: EXTENSION_ANNOTATION_LABEL, text: decision.annotation }]),
+      ]
+      if (notes.length > 0) annotations.set(event.id, notes)
     }
     return annotations
   }

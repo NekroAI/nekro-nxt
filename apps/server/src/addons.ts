@@ -345,6 +345,7 @@ export class AddonRegistry {
       },
       licenses: (provider.licenses ?? []).map((license) => ({ ...license })),
       sources: [...(provider.sources ?? [])],
+      dependsOn: [...(provider.dependsOn ?? [])],
       ...(state.progress === undefined ? {} : { progress: state.progress }),
       ...(state.error === undefined ? {} : { error: state.error }),
       installable: provider.install !== undefined && (state.state === 'not-installed' || state.state === 'failed'),
@@ -726,6 +727,9 @@ const SHERPA_LICENSES: AddonProviderStatus['licenses'] = [
   { component: 'Silero VAD', name: 'MIT', url: 'https://github.com/snakers4/silero-vad/blob/master/LICENSE' },
 ]
 
+/** Speech other than 16-bit WAV is decoded by the media add-on first. */
+const SPEECH_DEPENDS_ON: readonly AddonId[] = ['media']
+
 const localSpeechProvider = (
   local: LocalSpeech,
   id: LocalSpeechModelId,
@@ -734,6 +738,7 @@ const localSpeechProvider = (
   id,
   ...describe,
   summary: '在这台设备上识别，语音不会发到别处。',
+  dependsOn: SPEECH_DEPENDS_ON,
   sources: ['npm', 'npmmirror', 'Hugging Face', 'hf-mirror.com', 'GitHub Releases'],
   directories: local.directories(id),
   state: () => {
@@ -763,7 +768,7 @@ export const speechAddon = (local: LocalSpeech, cloud: SpeechCloud): AddonCapabi
   group: 'extension',
   title: '语音识别',
   summary: '把语音转成文字。',
-  usedBy: ['扩展的语音识别'],
+  usedBy: ['扩展的语音识别', '语音消息转文字'],
   prepare: () => local.prepare(),
   subscribe: (listener) => {
     const unsubscribe = [local.subscribe(listener), cloud.subscribe(listener)]
@@ -792,6 +797,7 @@ export const speechAddon = (local: LocalSpeech, cloud: SpeechCloud): AddonCapabi
       title: '云端',
       summary: '用「设置 → 模型」里的供应商识别，按供应商的价格计费。',
       notes: ['语言和速度取决于供应商'],
+      dependsOn: SPEECH_DEPENDS_ON,
       state: () => ({
         state: cloud.settings() === undefined ? 'needs-config' : 'available',
         source: 'cloud',

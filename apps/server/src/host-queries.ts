@@ -1,7 +1,7 @@
 import { snapshotSubConversations } from './host-routes-sub-conversations.js'
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import { z } from 'zod'
-import type { HostApiResponse } from '@nekro-nxt/contracts'
+import type { AddonId, HostApiResponse } from '@nekro-nxt/contracts'
 import {
   HostApiContracts,
   configFields,
@@ -677,6 +677,11 @@ export class HostQueries {
       archivedAt: connection.archivedAt,
     }))
     const addons = runtime.addons.list()
+    // Downloaded, bundled and found-on-this-device programs and configured cloud services are all usable.
+    const addonUsable = (id: AddonId) => {
+      const state = addons.find((addon) => addon.id === id)?.state
+      return state === 'installed' || state === 'available'
+    }
     return HostApiContracts.snapshot.parseResponse({
       cursor: this.#cursor(),
       addons,
@@ -693,9 +698,10 @@ export class HostQueries {
       models,
       capabilityAvailability: {
         subagents: { available: true },
-        codeRun: { available: addons.find(({ id }) => id === 'node')?.state === 'installed' },
-        githubCli: { available: addons.find(({ id }) => id === 'github-cli')?.state === 'installed' },
-        verificationBrowser: { available: addons.find(({ id }) => id === 'browser')?.state === 'installed' },
+        codeRun: { available: addonUsable('node') },
+        githubCli: { available: addonUsable('github-cli') },
+        verificationBrowser: { available: addonUsable('browser') },
+        speechRecognition: { available: addonUsable('speech') },
         commandConfinement: commandConfinementSupport(),
         webSearch,
       },

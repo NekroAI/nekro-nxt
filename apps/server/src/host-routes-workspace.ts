@@ -680,6 +680,7 @@ export function registerWorkspaceRoutes({
             : { communityFeedbackAuto: parsed.communityFeedbackAuto }),
           ...(parsed.codeRun === undefined ? {} : { codeRun: parsed.codeRun }),
           ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
+          ...(parsed.voiceTranscription === undefined ? {} : { voiceTranscription: parsed.voiceTranscription }),
           ...(parsed.extensionAutonomy === undefined ? {} : { extensionAutonomy: parsed.extensionAutonomy }),
           ...(parsed.extensionRequesters === undefined ? {} : { extensionRequesters: parsed.extensionRequesters }),
           ...(parsed.extensionConfigRequesters === undefined

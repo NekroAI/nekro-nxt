@@ -8,14 +8,15 @@ export const addonProvider = (
   resources: { notes: [] },
   licenses: [],
   sources: [],
+  dependsOn: [],
   installable: provider.state === 'not-installed' || provider.state === 'failed',
   removable: false,
   ...provider,
 })
 
 /**
- * The add-ons of a fictional desktop host: a system gh, a downloadable Node, no browser, no semantic model, no speech
- * recognition.
+ * The add-ons of a fictional desktop host: a system gh, a downloadable Node, no browser, no semantic model, no media
+ * processing, no speech recognition.
  */
 export const addonsFixture = (
   overrides: Partial<Record<AddonStatus['id'], Partial<AddonStatus>>> = {},
@@ -43,11 +44,33 @@ export const addonsFixture = (
       ],
     },
     {
+      id: 'media',
+      group: 'extension',
+      title: '媒体处理',
+      summary: '处理音频、视频和动图，例如截取画面、转换格式。',
+      usedBy: ['扩展的媒体处理'],
+      state: 'not-installed',
+      providers: [
+        addonProvider({
+          id: 'download',
+          title: '下载的 ffmpeg',
+          summary: '',
+          state: 'not-installed',
+          version: 'b6.1.1',
+          resources: { downloadBytes: 48 * 1024 * 1024, notes: [] },
+          licenses: [
+            { component: 'FFmpeg（ffmpeg-static 构建）', name: 'GPL-3.0', url: 'https://www.ffmpeg.org/legal.html' },
+          ],
+          sources: ['GitHub Releases', 'npmmirror'],
+        }),
+      ],
+    },
+    {
       id: 'speech',
       group: 'extension',
       title: '语音识别',
       summary: '把语音转成文字。',
-      usedBy: ['扩展的语音识别'],
+      usedBy: ['扩展的语音识别', '语音消息转文字'],
       state: 'not-installed',
       providers: [
         addonProvider({
@@ -56,6 +79,7 @@ export const addonsFixture = (
           summary: '在这台设备上识别，语音不会发到别处。',
           state: 'not-installed',
           version: 'paraformer-zh-small-int8',
+          dependsOn: ['media'],
           resources: { downloadBytes: 103 * 1024 * 1024, memoryBytes: 350 * 1024 * 1024, notes: ['中文', '识别更快'] },
         }),
         addonProvider({
@@ -64,6 +88,7 @@ export const addonsFixture = (
           summary: '在这台设备上识别，语音不会发到别处。',
           state: 'not-installed',
           version: 'sense-voice-small-int8',
+          dependsOn: ['media'],
           resources: {
             downloadBytes: 239 * 1024 * 1024,
             memoryBytes: 900 * 1024 * 1024,
@@ -77,6 +102,7 @@ export const addonsFixture = (
           state: 'needs-config',
           source: 'cloud',
           resources: { notes: ['语言和速度取决于供应商'] },
+          dependsOn: ['media'],
         }),
       ],
     },

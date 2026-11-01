@@ -531,6 +531,8 @@ const verificationBackends = (
   files: ExtensionFileStore,
 ): NxtServiceBackends => ({
   files,
+  // Media, programs and speech answer with fixed placeholders: verification spends no time or quota on them.
+  ...verificationMediaBackends(),
   fetch: (policy, url, init, secrets) => createExtensionEgress({ policy }).fetch(url, init, secrets),
   storage: memoryNxtStorage(),
   jobs: memoryNxtJobs(),
@@ -874,6 +876,7 @@ import { extensionLogger } from './extension-logger.js'
 import { verifyOutboundHandler } from './extension-outbound.js'
 import { EXTENSION_OUTBOUND_SDK_LEVEL } from '@nekro-nxt/contracts'
 import { ExtensionFileStore } from './extension-files.js'
+import { verificationMediaBackends } from './verification-media-backends.js'
 import { extensionToolContext, extensionToolTimeoutMs } from './extension-tool-context.js'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

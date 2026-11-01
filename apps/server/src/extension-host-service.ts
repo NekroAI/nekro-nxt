@@ -3,9 +3,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
 import { randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
+import path from 'node:path'
 import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
 import {
   ChannelIdSchema,
+  SpeechLanguageSchema,
   EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES,
   EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
   EXTENSION_FILES_DEFAULT_CACHE_QUOTA_BYTES,
@@ -24,7 +26,11 @@ import type {
   NxtAssetRecord,
   NxtByteRange,
   NxtCallContext,
+  NxtCommandsService,
   NxtFilesService,
+  NxtMediaInput,
+  NxtMediaService,
+  NxtSpeechService,
   NxtMemberSummary,
   NxtFetchInit,
   NxtFetchResponse,
@@ -47,6 +53,9 @@ import type {
 import { queryLimit, validateIndexDocument, validateIndexFilter, type ExtensionIndexEngine } from './extension-index.js'
 import type { ExtensionLibrary } from './extension-library.js'
 import { readRange, type ExtensionFileQuota, type ExtensionFiles } from './extension-files.js'
+import type { CommandArgument, CommandProfiles } from './command-profiles.js'
+import type { AudioFormat, ConvertFormat, MediaToolkit } from './media-toolkit.js'
+import type { SpeechService } from './speech-service.js'
 
 /** Service name extensions declare in `inject`. Not a DSH private Service, so isolation never hides it. */
 export const NXT_HOST_SERVICE_NAME = 'nxt'
@@ -198,6 +207,12 @@ export interface NxtServiceBackends {
   readonly library: ExtensionLibrary
   /** Work files; dynamic runs and verification use a throwaway directory. */
   readonly files: ExtensionFiles
+  /** The media add-on on host paths (附加功能 F8); verification answers with placeholders. */
+  readonly media: Pick<MediaToolkit, 'probe' | 'frames' | 'audio' | 'convert'>
+  /** Programs of the current add-ons by command profile (F7); verification answers with placeholders. */
+  readonly commands: Pick<CommandProfiles, 'run' | 'available'>
+  /** Speech to text with the speech add-on's provider (F9); verification answers with a fixed transcript. */
+  readonly speech: Pick<SpeechService, 'transcribe' | 'transcribeOnce'>
   readonly index: ExtensionIndexEngine
   /** Host-configured models for host-layer calls; images are library Assets. */
   readonly models: {
@@ -575,6 +590,262 @@ const filesService = (binding: NxtServiceBinding, backends: NxtServiceBackends):
   }
 }
 
+/** A host file a media, command or speech call reads, from an Asset or a work file of the extension. */
+interface ResolvedInput {
+  readonly path: string
+  /** The content digest of an Asset input, which speech uses to transcribe the same audio once. */
+  readonly digest?: string
+}
+
+const resolveInput = async (
+  binding: NxtServiceBinding,
+  backends: NxtServiceBackends,
+  input: NxtMediaInput | undefined,
+): Promise<ResolvedInput> => {
+  const value = input as { readonly assetId?: unknown; readonly fileId?: unknown } | undefined
+  if (typeof value?.assetId === 'string' && value.fileId === undefined) {
+    const asset = backends.library.readable(binding.ownerKey, bindingChannel(binding), value.assetId)
+    return { path: backends.library.blobPath(asset), digest: asset.contentDigest }
+  }
+  if (typeof value?.fileId === 'string' && value.assetId === undefined) {
+    return { path: (await backends.files.resolvePath(binding.ownerKey, value.fileId)).path }
+  }
+  throw new NxtCapabilityError('输入需要且只能是 { assetId } 或 { fileId } 之一。')
+}
+
+/**
+ * Runs `work` in a fresh work folder of the extension and turns the files it reports into temporary work files of the
+ * extension (counted against its temp quota). If importing fails part way, the files already imported are removed.
+ */
+const withOutputs = async <Result>(
+  binding: NxtServiceBinding,
+  backends: NxtServiceBackends,
+  work: (
+    folder: string,
+    keep: (hostPath: string, mediaType: string) => Promise<{ readonly fileId: string; readonly byteSize: number }>,
+  ) => Promise<Result>,
+): Promise<Result> => {
+  const quota = filesQuota(binding)
+  const folder = await backends.files.workDirectory(binding.ownerKey)
+  const kept: string[] = []
+  try {
+    return await work(folder.path, async (hostPath, mediaType) => {
+      const file = await backends.files.importPath(binding.ownerKey, hostPath, { mediaType, move: true }, quota)
+      kept.push(file.fileId)
+      return { fileId: file.fileId, byteSize: file.byteSize }
+    })
+  } catch (error) {
+    await Promise.all(kept.map((fileId) => backends.files.delete(binding.ownerKey, fileId)))
+    throw error
+  } finally {
+    await folder.dispose()
+  }
+}
+
+const FRAME_MEDIA_TYPES: Readonly<Record<string, string>> = { jpeg: 'image/jpeg', png: 'image/png' }
+const MEDIA_TYPES: Readonly<Record<AudioFormat | ConvertFormat, string>> = {
+  wav: 'audio/wav',
+  pcm_s16le: 'application/octet-stream',
+  mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
+  amr: 'audio/amr',
+  silk: 'audio/silk',
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+}
+const FILE_EXTENSIONS: Readonly<Record<string, string>> = { jpeg: 'jpg', pcm_s16le: 'pcm' }
+
+const outputName = (stem: string, format: unknown): string => {
+  const key = typeof format === 'string' && format in MEDIA_TYPES ? format : 'bin'
+  return `${stem}.${FILE_EXTENSIONS[key] ?? key}`
+}
+
+const callOptions = (options: { readonly signal?: AbortSignal } | undefined) =>
+  options?.signal === undefined ? {} : { signal: options.signal }
+
+const requireOptions = <Options>(options: Options | undefined): Options => {
+  if (options === undefined || options === null || typeof options !== 'object') {
+    throw new NxtCapabilityError('需要传入选项，至少写明 format。')
+  }
+  return options
+}
+
+/**
+ * `nxt.media` (附加功能 F8): the media add-on on Assets and work files. Assets follow the same visibility as
+ * `assets.read`; outputs become temporary work files, so producing them also needs `files`.
+ */
+const mediaService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtMediaService => {
+  const require = () => requireCapability(binding, 'media', 'media（媒体处理）')
+  return {
+    async probe(input, options) {
+      require()
+      const source = await resolveInput(binding, backends, input)
+      return backends.media.probe(source.path, callOptions(options))
+    },
+    async frames(input, options) {
+      require()
+      const checked = requireOptions(options)
+      const source = await resolveInput(binding, backends, input)
+      return withOutputs(binding, backends, async (folder, keep) => {
+        const frames = await backends.media.frames(source.path, checked, folder)
+        const kept = []
+        for (const frame of frames) {
+          const file = await keep(frame.path, FRAME_MEDIA_TYPES[checked.format] ?? 'application/octet-stream')
+          kept.push({ fileId: file.fileId, time: frame.time, width: frame.width, height: frame.height })
+        }
+        return kept
+      })
+    },
+    async audio(input, options) {
+      require()
+      const checked = requireOptions(options)
+      const source = await resolveInput(binding, backends, input)
+      return withOutputs(binding, backends, async (folder, keep) => {
+        const result = await backends.media.audio(
+          source.path,
+          checked,
+          path.join(folder, outputName('audio', checked.format)),
+        )
+        const file = await keep(result.path, MEDIA_TYPES[result.format])
+        return {
+          fileId: file.fileId,
+          byteSize: file.byteSize,
+          format: result.format,
+          sampleRate: result.sampleRate,
+          channels: result.channels,
+        }
+      })
+    },
+    async convert(input, options) {
+      require()
+      const checked = requireOptions(options)
+      const source = await resolveInput(binding, backends, input)
+      return withOutputs(binding, backends, async (folder, keep) => {
+        const result = await backends.media.convert(
+          source.path,
+          checked,
+          path.join(folder, outputName('converted', checked.format)),
+        )
+        const file = await keep(result.path, MEDIA_TYPES[result.format])
+        return { fileId: file.fileId, byteSize: file.byteSize, format: result.format }
+      })
+    },
+  }
+}
+
+/** Arguments as the profile reads them; anything else is refused before the run. */
+const commandArguments = (args: unknown): CommandArgument[] => {
+  if (!Array.isArray(args)) throw new NxtCapabilityError('参数需要是数组。')
+  return args.map((argument: unknown) => {
+    if (typeof argument === 'string') return argument
+    if (typeof argument === 'object' && argument !== null) {
+      if ('input' in argument && !('output' in argument) && typeof argument.input === 'string') {
+        return { input: argument.input }
+      }
+      if ('output' in argument && !('input' in argument) && typeof argument.output === 'string') {
+        return { output: argument.output }
+      }
+    }
+    throw new NxtCapabilityError('每个参数需要是文字、{ input: 键 } 或 { output: 文件名 }。')
+  })
+}
+
+/**
+ * `nxt.commands` (附加功能 F7): declared command profiles only, each call in a fresh work folder of the extension;
+ * output files become temporary work files.
+ */
+const commandsService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtCommandsService => {
+  const declared = () => requireCapability(binding, 'commands', 'commands（运行程序）').profiles as readonly string[]
+  return {
+    async run(profile, args, options) {
+      if (!declared().includes(profile)) {
+        throw new NxtCapabilityError(
+          `这个扩展没有声明命令档案 ${String(profile)}，请在 ${layerField(binding)}.commands.profiles 中加入。`,
+        )
+      }
+      const parsed = commandArguments(args)
+      const timeoutSeconds = options?.timeoutSeconds
+      if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
+        throw new NxtCapabilityError('timeoutSeconds 需要是正数。')
+      }
+      const inputs: Record<string, string> = {}
+      for (const [key, input] of Object.entries(options?.inputs ?? {})) {
+        inputs[key] = (await resolveInput(binding, backends, input)).path
+      }
+      return withOutputs(binding, backends, async (folder, keep) => {
+        const result = await backends.commands.run(profile, parsed, {
+          inputs,
+          workDir: folder,
+          ...(timeoutSeconds === undefined ? {} : { timeoutMs: Math.round(timeoutSeconds * 1000) }),
+          ...callOptions(options),
+        })
+        const outputs = []
+        for (const output of result.outputs) {
+          const file = await keep(output.path, 'application/octet-stream')
+          outputs.push({ name: output.name, fileId: file.fileId, byteSize: file.byteSize })
+        }
+        return {
+          exitCode: result.exitCode,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          truncated: result.truncated,
+          outputs,
+        }
+      })
+    },
+    profiles: () =>
+      settle(() => {
+        const available = new Map(backends.commands.available().map((profile) => [profile.id, profile.program]))
+        return declared().map((id) => ({ id, program: available.get(id) ?? id, available: available.has(id) }))
+      }),
+  }
+}
+
+/**
+ * `nxt.speech` (附加功能 F9) with the provider chosen in 设置 → 附加功能. Assets are transcribed once per content;
+ * calls beyond the declared rate are refused.
+ */
+const speechService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtSpeechService => {
+  const calls: number[] = []
+  return {
+    async transcribe(input, options) {
+      const speech = requireCapability(binding, 'speech', 'speech（语音识别）')
+      const language = options?.language === undefined ? undefined : SpeechLanguageSchema.safeParse(options.language)
+      if (language?.success === false) {
+        throw new NxtCapabilityError(`language 只能是 ${SpeechLanguageSchema.options.join('、')}。`)
+      }
+      const source = await resolveInput(binding, backends, input)
+      const now = Date.now()
+      while (calls.length > 0 && calls[0]! <= now - 60_000) calls.shift()
+      if (calls.length >= speech.maxCallsPerMinute) {
+        throw new NxtCapabilityError(`每分钟最多转写 ${speech.maxCallsPerMinute} 次，请稍后再试。`)
+      }
+      calls.push(now)
+      const request = {
+        path: source.path,
+        ...(language?.data === undefined ? {} : { language: language.data }),
+        ...callOptions(options),
+      }
+      const transcript =
+        source.digest === undefined
+          ? await backends.speech.transcribe(request)
+          : await backends.speech.transcribeOnce({ ...request, digest: source.digest })
+      return {
+        text: transcript.text,
+        ...(transcript.language === undefined ? {} : { language: transcript.language }),
+        segments: transcript.segments.map(({ start, end, text }) => ({ start, end, text })),
+        durationSeconds: transcript.durationSeconds,
+        provider: { id: transcript.provider.id, title: transcript.provider.title },
+        model: transcript.model,
+      }
+    },
+  }
+}
+
 const indexService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtIndexService => {
   const collectionOf = (name: string) => {
     const declared = requireCapability(binding, 'index', 'index（检索索引）').collections.find(
@@ -864,6 +1135,9 @@ export const createNxtHostService = (
       info: (assetId) => backends.library.imageInfo(binding.ownerKey, channelOf(binding), assetId),
     },
     files: filesService(binding, backends),
+    media: mediaService(binding, backends),
+    commands: commandsService(binding, backends),
+    speech: speechService(binding, backends),
     index: indexService(binding, backends),
     storage,
     context: {
@@ -1094,6 +1368,9 @@ export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServ
       info: (assetId) => backends.library.imageInfo(binding.ownerKey, undefined, assetId),
     },
     files: filesService(binding, backends),
+    media: mediaService(binding, backends),
+    commands: commandsService(binding, backends),
+    speech: speechService(binding, backends),
     index: indexService(binding, backends),
     models: modelService(binding, backends),
   }
@@ -1155,6 +1432,15 @@ export const createNxtDynamicFacade = (
   },
   get files() {
     return resolve().files
+  },
+  get media() {
+    return resolve().media
+  },
+  get commands() {
+    return resolve().commands
+  },
+  get speech() {
+    return resolve().speech
   },
   get index() {
     return resolve().index

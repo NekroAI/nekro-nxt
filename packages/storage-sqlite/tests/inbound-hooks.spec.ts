@@ -76,6 +76,26 @@ describe('Inbound Hooks Repository', () => {
       expect(retrieved?.decidedBy).toEqual([extensionId])
     })
 
+    it('keeps NekroNXT notes beside the extension annotation', () => {
+      const voiceEvent = ChannelEventIdSchema.parse('evt_HOOKSTESTVOICE')
+      insertChannelEvent(voiceEvent, 'chn_HOOKSTEST', 'msg_HOOKSTESTVOICE', 'dedupe-voice')
+      repo.saveInboundHookDecision({
+        channelEventId: voiceEvent,
+        agentId,
+        trigger: 'default',
+        hidden: false,
+        annotation: null,
+        hostAnnotations: [{ label: '语音转写', text: '示例转写' }],
+        decidedBy: [],
+        diagnostics: null,
+        decidedAt: 2000,
+      })
+      expect(repo.getInboundHookDecision(voiceEvent, agentId)?.hostAnnotations).toEqual([
+        { label: '语音转写', text: '示例转写' },
+      ])
+      expect(repo.getInboundHookDecision(eventId, agentId)?.hostAnnotations).toBeNull()
+    })
+
     it('should retrieve undefined for non-existent decision', () => {
       const nonExistentEventId = ChannelEventIdSchema.parse('evt_NONEXISTENT')
       const decision = repo.getInboundHookDecision(nonExistentEventId, agentId)

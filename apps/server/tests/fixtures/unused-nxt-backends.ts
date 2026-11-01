@@ -18,6 +18,12 @@ export const emptyExtensionLibrary = (): ExtensionLibrary =>
   })
 
 /** Publishes nxt for lifecycle-only tests; unexpected product operations fail explicitly. */
+/** Media, command and speech backends that fail every call. */
+export const unusedMediaBackends = (): Pick<NxtServiceBackends, 'media' | 'commands' | 'speech'> => {
+  const { media, commands, speech } = unusedNxtBackends()
+  return { media, commands, speech }
+}
+
 export const unusedNxtBackends = (): NxtServiceBackends => {
   const unused = () => Promise.reject(new Error('Unexpected nxt operation in a lifecycle-only fixture.'))
   return {
@@ -43,7 +49,16 @@ export const unusedNxtBackends = (): NxtServiceBackends => {
       cacheGet: unused,
       cachePut: unused,
       cacheDelete: unused,
+      workDirectory: unused,
     },
+    media: { probe: unused, frames: unused, audio: unused, convert: unused },
+    commands: {
+      run: unused,
+      available: () => {
+        throw new Error('Unexpected nxt operation in a lifecycle-only fixture.')
+      },
+    },
+    speech: { transcribe: unused, transcribeOnce: unused },
     index: memoryIndexEngine(),
     models: { list: unused, complete: unused },
   }
