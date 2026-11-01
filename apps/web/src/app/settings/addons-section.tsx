@@ -4,7 +4,6 @@ import type {
   AddonGroup,
   AddonId,
   AddonProviderStatus,
-  AddonState,
   AddonStatus,
   RetrievalStatus,
   SpeechLanguage,
@@ -29,12 +28,14 @@ import {
   toast,
   type Column,
   type SelectOption,
-  type Tone,
 } from '../../ui-kit/index.js'
 import { useProductApi } from '../model/store.js'
 import { useGo } from '../model/nav.js'
+import { addonStateLabel, addonUsable } from '../../addon-status.js'
 import { SectionHead } from './section-head.js'
 import styles from './settings.module.css'
+
+export { addonStateLabel, addonUsable }
 
 const GROUPS: readonly { readonly key: AddonGroup; readonly label: string }[] = [
   { key: 'extension', label: '扩展能力' },
@@ -58,38 +59,6 @@ const ADDON_TIPS: Partial<Record<AddonId, string>> = {
 const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-
-export const addonUsable = (state: AddonState | undefined): boolean => state === 'installed' || state === 'available'
-
-/** Label and tone of a capability or a provider; a failed one that has a source is installed but cannot start. */
-export const addonStateLabel = (
-  state: AddonState,
-  progress?: AddonStatus['progress'],
-  source?: AddonProviderStatus['source'],
-): { readonly label: string; readonly tone: Tone } => {
-  switch (state) {
-    case 'installing':
-      return {
-        label:
-          progress?.totalBytes === undefined || progress.totalBytes === 0
-            ? '正在下载'
-            : `正在下载 ${Math.floor((progress.receivedBytes / progress.totalBytes) * 100)}%`,
-        tone: 'accent',
-      }
-    case 'installed':
-      return { label: '已安装', tone: 'ok' }
-    case 'available':
-      return { label: '可用', tone: 'ok' }
-    case 'failed':
-      return { label: source === undefined ? '安装失败' : '无法使用', tone: 'bad' }
-    case 'unsupported':
-      return { label: '这台设备不支持', tone: 'neutral' }
-    case 'needs-config':
-      return { label: '待配置', tone: 'warn' }
-    case 'not-installed':
-      return { label: '未安装', tone: 'neutral' }
-  }
-}
 
 export const useAddon = (id: AddonId): AddonStatus | undefined =>
   useProductStore((state) => state.addons.find((addon) => addon.id === id))
@@ -200,9 +169,33 @@ export function AddonsSection({
   )
 }
 
+/** 依赖: the add-ons a provider needs, each with its state while it cannot be used, linking to its page. */
+function DependsOnRow({ ids }: { readonly ids: readonly AddonId[] }) {
+  const addons = useProductStore((state) => state.addons)
+  const needed = ids.flatMap((id) => addons.filter((addon) => addon.id === id))
+  if (needed.length === 0) return null
+  return (
+    <>
+      {needed.map((dependency) => (
+        <PropertyRow
+          key={dependency.id}
+          label="依赖"
+          description={`${dependency.title}${addonUsable(dependency.state) ? '' : `（${addonStateLabel(dependency.state, dependency.progress).label}）`}`}
+        >
+          <AddonLink addon={dependency} />
+        </PropertyRow>
+      ))}
+    </>
+  )
+}
+
 function AddonDetail({ addon }: { readonly addon: AddonStatus }) {
   const status = addonStateLabel(addon.state, addon.progress, selectedProvider(addon)?.source)
   const choice = addon.providers.length > 1
+  // What every provider needs is said once for the capability; the rest under the provider that needs it.
+  const shared = (addon.providers[0]?.dependsOn ?? []).filter((id) =>
+    addon.providers.every((provider) => provider.dependsOn.includes(id)),
+  )
   return (
     <div className={styles.addonDetail}>
       <ObjectHeader
@@ -214,9 +207,16 @@ function AddonDetail({ addon }: { readonly addon: AddonStatus }) {
       />
       <PropertyList>
         <PropertyRow label="使用方" description={addon.usedBy.join('、')} tip={ADDON_TIPS[addon.id]} />
+        <DependsOnRow ids={shared} />
       </PropertyList>
       {addon.providers.map((provider) => (
-        <ProviderGroup key={provider.id} addon={addon} provider={provider} choice={choice} />
+        <ProviderGroup
+          key={provider.id}
+          addon={addon}
+          provider={provider}
+          choice={choice}
+          dependsOn={provider.dependsOn.filter((id) => !shared.includes(id))}
+        />
       ))}
       {addon.id === 'retrieval' ? <RetrievalSettings addon={addon} /> : null}
       {addon.id === 'speech' ? <SpeechCloudSettings /> : null}
@@ -228,10 +228,13 @@ function ProviderGroup({
   addon,
   provider,
   choice,
+  dependsOn,
 }: {
   readonly addon: AddonStatus
   readonly provider: AddonProviderStatus
   readonly choice: boolean
+  /** What this provider needs beyond what the capability already lists. */
+  readonly dependsOn: readonly AddonId[]
 }) {
   const api = useProductApi()
   const [busy, setBusy] = useState(false)
@@ -326,6 +329,7 @@ function ProviderGroup({
           <PropertyRow label="运行时内存" description={`约 ${megabytes(memoryBytes)}`} />
         )}
         {notes.length === 0 ? null : <PropertyRow label="特点" description={notes.join('、')} />}
+        <DependsOnRow ids={dependsOn} />
         {provider.licenses.length === 0 ? null : (
           <PropertyRow
             label="许可证"

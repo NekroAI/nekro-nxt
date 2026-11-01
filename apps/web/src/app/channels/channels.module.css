@@ -1944,3 +1944,19 @@ button.step:hover {
   color: var(--muted);
   font-size: var(--fs-xs);
 }
+
+/* A voice message transcript can run long; it wraps under the bubble instead of widening the row. */
+.hookNote[data-host-note] {
+  align-items: flex-start;
+  max-width: min(100%, 560px);
+}
+
+.hookNote[data-host-note] > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.hostNoteText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

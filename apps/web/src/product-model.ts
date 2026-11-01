@@ -112,6 +112,8 @@ export interface AgentSummary {
     /** Network for commands and `run_code` programs. */
     readonly commandNetwork: boolean
     readonly communityFeedbackAuto: boolean
+    /** Voice messages reach the agent with a transcript. */
+    readonly voiceTranscription: boolean
     /** Linked accounts this agent's commands act as; each names an account in 设置 → 关联账号. */
     readonly commandAccounts: CommandAccountGrant[]
     readonly extensionAutonomy: 'manual' | 'confirm' | 'autonomous'
@@ -548,6 +550,7 @@ export interface CapabilityAvailability {
   readonly githubCli?: AddonAvailability | undefined
   readonly codeRun?: AddonAvailability | undefined
   readonly verificationBrowser?: AddonAvailability | undefined
+  readonly speechRecognition?: AddonAvailability | undefined
   /** What the host can confine for commands beyond file writes; absent hosts confine writes only. */
   readonly commandConfinement?: { readonly readScope: boolean; readonly networkControl: boolean } | undefined
   readonly webSearch: {

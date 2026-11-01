@@ -1509,6 +1509,9 @@ test.describe('settings space', () => {
       await expect(paraformer).toContainText('中文、识别更快')
       await expect(page.getByRole('region', { name: '本地 SenseVoice' })).toContainText('中文、英语、日语、韩语、粤语')
       await expect(page.getByRole('region', { name: '云端', exact: true })).toContainText('待配置')
+      // Every provider needs media processing, so it is said once for the capability.
+      await expect(page.getByText('媒体处理（未安装）')).toHaveCount(1)
+      await expect(paraformer).not.toContainText('依赖')
 
       const settings = page.getByRole('region', { name: '云端设置' })
       await settings.getByRole('combobox', { name: '云端语音识别的供应商' }).click()

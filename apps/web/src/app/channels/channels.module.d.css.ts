@@ -54,6 +54,7 @@ declare const styles: {
   readonly head: string
   readonly hiddenFromAgent: string
   readonly hookNote: string
+  readonly hostNoteText: string
   readonly iconToggle: string
   readonly input: string
   readonly inputText: string

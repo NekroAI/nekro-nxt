@@ -2570,7 +2570,8 @@ test.describe('NekroNxt browser projections', () => {
         const toggle = page.getByRole('switch', { name: '编排模式（PTC）' })
         await playwrightExpect(toggle).toBeDisabled()
         await playwrightExpect(page.getByText('未安装，安装后即可开启')).toBeVisible()
-        await page.getByRole('button', { name: '去安装' }).click()
+        // The Node row comes first; the speech recognition row below has its own.
+        await page.getByRole('button', { name: '去安装' }).first().click()
         await playwrightExpect(page).toHaveURL(/\/settings\/addons\/node$/u)
         await page.getByRole('region', { name: '下载的 Node' }).getByRole('button', { name: '安装' }).click()
         await playwrightExpect.poll(() => installs).toEqual(['/api/addons/node/providers/download/install'])
@@ -2601,6 +2602,86 @@ test.describe('NekroNxt browser projections', () => {
           })
         })
       },
+    )
+  })
+
+  test('turns on voice message transcription once speech recognition can be used', async () => {
+    const capabilityRequests: unknown[] = []
+    const missing = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      addons: addonsFixture(),
+      capabilityAvailability: { ...browserSnapshot.capabilityAvailability, speechRecognition: { available: false } },
+    })
+    const ready = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      addons: addonsFixture({
+        speech: {
+          state: 'available',
+          selected: 'cloud',
+          providers: [
+            addonProvider({ id: 'cloud', title: '云端', state: 'available', source: 'cloud', dependsOn: ['media'] }),
+          ],
+        },
+      }),
+      capabilityAvailability: { ...browserSnapshot.capabilityAvailability, speechRecognition: { available: true } },
+    })
+    let current = missing
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const toggle = page.getByRole('switch', { name: '语音消息转文字' })
+        await playwrightExpect(toggle).toBeDisabled()
+        await playwrightExpect(page.getByText('智能体收到语音时，同时看到转写的文字。')).toBeVisible()
+        await playwrightExpect(page.getByText('安装或配置后即可开启')).toBeVisible()
+        await page.getByRole('button', { name: '去安装' }).first().click()
+        await playwrightExpect(page).toHaveURL(/\/settings\/addons\/speech$/u)
+        current = ready
+        await page.goBack()
+        await page.reload()
+        await playwrightExpect(toggle).toBeEnabled()
+        await toggle.click()
+        await playwrightExpect(page.getByText('云端', { exact: true })).toBeVisible()
+        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toEqual({ voiceTranscription: true })
+      },
+      missing,
+      async (page) => {
+        await page.route('**/api/snapshot', (request) => request.fulfill({ json: current }))
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            json: {
+              currentRevisionId: browserRevisionId,
+              capabilities: { ...ready.agents[0]!.capabilities, voiceTranscription: true },
+            },
+          })
+        })
+      },
+    )
+  })
+
+  test('marks voice message transcription 待配置 when speech recognition stops working', async () => {
+    const turnedOn = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId
+          ? { ...agent, capabilities: { ...agent.capabilities, voiceTranscription: true } }
+          : agent,
+      ),
+      addons: addonsFixture(),
+      capabilityAvailability: { ...browserSnapshot.capabilityAvailability, speechRecognition: { available: false } },
+    })
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const toggle = page.getByRole('switch', { name: '语音消息转文字' })
+        await playwrightExpect(toggle).toBeEnabled()
+        await playwrightExpect(toggle).toBeChecked()
+        await playwrightExpect(page.getByText('待配置', { exact: true })).toBeVisible()
+        await playwrightExpect(page.getByText('安装或配置后即可开启')).toBeVisible()
+      },
+      turnedOn,
     )
   })
 

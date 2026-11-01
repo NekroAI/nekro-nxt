@@ -106,6 +106,7 @@ const CAPABILITY_KEYS = [
   'codeRun',
   'commandNetwork',
   'communityFeedbackAuto',
+  'voiceTranscription',
 ] as const satisfies readonly (keyof Capabilities)[]
 type BooleanCapability = (typeof CAPABILITY_KEYS)[number]
 const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation', 'scheduledTasks'] as const
@@ -184,6 +185,7 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if ('commandNetwork' in patch) changes.push('命令联网')
   if ('commandAccounts' in patch) changes.push('关联账号')
   if ('communityFeedbackAuto' in patch) changes.push('免确认提交反馈')
+  if ('voiceTranscription' in patch) changes.push('语音消息转文字')
   if ('extensionAutonomy' in patch) changes.push('扩展自主权')
   if ('extensionRequesters' in patch) changes.push('谁可以让它做扩展')
   if ('extensionConfigRequesters' in patch) changes.push('谁可以让它改配置')

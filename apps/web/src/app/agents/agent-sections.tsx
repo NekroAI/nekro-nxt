@@ -487,6 +487,8 @@ export function CapabilitiesSection({
 }) {
   const availability = useProductStore((state) => state.capabilityAvailability)
   const node = useAddon('node')
+  const speech = useAddon('speech')
+  const speechReady = availability.speechRecognition?.available === true
   const feedback = useFeedbackSummary()
   const [pending, setPending] = useState<{
     readonly title: string
@@ -706,6 +708,32 @@ export function CapabilitiesSection({
             onCheckedChange={(checked) => setCapability('scheduledTasks', checked)}
           />
         </PropertyRow>
+        <PropertyRow
+          label="语音消息转文字"
+          description="智能体收到语音时，同时看到转写的文字。"
+          badge={caps.voiceTranscription && !speechReady ? <Chip tone="warn">待配置</Chip> : undefined}
+        >
+          <Switch
+            label="语音消息转文字"
+            checked={caps.voiceTranscription}
+            disabled={!speechReady && !caps.voiceTranscription}
+            onCheckedChange={(checked) =>
+              update((current) => ({
+                ...current,
+                capabilities: { ...current.capabilities, voiceTranscription: checked },
+              }))
+            }
+          />
+        </PropertyRow>
+        {speech !== undefined && (caps.voiceTranscription || !speechReady) ? (
+          <PropertyRow
+            depth={1}
+            label="语音识别"
+            description={addonUsable(speech.state) ? selectedProvider(speech)?.title : '安装或配置后即可开启'}
+          >
+            <AddonLink addon={speech} />
+          </PropertyRow>
+        ) : null}
         {feedback.enabled ? (
           <PropertyRow
             label="免确认提交反馈"

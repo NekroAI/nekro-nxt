@@ -6,6 +6,7 @@ import {
   BellRing,
   Check,
   ChevronRight,
+  AudioLines,
   CircleAlert,
   EyeOff,
   Info,
@@ -212,7 +213,15 @@ export const MessageRow = memo(function MessageRow({
       <div className={styles.bubble}>
         <MessageContent message={message} />
       </div>
-      {message.inboundHook ? <HookNote hook={message.inboundHook} /> : null}
+      {message.inboundHook?.hostAnnotations?.map((note, index) => (
+        <div key={index} className={styles.hookNote} data-host-note="">
+          <AudioLines aria-hidden="true" />
+          <span className={styles.hostNoteText}>
+            {note.label}：{note.text}
+          </span>
+        </div>
+      ))}
+      {message.inboundHook && hookChanged(message.inboundHook) ? <HookNote hook={message.inboundHook} /> : null}
       {message.outboundProcessing ? <OutboundNote processing={message.outboundProcessing} /> : null}
       {unconfirmed ? (
         <div className={styles.unsentBar} role="status">
@@ -234,6 +243,10 @@ const HOOK_OUTCOME = {
   annotated: { icon: <Info aria-hidden="true" />, label: '附加了说明' },
   failed: { icon: <CircleAlert aria-hidden="true" />, label: '扩展处理出错' },
 } as const
+
+/** Whether extensions did anything to the message besides NekroNXT's own notes. */
+const hookChanged = (hook: NonNullable<ConversationMessage['inboundHook']>): boolean =>
+  hook.hidden || hook.trigger !== 'default' || hook.annotation !== undefined || hook.problems !== undefined
 
 /** Which extension handled a member message before the agent saw it, and how. */
 function HookNote({ hook }: { readonly hook: NonNullable<ConversationMessage['inboundHook']> }) {
