@@ -1953,7 +1953,7 @@ button.step:hover {
 
 .hookNote[data-host-note] > svg {
   flex: none;
-  margin-top: 2px;
+  margin-top: var(--s-1);
 }
 
 .hostNoteText {
