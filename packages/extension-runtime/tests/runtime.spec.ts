@@ -779,6 +779,20 @@ class MemoryExtensionRepository implements ExtensionRepository, HostUiRepository
       if (revision.extensionId === extensionId) this.revisions.delete(revisionId)
     }
   }
+  readonly kept = new Set<ExtensionRevisionId>()
+  listKeptExtensionRevisionIds(extensionId: ExtensionId): readonly ExtensionRevisionId[] {
+    return [...this.kept].filter((id) => this.revisions.get(id)?.extensionId === extensionId)
+  }
+  setExtensionRevisionKept(revisionId: ExtensionRevisionId, kept: boolean): void {
+    if (kept) this.kept.add(revisionId)
+    else this.kept.delete(revisionId)
+  }
+  deleteExtensionRevisions(_extensionId: ExtensionId, revisionIds: readonly ExtensionRevisionId[]): void {
+    for (const id of revisionIds) {
+      this.revisions.delete(id)
+      this.verifications.delete(id)
+    }
+  }
 
   getExtensionRevisionVerification(id: ExtensionRevisionId): ExtensionRevisionVerification | undefined {
     return this.verifications.get(id)

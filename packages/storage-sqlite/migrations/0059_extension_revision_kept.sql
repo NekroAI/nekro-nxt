@@ -1,0 +1,1 @@
+ALTER TABLE `extension_revisions` ADD `kept` integer DEFAULT false NOT NULL;

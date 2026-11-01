@@ -3,102 +3,104 @@ import type { HostApiResponse } from '@nekro-nxt/contracts'
 export type LineageLine = HostApiResponse<'getExtensionLineage'>['lines'][number]
 export type LineageNode = LineageLine['nodes'][number]
 
-export interface PlacedNode {
-  readonly node: LineageNode
-  /** Index of the node's line in the family, which picks its colour. */
-  readonly lane: number
-  /** Column = generation from the oldest version on this machine; row = track. */
-  readonly column: number
-  readonly row: number
+/** One row of the version timeline, newest first. */
+export type TimelineRow =
+  | { readonly kind: 'day'; readonly key: string; readonly label: string }
+  | {
+      readonly kind: 'node'
+      readonly key: string
+      readonly node: LineageNode
+      /** Index of the node's line in the family, which picks its rail. */
+      readonly lane: number
+    }
+  | {
+      readonly kind: 'fold'
+      readonly key: string
+      readonly lane: number
+      /** Newest first. */
+      readonly nodes: readonly LineageNode[]
+    }
+
+export interface Timeline {
+  readonly rows: readonly TimelineRow[]
+  readonly lanes: number
+  /** A branch's oldest row hangs off the version it was branched from. */
+  readonly branches: readonly { readonly from: string; readonly to: string; readonly lane: number }[]
 }
 
-export interface LineageEdge {
-  readonly from: PlacedNode
-  readonly to: PlacedNode
-  /** `version` joins two versions of one extension; `branch` joins a branch to the version it started from. */
-  readonly kind: 'version' | 'branch'
+/** Versions that always get a row of their own: they are what people look for on the timeline. */
+export const standsAlone = (node: LineageNode): boolean => node.current || node.protectedBy !== undefined
+
+const MIN_FOLD = 2
+
+const dayKey = (at: number) => {
+  const date = new Date(at)
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
 }
 
-export interface LineageLayout {
-  readonly nodes: readonly PlacedNode[]
-  readonly edges: readonly LineageEdge[]
-  readonly columns: number
-  readonly rows: number
+/** `今天`, `昨天`, `10月28日`, or with the year when it is not this year. */
+export const dayLabel = (at: number, now: number): string => {
+  if (dayKey(at) === dayKey(now)) return '今天'
+  if (dayKey(at) === dayKey(now - 86_400_000)) return '昨天'
+  const date = new Date(at)
+  const day = `${date.getMonth() + 1}月${date.getDate()}日`
+  return date.getFullYear() === new Date(now).getFullYear() ? day : `${date.getFullYear()}年${day}`
 }
+
+export const foldKey = (lane: number, newest: LineageNode) => `fold:${lane}:${newest.revisionId}`
+export const nodeKey = (node: Pick<LineageNode, 'revisionId'>) => `node:${node.revisionId}`
 
 /**
- * Lays the family out as a tree that grows to the right: every version sits one column after its parent, the line
- * that leads to the version in use (or the newest one) keeps its parent's row, and every other child (a second save
- * of the same generation, or a branch) opens a row of its own below. A branch's first version hangs off the version
- * it was branched from; a line whose origin is not on this machine starts a tree of its own.
+ * Lays the family out as one timeline, newest on top, each line on a rail of its own. The version in use, the newest
+ * and oldest of each line, and every version something still needs keep their own row; runs of other versions fold
+ * into one row until they are expanded. Days separate the rows.
  */
-export function layoutLineage(lines: readonly LineageLine[]): LineageLayout {
-  const lane = new Map(lines.map((line, index) => [line.extensionId, index]))
-  const byId = new Map(lines.flatMap((line) => line.nodes.map((node) => [node.revisionId, node] as const)))
-  const branchOf = new Map(lines.map((line) => [line.extensionId, line.branchOf?.revisionId]))
-
-  const parentOf = (node: LineageNode): { readonly id: string; readonly kind: LineageEdge['kind'] } | undefined => {
-    if (node.parentRevisionId !== undefined && byId.has(node.parentRevisionId)) {
-      return { id: node.parentRevisionId, kind: 'version' }
+export function buildTimeline(
+  lines: readonly LineageLine[],
+  options: { readonly expanded: ReadonlySet<string>; readonly now: number },
+): Timeline {
+  type Item = Exclude<TimelineRow, { kind: 'day' }> & { readonly at: number }
+  const items: Item[] = []
+  const oldestOf = new Map<string, string>()
+  lines.forEach((line, lane) => {
+    const nodes = [...line.nodes].sort((left, right) => right.createdAt - left.createdAt)
+    let run: LineageNode[] = []
+    const flush = () => {
+      const first = run[0]
+      if (first !== undefined && run.length >= MIN_FOLD && !options.expanded.has(foldKey(lane, first)))
+        items.push({ kind: 'fold', key: foldKey(lane, first), lane, nodes: run, at: first.createdAt })
+      else for (const node of run) items.push({ kind: 'node', key: nodeKey(node), node, lane, at: node.createdAt })
+      run = []
     }
-    const origin = branchOf.get(node.extensionId)
-    // Only the first version of a branch (the one without a parent on its own line) hangs off the origin.
-    if (node.parentRevisionId === undefined && origin !== undefined && byId.has(origin)) {
-      return { id: origin, kind: 'branch' }
-    }
-    return undefined
-  }
-
-  const children = new Map<string, LineageNode[]>()
-  const roots: LineageNode[] = []
-  for (const node of byId.values()) {
-    const parent = parentOf(node)
-    if (parent === undefined) roots.push(node)
-    else children.set(parent.id, [...(children.get(parent.id) ?? []), node])
-  }
-
-  // How strongly a subtree continues its line: holding the version in use wins, then the newest save on that line.
-  const weight = new Map<string, number>()
-  const weigh = (node: LineageNode): number => {
-    const known = weight.get(node.revisionId)
-    if (known !== undefined) return known
-    let best = node.current ? Number.POSITIVE_INFINITY : node.createdAt
-    for (const child of children.get(node.revisionId) ?? []) {
-      if (child.extensionId === node.extensionId) best = Math.max(best, weigh(child))
-    }
-    weight.set(node.revisionId, best)
-    return best
-  }
-  const ordered = (node: LineageNode): LineageNode[] =>
-    [...(children.get(node.revisionId) ?? [])].sort((left, right) => {
-      const sameLeft = left.extensionId === node.extensionId ? 0 : 1
-      const sameRight = right.extensionId === node.extensionId ? 0 : 1
-      return sameLeft - sameRight || (sameLeft === 0 ? weigh(right) - weigh(left) : left.createdAt - right.createdAt)
+    nodes.forEach((node, index) => {
+      if (standsAlone(node) || index === 0 || index === nodes.length - 1) {
+        flush()
+        items.push({ kind: 'node', key: nodeKey(node), node, lane, at: node.createdAt })
+      } else run.push(node)
     })
+    flush()
+    const oldest = nodes.at(-1)
+    if (oldest !== undefined) oldestOf.set(line.extensionId, nodeKey(oldest))
+  })
+  items.sort((left, right) => right.at - left.at || left.lane - right.lane)
 
-  const placed = new Map<string, PlacedNode>()
-  const edges: LineageEdge[] = []
-  let rows = 0
-  let columns = 0
-  const place = (node: LineageNode, column: number, row: number) => {
-    const entry: PlacedNode = { node, lane: lane.get(node.extensionId) ?? 0, column, row }
-    placed.set(node.revisionId, entry)
-    columns = Math.max(columns, column + 1)
-    ordered(node).forEach((child, index) => {
-      const continues = index === 0 && child.extensionId === node.extensionId
-      const childRow = continues ? row : rows++
-      place(child, column + 1, childRow)
-      const to = placed.get(child.revisionId)!
-      edges.push({ from: entry, to, kind: parentOf(child)?.kind ?? 'version' })
-    })
+  const rows: TimelineRow[] = []
+  let day: string | undefined
+  for (const { at, ...item } of items) {
+    if (dayKey(at) !== day) {
+      day = dayKey(at)
+      rows.push({ kind: 'day', key: `day:${day}`, label: dayLabel(at, options.now) })
+    }
+    rows.push(item)
   }
-  for (const root of [...roots].sort(
-    (left, right) =>
-      (lane.get(left.extensionId) ?? 0) - (lane.get(right.extensionId) ?? 0) || left.createdAt - right.createdAt,
-  )) {
-    place(root, 0, rows++)
-  }
-  return { nodes: [...placed.values()], edges, columns, rows }
+
+  const present = new Set(rows.map((row) => row.key))
+  const branches = lines.flatMap((line, lane) => {
+    const from = line.branchOf === undefined ? undefined : nodeKey(line.branchOf)
+    const to = oldestOf.get(line.extensionId)
+    return from !== undefined && to !== undefined && present.has(from) && present.has(to) ? [{ from, to, lane }] : []
+  })
+  return { rows, lanes: lines.length, branches }
 }
 
 /** Where a version came from, in a few words. */

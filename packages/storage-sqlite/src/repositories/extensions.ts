@@ -1,4 +1,4 @@
-import { and, asc, eq, notInArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, notInArray } from 'drizzle-orm'
 import {
   DshPluginEntryIdSchema,
   ExtensionIdSchema,
@@ -347,6 +347,50 @@ export function createExtensionsRepository(database: DrizzleCoreDatabase): Exten
           tx.delete(extensionRevisions).where(eq(extensionRevisions.extensionId, extensionId)).run()
           const result = tx.delete(localExtensions).where(eq(localExtensions.id, extensionId)).run()
           if (result.changes !== 1) throw new Error('Extension 不存在或已被删除。')
+        },
+        { behavior: 'immediate' },
+      )
+    },
+    listKeptExtensionRevisionIds(extensionId): readonly ExtensionRevisionId[] {
+      return database
+        .select({ id: extensionRevisions.id })
+        .from(extensionRevisions)
+        .where(and(eq(extensionRevisions.extensionId, extensionId), eq(extensionRevisions.kept, true)))
+        .all()
+        .map((row) => ExtensionRevisionIdSchema.parse(row.id))
+    },
+    setExtensionRevisionKept(revisionId, kept): void {
+      const result = database
+        .update(extensionRevisions)
+        .set({ kept })
+        .where(eq(extensionRevisions.id, revisionId))
+        .run()
+      if (result.changes !== 1) throw new Error('版本不存在或已被删除。')
+    },
+    deleteExtensionRevisions(extensionId, revisionIds): void {
+      if (revisionIds.length === 0) return
+      database.transaction(
+        (tx) => {
+          const ids = [...revisionIds]
+          const owned = tx
+            .select({ id: extensionRevisions.id })
+            .from(extensionRevisions)
+            .where(and(eq(extensionRevisions.extensionId, extensionId), inArray(extensionRevisions.id, ids)))
+            .all()
+          if (owned.length !== ids.length) throw new Error('有版本不属于这个扩展，或已被删除。')
+          const active = tx
+            .select()
+            .from(agentActivations)
+            .where(inArray(agentActivations.extensionRevisionId, ids))
+            .get()
+          const installed = tx
+            .select()
+            .from(hostExtensionInstallations)
+            .where(inArray(hostExtensionInstallations.extensionRevisionId, ids))
+            .get()
+          if (active || installed) throw new Error('正在使用或有智能体启用的版本不能删除。')
+          tx.delete(extensionRevisionVerifications).where(inArray(extensionRevisionVerifications.revisionId, ids)).run()
+          tx.delete(extensionRevisions).where(inArray(extensionRevisions.id, ids)).run()
         },
         { behavior: 'immediate' },
       )

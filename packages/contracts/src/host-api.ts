@@ -2789,6 +2789,22 @@ const agentExtensionParam = z.object({ agentId: AgentIdSchema, extensionId: Exte
 
 const PermissionApprovalSchema = z.object({ permissionDigest: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()
 
+/**
+ * What keeps a version from being cleaned up: in use, enabled for an agent, released to a community, kept by hand,
+ * the start of a branch, the base of an open revision, needed by 回到上一个版本, or named by a pending request.
+ */
+export const ExtensionRevisionProtectionSchema = z.enum([
+  'installed',
+  'active',
+  'released',
+  'kept',
+  'branch',
+  'revising',
+  'undo',
+  'request',
+])
+export type ExtensionRevisionProtection = z.output<typeof ExtensionRevisionProtectionSchema>
+
 /** One version of one line in the lineage view of an extension family. */
 export const ExtensionLineageNodeSchema = z
   .object({
@@ -2800,6 +2816,10 @@ export const ExtensionLineageNodeSchema = z
     createdAt: z.number().int().nonnegative(),
     current: z.boolean(),
     releaseNumbers: z.array(z.number().int().positive()),
+    /** Marked by an administrator to keep. */
+    kept: z.boolean(),
+    /** Why the version cannot be cleaned up; absent when it can. */
+    protectedBy: ExtensionRevisionProtectionSchema.optional(),
   })
   .strict()
 
@@ -5658,6 +5678,23 @@ export const HostApiContracts = {
     params: extensionParam,
     request: NoRequestBodySchema,
     response: ExtensionLineageSchema,
+    error: HostApiErrorSchema,
+  }),
+  setExtensionRevisionKept: defineContract({
+    method: 'POST',
+    path: '/api/extensions/:extensionId/revisions/:revisionId/keep',
+    params: z.object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }).strict(),
+    request: z.object({ kept: z.boolean() }).strict(),
+    response: z.object({ kept: z.boolean() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  deleteExtensionRevisions: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/extensions/:extensionId/revisions/delete',
+    params: extensionParam,
+    request: z.object({ revisionIds: z.array(ExtensionRevisionIdSchema).min(1).max(200) }).strict(),
+    response: z.object({ deleted: z.number().int().nonnegative() }).strict(),
     error: HostApiErrorSchema,
   }),
   branchExtension: defineContract({

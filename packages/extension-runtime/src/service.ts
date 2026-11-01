@@ -562,6 +562,32 @@ export class ExtensionService {
     return this.#sources.restoreStagedExtension(extensionId, trash)
   }
 
+  /**
+   * Deletes Revisions nothing runs: sources move aside first and come back when the database refuses, so a failed
+   * delete leaves every Revision intact.
+   */
+  async deleteRevisions(extensionId: ExtensionId, revisionIds: readonly ExtensionRevisionId[]): Promise<void> {
+    const revisions = revisionIds.map((id) => {
+      const revision = this.#repository.getExtensionRevision(id)
+      if (revision?.extensionId !== extensionId) throw new Error('有版本不属于这个扩展，或已被删除。')
+      return revision
+    })
+    const staged: { readonly revisionId: ExtensionRevisionId; readonly trash: string }[] = []
+    try {
+      for (const revision of revisions) {
+        const trash = await this.#sources.stageRevisionDeletion(extensionId, revision.id)
+        if (trash !== undefined) staged.push({ revisionId: revision.id, trash })
+      }
+      this.#repository.deleteExtensionRevisions(extensionId, revisionIds)
+    } catch (error) {
+      for (const entry of staged.toReversed())
+        await this.#sources.restoreStagedRevision(extensionId, entry.revisionId, entry.trash).catch(() => undefined)
+      throw error
+    }
+    for (const entry of staged) await this.#sources.discardStagedRevision(entry.trash).catch(() => undefined)
+    await this.deleteRevisionCaches(revisions).catch(() => undefined)
+  }
+
   async deleteRevisionCaches(revisions: readonly Revision[]): Promise<void> {
     if (!this.#builder) return
     await this.#builder.deleteRevisionCaches(revisions.map((revision) => revision.id))

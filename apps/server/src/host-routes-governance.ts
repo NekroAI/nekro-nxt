@@ -2,7 +2,7 @@ import { HostApiContracts, ExtensionIdSchema, AuthoringTaskIdSchema, type Extens
 import { FULL_DATA_SCOPE } from '@nekro-nxt/extension-runtime'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { NekroRuntime } from './bootstrap.js'
-import { lineageGraph } from './extension-governance/versions.js'
+import { lineageGraph, protectionReason, revisionProtections } from './extension-governance/versions.js'
 import { ExtensionConfigMigration } from './extension-governance/config-migration.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
 import { activationManifest, projectExtensionRequests } from './host-queries.js'
@@ -71,6 +71,47 @@ export async function handleGovernanceExtensionRoute(
     }
     return true
   }
+  const protections = (extensionId: ExtensionId) =>
+    revisionProtections(runtime.repository, (id) => runtime.extensionData.latestSwitch(id), extensionId)
+  const revisionRoute = /^\/api\/extensions\/([^/]+)\/revisions\/(?:([^/]+)\/keep|delete)$/u.exec(url.pathname)
+  if (revisionRoute) {
+    if (req.method !== 'POST') {
+      writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+      return true
+    }
+    try {
+      const extensionId = decodeURIComponent(revisionRoute[1] ?? '')
+      if (revisionRoute[2] !== undefined) {
+        const params = HostApiContracts.setExtensionRevisionKept.parseParams({
+          extensionId,
+          revisionId: decodeURIComponent(revisionRoute[2]),
+        })
+        const input = HostApiContracts.setExtensionRevisionKept.parseRequest(await readJsonBody(req))
+        if (runtime.repository.getExtensionRevision(params.revisionId)?.extensionId !== params.extensionId)
+          throw new Error('版本不存在或已被删除。')
+        runtime.repository.setExtensionRevisionKept(params.revisionId, input.kept)
+        writeContractJson(res, 200, HostApiContracts.setExtensionRevisionKept, { kept: input.kept })
+        broadcastExtensionsChanged()
+        return true
+      }
+      const params = HostApiContracts.deleteExtensionRevisions.parseParams({ extensionId })
+      const input = HostApiContracts.deleteExtensionRevisions.parseRequest(await readJsonBody(req))
+      const revisionIds = [...new Set(input.revisionIds)]
+      const guarded = protections(params.extensionId)
+      const blocked = revisionIds.flatMap((id) => {
+        const reason = guarded.get(id)
+        return reason === undefined ? [] : [reason]
+      })
+      if (blocked.length > 0)
+        throw new Error(`有 ${blocked.length} 个版本${protectionReason[blocked[0]!]}，不能清理。请刷新后重新选择。`)
+      await runtime.extensionService.deleteRevisions(params.extensionId, revisionIds)
+      writeContractJson(res, 200, HostApiContracts.deleteExtensionRevisions, { deleted: revisionIds.length })
+      broadcastExtensionsChanged()
+    } catch (error) {
+      failure(res, 'extension-revision-failed', error)
+    }
+    return true
+  }
   const match =
     /^\/api\/extensions\/([^/]+)\/(lineage|branch|revert|data|data\/preview|data\/migrate|data\/snapshots|data\/export|data\/export-config)$/u.exec(
       url.pathname,
@@ -88,7 +129,7 @@ export async function handleGovernanceExtensionRoute(
   try {
     if (route === 'lineage' && req.method === 'GET') {
       writeContractJson(res, 200, HostApiContracts.getExtensionLineage, {
-        lines: lineageGraph(runtime.repository, runtime.extensionService, extensionId).map((line) => ({
+        lines: lineageGraph(runtime.repository, runtime.extensionService, extensionId, protections).map((line) => ({
           ...line,
           nodes: [...line.nodes],
         })),

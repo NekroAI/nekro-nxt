@@ -193,6 +193,14 @@ export interface ExtensionRepository {
   }): void
   /** Deletes one inactive Extension and all immutable Revisions in one database transaction. */
   deleteExtension(extensionId: ExtensionId): void
+  /** Revisions of one Extension an administrator marked to keep. */
+  listKeptExtensionRevisionIds(extensionId: ExtensionId): readonly ExtensionRevisionId[]
+  setExtensionRevisionKept(revisionId: ExtensionRevisionId, kept: boolean): void
+  /**
+   * Deletes Revisions of one Extension in one transaction; refuses when any of them is installed or enabled for an
+   * agent. Their source directories are the caller's.
+   */
+  deleteExtensionRevisions(extensionId: ExtensionId, revisionIds: readonly ExtensionRevisionId[]): void
   getExtensionRevisionVerification(revisionId: ExtensionRevisionId): ExtensionRevisionVerification | undefined
   getExtensionClientDiagnostic(agentId: AgentId, extensionId: ExtensionId): ExtensionClientDiagnostic | undefined
   upsertExtensionClientDiagnostic(diagnostic: ExtensionClientDiagnostic): void

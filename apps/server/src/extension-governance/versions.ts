@@ -1,6 +1,12 @@
-import type { ExtensionId, ExtensionRevisionId } from '@nekro-nxt/contracts'
+import {
+  ExtensionRevisionIdSchema,
+  type ExtensionId,
+  type ExtensionRevisionId,
+  type ExtensionRevisionProtection,
+} from '@nekro-nxt/contracts'
 import { lineageDepth, type ExtensionLineage, type Revision } from '@nekro-nxt/extension-runtime'
 import type { ExtensionRevisionReleaseRecord, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
+import { z } from 'zod'
 
 /** Lineage source a projection reads: the Manifest's when a Revision carries one, the database record otherwise. */
 export interface LineageReader {
@@ -33,6 +39,7 @@ export const extensionVersions = (
 ): ReadonlyMap<ExtensionRevisionId, RevisionVersion> => {
   const revisions = repository.listExtensionRevisions(extensionId)
   const releases = repository.listExtensionRevisionReleases(extensionId)
+  const local = new Set<string>(revisions.map((revision) => revision.id))
   const byGeneration = new Map<number, number>()
   const result = new Map<ExtensionRevisionId, RevisionVersion>()
   for (const revision of [...revisions].sort((left, right) => left.createdAt - right.createdAt)) {
@@ -40,7 +47,11 @@ export const extensionVersions = (
     const version = lineageDepth(node.lineage)
     const seen = (byGeneration.get(version) ?? 0) + 1
     byGeneration.set(version, seen)
-    const parent = node.lineage?.parent ?? undefined
+    // A cleaned-up parent hands its children to the nearest earlier version still on this machine.
+    const recorded = node.lineage?.parent ?? undefined
+    const parent =
+      [recorded, ...(node.lineage?.ancestry ?? [])].find((id) => id !== undefined && id !== null && local.has(id)) ??
+      recorded
     result.set(revision.id, {
       revisionId: revision.id,
       version,
@@ -63,6 +74,8 @@ export interface LineageGraphNode {
   readonly createdAt: number
   readonly current: boolean
   readonly releaseNumbers: readonly number[]
+  readonly kept: boolean
+  readonly protectedBy?: ExtensionRevisionProtection
 }
 
 export interface LineageGraphLine {
@@ -86,9 +99,12 @@ export const lineageGraph = (
     | 'listExtensionRevisions'
     | 'listExtensionRevisionReleases'
     | 'getHostInstallation'
+    | 'listKeptExtensionRevisionIds'
   >,
   lineage: LineageReader,
   extensionId: ExtensionId,
+  protections: (extensionId: ExtensionId) => ReadonlyMap<ExtensionRevisionId, ExtensionRevisionProtection> = () =>
+    new Map(),
 ): readonly LineageGraphLine[] => {
   const extensions = repository.listExtensions()
   let root = repository.getExtension(extensionId)
@@ -113,6 +129,8 @@ export const lineageGraph = (
   return family.map((extension) => {
     const versions = extensionVersions(repository, lineage, extension.id)
     const current = repository.getHostInstallation(extension.id)?.extensionRevisionId
+    const kept = new Set(repository.listKeptExtensionRevisionIds(extension.id))
+    const protectedBy = protections(extension.id)
     return {
       extensionId: extension.id,
       displayName: extension.displayName,
@@ -127,6 +145,8 @@ export const lineageGraph = (
           origin: revision.origin,
           createdAt: revision.createdAt,
           current: revision.id === current,
+          kept: kept.has(revision.id),
+          ...(protectedBy.has(revision.id) ? { protectedBy: protectedBy.get(revision.id)! } : {}),
           releaseNumbers: version.releases.flatMap((release) =>
             release.releaseNumber === null ? [] : [release.releaseNumber],
           ),
@@ -134,4 +154,62 @@ export const lineageGraph = (
       }),
     }
   })
+}
+
+const RequestPayloadSchema = z
+  .object({ action: z.object({ revisionId: ExtensionRevisionIdSchema.optional() }).passthrough().optional() })
+  .passthrough()
+
+/**
+ * Why each version of one extension cannot be cleaned up; versions missing from the map can. The first reason in the
+ * order people care about wins: in use, enabled for an agent, released, kept, then what other work still needs.
+ */
+export const revisionProtections = (
+  repository: Pick<
+    SqliteCoreRepository,
+    | 'listExtensions'
+    | 'listExtensionRevisionReleases'
+    | 'getHostInstallation'
+    | 'listActivations'
+    | 'listKeptExtensionRevisionIds'
+    | 'getOpenRevisionTask'
+    | 'listExtensionRequests'
+  >,
+  latestSwitch: (
+    extensionId: ExtensionId,
+  ) => { readonly fromRevisionId: ExtensionRevisionId; readonly toRevisionId: ExtensionRevisionId } | undefined,
+  extensionId: ExtensionId,
+): ReadonlyMap<ExtensionRevisionId, ExtensionRevisionProtection> => {
+  const result = new Map<ExtensionRevisionId, ExtensionRevisionProtection>()
+  const mark = (revisionId: ExtensionRevisionId | undefined, reason: ExtensionRevisionProtection) => {
+    if (revisionId !== undefined && !result.has(revisionId)) result.set(revisionId, reason)
+  }
+  mark(repository.getHostInstallation(extensionId)?.extensionRevisionId, 'installed')
+  for (const activation of repository.listActivations())
+    if (activation.extensionId === extensionId) mark(activation.extensionRevisionId, 'active')
+  for (const release of repository.listExtensionRevisionReleases(extensionId)) mark(release.revisionId, 'released')
+  for (const revisionId of repository.listKeptExtensionRevisionIds(extensionId)) mark(revisionId, 'kept')
+  for (const extension of repository.listExtensions())
+    if (extension.branchOf?.extensionId === extensionId) mark(extension.branchOf.revisionId, 'branch')
+  const task = repository.getOpenRevisionTask(extensionId)
+  mark(task?.baseRevisionId, 'revising')
+  mark(task?.referenceRevisionId, 'revising')
+  const switched = latestSwitch(extensionId)
+  mark(switched?.fromRevisionId, 'undo')
+  mark(switched?.toRevisionId, 'undo')
+  for (const request of repository.listExtensionRequests({ status: 'pending' }))
+    mark(RequestPayloadSchema.safeParse(request.payload).data?.action?.revisionId, 'request')
+  return result
+}
+
+/** What blocks a cleanup, in the words of the error people see. */
+export const protectionReason: Record<ExtensionRevisionProtection, string> = {
+  installed: '正在使用',
+  active: '有智能体启用',
+  released: '发布到过社区',
+  kept: '已保留',
+  branch: '有分支从这里分出',
+  revising: '智能体正在基于它修改',
+  undo: '回到上一个版本要用到',
+  request: '有待确认的请求用到它',
 }

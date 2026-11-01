@@ -309,34 +309,38 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
       {tab === 'config' ? <ExtensionSettings extension={extension} /> : null}
 
       {tab === 'versions' ? (
-        <>
-          <VersionList extension={extension} switching={switching} describe={versionOf} />
-          <PropertyGroup
-            title="谱系"
-            tip="每次保存都是一个新版本，接在它修改的版本之后；分支是从某个版本另起的扩展，分支还可以再分支。实心点是正在使用的版本。点一个版本可以切换、导出、发布或从它修改。"
-          >
-            <LineageView
-              extension={extension}
-              actions={{
-                onSwitch: (revision) => switching.request(revision),
-                onBranch: (revision) => setBranching(revision),
-                onPublish: (revision) => setPublishing(revision),
-                onExport: (revision) => void download(extension, revision).catch(failure),
-                onRevise:
-                  reviser?.channels[0] === undefined
-                    ? undefined
-                    : (revision) => {
-                        const channelId = reviser.channels[0]!
-                        ui.getState().setChannelDraft(
-                          channelId,
-                          `在「${extension.name}」${versionOf(revision)?.title ?? ''}的基础上修改：`,
-                        )
-                        navigate(`/channels/${channelId}`)
-                      },
-              }}
-            />
-          </PropertyGroup>
-        </>
+        <PropertyGroup
+          title="版本"
+          tip="每次保存都是一个新版本，接在它修改的版本之后；分支是从某个版本另起的扩展。正在使用、有智能体在用、发布过和保留的版本单独显示，其余的中间版本折叠起来，可以展开或清理。"
+          actions={
+            extension.installation && extension.revisions.length > 1 ? (
+              <Button size="small" variant="ghost" disabled={switching.busy} onClick={() => void switching.rollback()}>
+                回到上一个版本
+              </Button>
+            ) : undefined
+          }
+        >
+          <LineageView
+            extension={extension}
+            actions={{
+              onSwitch: (revision) => switching.request(revision),
+              onBranch: (revision) => setBranching(revision),
+              onPublish: (revision) => setPublishing(revision),
+              onExport: (revision) => void download(extension, revision).catch(failure),
+              onRevise:
+                reviser?.channels[0] === undefined
+                  ? undefined
+                  : (revision) => {
+                      const channelId = reviser.channels[0]!
+                      ui.getState().setChannelDraft(
+                        channelId,
+                        `在「${extension.name}」${versionOf(revision)?.title ?? ''}的基础上修改：`,
+                      )
+                      navigate(`/channels/${channelId}`)
+                    },
+            }}
+          />
+        </PropertyGroup>
       ) : null}
 
       {tab === 'data' ? <ExtensionData extension={extension} /> : null}
@@ -903,86 +907,6 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
     </>
   )
   return { request, rollback, busy, dialog }
-}
-
-/** Every saved version, newest first; any usable one can be installed or switched to from its row. */
-function VersionList({
-  extension,
-  switching,
-  describe,
-}: {
-  readonly extension: LocalExtensionSummary
-  readonly switching: ReturnType<typeof useVersionSwitch>
-  readonly describe: (revision: Revision | undefined) => VersionText | undefined
-}) {
-  const installed = extension.installation?.revisionId
-  const columns: readonly Column<Revision>[] = [
-    {
-      key: 'version',
-      header: '版本',
-      width: 'minmax(220px, 2fr)',
-      render: (revision) => {
-        const text = describe(revision)
-        return (
-          <span className={styles.versionCell}>
-            <b>{text?.title}</b>
-            <span className={styles.faint}>
-              {text?.source} · {text?.code}
-            </span>
-          </span>
-        )
-      },
-    },
-    {
-      key: 'state',
-      header: '状态',
-      width: 'minmax(120px, 1fr)',
-      priority: 2,
-      render: (revision) => {
-        const users = extension.activations.filter((item) => item.revisionId === revision.id)
-        return (
-          <span className={styles.contributionChips}>
-            {revision.id === installed ? <Chip tone="ok">正在使用</Chip> : null}
-            {users.length > 0 && revision.id !== installed ? (
-              <Chip>{users.map((item) => item.agentName).join('、')} 在用</Chip>
-            ) : null}
-            {usable(revision) ? null : <Chip tone="warn">格式不受支持</Chip>}
-          </span>
-        )
-      },
-    },
-    {
-      key: 'action',
-      header: <span className={styles.srOnly}>操作</span>,
-      width: '132px',
-      align: 'end',
-      render: (revision) =>
-        revision.id === installed || !usable(revision) ? null : (
-          <Button size="small" busy={switching.busy} onClick={() => switching.request(revision)}>
-            {installed ? '切换到这个版本' : '安装这个版本'}
-          </Button>
-        ),
-    },
-  ]
-  return (
-    <PropertyGroup
-      title="版本"
-      actions={
-        installed && extension.revisions.length > 1 ? (
-          <Button size="small" variant="ghost" disabled={switching.busy} onClick={() => void switching.rollback()}>
-            回到上一个版本
-          </Button>
-        ) : undefined
-      }
-    >
-      <DataTable
-        label="版本"
-        columns={columns}
-        rows={extension.revisions.toReversed()}
-        rowKey={(revision) => revision.id}
-      />
-    </PropertyGroup>
-  )
 }
 
 /** The extension's single installation on this machine; versions are chosen on the 版本 tab. */

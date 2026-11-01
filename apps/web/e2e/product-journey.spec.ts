@@ -621,8 +621,32 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   })
 
   await installWorkspaceRoutes(page, snapshot)
-  // The extension exists only in the mocked snapshot, so its lineage is mocked too.
-  await page.route(`**/api/extensions/${extensionId}/lineage`, (route) => route.fulfill({ json: { lines: [] } }))
+  // The extension exists only in the mocked snapshot, so its lineage is mocked too, following the installation.
+  await page.route(`**/api/extensions/${extensionId}/lineage`, (route) => {
+    const node = (revisionId: string, label: string, createdAt: number, parentRevisionId?: string) => ({
+      revisionId,
+      extensionId,
+      label,
+      ...(parentRevisionId === undefined ? {} : { parentRevisionId }),
+      origin: 'file',
+      createdAt,
+      current: installedRevisionId === revisionId,
+      releaseNumbers: [],
+      kept: false,
+      ...(installedRevisionId === revisionId ? { protectedBy: 'installed' } : {}),
+    })
+    return route.fulfill({
+      json: {
+        lines: [
+          {
+            extensionId,
+            displayName: '合成聊天适配器',
+            nodes: [node(revisionV1, 'v1', 1_725_000_000_000), node(revisionV2, 'v2', 1_725_000_001_000, revisionV1)],
+          },
+        ],
+      },
+    })
+  })
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(`/workshop/extensions/${extensionId}`)
   await expect(page.getByRole('heading', { name: '合成聊天适配器', level: 1 })).toBeVisible()
@@ -644,13 +668,15 @@ test('a verified Adapter can install, create a schema-backed connection, roll ba
   await expect(detail.getByRole('combobox', { name: '测试频道' })).toContainText('合成演示频道')
 
   await page.goto(`/workshop/extensions/${extensionId}?tab=versions`)
-  // The version table lists newest first: the first row is v2, the second v1.
-  const versions = page.getByRole('table', { name: '版本' }).getByRole('row')
-  await versions.nth(2).getByRole('button', { name: '切换到这个版本' }).click()
-  await expect(versions.nth(2)).toContainText('正在使用')
-  await versions.nth(1).getByRole('button', { name: '切换到这个版本' }).click()
-  await expect(versions.nth(1)).toContainText('正在使用')
-  await expect(versions.nth(2)).not.toContainText('正在使用')
+  // The timeline lists newest first: the first row is v2, the second v1.
+  const versions = page.getByRole('group', { name: '版本谱系' }).getByRole('button')
+  await versions.nth(1).click()
+  await page.getByRole('button', { name: '切换到这个版本' }).click()
+  await expect(versions.nth(1)).toHaveAccessibleName(/正在使用$/u)
+  await versions.nth(0).click()
+  await page.getByRole('button', { name: '切换到这个版本' }).click()
+  await expect(versions.nth(0)).toHaveAccessibleName(/正在使用$/u)
+  await expect(versions.nth(1)).not.toHaveAccessibleName(/正在使用$/u)
   await expect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
   expect(installationRequests).toEqual([revisionV2, revisionV1, revisionV2])
   expect(await page.locator('main').evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true)

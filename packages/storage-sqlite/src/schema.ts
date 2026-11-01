@@ -913,6 +913,8 @@ export const extensionRevisions = sqliteTable(
     /** Creation task that saved it, when it was authored here. */
     authoringTaskId: text('authoring_task_id').$type<AuthoringTaskId>(),
     dataVersion: integer('data_version').notNull().default(1),
+    /** Marked by an administrator to keep: shown on the lineage and never offered for cleanup. */
+    kept: integer({ mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [

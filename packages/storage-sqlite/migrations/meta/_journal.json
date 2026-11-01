@@ -414,6 +414,13 @@
       "when": 1793430130660,
       "tag": "0058_smart_trigger_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1793507484614,
+      "tag": "0059_extension_revision_kept",
+      "breakpoints": true
     }
   ]
 }

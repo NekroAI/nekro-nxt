@@ -4,7 +4,7 @@ import { Context } from '@deepseek-ai/cordis'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { materializeImportedRevision } from '@nekro-nxt/extension-format'
@@ -26,7 +26,7 @@ import { ExtensionGovernanceTools } from '../src/extension-governance/tool-port.
 import { extensionAgentTools } from '../src/extension-governance/agent-tools.js'
 import { CommunitySyncService, type SyncCommunity } from '../src/extension-governance/community-sync.js'
 import { ExtensionRequestService, EXTENSION_REQUEST_TTL_MS } from '../src/extension-governance/requests.js'
-import { extensionVersions, lineageGraph } from '../src/extension-governance/versions.js'
+import { extensionVersions, lineageGraph, revisionProtections } from '../src/extension-governance/versions.js'
 import { HostLogService } from '../src/logs/service.js'
 import { extensionVerification } from './fixtures/extension-verification.js'
 
@@ -286,6 +286,45 @@ const saveSharedExtension = (
   })
 
 describe('extension lines', () => {
+  it('keeps marked versions and cleans up the rest, joining what follows to the nearest earlier version', async () => {
+    const runtime = await createRuntime()
+    try {
+      const { extensionId, v1, v2 } = await importBoth(runtime)
+      const third = await importRevision(runtime, {
+        extensionId,
+        revisionId: 'xrv_GOVERNEDTHREE',
+        source: SOURCE_V1.replace("() => 'v1'", "() => 'v3'"),
+        dataVersion: 2,
+      })
+      const v3 = third.revision
+      await runtime.extensions.install({ extensionId, revisionId: v3.id })
+      const guarded = () =>
+        revisionProtections(runtime.repository, (id) => runtime.extensionData.latestSwitch(id), extensionId)
+      expect([...guarded()]).toEqual([[v3.id, 'installed']])
+
+      runtime.repository.setExtensionRevisionKept(v1.id, true)
+      expect(guarded().get(v1.id)).toBe('kept')
+      const source = runtime.extensionService.revisionSourceDirectory(v2)
+      await runtime.extensionService.deleteRevisions(extensionId, [v2.id])
+      expect(runtime.repository.getExtensionRevision(v2.id)).toBeUndefined()
+      await expect(stat(source)).rejects.toThrow()
+
+      const [line] = lineageGraph(runtime.repository, runtime.extensionService, extensionId, () => guarded())
+      expect(line?.nodes.map((node) => [node.label, node.parentRevisionId, node.kept, node.protectedBy])).toEqual([
+        ['v1', undefined, true, 'kept'],
+        // v3 was made from v2; with v2 gone it hangs off v1 and keeps its generation.
+        ['v3', v1.id, false, 'installed'],
+      ])
+
+      // The database refuses a version that is in use, and the sources stay where they were.
+      await expect(runtime.extensionService.deleteRevisions(extensionId, [v3.id])).rejects.toThrow('正在使用')
+      await expect(stat(runtime.extensionService.revisionSourceDirectory(v3))).resolves.toBeDefined()
+      await expect(runtime.extensionService.deleteRevisions(extensionId, [v2.id])).rejects.toThrow('已被删除')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('chains imported versions, labels them by generation and branches into a new line', async () => {
     const runtime = await createRuntime()
     try {

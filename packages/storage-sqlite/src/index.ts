@@ -542,6 +542,12 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensions.saveExtensionRevision(...args)
   readonly deleteExtension = (...args: Parameters<ExtensionRepository['deleteExtension']>) =>
     this.#extensions.deleteExtension(...args)
+  readonly listKeptExtensionRevisionIds = (...args: Parameters<ExtensionRepository['listKeptExtensionRevisionIds']>) =>
+    this.#extensions.listKeptExtensionRevisionIds(...args)
+  readonly setExtensionRevisionKept = (...args: Parameters<ExtensionRepository['setExtensionRevisionKept']>) =>
+    this.#extensions.setExtensionRevisionKept(...args)
+  readonly deleteExtensionRevisions = (...args: Parameters<ExtensionRepository['deleteExtensionRevisions']>) =>
+    this.#extensions.deleteExtensionRevisions(...args)
   readonly getExtensionRevisionVerification = (
     ...args: Parameters<ExtensionRepository['getExtensionRevisionVerification']>
   ) => this.#extensions.getExtensionRevisionVerification(...args)

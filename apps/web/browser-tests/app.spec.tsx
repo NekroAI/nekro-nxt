@@ -1086,6 +1086,7 @@ test.describe('NekroNxt browser projections', () => {
               createdAt: 1_724_000_000_000,
               current: false,
               releaseNumbers: [],
+              kept: false,
             },
             {
               revisionId: browserExtensionRevisionId,
@@ -1096,6 +1097,8 @@ test.describe('NekroNxt browser projections', () => {
               createdAt: 1_725_000_000_000,
               current: true,
               releaseNumbers: [2],
+              kept: false,
+              protectedBy: 'installed',
             },
           ],
         },
@@ -1109,14 +1112,13 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(page.getByText('document_review', { exact: true })).toBeVisible()
         // Versions are named by when they were saved and what changed, never by an internal r-number.
         await page.getByRole('tab', { name: '版本' }).click()
-        const current = page.getByRole('button', { name: /正在使用，社区发布 #2$/u })
+        const timeline = page.getByRole('group', { name: '版本谱系' })
+        const current = timeline.getByRole('button', { name: /正在使用$/u })
         await playwrightExpect(current).toBeVisible()
-        await page
-          .getByRole('button', { name: /的版本$/u })
-          .first()
-          .click()
-        // The picked version offers to be installed in its lineage card (the version list has its own buttons).
-        await playwrightExpect(page.getByRole('button', { name: '安装这个版本' }).first()).toBeVisible()
+        await playwrightExpect(current).toContainText('社区 #2')
+        await timeline.getByRole('button').nth(1).click()
+        // The picked version offers to be installed beside the timeline.
+        await playwrightExpect(page.getByRole('button', { name: '安装这个版本' })).toBeVisible()
         await page.screenshot({ path: '.local/browser-test-results/lineage.png', fullPage: true })
         await playwrightExpect(page.locator('main')).not.toContainText(/(?:^|[^a-z_])r\d+(?:[^\d]|$)/u)
         await playwrightExpect(page.locator('main')).not.toContainText('Revision')
@@ -1139,6 +1141,88 @@ test.describe('NekroNxt browser projections', () => {
         )
       },
     )
+  })
+
+  test('folds versions nothing needs on the timeline and cleans them up or keeps one', async () => {
+    const day = 86_400_000
+    const base = Date.now() - 3 * day
+    const draft = (id: string, label: string, at: number) => ({
+      revisionId: id,
+      extensionId: browserExtensionId,
+      label,
+      origin: 'authored',
+      createdAt: at,
+      current: false,
+      releaseNumbers: [],
+      kept: false,
+    })
+    const lineage = {
+      lines: [
+        {
+          extensionId: browserExtensionId,
+          displayName: '文档复核',
+          nodes: [
+            { ...draft(browserExtensionPreviousRevisionId, 'v1', base), releaseNumbers: [1], protectedBy: 'released' },
+            draft('xrv_draftone', 'v2', base + day + 1000),
+            draft('xrv_drafttwo', 'v3', base + day + 2000),
+            draft('xrv_draftthree', 'v4', base + day + 3000),
+            {
+              ...draft(browserExtensionRevisionId, 'v5', base + 2 * day),
+              current: true,
+              protectedBy: 'installed',
+            },
+          ],
+        },
+        {
+          extensionId: 'ext_branchline',
+          displayName: '文档复核精简版',
+          branchOf: { extensionId: browserExtensionId, revisionId: browserExtensionPreviousRevisionId },
+          nodes: [
+            { ...draft('xrv_branchone', 'v1', base + 0.5 * day), extensionId: 'ext_branchline', origin: 'branch' },
+            {
+              ...draft('xrv_branchtwo', 'v2', base + 1.5 * day),
+              extensionId: 'ext_branchline',
+              parentRevisionId: 'xrv_branchone',
+            },
+          ],
+        },
+      ],
+    }
+    const deletes: unknown[] = []
+    for (const width of [1440, 375]) {
+      await withProductPage(
+        `/workshop/extensions/${browserExtensionId}?tab=versions`,
+        async (page) => {
+          const timeline = page.getByRole('group', { name: '版本谱系' })
+          await playwrightExpect(timeline.getByRole('button', { name: /正在使用$/u })).toBeVisible()
+          const fold = timeline.getByRole('button', { name: /3 个中间版本/u })
+          await fold.click()
+          await playwrightExpect(page.getByRole('list', { name: '中间版本' }).getByRole('checkbox')).toHaveCount(3)
+          await page.screenshot({ path: `.local/browser-test-results/versions-fold-${width}.png`, fullPage: true })
+          await page.getByRole('list', { name: '中间版本' }).getByRole('checkbox').first().uncheck()
+          await page.getByRole('button', { name: '清理选中的 2 个' }).click()
+          await page.getByRole('dialog').getByRole('button', { name: '清理', exact: true }).click()
+          await playwrightExpect.poll(() => deletes.length).toBe(width === 1440 ? 1 : 2)
+          // Expanding shows the folded versions one by one; a version selected there can be kept.
+          await fold.click()
+          await page.getByRole('button', { name: '在图上展开' }).click()
+          await playwrightExpect(timeline.getByRole('button')).toHaveCount(7)
+          await page.screenshot({ path: `.local/browser-test-results/versions-expanded-${width}.png`, fullPage: true })
+        },
+        browserSnapshot,
+        async (page) => {
+          await page.setViewportSize({ width, height: 900 })
+          await page.route(`**/api/extensions/${browserExtensionId}/lineage`, (request) =>
+            request.fulfill({ json: lineage }),
+          )
+          await page.route(`**/api/extensions/${browserExtensionId}/revisions/delete`, (request) => {
+            deletes.push(request.request().postDataJSON())
+            return request.fulfill({ json: { deleted: 2 } })
+          })
+        },
+      )
+    }
+    expect(deletes[0]).toEqual({ revisionIds: ['xrv_drafttwo', 'xrv_draftone'] })
   })
 
   test('keeps Host UI content inside Host-owned page insets for navigation and full-width modes', async () => {

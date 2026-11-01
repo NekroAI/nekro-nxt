@@ -110,6 +110,35 @@ export class ExtensionSourceStore {
     return trash
   }
 
+  /** Moves one Revision's sources aside; `undefined` when the directory is already gone. */
+  async stageRevisionDeletion(extensionId: ExtensionId, revisionId: ExtensionRevisionId): Promise<string | undefined> {
+    const source = this.revisionSourceDirectory(extensionId, revisionId)
+    const trash = path.join(this.#root, 'trash', 'revisions', `${revisionId}-${randomUUID()}`)
+    await mkdir(path.dirname(trash), { recursive: true, mode: 0o700 })
+    try {
+      await rename(source, trash)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return undefined
+      throw error
+    }
+    return trash
+  }
+
+  async restoreStagedRevision(extensionId: ExtensionId, revisionId: ExtensionRevisionId, trash: string): Promise<void> {
+    await rename(this.#revisionTrash(trash), this.revisionSourceDirectory(extensionId, revisionId))
+  }
+
+  async discardStagedRevision(trash: string): Promise<void> {
+    await rm(this.#revisionTrash(trash), { recursive: true, force: true })
+  }
+
+  #revisionTrash(trash: string): string {
+    const relative = path.relative(path.join(this.#root, 'trash', 'revisions'), trash)
+    if (relative.startsWith('..') || path.isAbsolute(relative) || relative.includes(path.sep))
+      throw new Error('Revision trash path escaped its root.')
+    return trash
+  }
+
   async restoreStagedExtension(extensionId: ExtensionId, trash: string): Promise<void> {
     assertStorageIdentity(extensionId)
     const trashRoot = path.join(this.#root, 'trash', 'extensions')
