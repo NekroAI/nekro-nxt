@@ -94,6 +94,8 @@ import { AdministratorsSection } from './administrators-section.js'
 import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
 import { StorageSection } from './storage-section.js'
+import { formatBytes } from '../../desktop-storage.js'
+import { useDesktopUpdate, type DesktopPlatform } from '../../desktop-update.js'
 import styles from './settings.module.css'
 
 // Four groups (docs/NekroNxt界面交互模型.md §9); the order inside a group is the order people need them.
@@ -1242,9 +1244,20 @@ function Appearance() {
 
 const compiledVersion = typeof __NEKRO_PRODUCT_VERSION__ === 'string' ? __NEKRO_PRODUCT_VERSION__ : ''
 
-/** Version, whether a newer release exists on this build's channel, and the switch for automatic checks. */
+/** What the app does after it quits to install, in the terms of each platform's installer. */
+const INSTALL_STEP: Record<DesktopPlatform, string> = {
+  win: '退出后会打开安装程序。',
+  mac: '退出后会打开安装盘，把新版本拖进「应用程序」替换旧版本。',
+  linux: '退出后会替换当前程序并重新打开。',
+}
+
+/**
+ * Version, whether a newer release exists on this build's channel, and the switch for automatic checks. In the desktop
+ * app an available update is downloaded, checked and installed from here (#87); elsewhere the row links to the release.
+ */
 function ProductUpdateRows({ updates }: { readonly updates: ReturnType<typeof useProductUpdates> }) {
   const { status, checking, checkNow, setAutoCheck } = updates
+  const desktop = useDesktopUpdate()
   if (status === undefined) return null
   const when =
     status.checkedAt === undefined
@@ -1261,24 +1274,82 @@ function ProductUpdateRows({ updates }: { readonly updates: ReturnType<typeof us
             ? '正在检查'
             : '还没有检查'
   const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
+  const available = status.state === 'available' && status.latest !== undefined
+  const phase = desktop?.state.phase
+  const description =
+    !available || desktop === undefined
+      ? stateText
+      : desktop.state.phase === 'downloading'
+        ? `正在从${desktop.state.source}下载 ${desktop.state.version} · ${formatBytes(desktop.state.received)} / ${formatBytes(desktop.state.total)}`
+        : desktop.state.phase === 'ready'
+          ? `${desktop.state.version} 已下载并校验。${INSTALL_STEP[desktop.platform]}`
+          : desktop.state.phase === 'installing'
+            ? '正在退出并打开安装包'
+            : desktop.state.phase === 'failed'
+              ? desktop.state.error
+              : stateText
+  const releaseLink =
+    status.latest === undefined ? null : (
+      <a href={status.latest.url} className={styles.link} target="_blank" rel="noreferrer">
+        查看更新内容
+      </a>
+    )
+  const action = !available ? (
+    <Button size="small" busy={checking} onClick={() => void checkNow().catch(failure)}>
+      检查更新
+    </Button>
+  ) : desktop === undefined ? (
+    releaseLink
+  ) : (
+    <span className={styles.updateActions}>
+      {releaseLink}
+      {phase === 'downloading' ? (
+        <Button size="small" onClick={() => void desktop.cancel().catch(failure)}>
+          取消
+        </Button>
+      ) : phase === 'ready' || phase === 'installing' ? (
+        <Button
+          size="small"
+          variant="primary"
+          busy={phase === 'installing'}
+          onClick={() => void desktop.install().catch(failure)}
+        >
+          退出并安装
+        </Button>
+      ) : (
+        <Button size="small" variant="primary" onClick={() => void desktop.download().catch(failure)}>
+          {phase === 'failed' ? '重新下载' : '下载更新'}
+        </Button>
+      )}
+    </span>
+  )
   return (
     <>
       {status.channel === 'development' ? null : (
         <>
-          <PropertyRow label="更新" description={stateText}>
-            {status.state === 'available' && status.latest !== undefined ? (
-              <a href={status.latest.url} className={styles.link} target="_blank" rel="noreferrer">
-                查看更新内容
-              </a>
-            ) : (
-              <Button size="small" busy={checking} onClick={() => void checkNow().catch(failure)}>
-                检查更新
-              </Button>
-            )}
+          <PropertyRow
+            label="更新"
+            description={
+              desktop?.state.phase === 'downloading' ? (
+                <>
+                  {description}
+                  <progress
+                    className={styles.updateProgress}
+                    aria-label="下载进度"
+                    max={desktop.state.total}
+                    value={desktop.state.received}
+                  />
+                </>
+              ) : (
+                description
+              )
+            }
+          >
+            {action}
           </PropertyRow>
           <PropertyRow
             label="自动检查更新"
-            tip={`每 6 小时向 GitHub 查询一次${status.channel === 'preview' ? '预览版' : '正式版'}的最新发布，不发送这台实例的任何信息。`}
+            tip={`每 6 小时向 GitHub 和 NekroNXT 社区查询一次${status.channel === 'preview' ? '预览版' : '正式版'}的最新发布，不发送这台实例的任何信息。`}
           >
             <Switch
               label="自动检查更新"

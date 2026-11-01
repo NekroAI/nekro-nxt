@@ -1,3 +1,4 @@
+import { ProductUpdateStatusSchema } from '@nekro-nxt/contracts'
 import { app, dialog, shell, utilityProcess, type BrowserWindow, type UtilityProcess } from 'electron'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -43,6 +44,8 @@ import {
 import { HostStartupWindow } from './startup-window.js'
 import { DesktopWindowLifecycle, type WindowTrayActions } from './window-lifecycle.js'
 import { createWindowsTray } from './windows-tray.js'
+import { DesktopUpdates, type DesktopPlatform } from './desktop-update.js'
+import { openInstaller } from './desktop-installer.js'
 
 const LOOPBACK_HOST = '127.0.0.1'
 
@@ -77,6 +80,9 @@ let cancelled = false
 let quitting = false
 let shutdownTask: Promise<void> | undefined
 let windowLifecycle: DesktopWindowLifecycle | undefined
+let localOrigin: string | undefined
+/** Set by an update install: opens the installer once the Host has stopped, just before the app exits. */
+let afterHostStopped: (() => Promise<void>) | undefined
 
 const productReleasePath = (): string => resolveProductReleasePath(import.meta.url)
 
@@ -404,6 +410,37 @@ const dataDirectory = new DataDirectoryService({
   showItemInFolder: (target) => shell.showItemInFolder(target),
 })
 
+const desktopPlatform: DesktopPlatform | undefined =
+  process.platform === 'darwin'
+    ? 'mac'
+    : process.platform === 'win32'
+      ? 'win'
+      : process.platform === 'linux'
+        ? 'linux'
+        : undefined
+
+// Settings → 关于 → 更新 (#87): the installer of the newer release is fetched here and opened after the app quits.
+const desktopUpdates =
+  desktopPlatform === undefined || dataMoveMode
+    ? undefined
+    : new DesktopUpdates({
+        platform: desktopPlatform,
+        arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+        directory: path.join(app.getPath('userData'), 'updates'),
+        readStatus: async () => {
+          if (localOrigin === undefined) throw new Error('本地服务还没有启动。')
+          const response = await fetch(new URL('/api/product/updates', localOrigin))
+          if (!response.ok) throw new Error(`读取更新信息失败（${response.status}）。`)
+          return ProductUpdateStatusSchema.parse(await response.json())
+        },
+        quitAndInstall: (afterQuit) => {
+          afterHostStopped = afterQuit
+          app.quit()
+        },
+        openInstaller: (file, platform) =>
+          openInstaller(file, platform, (execPath) => app.relaunch({ execPath, args: [] })),
+      })
+
 /**
  * Runs `integrity_check` on a copied database in the bundled server runtime, which owns SQLite access; the main process
  * opens no database itself.
@@ -471,12 +508,14 @@ const launchProduct = async (): Promise<void> => {
   publishStartup({ mode: 'starting' })
   try {
     const origin = await startProductHost(productRelease)
+    localOrigin = origin
     if (cancelled || quitting) return
     const manager = await DesktopInstanceManager.create({
       localOrigin: origin,
       release: productRelease,
       localHostStatus: localHostLifecycle.status,
       dataDirectory,
+      ...(desktopUpdates === undefined ? {} : { updates: desktopUpdates }),
     })
     if (cancelled || quitting) {
       manager.dispose()
@@ -608,6 +647,7 @@ app.on('before-quit', (event) => {
     await stopProductHost()
     await startupTask
     if (restoreTask !== undefined) await waitForHostShutdown({ exited: restoreTask, onWaiting: showHostStopWaiting })
+    await afterHostStopped?.()
   })().finally(() => {
     shutdownTask = undefined
     startupWindow?.window.destroy()

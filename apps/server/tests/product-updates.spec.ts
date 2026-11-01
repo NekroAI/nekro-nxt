@@ -156,6 +156,136 @@ describe('product updates', () => {
     expect(development.requested).toEqual([])
   })
 
+  it('lists checked installers and puts the community mirror ahead of GitHub for the same release', async () => {
+    const sha = (digit: string) => digit.repeat(64)
+    const sources = fakeGitHub({
+      '/releases/latest': {
+        tag_name: 'v0.8.0',
+        html_url: 'https://github.com/NekroAI/nekro-nxt/releases/tag/v0.8.0',
+        assets: [
+          {
+            name: 'nekro-nxt-win-x64-v0.8.0-setup.exe',
+            size: 200,
+            digest: `sha256:${sha('a')}`,
+            browser_download_url: 'https://github.com/dl/nekro-nxt-win-x64-v0.8.0-setup.exe',
+          },
+          {
+            name: 'nekro-nxt-mac-arm64-v0.8.0.dmg',
+            size: 300,
+            digest: `sha256:${sha('b')}`,
+            browser_download_url: 'https://github.com/dl/nekro-nxt-mac-arm64-v0.8.0.dmg',
+          },
+          // No published digest: it cannot be checked after download, so it is not offered.
+          {
+            name: 'nekro-nxt-linux-x64-v0.8.0.AppImage',
+            size: 400,
+            browser_download_url: 'https://github.com/dl/nekro-nxt-linux-x64-v0.8.0.AppImage',
+          },
+          { name: 'notes.txt', size: 1, digest: `sha256:${sha('c')}`, browser_download_url: 'https://github.com/dl/n' },
+        ],
+      },
+      '/api/v1/desktop/stable/manifest': {
+        format: 'nxt.desktop-mirror',
+        version: 1,
+        channel: 'stable',
+        releaseVersion: '0.8.0',
+        commit: 'abcdef1234567890abcdef1234567890abcdef12',
+        publishedAt: 5,
+        releaseUrl: 'https://github.com/NekroAI/nekro-nxt/releases/tag/v0.8.0',
+        files: [
+          {
+            platform: 'win',
+            arch: 'x64',
+            name: 'nekro-nxt-win-x64-v0.8.0-setup.exe',
+            size: 200,
+            sha256: sha('a'),
+            path: 'files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe',
+          },
+          // Disagrees with GitHub on the content: only GitHub's copy is offered.
+          {
+            platform: 'mac',
+            arch: 'arm64',
+            name: 'nekro-nxt-mac-arm64-v0.8.0.dmg',
+            size: 300,
+            sha256: sha('d'),
+            path: 'files/v0.8.0/nekro-nxt-mac-arm64-v0.8.0.dmg',
+          },
+        ],
+      },
+    })
+    const updates = new ProductUpdates({
+      releaseId: '0.7.0+c920874da1ef',
+      repository: 'NekroAI/nekro-nxt',
+      mirror: 'https://community.example',
+      settings: settingsStore(),
+      fetch: sources.fetch,
+    })
+    const status = await updates.check()
+    expect(status.latest?.downloads).toEqual([
+      {
+        platform: 'win',
+        arch: 'x64',
+        name: 'nekro-nxt-win-x64-v0.8.0-setup.exe',
+        size: 200,
+        sha256: sha('a'),
+        urls: [
+          'https://community.example/api/v1/desktop/stable/files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe',
+          'https://github.com/dl/nekro-nxt-win-x64-v0.8.0-setup.exe',
+        ],
+      },
+      {
+        platform: 'mac',
+        arch: 'arm64',
+        name: 'nekro-nxt-mac-arm64-v0.8.0.dmg',
+        size: 300,
+        sha256: sha('b'),
+        urls: ['https://github.com/dl/nekro-nxt-mac-arm64-v0.8.0.dmg'],
+      },
+    ])
+  })
+
+  it('finds a Preview update through the mirror when GitHub cannot be reached', async () => {
+    const mirror = fakeGitHub({
+      '/api/v1/desktop/preview/manifest': {
+        format: 'nxt.desktop-mirror',
+        version: 1,
+        channel: 'preview',
+        releaseVersion: '0.8.0-20261101-010101utc.g2222222222',
+        commit: '2222222222222222222222222222222222222222',
+        publishedAt: 9,
+        releaseUrl: 'https://github.com/NekroAI/nekro-nxt/releases/tag/preview',
+        files: [
+          {
+            platform: 'linux',
+            arch: 'x64',
+            name: 'nekro-nxt-preview-linux-x64-v0.8.0.AppImage',
+            size: 10,
+            sha256: 'e'.repeat(64),
+            path: 'files/2222222222222222222222222222222222222222/nekro-nxt-preview-linux-x64-v0.8.0.AppImage',
+          },
+        ],
+      },
+    })
+    const updates = new ProductUpdates({
+      releaseId: '0.8.0-20261031-010101utc.g111111111111+111111111111',
+      repository: 'NekroAI/nekro-nxt',
+      mirror: 'https://community.example',
+      settings: settingsStore(),
+      fetch: (url) =>
+        (url instanceof Request ? url.url : url.toString()).startsWith('https://api.github.com')
+          ? Promise.reject(new Error('offline'))
+          : mirror.fetch(url),
+    })
+    await expect(updates.check()).resolves.toMatchObject({
+      state: 'available',
+      latest: {
+        version: '0.8.0-20261101-010101utc.g2222222222',
+        commit: '2222222',
+        downloads: [{ platform: 'linux', urls: [expect.stringContaining('community.example') as unknown] }],
+      },
+    })
+  })
+
   it('keeps the automatic check setting', () => {
     const settings = settingsStore()
     const updates = new ProductUpdates({ releaseId: '0.4.0+c920874da1ef', repository: 'NekroAI/nekro-nxt', settings })

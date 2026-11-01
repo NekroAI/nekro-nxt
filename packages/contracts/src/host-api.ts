@@ -1208,6 +1208,20 @@ export const ChannelContextPolicyViewSchema = z
 
 export type ChannelContextPolicyView = z.output<typeof ChannelContextPolicyViewSchema>
 
+/** One desktop installer of a release; `urls` lists the sources to try in order. */
+export const ProductDownloadSchema = z
+  .object({
+    platform: z.enum(['mac', 'win', 'linux']),
+    arch: z.enum(['arm64', 'x64']),
+    name: z.string().min(1),
+    size: z.number().int().positive(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    urls: z.array(z.string().url()).min(1),
+  })
+  .strict()
+
+export type ProductDownload = z.output<typeof ProductDownloadSchema>
+
 /** Whether a newer release exists on the build's own channel; development builds are never compared. */
 export const ProductUpdateStatusSchema = z
   .object({
@@ -1222,6 +1236,8 @@ export const ProductUpdateStatusSchema = z
         commit: z.string().optional(),
         url: z.string().url(),
         publishedAt: z.number().int().nonnegative().optional(),
+        /** Desktop installers of this release; the desktop app downloads its own and checks size and digest. */
+        downloads: z.array(ProductDownloadSchema).optional(),
       })
       .strict()
       .optional(),

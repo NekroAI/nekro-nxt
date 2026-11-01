@@ -24,6 +24,7 @@ import {
   writeJson,
   assertAvailableModel,
 } from './host-route-support.js'
+import { DEFAULT_COMMUNITY_URL } from './community.js'
 import { ProductUpdates } from './product-updates.js'
 import { readMessagePacing, writeMessagePacing, type MessagePacingSettingsStore } from './message-pacing.js'
 import { readCompactionSettings, writeCompactionSettings } from './compaction-settings.js'
@@ -299,6 +300,7 @@ export const createNekroHostApi = (
   const productUpdates = new ProductUpdates({
     releaseId: productMetadata.releaseId,
     repository: productMetadata.repositoryUrl.replace(/^https:\/\/github\.com\//u, '').replace(/\/$/u, ''),
+    mirror: DEFAULT_COMMUNITY_URL,
     settings: {
       get: (key) => runtime.repository.getSystemSetting(key),
       put: (key, value, expectedRevision) => {

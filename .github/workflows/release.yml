@@ -162,3 +162,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
         run: node scripts/stable-release-ci.mjs publish --artifacts-dir .local/stable-release
+      # Community mirror of the installers (#87); off until the repository variable R2_ACCOUNT_ID is set.
+      - name: Mirror installers to the community site
+        if: ${{ vars.R2_ACCOUNT_ID != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/mirror-desktop-release.mjs stable --artifacts-dir .local/stable-release

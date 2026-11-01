@@ -1,4 +1,4 @@
-import type { JsonValue, ProductUpdateStatus } from '@nekro-nxt/contracts'
+import type { JsonValue, ProductDownload, ProductUpdateStatus } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 
 /** How often a host looks for a newer release on its own; a manual check is always allowed. */
@@ -46,10 +46,86 @@ const GitHubReleaseSchema = z
     published_at: z.string().nullable().optional(),
     updated_at: z.string().nullable().optional(),
     body: z.string().nullable().optional(),
+    assets: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            size: z.number(),
+            digest: z.string().nullable().optional(),
+            browser_download_url: z.string().url(),
+          })
+          .loose(),
+      )
+      .optional(),
   })
   .loose()
 
 type GitHubRelease = z.output<typeof GitHubReleaseSchema>
+
+/** What the CI writes next to the installers it copies to the community mirror. */
+const MirrorManifestSchema = z
+  .object({
+    format: z.literal('nxt.desktop-mirror'),
+    version: z.literal(1),
+    channel: z.enum(['stable', 'preview']),
+    releaseVersion: z.string(),
+    commit: z.string().regex(/^[0-9a-f]{7,40}$/u),
+    publishedAt: z.number().int().nonnegative(),
+    releaseUrl: z.string().url(),
+    files: z.array(
+      z
+        .object({
+          platform: z.enum(['mac', 'win', 'linux']),
+          arch: z.enum(['arm64', 'x64']),
+          name: z.string().min(1),
+          size: z.number().int().positive(),
+          sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+          path: z.string().min(1),
+        })
+        .strict(),
+    ),
+  })
+  .loose()
+
+/** One source's view of the newest release on the channel. */
+interface ReleaseCandidate {
+  readonly version: string
+  readonly commit?: string
+  readonly url: string
+  readonly publishedAt?: number
+  readonly downloads: readonly ProductDownload[]
+}
+
+const PLATFORMS = ['mac', 'win', 'linux'] as const
+const ARCHITECTURES = ['arm64', 'x64'] as const
+const INSTALLER = /^nekro-nxt(?:-preview)?-(mac|win|linux)-(arm64|x64)-v.+\.(?:dmg|exe|AppImage)$/u
+
+/** Installers among a GitHub release's assets; one without a published digest cannot be checked and is left out. */
+export const githubDownloads = (release: GitHubRelease): ProductDownload[] =>
+  (release.assets ?? []).flatMap((asset) => {
+    const match = INSTALLER.exec(asset.name)
+    const sha256 = /^sha256:([a-f0-9]{64})$/u.exec(asset.digest ?? '')?.[1]
+    if (match === null || sha256 === undefined || !Number.isSafeInteger(asset.size) || asset.size <= 0) return []
+    const platform = PLATFORMS.find((value) => value === match[1])
+    const arch = ARCHITECTURES.find((value) => value === match[2])
+    if (platform === undefined || arch === undefined) return []
+    return [{ platform, arch, name: asset.name, size: asset.size, sha256, urls: [asset.browser_download_url] }]
+  })
+
+/** The same installer from both sources: the mirror goes first, GitHub stays as the fallback. */
+const mergeDownloads = (mirror: readonly ProductDownload[], github: readonly ProductDownload[]): ProductDownload[] => {
+  const byName = new Map(github.map((download) => [download.name, download]))
+  const merged = mirror.map((download) => {
+    const other = byName.get(download.name)
+    byName.delete(download.name)
+    if (other === undefined) return download
+    // Two sources disagreeing on the content: trust neither copy of the mirror.
+    if (other.sha256 !== download.sha256 || other.size !== download.size) return other
+    return { ...download, urls: [...download.urls, ...other.urls] }
+  })
+  return [...merged, ...byName.values()]
+}
 
 export interface ProductUpdatesOptions {
   readonly releaseId: string
@@ -59,6 +135,8 @@ export interface ProductUpdatesOptions {
     get(key: string): { readonly value: JsonValue; readonly revision: number } | undefined
     put(key: string, value: JsonValue, expectedRevision: number | undefined): void
   }
+  /** Community site that mirrors the installers for those who cannot reach GitHub; omitted, only GitHub is used. */
+  readonly mirror?: string
   readonly fetch?: typeof fetch
   readonly now?: () => number
   readonly onChange?: (status: ProductUpdateStatus) => void
@@ -136,28 +214,38 @@ export class ProductUpdates {
   async #check(): Promise<ProductUpdateStatus> {
     const checkedAt = this.#now()
     try {
-      const release = await this.#release(this.#identity.channel === 'preview' ? 'tags/preview' : 'latest')
-      const url = release.html_url ?? `https://github.com/${this.#options.repository}/releases`
-      // Preview replaces a rolling release: published_at remains its original publication date.
-      const releaseTime = this.#identity.channel === 'preview' ? release.updated_at : release.published_at
-      const publishedAt = typeof releaseTime === 'string' ? Date.parse(releaseTime) : Number.NaN
-      const published = Number.isFinite(publishedAt) ? { publishedAt } : {}
-      if (this.#identity.channel === 'preview') {
-        const body = release.body ?? ''
-        const commit = /nxt-preview-commit:([0-9a-f]{7,40})/u.exec(body)?.[1]
-        if (commit === undefined) throw new Error('预览版发布页缺少提交信息。')
-        const name = release.name?.replace(/^NekroNXT Preview\s+/u, '') ?? 'preview'
+      const preview = this.#identity.channel === 'preview'
+      const [github, mirror] = await Promise.allSettled([this.#githubCandidate(), this.#mirrorCandidate()])
+      const fromGitHub = github.status === 'fulfilled' ? github.value : undefined
+      const fromMirror = mirror.status === 'fulfilled' ? mirror.value : undefined
+      const latest = this.#newest(fromGitHub, fromMirror)
+      if (latest === undefined) throw github.status === 'rejected' ? github.reason : new Error('没有找到可用的发布。')
+      const published = latest.publishedAt === undefined ? {} : { publishedAt: latest.publishedAt }
+      const downloads = latest.downloads.length === 0 ? {} : { downloads: [...latest.downloads] }
+      if (preview) {
         const current = this.#identity.commit ?? ''
+        const commit = latest.commit ?? ''
         const same = commit.startsWith(current) || current.startsWith(commit)
         this.#result = same
           ? { state: 'up-to-date', checkedAt }
-          : { state: 'available', checkedAt, latest: { version: name, commit: commit.slice(0, 7), url, ...published } }
+          : {
+              state: 'available',
+              checkedAt,
+              latest: {
+                version: latest.version,
+                commit: commit.slice(0, 7),
+                url: latest.url,
+                ...published,
+                ...downloads,
+              },
+            }
       } else {
-        const tag = release.tag_name ?? ''
-        const version = tag.replace(/^v/u, '')
-        if (semverParts(version) === undefined) throw new Error(`最新正式版的标签无法识别：${tag}`)
-        this.#result = isNewerVersion(version, this.#identity.version)
-          ? { state: 'available', checkedAt, latest: { version, url, ...published } }
+        this.#result = isNewerVersion(latest.version, this.#identity.version)
+          ? {
+              state: 'available',
+              checkedAt,
+              latest: { version: latest.version, url: latest.url, ...published, ...downloads },
+            }
           : { state: 'up-to-date', checkedAt }
       }
     } catch (error) {
@@ -171,6 +259,64 @@ export class ProductUpdates {
     const status = this.status()
     this.#options.onChange?.(status)
     return status
+  }
+
+  /** The newer of the two views; the same release from both keeps the mirror's installers ahead of GitHub's. */
+  #newest(github: ReleaseCandidate | undefined, mirror: ReleaseCandidate | undefined): ReleaseCandidate | undefined {
+    if (github === undefined || mirror === undefined) return github ?? mirror
+    const same =
+      this.#identity.channel === 'preview'
+        ? github.commit !== undefined &&
+          mirror.commit !== undefined &&
+          github.commit.startsWith(mirror.commit.slice(0, 7))
+        : github.version === mirror.version
+    if (same) return { ...github, downloads: mergeDownloads(mirror.downloads, github.downloads) }
+    const mirrorNewer =
+      this.#identity.channel === 'preview'
+        ? (mirror.publishedAt ?? 0) > (github.publishedAt ?? 0)
+        : isNewerVersion(mirror.version, github.version)
+    return mirrorNewer ? mirror : github
+  }
+
+  async #githubCandidate(): Promise<ReleaseCandidate> {
+    const preview = this.#identity.channel === 'preview'
+    const release = await this.#release(preview ? 'tags/preview' : 'latest')
+    const url = release.html_url ?? `https://github.com/${this.#options.repository}/releases`
+    // Preview replaces a rolling release: published_at remains its original publication date.
+    const releaseTime = preview ? release.updated_at : release.published_at
+    const publishedAt = typeof releaseTime === 'string' ? Date.parse(releaseTime) : Number.NaN
+    const published = Number.isFinite(publishedAt) ? { publishedAt } : {}
+    const downloads = githubDownloads(release)
+    if (preview) {
+      const commit = /nxt-preview-commit:([0-9a-f]{7,40})/u.exec(release.body ?? '')?.[1]
+      if (commit === undefined) throw new Error('预览版发布页缺少提交信息。')
+      const version = release.name?.replace(/^NekroNXT Preview\s+/u, '') ?? 'preview'
+      return { version, commit, url, ...published, downloads }
+    }
+    const tag = release.tag_name ?? ''
+    const version = tag.replace(/^v/u, '')
+    if (semverParts(version) === undefined) throw new Error(`最新正式版的标签无法识别：${tag}`)
+    return { version, url, ...published, downloads }
+  }
+
+  async #mirrorCandidate(): Promise<ReleaseCandidate | undefined> {
+    const mirror = this.#options.mirror
+    if (mirror === undefined) return undefined
+    const manifestUrl = new URL(`/api/v1/desktop/${this.#identity.channel}/manifest`, mirror)
+    const response = await this.#fetch(manifestUrl, {
+      headers: { accept: 'application/json', 'user-agent': 'NekroNXT' },
+      signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
+    })
+    if (!response.ok) throw new Error(`社区镜像返回 ${response.status}。`)
+    const manifest = MirrorManifestSchema.parse(await response.json())
+    if (manifest.channel !== this.#identity.channel) throw new Error('社区镜像的发布通道不一致。')
+    return {
+      version: manifest.releaseVersion,
+      commit: manifest.commit,
+      url: manifest.releaseUrl,
+      publishedAt: manifest.publishedAt,
+      downloads: manifest.files.map(({ path, ...file }) => ({ ...file, urls: [new URL(path, manifestUrl).href] })),
+    }
   }
 
   async #release(path: string): Promise<GitHubRelease> {

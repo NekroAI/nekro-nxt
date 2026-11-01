@@ -52,7 +52,7 @@ pnpm desktop:stable --platform all
 pnpm release 0.1.0
 ```
 
-省略 `--platform` 时构建当前系统对应平台。`desktop:stable` 只在本地生成安装包，不创建 Tag 或上传；正式发布只使用带显式版本的 `pnpm release`。Release 构建要求 Git worktree 干净。更新通过下载并替换同通道完整产品包完成；自动替换、平台签名、公证和差分资源更新均未开放。
+省略 `--platform` 时构建当前系统对应平台。`desktop:stable` 只在本地生成安装包，不创建 Tag 或上传；正式发布只使用带显式版本的 `pnpm release`。Release 构建要求 Git worktree 干净。更新通过下载并替换同通道完整产品包完成：设置 → 关于 → 更新在应用内下载本机平台的安装包，核对大小和 SHA-256 后，在本地 Host 停止、数据目录释放之后打开安装包（Windows 运行安装程序，macOS 打开 DMG，Linux 替换当前 AppImage 并重启），见 `src/desktop-update.ts`。下载来源依次是 NekroNXT 社区镜像和 GitHub Release；CI 在设置了 `R2_ACCOUNT_ID` 变量和 `R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY` 密钥后，把安装包和清单同步到社区站的 R2（`scripts/mirror-desktop-release.mjs`）。静默替换、平台签名、公证和差分资源更新均未开放。
 
 ## 验证
 

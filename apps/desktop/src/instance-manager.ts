@@ -15,6 +15,7 @@ import {
 import { ClientNotificationFeedResponseSchema } from '@nekro-nxt/contracts'
 import path from 'node:path'
 import type { DesktopDataDirectory } from './data-directory-service.js'
+import type { DesktopUpdates } from './desktop-update.js'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { CredentialVault } from './credential-vault.js'
 import { trustedInstanceFailure, trustedInstanceSuccess } from './instance-operation-error.js'
@@ -201,6 +202,8 @@ export class DesktopInstanceManager {
   #lastCurrentPresentationSignature: string | undefined
   #disposed = false
   readonly #dataDirectory: DesktopDataDirectory | undefined
+  readonly #updates: DesktopUpdates | undefined
+  #detachUpdates: (() => void) | undefined
 
   private constructor(input: {
     window: BrowserWindow
@@ -209,9 +212,11 @@ export class DesktopInstanceManager {
     vault: CredentialVault
     localHostStatus: LocalHostStatus
     dataDirectory: DesktopDataDirectory | undefined
+    updates: DesktopUpdates | undefined
   }) {
     this.#window = input.window
     this.#dataDirectory = input.dataDirectory
+    this.#updates = input.updates
     this.#release = input.release
     this.#profiles = input.profiles
     this.#vault = input.vault
@@ -250,6 +255,8 @@ export class DesktopInstanceManager {
     readonly localHostStatus: LocalHostStatus
     /** Settings → 存储 for the local instance; absent in builds or modes that cannot move the data directory. */
     readonly dataDirectory?: DesktopDataDirectory
+    /** Settings → 关于 → 更新 for the local instance; absent where the app cannot update itself. */
+    readonly updates?: DesktopUpdates
   }): Promise<DesktopInstanceManager> {
     const userData = app.getPath('userData')
     const profiles = await InstanceProfileStore.open(path.join(userData, 'instance-profiles.json'), input.localOrigin)
@@ -274,6 +281,7 @@ export class DesktopInstanceManager {
           vault,
           localHostStatus: input.localHostStatus,
           dataDirectory: input.dataDirectory,
+          updates: input.updates,
         }),
       async (manager) => {
         manager.#registerIpc()
@@ -450,6 +458,7 @@ export class DesktopInstanceManager {
   dispose(): void {
     if (this.#disposed) return
     this.#disposed = true
+    this.#detachUpdates?.()
     this.#ipcRegistrations.dispose()
     this.#mutationLifecycle.dispose()
     this.#instanceMutations.close()
@@ -504,6 +513,7 @@ export class DesktopInstanceManager {
         if (event.sender.id === this.#productView?.webContents.id) this.closeOverlay(false, true, false)
       })
       this.#registerStorageIpc()
+      this.#registerUpdateIpc()
       this.#registerOverlayIpc('list', () => this.#snapshot())
       this.#registerOverlayIpc('close', (value) =>
         this.closeOverlay(false, true, isRecord(value) && value['restoreControl'] === true),
@@ -735,6 +745,43 @@ export class DesktopInstanceManager {
     })
     this.#ipcRegistrations.registerHandle('nxt:storage:reveal-old', (event) => required(event).revealOldDirectory())
     this.#ipcRegistrations.registerHandle('nxt:storage:dismiss', (event) => required(event).dismissNotice())
+  }
+
+  /**
+   * Settings → 关于 → 更新 updates this app, which only the local instance's page speaks for: a remote server's page
+   * reports that server's version, not this app's.
+   */
+  #registerUpdateIpc(): void {
+    const updates = this.#updates
+    const local = (event: Electron.IpcMainInvokeEvent): DesktopUpdates | undefined => {
+      this.#assertProductSender(event.sender.id)
+      const profile = this.#profiles.get(this.#currentProfileId)
+      if (profile?.kind !== 'local' || updates === undefined) return undefined
+      let origin: string | undefined
+      try {
+        origin = new URL(event.sender.getURL()).origin
+      } catch {
+        origin = undefined
+      }
+      return origin === new URL(profile.origin).origin ? updates : undefined
+    }
+    const required = (event: Electron.IpcMainInvokeEvent): DesktopUpdates => {
+      const service = local(event)
+      if (service === undefined) throw new Error('Desktop updates belong to the local instance.')
+      return service
+    }
+    this.#ipcRegistrations.registerHandle('nxt:update:state', (event) => {
+      const service = local(event)
+      return service === undefined
+        ? { supported: false }
+        : { supported: true, platform: service.platform, state: service.state }
+    })
+    this.#ipcRegistrations.registerHandle('nxt:update:download', (event) => required(event).download())
+    this.#ipcRegistrations.registerHandle('nxt:update:cancel', (event) => required(event).cancel())
+    this.#ipcRegistrations.registerHandle('nxt:update:install', (event) => required(event).install())
+    this.#detachUpdates = updates?.subscribe((state) =>
+      this.#productView?.webContents.send('nxt:update:changed', state),
+    )
   }
 
   #assertProductSender(senderId: number): void {

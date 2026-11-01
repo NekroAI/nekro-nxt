@@ -70,3 +70,16 @@ contextBridge.exposeInMainWorld('nekroDesktopStorage', {
   revealOldDirectory: () => ipcRenderer.invoke('nxt:storage:reveal-old'),
   dismissNotice: () => ipcRenderer.invoke('nxt:storage:dismiss'),
 })
+
+// Settings → 关于 → 更新. The main process answers only the local instance's own page.
+contextBridge.exposeInMainWorld('nekroDesktopUpdate', {
+  state: () => ipcRenderer.invoke('nxt:update:state'),
+  download: () => ipcRenderer.invoke('nxt:update:download'),
+  cancel: () => ipcRenderer.invoke('nxt:update:cancel'),
+  install: () => ipcRenderer.invoke('nxt:update:install'),
+  subscribe: (listener: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown): void => listener(state)
+    ipcRenderer.on('nxt:update:changed', handler)
+    return () => ipcRenderer.removeListener('nxt:update:changed', handler)
+  },
+})

@@ -367,3 +367,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/rolling-preview-release.mjs finalize --candidates-dir .local/preview-candidates --build-result success
+      # Community mirror of the installers (#87); off until the repository variable R2_ACCOUNT_ID is set.
+      - name: Mirror installers to the community site
+        if: ${{ vars.R2_ACCOUNT_ID != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/mirror-desktop-release.mjs preview --artifacts-dir .local/preview-candidates

@@ -170,6 +170,94 @@ test.describe('settings space', () => {
     }
   })
 
+  test('downloads an update inside the desktop app and installs it after quitting', async () => {
+    const status = {
+      channel: 'stable',
+      currentVersion: '0.7.0',
+      state: 'available',
+      autoCheck: true,
+      latest: {
+        version: '0.8.0',
+        url: 'https://github.com/NekroAI/nekro-nxt/releases/tag/v0.8.0',
+        downloads: [
+          {
+            platform: 'mac',
+            arch: 'arm64',
+            name: 'nekro-nxt-mac-arm64-v0.8.0.dmg',
+            size: 300 * 1024 ** 2,
+            sha256: fakeDigest,
+            urls: ['https://community.example/api/v1/desktop/stable/files/v0.8.0/nekro-nxt-mac-arm64-v0.8.0.dmg'],
+          },
+        ],
+      },
+    }
+    for (const width of [1440, 375]) {
+      const { page, errors } = await open('/settings/about', {
+        width,
+        before: async (target) => {
+          await target.route('**/api/product/updates', (request) => request.fulfill({ json: status }))
+          await target.addInitScript(() => {
+            const calls: string[] = []
+            const listeners = new Set<(state: unknown) => void>()
+            const emit = (state: unknown) => {
+              for (const listener of listeners) listener(state)
+              return state
+            }
+            window.addEventListener('fixture:update-ready', () => emit({ phase: 'ready', version: '0.8.0' }))
+            Object.assign(window, {
+              __updateCalls: calls,
+              nekroDesktopUpdate: {
+                state: () => Promise.resolve({ supported: true, platform: 'mac', state: { phase: 'idle' } }),
+                download: () => {
+                  calls.push('download')
+                  return Promise.resolve(
+                    emit({
+                      phase: 'downloading',
+                      version: '0.8.0',
+                      received: 120 * 1024 ** 2,
+                      total: 300 * 1024 ** 2,
+                      source: '社区镜像',
+                    }),
+                  )
+                },
+                cancel: () => Promise.resolve({ phase: 'idle' }),
+                install: () => {
+                  calls.push('install')
+                  return Promise.resolve(emit({ phase: 'installing', version: '0.8.0' }))
+                },
+                subscribe: (listener: (state: unknown) => void) => {
+                  listeners.add(listener)
+                  return () => listeners.delete(listener)
+                },
+              },
+            })
+          })
+        },
+      })
+      try {
+        await expect(page.getByText('有新版本 0.8.0')).toBeVisible()
+        await expect(page.getByRole('link', { name: '查看更新内容' })).toBeVisible()
+        await page.getByRole('button', { name: '下载更新' }).click()
+        await expect(page.getByText('正在从社区镜像下载 0.8.0 · 120.0 MB / 300.0 MB')).toBeVisible()
+        await expect(page.getByRole('progressbar', { name: '下载进度' })).toBeVisible()
+        await expect(page.getByRole('button', { name: '取消' })).toBeVisible()
+        await page.screenshot({ path: `.local/browser-test-results/settings-update-downloading-${width}.png` })
+        await page.evaluate(() => window.dispatchEvent(new Event('fixture:update-ready')))
+        await expect(
+          page.getByText('0.8.0 已下载并校验。退出后会打开安装盘，把新版本拖进「应用程序」替换旧版本。'),
+        ).toBeVisible()
+        await page.screenshot({ path: `.local/browser-test-results/settings-update-ready-${width}.png` })
+        await page.getByRole('button', { name: '退出并安装' }).click()
+        await expect
+          .poll(() => page.evaluate((): unknown => Reflect.get(window, '__updateCalls')))
+          .toEqual(['download', 'install'])
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
   test('moves the Desktop data directory from Settings → 存储 and shows what is left behind', async () => {
     const backup = { mode: 'data', directory: null, locked: false, keep: 2, usage: { count: 1, bytes: 2 * 1024 ** 3 } }
     const install = async (page: Page, status: Record<string, unknown>, choice: Record<string, unknown>) => {

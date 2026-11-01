@@ -31,6 +31,8 @@ declare const styles: {
   readonly srOnly: string
   readonly title: string
   readonly titleWithTip: string
+  readonly updateActions: string
+  readonly updateProgress: string
 }
 
 export default styles
