@@ -127,6 +127,12 @@ export function PublishDialog({
     .flatMap((item) => item.releases.filter((release) => release.communityUrl === communityUrl))
     .filter((release) => release.number !== null)
     .sort((left, right) => (right.number ?? 0) - (left.number ?? 0))[0]
+  // Which local version goes up, named the way the 版本 tab names it, with its lineage number (#95).
+  const target = revision ?? extension.revisions.at(-1)
+  const versionName =
+    target === undefined
+      ? '最新版本'
+      : `${describe(extension, target.id)?.title ?? '最新版本'}（${target.versionLabel}）`
 
   // 已发布过的扩展带出社区上的条目信息，供作者修改；首次发布用本机描述作为一句话简介的起点。
   useEffect(() => {
@@ -237,7 +243,7 @@ export function PublishDialog({
         }
       >
         <p>
-          <Chip tone={label.tone}>{label.label}</Chip> 发布 #{published.releaseNumber}
+          <Chip tone={label.tone}>{label.label}</Chip> 发布 #{published.releaseNumber} · 本机的{versionName}
         </p>
         <p>
           {published.reviewStatus === 'rejected'
@@ -312,7 +318,7 @@ export function PublishDialog({
       ) : account ? (
         <>
           <p>
-            以 @{account.handle} 发布 {(revision ? describe(extension, revision.id)?.title : undefined) ?? '最新版本'}
+            以 @{account.handle} 发布 <b>{versionName}</b>
             {previous?.number ? `，接在社区发布 #${previous.number} 之后` : '，这是它在社区上的第一次发布'}
             。所有人都能看到并安装它。
           </p>

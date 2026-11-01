@@ -576,6 +576,8 @@ test.describe('workshop', () => {
       }
       await openPublish()
       const dialog = page.getByRole('dialog')
+      // The dialog names the local version that goes up, with its lineage number (#95).
+      await expect(dialog).toContainText(/以 @\S+ 发布 .+（v\d+(?:·\d+)?）/u)
       await dialog.getByLabel('详细介绍').fill('虚构的详细介绍')
       await dialog.getByLabel('标签').fill('虚构、示例')
       await dialog.getByLabel('更新说明').fill('虚构的更新说明')
