@@ -209,19 +209,19 @@ describe.skipIf(process.platform === 'win32')('downloading ffmpeg', () => {
     })
     const registry = new AddonRegistry([mediaAddon(media)], { settings: memorySettings() })
     await registry.prepare()
-    const env: NodeJS.ProcessEnv = { DSH_FFPROBE_PATH: '/home/fixture/ffprobe' }
+    const env: NodeJS.ProcessEnv = { DSH_FFPROBE_PATH: '/opt/fixture/ffprobe' }
     const stop = syncProgramEnvironment(registry, env)
-    expect(env).toEqual({ DSH_FFPROBE_PATH: '/home/fixture/ffprobe' })
+    expect(env).toEqual({ DSH_FFPROBE_PATH: '/opt/fixture/ffprobe' })
     registry.install('media', 'download')
     await settle(media)
     expect(env).toEqual({
       FFMPEG_PATH: path.join(root, 'b6.1.1', 'ffmpeg'),
       DSH_FFMPEG_PATH: path.join(root, 'b6.1.1', 'ffmpeg'),
       FFPROBE_PATH: path.join(root, 'b6.1.1', 'ffprobe'),
-      DSH_FFPROBE_PATH: '/home/fixture/ffprobe',
+      DSH_FFPROBE_PATH: '/opt/fixture/ffprobe',
     })
     await registry.remove('media', 'download')
-    expect(env).toEqual({ DSH_FFPROBE_PATH: '/home/fixture/ffprobe' })
+    expect(env).toEqual({ DSH_FFPROBE_PATH: '/opt/fixture/ffprobe' })
     stop()
   })
 

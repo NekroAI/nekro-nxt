@@ -171,7 +171,7 @@ export const commonMediaDirectories = (
       'C:\\ffmpeg\\bin',
     ]
   }
-  return ['/usr/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin', '/snap/bin']
+  return ['/usr/bin', '/usr/local/bin', '/snap/bin']
 }
 
 /**
