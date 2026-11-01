@@ -26,7 +26,11 @@ test('puts a Stable release under its version and the rolling Preview under its 
 })
 
 test('describes every installer with a path relative to the manifest', () => {
-  const manifest = mirrorManifest(stable, [receipt()], { publishedAt: 5, releaseUrl: 'https://example.com/r' })
+  const manifest = mirrorManifest(stable, [receipt()], {
+    publishedAt: 5,
+    releaseUrl: 'https://example.com/r',
+    githubDownload: 'https://example.com/download/v0.8.0',
+  })
   assert.deepEqual(manifest, {
     format: 'nxt.desktop-mirror',
     version: 1,
@@ -43,6 +47,7 @@ test('describes every installer with a path relative to the manifest', () => {
         size: 200,
         sha256: 'a'.repeat(64),
         path: 'files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe',
+        githubUrl: 'https://example.com/download/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe',
       },
     ],
   })

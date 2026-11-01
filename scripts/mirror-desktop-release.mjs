@@ -1,6 +1,8 @@
-// Copies a published release's desktop installers to the community site's R2 bucket, so the desktop app can update
-// where GitHub is hard to reach (#87). Runs after the GitHub release is published; without the R2 secrets it does
-// nothing, and a failure here never undoes the GitHub release.
+// Copies a published release's desktop installers to NekroAI's public download bucket (`nekro-nxt-dist`, served at
+// https://dl.nekro.ai), so the desktop app and the community download page work where GitHub is hard to reach (#87).
+// The bucket holds only public releases; community uploads stay in the community site's own private bucket. Runs
+// after the GitHub release is published; without the R2 secrets it does nothing, and a failure here never undoes the
+// GitHub release.
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -9,16 +11,17 @@ import { fileURLToPath } from 'node:url'
 import { readProductRelease } from './product-release.mjs'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const DEFAULT_BUCKET = 'nekro-nxt-community-packages'
-const PREFIX = 'desktop'
+const DEFAULT_BUCKET = 'nekro-nxt-dist'
+/** Every NekroNXT file in the bucket sits under `nxt/`, so other NekroAI projects can share it. */
+const PREFIX = 'nxt/desktop'
 
 /** The folder one release's installers live in: the version for Stable, the commit for the rolling Preview. */
 export function mirrorFolder(release) {
   return release.channel === 'stable' ? `v${release.version}` : release.commit
 }
 
-/** The manifest NekroNXT reads from `/api/v1/desktop/<channel>/manifest`; file paths are relative to it. */
-export function mirrorManifest(release, receipts, { publishedAt, releaseUrl }) {
+/** The manifest at `nxt/desktop/<channel>/manifest.json`; file paths are relative to it. */
+export function mirrorManifest(release, receipts, { publishedAt, releaseUrl, githubDownload }) {
   const folder = mirrorFolder(release)
   return {
     format: 'nxt.desktop-mirror',
@@ -35,6 +38,7 @@ export function mirrorManifest(release, receipts, { publishedAt, releaseUrl }) {
       size: receipt.bytes,
       sha256: receipt.sha256,
       path: `files/${folder}/${receipt.artifact}`,
+      githubUrl: `${githubDownload}/${receipt.artifact}`,
     })),
   }
 }
@@ -117,7 +121,18 @@ async function main() {
 
   for (const receipt of receipts) {
     const key = `${PREFIX}/${channel}/files/${folder}/${receipt.artifact}`
-    aws(['s3', 'cp', path.join(directory, receipt.artifact), `s3://${bucket}/${key}`, '--only-show-errors'])
+    aws([
+      's3',
+      'cp',
+      path.join(directory, receipt.artifact),
+      `s3://${bucket}/${key}`,
+      '--content-type',
+      'application/octet-stream',
+      // A folder never changes once written: Stable is named by version, Preview by commit.
+      '--cache-control',
+      'public, max-age=31536000, immutable',
+      '--only-show-errors',
+    ])
     const head = JSON.parse(aws(['s3api', 'head-object', '--bucket', bucket, '--key', key]))
     if (head.ContentLength !== receipt.bytes) throw new Error(`社区镜像上的 ${receipt.artifact} 大小不一致。`)
   }
@@ -138,6 +153,7 @@ async function main() {
     const manifest = mirrorManifest(release, receipts, {
       publishedAt: Date.now(),
       releaseUrl: published.html_url ?? `https://github.com/${repository}/releases/tag/${tag}`,
+      githubDownload: `https://github.com/${repository}/releases/download/${tag}`,
     })
     await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
     aws([

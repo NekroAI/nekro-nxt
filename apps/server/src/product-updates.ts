@@ -3,6 +3,15 @@ import { z } from 'zod'
 
 /** How often a host looks for a newer release on its own; a manual check is always allowed. */
 export const PRODUCT_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000
+/** NekroAI's public download mirror of NekroNXT releases; `NEKRO_DOWNLOAD_MIRROR` points elsewhere or turns it off. */
+export const DEFAULT_DOWNLOAD_MIRROR = 'https://dl.nekro.ai/nxt'
+
+/** The mirror option from `NEKRO_DOWNLOAD_MIRROR`: unset uses NekroAI's, `off` or empty uses GitHub only. */
+export const downloadMirror = (value: string | undefined): { readonly mirror?: string } => {
+  if (value === undefined) return { mirror: DEFAULT_DOWNLOAD_MIRROR }
+  const trimmed = value.trim()
+  return trimmed === '' || trimmed === 'off' ? {} : { mirror: trimmed }
+}
 const CHECK_TIMEOUT_MS = 10_000
 const SETTING_KEY = 'product.updates'
 
@@ -63,7 +72,7 @@ const GitHubReleaseSchema = z
 
 type GitHubRelease = z.output<typeof GitHubReleaseSchema>
 
-/** What the CI writes next to the installers it copies to the community mirror. */
+/** What the CI writes next to the installers it copies to the NekroAI download mirror (`dl.nekro.ai`). */
 const MirrorManifestSchema = z
   .object({
     format: z.literal('nxt.desktop-mirror'),
@@ -82,6 +91,8 @@ const MirrorManifestSchema = z
           size: z.number().int().positive(),
           sha256: z.string().regex(/^[a-f0-9]{64}$/u),
           path: z.string().min(1),
+          /** The same installer on the GitHub release, for pages that offer both. */
+          githubUrl: z.string().url().optional(),
         })
         .strict(),
     ),
@@ -135,7 +146,10 @@ export interface ProductUpdatesOptions {
     get(key: string): { readonly value: JsonValue; readonly revision: number } | undefined
     put(key: string, value: JsonValue, expectedRevision: number | undefined): void
   }
-  /** Community site that mirrors the installers for those who cannot reach GitHub; omitted, only GitHub is used. */
+  /**
+   * Base of the download mirror for those who cannot reach GitHub, e.g. `https://dl.nekro.ai/nxt`; the manifest of a
+   * channel is `<mirror>/desktop/<channel>/manifest.json`. Omitted, only GitHub is used.
+   */
   readonly mirror?: string
   readonly fetch?: typeof fetch
   readonly now?: () => number
@@ -302,7 +316,7 @@ export class ProductUpdates {
   async #mirrorCandidate(): Promise<ReleaseCandidate | undefined> {
     const mirror = this.#options.mirror
     if (mirror === undefined) return undefined
-    const manifestUrl = new URL(`/api/v1/desktop/${this.#identity.channel}/manifest`, mirror)
+    const manifestUrl = new URL(`${mirror.replace(/\/+$/u, '')}/desktop/${this.#identity.channel}/manifest.json`)
     const response = await this.#fetch(manifestUrl, {
       headers: { accept: 'application/json', 'user-agent': 'NekroNXT' },
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
@@ -315,7 +329,14 @@ export class ProductUpdates {
       commit: manifest.commit,
       url: manifest.releaseUrl,
       publishedAt: manifest.publishedAt,
-      downloads: manifest.files.map(({ path, ...file }) => ({ ...file, urls: [new URL(path, manifestUrl).href] })),
+      downloads: manifest.files.map((file) => ({
+        platform: file.platform,
+        arch: file.arch,
+        name: file.name,
+        size: file.size,
+        sha256: file.sha256,
+        urls: [new URL(file.path, manifestUrl).href],
+      })),
     }
   }
 

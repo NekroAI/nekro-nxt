@@ -186,7 +186,7 @@ test.describe('settings space', () => {
             name: 'nekro-nxt-mac-arm64-v0.8.0.dmg',
             size: 300 * 1024 ** 2,
             sha256: fakeDigest,
-            urls: ['https://community.example/api/v1/desktop/stable/files/v0.8.0/nekro-nxt-mac-arm64-v0.8.0.dmg'],
+            urls: ['https://downloads.example/nxt/desktop/stable/files/v0.8.0/nekro-nxt-mac-arm64-v0.8.0.dmg'],
           },
         ],
       },

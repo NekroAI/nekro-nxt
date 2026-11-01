@@ -1,6 +1,6 @@
 import type { JsonValue } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
-import { isNewerVersion, ProductUpdates, releaseIdentity } from '../src/product-updates.ts'
+import { downloadMirror, isNewerVersion, ProductUpdates, releaseIdentity } from '../src/product-updates.ts'
 
 const settingsStore = () => {
   const rows = new Map<string, { value: JsonValue; revision: number }>()
@@ -184,7 +184,7 @@ describe('product updates', () => {
           { name: 'notes.txt', size: 1, digest: `sha256:${sha('c')}`, browser_download_url: 'https://github.com/dl/n' },
         ],
       },
-      '/api/v1/desktop/stable/manifest': {
+      '/nxt/desktop/stable/manifest.json': {
         format: 'nxt.desktop-mirror',
         version: 1,
         channel: 'stable',
@@ -200,6 +200,7 @@ describe('product updates', () => {
             size: 200,
             sha256: sha('a'),
             path: 'files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe',
+            githubUrl: 'https://github.com/dl/nekro-nxt-win-x64-v0.8.0-setup.exe',
           },
           // Disagrees with GitHub on the content: only GitHub's copy is offered.
           {
@@ -216,7 +217,7 @@ describe('product updates', () => {
     const updates = new ProductUpdates({
       releaseId: '0.7.0+c920874da1ef',
       repository: 'NekroAI/nekro-nxt',
-      mirror: 'https://community.example',
+      mirror: 'https://downloads.example/nxt',
       settings: settingsStore(),
       fetch: sources.fetch,
     })
@@ -229,7 +230,7 @@ describe('product updates', () => {
         size: 200,
         sha256: sha('a'),
         urls: [
-          'https://community.example/api/v1/desktop/stable/files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe',
+          'https://downloads.example/nxt/desktop/stable/files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe',
           'https://github.com/dl/nekro-nxt-win-x64-v0.8.0-setup.exe',
         ],
       },
@@ -246,7 +247,7 @@ describe('product updates', () => {
 
   it('finds a Preview update through the mirror when GitHub cannot be reached', async () => {
     const mirror = fakeGitHub({
-      '/api/v1/desktop/preview/manifest': {
+      '/nxt/desktop/preview/manifest.json': {
         format: 'nxt.desktop-mirror',
         version: 1,
         channel: 'preview',
@@ -269,7 +270,7 @@ describe('product updates', () => {
     const updates = new ProductUpdates({
       releaseId: '0.8.0-20261031-010101utc.g111111111111+111111111111',
       repository: 'NekroAI/nekro-nxt',
-      mirror: 'https://community.example',
+      mirror: 'https://downloads.example/nxt',
       settings: settingsStore(),
       fetch: (url) =>
         (url instanceof Request ? url.url : url.toString()).startsWith('https://api.github.com')
@@ -281,9 +282,21 @@ describe('product updates', () => {
       latest: {
         version: '0.8.0-20261101-010101utc.g2222222222',
         commit: '2222222',
-        downloads: [{ platform: 'linux', urls: [expect.stringContaining('community.example') as unknown] }],
+        downloads: [
+          {
+            platform: 'linux',
+            urls: [expect.stringContaining('downloads.example/nxt/desktop/preview/files/') as unknown],
+          },
+        ],
       },
     })
+  })
+
+  it('reads the mirror from the environment', () => {
+    expect(downloadMirror(undefined)).toEqual({ mirror: 'https://dl.nekro.ai/nxt' })
+    expect(downloadMirror('https://mirror.example/nxt')).toEqual({ mirror: 'https://mirror.example/nxt' })
+    expect(downloadMirror('off')).toEqual({})
+    expect(downloadMirror(' ')).toEqual({})
   })
 
   it('keeps the automatic check setting', () => {

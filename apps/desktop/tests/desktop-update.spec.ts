@@ -8,7 +8,7 @@ import { DesktopUpdates, type DesktopUpdatesOptions } from '../src/desktop-updat
 
 const content = new TextEncoder().encode('fixture installer bytes')
 const sha256 = createHash('sha256').update(content).digest('hex')
-const MIRROR = 'https://community.example/api/v1/desktop/stable/files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe'
+const MIRROR = 'https://downloads.example/nxt/desktop/stable/files/v0.8.0/nekro-nxt-win-x64-v0.8.0-setup.exe'
 const GITHUB = 'https://github.com/dl/nekro-nxt-win-x64-v0.8.0-setup.exe'
 
 const download = (overrides: Partial<ProductDownload> = {}): ProductDownload => ({

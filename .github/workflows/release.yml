@@ -162,8 +162,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
         run: node scripts/stable-release-ci.mjs publish --artifacts-dir .local/stable-release
-      # Community mirror of the installers (#87); off until the repository variable R2_ACCOUNT_ID is set.
-      - name: Mirror installers to the community site
+      # Public download mirror of the installers (#87, bucket nekro-nxt-dist); off until the repository variable R2_ACCOUNT_ID is set.
+      - name: Mirror installers to dl.nekro.ai
         if: ${{ vars.R2_ACCOUNT_ID != '' }}
         continue-on-error: true
         env:
