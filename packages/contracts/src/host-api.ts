@@ -1666,7 +1666,7 @@ export const ScheduledTaskSchema = z
 export type ScheduledTask = z.output<typeof ScheduledTaskSchema>
 
 /** Programs and models NekroNXT installs on request (附加功能); `<data root>/runtimes`, left out of backups. */
-export const AddonIdSchema = z.enum(['retrieval', 'node', 'github-cli', 'browser'])
+export const AddonIdSchema = z.enum(['retrieval', 'media', 'node', 'github-cli', 'browser'])
 export type AddonId = z.output<typeof AddonIdSchema>
 
 /** `extension`: used by extensions; `agent`: used by agents' commands; `host`: used by NekroNXT itself. */

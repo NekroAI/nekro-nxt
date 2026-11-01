@@ -85,10 +85,7 @@ const setup = async (
   const platforms = new LinkedAccountPlatforms([
     createGithubPlatform({
       fetch: github(options.accounts ?? {}),
-      cli: {
-        executable: () => options.gh,
-        directoryForPath: () => undefined,
-      },
+      cli: { executable: () => options.gh },
     }),
   ])
   const make = (secrets = new SecretRegistry()) =>
@@ -115,7 +112,7 @@ const grantOf = (accountId: string, usage: CommandAccountGrant['usage'] = []): C
 
 describe('linked account platforms', () => {
   it('keeps one platform per id and names the unsupported ones', () => {
-    const cli = { executable: () => undefined, directoryForPath: () => undefined }
+    const cli = { executable: () => undefined }
     expect(() => new LinkedAccountPlatforms([createGithubPlatform({ cli }), createGithubPlatform({ cli })])).toThrow()
     const platforms = new LinkedAccountPlatforms([createGithubPlatform({ cli })])
     expect(platforms.list().map((platform) => [platform.id, platform.name, platform.addMethods])).toEqual([
