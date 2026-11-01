@@ -23,6 +23,7 @@ import {
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { mountCredentialRedaction } from './credential-redaction.js'
+import { mountSandboxHints } from './command-sandbox-hints.js'
 import { preloadCredentialDocument } from './logs/credentials.js'
 import { SecretRegistry } from './secret-registry.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
@@ -3641,6 +3642,22 @@ export class DshHostRuntime implements AgentSessionDriver {
           ...(options.credentialPaths ?? []),
           ...(options.llmCredentialPath === undefined ? [] : [options.llmCredentialPath]),
         ],
+      })
+      // A command the sandbox stopped gets a plain explanation for the agent; a sandbox that cannot start at all is
+      // also logged for the administrator, at most every ten minutes (#96).
+      let sandboxLoggedAt = 0
+      mountSandboxHints(context, {
+        onUnavailable: (detail) => {
+          if (Date.now() - sandboxLoggedAt < 10 * 60 * 1000) return
+          sandboxLoggedAt = Date.now()
+          options.logs?.write({
+            level: 'warn',
+            message:
+              '命令沙箱没能启动，开了「运行命令」的智能体现在无法执行任何命令。可以改用「完整访问」，或检查数据目录所在的磁盘。',
+            source: { kind: 'system', id: 'command-sandbox', name: '命令沙箱' },
+            details: { detail },
+          })
+        },
       })
       await context.plugin(SubagentSpawnInProcess, { providerName: 'spawn' })
       const runtime = new DshHostRuntime(context, { ...options, secrets }, channelReplyGuard, conversationScripts)
