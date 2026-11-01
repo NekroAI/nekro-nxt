@@ -830,6 +830,16 @@ button.step:hover {
   white-space: nowrap;
 }
 
+/* The latest progress a running tool reported, in place of its arguments. */
+.stepProgress {
+  min-width: 0;
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--fg-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stepTime {
   flex: none;
   color: var(--faint);

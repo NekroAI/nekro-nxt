@@ -526,7 +526,11 @@ const VERIFICATION_CALL_CONTEXT: NxtCallContext = {
  * `nxt` backends for save/import verification: throwaway storage, synthetic call context and assets, no saved secrets.
  * Network requests are real, which is why `verificationInput` samples must be side-effect free.
  */
-const verificationBackends = (capabilities: ExtensionCapabilities | undefined): NxtServiceBackends => ({
+const verificationBackends = (
+  capabilities: ExtensionCapabilities | undefined,
+  files: ExtensionFileStore,
+): NxtServiceBackends => ({
+  files,
   fetch: (policy, url, init, secrets) => createExtensionEgress({ policy }).fetch(url, init, secrets),
   storage: memoryNxtStorage(),
   jobs: memoryNxtJobs(),
@@ -605,7 +609,15 @@ const defaultConfig = (input: ImportedRevisionVerificationInput, layer: 'host' |
 export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (input) => {
   const manifest = input.materialized.manifest
   const agentCapabilities = manifest.permissions.agent
-  const backends = verificationBackends(agentCapabilities)
+  // Work files of a verification live in a throwaway directory removed when it ends.
+  const filesRoot = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-verify-files-'))
+  const files = new ExtensionFileStore({
+    root: filesRoot,
+    blobPath: () => {
+      throw new Error('验证时没有文件。')
+    },
+  })
+  const backends = verificationBackends(agentCapabilities, files)
   const hostConfig = defaultConfig(input, 'host')
   const agentConfig = defaultConfig(input, 'agent')
   const sdk = manifest.requires?.sdk ?? 7
@@ -662,6 +674,7 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
             defineTool: (tool: ExtensionToolDefinition) => tool,
             registerTool: (_context: unknown, tool: ExtensionToolDefinition) => {
               if (tools.has(tool.name)) throw new Error(`重复工具：${tool.name}`)
+              extensionToolTimeoutMs(tool, sdk)
               tools.set(tool.name, tool)
               return () => tools.delete(tool.name)
             },
@@ -789,7 +802,10 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
       })
     }
     for (const tool of tools.values()) {
-      wireResult(await tool.execute(toolInputs.get(tool.name) ?? {}), `工具 ${tool.name}`)
+      wireResult(
+        await tool.execute(toolInputs.get(tool.name) ?? {}, extensionToolContext(undefined, undefined)),
+        `工具 ${tool.name}`,
+      )
       toolInvocations.push({ name: tool.name, succeeded: true })
     }
     for (const [method, handler] of handlers) {
@@ -850,8 +866,15 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
     for (const registered of registeredAdapters) await registered.dispose()
     tools.clear()
     handlers.clear()
+    await files.dispose()
+    await rm(filesRoot, { recursive: true, force: true })
   }
 }
 import { extensionLogger } from './extension-logger.js'
 import { verifyOutboundHandler } from './extension-outbound.js'
 import { EXTENSION_OUTBOUND_SDK_LEVEL } from '@nekro-nxt/contracts'
+import { ExtensionFileStore } from './extension-files.js'
+import { extensionToolContext, extensionToolTimeoutMs } from './extension-tool-context.js'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'

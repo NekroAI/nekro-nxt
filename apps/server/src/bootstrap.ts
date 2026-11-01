@@ -106,6 +106,7 @@ import {
 } from './extension-host-backends.js'
 import { memoryIndexEngine, sqliteIndexEngine } from './extension-index.js'
 import { RetrievalRuntime } from './retrieval-runtime.js'
+import { ExtensionFileStore } from './extension-files.js'
 import {
   ExtensionLibrary,
   memoryLibraryRegistry,
@@ -270,6 +271,9 @@ export class NekroRuntime {
   readonly mcpStatus: McpStatusRegistry
   /** The agent's outbound processors: every agent message passes them before sending and after delivery. */
   readonly outbound: ExtensionOutboundProcessor
+  /** Work files of installed extensions; host services that run programs read and create them by `fileId`. */
+  readonly extensionFiles: ExtensionFileStore
+  readonly #previewFiles: ExtensionFileStore
   readonly authoringTestConfig: AuthoringTestConfig
   readonly codeRunNode: CodeRunNode
   readonly githubCli: GithubCli
@@ -336,6 +340,8 @@ export class NekroRuntime {
     readonly channelPrompts: ChannelPrompts
     readonly mcpStatus: McpStatusRegistry
     readonly outbound: ExtensionOutboundProcessor
+    readonly extensionFiles: ExtensionFileStore
+    readonly previewFiles: ExtensionFileStore
     readonly authoringTestConfig: AuthoringTestConfig
     readonly codeRunNode: CodeRunNode
     readonly githubCli: GithubCli
@@ -471,6 +477,8 @@ export class NekroRuntime {
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.outbound = input.outbound
+    this.extensionFiles = input.extensionFiles
+    this.#previewFiles = input.previewFiles
     this.authoringTestConfig = input.authoringTestConfig
     this.feedback = new CommunityFeedbackService(
       this.repository,
@@ -775,6 +783,22 @@ export class NekroRuntime {
       })
       await retrieval.start()
       const extensionIndex = sqliteIndexEngine(repository.extensionIndex, retrieval, now)
+      // `extension-files/` is rebuildable: temporary files expire within a day and cached ones can be made again.
+      const extensionFilesRoot = path.join(path.dirname(options.coreDatabasePath), 'extension-files')
+      const assetBlobPath = (contentDigest: string) => assetService.blobPath({ contentDigest })
+      const extensionFiles = new ExtensionFileStore({
+        root: path.join(extensionFilesRoot, 'extensions'),
+        blobPath: assetBlobPath,
+        now,
+      })
+      await extensionFiles.start()
+      // Dynamic runs keep their files apart from installed extensions and start empty each time.
+      await rm(path.join(extensionFilesRoot, 'preview'), { recursive: true, force: true })
+      const previewFiles = new ExtensionFileStore({
+        root: path.join(extensionFilesRoot, 'preview'),
+        blobPath: assetBlobPath,
+        now,
+      })
       const libraryFor = (registry: LibraryRegistry) =>
         new ExtensionLibrary({ registry, assets: repository, assetService, now })
       const platformCatalog: NxtServiceBackends['platform']['catalog'] = (channelId) => {
@@ -928,6 +952,7 @@ export class NekroRuntime {
           fetch: nxtFetch,
           complete: nxtComplete,
           library: libraryFor(sqliteLibraryRegistry(repository.extensionLibrary)),
+          files: extensionFiles,
           index: extensionIndex,
           models: nxtModels,
           storage: sqliteNxtStorage(repository, now),
@@ -964,6 +989,7 @@ export class NekroRuntime {
           complete: nxtComplete,
           // Dynamic runs keep their library and index in memory; pictures and channel grants stay real.
           library: libraryFor(memoryLibraryRegistry()),
+          files: previewFiles,
           index: memoryIndexEngine(),
           models: nxtModels,
           storage: memoryNxtStorage(now),
@@ -1489,6 +1515,8 @@ export class NekroRuntime {
         channelPrompts,
         mcpStatus,
         outbound: outboundProcessor,
+        extensionFiles,
+        previewFiles,
         authoringTestConfig,
         compatibility,
         database,
@@ -2093,6 +2121,8 @@ export class NekroRuntime {
     this.#disposed = true
     await this.#jobScheduler.dispose()
     await this.retrieval.dispose()
+    await this.extensionFiles.dispose()
+    await this.#previewFiles.dispose()
     await this.commands.dispose()
     await this.authoring.dispose()
     await this.extensionService.dispose()

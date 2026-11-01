@@ -3036,6 +3036,58 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('shows the latest progress of a running tool on its step', async () => {
+    await withProductPage(
+      `/channels/${browserChannelId}`,
+      async (page) => {
+        const step = page.getByRole('button', { name: /^取帧.*已取 12\/40 帧 30%/u })
+        await playwrightExpect(step).toBeVisible()
+        await playwrightExpect(step.getByText('已取 12/40 帧', { exact: true })).toBeVisible()
+        await playwrightExpect(step.getByText('30%', { exact: true })).toBeVisible()
+        await page.screenshot({ path: '.local/screenshots-addons/tool-progress.png' })
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/channels/*/runtime', (request) =>
+          request.fulfill({
+            json: {
+              cursor: { epoch: 'fixture', sequence: 0 },
+              channelId: browserChannelId,
+              agentId: browserAgentId,
+              phase: 'using-tool',
+              summary: '智能体正在使用取帧。',
+              pendingInjectCount: 0,
+              turns: [
+                {
+                  turn: 1,
+                  startedAt: 1_725_000_000_500,
+                  state: 'in-progress',
+                  producedReply: false,
+                  responseState: 'not-required',
+                  steps: [
+                    {
+                      step: 1,
+                      tools: [
+                        {
+                          callId: 'call_frames',
+                          name: 'clip_frames',
+                          displayName: '取帧',
+                          state: 'running',
+                          inputPreview: '{"interval":2}',
+                          progress: { text: '已取 12/40 帧', fraction: 0.3 },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        )
+      },
+    )
+  })
+
   test('shows real creation state without displaying package or approval identifiers', async () => {
     await withProductPage(
       `/workshop/tasks/${workshopTask.id}`,

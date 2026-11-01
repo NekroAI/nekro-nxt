@@ -860,6 +860,12 @@ export const ChannelRuntimeUsageSchema = z
   })
   .strict()
 
+/** The latest progress a running extension tool reported. */
+export const ChannelRuntimeToolProgressSchema = z
+  .object({ text: z.string().min(1).max(200), fraction: z.number().min(0).max(1).optional() })
+  .strict()
+export type ChannelRuntimeToolProgress = z.output<typeof ChannelRuntimeToolProgressSchema>
+
 const channelRuntimeToolFields = {
   callId: NonEmptyStringSchema,
   name: NonEmptyStringSchema,
@@ -871,6 +877,8 @@ const channelRuntimeToolFields = {
   /** `cancelled`: an extension stopped the message before it was sent. */
   deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown', 'cancelled']).optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  /** Set while the tool runs and has reported progress. */
+  progress: ChannelRuntimeToolProgressSchema.optional(),
 }
 
 export const ChannelRuntimeToolSchema = z

@@ -13,6 +13,7 @@ const CHROMIUM_LOCKS = /^(?:Singleton(?:Lock|Socket|Cookie)|lockfile)$/u
 const REBUILDABLE_DATA = [
   'data/logs',
   'data/extension-cache',
+  'data/extension-files',
   'data/runtimes',
   'data/dsh/plugin-staging',
   'data/dsh/request-images',

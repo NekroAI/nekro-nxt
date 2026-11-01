@@ -2,15 +2,19 @@ import type { NxtLogger } from '@nekro-nxt/contracts'
 import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
 import { randomBytes } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
 import {
   ChannelIdSchema,
   EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES,
   EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
+  EXTENSION_FILES_DEFAULT_CACHE_QUOTA_BYTES,
+  EXTENSION_FILES_DEFAULT_TEMP_QUOTA_BYTES,
   EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES,
   JsonValueSchema,
   type ExtensionCapabilities,
   type ExtensionContextContribution,
+  type ChannelId,
   type ExtensionStorageScope,
   type JsonValue,
 } from '@nekro-nxt/contracts'
@@ -18,7 +22,9 @@ import type {
   ExtensionJsonValue,
   NxtAssetCreateInput,
   NxtAssetRecord,
+  NxtByteRange,
   NxtCallContext,
+  NxtFilesService,
   NxtMemberSummary,
   NxtFetchInit,
   NxtFetchResponse,
@@ -40,6 +46,7 @@ import type {
 } from '@nekro-nxt/extension-sdk'
 import { queryLimit, validateIndexDocument, validateIndexFilter, type ExtensionIndexEngine } from './extension-index.js'
 import type { ExtensionLibrary } from './extension-library.js'
+import { readRange, type ExtensionFileQuota, type ExtensionFiles } from './extension-files.js'
 
 /** Service name extensions declare in `inject`. Not a DSH private Service, so isolation never hides it. */
 export const NXT_HOST_SERVICE_NAME = 'nxt'
@@ -189,6 +196,8 @@ export interface NxtServiceBackends {
     search(channelId: string, query: string, limit: number): Promise<readonly NxtHistoryMessage[]>
   }
   readonly library: ExtensionLibrary
+  /** Work files; dynamic runs and verification use a throwaway directory. */
+  readonly files: ExtensionFiles
   readonly index: ExtensionIndexEngine
   /** Host-configured models for host-layer calls; images are library Assets. */
   readonly models: {
@@ -420,6 +429,149 @@ const channelOf = (binding: NxtServiceBinding) => {
 const requireWrite = (binding: NxtServiceBinding): void => {
   if (requireCapability(binding, 'assets', 'assets（生成频道文件）').write === undefined) {
     throw new NxtCapabilityError(`在当前频道生成文件需要在 ${layerField(binding)}.assets 中声明 write: true。`)
+  }
+}
+
+/** Largest chunk one `assets.read` or `files.read` returns. */
+export const NXT_READ_CHUNK_MAX_BYTES = 4 * 1024 * 1024
+/** Dynamic runs and verification keep work files small whatever the declaration asks for. */
+const PREVIEW_FILES_QUOTA_BYTES = 64 * 1024 * 1024
+
+const byteRange = (range: NxtByteRange | undefined): { readonly offset: number; readonly length: number } => {
+  const offset = range?.offset ?? 0
+  const length = range?.length ?? NXT_READ_CHUNK_MAX_BYTES
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new NxtCapabilityError('offset 必须是非负整数。')
+  if (!Number.isSafeInteger(length) || length < 1 || length > NXT_READ_CHUNK_MAX_BYTES) {
+    throw new NxtCapabilityError(`length 必须是 1 到 ${NXT_READ_CHUNK_MAX_BYTES} 之间的整数（每次最多读 4 MiB）。`)
+  }
+  return { offset, length }
+}
+
+/** The channel an agent binding runs in; host bindings and calls outside a channel read only the library. */
+const bindingChannel = (binding: NxtServiceBinding): ChannelId | undefined => {
+  if (binding.mode === 'host') return undefined
+  const parsed = ChannelIdSchema.safeParse(binding.channelId)
+  return parsed.success ? parsed.data : undefined
+}
+
+const requireAssetRead = (binding: NxtServiceBinding): void => {
+  if (requireCapability(binding, 'assets', 'assets.read（读取频道文件）').read === undefined) {
+    throw new NxtCapabilityError(`读取文件内容需要在 ${layerField(binding)}.assets 中声明 read: true。`)
+  }
+}
+
+/** `assets.read` and `assets.stat`: Assets the binding's channel can see, or the extension's library holds. */
+const assetReader = (
+  binding: NxtServiceBinding,
+  backends: NxtServiceBackends,
+): Pick<NxtHostService['assets'], 'read' | 'stat'> => ({
+  async read(assetId, range) {
+    requireAssetRead(binding)
+    range?.signal?.throwIfAborted()
+    const { offset, length } = byteRange(range)
+    const asset = backends.library.readable(binding.ownerKey, bindingChannel(binding), assetId)
+    const chunk = await readRange(backends.library.blobPath(asset), asset.byteSize, offset, length)
+    return {
+      base64: chunk.bytes.toString('base64'),
+      eof: chunk.eof,
+      byteSize: asset.byteSize,
+      mediaType: asset.mediaType,
+    }
+  },
+  stat: (assetId) =>
+    settle(() => {
+      requireAssetRead(binding)
+      const asset = backends.library.readable(binding.ownerKey, bindingChannel(binding), assetId)
+      return { byteSize: asset.byteSize, mediaType: asset.mediaType }
+    }),
+})
+
+const filesQuota = (binding: NxtServiceBinding): ExtensionFileQuota => {
+  const files = requireCapability(binding, 'files', 'files（工作文件）')
+  const cap = binding.mode === 'dynamic' || binding.mode === 'verification' ? PREVIEW_FILES_QUOTA_BYTES : Infinity
+  return {
+    tempBytes: Math.min(files.tempQuotaBytes ?? EXTENSION_FILES_DEFAULT_TEMP_QUOTA_BYTES, cap),
+    cacheBytes: Math.min(files.cacheQuotaBytes ?? EXTENSION_FILES_DEFAULT_CACHE_QUOTA_BYTES, cap),
+  }
+}
+
+const fileBytes = (input: { readonly base64?: unknown; readonly text?: unknown }): Uint8Array => {
+  if ((input.base64 === undefined) === (input.text === undefined)) {
+    throw new NxtCapabilityError('files.write 需要且只能提供 base64 或 text 之一。')
+  }
+  if (typeof input.text === 'string') return new TextEncoder().encode(input.text)
+  if (typeof input.base64 !== 'string') throw new NxtCapabilityError('base64 必须是字符串。')
+  return Uint8Array.from(Buffer.from(input.base64, 'base64'))
+}
+
+/**
+ * `nxt.files` (附加功能 F5). File ids belong to the extension (`ownerKey`), shared by its host instance and agent
+ * attachments. `fromAsset` follows the same visibility as `assets.read`; `toAsset` needs the same declaration as
+ * creating an Asset there.
+ */
+const filesService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtFilesService => {
+  const owner = binding.ownerKey
+  return {
+    async write(input, options) {
+      const quota = filesQuota(binding)
+      options?.signal?.throwIfAborted()
+      const name = typeof input?.name === 'string' ? input.name : undefined
+      const mediaType =
+        typeof input?.mediaType === 'string'
+          ? input.mediaType
+          : input?.text !== undefined
+            ? 'text/plain; charset=utf-8'
+            : undefined
+      return backends.files.write(owner, { bytes: fileBytes(input ?? {}), name, mediaType }, quota)
+    },
+    async read(fileId, range) {
+      filesQuota(binding)
+      range?.signal?.throwIfAborted()
+      const { offset, length } = byteRange(range)
+      const chunk = await backends.files.read(owner, fileId, offset, length)
+      return { base64: chunk.bytes.toString('base64'), eof: chunk.eof }
+    },
+    async stat(fileId) {
+      filesQuota(binding)
+      return backends.files.stat(owner, fileId)
+    },
+    async delete(fileId) {
+      filesQuota(binding)
+      return backends.files.delete(owner, fileId)
+    },
+    async fromAsset(assetId, options) {
+      filesQuota(binding)
+      options?.signal?.throwIfAborted()
+      const asset = backends.library.readable(owner, bindingChannel(binding), assetId)
+      return backends.files.fromAsset(owner, asset)
+    },
+    async toAsset(fileId, options) {
+      filesQuota(binding)
+      const library = binding.mode === 'host' || options?.library === true
+      const quota = library ? libraryQuota(binding) : undefined
+      if (!library) requireWrite(binding)
+      options?.signal?.throwIfAborted()
+      const { path: source } = await backends.files.resolvePath(owner, fileId)
+      const bytes = createReadStream(source, options?.signal === undefined ? {} : { signal: options.signal })
+      if (quota !== undefined) {
+        const kept = await backends.library.import(owner, bytes, quota)
+        return { assetId: kept.assetId, byteSize: kept.byteSize, mediaType: kept.mediaType }
+      }
+      return backends.library.createInChannel(channelOf(binding), bytes)
+    },
+    cache: {
+      async get(key) {
+        filesQuota(binding)
+        return backends.files.cacheGet(owner, key)
+      },
+      async put(key, fileId) {
+        return backends.files.cachePut(owner, key, fileId, filesQuota(binding))
+      },
+      async delete(key) {
+        filesQuota(binding)
+        return backends.files.cacheDelete(owner, key)
+      },
+    },
   }
 }
 
@@ -694,6 +846,7 @@ export const createNxtHostService = (
           libraryQuota(binding)
           return backends.library.attach(binding.ownerKey, channelOf(binding), assetId)
         }),
+      ...assetReader(binding, backends),
       async fromUrl(url, options) {
         requireWrite(binding)
         const response = await fetchWithPolicy(url)
@@ -710,6 +863,7 @@ export const createNxtHostService = (
     image: {
       info: (assetId) => backends.library.imageInfo(binding.ownerKey, channelOf(binding), assetId),
     },
+    files: filesService(binding, backends),
     index: indexService(binding, backends),
     storage,
     context: {
@@ -934,10 +1088,12 @@ export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServ
           libraryQuota(binding)
           return backends.library.release(binding.ownerKey, assetId)
         }),
+      ...assetReader(binding, backends),
     },
     image: {
       info: (assetId) => backends.library.imageInfo(binding.ownerKey, undefined, assetId),
     },
+    files: filesService(binding, backends),
     index: indexService(binding, backends),
     models: modelService(binding, backends),
   }
@@ -968,9 +1124,17 @@ export const dshPromptRegistry = (
 export const createNxtDynamicFacade = (
   resolve: () => NxtHostService,
   resolveHostLayer?: () => NxtHostLayerService,
-): NxtHostService & { readonly hostLayer: NxtHostLayerService | undefined } => ({
+  reportToolProgress?: (callId: string, update: unknown) => void,
+): NxtHostService & {
+  readonly hostLayer: NxtHostLayerService | undefined
+  /** Called by the dynamic wrapper's `harness.defineTool` with the progress a candidate's Tool reports. */
+  readonly reportToolProgress: (callId: string, update: unknown) => void
+} => ({
   get logger() {
     return resolve().logger
+  },
+  reportToolProgress: (callId, update) => {
+    if (typeof callId === 'string') reportToolProgress?.(callId, update)
   },
   config: () => resolve().config(),
   /** The candidate's host-layer `nxt`; the dynamic wrapper hands it to the factory's top-level `nxt`. */
@@ -988,6 +1152,9 @@ export const createNxtDynamicFacade = (
   },
   get image() {
     return resolve().image
+  },
+  get files() {
+    return resolve().files
   },
   get index() {
     return resolve().index

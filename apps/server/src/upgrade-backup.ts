@@ -70,6 +70,7 @@ const EXCLUDED = [
   'backups',
   'logs',
   'extension-cache',
+  'extension-files',
   'runtimes',
   'dsh/plugin-staging',
   'dsh/request-images',

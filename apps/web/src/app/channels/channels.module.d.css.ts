@@ -129,6 +129,7 @@ declare const styles: {
   readonly stepChevron: string
   readonly stepFail: string
   readonly stepOk: string
+  readonly stepProgress: string
   readonly stepRun: string
   readonly stepTime: string
   readonly stepWarn: string
