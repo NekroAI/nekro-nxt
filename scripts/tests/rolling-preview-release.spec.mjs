@@ -160,7 +160,8 @@ test('failed rerun preserves assets when preview tag already points at the candi
 
 test('rolling Preview copy identifies its moving channel and immutable Product Release', () => {
   assert.equal(previewReleaseTitle(release), `NekroNXT Preview ${release.version}`)
-  const body = previewReleaseBody(release, 'NekroAI/nekro-nxt', distribution)
+  const body = previewReleaseBody(release, 'NekroAI/nekro-nxt', distribution, undefined, Date.UTC(2026, 10, 1, 6, 1))
+  assert.match(body, /构建于 2026-11-01 14:01（北京时间），提交 \[0123456\]/u)
   assert.match(body, /滚动预览版/u)
   assert.match(body, new RegExp(release.releaseId.replaceAll('+', '\\+'), 'u'))
   assert.match(body, /NekroAI\/nekro-nxt\/commit\/0123456789abcdef/u)

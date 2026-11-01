@@ -104,7 +104,12 @@ export function previewReleaseTitle(release) {
   return `NekroNXT Preview ${release.version}`
 }
 
-export function previewReleaseBody(release, repository, distribution, serverDigest) {
+/** `2026-11-01 14:01`: when this Preview was built, in Beijing time; GitHub keeps the first publication date (#98). */
+export function previewBuildTime(at) {
+  return new Date(at + 8 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ')
+}
+
+export function previewReleaseBody(release, repository, distribution, serverDigest, builtAt = Date.now()) {
   const targets = new Map(
     previewArtifactTargets(distribution, release.version).map((target) => [
       `${target.platform}/${target.arch}`,
@@ -121,6 +126,7 @@ export function previewReleaseBody(release, repository, distribution, serverDige
     `<!-- nxt-preview-commit:${release.commit} -->`,
     ...(serverDigest ? [`<!-- nxt-preview-server:${serverDigest} -->`] : []),
     '> 这是 `main` 最新通过完整 CI 的滚动预览版；下一次成功构建会更新本页面。',
+    `> 构建于 ${previewBuildTime(builtAt)}（北京时间），提交 [${release.commit.slice(0, 7)}](https://github.com/${repository}/commit/${release.commit})。GitHub 上方显示的日期是这个页面第一次发布的时间，不是这一版的构建时间。`,
     '',
     '## 客户端下载',
     '',
