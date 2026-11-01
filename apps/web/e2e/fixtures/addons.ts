@@ -56,7 +56,6 @@ export const addonsFixture = (
           title: '下载的 ffmpeg',
           summary: '',
           state: 'not-installed',
-          version: 'b6.1.1',
           resources: { downloadBytes: 48 * 1024 * 1024, notes: [] },
           licenses: [
             { component: 'FFmpeg（ffmpeg-static 构建）', name: 'GPL-3.0', url: 'https://www.ffmpeg.org/legal.html' },
@@ -78,7 +77,6 @@ export const addonsFixture = (
           title: '本地 Paraformer',
           summary: '在这台设备上识别，语音不会发到别处。',
           state: 'not-installed',
-          version: 'paraformer-zh-small-int8',
           dependsOn: ['media'],
           resources: { downloadBytes: 103 * 1024 * 1024, memoryBytes: 350 * 1024 * 1024, notes: ['中文', '识别更快'] },
         }),
@@ -87,7 +85,6 @@ export const addonsFixture = (
           title: '本地 SenseVoice',
           summary: '在这台设备上识别，语音不会发到别处。',
           state: 'not-installed',
-          version: 'sense-voice-small-int8',
           dependsOn: ['media'],
           resources: {
             downloadBytes: 239 * 1024 * 1024,
