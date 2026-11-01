@@ -110,6 +110,7 @@ test.describe('settings space', () => {
     )
     await page.route('**/api/dsh/plugins', (request) => request.fulfill({ json: { plugins: [] } }))
     await page.route('**/api/dsh/settings', (request) => request.fulfill({ json: { namespaces: [] } }))
+    await page.route('**/api/settings/speech', (request) => request.fulfill({ json: { cloud: null, providers: [] } }))
     await installSnapshotHealthRoutes(page, productSnapshot)
     await page.route('**/api/snapshot', (request) => request.fulfill({ json: productSnapshot }))
     await page.route('**/api/events', (request) =>
@@ -1478,6 +1479,68 @@ test.describe('settings space', () => {
       // A single provider is not a choice.
       await expect(provider.getByRole('button', { name: '使用这一项' })).toHaveCount(0)
       await expect(provider).not.toContainText('正在使用')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('compares the speech recognition providers and sets up the cloud one', async () => {
+    const requests: unknown[] = []
+    const providers = [{ provider: 'example-relay', displayName: '示例中转' }]
+    let cloud: unknown = null
+    const { page, errors } = await open('/settings/addons/speech', {
+      before: async (target) => {
+        await target.route('**/api/settings/speech', (request) => {
+          if (request.request().method() === 'PUT') {
+            const body: unknown = request.request().postDataJSON()
+            requests.push(body)
+            cloud = typeof body === 'object' && body !== null ? (Reflect.get(body, 'cloud') as unknown) : null
+          }
+          return request.fulfill({ json: { cloud, providers } })
+        })
+      },
+    })
+    try {
+      await expect(page.getByRole('heading', { name: '语音识别', level: 2 })).toBeVisible()
+      const paraformer = page.getByRole('region', { name: '本地 Paraformer' })
+      await expect(paraformer).toContainText('约 103 MB')
+      await expect(paraformer).toContainText('约 350 MB')
+      await expect(paraformer).toContainText('中文、识别更快')
+      await expect(page.getByRole('region', { name: '本地 SenseVoice' })).toContainText('中文、英语、日语、韩语、粤语')
+      await expect(page.getByRole('region', { name: '云端', exact: true })).toContainText('待配置')
+
+      const settings = page.getByRole('region', { name: '云端设置' })
+      await settings.getByRole('combobox', { name: '云端语音识别的供应商' }).click()
+      await page.getByRole('option', { name: '示例中转' }).click()
+      // Nothing is saved until a model is named.
+      expect(requests).toEqual([])
+      const model = settings.getByRole('textbox', { name: '云端语音识别的模型' })
+      await model.fill('whisper-1')
+      await model.press('Enter')
+      await expect.poll(() => requests).toEqual([{ cloud: { provider: 'example-relay', model: 'whisper-1' } }])
+      await settings.getByRole('combobox', { name: '云端语音识别的语言' }).click()
+      await page.getByRole('option', { name: '日语' }).click()
+      await expect
+        .poll(() => requests.at(-1))
+        .toEqual({ cloud: { provider: 'example-relay', model: 'whisper-1', language: 'ja' } })
+      await settings.getByRole('button', { name: '清除' }).click()
+      await expect.poll(() => requests.at(-1)).toEqual({ cloud: null })
+      await expect(model).toHaveValue('')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('says where to add a provider when none can transcribe', async () => {
+    const { page, errors } = await open('/settings/addons/speech')
+    try {
+      const settings = page.getByRole('region', { name: '云端设置' })
+      await expect(settings).toContainText('在「设置 → 模型」添加 OpenAI 兼容的供应商后，可以在这里选择')
+      await expect(settings.getByRole('combobox', { name: '云端语音识别的供应商' })).toHaveCount(0)
+      await expect(settings.getByRole('textbox', { name: '云端语音识别的模型' })).toBeDisabled()
+      await expect(settings.getByRole('button', { name: '清除' })).toHaveCount(0)
       expect(errors).toEqual([])
     } finally {
       await page.close()

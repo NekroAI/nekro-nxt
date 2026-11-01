@@ -245,6 +245,10 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.getRetrievalStatus, {}, undefined, options),
   updateRetrievalMode: (request: HostApiRequest<'updateRetrievalMode'>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.updateRetrievalMode, {}, request, options),
+  getSpeechSettings: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getSpeechSettings, {}, undefined, options),
+  updateSpeechSettings: (request: HostApiRequest<'updateSpeechSettings'>, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.updateSpeechSettings, {}, request, options),
   installAddonProvider: (id: AddonId, provider: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.installAddonProvider, { id, provider }, undefined, options),
   removeAddonProvider: (id: AddonId, provider: string, options?: HostRequestOptions) =>

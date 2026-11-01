@@ -13,7 +13,10 @@ export const addonProvider = (
   ...provider,
 })
 
-/** The four add-ons of a fictional desktop host: a system gh, a downloadable Node, no browser, no semantic model. */
+/**
+ * The add-ons of a fictional desktop host: a system gh, a downloadable Node, no browser, no semantic model, no speech
+ * recognition.
+ */
 export const addonsFixture = (
   overrides: Partial<Record<AddonStatus['id'], Partial<AddonStatus>>> = {},
 ): AddonStatus[] => {
@@ -36,6 +39,44 @@ export const addonsFixture = (
             { component: 'bge-small-zh-v1.5', name: 'MIT', url: 'https://huggingface.co/BAAI/bge-small-zh-v1.5' },
           ],
           sources: ['Hugging Face', 'hf-mirror.com'],
+        }),
+      ],
+    },
+    {
+      id: 'speech',
+      group: 'extension',
+      title: '语音识别',
+      summary: '把语音转成文字。',
+      usedBy: ['扩展的语音识别'],
+      state: 'not-installed',
+      providers: [
+        addonProvider({
+          id: 'paraformer-zh-small',
+          title: '本地 Paraformer',
+          summary: '在这台设备上识别，语音不会发到别处。',
+          state: 'not-installed',
+          version: 'paraformer-zh-small-int8',
+          resources: { downloadBytes: 103 * 1024 * 1024, memoryBytes: 350 * 1024 * 1024, notes: ['中文', '识别更快'] },
+        }),
+        addonProvider({
+          id: 'sense-voice-small',
+          title: '本地 SenseVoice',
+          summary: '在这台设备上识别，语音不会发到别处。',
+          state: 'not-installed',
+          version: 'sense-voice-small-int8',
+          resources: {
+            downloadBytes: 239 * 1024 * 1024,
+            memoryBytes: 900 * 1024 * 1024,
+            notes: ['中文、英语、日语、韩语、粤语'],
+          },
+        }),
+        addonProvider({
+          id: 'cloud',
+          title: '云端',
+          summary: '用「设置 → 模型」里的供应商识别，按供应商的价格计费。',
+          state: 'needs-config',
+          source: 'cloud',
+          resources: { notes: ['语言和速度取决于供应商'] },
         }),
       ],
     },
