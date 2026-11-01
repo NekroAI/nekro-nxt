@@ -504,7 +504,7 @@ function SpeechCloudSettings() {
               ? '在「设置 → 模型」添加 OpenAI 兼容的供应商后，可以在这里选择'
               : undefined
           }
-          tip="需要供应商提供 OpenAI 兼容的语音转写，费用按供应商的价格计算。"
+          tip="需要供应商提供 OpenAI 兼容的语音转写。"
         >
           {settings === undefined ? (
             <Skeleton width={180} height={28} />
