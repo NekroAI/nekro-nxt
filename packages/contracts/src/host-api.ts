@@ -1674,7 +1674,7 @@ export const ScheduledTaskSchema = z
 export type ScheduledTask = z.output<typeof ScheduledTaskSchema>
 
 /** Programs and models NekroNXT installs on request (附加功能); `<data root>/runtimes`, left out of backups. */
-export const AddonIdSchema = z.enum(['retrieval', 'node', 'github-cli', 'browser'])
+export const AddonIdSchema = z.enum(['retrieval', 'speech', 'node', 'github-cli', 'browser'])
 export type AddonId = z.output<typeof AddonIdSchema>
 
 /** `extension`: used by extensions; `agent`: used by agents' commands; `host`: used by NekroNXT itself. */
@@ -1758,6 +1758,30 @@ export const AddonStatusSchema = z
   })
   .strict()
 export type AddonStatus = z.output<typeof AddonStatusSchema>
+
+/** Languages speech recognition can be asked for; `auto` lets the provider tell. */
+export const SpeechLanguageSchema = z.enum(['auto', 'zh', 'en', 'ja', 'ko', 'yue'])
+export type SpeechLanguage = z.output<typeof SpeechLanguageSchema>
+
+/** The cloud provider of the `speech` add-on: a provider from 设置 → 模型 and the transcription model it serves. */
+export const SpeechCloudSettingsSchema = z
+  .object({
+    provider: NonEmptyStringSchema,
+    model: z.string().trim().min(1).max(200),
+    /** Used when a caller does not name a language. */
+    language: SpeechLanguageSchema.optional(),
+  })
+  .strict()
+export type SpeechCloudSettings = z.output<typeof SpeechCloudSettingsSchema>
+
+export const SpeechSettingsSchema = z
+  .object({
+    cloud: SpeechCloudSettingsSchema.nullable(),
+    /** Configured providers with an OpenAI-compatible address, the ones cloud transcription can use. */
+    providers: z.array(z.object({ provider: NonEmptyStringSchema, displayName: z.string() }).strict()),
+  })
+  .strict()
+export type SpeechSettings = z.output<typeof SpeechSettingsSchema>
 
 /** Whether a capability that needs an add-on can run now; details live in `addons`. */
 export const AddonAvailabilitySchema = z.object({ available: z.boolean() }).strict()
@@ -3931,6 +3955,22 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: z.object({ mode: RetrievalModeSchema }).strict(),
     response: RetrievalStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  getSpeechSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/speech',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: SpeechSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateSpeechSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/speech',
+    params: EmptyParamsSchema,
+    request: z.object({ cloud: SpeechCloudSettingsSchema.nullable() }).strict(),
+    response: SpeechSettingsSchema,
     error: HostApiErrorSchema,
   }),
   listAddons: defineContract({

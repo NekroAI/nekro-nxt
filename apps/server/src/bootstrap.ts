@@ -106,8 +106,11 @@ import {
 } from './extension-host-backends.js'
 import { memoryIndexEngine, sqliteIndexEngine } from './extension-index.js'
 import { RetrievalRuntime } from './retrieval-runtime.js'
-import { AddonRegistry, browserAddon, githubCliAddon, nodeAddon, retrievalAddon } from './addons.js'
+import { AddonRegistry, browserAddon, githubCliAddon, nodeAddon, retrievalAddon, speechAddon } from './addons.js'
 import { ExtensionFileStore } from './extension-files.js'
+import { SpeechCloud } from './speech-cloud.js'
+import { LocalSpeech } from './speech-local.js'
+import { SpeechService } from './speech-service.js'
 import {
   ExtensionLibrary,
   memoryLibraryRegistry,
@@ -293,6 +296,10 @@ export class NekroRuntime {
   readonly modelProviderAccess: ModelProviderAccess
   readonly retrieval: RetrievalRuntime
   readonly addons: AddonRegistry
+  /** Speech to text with the provider the `speech` add-on uses. */
+  readonly speech: SpeechService
+  readonly speechCloud: SpeechCloud
+  readonly #localSpeech: LocalSpeech
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -354,6 +361,9 @@ export class NekroRuntime {
     readonly modelProviderAccess: ModelProviderAccess
     readonly retrieval: RetrievalRuntime
     readonly addons: AddonRegistry
+    readonly speech: SpeechService
+    readonly speechCloud: SpeechCloud
+    readonly localSpeech: LocalSpeech
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -478,6 +488,9 @@ export class NekroRuntime {
     this.modelProviderAccess = input.modelProviderAccess
     this.retrieval = input.retrieval
     this.addons = input.addons
+    this.speech = input.speech
+    this.speechCloud = input.speechCloud
+    this.#localSpeech = input.localSpeech
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.outbound = input.outbound
@@ -1064,10 +1077,40 @@ export class NekroRuntime {
           ? { systemRoot: process.env['NEKRO_VERIFICATION_BROWSER_ROOT'] }
           : {}),
       })
+      const systemSettings = {
+        get: (key: string) => repository.getSystemSetting(key),
+        put: (key: string, value: JsonValue, expectedRevision: number | undefined) =>
+          repository.putSystemSetting(key, value, expectedRevision, now()),
+      }
+      const localSpeech = new LocalSpeech({ root: path.join(runtimesRoot, 'speech') })
+      const speechCloud = new SpeechCloud({
+        settings: systemSettings,
+        providers: async () => {
+          const host = hostReference.current
+          if (host === undefined) return []
+          try {
+            return (await host.getLlmProviderSettings()).providers
+          } catch {
+            // Hosts without model settings have no providers to offer.
+            return []
+          }
+        },
+        connection: async (provider) => {
+          const connection = await hostReference.current?.llmProviderConnection(provider)
+          return connection === undefined
+            ? undefined
+            : {
+                ...(connection.baseURL === undefined ? {} : { baseURL: connection.baseURL }),
+                ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
+              }
+        },
+      })
+      const speech = speechAddon(localSpeech, speechCloud)
       // The four existing add-ons keep the folders they were first installed in.
       const addons = new AddonRegistry(
         [
           retrievalAddon(retrieval),
+          speech,
           nodeAddon(codeRunNode, path.join(runtimesRoot, 'node')),
           githubCliAddon(githubCli, path.join(runtimesRoot, 'gh')),
           browserAddon(verificationBrowser, path.join(runtimesRoot, 'chromium')),
@@ -1080,6 +1123,13 @@ export class NekroRuntime {
         },
       )
       await addons.prepare()
+      const speechService = new SpeechService({
+        active: () => addons.active('speech'),
+        titles: Object.fromEntries(speech.providers.map((provider) => [provider.id, provider.title])),
+        local: localSpeech,
+        cloud: speechCloud,
+        cacheDirectory: path.join(runtimesRoot, 'speech', 'transcripts'),
+      })
       const credentialLibrary = new CredentialLibrary(repository, credentials, {
         secrets,
         now,
@@ -1552,6 +1602,9 @@ export class NekroRuntime {
         modelProviderAccess: providerAccess,
         retrieval,
         addons,
+        speech: speechService,
+        speechCloud,
+        localSpeech,
         channelPrompts,
         mcpStatus,
         outbound: outboundProcessor,
@@ -2166,6 +2219,7 @@ export class NekroRuntime {
     this.#disposed = true
     await this.#jobScheduler.dispose()
     this.addons.dispose()
+    this.#localSpeech.dispose()
     await this.retrieval.dispose()
     await this.extensionFiles.dispose()
     await this.#previewFiles.dispose()

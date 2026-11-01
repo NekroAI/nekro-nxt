@@ -7,6 +7,8 @@ import type {
   AddonState,
   AddonStatus,
   RetrievalStatus,
+  SpeechLanguage,
+  SpeechSettings,
 } from '@nekro-nxt/contracts'
 import { workspaceApi } from '../../host-api-client.js'
 import { useProductStore } from '../../product-runtime.js'
@@ -15,15 +17,18 @@ import {
   Chip,
   DataTable,
   EmptyState,
+  Input,
   MasterDetail,
   ObjectHeader,
   PropertyGroup,
   PropertyList,
   PropertyRow,
+  Select,
   Skeleton,
   Switch,
   toast,
   type Column,
+  type SelectOption,
   type Tone,
 } from '../../ui-kit/index.js'
 import { useProductApi } from '../model/store.js'
@@ -214,6 +219,7 @@ function AddonDetail({ addon }: { readonly addon: AddonStatus }) {
         <ProviderGroup key={provider.id} addon={addon} provider={provider} choice={choice} />
       ))}
       {addon.id === 'retrieval' ? <RetrievalSettings addon={addon} /> : null}
+      {addon.id === 'speech' ? <SpeechCloudSettings /> : null}
     </div>
   )
 }
@@ -413,6 +419,150 @@ function RetrievalSettings({ addon }: { readonly addon: AddonStatus }) {
             )}
           </PropertyRow>
         ) : null}
+      </PropertyList>
+    </PropertyGroup>
+  )
+}
+
+const SPEECH_LANGUAGES: readonly (SelectOption & { readonly value: SpeechLanguage })[] = [
+  { value: 'auto', label: '自动识别' },
+  { value: 'zh', label: '中文' },
+  { value: 'en', label: '英语' },
+  { value: 'ja', label: '日语' },
+  { value: 'ko', label: '韩语' },
+  { value: 'yue', label: '粤语' },
+]
+
+/** Which model provider and model cloud speech recognition uses; saved once both are filled in. */
+function SpeechCloudSettings() {
+  const api = useProductApi()
+  const [settings, setSettings] = useState<SpeechSettings>()
+  const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const [language, setLanguage] = useState<SpeechLanguage>('auto')
+  const [busy, setBusy] = useState(false)
+  const apply = (view: SpeechSettings) => {
+    setSettings(view)
+    setProvider(view.cloud?.provider ?? '')
+    setModel(view.cloud?.model ?? '')
+    setLanguage(view.cloud?.language ?? 'auto')
+  }
+  useEffect(() => {
+    const controller = new AbortController()
+    workspaceApi
+      .getSpeechSettings({ signal: controller.signal })
+      .then(apply)
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [])
+  const update = async (cloud: SpeechSettings['cloud']) => {
+    setBusy(true)
+    try {
+      apply(await workspaceApi.updateSpeechSettings({ cloud }))
+      await api.getState().refreshHost()
+      toast(cloud === null ? '已清除' : '已保存')
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const save = (next: { readonly provider: string; readonly model: string; readonly language: SpeechLanguage }) => {
+    const trimmed = next.model.trim()
+    if (next.provider === '' || trimmed === '') return
+    const current = settings?.cloud
+    if (
+      current?.provider === next.provider &&
+      current.model === trimmed &&
+      (current.language ?? 'auto') === next.language
+    ) {
+      return
+    }
+    void update({
+      provider: next.provider,
+      model: trimmed,
+      ...(next.language === 'auto' ? {} : { language: next.language }),
+    })
+  }
+  const providers = settings?.providers ?? []
+  return (
+    <PropertyGroup
+      title="云端设置"
+      actions={
+        settings?.cloud ? (
+          <Button size="small" variant="ghost" busy={busy} onClick={() => void update(null)}>
+            清除
+          </Button>
+        ) : undefined
+      }
+    >
+      <PropertyList>
+        <PropertyRow
+          label="供应商"
+          description={
+            settings !== undefined && providers.length === 0
+              ? '在「设置 → 模型」添加 OpenAI 兼容的供应商后，可以在这里选择'
+              : undefined
+          }
+          tip="需要供应商提供 OpenAI 兼容的语音转写。"
+        >
+          {settings === undefined ? (
+            <Skeleton width={180} height={28} />
+          ) : providers.length === 0 ? undefined : (
+            <Select
+              aria-label="云端语音识别的供应商"
+              placeholder="选择供应商"
+              value={provider}
+              disabled={busy}
+              options={providers.map((entry) => ({ value: entry.provider, label: entry.displayName }))}
+              onValueChange={(value) => {
+                setProvider(value)
+                save({ provider: value, model, language })
+              }}
+            />
+          )}
+        </PropertyRow>
+        <PropertyRow
+          label="模型"
+          width="sm"
+          tip="填写供应商的语音转写模型名，例如 whisper-1、FunAudioLLM/SenseVoiceSmall。"
+        >
+          {settings === undefined ? (
+            <Skeleton width={180} height={28} />
+          ) : (
+            <Input
+              aria-label="云端语音识别的模型"
+              placeholder="例如 whisper-1"
+              value={model}
+              disabled={busy || providers.length === 0}
+              onChange={(event) => setModel(event.target.value)}
+              onBlur={() => save({ provider, model, language })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  save({ provider, model, language })
+                }
+              }}
+            />
+          )}
+        </PropertyRow>
+        <PropertyRow label="语言" tip="扩展没有指定语言时使用。">
+          {settings === undefined ? (
+            <Skeleton width={120} height={28} />
+          ) : (
+            <Select
+              aria-label="云端语音识别的语言"
+              value={language}
+              disabled={busy || providers.length === 0}
+              options={SPEECH_LANGUAGES}
+              onValueChange={(value) => {
+                const next = SPEECH_LANGUAGES.find((option) => option.value === value)?.value ?? 'auto'
+                setLanguage(next)
+                save({ provider, model, language: next })
+              }}
+            />
+          )}
+        </PropertyRow>
       </PropertyList>
     </PropertyGroup>
   )

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
-import { mkdir, open, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -61,4 +61,66 @@ export const downloadAndUnpack = async (input: {
   // macOS, Linux and Windows 10+ all ship a `tar` that reads both .tar.gz and .zip.
   await run('tar', ['-xf', input.archive, '-C', input.destination])
   await rm(input.archive)
+}
+
+/** A file pinned by size and sha256, with the sources tried in order. */
+export interface PinnedDownload {
+  readonly target: string
+  readonly bytes: number
+  readonly sha256: string
+  readonly urls: readonly string[]
+}
+
+/** Whether `target` already holds the pinned file. */
+export const pinnedFileVerified = async (target: string, bytes: number, sha256: string): Promise<boolean> => {
+  try {
+    if ((await stat(target)).size !== bytes) return false
+    return (
+      createHash('sha256')
+        .update(await readFile(target))
+        .digest('hex') === sha256
+    )
+  } catch {
+    return false
+  }
+}
+
+/** Tries each source in turn; the file appears at `target` only after its size and hash match. */
+export const downloadPinnedFile = async (
+  entry: PinnedDownload,
+  options: { readonly fetch?: typeof fetch; readonly onProgress?: (received: number) => void } = {},
+): Promise<void> => {
+  await mkdir(path.dirname(entry.target), { recursive: true })
+  const failures: string[] = []
+  for (const url of entry.urls) {
+    const staging = `${entry.target}.${randomUUID()}.part`
+    try {
+      const response = await (options.fetch ?? fetch)(url, { signal: AbortSignal.timeout(10 * 60 * 1000) })
+      if (!response.ok || response.body === null) throw new Error(`HTTP ${response.status}`)
+      const hash = createHash('sha256')
+      let received = 0
+      const file = await open(staging, 'w')
+      try {
+        const reader = response.body.getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          received += value.byteLength
+          if (received > entry.bytes) throw new Error('文件比预期大')
+          hash.update(value)
+          await file.write(value)
+          options.onProgress?.(received)
+        }
+      } finally {
+        await file.close()
+      }
+      if (received !== entry.bytes || hash.digest('hex') !== entry.sha256) throw new Error('校验不通过')
+      await rename(staging, entry.target)
+      return
+    } catch (error) {
+      await rm(staging, { force: true })
+      failures.push(`${new URL(url).host}：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  throw new Error(`${path.basename(entry.target)} 下载失败（${failures.join('；')}）`)
 }

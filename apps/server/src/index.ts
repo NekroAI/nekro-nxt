@@ -3821,6 +3821,12 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#withSubscriptions(await this.#modelSettings.getLlmProviderSettings())
   }
 
+  /** A provider's saved address and key, for requests outside model calls such as speech transcription. */
+  llmProviderConnection(provider: string): ReturnType<HostModelSettings['providerConnection']> {
+    this.#assertActive()
+    return this.#modelSettings.providerConnection(provider)
+  }
+
   /** Every provider list the page receives says which routes sign in, or a save would hide the accounts. */
   async #withSubscriptions(settings: LlmProviderSettingsView): Promise<LlmProviderSettingsView> {
     const subscriptions = this.#subscriptions

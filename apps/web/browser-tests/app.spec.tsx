@@ -416,6 +416,7 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
   await page.route('**/api/settings/model-fallback', (route) =>
     route.fulfill({ json: { unavailableCooldownMinutes: 10, quotaCooldownMinutes: 60 } }),
   )
+  await page.route('**/api/settings/speech', (route) => route.fulfill({ json: { cloud: null, providers: [] } }))
   await page.route('**/api/product/updates', (route) =>
     route.fulfill({
       json: { channel: 'development', currentVersion: 'fixture', state: 'unsupported', autoCheck: true },

@@ -9,6 +9,7 @@ import {
   AddonRequestError,
   browserAddon,
   directoryBytes,
+  speechAddon,
   githubCliAddon,
   nodeAddon,
   type AddonCapability,
@@ -19,6 +20,8 @@ import { CodeRunNode } from '../src/code-run-node.ts'
 import { GithubCli } from '../src/github-cli.ts'
 import type { HostRouteContext } from '../src/host-route-support.ts'
 import { registerAddonRoutes } from '../src/host-routes-addons.ts'
+import { SpeechCloud, type SpeechCloudOptions } from '../src/speech-cloud.ts'
+import { LocalSpeech } from '../src/speech-local.ts'
 import { VerificationBrowser } from '../src/verification-browser.ts'
 
 const temporaryDirectories: string[] = []
@@ -49,6 +52,30 @@ const memorySettings = (): AddonSettingsStore & { readonly values: Map<string, J
     },
   }
 }
+
+/** Cloud transcription over two fictional providers, one of which speaks only Anthropic's protocol. */
+const cloudOptions = (settings: AddonSettingsStore = memorySettings()): SpeechCloudOptions => ({
+  settings,
+  providers: () =>
+    Promise.resolve([
+      {
+        provider: 'example-relay',
+        displayName: '示例中转',
+        configured: true,
+        baseURL: 'https://relay.example.test/v1',
+        api: 'openai-completions',
+      },
+      {
+        provider: 'example-claude',
+        displayName: '示例 Claude',
+        configured: true,
+        baseURL: 'https://claude.example.test',
+        api: 'anthropic-messages',
+      },
+      { provider: 'deepseek', displayName: 'DeepSeek', configured: true },
+    ]),
+  connection: () => Promise.resolve(undefined),
+})
 
 /** A capability with a program found on this device and one that downloads on request, both controlled by the test. */
 const fakeCapability = () => {
@@ -266,18 +293,24 @@ describe('add-on registry', () => {
 })
 
 describe('add-on routes', () => {
-  const serve = async (registry: AddonRegistry) => {
+  const serve = async (registry: AddonRegistry, speechCloud = new SpeechCloud(cloudOptions())) => {
     type Route = Parameters<HostRouteContext['registerRoute']>[0]
-    let route: Route | undefined
+    const routes: Route[] = []
     const events: HostSseEvent[] = []
     const dispose = registerAddonRoutes({
-      runtime: { addons: registry },
+      runtime: { addons: registry, speechCloud },
       registerRoute: (registered) => {
-        route = registered
+        routes.push(registered)
       },
       broadcast: (event) => events.push(event),
     })
-    const server = createServer((req, res) => void route?.handler(req, res))
+    const server = createServer((req, res) => {
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+      const route = routes.find((candidate) =>
+        candidate.kind === 'exact' ? candidate.path === pathname : pathname.startsWith(candidate.path),
+      )
+      void route?.handler(req, res)
+    })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     servers.push(server)
     const address = server.address()
@@ -326,5 +359,49 @@ describe('add-on routes', () => {
     expect((await call('POST', '/api/addons/unknown/providers/x/install')).status).toBe(404)
     expect((await call('GET', '/api/addons/github-cli/providers/download/install')).status).toBe(405)
     dispose()
+  })
+
+  it('keeps the cloud speech settings, offers only OpenAI-compatible providers and selects the cloud once set', async () => {
+    const settings = memorySettings()
+    const cloud = new SpeechCloud(cloudOptions(settings))
+    const local = new LocalSpeech({ root: path.join(await temporary(), 'speech'), platform: 'linux', arch: 'x64' })
+    const registry = new AddonRegistry([speechAddon(local, cloud)], { settings })
+    await registry.prepare()
+    const { call, events, dispose } = await serve(registry, cloud)
+
+    expect(await call('GET', '/api/settings/speech')).toEqual({
+      status: 200,
+      body: { cloud: null, providers: [{ provider: 'example-relay', displayName: '示例中转' }] },
+    })
+    expect(registry.status('speech')).toMatchObject({
+      state: 'not-installed',
+      providers: [
+        { id: 'paraformer-zh-small', state: 'not-installed', installable: true },
+        { id: 'sense-voice-small', state: 'not-installed' },
+        { id: 'cloud', state: 'needs-config', source: 'cloud', installable: false },
+      ],
+    })
+    expect(registry.status('speech')).not.toHaveProperty('selected')
+
+    const refused = await call('PUT', '/api/settings/speech', { cloud: { provider: 'example-claude', model: 'm' } })
+    expect(refused).toMatchObject({ status: 400, body: { error: { code: 'speech-settings-failed' } } })
+
+    const saved = await call('PUT', '/api/settings/speech', {
+      cloud: { provider: 'example-relay', model: 'whisper-1', language: 'zh' },
+    })
+    expect(saved).toMatchObject({
+      status: 200,
+      body: { cloud: { provider: 'example-relay', model: 'whisper-1', language: 'zh' } },
+    })
+    expect(registry.status('speech')).toMatchObject({ state: 'available', selected: 'cloud' })
+    expect(events).toContainEqual({ event: 'snapshot-changed', data: { changed: true } })
+
+    const cleared = await call('PUT', '/api/settings/speech', { cloud: null })
+    expect(cleared).toMatchObject({ status: 200, body: { cloud: null } })
+    // Still the chosen one, now waiting for settings again.
+    expect(registry.status('speech')).toMatchObject({ state: 'needs-config' })
+    expect(registry.active('speech')).toBeUndefined()
+    dispose()
+    local.dispose()
   })
 })
