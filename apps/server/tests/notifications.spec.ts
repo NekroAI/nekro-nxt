@@ -18,7 +18,7 @@ afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const createFixture = async () => {
+const createFixture = async (options: { readonly now?: () => number } = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-notifications-'))
   temporaryRoots.push(root)
   let record: SystemSettingRecord | undefined
@@ -35,7 +35,7 @@ const createFixture = async () => {
   const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response(null, { status: 200 })))
   const service = new NotificationService(repository, new LocalCredentialStore(path.join(root, 'credentials')), {
     fetch,
-    now: () => 1_725_000_000_000,
+    now: options.now ?? (() => 1_725_000_000_000),
   })
   return {
     service,
@@ -281,8 +281,8 @@ describe('NotificationService', () => {
       body: '内容',
     })
     const ids = service.readClientNotifications(cursor).notifications.map((item) => item.id)
-    expect(ids.slice(0, 7)).toEqual([
-      'dynamic-approval:agent_synthetic:plugin_synthetic',
+    expect(ids.slice(0, 6)).toEqual([
+      // The second request for the same waiting candidate is not announced again.
       'dynamic-approval:agent_synthetic:plugin_synthetic',
       'dynamic-approval:agent_synthetic:plugin_other',
       'feedback:FB-12',
@@ -290,6 +290,21 @@ describe('NotificationService', () => {
       'notice:extension:ext_weather',
       'notice:extension:ext_weather',
     ])
-    expect(ids[7]).toMatch(/^notice:[a-f0-9]{64}$/u)
+    expect(ids[6]).toMatch(/^notice:[a-f0-9]{64}$/u)
+  })
+
+  it('announces a waiting candidate once an hour however often the runner asks again', async () => {
+    let now = 1_000
+    const { service } = await createFixture({ now: () => now })
+    await service.updateSettings({
+      system: { enabled: true },
+      bark: { enabled: false, serverUrl: 'https://api.day.app' },
+      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true },
+    })
+    await expect(service.notifyDynamicApproval(approval)).resolves.toBe('sent')
+    now += 59 * 60 * 1000
+    await expect(service.notifyDynamicApproval({ ...approval, requestId: 'approval_retry' })).resolves.toBe('skipped')
+    now += 2 * 60 * 1000
+    await expect(service.notifyDynamicApproval({ ...approval, requestId: 'approval_later' })).resolves.toBe('sent')
   })
 })

@@ -149,12 +149,17 @@ const normalizeDeviceKey = (raw: string): string => {
   return value
 }
 
+/** How long the same waiting candidate stays quiet after it was announced. */
+const APPROVAL_REMINDER_MS = 60 * 60 * 1000
+
 export class NotificationService {
   readonly #repository: NotificationSettingsRepository
   readonly #credentials: LocalCredentialStore
   readonly #fetch: FetchLike
   readonly #now: () => number
   readonly #clientNotifications: Array<{ readonly cursor: number; readonly notification: ClientNotification }> = []
+  /** When each agent's candidate last asked to run; the runner may ask again for a candidate still waiting. */
+  readonly #approvalNotifiedAt = new Map<string, number>()
   #notificationCursor = 0
 
   constructor(
@@ -254,14 +259,23 @@ export class NotificationService {
     })
   }
 
+  /**
+   * Tells the admin a candidate waits for permission to run. One candidate asks once per hour at most (#91): the
+   * runner asks again on every retry, and each push would otherwise stack another notification.
+   */
   async notifyDynamicApproval(input: DynamicApprovalNotification): Promise<'sent' | 'skipped'> {
-    return await this.#deliver(DYNAMIC_CLIENT_APPROVAL_NOTIFICATION, {
+    const key = `${input.agentId}:${input.pluginId}`
+    const last = this.#approvalNotifiedAt.get(key)
+    if (last !== undefined && this.#now() - last < APPROVAL_REMINDER_MS) return 'skipped'
+    const result = await this.#deliver(DYNAMIC_CLIENT_APPROVAL_NOTIFICATION, {
       id: sourceId('dynamic-approval', input.agentId, input.pluginId),
       title: '有扩展等你试运行',
       body: `「${input.agentDisplayName}」做的「${input.extensionName}」需要你允许运行。${input.purpose ? `用途：${input.purpose}` : ''}`,
       route: '/workshop',
       barkGroup: `NekroNXT · ${input.extensionName}`,
     })
+    if (result === 'sent') this.#approvalNotifiedAt.set(key, this.#now())
+    return result
   }
 
   /** An agent asked for a credential; the link opens the add form pre-filled. */
