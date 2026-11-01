@@ -26,6 +26,7 @@ import { Button } from './ui-kit/index.js'
 import { HostUiPageFrame } from './host-ui-client.js'
 import { ContributionBoundary, ContributionFrame } from './extension-ui/contribution-frame.js'
 import type { ContributionRegistry, PanelEntry } from './extension-ui/registry.js'
+import { hasVisibleContent } from './dynamic-page-content.js'
 import styles from './dynamic-client-coordinator.module.css'
 
 /** One browser ModuleLoader multiplexed across product intelligent-agents. */
@@ -723,10 +724,7 @@ function DynamicPagePreview({
     entry.recordPageGeometry(geometry.evidence)
     setVisualSuggestions([...evidence.violations, ...geometry.violations])
     const content = root.querySelector<HTMLElement>('[data-host-ui-content]')
-    if (
-      !content ||
-      (!content.innerText.trim() && !content.querySelector('img, svg, canvas, input, select, textarea, video'))
-    ) {
+    if (!content || !hasVisibleContent(content)) {
       coordinator.reportPreviewFailure(entry.pluginId, new Error('页面没有可见内容。'))
     }
     coordinator.notePageInspected(entry.pluginId)
