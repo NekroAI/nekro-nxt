@@ -845,6 +845,46 @@ test('composer attachments upload, fail, retry, remove and send as ordered parts
   expect(unexpected, unexpected.join('\n')).toEqual([])
 })
 
+test('files dropped anywhere on the channel become attachments and the whole pane says so', async ({ page }) => {
+  const failures = installRuntimeFailureGate(page)
+  await installProductRoutes(page)
+  await page.route('**/api/channels/*/assets', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const fileName = decodeURIComponent(route.request().headers()['x-file-name'] ?? '')
+    return route.fulfill({
+      json: {
+        assetId: 'ast_01M4YR1WNMD7Q8NBM7P2B0GARC',
+        mediaType: 'text/plain',
+        byteSize: 12,
+        fileName,
+        partType: 'file',
+      },
+    })
+  })
+  await page.goto(`/channels/${targetChannelId}`)
+  const history = page.getByRole('log', { name: '消息记录' })
+  await expect(history).toBeVisible()
+  // Dragging over the message history, far from the composer, lights up the whole channel.
+  await history.evaluate((element) => {
+    const transfer = new DataTransfer()
+    transfer.items.add(new File(['虚构内容'], '拖入的笔记.txt', { type: 'text/plain' }))
+    element.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+    Reflect.set(window, '__dropTransfer', transfer)
+  })
+  await expect(page.locator('section[data-file-drop="ready"]')).toHaveAttribute('data-drop-hint', '松手添加为附件')
+  await page.screenshot({ path: test.info().outputPath('channel-drop.png') })
+  await history.evaluate((element) => {
+    const transfer: unknown = Reflect.get(window, '__dropTransfer')
+    if (!(transfer instanceof DataTransfer)) throw new Error('no transfer')
+    element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+  })
+  await expect(page.locator('section[data-file-drop]')).toHaveCount(0)
+  await expect(
+    page.getByRole('list', { name: '待发送附件' }).getByRole('listitem', { name: '拖入的笔记.txt' }),
+  ).toBeVisible()
+  expect(failures).toEqual([])
+})
+
 test('long history stays above a growing multiline composer and an empty channel says so', async ({ page }) => {
   const failures = installRuntimeFailureGate(page)
   await installProductRoutes(page)

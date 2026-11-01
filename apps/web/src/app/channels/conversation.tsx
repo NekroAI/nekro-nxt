@@ -122,6 +122,7 @@ export function Conversation({
   readonly inspectorOpen: boolean
   readonly onToggleInspector: () => void
 }) {
+  const pane = useRef<HTMLElement>(null)
   const api = useProductApi()
   const messages = useProductStore((state) => state.messagesByChannel[channel.id] ?? EMPTY)
   const history = useProductStore((state) => state.channelHistory[channel.id])
@@ -219,7 +220,7 @@ export function Conversation({
   }
 
   return (
-    <section className={styles.chan} aria-label={channel.name}>
+    <section ref={pane} className={styles.chan} aria-label={channel.name}>
       <header className={styles.head}>
         <div className={styles.title} key={channel.id}>
           <h1 className={styles.titleLine}>
@@ -347,7 +348,7 @@ export function Conversation({
           </Button>
         ) : null}
         <Queue channelId={channel.id} count={runtime?.pendingInjectCount ?? 0} />
-        <Composer key={channel.id} channel={channel} agent={agent} connection={connection} />
+        <Composer key={channel.id} channel={channel} agent={agent} connection={connection} dropArea={pane} />
       </div>
       <ContextResetDialog
         channelId={channel.id}

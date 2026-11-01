@@ -1,5 +1,5 @@
 import { ArrowRight, FilePlus2, ImagePlus, Plug, RotateCcw, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { EMPTY_CHANNEL_DRAFT, isReadyAttachment, type ChannelAttachment } from '../../channel-drafts.js'
 import {
@@ -120,10 +120,13 @@ export function Composer({
   channel,
   agent,
   connection,
+  dropArea,
 }: {
   readonly channel: ChannelSummary
   readonly agent: AgentSummary | undefined
   readonly connection: ConnectionSummary | undefined
+  /** Where dropped files are taken (#97): the whole channel pane; the composer itself when absent. */
+  readonly dropArea?: RefObject<HTMLElement | null>
 }) {
   const api = useProductApi()
   const ui = useProductRuntime().uiStore
@@ -136,6 +139,7 @@ export function Composer({
   const input = useRef<HTMLTextAreaElement>(null)
   const imagePicker = useRef<HTMLInputElement>(null)
   const filePicker = useRef<HTMLInputElement>(null)
+  const form = useRef<HTMLFormElement>(null)
   const [dragging, setDragging] = useState(false)
   const dragDepth = useRef(0)
   const external = channel.kind !== 'internal'
@@ -251,37 +255,67 @@ export function Composer({
       void send()
     }
   }
+  // Native listeners on the drop area, reading the latest state through a ref so they attach once per area.
+  const dropState = useRef({ addFiles, refusal: blocked || (sending ? '正在发送' : '') })
+  dropState.current = { addFiles, refusal: blocked || (sending ? '正在发送' : '') }
+  useEffect(() => {
+    const area = dropArea?.current ?? form.current
+    if (!area) return
+    const carriesFiles = (event: DragEvent) => event.dataTransfer?.types.includes('Files') === true
+    const show = (on: boolean) => {
+      setDragging(on)
+      if (on) {
+        area.dataset['fileDrop'] = dropState.current.refusal ? 'refused' : 'ready'
+        area.dataset['dropHint'] = dropState.current.refusal || '松手添加为附件'
+      } else {
+        delete area.dataset['fileDrop']
+        delete area.dataset['dropHint']
+      }
+    }
+    const enter = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      dragDepth.current += 1
+      show(true)
+    }
+    const leave = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      dragDepth.current = Math.max(0, dragDepth.current - 1)
+      if (!dragDepth.current) show(false)
+    }
+    const over = (event: DragEvent) => {
+      if (!carriesFiles(event) || !event.dataTransfer) return
+      event.preventDefault()
+      event.dataTransfer.dropEffect = dropState.current.refusal ? 'none' : 'copy'
+    }
+    const drop = (event: DragEvent) => {
+      if (!carriesFiles(event)) return
+      event.preventDefault()
+      dragDepth.current = 0
+      show(false)
+      dropState.current.addFiles([...(event.dataTransfer?.files ?? [])])
+    }
+    area.addEventListener('dragenter', enter)
+    area.addEventListener('dragleave', leave)
+    area.addEventListener('dragover', over)
+    area.addEventListener('drop', drop)
+    return () => {
+      area.removeEventListener('dragenter', enter)
+      area.removeEventListener('dragleave', leave)
+      area.removeEventListener('dragover', over)
+      area.removeEventListener('drop', drop)
+      dragDepth.current = 0
+      show(false)
+    }
+  }, [dropArea])
   return (
     <form
+      ref={form}
       className={[styles.composer, dragging ? styles.composerDragging : ''].join(' ')}
       aria-label="消息输入"
       onSubmit={(event) => {
         event.preventDefault()
         void send()
-      }}
-      onDragEnter={(event) => {
-        if (!event.dataTransfer.types.includes('Files')) return
-        event.preventDefault()
-        dragDepth.current += 1
-        setDragging(true)
-      }}
-      onDragLeave={(event) => {
-        if (!event.dataTransfer.types.includes('Files')) return
-        dragDepth.current = Math.max(0, dragDepth.current - 1)
-        if (!dragDepth.current) setDragging(false)
-      }}
-      onDragOver={(event) => {
-        if (event.dataTransfer.types.includes('Files')) {
-          event.preventDefault()
-          event.dataTransfer.dropEffect = blocked || sending ? 'none' : 'copy'
-        }
-      }}
-      onDrop={(event) => {
-        if (!event.dataTransfer.types.includes('Files')) return
-        event.preventDefault()
-        dragDepth.current = 0
-        setDragging(false)
-        addFiles([...event.dataTransfer.files])
       }}
     >
       {attachments.length ? (

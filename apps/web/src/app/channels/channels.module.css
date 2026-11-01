@@ -1153,6 +1153,28 @@ button.step:hover {
   width: 100%;
   min-width: 0;
 }
+/* Files dragged anywhere over the channel (#97): the whole pane shows it takes them, or why it does not. */
+.chan[data-file-drop]::after {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent-line);
+  border-radius: var(--r-3);
+  inset: var(--s-2);
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  color: var(--accent);
+  content: attr(data-drop-hint);
+  font: var(--t-title);
+  pointer-events: none;
+}
+
+.chan[data-file-drop='refused']::after {
+  border-color: var(--line-3);
+  color: var(--muted);
+}
+
 .composerDragging {
   border-color: var(--accent);
   background: var(--accent-soft);
