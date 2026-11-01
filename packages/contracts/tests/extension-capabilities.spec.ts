@@ -14,6 +14,11 @@ import {
   ExtensionPermissionsSchema,
   outboundProcessesBeforeSend,
   requiredExtensionSdkLevel,
+  requiredExtensionAddons,
+  AddonIdSchema,
+  EXTENSION_COMMAND_PROFILES,
+  EXTENSION_SPEECH_DEFAULT_CALLS_PER_MINUTE,
+  HostLayerCapabilitiesSchema,
 } from '../src/index.js'
 
 const caps = (value: unknown): ExtensionCapabilities => ExtensionCapabilitiesSchema.parse(value)
@@ -542,5 +547,90 @@ describe('work files, asset reads and high-detail tool images', () => {
       requiredExtensionSdkLevel(ExtensionPermissionsSchema.parse({ host: { assets: { library: {} } } })).level,
     ).toBe(8)
     expect(EXTENSION_FILES_SDK_LEVEL).toBe(14)
+  })
+})
+
+describe('media, commands and speech', () => {
+  it('accepts known command profiles once each and bounds the speech rate', () => {
+    expect(caps({ media: true }).media).toBe(true)
+    expect(() => caps({ media: false })).toThrow()
+    expect(caps({ commands: { profiles: ['ffprobe', 'ffmpeg'] } }).commands?.profiles).toEqual(['ffprobe', 'ffmpeg'])
+    expect(() => caps({ commands: { profiles: [] } })).toThrow()
+    expect(() => caps({ commands: { profiles: ['ffmpeg', 'ffmpeg'] } })).toThrow('命令档案不能重复')
+    expect(() => caps({ commands: { profiles: ['bash'] } })).toThrow('命令档案只能是 ffmpeg、ffprobe')
+    expect(caps({ speech: {} }).speech).toEqual({ maxCallsPerMinute: EXTENSION_SPEECH_DEFAULT_CALLS_PER_MINUTE })
+    expect(() => caps({ speech: { maxCallsPerMinute: 61 } })).toThrow()
+    expect(
+      hostLayerAsCapabilities(
+        HostLayerCapabilitiesSchema.parse({ media: true, commands: { profiles: ['ffmpeg'] }, speech: {} }),
+      ),
+    ).toEqual({ media: true, commands: { profiles: ['ffmpeg'] }, speech: { maxCallsPerMinute: 10 } })
+  })
+
+  it.each([
+    ['adding media', {}, { media: true }, true],
+    ['keeping media', { media: true }, { media: true }, false],
+    [
+      'adding a profile',
+      { commands: { profiles: ['ffprobe'] } },
+      { commands: { profiles: ['ffprobe', 'ffmpeg'] } },
+      true,
+    ],
+    [
+      'dropping a profile',
+      { commands: { profiles: ['ffprobe', 'ffmpeg'] } },
+      { commands: { profiles: ['ffmpeg'] } },
+      false,
+    ],
+    ['adding speech', {}, { speech: { maxCallsPerMinute: 5 } }, true],
+    ['raising the speech rate', { speech: { maxCallsPerMinute: 5 } }, { speech: { maxCallsPerMinute: 6 } }, true],
+    ['lowering the speech rate', { speech: { maxCallsPerMinute: 5 } }, { speech: { maxCallsPerMinute: 4 } }, false],
+  ])('approval covers %s', (_name, previous, next, expands) => {
+    expect(extensionCapabilitiesExpand(caps(previous), caps(next))).toBe(expands)
+  })
+
+  it('rates media as normal, speech as sensitive and commands as high with their limits', () => {
+    expect(
+      summarizeExtensionCapabilities(
+        caps({ media: true, commands: { profiles: ['ffmpeg', 'ffprobe'] }, speech: { maxCallsPerMinute: 6 } }),
+      ),
+    ).toEqual([
+      { key: 'media', risk: 'normal', label: '处理音频、视频和图片' },
+      {
+        key: 'commands',
+        risk: 'high',
+        label: '在本机运行程序',
+        detail: 'ffmpeg、ffprobe',
+        scope: '只能读写交给它的文件，不能联网',
+      },
+      {
+        key: 'speech',
+        risk: 'sensitive',
+        label: '把音频转成文字',
+        detail: '音频可能发给「设置 → 附加功能」里选择的语音识别服务，每分钟最多 6 次',
+      },
+    ])
+  })
+
+  it('needs SDK level 14', () => {
+    expect(
+      requiredExtensionSdkLevel(
+        ExtensionPermissionsSchema.parse({
+          agent: { media: true, speech: {} },
+          host: { commands: { profiles: ['ffmpeg'] } },
+        }),
+      ),
+    ).toEqual({ level: EXTENSION_FILES_SDK_LEVEL, capabilities: ['媒体处理', '运行程序', '语音识别'] })
+  })
+
+  it('derives the add-ons the capabilities need', () => {
+    expect(requiredExtensionAddons(caps({ files: {} }))).toEqual([])
+    expect(requiredExtensionAddons(caps({ speech: {} }), caps({ commands: { profiles: ['ffprobe'] } }))).toEqual([
+      'media',
+      'speech',
+    ])
+    expect(requiredExtensionAddons(undefined, hostLayerAsCapabilities({ media: true }))).toEqual(['media'])
+    // Every profile names an add-on the host knows.
+    for (const addon of Object.values(EXTENSION_COMMAND_PROFILES)) expect(AddonIdSchema.parse(addon)).toBe(addon)
   })
 })

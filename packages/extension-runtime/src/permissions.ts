@@ -42,6 +42,9 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
     ...(capabilities.assets === undefined ? {} : { assets: capabilities.assets }),
     ...(capabilities.files === undefined ? {} : { files: capabilities.files }),
     ...(capabilities.toolImages === undefined ? {} : { toolImages: capabilities.toolImages }),
+    ...(capabilities.media === undefined ? {} : { media: capabilities.media }),
+    ...(capabilities.commands === undefined ? {} : { commands: { profiles: sorted(capabilities.commands.profiles) } }),
+    ...(capabilities.speech === undefined ? {} : { speech: capabilities.speech }),
     ...(capabilities.index === undefined
       ? {}
       : {

@@ -556,6 +556,9 @@ export const requiredExtensionSdkLevel = (
       ? undefined
       : '读取频道文件',
     permissions?.agent?.toolImages === undefined ? undefined : '高细节图片',
+    permissions?.host?.media === undefined && permissions?.agent?.media === undefined ? undefined : '媒体处理',
+    permissions?.host?.commands === undefined && permissions?.agent?.commands === undefined ? undefined : '运行程序',
+    permissions?.host?.speech === undefined && permissions?.agent?.speech === undefined ? undefined : '语音识别',
   ].filter((name): name is string => name !== undefined)
   if (level14.length > 0) return { level: EXTENSION_FILES_SDK_LEVEL, capabilities: level14 }
   const level8 = [
