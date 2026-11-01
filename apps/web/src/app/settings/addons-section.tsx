@@ -307,7 +307,7 @@ function ProviderGroup({
             </Button>
           ) : undefined}
         </PropertyRow>
-        {provider.source === undefined ? null : (
+        {choice || provider.source === undefined ? null : (
           <PropertyRow label="来源" description={SOURCE_LABEL[provider.source]} />
         )}
         {provider.version === undefined ? null : <PropertyRow label="版本" description={provider.version} />}
@@ -383,15 +383,15 @@ function RetrievalSettings({ addon }: { readonly addon: AddonStatus }) {
     <PropertyGroup title="设置">
       <PropertyList>
         <PropertyRow
-          label="语义检索"
-          description={installed ? undefined : '安装后可以开启'}
+          label="启用"
+          description={installed ? undefined : '安装后可以启用'}
           tip="扩展查找自己保存的资料（比如表情包）时，除了关键词，还按意思找：用「累了」也能找到「加班到崩溃」。模型在本机运行，不会把内容发到别处。"
         >
           {status === undefined ? (
             <Skeleton width={40} height={22} />
           ) : (
             <Switch
-              label="语义检索"
+              label="启用语义检索"
               checked={status.mode === 'builtin'}
               disabled={!installed || busy}
               onCheckedChange={(checked) => void change(checked)}

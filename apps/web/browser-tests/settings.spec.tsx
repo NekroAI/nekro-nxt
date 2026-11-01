@@ -1257,7 +1257,7 @@ test.describe('settings space', () => {
       await expect(page.getByRole('heading', { name: 'GitHub CLI', level: 2 })).toBeVisible()
       const system = page.getByRole('region', { name: '这台设备的 gh' })
       await expect(system).toContainText('正在使用')
-      await expect(system).toContainText('来自这台设备')
+      await expect(system).not.toContainText('来自这台设备')
       await expect(system).toContainText('2.90.0')
       const download = page.getByRole('region', { name: '下载的 gh' })
       await expect(download).toContainText('约 15 MB')
@@ -1449,7 +1449,7 @@ test.describe('settings space', () => {
     try {
       await expect(page).toHaveURL(/\/settings\/addons\/retrieval$/u)
       const settings = page.getByRole('region', { name: '设置', exact: true })
-      const toggle = settings.getByRole('switch', { name: '语义检索' })
+      const toggle = settings.getByRole('switch', { name: '启用语义检索' })
       await expect(toggle).toBeEnabled()
       await expect(page.getByRole('region', { name: '内置 bge-small-zh' })).toContainText('52 MB')
       await toggle.click()
@@ -1471,8 +1471,8 @@ test.describe('settings space', () => {
     })
     try {
       const settings = page.getByRole('region', { name: '设置', exact: true })
-      await expect(settings.getByRole('switch', { name: '语义检索' })).toBeDisabled()
-      await expect(settings).toContainText('安装后可以开启')
+      await expect(settings.getByRole('switch', { name: '启用语义检索' })).toBeDisabled()
+      await expect(settings).toContainText('安装后可以启用')
       const provider = page.getByRole('region', { name: '内置 bge-small-zh' })
       await expect(provider).toContainText('约 48 MB')
       // A single provider is not a choice.

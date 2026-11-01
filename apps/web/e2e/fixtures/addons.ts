@@ -50,7 +50,7 @@ export const addonsFixture = (
         addonProvider({
           id: 'download',
           title: '下载的 Node',
-          summary: '下载到 NekroNXT 的数据目录，不影响这台设备上的其他程序。',
+          summary: '',
           state: 'not-installed',
           version: '24.21.0',
           resources: { downloadBytes: 50 * 1024 * 1024, notes: [] },
@@ -71,7 +71,7 @@ export const addonsFixture = (
         addonProvider({
           id: 'system',
           title: '这台设备的 gh',
-          summary: '这台设备上已经安装的 GitHub CLI。',
+          summary: '',
           state: 'available',
           source: 'system',
           version: '2.90.0',
@@ -79,7 +79,7 @@ export const addonsFixture = (
         addonProvider({
           id: 'download',
           title: '下载的 gh',
-          summary: '下载到 NekroNXT 的数据目录，不影响这台设备上的其他程序。',
+          summary: '',
           state: 'not-installed',
           version: '2.102.0',
           resources: { downloadBytes: 15 * 1024 * 1024, notes: [] },
@@ -99,7 +99,7 @@ export const addonsFixture = (
         addonProvider({
           id: 'download',
           title: '下载的 Chromium',
-          summary: '下载到 NekroNXT 的数据目录，不影响这台设备上的其他程序。',
+          summary: '',
           state: 'not-installed',
           resources: { downloadBytes: 110 * 1024 * 1024, notes: [] },
           sources: ['Playwright（cdn.playwright.dev）'],

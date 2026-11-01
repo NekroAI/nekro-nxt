@@ -384,7 +384,7 @@ const downloadState = (
   }
 }
 
-const DOWNLOAD_SUMMARY = '下载到 NekroNXT 的数据目录，不影响这台设备上的其他程序。'
+const DOWNLOAD_SUMMARY = ''
 
 export const nodeAddon = (node: CodeRunNode, directory: string): AddonCapability => {
   const downloadBytes = node.downloadBytes()
@@ -400,7 +400,7 @@ export const nodeAddon = (node: CodeRunNode, directory: string): AddonCapability
       {
         id: 'bundled',
         title: 'NekroNXT 自带的 Node',
-        summary: 'NekroNXT 服务自己使用的 Node。',
+        summary: '',
         programs: ['node'],
         state: () => {
           const bundled = node.bundled()
@@ -411,7 +411,7 @@ export const nodeAddon = (node: CodeRunNode, directory: string): AddonCapability
       {
         id: 'system',
         title: '这台设备的 Node',
-        summary: '这台设备上已经安装的 Node 22 或更高版本。',
+        summary: '需要 Node 22 或更高版本。',
         programs: ['node'],
         state: () => {
           const system = node.system()
@@ -457,7 +457,7 @@ export const githubCliAddon = (cli: GithubCli, directory: string): AddonCapabili
       {
         id: 'system',
         title: '这台设备的 gh',
-        summary: '这台设备上已经安装的 GitHub CLI。',
+        summary: '',
         programs: ['gh'],
         state: () => {
           const system = cli.system()
@@ -501,7 +501,7 @@ export const browserAddon = (browser: VerificationBrowser, directory: string): A
     {
       id: 'bundled',
       title: '随 NekroNXT 安装的 Chromium',
-      summary: '和 NekroNXT 的 Docker 镜像一起安装。',
+      summary: '',
       state: () => {
         const executable = browser.bundled()
         if (executable === undefined) return undefined
