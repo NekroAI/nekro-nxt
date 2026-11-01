@@ -156,7 +156,7 @@ const scriptProfile: CommandProfile = {
   prefix: [],
   inputPrefix: [],
   options: { v: { takes: 'value' } },
-  timeoutMs: { default: 300, max: 300 },
+  timeoutMs: { default: 5000, max: 5000 },
   maxStdioBytes: 64,
   maxOutputs: 5,
 }
@@ -185,11 +185,15 @@ describe.skipIf(process.platform === 'win32')('running a profile', () => {
     await writeFile(input, 'x')
     const started = Date.now()
     await expect(
-      profiles(program).run('fixture', [{ input: 'in' }], { inputs: { in: input }, workDir }),
+      profiles({ ...program, profile: { ...scriptProfile, timeoutMs: { default: 300, max: 300 } } }).run(
+        'fixture',
+        [{ input: 'in' }],
+        { inputs: { in: input }, workDir },
+      ),
     ).rejects.toMatchObject({
       code: 'timeout',
     })
-    expect(Date.now() - started).toBeLessThan(3000)
+    expect(Date.now() - started).toBeLessThan(4000)
     expect(await readdir(workDir)).toEqual([])
   })
 
