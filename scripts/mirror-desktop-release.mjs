@@ -112,6 +112,18 @@ export function prunableFolders(folders, keep) {
   return folders.filter((folder) => !kept.has(folder))
 }
 
+/** Runs an upload up to three times; a large multipart upload to R2 now and then fails as a whole. */
+function retrying(label, upload) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return upload()
+    } catch (error) {
+      if (attempt >= 3) throw error
+      console.log(`上传 ${label} 失败，重试第 ${attempt} 次：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
 function option(name) {
   const index = process.argv.indexOf(name)
   return index >= 0 ? process.argv[index + 1] : undefined
@@ -184,6 +196,9 @@ async function main() {
     AWS_ACCESS_KEY_ID: process.env['R2_ACCESS_KEY_ID'],
     AWS_SECRET_ACCESS_KEY: process.env['R2_SECRET_ACCESS_KEY'],
     AWS_DEFAULT_REGION: 'auto',
+    // R2 rejects the CRC checksums newer AWS CLIs add to multipart uploads (InvalidPart on completion).
+    AWS_REQUEST_CHECKSUM_CALCULATION: 'WHEN_REQUIRED',
+    AWS_RESPONSE_CHECKSUM_VALIDATION: 'WHEN_REQUIRED',
   }
   const endpoint = ['--endpoint-url', `https://${account}.r2.cloudflarestorage.com`]
   const aws = (args) => run('aws', [...args, ...endpoint], { env })
@@ -192,18 +207,20 @@ async function main() {
 
   for (const receipt of receipts) {
     const key = `${PREFIX}/${channel}/files/${folder}/${receipt.artifact}`
-    aws([
-      's3',
-      'cp',
-      path.join(directory, receipt.artifact),
-      `s3://${bucket}/${key}`,
-      '--content-type',
-      'application/octet-stream',
-      // A folder never changes once written: Stable is named by version, Preview by commit.
-      '--cache-control',
-      'public, max-age=31536000, immutable',
-      '--only-show-errors',
-    ])
+    retrying(receipt.artifact, () =>
+      aws([
+        's3',
+        'cp',
+        path.join(directory, receipt.artifact),
+        `s3://${bucket}/${key}`,
+        '--content-type',
+        'application/octet-stream',
+        // A folder never changes once written: Stable is named by version, Preview by commit.
+        '--cache-control',
+        'public, max-age=31536000, immutable',
+        '--only-show-errors',
+      ]),
+    )
     const head = JSON.parse(aws(['s3api', 'head-object', '--bucket', bucket, '--key', key]))
     if (head.ContentLength !== receipt.bytes) throw new Error(`社区镜像上的 ${receipt.artifact} 大小不一致。`)
   }
