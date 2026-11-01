@@ -2,7 +2,9 @@ import { lstat, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { AddonGroup, AddonId, AddonProviderStatus, AddonState, AddonStatus, JsonValue } from '@nekro-nxt/contracts'
 import type { CodeRunNode } from './code-run-node.js'
+import { FFMPEG_PROFILE, FFPROBE_PROFILE, type CommandProfile } from './command-profiles.js'
 import type { GithubCli } from './github-cli.js'
+import type { MediaFfmpeg } from './media-ffmpeg.js'
 import type { RetrievalRuntime } from './retrieval-runtime.js'
 import type { RuntimeDownloadState } from './runtime-download.js'
 import type { SpeechCloud } from './speech-cloud.js'
@@ -22,6 +24,23 @@ export interface AddonProviderState {
   readonly removable: boolean
 }
 
+/** An executable a provider offers (附加功能 F4). */
+export interface AddonProgram {
+  readonly name: string
+  /** Environment variables DSH plugins commonly read this program's path from, such as `FFMPEG_PATH`. */
+  readonly env?: readonly string[]
+  /** What extensions may run it with (附加功能 F7). */
+  readonly profile?: CommandProfile
+}
+
+/** A program of a capability's current provider, where it is now. */
+export interface ActiveAddonProgram extends AddonProgram {
+  readonly addon: AddonId
+  readonly provider: string
+  readonly source?: AddonProviderStatus['source']
+  readonly path: string
+}
+
 /** One way to provide a capability (附加功能 F1): a bundled or system program, a download, a cloud service. */
 export interface AddonProvider {
   readonly id: string
@@ -33,8 +52,8 @@ export interface AddonProvider {
   readonly notes?: readonly string[]
   /** Other capabilities it needs installed first. */
   readonly dependsOn?: readonly AddonId[]
-  /** Executables it provides to commands and DSH plugins (附加功能 F4). */
-  readonly programs?: readonly string[]
+  /** Executables it provides to commands, DSH plugins and command profiles (附加功能 F4). */
+  readonly programs?: readonly AddonProgram[]
   /** Folders its own download occupies, measured for `installedBytes`. */
   readonly directories?: readonly string[]
   /** `undefined` leaves it out: a system program this device does not have, a bundled one this host lacks. */
@@ -168,6 +187,29 @@ export class AddonRegistry {
       ...(source === undefined ? {} : { source }),
       program: (name) => provider.program?.(name),
     }
+  }
+
+  /** Programs of every capability's current provider (附加功能 F4), in registration order. */
+  programs(): ActiveAddonProgram[] {
+    return [...this.#capabilities.values()].flatMap((capability) => {
+      const provider = this.#active(capability)
+      if (provider === undefined) return []
+      const source = provider.state()?.source
+      return (provider.programs ?? []).flatMap((program) => {
+        const location = provider.program?.(program.name)
+        return location === undefined
+          ? []
+          : [
+              {
+                ...program,
+                addon: capability.id,
+                provider: provider.id,
+                ...(source === undefined ? {} : { source }),
+                path: location,
+              },
+            ]
+      })
+    })
   }
 
   /** Installing a provider also selects it: whoever installs one means to use it. */
@@ -347,6 +389,39 @@ export class AddonRegistry {
   }
 }
 
+/**
+ * Keeps the variables programs declare (such as `FFMPEG_PATH`) pointing at the current providers' programs, for the
+ * DSH plugins that run inside this process; a variable is removed again when no provider offers its program, and all
+ * of them when the returned stop runs. Variables already set when NekroNXT started are the user's and stay as they are.
+ */
+export const syncProgramEnvironment = (registry: AddonRegistry, env: NodeJS.ProcessEnv = process.env): (() => void) => {
+  const preset = new Set(Object.keys(env))
+  const owned = new Set<string>()
+  const apply = () => {
+    const wanted = new Map<string, string>()
+    for (const program of registry.programs()) {
+      for (const name of program.env ?? []) if (!wanted.has(name) && !preset.has(name)) wanted.set(name, program.path)
+    }
+    for (const name of owned) {
+      if (!wanted.has(name)) {
+        delete env[name]
+        owned.delete(name)
+      }
+    }
+    for (const [name, value] of wanted) {
+      env[name] = value
+      owned.add(name)
+    }
+  }
+  apply()
+  const unsubscribe = registry.subscribe(apply)
+  return () => {
+    unsubscribe()
+    for (const name of owned) delete env[name]
+    owned.clear()
+  }
+}
+
 /** A pinned download as a provider state; `found` is the downloaded program, if any. */
 const downloadState = (
   download: RuntimeDownloadState | undefined,
@@ -404,7 +479,7 @@ export const nodeAddon = (node: CodeRunNode, directory: string): AddonCapability
         id: 'bundled',
         title: 'NekroNXT 自带的 Node',
         summary: '',
-        programs: ['node'],
+        programs: [{ name: 'node' }],
         state: () => {
           const bundled = node.bundled()
           return bundled && { state: 'available', source: 'bundled', version: bundled.version, removable: false }
@@ -415,7 +490,7 @@ export const nodeAddon = (node: CodeRunNode, directory: string): AddonCapability
         id: 'system',
         title: '这台设备的 Node',
         summary: '需要 Node 22 或更高版本。',
-        programs: ['node'],
+        programs: [{ name: 'node' }],
         state: () => {
           const system = node.system()
           return system && { state: 'available', source: 'system', version: system.version, removable: false }
@@ -428,7 +503,7 @@ export const nodeAddon = (node: CodeRunNode, directory: string): AddonCapability
         summary: DOWNLOAD_SUMMARY,
         licenses: [{ component: 'Node.js', name: 'MIT', url: 'https://github.com/nodejs/node/blob/main/LICENSE' }],
         sources: ['nodejs.org'],
-        programs: ['node'],
+        programs: [{ name: 'node' }],
         directories: [directory],
         // The server runs programs with its own Node and offers no download.
         state: () =>
@@ -461,7 +536,7 @@ export const githubCliAddon = (cli: GithubCli, directory: string): AddonCapabili
         id: 'system',
         title: '这台设备的 gh',
         summary: '',
-        programs: ['gh'],
+        programs: [{ name: 'gh' }],
         state: () => {
           const system = cli.system()
           return system && { state: 'available', source: 'system', version: system.version, removable: false }
@@ -474,7 +549,7 @@ export const githubCliAddon = (cli: GithubCli, directory: string): AddonCapabili
         summary: DOWNLOAD_SUMMARY,
         licenses: [{ component: 'GitHub CLI', name: 'MIT', url: 'https://github.com/cli/cli/blob/trunk/LICENSE' }],
         sources: ['GitHub Releases'],
-        programs: ['gh'],
+        programs: [{ name: 'gh' }],
         directories: [directory],
         state: () =>
           downloadState(cli.download(), cli.downloaded(), {
@@ -484,6 +559,63 @@ export const githubCliAddon = (cli: GithubCli, directory: string): AddonCapabili
         install: () => cli.startDownload(),
         remove: () => cli.removeDownloaded(),
         program: (name) => (name === 'gh' ? cli.downloaded()?.executable : undefined),
+      },
+    ],
+  }
+}
+
+const MEDIA_PROGRAMS: readonly AddonProgram[] = [
+  { name: 'ffmpeg', env: ['FFMPEG_PATH', 'DSH_FFMPEG_PATH'], profile: FFMPEG_PROFILE },
+  { name: 'ffprobe', env: ['FFPROBE_PATH', 'DSH_FFPROBE_PATH'], profile: FFPROBE_PROFILE },
+]
+
+const mediaProgram = (found: ReturnType<MediaFfmpeg['system']>, name: string): string | undefined =>
+  found === undefined || found.problem !== undefined
+    ? undefined
+    : name === 'ffmpeg'
+      ? found.ffmpeg
+      : name === 'ffprobe'
+        ? found.ffprobe
+        : undefined
+
+export const mediaAddon = (media: MediaFfmpeg): AddonCapability => {
+  const downloadBytes = media.downloadBytes()
+  return {
+    id: 'media',
+    group: 'extension',
+    title: '媒体处理',
+    summary: '处理音频、视频和动图，例如截取画面、转换格式。',
+    usedBy: ['扩展的媒体处理'],
+    prepare: () => media.prepare(),
+    subscribe: (listener) => media.subscribe(listener),
+    providers: [
+      {
+        id: 'system',
+        title: '这台设备的 ffmpeg',
+        summary: '',
+        programs: MEDIA_PROGRAMS,
+        state: () => {
+          const system = media.system()
+          return system && { state: 'available', source: 'system', version: system.version, removable: false }
+        },
+        program: (name) => mediaProgram(media.system(), name),
+      },
+      {
+        id: 'download',
+        title: '下载的 ffmpeg',
+        summary: DOWNLOAD_SUMMARY,
+        licenses: [{ component: 'FFmpeg（ffmpeg-static 构建）', name: 'GPL-3.0', url: media.licenseUrl }],
+        sources: ['GitHub Releases', 'npmmirror'],
+        programs: MEDIA_PROGRAMS,
+        directories: [media.directory],
+        state: () =>
+          downloadState(media.download(), media.downloaded(), {
+            version: media.releaseVersion,
+            ...(downloadBytes === undefined ? {} : { downloadBytes }),
+          }),
+        install: () => media.startDownload(),
+        remove: () => media.removeDownloaded(),
+        program: (name) => mediaProgram(media.downloaded(), name),
       },
     ],
   }

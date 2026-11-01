@@ -41,11 +41,7 @@ export interface LinkedAccountPlatform {
    * Variables an agent's commands receive to act as the account. Read when each command starts, so they must not
    * write the token into any file.
    */
-  commandEnvironment(input: {
-    readonly agentId: AgentId
-    readonly token: string
-    readonly basePath?: string | undefined
-  }): Record<string, string>
+  commandEnvironment(input: { readonly agentId: AgentId; readonly token: string }): Record<string, string>
   /** What the agent is told about the account and how to use it; never the token. */
   promptLines(input: { readonly login: string; readonly usage: readonly CommandAccountUsage[] }): string[]
   /** The platform's program, when it has one the user can download or remove. */

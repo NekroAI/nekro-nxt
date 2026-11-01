@@ -106,7 +106,7 @@ const fakeCapability = () => {
         id: 'system',
         title: '这台设备的示例工具',
         summary: '',
-        programs: ['tool'],
+        programs: [{ name: 'tool' }],
         state: () => system,
         program: () => '/usr/bin/tool',
       },
@@ -116,7 +116,7 @@ const fakeCapability = () => {
         summary: '',
         licenses: [{ name: 'MIT', url: 'https://example.test/LICENSE' }],
         sources: ['example.test'],
-        programs: ['tool'],
+        programs: [{ name: 'tool' }],
         directories: ['/fixture/tool'],
         state: () => download,
         install: () => {

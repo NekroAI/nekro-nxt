@@ -1,4 +1,5 @@
 import SandboxBashExecutor from '@deepseek-ai/dsh-bash-sandbox'
+import path from 'node:path'
 import type { AgentId, CredentialId, LinkedAccountId } from '@nekro-nxt/contracts'
 import type { CommandAccountGrant } from '@nekro-nxt/core'
 
@@ -90,6 +91,29 @@ export const commandCredentialPrompt = (
     )
   }
   return lines.length === 0 ? undefined : lines.join('\n')
+}
+
+/**
+ * `PATH` for agents' commands with the folders of the add-ons' programs (附加功能 F4): a downloaded or bundled program
+ * goes in front, so the provider people chose wins over another copy on `PATH`; a program of this device whose folder
+ * is missing from `PATH` goes last, so it does not change which other tools commands find. `undefined` when every
+ * folder is already on `PATH`.
+ */
+export const programSearchPath = (
+  programs: readonly { readonly path: string; readonly source?: string | undefined }[],
+  basePath: string | undefined,
+  delimiter: string = path.delimiter,
+): string | undefined => {
+  const base = (basePath ?? '').split(delimiter).filter((entry) => entry !== '')
+  const front: string[] = []
+  const back: string[] = []
+  for (const program of programs) {
+    const directory = path.dirname(program.path)
+    if (base.includes(directory) || front.includes(directory) || back.includes(directory)) continue
+    ;(program.source === 'system' ? back : front).push(directory)
+  }
+  if (front.length === 0 && back.length === 0) return undefined
+  return [...front, ...base, ...back].join(delimiter)
 }
 
 type ExecutorRequest = Parameters<SandboxBashExecutor['resolve']>[0]

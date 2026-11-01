@@ -18,9 +18,10 @@ FROM node:22-bookworm-slim AS runtime
 
 ARG NEKRO_RELEASE_ID=0.0.0+local
 
-# fontconfig and a CJK font let extension SVG rendering (ctx.nxt.render.svg) draw Chinese text.
+# fontconfig and a CJK font let extension SVG rendering (ctx.nxt.render.svg) draw Chinese text. ffmpeg is the
+# "this device" provider of the media add-on, so media processing works without a download.
 RUN apt-get update \
-  && apt-get install --yes --no-install-recommends ca-certificates tini fontconfig fonts-wqy-microhei \
+  && apt-get install --yes --no-install-recommends ca-certificates tini fontconfig fonts-wqy-microhei ffmpeg \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 10001 nekro \
   && useradd --system --uid 10001 --gid nekro --home-dir /data --shell /usr/sbin/nologin nekro \

@@ -106,8 +106,22 @@ import {
 } from './extension-host-backends.js'
 import { memoryIndexEngine, sqliteIndexEngine } from './extension-index.js'
 import { RetrievalRuntime } from './retrieval-runtime.js'
-import { AddonRegistry, browserAddon, githubCliAddon, nodeAddon, retrievalAddon, speechAddon } from './addons.js'
+import {
+  AddonRegistry,
+  browserAddon,
+  githubCliAddon,
+  mediaAddon,
+  nodeAddon,
+  retrievalAddon,
+  speechAddon,
+  syncProgramEnvironment,
+} from './addons.js'
+import { CommandProfiles } from './command-profiles.js'
+import { dataRootCommandConfinement } from './command-confinement.js'
+import { ConfinedProgramRunner, createProgramSandbox } from './confined-program.js'
 import { ExtensionFileStore } from './extension-files.js'
+import { MediaFfmpeg } from './media-ffmpeg.js'
+import { MediaToolkit } from './media-toolkit.js'
 import { SpeechCloud } from './speech-cloud.js'
 import { LocalSpeech } from './speech-local.js'
 import { SpeechService } from './speech-service.js'
@@ -300,6 +314,11 @@ export class NekroRuntime {
   readonly speech: SpeechService
   readonly speechCloud: SpeechCloud
   readonly #localSpeech: LocalSpeech
+  /** Host-side media processing on the `media` add-on (附加功能 F8). */
+  readonly media: MediaToolkit
+  /** Programs of the add-ons run by their command profiles (附加功能 F7). */
+  readonly commandProfiles: CommandProfiles
+  readonly #disposePrograms: () => Promise<void>
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -364,6 +383,9 @@ export class NekroRuntime {
     readonly speech: SpeechService
     readonly speechCloud: SpeechCloud
     readonly localSpeech: LocalSpeech
+    readonly media: MediaToolkit
+    readonly commandProfiles: CommandProfiles
+    readonly disposePrograms: () => Promise<void>
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -491,6 +513,9 @@ export class NekroRuntime {
     this.speech = input.speech
     this.speechCloud = input.speechCloud
     this.#localSpeech = input.localSpeech
+    this.media = input.media
+    this.commandProfiles = input.commandProfiles
+    this.#disposePrograms = input.disposePrograms
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.outbound = input.outbound
@@ -1106,10 +1131,12 @@ export class NekroRuntime {
         },
       })
       const speech = speechAddon(localSpeech, speechCloud)
+      const mediaFfmpeg = new MediaFfmpeg({ root: path.join(runtimesRoot, 'media') })
       // The four existing add-ons keep the folders they were first installed in.
       const addons = new AddonRegistry(
         [
           retrievalAddon(retrieval),
+          mediaAddon(mediaFfmpeg),
           speech,
           nodeAddon(codeRunNode, path.join(runtimesRoot, 'node')),
           githubCliAddon(githubCli, path.join(runtimesRoot, 'gh')),
@@ -1123,12 +1150,40 @@ export class NekroRuntime {
         },
       )
       await addons.prepare()
+      const stopProgramEnvironment = syncProgramEnvironment(addons)
+      // Media programs run like agents' commands: confined, no network, one shared limit on how many run at once.
+      const programSandbox = await createProgramSandbox()
+      const programRunner = new ConfinedProgramRunner({
+        sandbox: programSandbox,
+        confinement: dataRootCommandConfinement(
+          path.dirname(options.coreDatabasePath),
+          options.developmentWorkspaceRoot ?? path.join(path.dirname(options.coreDatabasePath), 'workspaces'),
+        ),
+      })
+      const media = new MediaToolkit({
+        runner: programRunner,
+        programs: () => {
+          const active = addons.active('media')
+          const ffmpeg = active?.program('ffmpeg')
+          const ffprobe = active?.program('ffprobe')
+          return ffmpeg === undefined || ffprobe === undefined ? undefined : { ffmpeg, ffprobe }
+        },
+      })
+      const commandProfiles = new CommandProfiles({ runner: programRunner, programs: () => addons.programs() })
       const speechService = new SpeechService({
         active: () => addons.active('speech'),
         titles: Object.fromEntries(speech.providers.map((provider) => [provider.id, provider.title])),
         local: localSpeech,
         cloud: speechCloud,
         cacheDirectory: path.join(runtimesRoot, 'speech', 'transcripts'),
+        decode: (input, output, { signal }) =>
+          media
+            .audio(
+              input,
+              { format: 'wav', sampleRate: 16000, channels: 1, ...(signal === undefined ? {} : { signal }) },
+              output,
+            )
+            .then(() => undefined),
       })
       const credentialLibrary = new CredentialLibrary(repository, credentials, {
         secrets,
@@ -1141,17 +1196,7 @@ export class NekroRuntime {
         secrets,
         platforms: new LinkedAccountPlatforms([
           createGithubPlatform({
-            cli: {
-              executable: () => addons.active('github-cli')?.program('gh'),
-              // A system `gh` is already on the PATH; a downloaded one goes in front of it.
-              directoryForPath: () => {
-                const active = addons.active('github-cli')
-                const executable = active?.program('gh')
-                return active?.source === 'downloaded' && executable !== undefined
-                  ? path.dirname(executable)
-                  : undefined
-              },
-            },
+            cli: { executable: () => addons.active('github-cli')?.program('gh') },
           }),
         ]),
         now,
@@ -1193,6 +1238,7 @@ export class NekroRuntime {
           const executable = active.program('node')
           return executable === undefined ? undefined : { executable }
         },
+        programs: () => addons.programs(),
         commandAccounts: {
           credentials: (agentId) =>
             credentialLibrary.commandCredentials(agentId).map(({ record, value, env }) => ({
@@ -1605,6 +1651,12 @@ export class NekroRuntime {
         speech: speechService,
         speechCloud,
         localSpeech,
+        media,
+        commandProfiles,
+        disposePrograms: async () => {
+          stopProgramEnvironment()
+          await programSandbox.dispose()
+        },
         channelPrompts,
         mcpStatus,
         outbound: outboundProcessor,
@@ -2220,6 +2272,7 @@ export class NekroRuntime {
     await this.#jobScheduler.dispose()
     this.addons.dispose()
     this.#localSpeech.dispose()
+    await this.#disposePrograms()
     await this.retrieval.dispose()
     await this.extensionFiles.dispose()
     await this.#previewFiles.dispose()

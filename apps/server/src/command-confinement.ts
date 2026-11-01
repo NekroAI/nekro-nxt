@@ -2,6 +2,7 @@ import { canonicalPath, type ConfinedArgv, type SandboxPolicy } from '@deepseek-
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, realpathSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
@@ -288,6 +289,23 @@ export const installRootOf = (moduleFile: string): string => {
   const at = real.indexOf(marker)
   return at < 0 ? path.dirname(real) : real.slice(0, at)
 }
+
+/**
+ * {@link hostCommandConfinement} for the data root NXT runs on: downloaded runtimes, the install NXT runs from and the
+ * Node or app bundle running it stay readable.
+ */
+export const dataRootCommandConfinement = (
+  dataRoot: string,
+  workspaceRoot: string | undefined,
+): Omit<CommandConfinement, 'network'> =>
+  hostCommandConfinement({
+    dataRoot,
+    workspaceRoot,
+    installRoot: installRootOf(
+      createRequire(import.meta.url).resolve('@deepseek-ai/dsh-ptc-runtime-node/package.json'),
+    ),
+    runtimeRoots: [path.join(dataRoot, 'runtimes'), path.dirname(path.dirname(process.execPath))],
+  })
 
 /**
  * DSH's local provider with NXT's read scope, signal scope and network switch added to every confined command.

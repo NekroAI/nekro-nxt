@@ -100,11 +100,9 @@ const USAGE_TEXT: Record<CommandAccountUsage, string> = {
   push: '推送代码',
 }
 
-/** The GitHub CLI as the platform needs it: where the program is. */
+/** The GitHub CLI as the platform needs it: where the program is. Commands find it on `PATH` like other add-ons. */
 export interface GithubCliPort {
   executable(): string | undefined
-  /** The directory to put in front of `PATH`; `undefined` when `gh` is already on it. */
-  directoryForPath(): string | undefined
 }
 
 /**
@@ -123,22 +121,18 @@ export const createGithubPlatform = (options: {
     tokenOf: (source) => githubTokenOf(source, options.cli.executable()),
     verify: (token) => verifyGithubToken(fetcher, token),
     sameAccount: (current, next) => current.login.toLowerCase() === next.login.toLowerCase(),
-    commandEnvironment: ({ agentId, token, basePath = process.env['PATH'] }) => {
-      const cliDirectory = options.cli.directoryForPath()
-      return {
-        GH_TOKEN: token,
-        GH_PROMPT_DISABLED: '1',
-        GH_NO_UPDATE_NOTIFIER: '1',
-        GH_NO_EXTENSION_UPDATE_NOTIFIER: '1',
-        // The user's own `gh` configuration is out of reach for commands; give it a scratch one.
-        GH_CONFIG_DIR: path.join(tmpdir(), 'nekro-nxt-gh', agentId),
-        GIT_TERMINAL_PROMPT: '0',
-        GIT_CONFIG_COUNT: '1',
-        GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
-        GIT_CONFIG_VALUE_0: '!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f',
-        ...(cliDirectory === undefined ? {} : { PATH: `${cliDirectory}${path.delimiter}${basePath ?? ''}` }),
-      }
-    },
+    commandEnvironment: ({ agentId, token }) => ({
+      GH_TOKEN: token,
+      GH_PROMPT_DISABLED: '1',
+      GH_NO_UPDATE_NOTIFIER: '1',
+      GH_NO_EXTENSION_UPDATE_NOTIFIER: '1',
+      // The user's own `gh` configuration is out of reach for commands; give it a scratch one.
+      GH_CONFIG_DIR: path.join(tmpdir(), 'nekro-nxt-gh', agentId),
+      GIT_TERMINAL_PROMPT: '0',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'credential.https://github.com.helper',
+      GIT_CONFIG_VALUE_0: '!f() { test "$1" = get && echo username=x-access-token && echo "password=$GH_TOKEN"; }; f',
+    }),
     promptLines: ({ login, usage }) => [
       options.cli.executable() !== undefined
         ? `命令里的 GitHub 已用账号 ${login} 登录：gh 可以直接用，git 走 https 也会带上这个账号。`

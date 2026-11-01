@@ -39,16 +39,17 @@ import {
 } from './feedback-tools.js'
 import type { CommunityFeedbackService } from './community-feedback.js'
 import { WorkspaceFileSystem } from './workspace-file-system.js'
+import type { ActiveAddonProgram } from './addons.js'
 import {
   commandCredentialEnvironment,
   commandCredentialPrompt,
   createEnvForwardingExecutor,
+  programSearchPath,
   type CommandCredentialSources,
 } from './command-account-env.js'
 import {
   createConfinedSandboxProvider,
-  hostCommandConfinement,
-  installRootOf,
+  dataRootCommandConfinement,
   type CommandConfinement,
 } from './command-confinement.js'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -535,6 +536,8 @@ export interface DshHostRuntimeOptions {
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
   /** Where commands get the credentials open to an agent and the linked accounts it is granted. */
   readonly commandAccounts?: CommandCredentialSources
+  /** Programs of the add-ons' current providers, added to every agent's command `PATH` (附加功能 F4). */
+  readonly programs?: () => readonly ActiveAddonProgram[]
   readonly configureLlm?: (context: Context) => Promise<void> | void
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
@@ -3173,6 +3176,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #commandAccounts: CommandCredentialSources | undefined
   readonly #codeRunFallbackDirectory: string
   readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
+  readonly #programs: () => readonly ActiveAddonProgram[]
   #codeRunMount: Promise<boolean> | undefined
   readonly #shutdownInboxRoot: string
   readonly #incompatibleAgents = new Set<AgentId>()
@@ -3246,18 +3250,11 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#codeRunNode = options.codeRunNode
     this.#commandAccounts = options.commandAccounts
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
-    this.#hostCommandConfinement = hostCommandConfinement({
-      dataRoot: path.dirname(options.sessionDatabasePath),
-      workspaceRoot: options.developmentWorkspaceRoot,
-      installRoot: installRootOf(
-        createRequire(import.meta.url).resolve('@deepseek-ai/dsh-ptc-runtime-node/package.json'),
-      ),
-      // Downloaded Node for `run_code`, and the Node or app bundle running NXT.
-      runtimeRoots: [
-        path.join(path.dirname(options.sessionDatabasePath), 'runtimes'),
-        path.dirname(path.dirname(process.execPath)),
-      ],
-    })
+    this.#hostCommandConfinement = dataRootCommandConfinement(
+      path.dirname(options.sessionDatabasePath),
+      options.developmentWorkspaceRoot,
+    )
+    this.#programs = options.programs ?? (() => [])
     this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
     this.#modelSettings = new HostModelSettings(
       context,
@@ -5355,10 +5352,22 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
-  /** The variables that give one agent's commands its credentials. */
+  /** The variables that give one agent's commands its credentials, and the add-ons' programs on `PATH`. */
   #commandEnvironmentOf(revision: AgentRevisionRecord): Record<string, string> {
-    if (this.#commandAccounts === undefined) return {}
-    return commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+    const environment =
+      this.#commandAccounts === undefined
+        ? {}
+        : commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+    const searchPath = programSearchPath(this.#programs(), process.env['PATH'])
+    return searchPath === undefined ? environment : { ...environment, PATH: searchPath }
+  }
+
+  /** The host confinement with the folders of the add-ons' programs readable, wherever they are installed. */
+  #commandConfinementBase(): Omit<CommandConfinement, 'network'> {
+    const programs = this.#programs().map((program) => path.dirname(program.path))
+    return programs.length === 0
+      ? this.#hostCommandConfinement
+      : { ...this.#hostCommandConfinement, readable: [...this.#hostCommandConfinement.readable, ...programs] }
   }
 
   #commandAccountPromptOf(revision: AgentRevisionRecord): string | undefined {
@@ -5369,7 +5378,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */
   #commandConfinementOf(revision: AgentRevisionRecord): CommandConfinement {
     if (revision.capabilities.unrestrictedFileAccess) return { hidden: [], readable: [], network: true }
-    return { ...this.#hostCommandConfinement, network: revision.capabilities.commandNetwork }
+    return { ...this.#commandConfinementBase(), network: revision.capabilities.commandNetwork }
   }
 
   /**
@@ -5386,7 +5395,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         workspaces !== undefined && resolveAgentWorkspace(workspaces, record.revision.agentId) === workspaceRoot,
     )
     return {
-      ...this.#hostCommandConfinement,
+      ...this.#commandConfinementBase(),
       network: related.length > 0 && related.every((record) => this.#commandConfinementOf(record.revision).network),
     }
   }
