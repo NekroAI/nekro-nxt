@@ -1564,7 +1564,7 @@ export function DshPluginDetail({
                   <p className={styles.muted}>
                     {dshRestrictedReason(restricted)}
                     {restricted.includes('attachments') && plugin.imageSubmission === false
-                      ? '打开下方的「允许提交图片」后可以使用 attachments 服务。'
+                      ? '打开下方的「允许提交图片」后，这个插件也可以提交图片。'
                       : null}
                   </p>
                 ) : null}
