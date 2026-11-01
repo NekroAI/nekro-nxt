@@ -10,6 +10,8 @@ import {
   hostLayerAsCapabilities,
   type ExtensionCapabilities,
   EXTENSION_OUTBOUND_SDK_LEVEL,
+  EXTENSION_FILES_SDK_LEVEL,
+  ExtensionPermissionsSchema,
   outboundProcessesBeforeSend,
   requiredExtensionSdkLevel,
 } from '../src/index.js'
@@ -323,7 +325,7 @@ describe('asset library, search index and host model capabilities', () => {
   it('accepts library and index declarations and keeps write separate from the library', () => {
     const declared = caps({ assets: { library: { quotaBytes: 64 * 1024 * 1024 } }, index: { collections: [stickers] } })
     expect(declared.index?.collections[0]?.fields[1]).toEqual({ name: 'caption', weight: 1 })
-    expect(() => caps({ assets: {} })).toThrow('assets 至少声明 write 或 library')
+    expect(() => caps({ assets: {} })).toThrow('assets 至少声明 write、library 或 read')
     expect(() =>
       caps({ index: { collections: [{ name: 'stickers', fields: [{ name: 'scope' }], filters: ['scope'] }] } }),
     ).toThrow('不能重名')
@@ -465,5 +467,80 @@ describe('outbound processing capability', () => {
       }),
     ).toEqual({ level: EXTENSION_OUTBOUND_SDK_LEVEL, capabilities: ['出站处理'] })
     expect(EXTENSION_OUTBOUND_SDK_LEVEL).toBe(13)
+  })
+})
+
+describe('work files, asset reads and high-detail tool images', () => {
+  it('bounds file quotas and accepts each capability on its own', () => {
+    expect(caps({ files: {} }).files).toEqual({})
+    expect(caps({ files: { tempQuotaBytes: 2 * 1024 * 1024 * 1024 } }).files?.tempQuotaBytes).toBe(2 * 1024 ** 3)
+    expect(() => caps({ files: { cacheQuotaBytes: 17 * 1024 ** 3 } })).toThrow()
+    expect(() => caps({ files: { tempQuotaBytes: 1024 } })).toThrow()
+    expect(caps({ assets: { read: true } }).assets).toEqual({ read: true })
+    expect(() => caps({ toolImages: {} })).toThrow()
+    expect(caps({ toolImages: { highDetail: true } }).toolImages).toEqual({ highDetail: true })
+    expect(() => ExtensionPermissionsSchema.parse({ host: { toolImages: { highDetail: true } } })).toThrow()
+    expect(() => ExtensionPermissionsSchema.parse({ host: { assets: {} } })).toThrow('assets 至少声明 library 或 read')
+  })
+
+  it('maps host-layer files and reads into the shared shape', () => {
+    expect(hostLayerAsCapabilities({ files: { cacheQuotaBytes: 64 * 1024 * 1024 }, assets: { read: true } })).toEqual({
+      files: { cacheQuotaBytes: 64 * 1024 * 1024 },
+      assets: { read: true },
+    })
+  })
+
+  it.each([
+    ['adding work files', {}, { files: {} }, true],
+    ['raising a file quota', { files: {} }, { files: { tempQuotaBytes: 4 * 1024 ** 3 } }, false],
+    ['adding asset reads', { assets: { write: true } }, { assets: { write: true, read: true } }, true],
+    ['keeping asset reads', { assets: { read: true } }, { assets: { read: true } }, false],
+    ['adding high-detail images', {}, { toolImages: { highDetail: true } }, true],
+  ])('approval covers %s', (_name, previous, next, expands) => {
+    expect(extensionCapabilitiesExpand(caps(previous), caps(next))).toBe(expands)
+  })
+
+  it('rates channel reads as sensitive and files and images as normal', () => {
+    expect(
+      summarizeExtensionCapabilities(
+        caps({
+          assets: { read: true },
+          files: { cacheQuotaBytes: 512 * 1024 * 1024 },
+          toolImages: { highDetail: true },
+        }),
+      ),
+    ).toEqual([
+      { key: 'assets.read', risk: 'sensitive', label: '读取当前频道里的图片和文件' },
+      { key: 'files', risk: 'normal', label: '在本机存放临时文件和缓存', detail: '临时文件最多 1 GB，缓存最多 512 MB' },
+      { key: 'toolImages', risk: 'normal', label: '以高细节向智能体展示图片', detail: '计入智能体用量' },
+    ])
+    expect(
+      summarizeExtensionCapabilities(hostLayerAsCapabilities({ assets: { read: true } }), { layer: 'host' }),
+    ).toEqual([{ key: 'assets.read', risk: 'normal', label: '读取扩展资源库里的文件' }])
+  })
+
+  it('needs SDK level 14', () => {
+    for (const permissions of [
+      { agent: { files: {} } },
+      { host: { files: {} } },
+      { agent: { assets: { read: true } } },
+      { host: { assets: { read: true } } },
+      { agent: { toolImages: { highDetail: true } } },
+    ]) {
+      expect(requiredExtensionSdkLevel(ExtensionPermissionsSchema.parse(permissions)).level).toBe(
+        EXTENSION_FILES_SDK_LEVEL,
+      )
+    }
+    expect(
+      requiredExtensionSdkLevel(
+        ExtensionPermissionsSchema.parse({
+          agent: { files: {}, assets: { read: true }, toolImages: { highDetail: true } },
+        }),
+      ).capabilities,
+    ).toEqual(['工作文件', '读取频道文件', '高细节图片'])
+    expect(
+      requiredExtensionSdkLevel(ExtensionPermissionsSchema.parse({ host: { assets: { library: {} } } })).level,
+    ).toBe(8)
+    expect(EXTENSION_FILES_SDK_LEVEL).toBe(14)
   })
 })
