@@ -5,6 +5,9 @@ import type { CodeRunNode } from './code-run-node.js'
 import type { GithubCli } from './github-cli.js'
 import type { RetrievalRuntime } from './retrieval-runtime.js'
 import type { RuntimeDownloadState } from './runtime-download.js'
+import type { SpeechCloud } from './speech-cloud.js'
+import type { LocalSpeech } from './speech-local.js'
+import { LOCAL_SPEECH_MODELS, type LocalSpeechModelId } from './speech-model-files.js'
 import type { VerificationBrowser } from './verification-browser.js'
 
 /** Where a provider stands right now. */
@@ -582,6 +585,87 @@ export const retrievalAddon = (retrieval: RetrievalRuntime): AddonCapability => 
       },
       install: () => retrieval.startDownload(),
       remove: () => retrieval.remove(),
+    },
+  ],
+})
+
+const SHERPA_LICENSES: AddonProviderStatus['licenses'] = [
+  { component: 'sherpa-onnx', name: 'Apache-2.0', url: 'https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE' },
+  { component: 'Silero VAD', name: 'MIT', url: 'https://github.com/snakers4/silero-vad/blob/master/LICENSE' },
+]
+
+const localSpeechProvider = (
+  local: LocalSpeech,
+  id: LocalSpeechModelId,
+  describe: Pick<AddonProvider, 'title' | 'notes' | 'licenses'>,
+): AddonProvider => ({
+  id,
+  ...describe,
+  summary: '在这台设备上识别，语音不会发到别处。',
+  sources: ['npm', 'npmmirror', 'Hugging Face', 'hf-mirror.com', 'GitHub Releases'],
+  directories: local.directories(id),
+  state: () => {
+    const { name: version, memoryBytes } = LOCAL_SPEECH_MODELS[id]
+    const install = local.install(id)
+    const base = { version, memoryBytes, downloadBytes: local.downloadBytes(id) }
+    if (install.state === 'installed') return { ...base, state: 'installed', source: 'downloaded', removable: true }
+    if (!local.supported) return { ...base, state: 'unsupported', removable: false }
+    if (install.state === 'downloading') {
+      return {
+        ...base,
+        state: 'installing',
+        progress: { receivedBytes: install.receivedBytes, totalBytes: install.totalBytes },
+        removable: false,
+      }
+    }
+    if (install.state === 'failed') return { ...base, state: 'failed', error: install.error, removable: false }
+    return { ...base, state: 'not-installed', removable: false }
+  },
+  install: () => local.startDownload(id),
+  remove: () => local.remove(id),
+})
+
+/** Speech recognition (附加功能 F9): two local models sharing one runtime, and the cloud. */
+export const speechAddon = (local: LocalSpeech, cloud: SpeechCloud): AddonCapability => ({
+  id: 'speech',
+  group: 'extension',
+  title: '语音识别',
+  summary: '把语音转成文字。',
+  usedBy: ['扩展的语音识别'],
+  prepare: () => local.prepare(),
+  subscribe: (listener) => {
+    const unsubscribe = [local.subscribe(listener), cloud.subscribe(listener)]
+    return () => unsubscribe.forEach((stop) => stop())
+  },
+  providers: [
+    localSpeechProvider(local, 'paraformer-zh-small', {
+      title: '本地 Paraformer',
+      notes: ['中文', '识别更快'],
+      licenses: SHERPA_LICENSES,
+    }),
+    localSpeechProvider(local, 'sense-voice-small', {
+      title: '本地 SenseVoice',
+      notes: ['中文、英语、日语、韩语、粤语'],
+      licenses: [
+        ...SHERPA_LICENSES,
+        {
+          component: 'SenseVoice-Small',
+          name: 'FunASR Model License',
+          url: 'https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE',
+        },
+        { component: 'WSYue-ASR', name: 'Apache-2.0', url: 'https://huggingface.co/ASLP-lab/WSYue-ASR' },
+      ],
+    }),
+    {
+      id: 'cloud',
+      title: '云端',
+      summary: '用「设置 → 模型」里的供应商识别，按供应商的价格计费。',
+      notes: ['语言和速度取决于供应商'],
+      state: () => ({
+        state: cloud.settings() === undefined ? 'needs-config' : 'available',
+        source: 'cloud',
+        removable: false,
+      }),
     },
   ],
 })

@@ -8,7 +8,12 @@ if (productVersion === undefined || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$
 }
 
 export default defineConfig({
-  entry: { index: 'src/index.ts', main: 'src/main.ts', 'logs/storage-worker': 'src/logs/storage-worker.ts' },
+  entry: {
+    index: 'src/index.ts',
+    main: 'src/main.ts',
+    'logs/storage-worker': 'src/logs/storage-worker.ts',
+    'speech-engine-worker': 'src/speech-engine-worker.mjs',
+  },
   format: ['esm'],
   clean: true,
   dts: false,

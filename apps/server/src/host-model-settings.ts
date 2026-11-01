@@ -925,7 +925,16 @@ export class HostModelSettings {
 
   /** The address, protocol and key the saved configuration of a provider uses. */
   async #savedConnection(provider: string): Promise<LlmProviderConnection | undefined> {
-    if (!this.#hasLlmSettings || !this.#testResults) return undefined
+    if (!this.#testResults) return undefined
+    return this.providerConnection(provider)
+  }
+
+  /**
+   * The address, protocol and key a provider's saved configuration uses, for the few requests made outside DSH's
+   * model calls, such as speech transcription.
+   */
+  async providerConnection(provider: string): Promise<LlmProviderConnection | undefined> {
+    if (!this.#hasLlmSettings) return undefined
     const entry = this.#context.llm.listConfigurableProviders().find((candidate) => candidate.provider === provider)
     if (!entry) return undefined
     const descriptor = this.#context.settings
