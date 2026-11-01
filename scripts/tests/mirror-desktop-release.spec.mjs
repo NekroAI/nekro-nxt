@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { mirrorFolder, mirrorManifest, prunableFolders, releaseReceipts } from '../mirror-desktop-release.mjs'
+import {
+  mirrorFolder,
+  mirrorManifest,
+  prunableFolders,
+  publishedRelease,
+  receiptsFromRelease,
+  releaseReceipts,
+} from '../mirror-desktop-release.mjs'
 
 const commit = '0123456789abcdef0123456789abcdef01234567'
 const stable = { channel: 'stable', version: '0.8.0', commit }
@@ -67,4 +74,42 @@ test('mirrors only receipts of this exact build', () => {
 test('keeps the new release and the previous one, deletes the rest', () => {
   assert.deepEqual(prunableFolders(['v0.6.0', 'v0.7.0', 'v0.8.0'], ['v0.8.0', 'v0.7.0']), ['v0.6.0'])
   assert.deepEqual(prunableFolders(['v0.7.0', 'v0.8.0'], ['v0.8.0', undefined]), ['v0.7.0'])
+})
+
+test('describes what a GitHub release serves now, for a sync the release workflow missed', () => {
+  const asset = (name, digest) => ({ name, size: 200, digest })
+  const stableRelease = publishedRelease('stable', { tag_name: 'v0.8.0', assets: [] }, (tag) =>
+    tag === 'v0.8.0' ? commit : '',
+  )
+  assert.deepEqual(stableRelease, stable)
+  const receipts = receiptsFromRelease(stableRelease, {
+    assets: [
+      asset('nekro-nxt-win-x64-v0.8.0-setup.exe', `sha256:${'a'.repeat(64)}`),
+      // Without a digest the copy cannot be checked, so it is not mirrored.
+      asset('nekro-nxt-linux-x64-v0.8.0.AppImage', null),
+      asset('notes.txt', `sha256:${'b'.repeat(64)}`),
+    ],
+  })
+  assert.deepEqual(receipts, [
+    {
+      format: 'nxt.desktop-artifact-receipt',
+      channel: 'stable',
+      platform: 'win',
+      arch: 'x64',
+      releaseVersion: '0.8.0',
+      commit,
+      artifact: 'nekro-nxt-win-x64-v0.8.0-setup.exe',
+      bytes: 200,
+      sha256: 'a'.repeat(64),
+    },
+  ])
+  assert.equal(releaseReceipts(stableRelease, receipts).length, 1)
+
+  const rolling = publishedRelease(
+    'preview',
+    { tag_name: 'preview', name: `NekroNXT Preview ${preview.version}`, body: `<!-- nxt-preview-commit:${commit} -->` },
+    () => '',
+  )
+  assert.deepEqual(rolling, preview)
+  assert.throws(() => publishedRelease('preview', { tag_name: 'preview', body: '' }, () => ''), /缺少提交信息/u)
 })

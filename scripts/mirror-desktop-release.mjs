@@ -4,6 +4,8 @@
 // after the GitHub release is published; without the R2 secrets it does nothing, and a failure here never undoes the
 // GitHub release.
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -60,6 +62,50 @@ export function releaseReceipts(release, candidates) {
   return receipts
 }
 
+const INSTALLER = /^nekro-nxt(?:-preview)?-(mac|win|linux)-(arm64|x64)-v.+\.(?:dmg|exe|AppImage)$/u
+
+/**
+ * The release a channel's GitHub page serves now, as the mirror describes it: Stable by its tag, the rolling Preview
+ * by the commit its notes name. `commitOfTag` resolves a Stable tag to its commit.
+ */
+export function publishedRelease(channel, published, commitOfTag) {
+  if (channel === 'stable') {
+    const version = published.tag_name.replace(/^v/u, '')
+    return { channel, version, commit: commitOfTag(published.tag_name) }
+  }
+  const commit = /nxt-preview-commit:([0-9a-f]{40})/u.exec(published.body ?? '')?.[1]
+  if (commit === undefined) throw new Error('预览版发布页缺少提交信息。')
+  return { channel, version: (published.name ?? '').replace(/^NekroNXT Preview\s+/u, ''), commit }
+}
+
+/** Receipts for a GitHub release's installers, from the size and digest GitHub publishes for each asset. */
+export function receiptsFromRelease(release, published) {
+  return (published.assets ?? []).flatMap((asset) => {
+    const match = INSTALLER.exec(asset.name)
+    const sha256 = /^sha256:([a-f0-9]{64})$/u.exec(asset.digest ?? '')?.[1]
+    if (match === null || sha256 === undefined) return []
+    return [
+      {
+        format: 'nxt.desktop-artifact-receipt',
+        channel: release.channel,
+        platform: match[1],
+        arch: match[2],
+        releaseVersion: release.version,
+        commit: release.commit,
+        artifact: asset.name,
+        bytes: asset.size,
+        sha256,
+      },
+    ]
+  })
+}
+
+const fileDigest = async (file) => {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(file)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
 /** Folders to delete: everything but the new release and the one the previous manifest pointed at. */
 export function prunableFolders(folders, keep) {
   const kept = new Set(keep.filter((folder) => typeof folder === 'string'))
@@ -88,24 +134,49 @@ async function main() {
     console.log('没有配置 R2 凭据，跳过社区镜像。')
     return
   }
-  const directory = path.resolve(repositoryRoot, option('--artifacts-dir') ?? '')
   const repository = process.env['GITHUB_REPOSITORY']
   if (!repository) throw new Error('缺少 GITHUB_REPOSITORY。')
-  const release = await readProductRelease(repositoryRoot, channel)
-
-  // Mirror only what GitHub now serves: a stale Preview candidate or an unpublished tag is skipped.
-  const tag = channel === 'stable' ? `v${release.version}` : 'preview'
-  const published = JSON.parse(run('gh', ['api', `/repos/${repository}/releases/tags/${tag}`]))
-  if (channel === 'preview' && !(published.body ?? '').includes(`nxt-preview-commit:${release.commit}`)) {
-    console.log('GitHub 上的预览版已不是这个提交，跳过社区镜像。')
-    return
+  const fromGitHub = process.argv.includes('--from-github')
+  const tagPath = (tag) => `/repos/${repository}/releases/tags/${tag}`
+  let release
+  let published
+  let directory
+  let receipts
+  let downloads
+  if (fromGitHub) {
+    // Copies what the GitHub release serves right now, checking every file against GitHub's digest; for a sync that
+    // the release workflow missed.
+    published = JSON.parse(
+      run('gh', ['api', channel === 'stable' ? `/repos/${repository}/releases/latest` : tagPath('preview')]),
+    )
+    release = publishedRelease(channel, published, (tag) =>
+      run('gh', ['api', `/repos/${repository}/commits/${tag}`, '--jq', '.sha']),
+    )
+    receipts = receiptsFromRelease(release, published)
+    if (receipts.length === 0) throw new Error('GitHub 发布页上没有带摘要的安装包。')
+    downloads = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-mirror-assets-'))
+    directory = downloads
+    for (const receipt of receipts) {
+      run('gh', ['release', 'download', published.tag_name, '-R', repository, '-p', receipt.artifact, '-D', directory])
+      if ((await fileDigest(path.join(directory, receipt.artifact))) !== receipt.sha256)
+        throw new Error(`下载的 ${receipt.artifact} 与 GitHub 公布的摘要不一致。`)
+    }
+  } else {
+    directory = path.resolve(repositoryRoot, option('--artifacts-dir') ?? '')
+    release = await readProductRelease(repositoryRoot, channel)
+    // Mirror only what GitHub now serves: a stale Preview candidate or an unpublished tag is skipped.
+    published = JSON.parse(run('gh', ['api', tagPath(channel === 'stable' ? `v${release.version}` : 'preview')]))
+    if (channel === 'preview' && !(published.body ?? '').includes(`nxt-preview-commit:${release.commit}`)) {
+      console.log('GitHub 上的预览版已不是这个提交，跳过社区镜像。')
+      return
+    }
+    const names = (await readdir(directory)).filter((name) => name.endsWith('.receipt.json'))
+    receipts = releaseReceipts(
+      release,
+      await Promise.all(names.map(async (name) => JSON.parse(await readFile(path.join(directory, name), 'utf8')))),
+    )
   }
-
-  const names = (await readdir(directory)).filter((name) => name.endsWith('.receipt.json'))
-  const receipts = releaseReceipts(
-    release,
-    await Promise.all(names.map(async (name) => JSON.parse(await readFile(path.join(directory, name), 'utf8')))),
-  )
+  const tag = published.tag_name
 
   const bucket = process.env['R2_BUCKET'] || DEFAULT_BUCKET
   const env = {
@@ -178,6 +249,7 @@ async function main() {
       aws(['s3', 'rm', `${channelRoot}/files/${stale}/`, '--recursive', '--only-show-errors'])
   } finally {
     await rm(temporary, { recursive: true, force: true })
+    if (downloads !== undefined) await rm(downloads, { recursive: true, force: true })
   }
   console.log(`社区镜像已更新：${channel} ${release.version}（${receipts.length} 个安装包）。`)
 }
