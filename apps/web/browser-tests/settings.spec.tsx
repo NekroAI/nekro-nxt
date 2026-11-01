@@ -1745,7 +1745,7 @@ test.describe('settings space', () => {
       await expect(page.getByRole('heading', { name: '@example/dsh-fixture-charts' })).toBeVisible()
       await expect(
         page.getByText(
-          '需要 attachments 服务，只对官方插件开放。打开下方的「允许提交图片」后可以使用 attachments 服务。',
+          '需要 attachments 服务，只对官方插件开放。打开下方的「允许提交图片」后，这个插件也可以提交图片。',
           { exact: true },
         ),
       ).toBeVisible()
