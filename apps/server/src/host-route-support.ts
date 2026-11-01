@@ -678,6 +678,11 @@ export const buildSnapshotMessage = (
   return out.toReversed()
 }
 
+const imageSubmissionOf = (runtime: NekroRuntime, packageName: string): { readonly imageSubmission?: boolean } => {
+  const allowed = runtime.host.dshPluginImageSubmission(packageName)
+  return allowed === undefined ? {} : { imageSubmission: allowed }
+}
+
 export const projectDshPlugins = (runtime: NekroRuntime) => [
   ...runtime.host.listDshPlugins(),
   ...runtime.repository.listDshPluginPackages().map((packageRecord) => {
@@ -743,6 +748,7 @@ export const projectDshPlugins = (runtime: NekroRuntime) => [
       packageId: packageRecord.id,
       installSource: packageRecord.source,
       official,
+      ...(official ? {} : imageSubmissionOf(runtime, packageRecord.packageName)),
       installedAt: packageRecord.installedAt,
       clientUiDetected:
         'dsh' in manifest &&

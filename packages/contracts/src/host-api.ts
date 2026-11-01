@@ -2384,6 +2384,8 @@ export const DshPluginCatalogEntrySchema = z
     installSource: z.enum(['registry', 'tarball', 'imported']).optional(),
     /** Published by the DSH maintainers on npm for the DSH release this build runs. */
     official: z.boolean().optional(),
+    /** Third-party installed plugins: whether an administrator allowed them to submit images to the model. */
+    imageSubmission: z.boolean().optional(),
     installedAt: z.number().int().safe().nonnegative().optional(),
     clientUiDetected: z.boolean().optional(),
     hostUi: DshNxtHostUiSchema.optional(),
@@ -4344,6 +4346,14 @@ export const HostApiContracts = {
     params: dshPluginEntryParam,
     request: z.object({ targetKey: NonEmptyStringSchema }).strict(),
     response: z.object({ disabled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  setDshPluginImageSubmission: defineContract({
+    method: 'PUT',
+    path: '/api/dsh/plugin-installs/:packageId/image-submission',
+    params: dshPluginPackageParam,
+    request: z.object({ allowed: z.boolean() }).strict(),
+    response: z.object({ allowed: z.boolean() }).strict(),
     error: HostApiErrorSchema,
   }),
   removeDshPluginPackage: defineContract({

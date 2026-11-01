@@ -164,12 +164,13 @@ const lifecycleFixture = async (
     repository.upsertDshPluginActivation({ entryId, targetKey: 'host', target: 'host', activatedAt: 1 })
     return entryId
   }
-  const coordinator = () =>
+  const coordinator = (imageSubmission?: { readonly attachments: object }) =>
     new DshPluginLifecycleCoordinator({
       repository,
       rootContext: context,
       serviceAccess: dshPluginServiceAccess,
       isolatedServices: DSH_PLUGIN_ISOLATED_SERVICE_KEYS,
+      ...(imageSubmission === undefined ? {} : { imageSubmission }),
       resolveModule: (_packageId, name) => moduleUrl(sources[name] ?? OFFLOAD_SOURCE),
       listAgentSessions: () => [],
     })
@@ -234,6 +235,39 @@ describe('DSH plugin lifecycle across official and isolated Loaders', () => {
         expect.objectContaining({ waitingFor: ['fixtureShared'], restricted: [] }),
       )
       await lifecycle.dispose()
+    } finally {
+      f.database.close()
+    }
+  })
+})
+
+describe('DSH plugin image submission', () => {
+  it('gives a third-party plugin the channel image service only after an administrator allows it', async () => {
+    const f = await lifecycleFixture([], {
+      UPLOADED: `export const inject = ['attachments']; export function apply(ctx) { ctx.provide('fixtureImages', ctx.attachments.marker) }`,
+    })
+    try {
+      const entry = f.seed('UPLOADED', true)
+      const lifecycle = f.coordinator({ attachments: { marker: 'channel-images' } })
+      await lifecycle.initialize()
+      const packageId = DshPluginPackageIdSchema.parse('dsp_UPLOADED')
+      expect(lifecycle.imageSubmissionAllowed(official.packageName)).toBe(false)
+      expect(f.repository.getDshPluginDiagnostic(entry, 'host')).toEqual(expect.objectContaining({ status: 'pending' }))
+
+      await lifecycle.setImageSubmission(packageId, true)
+      expect(lifecycle.imageSubmissionAllowed(official.packageName)).toBe(true)
+      expect(f.repository.getDshPluginDiagnostic(entry, 'host')).toEqual(expect.objectContaining({ status: 'active' }))
+      expect(f.context.get('fixtureImages')).toBe('channel-images')
+
+      await lifecycle.setImageSubmission(packageId, false)
+      expect(f.repository.getDshPluginDiagnostic(entry, 'host')).toEqual(expect.objectContaining({ status: 'pending' }))
+      expect(f.context.get('fixtureImages')).toBeUndefined()
+      await lifecycle.dispose()
+
+      // Without the service the switch does not exist.
+      const unavailable = f.coordinator()
+      expect(unavailable.imageSubmissionAllowed(official.packageName)).toBe(false)
+      await expect(unavailable.setImageSubmission(packageId, true)).rejects.toThrow('not configured')
     } finally {
       f.database.close()
     }

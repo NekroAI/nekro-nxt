@@ -23,6 +23,7 @@ import {
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { assetSaveToWorkspaceTool } from './asset-save-tool.js'
+import { channelImageSubmission, trackToolCallSessions } from './dsh-plugin-images.js'
 import { mountCredentialRedaction } from './credential-redaction.js'
 import { mountSandboxHints } from './command-sandbox-hints.js'
 import { preloadCredentialDocument } from './logs/credentials.js'
@@ -3469,6 +3470,8 @@ export class DshHostRuntime implements AgentSessionDriver {
             },
           },
     )
+    // Third-party plugins allowed to submit images put them in the channel of the tool call that runs.
+    trackToolCallSessions(context)
     this.#dshPluginLifecycle =
       options.dshPlugins === undefined
         ? undefined
@@ -3478,6 +3481,14 @@ export class DshHostRuntime implements AgentSessionDriver {
             rootContext: context,
             serviceAccess: dshPluginServiceAccess,
             isolatedServices: DSH_PLUGIN_ISOLATED_SERVICE_KEYS,
+            imageSubmission: {
+              attachments: channelImageSubmission({
+                store: () => requireNekroAssetAttachmentStore(this.#context.attachments),
+                channelOf: (sessionId) => this.#sessions.get(sessionId)?.channelId,
+                assets: this.#assets,
+                assetService: this.#assetService,
+              }),
+            },
             resolveModule: options.dshPlugins.resolveModule,
             listAgentSessions: (agentId) =>
               [...this.#sessions.handles()]
@@ -3943,6 +3954,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#assertActive()
     if (!this.#dshPluginLifecycle) return Promise.resolve()
     return this.#dshPluginLifecycle.assertSessionIndependent(entryIds, action)
+  }
+
+  /** Whether third-party plugins of this package may submit images; undefined when this Host cannot offer it. */
+  dshPluginImageSubmission(packageName: string): boolean | undefined {
+    return this.#dshPluginLifecycle?.imageSubmissionAllowed(packageName)
+  }
+
+  setDshPluginImageSubmission(packageId: DshPluginPackageId, allowed: boolean): Promise<void> {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
+    return this.#dshPluginLifecycle.setImageSubmission(packageId, allowed)
   }
 
   installedDshPluginServiceView(
