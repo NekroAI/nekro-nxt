@@ -88,7 +88,6 @@ const setup = async (
       cli: {
         executable: () => options.gh,
         directoryForPath: () => undefined,
-        status: () => ({ available: options.gh !== undefined }),
       },
     }),
   ])
@@ -116,7 +115,7 @@ const grantOf = (accountId: string, usage: CommandAccountGrant['usage'] = []): C
 
 describe('linked account platforms', () => {
   it('keeps one platform per id and names the unsupported ones', () => {
-    const cli = { executable: () => undefined, directoryForPath: () => undefined, status: () => ({ available: false }) }
+    const cli = { executable: () => undefined, directoryForPath: () => undefined }
     expect(() => new LinkedAccountPlatforms([createGithubPlatform({ cli }), createGithubPlatform({ cli })])).toThrow()
     const platforms = new LinkedAccountPlatforms([createGithubPlatform({ cli })])
     expect(platforms.list().map((platform) => [platform.id, platform.name, platform.addMethods])).toEqual([

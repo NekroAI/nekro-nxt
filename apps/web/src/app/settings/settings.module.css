@@ -357,3 +357,17 @@
   border-radius: 999px;
   background: var(--accent-fill);
 }
+
+/* —— 附加功能 —— */
+.addonDetail {
+  display: grid;
+  align-content: start;
+  gap: var(--s-6);
+  min-width: 0;
+}
+
+.licenses {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+}

@@ -673,8 +673,10 @@ export class HostQueries {
       channelCount: runtime.repository.listChannelIdsByConnection(connection.id).length,
       archivedAt: connection.archivedAt,
     }))
+    const addons = runtime.addons.list()
     return HostApiContracts.snapshot.parseResponse({
       cursor: this.#cursor(),
+      addons,
       communityFeedback: runtime.feedback.snapshot(),
       diagnosticsSampledAt,
       upgrade: {
@@ -688,9 +690,9 @@ export class HostQueries {
       models,
       capabilityAvailability: {
         subagents: { available: true },
-        codeRun: runtime.codeRunNode.status(),
-        githubCli: runtime.githubCli.status(),
-        verificationBrowser: runtime.verificationBrowser.status(),
+        codeRun: { available: addons.find(({ id }) => id === 'node')?.state === 'installed' },
+        githubCli: { available: addons.find(({ id }) => id === 'github-cli')?.state === 'installed' },
+        verificationBrowser: { available: addons.find(({ id }) => id === 'browser')?.state === 'installed' },
         commandConfinement: commandConfinementSupport(),
         webSearch,
       },

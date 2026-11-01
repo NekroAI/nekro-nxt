@@ -1298,30 +1298,10 @@ export const SubConversationSettingsSchema = z.object({ retention: SubConversati
 export const RetrievalModeSchema = z.enum(['keyword', 'builtin'])
 export type RetrievalMode = z.output<typeof RetrievalModeSchema>
 
-/** Search used by extension indexes (表情包与扩展素材能力 §6.4). */
+/** Search used by extension indexes (表情包与扩展素材能力 §6.4); the model itself is the `retrieval` add-on. */
 export const RetrievalStatusSchema = z
   .object({
     mode: RetrievalModeSchema,
-    builtin: z
-      .object({
-        model: z.string(),
-        /** False where no inference runtime is published for this system and processor. */
-        supported: z.boolean(),
-        downloadBytes: z.number().int().nonnegative(),
-        install: z.discriminatedUnion('state', [
-          z.object({ state: z.literal('not-installed') }).strict(),
-          z
-            .object({
-              state: z.literal('downloading'),
-              receivedBytes: z.number().int().nonnegative(),
-              totalBytes: z.number().int().nonnegative(),
-            })
-            .strict(),
-          z.object({ state: z.literal('installed') }).strict(),
-          z.object({ state: z.literal('failed'), error: z.string() }).strict(),
-        ]),
-      })
-      .strict(),
     vectors: z
       .object({
         documents: z.number().int().nonnegative(),
@@ -1685,42 +1665,102 @@ export const ScheduledTaskSchema = z
 
 export type ScheduledTask = z.output<typeof ScheduledTaskSchema>
 
-/** The Node that runs `run_code` programs, and the download the desktop app offers when there is none. */
-export const CodeRunAvailabilitySchema = z
+/** Programs and models NekroNXT installs on request (附加功能); `<data root>/runtimes`, left out of backups. */
+export const AddonIdSchema = z.enum(['retrieval', 'node', 'github-cli', 'browser'])
+export type AddonId = z.output<typeof AddonIdSchema>
+
+/** `extension`: used by extensions; `agent`: used by agents' commands; `host`: used by NekroNXT itself. */
+export const AddonGroupSchema = z.enum(['extension', 'agent', 'host'])
+export type AddonGroup = z.output<typeof AddonGroupSchema>
+
+/**
+ * `installed`: downloaded and ready; `available`: usable without installing (bundled, found on this device, cloud);
+ * `needs-config`: usable once configured (cloud).
+ */
+export const AddonStateSchema = z.enum([
+  'not-installed',
+  'installing',
+  'installed',
+  'failed',
+  'unsupported',
+  'available',
+  'needs-config',
+])
+export type AddonState = z.output<typeof AddonStateSchema>
+
+const AddonProgressSchema = z
   .object({
-    available: z.boolean(),
-    source: z.enum(['host', 'system', 'downloaded']).optional(),
-    version: z.string().optional(),
-    download: z
-      .object({
-        version: z.string(),
-        state: z.enum(['idle', 'downloading', 'failed']),
-        receivedBytes: z.number().int().nonnegative().optional(),
-        totalBytes: z.number().int().nonnegative().optional(),
-        error: z.string().optional(),
-      })
-      .strict()
-      .optional(),
+    receivedBytes: z.number().int().nonnegative(),
+    totalBytes: z.number().int().nonnegative().optional(),
   })
   .strict()
 
-export type CodeRunAvailability = z.output<typeof CodeRunAvailabilitySchema>
+/** One way an add-on can be provided, such as a program found on this device or one NekroNXT downloads. */
+export const AddonProviderStatusSchema = z
+  .object({
+    id: NonEmptyStringSchema,
+    title: NonEmptyStringSchema,
+    summary: z.string(),
+    state: AddonStateSchema,
+    /** `bundled`: installed with NekroNXT; `system`: found on this device; `downloaded`: fetched by NekroNXT. */
+    source: z.enum(['bundled', 'system', 'downloaded', 'cloud']).optional(),
+    /** The installed version, or the one an install fetches. */
+    version: z.string().optional(),
+    resources: z
+      .object({
+        /** Approximate for this system and processor. */
+        downloadBytes: z.number().int().nonnegative().optional(),
+        /** Measured from its own folder after install. */
+        installedBytes: z.number().int().nonnegative().optional(),
+        memoryBytes: z.number().int().nonnegative().optional(),
+        /** Short differences worth comparing, such as languages or speed. */
+        notes: z.array(z.string()).default([]),
+      })
+      .strict(),
+    /** One entry per component that carries its own license. */
+    licenses: z
+      .array(z.object({ component: z.string().optional(), name: NonEmptyStringSchema, url: z.url() }).strict())
+      .default([]),
+    /** Where downloads come from, for display. */
+    sources: z.array(z.string()).default([]),
+    progress: AddonProgressSchema.optional(),
+    error: z.string().optional(),
+    installable: z.boolean(),
+    removable: z.boolean(),
+  })
+  .strict()
+export type AddonProviderStatus = z.output<typeof AddonProviderStatusSchema>
 
-/** The GitHub CLI commands call: found on this machine, or downloaded by NekroNXT where it can. */
-export const GithubCliAvailabilitySchema = CodeRunAvailabilitySchema
-export type GithubCliAvailability = z.output<typeof GithubCliAvailabilitySchema>
+/** One add-on (a capability) as 设置 → 附加功能 shows it; the registry on the server is its only source. */
+export const AddonStatusSchema = z
+  .object({
+    id: AddonIdSchema,
+    group: AddonGroupSchema,
+    title: NonEmptyStringSchema,
+    summary: z.string(),
+    /** Who relies on it, as labels people recognise. */
+    usedBy: z.array(z.string()),
+    /** The selected provider's state, or, while none can be used, the one closest to usable. */
+    state: AddonStateSchema,
+    progress: AddonProgressSchema.optional(),
+    /** The provider in use; absent while none can be used. */
+    selected: NonEmptyStringSchema.optional(),
+    /** In declared order; providers that do not exist on this device are left out. */
+    providers: z.array(AddonProviderStatusSchema),
+  })
+  .strict()
+export type AddonStatus = z.output<typeof AddonStatusSchema>
 
-/** The optional headless Chromium that loads and checks creation candidates when no page is open. */
-export const VerificationBrowserAvailabilitySchema = CodeRunAvailabilitySchema
-export type VerificationBrowserAvailability = z.output<typeof VerificationBrowserAvailabilitySchema>
+/** Whether a capability that needs an add-on can run now; details live in `addons`. */
+export const AddonAvailabilitySchema = z.object({ available: z.boolean() }).strict()
+export type AddonAvailability = z.output<typeof AddonAvailabilitySchema>
 
 /** A platform's own program that linked accounts work through, such as the GitHub CLI. */
 export const LinkedAccountPlatformToolSchema = z
   .object({
-    /** The runtime download routes it is managed by (`downloadGithubCli`, `removeGithubCli`). */
+    /** The add-on it is installed as (`AddonStatus.id`). */
     id: z.enum(['github-cli']),
     name: z.string(),
-    availability: GithubCliAvailabilitySchema,
   })
   .strict()
 
@@ -1811,12 +1851,12 @@ export const HostSnapshotSchema = z
     capabilityAvailability: z
       .object({
         subagents: z.object({ available: z.boolean() }).strict(),
-        /** Optional in older hosts, which never offer `run_code`. */
-        codeRun: CodeRunAvailabilitySchema.optional(),
-        /** Optional in older hosts, which never offer command accounts. */
-        githubCli: GithubCliAvailabilitySchema.optional(),
-        /** Optional in older hosts, which check candidates only in an open page. */
-        verificationBrowser: VerificationBrowserAvailabilitySchema.optional(),
+        /** The `node` add-on that `run_code` needs. */
+        codeRun: AddonAvailabilitySchema.optional(),
+        /** The `github-cli` add-on that commands use with a GitHub account. */
+        githubCli: AddonAvailabilitySchema.optional(),
+        /** The `browser` add-on that checks candidates when no page is open. */
+        verificationBrowser: AddonAvailabilitySchema.optional(),
         /** What this host can confine for commands beyond file writes; optional in older hosts. */
         commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
         webSearch: z
@@ -2248,6 +2288,7 @@ export const HostSnapshotSchema = z
     authoringTasks: z.array(AuthoringTaskSummarySchema).default([]),
     /** Open sub-conversations, and the most recently ended ones of each channel. */
     subConversations: z.array(SubConversationSchema).default([]),
+    addons: z.array(AddonStatusSchema).default([]),
     scheduledTasks: z.array(ScheduledTaskSchema).default([]),
     /** Extension requests waiting for an administrator. */
     extensionRequests: z.array(ExtensionRequestSchema).default([]),
@@ -3882,74 +3923,39 @@ export const HostApiContracts = {
     response: RetrievalStatusSchema,
     error: HostApiErrorSchema,
   }),
-  downloadRetrievalModel: defineContract({
-    method: 'POST',
-    path: '/api/settings/retrieval/model/download',
+  listAddons: defineContract({
+    method: 'GET',
+    path: '/api/addons',
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
-    response: RetrievalStatusSchema,
+    response: z.object({ addons: z.array(AddonStatusSchema) }).strict(),
     error: HostApiErrorSchema,
   }),
-  removeRetrievalModel: defineContract({
-    method: 'DELETE',
-    path: '/api/settings/retrieval/model',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: RetrievalStatusSchema,
-    error: HostApiErrorSchema,
-  }),
-  downloadCodeRunNode: defineContract({
+  installAddonProvider: defineContract({
     invalidatesSnapshot: true,
     method: 'POST',
-    path: '/api/runtimes/code-run-node/download',
-    params: EmptyParamsSchema,
+    path: '/api/addons/:id/providers/:provider/install',
+    params: z.object({ id: AddonIdSchema, provider: NonEmptyStringSchema }).strict(),
     request: NoRequestBodySchema,
-    response: CodeRunAvailabilitySchema,
+    response: AddonStatusSchema,
     error: HostApiErrorSchema,
   }),
-  removeCodeRunNode: defineContract({
+  removeAddonProvider: defineContract({
     invalidatesSnapshot: true,
     method: 'DELETE',
-    path: '/api/runtimes/code-run-node',
-    params: EmptyParamsSchema,
+    path: '/api/addons/:id/providers/:provider',
+    params: z.object({ id: AddonIdSchema, provider: NonEmptyStringSchema }).strict(),
     request: NoRequestBodySchema,
-    response: CodeRunAvailabilitySchema,
+    response: AddonStatusSchema,
     error: HostApiErrorSchema,
   }),
-  downloadGithubCli: defineContract({
+  selectAddonProvider: defineContract({
     invalidatesSnapshot: true,
-    method: 'POST',
-    path: '/api/runtimes/github-cli/download',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: GithubCliAvailabilitySchema,
-    error: HostApiErrorSchema,
-  }),
-  removeGithubCli: defineContract({
-    invalidatesSnapshot: true,
-    method: 'DELETE',
-    path: '/api/runtimes/github-cli',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: GithubCliAvailabilitySchema,
-    error: HostApiErrorSchema,
-  }),
-  downloadVerificationBrowser: defineContract({
-    invalidatesSnapshot: true,
-    method: 'POST',
-    path: '/api/runtimes/verification-browser/download',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: VerificationBrowserAvailabilitySchema,
-    error: HostApiErrorSchema,
-  }),
-  removeVerificationBrowser: defineContract({
-    invalidatesSnapshot: true,
-    method: 'DELETE',
-    path: '/api/runtimes/verification-browser',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: VerificationBrowserAvailabilitySchema,
+    method: 'PUT',
+    path: '/api/addons/:id/selection',
+    params: z.object({ id: AddonIdSchema }).strict(),
+    request: z.object({ provider: NonEmptyStringSchema }).strict(),
+    response: AddonStatusSchema,
     error: HostApiErrorSchema,
   }),
   getLinkedAccounts: defineContract({

@@ -6,6 +6,14 @@ import { promisify } from 'node:util'
 
 const run = promisify(execFile)
 
+/** Where a pinned download stands; `idle` before it starts and after it succeeded. */
+export interface RuntimeDownloadState {
+  readonly state: 'idle' | 'downloading' | 'failed'
+  readonly receivedBytes?: number
+  readonly totalBytes?: number
+  readonly error?: string
+}
+
 export interface RuntimeDownloadProgress {
   readonly receivedBytes: number
   readonly totalBytes?: number

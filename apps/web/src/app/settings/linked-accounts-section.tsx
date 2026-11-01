@@ -34,7 +34,7 @@ import {
   toast,
   type Column,
 } from '../../ui-kit/index.js'
-import { CodeRunNodeDownload, CodeRunNodeRemove } from '../agents/runtime-download.js'
+import { AddonLink, addonUsable, selectedProvider, useAddon } from './addons-section.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { SectionHead } from './section-head.js'
 import own from './credentials-section.module.css'
@@ -60,7 +60,7 @@ const useAgentName = () => {
 export function LinkedAccountsSection({ lead }: { readonly lead: ReactNode }) {
   const [params, setParams] = useSearchParams()
   const { view, error, load, replace } = useLinkedAccounts()
-  const cli = useProductStore((state) => state.capabilityAvailability.githubCli)
+  const cli = useAddon('github-cli')
   const agentName = useAgentName()
   const [adding, setAdding] = useState<string>()
   const requestedAdd = LinkedAccountPlatformIdSchema.safeParse(params.get('add'))
@@ -190,25 +190,24 @@ export function LinkedAccountsSection({ lead }: { readonly lead: ReactNode }) {
     tools.length === 0 ? undefined : (
       <>
         {tools.map(({ platform, tool }) => {
-          const availability = tool.id === 'github-cli' ? (cli ?? tool.availability) : tool.availability
+          // The tool is installed as the add-on of the same id.
+          const addon = tool.id === 'github-cli' ? cli : undefined
+          if (addon === undefined) return null
+          const provider = selectedProvider(addon)
           return (
             <PropertyGroup key={platform.id} title={tool.name}>
               <PropertyList>
                 <PropertyRow
                   label="gh"
                   description={
-                    availability.available
-                      ? `${availability.version ?? ''}，${availability.source === 'downloaded' ? '由 NekroNXT 下载' : '来自这台设备'}`
-                      : availability.download === undefined
+                    addonUsable(addon.state) && provider !== undefined
+                      ? [provider.title, provider.version].filter(Boolean).join('，')
+                      : addon.state === 'unsupported'
                         ? '这台设备没有 gh'
-                        : '这台设备没有 gh，下载后智能体的命令里可以直接使用'
+                        : '这台设备没有 gh，安装后智能体的命令里可以直接使用'
                   }
                 >
-                  {availability.available ? (
-                    <CodeRunNodeRemove availability={availability} kind={tool.id} />
-                  ) : (
-                    <CodeRunNodeDownload availability={availability} kind={tool.id} />
-                  )}
+                  {addon.state === 'unsupported' ? null : <AddonLink addon={addon} />}
                 </PropertyRow>
               </PropertyList>
             </PropertyGroup>

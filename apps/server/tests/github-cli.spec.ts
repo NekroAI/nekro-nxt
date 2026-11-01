@@ -4,7 +4,8 @@ import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { GithubCli, type GithubCliStatus } from '../src/github-cli.ts'
+import { GithubCli } from '../src/github-cli.ts'
+import type { RuntimeDownloadState } from '../src/runtime-download.ts'
 
 const temporaryDirectories: string[] = []
 const temporary = async (prefix: string) => {
@@ -42,27 +43,26 @@ const fakeRelease = async () => {
 }
 
 const settled = (cli: GithubCli) =>
-  new Promise<GithubCliStatus>((resolve) => {
+  new Promise<RuntimeDownloadState | undefined>((resolve) => {
     const check = () => {
-      const status = cli.status()
-      if (status.download?.state !== 'downloading') {
+      const download = cli.download()
+      if (download?.state !== 'downloading') {
         unsubscribe()
-        resolve(status)
+        resolve(download)
       }
     }
     const unsubscribe = cli.subscribe(check)
   })
 
 describe.skipIf(process.platform === 'win32')('GitHub CLI', () => {
-  it('uses a gh the machine already has and leaves PATH alone', async () => {
+  it('finds a gh the machine already has', async () => {
     const cli = new GithubCli({
       root: await temporary('nekro-nxt-gh-'),
       findSystem: () => Promise.resolve({ executable: '/usr/local/bin/gh', version: '2.90.0' }),
     })
     await cli.prepare()
-    expect(cli.status()).toEqual({ available: true, source: 'system', version: '2.90.0' })
-    expect(cli.executable()).toBe('/usr/local/bin/gh')
-    expect(cli.directoryForPath()).toBeUndefined()
+    expect(cli.system()).toEqual({ executable: '/usr/local/bin/gh', version: '2.90.0' })
+    expect(cli.downloaded()).toBeUndefined()
   })
 
   it('downloads, verifies and unpacks the pinned release, then removes it again', async () => {
@@ -79,16 +79,17 @@ describe.skipIf(process.platform === 'win32')('GitHub CLI', () => {
       },
     })
     await cli.prepare()
-    expect(cli.status()).toEqual({ available: false, download: { version: '99.0.0', state: 'idle' } })
-    expect(cli.executable()).toBeUndefined()
+    expect(cli.system()).toBeUndefined()
+    expect(cli.downloaded()).toBeUndefined()
+    expect(cli.download()).toEqual({ state: 'idle' })
 
     const done = settled(cli)
-    expect(cli.startDownload().download?.state).toBe('downloading')
-    expect(await done).toEqual({ available: true, source: 'downloaded', version: '99.0.0' })
+    cli.startDownload()
+    expect(cli.download()?.state).toBe('downloading')
+    expect(await done).toEqual({ state: 'idle' })
     expect(requested).toEqual([`https://downloads.example.test/gh/${release.artifacts[key]!.file}`])
-    const executable = cli.executable()!
+    const executable = cli.downloaded()!.executable
     expect(executable).toBe(path.join(root, '99.0.0', 'gh_99.0.0_test', 'bin', 'gh'))
-    expect(cli.directoryForPath()).toBe(path.dirname(executable))
     await expect(access(executable)).resolves.toBeUndefined()
 
     // A restart finds the download without fetching again.
@@ -99,9 +100,10 @@ describe.skipIf(process.platform === 'win32')('GitHub CLI', () => {
       fetch: () => Promise.reject(new Error('offline')),
     })
     await restarted.prepare()
-    expect(restarted.status()).toMatchObject({ available: true, source: 'downloaded' })
+    expect(restarted.downloaded()).toEqual({ executable, version: '99.0.0' })
 
-    expect(await cli.removeDownloaded()).toEqual({ available: false, download: { version: '99.0.0', state: 'idle' } })
+    await cli.removeDownloaded()
+    expect(cli.downloaded()).toBeUndefined()
     await expect(access(path.join(root, '99.0.0'))).rejects.toThrow()
   })
 
@@ -117,9 +119,8 @@ describe.skipIf(process.platform === 'win32')('GitHub CLI', () => {
     await cli.prepare()
     const done = settled(cli)
     cli.startDownload()
-    const status = await done
-    expect(status.available).toBe(false)
-    expect(status.download).toMatchObject({ state: 'failed', error: '下载的文件校验不通过，已丢弃。' })
+    expect(await done).toEqual({ state: 'failed', error: '下载的文件校验不通过，已丢弃。' })
+    expect(cli.downloaded()).toBeUndefined()
     await expect(access(path.join(root, '99.0.0'))).rejects.toThrow()
   })
 
@@ -130,7 +131,7 @@ describe.skipIf(process.platform === 'win32')('GitHub CLI', () => {
       release: { version: '1.0.0', baseUrl: 'https://x.test', artifacts: {} },
     })
     await cli.prepare()
-    expect(cli.status()).toEqual({ available: false })
+    expect(cli.download()).toBeUndefined()
     expect(() => cli.startDownload()).toThrow('这台设备不能自动下载 GitHub CLI。')
   })
 })

@@ -38,6 +38,7 @@ export interface ProductSnapshot {
   readonly dynamic: readonly DynamicPackageSummary[]
   readonly authoringTasks?: ProductState['authoringTasks']
   readonly subConversations?: ProductState['subConversations']
+  readonly addons?: ProductState['addons']
   readonly extensionRequests?: ProductState['extensionRequests']
   readonly scheduledTasks?: ProductState['scheduledTasks']
   readonly notificationSettings: ProductState['notificationSettings']

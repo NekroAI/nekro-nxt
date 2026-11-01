@@ -1,4 +1,5 @@
 import { credentialsView } from '../e2e/fixtures/credentials.js'
+import { addonProvider, addonsFixture } from '../e2e/fixtures/addons.js'
 import { botAccountId, linkedAccountsView } from '../e2e/fixtures/linked-accounts.js'
 import { fixtureReleaseId, installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
@@ -2524,7 +2525,7 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('offers scripts under command access and downloads the Node they need in place', async () => {
+  test('offers scripts under command access and links to installing the Node they need', async () => {
     const capabilityRequests: unknown[] = []
     const withCommands = {
       ...browserSnapshot,
@@ -2536,27 +2537,46 @@ test.describe('NekroNxt browser projections', () => {
     }
     const missing = HostApiContracts.snapshot.response.parse({
       ...withCommands,
-      capabilityAvailability: {
-        ...withCommands.capabilityAvailability,
-        codeRun: { available: false, download: { version: '24.21.0', state: 'idle' } },
-      },
+      addons: addonsFixture(),
+      capabilityAvailability: { ...withCommands.capabilityAvailability, codeRun: { available: false } },
     })
     const ready = HostApiContracts.snapshot.response.parse({
       ...withCommands,
-      capabilityAvailability: {
-        ...withCommands.capabilityAvailability,
-        codeRun: { available: true, source: 'downloaded', version: '24.21.0' },
-      },
+      addons: addonsFixture({
+        node: {
+          state: 'installed',
+          selected: 'download',
+          providers: [
+            addonProvider({
+              id: 'download',
+              title: '下载的 Node',
+              state: 'installed',
+              source: 'downloaded',
+              version: '24.21.0',
+              resources: { installedBytes: 120 * 1024 * 1024, notes: [] },
+              removable: true,
+            }),
+          ],
+        },
+      }),
+      capabilityAvailability: { ...withCommands.capabilityAvailability, codeRun: { available: true } },
     })
     let current = missing
+    const installs: string[] = []
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
         const toggle = page.getByRole('switch', { name: '编排模式（PTC）' })
         await playwrightExpect(toggle).toBeDisabled()
-        await page.getByRole('button', { name: '下载 Node 24.21.0' }).click()
+        await playwrightExpect(page.getByText('未安装，安装后即可开启')).toBeVisible()
+        await page.getByRole('button', { name: '去安装' }).click()
+        await playwrightExpect(page).toHaveURL(/\/settings\/addons\/node$/u)
+        await page.getByRole('region', { name: '下载的 Node' }).getByRole('button', { name: '安装' }).click()
+        await playwrightExpect.poll(() => installs).toEqual(['/api/addons/node/providers/download/install'])
+        await playwrightExpect(page.getByRole('region', { name: '下载的 Node' })).toContainText('已安装')
+        await page.goBack()
         await playwrightExpect(toggle).toBeEnabled()
-        await playwrightExpect(page.getByText('Node 24.21.0，由 NXT 下载')).toBeVisible()
+        await playwrightExpect(page.getByText('下载的 Node，24.21.0')).toBeVisible()
         await toggle.click()
         await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
         await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
@@ -2565,11 +2585,10 @@ test.describe('NekroNxt browser projections', () => {
       missing,
       async (page) => {
         await page.route('**/api/snapshot', (request) => request.fulfill({ json: current }))
-        await page.route('**/api/runtimes/code-run-node/download', (request) => {
+        await page.route('**/api/addons/**', (request) => {
+          installs.push(new URL(request.request().url()).pathname)
           current = ready
-          return request.fulfill({
-            json: { available: false, download: { version: '24.21.0', state: 'downloading', receivedBytes: 0 } },
-          })
+          return request.fulfill({ json: ready.addons.find((addon) => addon.id === 'node') })
         })
         await page.route('**/api/agents/*/capabilities', async (request) => {
           capabilityRequests.push(request.request().postDataJSON())

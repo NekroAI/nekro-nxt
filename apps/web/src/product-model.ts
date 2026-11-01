@@ -1,8 +1,8 @@
 import type { HostQueryState } from './owned-host-query.js'
 import type { AdapterConnectionDescriptor } from '@nekro-nxt/adapter-sdk'
 import type {
-  CodeRunAvailability,
-  GithubCliAvailability,
+  AddonAvailability,
+  AddonStatus,
   ChannelRuntimePhase,
   HostApiParams,
   HostApiRequest,
@@ -544,12 +544,10 @@ export interface CommandAccountGrant {
 
 export interface CapabilityAvailability {
   readonly subagents: { readonly available: boolean }
-  /** Absent until a host reports it; such a host offers no command accounts. */
-  readonly githubCli?: GithubCliAvailability | undefined
-  /** Absent until a host reports it; such a host cannot run `run_code`. */
-  readonly codeRun?: CodeRunAvailability | undefined
-  /** Absent until a host reports it; such a host checks candidates only in an open page. */
-  readonly verificationBrowser?: CodeRunAvailability | undefined
+  /** The add-ons these capabilities need; details are in `ProductState.addons`. */
+  readonly githubCli?: AddonAvailability | undefined
+  readonly codeRun?: AddonAvailability | undefined
+  readonly verificationBrowser?: AddonAvailability | undefined
   /** What the host can confine for commands beyond file writes; absent hosts confine writes only. */
   readonly commandConfinement?: { readonly readScope: boolean; readonly networkControl: boolean } | undefined
   readonly webSearch: {
@@ -637,6 +635,8 @@ export interface ProductState {
   readonly authoringTasks: HostApiResponse<'snapshot'>['authoringTasks']
   /** Open sub-conversations and the latest ended ones of each channel. */
   readonly subConversations: HostApiResponse<'snapshot'>['subConversations']
+  /** 设置 → 附加功能, kept current by snapshot changes. */
+  readonly addons: readonly AddonStatus[]
   /** Extension requests waiting for an administrator. */
   readonly extensionRequests: HostApiResponse<'snapshot'>['extensionRequests']
   readonly scheduledTasks: HostApiResponse<'snapshot'>['scheduledTasks']

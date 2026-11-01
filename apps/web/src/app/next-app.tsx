@@ -117,6 +117,7 @@ export function NextApp() {
                   <Route path="community/*" element={space(<CommunitySpace />)} />
                   <Route path="wiring/*" element={space(<WiringSpace />)} />
                   <Route path="settings/:section?" element={space(<SettingsSpace />)} />
+                  <Route path="settings/:section/:item" element={space(<SettingsSpace />)} />
                   <Route path="apps/:pageInstanceId/*" element={<ExtensionPage />} />
                   <Route path="*" element={<Navigate to="/live" replace />} />
                 </Route>

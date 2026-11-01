@@ -4,6 +4,7 @@ import {
   HostApiContracts,
   HostApiErrorSchema,
   buildHostApiContractPath,
+  type AddonId,
   type HostApiContract,
   type HostApiContractParams,
   type HostApiContractRequest,
@@ -244,10 +245,12 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.getRetrievalStatus, {}, undefined, options),
   updateRetrievalMode: (request: HostApiRequest<'updateRetrievalMode'>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.updateRetrievalMode, {}, request, options),
-  downloadRetrievalModel: (options?: HostRequestOptions) =>
-    callHostApi(HostApiContracts.downloadRetrievalModel, {}, undefined, options),
-  removeRetrievalModel: (options?: HostRequestOptions) =>
-    callHostApi(HostApiContracts.removeRetrievalModel, {}, undefined, options),
+  installAddonProvider: (id: AddonId, provider: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.installAddonProvider, { id, provider }, undefined, options),
+  removeAddonProvider: (id: AddonId, provider: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.removeAddonProvider, { id, provider }, undefined, options),
+  selectAddonProvider: (id: AddonId, provider: string, options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.selectAddonProvider, { id }, { provider }, options),
   getSubConversationRuntime: (conversationId: string, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.getSubConversationRuntime, { conversationId }, undefined, options),
   listSubConversations: (channelId: string, options?: HostRequestOptions) =>

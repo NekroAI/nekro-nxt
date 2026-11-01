@@ -5,7 +5,6 @@ import type {
   LinkedAccountPlatformId,
   LinkedAccountTokenSource,
 } from '@nekro-nxt/contracts'
-import type { GithubCliStatus } from '../github-cli.js'
 
 /** A message safe to show the user: what failed, without the token. */
 export class LinkedAccountError extends Error {}
@@ -17,11 +16,10 @@ export interface LinkedAccountIdentity {
   readonly scopes?: readonly string[]
 }
 
-/** A platform's own program that accounts work through, managed by the runtime download routes. */
+/** A platform's own program that accounts work through, installed as the add-on of the same id. */
 export interface LinkedAccountPlatformTool {
   readonly id: 'github-cli'
   readonly name: string
-  readonly availability: GithubCliStatus
 }
 
 /**

@@ -4,7 +4,8 @@ import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CodeRunNode, type CodeRunNodeStatus } from '../src/code-run-node.ts'
+import { CodeRunNode } from '../src/code-run-node.ts'
+import type { RuntimeDownloadState } from '../src/runtime-download.ts'
 
 const temporaryDirectories: string[] = []
 const temporary = async (prefix: string) => {
@@ -42,12 +43,12 @@ const fakeRelease = async (nodeVersion: string) => {
 }
 
 const settled = (node: CodeRunNode) =>
-  new Promise<CodeRunNodeStatus>((resolve) => {
+  new Promise<RuntimeDownloadState | undefined>((resolve) => {
     const check = () => {
-      const status = node.status()
-      if (status.download?.state !== 'downloading') {
+      const download = node.download()
+      if (download?.state !== 'downloading') {
         unsubscribe()
-        resolve(status)
+        resolve(download)
       }
     }
     const unsubscribe = node.subscribe(check)
@@ -71,8 +72,9 @@ describe.skipIf(process.platform === 'win32')('Node for run_code', () => {
   it('uses the server process itself outside the desktop app', async () => {
     const node = new CodeRunNode({ root: await temporary('nekro-nxt-runtimes-'), embedded: false })
     await node.prepare()
-    expect(node.status()).toEqual({ available: true, source: 'host', version: process.versions.node })
-    expect(node.executable()).toEqual({})
+    expect(node.bundled()).toEqual({ version: process.versions.node })
+    expect(node.system()).toBeUndefined()
+    expect(() => node.startDownload()).toThrow('这台设备不能自动下载运行环境。')
   })
 
   it('downloads, verifies and unpacks the pinned release, then removes it again', async () => {
@@ -89,14 +91,17 @@ describe.skipIf(process.platform === 'win32')('Node for run_code', () => {
       },
     })
     await node.prepare()
-    expect(node.status()).toEqual({ available: false, download: { version: '99.0.0', state: 'idle' } })
-    expect(node.executable()).toBeUndefined()
+    expect(node.bundled()).toBeUndefined()
+    expect(node.system()).toBeUndefined()
+    expect(node.downloaded()).toBeUndefined()
+    expect(node.download()).toEqual({ state: 'idle' })
 
     const done = settled(node)
-    expect(node.startDownload().download?.state).toBe('downloading')
-    expect(await done).toEqual({ available: true, source: 'downloaded', version: '99.0.0' })
+    node.startDownload()
+    expect(node.download()?.state).toBe('downloading')
+    expect(await done).toEqual({ state: 'idle' })
     expect(requested).toEqual([`https://downloads.example.test/dist/${release.artifacts[key]!.file}`])
-    const executable = node.executable()?.executable
+    const executable = node.downloaded()?.executable
     expect(executable).toBe(path.join(root, '99.0.0', 'node-v99.0.0-test', 'bin', 'node'))
     await expect(access(executable!)).resolves.toBeUndefined()
 
@@ -108,9 +113,10 @@ describe.skipIf(process.platform === 'win32')('Node for run_code', () => {
       fetch: () => Promise.reject(new Error('offline')),
     })
     await restarted.prepare()
-    expect(restarted.status()).toMatchObject({ available: true, source: 'downloaded' })
+    expect(restarted.downloaded()).toEqual({ executable, version: '99.0.0' })
 
-    expect(await node.removeDownloaded()).toEqual({ available: false, download: { version: '99.0.0', state: 'idle' } })
+    await node.removeDownloaded()
+    expect(node.downloaded()).toBeUndefined()
     await expect(access(path.join(root, '99.0.0'))).rejects.toThrow()
   })
 
@@ -127,16 +133,15 @@ describe.skipIf(process.platform === 'win32')('Node for run_code', () => {
     await node.prepare()
     let done = settled(node)
     node.startDownload()
-    expect(await done).toEqual({
-      available: false,
-      download: { version: '99.0.0', state: 'failed', error: '下载的文件校验不通过，已丢弃。' },
-    })
+    expect(await done).toEqual({ state: 'failed', error: '下载的文件校验不通过，已丢弃。' })
+    expect(node.downloaded()).toBeUndefined()
     await expect(access(path.join(root, '99.0.0'))).rejects.toThrow()
 
     tampered = false
     done = settled(node)
     node.startDownload()
-    expect((await done).available).toBe(true)
+    expect(await done).toEqual({ state: 'idle' })
+    expect(node.downloaded()).toBeDefined()
   })
 
   it('rejects a downloaded Node older than the programs need and does not keep it', async () => {
@@ -151,17 +156,15 @@ describe.skipIf(process.platform === 'win32')('Node for run_code', () => {
     await node.prepare()
     const done = settled(node)
     node.startDownload()
-    expect(await done).toMatchObject({
-      available: false,
-      download: { state: 'failed', error: '下载的 Node v20.0.0 版本过低。' },
-    })
+    expect(await done).toEqual({ state: 'failed', error: '下载的 Node v20.0.0 版本过低。' })
+    expect(node.downloaded()).toBeUndefined()
     await expect(access(path.join(root, '99.0.0'))).rejects.toThrow()
   })
 
   it('offers no download on a platform without a pinned build', async () => {
     const node = new CodeRunNode({ root: await temporary('nekro-nxt-runtimes-'), embedded: true, platform: 'aix' })
     await node.prepare()
-    expect(node.status()).toEqual({ available: false })
+    expect(node.download()).toBeUndefined()
     expect(() => node.startDownload()).toThrow('这台设备不能自动下载运行环境。')
   })
 })

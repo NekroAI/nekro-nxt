@@ -5,7 +5,7 @@ import { useProductStore, type AgentSummary } from '../../product-runtime.js'
 import { Button, Chip, PropertyRow, Select, ToggleChip } from '../../ui-kit/index.js'
 import { useGo } from '../model/nav.js'
 import type { AgentDraft, DraftUpdate } from './agent-draft.js'
-import { CodeRunNodeDownload } from './runtime-download.js'
+import { AddonLink, useAddon } from '../settings/addons-section.js'
 import styles from './agents.module.css'
 
 type Grant = AgentDraft['capabilities']['commandAccounts'][number]
@@ -26,6 +26,7 @@ export function CommandAccountRows({
 }) {
   const { view } = useLinkedAccounts()
   const cli = useProductStore((state) => state.capabilityAvailability.githubCli)
+  const cliAddon = useAddon('github-cli')
   const go = useGo()
   if (view === undefined) return null
   const platforms = view.platforms.filter(
@@ -108,17 +109,17 @@ export function CommandAccountRows({
                 </div>
               </PropertyRow>
             ) : null}
-            {platform.id === 'github' && account !== undefined && cli !== undefined && !cli.available ? (
+            {platform.id === 'github' && account !== undefined && cliAddon !== undefined && cli?.available === false ? (
               <PropertyRow
                 depth={2}
                 label="GitHub CLI"
                 description={
-                  cli.download === undefined
+                  cliAddon.state === 'unsupported'
                     ? '这台设备没有 gh，命令里只能通过 REST 接口使用这个账号'
-                    : '这台设备没有 gh，下载后命令里可以直接使用'
+                    : '这台设备没有 gh，安装后命令里可以直接使用'
                 }
               >
-                <CodeRunNodeDownload availability={cli} kind="github-cli" />
+                {cliAddon.state === 'unsupported' ? null : <AddonLink addon={cliAddon} />}
               </PropertyRow>
             ) : null}
           </Fragment>

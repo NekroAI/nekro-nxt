@@ -34,7 +34,6 @@ const githubPlatform = (options: { readonly cliDirectory?: string; readonly cliA
     cli: {
       executable: () => (options.cliAvailable === false ? undefined : '/usr/bin/gh'),
       directoryForPath: () => options.cliDirectory,
-      status: () => ({ available: options.cliAvailable !== false }),
     },
   })
 

@@ -25,6 +25,13 @@ const IDLE_RELEASE_MS = 10 * 60 * 1000
 const EMBED_BATCH = 16
 const MAX_TOKENS = 256
 
+/** Where the built-in model's download stands. */
+export type RetrievalInstall =
+  | { readonly state: 'not-installed' }
+  | { readonly state: 'downloading'; readonly receivedBytes: number; readonly totalBytes: number }
+  | { readonly state: 'installed' }
+  | { readonly state: 'failed'; readonly error: string }
+
 export interface RetrievalSettingsStore {
   get(key: string): { readonly value: JsonValue; readonly revision: number } | undefined
   put(key: string, value: JsonValue, expectedRevision: number | undefined): void
@@ -103,7 +110,7 @@ export class RetrievalRuntime implements IndexVectorProvider {
   readonly #platformKey: string
   readonly #listeners = new Set<() => void>()
   #mode: RetrievalMode = 'keyword'
-  #install: RetrievalStatus['builtin']['install'] = { state: 'not-installed' }
+  #install: RetrievalInstall = { state: 'not-installed' }
   #inflight: Promise<void> | undefined
   #model: Promise<LoadedModel> | undefined
   #idleTimer: NodeJS.Timeout | undefined
@@ -187,15 +194,8 @@ export class RetrievalRuntime implements IndexVectorProvider {
 
   status(): RetrievalStatus {
     const counts = this.#options.index.countIndexVectors(BUILTIN_SPACE)
-    const totalBytes = this.#plan().reduce((sum, entry) => sum + entry.file[1], 0)
     return {
       mode: this.#mode,
-      builtin: {
-        model: BUILTIN_EMBEDDING_MODEL.id,
-        supported: this.#nativeFiles !== undefined,
-        downloadBytes: totalBytes,
-        install: this.#install,
-      },
       vectors: {
         documents: counts.documents,
         embedded: counts.vectors,
@@ -205,9 +205,26 @@ export class RetrievalRuntime implements IndexVectorProvider {
     }
   }
 
+  /** The model as the `retrieval` add-on: whether it can run here, its size, its download and its folders. */
+  installation(): {
+    readonly model: string
+    readonly supported: boolean
+    readonly downloadBytes: number
+    readonly install: RetrievalInstall
+    readonly directories: readonly string[]
+  } {
+    return {
+      model: BUILTIN_EMBEDDING_MODEL.id,
+      supported: this.#nativeFiles !== undefined,
+      downloadBytes: this.#plan().reduce((sum, entry) => sum + entry.file[1], 0),
+      install: this.#install,
+      directories: [this.#runtimeRoot, path.join(this.#options.root, 'embedding-models', BUILTIN_EMBEDDING_MODEL.id)],
+    }
+  }
+
   setMode(mode: RetrievalMode): RetrievalStatus {
     if (mode === 'builtin' && this.#install.state !== 'installed') {
-      throw new Error('先下载内置语义模型，再开启语义检索。')
+      throw new Error('先安装语义检索，再开启。')
     }
     this.#options.settings.put(SETTING_KEY, { mode }, this.#options.settings.get(SETTING_KEY)?.revision)
     this.#mode = mode
@@ -217,18 +234,17 @@ export class RetrievalRuntime implements IndexVectorProvider {
     return this.status()
   }
 
-  /** Starts downloading the model and runtime; progress arrives through `status()` and `subscribe()`. */
-  startDownload(): RetrievalStatus {
+  /** Starts downloading the model and runtime; progress arrives through `installation()` and `subscribe()`. */
+  startDownload(): void {
     if (this.#nativeFiles === undefined) throw new Error('这台设备的系统或处理器还不能运行内置语义模型。')
-    if (this.#install.state === 'installed') return this.status()
+    if (this.#install.state === 'installed') return
     this.#inflight ??= this.#download().finally(() => {
       this.#inflight = undefined
       this.#changed()
     })
-    return this.status()
   }
 
-  async remove(): Promise<RetrievalStatus> {
+  async remove(): Promise<void> {
     if (this.#inflight !== undefined) throw new Error('正在下载，等下载结束后再删除。')
     if (this.#mode === 'builtin') this.setMode('keyword')
     await this.#release()
@@ -240,7 +256,6 @@ export class RetrievalRuntime implements IndexVectorProvider {
     await rm(this.#runtimeRoot, { recursive: true, force: true })
     this.#install = { state: 'not-installed' }
     this.#changed()
-    return this.status()
   }
 
   async #installed(): Promise<boolean> {

@@ -27,11 +27,7 @@ export const linkedAccountsView = (
         id: 'github',
         name: 'GitHub',
         addMethods: ['token', 'gh-login'],
-        tool: {
-          id: 'github-cli',
-          name: 'GitHub CLI',
-          availability: { available: true, source: 'system', version: '2.90.0' },
-        },
+        tool: { id: 'github-cli', name: 'GitHub CLI' },
         accounts: options.empty
           ? []
           : [

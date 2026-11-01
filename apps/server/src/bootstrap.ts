@@ -106,6 +106,7 @@ import {
 } from './extension-host-backends.js'
 import { memoryIndexEngine, sqliteIndexEngine } from './extension-index.js'
 import { RetrievalRuntime } from './retrieval-runtime.js'
+import { AddonRegistry, browserAddon, githubCliAddon, nodeAddon, retrievalAddon } from './addons.js'
 import {
   ExtensionLibrary,
   memoryLibraryRegistry,
@@ -287,6 +288,7 @@ export class NekroRuntime {
   /** Which model providers agents and extensions may call through the host. */
   readonly modelProviderAccess: ModelProviderAccess
   readonly retrieval: RetrievalRuntime
+  readonly addons: AddonRegistry
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -345,6 +347,7 @@ export class NekroRuntime {
     readonly credentialRequests: CredentialRequests
     readonly modelProviderAccess: ModelProviderAccess
     readonly retrieval: RetrievalRuntime
+    readonly addons: AddonRegistry
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -468,6 +471,7 @@ export class NekroRuntime {
     this.credentialRequests = input.credentialRequests
     this.modelProviderAccess = input.modelProviderAccess
     this.retrieval = input.retrieval
+    this.addons = input.addons
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.outbound = input.outbound
@@ -1021,21 +1025,35 @@ export class NekroRuntime {
         },
       }
 
+      const runtimesRoot = path.join(path.dirname(options.coreDatabasePath), 'runtimes')
       const codeRunNode = new CodeRunNode({
-        root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'node'),
+        root: path.join(runtimesRoot, 'node'),
         // The desktop app's server runs inside Electron, whose own executable cannot run a program as Node.
         embedded: process.versions['electron'] !== undefined,
       })
-      await codeRunNode.prepare()
-      const githubCli = new GithubCli({ root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'gh') })
-      await githubCli.prepare()
+      const githubCli = new GithubCli({ root: path.join(runtimesRoot, 'gh') })
       const verificationBrowser = new VerificationBrowser({
-        root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'chromium'),
+        root: path.join(runtimesRoot, 'chromium'),
         ...(process.env['NEKRO_VERIFICATION_BROWSER_ROOT']
           ? { systemRoot: process.env['NEKRO_VERIFICATION_BROWSER_ROOT'] }
           : {}),
       })
-      await verificationBrowser.prepare()
+      // The four existing add-ons keep the folders they were first installed in.
+      const addons = new AddonRegistry(
+        [
+          retrievalAddon(retrieval),
+          nodeAddon(codeRunNode, path.join(runtimesRoot, 'node')),
+          githubCliAddon(githubCli, path.join(runtimesRoot, 'gh')),
+          browserAddon(verificationBrowser, path.join(runtimesRoot, 'chromium')),
+        ],
+        {
+          settings: {
+            get: (key) => repository.getSystemSetting(key),
+            put: (key, value, expectedRevision) => repository.putSystemSetting(key, value, expectedRevision, now()),
+          },
+        },
+      )
+      await addons.prepare()
       const credentialLibrary = new CredentialLibrary(repository, credentials, {
         secrets,
         now,
@@ -1045,7 +1063,21 @@ export class NekroRuntime {
       credentialPort.current = credentialLibrary
       const linkedAccounts = new LinkedAccountLibrary(repository, credentials, {
         secrets,
-        platforms: new LinkedAccountPlatforms([createGithubPlatform({ cli: githubCli })]),
+        platforms: new LinkedAccountPlatforms([
+          createGithubPlatform({
+            cli: {
+              executable: () => addons.active('github-cli')?.program('gh'),
+              // A system `gh` is already on the PATH; a downloaded one goes in front of it.
+              directoryForPath: () => {
+                const active = addons.active('github-cli')
+                const executable = active?.program('gh')
+                return active?.source === 'downloaded' && executable !== undefined
+                  ? path.dirname(executable)
+                  : undefined
+              },
+            },
+          }),
+        ]),
         now,
         nextId: () => nextUlid(),
       })
@@ -1077,7 +1109,14 @@ export class NekroRuntime {
             return channel?.kind === 'internal' && channel.connectionId === internalConnectionId
           },
         },
-        codeRunNode: () => codeRunNode.executable(),
+        codeRunNode: () => {
+          const active = addons.active('node')
+          if (active === undefined) return undefined
+          // The server's own Node runs programs as this process.
+          if (active.source === 'bundled') return {}
+          const executable = active.program('node')
+          return executable === undefined ? undefined : { executable }
+        },
         commandAccounts: {
           credentials: (agentId) =>
             credentialLibrary.commandCredentials(agentId).map(({ record, value, env }) => ({
@@ -1486,6 +1525,7 @@ export class NekroRuntime {
         credentialRequests,
         modelProviderAccess: providerAccess,
         retrieval,
+        addons,
         channelPrompts,
         mcpStatus,
         outbound: outboundProcessor,
@@ -1548,7 +1588,12 @@ export class NekroRuntime {
         return status !== 'awaiting-approval' && status !== 'running'
       },
       origin: () => process.env['NEKRO_VERIFY_ORIGIN'] || this.#verificationOrigin,
-      browser: this.verificationBrowser,
+      browser: {
+        launch: () => {
+          const executable = this.addons.active('browser')?.program('chromium')
+          return executable === undefined ? Promise.resolve(undefined) : this.verificationBrowser.launch(executable)
+        },
+      },
       runWithoutClient: (taskId) => this.host.runWaitingCandidateWithoutClient(AuthoringTaskIdSchema.parse(taskId)),
       log: (message, error) => console.error(`[nekro-nxt] ${message}：`, error),
     })
@@ -2092,6 +2137,7 @@ export class NekroRuntime {
     await this.#candidateVerifier?.dispose()
     this.#disposed = true
     await this.#jobScheduler.dispose()
+    this.addons.dispose()
     await this.retrieval.dispose()
     await this.commands.dispose()
     await this.authoring.dispose()

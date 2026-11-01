@@ -53,18 +53,19 @@ describe('verification browser', () => {
         return 0
       },
     })
-    browser.subscribe(() => states.push(browser.status().download?.state ?? 'ready'))
+    browser.subscribe(() => states.push(browser.download().state))
     await browser.prepare()
-    expect(browser.status()).toMatchObject({ available: false, download: { state: 'idle' } })
+    expect(browser.downloaded()).toBeUndefined()
+    expect(browser.download()).toEqual({ state: 'idle' })
     browser.startDownload()
-    await expect.poll(() => browser.status().available).toBe(true)
+    await expect.poll(() => browser.downloaded()).toBeDefined()
     expect(states).toContain('downloading')
-    expect(browser.status()).toEqual({ available: true, source: 'downloaded', version: 'Chromium' })
+    expect(browser.download()).toEqual({ state: 'idle' })
     await browser.removeDownloaded()
-    expect(browser.status().available).toBe(false)
+    expect(browser.downloaded()).toBeUndefined()
   })
 
-  it('uses a browser installed with NekroNXT without offering to remove it', async () => {
+  it('finds a browser installed with NekroNXT', async () => {
     const directory = await scratch()
     const systemRoot = path.join(directory, 'bundled')
     const folder = path.join(systemRoot, 'chromium_headless_shell-1', 'chrome-headless-shell-linux64')
@@ -72,7 +73,8 @@ describe('verification browser', () => {
     await writeFile(path.join(folder, 'chrome-headless-shell'), '')
     const browser = new VerificationBrowser({ root: path.join(directory, 'chromium'), systemRoot })
     await browser.prepare()
-    expect(browser.status()).toEqual({ available: true, source: 'system', version: 'Chromium' })
+    expect(browser.bundled()).toBe(path.join(folder, 'chrome-headless-shell'))
+    expect(browser.downloaded()).toBeUndefined()
   })
 
   it('shows why an installed browser cannot start and keeps candidates from trying again', async () => {
@@ -91,13 +93,11 @@ describe('verification browser', () => {
       },
     })
     await browser.prepare()
-    expect(await browser.launch()).toBeUndefined()
-    expect(await browser.launch()).toBeUndefined()
+    const executable = browser.downloaded()!
+    expect(await browser.launch(executable)).toBeUndefined()
+    expect(await browser.launch(executable)).toBeUndefined()
     expect(attempts).toBe(1)
-    expect(browser.status()).toMatchObject({
-      available: false,
-      download: { state: 'failed', error: '无法启动：缺少系统库 libnss3' },
-    })
+    expect(browser.problem(executable)).toBe('无法启动：缺少系统库 libnss3')
   })
 })
 

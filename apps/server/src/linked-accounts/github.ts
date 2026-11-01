@@ -4,7 +4,6 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import type { CommandAccountUsage, LinkedAccountTokenSource } from '@nekro-nxt/contracts'
-import type { GithubCliStatus } from '../github-cli.js'
 import { LinkedAccountError, type LinkedAccountIdentity, type LinkedAccountPlatform } from './platform.js'
 
 const run = promisify(execFile)
@@ -101,12 +100,11 @@ const USAGE_TEXT: Record<CommandAccountUsage, string> = {
   push: '推送代码',
 }
 
-/** The GitHub CLI as the platform needs it: where the program is and whether it can be downloaded. */
+/** The GitHub CLI as the platform needs it: where the program is. */
 export interface GithubCliPort {
   executable(): string | undefined
   /** The directory to put in front of `PATH`; `undefined` when `gh` is already on it. */
   directoryForPath(): string | undefined
-  status(): GithubCliStatus
 }
 
 /**
@@ -151,7 +149,7 @@ export const createGithubPlatform = (options: {
             `这个账号交给你的用途是：${usage.map((hint) => USAGE_TEXT[hint]).join('、')}。用途之外的操作，先和管理员确认。`,
           ]),
     ],
-    tool: () => ({ id: 'github-cli', name: 'GitHub CLI', availability: options.cli.status() }),
+    tool: () => ({ id: 'github-cli', name: 'GitHub CLI' }),
     localLogins: () => localGithubLogins(options.cli.executable()),
   }
 }

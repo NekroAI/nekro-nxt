@@ -1,3 +1,4 @@
+import { addonsFixture } from './addons.js'
 import { fixtureReleaseId } from './host-release.js'
 import {
   AgentIdSchema,
@@ -102,8 +103,12 @@ export const productSnapshot = HostApiContracts.snapshot.response.parse({
     licenseSpdx: 'AGPL-3.0-only',
     dshVersion: '0.1.1-rc.2',
   },
+  addons: addonsFixture(),
   capabilityAvailability: {
     subagents: { available: true },
+    codeRun: { available: false },
+    githubCli: { available: true },
+    verificationBrowser: { available: false },
     webSearch: {
       provider: 'deepseek-official',
       available: false,

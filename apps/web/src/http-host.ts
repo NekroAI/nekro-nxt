@@ -156,6 +156,7 @@ const emptySnapshot = (): ProductSnapshot => ({
   dynamic: [],
   authoringTasks: [],
   subConversations: [],
+  addons: [],
   extensionRequests: [],
   scheduledTasks: [],
   notificationSettings: {
@@ -848,6 +849,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     })),
     authoringTasks: json.authoringTasks,
     subConversations: json.subConversations,
+    addons: json.addons,
     extensionRequests: json.extensionRequests,
     scheduledTasks: json.scheduledTasks,
     communityFeedback: json.communityFeedback,

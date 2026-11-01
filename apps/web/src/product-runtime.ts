@@ -46,6 +46,7 @@ export function createProductRuntime(events = new HostEventStream()) {
         hostUi: snapshot.hostUi ?? { preferencesRevision: 0, pages: [] },
         authoringTasks: snapshot.authoringTasks ?? [],
         subConversations: snapshot.subConversations ?? [],
+        addons: snapshot.addons ?? [],
         extensionRequests: snapshot.extensionRequests ?? [],
         scheduledTasks: snapshot.scheduledTasks ?? [],
         communityFeedback: snapshot.communityFeedback,

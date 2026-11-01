@@ -7,15 +7,14 @@ import {
   Cpu,
   HardDrive,
   Inbox,
+  PackagePlus,
   Info,
   MessageCircle,
   MessagesSquare,
-  ScanEye,
   MonitorSmartphone,
   Palette,
   Plug,
   Plus,
-  Search,
   ScrollText,
   SquareSlash,
   Upload,
@@ -49,10 +48,9 @@ import type {
   CompactionSettings,
   ModelFallbackSettings,
   MessagePacing,
-  RetrievalStatus,
   SubConversationRetention,
 } from '@nekro-nxt/contracts'
-import { CodeRunNodeDownload, CodeRunNodeRemove } from '../agents/runtime-download.js'
+import { AddonsSection } from './addons-section.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { providerDisplayName } from '../../provider-labels.js'
 import { useProductRuntime, useProductStore, useUiStateStore } from '../../product-runtime.js'
@@ -108,11 +106,10 @@ const GROUPS = [
 
 const SECTIONS = [
   { key: 'models', label: '模型', group: 'runtime', icon: <Cpu size={16} /> },
-  { key: 'retrieval', label: '检索', group: 'runtime', icon: <Search size={16} /> },
   { key: 'dsh', label: 'DSH 插件', group: 'runtime', icon: <Blocks size={16} /> },
   { key: 'chat', label: '聊天', group: 'runtime', icon: <MessageCircle size={16} /> },
   { key: 'conversations', label: '子对话', group: 'runtime', icon: <MessagesSquare size={16} /> },
-  { key: 'verification', label: '界面检查', group: 'runtime', icon: <ScanEye size={16} /> },
+  { key: 'addons', label: '附加功能', group: 'runtime', icon: <PackagePlus size={16} /> },
   { key: 'adapters', label: '平台适配器', group: 'links', icon: <Plug size={16} /> },
   { key: 'credentials', label: '凭据', group: 'links', icon: <KeyRound size={16} /> },
   { key: 'accounts', label: '关联账号', group: 'links', icon: <Link2 size={16} /> },
@@ -138,7 +135,7 @@ const listedProviders = (providers: readonly ProviderView[]): readonly ProviderV
 const DSH_GROUPS = ['builtin', 'installed', 'runtime'] as const
 
 export default function SettingsSpace() {
-  const { section } = useParams<{ section: string }>()
+  const { section, item } = useParams<{ section: string; item: string }>()
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const current = SECTIONS.find((item) => item.key === section)
@@ -162,7 +159,11 @@ export default function SettingsSpace() {
   }, [section])
   // 社区地址已移到「社区 → 账号」底部，旧地址直接带过去。
   if (section === 'community') return <Navigate to="/community/account" replace />
+  // 界面检查和检索并入了附加功能。
+  if (section === 'verification') return <Navigate to="/settings/addons/browser" replace />
+  if (section === 'retrieval') return <Navigate to="/settings/addons/retrieval" replace />
   if (!isSection(section)) return <Navigate to="/settings/models" replace />
+  if (item !== undefined && section !== 'addons') return <Navigate to={`/settings/${section}`} replace />
 
   const selectProvider = (provider: string) =>
     void navigate(provider ? `/settings/models?provider=${encodeURIComponent(provider)}` : '/settings/models')
@@ -203,6 +204,12 @@ export default function SettingsSpace() {
           onRetry={() => void llm.load()}
           onSelect={selectProvider}
         />
+      ) : section === 'addons' ? (
+        <AddonsSection
+          id={item}
+          lead={<NarrowNav section="addons" />}
+          onSelect={(id) => void navigate(id ? `/settings/addons/${id}` : '/settings/addons')}
+        />
       ) : section === 'credentials' ? (
         <CredentialsSection lead={<NarrowNav section="credentials" />} />
       ) : section === 'accounts' ? (
@@ -231,8 +238,6 @@ export default function SettingsSpace() {
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
           {section === 'conversations' ? <SubConversations /> : null}
-          {section === 'verification' ? <InterfaceChecks /> : null}
-          {section === 'retrieval' ? <Retrieval /> : null}
           {section === 'notifications' ? <Notifications /> : null}
           {section === 'feedback' ? <FeedbackSettingsSection /> : null}
           {section === 'access' ? (
@@ -811,38 +816,6 @@ function Chat() {
   )
 }
 
-/**
- * The headless browser that checks the interface of candidates agents make when no NekroNXT page is open. Shared by
- * the whole device, like the semantic model; without it candidates still run, marked as interface unchecked.
- */
-function InterfaceChecks() {
-  const browser = useProductStore((state) => state.capabilityAvailability.verificationBrowser)
-  return (
-    <>
-      <SectionHead title="界面检查" />
-      <PropertyList>
-        <PropertyRow
-          label="后台浏览器"
-          description={
-            browser?.source === 'system'
-              ? '已随 NekroNXT 安装'
-              : browser?.available
-                ? '已安装，没打开 NekroNXT 页面时用它检查扩展界面'
-                : '无头 Chromium，下载约 100 MB，安装后约 200 MB'
-          }
-          tip="智能体做的扩展带界面时，试运行要在浏览器里加载并检查。打开着任何一个 NekroNXT 页面时由页面完成；一个页面都没开时由这个浏览器在后台完成。不安装也可以，候选照常运行，标为「界面未检查」。"
-        >
-          {browser === undefined ? null : browser.available ? (
-            <CodeRunNodeRemove availability={browser} kind="verification-browser" />
-          ) : (
-            <CodeRunNodeDownload availability={browser} kind="verification-browser" />
-          )}
-        </PropertyRow>
-      </PropertyList>
-    </>
-  )
-}
-
 const RETENTION_OPTIONS: readonly { readonly value: SubConversationRetention; readonly label: string }[] = [
   { value: '1d', label: '1 天' },
   { value: '3d', label: '3 天' },
@@ -884,116 +857,6 @@ function SubConversations() {
             <Segmented label="结束后保留" value={retention} onChange={change} options={RETENTION_OPTIONS} />
           )}
         </PropertyRow>
-      </PropertyList>
-    </>
-  )
-}
-
-const megabytes = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
-
-/** Search used by extensions for their own collections, e.g. stickers; semantic search runs a small model locally. */
-function Retrieval() {
-  const [status, setStatus] = useState<RetrievalStatus>()
-  const [busy, setBusy] = useState(false)
-  const fail = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
-  const busyNow = status?.builtin.install.state === 'downloading' || status?.vectors.state === 'running'
-  useEffect(() => {
-    const controller = new AbortController()
-    const load = () =>
-      workspaceApi
-        .getRetrievalStatus({ signal: controller.signal })
-        .then(setStatus)
-        .catch(() => undefined)
-    void load()
-    // Progress has no push channel; poll only while a download or an index build is running.
-    const timer = busyNow ? setInterval(() => void load(), 1000) : undefined
-    return () => {
-      controller.abort()
-      if (timer !== undefined) clearInterval(timer)
-    }
-  }, [busyNow])
-  const run = async (action: () => Promise<RetrievalStatus>) => {
-    setBusy(true)
-    try {
-      setStatus(await action())
-    } catch (error) {
-      fail(error)
-    } finally {
-      setBusy(false)
-    }
-  }
-  if (status === undefined) {
-    return (
-      <>
-        <SectionHead title="检索" />
-        <Skeleton width={320} height={28} />
-      </>
-    )
-  }
-  const { builtin, vectors } = status
-  const install = builtin.install
-  const installed = install.state === 'installed'
-  return (
-    <>
-      <SectionHead title="检索" />
-      <PropertyList>
-        <PropertyRow
-          label="语义检索"
-          tip="扩展查找自己保存的资料（比如表情包）时，除了关键词，还按意思找：用「累了」也能找到「加班到崩溃」。模型在本机运行，不会把内容发到别处。"
-        >
-          <Switch
-            label="语义检索"
-            checked={status.mode === 'builtin'}
-            disabled={!installed || busy}
-            onCheckedChange={(checked) =>
-              void run(() => workspaceApi.updateRetrievalMode({ mode: checked ? 'builtin' : 'keyword' }))
-            }
-          />
-        </PropertyRow>
-        <PropertyRow label="语义模型" description={`${builtin.model}，约 ${megabytes(builtin.downloadBytes)}`}>
-          {!builtin.supported ? (
-            <span className={styles.note}>这台设备的系统或处理器暂时不能运行</span>
-          ) : install.state === 'downloading' ? (
-            <span className={styles.note} role="status">
-              正在下载 {megabytes(install.receivedBytes)} / {megabytes(install.totalBytes)}
-            </span>
-          ) : installed ? (
-            <Button
-              size="small"
-              variant="ghost"
-              busy={busy}
-              onClick={() => void run(() => workspaceApi.removeRetrievalModel())}
-            >
-              删除
-            </Button>
-          ) : (
-            <div className={styles.note}>
-              {install.state === 'failed' ? (
-                <span className={styles.noteWarn} role="alert">
-                  {install.error}
-                </span>
-              ) : null}
-              <Button size="small" busy={busy} onClick={() => void run(() => workspaceApi.downloadRetrievalModel())}>
-                {install.state === 'failed' ? '重试' : '下载'}
-              </Button>
-            </div>
-          )}
-        </PropertyRow>
-        {status.mode === 'builtin' ? (
-          <PropertyRow label="语义索引" description="新保存的资料会在几秒内加入">
-            {vectors.error !== undefined ? (
-              <span className={styles.noteWarn} role="alert">
-                {vectors.error}
-              </span>
-            ) : (
-              <span className={styles.note} role="status">
-                {vectors.state === 'ready'
-                  ? `已就绪，共 ${vectors.documents} 条`
-                  : `正在建立 ${vectors.embedded} / ${vectors.documents}`}
-              </span>
-            )}
-          </PropertyRow>
-        ) : null}
       </PropertyList>
     </>
   )
