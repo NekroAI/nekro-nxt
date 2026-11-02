@@ -692,7 +692,7 @@ describe('DSH official capability composition', () => {
       await host.whenIdle(sessionId)
       expect(model.rootRequests).toBeGreaterThanOrEqual(3)
       expect(model.childRequests).toHaveLength(1)
-      expect(model.childRequests[0]?.maxTokens).toBe(4096)
+      expect(model.childRequests[0]?.maxTokens).toBe(model.rootRequestOptions[0]?.maxTokens)
       const childToolNames = model.childRequests[0]?.tools?.map((tool) => tool.name) ?? []
       expect(childToolNames).toEqual(
         expect.arrayContaining([
@@ -766,7 +766,7 @@ describe('DSH official capability composition', () => {
       await model.followupChildFinished.promise
       await host.whenIdle(sessionId)
       expect(model.childRequests).toHaveLength(2)
-      expect(model.childRequests[1]?.maxTokens).toBe(4096)
+      expect(model.childRequests[1]?.maxTokens).toBe(model.rootRequestOptions[0]?.maxTokens)
       expect(host.toolNames(sessionId)).toEqual(
         expect.arrayContaining(['retract_channel_message', 'nudge_channel_member']),
       )

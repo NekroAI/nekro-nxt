@@ -826,7 +826,6 @@ class NekroNxtAgentScopeInheritance extends Service {
     // without sub-conversation tools).
     const denied = visibleChildDeniedToolNames(childContext)
     if (denied.length) childContext.tools.restrict({ deny: denied })
-    childContext.on('agent/request', async (_payload, next) => ({ ...(await next()), maxTokens: CHILD_MAX_TOKENS }))
     return undefined
   }
 
@@ -3098,8 +3097,6 @@ const FALLBACK_REASON_TEXT: Readonly<Record<ModelFallbackReason, string>> = {
   'rate-limit': '持续限流',
   unavailable: '暂时不可用',
 }
-
-const CHILD_MAX_TOKENS = 4096
 
 const CHILD_DENIED_TOOL_NAMES = [
   'send_channel_message',
