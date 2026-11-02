@@ -1,5 +1,5 @@
 import { Plus, Trash2 } from 'lucide-react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Button,
   Checkbox,
@@ -191,11 +191,13 @@ function ModelCandidates({
   addable,
   disabled,
   onChange,
+  onPickedChange,
 }: {
   readonly rows: readonly ModelRow[]
   readonly addable: readonly EditableModel[]
   readonly disabled: boolean
   readonly onChange: (rows: readonly ModelRow[]) => void
+  readonly onPickedChange?: ((models: readonly EditableModel[]) => void) | undefined
 }): ReactNode {
   const [query, setQuery] = useState('')
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set())
@@ -205,6 +207,12 @@ function ModelCandidates({
   )
   // Picks the list gained in the meantime, or a refresh no longer offers, drop out of the selection.
   const selected = addable.filter((model) => chosen.has(model.id))
+  const selectedKey = selected.map((model) => model.id).join('\n')
+  // The form saves picks nobody moved into the list yet, so it has to know them.
+  useEffect(() => {
+    onPickedChange?.(selected)
+  }, [selectedKey])
+  useEffect(() => () => onPickedChange?.([]), [])
   const add = (models: readonly EditableModel[]): void => {
     const next = appendModels(rows, models)
     onChange(next.rows)
@@ -281,6 +289,7 @@ export function ModelListEditor({
   disabled = false,
   validate,
   revealErrors = false,
+  onPickedChange,
 }: {
   readonly rows: readonly ModelRow[]
   readonly onChange: (rows: readonly ModelRow[]) => void
@@ -290,6 +299,8 @@ export function ModelListEditor({
   readonly validate: boolean
   /** True once the user tried to save: every row counts, touched or not. */
   readonly revealErrors?: boolean
+  /** Discovered models picked but not added to the list yet; saving adds them too. */
+  readonly onPickedChange?: (models: readonly EditableModel[]) => void
 }): ReactNode {
   const [touched, setTouched] = useState<ReadonlySet<string>>(() => new Set())
   const [listTouched, setListTouched] = useState(false)
@@ -520,7 +531,13 @@ export function ModelListEditor({
         </p>
       ) : null}
       {addable.length > 0 ? (
-        <ModelCandidates rows={rows} addable={addable} disabled={disabled} onChange={onChange} />
+        <ModelCandidates
+          rows={rows}
+          addable={addable}
+          disabled={disabled}
+          onChange={onChange}
+          onPickedChange={onPickedChange}
+        />
       ) : null}
     </div>
   )

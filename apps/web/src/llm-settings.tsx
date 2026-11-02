@@ -6,15 +6,18 @@ import { ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { providerDisplayName } from './provider-labels.js'
+import { useCredentials } from './credentials/credentials-data.js'
 import { relativeTime } from './app/channels/timeline-model.js'
 import {
   ModelListEditor,
   ModelListView,
+  appendModels,
   modelPayload,
   modelRowFromModel,
   modelRowsError,
   modelsToAdd,
   enrichRows,
+  type EditableModel,
   type ModelRow,
 } from './llm-model-editor.js'
 import {
@@ -37,6 +40,7 @@ import {
   SecretInput,
   Select,
   Skeleton,
+  SwitchRow,
   toast,
   type Tone,
 } from './ui-kit/index.js'
@@ -246,6 +250,7 @@ export function ModelProviderDetail({
   const [apiKey, setApiKey] = useState('')
   const [rows, setRows] = useState<readonly ModelRow[]>([])
   const [modelsDirty, setModelsDirty] = useState(false)
+  const [picked, setPicked] = useState<readonly EditableModel[]>([])
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(customMode)
@@ -256,6 +261,10 @@ export function ModelProviderDetail({
   const [switchingToSubscription, setSwitchingToSubscription] = useState(false)
   const advancedId = useId()
   const subscription = selected?.subscription
+  // Whether extensions may call this provider's models is kept with the credentials; only saved providers have it.
+  const credentials = useCredentials(selected?.configured === true)
+  const access = credentials.view?.modelProviders.find((provider) => provider.provider === selected?.provider)
+  const [accessPending, setAccessPending] = useState(false)
 
   const customEditor = customMode || selected?.declared === true
   const providerId = customMode
@@ -265,11 +274,14 @@ export function ModelProviderDetail({
     : (selected?.provider ?? '')
   const modelsEditable = customEditor || (selected !== undefined && EDITABLE_MODEL_NAMESPACES.has(selected.settingsNs))
   const discoverable = customMode || selected?.discoverable === true
-  const submitsModels = customEditor || modelsDirty
+  // Models picked from the discovered ones but not moved into the list yet are saved along with it.
+  const pickedAdd = modelsEditable && picked.length > 0 ? appendModels(rows, picked) : undefined
+  const savedRows = pickedAdd?.rows ?? rows
+  const submitsModels = customEditor || modelsDirty || (pickedAdd?.added ?? 0) > 0
   const catalogRoute = !customEditor && selected?.settingsNs === 'llm-pi-ai'
   const restorable = !customMode && selected?.declared === false && selected.modelsCustomized
-  const modelsError = modelsEditable && submitsModels ? modelRowsError(rows) : undefined
-  const submittedModels = modelPayload(rows)
+  const modelsError = modelsEditable && submitsModels ? modelRowsError(savedRows) : undefined
+  const submittedModels = modelPayload(savedRows)
   const testModels = submitsModels ? submittedModels : selected?.models.length ? selected.models : discovered
   const testModel = testModels[0]
   const modelName = (model: (typeof testModels)[number]): string =>
@@ -282,6 +294,7 @@ export function ModelProviderDetail({
     setDiscovered([])
     setApiKey('')
     setModelsDirty(false)
+    setPicked([])
     if (customMode) {
       setDisplayName('')
       setBaseURL('')
@@ -301,6 +314,20 @@ export function ModelProviderDetail({
   if (!settings) return null
   if (!customMode && !selected) {
     return <EmptyState title="没有找到这个供应商" action={<Button onClick={() => onSelect('')}>返回模型</Button>} />
+  }
+
+  const setAccess = async (open: boolean): Promise<void> => {
+    if (!access || accessPending) return
+    setAccessPending(true)
+    try {
+      credentials.replace(
+        await callHostApi(HostApiContracts.setModelProviderAccess, { provider: access.provider }, { open }),
+      )
+    } catch (cause) {
+      toast(failure(cause), { tone: 'bad', group: `llm-provider-access:${access.provider}` })
+    } finally {
+      setAccessPending(false)
+    }
   }
 
   const discover = async (): Promise<void> => {
@@ -372,9 +399,10 @@ export function ModelProviderDetail({
       setModelsDirty(false)
       setSubmitted(false)
       if (customMode) onSelect(providerId)
+      const alsoAdded = pickedAdd?.added ? `，所选的 ${pickedAdd.added} 个模型已一并加入` : ''
       try {
         await store.getState().refreshHost()
-        toast('供应商配置已保存', { group: `llm-provider-save:${providerId}` })
+        toast(`供应商配置已保存${alsoAdded}`, { group: `llm-provider-save:${providerId}` })
       } catch (refreshError) {
         toast(`配置已保存，但页面数据刷新失败：${failure(refreshError)}`, {
           tone: 'bad',
@@ -578,11 +606,24 @@ export function ModelProviderDetail({
               setRows(next)
               setModelsDirty(true)
             }}
+            onPickedChange={setPicked}
           />
         ) : (
           <ModelListView models={selected?.models ?? []} />
         )}
       </PropertyGroup>
+
+      {access ? (
+        <PropertyGroup title="扩展">
+          <SwitchRow
+            title="允许智能体主动在扩展配置中使用此供应商模型"
+            description={access.open ? undefined : '关闭时，扩展读取模型列表看不到这家供应商的模型。'}
+            checked={access.open}
+            pending={accessPending}
+            onCheckedChange={(open) => void setAccess(open)}
+          />
+        </PropertyGroup>
+      ) : null}
 
       {customEditor || catalogRoute || selected ? (
         <PropertyGroup
