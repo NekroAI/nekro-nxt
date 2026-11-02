@@ -3,30 +3,15 @@ import { createRequire } from 'node:module'
 import { readdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import type { Browser } from 'playwright-core'
+import type { RuntimeDownloadState } from './runtime-download.js'
 
 /**
  * The headless Chromium that loads and checks creation candidates when no NekroNXT page is open. It is optional:
- * Playwright's own installer downloads it into `<data root>/runtimes/chromium` on request, and without it candidates
- * that may run without asking still run, with their interface marked as unchecked.
+ * one may come with NekroNXT (the Docker image), and Playwright's own installer downloads one into
+ * `<data root>/runtimes/chromium` on request. Which one checks candidates is the `browser` add-on's choice
+ * (`AddonRegistry`); without one, candidates that may run without asking still run, with their interface marked as
+ * unchecked.
  */
-/** Same shape as the other downloadable programs (`CodeRunAvailability`), so pages show it the same way. */
-export interface VerificationBrowserStatus {
-  readonly available: boolean
-  /** `system`: preinstalled with NekroNXT (the Docker image); `downloaded`: fetched on request into the data root. */
-  readonly source?: 'system' | 'downloaded'
-  readonly version?: string
-  /** Present while it is not usable: to install it, or why it failed to install or start. */
-  readonly download?: {
-    readonly version: string
-    readonly state: 'idle' | 'downloading' | 'failed'
-    readonly receivedBytes?: number
-    readonly totalBytes?: number
-    readonly error?: string
-  }
-}
-
-const PRODUCT = 'Chromium'
-
 export interface VerificationBrowserOptions {
   /** `<data root>/runtimes/chromium`; the folder is NekroNXT's own and holds nothing else. */
   readonly root: string
@@ -79,10 +64,11 @@ const progressOf = (line: string): { readonly receivedBytes: number; readonly to
 
 export class VerificationBrowser {
   readonly #options: VerificationBrowserOptions
-  #executable: string | undefined
-  #source: 'system' | 'downloaded' = 'downloaded'
-  #problem: string | undefined
-  #download: NonNullable<VerificationBrowserStatus['download']> = { version: PRODUCT, state: 'idle' }
+  #bundled: string | undefined
+  #downloaded: string | undefined
+  /** Why a browser could not start, by executable, until it is reinstalled. */
+  readonly #problems = new Map<string, string>()
+  #download: RuntimeDownloadState = { state: 'idle' }
   #inflight: Promise<void> | undefined
   readonly #listeners = new Set<() => void>()
 
@@ -90,43 +76,42 @@ export class VerificationBrowser {
     this.#options = options
   }
 
-  /** Looks for an installed browser; later calls reuse the answer. */
+  /** Looks for the installed browsers once. */
   async prepare(): Promise<void> {
-    await this.#locate()
+    this.#downloaded = await this.#findExecutable(this.#options.root)
+    this.#bundled =
+      this.#options.systemRoot === undefined ? undefined : await this.#findExecutable(this.#options.systemRoot)
   }
 
-  async #locate(): Promise<void> {
-    const downloaded = await this.#findExecutable(this.#options.root)
-    const system =
-      downloaded === undefined && this.#options.systemRoot !== undefined
-        ? await this.#findExecutable(this.#options.systemRoot)
-        : undefined
-    this.#executable = downloaded ?? system
-    this.#source = system === undefined ? 'downloaded' : 'system'
+  /** The browser installed with NekroNXT itself. */
+  bundled(): string | undefined {
+    return this.#bundled
   }
 
-  status(): VerificationBrowserStatus {
-    if (this.#executable !== undefined && this.#problem === undefined && this.#download.state !== 'downloading')
-      return { available: true, source: this.#source, version: PRODUCT }
-    // Installed but unable to start: show why, with the same retry as a failed download.
-    const download =
-      this.#problem !== undefined && this.#download.state !== 'downloading'
-        ? { version: PRODUCT, state: 'failed' as const, error: this.#problem }
-        : this.#download
-    return { available: false, download }
+  downloaded(): string | undefined {
+    return this.#downloaded
   }
 
-  /** Starts the installer; progress and the outcome arrive through `status()` and `subscribe()`. */
-  startDownload(): VerificationBrowserStatus {
-    if (this.#executable !== undefined && this.#problem === undefined) return this.status()
+  download(): RuntimeDownloadState {
+    return this.#download
+  }
+
+  /** Why this browser could not start, if it failed to. */
+  problem(executable: string): string | undefined {
+    return this.#problems.get(executable)
+  }
+
+  /** Starts the installer; progress and the outcome arrive through `download()` and `subscribe()`. */
+  startDownload(): void {
+    const downloaded = this.#downloaded
+    if (downloaded !== undefined && !this.#problems.has(downloaded)) return
     this.#inflight ??= this.#runInstall().finally(() => {
       this.#inflight = undefined
     })
-    return this.status()
   }
 
   async #runInstall(): Promise<void> {
-    this.#setDownload({ version: PRODUCT, state: 'downloading', receivedBytes: 0 })
+    this.#setDownload({ state: 'downloading', receivedBytes: 0 })
     let last = ''
     // The installer also fetches a small helper after the browser; only the largest file drives the progress.
     let largest = 0
@@ -136,43 +121,41 @@ export class VerificationBrowser {
         const progress = progressOf(line)
         if (!progress || progress.totalBytes < largest) return
         largest = progress.totalBytes
-        this.#setDownload({ version: PRODUCT, state: 'downloading', ...progress })
+        this.#setDownload({ state: 'downloading', ...progress })
       })
       if (code !== 0) throw new Error(last.trim() || `安装程序退出（代码 ${code}）。`)
-      await this.#locate()
-      if (this.#executable === undefined) throw new Error('安装完成后没有找到浏览器。')
-      this.#problem = undefined
-      this.#setDownload({ version: PRODUCT, state: 'idle' })
+      if (this.#downloaded !== undefined) this.#problems.delete(this.#downloaded)
+      this.#downloaded = await this.#findExecutable(this.#options.root)
+      if (this.#downloaded === undefined) throw new Error('安装完成后没有找到浏览器。')
+      this.#problems.delete(this.#downloaded)
+      this.#setDownload({ state: 'idle' })
     } catch (error) {
-      this.#setDownload({
-        version: PRODUCT,
-        state: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      })
+      this.#setDownload({ state: 'failed', error: error instanceof Error ? error.message : String(error) })
     }
   }
 
-  /** Removes the downloaded browser; candidates then run with their interface unchecked. */
-  async removeDownloaded(): Promise<VerificationBrowserStatus> {
+  /** Removes the downloaded browser. */
+  async removeDownloaded(): Promise<void> {
     if (this.#inflight !== undefined) throw new Error('浏览器正在下载，完成后再删除。')
     await rm(this.#options.root, { recursive: true, force: true })
-    this.#problem = undefined
-    await this.#locate()
+    if (this.#downloaded !== undefined) this.#problems.delete(this.#downloaded)
+    this.#downloaded = undefined
     this.#notify()
-    return this.status()
   }
 
   /**
-   * Starts the browser. A start that fails (missing system libraries, a damaged download) is remembered as the
-   * problem shown in the status, so the next candidate does not try again until the browser is reinstalled.
+   * Starts a browser. A start that fails (missing system libraries, a damaged download) is remembered as its problem,
+   * so the next candidate does not try again until the browser is reinstalled.
    */
-  async launch(): Promise<Browser | undefined> {
-    const executable = this.#executable
-    if (executable === undefined || this.#problem !== undefined) return undefined
+  async launch(executable: string): Promise<Browser | undefined> {
+    if (this.#problems.has(executable)) return undefined
     try {
       return await (this.#options.launch ?? launchChromium)(executable)
     } catch (error) {
-      this.#problem = `无法启动：${error instanceof Error ? error.message.split('\n')[0] : String(error)}`
+      this.#problems.set(
+        executable,
+        `无法启动：${error instanceof Error ? error.message.split('\n')[0] : String(error)}`,
+      )
       this.#notify()
       return undefined
     }
@@ -215,7 +198,7 @@ export class VerificationBrowser {
     for (const listener of this.#listeners) listener()
   }
 
-  #setDownload(download: NonNullable<VerificationBrowserStatus['download']>): void {
+  #setDownload(download: RuntimeDownloadState): void {
     this.#download = download
     this.#notify()
   }

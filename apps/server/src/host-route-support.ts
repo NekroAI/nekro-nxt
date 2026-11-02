@@ -466,13 +466,23 @@ const inboundHookFact = (
           : [],
       )
     : []
-  if (decision.trigger === 'default' && !decision.hidden && decision.annotation === null && problems.length === 0) {
+  const hostAnnotations = decision.hostAnnotations ?? []
+  if (
+    decision.trigger === 'default' &&
+    !decision.hidden &&
+    decision.annotation === null &&
+    hostAnnotations.length === 0 &&
+    problems.length === 0
+  ) {
     return undefined
   }
   return {
     trigger: decision.trigger,
     hidden: decision.hidden,
     ...(decision.annotation === null ? {} : { annotation: decision.annotation }),
+    ...(hostAnnotations.length === 0
+      ? {}
+      : { hostAnnotations: hostAnnotations.map(({ label, text }) => ({ label, text })) }),
     extensions: decision.decidedBy.map(name),
     ...(problems.length === 0 ? {} : { problems }),
   }
@@ -678,6 +688,11 @@ export const buildSnapshotMessage = (
   return out.toReversed()
 }
 
+const imageSubmissionOf = (runtime: NekroRuntime, packageName: string): { readonly imageSubmission?: boolean } => {
+  const allowed = runtime.host.dshPluginImageSubmission(packageName)
+  return allowed === undefined ? {} : { imageSubmission: allowed }
+}
+
 export const projectDshPlugins = (runtime: NekroRuntime) => [
   ...runtime.host.listDshPlugins(),
   ...runtime.repository.listDshPluginPackages().map((packageRecord) => {
@@ -743,6 +758,7 @@ export const projectDshPlugins = (runtime: NekroRuntime) => [
       packageId: packageRecord.id,
       installSource: packageRecord.source,
       official,
+      ...(official ? {} : imageSubmissionOf(runtime, packageRecord.packageName)),
       installedAt: packageRecord.installedAt,
       clientUiDetected:
         'dsh' in manifest &&

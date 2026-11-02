@@ -21,6 +21,7 @@ import {
 import { differenceHash, hashDistance } from '../src/extension-image-info.js'
 import { sqliteIndexEngine, type IndexVectorProvider } from '../src/extension-index.js'
 import { ExtensionLibrary, sqliteLibraryRegistry } from '../src/extension-library.js'
+import { unusedNxtBackends, unusedMediaBackends } from './fixtures/unused-nxt-backends.js'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -87,6 +88,7 @@ const setup = async (options: { readonly vectors?: IndexVectorProvider } = {}) =
   })
   const modelCalls: unknown[] = []
   const backends: NxtServiceBackends = {
+    ...unusedMediaBackends(),
     fetch: () => Promise.reject(new Error('no network')),
     storage: memoryNxtStorage(() => 1),
     jobs: memoryNxtJobs(),
@@ -103,6 +105,7 @@ const setup = async (options: { readonly vectors?: IndexVectorProvider } = {}) =
     complete: () => Promise.reject(new Error('not used')),
     history: { list: () => Promise.resolve({ messages: [] }), search: () => Promise.resolve([]) },
     library,
+    files: unusedNxtBackends().files,
     index: sqliteIndexEngine(repository.extensionIndex, options.vectors, () => 1),
     models: {
       list: () =>

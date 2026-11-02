@@ -1,7 +1,7 @@
 import { snapshotSubConversations } from './host-routes-sub-conversations.js'
 import { DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import { z } from 'zod'
-import type { HostApiResponse } from '@nekro-nxt/contracts'
+import type { AddonId, HostApiResponse } from '@nekro-nxt/contracts'
 import {
   HostApiContracts,
   configFields,
@@ -78,6 +78,9 @@ export const assembleChannelRuntime = (
       live === undefined || episode?.dshSessionId === undefined
         ? []
         : runtime.host.normalizedSessionEvents(episode.dshSessionId),
+    ...(live === undefined || episode?.dshSessionId === undefined
+      ? {}
+      : { toolProgress: runtime.host.toolProgress(episode.dshSessionId) }),
   })
 }
 
@@ -673,8 +676,15 @@ export class HostQueries {
       channelCount: runtime.repository.listChannelIdsByConnection(connection.id).length,
       archivedAt: connection.archivedAt,
     }))
+    const addons = runtime.addons.list()
+    // Downloaded, bundled and found-on-this-device programs and configured cloud services are all usable.
+    const addonUsable = (id: AddonId) => {
+      const state = addons.find((addon) => addon.id === id)?.state
+      return state === 'installed' || state === 'available'
+    }
     return HostApiContracts.snapshot.parseResponse({
       cursor: this.#cursor(),
+      addons,
       communityFeedback: runtime.feedback.snapshot(),
       diagnosticsSampledAt,
       upgrade: {
@@ -688,9 +698,10 @@ export class HostQueries {
       models,
       capabilityAvailability: {
         subagents: { available: true },
-        codeRun: runtime.codeRunNode.status(),
-        githubCli: runtime.githubCli.status(),
-        verificationBrowser: runtime.verificationBrowser.status(),
+        codeRun: { available: addonUsable('node') },
+        githubCli: { available: addonUsable('github-cli') },
+        verificationBrowser: { available: addonUsable('browser') },
+        speechRecognition: { available: addonUsable('speech') },
         commandConfinement: commandConfinementSupport(),
         webSearch,
       },

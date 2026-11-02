@@ -34,7 +34,9 @@ import {
   AuthoringTaskIdSchema,
   HostApiContracts,
   OutboundIntentIdSchema,
+  EXTENSION_COMMAND_PROFILES,
   ExtensionIdSchema,
+  ExtensionCommandProfileIdSchema,
   HostUiPageInstanceIdSchema,
   type AgentId,
   type ChannelId,
@@ -91,6 +93,7 @@ import { verifyImportedExtensionRevision } from './imported-extension-verifier.j
 import { AuthoringTestConfig } from './authoring-test-config.js'
 import { createExtensionEgress } from './extension-egress.js'
 import { ExtensionInboundHookGate } from './extension-inbound-hooks.js'
+import { voiceTranscriptionAnnotator } from './voice-transcription.js'
 import { ExtensionJobScheduler, scheduledJob, sqliteNxtJobs, syncDeclaredJobs } from './extension-jobs.js'
 import { ScheduledTasks, type JobFireOutcome } from './scheduled-tasks.js'
 import { CodeRunNode } from './code-run-node.js'
@@ -106,6 +109,25 @@ import {
 } from './extension-host-backends.js'
 import { memoryIndexEngine, sqliteIndexEngine } from './extension-index.js'
 import { RetrievalRuntime } from './retrieval-runtime.js'
+import {
+  AddonRegistry,
+  browserAddon,
+  githubCliAddon,
+  mediaAddon,
+  nodeAddon,
+  retrievalAddon,
+  speechAddon,
+  syncProgramEnvironment,
+} from './addons.js'
+import { CommandProfiles } from './command-profiles.js'
+import { dataRootCommandConfinement } from './command-confinement.js'
+import { ConfinedProgramRunner, createProgramSandbox } from './confined-program.js'
+import { ExtensionFileStore } from './extension-files.js'
+import { MediaFfmpeg } from './media-ffmpeg.js'
+import { MediaToolkit } from './media-toolkit.js'
+import { SpeechCloud } from './speech-cloud.js'
+import { LocalSpeech } from './speech-local.js'
+import { SpeechService } from './speech-service.js'
 import {
   ExtensionLibrary,
   memoryLibraryRegistry,
@@ -214,6 +236,9 @@ const inboundDecision = (record: InboundHookDecisionRecord): InboundHookDecision
   trigger: record.trigger,
   hidden: record.hidden,
   ...(record.annotation === null ? {} : { annotation: record.annotation }),
+  ...(record.hostAnnotations === null || record.hostAnnotations === undefined || record.hostAnnotations.length === 0
+    ? {}
+    : { hostAnnotations: record.hostAnnotations }),
 })
 
 export class NekroRuntime {
@@ -270,6 +295,9 @@ export class NekroRuntime {
   readonly mcpStatus: McpStatusRegistry
   /** The agent's outbound processors: every agent message passes them before sending and after delivery. */
   readonly outbound: ExtensionOutboundProcessor
+  /** Work files of installed extensions; host services that run programs read and create them by `fileId`. */
+  readonly extensionFiles: ExtensionFileStore
+  readonly #previewFiles: ExtensionFileStore
   readonly authoringTestConfig: AuthoringTestConfig
   readonly codeRunNode: CodeRunNode
   readonly githubCli: GithubCli
@@ -287,6 +315,16 @@ export class NekroRuntime {
   /** Which model providers agents and extensions may call through the host. */
   readonly modelProviderAccess: ModelProviderAccess
   readonly retrieval: RetrievalRuntime
+  readonly addons: AddonRegistry
+  /** Speech to text with the provider the `speech` add-on uses. */
+  readonly speech: SpeechService
+  readonly speechCloud: SpeechCloud
+  readonly #localSpeech: LocalSpeech
+  /** Host-side media processing on the `media` add-on (附加功能 F8). */
+  readonly media: MediaToolkit
+  /** Programs of the add-ons run by their command profiles (附加功能 F7). */
+  readonly commandProfiles: CommandProfiles
+  readonly #disposePrograms: () => Promise<void>
   readonly #hostClientDiagnostics = new Map<
     ExtensionId,
     {
@@ -336,6 +374,8 @@ export class NekroRuntime {
     readonly channelPrompts: ChannelPrompts
     readonly mcpStatus: McpStatusRegistry
     readonly outbound: ExtensionOutboundProcessor
+    readonly extensionFiles: ExtensionFileStore
+    readonly previewFiles: ExtensionFileStore
     readonly authoringTestConfig: AuthoringTestConfig
     readonly codeRunNode: CodeRunNode
     readonly githubCli: GithubCli
@@ -345,6 +385,13 @@ export class NekroRuntime {
     readonly credentialRequests: CredentialRequests
     readonly modelProviderAccess: ModelProviderAccess
     readonly retrieval: RetrievalRuntime
+    readonly addons: AddonRegistry
+    readonly speech: SpeechService
+    readonly speechCloud: SpeechCloud
+    readonly localSpeech: LocalSpeech
+    readonly media: MediaToolkit
+    readonly commandProfiles: CommandProfiles
+    readonly disposePrograms: () => Promise<void>
     readonly adapterHandles: readonly RegisteredAdapterHandle[]
     readonly adapterRuntimes: Map<ConnectionId, AdapterConnectionRuntime>
     readonly adapterTransport: AdapterTransportService
@@ -468,9 +515,18 @@ export class NekroRuntime {
     this.credentialRequests = input.credentialRequests
     this.modelProviderAccess = input.modelProviderAccess
     this.retrieval = input.retrieval
+    this.addons = input.addons
+    this.speech = input.speech
+    this.speechCloud = input.speechCloud
+    this.#localSpeech = input.localSpeech
+    this.media = input.media
+    this.commandProfiles = input.commandProfiles
+    this.#disposePrograms = input.disposePrograms
     this.channelPrompts = input.channelPrompts
     this.mcpStatus = input.mcpStatus
     this.outbound = input.outbound
+    this.extensionFiles = input.extensionFiles
+    this.#previewFiles = input.previewFiles
     this.authoringTestConfig = input.authoringTestConfig
     this.feedback = new CommunityFeedbackService(
       this.repository,
@@ -775,6 +831,22 @@ export class NekroRuntime {
       })
       await retrieval.start()
       const extensionIndex = sqliteIndexEngine(repository.extensionIndex, retrieval, now)
+      // `extension-files/` is rebuildable: temporary files expire within a day and cached ones can be made again.
+      const extensionFilesRoot = path.join(path.dirname(options.coreDatabasePath), 'extension-files')
+      const assetBlobPath = (contentDigest: string) => assetService.blobPath({ contentDigest })
+      const extensionFiles = new ExtensionFileStore({
+        root: path.join(extensionFilesRoot, 'extensions'),
+        blobPath: assetBlobPath,
+        now,
+      })
+      await extensionFiles.start()
+      // Dynamic runs keep their files apart from installed extensions and start empty each time.
+      await rm(path.join(extensionFilesRoot, 'preview'), { recursive: true, force: true })
+      const previewFiles = new ExtensionFileStore({
+        root: path.join(extensionFilesRoot, 'preview'),
+        blobPath: assetBlobPath,
+        now,
+      })
       const libraryFor = (registry: LibraryRegistry) =>
         new ExtensionLibrary({ registry, assets: repository, assetService, now })
       const platformCatalog: NxtServiceBackends['platform']['catalog'] = (channelId) => {
@@ -921,6 +993,110 @@ export class NekroRuntime {
                   ...(binding.mode === 'dynamic' ? {} : { extensionId: binding.ownerKey }),
                 },
               )
+
+      const runtimesRoot = path.join(path.dirname(options.coreDatabasePath), 'runtimes')
+      const codeRunNode = new CodeRunNode({
+        root: path.join(runtimesRoot, 'node'),
+        // The desktop app's server runs inside Electron, whose own executable cannot run a program as Node.
+        embedded: process.versions['electron'] !== undefined,
+      })
+      const githubCli = new GithubCli({ root: path.join(runtimesRoot, 'gh') })
+      const verificationBrowser = new VerificationBrowser({
+        root: path.join(runtimesRoot, 'chromium'),
+        ...(process.env['NEKRO_VERIFICATION_BROWSER_ROOT']
+          ? { systemRoot: process.env['NEKRO_VERIFICATION_BROWSER_ROOT'] }
+          : {}),
+      })
+      const systemSettings = {
+        get: (key: string) => repository.getSystemSetting(key),
+        put: (key: string, value: JsonValue, expectedRevision: number | undefined) =>
+          repository.putSystemSetting(key, value, expectedRevision, now()),
+      }
+      const localSpeech = new LocalSpeech({ root: path.join(runtimesRoot, 'speech') })
+      const speechCloud = new SpeechCloud({
+        settings: systemSettings,
+        providers: async () => {
+          const host = hostReference.current
+          if (host === undefined) return []
+          try {
+            return (await host.getLlmProviderSettings()).providers
+          } catch {
+            // Hosts without model settings have no providers to offer.
+            return []
+          }
+        },
+        connection: async (provider) => {
+          const connection = await hostReference.current?.llmProviderConnection(provider)
+          return connection === undefined
+            ? undefined
+            : {
+                ...(connection.baseURL === undefined ? {} : { baseURL: connection.baseURL }),
+                ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
+              }
+        },
+      })
+      const speech = speechAddon(localSpeech, speechCloud)
+      const mediaFfmpeg = new MediaFfmpeg({ root: path.join(runtimesRoot, 'media') })
+      // The four existing add-ons keep the folders they were first installed in.
+      const addons = new AddonRegistry(
+        [
+          retrievalAddon(retrieval),
+          mediaAddon(mediaFfmpeg),
+          speech,
+          nodeAddon(codeRunNode, path.join(runtimesRoot, 'node')),
+          githubCliAddon(githubCli, path.join(runtimesRoot, 'gh')),
+          browserAddon(verificationBrowser, path.join(runtimesRoot, 'chromium')),
+        ],
+        {
+          settings: {
+            get: (key) => repository.getSystemSetting(key),
+            put: (key, value, expectedRevision) => repository.putSystemSetting(key, value, expectedRevision, now()),
+          },
+        },
+      )
+      await addons.prepare()
+      const stopProgramEnvironment = syncProgramEnvironment(addons)
+      // Media programs run like agents' commands: confined, no network, one shared limit on how many run at once.
+      const programSandbox = await createProgramSandbox()
+      const programRunner = new ConfinedProgramRunner({
+        sandbox: programSandbox,
+        confinement: dataRootCommandConfinement(
+          path.dirname(options.coreDatabasePath),
+          options.developmentWorkspaceRoot ?? path.join(path.dirname(options.coreDatabasePath), 'workspaces'),
+        ),
+      })
+      const media = new MediaToolkit({
+        runner: programRunner,
+        programs: () => {
+          const active = addons.active('media')
+          const ffmpeg = active?.program('ffmpeg')
+          const ffprobe = active?.program('ffprobe')
+          return ffmpeg === undefined || ffprobe === undefined ? undefined : { ffmpeg, ffprobe }
+        },
+      })
+      const commandProfiles = new CommandProfiles({
+        runner: programRunner,
+        programs: () => addons.programs(),
+        addonTitle: (profileId) => {
+          const known = ExtensionCommandProfileIdSchema.safeParse(profileId)
+          return known.success ? addons.status(EXTENSION_COMMAND_PROFILES[known.data]).title : undefined
+        },
+      })
+      const speechService = new SpeechService({
+        active: () => addons.active('speech'),
+        titles: Object.fromEntries(speech.providers.map((provider) => [provider.id, provider.title])),
+        local: localSpeech,
+        cloud: speechCloud,
+        cacheDirectory: path.join(runtimesRoot, 'speech', 'transcripts'),
+        decode: (input, output, { signal }) =>
+          media
+            .audio(
+              input,
+              { format: 'wav', sampleRate: 16000, channels: 1, ...(signal === undefined ? {} : { signal }) },
+              output,
+            )
+            .then(() => undefined),
+      })
       const extensionHost: NonNullable<DshHostRuntimeOptions['extensionHost']> = {
         migrationStorage: (revision) => createMigrationStorage(repository, revision.extensionId),
         activationBackends: createNxtProductBackends(nxtFacts, {
@@ -928,6 +1104,10 @@ export class NekroRuntime {
           fetch: nxtFetch,
           complete: nxtComplete,
           library: libraryFor(sqliteLibraryRegistry(repository.extensionLibrary)),
+          files: extensionFiles,
+          media,
+          commands: commandProfiles,
+          speech: speechService,
           index: extensionIndex,
           models: nxtModels,
           storage: sqliteNxtStorage(repository, now),
@@ -964,6 +1144,11 @@ export class NekroRuntime {
           complete: nxtComplete,
           // Dynamic runs keep their library and index in memory; pictures and channel grants stay real.
           library: libraryFor(memoryLibraryRegistry()),
+          files: previewFiles,
+          // Media, programs and speech run for real; outputs count against the dynamic run's small file quota.
+          media,
+          commands: commandProfiles,
+          speech: speechService,
           index: memoryIndexEngine(),
           models: nxtModels,
           storage: memoryNxtStorage(now),
@@ -1021,21 +1206,6 @@ export class NekroRuntime {
         },
       }
 
-      const codeRunNode = new CodeRunNode({
-        root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'node'),
-        // The desktop app's server runs inside Electron, whose own executable cannot run a program as Node.
-        embedded: process.versions['electron'] !== undefined,
-      })
-      await codeRunNode.prepare()
-      const githubCli = new GithubCli({ root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'gh') })
-      await githubCli.prepare()
-      const verificationBrowser = new VerificationBrowser({
-        root: path.join(path.dirname(options.coreDatabasePath), 'runtimes', 'chromium'),
-        ...(process.env['NEKRO_VERIFICATION_BROWSER_ROOT']
-          ? { systemRoot: process.env['NEKRO_VERIFICATION_BROWSER_ROOT'] }
-          : {}),
-      })
-      await verificationBrowser.prepare()
       const credentialLibrary = new CredentialLibrary(repository, credentials, {
         secrets,
         now,
@@ -1045,7 +1215,11 @@ export class NekroRuntime {
       credentialPort.current = credentialLibrary
       const linkedAccounts = new LinkedAccountLibrary(repository, credentials, {
         secrets,
-        platforms: new LinkedAccountPlatforms([createGithubPlatform({ cli: githubCli })]),
+        platforms: new LinkedAccountPlatforms([
+          createGithubPlatform({
+            cli: { executable: () => addons.active('github-cli')?.program('gh') },
+          }),
+        ]),
         now,
         nextId: () => nextUlid(),
       })
@@ -1077,7 +1251,15 @@ export class NekroRuntime {
             return channel?.kind === 'internal' && channel.connectionId === internalConnectionId
           },
         },
-        codeRunNode: () => codeRunNode.executable(),
+        codeRunNode: () => {
+          const active = addons.active('node')
+          if (active === undefined) return undefined
+          // The server's own Node runs programs as this process.
+          if (active.source === 'bundled') return {}
+          const executable = active.program('node')
+          return executable === undefined ? undefined : { executable }
+        },
+        programs: () => addons.programs(),
         commandAccounts: {
           credentials: (agentId) =>
             credentialLibrary.commandCredentials(agentId).map(({ record, value, env }) => ({
@@ -1237,6 +1419,22 @@ export class NekroRuntime {
 
       const inboundHooks = new ExtensionInboundHookGate({
         handlers: (agentId) => host.inboundHandlers(agentId),
+        hostAnnotators: [
+          voiceTranscriptionAnnotator({
+            enabled: (agentId) => repository.getAgent(agentId)?.revision.capabilities.voiceTranscription === true,
+            audio: (assetId) => {
+              const asset = repository.getAssetById(assetId)
+              return asset === undefined
+                ? undefined
+                : { path: assetService.blobPath(asset), digest: asset.contentDigest }
+            },
+            speech: speechService,
+            warn: (message, error) =>
+              options.logs?.logger({ kind: 'system', id: 'speech', name: '语音识别' }).warn(message, {
+                error: error instanceof Error ? error.message : String(error),
+              }),
+          }),
+        ],
         describe: (handler) => extensionHost.describeRevision(handler.revision),
         nxtFor: (handler, channelId) => attachmentNxt(handler, ChannelIdSchema.parse(channelId)),
         message: (event, defaultTriggered) => {
@@ -1275,6 +1473,7 @@ export class NekroRuntime {
                 trigger: decision.trigger,
                 hidden: decision.hidden,
                 annotation: decision.annotation ?? null,
+                hostAnnotations: decision.hostAnnotations === undefined ? null : [...decision.hostAnnotations],
                 decidedBy: decidedBy.map((extensionId) => ExtensionIdSchema.parse(extensionId)),
                 diagnostics: diagnostics.length === 0 ? null : diagnostics.map((item) => ({ ...item })),
                 decidedAt,
@@ -1486,9 +1685,21 @@ export class NekroRuntime {
         credentialRequests,
         modelProviderAccess: providerAccess,
         retrieval,
+        addons,
+        speech: speechService,
+        speechCloud,
+        localSpeech,
+        media,
+        commandProfiles,
+        disposePrograms: async () => {
+          stopProgramEnvironment()
+          await programSandbox.dispose()
+        },
         channelPrompts,
         mcpStatus,
         outbound: outboundProcessor,
+        extensionFiles,
+        previewFiles,
         authoringTestConfig,
         compatibility,
         database,
@@ -1548,7 +1759,12 @@ export class NekroRuntime {
         return status !== 'awaiting-approval' && status !== 'running'
       },
       origin: () => process.env['NEKRO_VERIFY_ORIGIN'] || this.#verificationOrigin,
-      browser: this.verificationBrowser,
+      browser: {
+        launch: () => {
+          const executable = this.addons.active('browser')?.program('chromium')
+          return executable === undefined ? Promise.resolve(undefined) : this.verificationBrowser.launch(executable)
+        },
+      },
       runWithoutClient: (taskId) => this.host.runWaitingCandidateWithoutClient(AuthoringTaskIdSchema.parse(taskId)),
       log: (message, error) => console.error(`[nekro-nxt] ${message}：`, error),
     })
@@ -2092,7 +2308,12 @@ export class NekroRuntime {
     await this.#candidateVerifier?.dispose()
     this.#disposed = true
     await this.#jobScheduler.dispose()
+    this.addons.dispose()
+    this.#localSpeech.dispose()
+    await this.#disposePrograms()
     await this.retrieval.dispose()
+    await this.extensionFiles.dispose()
+    await this.#previewFiles.dispose()
     await this.commands.dispose()
     await this.authoring.dispose()
     await this.extensionService.dispose()

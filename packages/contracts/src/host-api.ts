@@ -365,6 +365,8 @@ const AgentCapabilitiesSchema = z
     /** Network for commands; absent in older clients means on. */
     commandNetwork: z.boolean().default(true),
     communityFeedbackAuto: z.boolean().default(false),
+    /** Voice messages reach the agent with a transcript (附加功能 F10). */
+    voiceTranscription: z.boolean().default(false),
     /** Linked accounts this agent's commands act as, one per platform; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
     /**
@@ -621,6 +623,7 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
     codeRun: z.boolean().optional(),
     commandNetwork: z.boolean().optional(),
     communityFeedbackAuto: z.boolean().optional(),
+    voiceTranscription: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).optional(),
     extensionRequesters: z.enum(['everyone', 'admins']).optional(),
@@ -726,6 +729,8 @@ export const HostSnapshotMessageSchema = z
         trigger: z.enum(['default', 'suppress', 'force']),
         hidden: z.boolean(),
         annotation: z.string().optional(),
+        /** What NekroNXT itself added for the agent, such as the transcript of a voice message. */
+        hostAnnotations: z.array(z.object({ label: z.string(), text: z.string() }).strict()).optional(),
         extensions: z.array(z.string()),
         problems: z.array(z.string()).optional(),
       })
@@ -860,6 +865,12 @@ export const ChannelRuntimeUsageSchema = z
   })
   .strict()
 
+/** The latest progress a running extension tool reported. */
+export const ChannelRuntimeToolProgressSchema = z
+  .object({ text: z.string().min(1).max(200), fraction: z.number().min(0).max(1).optional() })
+  .strict()
+export type ChannelRuntimeToolProgress = z.output<typeof ChannelRuntimeToolProgressSchema>
+
 const channelRuntimeToolFields = {
   callId: NonEmptyStringSchema,
   name: NonEmptyStringSchema,
@@ -871,6 +882,8 @@ const channelRuntimeToolFields = {
   /** `cancelled`: an extension stopped the message before it was sent. */
   deliveryState: z.enum(['sent', 'partially-sent', 'failed', 'unknown', 'cancelled']).optional(),
   durationMs: z.number().int().nonnegative().optional(),
+  /** Set while the tool runs and has reported progress. */
+  progress: ChannelRuntimeToolProgressSchema.optional(),
 }
 
 export const ChannelRuntimeToolSchema = z
@@ -1298,30 +1311,10 @@ export const SubConversationSettingsSchema = z.object({ retention: SubConversati
 export const RetrievalModeSchema = z.enum(['keyword', 'builtin'])
 export type RetrievalMode = z.output<typeof RetrievalModeSchema>
 
-/** Search used by extension indexes (表情包与扩展素材能力 §6.4). */
+/** Search used by extension indexes (表情包与扩展素材能力 §6.4); the model itself is the `retrieval` add-on. */
 export const RetrievalStatusSchema = z
   .object({
     mode: RetrievalModeSchema,
-    builtin: z
-      .object({
-        model: z.string(),
-        /** False where no inference runtime is published for this system and processor. */
-        supported: z.boolean(),
-        downloadBytes: z.number().int().nonnegative(),
-        install: z.discriminatedUnion('state', [
-          z.object({ state: z.literal('not-installed') }).strict(),
-          z
-            .object({
-              state: z.literal('downloading'),
-              receivedBytes: z.number().int().nonnegative(),
-              totalBytes: z.number().int().nonnegative(),
-            })
-            .strict(),
-          z.object({ state: z.literal('installed') }).strict(),
-          z.object({ state: z.literal('failed'), error: z.string() }).strict(),
-        ]),
-      })
-      .strict(),
     vectors: z
       .object({
         documents: z.number().int().nonnegative(),
@@ -1685,42 +1678,128 @@ export const ScheduledTaskSchema = z
 
 export type ScheduledTask = z.output<typeof ScheduledTaskSchema>
 
-/** The Node that runs `run_code` programs, and the download the desktop app offers when there is none. */
-export const CodeRunAvailabilitySchema = z
+/** Programs and models NekroNXT installs on request (附加功能); `<data root>/runtimes`, left out of backups. */
+export const AddonIdSchema = z.enum(['media', 'speech', 'retrieval', 'node', 'github-cli', 'browser'])
+export type AddonId = z.output<typeof AddonIdSchema>
+
+/** `extension`: used by extensions; `agent`: used by agents' commands; `host`: used by NekroNXT itself. */
+export const AddonGroupSchema = z.enum(['extension', 'agent', 'host'])
+export type AddonGroup = z.output<typeof AddonGroupSchema>
+
+/**
+ * `installed`: downloaded and ready; `available`: usable without installing (bundled, found on this device, cloud);
+ * `needs-config`: usable once configured (cloud).
+ */
+export const AddonStateSchema = z.enum([
+  'not-installed',
+  'installing',
+  'installed',
+  'failed',
+  'unsupported',
+  'available',
+  'needs-config',
+])
+export type AddonState = z.output<typeof AddonStateSchema>
+
+const AddonProgressSchema = z
   .object({
-    available: z.boolean(),
-    source: z.enum(['host', 'system', 'downloaded']).optional(),
-    version: z.string().optional(),
-    download: z
-      .object({
-        version: z.string(),
-        state: z.enum(['idle', 'downloading', 'failed']),
-        receivedBytes: z.number().int().nonnegative().optional(),
-        totalBytes: z.number().int().nonnegative().optional(),
-        error: z.string().optional(),
-      })
-      .strict()
-      .optional(),
+    receivedBytes: z.number().int().nonnegative(),
+    totalBytes: z.number().int().nonnegative().optional(),
   })
   .strict()
 
-export type CodeRunAvailability = z.output<typeof CodeRunAvailabilitySchema>
+/** One way an add-on can be provided, such as a program found on this device or one NekroNXT downloads. */
+export const AddonProviderStatusSchema = z
+  .object({
+    id: NonEmptyStringSchema,
+    title: NonEmptyStringSchema,
+    summary: z.string(),
+    state: AddonStateSchema,
+    /** `bundled`: installed with NekroNXT; `system`: found on this device; `downloaded`: fetched by NekroNXT. */
+    source: z.enum(['bundled', 'system', 'downloaded', 'cloud']).optional(),
+    /** The installed version, or the one an install fetches. */
+    version: z.string().optional(),
+    resources: z
+      .object({
+        /** Approximate for this system and processor. */
+        downloadBytes: z.number().int().nonnegative().optional(),
+        /** Measured from its own folder after install. */
+        installedBytes: z.number().int().nonnegative().optional(),
+        memoryBytes: z.number().int().nonnegative().optional(),
+        /** Short differences worth comparing, such as languages or speed. */
+        notes: z.array(z.string()).default([]),
+      })
+      .strict(),
+    /** One entry per component that carries its own license. */
+    licenses: z
+      .array(z.object({ component: z.string().optional(), name: NonEmptyStringSchema, url: z.url() }).strict())
+      .default([]),
+    /** Where downloads come from, for display. */
+    sources: z.array(z.string()).default([]),
+    progress: AddonProgressSchema.optional(),
+    error: z.string().optional(),
+    /** Other add-ons it needs to work. */
+    dependsOn: z.array(AddonIdSchema).default([]),
+    installable: z.boolean(),
+    removable: z.boolean(),
+  })
+  .strict()
+export type AddonProviderStatus = z.output<typeof AddonProviderStatusSchema>
 
-/** The GitHub CLI commands call: found on this machine, or downloaded by NekroNXT where it can. */
-export const GithubCliAvailabilitySchema = CodeRunAvailabilitySchema
-export type GithubCliAvailability = z.output<typeof GithubCliAvailabilitySchema>
+/** One add-on (a capability) as 设置 → 附加功能 shows it; the registry on the server is its only source. */
+export const AddonStatusSchema = z
+  .object({
+    id: AddonIdSchema,
+    group: AddonGroupSchema,
+    title: NonEmptyStringSchema,
+    summary: z.string(),
+    /** Who relies on it, as labels people recognise. */
+    usedBy: z.array(z.string()),
+    /** The selected provider's state, or, while none can be used, the one closest to usable. */
+    state: AddonStateSchema,
+    progress: AddonProgressSchema.optional(),
+    /** The provider in use; absent while none can be used. */
+    selected: NonEmptyStringSchema.optional(),
+    /** In declared order; providers that do not exist on this device are left out. */
+    providers: z.array(AddonProviderStatusSchema),
+  })
+  .strict()
+export type AddonStatus = z.output<typeof AddonStatusSchema>
 
-/** The optional headless Chromium that loads and checks creation candidates when no page is open. */
-export const VerificationBrowserAvailabilitySchema = CodeRunAvailabilitySchema
-export type VerificationBrowserAvailability = z.output<typeof VerificationBrowserAvailabilitySchema>
+/** Languages speech recognition can be asked for; `auto` lets the provider tell. */
+export const SpeechLanguageSchema = z.enum(['auto', 'zh', 'en', 'ja', 'ko', 'yue'])
+export type SpeechLanguage = z.output<typeof SpeechLanguageSchema>
+
+/** The cloud provider of the `speech` add-on: a provider from 设置 → 模型 and the transcription model it serves. */
+export const SpeechCloudSettingsSchema = z
+  .object({
+    provider: NonEmptyStringSchema,
+    model: z.string().trim().min(1).max(200),
+    /** Used when a caller does not name a language. */
+    language: SpeechLanguageSchema.optional(),
+  })
+  .strict()
+export type SpeechCloudSettings = z.output<typeof SpeechCloudSettingsSchema>
+
+export const SpeechSettingsSchema = z
+  .object({
+    cloud: SpeechCloudSettingsSchema.nullable(),
+    /** Configured providers with an OpenAI-compatible address, the ones cloud transcription can use. */
+    providers: z.array(z.object({ provider: NonEmptyStringSchema, displayName: z.string() }).strict()),
+  })
+  .strict()
+export type SpeechSettings = z.output<typeof SpeechSettingsSchema>
+
+/** Whether a capability that needs an add-on can run now; details live in `addons`. */
+export const AddonAvailabilitySchema = z.object({ available: z.boolean() }).strict()
+export type AddonAvailability = z.output<typeof AddonAvailabilitySchema>
 
 /** A platform's own program that linked accounts work through, such as the GitHub CLI. */
 export const LinkedAccountPlatformToolSchema = z
   .object({
-    /** The runtime download routes it is managed by (`downloadGithubCli`, `removeGithubCli`). */
+    /** The add-on it is installed as (`AddonStatus.id`). */
     id: z.enum(['github-cli']),
     name: z.string(),
-    availability: GithubCliAvailabilitySchema,
   })
   .strict()
 
@@ -1811,12 +1890,14 @@ export const HostSnapshotSchema = z
     capabilityAvailability: z
       .object({
         subagents: z.object({ available: z.boolean() }).strict(),
-        /** Optional in older hosts, which never offer `run_code`. */
-        codeRun: CodeRunAvailabilitySchema.optional(),
-        /** Optional in older hosts, which never offer command accounts. */
-        githubCli: GithubCliAvailabilitySchema.optional(),
-        /** Optional in older hosts, which check candidates only in an open page. */
-        verificationBrowser: VerificationBrowserAvailabilitySchema.optional(),
+        /** The `node` add-on that `run_code` needs. */
+        codeRun: AddonAvailabilitySchema.optional(),
+        /** The `github-cli` add-on that commands use with a GitHub account. */
+        githubCli: AddonAvailabilitySchema.optional(),
+        /** The `browser` add-on that checks candidates when no page is open. */
+        verificationBrowser: AddonAvailabilitySchema.optional(),
+        /** The `speech` add-on that voice message transcription needs. */
+        speechRecognition: AddonAvailabilitySchema.optional(),
         /** What this host can confine for commands beyond file writes; optional in older hosts. */
         commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
         webSearch: z
@@ -2248,6 +2329,7 @@ export const HostSnapshotSchema = z
     authoringTasks: z.array(AuthoringTaskSummarySchema).default([]),
     /** Open sub-conversations, and the most recently ended ones of each channel. */
     subConversations: z.array(SubConversationSchema).default([]),
+    addons: z.array(AddonStatusSchema).default([]),
     scheduledTasks: z.array(ScheduledTaskSchema).default([]),
     /** Extension requests waiting for an administrator. */
     extensionRequests: z.array(ExtensionRequestSchema).default([]),
@@ -2376,6 +2458,8 @@ export const DshPluginCatalogEntrySchema = z
     installSource: z.enum(['registry', 'tarball', 'imported']).optional(),
     /** Published by the DSH maintainers on npm for the DSH release this build runs. */
     official: z.boolean().optional(),
+    /** Third-party installed plugins: whether an administrator allowed them to submit images to the model. */
+    imageSubmission: z.boolean().optional(),
     installedAt: z.number().int().safe().nonnegative().optional(),
     clientUiDetected: z.boolean().optional(),
     hostUi: DshNxtHostUiSchema.optional(),
@@ -3882,74 +3966,55 @@ export const HostApiContracts = {
     response: RetrievalStatusSchema,
     error: HostApiErrorSchema,
   }),
-  downloadRetrievalModel: defineContract({
-    method: 'POST',
-    path: '/api/settings/retrieval/model/download',
+  getSpeechSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/speech',
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
-    response: RetrievalStatusSchema,
+    response: SpeechSettingsSchema,
     error: HostApiErrorSchema,
   }),
-  removeRetrievalModel: defineContract({
-    method: 'DELETE',
-    path: '/api/settings/retrieval/model',
+  updateSpeechSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/speech',
+    params: EmptyParamsSchema,
+    request: z.object({ cloud: SpeechCloudSettingsSchema.nullable() }).strict(),
+    response: SpeechSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  listAddons: defineContract({
+    method: 'GET',
+    path: '/api/addons',
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
-    response: RetrievalStatusSchema,
+    response: z.object({ addons: z.array(AddonStatusSchema) }).strict(),
     error: HostApiErrorSchema,
   }),
-  downloadCodeRunNode: defineContract({
+  installAddonProvider: defineContract({
     invalidatesSnapshot: true,
     method: 'POST',
-    path: '/api/runtimes/code-run-node/download',
-    params: EmptyParamsSchema,
+    path: '/api/addons/:id/providers/:provider/install',
+    params: z.object({ id: AddonIdSchema, provider: NonEmptyStringSchema }).strict(),
     request: NoRequestBodySchema,
-    response: CodeRunAvailabilitySchema,
+    response: AddonStatusSchema,
     error: HostApiErrorSchema,
   }),
-  removeCodeRunNode: defineContract({
+  removeAddonProvider: defineContract({
     invalidatesSnapshot: true,
     method: 'DELETE',
-    path: '/api/runtimes/code-run-node',
-    params: EmptyParamsSchema,
+    path: '/api/addons/:id/providers/:provider',
+    params: z.object({ id: AddonIdSchema, provider: NonEmptyStringSchema }).strict(),
     request: NoRequestBodySchema,
-    response: CodeRunAvailabilitySchema,
+    response: AddonStatusSchema,
     error: HostApiErrorSchema,
   }),
-  downloadGithubCli: defineContract({
+  selectAddonProvider: defineContract({
     invalidatesSnapshot: true,
-    method: 'POST',
-    path: '/api/runtimes/github-cli/download',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: GithubCliAvailabilitySchema,
-    error: HostApiErrorSchema,
-  }),
-  removeGithubCli: defineContract({
-    invalidatesSnapshot: true,
-    method: 'DELETE',
-    path: '/api/runtimes/github-cli',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: GithubCliAvailabilitySchema,
-    error: HostApiErrorSchema,
-  }),
-  downloadVerificationBrowser: defineContract({
-    invalidatesSnapshot: true,
-    method: 'POST',
-    path: '/api/runtimes/verification-browser/download',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: VerificationBrowserAvailabilitySchema,
-    error: HostApiErrorSchema,
-  }),
-  removeVerificationBrowser: defineContract({
-    invalidatesSnapshot: true,
-    method: 'DELETE',
-    path: '/api/runtimes/verification-browser',
-    params: EmptyParamsSchema,
-    request: NoRequestBodySchema,
-    response: VerificationBrowserAvailabilitySchema,
+    method: 'PUT',
+    path: '/api/addons/:id/selection',
+    params: z.object({ id: AddonIdSchema }).strict(),
+    request: z.object({ provider: NonEmptyStringSchema }).strict(),
+    response: AddonStatusSchema,
     error: HostApiErrorSchema,
   }),
   getLinkedAccounts: defineContract({
@@ -4336,6 +4401,14 @@ export const HostApiContracts = {
     params: dshPluginEntryParam,
     request: z.object({ targetKey: NonEmptyStringSchema }).strict(),
     response: z.object({ disabled: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  setDshPluginImageSubmission: defineContract({
+    method: 'PUT',
+    path: '/api/dsh/plugin-installs/:packageId/image-submission',
+    params: dshPluginPackageParam,
+    request: z.object({ allowed: z.boolean() }).strict(),
+    response: z.object({ allowed: z.boolean() }).strict(),
     error: HostApiErrorSchema,
   }),
   removeDshPluginPackage: defineContract({

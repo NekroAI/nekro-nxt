@@ -1,4 +1,4 @@
-import type { InboundHookDecision, InboundHookGate } from '@nekro-nxt/channel-runtime'
+import type { InboundAnnotation, InboundHookDecision, InboundHookGate } from '@nekro-nxt/channel-runtime'
 import type { BindingRecord, ChannelEventRecord } from '@nekro-nxt/core'
 import type { AgentId, ChannelEventId, ExtensionCapabilities } from '@nekro-nxt/contracts'
 import type { NxtHostService, NxtInboundDecision, NxtInboundMessage } from '@nekro-nxt/extension-sdk'
@@ -19,8 +19,22 @@ export interface InboundHookDecisionStore {
   }): InboundHookDecision
 }
 
+/**
+ * A note NekroNXT itself adds to inbound messages for agents that turned it on, such as voice message transcripts.
+ * `annotate` keeps to its own time limit and never rejects; an empty result adds nothing.
+ */
+export interface InboundHostAnnotator {
+  covers(agentId: AgentId): boolean
+  annotate(input: {
+    readonly binding: BindingRecord
+    readonly event: ChannelEventRecord
+  }): Promise<readonly InboundAnnotation[]>
+}
+
 export interface ExtensionInboundHookGateOptions {
   readonly handlers: (agentId: AgentId) => readonly PersistentInboundHandler[]
+  /** Run alongside the extension handlers; their notes come first. */
+  readonly hostAnnotators?: readonly InboundHostAnnotator[]
   readonly describe: (handler: PersistentInboundHandler) => {
     readonly displayName: string
     readonly capabilities: ExtensionCapabilities | undefined
@@ -47,8 +61,10 @@ const timeout = <Value>(promise: Promise<Value>, ms: number): Promise<Value> => 
 const TRIGGER_RANK = { suppress: 2, force: 1, default: 0 } as const
 
 /**
- * Inbound hooks of agent extensions. Each handler sees only what its declaration allows, runs under its own timeout,
- * and may only exercise the effects it declared; failures fall back to the default and are recorded, never thrown.
+ * Inbound hooks of agent extensions, with NekroNXT's own annotators chained before them. Each handler sees only what
+ * its declaration allows, runs under its own timeout, and may only exercise the effects it declared; failures fall
+ * back to the default and are recorded, never thrown. A message that no handler saw and no annotator noted keeps no
+ * decision.
  */
 export class ExtensionInboundHookGate implements InboundHookGate {
   readonly #options: ExtensionInboundHookGateOptions
@@ -59,7 +75,10 @@ export class ExtensionInboundHookGate implements InboundHookGate {
   }
 
   covers(agentId: AgentId): boolean {
-    return this.#options.handlers(agentId).length > 0
+    return (
+      this.#options.handlers(agentId).length > 0 ||
+      (this.#options.hostAnnotators ?? []).some((annotator) => annotator.covers(agentId))
+    )
   }
 
   stored(eventId: ChannelEventId, agentId: AgentId): InboundHookDecision | undefined {
@@ -86,13 +105,19 @@ export class ExtensionInboundHookGate implements InboundHookGate {
     readonly event: ChannelEventRecord
     readonly defaultTriggered: boolean
   }): Promise<InboundHookDecision> {
-    const message = this.#options.message(input.event, input.defaultTriggered)
+    const hostNotes = Promise.all(
+      (this.#options.hostAnnotators ?? [])
+        .filter((annotator) => annotator.covers(input.binding.agentId))
+        .map((annotator) => annotator.annotate(input).catch((): readonly InboundAnnotation[] => [])),
+    ).then((notes) => notes.flat())
+    const handlers = this.#options.handlers(input.binding.agentId)
+    let message: NxtInboundMessage | undefined
     const decidedBy: string[] = []
     const diagnostics: { extensionId: string; message: string }[] = []
     let trigger: InboundHookDecision['trigger'] = 'default'
     let hidden = false
     const annotations: string[] = []
-    for (const handler of this.#options.handlers(input.binding.agentId)) {
+    for (const handler of handlers) {
       const extensionId = handler.revision.extensionId
       const { capabilities, displayName } = this.#options.describe(handler)
       const declared = capabilities?.inboundHook
@@ -101,7 +126,12 @@ export class ExtensionInboundHookGate implements InboundHookGate {
       let answer: NxtInboundDecision | undefined
       try {
         answer = await timeout(
-          Promise.resolve(handler.handler(message, this.#options.nxtFor(handler, input.event.channelId))),
+          Promise.resolve(
+            handler.handler(
+              (message ??= this.#options.message(input.event, input.defaultTriggered)),
+              this.#options.nxtFor(handler, input.event.channelId),
+            ),
+          ),
           declared.timeoutMs,
         )
       } catch (error) {
@@ -125,10 +155,17 @@ export class ExtensionInboundHookGate implements InboundHookGate {
       }
     }
     const annotation = annotations.join('\n')
+    const hostAnnotations = await hostNotes
+    if (handlers.length === 0 && hostAnnotations.length === 0) return { trigger: 'default', hidden: false }
     return this.#options.store.save({
       eventId: input.event.id,
       agentId: input.binding.agentId,
-      decision: { trigger, hidden, ...(annotation === '' ? {} : { annotation }) },
+      decision: {
+        trigger,
+        hidden,
+        ...(annotation === '' ? {} : { annotation }),
+        ...(hostAnnotations.length === 0 ? {} : { hostAnnotations }),
+      },
       decidedBy,
       diagnostics,
       decidedAt: this.#options.now(),

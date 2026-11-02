@@ -721,6 +721,66 @@ test.describe('workshop', () => {
     }
   })
 
+  test('names the add-ons an extension needs on its page and its approval', async () => {
+    const capabilities = {
+      media: true as const,
+      commands: { profiles: ['ffmpeg' as const] },
+      files: {},
+    }
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id !== summaryExtensionId
+          ? extension
+          : {
+              ...extension,
+              activations: [],
+              revisions: extension.revisions.map((revision) => ({
+                ...revision,
+                verification: {
+                  verifiedAt: 1_725_000_000_000,
+                  dshVersion: 'fixture',
+                  contractVersion: 'nekro-nxt-extension-v5',
+                  hostBuilt: true,
+                  clientBuilt: false,
+                  buildKey: 'fixture',
+                  toolInvocationCount: 1,
+                  rpcMethods: [],
+                  renderedPanels: [],
+                  renderedToolViews: [],
+                  renderedMessageRenderers: [],
+                  permissions: { permissions: [], networkOrigins: [], agent: capabilities },
+                  agentPermission: {
+                    declaration: { permissions: [], networkOrigins: [], capabilities },
+                    permissionDigest: 'e'.repeat(64),
+                    approvalRequired: true,
+                  },
+                },
+              })),
+            },
+      ),
+    }
+    const page = await openWorkshop(snapshot)
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      await expect(page.getByText('媒体处理（未安装）')).toBeVisible()
+      await page
+        .getByRole('switch', { name: /使用「群聊摘要」/u })
+        .first()
+        .click()
+      const dialog = page.getByRole('dialog')
+      await expect(dialog.getByText('处理音频、视频和图片')).toBeVisible()
+      await expect(dialog).toContainText('将运行：ffmpeg。只能读写交给它的文件，不能联网，打开即表示接受风险。')
+      await expect(dialog.getByText('需要附加功能：媒体处理（未安装）')).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/approval-required-addons.png' })
+      await dialog.getByRole('button', { name: '去安装' }).click()
+      await expect(page).toHaveURL(/\/settings\/addons\/media$/u)
+      await expect(dialog).toBeHidden()
+    } finally {
+      await page.close()
+    }
+  })
+
   test('keeps only the switching row busy while the agent is replying and shows a failed switch with its reason', async () => {
     const snapshot = {
       ...productSnapshot,

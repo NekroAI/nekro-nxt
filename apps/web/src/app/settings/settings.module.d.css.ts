@@ -1,6 +1,7 @@
 declare const styles: {
   readonly actions: string
   readonly adapterName: string
+  readonly addonDetail: string
   readonly barkFields: string
   readonly brand: string
   readonly brandAmbient: string
@@ -10,6 +11,7 @@ declare const styles: {
   readonly head: string
   readonly headActions: string
   readonly inlineForm: string
+  readonly licenses: string
   readonly link: string
   readonly loading: string
   readonly movePlan: string

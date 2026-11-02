@@ -45,7 +45,7 @@ export const linkedAccountsView = async (runtime: NekroRuntime): Promise<LinkedA
         id: platform.id,
         name: platform.name,
         addMethods: [...platform.addMethods],
-        ...(tool === undefined ? {} : { tool: { id: tool.id, name: tool.name, availability: tool.availability } }),
+        ...(tool === undefined ? {} : { tool: { id: tool.id, name: tool.name } }),
         accounts: library
           .list()
           .filter((record) => record.platform === platform.id)

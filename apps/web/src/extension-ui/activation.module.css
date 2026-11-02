@@ -10,3 +10,20 @@
   color: var(--fg-2);
   font: var(--t-note);
 }
+
+.addons {
+  display: grid;
+  gap: var(--s-1);
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.addon {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  color: var(--fg-2);
+  font: var(--t-note);
+}

@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -12,6 +12,7 @@ import {
   commandCredentialEnvironment,
   commandCredentialPrompt,
   createEnvForwardingExecutor,
+  programSearchPath,
   type CommandAccount,
   type CommandCredential,
   type CommandCredentialSources,
@@ -28,20 +29,16 @@ afterEach(() => {
 const agent = AgentIdSchema.parse('agt_fixture')
 const grant = { service: 'github' as const, accountId: 'acc_fixture', usage: [] }
 
-/** A GitHub platform whose `gh` is on PATH (or downloaded to `cliDirectory`) for the environment tests. */
-const githubPlatform = (options: { readonly cliDirectory?: string; readonly cliAvailable?: boolean } = {}) =>
+/** A GitHub platform whose `gh` is on PATH for the environment tests. */
+const githubPlatform = (options: { readonly cliAvailable?: boolean } = {}) =>
   createGithubPlatform({
-    cli: {
-      executable: () => (options.cliAvailable === false ? undefined : '/usr/bin/gh'),
-      directoryForPath: () => options.cliDirectory,
-      status: () => ({ available: options.cliAvailable !== false }),
-    },
+    cli: { executable: () => (options.cliAvailable === false ? undefined : '/usr/bin/gh') },
   })
 
 const githubAccount = (platform = githubPlatform(), usage: CommandAccountGrant['usage'] = []): CommandAccount => ({
   id: LinkedAccountIdSchema.parse('acc_fixture'),
   label: 'GitHub octo-fixture',
-  environment: platform.commandEnvironment({ agentId: agent, token: 'tok-fixture', basePath: '/usr/bin' }),
+  environment: platform.commandEnvironment({ agentId: agent, token: 'tok-fixture' }),
   prompt: platform.promptLines({ login: 'octo-fixture', usage }),
 })
 const weather: CommandCredential = {
@@ -79,15 +76,6 @@ describe('command credential environment', () => {
     const env = commandCredentialEnvironment(agent, [], sources([weather], [], { used: (id) => used.push(id) }))
     expect(env).toEqual({ WEATHER_KEY: 'weather-fixture-key' })
     expect(used).toEqual([weather.id])
-  })
-
-  it('puts a downloaded gh in front of PATH', () => {
-    const env = commandCredentialEnvironment(
-      agent,
-      [grant],
-      sources([], [githubAccount(githubPlatform({ cliDirectory: '/data/runtimes/gh/bin' }))]),
-    )
-    expect(env['PATH']).toBe(`/data/runtimes/gh/bin${path.delimiter}/usr/bin`)
   })
 
   it('lets the account win where it and a credential set the same variable, and says so once', () => {
@@ -147,6 +135,26 @@ describe('command credential environment', () => {
   })
 })
 
+describe('program search path', () => {
+  const programs = [
+    { path: '/data/runtimes/media/b6.1.1/ffmpeg', source: 'downloaded' },
+    { path: '/data/runtimes/media/b6.1.1/ffprobe', source: 'downloaded' },
+    { path: '/opt/fixture/bin/gh', source: 'system' },
+    { path: '/usr/bin/node', source: 'system' },
+  ]
+
+  it('puts downloaded programs in front, folders of this device missing from PATH last, each once', () => {
+    expect(programSearchPath(programs, '/usr/bin:/bin', ':')).toBe(
+      '/data/runtimes/media/b6.1.1:/usr/bin:/bin:/opt/fixture/bin',
+    )
+  })
+
+  it('leaves PATH alone when every folder is already on it', () => {
+    expect(programSearchPath([{ path: '/usr/bin/node', source: 'system' }], '/usr/bin:/bin', ':')).toBeUndefined()
+    expect(programSearchPath([], '/usr/bin', ':')).toBeUndefined()
+  })
+})
+
 interface ShellLike {
   resolve(request: object): object
   execute(spec: object): Promise<{ result(): Promise<{ stdout: { text: string } }> }>
@@ -193,6 +201,17 @@ describe.skipIf(process.platform === 'win32')('commands receive the granted acco
     const command = 'echo "gh=$GH_TOKEN other=$SOME_API_TOKEN"'
     expect(await runCommand('danger-full-access', {}, command)).toBe('gh= other=')
     expect(await runCommand('danger-full-access', { GH_TOKEN: 'tok-fixture' }, command)).toBe('gh=tok-fixture other=')
+  })
+
+  it('finds an add-on program through the PATH it is given', async () => {
+    const folder = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-program-')))
+    directories.push(folder)
+    writeFileSync(path.join(folder, 'fixture-tool'), '#!/bin/sh\necho fixture-tool-ran\n', { mode: 0o755 })
+    const searchPath = programSearchPath(
+      [{ path: path.join(folder, 'fixture-tool'), source: 'downloaded' }],
+      process.env['PATH'],
+    )
+    expect(await runCommand('danger-full-access', { PATH: searchPath! }, 'fixture-tool')).toBe('fixture-tool-ran')
   })
 
   it.runIf(process.platform === 'darwin')('also under the confined workspace mode', async () => {

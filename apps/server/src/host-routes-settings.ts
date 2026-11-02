@@ -532,6 +532,23 @@ export function registerSettingsRoutes({
         }
         return
       }
+      const imagesMatch = /^\/api\/dsh\/plugin-installs\/([^/]+)\/image-submission$/u.exec(url.pathname)
+      if (imagesMatch) {
+        if (req.method !== 'PUT') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        try {
+          const packageId = DshPluginPackageIdSchema.parse(decodeURIComponent(imagesMatch[1] ?? ''))
+          const input = HostApiContracts.setDshPluginImageSubmission.parseRequest(await readJsonBody(req))
+          await runtime.host.setDshPluginImageSubmission(packageId, input.allowed)
+          broadcast({ event: 'dsh-plugins-changed', data: { changed: true } })
+          writeContractJson(res, 200, HostApiContracts.setDshPluginImageSubmission, { allowed: input.allowed })
+        } catch (error) {
+          writeError(res, 400, 'dsh-plugin-images-failed', error instanceof Error ? error.message : String(error))
+        }
+        return
+      }
       const match = /^\/api\/dsh\/plugin-installs\/([^/]+)$/u.exec(url.pathname)
       if (!match?.[1]) {
         writeError(res, 404, 'not-found', `Unknown route: ${req.method} ${url.pathname}`)

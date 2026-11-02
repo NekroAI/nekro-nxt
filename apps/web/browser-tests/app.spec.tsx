@@ -1,4 +1,5 @@
 import { credentialsView } from '../e2e/fixtures/credentials.js'
+import { addonProvider, addonsFixture } from '../e2e/fixtures/addons.js'
 import { botAccountId, linkedAccountsView } from '../e2e/fixtures/linked-accounts.js'
 import { fixtureReleaseId, installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
 import {
@@ -415,6 +416,7 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
   await page.route('**/api/settings/model-fallback', (route) =>
     route.fulfill({ json: { unavailableCooldownMinutes: 10, quotaCooldownMinutes: 60 } }),
   )
+  await page.route('**/api/settings/speech', (route) => route.fulfill({ json: { cloud: null, providers: [] } }))
   await page.route('**/api/product/updates', (route) =>
     route.fulfill({
       json: { channel: 'development', currentVersion: 'fixture', state: 'unsupported', autoCheck: true },
@@ -2524,7 +2526,7 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('offers scripts under command access and downloads the Node they need in place', async () => {
+  test('offers scripts under command access and links to installing the Node they need', async () => {
     const capabilityRequests: unknown[] = []
     const withCommands = {
       ...browserSnapshot,
@@ -2536,27 +2538,47 @@ test.describe('NekroNxt browser projections', () => {
     }
     const missing = HostApiContracts.snapshot.response.parse({
       ...withCommands,
-      capabilityAvailability: {
-        ...withCommands.capabilityAvailability,
-        codeRun: { available: false, download: { version: '24.21.0', state: 'idle' } },
-      },
+      addons: addonsFixture(),
+      capabilityAvailability: { ...withCommands.capabilityAvailability, codeRun: { available: false } },
     })
     const ready = HostApiContracts.snapshot.response.parse({
       ...withCommands,
-      capabilityAvailability: {
-        ...withCommands.capabilityAvailability,
-        codeRun: { available: true, source: 'downloaded', version: '24.21.0' },
-      },
+      addons: addonsFixture({
+        node: {
+          state: 'installed',
+          selected: 'download',
+          providers: [
+            addonProvider({
+              id: 'download',
+              title: '下载的 Node',
+              state: 'installed',
+              source: 'downloaded',
+              version: '24.21.0',
+              resources: { installedBytes: 120 * 1024 * 1024, notes: [] },
+              removable: true,
+            }),
+          ],
+        },
+      }),
+      capabilityAvailability: { ...withCommands.capabilityAvailability, codeRun: { available: true } },
     })
     let current = missing
+    const installs: string[] = []
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
         const toggle = page.getByRole('switch', { name: '编排模式（PTC）' })
         await playwrightExpect(toggle).toBeDisabled()
-        await page.getByRole('button', { name: '下载 Node 24.21.0' }).click()
+        await playwrightExpect(page.getByText('未安装，安装后即可开启')).toBeVisible()
+        // The Node row comes first; the speech recognition row below has its own.
+        await page.getByRole('button', { name: '去安装' }).first().click()
+        await playwrightExpect(page).toHaveURL(/\/settings\/addons\/node$/u)
+        await page.getByRole('region', { name: '下载的 Node' }).getByRole('button', { name: '安装' }).click()
+        await playwrightExpect.poll(() => installs).toEqual(['/api/addons/node/providers/download/install'])
+        await playwrightExpect(page.getByRole('region', { name: '下载的 Node' })).toContainText('已安装')
+        await page.goBack()
         await playwrightExpect(toggle).toBeEnabled()
-        await playwrightExpect(page.getByText('Node 24.21.0，由 NXT 下载')).toBeVisible()
+        await playwrightExpect(page.getByText('下载的 Node，24.21.0')).toBeVisible()
         await toggle.click()
         await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
         await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
@@ -2565,11 +2587,10 @@ test.describe('NekroNxt browser projections', () => {
       missing,
       async (page) => {
         await page.route('**/api/snapshot', (request) => request.fulfill({ json: current }))
-        await page.route('**/api/runtimes/code-run-node/download', (request) => {
+        await page.route('**/api/addons/**', (request) => {
+          installs.push(new URL(request.request().url()).pathname)
           current = ready
-          return request.fulfill({
-            json: { available: false, download: { version: '24.21.0', state: 'downloading', receivedBytes: 0 } },
-          })
+          return request.fulfill({ json: ready.addons.find((addon) => addon.id === 'node') })
         })
         await page.route('**/api/agents/*/capabilities', async (request) => {
           capabilityRequests.push(request.request().postDataJSON())
@@ -2581,6 +2602,86 @@ test.describe('NekroNxt browser projections', () => {
           })
         })
       },
+    )
+  })
+
+  test('turns on voice message transcription once speech recognition can be used', async () => {
+    const capabilityRequests: unknown[] = []
+    const missing = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      addons: addonsFixture(),
+      capabilityAvailability: { ...browserSnapshot.capabilityAvailability, speechRecognition: { available: false } },
+    })
+    const ready = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      addons: addonsFixture({
+        speech: {
+          state: 'available',
+          selected: 'cloud',
+          providers: [
+            addonProvider({ id: 'cloud', title: '云端', state: 'available', source: 'cloud', dependsOn: ['media'] }),
+          ],
+        },
+      }),
+      capabilityAvailability: { ...browserSnapshot.capabilityAvailability, speechRecognition: { available: true } },
+    })
+    let current = missing
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const toggle = page.getByRole('switch', { name: '语音消息转文字' })
+        await playwrightExpect(toggle).toBeDisabled()
+        await playwrightExpect(page.getByText('智能体收到语音时，同时看到转写的文字。')).toBeVisible()
+        await playwrightExpect(page.getByText('安装或配置后即可开启')).toBeVisible()
+        await page.getByRole('button', { name: '去安装' }).first().click()
+        await playwrightExpect(page).toHaveURL(/\/settings\/addons\/speech$/u)
+        current = ready
+        await page.goBack()
+        await page.reload()
+        await playwrightExpect(toggle).toBeEnabled()
+        await toggle.click()
+        await playwrightExpect(page.getByText('云端', { exact: true })).toBeVisible()
+        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toEqual({ voiceTranscription: true })
+      },
+      missing,
+      async (page) => {
+        await page.route('**/api/snapshot', (request) => request.fulfill({ json: current }))
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            json: {
+              currentRevisionId: browserRevisionId,
+              capabilities: { ...ready.agents[0]!.capabilities, voiceTranscription: true },
+            },
+          })
+        })
+      },
+    )
+  })
+
+  test('marks voice message transcription 待配置 when speech recognition stops working', async () => {
+    const turnedOn = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId
+          ? { ...agent, capabilities: { ...agent.capabilities, voiceTranscription: true } }
+          : agent,
+      ),
+      addons: addonsFixture(),
+      capabilityAvailability: { ...browserSnapshot.capabilityAvailability, speechRecognition: { available: false } },
+    })
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const toggle = page.getByRole('switch', { name: '语音消息转文字' })
+        await playwrightExpect(toggle).toBeEnabled()
+        await playwrightExpect(toggle).toBeChecked()
+        await playwrightExpect(page.getByText('待配置', { exact: true })).toBeVisible()
+        await playwrightExpect(page.getByText('安装或配置后即可开启')).toBeVisible()
+      },
+      turnedOn,
     )
   })
 
@@ -3032,6 +3133,58 @@ test.describe('NekroNxt browser projections', () => {
                 : { callId, available: false, inputTruncated: false, resultTruncated: false },
           })
         })
+      },
+    )
+  })
+
+  test('shows the latest progress of a running tool on its step', async () => {
+    await withProductPage(
+      `/channels/${browserChannelId}`,
+      async (page) => {
+        const step = page.getByRole('button', { name: /^取帧.*已取 12\/40 帧 30%/u })
+        await playwrightExpect(step).toBeVisible()
+        await playwrightExpect(step.getByText('已取 12/40 帧', { exact: true })).toBeVisible()
+        await playwrightExpect(step.getByText('30%', { exact: true })).toBeVisible()
+        await page.screenshot({ path: '.local/screenshots-addons/tool-progress.png' })
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/channels/*/runtime', (request) =>
+          request.fulfill({
+            json: {
+              cursor: { epoch: 'fixture', sequence: 0 },
+              channelId: browserChannelId,
+              agentId: browserAgentId,
+              phase: 'using-tool',
+              summary: '智能体正在使用取帧。',
+              pendingInjectCount: 0,
+              turns: [
+                {
+                  turn: 1,
+                  startedAt: 1_725_000_000_500,
+                  state: 'in-progress',
+                  producedReply: false,
+                  responseState: 'not-required',
+                  steps: [
+                    {
+                      step: 1,
+                      tools: [
+                        {
+                          callId: 'call_frames',
+                          name: 'clip_frames',
+                          displayName: '取帧',
+                          state: 'running',
+                          inputPreview: '{"interval":2}',
+                          progress: { text: '已取 12/40 帧', fraction: 0.3 },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        )
       },
     )
   })

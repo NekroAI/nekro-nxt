@@ -69,6 +69,7 @@ export function createProductStore(
     dynamic: [],
     authoringTasks: [],
     subConversations: [],
+    addons: [],
     extensionRequests: [],
     scheduledTasks: [],
     notificationSettings: {

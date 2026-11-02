@@ -6,7 +6,9 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   communityPublisherLabel,
+  hostLayerAsCapabilities,
   HostApiContracts,
+  requiredExtensionAddons,
   type CommunitySyncItem,
   type HostApiResponse,
 } from '@nekro-nxt/contracts'
@@ -75,6 +77,7 @@ import { LineageView } from './lineage-view.js'
 import { PublishDialog } from './publish-dialog.js'
 import { needsAction, useCommunitySync, useCommunityUpdate } from './updates-view.js'
 import { useVersionText, type VersionText } from './version-text.js'
+import { AddonLink, addonStateLabel, addonUsable } from '../settings/addons-section.js'
 import styles from './workshop.module.css'
 
 type Revision = LocalExtensionSummary['revisions'][number]
@@ -498,6 +501,11 @@ function BranchDialog({
 function Overview({ revision, pages }: { readonly revision: Revision | undefined; readonly pages: Revision['pages'] }) {
   const navigate = useGo()
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const addons = useProductStore((state) => state.addons)
+  const permissions = revision?.verification?.permissions
+  const neededAddons = requiredExtensionAddons(permissions?.agent, hostLayerAsCapabilities(permissions?.host)).flatMap(
+    (id) => addons.filter((addon) => addon.id === id),
+  )
   const parts = [
     ...(revision?.contributions ?? []).map((value) => ({ ...contributionParts(value), detail: undefined })),
     ...mcpParts(revision?.verification?.permissions?.agent?.mcp?.servers ?? []),
@@ -555,6 +563,19 @@ function Overview({ revision, pages }: { readonly revision: Revision | undefined
               </PropertyRow>
             )
           })}
+        </PropertyList>
+      )}
+      {neededAddons.length === 0 ? null : (
+        <PropertyList>
+          {neededAddons.map((addon) => (
+            <PropertyRow
+              key={addon.id}
+              label="需要附加功能"
+              description={`${addon.title}${addonUsable(addon.state) ? '' : `（${addonStateLabel(addon.state, addon.progress).label}）`}`}
+            >
+              <AddonLink addon={addon} />
+            </PropertyRow>
+          ))}
         </PropertyList>
       )}
     </PropertyGroup>
@@ -871,6 +892,7 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
           accepted={acceptedRisks}
           onAcceptedChange={setAcceptedRisks}
           {...(approve === undefined ? {} : { fieldTitle: configFieldTitles(approve.revision) })}
+          onLeave={() => setApprove(undefined)}
         />
       </ConfirmDialog>
       <ConfirmDialog

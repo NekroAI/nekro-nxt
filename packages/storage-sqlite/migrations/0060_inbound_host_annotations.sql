@@ -1,0 +1,1 @@
+ALTER TABLE `inbound_hook_decisions` ADD `host_annotations` text;

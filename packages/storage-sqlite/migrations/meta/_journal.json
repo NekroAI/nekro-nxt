@@ -421,6 +421,13 @@
       "when": 1793507484614,
       "tag": "0059_extension_revision_kept",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1793553385440,
+      "tag": "0060_inbound_host_annotations",
+      "breakpoints": true
     }
   ]
 }

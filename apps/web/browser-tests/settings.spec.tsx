@@ -24,6 +24,7 @@ import {
   weatherUses,
 } from '../e2e/fixtures/credentials.js'
 import { installSnapshotHealthRoutes } from '../e2e/fixtures/host-release.js'
+import { addonProvider, addonsFixture } from '../e2e/fixtures/addons.js'
 import { addedAccountId, linkedAccountsView, octoAccountId, octoUses } from '../e2e/fixtures/linked-accounts.js'
 import { productSnapshot, targetAgentId } from '../e2e/fixtures/product-quality.js'
 
@@ -109,6 +110,7 @@ test.describe('settings space', () => {
     )
     await page.route('**/api/dsh/plugins', (request) => request.fulfill({ json: { plugins: [] } }))
     await page.route('**/api/dsh/settings', (request) => request.fulfill({ json: { namespaces: [] } }))
+    await page.route('**/api/settings/speech', (request) => request.fulfill({ json: { cloud: null, providers: [] } }))
     await installSnapshotHealthRoutes(page, productSnapshot)
     await page.route('**/api/snapshot', (request) => request.fulfill({ json: productSnapshot }))
     await page.route('**/api/events', (request) =>
@@ -450,7 +452,7 @@ test.describe('settings space', () => {
     try {
       const list = page.getByRole('complementary', { name: '设置' })
       // The section list never nests items: every entry opens its section the same way.
-      await expect(list.getByRole('link')).toHaveCount(17)
+      await expect(list.getByRole('link')).toHaveCount(16)
       await expect(list.getByRole('link', { name: '聊天命令', exact: true })).toBeVisible()
       await expect(list.getByRole('link', { name: '日志保存' })).toBeVisible()
       await expect(page.getByRole('heading', { name: '模型', level: 1 })).toBeVisible()
@@ -748,7 +750,7 @@ test.describe('settings space', () => {
       },
     })
     try {
-      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(18)
+      await expect(page.getByRole('complementary', { name: '设置' }).getByRole('link')).toHaveCount(17)
       const table = page.getByRole('table', { name: '已登录设备' })
       await expect(table).toContainText('浏览器 · Chrome · macOS')
       await expect(table).toContainText('此设备')
@@ -1023,7 +1025,7 @@ test.describe('settings space', () => {
               ...productSnapshot,
               capabilityAvailability: {
                 ...productSnapshot.capabilityAvailability,
-                githubCli: { available: true, source: 'system', version: '2.90.0' },
+                githubCli: { available: true },
               },
             },
           }),
@@ -1112,7 +1114,8 @@ test.describe('settings space', () => {
       await expect(table).toContainText('由 GitHub 上这个 token 的设置决定')
       await expect(table).toContainText('未使用')
       const cli = page.getByRole('region', { name: 'GitHub CLI' })
-      await expect(cli).toContainText('2.90.0，来自这台设备')
+      await expect(cli).toContainText('这台设备的 gh，2.90.0')
+      await expect(cli.getByRole('button', { name: '查看' })).toBeVisible()
       expect(errors).toEqual([])
     } finally {
       await page.close()
@@ -1229,6 +1232,318 @@ test.describe('settings space', () => {
       expect(state.calls).toEqual([{ method: 'POST', path: `/${octoAccountId}/remove`, body: { confirm: true } }])
       await expect(page).not.toHaveURL(/account=/u)
       await expect(page.getByRole('table', { name: 'GitHub 账号' })).not.toContainText('octo-fixture')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('lists add-ons by what uses them and opens one with its details', async () => {
+    const { page, errors } = await open('/settings/addons')
+    try {
+      await expect(page.getByRole('heading', { name: '附加功能', level: 1 })).toBeVisible()
+      await expect(page.getByRole('link', { name: '附加功能', exact: true })).toHaveAttribute('aria-current', 'page')
+      await expect(page.getByRole('link', { name: '界面检查' })).toHaveCount(0)
+      await expect(page.getByRole('link', { name: '检索', exact: true })).toHaveCount(0)
+      const extension = page.getByRole('table', { name: '扩展能力' })
+      await expect(extension).toContainText('语义检索')
+      await expect(extension).toContainText('未安装')
+      const agent = page.getByRole('table', { name: '智能体命令' })
+      await expect(agent.getByRole('row')).toHaveCount(3)
+      await expect(agent).toContainText('可用')
+      await expect(page.getByRole('table', { name: '系统' })).toContainText('后台浏览器')
+
+      await agent.getByText('GitHub CLI', { exact: true }).click()
+      await expect(page).toHaveURL(/\/settings\/addons\/github-cli$/u)
+      await expect(page.getByRole('heading', { name: 'GitHub CLI', level: 2 })).toBeVisible()
+      const system = page.getByRole('region', { name: '这台设备的 gh' })
+      await expect(system).toContainText('正在使用')
+      await expect(system).not.toContainText('来自这台设备')
+      await expect(system).toContainText('2.90.0')
+      const download = page.getByRole('region', { name: '下载的 gh' })
+      await expect(download).toContainText('约 15 MB')
+      await expect(download).toContainText('GitHub Releases')
+      await expect(download.getByRole('link', { name: 'GitHub CLI：MIT' })).toHaveAttribute(
+        'href',
+        'https://github.com/cli/cli/blob/trunk/LICENSE',
+      )
+      await expect(download.getByRole('button', { name: '安装' })).toBeVisible()
+      await expect(download.getByRole('button', { name: '使用这一项' })).toHaveCount(0)
+      await expect(page.getByRole('main')).toContainText('智能体命令')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('installs a provider, shows its progress and switches to it', async () => {
+    const calls: { method: string; path: string; body: unknown }[] = []
+    const githubCli = (download: Parameters<typeof addonProvider>[0], selected: string) =>
+      addonsFixture({
+        'github-cli': {
+          state: download.state === 'installed' && selected === 'download' ? 'installed' : 'available',
+          selected,
+          providers: [
+            addonProvider({
+              id: 'system',
+              title: '这台设备的 gh',
+              state: 'available',
+              source: 'system',
+              version: '2.90.0',
+            }),
+            addonProvider(download),
+          ],
+        },
+      })
+    const stages = {
+      installing: githubCli(
+        {
+          id: 'download',
+          title: '下载的 gh',
+          state: 'installing',
+          version: '2.102.0',
+          progress: { receivedBytes: 6 * 1024 * 1024, totalBytes: 15 * 1024 * 1024 },
+        },
+        'system',
+      ),
+      installed: githubCli(
+        {
+          id: 'download',
+          title: '下载的 gh',
+          state: 'installed',
+          source: 'downloaded',
+          version: '2.102.0',
+          resources: { installedBytes: 40 * 1024 * 1024, notes: [] },
+          removable: true,
+        },
+        'system',
+      ),
+      chosen: githubCli(
+        {
+          id: 'download',
+          title: '下载的 gh',
+          state: 'installed',
+          source: 'downloaded',
+          version: '2.102.0',
+          resources: { installedBytes: 40 * 1024 * 1024, notes: [] },
+          removable: true,
+        },
+        'download',
+      ),
+    }
+    let addons = productSnapshot.addons
+    const { page, errors } = await open('/settings/addons/github-cli', {
+      before: async (target) => {
+        await target.route('**/api/snapshot', (request) => request.fulfill({ json: { ...productSnapshot, addons } }))
+        await target.route('**/api/addons/**', (request) => {
+          const method = request.request().method()
+          const path = new URL(request.request().url()).pathname
+          calls.push({ method, path, body: method === 'PUT' ? request.request().postDataJSON() : undefined })
+          addons = method === 'PUT' ? stages.chosen : stages.installing
+          return request.fulfill({ json: addons.find((addon) => addon.id === 'github-cli') })
+        })
+      },
+    })
+    try {
+      const download = page.getByRole('region', { name: '下载的 gh' })
+      await download.getByRole('button', { name: '安装' }).click()
+      await expect(download).toContainText('正在下载 6 MB / 15 MB')
+      await expect(download.getByRole('progressbar', { name: '下载的 gh下载进度' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'GitHub CLI', level: 2 }).locator('..')).toContainText('可用')
+
+      // The next snapshot after the download finished.
+      addons = stages.installed
+      await page.reload()
+      await expect(download).toContainText('已安装')
+      await expect(download).toContainText('占用空间')
+      await expect(download).toContainText('40 MB')
+      await download.getByRole('button', { name: '使用这一项' }).click()
+      await expect(download).toContainText('正在使用')
+      await expect(download.getByRole('button', { name: '删除' })).toBeVisible()
+      expect(calls).toEqual([
+        { method: 'POST', path: '/api/addons/github-cli/providers/download/install', body: undefined },
+        { method: 'PUT', path: '/api/addons/github-cli/selection', body: { provider: 'download' } },
+      ])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('shows why an install failed and retries it', async () => {
+    const failed = addonsFixture({
+      browser: {
+        state: 'failed',
+        providers: [
+          addonProvider({
+            id: 'download',
+            title: '下载的 Chromium',
+            state: 'failed',
+            error: '下载失败（HTTP 503）。',
+            resources: { downloadBytes: 110 * 1024 * 1024, notes: [] },
+          }),
+        ],
+      },
+    })
+    const calls: string[] = []
+    const { page, errors } = await open('/settings/verification', {
+      before: async (target) => {
+        await target.route('**/api/snapshot', (request) =>
+          request.fulfill({ json: { ...productSnapshot, addons: failed } }),
+        )
+        await target.route('**/api/addons/**', (request) => {
+          calls.push(new URL(request.request().url()).pathname)
+          return request.fulfill({ json: failed.find((addon) => addon.id === 'browser') })
+        })
+      },
+    })
+    try {
+      await expect(page).toHaveURL(/\/settings\/addons\/browser$/u)
+      await expect(page.getByRole('heading', { name: '后台浏览器', level: 2 })).toBeVisible()
+      const download = page.getByRole('region', { name: '下载的 Chromium' })
+      await expect(download.getByRole('alert')).toHaveText('下载失败（HTTP 503）。')
+      await expect(download).toContainText('约 110 MB')
+      await download.getByRole('button', { name: '重试' }).click()
+      await expect.poll(() => calls).toEqual(['/api/addons/browser/providers/download/install'])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('keeps the semantic search switch on the retrieval add-on and opens it from the old address', async () => {
+    const modes: unknown[] = []
+    const installed = addonsFixture({
+      retrieval: {
+        state: 'installed',
+        selected: 'bge-small-zh',
+        providers: [
+          addonProvider({
+            id: 'bge-small-zh',
+            title: '内置 bge-small-zh',
+            state: 'installed',
+            source: 'downloaded',
+            version: 'bge-small-zh-v1.5',
+            resources: { installedBytes: 52 * 1024 * 1024, notes: [] },
+            removable: true,
+          }),
+        ],
+      },
+    })
+    let mode = 'keyword'
+    const { page, errors } = await open('/settings/retrieval', {
+      before: async (target) => {
+        await target.route('**/api/snapshot', (request) =>
+          request.fulfill({ json: { ...productSnapshot, addons: installed } }),
+        )
+        await target.route('**/api/settings/retrieval', (request) => {
+          if (request.request().method() === 'PUT') {
+            modes.push(request.request().postDataJSON())
+            mode = 'builtin'
+          }
+          return request.fulfill({
+            json: { mode, vectors: { documents: 12, embedded: 12, state: mode === 'builtin' ? 'ready' : 'idle' } },
+          })
+        })
+      },
+    })
+    try {
+      await expect(page).toHaveURL(/\/settings\/addons\/retrieval$/u)
+      const settings = page.getByRole('region', { name: '设置', exact: true })
+      const toggle = settings.getByRole('switch', { name: '启用语义检索' })
+      await expect(toggle).toBeEnabled()
+      await expect(page.getByRole('region', { name: '内置 bge-small-zh' })).toContainText('52 MB')
+      await toggle.click()
+      await expect(settings).toContainText('已就绪，共 12 条')
+      expect(modes).toEqual([{ mode: 'builtin' }])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('keeps the semantic search switch off until the model is installed', async () => {
+    const { page, errors } = await open('/settings/addons/retrieval', {
+      before: async (target) => {
+        await target.route('**/api/settings/retrieval', (request) =>
+          request.fulfill({ json: { mode: 'keyword', vectors: { documents: 0, embedded: 0, state: 'idle' } } }),
+        )
+      },
+    })
+    try {
+      const settings = page.getByRole('region', { name: '设置', exact: true })
+      await expect(settings.getByRole('switch', { name: '启用语义检索' })).toBeDisabled()
+      await expect(settings).toContainText('安装后可以启用')
+      const provider = page.getByRole('region', { name: '内置 bge-small-zh' })
+      await expect(provider).toContainText('约 48 MB')
+      // A single provider is not a choice.
+      await expect(provider.getByRole('button', { name: '使用这一项' })).toHaveCount(0)
+      await expect(provider).not.toContainText('正在使用')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('compares the speech recognition providers and sets up the cloud one', async () => {
+    const requests: unknown[] = []
+    const providers = [{ provider: 'example-relay', displayName: '示例中转' }]
+    let cloud: unknown = null
+    const { page, errors } = await open('/settings/addons/speech', {
+      before: async (target) => {
+        await target.route('**/api/settings/speech', (request) => {
+          if (request.request().method() === 'PUT') {
+            const body: unknown = request.request().postDataJSON()
+            requests.push(body)
+            cloud = typeof body === 'object' && body !== null ? (Reflect.get(body, 'cloud') as unknown) : null
+          }
+          return request.fulfill({ json: { cloud, providers } })
+        })
+      },
+    })
+    try {
+      await expect(page.getByRole('heading', { name: '语音识别', level: 2 })).toBeVisible()
+      const paraformer = page.getByRole('region', { name: '本地 Paraformer' })
+      await expect(paraformer).toContainText('约 103 MB')
+      await expect(paraformer).toContainText('约 350 MB')
+      await expect(paraformer).toContainText('中文、识别更快')
+      await expect(page.getByRole('region', { name: '本地 SenseVoice' })).toContainText('中文、英语、日语、韩语、粤语')
+      await expect(page.getByRole('region', { name: '云端', exact: true })).toContainText('待配置')
+      // Every provider needs media processing, so it is said once for the capability.
+      await expect(page.getByText('媒体处理（未安装）')).toHaveCount(1)
+      await expect(paraformer).not.toContainText('依赖')
+
+      const settings = page.getByRole('region', { name: '云端设置' })
+      await settings.getByRole('combobox', { name: '云端语音识别的供应商' }).click()
+      await page.getByRole('option', { name: '示例中转' }).click()
+      // Nothing is saved until a model is named.
+      expect(requests).toEqual([])
+      const model = settings.getByRole('textbox', { name: '云端语音识别的模型' })
+      await model.fill('whisper-1')
+      await model.press('Enter')
+      await expect.poll(() => requests).toEqual([{ cloud: { provider: 'example-relay', model: 'whisper-1' } }])
+      await settings.getByRole('combobox', { name: '云端语音识别的语言' }).click()
+      await page.getByRole('option', { name: '日语' }).click()
+      await expect
+        .poll(() => requests.at(-1))
+        .toEqual({ cloud: { provider: 'example-relay', model: 'whisper-1', language: 'ja' } })
+      await settings.getByRole('button', { name: '清除' }).click()
+      await expect.poll(() => requests.at(-1)).toEqual({ cloud: null })
+      await expect(model).toHaveValue('')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('says where to add a provider when none can transcribe', async () => {
+    const { page, errors } = await open('/settings/addons/speech')
+    try {
+      const settings = page.getByRole('region', { name: '云端设置' })
+      await expect(settings).toContainText('在「设置 → 模型」添加 OpenAI 兼容的供应商后，可以在这里选择')
+      await expect(settings.getByRole('combobox', { name: '云端语音识别的供应商' })).toHaveCount(0)
+      await expect(settings.getByRole('textbox', { name: '云端语音识别的模型' })).toBeDisabled()
+      await expect(settings.getByRole('button', { name: '清除' })).toHaveCount(0)
       expect(errors).toEqual([])
     } finally {
       await page.close()
@@ -1458,6 +1773,62 @@ test.describe('settings space', () => {
     })
   }
 
+  test('lets an administrator allow a third-party plugin to submit images', async () => {
+    const packageId = 'dsp_fixtureimages'
+    const catalog = (allowed: boolean) => {
+      const base = dshPluginCatalog(packageId, '@example/dsh-fixture-charts', false, [
+        {
+          id: 'dse_fixtureimages',
+          entryKey: 'main',
+          scope: 'host',
+          diagnostic: allowed
+            ? { status: 'active', phase: 'apply' }
+            : {
+                status: 'pending',
+                phase: 'dependency',
+                message: '需要 attachments 服务，只对官方插件开放',
+                waitingFor: ['attachments'],
+                restrictedServices: ['attachments'],
+              },
+        },
+      ])
+      return { plugins: base.plugins.map((plugin) => ({ ...plugin, imageSubmission: allowed })) }
+    }
+    let allowed = false
+    const requests: unknown[] = []
+    const { page, errors } = await open(`/settings/dsh?entry=${encodeURIComponent(`plugin:${packageId}`)}`, {
+      before: async (target) => {
+        await target.route('**/api/dsh/plugins', (request) => request.fulfill({ json: catalog(allowed) }))
+        await target.route(`**/api/dsh/plugin-installs/${packageId}/image-submission`, (request) => {
+          const body: unknown = request.request().postDataJSON()
+          requests.push({ method: request.request().method(), body })
+          allowed = typeof body === 'object' && body !== null && 'allowed' in body && body.allowed === true
+          return request.fulfill({ json: { allowed } })
+        })
+      },
+    })
+    try {
+      await expect(page.getByRole('heading', { name: '@example/dsh-fixture-charts' })).toBeVisible()
+      await expect(
+        page.getByText(
+          '需要 attachments 服务，只对官方插件开放。打开下方的「允许提交图片」后，这个插件也可以提交图片。',
+          { exact: true },
+        ),
+      ).toBeVisible()
+      const allow = page.getByRole('switch', { name: '允许提交图片' })
+      await expect(allow).not.toBeChecked()
+      await page.screenshot({ path: '.local/screenshots-addons/dsh-image-submission-off.png', fullPage: true })
+      await allow.click()
+      await expect(allow).toBeChecked()
+      expect(requests).toEqual([{ method: 'PUT', body: { allowed: true } }])
+      await expect(page.getByText('本机已启用', { exact: true })).toBeVisible()
+      await page.screenshot({ path: '.local/screenshots-addons/dsh-image-submission-on.png', fullPage: true })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('clears sent feedback on account changes and discards a late response from the previous account', async () => {
     let account = 'alpha'
     let hold = false
@@ -1525,6 +1896,7 @@ test.describe('settings space', () => {
       await page.getByRole('button', { name: '查看最近一次发送的内容', exact: true }).click()
       await expect(page.getByRole('dialog', { name: '最近一次发送的内容' })).toContainText('alpha 的虚构反馈')
       account = 'beta'
+      // The page reads the community account again when the window regains focus.
       await page.evaluate(() => window.dispatchEvent(new Event('focus')))
       await expect(page.getByText('账号乙', { exact: true })).toBeVisible()
       await expect(page.getByRole('dialog', { name: '最近一次发送的内容' })).toBeHidden()

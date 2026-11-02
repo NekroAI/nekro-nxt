@@ -41,6 +41,7 @@ import { bindLogOwner, withLogOwner } from './logs/bridge.js'
 import { extensionLogger } from './extension-logger.js'
 import { NXT_HOST_SERVICE_NAME } from './extension-host-service.js'
 import { withToolImages, type ToolImageResolver } from './extension-tool-images.js'
+import { bindExtensionTool, type ToolProgressSink } from './extension-tool-context.js'
 import type { SessionRegistry } from './session-registry.js'
 
 const PERSISTENT_EXTENSION_HOST_SERVICES = new Set(['tools', NXT_HOST_SERVICE_NAME])
@@ -55,11 +56,19 @@ const persistentExtensionContext = (
   context: Context,
   nxt: NxtHostService | undefined,
   config: JsonValue,
-  images: ToolImageResolver | undefined,
+  tools: {
+    readonly sdk: number
+    readonly images: ToolImageResolver | undefined
+    readonly progress: ToolProgressSink | undefined
+  },
 ): PersistentExtensionContext => ({
   tools: {
-    register: (tool) =>
-      context.tools.register(parseDshToolDefinition(images === undefined ? tool : withToolImages(tool, images))),
+    register: (tool) => {
+      const bound = bindExtensionTool(tool, { sdk: tools.sdk, progress: tools.progress })
+      return context.tools.register(
+        parseDshToolDefinition(tools.images === undefined ? bound : withToolImages(bound, tools.images)),
+      )
+    },
   },
   ...(nxt === undefined ? {} : { nxt }),
   config: () => config,
@@ -84,6 +93,13 @@ export type PersistentToolImagesFactory = (input: {
   readonly revision: Revision
   readonly sessionId: string
 }) => ToolImageResolver
+
+/** Shows the progress an extension Tool reports for one call of a Session on the channel timeline. */
+export type PersistentToolProgress = (
+  sessionId: string,
+  callId: string,
+  update: Parameters<ToolProgressSink>[1],
+) => void
 
 /** Builds the host instance's `nxt`, handed to the Host factory once per installation. */
 export type PersistentHostNxtFactory = (input: {
@@ -189,8 +205,20 @@ const unavailableHostNxt = (): NxtHostLayerService => {
     storage: { get: unavailable, set: unavailable, delete: unavailable, list: unavailable },
     render: { svg: unavailable },
     parse: { html: unavailable, feed: unavailable },
-    assets: { list: unavailable, get: unavailable, release: unavailable },
+    assets: { list: unavailable, get: unavailable, release: unavailable, read: unavailable, stat: unavailable },
     image: { info: unavailable },
+    files: {
+      write: unavailable,
+      read: unavailable,
+      stat: unavailable,
+      delete: unavailable,
+      fromAsset: unavailable,
+      toAsset: unavailable,
+      cache: { get: unavailable, put: unavailable, delete: unavailable },
+    },
+    media: { probe: unavailable, frames: unavailable, audio: unavailable, convert: unavailable },
+    commands: { run: unavailable, profiles: unavailable },
+    speech: { transcribe: unavailable },
     index: { upsert: unavailable, delete: unavailable, query: unavailable, count: unavailable },
     models: { list: unavailable, complete: unavailable },
   }
@@ -203,6 +231,7 @@ const unavailableHostNxt = (): NxtHostLayerService => {
 export class PersistentExtensionMounts {
   readonly #sessions: SessionRegistry<unknown>
   readonly #toolImages: PersistentToolImagesFactory | undefined
+  readonly #toolProgress: PersistentToolProgress | undefined
   readonly #instances = new Map<Revision['extensionId'], Instance>()
   /** Extensions whose factory is running; a second load for the same Extension is rejected before it starts. */
   readonly #loading = new Set<Revision['extensionId']>()
@@ -233,6 +262,7 @@ export class PersistentExtensionMounts {
       readonly mcp?: PersistentMcpMount
       readonly adapters?: PersistentAdapterPort
       readonly toolImages?: PersistentToolImagesFactory
+      readonly toolProgress?: PersistentToolProgress
       /** Storage a `harness.migrateData` handler rewrites during a version switch. */
       readonly migrationStorage?: (revision: Revision) => NxtDataMigration['storage']
     } = {},
@@ -242,6 +272,7 @@ export class PersistentExtensionMounts {
     this.#logs = options.logs
     this.#logName = options.logName
     this.#toolImages = options.toolImages
+    this.#toolProgress = options.toolProgress
     this.#nxt = options.nxt
     this.#hostNxt = options.hostNxt
     this.#mcp = options.mcp
@@ -765,7 +796,12 @@ export class PersistentExtensionMounts {
                 })
               : undefined
           const images = this.#toolImages?.({ revision: instance.revision, sessionId })
-          const view = persistentExtensionContext(context, nxt, attachment.config, images)
+          const progress = this.#toolProgress
+          const view = persistentExtensionContext(context, nxt, attachment.config, {
+            sdk: instance.sdk,
+            images,
+            progress: progress === undefined ? undefined : (callId, update) => progress(sessionId, callId, update),
+          })
           const run = () => apply?.({ ...view, logger: extensionLogger(this.#logs, source, scope, instance.sdk) })
           if (this.#logs)
             await withLogOwner(

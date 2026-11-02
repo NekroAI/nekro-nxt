@@ -11,6 +11,7 @@ import type {
   ChannelRuntimePerformanceSample,
   ChannelRuntimePhase,
   ChannelRuntimeProjection,
+  ChannelRuntimeToolProgress,
   ChannelRuntimeUsage,
   EpisodeId,
 } from '@nekro-nxt/contracts'
@@ -49,6 +50,7 @@ const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   edit_file: '编辑文件',
   grep: '搜索文件',
   glob: '查找文件',
+  asset_save_to_workspace: '存入工作区',
 }
 
 export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'
@@ -165,6 +167,8 @@ export interface ChannelRuntimeProjectionInput {
   readonly newSessionCompactionStartedAt?: number
   /** Set while the channel's conversation runs on a fallback model. */
   readonly modelFallback?: ChannelRuntimeProjection['modelFallback']
+  /** Latest progress of running tool calls, by call id. */
+  readonly toolProgress?: ReadonlyMap<string, ChannelRuntimeToolProgress>
 }
 
 type ProjectedTool = {
@@ -550,7 +554,15 @@ const toolsOf = (step: ProjectedStep, parentCallId: string | undefined): Map<str
   return parent.children
 }
 
-const toolView = (tool: ProjectedTool) => ({
+const progressOf = (
+  tool: ProjectedTool,
+  progress: ReadonlyMap<string, ChannelRuntimeToolProgress> | undefined,
+): { readonly progress?: ChannelRuntimeToolProgress } => {
+  const latest = tool.state === 'running' ? progress?.get(tool.callId) : undefined
+  return latest === undefined ? {} : { progress: latest }
+}
+
+const toolView = (tool: ProjectedTool, progress?: ReadonlyMap<string, ChannelRuntimeToolProgress>) => ({
   callId: tool.callId,
   name: tool.name,
   displayName: tool.displayName,
@@ -560,6 +572,7 @@ const toolView = (tool: ProjectedTool) => ({
   ...(tool.wroteToChannel === undefined ? {} : { wroteToChannel: tool.wroteToChannel }),
   ...(tool.deliveryState === undefined ? {} : { deliveryState: tool.deliveryState }),
   ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+  ...progressOf(tool, progress),
 })
 
 export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): ChannelRuntimeProjection => {
@@ -726,9 +739,11 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
           return {
             step: step.step,
             tools: [...step.tools.values()].map((tool) => ({
-              ...toolView(tool),
+              ...toolView(tool, input.toolProgress),
               ...(tool.code === undefined ? {} : { code: tool.code }),
-              ...(tool.children === undefined ? {} : { children: [...tool.children.values()].map(toolView) }),
+              ...(tool.children === undefined
+                ? {}
+                : { children: [...tool.children.values()].map((child) => toolView(child, input.toolProgress)) }),
             })),
             ...(step.text || step.reasoning
               ? {

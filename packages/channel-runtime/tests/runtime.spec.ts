@@ -3375,7 +3375,12 @@ describe('ChannelRuntime extension inbound hooks and scheduled jobs', () => {
     const { gate } = hookGate((value) =>
       value === '安静'
         ? { trigger: 'suppress', hidden: false }
-        : { trigger: 'default', hidden: false, annotation: '情绪：积极' },
+        : {
+            trigger: 'default',
+            hidden: false,
+            annotation: '情绪：积极',
+            hostAnnotations: [{ label: '语音转写', text: '示例转写' }],
+          },
     )
     const harness = await setup(true, undefined, undefined, undefined, { inboundHooks: gate })
     await harness.runtime.acceptChannelInbound(
@@ -3387,7 +3392,11 @@ describe('ChannelRuntime extension inbound hooks and scheduled jobs', () => {
     )
     const call = harness.admissionCalls[0]
     expect(call?.replyRequired).toBe(true)
-    expect(call?.annotations?.get(loud.channelEventId)).toBe('情绪：积极')
+    // NekroNXT's own notes come first, each under its own label; extensions' under 扩展标注.
+    expect(call?.annotations?.get(loud.channelEventId)).toEqual([
+      { label: '语音转写', text: '示例转写' },
+      { label: '扩展标注', text: '情绪：积极' },
+    ])
   })
 
   it('wakes the agent for a due job without a reply obligation and fires each occurrence once', async () => {

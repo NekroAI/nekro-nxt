@@ -123,9 +123,9 @@ describe('built-in retrieval model', () => {
       arch: 'x64',
     })
     await runtime.start()
-    expect(runtime.status().builtin).toMatchObject({ supported: false, install: { state: 'not-installed' } })
+    expect(runtime.installation()).toMatchObject({ supported: false, install: { state: 'not-installed' } })
     expect(() => runtime.startDownload()).toThrow('还不能运行内置语义模型')
-    expect(() => runtime.setMode('builtin')).toThrow('先下载内置语义模型')
+    expect(() => runtime.setMode('builtin')).toThrow('先安装语义检索')
     expect(await runtime.queryVector('开心')).toBeUndefined()
   })
 
@@ -142,13 +142,13 @@ describe('built-in retrieval model', () => {
     runtime.startDownload()
     await new Promise<void>((resolve) => {
       const off = runtime.subscribe(() => {
-        if (runtime.status().builtin.install.state === 'failed') {
+        if (runtime.installation().install.state === 'failed') {
           off()
           resolve()
         }
       })
     })
-    const install = runtime.status().builtin.install
+    const install = runtime.installation().install
     expect(install.state).toBe('failed')
     expect(install.state === 'failed' ? install.error : '').toContain('下载失败')
     expect(install.state === 'failed' ? install.error : '').toContain('校验不通过')

@@ -54,6 +54,7 @@ declare const styles: {
   readonly head: string
   readonly hiddenFromAgent: string
   readonly hookNote: string
+  readonly hostNoteText: string
   readonly iconToggle: string
   readonly input: string
   readonly inputText: string
@@ -129,6 +130,7 @@ declare const styles: {
   readonly stepChevron: string
   readonly stepFail: string
   readonly stepOk: string
+  readonly stepProgress: string
   readonly stepRun: string
   readonly stepTime: string
   readonly stepWarn: string

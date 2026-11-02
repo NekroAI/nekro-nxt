@@ -31,7 +31,7 @@ import { readModelFallbackSettings, writeModelFallbackSettings } from './model-f
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerSubConversationRoutes } from './host-routes-sub-conversations.js'
 import { registerLinkedAccountRoutes } from './host-routes-linked-accounts.js'
-import { registerRuntimeRoutes } from './host-routes-runtimes.js'
+import { registerAddonRoutes } from './host-routes-addons.js'
 import { registerCredentialRoutes } from './host-routes-credentials.js'
 import { registerGovernanceRoutes } from './host-routes-governance.js'
 import { registerScheduledTaskRoutes } from './host-routes-scheduled-tasks.js'
@@ -494,66 +494,6 @@ export const createNekroHostApi = (
       }
     },
   })
-  registerRoute({
-    kind: 'exact',
-    path: '/api/settings/retrieval/model/download',
-    handler: (req, res) => {
-      if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
-        return
-      }
-      try {
-        writeContractJson(res, 200, HostApiContracts.downloadRetrievalModel, runtime.retrieval.startDownload())
-      } catch (error) {
-        writeError(res, 400, 'retrieval-model-unavailable', error instanceof Error ? error.message : String(error))
-      }
-    },
-  })
-  registerRoute({
-    kind: 'exact',
-    path: '/api/settings/retrieval/model',
-    handler: async (req, res) => {
-      if (req.method !== 'DELETE') {
-        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
-        return
-      }
-      try {
-        writeContractJson(res, 200, HostApiContracts.removeRetrievalModel, await runtime.retrieval.remove())
-      } catch (error) {
-        writeError(res, 400, 'retrieval-model-busy', error instanceof Error ? error.message : String(error))
-      }
-    },
-  })
-  registerRoute({
-    kind: 'exact',
-    path: '/api/runtimes/code-run-node/download',
-    handler: (req, res) => {
-      if (req.method !== 'POST') {
-        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
-        return
-      }
-      try {
-        writeContractJson(res, 200, HostApiContracts.downloadCodeRunNode, runtime.codeRunNode.startDownload())
-      } catch (error) {
-        writeError(res, 400, 'code-run-node-unavailable', error instanceof Error ? error.message : String(error))
-      }
-    },
-  })
-  registerRoute({
-    kind: 'exact',
-    path: '/api/runtimes/code-run-node',
-    handler: async (req, res) => {
-      if (req.method !== 'DELETE') {
-        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
-        return
-      }
-      try {
-        writeContractJson(res, 200, HostApiContracts.removeCodeRunNode, await runtime.codeRunNode.removeDownloaded())
-      } catch (error) {
-        writeError(res, 400, 'code-run-node-busy', error instanceof Error ? error.message : String(error))
-      }
-    },
-  })
   let snapshotSequence = 0
   let settledSnapshot = 0
   let needsSnapshotProbe = true
@@ -639,9 +579,6 @@ export const createNekroHostApi = (
     broadcast({ event: 'snapshot-changed', data: { changed: true } })
   })
   const unsubscribeRuntimeStatus = runtime.host.subscribeRuntimeStatus(() => {
-    broadcast({ event: 'snapshot-changed', data: { changed: true } })
-  })
-  const unsubscribeCodeRunNode = runtime.codeRunNode.subscribe(() => {
     broadcast({ event: 'snapshot-changed', data: { changed: true } })
   })
   const unsubscribeChannelRuntime = runtime.host.subscribeChannelRuntime((channelId) => {
@@ -788,17 +725,7 @@ export const createNekroHostApi = (
       extensionImports,
     }),
   )
-  disposers.push(
-    registerRuntimeRoutes({
-      runtime,
-      registerRoute,
-      broadcast,
-      broadcastExtensionsChanged,
-      readCursor: () => hub.cursor,
-      projections,
-      extensionImports,
-    }),
-  )
+  disposers.push(registerAddonRoutes({ runtime, registerRoute, broadcast }))
   disposers.push(
     registerGovernanceRoutes({
       runtime,
@@ -862,7 +789,6 @@ export const createNekroHostApi = (
       pendingFacts.clear()
       unsubscribeConnectionChanges()
       unsubscribeRuntimeStatus()
-      unsubscribeCodeRunNode()
       unsubscribeChannelRuntime()
       unsubscribeDshSettings()
       unsubscribeDshCredentials()

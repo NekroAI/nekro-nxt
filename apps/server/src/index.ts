@@ -22,6 +22,8 @@ import {
   runDshSettingsMaintenance,
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
+import { assetSaveToWorkspaceTool } from './asset-save-tool.js'
+import { channelImageSubmission, trackToolCallSessions } from './dsh-plugin-images.js'
 import { mountCredentialRedaction } from './credential-redaction.js'
 import { mountSandboxHints } from './command-sandbox-hints.js'
 import { preloadCredentialDocument } from './logs/credentials.js'
@@ -37,16 +39,17 @@ import {
 } from './feedback-tools.js'
 import type { CommunityFeedbackService } from './community-feedback.js'
 import { WorkspaceFileSystem } from './workspace-file-system.js'
+import type { ActiveAddonProgram } from './addons.js'
 import {
   commandCredentialEnvironment,
   commandCredentialPrompt,
   createEnvForwardingExecutor,
+  programSearchPath,
   type CommandCredentialSources,
 } from './command-account-env.js'
 import {
   createConfinedSandboxProvider,
-  hostCommandConfinement,
-  installRootOf,
+  dataRootCommandConfinement,
   type CommandConfinement,
 } from './command-confinement.js'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -533,6 +536,8 @@ export interface DshHostRuntimeOptions {
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
   /** Where commands get the credentials open to an agent and the linked accounts it is granted. */
   readonly commandAccounts?: CommandCredentialSources
+  /** Programs of the add-ons' current providers, added to every agent's command `PATH` (附加功能 F4). */
+  readonly programs?: () => readonly ActiveAddonProgram[]
   readonly configureLlm?: (context: Context) => Promise<void> | void
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
@@ -3171,6 +3176,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #commandAccounts: CommandCredentialSources | undefined
   readonly #codeRunFallbackDirectory: string
   readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
+  readonly #programs: () => readonly ActiveAddonProgram[]
   #codeRunMount: Promise<boolean> | undefined
   readonly #shutdownInboxRoot: string
   readonly #incompatibleAgents = new Set<AgentId>()
@@ -3244,18 +3250,11 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#codeRunNode = options.codeRunNode
     this.#commandAccounts = options.commandAccounts
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
-    this.#hostCommandConfinement = hostCommandConfinement({
-      dataRoot: path.dirname(options.sessionDatabasePath),
-      workspaceRoot: options.developmentWorkspaceRoot,
-      installRoot: installRootOf(
-        createRequire(import.meta.url).resolve('@deepseek-ai/dsh-ptc-runtime-node/package.json'),
-      ),
-      // Downloaded Node for `run_code`, and the Node or app bundle running NXT.
-      runtimeRoots: [
-        path.join(path.dirname(options.sessionDatabasePath), 'runtimes'),
-        path.dirname(path.dirname(process.execPath)),
-      ],
-    })
+    this.#hostCommandConfinement = dataRootCommandConfinement(
+      path.dirname(options.sessionDatabasePath),
+      options.developmentWorkspaceRoot,
+    )
+    this.#programs = options.programs ?? (() => [])
     this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
     this.#modelSettings = new HostModelSettings(
       context,
@@ -3354,6 +3353,8 @@ export class DshHostRuntime implements AgentSessionDriver {
               )
             },
             ...(extensionHost.adapters === undefined ? {} : { adapters: extensionHost.adapters }),
+            toolProgress: (sessionId, callId, update) =>
+              this.#runtimeProjection.reportToolProgress(sessionId, callId, update),
             toolImages: ({ revision, sessionId }) => ({
               plan: async (images, agent) => {
                 const record = this.#sessions.require(sessionId)
@@ -3365,6 +3366,24 @@ export class DshHostRuntime implements AgentSessionDriver {
                   agent === undefined
                     ? new Map<string, EffectiveImageDetail>()
                     : collectVisibleImageResidency(agent, this.#assets)
+                const described = extensionHost.describeRevision(revision)
+                const highDetail = described.capabilities?.toolImages?.highDetail === true
+                if (!highDetail && images.some(({ detail }) => detail === 'high')) {
+                  extensionHost.activationBackends
+                    .logger?.({
+                      mode: 'activation',
+                      agentId: record.revision.agentId,
+                      ownerKey: revision.extensionId,
+                      displayName: described.displayName,
+                      channelId: record.channelId,
+                      capabilities: () => described.capabilities,
+                      config: () => null,
+                      declaredSecrets: () => ({ config: [], hostConfig: [] }),
+                    })
+                    .warn(
+                      '工具结果里的图片写了 detail: high，但没有声明 permissions.agent.toolImages.highDetail，已按低细节展示。',
+                    )
+                }
                 const plans: ToolImagePlan[] = []
                 for (const image of images) {
                   try {
@@ -3377,9 +3396,16 @@ export class DshHostRuntime implements AgentSessionDriver {
                       plans.push({ state: 'visible' })
                       continue
                     }
-                    // Low detail: enough to tell what a picture shows, at a fraction of the tokens.
-                    plans.push({ state: 'shown', attachment: await attachments.refForAsset(asset, undefined, 'low') })
-                    residency.set(asset.contentDigest, 'low')
+                    // Low detail by default: enough to tell what a picture shows, at a fraction of the tokens.
+                    const detail = image.detail === 'high' && highDetail ? 'high' : 'low'
+                    plans.push({
+                      state: 'shown',
+                      attachment:
+                        detail === 'high'
+                          ? await attachments.refForHighDetail(asset)
+                          : await attachments.refForAsset(asset, undefined, 'low'),
+                    })
+                    residency.set(asset.contentDigest, detail === 'high' ? 'auto' : 'low')
                   } catch {
                     plans.push({ state: 'text', reason: '图片暂时读不到' })
                   }
@@ -3441,6 +3467,8 @@ export class DshHostRuntime implements AgentSessionDriver {
             },
           },
     )
+    // Third-party plugins allowed to submit images put them in the channel of the tool call that runs.
+    trackToolCallSessions(context)
     this.#dshPluginLifecycle =
       options.dshPlugins === undefined
         ? undefined
@@ -3450,6 +3478,14 @@ export class DshHostRuntime implements AgentSessionDriver {
             rootContext: context,
             serviceAccess: dshPluginServiceAccess,
             isolatedServices: DSH_PLUGIN_ISOLATED_SERVICE_KEYS,
+            imageSubmission: {
+              attachments: channelImageSubmission({
+                store: () => requireNekroAssetAttachmentStore(this.#context.attachments),
+                channelOf: (sessionId) => this.#sessions.get(sessionId)?.channelId,
+                assets: this.#assets,
+                assetService: this.#assetService,
+              }),
+            },
             resolveModule: options.dshPlugins.resolveModule,
             listAgentSessions: (agentId) =>
               [...this.#sessions.handles()]
@@ -3782,6 +3818,12 @@ export class DshHostRuntime implements AgentSessionDriver {
     return this.#withSubscriptions(await this.#modelSettings.getLlmProviderSettings())
   }
 
+  /** A provider's saved address and key, for requests outside model calls such as speech transcription. */
+  llmProviderConnection(provider: string): ReturnType<HostModelSettings['providerConnection']> {
+    this.#assertActive()
+    return this.#modelSettings.providerConnection(provider)
+  }
+
   /** Every provider list the page receives says which routes sign in, or a save would hide the accounts. */
   async #withSubscriptions(settings: LlmProviderSettingsView): Promise<LlmProviderSettingsView> {
     const subscriptions = this.#subscriptions
@@ -3915,6 +3957,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#assertActive()
     if (!this.#dshPluginLifecycle) return Promise.resolve()
     return this.#dshPluginLifecycle.assertSessionIndependent(entryIds, action)
+  }
+
+  /** Whether third-party plugins of this package may submit images; undefined when this Host cannot offer it. */
+  dshPluginImageSubmission(packageName: string): boolean | undefined {
+    return this.#dshPluginLifecycle?.imageSubmissionAllowed(packageName)
+  }
+
+  setDshPluginImageSubmission(packageId: DshPluginPackageId, allowed: boolean): Promise<void> {
+    this.#assertActive()
+    if (!this.#dshPluginLifecycle) return Promise.reject(new Error('DSH 用户插件生命周期未配置。'))
+    return this.#dshPluginLifecycle.setImageSubmission(packageId, allowed)
   }
 
   installedDshPluginServiceView(
@@ -4260,6 +4313,11 @@ export class DshHostRuntime implements AgentSessionDriver {
       agentContext.tools.register(
         assetCreateTool(input.channelId, this.#assets, this.#assetService, { workspace: developmentWorkspace }),
       )
+      if (developmentWorkspace !== undefined) {
+        agentContext.tools.register(
+          assetSaveToWorkspaceTool(input.channelId, this.#assets, this.#assetService, developmentWorkspace),
+        )
+      }
       if (this.#assets.revokeUnusedAgentAsset !== undefined) {
         agentContext.tools.register(assetDeleteTool(input.channelId, this.#assets))
       }
@@ -4378,6 +4436,7 @@ export class DshHostRuntime implements AgentSessionDriver {
             createNxtDynamicFacade(
               () => dynamicNxt,
               () => dynamicHostNxt,
+              (callId, update) => this.#runtimeProjection.reportToolProgress(sessionId, callId, update),
             ),
           )
         }
@@ -4822,8 +4881,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       )
       const note = memberNotes.get(event.id)
       if (note !== undefined) projectedEvents.push({ type: 'text', text: note })
-      const annotation = input.annotations?.get(event.id)
-      if (annotation !== undefined) projectedEvents.push({ type: 'text', text: `[扩展标注] ${annotation}` })
+      for (const annotation of input.annotations?.get(event.id) ?? []) {
+        projectedEvents.push({ type: 'text', text: `[${annotation.label}] ${annotation.text}` })
+      }
     }
     if (input.wakeNote !== undefined) projectedEvents.push({ type: 'text', text: `〔${input.wakeNote}〕` })
     const message = freezeMessage({
@@ -5293,10 +5353,22 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
-  /** The variables that give one agent's commands its credentials. */
+  /** The variables that give one agent's commands its credentials, and the add-ons' programs on `PATH`. */
   #commandEnvironmentOf(revision: AgentRevisionRecord): Record<string, string> {
-    if (this.#commandAccounts === undefined) return {}
-    return commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+    const environment =
+      this.#commandAccounts === undefined
+        ? {}
+        : commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+    const searchPath = programSearchPath(this.#programs(), process.env['PATH'])
+    return searchPath === undefined ? environment : { ...environment, PATH: searchPath }
+  }
+
+  /** The host confinement with the folders of the add-ons' programs readable, wherever they are installed. */
+  #commandConfinementBase(): Omit<CommandConfinement, 'network'> {
+    const programs = this.#programs().map((program) => path.dirname(program.path))
+    return programs.length === 0
+      ? this.#hostCommandConfinement
+      : { ...this.#hostCommandConfinement, readable: [...this.#hostCommandConfinement.readable, ...programs] }
   }
 
   #commandAccountPromptOf(revision: AgentRevisionRecord): string | undefined {
@@ -5307,7 +5379,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */
   #commandConfinementOf(revision: AgentRevisionRecord): CommandConfinement {
     if (revision.capabilities.unrestrictedFileAccess) return { hidden: [], readable: [], network: true }
-    return { ...this.#hostCommandConfinement, network: revision.capabilities.commandNetwork }
+    return { ...this.#commandConfinementBase(), network: revision.capabilities.commandNetwork }
   }
 
   /**
@@ -5324,7 +5396,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         workspaces !== undefined && resolveAgentWorkspace(workspaces, record.revision.agentId) === workspaceRoot,
     )
     return {
-      ...this.#hostCommandConfinement,
+      ...this.#commandConfinementBase(),
       network: related.length > 0 && related.every((record) => this.#commandConfinementOf(record.revision).network),
     }
   }
@@ -5513,6 +5585,11 @@ export class DshHostRuntime implements AgentSessionDriver {
   sessionRuntimeMetrics(dshSessionId: string) {
     this.#assertActive()
     return this.#runtimeProjection.sessionRuntimeMetrics(dshSessionId)
+  }
+
+  /** Latest progress running extension tools of the Session reported, by call id. */
+  toolProgress(dshSessionId: string) {
+    return this.#runtimeProjection.toolProgress(dshSessionId)
   }
 
   /** Idle compaction uses the same unrounded occupancy as the channel inspector. */

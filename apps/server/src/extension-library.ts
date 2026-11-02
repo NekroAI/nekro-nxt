@@ -73,7 +73,7 @@ export interface LibraryAssetAccess {
   grantAssetAccess(grant: {
     readonly assetId: AssetId
     readonly channelId: ChannelId
-    readonly source: 'extension-library'
+    readonly source: 'extension-library' | 'agent-tool'
     readonly grantedAt: number
   }): unknown
 }
@@ -128,6 +128,13 @@ export class ExtensionLibrary {
   ): Promise<NxtLibraryAsset & { readonly existed: boolean }> {
     const prepared = await this.#assetService.prepare({ bytes })
     return this.#registry.keep(owner, prepared.asset, this.#now(), quotaBytes)
+  }
+
+  /** Stores new bytes as an Asset of the channel, as `assets.create` does, e.g. a work file turned into an Asset. */
+  async createInChannel(channelId: ChannelId, bytes: Uint8Array | AsyncIterable<Uint8Array>): Promise<NxtAssetRecord> {
+    const { asset } = await this.#assetService.prepare({ bytes })
+    this.#assets.grantAssetAccess({ assetId: asset.id, channelId, source: 'agent-tool', grantedAt: this.#now() })
+    return { assetId: asset.id, byteSize: asset.byteSize, mediaType: asset.mediaType }
   }
 
   release(owner: string, assetId: string): boolean {

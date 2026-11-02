@@ -4,6 +4,7 @@ import type { ExtensionApprovals } from '../product-model.js'
 import { useProductRuntime, type LocalExtensionSummary, type ProductState } from '../product-runtime.js'
 import { ConfirmDialog, SwitchRow } from '../ui-kit/index.js'
 import { highRiskCapabilities, permissionLines, type PermissionLayer } from './permissions.js'
+import { RequiredAddons } from './required-addons.js'
 import styles from './activation.module.css'
 
 /** Keys of the high-risk capabilities in a host and an agent approval; each must be accepted before confirming. */
@@ -62,7 +63,7 @@ function ApprovalLayer({
         <SwitchRow
           key={risk.key}
           title={risk.label}
-          description={`${risk.detail === undefined ? '' : `${risk.key.startsWith(`${layer}:mcp.`) ? '将运行' : '用途'}：${sentence(risk.detail)}。`}这项能力没有范围限制，打开即表示接受风险。`}
+          description={`${risk.detail === undefined ? '' : `${risk.key.startsWith(`${layer}:mcp.`) || risk.key === `${layer}:commands` ? '将运行' : '用途'}：${sentence(risk.detail)}。`}${risk.scope ?? '这项能力没有范围限制'}，打开即表示接受风险。`}
           checked={accepted.has(risk.key)}
           onCheckedChange={(checked) => {
             const next = new Set(accepted)
@@ -78,7 +79,8 @@ function ApprovalLayer({
 
 /**
  * The body of a permission approval: the host layer (installing on this machine), then the agent layer, followed by
- * one switch per high-risk capability.
+ * one switch per high-risk capability, and the add-ons the capabilities need. `onLeave` closes the approval when the
+ * user goes to an add-on's page from it.
  */
 export function PermissionApprovalList({
   host,
@@ -88,8 +90,10 @@ export function PermissionApprovalList({
   accepted,
   onAcceptedChange,
   fieldTitle,
+  onLeave,
 }: {
   readonly fieldTitle?: (key: string) => string
+  readonly onLeave?: () => void
   readonly host?: ExtensionPermissionRequirement | undefined
   readonly agent?: ExtensionPermissionRequirement | undefined
   readonly hostTitle: string
@@ -102,6 +106,10 @@ export function PermissionApprovalList({
     <>
       {host === undefined ? null : <ApprovalLayer layer="host" title={hostTitle} requirement={host} {...shared} />}
       {agent === undefined ? null : <ApprovalLayer layer="agent" title={agentTitle} requirement={agent} {...shared} />}
+      <RequiredAddons
+        capabilities={[host?.declaration.capabilities, agent?.declaration.capabilities]}
+        onLeave={onLeave}
+      />
     </>
   )
 }
@@ -260,6 +268,10 @@ export function useExtensionActivation(): {
         accepted={acceptedRisks}
         onAcceptedChange={setAcceptedRisks}
         fieldTitle={configFieldTitles(pending.revision)}
+        onLeave={() => {
+          pending.resolve(false)
+          setPending(undefined)
+        }}
       />
     </ConfirmDialog>
   ) : null

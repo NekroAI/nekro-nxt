@@ -8,8 +8,14 @@ import { z } from 'zod'
  * migration hook and administrator-only commands. Level 11 lists the pictures of an inbound message to inbound hooks.
  * Level 12 adds credential placeholders (`secrets.placeholder`) that `http.fetch` fills for the credential's domains.
  * Level 13 adds outbound processing (`harness.onOutbound`, `permissions.agent.outbound`).
+ * Level 14 adds work files (`files`), reading Asset bytes (`assets.read`), high-detail tool images (`toolImages`),
+ * long-running tools (`timeoutSeconds`, `execute(args, { signal, progress })`), media processing (`media`), command
+ * profiles (`commands`) and speech to text (`speech`).
  */
-export const EXTENSION_SDK_LEVEL = 13
+export const EXTENSION_SDK_LEVEL = 14
+
+/** Work files, Asset reads, high-detail tool images, tool time limits, media, commands and speech need this level. */
+export const EXTENSION_FILES_SDK_LEVEL = 14
 
 /** Outbound processing needs this level; packages that declare `permissions.agent.outbound` declare it. */
 export const EXTENSION_OUTBOUND_SDK_LEVEL = 13
@@ -30,6 +36,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 11, version: '0.6.0' },
   { level: 12, version: '0.7.0' },
   { level: 13, version: '0.7.0' },
+  { level: 14, version: '0.8.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
@@ -225,16 +232,91 @@ export type ExtensionAssetLibraryCapability = z.output<typeof ExtensionAssetLibr
 
 /**
  * `write` creates Assets in the current channel; `library` keeps Assets in the extension's own library so they can be
- * used in any channel later.
+ * used in any channel later; `read` reads the bytes of Assets the current channel can see or the library holds.
  */
 export const ExtensionAssetsCapabilitySchema = z
   .object({
     write: z.literal(true).optional(),
     library: ExtensionAssetLibraryCapabilitySchema.optional(),
+    read: z.literal(true).optional(),
   })
   .strict()
-  .refine((value) => value.write !== undefined || value.library !== undefined, 'assets 至少声明 write 或 library。')
+  .refine(
+    (value) => value.write !== undefined || value.library !== undefined || value.read !== undefined,
+    'assets 至少声明 write、library 或 read。',
+  )
 export type ExtensionAssetsCapability = z.output<typeof ExtensionAssetsCapabilitySchema>
+
+export const EXTENSION_FILES_DEFAULT_TEMP_QUOTA_BYTES = 1024 * 1024 * 1024
+export const EXTENSION_FILES_DEFAULT_CACHE_QUOTA_BYTES = 1024 * 1024 * 1024
+export const EXTENSION_FILES_MAX_QUOTA_BYTES = 16 * 1024 * 1024 * 1024
+
+const FilesQuotaSchema = z
+  .number()
+  .int()
+  .min(1024 * 1024)
+  .max(EXTENSION_FILES_MAX_QUOTA_BYTES)
+
+/**
+ * Work files passed between services by `fileId`. Temporary files expire a day after they are written; cache entries
+ * stay until the cache quota is full, then the least recently used go first.
+ */
+export const ExtensionFilesCapabilitySchema = z
+  .object({ tempQuotaBytes: FilesQuotaSchema.optional(), cacheQuotaBytes: FilesQuotaSchema.optional() })
+  .strict()
+export type ExtensionFilesCapability = z.output<typeof ExtensionFilesCapabilitySchema>
+
+/** Tool result pictures with `detail: 'high'` reach the model at up to 2048 px on the long side. */
+export const ExtensionToolImagesCapabilitySchema = z.object({ highDetail: z.literal(true) }).strict()
+export type ExtensionToolImagesCapability = z.output<typeof ExtensionToolImagesCapabilitySchema>
+
+/**
+ * Add-ons (附加功能) whose capability an extension can use. The ids match `AddonIdSchema` in host-api; they are
+ * repeated here so manifests validate without it.
+ */
+export type ExtensionAddonId = 'media' | 'speech'
+
+/**
+ * Command profiles extensions may run (`nxt.commands`, 附加功能 F7), and the add-on that provides each program. A new
+ * program needs a profile on the server and a row here.
+ */
+export const ExtensionCommandProfileIdSchema = z.enum(['ffmpeg', 'ffprobe'], {
+  message: '命令档案只能是 ffmpeg、ffprobe。',
+})
+export type ExtensionCommandProfileId = z.output<typeof ExtensionCommandProfileIdSchema>
+
+export const EXTENSION_COMMAND_PROFILES: Readonly<Record<ExtensionCommandProfileId, ExtensionAddonId>> = {
+  ffmpeg: 'media',
+  ffprobe: 'media',
+}
+
+/** Programs run through their command profiles: confined to the call's own files, without network. */
+export const ExtensionCommandsCapabilitySchema = z
+  .object({
+    profiles: z
+      .array(ExtensionCommandProfileIdSchema)
+      .min(1)
+      .max(ExtensionCommandProfileIdSchema.options.length)
+      .refine((value) => new Set(value).size === value.length, '命令档案不能重复。'),
+  })
+  .strict()
+export type ExtensionCommandsCapability = z.output<typeof ExtensionCommandsCapabilitySchema>
+
+export const EXTENSION_SPEECH_MAX_CALLS_PER_MINUTE = 60
+export const EXTENSION_SPEECH_DEFAULT_CALLS_PER_MINUTE = 10
+
+/** Speech to text with the provider chosen in 设置 → 附加功能, which may be a cloud service. */
+export const ExtensionSpeechCapabilitySchema = z
+  .object({
+    maxCallsPerMinute: z
+      .number()
+      .int()
+      .min(1)
+      .max(EXTENSION_SPEECH_MAX_CALLS_PER_MINUTE)
+      .default(EXTENSION_SPEECH_DEFAULT_CALLS_PER_MINUTE),
+  })
+  .strict()
+export type ExtensionSpeechCapability = z.output<typeof ExtensionSpeechCapabilitySchema>
 
 const IndexNameSchema = z
   .string()
@@ -404,6 +486,12 @@ export const ExtensionCapabilitiesSchema = z
     network: ExtensionNetworkCapabilitySchema.optional(),
     storage: ExtensionStorageCapabilitySchema.optional(),
     assets: ExtensionAssetsCapabilitySchema.optional(),
+    files: ExtensionFilesCapabilitySchema.optional(),
+    toolImages: ExtensionToolImagesCapabilitySchema.optional(),
+    /** `nxt.media`: probe, frames, audio and convert on the media add-on. */
+    media: z.literal(true).optional(),
+    commands: ExtensionCommandsCapabilitySchema.optional(),
+    speech: ExtensionSpeechCapabilitySchema.optional(),
     index: ExtensionIndexCapabilitySchema.optional(),
     /** Host layer only; the agent layer uses `llm`, which runs on the agent's own model. */
     models: ExtensionModelsCapabilitySchema.optional(),
@@ -437,8 +525,19 @@ export const HostLayerCapabilitiesSchema = z
       .object({ quotaBytes: z.number().int().min(1024).max(EXTENSION_STORAGE_MAX_QUOTA_BYTES).optional() })
       .strict()
       .optional(),
-    /** The same library agent attachments use; the host instance lists and imports into it. */
-    assets: z.object({ library: ExtensionAssetLibraryCapabilitySchema }).strict().optional(),
+    /**
+     * The same library agent attachments use; the host instance lists and imports into it. `read` reads the bytes of
+     * library Assets.
+     */
+    assets: z
+      .object({ library: ExtensionAssetLibraryCapabilitySchema.optional(), read: z.literal(true).optional() })
+      .strict()
+      .refine((value) => value.library !== undefined || value.read !== undefined, 'assets 至少声明 library 或 read。')
+      .optional(),
+    files: ExtensionFilesCapabilitySchema.optional(),
+    media: z.literal(true).optional(),
+    commands: ExtensionCommandsCapabilitySchema.optional(),
+    speech: ExtensionSpeechCapabilitySchema.optional(),
     /** The same collections agent attachments declare; pages search and maintain them. */
     index: ExtensionIndexCapabilitySchema.optional(),
     models: ExtensionModelsCapabilitySchema.optional(),
@@ -460,7 +559,18 @@ export const hostLayerAsCapabilities = (host: HostLayerCapabilities | undefined)
                 ...(host.storage.quotaBytes === undefined ? {} : { quotaBytes: host.storage.quotaBytes }),
               },
             }),
-        ...(host.assets === undefined ? {} : { assets: { library: host.assets.library } }),
+        ...(host.assets === undefined
+          ? {}
+          : {
+              assets: {
+                ...(host.assets.library === undefined ? {} : { library: host.assets.library }),
+                ...(host.assets.read === undefined ? {} : { read: host.assets.read }),
+              },
+            }),
+        ...(host.files === undefined ? {} : { files: host.files }),
+        ...(host.media === undefined ? {} : { media: host.media }),
+        ...(host.commands === undefined ? {} : { commands: host.commands }),
+        ...(host.speech === undefined ? {} : { speech: host.speech }),
         ...(host.index === undefined ? {} : { index: host.index }),
         ...(host.models === undefined ? {} : { models: host.models }),
       }
@@ -499,6 +609,19 @@ export const extensionCapabilitiesExpand = (
   if (next.storage?.scopes.some((scope) => !(previous?.storage?.scopes ?? []).includes(scope))) return true
   if (next.assets?.write !== undefined && previous?.assets?.write === undefined) return true
   if (next.assets?.library !== undefined && previous?.assets?.library === undefined) return true
+  if (next.assets?.read !== undefined && previous?.assets?.read === undefined) return true
+  if (next.files !== undefined && previous?.files === undefined) return true
+  if (next.toolImages !== undefined && previous?.toolImages === undefined) return true
+  if (next.media !== undefined && previous?.media === undefined) return true
+  if ((next.commands?.profiles ?? []).some((profile) => !(previous?.commands?.profiles ?? []).includes(profile))) {
+    return true
+  }
+  if (
+    next.speech !== undefined &&
+    (previous?.speech === undefined || next.speech.maxCallsPerMinute > previous.speech.maxCallsPerMinute)
+  ) {
+    return true
+  }
   if (
     next.models !== undefined &&
     (previous?.models === undefined ||
@@ -568,6 +691,25 @@ export interface ExtensionCapabilitySummaryItem {
   readonly risk: ExtensionCapabilityRisk
   readonly label: string
   readonly detail?: string
+  /** For a high-risk capability with limits: what it stays within, shown where the user accepts the risk. */
+  readonly scope?: string
+}
+
+/**
+ * Add-ons the declared capabilities need (附加功能 F13), in a stable order: `media` needs 媒体处理, `speech` needs
+ * 语音识别, and each command profile needs the add-on that provides its program. Pass both layers, host-layer ones
+ * through {@link hostLayerAsCapabilities}.
+ */
+export const requiredExtensionAddons = (
+  ...layers: readonly (ExtensionCapabilities | undefined)[]
+): readonly ExtensionAddonId[] => {
+  const needed = new Set<ExtensionAddonId>()
+  for (const capabilities of layers) {
+    if (capabilities?.media !== undefined) needed.add('media')
+    if (capabilities?.speech !== undefined) needed.add('speech')
+    for (const profile of capabilities?.commands?.profiles ?? []) needed.add(EXTENSION_COMMAND_PROFILES[profile])
+  }
+  return (['media', 'speech'] as const).filter((id) => needed.has(id))
 }
 
 /**
@@ -615,6 +757,49 @@ export const summarizeExtensionCapabilities = (
       risk: 'sensitive',
       label: '把频道里的图片收进扩展资源库，之后可以在其他频道使用',
       detail: `最多 ${formatLibraryQuota(capabilities.assets.library.quotaBytes ?? EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES)}`,
+    })
+  }
+  if (capabilities.assets?.read !== undefined) {
+    items.push(
+      options.layer === 'host'
+        ? { key: 'assets.read', risk: 'normal', label: '读取扩展资源库里的文件' }
+        : { key: 'assets.read', risk: 'sensitive', label: '读取当前频道里的图片和文件' },
+    )
+  }
+  if (capabilities.files !== undefined) {
+    items.push({
+      key: 'files',
+      risk: 'normal',
+      label: '在本机存放临时文件和缓存',
+      detail: `临时文件最多 ${formatLibraryQuota(capabilities.files.tempQuotaBytes ?? EXTENSION_FILES_DEFAULT_TEMP_QUOTA_BYTES)}，缓存最多 ${formatLibraryQuota(capabilities.files.cacheQuotaBytes ?? EXTENSION_FILES_DEFAULT_CACHE_QUOTA_BYTES)}`,
+    })
+  }
+  if (capabilities.toolImages !== undefined) {
+    items.push({
+      key: 'toolImages',
+      risk: 'normal',
+      label: '以高细节向智能体展示图片',
+      detail: '计入智能体用量',
+    })
+  }
+  if (capabilities.media !== undefined) {
+    items.push({ key: 'media', risk: 'normal', label: '处理音频、视频和图片' })
+  }
+  if (capabilities.commands !== undefined) {
+    items.push({
+      key: 'commands',
+      risk: 'high',
+      label: '在本机运行程序',
+      detail: capabilities.commands.profiles.join('、'),
+      scope: '只能读写交给它的文件，不能联网',
+    })
+  }
+  if (capabilities.speech !== undefined) {
+    items.push({
+      key: 'speech',
+      risk: 'sensitive',
+      label: '把音频转成文字',
+      detail: `音频可能发给「设置 → 附加功能」里选择的语音识别服务，每分钟最多 ${capabilities.speech.maxCallsPerMinute} 次`,
     })
   }
   if (capabilities.index !== undefined) {

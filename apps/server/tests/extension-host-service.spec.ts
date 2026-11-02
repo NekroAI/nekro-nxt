@@ -17,7 +17,7 @@ import {
   type NxtServiceBinding,
 } from '../src/extension-host-service.js'
 import { memoryIndexEngine } from '../src/extension-index.js'
-import { emptyExtensionLibrary } from './fixtures/unused-nxt-backends.js'
+import { emptyExtensionLibrary, unusedNxtBackends, unusedMediaBackends } from './fixtures/unused-nxt-backends.js'
 import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from '../src/extension-secret-config.js'
 
 const callContext: NxtCallContext = {
@@ -63,6 +63,7 @@ const fixture = (
     ...(options.namedCredential === undefined ? {} : { namedCredential: options.namedCredential }),
   }
   const backends: NxtServiceBackends = {
+    ...unusedMediaBackends(),
     fetch,
     complete,
     storage: memoryNxtStorage(() => 1),
@@ -91,6 +92,7 @@ const fixture = (
         Promise.resolve(memberId === 'mbr_SELF' ? { memberId, self: true as const } : undefined),
     },
     library: emptyExtensionLibrary(),
+    files: unusedNxtBackends().files,
     index: memoryIndexEngine(),
     models: {
       list: () => Promise.resolve([]),

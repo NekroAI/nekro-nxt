@@ -52,7 +52,14 @@ import {
 } from './agent-draft.js'
 import { CommandAccountRows } from './command-accounts.js'
 import { CommandCredentialRows } from './command-credentials.js'
-import { CodeRunNodeDownload, CodeRunNodeRemove } from './runtime-download.js'
+import {
+  AddonLink,
+  addonManageable,
+  addonStateLabel,
+  addonUsable,
+  selectedProvider,
+  useAddon,
+} from '../settings/addons-section.js'
 import { missingAgentModel, replacementModel } from './model-health.js'
 import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
@@ -479,6 +486,9 @@ export function CapabilitiesSection({
   readonly update: DraftUpdate
 }) {
   const availability = useProductStore((state) => state.capabilityAvailability)
+  const node = useAddon('node')
+  const speech = useAddon('speech')
+  const speechReady = availability.speechRecognition?.available === true
   const feedback = useFeedbackSummary()
   const [pending, setPending] = useState<{
     readonly title: string
@@ -564,22 +574,20 @@ export function CapabilitiesSection({
             />
           </PropertyRow>
         ) : null}
-        {caps.developmentShell && availability.codeRun !== undefined ? (
-          availability.codeRun.available ? (
-            availability.codeRun.source === 'downloaded' ? (
-              <PropertyRow
-                depth={2}
-                label="编排运行环境"
-                description={`Node ${availability.codeRun.version ?? ''}，由 NXT 下载`}
-              >
-                <CodeRunNodeRemove availability={availability.codeRun} />
-              </PropertyRow>
-            ) : null
-          ) : availability.codeRun.download !== undefined ? (
-            <PropertyRow depth={2} label="编排运行环境" description="这台设备没有可用的 Node，下载后即可开启">
-              <CodeRunNodeDownload availability={availability.codeRun} />
-            </PropertyRow>
-          ) : null
+        {caps.developmentShell && node !== undefined && addonManageable(node) ? (
+          <PropertyRow
+            depth={2}
+            label="编排运行环境"
+            description={
+              addonUsable(node.state)
+                ? [selectedProvider(node)?.title, selectedProvider(node)?.version].filter(Boolean).join('，')
+                : node.state === 'unsupported'
+                  ? '这台设备不支持'
+                  : `${addonStateLabel(node.state, node.progress).label}，安装后即可开启`
+            }
+          >
+            <AddonLink addon={node} />
+          </PropertyRow>
         ) : null}
         <PropertyRow label="子对话" tip="把需要单独处理的事交给子对话去做，进行中的子对话显示在频道下">
           <Switch
@@ -700,6 +708,32 @@ export function CapabilitiesSection({
             onCheckedChange={(checked) => setCapability('scheduledTasks', checked)}
           />
         </PropertyRow>
+        <PropertyRow
+          label="语音消息转文字"
+          description="智能体收到语音时，同时看到转写的文字。"
+          badge={caps.voiceTranscription && !speechReady ? <Chip tone="warn">待配置</Chip> : undefined}
+        >
+          <Switch
+            label="语音消息转文字"
+            checked={caps.voiceTranscription}
+            disabled={!speechReady && !caps.voiceTranscription}
+            onCheckedChange={(checked) =>
+              update((current) => ({
+                ...current,
+                capabilities: { ...current.capabilities, voiceTranscription: checked },
+              }))
+            }
+          />
+        </PropertyRow>
+        {speech !== undefined && (caps.voiceTranscription || !speechReady) ? (
+          <PropertyRow
+            depth={1}
+            label="语音识别"
+            description={addonUsable(speech.state) ? selectedProvider(speech)?.title : '安装或配置后即可开启'}
+          >
+            <AddonLink addon={speech} />
+          </PropertyRow>
+        ) : null}
         {feedback.enabled ? (
           <PropertyRow
             label="免确认提交反馈"

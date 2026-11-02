@@ -830,6 +830,16 @@ button.step:hover {
   white-space: nowrap;
 }
 
+/* The latest progress a running tool reported, in place of its arguments. */
+.stepProgress {
+  min-width: 0;
+  max-width: 280px;
+  overflow: hidden;
+  color: var(--fg-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .stepTime {
   flex: none;
   color: var(--faint);
@@ -1933,4 +1943,20 @@ button.step:hover {
 .unitField > span {
   color: var(--muted);
   font-size: var(--fs-xs);
+}
+
+/* A voice message transcript can run long; it wraps under the bubble instead of widening the row. */
+.hookNote[data-host-note] {
+  align-items: flex-start;
+  max-width: min(100%, 560px);
+}
+
+.hookNote[data-host-note] > svg {
+  flex: none;
+  margin-top: var(--s-1);
+}
+
+.hostNoteText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }

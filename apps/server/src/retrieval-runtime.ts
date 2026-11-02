@@ -1,6 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { JsonValue, RetrievalMode, RetrievalStatus } from '@nekro-nxt/contracts'
 import type { ExtensionIndexRepository } from '@nekro-nxt/storage-sqlite'
@@ -15,6 +14,7 @@ import {
   ONNXRUNTIME_VERSION,
   type PinnedFile,
 } from './retrieval-model-files.js'
+import { downloadPinnedFile, pinnedFileVerified } from './runtime-download.js'
 
 const SETTING_KEY = 'retrieval'
 /** Bumped when the text a document is embedded from changes, so old vectors are rebuilt. */
@@ -24,6 +24,13 @@ const BUILTIN_SPACE = `builtin:${BUILTIN_EMBEDDING_MODEL.id}:${BUILTIN_EMBEDDING
 const IDLE_RELEASE_MS = 10 * 60 * 1000
 const EMBED_BATCH = 16
 const MAX_TOKENS = 256
+
+/** Where the built-in model's download stands. */
+export type RetrievalInstall =
+  | { readonly state: 'not-installed' }
+  | { readonly state: 'downloading'; readonly receivedBytes: number; readonly totalBytes: number }
+  | { readonly state: 'installed' }
+  | { readonly state: 'failed'; readonly error: string }
 
 export interface RetrievalSettingsStore {
   get(key: string): { readonly value: JsonValue; readonly revision: number } | undefined
@@ -91,8 +98,6 @@ const isOrtModule = (value: unknown): value is OrtModule =>
   'Tensor' in value &&
   typeof value.Tensor === 'function'
 
-const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
-
 /**
  * The built-in semantic search model (表情包与扩展素材能力 §6.4): downloaded on request into the data root, verified
  * file by file, loaded on first use and released when idle. Keyword search never depends on it; when it is missing,
@@ -103,7 +108,7 @@ export class RetrievalRuntime implements IndexVectorProvider {
   readonly #platformKey: string
   readonly #listeners = new Set<() => void>()
   #mode: RetrievalMode = 'keyword'
-  #install: RetrievalStatus['builtin']['install'] = { state: 'not-installed' }
+  #install: RetrievalInstall = { state: 'not-installed' }
   #inflight: Promise<void> | undefined
   #model: Promise<LoadedModel> | undefined
   #idleTimer: NodeJS.Timeout | undefined
@@ -187,15 +192,8 @@ export class RetrievalRuntime implements IndexVectorProvider {
 
   status(): RetrievalStatus {
     const counts = this.#options.index.countIndexVectors(BUILTIN_SPACE)
-    const totalBytes = this.#plan().reduce((sum, entry) => sum + entry.file[1], 0)
     return {
       mode: this.#mode,
-      builtin: {
-        model: BUILTIN_EMBEDDING_MODEL.id,
-        supported: this.#nativeFiles !== undefined,
-        downloadBytes: totalBytes,
-        install: this.#install,
-      },
       vectors: {
         documents: counts.documents,
         embedded: counts.vectors,
@@ -205,9 +203,26 @@ export class RetrievalRuntime implements IndexVectorProvider {
     }
   }
 
+  /** The model as the `retrieval` add-on: whether it can run here, its size, its download and its folders. */
+  installation(): {
+    readonly model: string
+    readonly supported: boolean
+    readonly downloadBytes: number
+    readonly install: RetrievalInstall
+    readonly directories: readonly string[]
+  } {
+    return {
+      model: BUILTIN_EMBEDDING_MODEL.id,
+      supported: this.#nativeFiles !== undefined,
+      downloadBytes: this.#plan().reduce((sum, entry) => sum + entry.file[1], 0),
+      install: this.#install,
+      directories: [this.#runtimeRoot, path.join(this.#options.root, 'embedding-models', BUILTIN_EMBEDDING_MODEL.id)],
+    }
+  }
+
   setMode(mode: RetrievalMode): RetrievalStatus {
     if (mode === 'builtin' && this.#install.state !== 'installed') {
-      throw new Error('先下载内置语义模型，再开启语义检索。')
+      throw new Error('先安装语义检索，再开启。')
     }
     this.#options.settings.put(SETTING_KEY, { mode }, this.#options.settings.get(SETTING_KEY)?.revision)
     this.#mode = mode
@@ -217,18 +232,17 @@ export class RetrievalRuntime implements IndexVectorProvider {
     return this.status()
   }
 
-  /** Starts downloading the model and runtime; progress arrives through `status()` and `subscribe()`. */
-  startDownload(): RetrievalStatus {
+  /** Starts downloading the model and runtime; progress arrives through `installation()` and `subscribe()`. */
+  startDownload(): void {
     if (this.#nativeFiles === undefined) throw new Error('这台设备的系统或处理器还不能运行内置语义模型。')
-    if (this.#install.state === 'installed') return this.status()
+    if (this.#install.state === 'installed') return
     this.#inflight ??= this.#download().finally(() => {
       this.#inflight = undefined
       this.#changed()
     })
-    return this.status()
   }
 
-  async remove(): Promise<RetrievalStatus> {
+  async remove(): Promise<void> {
     if (this.#inflight !== undefined) throw new Error('正在下载，等下载结束后再删除。')
     if (this.#mode === 'builtin') this.setMode('keyword')
     await this.#release()
@@ -240,7 +254,6 @@ export class RetrievalRuntime implements IndexVectorProvider {
     await rm(this.#runtimeRoot, { recursive: true, force: true })
     this.#install = { state: 'not-installed' }
     this.#changed()
-    return this.status()
   }
 
   async #installed(): Promise<boolean> {
@@ -279,12 +292,18 @@ export class RetrievalRuntime implements IndexVectorProvider {
     report(0)
     try {
       for (const entry of plan) {
-        if (await this.#verified(entry.target, entry.file)) {
+        if (await pinnedFileVerified(entry.target, entry.file[1], entry.file[2])) {
           doneBytes += entry.file[1]
           report(doneBytes)
           continue
         }
-        await this.#fetchFile(entry, (received) => report(doneBytes + received))
+        await downloadPinnedFile(
+          { target: entry.target, bytes: entry.file[1], sha256: entry.file[2], urls: entry.urls },
+          {
+            ...(this.#options.fetch === undefined ? {} : { fetch: this.#options.fetch }),
+            onProgress: (received) => report(doneBytes + received),
+          },
+        )
         doneBytes += entry.file[1]
         report(doneBytes)
       }
@@ -294,56 +313,6 @@ export class RetrievalRuntime implements IndexVectorProvider {
     } catch (error) {
       this.#install = { state: 'failed', error: error instanceof Error ? error.message : String(error) }
     }
-  }
-
-  async #verified(target: string, file: PinnedFile): Promise<boolean> {
-    try {
-      if ((await stat(target)).size !== file[1]) return false
-      return sha256(await readFile(target)) === file[2]
-    } catch {
-      return false
-    }
-  }
-
-  /** Tries each source in turn; a file is published only after its size and hash match. */
-  async #fetchFile(
-    entry: { readonly target: string; readonly file: PinnedFile; readonly urls: readonly string[] },
-    onProgress: (received: number) => void,
-  ): Promise<void> {
-    const [, size, digest] = entry.file
-    await mkdir(path.dirname(entry.target), { recursive: true })
-    const failures: string[] = []
-    for (const url of entry.urls) {
-      const staging = `${entry.target}.${randomUUID()}.part`
-      try {
-        const response = await (this.#options.fetch ?? fetch)(url, { signal: AbortSignal.timeout(10 * 60 * 1000) })
-        if (!response.ok || response.body === null) throw new Error(`HTTP ${response.status}`)
-        const hash = createHash('sha256')
-        let received = 0
-        const file = await open(staging, 'w')
-        try {
-          const reader = response.body.getReader()
-          for (;;) {
-            const { done, value } = await reader.read()
-            if (done) break
-            received += value.byteLength
-            if (received > size) throw new Error('文件比预期大')
-            hash.update(value)
-            await file.write(value)
-            onProgress(received)
-          }
-        } finally {
-          await file.close()
-        }
-        if (received !== size || hash.digest('hex') !== digest) throw new Error('校验不通过')
-        await rename(staging, entry.target)
-        return
-      } catch (error) {
-        await rm(staging, { force: true })
-        failures.push(`${new URL(url).host}：${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
-    throw new Error(`${path.basename(entry.target)} 下载失败（${failures.join('；')}）`)
   }
 
   async #load(): Promise<LoadedModel> {
