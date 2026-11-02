@@ -1586,6 +1586,48 @@ describe('relations, admissions and outbox', () => {
     }
   })
 
+  it('records every asset of a forwarded part that carries several images', async () => {
+    const { database, repository, core, connection } = await createFixture()
+    try {
+      const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'forward', kind: 'group' })
+      const imageIds = ['ast_FORWARD1', 'ast_FORWARD2'].map((id) => AssetIdSchema.parse(id))
+      imageIds.forEach((id, index) =>
+        repository.ensureAsset({
+          id,
+          contentDigest: `sha256:${String(index + 1).repeat(64)}`,
+          byteSize: 4,
+          mediaType: 'image/png',
+          createdAt: 1,
+        }),
+      )
+      const commit = core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'fixture-alpha',
+        platformMessageId: 'forward-1',
+        kind: 'message-created',
+        parts: [
+          {
+            type: 'rich',
+            adapterKey: 'fixture-alpha',
+            kind: 'forward',
+            summary: '合并转发',
+            extension: { items: imageIds.map((imageAssetId) => ({ imageAssetId })) },
+          },
+        ],
+        platformTimestamp: 10,
+        receivedAt: 11,
+        dedupeKey: 'forward-event-1',
+        assetOccurrences: imageIds.map((assetId) => ({ partIndex: 0, assetId })),
+      })
+      expect(commit.inserted).toBe(true)
+      expect(database.db.select({ value: count() }).from(assetOccurrences).get()?.value).toBe(2)
+      for (const id of imageIds) expect(repository.canAccessAsset(id, channel.id)).toBe(true)
+    } finally {
+      database.close()
+    }
+  })
+
   it('persists activity relationships without rewriting the target message fact', async () => {
     const { database, repository, core, connection } = await createFixture()
     try {

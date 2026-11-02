@@ -428,6 +428,13 @@
       "when": 1793553385440,
       "tag": "0060_inbound_host_annotations",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1793621382409,
+      "tag": "0061_asset_occurrences_per_asset",
+      "breakpoints": true
     }
   ]
 }

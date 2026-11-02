@@ -226,3 +226,51 @@ test('discovered models wait to be picked, and a long list can be searched and p
   expect(models).not.toContain('relay-code-0450')
   expect(failures).toEqual([])
 })
+
+test('saving a provider adds the picked models and can open the provider to extensions', async ({ page }) => {
+  const failures: string[] = []
+  page.on('pageerror', (error) => failures.push(error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') failures.push(message.text())
+  })
+  const saved: unknown[] = []
+  await stubRelay(page, saved)
+  let open = false
+  const accessView = () => ({
+    credentials: [],
+    modelProviders: [{ provider: 'synthetic-relay', name: '示例中转站', open }],
+    requests: [],
+  })
+  await page.route('**/api/settings/credentials', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    await route.fulfill({ json: accessView() })
+  })
+  await page.route('**/api/settings/credentials/model-providers/synthetic-relay', async (route) => {
+    open = HostApiContracts.setModelProviderAccess.request.parse(route.request().postDataJSON()).open
+    await route.fulfill({ json: accessView() })
+  })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/settings/models?provider=synthetic-relay')
+
+  await page.getByRole('button', { name: '获取可用模型', exact: true }).click()
+  const candidates = page.getByRole('group', { name: '可加入的模型' })
+  await page.getByRole('searchbox', { name: '搜索可加入的模型' }).fill('chat-000')
+  await candidates.getByRole('button', { name: 'relay-chat-0001', exact: true }).click()
+  await candidates.getByRole('button', { name: 'relay-chat-0002', exact: true }).click()
+  await expect(page.getByRole('table', { name: '模型列表' })).toContainText('还没有模型')
+  await page.getByRole('button', { name: '保存供应商' }).click()
+  await expect.poll(() => saved.length).toBe(1)
+  const models = HostApiContracts.llmSaveProvider.request.parse(saved[0]).models!.map((model) => model.id)
+  expect(models).toEqual(['relay-chat-0001', 'relay-chat-0002'])
+  await expect(page.getByText('供应商配置已保存，所选的 2 个模型已一并加入')).toBeVisible()
+
+  const access = page.getByRole('switch', { name: '允许智能体主动在扩展配置中使用此供应商模型' })
+  await expect(access).not.toBeChecked()
+  await expect(page.getByText('关闭时，扩展读取模型列表看不到这家供应商的模型。')).toBeVisible()
+  await access.click()
+  await expect(access).toBeChecked()
+  expect(open).toBe(true)
+  await access.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: '.local/model-provider-extension-access-1440.png', animations: 'disabled' })
+  expect(failures).toEqual([])
+})
