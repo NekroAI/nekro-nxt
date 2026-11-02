@@ -843,7 +843,7 @@ export const assetOccurrences = sqliteTable(
       .references(() => assets.id, { onDelete: 'restrict' }),
   },
   (table) => [
-    primaryKey({ columns: [table.channelEventId, table.partIndex] }),
+    primaryKey({ columns: [table.channelEventId, table.partIndex, table.assetId] }),
     index('asset_occurrences_asset_idx').on(table.assetId, table.channelEventId),
     check('asset_occurrences_part_index_ck', sql`${table.partIndex} >= 0`),
   ],
