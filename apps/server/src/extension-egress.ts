@@ -1,4 +1,6 @@
 import { lookup as dnsLookup } from 'node:dns/promises'
+import { createWriteStream, type WriteStream } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { isIP } from 'node:net'
@@ -50,6 +52,22 @@ export interface ExtensionFetchResponse {
   readonly base64?: string
 }
 
+/** Where `download` writes the response body of a successful request, and how many bytes it may take. */
+export interface ExtensionDownloadTarget {
+  readonly path: string
+  readonly maxBytes: number
+  readonly signal?: AbortSignal | undefined
+}
+
+/** `download` result: the body is in the target file (`byteSize` bytes) when `status` is 2xx, and nowhere otherwise. */
+export interface ExtensionDownloadResponse {
+  readonly url: string
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly contentType: string
+  readonly byteSize: number
+}
+
 export class ExtensionEgressError extends Error {
   constructor(
     readonly code:
@@ -63,8 +81,11 @@ export class ExtensionEgressError extends Error {
       | 'invalid-protocol'
       | 'invalid-request-header'
       | 'dns-error'
-      | 'request-error',
+      | 'request-error'
+      | 'aborted',
     message: string,
+    /** For `response-too-large`: the limit the response went past. */
+    readonly limitBytes?: number,
   ) {
     super(message)
     this.name = 'ExtensionEgressError'
@@ -77,7 +98,7 @@ interface ResolvedAddress {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000
-const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024 // 8 MiB
+const DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024 // 32 MiB
 const DEFAULT_MAX_REDIRECTS = 5
 
 const FORBIDDEN_HEADERS = new Set([
@@ -170,6 +191,16 @@ const isPolicyMatch = (policy: ExtensionEgressPolicy, hostname: string, configHo
 const isPrivateNetworkAllowed = (policy: ExtensionEgressPolicy, configHost?: string): boolean =>
   policy.mode === 'config' && configHost !== undefined && (policy.privateHosts ?? policy.hosts).includes(configHost)
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+const tooLarge = (limitBytes: number): ExtensionEgressError =>
+  new ExtensionEgressError('response-too-large', `响应超过 ${limitBytes} 字节。`, limitBytes)
+
+/**
+ * Sends one hop. A redirect's body is discarded. Without `target` the body is collected in memory up to
+ * `maxResponseBytes`; with it, a 2xx body streams into `target.path` up to `target.maxBytes` (the partial file is
+ * removed when that is exceeded or the request fails) and any other body is discarded.
+ */
 const createNetworkRequest = async (
   url: URL,
   resolved: ResolvedAddress,
@@ -178,9 +209,38 @@ const createNetworkRequest = async (
   body: Buffer | undefined,
   timeoutMs: number,
   maxResponseBytes: number,
-): Promise<{ status: number; headers: Headers; bytes: Uint8Array }> =>
+  target?: ExtensionDownloadTarget,
+): Promise<{ status: number; headers: Headers; bytes: Uint8Array; byteSize: number }> =>
   new Promise((resolve, reject) => {
     const transport = url.protocol === 'https:' ? httpsRequest : httpRequest
+    let settled = false
+    let file: WriteStream | undefined
+    const fail = (error: unknown) => {
+      if (settled) return
+      settled = true
+      target?.signal?.removeEventListener('abort', onAbort)
+      const failure = error instanceof Error ? error : new Error(String(error))
+      if (target === undefined) {
+        reject(failure)
+        return
+      }
+      // Remove the partial file only once the stream has closed, so a late open cannot bring it back.
+      const open = file
+      const closed =
+        open === undefined || open.closed
+          ? Promise.resolve()
+          : new Promise<void>((done) => {
+              open.once('close', () => done())
+              open.destroy()
+            })
+      void closed.then(() => rm(target.path, { force: true })).finally(() => reject(failure))
+    }
+    const succeed = (value: { status: number; headers: Headers; bytes: Uint8Array; byteSize: number }) => {
+      if (settled) return
+      settled = true
+      target?.signal?.removeEventListener('abort', onAbort)
+      resolve(value)
+    }
     const request = transport(
       url,
       {
@@ -198,38 +258,76 @@ const createNetworkRequest = async (
             responseHeaders.set(name, Array.isArray(value) ? value.join(', ') : value)
           }
         }
+        const status = response.statusCode ?? 0
+        const empty = { status, headers: responseHeaders, bytes: new Uint8Array(), byteSize: 0 }
+        response.on('error', fail)
 
-        const length = Number(response.headers['content-length'] ?? '0')
-        if (Number.isFinite(length) && length > maxResponseBytes) {
+        if (REDIRECT_STATUSES.has(status) || (target !== undefined && (status < 200 || status >= 300))) {
           response.resume()
-          reject(new ExtensionEgressError('response-too-large', `响应超过 ${maxResponseBytes} 字节。`))
+          response.on('end', () => succeed(empty))
+          return
+        }
+
+        const limit = target?.maxBytes ?? maxResponseBytes
+        const length = Number(response.headers['content-length'] ?? '0')
+        if (Number.isFinite(length) && length > limit) {
+          response.resume()
+          fail(tooLarge(limit))
+          return
+        }
+
+        let total = 0
+        if (target !== undefined) {
+          const stream = createWriteStream(target.path, { flags: 'wx', mode: 0o600 })
+          file = stream
+          stream.on('error', (error) => {
+            response.destroy()
+            fail(error)
+          })
+          response.on('data', (chunk: Buffer) => {
+            total += chunk.byteLength
+            if (total > limit) {
+              response.destroy()
+              fail(tooLarge(limit))
+            }
+          })
+          response.pipe(stream)
+          stream.on('close', () => {
+            if (!stream.errored) succeed({ ...empty, byteSize: total })
+          })
           return
         }
 
         const chunks: Buffer[] = []
-        let total = 0
         response.on('data', (chunk: Buffer) => {
           total += chunk.byteLength
-          if (total > maxResponseBytes) {
-            response.destroy(new ExtensionEgressError('response-too-large', `响应超过 ${maxResponseBytes} 字节。`))
+          if (total > limit) {
+            response.destroy()
+            fail(tooLarge(limit))
             return
           }
           chunks.push(chunk)
         })
         response.on('end', () => {
-          resolve({ status: response.statusCode ?? 0, headers: responseHeaders, bytes: Buffer.concat(chunks) })
+          const bytes = Buffer.concat(chunks)
+          succeed({ ...empty, bytes, byteSize: bytes.byteLength })
         })
-        response.on('error', reject)
       },
     )
-    request.setTimeout(timeoutMs, () =>
-      request.destroy(new ExtensionEgressError('timeout', `请求在 ${timeoutMs}ms 内无响应。`)),
-    )
+    function onAbort() {
+      request.destroy()
+      fail(new ExtensionEgressError('aborted', '下载已取消。'))
+    }
+    // An idle limit: a large download keeps going while data flows.
+    request.setTimeout(timeoutMs, () => {
+      request.destroy()
+      fail(new ExtensionEgressError('timeout', `请求在 ${timeoutMs}ms 内无响应。`))
+    })
     request.on('error', (error) => {
       if (error instanceof ExtensionEgressError) {
-        reject(error)
+        fail(error)
       } else {
-        reject(
+        fail(
           new ExtensionEgressError(
             'request-error',
             `网络请求失败：${error instanceof Error ? error.message : String(error)}`,
@@ -237,6 +335,11 @@ const createNetworkRequest = async (
         )
       }
     })
+    if (target?.signal?.aborted === true) {
+      onAbort()
+      return
+    }
+    target?.signal?.addEventListener('abort', onAbort, { once: true })
     if (body !== undefined) request.write(body)
     request.end()
   })
@@ -248,278 +351,288 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
   const resolve = options.resolve ?? ((hostname: string) => dnsLookup(hostname, { all: true, verbatim: true }))
   const isPrivateAddress = options.isPrivateAddress ?? isPrivateNetworkAddress
 
+  /**
+   * Follows redirects to the final response. `secrets` fill credential placeholders in the URL, headers and string
+   * body just before each hop is sent, only for hosts the credential allows. A placeholder that may not go to the first
+   * host fails the request; on a redirect to such a host, headers carrying it are dropped and a body carrying it fails
+   * the request.
+   */
+  const send = async (
+    requestedUrl: string,
+    init: ExtensionFetchInit | undefined,
+    secrets: readonly ExtensionFetchSecret[],
+    target?: ExtensionDownloadTarget,
+  ) => {
+    // Pages often give protocol-relative addresses (`//host/path`); outside a page they mean HTTPS.
+    const urlString = requestedUrl.startsWith('//') ? `https:${requestedUrl}` : requestedUrl
+    let url: URL
+    try {
+      url = new URL(urlString.replaceAll(PLACEHOLDER_PATTERN, 'x'))
+      // A placeholder in the host part would let the credential decide where the request goes.
+      if (url.host !== new URL(urlString.replaceAll(PLACEHOLDER_PATTERN, 'y')).host) {
+        throw new ExtensionEgressError('invalid-url', '凭据占位符不能出现在主机名里。')
+      }
+    } catch (error) {
+      if (error instanceof ExtensionEgressError) throw error
+      throw new ExtensionEgressError(
+        'invalid-url',
+        `无效的 URL：${requestedUrl}。需要 http:// 或 https:// 开头的完整地址。`,
+      )
+    }
+    const firstHostname = normalizeUrlHostname(url)
+    const filledUrl = fillPlaceholders(urlString, firstHostname, secrets)
+    if (filledUrl.blocked) {
+      throw new ExtensionEgressError('policy-denied', `访问被拒：凭据不允许发往 ${firstHostname}。`)
+    }
+    try {
+      url = new URL(filledUrl.text)
+    } catch {
+      throw new ExtensionEgressError('invalid-url', '填入凭据后 URL 无效。')
+    }
+    if (normalizeUrlHostname(url) !== firstHostname) {
+      throw new ExtensionEgressError('invalid-url', '填入凭据后主机名变了，请把占位符放在路径或查询参数里。')
+    }
+
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new ExtensionEgressError('invalid-protocol', `仅支持 HTTP/HTTPS 协议，当前：${url.protocol}`)
+    }
+
+    if (url.username || url.password) {
+      throw new ExtensionEgressError('invalid-request', `URL 不允许包含用户名或密码。`)
+    }
+
+    const method = (init?.method ?? 'GET').toUpperCase()
+    // Header values as the extension wrote them; each hop fills them in for its own host.
+    const headerTemplates = new Map<string, string>()
+
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(method)) {
+      throw new ExtensionEgressError('invalid-request', `不支持的 HTTP 方法：${method}`)
+    }
+
+    if (init?.headers) {
+      for (const [name, value] of Object.entries(init.headers)) {
+        const lowerName = name.toLowerCase()
+        if (FORBIDDEN_HEADERS.has(lowerName)) {
+          throw new ExtensionEgressError('invalid-request-header', `不允许发送 ${name} 请求头。`)
+        }
+        headerTemplates.set(lowerName, value)
+      }
+    }
+
+    if (!headerTemplates.has('user-agent')) {
+      headerTemplates.set('user-agent', 'NekroNXT-Extension')
+    }
+
+    const firstHopHeaders = [...headerTemplates.values()].some(
+      (value) => fillPlaceholders(value, firstHostname, secrets).blocked,
+    )
+    if (firstHopHeaders) {
+      throw new ExtensionEgressError('policy-denied', `访问被拒：凭据不允许发往 ${firstHostname}。`)
+    }
+
+    let body: Buffer | undefined
+    let bodyTemplate: string | undefined
+    if (init?.body !== undefined && init?.bodyBase64 !== undefined) {
+      throw new ExtensionEgressError('invalid-request', `body 和 bodyBase64 不能同时指定。`)
+    }
+    if (init?.body !== undefined) {
+      bodyTemplate = init.body
+    } else if (init?.bodyBase64 !== undefined) {
+      if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(init.bodyBase64)) {
+        throw new ExtensionEgressError('invalid-request', `无效的 base64 编码。`)
+      }
+      body = Buffer.from(init.bodyBase64, 'base64')
+    }
+    let currentMethod = method
+
+    for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
+      // Every hop is checked again: a redirect must not escape the declared policy or reach a private address.
+      const hostname = normalizeUrlHostname(url)
+      let isLocalHostname = false
+      if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
+        isLocalHostname = true
+      }
+
+      const configHost =
+        options.policy.mode === 'config'
+          ? options.policy.hosts.find((h) => h === `${hostname}${url.port ? `:${url.port}` : ''}`)
+          : undefined
+      const canAccessPrivate = isPrivateNetworkAllowed(options.policy, configHost)
+
+      if (!isPolicyMatch(options.policy, hostname, configHost)) {
+        const suggestion =
+          options.policy.mode === 'domains'
+            ? `请在 Manifest permissions.capabilities.network.domains 中声明 ${hostname}`
+            : `该地址不是用户在配置中填写的服务地址`
+        throw new ExtensionEgressError('policy-denied', `访问被拒：未授权访问 ${hostname}。${suggestion}`)
+      }
+
+      let addresses: ResolvedAddress[] = []
+      if (isIP(hostname)) {
+        const family = isIP(hostname)
+        if (family === 4 || family === 6) {
+          addresses = [{ address: hostname, family }]
+        }
+      } else {
+        try {
+          const resolved = await resolve(hostname)
+          addresses = resolved.map((item: unknown) => {
+            if (typeof item === 'object' && item !== null && 'address' in item && 'family' in item) {
+              const itemRecord = item as Record<string, unknown>
+              const address = String(itemRecord['address'])
+              const familyNum = Number(itemRecord['family'])
+              if (familyNum === 4 || familyNum === 6) {
+                return {
+                  address,
+                  family: familyNum,
+                }
+              }
+            }
+            throw new Error('Invalid DNS resolution result')
+          })
+        } catch (error) {
+          throw new ExtensionEgressError(
+            'dns-error',
+            `DNS 解析失败：${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
+
+      if (addresses.length === 0) {
+        throw new ExtensionEgressError('dns-error', `无法解析主机名 ${hostname}。`)
+      }
+
+      for (const addr of addresses) {
+        if (isLocalHostname || isPrivateAddress(addr.address)) {
+          if (!canAccessPrivate) {
+            throw new ExtensionEgressError(
+              'private-address',
+              `访问被拒：不允许访问本机或私网地址 ${hostname}。需要访问内网服务时，请使用 config 网络模式并让用户在配置中填写该地址。`,
+            )
+          }
+        }
+      }
+
+      const selected = addresses[0]!
+      if (selected.family !== 4 && selected.family !== 6) {
+        throw new ExtensionEgressError('invalid-request', `无效的地址族：${String(selected.family)}`)
+      }
+
+      // Fill placeholders for this hop's host; a header whose credential may not go here is left out.
+      const headers = new Headers()
+      for (const [name, template] of headerTemplates) {
+        const filled = fillPlaceholders(template, hostname, secrets)
+        if (!filled.blocked) headers.set(name, filled.text)
+      }
+      if (bodyTemplate !== undefined) {
+        const filled = fillPlaceholders(bodyTemplate, hostname, secrets)
+        if (filled.blocked) {
+          throw new ExtensionEgressError('policy-denied', `访问被拒：重定向到 ${hostname}，凭据不允许发往这个地址。`)
+        }
+        body = Buffer.from(filled.text, 'utf8')
+      }
+
+      const response = await createNetworkRequest(
+        url,
+        selected,
+        currentMethod,
+        headers,
+        body,
+        timeoutMs,
+        maxResponseBytes,
+        target,
+      )
+
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location')
+        if (!location) {
+          throw new ExtensionEgressError('request-error', `收到重定向（状态码 ${response.status}）但没有 Location 头。`)
+        }
+
+        if (redirectCount >= maxRedirects) {
+          throw new ExtensionEgressError('too-many-redirects', `重定向次数超过 ${maxRedirects}。`)
+        }
+
+        let next: URL
+        try {
+          next = new URL(location, url)
+        } catch {
+          throw new ExtensionEgressError('request-error', `无效的重定向 URL：${location}`)
+        }
+        if (next.protocol !== 'http:' && next.protocol !== 'https:') {
+          throw new ExtensionEgressError('invalid-protocol', `重定向到了不支持的协议：${next.protocol}`)
+        }
+        // Credentials an extension attached for one service must not follow a redirect to another origin.
+        if (next.origin !== url.origin) {
+          headerTemplates.delete('authorization')
+          headerTemplates.delete('cookie')
+        }
+        if (
+          response.status === 303 ||
+          ((response.status === 301 || response.status === 302) && currentMethod === 'POST')
+        ) {
+          currentMethod = currentMethod === 'HEAD' ? 'HEAD' : 'GET'
+          body = undefined
+          bodyTemplate = undefined
+          headerTemplates.delete('content-type')
+        }
+        url = next
+        continue
+      }
+
+      return { url, response }
+    }
+
+    throw new ExtensionEgressError('too-many-redirects', `未能完成请求：重定向过多。`)
+  }
+
+  const responseHeaders = (headers: Headers): Record<string, string> =>
+    Object.fromEntries(Array.from(headers.entries()).map(([k, v]) => [k.toLowerCase(), v]))
+
   return {
-    /**
-     * `secrets` fill credential placeholders in the URL, headers and string body just before each hop is sent, only
-     * for hosts the credential allows. A placeholder that may not go to the first host fails the request; on a redirect
-     * to such a host, headers carrying it are dropped and a body carrying it fails the request.
-     */
+    /** Collects the whole body in memory, up to `maxResponseBytes`. */
     fetch: async (
       requestedUrl: string,
       init?: ExtensionFetchInit,
       secrets: readonly ExtensionFetchSecret[] = [],
     ): Promise<ExtensionFetchResponse> => {
-      // Pages often give protocol-relative addresses (`//host/path`); outside a page they mean HTTPS.
-      const urlString = requestedUrl.startsWith('//') ? `https:${requestedUrl}` : requestedUrl
-      let url: URL
-      try {
-        url = new URL(urlString.replaceAll(PLACEHOLDER_PATTERN, 'x'))
-        // A placeholder in the host part would let the credential decide where the request goes.
-        if (url.host !== new URL(urlString.replaceAll(PLACEHOLDER_PATTERN, 'y')).host) {
-          throw new ExtensionEgressError('invalid-url', '凭据占位符不能出现在主机名里。')
-        }
-      } catch (error) {
-        if (error instanceof ExtensionEgressError) throw error
-        throw new ExtensionEgressError(
-          'invalid-url',
-          `无效的 URL：${requestedUrl}。需要 http:// 或 https:// 开头的完整地址。`,
-        )
+      const { url, response } = await send(requestedUrl, init, secrets)
+      const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
+      const mediaType = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
+      // 结构化文本（XHTML、RSS/Atom、各种 +json）也按文本返回，扩展不必自己解码 base64。
+      const isTextContent =
+        mediaType.startsWith('text/') ||
+        ['application/json', 'application/xml', 'application/javascript'].includes(mediaType) ||
+        mediaType.endsWith('+xml') ||
+        mediaType.endsWith('+json')
+      return {
+        url: maskSecrets(url.toString(), secrets),
+        status: response.status,
+        headers: responseHeaders(response.headers),
+        contentType,
+        ...(isTextContent
+          ? { text: new TextDecoder().decode(response.bytes) }
+          : { base64: Buffer.from(response.bytes).toString('base64') }),
       }
-      const firstHostname = normalizeUrlHostname(url)
-      const filledUrl = fillPlaceholders(urlString, firstHostname, secrets)
-      if (filledUrl.blocked) {
-        throw new ExtensionEgressError('policy-denied', `访问被拒：凭据不允许发往 ${firstHostname}。`)
+    },
+    /**
+     * Streams a 2xx body into `target.path` (which must not exist yet) instead of memory, up to `target.maxBytes`;
+     * the same policy, placeholder and redirect checks as `fetch` apply.
+     */
+    download: async (
+      requestedUrl: string,
+      init: ExtensionFetchInit | undefined,
+      secrets: readonly ExtensionFetchSecret[],
+      target: ExtensionDownloadTarget,
+    ): Promise<ExtensionDownloadResponse> => {
+      const { url, response } = await send(requestedUrl, init, secrets, target)
+      return {
+        url: maskSecrets(url.toString(), secrets),
+        status: response.status,
+        headers: responseHeaders(response.headers),
+        contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+        byteSize: response.byteSize,
       }
-      try {
-        url = new URL(filledUrl.text)
-      } catch {
-        throw new ExtensionEgressError('invalid-url', '填入凭据后 URL 无效。')
-      }
-      if (normalizeUrlHostname(url) !== firstHostname) {
-        throw new ExtensionEgressError('invalid-url', '填入凭据后主机名变了，请把占位符放在路径或查询参数里。')
-      }
-
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        throw new ExtensionEgressError('invalid-protocol', `仅支持 HTTP/HTTPS 协议，当前：${url.protocol}`)
-      }
-
-      if (url.username || url.password) {
-        throw new ExtensionEgressError('invalid-request', `URL 不允许包含用户名或密码。`)
-      }
-
-      const method = (init?.method ?? 'GET').toUpperCase()
-      // Header values as the extension wrote them; each hop fills them in for its own host.
-      const headerTemplates = new Map<string, string>()
-
-      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(method)) {
-        throw new ExtensionEgressError('invalid-request', `不支持的 HTTP 方法：${method}`)
-      }
-
-      if (init?.headers) {
-        for (const [name, value] of Object.entries(init.headers)) {
-          const lowerName = name.toLowerCase()
-          if (FORBIDDEN_HEADERS.has(lowerName)) {
-            throw new ExtensionEgressError('invalid-request-header', `不允许发送 ${name} 请求头。`)
-          }
-          headerTemplates.set(lowerName, value)
-        }
-      }
-
-      if (!headerTemplates.has('user-agent')) {
-        headerTemplates.set('user-agent', 'NekroNXT-Extension')
-      }
-
-      const firstHopHeaders = [...headerTemplates.values()].some(
-        (value) => fillPlaceholders(value, firstHostname, secrets).blocked,
-      )
-      if (firstHopHeaders) {
-        throw new ExtensionEgressError('policy-denied', `访问被拒：凭据不允许发往 ${firstHostname}。`)
-      }
-
-      let body: Buffer | undefined
-      let bodyTemplate: string | undefined
-      if (init?.body !== undefined && init?.bodyBase64 !== undefined) {
-        throw new ExtensionEgressError('invalid-request', `body 和 bodyBase64 不能同时指定。`)
-      }
-      if (init?.body !== undefined) {
-        bodyTemplate = init.body
-      } else if (init?.bodyBase64 !== undefined) {
-        if (!/^[A-Za-z0-9+/]*={0,2}$/u.test(init.bodyBase64)) {
-          throw new ExtensionEgressError('invalid-request', `无效的 base64 编码。`)
-        }
-        body = Buffer.from(init.bodyBase64, 'base64')
-      }
-      let currentMethod = method
-
-      for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount++) {
-        // Every hop is checked again: a redirect must not escape the declared policy or reach a private address.
-        const hostname = normalizeUrlHostname(url)
-        let isLocalHostname = false
-        if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local')) {
-          isLocalHostname = true
-        }
-
-        const configHost =
-          options.policy.mode === 'config'
-            ? options.policy.hosts.find((h) => h === `${hostname}${url.port ? `:${url.port}` : ''}`)
-            : undefined
-        const canAccessPrivate = isPrivateNetworkAllowed(options.policy, configHost)
-
-        if (!isPolicyMatch(options.policy, hostname, configHost)) {
-          const suggestion =
-            options.policy.mode === 'domains'
-              ? `请在 Manifest permissions.capabilities.network.domains 中声明 ${hostname}`
-              : `该地址不是用户在配置中填写的服务地址`
-          throw new ExtensionEgressError('policy-denied', `访问被拒：未授权访问 ${hostname}。${suggestion}`)
-        }
-
-        let addresses: ResolvedAddress[] = []
-        if (isIP(hostname)) {
-          const family = isIP(hostname)
-          if (family === 4 || family === 6) {
-            addresses = [{ address: hostname, family }]
-          }
-        } else {
-          try {
-            const resolved = await resolve(hostname)
-            addresses = resolved.map((item: unknown) => {
-              if (typeof item === 'object' && item !== null && 'address' in item && 'family' in item) {
-                const itemRecord = item as Record<string, unknown>
-                const address = String(itemRecord['address'])
-                const familyNum = Number(itemRecord['family'])
-                if (familyNum === 4 || familyNum === 6) {
-                  return {
-                    address,
-                    family: familyNum,
-                  }
-                }
-              }
-              throw new Error('Invalid DNS resolution result')
-            })
-          } catch (error) {
-            throw new ExtensionEgressError(
-              'dns-error',
-              `DNS 解析失败：${error instanceof Error ? error.message : String(error)}`,
-            )
-          }
-        }
-
-        if (addresses.length === 0) {
-          throw new ExtensionEgressError('dns-error', `无法解析主机名 ${hostname}。`)
-        }
-
-        for (const addr of addresses) {
-          if (isLocalHostname || isPrivateAddress(addr.address)) {
-            if (!canAccessPrivate) {
-              throw new ExtensionEgressError(
-                'private-address',
-                `访问被拒：不允许访问本机或私网地址 ${hostname}。需要访问内网服务时，请使用 config 网络模式并让用户在配置中填写该地址。`,
-              )
-            }
-          }
-        }
-
-        const selected = addresses[0]!
-        if (selected.family !== 4 && selected.family !== 6) {
-          throw new ExtensionEgressError('invalid-request', `无效的地址族：${String(selected.family)}`)
-        }
-
-        // Fill placeholders for this hop's host; a header whose credential may not go here is left out.
-        const headers = new Headers()
-        for (const [name, template] of headerTemplates) {
-          const filled = fillPlaceholders(template, hostname, secrets)
-          if (!filled.blocked) headers.set(name, filled.text)
-        }
-        if (bodyTemplate !== undefined) {
-          const filled = fillPlaceholders(bodyTemplate, hostname, secrets)
-          if (filled.blocked) {
-            throw new ExtensionEgressError('policy-denied', `访问被拒：重定向到 ${hostname}，凭据不允许发往这个地址。`)
-          }
-          body = Buffer.from(filled.text, 'utf8')
-        }
-
-        const response = await createNetworkRequest(
-          url,
-          selected,
-          currentMethod,
-          headers,
-          body,
-          timeoutMs,
-          maxResponseBytes,
-        )
-
-        if ([301, 302, 303, 307, 308].includes(response.status)) {
-          const location = response.headers.get('location')
-          if (!location) {
-            throw new ExtensionEgressError(
-              'request-error',
-              `收到重定向（状态码 ${response.status}）但没有 Location 头。`,
-            )
-          }
-
-          if (redirectCount >= maxRedirects) {
-            throw new ExtensionEgressError('too-many-redirects', `重定向次数超过 ${maxRedirects}。`)
-          }
-
-          let next: URL
-          try {
-            next = new URL(location, url)
-          } catch {
-            throw new ExtensionEgressError('request-error', `无效的重定向 URL：${location}`)
-          }
-          if (next.protocol !== 'http:' && next.protocol !== 'https:') {
-            throw new ExtensionEgressError('invalid-protocol', `重定向到了不支持的协议：${next.protocol}`)
-          }
-          // Credentials an extension attached for one service must not follow a redirect to another origin.
-          if (next.origin !== url.origin) {
-            headerTemplates.delete('authorization')
-            headerTemplates.delete('cookie')
-          }
-          if (
-            response.status === 303 ||
-            ((response.status === 301 || response.status === 302) && currentMethod === 'POST')
-          ) {
-            currentMethod = currentMethod === 'HEAD' ? 'HEAD' : 'GET'
-            body = undefined
-            bodyTemplate = undefined
-            headerTemplates.delete('content-type')
-          }
-          url = next
-          continue
-        }
-
-        const contentLength = Number(response.headers.get('content-length') ?? '0')
-        if (Number.isFinite(contentLength) && contentLength > maxResponseBytes) {
-          throw new ExtensionEgressError('response-too-large', `响应超过 ${maxResponseBytes} 字节。`)
-        }
-
-        if (response.bytes.byteLength > maxResponseBytes) {
-          throw new ExtensionEgressError('response-too-large', `实际响应超过 ${maxResponseBytes} 字节。`)
-        }
-
-        const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
-        const mediaType = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
-        // 结构化文本（XHTML、RSS/Atom、各种 +json）也按文本返回，扩展不必自己解码 base64。
-        const isTextContent =
-          mediaType.startsWith('text/') ||
-          ['application/json', 'application/xml', 'application/javascript'].includes(mediaType) ||
-          mediaType.endsWith('+xml') ||
-          mediaType.endsWith('+json')
-
-        const resultData: {
-          url: string
-          status: number
-          headers: Record<string, string>
-          contentType: string
-          text?: string
-          base64?: string
-        } = {
-          url: maskSecrets(url.toString(), secrets),
-          status: response.status,
-          headers: Object.fromEntries(Array.from(response.headers.entries()).map(([k, v]) => [k.toLowerCase(), v])),
-          contentType,
-        }
-
-        if (isTextContent) {
-          resultData.text = new TextDecoder().decode(response.bytes)
-        } else {
-          resultData.base64 = Buffer.from(response.bytes).toString('base64')
-        }
-
-        return resultData
-      }
-
-      throw new ExtensionEgressError('too-many-redirects', `未能完成请求：重定向过多。`)
     },
   }
 }

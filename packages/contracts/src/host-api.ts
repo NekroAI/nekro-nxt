@@ -9,7 +9,11 @@ import {
   hostLogSourceSchema,
   hostLogStatusSchema,
 } from './logs.js'
-import { McpServerFormSchema } from './extension-capabilities.js'
+import {
+  EXTENSION_DOWNLOAD_MAX_BYTES,
+  EXTENSION_DOWNLOAD_MIN_BYTES,
+  McpServerFormSchema,
+} from './extension-capabilities.js'
 import {
   BoundCredentialsSchema,
   CredentialBindingsRequestSchema,
@@ -510,6 +514,12 @@ export const ModelFallbackReasonSchema = z.enum(['quota', 'rate-limit', 'unavail
 export type ModelFallbackReason = z.output<typeof ModelFallbackReasonSchema>
 
 /** How long a model that failed is passed over before conversations try it again. */
+/** 设置 → 存储 → 扩展下载上限: the most one extension download (`files.fromUrl`) may write. */
+export const ExtensionDownloadSettingsSchema = z
+  .object({ maxBytes: z.number().int().min(EXTENSION_DOWNLOAD_MIN_BYTES).max(EXTENSION_DOWNLOAD_MAX_BYTES) })
+  .strict()
+export type ExtensionDownloadSettings = z.output<typeof ExtensionDownloadSettingsSchema>
+
 export const ModelFallbackSettingsSchema = z
   .object({
     /** After rate limits, server errors, timeouts or empty replies that outlasted the usual retries. */
@@ -3914,6 +3924,22 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: CompactionSettingsSchema,
     response: CompactionSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  getExtensionDownloadSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/extension-downloads',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ExtensionDownloadSettingsSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateExtensionDownloadSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/extension-downloads',
+    params: EmptyParamsSchema,
+    request: ExtensionDownloadSettingsSchema,
+    response: ExtensionDownloadSettingsSchema,
     error: HostApiErrorSchema,
   }),
   getModelFallbackSettings: defineContract({

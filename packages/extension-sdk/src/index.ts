@@ -291,6 +291,12 @@ export interface NxtFileWriteInput {
   readonly mediaType?: string
 }
 
+/** SDK 15: `files.fromUrl` options; the request fields are the same as `http.fetch`. */
+export interface NxtFileFromUrlOptions extends NxtFetchInit, NxtCallOptions {
+  /** File name; defaults to the last part of the URL path. */
+  readonly name?: string
+}
+
 /**
  * SDK 14 work files (`permissions.*.files`). A `fileId` belongs to this extension only. Temporary files count against
  * `tempQuotaBytes` and expire after 24 hours; putting a file into the cache keeps it (against `cacheQuotaBytes`, least
@@ -309,6 +315,12 @@ export interface NxtFilesService {
    * `{ library: true }` (needs `assets.library`; the host instance always saves into the library).
    */
   toAsset(fileId: string, options?: NxtCallOptions & { readonly library?: boolean }): Promise<NxtAssetRecord>
+  /**
+   * SDK 15. Requires `network` too. Downloads `url` straight into a temporary work file through the controlled
+   * network, for videos, audio and archives too big for `http.fetch`. At most the instance's 扩展下载上限 (default
+   * 1 GiB, set in 设置 → 存储) and the room left in the temp quota; a non-2xx status fails the call.
+   */
+  fromUrl(url: string, options?: NxtFileFromUrlOptions): Promise<NxtFileRecord>
   readonly cache: {
     /** The cached file of `key`, or undefined. Reading it counts as use. */
     get(key: string): Promise<NxtFileRecord | undefined>
@@ -782,7 +794,10 @@ export interface NxtHostService {
   /** This agent's configuration (`config.agent`); same value as `ctx.config()`. */
   config(): ExtensionJsonValue
   readonly http: {
-    /** Requires `permissions.agent.network`. */
+    /**
+     * Requires `permissions.agent.network`. Holds the whole response in memory, at most 32 MiB; download bigger files
+     * with `files.fromUrl`.
+     */
     fetch(url: string, init?: NxtFetchInit): Promise<NxtFetchResponse>
   }
   readonly secrets: {
@@ -804,7 +819,10 @@ export interface NxtHostService {
      * saves it into the extension's library instead (needs `assets.library`).
      */
     create(input: NxtAssetCreateInput, options?: NxtAssetCreateOptions): Promise<NxtAssetRecord>
-    /** Requires `assets.write` and `network`; downloads through the controlled fetch. */
+    /**
+     * Requires `assets.write` and `network`. Downloads through the controlled network straight into an Asset, at most
+     * 128 MiB and the instance's 扩展下载上限.
+     */
     fromUrl(url: string, options?: { readonly name?: string }): Promise<NxtAssetRecord>
     /**
      * Requires `assets.library`. Keeps an Asset the current channel can see in the extension's library, so it can be
@@ -1790,15 +1808,15 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     declaration:
       '能力分两层声明：智能体挂载内的 ctx.nxt 用 nekro_nxt_extension_define.permissions.agent（并在返回的插件 inject 中加入 nxt）；factory 顶层的本机层 nxt（http、secrets、storage、render、parse、assets、image、files、media、commands、speech、index、models）用 permissions.host。未声明的能力调用会抛出指明缺失字段的错误。',
     services: [
-      "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。",
+      "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。整个响应读进内存，最多 32 MiB，适合接口、网页和图片；视频、音频、压缩包这类大文件用 files.fromUrl 下载，超出时报错也会这样提示。",
       'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
       "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
       "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）与 read/stat、nxt.image.info、nxt.files、nxt.media、nxt.commands、nxt.speech、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library?, read? }, files?, media?, commands?, speech?, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
       'logger 与 ctx.logger 提供 debug/info/warn/error(message, details?)，来源由宿主绑定；需要 requires.sdk 至少为 9，动态创造会自动声明。记录状态、数量和错误即可，不记录凭据、聊天正文或模型请求。Debug 在用户开启临时调试时保存。',
-      'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
+      'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。create 最多 8 MiB；fromUrl 直接下载成 Asset，最多 128 MiB，也受扩展下载上限限制；下载后还要处理的视频、音频用 files.fromUrl。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
       'ctx.nxt.assets.keep(assetId) / release(assetId) / attach(assetId)：扩展资源库。keep 把当前频道看得到的 Asset 收进本扩展的资源库，之后可以在别的频道使用（同一张图重复 keep 不变，超出配额报错）；release 移出资源库；attach 让资源库里的 Asset 在当前频道可以发送并返回 assetId。create(input, { library: true }) 生成后直接存进资源库。需要 assets: { library: { quotaBytes? } }（默认 2 GiB），本机层与挂载两层共用同一个资源库。本机层用 nxt.assets.list({ limit, after }) / get(assetId) / release(assetId) 管理。',
       'ctx.nxt.assets.read(assetId, { offset, length }) → { base64, eof, byteSize, mediaType } / stat(assetId) → { byteSize, mediaType }：读取当前频道看得到的或资源库中的文件内容，用来解析 PDF、表格、压缩包或处理音视频。每次最多读 4 MiB，从 offset 0 开始，每次加上读到的字节数，直到 eof。需要 assets: { read: true } 和 requires.sdk 至少为 14；本机层只能读资源库中的文件。',
-      'ctx.nxt.files / nxt.files：工作文件，用文件编号 fileId 在服务之间传递数据，不接触本机路径。write({ base64 | text, name, mediaType }) → { fileId, byteSize, … }（单个最多 128 MiB）；read(fileId, { offset, length }) → { base64, eof }（每次最多 4 MiB）；stat、delete；fromAsset(assetId) 把频道或资源库里的文件变成 fileId，不复制内容，可读范围与 assets.read 相同；toAsset(fileId) 存为当前频道的 Asset（需要 assets.write），toAsset(fileId, { library: true }) 存进资源库（需要 assets.library，本机层总是存进资源库）。临时文件 24 小时后删除；cache.put(key, fileId) 把文件留作缓存，不再过期，cache.get(key) 取回，cache.delete(key) 删除，同一个键再 put 会替换旧文件，缓存满了先删最久没用的。fileId 只在本扩展内有效，本机层和智能体挂载共用。需要 files: { tempQuotaBytes?, cacheQuotaBytes? }（默认各 1 GiB，最多 16 GiB）和 requires.sdk 至少为 14；动态试运行的文件单独存放，各最多 64 MiB。',
+      'ctx.nxt.files / nxt.files：工作文件，用文件编号 fileId 在服务之间传递数据，不接触本机路径。write({ base64 | text, name, mediaType }) → { fileId, byteSize, … }（单个最多 128 MiB）；read(fileId, { offset, length }) → { base64, eof }（每次最多 4 MiB）；stat、delete；fromAsset(assetId) 把频道或资源库里的文件变成 fileId，不复制内容，可读范围与 assets.read 相同；toAsset(fileId) 存为当前频道的 Asset（需要 assets.write），toAsset(fileId, { library: true }) 存进资源库（需要 assets.library，本机层总是存进资源库）。fromUrl(url, { method, headers, body, name, signal }) 通过受控网络把视频、音频、压缩包等大文件直接下载成临时工作文件，不读进内存，返回 { fileId, byteSize, mediaType, … }，可以直接交给 media、speech 或 toAsset；还需要 network 和 requires.sdk 至少为 15（动态创造会自动声明），状态码不是 2xx 时报错。单次下载最多为「设置 → 存储 → 扩展下载上限」（默认 1 GB，管理员可以调低），也不能超过临时文件配额的剩余空间。超出时报错写明上限和原因，工具要把这句话原样返回，由智能体转告用户：上限不够时请管理员到该设置调高，配额不够时调大 files.tempQuotaBytes 或删除旧文件；不要改成只下载开头一段，很多视频缺了结尾解不出画面。临时文件 24 小时后删除；cache.put(key, fileId) 把文件留作缓存，不再过期，cache.get(key) 取回，cache.delete(key) 删除，同一个键再 put 会替换旧文件，缓存满了先删最久没用的。fileId 只在本扩展内有效，本机层和智能体挂载共用。需要 files: { tempQuotaBytes?, cacheQuotaBytes? }（默认各 1 GiB，最多 16 GiB）和 requires.sdk 至少为 14；动态试运行的文件单独存放，各最多 64 MiB。',
       "ctx.nxt.media / nxt.media：处理音频、视频和图片，用「设置 → 附加功能」里的媒体处理（ffmpeg）。输入写 { assetId }（当前频道看得到的或资源库中的文件，本机层只能用资源库）或 { fileId }。probe(input) → { durationSeconds, format, streams: [{ type, codec, width, height, fps, sampleRate, channels }] }；frames(input, { at: [秒, …] 或 { intervalSeconds | count, from, to }, width, height, format: 'jpeg' | 'png' | 'rgb24' | 'gray8', quality }) → [{ fileId, time, width, height }]，rgb24、gray8 是原始像素，适合检测镜头切换，单次最多 1000 帧；audio(input, { from, to, sampleRate, channels, format: 'wav' | 'pcm_s16le' | 'mp3' | 'ogg' | 'amr' | 'silk' }) → { fileId, byteSize, format, sampleRate, channels }；convert(input, { format, maxWidth, maxHeight }) 在 png、jpeg、webp、gif、mp3、ogg、wav、amr、silk、mp4、webm 之间转换 → { fileId, byteSize, format }。输出是临时工作文件，计入临时文件配额，用 files.read 读取、files.toAsset 发送，或交给下一个服务。都接受 { signal }。当前 ffmpeg 不能生成某种格式时报错写明是哪一种。需要 media: true、files 和 requires.sdk 至少为 14。媒体处理没有安装时报错写明请管理员到「设置 → 附加功能」安装；保存验证时返回固定的占位结果（1×1 的画面、短暂的静音），不运行 ffmpeg。",
       "ctx.nxt.commands / nxt.commands：按命令档案运行附加功能提供的程序，目前有 ffmpeg 和 ffprobe，nxt.media 做不到的处理才用它。run(profile, args, { inputs: { 键: { assetId } | { fileId } }, timeoutSeconds, signal }) → { exitCode, stdout, stderr, truncated, outputs: [{ name, fileId, byteSize }] }。args 里的文字原样传入，输入文件写 { input: 键 }，输出文件写 { output: 'cover.png' }（序列写 'frame-%03d.jpg'）。每次在单独的临时目录里运行，不能联网，只能读写交给它的文件；档案没有列出的选项、网址、绝对路径和会自己打开文件的滤镜会被拒绝，报错写明是哪一个。profiles() 列出声明的档案和现在能否使用。需要 commands: { profiles: ['ffmpeg', 'ffprobe'] }（启用时用户逐项确认）、files 和 requires.sdk 至少为 14。提供程序的附加功能没有安装时报错写明要安装哪一项；保存验证时只检查参数，不运行程序，返回退出码 0 和空的输出文件。",
       "ctx.nxt.speech / nxt.speech：语音转文字，用「设置 → 附加功能」里选择的语音识别（本地模型或云端供应商）。transcribe({ assetId } | { fileId }, { language: 'auto' | 'zh' | 'en' | 'ja' | 'ko' | 'yue', signal }) → { text, language, segments: [{ start, end, text }], durationSeconds, provider: { id, title }, model }；结果写明实际使用的识别方式和模型，不要假设是哪一种。SILK、AMR、mp3 等格式先由媒体处理转换；视频先用 media.audio 取出音轨。同一个频道文件按内容只转写一次。需要 speech: { maxCallsPerMinute }（1–60，默认 10，超出时报错）和 requires.sdk 至少为 14。语音识别不可用时报错写明请管理员到「设置 → 附加功能」安装或配置；保存验证时返回固定文字。",

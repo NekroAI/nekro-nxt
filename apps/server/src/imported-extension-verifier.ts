@@ -533,7 +533,14 @@ const verificationBackends = (
   files,
   // Media, programs and speech answer with fixed placeholders: verification spends no time or quota on them.
   ...verificationMediaBackends(),
-  fetch: (policy, url, init, secrets) => createExtensionEgress({ policy }).fetch(url, init, secrets),
+  fetch: (policy, url, init, secrets, limits) =>
+    createExtensionEgress({ policy, ...(limits === undefined ? {} : { maxResponseBytes: limits.maxBytes }) }).fetch(
+      url,
+      init,
+      secrets,
+    ),
+  download: (policy, url, init, secrets, target) =>
+    createExtensionEgress({ policy }).download(url, init, secrets, target),
   storage: memoryNxtStorage(),
   jobs: memoryNxtJobs(),
   platform: {
@@ -562,6 +569,12 @@ const verificationBackends = (
   secret: () => Promise.resolve(undefined),
   // Verification never spends the user's model quota; a fixed reply exercises the call path.
   complete: () => Promise.resolve({ text: '验证模型回复' }),
+  // A downloaded Asset is read through and discarded, like the inline one below.
+  createAssetFromStream: async (_channelId, bytes) => {
+    let byteSize = 0
+    for await (const chunk of bytes) byteSize += chunk.byteLength
+    return { assetId: 'ast_VERIFY', byteSize, mediaType: 'application/octet-stream' }
+  },
   createAsset: (_channelId, asset) =>
     Promise.resolve({
       assetId: 'ast_VERIFY',
