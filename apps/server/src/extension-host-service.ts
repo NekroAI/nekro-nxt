@@ -10,6 +10,7 @@ import {
   SpeechLanguageSchema,
   EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES,
   EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
+  EXTENSION_DOWNLOAD_DEFAULT_BYTES,
   EXTENSION_DOWNLOAD_MAX_BYTES,
   EXTENSION_DOWNLOAD_SDK_LEVEL,
   EXTENSION_FETCH_MAX_BYTES,
@@ -540,9 +541,9 @@ const assetReader = (
 
 const DOWNLOAD_SETTING = '「设置 → 存储 → 扩展下载上限」'
 
-/** 扩展下载上限: what one download may write, never above the highest the host allows. */
+/** 扩展下载上限: what one download may write, never above the highest an administrator can set. */
 const downloadLimit = (backends: NxtServiceBackends): number =>
-  Math.min(backends.downloadLimitBytes?.() ?? EXTENSION_DOWNLOAD_MAX_BYTES, EXTENSION_DOWNLOAD_MAX_BYTES)
+  Math.min(backends.downloadLimitBytes?.() ?? EXTENSION_DOWNLOAD_DEFAULT_BYTES, EXTENSION_DOWNLOAD_MAX_BYTES)
 
 /** What `http.fetch` holds in memory: its own cap, or a lower 扩展下载上限. */
 const fetchLimit = (backends: NxtServiceBackends): number =>

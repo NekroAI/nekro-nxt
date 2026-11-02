@@ -15,16 +15,17 @@ const memorySettings = () => {
 }
 
 describe('扩展下载上限', () => {
-  it('defaults to 1 GiB and keeps what an administrator lowers it to', () => {
+  it('defaults to 1 GiB and keeps what an administrator sets, up to 5 GiB', () => {
     const settings = memorySettings()
     expect(readExtensionDownloadLimit(settings)).toBe(1024 * MiB)
     expect(writeExtensionDownloadLimit(settings, 256 * MiB)).toBe(256 * MiB)
     expect(readExtensionDownloadLimit(settings)).toBe(256 * MiB)
+    expect(writeExtensionDownloadLimit(settings, 5 * 1024 * MiB)).toBe(5 * 1024 * MiB)
   })
 
-  it('refuses values above 1 GiB or below 8 MiB and ignores a stored value it cannot read', () => {
+  it('refuses values above 5 GiB or below 8 MiB and ignores a stored value it cannot read', () => {
     const settings = memorySettings()
-    expect(() => writeExtensionDownloadLimit(settings, 2048 * MiB)).toThrow()
+    expect(() => writeExtensionDownloadLimit(settings, 5 * 1024 * MiB + 1)).toThrow()
     expect(() => writeExtensionDownloadLimit(settings, MiB)).toThrow()
     settings.put('extension.downloadLimit', { maxBytes: 'big' })
     expect(readExtensionDownloadLimit(settings)).toBe(1024 * MiB)

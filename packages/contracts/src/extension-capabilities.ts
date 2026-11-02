@@ -21,8 +21,11 @@ export const EXTENSION_DOWNLOAD_SDK_LEVEL = 15
 /** Largest response `http.fetch` holds in memory; bigger files go through `files.fromUrl`. */
 export const EXTENSION_FETCH_MAX_BYTES = 32 * 1024 * 1024
 
-/** Default and highest 扩展下载上限: what one `files.fromUrl` may write. Administrators can only lower it. */
-export const EXTENSION_DOWNLOAD_MAX_BYTES = 1024 * 1024 * 1024
+/** Default 扩展下载上限: what one `files.fromUrl` may write until an administrator changes it. */
+export const EXTENSION_DOWNLOAD_DEFAULT_BYTES = 1024 * 1024 * 1024
+
+/** The highest 扩展下载上限 an administrator can set. */
+export const EXTENSION_DOWNLOAD_MAX_BYTES = 5 * 1024 * 1024 * 1024
 
 /** The lowest 扩展下载上限 an administrator can set. */
 export const EXTENSION_DOWNLOAD_MIN_BYTES = 8 * 1024 * 1024
@@ -50,7 +53,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 12, version: '0.7.0' },
   { level: 13, version: '0.7.0' },
   { level: 14, version: '0.8.0' },
-  { level: 15, version: '0.9.0' },
+  { level: 15, version: '0.8.1' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */

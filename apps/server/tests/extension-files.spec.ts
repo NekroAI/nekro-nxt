@@ -356,7 +356,7 @@ describe('downloads into work files', () => {
       { ...backends, download, downloadLimitBytes: () => 2 * MiB },
     )
     await expect(lowered.files.fromUrl('https://media.example.com/big.mp4')).rejects.toThrow(
-      '文件超过扩展下载上限 2 MB。可以请管理员在「设置 → 存储 → 扩展下载上限」调高（最多 1 GB）。',
+      '文件超过扩展下载上限 2 MB。可以请管理员在「设置 → 存储 → 扩展下载上限」调高（最多 5 GB）。',
     )
     const full = createNxtHostService(
       { ...binding(roomA.id, { ...capabilities, files: { tempQuotaBytes: 2 * MiB } }), sdk: 15 },

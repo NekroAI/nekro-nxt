@@ -267,7 +267,7 @@ function UpgradeBackupRows() {
 }
 
 const MiB = 1024 * 1024
-const DOWNLOAD_LIMITS = [64 * MiB, 128 * MiB, 256 * MiB, 512 * MiB, 1024 * MiB]
+const DOWNLOAD_LIMITS = [64 * MiB, 128 * MiB, 256 * MiB, 512 * MiB, 1024 * MiB, 2048 * MiB, 5120 * MiB]
 
 const downloadLabel = (bytes: number) =>
   bytes >= 1024 * MiB ? `${bytes / 1024 / MiB} GB` : `${Math.round(bytes / MiB)} MB`

@@ -172,7 +172,7 @@ test.describe('settings space', () => {
     }
   })
 
-  test('lowers the largest file an extension may download', async () => {
+  test('changes the largest file an extension may download', async () => {
     const requests: unknown[] = []
     let maxBytes = 1024 * 1024 * 1024
     const { page, errors } = await open('/settings/storage', {
@@ -196,6 +196,10 @@ test.describe('settings space', () => {
       await page.getByRole('option', { name: '256 MB' }).click()
       await expect.poll(() => requests).toEqual([{ maxBytes: 256 * 1024 * 1024 }])
       await expect(select).toHaveText('256 MB')
+      await select.click()
+      await page.getByRole('option', { name: '5 GB' }).click()
+      await expect.poll(() => requests.at(-1)).toEqual({ maxBytes: 5 * 1024 * 1024 * 1024 })
+      await expect(select).toHaveText('5 GB')
       await page.screenshot({ path: '.local/browser-test-results/settings-extension-downloads.png' })
       expect(errors).toEqual([])
     } finally {
