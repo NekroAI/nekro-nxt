@@ -242,7 +242,10 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('t
   it('reads a hidden file only when the run lists it', async () => {
     const sandbox = await createProgramSandbox()
     try {
-      const hidden = await temporary()
+      // Outside the system temp folder: the Linux sandbox lets every command read and write /tmp.
+      await mkdir(path.join(process.cwd(), '.local'), { recursive: true })
+      const hidden = realpathSync(await mkdtemp(path.join(process.cwd(), '.local', 'nekro-nxt-hidden-')))
+      temporaryDirectories.push(hidden)
       const secret = path.join(hidden, 'note.txt')
       await writeFile(secret, 'fixture note')
       const runner = new ConfinedProgramRunner({ sandbox, confinement: { hidden: [hidden], readable: [] } })
