@@ -172,6 +172,37 @@ test.describe('settings space', () => {
     }
   })
 
+  test('lowers the largest file an extension may download', async () => {
+    const requests: unknown[] = []
+    let maxBytes = 1024 * 1024 * 1024
+    const { page, errors } = await open('/settings/storage', {
+      before: async (target) => {
+        await target.route('**/api/settings/extension-downloads', async (request) => {
+          if (request.request().method() === 'PUT') {
+            const body: unknown = request.request().postDataJSON()
+            requests.push(body)
+            if (body !== null && typeof body === 'object' && 'maxBytes' in body && typeof body.maxBytes === 'number') {
+              maxBytes = body.maxBytes
+            }
+          }
+          await request.fulfill({ json: { maxBytes } })
+        })
+      },
+    })
+    try {
+      const select = page.getByRole('combobox', { name: '扩展下载上限' })
+      await expect(select).toHaveText('1 GB')
+      await select.click()
+      await page.getByRole('option', { name: '256 MB' }).click()
+      await expect.poll(() => requests).toEqual([{ maxBytes: 256 * 1024 * 1024 }])
+      await expect(select).toHaveText('256 MB')
+      await page.screenshot({ path: '.local/browser-test-results/settings-extension-downloads.png' })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('downloads an update inside the desktop app and installs it after quitting', async () => {
     const status = {
       channel: 'stable',

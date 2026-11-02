@@ -24,6 +24,7 @@ export function StorageSection() {
       <PropertyList>
         <DataDirectoryRows />
         <UpgradeBackupRows />
+        <ExtensionDownloadRow />
       </PropertyList>
     </>
   )
@@ -262,5 +263,51 @@ function UpgradeBackupRows() {
         </PropertyRow>
       ) : null}
     </>
+  )
+}
+
+const MiB = 1024 * 1024
+const DOWNLOAD_LIMITS = [64 * MiB, 128 * MiB, 256 * MiB, 512 * MiB, 1024 * MiB]
+
+const downloadLabel = (bytes: number) =>
+  bytes >= 1024 * MiB ? `${bytes / 1024 / MiB} GB` : `${Math.round(bytes / MiB)} MB`
+
+/** 扩展下载上限: the biggest file one extension download may fetch. */
+function ExtensionDownloadRow() {
+  const [maxBytes, setMaxBytes] = useState<number>()
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    workspaceApi
+      .getExtensionDownloadSettings({ signal: controller.signal })
+      .then((settings) => setMaxBytes(settings.maxBytes))
+      .catch(() => undefined)
+    return () => controller.abort()
+  }, [])
+  if (maxBytes === undefined) return null
+  const limits = DOWNLOAD_LIMITS.includes(maxBytes)
+    ? DOWNLOAD_LIMITS
+    : [...DOWNLOAD_LIMITS, maxBytes].sort((a, b) => a - b)
+  const save = async (next: number) => {
+    setBusy(true)
+    try {
+      setMaxBytes((await workspaceApi.updateExtensionDownloadSettings({ maxBytes: next })).maxBytes)
+      toast('已保存')
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <PropertyRow label="扩展下载上限" description="扩展一次最多能下载多大的文件，比如让智能体下载视频来看">
+      <Select
+        aria-label="扩展下载上限"
+        value={String(maxBytes)}
+        disabled={busy}
+        options={limits.map((bytes) => ({ value: String(bytes), label: downloadLabel(bytes) }))}
+        onValueChange={(value) => void save(Number(value))}
+      />
+    </PropertyRow>
   )
 }
