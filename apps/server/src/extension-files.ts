@@ -54,7 +54,7 @@ const cleanName = (name: string | undefined): string | undefined => {
   return base === '' || base === '.' || base === '..' ? undefined : base
 }
 
-const formatBytes = (bytes: number): string =>
+export const formatBytes = (bytes: number): string =>
   bytes >= 1024 * 1024 * 1024
     ? `${+(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
     : `${Math.max(1, Math.round(bytes / 1024 / 1024))} MB`
@@ -73,6 +73,7 @@ export type ExtensionFiles = Pick<
   | 'cachePut'
   | 'cacheDelete'
   | 'workDirectory'
+  | 'usage'
 >
 
 /**
@@ -183,14 +184,21 @@ export class ExtensionFileStore {
   async importPath(
     owner: string,
     hostPath: string,
-    options: { readonly name?: string; readonly mediaType?: string; readonly move?: boolean },
+    options: {
+      readonly name?: string | undefined
+      readonly mediaType?: string | undefined
+      readonly move?: boolean
+      /** Downloads pass the 扩展下载上限 here; other files stay within {@link EXTENSION_FILE_MAX_BYTES}. */
+      readonly maxBytes?: number
+    },
     quota: ExtensionFileQuota,
   ): Promise<NxtFileRecord> {
     await this.start()
     const info = await stat(hostPath)
     if (!info.isFile()) throw new Error(`Not a regular file: ${hostPath}`)
-    if (info.size > EXTENSION_FILE_MAX_BYTES) {
-      throw new NxtCapabilityError(`单个文件最多 ${formatBytes(EXTENSION_FILE_MAX_BYTES)}。`)
+    const maxBytes = options.maxBytes ?? EXTENSION_FILE_MAX_BYTES
+    if (info.size > maxBytes) {
+      throw new NxtCapabilityError(`单个文件最多 ${formatBytes(maxBytes)}。`)
     }
     this.#reserveTemp(owner, info.size, quota)
     const file = this.#newRecord(owner, info.size, options.mediaType, options.name ?? path.basename(hostPath))

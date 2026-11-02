@@ -1,4 +1,8 @@
+import { existsSync } from 'node:fs'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createExtensionEgress, ExtensionEgressError, type ExtensionEgressPolicy } from '../src/extension-egress.js'
 
@@ -39,6 +43,11 @@ beforeEach(async () => {
       } else if (url === '/large') {
         response.writeHead(200, { 'content-type': 'text/plain' })
         response.end('x'.repeat(2048))
+      } else if (url === '/chunked') {
+        // No content-length: the size is only known while reading.
+        response.writeHead(200, { 'content-type': 'video/mp4' })
+        response.write('v'.repeat(1500))
+        setTimeout(() => response.end('v'.repeat(1500)), 10)
       } else if (url === '/slow') {
         setTimeout(() => response.end('late'), 500)
       } else if (url === '/echo') {
@@ -276,5 +285,77 @@ describe('credential placeholders', () => {
     expect(withBody.code).toBe('policy-denied')
     expect(received).toHaveLength(1)
     expect(received[0]?.body.toString()).toBe('key=weather-fixture-key')
+  })
+})
+
+describe('downloads into a file', () => {
+  let directory = ''
+  beforeEach(async () => {
+    directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-egress-'))
+  })
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true })
+  })
+  const policy: ExtensionEgressPolicy = { mode: 'domains', domains: ['media.example.com'] }
+
+  it('streams a body bigger than the memory limit into the target file', async () => {
+    const egress = egressFor(policy)
+    expect((await failure(egress.fetch(`http://media.example.com:${port}/large`))).code).toBe('response-too-large')
+    const target = path.join(directory, 'large')
+    const result = await egress.download(`http://media.example.com:${port}/redirect-to/%2Flarge`, undefined, [], {
+      path: target,
+      maxBytes: 4096,
+    })
+    expect(result).toMatchObject({ status: 200, contentType: 'text/plain', byteSize: 2048 })
+    expect(result.url).toBe(`http://media.example.com:${port}/large`)
+    expect(await readFile(target, 'utf8')).toBe('x'.repeat(2048))
+  })
+
+  it('stops past the limit and leaves no partial file', async () => {
+    const egress = egressFor(policy)
+    for (const route of ['/large', '/chunked']) {
+      const target = path.join(directory, route.slice(1))
+      const error = await failure(
+        egress.download(`http://media.example.com:${port}${route}`, undefined, [], {
+          path: target,
+          maxBytes: 1000,
+        }),
+      )
+      expect(error).toMatchObject({ code: 'response-too-large', limitBytes: 1000 })
+      expect(existsSync(target)).toBe(false)
+    }
+    const whole = path.join(directory, 'whole')
+    await egress.download(`http://media.example.com:${port}/chunked`, undefined, [], { path: whole, maxBytes: 3000 })
+    expect((await readFile(whole)).byteLength).toBe(3000)
+  })
+
+  it('writes nothing for an error status and keeps the network policy', async () => {
+    const egress = egressFor(policy)
+    const target = path.join(directory, 'missing')
+    expect(
+      await egress.download(`http://media.example.com:${port}/missing`, undefined, [], {
+        path: target,
+        maxBytes: 4096,
+      }),
+    ).toMatchObject({ status: 404, byteSize: 0 })
+    expect(existsSync(target)).toBe(false)
+    const denied = await failure(
+      egress.download(`http://other.example.com:${port}/large`, undefined, [], { path: target, maxBytes: 4096 }),
+    )
+    expect(denied.code).toBe('policy-denied')
+    expect(received.map(({ url }) => url)).toEqual(['/missing'])
+  })
+
+  it('stops when the caller cancels', async () => {
+    const controller = new AbortController()
+    const target = path.join(directory, 'slow')
+    const pending = egressFor(policy).download(`http://media.example.com:${port}/chunked`, undefined, [], {
+      path: target,
+      maxBytes: 4096,
+      signal: controller.signal,
+    })
+    controller.abort()
+    expect((await failure(pending)).code).toBe('aborted')
+    expect(existsSync(target)).toBe(false)
   })
 })

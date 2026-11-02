@@ -13,6 +13,7 @@ import {
   type NxtServiceBinding,
 } from '../src/extension-host-service.js'
 import { ExtensionLibrary, sqliteLibraryRegistry } from '../src/extension-library.js'
+import { ExtensionEgressError } from '../src/extension-egress.js'
 import { unusedNxtBackends } from './fixtures/unused-nxt-backends.js'
 
 const directories: string[] = []
@@ -298,5 +299,109 @@ describe('nxt.files', () => {
     await expect(dynamic.files.write({ base64: Buffer.alloc(65 * MiB).toString('base64') })).rejects.toThrow(
       '临时文件已满（上限 64 MB）',
     )
+  })
+})
+
+/** Bytes a fictional server answers with per path; the fake download enforces `maxBytes` like the egress does. */
+const downloads = (served: Readonly<Record<string, { readonly status?: number; readonly body: Uint8Array }>>) => {
+  const calls: { url: string; maxBytes: number }[] = []
+  const download: NonNullable<NxtServiceBackends['download']> = async (_policy, url, _init, _secrets, target) => {
+    calls.push({ url, maxBytes: target.maxBytes })
+    const answer = served[new URL(url).pathname] ?? { status: 404, body: new Uint8Array() }
+    const status = answer.status ?? 200
+    if (status === 200) {
+      if (answer.body.byteLength > target.maxBytes) {
+        throw new ExtensionEgressError('response-too-large', '响应过大。', target.maxBytes)
+      }
+      await writeFile(target.path, answer.body)
+    }
+    return { url, status, contentType: 'video/mp4', byteSize: status === 200 ? answer.body.byteLength : 0 }
+  }
+  return { calls, download }
+}
+
+describe('downloads into work files', () => {
+  const capabilities: ExtensionCapabilities = {
+    files: { tempQuotaBytes: 4 * MiB },
+    network: { mode: 'domains', domains: ['media.example.com'] },
+  }
+
+  it('downloads into a temporary file named after the URL', async () => {
+    const { backends, binding, files, roomA } = await productSetup()
+    const { download } = downloads({ '/clips/%E7%A4%BA%E4%BE%8B.mp4': { body: bytes(3 * MiB) } })
+    const nxt = createNxtHostService({ ...binding(roomA.id, capabilities), sdk: 15 }, { ...backends, download })
+    const file = await nxt.files.fromUrl('https://media.example.com/clips/%E7%A4%BA%E4%BE%8B.mp4')
+    expect(file).toMatchObject({ byteSize: 3 * MiB, mediaType: 'video/mp4', name: '示例.mp4', kind: 'temp' })
+    expect(files.usage(extensionId).tempBytes).toBe(3 * MiB)
+    expect((await nxt.files.read(file.fileId, { offset: 0, length: 4 })).base64).toBe(
+      Buffer.from(bytes(4)).toString('base64'),
+    )
+    await expect(nxt.files.fromUrl('https://media.example.com/missing.mp4')).rejects.toThrow('下载失败：HTTP 404')
+  })
+
+  it('needs SDK 15 and the network declaration', async () => {
+    const { backends, binding, roomA } = await productSetup()
+    const { download } = downloads({})
+    const old = createNxtHostService({ ...binding(roomA.id, capabilities), sdk: 14 }, { ...backends, download })
+    await expect(old.files.fromUrl('https://media.example.com/a.mp4')).rejects.toThrow('requires.sdk 为 15')
+    const offline = createNxtHostService({ ...binding(roomA.id, { files: {} }), sdk: 15 }, { ...backends, download })
+    await expect(offline.files.fromUrl('https://media.example.com/a.mp4')).rejects.toThrow('network（出站网络）')
+  })
+
+  it('says which limit a download went past', async () => {
+    const { backends, binding, roomA } = await productSetup()
+    const { calls, download } = downloads({ '/big.mp4': { body: bytes(3 * MiB) } })
+    const lowered = createNxtHostService(
+      { ...binding(roomA.id, capabilities), sdk: 15 },
+      { ...backends, download, downloadLimitBytes: () => 2 * MiB },
+    )
+    await expect(lowered.files.fromUrl('https://media.example.com/big.mp4')).rejects.toThrow(
+      '文件超过扩展下载上限 2 MB。可以请管理员在「设置 → 存储 → 扩展下载上限」调高（最多 1 GB）。',
+    )
+    const full = createNxtHostService(
+      { ...binding(roomA.id, { ...capabilities, files: { tempQuotaBytes: 2 * MiB } }), sdk: 15 },
+      { ...backends, download },
+    )
+    await expect(full.files.fromUrl('https://media.example.com/big.mp4')).rejects.toThrow(
+      '临时文件空间不够：这个扩展的临时文件配额为 2 MB，还剩 2 MB。请先删除不用的工作文件，或调大 files.tempQuotaBytes。',
+    )
+    expect(calls.map(({ maxBytes }) => maxBytes)).toEqual([2 * MiB, 2 * MiB])
+  })
+
+  it('tells http.fetch callers to download big files instead', async () => {
+    const { backends, binding, roomA } = await productSetup()
+    const limits: number[] = []
+    const fetch: NxtServiceBackends['fetch'] = (_policy, _url, _init, _secrets, options) => {
+      limits.push(options?.maxBytes ?? 0)
+      return Promise.reject(new ExtensionEgressError('response-too-large', '响应过大。', options?.maxBytes))
+    }
+    const nxt = createNxtHostService(binding(roomA.id, capabilities), { ...backends, fetch })
+    await expect(nxt.http.fetch('https://media.example.com/big.mp4')).rejects.toThrow(
+      '响应超过 http.fetch 的 32 MB 上限。http.fetch 把整个响应读进内存，只适合接口和网页；视频、音频、压缩包等大文件请用 files.fromUrl',
+    )
+    const lowered = createNxtHostService(binding(roomA.id, capabilities), {
+      ...backends,
+      fetch,
+      downloadLimitBytes: () => 16 * MiB,
+    })
+    await expect(lowered.http.fetch('https://media.example.com/big.mp4')).rejects.toThrow(
+      '管理员在「设置 → 存储 → 扩展下载上限」把扩展下载上限设为 16 MB',
+    )
+    expect(limits).toEqual([32 * MiB, 16 * MiB])
+  })
+
+  it('downloads straight into a channel Asset', async () => {
+    const { repository, backends, binding, files, roomA } = await productSetup()
+    const { calls, download } = downloads({ '/poster.png': { body: new TextEncoder().encode('海报') } })
+    const nxt = createNxtHostService(
+      binding(roomA.id, { assets: { write: true }, network: { mode: 'domains', domains: ['media.example.com'] } }),
+      { ...backends, download },
+    )
+    const saved = await nxt.assets.fromUrl('https://media.example.com/poster.png', { name: 'poster.png' })
+    expect(saved.byteSize).toBe(6)
+    expect(repository.canAccessAsset(AssetIdSchema.parse(saved.assetId), roomA.id)).toBe(true)
+    expect(calls).toEqual([{ url: 'https://media.example.com/poster.png', maxBytes: 128 * MiB }])
+    // The download folder is gone and nothing counts against work files.
+    expect(files.usage(extensionId)).toEqual({ tempBytes: 0, cacheBytes: 0 })
   })
 })

@@ -50,6 +50,9 @@ export const unusedNxtBackends = (): NxtServiceBackends => {
       cachePut: unused,
       cacheDelete: unused,
       workDirectory: unused,
+      usage: () => {
+        throw new Error('Unexpected nxt operation in a lifecycle-only fixture.')
+      },
     },
     media: { probe: unused, frames: unused, audio: unused, convert: unused },
     commands: {

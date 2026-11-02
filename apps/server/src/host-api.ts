@@ -28,6 +28,7 @@ import { downloadMirror, ProductUpdates } from './product-updates.js'
 import { readMessagePacing, writeMessagePacing, type MessagePacingSettingsStore } from './message-pacing.js'
 import { readCompactionSettings, writeCompactionSettings } from './compaction-settings.js'
 import { readModelFallbackSettings, writeModelFallbackSettings } from './model-fallback-settings.js'
+import { readExtensionDownloadLimit, writeExtensionDownloadLimit } from './extension-download-settings.js'
 import { registerAuthoringRoutes } from './host-routes-authoring.js'
 import { registerSubConversationRoutes } from './host-routes-sub-conversations.js'
 import { registerLinkedAccountRoutes } from './host-routes-linked-accounts.js'
@@ -427,6 +428,35 @@ export const createNekroHostApi = (
         )
       } catch (error) {
         writeError(res, 400, 'model-fallback-settings-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/extension-downloads',
+    handler: async (req, res) => {
+      if (req.method === 'GET') {
+        writeContractJson(res, 200, HostApiContracts.getExtensionDownloadSettings, {
+          maxBytes: readExtensionDownloadLimit(pacingSettings),
+        })
+        return
+      }
+      if (req.method !== 'PUT') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.updateExtensionDownloadSettings.parseRequest(await readJsonBody(req))
+        writeContractJson(res, 200, HostApiContracts.updateExtensionDownloadSettings, {
+          maxBytes: writeExtensionDownloadLimit(pacingSettings, parsed.maxBytes),
+        })
+      } catch (error) {
+        writeError(
+          res,
+          400,
+          'extension-download-settings-failed',
+          error instanceof Error ? error.message : String(error),
+        )
       }
     },
   })

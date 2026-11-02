@@ -154,6 +154,7 @@ import { runtimeFeedbackSources, type FeedbackEnvironment } from './feedback-run
 import { channelMemberRelations } from './channel-member-relations.js'
 import { ChannelPrompts } from './channel-prompts.js'
 import { messageGapMs, readMessagePacing } from './message-pacing.js'
+import { readExtensionDownloadLimit } from './extension-download-settings.js'
 import { readCompactionSettings } from './compaction-settings.js'
 import { readModelFallbackSettings } from './model-fallback-settings.js'
 import { readSubConversationRetention } from './sub-conversation-settings.js'
@@ -792,8 +793,15 @@ export class NekroRuntime {
         accountPlatformUserId: (connectionId) =>
           core.connectionAccountPlatformUserId(ConnectionIdSchema.parse(connectionId)),
       }
-      const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init, secrets) =>
-        createExtensionEgress({ policy }).fetch(url, init, secrets)
+      const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init, secrets, limits) =>
+        createExtensionEgress({ policy, ...(limits === undefined ? {} : { maxResponseBytes: limits.maxBytes }) }).fetch(
+          url,
+          init,
+          secrets,
+        )
+      const nxtDownload: NxtServiceBackends['download'] = (policy, url, init, secrets, target) =>
+        createExtensionEgress({ policy }).download(url, init, secrets, target)
+      const nxtDownloadLimit = () => readExtensionDownloadLimit({ get: (key) => repository.getSystemSetting(key) })
       // The model runtime lives in the DSH Host created below; extension calls only happen after it exists.
       const nxtComplete: NxtServiceBackends['complete'] = (binding, request, maxOutputTokens) => {
         if (!hostReference.current) return Promise.reject(new Error('DSH Host is not ready.'))
@@ -1102,6 +1110,8 @@ export class NekroRuntime {
         activationBackends: createNxtProductBackends(nxtFacts, {
           ...(loggerFor === undefined ? {} : { logger: loggerFor }),
           fetch: nxtFetch,
+          download: nxtDownload,
+          downloadLimitBytes: nxtDownloadLimit,
           complete: nxtComplete,
           library: libraryFor(sqliteLibraryRegistry(repository.extensionLibrary)),
           files: extensionFiles,
@@ -1141,6 +1151,8 @@ export class NekroRuntime {
         dynamicBackends: createNxtProductBackends(nxtFacts, {
           ...(loggerFor === undefined ? {} : { logger: loggerFor }),
           fetch: nxtFetch,
+          download: nxtDownload,
+          downloadLimitBytes: nxtDownloadLimit,
           complete: nxtComplete,
           // Dynamic runs keep their library and index in memory; pictures and channel grants stay real.
           library: libraryFor(memoryLibraryRegistry()),

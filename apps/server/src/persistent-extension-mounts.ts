@@ -214,6 +214,7 @@ const unavailableHostNxt = (): NxtHostLayerService => {
       delete: unavailable,
       fromAsset: unavailable,
       toAsset: unavailable,
+      fromUrl: unavailable,
       cache: { get: unavailable, put: unavailable, delete: unavailable },
     },
     media: { probe: unavailable, frames: unavailable, audio: unavailable, convert: unavailable },

@@ -200,17 +200,10 @@ describe('nxt Host service', () => {
     await nxt.storage.set('b', 'x'.repeat(200))
   })
 
-  it('saves channel assets and downloads through the controlled fetch', async () => {
-    const { nxt, createAsset } = fixture({
-      assets: { write: true },
-      network: { mode: 'domains', domains: ['api.example.com'] },
-    })
+  // Downloads into Assets are covered with real work files in extension-files.spec.ts.
+  it('saves channel assets', async () => {
+    const { nxt } = fixture({ assets: { write: true } })
     expect(await nxt.assets.create({ text: 'poster' })).toMatchObject({ assetId: 'ast_FIXTURE' })
-    await nxt.assets.fromUrl('https://api.example.com/image.png', { name: 'image.png' })
-    expect(createAsset.mock.calls[1]).toEqual([
-      'chn_FIXTURE',
-      { text: 'ok', mediaType: 'text/plain', name: 'image.png' },
-    ])
   })
 
   it('labels static sections and renders dynamic context once per turn within its budget', async () => {

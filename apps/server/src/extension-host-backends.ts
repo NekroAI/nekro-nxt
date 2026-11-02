@@ -189,6 +189,8 @@ export const createNxtProductBackends = (
   infrastructure: Pick<
     NxtServiceBackends,
     | 'fetch'
+    | 'download'
+    | 'downloadLimitBytes'
     | 'storage'
     | 'diagnostic'
     | 'complete'

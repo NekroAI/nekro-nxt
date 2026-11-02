@@ -10,6 +10,9 @@ import {
   SpeechLanguageSchema,
   EXTENSION_ASSET_LIBRARY_DEFAULT_QUOTA_BYTES,
   EXTENSION_CONTEXT_DYNAMIC_MAX_CHARS,
+  EXTENSION_DOWNLOAD_MAX_BYTES,
+  EXTENSION_DOWNLOAD_SDK_LEVEL,
+  EXTENSION_FETCH_MAX_BYTES,
   EXTENSION_FILES_DEFAULT_CACHE_QUOTA_BYTES,
   EXTENSION_FILES_DEFAULT_TEMP_QUOTA_BYTES,
   EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES,
@@ -27,6 +30,7 @@ import type {
   NxtByteRange,
   NxtCallContext,
   NxtCommandsService,
+  NxtFileFromUrlOptions,
   NxtFilesService,
   NxtMediaInput,
   NxtMediaService,
@@ -52,7 +56,13 @@ import type {
 } from '@nekro-nxt/extension-sdk'
 import { queryLimit, validateIndexDocument, validateIndexFilter, type ExtensionIndexEngine } from './extension-index.js'
 import type { ExtensionLibrary } from './extension-library.js'
-import { readRange, type ExtensionFileQuota, type ExtensionFiles } from './extension-files.js'
+import {
+  EXTENSION_FILE_MAX_BYTES,
+  formatBytes,
+  readRange,
+  type ExtensionFileQuota,
+  type ExtensionFiles,
+} from './extension-files.js'
 import type { CommandArgument, CommandProfiles } from './command-profiles.js'
 import type { AudioFormat, ConvertFormat, MediaToolkit } from './media-toolkit.js'
 import type { SpeechService } from './speech-service.js'
@@ -138,6 +148,20 @@ export type NxtEgressPolicy =
   | { readonly mode: 'config'; readonly hosts: readonly string[]; readonly privateHosts?: readonly string[] }
   | { readonly mode: 'unrestricted' }
 
+export interface NxtDownloadTarget {
+  readonly path: string
+  readonly maxBytes: number
+  readonly signal?: AbortSignal | undefined
+}
+
+/** The body is in the target file when `status` is 2xx. */
+export interface NxtDownloadResult {
+  readonly url: string
+  readonly status: number
+  readonly contentType: string
+  readonly byteSize: number
+}
+
 /** Product facts the service reads or writes; wired by the Server composition root or a verification fake. */
 export interface NxtServiceBackends {
   readonly logger?: (binding: NxtServiceBinding) => NxtLogger
@@ -146,7 +170,20 @@ export interface NxtServiceBackends {
     url: string,
     init: NxtFetchInit | undefined,
     secrets?: readonly NxtFetchSecret[],
+    limits?: { readonly maxBytes: number },
   ) => Promise<NxtFetchResponse>
+  /** Streams a 2xx response body into a file through the same policy as `fetch`; absent backends cannot download. */
+  readonly download?: (
+    policy: NxtEgressPolicy,
+    url: string,
+    init: NxtFetchInit | undefined,
+    secrets: readonly NxtFetchSecret[],
+    target: NxtDownloadTarget,
+  ) => Promise<NxtDownloadResult>
+  /** 设置 → 存储 → 扩展下载上限; the highest allowed when absent. */
+  readonly downloadLimitBytes?: () => number
+  /** A channel Asset from streamed bytes (`assets.fromUrl`); the library's channel import when absent. */
+  readonly createAssetFromStream?: (channelId: string, bytes: AsyncIterable<Uint8Array>) => Promise<NxtAssetRecord>
   readonly storage: NxtStorageBackend
   /** A secret field's value for code to read (`secrets.get`). */
   readonly secret: (binding: NxtServiceBinding, key: string) => Promise<string | undefined>
@@ -501,6 +538,69 @@ const assetReader = (
     }),
 })
 
+const DOWNLOAD_SETTING = '「设置 → 存储 → 扩展下载上限」'
+
+/** 扩展下载上限: what one download may write, never above the highest the host allows. */
+const downloadLimit = (backends: NxtServiceBackends): number =>
+  Math.min(backends.downloadLimitBytes?.() ?? EXTENSION_DOWNLOAD_MAX_BYTES, EXTENSION_DOWNLOAD_MAX_BYTES)
+
+/** What `http.fetch` holds in memory: its own cap, or a lower 扩展下载上限. */
+const fetchLimit = (backends: NxtServiceBackends): number =>
+  Math.min(EXTENSION_FETCH_MAX_BYTES, downloadLimit(backends))
+
+const isTooLarge = (error: unknown): boolean =>
+  error instanceof Error && 'code' in error && error.code === 'response-too-large'
+
+/** Turns an egress size error into one that says what to do next; other errors pass through. */
+const explainTooLarge = async <Result>(work: () => Promise<Result>, explain: () => string): Promise<Result> => {
+  try {
+    return await work()
+  } catch (error) {
+    if (isTooLarge(error)) throw new NxtCapabilityError(explain())
+    throw error
+  }
+}
+
+const fetchTooLarge = (backends: NxtServiceBackends): string => {
+  const limit = fetchLimit(backends)
+  return limit < EXTENSION_FETCH_MAX_BYTES
+    ? `响应超过 ${formatBytes(limit)}：管理员在${DOWNLOAD_SETTING}把扩展下载上限设为 ${formatBytes(limit)}，需要更大的文件时请管理员调高。`
+    : `响应超过 http.fetch 的 ${formatBytes(limit)} 上限。http.fetch 把整个响应读进内存，只适合接口和网页；视频、音频、压缩包等大文件请用 files.fromUrl 下载成工作文件（需要 files 权限和 requires.sdk 至少为 ${EXTENSION_DOWNLOAD_SDK_LEVEL}）。`
+}
+
+/** Says which limit a download went past: the 扩展下载上限, or the room left in the temp quota. */
+const downloadTooLarge = (binding: NxtServiceBinding, limit: number, room: number, quota: number): string => {
+  if (room < limit) {
+    const preview =
+      binding.mode === 'dynamic' || binding.mode === 'verification'
+        ? `动态试运行和保存验证时工作文件最多 ${formatBytes(PREVIEW_FILES_QUOTA_BYTES)}，正式启用后按声明的配额。`
+        : '请先删除不用的工作文件，或调大 files.tempQuotaBytes。'
+    return `临时文件空间不够：这个扩展的临时文件配额为 ${formatBytes(quota)}，还剩 ${formatBytes(room)}。${preview}`
+  }
+  return limit < EXTENSION_DOWNLOAD_MAX_BYTES
+    ? `文件超过扩展下载上限 ${formatBytes(limit)}。可以请管理员在${DOWNLOAD_SETTING}调高（最多 ${formatBytes(EXTENSION_DOWNLOAD_MAX_BYTES)}）。`
+    : `文件超过扩展下载上限 ${formatBytes(limit)}，NekroNXT 目前不能下载更大的文件。`
+}
+
+/** The last part of the URL path, as the default name of a downloaded file. */
+const urlFileName = (url: string): string | undefined => {
+  try {
+    const base = decodeURIComponent(new URL(url).pathname.split('/').at(-1) ?? '')
+    return base === '' ? undefined : base
+  } catch {
+    return undefined
+  }
+}
+
+type Downloader = (url: string, init: NxtFetchInit | undefined, target: NxtDownloadTarget) => Promise<NxtDownloadResult>
+
+const fetchInit = (options: NxtFileFromUrlOptions | undefined): NxtFetchInit => ({
+  ...(options?.method === undefined ? {} : { method: options.method }),
+  ...(options?.headers === undefined ? {} : { headers: options.headers }),
+  ...(options?.body === undefined ? {} : { body: options.body }),
+  ...(options?.bodyBase64 === undefined ? {} : { bodyBase64: options.bodyBase64 }),
+})
+
 const filesQuota = (binding: NxtServiceBinding): ExtensionFileQuota => {
   const files = requireCapability(binding, 'files', 'files（工作文件）')
   const cap = binding.mode === 'dynamic' || binding.mode === 'verification' ? PREVIEW_FILES_QUOTA_BYTES : Infinity
@@ -524,7 +624,11 @@ const fileBytes = (input: { readonly base64?: unknown; readonly text?: unknown }
  * attachments. `fromAsset` follows the same visibility as `assets.read`; `toAsset` needs the same declaration as
  * creating an Asset there.
  */
-const filesService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtFilesService => {
+const filesService = (
+  binding: NxtServiceBinding,
+  backends: NxtServiceBackends,
+  download: Downloader,
+): NxtFilesService => {
   const owner = binding.ownerKey
   return {
     async write(input, options) {
@@ -573,6 +677,41 @@ const filesService = (binding: NxtServiceBinding, backends: NxtServiceBackends):
         return { assetId: kept.assetId, byteSize: kept.byteSize, mediaType: kept.mediaType }
       }
       return backends.library.createInChannel(channelOf(binding), bytes)
+    },
+    async fromUrl(url, options) {
+      if (binding.mode !== 'dynamic' && (binding.sdk ?? 7) < EXTENSION_DOWNLOAD_SDK_LEVEL) {
+        throw new NxtCapabilityError(
+          `files.fromUrl 需要在清单中声明 requires.sdk 为 ${EXTENSION_DOWNLOAD_SDK_LEVEL} 或更高。`,
+        )
+      }
+      const quota = filesQuota(binding)
+      options?.signal?.throwIfAborted()
+      const limit = downloadLimit(backends)
+      const room = Math.max(0, quota.tempBytes - backends.files.usage(owner).tempBytes)
+      const folder = await backends.files.workDirectory(owner)
+      try {
+        const target = path.join(folder.path, 'download')
+        const response = await explainTooLarge(
+          () =>
+            download(url, fetchInit(options), {
+              path: target,
+              maxBytes: Math.min(limit, room),
+              signal: options?.signal,
+            }),
+          () => downloadTooLarge(binding, limit, room, quota.tempBytes),
+        )
+        if (response.status < 200 || response.status >= 300) {
+          throw new NxtCapabilityError(`下载失败：HTTP ${response.status}`)
+        }
+        return await backends.files.importPath(
+          owner,
+          target,
+          { name: options?.name ?? urlFileName(url), mediaType: response.contentType, move: true, maxBytes: limit },
+          quota,
+        )
+      } finally {
+        await folder.dispose()
+      }
     },
     cache: {
       async get(key) {
@@ -941,6 +1080,19 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
   }
 }
 
+/** Downloads into a file through the binding's egress policy, filling credential placeholders like `http.fetch`. */
+const createDownloader =
+  (
+    binding: NxtServiceBinding,
+    backends: NxtServiceBackends,
+    placeholders: ReturnType<typeof credentialPlaceholders>,
+  ): Downloader =>
+  async (url, init, target) => {
+    const policy = egressPolicy(binding)
+    if (backends.download === undefined) throw new NxtCapabilityError('这里不能下载文件。')
+    return backends.download(policy, url, init, await placeholders.secretsFor(url, init), target)
+  }
+
 /** Host-layer model calls: the caller names one of the Host's configured models by `ref`. */
 const modelService = (binding: NxtServiceBinding, backends: NxtServiceBackends): NxtHostLayerService['models'] => {
   const calls: number[] = []
@@ -1027,8 +1179,13 @@ export const createNxtHostService = (
   // Async so a missing declaration rejects like every other `nxt` call instead of throwing synchronously.
   const fetchWithPolicy = async (url: string, init?: NxtFetchInit): Promise<NxtFetchResponse> => {
     const policy = egressPolicy(binding)
-    return backends.fetch(policy, url, init, await placeholders.secretsFor(url, init))
+    const secrets = await placeholders.secretsFor(url, init)
+    return explainTooLarge(
+      () => backends.fetch(policy, url, init, secrets, { maxBytes: fetchLimit(backends) }),
+      () => fetchTooLarge(backends),
+    )
   }
+  const download = createDownloader(binding, backends, placeholders)
 
   const renderApi = async (): Promise<NxtPromptRenderApi> => ({
     storage: { get: (key, options) => storage.get(key, options), list: (options) => storage.list(options) },
@@ -1118,23 +1275,36 @@ export const createNxtHostService = (
           return backends.library.attach(binding.ownerKey, channelOf(binding), assetId)
         }),
       ...assetReader(binding, backends),
-      async fromUrl(url, options) {
+      // `name` stays accepted for older extensions; channel Assets are identified by content.
+      async fromUrl(url) {
         requireWrite(binding)
-        const response = await fetchWithPolicy(url)
-        if (response.status < 200 || response.status >= 300) {
-          throw new Error(`下载失败：HTTP ${response.status}`)
+        const limit = Math.min(downloadLimit(backends), EXTENSION_FILE_MAX_BYTES)
+        const folder = await backends.files.workDirectory(binding.ownerKey)
+        try {
+          const target = path.join(folder.path, 'download')
+          const response = await explainTooLarge(
+            () => download(url, undefined, { path: target, maxBytes: limit }),
+            () =>
+              limit < EXTENSION_FILE_MAX_BYTES
+                ? downloadTooLarge(binding, limit, Infinity, Infinity)
+                : `文件超过 ${formatBytes(limit)}，不能直接存成频道文件。请用 files.fromUrl 下载成工作文件再处理。`,
+          )
+          if (response.status < 200 || response.status >= 300) {
+            throw new Error(`下载失败：HTTP ${response.status}`)
+          }
+          const bytes = createReadStream(target)
+          return await (backends.createAssetFromStream === undefined
+            ? backends.library.createInChannel(channelOf(binding), bytes)
+            : backends.createAssetFromStream(binding.channelId, bytes))
+        } finally {
+          await folder.dispose()
         }
-        return backends.createAsset(binding.channelId, {
-          ...(response.base64 === undefined ? { text: response.text ?? '' } : { base64: response.base64 }),
-          mediaType: response.contentType,
-          ...(options?.name === undefined ? {} : { name: options.name }),
-        })
       },
     },
     image: {
       info: (assetId) => backends.library.imageInfo(binding.ownerKey, channelOf(binding), assetId),
     },
-    files: filesService(binding, backends),
+    files: filesService(binding, backends, download),
     media: mediaService(binding, backends),
     commands: commandsService(binding, backends),
     speech: speechService(binding, backends),
@@ -1315,7 +1485,11 @@ export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServ
     http: {
       fetch: async (url, init) => {
         const policy = egressPolicy(binding)
-        return backends.fetch(policy, url, init, await placeholders.secretsFor(url, init))
+        const secrets = await placeholders.secretsFor(url, init)
+        return explainTooLarge(
+          () => backends.fetch(policy, url, init, secrets, { maxBytes: fetchLimit(backends) }),
+          () => fetchTooLarge(backends),
+        )
       },
     },
     secrets: {
@@ -1367,7 +1541,7 @@ export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServ
     image: {
       info: (assetId) => backends.library.imageInfo(binding.ownerKey, undefined, assetId),
     },
-    files: filesService(binding, backends),
+    files: filesService(binding, backends, createDownloader(binding, backends, placeholders)),
     media: mediaService(binding, backends),
     commands: commandsService(binding, backends),
     speech: speechService(binding, backends),
