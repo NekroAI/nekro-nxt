@@ -278,12 +278,12 @@ export function CredentialsSection({ lead }: { readonly lead: ReactNode }) {
   // Model access belongs to the whole page, not to one credential: hidden while one is open.
   const overview =
     view !== undefined && view.modelProviders.length > 0 ? (
-      <PropertyGroup title="模型供应商" description="打开的供应商可以被智能体和扩展调用。">
+      <PropertyGroup title="模型供应商" description="打开后，智能体可以主动在扩展配置中使用这家供应商的模型。">
         <PropertyList>
           {view.modelProviders.map((provider) => (
             <PropertyRow key={provider.provider} label={provider.name}>
               <Switch
-                label={`${provider.name} 开放给智能体和扩展`}
+                label={`${provider.name}：允许智能体主动在扩展配置中使用此供应商模型`}
                 checked={provider.open}
                 onCheckedChange={(open) => setProviderOpen(provider.provider, open)}
               />

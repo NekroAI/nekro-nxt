@@ -985,7 +985,7 @@ test.describe('settings space', () => {
     const { page, errors } = await open('/settings/credentials', { before: credentialRoutes(state) })
     try {
       await page.getByRole('switch', { name: '天气服务 自动使用' }).click()
-      await page.getByRole('switch', { name: '示例供应商甲 开放给智能体和扩展' }).click()
+      await page.getByRole('switch', { name: '示例供应商甲：允许智能体主动在扩展配置中使用此供应商模型' }).click()
       await expect
         .poll(() => state.calls.map(({ method, path, body }) => [method, path, body]))
         .toEqual([
