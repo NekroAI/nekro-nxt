@@ -61,6 +61,7 @@ type RuntimeSlice = Pick<
   | 'listRecoverableAdmissions'
   | 'listAdmittedEvents'
   | 'listUnadmittedEvents'
+  | 'isEventAdmitted'
   | 'claimAdmission'
   | 'completeAdmission'
 >
@@ -513,6 +514,20 @@ export function createRuntimeRepository(
         .all()
         .reverse()
         .map(({ event }) => toChannelEvent(event))
+    },
+    isEventAdmitted(channelId, agentId, eventId): boolean {
+      return (
+        database
+          .select({ present: sql`1` })
+          .from(admissionEvents)
+          .innerJoin(admissions, eq(admissions.id, admissionEvents.admissionId))
+          .innerJoin(episodes, eq(episodes.id, admissions.episodeId))
+          .where(
+            and(eq(admissionEvents.eventId, eventId), eq(episodes.channelId, channelId), eq(episodes.agentId, agentId)),
+          )
+          .limit(1)
+          .get() !== undefined
+      )
     },
     listUnadmittedEvents(channelId, agentId, boundAt): readonly ChannelEventRecord[] {
       const storedCutoff = database

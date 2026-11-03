@@ -455,6 +455,8 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#runtime.listAdmittedEvents(...args)
   readonly listUnadmittedEvents = (...args: Parameters<RuntimeRepository['listUnadmittedEvents']>) =>
     this.#runtime.listUnadmittedEvents(...args)
+  readonly isEventAdmitted = (...args: Parameters<RuntimeRepository['isEventAdmitted']>) =>
+    this.#runtime.isEventAdmitted(...args)
   readonly claimAdmission = (...args: Parameters<RuntimeRepository['claimAdmission']>) =>
     this.#runtime.claimAdmission(...args)
   readonly completeAdmission = (...args: Parameters<RuntimeRepository['completeAdmission']>) =>

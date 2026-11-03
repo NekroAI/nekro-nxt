@@ -267,6 +267,8 @@ export interface RuntimeRepository {
   /** Admitted inbound facts for one Episode, oldest-first within the recent limit. */
   listAdmittedEvents(episodeId: EpisodeId, limit: number): readonly ChannelEventRecord[]
   listUnadmittedEvents(channelId: ChannelId, agentId: AgentId, boundAt: number): readonly ChannelEventRecord[]
+  /** Whether the event was already handed to this agent in some Admission of the channel, in any state. */
+  isEventAdmitted(channelId: ChannelId, agentId: AgentId, eventId: ChannelEventId): boolean
   claimAdmission(id: AdmissionId): void
   completeAdmission(id: AdmissionId, dshMessageId: string, eventId: ChannelEventId): void
   findOutboundByClientRequest(
@@ -1989,7 +1991,7 @@ export class ChannelRuntime {
     const dshSessionId = episode.dshSessionId
     if (dshSessionId === undefined) throw new Error(`Episode has no DSH Session after revision switch: ${episode.id}`)
     if (!this.#admissionAllowed(binding.agentId)) return
-    const candidateEvents = (backlog ?? this.#candidateTriggeredEvents(binding, event)).filter(
+    const candidateEvents = (backlog ?? this.#candidateTriggeredEvents(binding, event, episode.id)).filter(
       (candidate) => !this.#commands?.excludes(candidate),
     )
     // Hidden facts still advance the Admission cursor with visible ones, but never form an Admission on their own.
@@ -2060,9 +2062,21 @@ export class ChannelRuntime {
     }
   }
 
-  #candidateTriggeredEvents(binding: BindingRecord, current: ChannelEventRecord): readonly ChannelEventRecord[] {
+  #candidateTriggeredEvents(
+    binding: BindingRecord,
+    current: ChannelEventRecord,
+    episodeId: EpisodeId,
+  ): readonly ChannelEventRecord[] {
     const candidates = this.#runtimeRepository.listUnadmittedEvents(binding.channelId, binding.agentId, binding.boundAt)
-    return candidates.some(({ id }) => id === current.id) ? candidates : [...candidates, current]
+    if (candidates.some(({ id }) => id === current.id)) return candidates
+    // A wake queued behind an earlier turn finds its message already handed over with that turn; only an Admission
+    // still being delivered is picked up again.
+    const handedOver =
+      this.#runtimeRepository.isEventAdmitted(binding.channelId, binding.agentId, current.id) &&
+      !this.#runtimeRepository
+        .listRecoverableAdmissions(episodeId)
+        .some((admission) => admission.eventIds.includes(current.id))
+    return handedOver ? candidates : [...candidates, current]
   }
 
   async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId): Promise<void> {

@@ -525,6 +525,14 @@ class MemoryRuntimeRepository implements RuntimeRepository {
       .sort((left, right) => left.receivedAt - right.receivedAt || left.id.localeCompare(right.id))
       .slice(-limit)
   }
+  isEventAdmitted(channelId: ChannelId, agentId: AgentId, eventId: ChannelEventId) {
+    return [...this.admissions.values()].some(
+      (admission) =>
+        admission.eventIds.includes(eventId) &&
+        this.episodes.get(admission.episodeId)?.channelId === channelId &&
+        this.episodes.get(admission.episodeId)?.agentId === agentId,
+    )
+  }
   listUnadmittedEvents(channelId: ChannelId, agentId: AgentId, boundAt: number) {
     const episodeIds = new Set(
       [...this.episodes.values()]
@@ -1075,6 +1083,34 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.adapterStateRows.size).toBe(0)
   })
 
+  it('hands a message that joined an earlier turn over only once when its own wake comes after', async () => {
+    const context = await setup()
+    let openSession!: () => void
+    const opening = new Promise<void>((resolve) => {
+      openSession = resolve
+    })
+    const createSession = context.sessionDriver.createSession.bind(context.sessionDriver)
+    context.sessionDriver.createSession = async (input) => {
+      await opening
+      return createSession(input)
+    }
+    const accept = (id: string) =>
+      context.runtime.acceptChannelInbound({
+        ...inbound(context.connection.id, context.channel.id, id),
+        platformMessageId: id,
+      })
+    // The first wake is still opening the session when the second message arrives and queues behind it.
+    const first = accept('opening-first')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const second = accept('queued-second')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    openSession()
+    await Promise.all([first, second])
+    const handedOver = context.admissionCalls.flatMap(({ events }) => events.map(({ dedupeKey }) => dedupeKey))
+    expect(handedOver.filter((key) => key === 'event:queued-second')).toHaveLength(1)
+    expect(new Set(handedOver).size).toBe(handedOver.length)
+  })
+
   it('reacts once per processing cycle, including injected messages after a reply consumes feedback', async () => {
     const calls: string[] = []
     let endTurn!: () => void
@@ -1101,7 +1137,12 @@ describe('ChannelRuntime M1 lane', () => {
     context.setSessionStatus('running')
     await Promise.all([accept('injected-second'), accept('injected-third')])
     expect(calls).toEqual(['start:first-trigger'])
-    expect(context.admissionCalls.slice(1).map((call) => call.mode)).toEqual(['inject', 'inject'])
+    // Both join the running turn together, each handed over once.
+    expect(context.admissionCalls.slice(1).map((call) => call.mode)).toEqual(['inject'])
+    expect(context.admissionCalls[1]?.events.map(({ dedupeKey }) => dedupeKey)).toEqual([
+      'event:injected-second',
+      'event:injected-third',
+    ])
     const planOutbound: NonNullable<AdapterConnectionRuntime['planOutbound']> = ({ parts }) =>
       Promise.resolve([{ parts, consumesProcessingFeedback: true }])
     Object.defineProperty(context.adapter, 'planOutbound', { value: planOutbound })
@@ -2255,11 +2296,13 @@ describe('ChannelRuntime M1 lane', () => {
     )
 
     expect(context.maxActiveAdmissions()).toBe(1)
-    expect([...context.runtimeRepository.admissions.values()].slice(1)).toHaveLength(20)
-    expect([...context.runtimeRepository.admissions.values()].slice(1).every(({ mode }) => mode === 'inject')).toBe(
-      true,
-    )
-    expect(context.sessionCalls.filter((call) => call.startsWith('admit:inject:'))).toHaveLength(20)
+    // Messages queued behind the busy lane go in together, each exactly once.
+    const injected = [...context.runtimeRepository.admissions.values()].slice(1)
+    expect(injected.every(({ mode }) => mode === 'inject')).toBe(true)
+    const injectedEvents = injected.flatMap(({ eventIds }) => eventIds)
+    expect(injectedEvents).toHaveLength(20)
+    expect(new Set(injectedEvents).size).toBe(20)
+    expect(context.sessionCalls.filter((call) => call.startsWith('admit:inject:'))).toHaveLength(injected.length)
   })
 
   it('recovers a DSH-committed Admission and marks an in-flight delivery unknown without resending', async () => {
