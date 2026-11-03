@@ -57,6 +57,19 @@ function NumberSetting({
   )
 }
 
+/** The timing settings in a few words, for the folded row; empty when the policy answers no messages. */
+export function responseTimingSummary(triggerPolicy: TriggerPolicy, settings: ResponseTimingSettings): string[] {
+  if (triggerPolicy === 'command' || triggerPolicy === 'observe-only') return []
+  const resolved = resolveResponseTiming(settings)
+  const parts = [resolved.waitEnabled ? `等说完 ${resolved.waitMaxQuietSeconds} 秒` : '不等说完']
+  if (triggerPolicy === 'smart') {
+    if (resolved.nameWake) parts.push('提到名字')
+    if (resolved.attentionWake) parts.push('接着说')
+    if (resolved.debounceSeconds > 0) parts.push(`合并 ${resolved.debounceSeconds} 秒`)
+  }
+  return parts
+}
+
 /**
  * When the bound agent speaks (Decision 2026-10-31 响应时机与智能响应): waiting for someone to finish, for every
  * policy that answers messages, and the extra wakes of smart mode.

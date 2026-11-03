@@ -3195,6 +3195,10 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #compaction: DshHostRuntimeOptions['compaction']
   /** Channels waiting for a new-session compaction summary, with when they started. */
   readonly #newSessionCompactions = new Map<string, number>()
+  /** Channels running a compaction someone started by hand, with when they started; it spans the whole reset. */
+  readonly #manualCompactions = new Map<string, number>()
+  /** The last hand-started compaction that failed on each channel, until the next one starts. */
+  readonly #manualCompactionFailures = new Map<string, { readonly message: string; readonly at: number }>()
   readonly #modelFallbackSettings: () => ModelFallbackSettings
   readonly #routeHealth = new ModelRouteHealth()
   /** Sessions running on a fallback model, with why and since when; a session on its main model has no entry. */
@@ -5105,7 +5109,37 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   /** When the channel started waiting for a new-session compaction summary, while it waits. */
   newSessionCompactionStartedAt(channelId: string): number | undefined {
-    return this.#newSessionCompactions.get(channelId)
+    return this.#manualCompactions.get(channelId) ?? this.#newSessionCompactions.get(channelId)
+  }
+
+  /**
+   * Runs a compaction someone started by hand without holding their request: the summary can take minutes. The
+   * channel shows it as compacting from now until the new session is open.
+   */
+  startManualCompaction(channelId: string, run: () => Promise<unknown>): void {
+    this.#manualCompactions.set(channelId, Date.now())
+    this.#manualCompactionFailures.delete(channelId)
+    this.#runtimeProjection.touchChannel(channelId)
+    void run()
+      .catch((error: unknown) => {
+        this.#manualCompactionFailures.set(channelId, {
+          message: error instanceof Error ? error.message : String(error),
+          at: Date.now(),
+        })
+      })
+      .finally(() => {
+        this.#manualCompactions.delete(channelId)
+        this.#runtimeProjection.touchChannel(channelId)
+      })
+  }
+
+  manualCompactionRunning(channelId: string): boolean {
+    return this.#manualCompactions.has(channelId)
+  }
+
+  /** The last hand-started compaction on the channel that failed, until another one starts. */
+  manualCompactionFailure(channelId: string): { readonly message: string; readonly at: number } | undefined {
+    return this.#manualCompactionFailures.get(channelId)
   }
 
   /** The fallback model the channel's conversation runs on, while it does. */

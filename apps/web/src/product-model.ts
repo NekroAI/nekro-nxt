@@ -199,6 +199,8 @@ export interface ChannelRuntimeView {
   readonly summary: string
   /** A compaction under way, shown as its own row until the summary is written. */
   readonly compaction?: HostApiResponse<'getChannelRuntime'>['compaction']
+  /** The last compaction started by hand that failed, until another one starts. */
+  readonly compactionFailure?: HostApiResponse<'getChannelRuntime'>['compactionFailure']
   /** The conversation runs on a fallback model. */
   readonly modelFallback?: HostApiResponse<'getChannelRuntime'>['modelFallback']
   readonly pendingInjectCount: number

@@ -21,6 +21,7 @@ test('a second response-timing edit made before the saved binding comes back kee
   })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.goto(`/channels/${targetChannelId}`)
+  await page.getByRole('button', { name: '展开回复细节' }).click()
 
   const quiet = page.getByRole('spinbutton', { name: '每次最多等（秒）' })
   const total = page.getByRole('spinbutton', { name: '一共最多等（秒）' })

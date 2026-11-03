@@ -1364,6 +1364,7 @@ test('external channel exposes processing feedback and per-event trigger control
   await page.goto(`/channels/${channelId}`)
   const inspector = page.getByRole('complementary', { name: '频道信息' })
   await expect(page.getByText('本机 · 记录员', { exact: true })).toBeVisible()
+  await inspector.getByRole('button', { name: '展开回复细节' }).click()
   const localAgents = inspector.getByRole('switch', { name: '回应本机智能体' })
   await expect(inspector.getByText('记录员也在这个群', { exact: true })).toBeVisible()
   await expect(localAgents).not.toBeChecked()
@@ -1662,7 +1663,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ mode: input.mode, closedEpisodeId, nextEpisodeId: episodeId }),
+      body: JSON.stringify({ mode: input.mode, closedEpisodeId }),
     })
   })
   await page.route(`**/api/agents/${agentId}`, async (route) => {
@@ -1757,7 +1758,8 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   const compactDialog = page.getByRole('dialog', { name: '压缩上下文？' })
   await expect(compactDialog).toContainText('当前任务会停止，对话整理成摘要后继续。')
   await compactDialog.getByRole('button', { name: '压缩', exact: true }).click()
-  await expect(page.getByText('已压缩上下文', { exact: true })).toBeVisible()
+  // The request returns before the summary is written; the dialog does not wait for it.
+  await expect(compactDialog).toHaveCount(0)
   expect(resetRequests).toEqual([{ expectedEpisodeId: 'eps_contextjourney', mode: 'compact' }])
 
   await page.goto(`/agents/${agentId}`)

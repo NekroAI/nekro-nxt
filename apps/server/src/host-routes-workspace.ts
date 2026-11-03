@@ -1037,6 +1037,21 @@ export function registerWorkspaceRoutes({
             writeError(res, 409, 'episode-conflict', '频道上下文已发生变化，请刷新后重试。')
             return
           }
+          if (runtime.host.manualCompactionRunning(typedChannelId)) {
+            writeError(res, 409, 'context-reset-running', '上下文正在压缩，完成后再试。')
+            return
+          }
+          if (parsed.mode === 'compact') {
+            // The summary may take minutes; the channel shows the compaction and any failure while it runs.
+            runtime.host.startManualCompaction(typedChannelId, () =>
+              runtime.channels.resetEpisode(episode.id, 'compact'),
+            )
+            writeContractJson(res, 200, HostApiContracts.resetChannelContext, {
+              mode: 'compact',
+              closedEpisodeId: episode.id,
+            })
+            return
+          }
           const result = await runtime.channels.resetEpisode(episode.id, parsed.mode)
           writeContractJson(res, 200, HostApiContracts.resetChannelContext, {
             mode: result.mode,

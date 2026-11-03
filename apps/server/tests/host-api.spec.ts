@@ -1002,25 +1002,50 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       })
       expect(stale.status).toBe(409)
 
-      const compactResponse = await fetch(`${origin}/api/channels/${seeded.channel.id}/context-reset`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: 'compact', expectedEpisodeId: first.id }),
+      const contextReset = (mode: 'compact' | 'clear', expectedEpisodeId: string) =>
+        fetch(`${origin}/api/channels/${seeded.channel.id}/context-reset`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ mode, expectedEpisodeId }),
+        })
+      const channelRuntime = async () =>
+        HostApiContracts.getChannelRuntime.parseResponse(
+          await (await fetch(`${origin}/api/channels/${seeded.channel.id}/runtime`)).json(),
+        )
+
+      // Compaction answers before the summary is written; the channel shows it until the new session opens.
+      const resetEpisode = runtime.channels.resetEpisode.bind(runtime.channels)
+      let release!: () => void
+      const held = new Promise<void>((resolve) => (release = resolve))
+      const spy = vi.spyOn(runtime.channels, 'resetEpisode').mockImplementationOnce(async (...args) => {
+        await held
+        return resetEpisode(...args)
       })
+      const compactResponse = await contextReset('compact', first.id)
       expect(compactResponse.status, await compactResponse.clone().text()).toBe(200)
       const compacted = HostApiContracts.resetChannelContext.parseResponse(await compactResponse.json())
-      expect(compacted).toMatchObject({ mode: 'compact', closedEpisodeId: first.id })
-      expect(compacted.nextEpisodeId).toBeDefined()
+      expect(compacted).toEqual({ mode: 'compact', closedEpisodeId: first.id })
+      expect((await channelRuntime()).compaction).toMatchObject({ kind: 'new-session' })
+      expect((await contextReset('clear', first.id)).status).toBe(409)
+      release()
+      await vi.waitFor(async () => expect((await channelRuntime()).compaction).toBeUndefined())
       expect(runtime.repository.getEpisode(first.id)).toMatchObject({ closeReason: 'context-compacted' })
+      const second = runtime.repository.getActiveEpisode(seeded.channel.id, seeded.definition.id)!
+      expect(second.id).not.toBe(first.id)
 
-      const clearResponse = await fetch(`${origin}/api/channels/${seeded.channel.id}/context-reset`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: 'clear', expectedEpisodeId: compacted.nextEpisodeId }),
-      })
+      // A failure stays on the channel until the next compaction starts.
+      spy.mockRejectedValueOnce(new Error('摘要模型不可用'))
+      expect((await contextReset('compact', second.id)).status).toBe(200)
+      await vi.waitFor(async () =>
+        expect((await channelRuntime()).compactionFailure).toMatchObject({ message: '摘要模型不可用' }),
+      )
+      expect((await channelRuntime()).compaction).toBeUndefined()
+      spy.mockRestore()
+
+      const clearResponse = await contextReset('clear', second.id)
       expect(clearResponse.status, await clearResponse.clone().text()).toBe(200)
       const cleared = HostApiContracts.resetChannelContext.parseResponse(await clearResponse.json())
-      expect(cleared).toEqual({ mode: 'clear', closedEpisodeId: compacted.nextEpisodeId })
+      expect(cleared).toEqual({ mode: 'clear', closedEpisodeId: second.id })
       expect(runtime.repository.getActiveEpisode(seeded.channel.id, seeded.definition.id)).toBeUndefined()
 
       const removableChannel = runtime.core.createChannel({

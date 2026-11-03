@@ -1530,6 +1530,7 @@ export class HttpProductHost implements ProductHostPort {
       | 'phase'
       | 'summary'
       | 'compaction'
+      | 'compactionFailure'
       | 'modelFallback'
       | 'pendingInjectCount'
       | 'occupancy'
@@ -1546,6 +1547,7 @@ export class HttpProductHost implements ProductHostPort {
       phase: raw.phase,
       summary: raw.summary,
       ...(raw.compaction === undefined ? {} : { compaction: raw.compaction }),
+      ...(raw.compactionFailure === undefined ? {} : { compactionFailure: raw.compactionFailure }),
       ...(raw.modelFallback === undefined ? {} : { modelFallback: raw.modelFallback }),
       pendingInjectCount: raw.pendingInjectCount,
       ...(raw.occupancy === undefined ? {} : { occupancy: raw.occupancy }),

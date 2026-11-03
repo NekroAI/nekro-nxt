@@ -538,6 +538,27 @@ export function CompactionRow({
   )
 }
 
+/** A compaction started by hand that failed; it stays until the agent's next turn or another compaction. */
+export function CompactionFailedRow({
+  agent,
+  message,
+  onReset,
+}: {
+  readonly agent: AgentSummary | undefined
+  readonly message: string
+  readonly onReset: (reset: ContextReset) => void
+}) {
+  return (
+    <div className={styles.turn} style={cssVars({ '--turn-accent': agent ? agentAccent(agent) : 'var(--accent)' })}>
+      <div className={styles.turnHead}>
+        <b>{agent?.name ?? '智能体'}</b>
+        <span>压缩上下文失败：{message}</span>
+      </div>
+      <RecoveryActions recovery={{ failedInARow: 1, onReset }} />
+    </div>
+  )
+}
+
 export interface TurnRecovery {
   /** Failed turns in a row, counting this one. */
   readonly failedInARow: number

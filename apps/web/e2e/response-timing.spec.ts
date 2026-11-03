@@ -59,6 +59,7 @@ test('smart response settings save per channel and agent aliases save with the p
       (await snapshot()).channels.find((candidate) => candidate.id === channel.id)?.bindings[0]?.responseTiming
 
     await page.goto(`/channels/${channel.id}`)
+    await page.getByRole('button', { name: '展开回复细节' }).click()
     await expect(page.getByRole('switch', { name: '提到名字时' })).toBeChecked()
     await expect(page.getByRole('switch', { name: '等对方说完' })).toBeChecked()
     await page.getByRole('spinbutton', { name: '合并连发（秒）' }).fill('5')
@@ -85,6 +86,7 @@ test('smart response settings save per channel and agent aliases save with the p
       },
     })
     await page.reload()
+    await page.getByRole('button', { name: '展开回复细节' }).click()
     await expect(page.getByRole('switch', { name: '等对方说完' })).not.toBeChecked()
     await expect(page.getByRole('switch', { name: '提到名字时' })).toHaveCount(0)
 

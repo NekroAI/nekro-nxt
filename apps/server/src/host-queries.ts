@@ -64,6 +64,7 @@ export const assembleChannelRuntime = (
     episode?.dshSessionId === undefined ? undefined : runtime.host.sessionRuntimeMetrics(episode.dshSessionId)
   const compactionStartedAt = runtime.host.newSessionCompactionStartedAt(channelId)
   const modelFallback = runtime.host.modelFallbackOf(channelId)
+  const compactionFailure = runtime.host.manualCompactionFailure(channelId)
   return projectChannelRuntime({
     channelId,
     agentId: binding.agentId,
@@ -72,6 +73,7 @@ export const assembleChannelRuntime = (
     pendingInjectCount,
     ...(compactionStartedAt === undefined ? {} : { newSessionCompactionStartedAt: compactionStartedAt }),
     ...(modelFallback === undefined ? {} : { modelFallback }),
+    ...(compactionFailure === undefined ? {} : { compactionFailure }),
     ...(metrics?.occupancy === undefined ? {} : { occupancy: metrics.occupancy }),
     ...(metrics?.performanceTotals === undefined ? {} : { performanceTotals: metrics.performanceTotals }),
     events:

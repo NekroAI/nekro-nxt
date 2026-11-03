@@ -82,6 +82,7 @@ test('platform updates preserve local names and rebinding preserves the processi
       expect(HostApiContracts.createBinding.response.parse(await response.json()).processingFeedback).toBe('off')
     }
     await page.reload()
+    await page.getByRole('button', { name: '展开回复细节' }).click()
     await expect(page.getByRole('switch', { name: '处理中反馈' })).not.toBeChecked()
     await page.screenshot({ path: testInfo.outputPath('rebound-feedback-off.png'), animations: 'disabled' })
     await page.route('**/api/snapshot', async (route) => {

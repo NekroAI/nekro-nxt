@@ -35,8 +35,8 @@ import type { HostApiResponse } from '@nekro-nxt/contracts'
 import styles from './channels.module.css'
 import { subConversationStatus } from './sub-conversation-rows.js'
 import subStyles from './sub-conversations.module.css'
-import { CompactionRow, MessageRow, TurnRow } from './timeline.js'
-import { ContextResetDialog, type ContextReset } from './context-reset-dialog.js'
+import { CompactionFailedRow, CompactionRow, MessageRow, TurnRow } from './timeline.js'
+import { ContextResetDialog, useCompactionDoneToast, type ContextReset } from './context-reset-dialog.js'
 import { buildTimeline, relativeTime } from './timeline-model.js'
 
 const EMPTY: readonly ConversationMessage[] = []
@@ -197,6 +197,14 @@ export function Conversation({
     while (count < turns.length && turns[turns.length - 1 - count]!.state === 'error') count += 1
     return count
   }, [runtime?.turns])
+  const lastTurnAt = runtime?.turns.at(-1)?.startedAt
+  const compactionFailure =
+    runtime?.compaction === undefined &&
+    runtime?.compactionFailure !== undefined &&
+    (lastTurnAt === undefined || lastTurnAt < runtime.compactionFailure.at)
+      ? runtime.compactionFailure
+      : undefined
+  useCompactionDoneToast(channel.id, runtime)
   const phaseKey = agent ? (runtime?.phase ?? channel.runtimePhase ?? agent.state) : undefined
   const phase = phaseKey ? agentPhase[phaseKey] : undefined
   const trigger = channel.bindings[0] ? triggerLabel[channel.bindings[0].triggerPolicy] : undefined
@@ -338,6 +346,9 @@ export function Conversation({
           )}
           {runtime?.compaction ? (
             <CompactionRow agent={agent} kind={runtime.compaction.kind} startedAt={runtime.compaction.startedAt} />
+          ) : null}
+          {compactionFailure ? (
+            <CompactionFailedRow agent={agent} message={compactionFailure.message} onReset={setReset} />
           ) : null}
         </div>
       </div>

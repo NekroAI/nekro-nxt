@@ -25,20 +25,24 @@ const install = async (page: Page, failures: number) => {
   await installSnapshotHealthRoutes(page, snapshot)
   await installWorkspaceRoutes(page, () => snapshot)
   await page.route('**/api/snapshot', (route) => route.fulfill({ json: snapshot }))
+  // A compaction runs after its request returns; the next read finds the new session.
+  let compacted = false
   await page.route('**/api/channels/*/runtime', (route) =>
     route.fulfill({
       json: {
         cursor: { epoch: 'fixture', sequence: 0 },
         channelId: targetChannelId,
         agentId: targetAgentId,
-        episodeId: targetEpisodeId,
-        phase: 'unavailable',
-        summary: '智能体本轮失败：模型请求没有发出去',
+        episodeId: compacted ? 'eps_targetnext' : targetEpisodeId,
+        phase: compacted ? 'idle' : 'unavailable',
+        summary: compacted ? '智能体当前空闲。' : '智能体本轮失败：模型请求没有发出去',
         pendingInjectCount: 0,
-        turns: [
-          { ...failedTurn(1), state: 'completed', responseState: 'finished', error: undefined },
-          ...Array.from({ length: failures }, (_, index) => failedTurn(index + 2)),
-        ],
+        turns: compacted
+          ? []
+          : [
+              { ...failedTurn(1), state: 'completed', responseState: 'finished', error: undefined },
+              ...Array.from({ length: failures }, (_, index) => failedTurn(index + 2)),
+            ],
       },
     }),
   )
@@ -49,9 +53,8 @@ const install = async (page: Page, failures: number) => {
   await page.route(`**/api/channels/${targetChannelId}/context-reset`, (route) => {
     const input = HostApiContracts.resetChannelContext.request.parse(route.request().postDataJSON())
     resets.push(input)
-    return route.fulfill({
-      json: { mode: input.mode, closedEpisodeId: targetEpisodeId, nextEpisodeId: 'eps_targetnext' },
-    })
+    compacted = input.mode === 'compact'
+    return route.fulfill({ json: { mode: input.mode, closedEpisodeId: targetEpisodeId } })
   })
   return { errors, resets }
 }
@@ -68,7 +71,7 @@ test('a failed turn offers compacting first', async ({ page }) => {
 
   await compact.click()
   const dialog = page.getByRole('dialog', { name: '压缩上下文？' })
-  await expect(dialog).toContainText('当前任务会停止，对话整理成摘要后继续。')
+  await expect(dialog).toContainText('压缩在后台进行，不影响其他操作。')
   await dialog.getByRole('button', { name: '压缩', exact: true }).click()
   await expect(page.getByText('已压缩上下文', { exact: true })).toBeVisible()
   expect(fixture.resets).toEqual([{ expectedEpisodeId: targetEpisodeId, mode: 'compact' }])

@@ -1106,6 +1106,8 @@ export const ChannelRuntimeProjectionSchema = z
       .object({ kind: z.enum(['in-session', 'new-session']), startedAt: z.number().int().nonnegative() })
       .strict()
       .optional(),
+    /** The last compaction started by hand that failed, until another one starts. */
+    compactionFailure: z.object({ message: z.string(), at: z.number().int().nonnegative() }).strict().optional(),
     /** The conversation runs on a fallback model; it tries the main model again at a new message after `retryMainAt`. */
     modelFallback: z
       .object({

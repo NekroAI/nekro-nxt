@@ -165,6 +165,8 @@ export interface ChannelRuntimeProjectionInput {
   readonly events: readonly RuntimeProjectionEvent[]
   /** Set while the channel waits for a compaction summary before its new session opens. */
   readonly newSessionCompactionStartedAt?: number
+  /** The last compaction started by hand that failed. */
+  readonly compactionFailure?: ChannelRuntimeProjection['compactionFailure']
   /** Set while the channel's conversation runs on a fallback model. */
   readonly modelFallback?: ChannelRuntimeProjection['modelFallback']
   /** Latest progress of running tool calls, by call id. */
@@ -809,6 +811,7 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
     ...(input.episodeId === undefined ? {} : { episodeId: input.episodeId }),
     ...(compaction === undefined ? {} : { compaction }),
     ...(input.modelFallback === undefined ? {} : { modelFallback: input.modelFallback }),
+    ...(input.compactionFailure === undefined ? {} : { compactionFailure: input.compactionFailure }),
     phase,
     summary,
     pendingInjectCount: input.pendingInjectCount,

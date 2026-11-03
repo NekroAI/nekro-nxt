@@ -45,7 +45,7 @@ import styles from './channels.module.css'
 import { formatTokens } from './timeline-model.js'
 import { describeSchedule, sortTasks } from '../agents/scheduled-task-model.js'
 import { nextRunText, TaskActions, useScheduledTaskActions } from '../agents/scheduled-tasks-section.js'
-import { ResponseTimingRows } from './response-timing-rows.js'
+import { ResponseTimingRows, responseTimingSummary } from './response-timing-rows.js'
 
 const INSPECTOR_TASKS = 3
 
@@ -79,6 +79,7 @@ export function ChannelInspector({
   const [intent, setIntent] = useState<BindIntent | null>(null)
   const [reset, setReset] = useState<ContextReset | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [promptOpen, setPromptOpen] = useState<false | 'instructions' | 'notes'>(false)
@@ -139,10 +140,27 @@ export function ChannelInspector({
     descriptor?.features.processingFeedback?.channelKinds.includes(channel.kind) === true &&
     feedbackCapability?.state !== 'disabled'
   const overrides = binding ? Object.keys(binding.activityTriggerOverrides).length : 0
+  useEffect(() => {
+    setDetailsOpen(false)
+    setEventsOpen(false)
+  }, [channel.id])
   const localAgentNames = channel.localAgentIds.flatMap((agentId) => {
     const name = agents.find((candidate) => candidate.id === agentId)?.name
     return name === undefined ? [] : [name]
   })
+
+  // The folded row says what is set, so the common case needs no unfolding.
+  const detailsSummary = binding
+    ? [
+        ...responseTimingSummary(binding.triggerPolicy, binding.responseTiming),
+        ...(showFeedback && binding.processingFeedback === 'auto' ? ['处理中反馈'] : []),
+        ...(localAgentNames.length > 0 && binding.localAgentMessages === 'trigger' ? ['回应本机智能体'] : []),
+        ...(overrides > 0 ? [`${overrides} 项特殊事件`] : []),
+      ]
+    : []
+  const hasDetails =
+    binding !== undefined &&
+    (detailsSummary.length > 0 || showFeedback || localAgentNames.length > 0 || activities.length > 0)
 
   const updateBinding = async (
     patch: Partial<
@@ -263,82 +281,101 @@ export function ChannelInspector({
               </Button>
             </PropertyRow>
           ) : null}
-          {agent && binding && showFeedback ? (
-            <PropertyRow
-              label="处理中反馈"
-              description={feedbackCapability?.reason}
-              tip={feedbackCapability?.reason ? undefined : '处理期间给触发消息加临时回应，结束后移除'}
-            >
-              <Switch
-                label="处理中反馈"
-                checked={binding.processingFeedback === 'auto'}
-                onCheckedChange={(checked) => updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
-              />
-            </PropertyRow>
-          ) : null}
-          {agent && binding && localAgentNames.length > 0 ? (
-            <PropertyRow
-              label="回应本机智能体"
-              description={`${localAgentNames.join('、')}也在这个群`}
-              tip="关闭时，本机其他智能体的发言只记入上下文；它 @ 或回复本智能体时仍会回应。打开后按上面的触发方式处理，两个智能体可能互相接话。"
-            >
-              <Switch
-                label="回应本机智能体"
-                checked={binding.localAgentMessages === 'trigger'}
-                onCheckedChange={(checked) => updateBinding({ localAgentMessages: checked ? 'trigger' : 'observe' })}
-              />
-            </PropertyRow>
-          ) : null}
-          {agent && binding ? (
-            <ResponseTimingRows
-              key={channel.id}
-              triggerPolicy={binding.triggerPolicy}
-              settings={binding.responseTiming}
-              onChange={(responseTiming) => void updateBinding({ responseTiming })}
-            />
-          ) : null}
-          {agent && binding && activities.length > 0 ? (
-            <PropertyRow label="特殊事件" description={overrides > 0 ? `${overrides} 项单独设置` : '跟随账号'}>
+          {agent && binding && hasDetails ? (
+            <PropertyRow label="回复细节" description={detailsSummary.join(' · ') || '未设置'}>
               <Pressable
                 className={styles.expand}
-                aria-expanded={eventsOpen}
-                aria-controls="channel-activity-overrides"
-                aria-label={eventsOpen ? '收起特殊事件' : '展开特殊事件'}
-                onClick={() => setEventsOpen(!eventsOpen)}
+                aria-expanded={detailsOpen}
+                aria-controls="channel-reply-details"
+                aria-label={detailsOpen ? '收起回复细节' : '展开回复细节'}
+                onClick={() => setDetailsOpen(!detailsOpen)}
               >
-                <ChevronRight size={16} data-open={eventsOpen} />
+                <ChevronRight size={16} data-open={detailsOpen} />
               </Pressable>
             </PropertyRow>
           ) : null}
         </PropertyList>
-        {agent && binding && activities.length > 0 ? (
-          <Disclosure open={eventsOpen} id="channel-activity-overrides">
+        {agent && binding && hasDetails ? (
+          <Disclosure open={detailsOpen} id="channel-reply-details">
             <PropertyList>
-              {activities.map((activity) => {
-                const override = binding.activityTriggerOverrides[activity.key]
-                const inherited = connection?.activityTriggerDefaults.includes(activity.key) === true
-                return (
-                  <PropertyRow key={activity.key} label={activity.displayName} layout="stacked">
-                    <Select
-                      aria-label={activity.displayName}
-                      value={override === undefined ? 'inherit' : override ? 'on' : 'off'}
-                      disabled={binding.triggerPolicy === 'observe-only'}
-                      options={[
-                        { value: 'inherit', label: `跟随账号（${inherited ? '触发' : '不触发'}）` },
-                        { value: 'on', label: '触发' },
-                        { value: 'off', label: '不触发' },
-                      ]}
-                      onValueChange={(value) => {
-                        const next = { ...binding.activityTriggerOverrides }
-                        if (value === 'inherit') delete next[activity.key]
-                        else next[activity.key] = value === 'on'
-                        void updateBinding({ activityTriggerOverrides: next })
-                      }}
-                    />
-                  </PropertyRow>
-                )
-              })}
+              <ResponseTimingRows
+                key={channel.id}
+                triggerPolicy={binding.triggerPolicy}
+                settings={binding.responseTiming}
+                onChange={(responseTiming) => void updateBinding({ responseTiming })}
+              />
+              {showFeedback ? (
+                <PropertyRow
+                  label="处理中反馈"
+                  description={feedbackCapability?.reason}
+                  tip={feedbackCapability?.reason ? undefined : '处理期间给触发消息加临时回应，结束后移除'}
+                >
+                  <Switch
+                    label="处理中反馈"
+                    checked={binding.processingFeedback === 'auto'}
+                    onCheckedChange={(checked) => updateBinding({ processingFeedback: checked ? 'auto' : 'off' })}
+                  />
+                </PropertyRow>
+              ) : null}
+              {localAgentNames.length > 0 ? (
+                <PropertyRow
+                  label="回应本机智能体"
+                  description={`${localAgentNames.join('、')}也在这个群`}
+                  tip="关闭时，本机其他智能体的发言只记入上下文；它 @ 或回复本智能体时仍会回应。打开后按上面的触发方式处理，两个智能体可能互相接话。"
+                >
+                  <Switch
+                    label="回应本机智能体"
+                    checked={binding.localAgentMessages === 'trigger'}
+                    onCheckedChange={(checked) =>
+                      updateBinding({ localAgentMessages: checked ? 'trigger' : 'observe' })
+                    }
+                  />
+                </PropertyRow>
+              ) : null}
+              {activities.length > 0 ? (
+                <PropertyRow label="特殊事件" description={overrides > 0 ? `${overrides} 项单独设置` : '跟随账号'}>
+                  <Pressable
+                    className={styles.expand}
+                    aria-expanded={eventsOpen}
+                    aria-controls="channel-activity-overrides"
+                    aria-label={eventsOpen ? '收起特殊事件' : '展开特殊事件'}
+                    onClick={() => setEventsOpen(!eventsOpen)}
+                  >
+                    <ChevronRight size={16} data-open={eventsOpen} />
+                  </Pressable>
+                </PropertyRow>
+              ) : null}
             </PropertyList>
+            {activities.length > 0 ? (
+              <Disclosure open={eventsOpen} id="channel-activity-overrides">
+                <PropertyList>
+                  {activities.map((activity) => {
+                    const override = binding.activityTriggerOverrides[activity.key]
+                    const inherited = connection?.activityTriggerDefaults.includes(activity.key) === true
+                    return (
+                      <PropertyRow key={activity.key} label={activity.displayName} layout="stacked">
+                        <Select
+                          aria-label={activity.displayName}
+                          value={override === undefined ? 'inherit' : override ? 'on' : 'off'}
+                          disabled={binding.triggerPolicy === 'observe-only'}
+                          options={[
+                            { value: 'inherit', label: `跟随账号（${inherited ? '触发' : '不触发'}）` },
+                            { value: 'on', label: '触发' },
+                            { value: 'off', label: '不触发' },
+                          ]}
+                          onValueChange={(value) => {
+                            const next = { ...binding.activityTriggerOverrides }
+                            if (value === 'inherit') delete next[activity.key]
+                            else next[activity.key] = value === 'on'
+                            void updateBinding({ activityTriggerOverrides: next })
+                          }}
+                        />
+                      </PropertyRow>
+                    )
+                  })}
+                </PropertyList>
+              </Disclosure>
+            ) : null}
           </Disclosure>
         ) : null}
       </PropertyGroup>
@@ -356,8 +393,13 @@ export function ChannelInspector({
                         查看
                       </Button>
                     </Tooltip>
-                    <Tooltip content="把较早的对话整理成摘要，腾出空间">
-                      <Button size="small" variant="ghost" onClick={() => setReset('compact')}>
+                    <Tooltip content={runtime.compaction ? '正在压缩' : '把较早的对话整理成摘要，腾出空间'}>
+                      <Button
+                        size="small"
+                        variant="ghost"
+                        disabled={runtime.compaction !== undefined}
+                        onClick={() => setReset('compact')}
+                      >
                         压缩
                       </Button>
                     </Tooltip>
