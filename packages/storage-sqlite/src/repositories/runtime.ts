@@ -501,8 +501,9 @@ export function createRuntimeRepository(
     },
     listAdmittedEvents(episodeId, limit): readonly ChannelEventRecord[] {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new TypeError('Invalid Episode Event limit.')
+      // An event can be handed over in more than one Admission; it is still one admitted event.
       return database
-        .select({ event: channelEvents })
+        .selectDistinct({ event: channelEvents })
         .from(admissionEvents)
         .innerJoin(admissions, eq(admissions.id, admissionEvents.admissionId))
         .innerJoin(channelEvents, eq(channelEvents.id, admissionEvents.eventId))

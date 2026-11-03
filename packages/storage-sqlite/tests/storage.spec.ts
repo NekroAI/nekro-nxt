@@ -2076,6 +2076,19 @@ describe('relations, admissions and outbox', () => {
       expect(() =>
         repository.completeAdmission(AdmissionIdSchema.parse('adm_MISSING'), 'dsh-message-missing', admissionEvent.id),
       ).toThrow('Unknown Admission')
+      // An event handed over twice (once in a follow-up, again on its own) is still one admitted event.
+      const repeatedAdmissionId = AdmissionIdSchema.parse('adm_LIFECYCLEREPEAT')
+      repository.createAdmission({
+        id: repeatedAdmissionId,
+        episodeId,
+        eventIds: [admissionEvent.id],
+        mode: 'followup',
+        state: 'pending',
+        createdAt: 8,
+      })
+      repository.claimAdmission(repeatedAdmissionId)
+      repository.completeAdmission(repeatedAdmissionId, 'dsh-message-repeat', admissionEvent.id)
+      expect(repository.listAdmittedEvents(episodeId, 10).map(({ id }) => id)).toEqual([admissionEvent.id])
 
       expect(repository.getEpisodeHandoffTo(episodeId)).toBeUndefined()
       const rolloverFromId = EpisodeIdSchema.parse('eps_ROLLOVERFROM')
