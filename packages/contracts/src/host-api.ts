@@ -1920,8 +1920,14 @@ export const HostSnapshotSchema = z
         verificationBrowser: AddonAvailabilitySchema.optional(),
         /** The `speech` add-on that voice message transcription needs. */
         speechRecognition: AddonAvailabilitySchema.optional(),
-        /** What this host can confine for commands beyond file writes; optional in older hosts. */
-        commandConfinement: z.object({ readScope: z.boolean(), networkControl: z.boolean() }).strict().optional(),
+        /**
+         * What this host can confine for commands beyond file writes; optional in older hosts. `commands: false` means
+         * commands only run with full access (Windows, #96); older hosts omit it.
+         */
+        commandConfinement: z
+          .object({ commands: z.boolean().optional(), readScope: z.boolean(), networkControl: z.boolean() })
+          .strict()
+          .optional(),
         webSearch: z
           .object({
             unavailableReason: z.string().optional(),

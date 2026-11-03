@@ -571,14 +571,14 @@ const GIT_BASH_PROGRAMS: readonly AddonProgram[] = [{ name: 'bash' }, { name: 'g
 const gitBashProgram = (found: FoundGitBash | undefined, name: string): string | undefined =>
   name === 'bash' ? found?.bash : name === 'git' ? found?.git : undefined
 
-/** Only on Windows: agents' commands run in this bash, never in whatever `bash` is first on `PATH` (#96). */
+/** Only on Windows: full-access agents' commands run in this bash, never in whatever `bash` is first on `PATH` (#96). */
 export const gitBashAddon = (gitBash: GitBash, directory: string): AddonCapability => {
   const downloadBytes = gitBash.downloadBytes()
   return {
     id: 'git-bash',
     group: 'agent',
     title: 'Git 与 Bash',
-    summary: '在 Windows 上运行智能体的命令需要它，也让命令里能用 git。',
+    summary: '在 Windows 上，「完整访问」的智能体运行命令需要它，也让命令里能用 git。',
     usedBy: ['智能体命令'],
     prepare: () => gitBash.prepare(),
     subscribe: (listener) => gitBash.subscribe(listener),

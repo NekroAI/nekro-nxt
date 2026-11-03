@@ -47,6 +47,7 @@ import {
   supportsImages,
   toggleAccess,
   type AccessCapability,
+  type Capabilities,
   type AgentDraft,
   type DraftUpdate,
 } from './agent-draft.js'
@@ -487,7 +488,7 @@ export function CapabilitiesSection({
 }) {
   const availability = useProductStore((state) => state.capabilityAvailability)
   const node = useAddon('node')
-  // Listed only on Windows, where commands need it to run at all (#96).
+  // Listed only on Windows, where commands with full access need it to run at all (#96).
   const gitBash = useAddon('git-bash')
   const speech = useAddon('speech')
   const speechReady = availability.speechRecognition?.available === true
@@ -496,16 +497,29 @@ export function CapabilitiesSection({
     readonly title: string
     readonly body: string
     readonly apply: () => void
-    /** The change turns commands on while this Windows host has no bash to run them in (#96). */
+    /** The change turns on commands with full access while this Windows host has no bash to run them in (#96). */
     readonly needsShell: boolean
+    /** The change turns on commands below full access on a host that cannot run them there (Windows, #96). */
+    readonly commandsBlocked: boolean
   } | null>(null)
   const preset = agentAccessPreset(draft.capabilities)
   const caps = draft.capabilities
+  const commandsNeedFullAccess = availability.commandConfinement?.commands === false
   const shellMissing = gitBash !== undefined && !addonUsable(gitBash.state)
   const shellInstall = shellMissing ? gitBash.providers.find((provider) => provider.installable) : undefined
-  const confirmIfRisky = (risky: boolean, title: string, body: string, apply: () => void, needsShell = false) => {
-    if (risky || (needsShell && shellMissing))
-      setPending({ title, body, apply, needsShell: needsShell && shellMissing })
+  const confirmIfRisky = (
+    risky: boolean,
+    title: string,
+    body: string,
+    apply: () => void,
+    next?: Pick<Capabilities, AccessCapability>,
+  ) => {
+    const fullCommands = (access: Pick<Capabilities, AccessCapability>) =>
+      access.developmentShell && access.unrestrictedFileAccess
+    const needsShell = next !== undefined && shellMissing && fullCommands(next) && !fullCommands(caps)
+    const commandsBlocked =
+      next !== undefined && commandsNeedFullAccess && next.developmentShell && !next.unrestrictedFileAccess
+    if (risky || needsShell) setPending({ title, body, apply, needsShell, commandsBlocked })
     else apply()
   }
   const installShell = async () => {
@@ -527,7 +541,7 @@ export function CapabilitiesSection({
       `允许${agent.name}${level.label}？`,
       level.description,
       apply,
-      accessOfLevel(level.level).developmentShell === true && !caps.developmentShell,
+      accessOfLevel(level.level),
     )
   }
   const setAccess = (key: AccessCapability, enabled: boolean) => {
@@ -539,9 +553,10 @@ export function CapabilitiesSection({
       `允许${agent.name}${item?.label ?? ''}？`,
       item?.description ?? '',
       apply,
-      key === 'developmentShell' && enabled,
+      toggleAccess(caps, key, enabled),
     )
   }
+  const commandsRun = caps.developmentShell && (caps.unrestrictedFileAccess || !commandsNeedFullAccess)
   const setCapability = (key: 'subagents' | 'webSearch' | 'dynamicCreation' | 'scheduledTasks', enabled: boolean) =>
     update((current) => ({ ...current, capabilities: { ...current.capabilities, [key]: enabled } }))
 
@@ -569,7 +584,15 @@ export function CapabilitiesSection({
             }
           />
         </PropertyRow>
-        {caps.developmentShell && gitBash !== undefined && addonManageable(gitBash) ? (
+        {caps.developmentShell && !caps.unrestrictedFileAccess && commandsNeedFullAccess ? (
+          <PropertyRow
+            depth={1}
+            label="命令"
+            description="这台 Windows 设备上，这一档暂时不能运行命令，调到「完整访问」后才能运行"
+            badge={<Chip tone="warn">暂不可用</Chip>}
+          />
+        ) : null}
+        {caps.developmentShell && caps.unrestrictedFileAccess && gitBash !== undefined && addonManageable(gitBash) ? (
           <PropertyRow
             depth={1}
             label="Git 与 Bash"
@@ -583,11 +606,11 @@ export function CapabilitiesSection({
             <AddonLink addon={gitBash} />
           </PropertyRow>
         ) : null}
-        {caps.developmentShell ? <CommandNetworkRow caps={caps} update={update} /> : null}
-        {caps.developmentShell && !caps.unrestrictedFileAccess ? (
+        {commandsRun ? <CommandNetworkRow caps={caps} update={update} /> : null}
+        {commandsRun && !caps.unrestrictedFileAccess ? (
           <CommandAccountRows agent={agent} caps={caps} update={update} />
         ) : null}
-        {caps.developmentShell ? <CommandCredentialRows agentId={agent.id} /> : null}
+        {commandsRun ? <CommandCredentialRows agentId={agent.id} /> : null}
         {caps.developmentShell ? (
           <PropertyRow
             depth={1}
@@ -802,6 +825,11 @@ export function CapabilitiesSection({
         }}
       >
         <p>{pending?.body}</p>
+        {pending?.commandsBlocked ? (
+          <p className={styles.noteWarn}>
+            这台 Windows 设备上，这一档暂时不能运行命令，要运行命令需要调到「完整访问」。
+          </p>
+        ) : null}
         {pending?.needsShell ? (
           <p className={styles.noteWarn}>
             这台 Windows 设备还没有 Git 与 Bash，装好之前命令无法运行。

@@ -19,6 +19,12 @@ export interface CommandConfinement {
 
 /** What the platform runner can enforce beyond file writes. */
 export interface CommandConfinementSupport {
+  /**
+   * Whether commands can run inside the runner at all. The Windows runner's restricted token cannot start Git Bash
+   * (MSYS2 fails to create its signal pipe) and stops PowerShell from capturing other programs' output, so commands
+   * there need full access, which skips the runner (#96).
+   */
+  readonly commands: boolean
   readonly readScope: boolean
   readonly networkControl: boolean
 }
@@ -208,15 +214,15 @@ const probeBwrapNetwork = (): boolean => {
 
 /**
  * Seatbelt and bwrap enforce both read scope and network; Linux without bwrap falls back to Landlock, which here
- * scopes reads only; the Windows runner restricts writes only.
+ * scopes reads only; the Windows runner restricts writes only, and commands cannot run in it.
  */
 export const commandConfinementSupport = (platform: NodeJS.Platform = process.platform): CommandConfinementSupport => {
-  if (platform === 'darwin') return { readScope: true, networkControl: true }
+  if (platform === 'darwin') return { commands: true, readScope: true, networkControl: true }
   if (platform === 'linux') {
     const bwrap = probeBwrapNetwork()
-    return { readScope: true, networkControl: bwrap }
+    return { commands: true, readScope: true, networkControl: bwrap }
   }
-  return { readScope: false, networkControl: false }
+  return { commands: platform !== 'win32', readScope: false, networkControl: false }
 }
 
 /** Toolchain directories under home that commands may still read; anything else there stays hidden. */

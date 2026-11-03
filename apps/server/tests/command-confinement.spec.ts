@@ -8,6 +8,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   bwrapArgs,
+  commandConfinementSupport,
   extendConfinedArgv,
   hostCommandConfinement,
   installRootOf,
@@ -122,7 +123,7 @@ describe('command confinement', () => {
   it('rewrites only the runners it knows', () => {
     const { workspace, confinement } = fixture()
     const policy = { mode: 'workspace-write' as const, workspaceRoot: workspace }
-    const support = { readScope: true, networkControl: true }
+    const support = { commands: true, readScope: true, networkControl: true }
     const windows = ['node', 'runner.js', '--workspace', workspace, '--', 'pwsh', '-c', 'echo']
     expect(extendConfinedArgv(windows, policy, confinement, support)).toEqual(windows)
     const landlock = extendConfinedArgv(
@@ -141,6 +142,11 @@ describe('command confinement', () => {
     expect(bwrap).not.toContain('--unshare-net')
   })
 
+  it('runs commands inside the runner everywhere except Windows (#96)', () => {
+    expect(commandConfinementSupport('darwin').commands).toBe(true)
+    expect(commandConfinementSupport('win32')).toEqual({ commands: false, readScope: false, networkControl: false })
+  })
+
   it('finds the install root above node_modules', () => {
     expect(installRootOf('/opt/nekro/server/node_modules/.pnpm/pkg/node_modules/pkg/package.json')).toBe(
       '/opt/nekro/server',
@@ -155,7 +161,7 @@ describe('command confinement', () => {
       ['/usr/bin/sandbox-exec', '-p', profile, '--', '/bin/bash', '-c', 'true'],
       policy,
       confinement,
-      { readScope: true, networkControl: true },
+      { commands: true, readScope: true, networkControl: true },
     )
     const run = (script: string) =>
       spawnSync(argv[0]!, [...argv.slice(1, -1), script], { cwd: workspace, encoding: 'utf8' }).stdout.trim()

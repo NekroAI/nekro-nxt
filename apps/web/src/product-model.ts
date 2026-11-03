@@ -559,8 +559,13 @@ export interface CapabilityAvailability {
   readonly codeRun?: AddonAvailability | undefined
   readonly verificationBrowser?: AddonAvailability | undefined
   readonly speechRecognition?: AddonAvailability | undefined
-  /** What the host can confine for commands beyond file writes; absent hosts confine writes only. */
-  readonly commandConfinement?: { readonly readScope: boolean; readonly networkControl: boolean } | undefined
+  /**
+   * What the host can confine for commands beyond file writes; absent hosts confine writes only. `commands: false`
+   * means commands only run with full access (Windows, #96).
+   */
+  readonly commandConfinement?:
+    | { readonly commands?: boolean | undefined; readonly readScope: boolean; readonly networkControl: boolean }
+    | undefined
   readonly webSearch: {
     readonly unavailableReason?: string | undefined
     readonly provider: string

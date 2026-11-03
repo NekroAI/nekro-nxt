@@ -48,6 +48,7 @@ import {
   type CommandCredentialSources,
 } from './command-account-env.js'
 import {
+  commandConfinementSupport,
   createConfinedSandboxProvider,
   dataRootCommandConfinement,
   type CommandConfinement,
@@ -3082,6 +3083,15 @@ async function mountDevelopmentCapabilities(
   }
 
   if (developmentShell) {
+    if (!unrestrictedFileAccess && !commandConfinementSupport().commands) {
+      // Windows: commands cannot run inside the sandbox, so there is no command tool below full access (#96).
+      agentContext.systemPrompt.section({
+        name: 'nekro-nxt:commands-unavailable',
+        order: 20.65,
+        text: () => COMMANDS_NEED_FULL_ACCESS,
+      })
+      return
+    }
     await capabilityContext.plugin(LocalSubprocessRuntime)
     await capabilityContext.plugin(
       createConfinedSandboxProvider(() => confinement),
@@ -3094,6 +3104,9 @@ async function mountDevelopmentCapabilities(
     await capabilityContext.plugin(BashTool, { enableRunInBackground: false })
   }
 }
+
+const COMMANDS_NEED_FULL_ACCESS =
+  '这台 Windows 设备上，你现在的访问权限还不能运行命令，所以你没有运行命令的工具；文件仍然可以用文件工具读写。需要运行命令时，告诉对方：请管理员把你的访问权限调到「完整访问」。'
 
 const FALLBACK_REASON_TEXT: Readonly<Record<ModelFallbackReason, string>> = {
   quota: '额度已用完',
@@ -5401,7 +5414,8 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   /**
    * The bash agents' commands run in: on Windows only the one the 「Git 与 Bash」 add-on provides, never whatever `bash`
-   * comes first on `PATH` (the launcher of the Windows Subsystem for Linux, #96); elsewhere the system's own.
+   * comes first on `PATH` (the launcher of the Windows Subsystem for Linux, #96); elsewhere the system's own. Windows
+   * agents only get commands with full access, so only they reach this there.
    */
   #commandShell(): string | undefined {
     if (process.platform !== 'win32') return 'bash'
@@ -5412,7 +5426,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       this.#logs?.write({
         level: 'warn',
         message:
-          '这台 Windows 设备还没有可用的 Bash，开了「运行命令」的智能体现在无法执行命令。请在 设置 → 附加功能 里安装「Git 与 Bash」。',
+          '这台 Windows 设备还没有可用的 Bash，开了「完整访问」的智能体现在无法执行命令。请在 设置 → 附加功能 里安装「Git 与 Bash」。',
         source: { kind: 'system', id: 'command-shell', name: '命令运行' },
       })
     }
