@@ -25,6 +25,11 @@ const install = async (page: Page, failures: number) => {
   await installSnapshotHealthRoutes(page, snapshot)
   await installWorkspaceRoutes(page, () => snapshot)
   await page.route('**/api/snapshot', (route) => route.fulfill({ json: snapshot }))
+  // The host announces the finished compaction on the event stream. This stream carries no frames and asks for a quick
+  // reconnect; every reopen makes the page re-read the runtime, which by then reports the new session.
+  await page.route('**/api/events', (route) =>
+    route.fulfill({ contentType: 'text/event-stream', body: 'retry: 200\n\n' }),
+  )
   // A compaction runs after its request returns; the next read finds the new session.
   let compacted = false
   await page.route('**/api/channels/*/runtime', (route) =>
