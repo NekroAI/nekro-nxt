@@ -4,7 +4,7 @@ import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { PanelSlot, useExtensionActivation } from '../../extension-ui/index.js'
-import { callHostApi } from '../../host-api-client.js'
+import { callHostApi, workspaceApi } from '../../host-api-client.js'
 import { useFeedbackSummary } from '../community/feedback-model.js'
 import {
   connectionDisplayName,
@@ -487,6 +487,8 @@ export function CapabilitiesSection({
 }) {
   const availability = useProductStore((state) => state.capabilityAvailability)
   const node = useAddon('node')
+  // Listed only on Windows, where commands need it to run at all (#96).
+  const gitBash = useAddon('git-bash')
   const speech = useAddon('speech')
   const speechReady = availability.speechRecognition?.available === true
   const feedback = useFeedbackSummary()
@@ -494,12 +496,25 @@ export function CapabilitiesSection({
     readonly title: string
     readonly body: string
     readonly apply: () => void
+    /** The change turns commands on while this Windows host has no bash to run them in (#96). */
+    readonly needsShell: boolean
   } | null>(null)
   const preset = agentAccessPreset(draft.capabilities)
   const caps = draft.capabilities
-  const confirmIfRisky = (risky: boolean, title: string, body: string, apply: () => void) => {
-    if (risky) setPending({ title, body, apply })
+  const shellMissing = gitBash !== undefined && !addonUsable(gitBash.state)
+  const shellInstall = shellMissing ? gitBash.providers.find((provider) => provider.installable) : undefined
+  const confirmIfRisky = (risky: boolean, title: string, body: string, apply: () => void, needsShell = false) => {
+    if (risky || (needsShell && shellMissing))
+      setPending({ title, body, apply, needsShell: needsShell && shellMissing })
     else apply()
+  }
+  const installShell = async () => {
+    if (gitBash === undefined || shellInstall === undefined) return
+    try {
+      await workspaceApi.installAddonProvider(gitBash.id, shellInstall.id)
+    } catch (error) {
+      failure(error)
+    }
   }
   const selectLevel = (index: number) => {
     const level = AGENT_ACCESS_LEVELS[index]
@@ -512,6 +527,7 @@ export function CapabilitiesSection({
       `允许${agent.name}${level.label}？`,
       level.description,
       apply,
+      accessOfLevel(level.level).developmentShell === true && !caps.developmentShell,
     )
   }
   const setAccess = (key: AccessCapability, enabled: boolean) => {
@@ -523,6 +539,7 @@ export function CapabilitiesSection({
       `允许${agent.name}${item?.label ?? ''}？`,
       item?.description ?? '',
       apply,
+      key === 'developmentShell' && enabled,
     )
   }
   const setCapability = (key: 'subagents' | 'webSearch' | 'dynamicCreation' | 'scheduledTasks', enabled: boolean) =>
@@ -552,6 +569,20 @@ export function CapabilitiesSection({
             }
           />
         </PropertyRow>
+        {caps.developmentShell && gitBash !== undefined && addonManageable(gitBash) ? (
+          <PropertyRow
+            depth={1}
+            label="Git 与 Bash"
+            description={
+              addonUsable(gitBash.state)
+                ? [selectedProvider(gitBash)?.title, selectedProvider(gitBash)?.version].filter(Boolean).join('，')
+                : `${addonStateLabel(gitBash.state, gitBash.progress).label}，安装后命令才能运行`
+            }
+            badge={addonUsable(gitBash.state) ? undefined : <Chip tone="warn">待安装</Chip>}
+          >
+            <AddonLink addon={gitBash} />
+          </PropertyRow>
+        ) : null}
         {caps.developmentShell ? <CommandNetworkRow caps={caps} update={update} /> : null}
         {caps.developmentShell && !caps.unrestrictedFileAccess ? (
           <CommandAccountRows agent={agent} caps={caps} update={update} />
@@ -762,14 +793,27 @@ export function CapabilitiesSection({
         open={pending !== null}
         onOpenChange={(open) => !open && setPending(null)}
         title={pending?.title ?? ''}
-        confirmLabel="允许"
+        confirmLabel={pending?.needsShell && shellInstall !== undefined ? '允许并安装 Git 与 Bash' : '允许'}
         danger
         onConfirm={() => {
+          if (pending?.needsShell) void installShell()
           pending?.apply()
           setPending(null)
         }}
       >
         <p>{pending?.body}</p>
+        {pending?.needsShell ? (
+          <p className={styles.noteWarn}>
+            这台 Windows 设备还没有 Git 与 Bash，装好之前命令无法运行。
+            {shellInstall === undefined
+              ? '可以在 设置 → 附加功能 里查看原因。'
+              : `确认后在后台下载安装${
+                  shellInstall.resources.downloadBytes === undefined
+                    ? ''
+                    : `（约 ${Math.round(shellInstall.resources.downloadBytes / 1024 / 1024)} MB）`
+                }，进度显示在下方的「Git 与 Bash」一行。`}
+          </p>
+        ) : null}
         <p className={styles.note}>确认后还需要保存才会生效。</p>
       </ConfirmDialog>
     </PropertyGroup>

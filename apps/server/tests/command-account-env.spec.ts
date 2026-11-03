@@ -1,4 +1,10 @@
 import { Context } from '@deepseek-ai/cordis'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
+import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import * as BashTool from '@deepseek-ai/dsh-tool-bash'
+import ToolRuntime from '@deepseek-ai/dsh-tools'
+import { WorkingDirectoryService } from '@deepseek-ai/dsh-working-directory'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
@@ -12,6 +18,7 @@ import {
   commandCredentialEnvironment,
   commandCredentialPrompt,
   createEnvForwardingExecutor,
+  MISSING_SHELL_MESSAGE,
   programSearchPath,
   type CommandAccount,
   type CommandCredential,
@@ -19,6 +26,7 @@ import {
 } from '../src/command-account-env.ts'
 import { createGithubPlatform } from '../src/linked-accounts/github.ts'
 import { createConfinedSandboxProvider } from '../src/command-confinement.ts'
+import { WorkspaceFileSystem } from '../src/workspace-file-system.ts'
 
 const directories: string[] = []
 afterEach(() => {
@@ -174,6 +182,7 @@ const runCommand = async (
   mode: 'workspace-write' | 'danger-full-access',
   environment: Record<string, string>,
   command: string,
+  shell?: () => string | undefined,
 ) => {
   const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-env-')))
   directories.push(workspace)
@@ -186,12 +195,12 @@ const runCommand = async (
     {},
   )
   await ctx.plugin(
-    createEnvForwardingExecutor(() => environment),
+    createEnvForwardingExecutor(() => environment, shell),
     { cwd: workspace },
   )
-  const shell = shellOf(ctx)
-  const spec = shell.resolve({ command, workdir: workspace, dshEnv: {} })
-  return (await (await shell.execute(spec)).result()).stdout.text.trim()
+  const executor = shellOf(ctx)
+  const spec = executor.resolve({ command, workdir: workspace, dshEnv: {} })
+  return (await (await executor.execute(spec)).result()).stdout.text.trim()
 }
 
 describe.skipIf(process.platform === 'win32')('commands receive the granted account', () => {
@@ -260,5 +269,71 @@ describe.skipIf(process.platform === 'win32')('commands receive the granted acco
     expect(await echo()).toBe('gh=tok-fixture')
     delete live['GH_TOKEN']
     expect(await echo()).toBe('gh=')
+  })
+})
+
+describe.skipIf(process.platform === 'win32')('commands run in the chosen bash (#96)', () => {
+  /** A stand-in bash that says which program ran before running the command in the real one. */
+  const fixtureBash = () => {
+    const folder = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-bash-')))
+    directories.push(folder)
+    const program = path.join(folder, 'chosen-bash')
+    writeFileSync(program, '#!/bin/sh\nprintf "chosen "\nexec bash "$@"\n', { mode: 0o755 })
+    return program
+  }
+
+  it('starts the command with the chosen program instead of the bare name', async () => {
+    const program = fixtureBash()
+    expect(await runCommand('danger-full-access', {}, 'echo ran', () => program)).toBe('chosen ran')
+  })
+
+  it.runIf(process.platform === 'darwin')('also inside the sandbox runner', async () => {
+    const program = fixtureBash()
+    expect(await runCommand('workspace-write', {}, 'echo ran', () => program)).toBe('chosen ran')
+  })
+
+  it('refuses the command in plain words when there is no bash to use', async () => {
+    await expect(runCommand('danger-full-access', {}, 'echo ran', () => undefined)).rejects.toThrow(
+      MISSING_SHELL_MESSAGE,
+    )
+  })
+})
+
+describe.skipIf(process.platform === 'win32')('an agent whose command has no bash to run in (#96)', () => {
+  it('gets a failed tool result that says why and what the administrator should install', async () => {
+    const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-env-')))
+    directories.push(workspace)
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SessionProjections)
+    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: workspace })
+    await ctx.plugin(WorkspaceFileSystem, { cwd: workspace })
+    await ctx.plugin(WorkingDirectoryService, { defaultDirectory: workspace })
+    await ctx.plugin(LocalSubprocessRuntime)
+    await ctx.plugin(
+      createConfinedSandboxProvider(() => ({ hidden: [], readable: [], network: true })),
+      {},
+    )
+    await ctx.plugin(
+      createEnvForwardingExecutor(
+        () => ({}),
+        () => undefined,
+      ),
+      { cwd: workspace },
+    )
+    await ctx.plugin(ShellEnv, { dshHome: workspace })
+    await ctx.plugin(BashTool, { enableRunInBackground: false })
+    const result = await ctx.tools.execute({
+      callId: ToolCallId('missing-shell'),
+      name: 'bash',
+      arguments: { command: 'mv a b', description: 'Rename a file' },
+      signal: new AbortController().signal,
+    })
+    expect(result.isError).toBe(true)
+    // The content is what the model reads.
+    expect(result.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n')).toContain(
+      MISSING_SHELL_MESSAGE,
+    )
   })
 })

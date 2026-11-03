@@ -2605,6 +2605,55 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('offers to install Git and Bash when commands are turned on for a Windows host that lacks it', async () => {
+    const windowsHost = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      addons: [
+        ...addonsFixture(),
+        {
+          id: 'git-bash',
+          group: 'agent',
+          title: 'Git 与 Bash',
+          summary: '在 Windows 上运行智能体的命令需要它，也让命令里能用 git。',
+          usedBy: ['智能体命令'],
+          state: 'not-installed',
+          providers: [
+            addonProvider({
+              id: 'download',
+              title: '下载的 Git 与 Bash',
+              state: 'not-installed',
+              resources: { downloadBytes: 60 * 1024 * 1024, notes: [] },
+            }),
+          ],
+        },
+      ],
+    })
+    const installs: string[] = []
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        await page.getByRole('button', { name: '运行命令', exact: true }).click()
+        const confirm = page.getByRole('dialog', { name: '允许资料员运行命令？' })
+        await playwrightExpect(confirm).toContainText('这台 Windows 设备还没有 Git 与 Bash，装好之前命令无法运行。')
+        await playwrightExpect(confirm).toContainText('约 60 MB')
+        await confirm.getByRole('button', { name: '允许并安装 Git 与 Bash' }).click()
+        await playwrightExpect.poll(() => installs).toEqual(['/api/addons/git-bash/providers/download/install'])
+        // The row stays as the way back to the add-on until it is installed.
+        await playwrightExpect(page.getByText('未安装，安装后命令才能运行')).toBeVisible()
+        await playwrightExpect(page.getByText('待安装')).toBeVisible()
+        await page.getByRole('button', { name: '去安装' }).first().click()
+        await playwrightExpect(page).toHaveURL(/\/settings\/addons\/git-bash$/u)
+      },
+      windowsHost,
+      async (page) => {
+        await page.route('**/api/addons/**', (request) => {
+          installs.push(new URL(request.request().url()).pathname)
+          return request.fulfill({ json: windowsHost.addons.find((addon) => addon.id === 'git-bash') })
+        })
+      },
+    )
+  })
+
   test('turns on voice message transcription once speech recognition can be used', async () => {
     const capabilityRequests: unknown[] = []
     const missing = HostApiContracts.snapshot.response.parse({

@@ -52,6 +52,7 @@ const SOURCE_LABEL: Record<NonNullable<AddonProviderStatus['source']>, string> =
 
 /** What a capability needs to say beyond its rows, once. */
 const ADDON_TIPS: Partial<Record<AddonId, string>> = {
+  'git-bash': '已经装了 Git for Windows 的设备会直接用它，不用再下载。',
   browser:
     '智能体做的扩展带界面时，试运行要在浏览器里加载并检查。打开着任何一个 NekroNXT 页面时由页面完成；一个页面都没开时由这个浏览器在后台完成。不安装也可以，候选照常运行，标为「界面未检查」。',
 }

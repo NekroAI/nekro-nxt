@@ -3054,6 +3054,7 @@ async function mountDevelopmentCapabilities(
   workspaceRoot: string | undefined,
   confinement: CommandConfinement,
   commandEnvironment: () => Readonly<Record<string, string>>,
+  commandShell: () => string | undefined,
 ): Promise<void> {
   const { developmentShell, fileTools, unrestrictedFileAccess } = revision.capabilities
   if (!developmentShell && !fileTools) return
@@ -3086,7 +3087,9 @@ async function mountDevelopmentCapabilities(
       createConfinedSandboxProvider(() => confinement),
       {},
     )
-    await capabilityContext.plugin(createEnvForwardingExecutor(commandEnvironment), { cwd: workspaceRoot })
+    await capabilityContext.plugin(createEnvForwardingExecutor(commandEnvironment, commandShell), {
+      cwd: workspaceRoot,
+    })
     await capabilityContext.plugin(ShellEnv, {})
     await capabilityContext.plugin(BashTool, { enableRunInBackground: false })
   }
@@ -3152,6 +3155,7 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
 export class DshHostRuntime implements AgentSessionDriver {
   readonly #logs: HostLogSink | undefined
+  #missingShellLoggedAt = 0
   readonly #context: Context
   readonly #subConversations: SubConversationManager
   readonly #subConversationStore: SubConversationStore
@@ -4698,6 +4702,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         developmentWorkspace,
         this.#commandConfinementOf(revision),
         () => this.#commandEnvironmentOf(revision),
+        () => this.#commandShell(),
       )
       const accountPrompt = this.#commandAccountPromptOf(revision)
       if (accountPrompt !== undefined) {
@@ -5392,6 +5397,26 @@ export class DshHostRuntime implements AgentSessionDriver {
         : commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
     const searchPath = programSearchPath(this.#programs(), process.env['PATH'])
     return searchPath === undefined ? environment : { ...environment, PATH: searchPath }
+  }
+
+  /**
+   * The bash agents' commands run in: on Windows only the one the 「Git 与 Bash」 add-on provides, never whatever `bash`
+   * comes first on `PATH` (the launcher of the Windows Subsystem for Linux, #96); elsewhere the system's own.
+   */
+  #commandShell(): string | undefined {
+    if (process.platform !== 'win32') return 'bash'
+    const bash = this.#programs().find((program) => program.addon === 'git-bash' && program.name === 'bash')?.path
+    // The agent is told why its command did not run; the administrator sees it in the logs, at most every ten minutes.
+    if (bash === undefined && Date.now() - this.#missingShellLoggedAt >= 10 * 60 * 1000) {
+      this.#missingShellLoggedAt = Date.now()
+      this.#logs?.write({
+        level: 'warn',
+        message:
+          '这台 Windows 设备还没有可用的 Bash，开了「运行命令」的智能体现在无法执行命令。请在 设置 → 附加功能 里安装「Git 与 Bash」。',
+        source: { kind: 'system', id: 'command-shell', name: '命令运行' },
+      })
+    }
+    return bash
   }
 
   /** The host confinement with the folders of the add-ons' programs readable, wherever they are installed. */

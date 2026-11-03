@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { AddonGroup, AddonId, AddonProviderStatus, AddonState, AddonStatus, JsonValue } from '@nekro-nxt/contracts'
 import type { CodeRunNode } from './code-run-node.js'
 import { FFMPEG_PROFILE, FFPROBE_PROFILE, type CommandProfile } from './command-profiles.js'
+import type { FoundGitBash, GitBash } from './git-bash.js'
 import type { GithubCli } from './github-cli.js'
 import type { MediaFfmpeg } from './media-ffmpeg.js'
 import type { RetrievalRuntime } from './retrieval-runtime.js'
@@ -560,6 +561,68 @@ export const githubCliAddon = (cli: GithubCli, directory: string): AddonCapabili
         install: () => cli.startDownload(),
         remove: () => cli.removeDownloaded(),
         program: (name) => (name === 'gh' ? cli.downloaded()?.executable : undefined),
+      },
+    ],
+  }
+}
+
+const GIT_BASH_PROGRAMS: readonly AddonProgram[] = [{ name: 'bash' }, { name: 'git' }]
+
+const gitBashProgram = (found: FoundGitBash | undefined, name: string): string | undefined =>
+  name === 'bash' ? found?.bash : name === 'git' ? found?.git : undefined
+
+/** Only on Windows: agents' commands run in this bash, never in whatever `bash` is first on `PATH` (#96). */
+export const gitBashAddon = (gitBash: GitBash, directory: string): AddonCapability => {
+  const downloadBytes = gitBash.downloadBytes()
+  return {
+    id: 'git-bash',
+    group: 'agent',
+    title: 'Git 与 Bash',
+    summary: '在 Windows 上运行智能体的命令需要它，也让命令里能用 git。',
+    usedBy: ['智能体命令'],
+    prepare: () => gitBash.prepare(),
+    subscribe: (listener) => gitBash.subscribe(listener),
+    providers: [
+      {
+        id: 'system',
+        title: '这台设备的 Git for Windows',
+        summary: '',
+        programs: GIT_BASH_PROGRAMS,
+        state: () => {
+          const system = gitBash.system()
+          return (
+            system && {
+              state: 'available',
+              source: 'system',
+              ...(system.version === undefined ? {} : { version: system.version }),
+              removable: false,
+            }
+          )
+        },
+        program: (name) => gitBashProgram(gitBash.system(), name),
+      },
+      {
+        id: 'download',
+        title: '下载的 Git 与 Bash',
+        summary: DOWNLOAD_SUMMARY,
+        licenses: [
+          {
+            component: 'Git for Windows（PortableGit）',
+            name: 'GPL-2.0',
+            url: 'https://github.com/git-for-windows/git/blob/main/COPYING',
+          },
+        ],
+        sources: ['NekroAI 下载镜像', 'GitHub Releases'],
+        programs: GIT_BASH_PROGRAMS,
+        directories: [directory],
+        state: () =>
+          downloadState(gitBash.download(), gitBash.downloaded(), {
+            version: gitBash.releaseVersion,
+            ...(downloadBytes === undefined ? {} : { downloadBytes }),
+          }),
+        install: () => gitBash.startDownload(),
+        remove: () => gitBash.removeDownloaded(),
+        program: (name) => gitBashProgram(gitBash.downloaded(), name),
       },
     ],
   }

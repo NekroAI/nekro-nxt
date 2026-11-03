@@ -117,18 +117,48 @@ export const programSearchPath = (
 }
 
 type ExecutorRequest = Parameters<SandboxBashExecutor['resolve']>[0]
+type ExecutorArgv = Parameters<SandboxBashExecutor['executeArgv']>[1]
+
+/** What a command gets when the bash it would run in is missing; the agent should pass it on, not retry. */
+export const MISSING_SHELL_MESSAGE =
+  '这条命令没有执行：这台 Windows 设备还没有可用的 Bash。请把这个情况告诉管理员：在 设置 → 附加功能 里安装「Git 与 Bash」后，命令就能运行。管理员处理之前，不要再尝试运行命令。'
+
+/** DSH starts every command as `bash -c …`; this puts the chosen bash in place of the bare name. */
+const withShell = (argv: readonly string[], shell: string): string[] => {
+  const separator = argv.indexOf('--')
+  const at = separator < 0 ? 0 : separator + 1
+  return argv[at] === 'bash' ? [...argv.slice(0, at), shell, ...argv.slice(at + 1)] : [...argv]
+}
 
 /**
- * DSH's sandbox executor that adds the agent's credential and account variables to every command. The variables are
- * read when the command starts, so removing a credential or an account stops it at the next command.
+ * DSH's sandbox executor that adds the agent's credential and account variables to every command, and runs commands in
+ * the bash `shell` names. The variables and the bash are read when the command starts, so removing a credential or an
+ * account stops it at the next command. `shell` returning `undefined` means there is no bash to use (Windows without
+ * Git for Windows, #96): the command fails with {@link MISSING_SHELL_MESSAGE} instead of reaching another `bash` on
+ * `PATH`, such as the launcher of the Windows Subsystem for Linux.
  */
 export const createEnvForwardingExecutor = (
   environment: () => Readonly<Record<string, string>>,
+  shell: () => string | undefined = () => 'bash',
 ): typeof SandboxBashExecutor =>
   class EnvForwardingExecutor extends SandboxBashExecutor {
     override resolve(request: ExecutorRequest) {
       const added = environment()
       if (Object.keys(added).length === 0) return super.resolve(request)
       return super.resolve({ ...request, env: { ...request.env, ...added } })
+    }
+
+    override executeArgv(
+      spec: Parameters<SandboxBashExecutor['executeArgv']>[0],
+      argvOrPrepare: ExecutorArgv,
+      onStarted?: Parameters<SandboxBashExecutor['executeArgv']>[2],
+    ) {
+      const program = shell()
+      if (program === undefined) return Promise.reject(new Error(MISSING_SHELL_MESSAGE))
+      const argv: ExecutorArgv =
+        typeof argvOrPrepare === 'function'
+          ? async (signal) => withShell(await argvOrPrepare(signal), program)
+          : withShell(argvOrPrepare, program)
+      return super.executeArgv(spec, argv, onStarted)
     }
   }

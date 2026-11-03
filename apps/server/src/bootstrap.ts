@@ -81,6 +81,8 @@ import { SecretRegistry } from './secret-registry.js'
 import { CredentialLibrary, namedCredentialId } from './credentials-library.js'
 import { CredentialRequests } from './credential-requests.js'
 import { ModelProviderAccess, openModelOptions } from './model-provider-access.js'
+import { GitBash } from './git-bash.js'
+import { downloadMirror } from './product-updates.js'
 import { GithubCli } from './github-cli.js'
 import { createGithubPlatform } from './linked-accounts/github.js'
 import { commandAccountsOf, LinkedAccountLibrary } from './linked-accounts/library.js'
@@ -112,6 +114,7 @@ import { RetrievalRuntime } from './retrieval-runtime.js'
 import {
   AddonRegistry,
   browserAddon,
+  gitBashAddon,
   githubCliAddon,
   mediaAddon,
   nodeAddon,
@@ -1053,6 +1056,18 @@ export class NekroRuntime {
           speech,
           nodeAddon(codeRunNode, path.join(runtimesRoot, 'node')),
           githubCliAddon(githubCli, path.join(runtimesRoot, 'gh')),
+          // Only Windows lacks a bash of its own; agents' commands there need this one (#96).
+          ...(process.platform === 'win32'
+            ? [
+                gitBashAddon(
+                  new GitBash({
+                    root: path.join(runtimesRoot, 'git'),
+                    ...downloadMirror(process.env['NEKRO_DOWNLOAD_MIRROR']),
+                  }),
+                  path.join(runtimesRoot, 'git'),
+                ),
+              ]
+            : []),
           browserAddon(verificationBrowser, path.join(runtimesRoot, 'chromium')),
         ],
         {
