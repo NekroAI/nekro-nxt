@@ -590,9 +590,9 @@ export function createProductStore(
       const extensionId = requireValue(id, '缺少本地扩展标识，请刷新页面后重试。')
       if (revisionId === null) {
         await requireHost().actions['extensions.uninstall']({ extensionId })
-        return
+        return 'done'
       }
-      await requireHost().actions['extensions.install']({
+      const result = await requireHost().actions['extensions.install']({
         extensionId,
         revisionId: requireValue(revisionId, '缺少要安装的扩展版本。'),
         ...(approvals?.host === undefined ? {} : { permissionDigest: approvals.host }),
@@ -601,6 +601,7 @@ export function createProductStore(
           ? {}
           : { restoreDataSnapshotId: approvals.restoreDataSnapshotId }),
       })
+      return result.pending === undefined ? 'done' : 'pending'
     },
     reportHostExtensionClientDiagnostic: async ({ extensionId, revisionId, status, message }) => {
       await requireHost().actions['extensions.hostClientDiagnostic']({

@@ -35,6 +35,7 @@ import {
   assertFallbackModels,
   buildSnapshotMessage,
   readJsonBody,
+  settleWithin,
   writeContractJson,
   writeError,
   writeJson,
@@ -44,33 +45,11 @@ import { clientCapabilities, knownAccountGrants } from './host-routes-linked-acc
 import { ChannelPromptConflictError } from '@nekro-nxt/storage-sqlite'
 import { ChannelPromptError, MEMBER_NOTE_MAX_CHARS } from './channel-prompts.js'
 /**
- * How long an enable or disable request waits for its result. Switching waits for the agent's safe gap, which lasts
- * as long as its current reply; past this window the request answers `pending` and finishes in the background.
+ * How long an enable, disable or version-switch request waits for its result. Switching waits for the agent's safe
+ * gap, which lasts as long as its current reply; past this window the request answers `pending` and finishes in the
+ * background.
  */
 export const ACTIVATION_RESPONSE_GRACE_MS = 800
-
-/**
- * Resolves with the operation's result when it settles within `graceMs` (a failure in that window rejects), otherwise
- * with `settled: false` and the still-running operation.
- */
-const settleWithin = async <T>(
-  operation: Promise<T>,
-  graceMs: number,
-): Promise<
-  { readonly settled: true; readonly value: T } | { readonly settled: false; readonly result: Promise<T> }
-> => {
-  // Marks a late failure as handled; the caller still observes it through `result`.
-  operation.catch(() => undefined)
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<{ readonly settled: false; readonly result: Promise<T> }>((resolve) => {
-    timer = setTimeout(() => resolve({ settled: false, result: operation }), graceMs)
-  })
-  try {
-    return await Promise.race([operation.then((value) => ({ settled: true as const, value })), timeout])
-  } finally {
-    clearTimeout(timer)
-  }
-}
 
 /**
  * The request still waiting for the agent's safe gap, or `undefined` when it has just settled. A pending request

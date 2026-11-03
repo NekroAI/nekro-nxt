@@ -360,7 +360,7 @@ describe('agent extension switching while the agent is replying', () => {
       persona: '',
       model: { provider: 'test-provider', model: 'chat-model' },
     })
-    const saved = await runtime.extensionService.saveDynamicPackage({
+    const probe = {
       snapshot: {
         name: '掷骰探针',
         purpose: '验证回复期间的启停。',
@@ -399,7 +399,8 @@ describe('agent extension switching while the agent is replying', () => {
         renderedMessageRenderers: [],
         permissions: { permissions: [], networkOrigins: [] },
       },
-    })
+    } satisfies Parameters<typeof runtime.extensionService.saveDynamicPackage>[0]
+    const saved = await runtime.extensionService.saveDynamicPackage(probe)
     // The host instance survives disable; inject an attachment failure at the next safe gap.
     let failNextAttachment = false
     const originalLoad = runtime.host.loadExtension.bind(runtime.host)
@@ -496,6 +497,33 @@ describe('agent extension switching while the agent is replying', () => {
         extensionRevisionId: saved.revision.id,
       })
       expect((await projected())?.activationTransitions).toBeUndefined()
+
+      // Switching versions while the agent replies answers pending too and shows on the installation.
+      const next = await runtime.extensionService.saveDynamicPackage({
+        ...probe,
+        snapshot: { ...probe.snapshot, hostCode: probe.snapshot.hostCode.replace("return '4'", "return '5'") },
+        extensionId: saved.extension.id,
+        parentRevisionId: saved.revision.id,
+      })
+      gate = closeGate()
+      waitUntilSafe.mockImplementation(() => gate)
+      const switching = await fetch(`${origin}/api/extensions/${saved.extension.id}/installation`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revisionId: next.revision.id }),
+      })
+      expect(switching.status).toBe(200)
+      const switched = HostApiContracts.installHostExtension.parseResponse(await switching.json())
+      expect(switched.installation).toBeUndefined()
+      expect(switched.pending).toMatchObject({ extensionRevisionId: next.revision.id, state: 'waiting' })
+      expect((await projected())?.installTransition).toMatchObject({
+        extensionRevisionId: next.revision.id,
+        state: 'waiting',
+      })
+      expect((await projected())?.installation?.extensionRevisionId).toBe(saved.revision.id)
+      openGate()
+      await until(async () => (await projected())?.installation?.extensionRevisionId === next.revision.id)
+      expect((await projected())?.installTransition).toBeUndefined()
     } finally {
       openGate()
       api.dispose()

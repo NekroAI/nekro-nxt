@@ -165,6 +165,18 @@ export interface ExtensionActivationTransition {
   readonly since: number
 }
 
+/**
+ * The latest install or version switch of one Extension that has not settled: still waiting for the agents and the
+ * adapter using it to finish what they are doing, or failed with the reason the user needs to see.
+ */
+export interface ExtensionInstallTransition {
+  readonly extensionId: ExtensionId
+  readonly extensionRevisionId: ExtensionRevisionId
+  readonly state: 'waiting' | 'failed'
+  readonly message?: string
+  readonly since: number
+}
+
 export interface ExtensionBuildArtifact {
   readonly revisionId: ExtensionRevisionId
   readonly buildKey: string

@@ -1,4 +1,9 @@
-import { AuthoringAttemptIdSchema, AuthoringTaskIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+import {
+  AuthoringAttemptIdSchema,
+  AuthoringTaskIdSchema,
+  ExtensionRevisionIdSchema,
+  HostApiContracts,
+} from '@nekro-nxt/contracts'
 import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -836,6 +841,116 @@ test.describe('workshop', () => {
       await page.waitForTimeout(800)
       await waitingSwitch.screenshot({ path: '.local/browser-test-results/extension-activation-waiting-switch.png' })
       await page.screenshot({ path: '.local/browser-test-results/extension-activation-waiting.png' })
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('closes the version approval at once and shows the switch waiting for the agent to finish replying', async () => {
+    const capabilities = { network: { mode: 'unrestricted' as const, purpose: '请求用户自己填写的绘图接口' } }
+    const base = productSnapshot.extensions.find((extension) => extension.id === summaryExtensionId)!
+    const current = base.revisions[0]!
+    const next = {
+      ...current,
+      id: ExtensionRevisionIdSchema.parse('xrv_summaryNext'),
+      revisionNumber: 3,
+      versionLabel: 'v3',
+      createdAt: 1_725_000_100_000,
+      verification: {
+        verifiedAt: 1_725_000_100_000,
+        dshVersion: 'fixture',
+        contractVersion: 'nekro-nxt-extension-v5',
+        hostBuilt: true,
+        clientBuilt: false,
+        buildKey: 'fixture',
+        toolInvocationCount: 1,
+        rpcMethods: [],
+        renderedPanels: [],
+        renderedToolViews: [],
+        renderedMessageRenderers: [],
+        permissions: { permissions: [], networkOrigins: [], agent: capabilities },
+        agentPermission: {
+          declaration: { permissions: [], networkOrigins: [], capabilities },
+          permissionDigest: 'f'.repeat(64),
+          approvalRequired: true,
+        },
+      },
+    }
+    const withRevisions = { ...base, revisions: [current, next] }
+    const snapshot = {
+      ...productSnapshot,
+      extensions: productSnapshot.extensions.map((extension) =>
+        extension.id === summaryExtensionId ? withRevisions : extension,
+      ),
+    }
+    const page = await openWorkshop(snapshot)
+    const node = (revision: typeof current, extra: object) => ({
+      revisionId: revision.id,
+      extensionId: summaryExtensionId,
+      label: revision.versionLabel,
+      origin: 'authored',
+      createdAt: revision.createdAt,
+      releaseNumbers: [],
+      kept: false,
+      ...extra,
+    })
+    await page.route('**/api/extensions/*/lineage', (route) =>
+      route.fulfill({
+        json: {
+          lines: [
+            {
+              extensionId: summaryExtensionId,
+              displayName: '群聊摘要',
+              nodes: [
+                node(current, { current: true, protectedBy: 'installed' }),
+                node(next, { current: false, parentRevisionId: current.id }),
+              ],
+            },
+          ],
+        },
+      }),
+    )
+    let requested: unknown
+    await page.route(`**/api/extensions/${summaryExtensionId}/installation`, async (route) => {
+      requested = route.request().postDataJSON()
+      const pending = { extensionRevisionId: next.id, state: 'waiting' as const, since: 1_725_000_200_000 }
+      await page.route('**/api/snapshot', (snapshotRoute) =>
+        snapshotRoute.fulfill({
+          json: {
+            ...snapshot,
+            extensions: snapshot.extensions.map((extension) =>
+              extension.id === summaryExtensionId ? { ...withRevisions, installTransition: pending } : extension,
+            ),
+          },
+        }),
+      )
+      await route.fulfill({ json: { pending } })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}?tab=versions`)
+      await page.getByRole('group', { name: '版本谱系' }).getByRole('button').first().click()
+      await page.getByRole('button', { name: '切换到这个版本' }).click()
+      const dialog = page.getByRole('dialog')
+      const risk = dialog.getByRole('switch', { name: '访问任意公网地址' })
+      await expect(risk).toBeVisible()
+      // 开关的点击热区超出开关本身，不能把对话框内容撑出横向滚动条。
+      const overflow = await dialog
+        .locator('[class*="body"]')
+        .first()
+        .evaluate((body) => body.scrollWidth - body.clientWidth)
+      expect(overflow).toBe(0)
+      await risk.click()
+      await page.screenshot({ path: '.local/browser-test-results/extension-switch-approval.png' })
+      await dialog.getByRole('button', { name: '批准并安装' }).click()
+      await expect(dialog).toBeHidden()
+      expect(requested).toMatchObject({
+        revisionId: next.id,
+        agentPermissionApproval: { permissionDigest: 'f'.repeat(64) },
+      })
+      await expect(page.getByText(/有智能体正在回复，回复完后切换到「/u).first()).toBeVisible()
+      await expect(page.getByRole('button', { name: '回到上一个版本' })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '切换到这个版本' })).toBeDisabled()
+      await page.screenshot({ path: '.local/browser-test-results/extension-switch-waiting.png' })
     } finally {
       await page.close()
     }

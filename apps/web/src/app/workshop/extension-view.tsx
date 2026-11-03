@@ -2,7 +2,7 @@ import { useGo } from '../model/nav.js'
 import { LogsButton } from '../logs/logs-button.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
 import { ArrowUpCircle, Download, GitBranch, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   communityPublisherLabel,
@@ -323,10 +323,12 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
             ) : undefined
           }
         >
+          {switching.status}
           <LineageView
             extension={extension}
             actions={{
               onSwitch: (revision) => switching.request(revision),
+              switchBusy: switching.busy,
               onBranch: (revision) => setBranching(revision),
               onPublish: (revision) => setPublishing(revision),
               onExport: (revision) => void download(extension, revision).catch(failure),
@@ -811,12 +813,40 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
   const [restoring, setRestoring] = useState<{ readonly revision: Revision; readonly snapshots: DataSnapshots }>()
   const [restoreChoice, setRestoreChoice] = useState('')
 
+  const transition = extension.installTransition
+  const waiting = transition?.state === 'waiting'
+  const nameOf = (revisionId: string) => describe(extension, revisionId)?.title ?? '这个版本'
+  const verb = extension.installation ? '切换到' : '安装'
+  // A switch this view saw waiting reports its outcome once it settles in the background.
+  const watched = useRef<string>(undefined)
+  const settled = transition?.state === 'failed' ? transition.message : undefined
+  const installedRevision = extension.installation?.revisionId
+  useEffect(() => {
+    if (transition?.state === 'waiting') {
+      watched.current = transition.revisionId
+      return
+    }
+    const revisionId = watched.current
+    if (revisionId === undefined) return
+    watched.current = undefined
+    if (transition?.state === 'failed') {
+      toast(`没能${verb}「${nameOf(revisionId)}」：${settled ?? '原因未知'}`, { tone: 'bad' })
+    } else if (installedRevision === revisionId) {
+      toast(`已${verb}「${nameOf(revisionId)}」`)
+    }
+    // Only the transition's settling matters here; names are read at that moment.
+  }, [transition?.state, transition?.revisionId, settled, installedRevision])
+
   const install = async (revision: Revision, approvals?: ExtensionApprovals) => {
     setBusy(true)
     try {
-      await api.getState().setHostExtensionInstalled(extension.id, revision.id, approvals)
-      const name = describe(extension, revision.id)?.title ?? '这个版本'
-      toast(extension.installation ? `已切换到「${name}」` : `已安装「${name}」`)
+      const outcome = await api.getState().setHostExtensionInstalled(extension.id, revision.id, approvals)
+      // The row says it is waiting; the outcome is told once the switch settles.
+      if (outcome === 'pending') {
+        watched.current = revision.id
+        return
+      }
+      toast(`已${verb}「${nameOf(revision.id)}」`)
     } finally {
       setBusy(false)
     }
@@ -840,6 +870,10 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
     void install(revision, restoreDataSnapshotId === undefined ? undefined : { restoreDataSnapshotId }).catch(failure)
   }
   const request = (revision: Revision) => {
+    if (waiting) {
+      toast('上一次切换还在等智能体回复完，请稍后再试')
+      return
+    }
     if (extension.installation && revision.dataVersion < extension.dataVersion) {
       void callHostApi(HostApiContracts.getExtensionData, { extensionId: extension.id }, undefined)
         .then((state) => {
@@ -928,7 +962,18 @@ function useVersionSwitch(extension: LocalExtensionSummary) {
       </ConfirmDialog>
     </>
   )
-  return { request, rollback, busy, dialog }
+  const status =
+    transition === undefined ? null : transition.state === 'waiting' ? (
+      <Banner tone="info">
+        有智能体正在回复，回复完后{verb}「{nameOf(transition.revisionId)}」。最多等 10
+        分钟，等不到就不切换，原来的版本照常运行。
+      </Banner>
+    ) : (
+      <Banner tone="bad">
+        没能{verb}「{nameOf(transition.revisionId)}」：{transition.message ?? '原因未知'}
+      </Banner>
+    )
+  return { request, rollback, busy: busy || waiting, dialog, status }
 }
 
 /** The extension's single installation on this machine; versions are chosen on the 版本 tab. */
@@ -954,6 +999,7 @@ function Installation({
     hasAgentLayer(extension) && !extension.provides.some((item) => item === 'page' || item === 'adapter')
   return (
     <PropertyGroup title="安装" id={INSTALLATION_ID}>
+      {switching.status}
       {installed?.runtime && installed.runtime.status !== 'active' ? (
         <Banner tone="bad">
           {installed.runtime.status === 'restore-failed' ? '启动恢复失败' : '停止失败'}

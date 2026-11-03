@@ -80,9 +80,12 @@
   align-content: start;
   min-height: 0;
   overflow: auto;
-  /* Room for focus rings of controls at the scroll edge. */
-  margin: calc(var(--s-1) * -1);
-  padding: var(--s-1);
+  /*
+   * Room for focus rings of controls at the scroll edge, and sideways for the hit area a switch keeps past its
+   * edges; less than that would add a horizontal scrollbar.
+   */
+  margin: calc(var(--s-1) * -1) calc(var(--s-2) * -1);
+  padding: var(--s-1) var(--s-2);
   gap: var(--s-3);
   color: var(--fg-2);
   font-size: var(--fs-md);

@@ -358,7 +358,9 @@ describe('product store Host mutations', () => {
   it.each([{ host: 'a'.repeat(64) }, { agent: 'b'.repeat(64) }, { host: 'a'.repeat(64), agent: 'b'.repeat(64) }])(
     'forwards only the approved layers for installation and activation: %j',
     async (approvals) => {
-      const execute = vi.fn(() => Promise.resolve(null))
+      const execute = vi.fn((action: string) =>
+        Promise.resolve(action === 'extensions.install' ? { pending: { state: 'waiting' } } : null),
+      )
       setActiveProductHost({
         getSnapshot: () => useProductStore.getState(),
         subscribe: () => () => undefined,
@@ -387,7 +389,10 @@ describe('product store Host mutations', () => {
       })
 
       await useProductStore.getState().setExtensionActive(extensionId, otherAgentId, true, undefined, approvals)
-      await useProductStore.getState().setHostExtensionInstalled(extensionId, extensionRevisionId, approvals)
+      // A switch waiting for the agents' current replies is reported as pending.
+      await expect(
+        useProductStore.getState().setHostExtensionInstalled(extensionId, extensionRevisionId, approvals),
+      ).resolves.toBe('pending')
       await useProductStore.getState().setHostExtensionInstalled(extensionId, null)
 
       expect(execute).toHaveBeenNthCalledWith(1, 'extensions.activate', {

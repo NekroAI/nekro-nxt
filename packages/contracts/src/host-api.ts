@@ -310,6 +310,16 @@ export const ExtensionActivationTransitionSchema = z
   })
   .strict()
 
+/** An install or version switch still waiting for the agents using the extension, or the one that failed last. */
+export const ExtensionInstallTransitionSchema = z
+  .object({
+    extensionRevisionId: ExtensionRevisionIdSchema,
+    state: z.enum(['waiting', 'failed']),
+    message: z.string().optional(),
+    since: z.number().int().safe().nonnegative(),
+  })
+  .strict()
+
 export const ImageUnderstandingPolicyApiSchema = z
   .object({
     history: z
@@ -2251,6 +2261,8 @@ export const HostSnapshotSchema = z
           ),
           /** Present only while some agent's enable or disable request is waiting or has failed. */
           activationTransitions: z.array(ExtensionActivationTransitionSchema).optional(),
+          /** Present only while an install or version switch is waiting or has failed. */
+          installTransition: ExtensionInstallTransitionSchema.optional(),
           installation: z
             .object({
               extensionRevisionId: ExtensionRevisionIdSchema,
@@ -5562,6 +5574,11 @@ export const HostApiContracts = {
         restoreDataSnapshotId: z.string().min(1).max(80).optional(),
       })
       .strict(),
+    /**
+     * The committed installation, or — while an agent using the extension is still replying — `pending`; the switch
+     * then happens at their next safe gap (waiting at most ten minutes) and its progress appears in the snapshot's
+     * `installTransition`.
+     */
     response: z
       .object({
         installation: z
@@ -5571,9 +5588,12 @@ export const HostApiContracts = {
             installedAt: z.number().int().safe().nonnegative(),
             config: JsonValueSchema,
           })
-          .strict(),
+          .strict()
+          .optional(),
+        pending: ExtensionInstallTransitionSchema.optional(),
       })
-      .strict(),
+      .strict()
+      .refine((value) => (value.installation === undefined) !== (value.pending === undefined), '安装结果必须二选一。'),
     error: HostApiErrorSchema,
   }),
   uninstallHostExtension: defineContract({

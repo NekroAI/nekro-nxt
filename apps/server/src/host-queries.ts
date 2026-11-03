@@ -19,6 +19,7 @@ import {
   type DynamicAuthoringAttempt,
   type DynamicAuthoringTask,
   type ExtensionActivationTransition,
+  type ExtensionInstallTransition,
 } from '@nekro-nxt/extension-runtime'
 import { clientCapabilities } from './host-routes-linked-accounts.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
@@ -312,6 +313,7 @@ export const projectExtensions = (runtime: NekroRuntime) => {
           : { runtime: runtime.extensions.getAttachmentDiagnostic(activation.agentId, extension.id) }),
       })),
       ...activationTransitionsProjection(runtime.extensions.listTransitions(extension.id)),
+      ...installTransitionProjection(runtime.extensions.getInstallTransition(extension.id)),
       ...(installation === undefined
         ? {}
         : {
@@ -740,6 +742,20 @@ export class HostQueries {
     })
   }
 }
+
+const installTransitionProjection = (
+  transition: ExtensionInstallTransition | undefined,
+): Pick<HostApiResponse<'snapshot'>['extensions'][number], 'installTransition'> =>
+  transition === undefined
+    ? {}
+    : {
+        installTransition: {
+          extensionRevisionId: transition.extensionRevisionId,
+          state: transition.state,
+          ...(transition.message === undefined ? {} : { message: transition.message }),
+          since: transition.since,
+        },
+      }
 
 const activationTransitionsProjection = (
   transitions: readonly ExtensionActivationTransition[],

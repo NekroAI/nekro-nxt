@@ -48,6 +48,8 @@ const marked = (node: LineageNode) =>
 
 export interface LineageActions {
   readonly onSwitch: (revision: Revision) => void
+  /** A switch is under way (or waiting for the agents to finish replying); another one waits until it settles. */
+  readonly switchBusy?: boolean
   readonly onBranch: (revision: Revision) => void
   readonly onPublish: (revision: Revision) => void
   readonly onExport: (revision: Revision) => void
@@ -591,6 +593,7 @@ function VersionDetail({
             size="small"
             variant="primary"
             icon={<Repeat2 size={14} />}
+            disabled={actions.switchBusy}
             onClick={() => actions.onSwitch(revision)}
           >
             {extension.installation ? '切换到这个版本' : '安装这个版本'}

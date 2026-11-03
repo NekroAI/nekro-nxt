@@ -28,6 +28,7 @@ import {
   AuthoringArtifactStore,
   DynamicAuthoringService,
   ExtensionBuilder,
+  ExtensionBusyError,
   ExtensionLifecycleCoordinator,
   ExtensionService,
   ExtensionSourceStore,
@@ -2093,6 +2094,7 @@ const lifecycleManifest = (
 const lifecycleFixture = (
   manifests: Readonly<Record<string, (item: Revision) => ExtensionManifest | undefined>> = {},
   now: () => number = () => 100,
+  safeGapTimeoutMs?: number,
 ) => {
   const repository = new MemoryExtensionRepository()
   const host = new FakeRuntimeHost()
@@ -2113,7 +2115,7 @@ const lifecycleFixture = (
         Promise.resolve({ revisionId: id, buildKey: contentDigest, directory: `/cache/${id}` }),
     },
     host,
-    { now },
+    { now, ...(safeGapTimeoutMs === undefined ? {} : { safeGapTimeoutMs }) },
   )
   return { repository, host, extension, first, second, coordinator }
 }
@@ -2192,6 +2194,9 @@ describe('Extension lifecycle', () => {
     await coordinator.install({ extensionId: extension.id, revisionId: second.id })
 
     expect(host.events).toEqual([
+      // Both agents are waited for together before anything stops, then once more at each detach.
+      `safe:${one}`,
+      `safe:${two}`,
       `safe:${one}`,
       `detach:${one}:${first.id}`,
       `safe:${two}`,
@@ -2328,7 +2333,12 @@ describe('Extension lifecycle', () => {
 
     host.occupiedAdapterKeys.clear()
     await coordinator.install({ extensionId: extension.id, revisionId: second.id })
-    expect(host.events).toEqual(['adapter-safe:synthetic', `dispose:${first.id}`, `load:${second.id}`])
+    expect(host.events).toEqual([
+      'adapter-safe:synthetic',
+      'adapter-safe:synthetic',
+      `dispose:${first.id}`,
+      `load:${second.id}`,
+    ])
     await expect(
       coordinator.activate({ agentId: agentId('adapterAgent'), extensionId: extension.id, revisionId: second.id }),
     ).rejects.toThrow('没有智能体能力')
@@ -2422,5 +2432,47 @@ describe('Extension lifecycle', () => {
     await coordinator.dispose()
     expect(host.loaded.has(extension.id)).toBe(false)
     await expect(coordinator.install({ extensionId: extension.id, revisionId: first.id })).rejects.toThrow('已停止')
+  })
+
+  it('shows a switch as waiting while an agent replies and clears it once switched', async () => {
+    const { host, extension, first, second, coordinator } = lifecycleFixture()
+    const agent = agentId('switchWaiting')
+    await coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: first.id })
+    const gate = deferred<void>()
+    host.safeGate = gate.promise
+    const switching = coordinator.install({ extensionId: extension.id, revisionId: second.id })
+    expect(coordinator.getInstallTransition(extension.id)).toMatchObject({
+      extensionRevisionId: second.id,
+      state: 'waiting',
+    })
+    gate.resolve()
+    await switching
+    expect(coordinator.getInstallTransition(extension.id)).toBeUndefined()
+    expect(host.loaded.get(extension.id)).toBe(second.id)
+  })
+
+  it('gives up a switch when an agent stays busy past the limit and keeps the old version running', async () => {
+    const { repository, host, extension, first, second, coordinator } = lifecycleFixture({}, () => 100, 20)
+    const agent = agentId('switchBusy')
+    await coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: first.id })
+    host.events.length = 0
+    host.safeGate = new Promise<void>(() => undefined)
+    await expect(coordinator.install({ extensionId: extension.id, revisionId: second.id })).rejects.toThrow(
+      ExtensionBusyError,
+    )
+    expect(host.events).toEqual([`safe:${agent}`])
+    expect(host.loaded.get(extension.id)).toBe(first.id)
+    expect(host.attached.has(`${agent}\0${first.id}`)).toBe(true)
+    expect(repository.getHostInstallation(extension.id)?.extensionRevisionId).toBe(first.id)
+    expect(coordinator.getInstallTransition(extension.id)).toMatchObject({
+      extensionRevisionId: second.id,
+      state: 'failed',
+    })
+
+    // The next attempt replaces the failed one, and goes through once the agent is free.
+    host.safeGate = undefined
+    await coordinator.install({ extensionId: extension.id, revisionId: second.id })
+    expect(coordinator.getInstallTransition(extension.id)).toBeUndefined()
+    expect(host.loaded.get(extension.id)).toBe(second.id)
   })
 })

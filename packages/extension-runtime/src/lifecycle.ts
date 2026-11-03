@@ -30,6 +30,7 @@ import type {
   Activation,
   ExtensionActivationTransition,
   ExtensionBuildArtifact,
+  ExtensionInstallTransition,
   ExtensionRepository,
   ExtensionRuntimeDiagnostic,
   HostInstallation,
@@ -150,6 +151,19 @@ const nextPageInstanceId = () => HostUiPageInstanceIdSchema.parse(`hup_${randomU
 
 const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+/** How long stopping an Extension waits for the agents and adapter using it to reach a safe gap. */
+export const EXTENSION_SAFE_GAP_TIMEOUT_MS = 10 * 60_000
+
+/** The agents or adapter using the Extension stayed busy past the wait limit; nothing was stopped. */
+export class ExtensionBusyError extends Error {
+  override readonly name = 'ExtensionBusyError'
+  constructor(timeoutMs: number) {
+    super(
+      `等了 ${Math.max(1, Math.round(timeoutMs / 60_000))} 分钟，用到这个扩展的智能体或连接一直没有停下来，这次没有改动，扩展照常运行。请稍后再试。`,
+    )
+  }
+}
+
 /**
  * Owns install, enable, switch, configuration and removal of Extensions (扩展形态统一 §6). One Extension has one host
  * instance per machine and at most one attachment per agent, all on the installed Revision. A switch stops every
@@ -169,6 +183,8 @@ export class ExtensionLifecycleCoordinator {
   readonly #attachmentDiagnostics = new Map<string, ExtensionRuntimeDiagnostic>()
   readonly #locks = new Map<ExtensionId, Promise<void>>()
   readonly #requests = new Map<string, ExtensionActivationTransition>()
+  readonly #installRequests = new Map<ExtensionId, ExtensionInstallTransition>()
+  readonly #safeGapTimeoutMs: number
   #disposed = false
   #disposePromise: Promise<void> | undefined
 
@@ -181,6 +197,8 @@ export class ExtensionLifecycleCoordinator {
       readonly now?: () => number
       readonly compatibility?: ExtensionCompatibilityPort
       readonly data?: ExtensionDataPort
+      /** Upper bound on waiting for safe gaps before stopping; defaults to {@link EXTENSION_SAFE_GAP_TIMEOUT_MS}. */
+      readonly safeGapTimeoutMs?: number
     } = {},
   ) {
     this.#repository = repository
@@ -190,6 +208,7 @@ export class ExtensionLifecycleCoordinator {
     this.#now = options.now ?? Date.now
     this.#compatibility = options.compatibility
     this.#data = options.data
+    this.#safeGapTimeoutMs = options.safeGapTimeoutMs ?? EXTENSION_SAFE_GAP_TIMEOUT_MS
   }
 
   // —— Requirements ——
@@ -245,7 +264,36 @@ export class ExtensionLifecycleCoordinator {
     /** Data copy to put back before switching to a Revision with an older data version. */
     readonly restoreDataSnapshotId?: string
   }): Promise<HostInstallation> {
-    return this.#exclusive(input.extensionId, () => this.#install(input))
+    const run = () => this.#exclusive(input.extensionId, () => this.#install(input))
+    // A configuration change is answered where it was made; installs and switches show their progress on the row.
+    if (input.config !== undefined) return run()
+    const waiting: ExtensionInstallTransition = {
+      extensionId: input.extensionId,
+      extensionRevisionId: input.revisionId,
+      state: 'waiting',
+      since: this.#timestamp(),
+    }
+    this.#installRequests.set(input.extensionId, waiting)
+    try {
+      const installation = await run()
+      if (this.#installRequests.get(input.extensionId) === waiting) this.#installRequests.delete(input.extensionId)
+      return installation
+    } catch (error) {
+      if (this.#installRequests.get(input.extensionId) === waiting) {
+        this.#installRequests.set(input.extensionId, {
+          ...waiting,
+          state: 'failed',
+          message: message(error),
+          since: this.#timestamp(),
+        })
+      }
+      throw error
+    }
+  }
+
+  /** The install or version switch of this Extension still waiting for a safe gap, or the one that failed last. */
+  getInstallTransition(extensionId: ExtensionId): ExtensionInstallTransition | undefined {
+    return this.#installRequests.get(extensionId)
   }
 
   async #install(input: Parameters<ExtensionLifecycleCoordinator['install']>[0]): Promise<HostInstallation> {
@@ -303,6 +351,7 @@ export class ExtensionLifecycleCoordinator {
       throw new ExtensionDataDowngradeError(dataCurrent, dataTarget)
     }
 
+    await this.#settled(live)
     await this.#stop(input.extensionId, live)
     // A copy of the data as the previous version left it: the way back for this switch and for a later rollback.
     let dataSnapshot: string | undefined
@@ -397,6 +446,7 @@ export class ExtensionLifecycleCoordinator {
       this.#assertAvailable()
       const live = this.#live.get(extensionId)
       const installation = this.#repository.getHostInstallation(extensionId)
+      await this.#settled(live)
       await this.#stop(extensionId, live)
       let result: T
       try {
@@ -432,6 +482,7 @@ export class ExtensionLifecycleCoordinator {
       if (!installation) throw new Error('这个扩展尚未安装到本机。')
       const live = this.#live.get(extensionId)
       const previous = live === undefined ? undefined : this.#snapshot(live)
+      await this.#settled(live)
       await this.#stop(extensionId, live)
       const activations = this.#repository.listActivations().filter((entry) => entry.extensionId === extensionId)
       try {
@@ -446,6 +497,7 @@ export class ExtensionLifecycleCoordinator {
         this.#attachmentDiagnostics.delete(this.#agentKey(activation.agentId, extensionId))
       }
       this.#diagnostics.delete(extensionId)
+      if (this.#installRequests.get(extensionId)?.state === 'failed') this.#installRequests.delete(extensionId)
     })
   }
 
@@ -889,6 +941,32 @@ export class ExtensionLifecycleCoordinator {
     }
     if (failures.length === 1) throw failures[0]
     if (failures.length > 1) throw new AggregateError(failures, '扩展停止失败。')
+  }
+
+  /**
+   * Waits, within the limit, until every agent and the adapter using the Extension is between replies, before anything
+   * is stopped: a limit reached here leaves the Extension running as it was. Stopping then waits at each safe gap again,
+   * which normally passes at once.
+   */
+  async #settled(live: LiveExtension | undefined): Promise<void> {
+    if (!live) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const waits = Promise.all([
+      ...[...live.attachments.keys()].map((agentId) => this.#host.waitUntilAgentSafe(agentId)),
+      ...(live.loaded.adapterKey === undefined ? [] : [this.#host.waitUntilAdapterSafe(live.loaded.adapterKey)]),
+    ])
+    // A wait that outlives the limit settles later on its own; its outcome no longer matters.
+    waits.catch(() => undefined)
+    try {
+      await Promise.race([
+        waits,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new ExtensionBusyError(this.#safeGapTimeoutMs)), this.#safeGapTimeoutMs)
+        }),
+      ])
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   #snapshot(live: LiveExtension): Snapshot {

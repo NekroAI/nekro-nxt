@@ -39,6 +39,7 @@ import {
   projectDshPlugins,
   readBinaryBody,
   readJsonBody,
+  settleWithin,
   writeContractJson,
   writeDownload,
   writeError,
@@ -50,6 +51,7 @@ import { performHostUiNetworkRequest } from './host-ui-network.js'
 import { activationManifest } from './host-queries.js'
 import { handleGovernanceExtensionRoute } from './host-routes-governance.js'
 import { maskExtensionSecrets } from './extension-secret-config.js'
+import { ACTIVATION_RESPONSE_GRACE_MS } from './host-routes-workspace.js'
 import { parseFallbackModels, parseSubConversationModelPolicy } from '@nekro-nxt/core'
 
 /**
@@ -802,17 +804,38 @@ export function registerExtensionsRoutes({
           try {
             const params = HostApiContracts.installHostExtension.parseParams({ extensionId })
             const parsed = HostApiContracts.installHostExtension.parseRequest(await readJsonBody(req))
-            const installation = await runtime.installHostExtension({
-              extensionId: params.extensionId,
-              revisionId: parsed.revisionId,
-              ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
-              ...(parsed.agentPermissionApproval === undefined
-                ? {}
-                : { agentPermissionApproval: parsed.agentPermissionApproval }),
-              ...(parsed.restoreDataSnapshotId === undefined
-                ? {}
-                : { restoreDataSnapshotId: parsed.restoreDataSnapshotId }),
-            })
+            const outcome = await settleWithin(
+              runtime.installHostExtension({
+                extensionId: params.extensionId,
+                revisionId: parsed.revisionId,
+                ...(parsed.permissionApproval === undefined ? {} : { permissionApproval: parsed.permissionApproval }),
+                ...(parsed.agentPermissionApproval === undefined
+                  ? {}
+                  : { agentPermissionApproval: parsed.agentPermissionApproval }),
+                ...(parsed.restoreDataSnapshotId === undefined
+                  ? {}
+                  : { restoreDataSnapshotId: parsed.restoreDataSnapshotId }),
+              }),
+              ACTIVATION_RESPONSE_GRACE_MS,
+            )
+            const transition = outcome.settled ? undefined : runtime.extensions.getInstallTransition(params.extensionId)
+            if (!outcome.settled && transition?.state === 'waiting') {
+              // Waiting for the agents using it to finish their replies; every view refreshes once it settles.
+              outcome.result.then(broadcastExtensionsChanged, (error: unknown) => {
+                console.warn('[nekro-nxt] 扩展版本切换失败：', error instanceof Error ? error.message : String(error))
+                broadcastExtensionsChanged()
+              })
+              writeContractJson(res, 200, HostApiContracts.installHostExtension, {
+                pending: {
+                  extensionRevisionId: transition.extensionRevisionId,
+                  state: transition.state,
+                  since: transition.since,
+                },
+              })
+              broadcastExtensionsChanged()
+              return
+            }
+            const installation = outcome.settled ? outcome.value : await outcome.result
             const manifest = activationManifest(runtime, installation.extensionRevisionId)
             writeContractJson(res, 200, HostApiContracts.installHostExtension, {
               installation: {
@@ -822,6 +845,8 @@ export function registerExtensionsRoutes({
             })
             broadcastExtensionsChanged()
           } catch (error) {
+            // The failed switch stays in the snapshot with its reason; refresh so every view shows it.
+            broadcastExtensionsChanged()
             writeError(res, 400, 'installation-failed', error instanceof Error ? error.message : String(error))
           }
           return

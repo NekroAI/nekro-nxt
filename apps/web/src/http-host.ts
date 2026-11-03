@@ -689,6 +689,17 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
               ...(transition.message === undefined ? {} : { message: transition.message }),
             })),
           }),
+      ...(extension.installTransition === undefined
+        ? {}
+        : {
+            installTransition: {
+              revisionId: extension.installTransition.extensionRevisionId,
+              state: extension.installTransition.state,
+              ...(extension.installTransition.message === undefined
+                ? {}
+                : { message: extension.installTransition.message }),
+            },
+          }),
       contributions: latestRevision?.contributions ?? [],
       ...(latestRevision?.verification === undefined
         ? {}

@@ -820,3 +820,26 @@ export const normalizeDynamicResolution = (
     ...(input.stack === undefined ? {} : { stack: input.stack }),
   }
 }
+
+/**
+ * Resolves with the operation's result when it settles within `graceMs` (a failure in that window rejects), otherwise
+ * with `settled: false` and the still-running operation.
+ */
+export const settleWithin = async <T>(
+  operation: Promise<T>,
+  graceMs: number,
+): Promise<
+  { readonly settled: true; readonly value: T } | { readonly settled: false; readonly result: Promise<T> }
+> => {
+  // Marks a late failure as handled; the caller still observes it through `result`.
+  operation.catch(() => undefined)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<{ readonly settled: false; readonly result: Promise<T> }>((resolve) => {
+    timer = setTimeout(() => resolve({ settled: false, result: operation }), graceMs)
+  })
+  try {
+    return await Promise.race([operation.then((value) => ({ settled: true as const, value })), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}

@@ -438,6 +438,12 @@ export interface LocalExtensionSummary {
     readonly state: 'waiting' | 'failed'
     readonly message?: string
   }[]
+  /** An install or version switch still waiting for the agents using it to finish replying, or failed with its reason. */
+  readonly installTransition?: {
+    readonly revisionId: string
+    readonly state: 'waiting' | 'failed'
+    readonly message?: string
+  }
   readonly contributions: readonly string[]
   readonly verification?: {
     readonly verifiedAt: number
@@ -786,7 +792,12 @@ export interface ProductState {
     readonly credentialBindings?: Readonly<Record<string, string | null>>
   }): Promise<void>
   /** Installs (or switches) the extension on this machine; `null` uninstalls it and stops every agent's use. */
-  setHostExtensionInstalled(id: string, revisionId: string | null, approvals?: ExtensionApprovals): Promise<void>
+  /** Resolves `pending` when the switch waits for the agents using the extension; it then finishes in the background. */
+  setHostExtensionInstalled(
+    id: string,
+    revisionId: string | null,
+    approvals?: ExtensionApprovals,
+  ): Promise<'done' | 'pending'>
   reportHostExtensionClientDiagnostic(input: {
     readonly extensionId: string
     readonly revisionId: string
