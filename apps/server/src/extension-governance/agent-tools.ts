@@ -355,7 +355,8 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
     name: 'nekro_nxt_extension_action',
     description: [
       '对扩展做生命周期操作。按你的扩展自主权和权限风险，结果可能是直接完成、在这次回复结束后生效（启用、切换等会改变你身上挂载的操作）、在频道里发出请求等管理员用 /ext approve 确认，或者需要管理员在后台处理；照返回的结果如实告诉用户。',
-      'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展，可给 name、slug）。',
+      'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展）。可给 name、description，不给时新扩展用候选的名称和用途，新版本沿用扩展现在的名称和说明；新建时还可给 slug。',
+      'edit_info：修改已保存扩展的信息，name 是名称，description 是说明，只改写上的那项。',
       'enable / disable：给你自己启用或停用。switch：切到指定版本。revert：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
       'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）；includeConfig 连同配置一起迁移（凭据不迁移）。总要管理员确认。',
@@ -369,6 +370,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
         required: true,
         enum: [
           'save',
+          'edit_info',
           'enable',
           'disable',
           'switch',
@@ -386,7 +388,8 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       extension: { type: 'string', description: '扩展名称或编号。' },
       task: { type: 'string', description: 'save 时的任务名称或编号。' },
       version: { type: 'string', description: 'switch 的目标版本，或 branch 的来源版本，例如 v2。' },
-      name: { type: 'string', description: 'save（新扩展）或 branch 的名称。' },
+      name: { type: 'string', description: 'save、edit_info 或 branch 的扩展名称。' },
+      description: { type: 'string', description: 'save 或 edit_info 的扩展说明。' },
       slug: { type: 'string', description: '英文短名：小写字母、数字和连字符。' },
       copyData: { type: 'boolean', description: 'branch 时是否复制原扩展的数据。' },
       source: { type: 'string', description: 'migrate_data 的来源扩展名称或编号。' },
@@ -414,6 +417,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
         .object({
           action: z.enum([
             'save',
+            'edit_info',
             'enable',
             'disable',
             'switch',
@@ -431,6 +435,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           task: z.string().optional(),
           version: z.string().optional(),
           name: z.string().trim().min(1).max(80).optional(),
+          description: z.string().trim().max(500).optional(),
           slug: z.string().optional(),
           copyData: z.boolean().optional(),
           source: z.string().optional(),
@@ -471,10 +476,22 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
             kind: 'save',
             taskId: task.id,
             ...(input.name === undefined ? {} : { name: input.name }),
+            ...(input.description === undefined ? {} : { description: input.description }),
             ...(input.slug === undefined ? {} : { slug: input.slug }),
           }
           break
         }
+        case 'edit_info':
+          if (input.name === undefined && input.description === undefined) {
+            throw new Error('edit_info 要写 name 或 description。')
+          }
+          action = {
+            kind: 'edit-info',
+            extensionId: extension().id,
+            ...(input.name === undefined ? {} : { name: input.name }),
+            ...(input.description === undefined ? {} : { description: input.description }),
+          }
+          break
         case 'enable':
           action = {
             kind: 'enable',

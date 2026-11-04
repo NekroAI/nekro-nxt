@@ -1097,8 +1097,16 @@ const nekroNxtExtensionDefineTool = (
           },
         ],
       },
-      name: { type: 'string', required: true, description: '用户可读的候选名称。' },
-      purpose: { type: 'string', required: true, description: '一句话说明这个候选为用户完成什么。' },
+      name: {
+        type: 'string',
+        required: true,
+        description: '扩展名称，保存后显示给用户：简短的中文名词短语，写用户得到的功能，不写实现手段。',
+      },
+      purpose: {
+        type: 'string',
+        required: true,
+        description: '扩展说明，保存后显示给用户：一句话说启用后智能体能为用户做什么。',
+      },
       code: {
         type: 'object',
         additionalProperties: false,

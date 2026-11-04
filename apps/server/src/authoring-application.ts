@@ -137,12 +137,13 @@ export class AuthoringApplicationService {
     if (material.verification.permissions?.agent?.mcp !== undefined) {
       throw new Error('动态创造不能声明 MCP 服务；请在工坊用「添加 MCP 服务」连接。')
     }
-    const name = target?.displayName ?? input.name?.trim() ?? attempt.name
+    // A new version keeps the extension's name and description unless the save gives new ones.
+    const name = input.name?.trim() || target?.displayName || attempt.name
     const saved = await runtime.extensionService.saveDynamicPackage({
       snapshot: material.snapshot,
       slug: target?.slug ?? input.slug ?? proposeSlug(name),
       displayName: name,
-      description: target?.description ?? input.description?.trim() ?? attempt.purpose,
+      description: input.description?.trim() || (target?.description ?? attempt.purpose),
       ...(target === undefined ? {} : { extensionId: target.id }),
       ...(task.kind === 'revise' && task.baseRevisionId !== undefined ? { parentRevisionId: task.baseRevisionId } : {}),
       createdByAgentId: task.agentId,

@@ -1277,7 +1277,7 @@ describe('Extension save', () => {
     expect((await readdir(path.join(sourceDirectory, 'source'))).sort()).toEqual(['host.ts'])
   })
 
-  it('reuses an existing Extension as a metadata no-op while appending its next Revision', async () => {
+  it('keeps an existing Extension identity while appending its next Revision with the name it is saved under', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-existing-'))
     temporaryDirectories.push(directory)
     const repository = new MemoryExtensionRepository()
@@ -1294,13 +1294,14 @@ describe('Extension save', () => {
       extensionId: existing.id,
       snapshot: { name: '新版本', purpose: '沿用已有扩展。', hostCode: 'return {}', contributions: [GREETING_TOOL] },
       slug: existing.slug,
-      displayName: '忽略的新名称',
-      description: '忽略的新描述',
+      displayName: '新名称',
+      description: '新说明',
     })
 
-    // The Extension keeps its identity and metadata; only what it provides follows the latest Revision.
-    expect(saved.extension).toEqual({ ...existing, provides: ['agent'] })
-    expect(repository.listExtensions()).toEqual([{ ...existing, provides: ['agent'] }])
+    // Identity stays; the name and description are the ones this version is saved under.
+    const expected = { ...existing, displayName: '新名称', description: '新说明', provides: ['agent'] }
+    expect(saved.extension).toEqual(expected)
+    expect(repository.listExtensions()).toEqual([expected])
     expect(saved.revision).toMatchObject({
       extensionId: existing.id,
       id: revisionId('nextRevision'),
@@ -1346,6 +1347,27 @@ describe('Extension save', () => {
 
     expect(second.revision.id).toBe(first.revision.id)
     expect(repository.listExtensionRevisions(first.extension.id)).toEqual([first.revision])
+  })
+
+  it('changes the name and description of a saved Extension without touching its slug or versions', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-info-'))
+    temporaryDirectories.push(directory)
+    const repository = new MemoryExtensionRepository()
+    const existing = localExtension(extensionId('info'))
+    const saved = revision(revisionId('infoRevision'), existing.id, 1)
+    repository.saveExtensionRevision({ extension: existing, revision: saved })
+    const service = new ExtensionService(repository, new ExtensionSourceStore(path.join(directory, 'data')))
+
+    expect(
+      service.updateDetails(existing.id, { displayName: '  看懂视频 ', description: '说出视频里发生了什么。' }),
+    ).toEqual({
+      ...existing,
+      displayName: '看懂视频',
+      description: '说出视频里发生了什么。',
+    })
+    expect(repository.listExtensionRevisions(existing.id)).toEqual([saved])
+    expect(() => service.updateDetails(existing.id, { displayName: ' ', description: '' })).toThrow()
+    expect(() => service.updateDetails(extensionId('missing'), { displayName: '名称', description: '' })).toThrow()
   })
 
   it('rejects an existing slug change and a new slug collision before publishing or committing', async () => {

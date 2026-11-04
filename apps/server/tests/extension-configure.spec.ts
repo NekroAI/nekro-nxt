@@ -547,6 +547,7 @@ describe('agents cannot widen their own reach', () => {
       'save',
       'enable',
       'disable',
+      'edit-info',
       'switch',
       'revert',
       'branch',

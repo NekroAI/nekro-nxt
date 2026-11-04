@@ -1,7 +1,7 @@
 import { useGo } from '../model/nav.js'
 import { LogsButton } from '../logs/logs-button.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
-import { ArrowUpCircle, Download, GitBranch, MoreHorizontal, Share2, Trash2 } from 'lucide-react'
+import { ArrowUpCircle, Download, GitBranch, MoreHorizontal, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
@@ -45,6 +45,7 @@ import {
   Switch,
   SwitchRow,
   TabStrip,
+  Textarea,
   toast,
   type Column,
 } from '../../ui-kit/index.js'
@@ -127,6 +128,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [publishing, setPublishing] = useState<Revision>()
   const [branching, setBranching] = useState<Revision>()
+  const [editingInfo, setEditingInfo] = useState(false)
   const switching = useVersionSwitch(extension)
   const describe = useVersionText()
   const versionOf = (revision: Revision | undefined) => (revision ? describe(extension, revision.id) : undefined)
@@ -212,6 +214,12 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                 </Button>
               }
               items={[
+                {
+                  key: 'info',
+                  label: '修改扩展信息',
+                  icon: <Pencil size={14} />,
+                  onSelect: () => setEditingInfo(true),
+                },
                 ...(current
                   ? [
                       {
@@ -251,6 +259,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
         onBranch={() => publishing && setBranching(publishing)}
       />
       <BranchDialog extension={extension} revision={branching} onClose={() => setBranching(undefined)} />
+      <InfoDialog extension={extension} open={editingInfo} onClose={() => setEditingInfo(false)} />
       {switching.dialog}
       {communityUpdate.dialog}
       {extension.description ? <p className={styles.lead}>{extension.description}</p> : null}
@@ -397,6 +406,86 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
 }
 
 /** Creates a new extension from one version; the data of the original can come along. */
+function InfoDialog({
+  extension,
+  open,
+  onClose,
+}: {
+  readonly extension: LocalExtensionSummary
+  readonly open: boolean
+  readonly onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    if (!open) return
+    setName(extension.name)
+    setDescription(extension.description)
+    setError('')
+    // Reset only when the dialog opens; live updates must not wipe what the user typed.
+  }, [open])
+  const subscribed = extension.communityLinks.some((link) => link.role === 'subscriber')
+  const changed = name.trim() !== extension.name || description.trim() !== extension.description
+  const save = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await callHostApi(
+        HostApiContracts.updateExtensionInfo,
+        { extensionId: extension.id },
+        { name: name.trim(), description: description.trim() },
+      )
+      toast('已保存扩展信息')
+      onClose()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => !next && !busy && onClose()}
+      title="修改扩展信息"
+      actions={
+        <>
+          <Button onClick={onClose} disabled={busy}>
+            取消
+          </Button>
+          <Button variant="primary" busy={busy} disabled={name.trim() === '' || !changed} onClick={() => void save()}>
+            保存
+          </Button>
+        </>
+      }
+    >
+      <Field label="名称">
+        <Input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} />
+      </Field>
+      <Field label="说明">
+        <Textarea
+          value={description}
+          maxLength={500}
+          rows={3}
+          onChange={(event) => setDescription(event.target.value)}
+        />
+      </Field>
+      {subscribed ? (
+        <p style={{ margin: 0, color: 'var(--muted)', fontSize: 'var(--fs-xs)' }}>
+          从社区更新时，名称和说明会换成发布者的版本。
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" style={{ margin: 0, color: 'var(--bad)' }}>
+          {error}
+        </p>
+      ) : null}
+    </Dialog>
+  )
+}
+
 function BranchDialog({
   extension,
   revision,

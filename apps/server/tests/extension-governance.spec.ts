@@ -596,7 +596,15 @@ describe('candidates after saving', () => {
       // While the revise is open its candidate stands in for the enabled version, with the candidate's defaults.
       await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('默认市')
 
-      const saved = await runtime.extensionActions.perform({ kind: 'save', taskId: task.id }, { kind: 'console' })
+      const saved = await runtime.extensionActions.perform(
+        { kind: 'save', taskId: task.id, description: '回答当前配置的城市。' },
+        { kind: 'console' },
+      )
+      // A new version keeps the extension's name unless the save gives a new one.
+      expect(runtime.repository.getExtension(extension.id)).toMatchObject({
+        displayName: extension.displayName,
+        description: '回答当前配置的城市。',
+      })
       await runtime.extensionActions.perform(
         { kind: 'switch', extensionId: extension.id, revisionId: saved.revisionId! },
         { kind: 'console' },
@@ -1557,6 +1565,45 @@ describe('extension autonomy', () => {
       expect(request.outcome).toBe('requested')
       expect(runtime.repository.getExtensionBySlug('shared-data-branch')).toBeUndefined()
       expect(runtime.extensionRequests.get(request.requestNumber!)?.status).toBe('pending')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('changes an extension’s name and description by the agent’s autonomy', async () => {
+    const runtime = await createRuntime()
+    try {
+      const creator = await agentWithChannel(runtime, 'autonomous')
+      const careful = await agentWithChannel(runtime, 'confirm')
+      const manual = await agentWithChannel(runtime, 'manual')
+      const { extension } = await saveSharedExtension(runtime, creator.agentId)
+      const tools = new ExtensionGovernanceTools(runtime)
+      const rename = { kind: 'edit-info', extensionId: extension.id, name: '看懂视频' } as const
+
+      expect((await tools.act(manual.agentId, manual.channelId, rename)).outcome).toBe('console')
+      const request = await tools.act(careful.agentId, careful.channelId, rename)
+      expect(request.outcome).toBe('requested')
+      expect(runtime.repository.getExtension(extension.id)?.displayName).toBe(extension.displayName)
+
+      const done = await tools.act(creator.agentId, creator.channelId, {
+        ...rename,
+        description: '发来视频，智能体能说出里面发生了什么。',
+      })
+      expect(done).toMatchObject({ outcome: 'done', message: `已把「${extension.displayName}」改名为「看懂视频」。` })
+      expect(runtime.repository.getExtension(extension.id)).toMatchObject({
+        slug: extension.slug,
+        displayName: '看懂视频',
+        description: '发来视频，智能体能说出里面发生了什么。',
+      })
+      // Leaving the name out keeps it.
+      await runtime.extensionActions.perform(
+        { kind: 'edit-info', extensionId: extension.id, description: '新的说明。' },
+        { kind: 'console' },
+      )
+      expect(runtime.repository.getExtension(extension.id)).toMatchObject({
+        displayName: '看懂视频',
+        description: '新的说明。',
+      })
     } finally {
       await runtime.dispose()
     }

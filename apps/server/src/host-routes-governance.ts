@@ -20,7 +20,7 @@ const failure = (res: ServerResponse, code: string, error: unknown): void =>
   writeError(res, 400, code, error instanceof Error ? error.message : String(error))
 
 /**
- * `/api/extensions/:id/(lineage|branch|revert|data…)`. The extensions prefix route hands these over first; the
+ * `/api/extensions/:id/(lineage|branch|info|revert|data…)`. The extensions prefix route hands these over first; the
  * return value says whether this function answered.
  */
 export async function handleGovernanceExtensionRoute(
@@ -113,7 +113,7 @@ export async function handleGovernanceExtensionRoute(
     return true
   }
   const match =
-    /^\/api\/extensions\/([^/]+)\/(lineage|branch|revert|data|data\/preview|data\/migrate|data\/snapshots|data\/export|data\/export-config)$/u.exec(
+    /^\/api\/extensions\/([^/]+)\/(lineage|branch|info|revert|data|data\/preview|data\/migrate|data\/snapshots|data\/export|data\/export-config)$/u.exec(
       url.pathname,
     )
   if (!match) return false
@@ -152,6 +152,16 @@ export async function handleGovernanceExtensionRoute(
         extensionId: result.extensionId!,
         revisionId: result.revisionId!,
       })
+      broadcastExtensionsChanged()
+      return true
+    }
+    if (route === 'info' && req.method === 'PUT') {
+      const input = HostApiContracts.updateExtensionInfo.parseRequest(await readJsonBody(req))
+      const result = await runtime.extensionActions.perform(
+        { kind: 'edit-info', extensionId, name: input.name, description: input.description },
+        { kind: 'console' },
+      )
+      writeContractJson(res, 200, HostApiContracts.updateExtensionInfo, { message: result.message })
       broadcastExtensionsChanged()
       return true
     }

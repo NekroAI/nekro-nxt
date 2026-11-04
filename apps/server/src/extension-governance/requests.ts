@@ -63,6 +63,7 @@ const extensionOf = (action: ExtensionAction): ExtensionId | undefined => {
       return action.targetExtensionId
     case 'enable':
     case 'disable':
+    case 'edit-info':
     case 'configure':
     case 'revert-config':
     case 'switch':
@@ -91,6 +92,8 @@ const objectKey = (action: ExtensionAction | undefined): string | undefined => {
       return `config-revert|${action.extensionId}`
     case 'migrate-data':
       return `data|${action.targetExtensionId}`
+    case 'edit-info':
+      return `info|${action.extensionId}`
     case 'community-publish':
     case 'community-update':
       return `${action.kind}|${action.extensionId}`

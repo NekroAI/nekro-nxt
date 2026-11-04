@@ -137,16 +137,19 @@ export class ExtensionService {
     })
     if (existing) this.#assertAdapterKeyKept(existing.id, materialized.manifest)
     const duplicate = this.#repository.getExtensionRevisionByPayloadDigest(extensionId, materialized.payloadDigest)
-    if (duplicate) return { extension: existing ?? this.#requireExtension(extensionId), revision: duplicate }
+    if (duplicate) {
+      if (existing) this.#repository.updateExtensionDetails(extensionId, metadata)
+      return { extension: this.#requireExtension(extensionId), revision: duplicate }
+    }
     const extension: LocalExtension = {
       ...(existing ?? {
         id: extensionId,
         slug,
-        displayName: metadata.displayName,
-        description: metadata.description,
         ...(input.createdByAgentId === undefined ? {} : { createdByAgentId: input.createdByAgentId }),
         createdAt: now,
       }),
+      displayName: metadata.displayName,
+      description: metadata.description,
       provides: materialized.provides,
     }
     const revision: Revision = {
@@ -203,7 +206,20 @@ export class ExtensionService {
       revision,
       ...(verification === undefined ? {} : { verification }),
     })
+    // Saving keeps an existing extension's stored details; a new version may come with a new name and description.
+    if (existing) this.#repository.updateExtensionDetails(extensionId, metadata)
     return { extension, revision }
+  }
+
+  /** Renames an extension or rewrites its description; its slug and versions stay as they are. */
+  updateDetails(
+    extensionId: ExtensionId,
+    input: { readonly displayName: string; readonly description: string },
+  ): LocalExtension {
+    if (this.#closing) throw new Error('扩展服务正在关闭。')
+    this.#requireExtension(extensionId)
+    this.#repository.updateExtensionDetails(extensionId, textSchema.parse(input))
+    return this.#requireExtension(extensionId)
   }
 
   async importRevision(input: {

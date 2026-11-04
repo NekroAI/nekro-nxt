@@ -5845,6 +5845,20 @@ export const HostApiContracts = {
     response: z.object({ extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }).strict(),
     error: HostApiErrorSchema,
   }),
+  updateExtensionInfo: defineContract({
+    invalidatesSnapshot: true,
+    method: 'PUT',
+    path: '/api/extensions/:extensionId/info',
+    params: extensionParam,
+    request: z
+      .object({
+        name: z.string().trim().min(1).max(80),
+        description: z.string().trim().max(500),
+      })
+      .strict(),
+    response: z.object({ message: z.string() }).strict(),
+    error: HostApiErrorSchema,
+  }),
   rollbackExtension: defineContract({
     invalidatesSnapshot: true,
     timeoutMs: 300_000,

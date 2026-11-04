@@ -93,6 +93,13 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     ...ConfigOrigin,
   }),
   z.object({ kind: z.literal('disable'), extensionId: ExtensionIdSchema, agentId: AgentIdSchema }),
+  /** Changes the extension's information: its name and description; leaving one out keeps it. */
+  z.object({
+    kind: z.literal('edit-info'),
+    extensionId: ExtensionIdSchema,
+    name: z.string().optional(),
+    description: z.string().optional(),
+  }),
   z.object({ kind: z.literal('switch'), extensionId: ExtensionIdSchema, revisionId: ExtensionRevisionIdSchema }),
   z.object({ kind: z.literal('revert'), extensionId: ExtensionIdSchema }),
   z.object({
@@ -620,6 +627,22 @@ export class ExtensionActionService {
           extensionId: action.extensionId,
         }
       }
+      case 'edit-info': {
+        const extension = runtime.repository.getExtension(action.extensionId)
+        if (!extension) throw new Error('这个扩展已经不在本机。')
+        const updated = runtime.extensionService.updateDetails(action.extensionId, {
+          displayName: action.name?.trim() || extension.displayName,
+          description: action.description ?? extension.description,
+        })
+        runtime.publishExtensionsChange?.()
+        return {
+          message:
+            updated.displayName === extension.displayName
+              ? `已修改「${updated.displayName}」的扩展信息。`
+              : `已把「${extension.displayName}」改名为「${updated.displayName}」。`,
+          extensionId: action.extensionId,
+        }
+      }
       case 'disable': {
         await runtime.extensions.disable(action.agentId, action.extensionId)
         return {
@@ -934,6 +957,16 @@ export class ExtensionActionService {
           ...normal,
           summary: `给${this.#agentName(action.agentId)}停用「${this.#extensionName(action.extensionId)}」`,
         }
+      case 'edit-info': {
+        const current = this.#extensionName(action.extensionId)
+        const name = action.name?.trim()
+        const renamed = name !== undefined && name !== '' && name !== current
+        const parts = [renamed ? `名称改为「${name}」` : '', action.description === undefined ? '' : '修改说明']
+        return {
+          ...normal,
+          summary: `修改「${current}」的扩展信息：${parts.filter((part) => part !== '').join('，') || '没有变化'}`,
+        }
+      }
       case 'switch':
       case 'revert': {
         const current = this.#maybeCurrent(action.extensionId)
@@ -1044,6 +1077,7 @@ export class ExtensionActionService {
       }
       case 'switch':
       case 'revert':
+      case 'edit-info':
       case 'community-update':
       case 'community-publish':
       case 'branch':

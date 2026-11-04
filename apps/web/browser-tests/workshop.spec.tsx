@@ -549,6 +549,32 @@ test.describe('workshop', () => {
     }
   })
 
+  test('changes the name and description of a saved extension from its page', async () => {
+    const page = await openWorkshop(productSnapshot)
+    const requests: unknown[] = []
+    await page.route(`**/api/extensions/${summaryExtensionId}/info`, (route) => {
+      requests.push({ method: route.request().method(), body: route.request().postDataJSON() as unknown })
+      return route.fulfill({ json: { message: '已把「旧名」改名为「看懂视频」。' } })
+    })
+    try {
+      await page.goto(`${baseUrl}/workshop/extensions/${summaryExtensionId}`)
+      await page.getByRole('button', { name: '更多' }).click()
+      await page.getByRole('menuitem', { name: '修改扩展信息' }).click()
+      const dialog = page.getByRole('dialog', { name: '修改扩展信息' })
+      const save = dialog.getByRole('button', { name: '保存', exact: true })
+      await expect(save).toBeDisabled()
+      await dialog.getByLabel('名称').fill(' 看懂视频 ')
+      await dialog.getByLabel('说明').fill('发来视频，智能体能说出里面发生了什么。')
+      await save.click()
+      await expect(dialog).toBeHidden()
+      expect(requests).toEqual([
+        { method: 'PUT', body: { name: '看懂视频', description: '发来视频，智能体能说出里面发生了什么。' } },
+      ])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('keeps the listing typed for a publish the community refused and shows why inside the dialog', async () => {
     const page = await openWorkshop(productSnapshot)
     let publishes = 0

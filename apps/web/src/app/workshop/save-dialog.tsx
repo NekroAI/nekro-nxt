@@ -34,17 +34,18 @@ export function SaveDialog({
 
   useEffect(() => {
     if (!open) return
-    const title = task.candidateAttempt?.name || task.title
+    // A new version starts from the extension's current name and description; a new extension from the candidate's.
+    const title = target?.name ?? (task.candidateAttempt?.name || task.title)
     setName(title)
     setSlug(proposeSlug(title))
     setSlugEdited(false)
-    setDescription(task.candidateAttempt?.purpose || task.requirementSummary)
+    setDescription(target?.description ?? (task.candidateAttempt?.purpose || task.requirementSummary))
     setError('')
     // Reset only when the dialog opens; live task updates must not wipe what the user typed.
   }, [open])
 
   const revising = task.kind === 'revise'
-  const valid = revising ? target !== undefined : SLUG_PATTERN.test(slug) && name.trim() !== ''
+  const valid = name.trim() !== '' && (revising ? target !== undefined : SLUG_PATTERN.test(slug))
   const save = async () => {
     const candidate = task.candidateAttempt
     if (!candidate) return
@@ -54,12 +55,12 @@ export function SaveDialog({
       await api.getState().saveDynamicExtension({
         taskId: task.id,
         attemptId: candidate.id,
-        name: target?.name ?? name.trim(),
+        name: name.trim(),
         slug: target?.slug ?? slug,
-        description: target?.description ?? description.trim(),
+        description: description.trim(),
       })
       onOpenChange(false)
-      toast(target ? `已保存为「${target.name}」的新版本` : `已保存「${name.trim()}」`)
+      toast(target ? `已保存为「${name.trim()}」的新版本` : `已保存「${name.trim()}」`)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -83,20 +84,19 @@ export function SaveDialog({
         </>
       }
     >
-      {revising ? (
-        target ? (
-          <p style={{ margin: 0 }}>
-            保存后成为「{target.name}」的下一个版本，接在{' '}
-            {(task.baseRevisionId ? describe(target, task.baseRevisionId)?.title : undefined) ?? '修改时的版本'}{' '}
-            之后。正在使用的版本不变，需要时在扩展详情里切换。
-          </p>
-        ) : (
-          <p role="alert" style={{ margin: 0, color: 'var(--bad)' }}>
-            要修改的扩展已经不在本机，这个任务无法保存。
-          </p>
-        )
+      {revising && !target ? (
+        <p role="alert" style={{ margin: 0, color: 'var(--bad)' }}>
+          要修改的扩展已经不在本机，这个任务无法保存。
+        </p>
       ) : (
         <>
+          {target ? (
+            <p style={{ margin: 0 }}>
+              保存后成为「{target.name}」的下一个版本，接在{' '}
+              {(task.baseRevisionId ? describe(target, task.baseRevisionId)?.title : undefined) ?? '修改时的版本'}{' '}
+              之后。正在使用的版本不变，需要时在扩展详情里切换。
+            </p>
+          ) : null}
           <Field label="名称">
             <Input
               value={name}
@@ -107,16 +107,18 @@ export function SaveDialog({
               }}
             />
           </Field>
-          <Field label="标识" error={SLUG_PATTERN.test(slug) ? undefined : '小写字母、数字和连字符，3–64 位'}>
-            <Input
-              value={slug}
-              spellCheck={false}
-              onChange={(event) => {
-                setSlugEdited(true)
-                setSlug(event.target.value.trim())
-              }}
-            />
-          </Field>
+          {target ? null : (
+            <Field label="标识" error={SLUG_PATTERN.test(slug) ? undefined : '小写字母、数字和连字符，3–64 位'}>
+              <Input
+                value={slug}
+                spellCheck={false}
+                onChange={(event) => {
+                  setSlugEdited(true)
+                  setSlug(event.target.value.trim())
+                }}
+              />
+            </Field>
+          )}
           <Field label="说明">
             <Textarea
               value={description}
