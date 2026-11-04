@@ -62,7 +62,7 @@ const resultText = (result: Readonly<ToolExecutionResult>): string =>
     ...(result.isError ? [result.error.message] : []),
   ].join('\n')
 
-const SANDBOXED_TOOLS = new Set(['bash'])
+const SANDBOXED_TOOLS = new Set(['bash', 'pwsh'])
 
 /**
  * Adds the hint after a command the sandbox stopped. The result itself is left as DSH wrote it, so its own markers

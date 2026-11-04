@@ -190,6 +190,9 @@ importers:
       '@deepseek-ai/dsh-ptc-runtime-node':
         specifier: 0.2.1-alpha.2
         version: 0.2.1-alpha.2(a1fa510ac9b2f2a5097c0f0d254bfadd)
+      '@deepseek-ai/dsh-pwsh-sandbox':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(47c0f581d69da915bbd49c87a65b071e)
       '@deepseek-ai/dsh-sandbox':
         specifier: 0.2.1-alpha.2
         version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-llm@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-session@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-scope@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)))
@@ -271,6 +274,12 @@ importers:
       '@deepseek-ai/dsh-tool-fs':
         specifier: 0.2.1-alpha.2
         version: 0.2.1-alpha.2(bf65a053ed7a090883f03a613769832b)
+      '@deepseek-ai/dsh-tool-fs-search':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(a4b4b91fd062203db0459d64511fbccb)
+      '@deepseek-ai/dsh-tool-pwsh':
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(4393a64135f75c363d5fb0f46e629b1c)
       '@deepseek-ai/dsh-tool-skill':
         specifier: 0.2.1-alpha.2
         version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-agent@0.2.1-alpha.2(3dc6930769662420cb44e109694f1822))(@deepseek-ai/dsh-llm@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-skill@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)(@deepseek-ai/dsh-llm@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1))(@deepseek-ai/dsh-scope@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)))(@deepseek-ai/dsh-tools@0.2.1-alpha.2(7dae165423b610802c67ae1eb268e109))(@deepseek-ai/dsh-working-directory@0.2.1-alpha.2(d3dadd6ccc60c19d6dd164159ffe5f9b))
@@ -355,6 +364,9 @@ importers:
       croner:
         specifier: 9.1.0
         version: 9.1.0
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
       fast-xml-parser:
         specifier: 5.11.2
         version: 5.11.2
@@ -5322,6 +5334,7 @@ packages:
   '@smithy/core@3.35.2':
     resolution: {integrity: sha512-ejTukBuP/Pg3t9N8Ux+0zKsXeHWm7p6W3HbXFOyltKasSxZwCFmvTut7kBdZSCF3m9y1bXXyVu6p2xuMFcsTyQ==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==}
@@ -13626,7 +13639,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+      vitest: 4.1.8(@opentelemetry/api@1.9.1)(@types/node@22.20.0)(@vitest/coverage-v8@4.1.8)(vite@6.4.3(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
   '@vitest/expect@4.1.8':
     dependencies:

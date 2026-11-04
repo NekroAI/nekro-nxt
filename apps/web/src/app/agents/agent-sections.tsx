@@ -5,7 +5,7 @@ import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '.
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { PanelSlot, useExtensionActivation } from '../../extension-ui/index.js'
 import { AddModelProviderForm } from '../../llm-settings.js'
-import { callHostApi, workspaceApi } from '../../host-api-client.js'
+import { callHostApi } from '../../host-api-client.js'
 import { useFeedbackSummary } from '../community/feedback-model.js'
 import {
   connectionDisplayName,
@@ -48,7 +48,6 @@ import {
   supportsImages,
   toggleAccess,
   type AccessCapability,
-  type Capabilities,
   type AgentDraft,
   type DraftUpdate,
 } from './agent-draft.js'
@@ -506,7 +505,7 @@ export function CapabilitiesSection({
   const name = agent?.name ?? (draft.name.trim() || '它')
   const availability = useProductStore((state) => state.capabilityAvailability)
   const node = useAddon('node')
-  // Listed only on Windows, where commands with full access need it to run at all (#96).
+  // Listed only on Windows, where it optionally puts git and bash on the commands' PATH (#96).
   const gitBash = useAddon('git-bash')
   const speech = useAddon('speech')
   const speechReady = availability.speechRecognition?.available === true
@@ -515,38 +514,13 @@ export function CapabilitiesSection({
     readonly title: string
     readonly body: string
     readonly apply: () => void
-    /** The change turns on commands with full access while this Windows host has no bash to run them in (#96). */
-    readonly needsShell: boolean
-    /** The change turns on commands below full access on a host that cannot run them there (Windows, #96). */
-    readonly commandsBlocked: boolean
   } | null>(null)
   const preset = agentAccessPreset(draft.capabilities)
   const caps = draft.capabilities
-  const commandsNeedFullAccess = availability.commandConfinement?.commands === false
-  const shellMissing = gitBash !== undefined && !addonUsable(gitBash.state)
-  const shellInstall = shellMissing ? gitBash.providers.find((provider) => provider.installable) : undefined
-  const confirmIfRisky = (
-    risky: boolean,
-    title: string,
-    body: string,
-    apply: () => void,
-    next?: Pick<Capabilities, AccessCapability>,
-  ) => {
-    const fullCommands = (access: Pick<Capabilities, AccessCapability>) =>
-      access.developmentShell && access.unrestrictedFileAccess
-    const needsShell = next !== undefined && shellMissing && fullCommands(next) && !fullCommands(caps)
-    const commandsBlocked =
-      next !== undefined && commandsNeedFullAccess && next.developmentShell && !next.unrestrictedFileAccess
-    if (risky || needsShell) setPending({ title, body, apply, needsShell, commandsBlocked })
+  const childOutputBlocked = availability.commandConfinement?.childOutput === false
+  const confirmIfRisky = (risky: boolean, title: string, body: string, apply: () => void) => {
+    if (risky) setPending({ title, body, apply })
     else apply()
-  }
-  const installShell = async () => {
-    if (gitBash === undefined || shellInstall === undefined) return
-    try {
-      await workspaceApi.installAddonProvider(gitBash.id, shellInstall.id)
-    } catch (error) {
-      failure(error)
-    }
   }
   const selectLevel = (index: number) => {
     const level = AGENT_ACCESS_LEVELS[index]
@@ -554,27 +528,14 @@ export function CapabilitiesSection({
     const apply = () =>
       update((current) => ({ ...current, capabilities: { ...current.capabilities, ...accessOfLevel(level.level) } }))
     const current = preset === 'custom' ? -1 : preset
-    confirmIfRisky(
-      level.level >= 2 && level.level > current,
-      `允许${name}${level.label}？`,
-      level.description,
-      apply,
-      accessOfLevel(level.level),
-    )
+    confirmIfRisky(level.level >= 2 && level.level > current, `允许${name}${level.label}？`, level.description, apply)
   }
   const setAccess = (key: AccessCapability, enabled: boolean) => {
     const apply = () =>
       update((current) => ({ ...current, capabilities: toggleAccess(current.capabilities, key, enabled) }))
     const item = ACCESS_SWITCHES.find((entry) => entry.key === key)
-    confirmIfRisky(
-      enabled && key !== 'fileTools',
-      `允许${name}${item?.label ?? ''}？`,
-      item?.description ?? '',
-      apply,
-      toggleAccess(caps, key, enabled),
-    )
+    confirmIfRisky(enabled && key !== 'fileTools', `允许${name}${item?.label ?? ''}？`, item?.description ?? '', apply)
   }
-  const commandsRun = caps.developmentShell && (caps.unrestrictedFileAccess || !commandsNeedFullAccess)
   const setCapability = (key: 'subagents' | 'webSearch' | 'dynamicCreation' | 'scheduledTasks', enabled: boolean) =>
     update((current) => ({ ...current, capabilities: { ...current.capabilities, [key]: enabled } }))
 
@@ -602,33 +563,31 @@ export function CapabilitiesSection({
             }
           />
         </PropertyRow>
-        {caps.developmentShell && !caps.unrestrictedFileAccess && commandsNeedFullAccess ? (
+        {caps.developmentShell && !caps.unrestrictedFileAccess && childOutputBlocked ? (
           <PropertyRow
             depth={1}
-            label="命令"
-            description="这台 Windows 设备上，这一档暂时不能运行命令，调到「完整访问」后才能运行"
-            badge={<Chip tone="warn">暂不可用</Chip>}
+            label="命令限制"
+            description="这台 Windows 设备上，这一档的命令不能克隆、拉取或推送 git 仓库，也不能用 pip、npm 安装依赖，需要时调到「完整访问」"
           />
         ) : null}
-        {caps.developmentShell && caps.unrestrictedFileAccess && gitBash !== undefined && addonManageable(gitBash) ? (
+        {caps.developmentShell && gitBash !== undefined && addonManageable(gitBash) ? (
           <PropertyRow
             depth={1}
             label="Git 与 Bash"
             description={
               addonUsable(gitBash.state)
                 ? [selectedProvider(gitBash)?.title, selectedProvider(gitBash)?.version].filter(Boolean).join('，')
-                : `${addonStateLabel(gitBash.state, gitBash.progress).label}，安装后命令才能运行`
+                : `${addonStateLabel(gitBash.state, gitBash.progress).label}，可选，装上后命令里能用 git 和 bash`
             }
-            badge={addonUsable(gitBash.state) ? undefined : <Chip tone="warn">待安装</Chip>}
           >
             <AddonLink addon={gitBash} />
           </PropertyRow>
         ) : null}
-        {commandsRun ? <CommandNetworkRow caps={caps} update={update} /> : null}
-        {commandsRun && !caps.unrestrictedFileAccess ? (
+        {caps.developmentShell ? <CommandNetworkRow caps={caps} update={update} /> : null}
+        {caps.developmentShell && !caps.unrestrictedFileAccess ? (
           <CommandAccountRows agentName={name} caps={caps} update={update} />
         ) : null}
-        {commandsRun && agent ? <CommandCredentialRows agentId={agent.id} /> : null}
+        {caps.developmentShell && agent ? <CommandCredentialRows agentId={agent.id} /> : null}
         {caps.developmentShell ? (
           <PropertyRow
             depth={1}
@@ -834,32 +793,14 @@ export function CapabilitiesSection({
         open={pending !== null}
         onOpenChange={(open) => !open && setPending(null)}
         title={pending?.title ?? ''}
-        confirmLabel={pending?.needsShell && shellInstall !== undefined ? '允许并安装 Git 与 Bash' : '允许'}
+        confirmLabel="允许"
         danger
         onConfirm={() => {
-          if (pending?.needsShell) void installShell()
           pending?.apply()
           setPending(null)
         }}
       >
         <p>{pending?.body}</p>
-        {pending?.commandsBlocked ? (
-          <p className={styles.noteWarn}>
-            这台 Windows 设备上，这一档暂时不能运行命令，要运行命令需要调到「完整访问」。
-          </p>
-        ) : null}
-        {pending?.needsShell ? (
-          <p className={styles.noteWarn}>
-            这台 Windows 设备还没有 Git 与 Bash，装好之前命令无法运行。
-            {shellInstall === undefined
-              ? '可以在 设置 → 附加功能 里查看原因。'
-              : `确认后在后台下载安装${
-                  shellInstall.resources.downloadBytes === undefined
-                    ? ''
-                    : `（约 ${Math.round(shellInstall.resources.downloadBytes / 1024 / 1024)} MB）`
-                }，进度显示在下方的「Git 与 Bash」一行。`}
-          </p>
-        ) : null}
         <p className={styles.note}>确认后还需要保存才会生效。</p>
       </ConfirmDialog>
     </PropertyGroup>

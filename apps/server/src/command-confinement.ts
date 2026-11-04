@@ -20,11 +20,10 @@ export interface CommandConfinement {
 /** What the platform runner can enforce beyond file writes. */
 export interface CommandConfinementSupport {
   /**
-   * Whether commands can run inside the runner at all. The Windows runner's restricted token cannot start Git Bash
-   * (MSYS2 fails to create its signal pipe) and stops PowerShell from capturing other programs' output, so commands
-   * there need full access, which skips the runner (#96).
+   * Whether a confined command can read the output of programs it starts. The Windows runner's restricted token cannot
+   * create pipes, so PowerShell capturing a program's output, `git` over https and package managers fail there (#96).
    */
-  readonly commands: boolean
+  readonly childOutput: boolean
   readonly readScope: boolean
   readonly networkControl: boolean
 }
@@ -214,15 +213,15 @@ const probeBwrapNetwork = (): boolean => {
 
 /**
  * Seatbelt and bwrap enforce both read scope and network; Linux without bwrap falls back to Landlock, which here
- * scopes reads only; the Windows runner restricts writes only, and commands cannot run in it.
+ * scopes reads only; the Windows runner restricts writes only, and what runs in it cannot read its own children's output.
  */
 export const commandConfinementSupport = (platform: NodeJS.Platform = process.platform): CommandConfinementSupport => {
-  if (platform === 'darwin') return { commands: true, readScope: true, networkControl: true }
+  if (platform === 'darwin') return { childOutput: true, readScope: true, networkControl: true }
   if (platform === 'linux') {
     const bwrap = probeBwrapNetwork()
-    return { commands: true, readScope: true, networkControl: bwrap }
+    return { childOutput: true, readScope: true, networkControl: bwrap }
   }
-  return { commands: platform !== 'win32', readScope: false, networkControl: false }
+  return { childOutput: platform !== 'win32', readScope: false, networkControl: false }
 }
 
 /** Toolchain directories under home that commands may still read; anything else there stays hidden. */

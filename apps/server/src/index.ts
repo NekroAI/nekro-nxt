@@ -41,16 +41,17 @@ import {
 } from './feedback-tools.js'
 import type { CommunityFeedbackService } from './community-feedback.js'
 import { WorkspaceFileSystem } from './workspace-file-system.js'
+import { mountWorkspaceFileTools } from './workspace-file-tools.js'
 import type { ActiveAddonProgram } from './addons.js'
 import {
   commandCredentialEnvironment,
   commandCredentialPrompt,
   createEnvForwardingExecutor,
+  createPwshEnvForwardingExecutor,
   programSearchPath,
   type CommandCredentialSources,
 } from './command-account-env.js'
 import {
-  commandConfinementSupport,
   confinedGitEnvironment,
   createConfinedSandboxProvider,
   dataRootCommandConfinement,
@@ -117,6 +118,7 @@ import * as BashTool from '@deepseek-ai/dsh-tool-bash'
 import * as ToolCallTimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
 import * as CordisTool from '@deepseek-ai/dsh-tool-cordis'
 import * as FsTool from '@deepseek-ai/dsh-tool-fs'
+import * as PwshTool from '@deepseek-ai/dsh-tool-pwsh'
 import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
@@ -3054,15 +3056,16 @@ const assetInspectImagesTool = (input: {
     },
   })
 
-async function mountDevelopmentCapabilities(
+export async function mountDevelopmentCapabilities(
   agentContext: Context,
-  revision: AgentRevisionRecord,
+  capabilities: Pick<AgentRevisionRecord['capabilities'], 'developmentShell' | 'fileTools' | 'unrestrictedFileAccess'>,
   workspaceRoot: string | undefined,
   confinement: CommandConfinement,
   commandEnvironment: () => Readonly<Record<string, string>>,
-  commandShell: () => string | undefined,
+  gitBashReady: () => boolean,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<void> {
-  const { developmentShell, fileTools, unrestrictedFileAccess } = revision.capabilities
+  const { developmentShell, fileTools, unrestrictedFileAccess } = capabilities
   if (!developmentShell && !fileTools) return
   if (workspaceRoot === undefined) {
     throw new Error('Development capabilities require an explicit workspace root.')
@@ -3086,23 +3089,35 @@ async function mountDevelopmentCapabilities(
     await capabilityContext.plugin(FsObservationPolicy)
     await capabilityContext.plugin(FsTool, {})
   }
+  if (fileTools && !developmentShell) {
+    // Without commands the agent still moves, deletes, searches and unzips; with them its shell does all of this.
+    await capabilityContext.plugin(LocalSubprocessRuntime)
+    mountWorkspaceFileTools(capabilityContext, { workspace: workspaceRoot, unrestricted: unrestrictedFileAccess })
+  }
 
   if (developmentShell) {
-    if (!unrestrictedFileAccess && !commandConfinementSupport().commands) {
-      // Windows: commands cannot run inside the sandbox, so there is no command tool below full access (#96).
-      agentContext.systemPrompt.section({
-        name: 'nekro-nxt:commands-unavailable',
-        order: 20.65,
-        text: () => COMMANDS_NEED_FULL_ACCESS,
-      })
-      return
-    }
     await capabilityContext.plugin(LocalSubprocessRuntime)
     await capabilityContext.plugin(
       createConfinedSandboxProvider(() => confinement),
       {},
     )
-    await capabilityContext.plugin(createEnvForwardingExecutor(commandEnvironment, commandShell), {
+    if (platform === 'win32') {
+      // Windows runs commands in PowerShell at every level: Git Bash cannot start inside the sandbox (#96).
+      await capabilityContext.plugin(createPwshEnvForwardingExecutor(commandEnvironment), {
+        cwd: workspaceRoot,
+        // Empty picks PowerShell 7 when installed, else the system's Windows PowerShell 5.1.
+        pwshPath: '',
+      })
+      await capabilityContext.plugin(ShellEnv, {})
+      await capabilityContext.plugin(PwshTool, { enableRunInBackground: false })
+      agentContext.systemPrompt.section({
+        name: 'nekro-nxt:windows-commands',
+        order: 20.65,
+        text: () => windowsCommandsPrompt(unrestrictedFileAccess, gitBashReady()),
+      })
+      return
+    }
+    await capabilityContext.plugin(createEnvForwardingExecutor(commandEnvironment), {
       cwd: workspaceRoot,
     })
     await capabilityContext.plugin(ShellEnv, {})
@@ -3110,8 +3125,21 @@ async function mountDevelopmentCapabilities(
   }
 }
 
-const COMMANDS_NEED_FULL_ACCESS =
-  '这台 Windows 设备上，你现在的访问权限还不能运行命令，所以你没有运行命令的工具；文件仍然可以用文件工具读写。需要运行命令时，告诉对方：请管理员把你的访问权限调到「完整访问」。'
+/** What an agent on Windows needs to know about its PowerShell commands (#96). */
+export const windowsCommandsPrompt = (unrestricted: boolean, gitBash: boolean): string =>
+  [
+    '这台设备是 Windows，命令用 PowerShell 运行。可能是系统自带的 5.1 版：它不支持 `&&` 和 `||`，几条命令用 `;` 分开，要等前一条成功再继续时写 `if ($?) { … }`；`curl` 在这里是 Invoke-WebRequest 的别名，要用真正的 curl 时写 `curl.exe`。',
+    gitBash
+      ? unrestricted
+        ? '命令里能用 git 和 bash；需要 bash 写法或运行 .sh 脚本时，用 `bash -c "…"` 或 `bash 脚本.sh`。'
+        : '命令里能用 git 做本地操作。'
+      : '这台设备的命令里没有 git 和 bash。需要它们时，告诉对方：请管理员在 设置 → 附加功能 里安装「Git 与 Bash」。',
+    ...(unrestricted
+      ? []
+      : [
+          '你的命令在沙箱里运行，只能写你的工作区。在这台设备的沙箱里，命令拿不到它启动的其他程序的输出：把程序的输出接进管道、写 `2>&1`、存进变量，结果都会是空的或报“拒绝访问”；直接运行程序就能看到它的输出，也可以用 `cmd /c "程序 参数 > 文件 2>&1"` 写进文件再读。脚本里启动子程序并读取输出同样会失败。所以 git 克隆、拉取、推送，以及 pip、npm 安装依赖都做不了，bash 也不能用；需要时告诉对方：请管理员把你的访问权限调到「完整访问」。',
+        ]),
+  ].join('\n')
 
 const FALLBACK_REASON_TEXT: Readonly<Record<ModelFallbackReason, string>> = {
   quota: '额度已用完',
@@ -3173,7 +3201,6 @@ const resolveAgentWorkspace = (workspaceRoot: string, agentId: AgentRevisionReco
 /** Owns the minimal production DSH Host roster and adapts it to Channel Runtime. */
 export class DshHostRuntime implements AgentSessionDriver {
   readonly #logs: HostLogSink | undefined
-  #missingShellLoggedAt = 0
   readonly #context: Context
   readonly #subConversations: SubConversationManager
   readonly #subConversationStore: SubConversationStore
@@ -4723,11 +4750,11 @@ export class DshHostRuntime implements AgentSessionDriver {
       await mountWebCapabilities(agentContext, revision)
       await mountDevelopmentCapabilities(
         agentContext,
-        revision,
+        revision.capabilities,
         developmentWorkspace,
         this.#commandConfinementOf(revision),
         () => this.#commandEnvironmentOf(revision),
-        () => this.#commandShell(),
+        () => this.#gitBashReady(),
       )
       const accountPrompt = this.#commandAccountPromptOf(revision)
       if (accountPrompt !== undefined) {
@@ -5429,25 +5456,9 @@ export class DshHostRuntime implements AgentSessionDriver {
     return searchPath === undefined ? environment : { ...environment, PATH: searchPath }
   }
 
-  /**
-   * The bash agents' commands run in: on Windows only the one the 「Git 与 Bash」 add-on provides, never whatever `bash`
-   * comes first on `PATH` (the launcher of the Windows Subsystem for Linux, #96); elsewhere the system's own. Windows
-   * agents only get commands with full access, so only they reach this there.
-   */
-  #commandShell(): string | undefined {
-    if (process.platform !== 'win32') return 'bash'
-    const bash = this.#programs().find((program) => program.addon === 'git-bash' && program.name === 'bash')?.path
-    // The agent is told why its command did not run; the administrator sees it in the logs, at most every ten minutes.
-    if (bash === undefined && Date.now() - this.#missingShellLoggedAt >= 10 * 60 * 1000) {
-      this.#missingShellLoggedAt = Date.now()
-      this.#logs?.write({
-        level: 'warn',
-        message:
-          '这台 Windows 设备还没有可用的 Bash，开了「完整访问」的智能体现在无法执行命令。请在 设置 → 附加功能 里安装「Git 与 Bash」。',
-        source: { kind: 'system', id: 'command-shell', name: '命令运行' },
-      })
-    }
-    return bash
+  /** Whether the 「Git 与 Bash」 add-on puts git and bash on Windows commands' `PATH`. */
+  #gitBashReady(): boolean {
+    return this.#programs().some((program) => program.addon === 'git-bash' && program.name === 'git')
   }
 
   /** The host confinement with the folders of the add-ons' programs readable, wherever they are installed. */

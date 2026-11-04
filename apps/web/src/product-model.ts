@@ -564,7 +564,7 @@ export interface CapabilityAvailability {
    * means commands only run with full access (Windows, #96).
    */
   readonly commandConfinement?:
-    | { readonly commands?: boolean | undefined; readonly readScope: boolean; readonly networkControl: boolean }
+    | { readonly childOutput?: boolean | undefined; readonly readScope: boolean; readonly networkControl: boolean }
     | undefined
   readonly webSearch: {
     readonly unavailableReason?: string | undefined

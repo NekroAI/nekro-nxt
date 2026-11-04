@@ -1,10 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
-import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
-import * as BashTool from '@deepseek-ai/dsh-tool-bash'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { WorkingDirectoryService } from '@deepseek-ai/dsh-working-directory'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
@@ -18,15 +14,15 @@ import {
   commandCredentialEnvironment,
   commandCredentialPrompt,
   createEnvForwardingExecutor,
-  MISSING_SHELL_MESSAGE,
+  createPwshEnvForwardingExecutor,
   programSearchPath,
   type CommandAccount,
   type CommandCredential,
   type CommandCredentialSources,
 } from '../src/command-account-env.ts'
 import { createGithubPlatform } from '../src/linked-accounts/github.ts'
+import { mountDevelopmentCapabilities, windowsCommandsPrompt } from '../src/index.ts'
 import { createConfinedSandboxProvider } from '../src/command-confinement.ts'
-import { WorkspaceFileSystem } from '../src/workspace-file-system.ts'
 
 const directories: string[] = []
 afterEach(() => {
@@ -131,6 +127,16 @@ describe('command credential environment', () => {
     expect(both).not.toContain('tok-fixture')
   })
 
+  it('on Windows, refers to variables the PowerShell way and promises no git over https (#96)', () => {
+    const windowsGithub = createGithubPlatform({ cli: { executable: () => 'C:\\gh\\gh.exe' }, platform: 'win32' })
+    const prompt = commandCredentialPrompt(agent, [grant], sources([weather], [githubAccount(windowsGithub)]), 'win32')
+    expect(prompt).toContain('用 $env:WEATHER_KEY 引用')
+    expect(prompt).toContain('gh 可以直接用')
+    expect(prompt).not.toContain('git 走 https')
+    const withoutGh = createGithubPlatform({ cli: { executable: () => undefined }, platform: 'win32' })
+    expect(withoutGh.promptLines({ login: 'octo-fixture', usage: [] })[0]).toContain('curl.exe')
+  })
+
   it('says plainly when gh is not installed, without exposing the token', () => {
     const prompt = commandCredentialPrompt(
       agent,
@@ -182,7 +188,6 @@ const runCommand = async (
   mode: 'workspace-write' | 'danger-full-access',
   environment: Record<string, string>,
   command: string,
-  shell?: () => string | undefined,
 ) => {
   const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-env-')))
   directories.push(workspace)
@@ -195,7 +200,7 @@ const runCommand = async (
     {},
   )
   await ctx.plugin(
-    createEnvForwardingExecutor(() => environment, shell),
+    createEnvForwardingExecutor(() => environment),
     { cwd: workspace },
   )
   const executor = shellOf(ctx)
@@ -272,68 +277,63 @@ describe.skipIf(process.platform === 'win32')('commands receive the granted acco
   })
 })
 
-describe.skipIf(process.platform === 'win32')('commands run in the chosen bash (#96)', () => {
-  /** A stand-in bash that says which program ran before running the command in the real one. */
-  const fixtureBash = () => {
-    const folder = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-bash-')))
-    directories.push(folder)
-    const program = path.join(folder, 'chosen-bash')
-    writeFileSync(program, '#!/bin/sh\nprintf "chosen "\nexec bash "$@"\n', { mode: 0o755 })
-    return program
-  }
-
-  it('starts the command with the chosen program instead of the bare name', async () => {
-    const program = fixtureBash()
-    expect(await runCommand('danger-full-access', {}, 'echo ran', () => program)).toBe('chosen ran')
-  })
-
-  it.runIf(process.platform === 'darwin')('also inside the sandbox runner', async () => {
-    const program = fixtureBash()
-    expect(await runCommand('workspace-write', {}, 'echo ran', () => program)).toBe('chosen ran')
-  })
-
-  it('refuses the command in plain words when there is no bash to use', async () => {
-    await expect(runCommand('danger-full-access', {}, 'echo ran', () => undefined)).rejects.toThrow(
-      MISSING_SHELL_MESSAGE,
-    )
-  })
-})
-
-describe.skipIf(process.platform === 'win32')('an agent whose command has no bash to run in (#96)', () => {
-  it('gets a failed tool result that says why and what the administrator should install', async () => {
-    const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-env-')))
+describe('commands on Windows run in PowerShell at every access level (#96)', () => {
+  /** Mounts an agent's development capabilities the way the host does, as if this were a Windows device. */
+  const mountForWindows = async (unrestrictedFileAccess: boolean, environment: Record<string, string> = {}) => {
+    const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-pwsh-')))
     directories.push(workspace)
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(SessionProjections)
-    await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access', workspaceRoot: workspace })
-    await ctx.plugin(WorkspaceFileSystem, { cwd: workspace })
-    await ctx.plugin(WorkingDirectoryService, { defaultDirectory: workspace })
+    await mountDevelopmentCapabilities(
+      ctx,
+      { fileTools: true, developmentShell: true, unrestrictedFileAccess },
+      workspace,
+      { hidden: [], readable: [], network: true },
+      () => environment,
+      () => true,
+      'win32',
+    )
+    return { ctx, workspace }
+  }
+
+  it.each([false, true])('gives the agent the pwsh tool and no bash tool (full access: %s)', async (unrestricted) => {
+    const { ctx } = await mountForWindows(unrestricted)
+    expect(ctx.tools.get('pwsh')).toBeDefined()
+    expect(ctx.tools.get('bash')).toBeUndefined()
+    expect(JSON.stringify(await ctx.systemPrompt.assemble())).toContain('命令用 PowerShell 运行')
+  })
+
+  it('forwards the agent credentials to PowerShell commands', async () => {
+    const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-pwsh-')))
+    directories.push(workspace)
+    const ctx = new Context()
+    await ctx.plugin(SessionProjections)
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace })
     await ctx.plugin(LocalSubprocessRuntime)
     await ctx.plugin(
       createConfinedSandboxProvider(() => ({ hidden: [], readable: [], network: true })),
       {},
     )
     await ctx.plugin(
-      createEnvForwardingExecutor(
-        () => ({}),
-        () => undefined,
-      ),
-      { cwd: workspace },
+      createPwshEnvForwardingExecutor(() => ({ WEATHER_KEY: 'weather-fixture-key' })),
+      { cwd: workspace, pwshPath: '' },
     )
-    await ctx.plugin(ShellEnv, { dshHome: workspace })
-    await ctx.plugin(BashTool, { enableRunInBackground: false })
-    const result = await ctx.tools.execute({
-      callId: ToolCallId('missing-shell'),
-      name: 'bash',
-      arguments: { command: 'mv a b', description: 'Rename a file' },
-      signal: new AbortController().signal,
+    expect(shellOf(ctx).resolve({ command: 'Get-Location', workdir: workspace, dshEnv: {} })).toMatchObject({
+      env: { WEATHER_KEY: 'weather-fixture-key' },
     })
-    expect(result.isError).toBe(true)
-    // The content is what the model reads.
-    expect(result.content.map((block) => (block.type === 'text' ? block.text : '')).join('\n')).toContain(
-      MISSING_SHELL_MESSAGE,
-    )
+  })
+
+  it('tells the agent what fails inside the sandbox and what git and bash it has', () => {
+    const confined = windowsCommandsPrompt(false, true)
+    expect(confined).toContain('`2>&1`')
+    expect(confined).toContain('「完整访问」')
+    expect(confined).toContain('git 做本地操作')
+    expect(confined).not.toContain('bash -c')
+    const full = windowsCommandsPrompt(true, true)
+    expect(full).toContain('bash -c')
+    expect(full).not.toContain('沙箱')
+    expect(windowsCommandsPrompt(true, false)).toContain('安装「Git 与 Bash」')
   })
 })

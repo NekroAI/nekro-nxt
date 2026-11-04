@@ -2726,12 +2726,12 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('on Windows, runs commands only with full access and offers Git and Bash there', async () => {
+  test('on Windows, runs commands at every level, names what the sandbox cannot do and offers Git and Bash', async () => {
     const windowsHost = HostApiContracts.snapshot.response.parse({
       ...browserSnapshot,
       capabilityAvailability: {
         ...browserSnapshot.capabilityAvailability,
-        commandConfinement: { commands: false, readScope: false, networkControl: false },
+        commandConfinement: { childOutput: false, readScope: false, networkControl: false },
       },
       addons: [
         ...addonsFixture(),
@@ -2739,7 +2739,7 @@ test.describe('NekroNxt browser projections', () => {
           id: 'git-bash',
           group: 'agent',
           title: 'Git 与 Bash',
-          summary: '在 Windows 上，「完整访问」的智能体运行命令需要它，也让命令里能用 git。',
+          summary: '可选。装上后，智能体的命令里能用 git 和 bash。',
           usedBy: ['智能体命令'],
           state: 'not-installed',
           providers: [
@@ -2753,38 +2753,27 @@ test.describe('NekroNxt browser projections', () => {
         },
       ],
     })
-    const installs: string[] = []
     await withProductPage(
       `/agents/${browserAgentId}`,
       async (page) => {
         await page.getByRole('button', { name: '运行命令', exact: true }).click()
         const confirm = page.getByRole('dialog', { name: '允许资料员运行命令？' })
-        await playwrightExpect(confirm).toContainText('这台 Windows 设备上，这一档暂时不能运行命令')
         await playwrightExpect(confirm).not.toContainText('Git 与 Bash')
         await confirm.getByRole('button', { name: '允许', exact: true }).click()
-        await playwrightExpect(page.getByText('暂不可用')).toBeVisible()
-        await playwrightExpect(page.getByText('命令联网')).toHaveCount(0)
+        await playwrightExpect(page.getByText('命令限制')).toBeVisible()
+        await playwrightExpect(page.getByText('这台设备无法限制命令联网，命令始终可以联网')).toBeVisible()
+        await playwrightExpect(page.getByText('未安装，可选，装上后命令里能用 git 和 bash')).toBeVisible()
+        await playwrightExpect(page.getByText('待安装')).toHaveCount(0)
 
         await page.getByRole('button', { name: '完整访问', exact: true }).click()
         const full = page.getByRole('dialog', { name: '允许资料员完整访问？' })
-        await playwrightExpect(full).toContainText('这台 Windows 设备还没有 Git 与 Bash，装好之前命令无法运行。')
-        await playwrightExpect(full).toContainText('约 60 MB')
-        await full.getByRole('button', { name: '允许并安装 Git 与 Bash' }).click()
-        await playwrightExpect.poll(() => installs).toEqual(['/api/addons/git-bash/providers/download/install'])
-        await playwrightExpect(page.getByText('暂不可用')).toHaveCount(0)
-        // The row stays as the way back to the add-on until it is installed.
-        await playwrightExpect(page.getByText('未安装，安装后命令才能运行')).toBeVisible()
-        await playwrightExpect(page.getByText('待安装')).toBeVisible()
+        await playwrightExpect(full).not.toContainText('Git 与 Bash')
+        await full.getByRole('button', { name: '允许', exact: true }).click()
+        await playwrightExpect(page.getByText('命令限制')).toHaveCount(0)
         await page.getByRole('button', { name: '去安装' }).first().click()
         await playwrightExpect(page).toHaveURL(/\/settings\/addons\/git-bash$/u)
       },
       windowsHost,
-      async (page) => {
-        await page.route('**/api/addons/**', (request) => {
-          installs.push(new URL(request.request().url()).pathname)
-          return request.fulfill({ json: windowsHost.addons.find((addon) => addon.id === 'git-bash') })
-        })
-      },
     )
   })
 

@@ -47,7 +47,7 @@ export type ToolKind = 'search' | 'command' | 'fetch' | 'message' | 'finish' | '
 
 export const toolKind = (name: string): ToolKind => {
   if (/search/iu.test(name)) return 'search'
-  if (/^(?:bash|shell|exec|run_command|command)/iu.test(name)) return 'command'
+  if (/^(?:bash|pwsh|shell|exec|run_command|command)/iu.test(name)) return 'command'
   if (/fetch|browse|read_url/iu.test(name)) return 'fetch'
   if (name === 'send_channel_message' || /send.*message/iu.test(name)) return 'message'
   if (name === 'finish_channel_turn') return 'finish'
