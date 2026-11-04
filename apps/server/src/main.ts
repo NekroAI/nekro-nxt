@@ -184,15 +184,17 @@ const errorCode = (error: unknown): unknown => {
 }
 
 /**
- * With a management key the internal web server listens on 127.0.0.1 only, behind the management edge. Some hosts
- * (Android containers) refuse loopback binds; say so instead of a bare `listen EPERM`.
+ * Android kernels let only root and the inet group open network sockets, so a container running as another user
+ * fails its first listen with EPERM or EACCES. EACCES on a port below 1024 is the ordinary privileged-port refusal.
  */
-export const explainLoopbackBindFailure = (error: unknown): unknown => {
+export const explainListenPermissionFailure = (error: unknown, port: number): unknown => {
   const code = errorCode(error)
   if (code !== 'EPERM' && code !== 'EACCES') return error
-  return new Error('这台设备不允许监听本机地址 127.0.0.1，设置管理密钥后服务无法启动。这类设备暂不支持。', {
-    cause: error,
-  })
+  if (code === 'EACCES' && port > 0 && port < 1024) return error
+  return new Error(
+    '这台设备不允许当前用户监听网络端口。Android 等系统只允许 root 或网络权限组的进程联网，用 Docker 部署时可设置 NEKRO_UID=0 和 NEKRO_GID=0。',
+    { cause: error },
+  )
 }
 
 const parseReleaseBackupRecord = (input: unknown, expectedReleaseId: string): ReleaseSqliteBackupRecord => {
@@ -704,7 +706,7 @@ const startLeasedServer = async (
         port: managementKey === undefined ? port : 0,
       })
     } catch (error) {
-      throw managementKey === undefined ? error : explainLoopbackBindFailure(error)
+      throw explainListenPermissionFailure(error, managementKey === undefined ? port : 0)
     }
     // The headless browser that checks creation candidates opens this Host's own page on its loopback listener.
     runtime.setVerificationOrigin(`http://127.0.0.1:${webContext.webServer.port}`)
@@ -839,7 +841,7 @@ const startLeasedServer = async (
         disposeSpaRoutes()
         await webContext.fiber.dispose()
         await runtime.dispose()
-        throw error
+        throw explainListenPermissionFailure(error, port)
       }
     }
 

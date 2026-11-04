@@ -22,4 +22,11 @@ fi
 
 # Same home as the nekro account had when the image ran as that user directly.
 export HOME="$NEKRO_DATA"
-exec setpriv --reuid="$uid" --regid="$gid" --clear-groups --inh-caps=-all -- "$@"
+# Android kernels let only root and members of the inet group (3003) open network sockets; other kernels give that
+# group no meaning. Fall back to no supplementary groups where it cannot be set, such as a narrow rootless gid map.
+groups=3003
+if ! setpriv --reuid="$uid" --regid="$gid" --groups="$groups" --inh-caps=-all -- true 2>/dev/null; then
+  echo "[nekro-nxt] 无法为运行用户加入网络权限组 3003。在 Android 上如果因此无法监听端口，可设置 NEKRO_UID=0 和 NEKRO_GID=0。" >&2
+  exec setpriv --reuid="$uid" --regid="$gid" --clear-groups --inh-caps=-all -- "$@"
+fi
+exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" --inh-caps=-all -- "$@"

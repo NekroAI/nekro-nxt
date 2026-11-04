@@ -11,7 +11,7 @@ import {
   parseManagementKey,
   parseReleaseId,
   startNekroServer,
-  explainLoopbackBindFailure,
+  explainListenPermissionFailure,
 } from '../src/main.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
 import {
@@ -42,14 +42,18 @@ describe('Server production entry', () => {
     expect(parseManagementKey('a'.repeat(32), true)).toBe('a'.repeat(32))
   })
 
-  it('explains a refused loopback bind and leaves other listen errors alone', () => {
+  it('explains a refused listen and leaves other listen errors alone', () => {
     const refused = Object.assign(new Error('listen EPERM: operation not permitted 127.0.0.1'), { code: 'EPERM' })
-    const explained = explainLoopbackBindFailure(refused)
+    const explained = explainListenPermissionFailure(refused, 0)
     if (!(explained instanceof Error)) throw new Error('Expected an explained Error.')
-    expect(explained.message).toContain('不允许监听本机地址 127.0.0.1')
+    expect(explained.message).toContain('NEKRO_UID=0')
     expect(explained.cause).toBe(refused)
+    const denied = Object.assign(new Error('listen EACCES: permission denied 0.0.0.0:4960'), { code: 'EACCES' })
+    expect(explainListenPermissionFailure(denied, 4960)).not.toBe(denied)
+    const privileged = Object.assign(new Error('listen EACCES: permission denied 0.0.0.0:80'), { code: 'EACCES' })
+    expect(explainListenPermissionFailure(privileged, 80)).toBe(privileged)
     const taken = Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' })
-    expect(explainLoopbackBindFailure(taken)).toBe(taken)
+    expect(explainListenPermissionFailure(taken, 4960)).toBe(taken)
   })
 
   it('uses the package identity by default and validates an injected release identity', async () => {
