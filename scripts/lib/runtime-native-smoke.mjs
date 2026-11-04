@@ -47,3 +47,32 @@ try {
   if (result.status !== 0)
     throw new Error(`Packaged JSONL native verification failed (${result.status ?? result.signal}).`)
 }
+
+/** Load sharp and the extension builder's esbuild with the packaged executable, so a pruned runtime that lost a target binary fails here. */
+export function verifyNativeMediaAndBuilder(executable, runtimeRoot) {
+  const source = `
+import { createRequire } from 'node:module'
+import path from 'node:path'
+import sharp from 'sharp'
+const image = await sharp({ create: { width: 4, height: 4, channels: 3, background: '#336699' } }).png().toBuffer()
+const metadata = await sharp(image).resize(2, 2).metadata()
+if (metadata.format !== 'png') throw new Error('Packaged sharp roundtrip mismatch')
+// 与扩展构建器解析同一个 esbuild，避免检查到另一个版本。
+const requireFromBuilder = createRequire(path.join(process.cwd(), 'node_modules/@nekro-nxt/extension-runtime/package.json'))
+const esbuild = requireFromBuilder('esbuild')
+const result = await esbuild.transform('const answer: number = 42; export default answer', { loader: 'ts', format: 'esm' })
+if (!result.code.includes('42')) throw new Error('Packaged esbuild transform mismatch')
+await esbuild.stop?.()
+console.log('[runtime-native] sharp ' + sharp.versions.sharp + ' and esbuild ' + esbuild.version + ' loaded for ' + process.platform + '-' + process.arch + '.')
+`
+  const result = spawnSync(executable, ['--input-type=module', '--eval', source], {
+    cwd: runtimeRoot,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    stdio: 'inherit',
+    timeout: 60_000,
+    windowsHide: true,
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0)
+    throw new Error(`Packaged sharp/esbuild verification failed (${result.status ?? result.signal}).`)
+}

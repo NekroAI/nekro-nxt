@@ -4,7 +4,10 @@ import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { verifyNativeSessionPersistence } from '../../../scripts/lib/runtime-native-smoke.mjs'
+import {
+  verifyNativeMediaAndBuilder,
+  verifyNativeSessionPersistence,
+} from '../../../scripts/lib/runtime-native-smoke.mjs'
 import { verifySubprocessRuntime } from '../../../scripts/lib/runtime-subprocess-smoke.mjs'
 import {
   installManagedPluginSmoke,
@@ -38,6 +41,7 @@ const serverEntry = await realpath(serverEntryPath)
 const distIndex = await realpath(distIndexPath)
 await verifySubprocessRuntime(executable, path.join(resources, 'server-runtime'))
 verifyNativeSessionPersistence(executable, path.join(resources, 'server-runtime'))
+verifyNativeMediaAndBuilder(executable, path.join(resources, 'server-runtime'))
 
 const reservePort = () =>
   new Promise((resolve, reject) => {

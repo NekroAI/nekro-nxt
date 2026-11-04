@@ -3,6 +3,7 @@ import { lstat, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { verifySubprocessRuntimeFiles } from '../../../scripts/lib/runtime-subprocess-smoke.mjs'
+import { pruneServerRuntime } from './prune-server-runtime.mjs'
 
 const appRoot = fileURLToPath(new URL('..', import.meta.url))
 const repositoryRoot = path.resolve(appRoot, '../..')
@@ -61,6 +62,13 @@ const virtualStore = path.join(destination, 'node_modules', '.pnpm')
 // legacy deploy 会为 workspace 根包留下一个指回 apps/server 的 hoist 链接。
 // Server 运行时不消费自身包名；保留该越界链接会让打包临时目录失去目标。
 await rm(path.join(virtualStore, 'node_modules', '@nekro-nxt', 'server'), { force: true })
+
+// supportedArchitectures 让工作区装齐三端原生依赖；每个安装包只保留目标平台能加载的部分。
+// 删除后下面的必需文件检查和 afterPack 冒烟会复核目标平台的原生依赖仍然完整。
+const pruned = await pruneServerRuntime(destination, targetPlatform)
+console.log(
+  `[server-runtime] 已移除 ${pruned.removed.length} 项非 ${targetPlatform} 平台文件，共 ${(pruned.bytes / 1048576).toFixed(1)} MB`,
+)
 const requireFile = async (filename) => {
   const entry = await stat(filename).catch(() => undefined)
   if (!entry?.isFile()) throw new Error(`Server runtime 缺少必需文件：${filename}`)
