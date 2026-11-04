@@ -72,11 +72,19 @@ const inferMediaType = (url: string, voiceUrl: string | undefined): string | und
 const parseAttachments = (value: unknown): readonly QQInboundAttachment[] => {
   const attachments: QQInboundAttachment[] = []
   for (const item of records(value)) {
+    // QQ voice arrives as content_type "voice" with `url` pointing at the SILK original
+    // and `voice_wav_url` at a WAV transcode; take the WAV so it is read as audio.
     const voiceUrl = text(item['voice_wav_url'])
-    const url = text(item['url'], voiceUrl)
+    const url = text(voiceUrl, item['url'])
     if (!url) continue
-    const mediaType = text(item['content_type']) ?? inferMediaType(url, voiceUrl)
-    const fileName = text(item['filename'])
+    const rawFileName = text(item['filename'])
+    const declared = text(item['content_type'])
+    const mediaType = voiceUrl
+      ? 'audio/wav'
+      : ((declared?.includes('/') ? declared : undefined) ??
+        inferMediaType(url, undefined) ??
+        (rawFileName === undefined ? undefined : inferMediaType(rawFileName, undefined)))
+    const fileName = voiceUrl ? rawFileName?.replace(/\.(?:amr|silk|slk)$/iu, '.wav') : rawFileName
     attachments.push({
       url,
       ...(fileName === undefined ? {} : { fileName }),

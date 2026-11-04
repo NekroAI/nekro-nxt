@@ -62,6 +62,13 @@ describe('QQ inbound malformed and media boundaries', () => {
           { url: 'https://cdn.test/no-extension', content_type: 'IMAGE/PNG', filename: 'explicit.png' },
           { url: 'https://cdn.test/unknown.bin' },
           { voice_wav_url: 'https://cdn.test/voice', filename: 'voice.wav' },
+          {
+            content_type: 'voice',
+            url: 'https://cdn.test/original-silk',
+            voice_wav_url: 'https://cdn.test/transcoded-wav',
+            filename: 'b8222489.amr',
+          },
+          { url: 'https://cdn.test/photo-without-extension', content_type: 'image', filename: 'photo.jpg' },
           {},
           null,
         ],
@@ -97,6 +104,8 @@ describe('QQ inbound malformed and media boundaries', () => {
       { url: 'https://cdn.test/no-extension', fileName: 'explicit.png', mediaType: 'image/png' },
       { url: 'https://cdn.test/unknown.bin' },
       { url: 'https://cdn.test/voice', fileName: 'voice.wav', mediaType: 'audio/wav' },
+      { url: 'https://cdn.test/transcoded-wav', fileName: 'b8222489.wav', mediaType: 'audio/wav' },
+      { url: 'https://cdn.test/photo-without-extension', fileName: 'photo.jpg', mediaType: 'image/jpeg' },
     ])
   })
 
