@@ -39,3 +39,17 @@
     Pop $0
   FunctionEnd
 !macroend
+
+; 完成页勾选“运行”时，模板用 StdUtils.ExecShellAsUser 同步启动应用：它要等资源管理器
+; 那边的 ShellExecute 返回，未签名的大体积 exe 首次启动会先被扫描，这段时间安装窗口
+; 显示“未响应”。改由 explorer.exe 打开快捷方式：Exec 不等待，应用仍以资源管理器的
+; 普通权限启动，不会继承所有用户安装时的管理员权限。
+!macro customFinishPage
+  Function StartApp
+    Exec '"$WINDIR\explorer.exe" "$launchLink"'
+  FunctionEnd
+
+  !define MUI_FINISHPAGE_RUN
+  !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
+  !insertmacro MUI_PAGE_FINISH
+!macroend
