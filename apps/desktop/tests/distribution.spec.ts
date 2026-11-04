@@ -78,6 +78,28 @@ describe('Desktop product distribution', () => {
     expect(multiUserTemplate).not.toContain('*$2(&w${NSIS_MAX_STRLEN} .s)')
   })
 
+  it('normalizes a manually chosen installation directory before the template check', () => {
+    const require = createRequire(import.meta.url)
+    const electronBuilderRequire = createRequire(require.resolve('electron-builder/package.json'))
+    const appBuilderLibPackagePath = electronBuilderRequire.resolve('app-builder-lib/package.json')
+    const assistedTemplate = readFileSync(
+      path.join(path.dirname(appBuilderLibPackagePath), 'templates/nsis/assistedInstaller.nsh'),
+      'utf8',
+    )
+    // 修正页挂在这个钩子上，必须位于目录页之后、安装页之前。
+    const directoryPage = assistedTemplate.indexOf('!insertmacro MUI_PAGE_DIRECTORY')
+    const hook = assistedTemplate.indexOf('!insertmacro customPageAfterChangeDir')
+    const installPage = assistedTemplate.indexOf('!insertmacro MUI_PAGE_INSTFILES')
+    expect(directoryPage).toBeGreaterThan(-1)
+    expect(hook).toBeGreaterThan(directoryPage)
+    expect(installPage).toBeGreaterThan(hook)
+
+    const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+    const include = readFileSync(path.join(desktopRoot, 'resources/installer.nsh'), 'utf8')
+    expect(include).toContain('!macro customPageAfterChangeDir')
+    expect(include).toContain('${isUpdated}')
+  })
+
   it('ships complete branded build resources for stable and preview', () => {
     const desktopRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
     for (const channel of ['stable', 'preview']) {
@@ -202,9 +224,10 @@ describe('Desktop product distribution', () => {
           throw new TypeError('electron-builder 配置缺少默认导出')
         }
         const config: unknown = configModule.default
-        if (typeof config !== 'object' || config === null || !('win' in config)) {
-          throw new TypeError('electron-builder 配置缺少 win 设置')
+        if (typeof config !== 'object' || config === null || !('win' in config) || !('nsis' in config)) {
+          throw new TypeError('electron-builder 配置缺少 win 或 nsis 设置')
         }
+        expect(config.nsis).toMatchObject({ include: 'resources/installer.nsh' })
         expect(config.win).toMatchObject({
           icon: 'icon.ico',
           signAndEditExecutable: true,

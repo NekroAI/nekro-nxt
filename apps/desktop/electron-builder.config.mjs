@@ -128,6 +128,8 @@ const config = {
     oneClick: false,
     perMachine: false,
     allowToChangeInstallationDirectory: true,
+    // 两个通道共用，修正手动选择目录后补应用子目录的逻辑。
+    include: 'resources/installer.nsh',
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
     shortcutName: distribution.productName,
