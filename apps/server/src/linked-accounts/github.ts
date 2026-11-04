@@ -135,7 +135,7 @@ export const createGithubPlatform = (options: {
     }),
     promptLines: ({ login, usage }) => [
       options.cli.executable() !== undefined
-        ? `命令里的 GitHub 已用账号 ${login} 登录：gh 可以直接用，git 走 https 也会带上这个账号。`
+        ? `命令里的 GitHub 已用账号 ${login} 登录：gh 可以直接用，git 走 https 也会带上这个账号。gh 操作仓库时用 -R 所有者/仓库 写明是哪个仓库；GH_TOKEN 和 GH_CONFIG_DIR 已经设好，不要改。`
         : `命令里的 GitHub 账号是 ${login}，这台设备上没有 gh：需要时用 curl 调 GitHub 的 REST 接口，请求头里带环境变量 GH_TOKEN；git 走 https 会自动带上这个账号。`,
       ...(usage.length === 0
         ? []

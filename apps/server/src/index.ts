@@ -49,6 +49,7 @@ import {
 } from './command-account-env.js'
 import {
   commandConfinementSupport,
+  confinedGitEnvironment,
   createConfinedSandboxProvider,
   dataRootCommandConfinement,
   type CommandConfinement,
@@ -5402,12 +5403,17 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
   }
 
-  /** The variables that give one agent's commands its credentials, and the add-ons' programs on `PATH`. */
+  /**
+   * The variables that give one agent's commands its credentials, the add-ons' programs on `PATH`, and, below full
+   * access, git settings that do not need the hidden home.
+   */
   #commandEnvironmentOf(revision: AgentRevisionRecord): Record<string, string> {
-    const environment =
-      this.#commandAccounts === undefined
+    const environment = {
+      ...(this.#commandAccounts === undefined
         ? {}
-        : commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+        : commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)),
+      ...(revision.capabilities.unrestrictedFileAccess ? {} : confinedGitEnvironment()),
+    }
     const searchPath = programSearchPath(this.#programs(), process.env['PATH'])
     return searchPath === undefined ? environment : { ...environment, PATH: searchPath }
   }

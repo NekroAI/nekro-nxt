@@ -1,9 +1,9 @@
 import { canonicalPath, type ConfinedArgv, type SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import LocalSandboxProvider from '@deepseek-ai/dsh-sandbox-local'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, realpathSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 
 /**
@@ -260,6 +260,25 @@ const HOME_TOOLCHAINS = [
   'Library/pnpm',
   'Library/Caches/ms-playwright',
 ]
+
+/** Git's user-level settings for confined commands: nothing but turning off the ignore and attributes files in home. */
+const CONFINED_GIT_CONFIG = '[core]\n\texcludesFile = /dev/null\n\tattributesFile = /dev/null\n'
+
+/**
+ * Variables that keep git working with home hidden. Git stops with "unable to access ~/.gitconfig" when it cannot read
+ * its user settings, so every git command in a repository failed, and so did `gh` where it asks git for the
+ * repository. Commands get a settings file of their own instead, written again if the system clears temporary files.
+ */
+export const confinedGitEnvironment = (
+  directory: string = path.join(tmpdir(), 'nekro-nxt-git'),
+): Readonly<Record<string, string>> => {
+  const file = path.join(directory, 'config')
+  if (!existsSync(file)) {
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(file, CONFINED_GIT_CONFIG)
+  }
+  return { GIT_CONFIG_GLOBAL: file }
+}
 
 /**
  * The host's command confinement: the data root, the workspaces root and the user's home are hidden; toolchains,

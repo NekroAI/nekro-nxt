@@ -113,7 +113,7 @@ describe('command credential environment', () => {
 
   it('tells the agent which account it acts as, the usage hint as guidance, and each variable it has', () => {
     expect(commandCredentialPrompt(agent, [grant], sources([], [githubAccount()]))).toBe(
-      '命令里的 GitHub 已用账号 octo-fixture 登录：gh 可以直接用，git 走 https 也会带上这个账号。',
+      '命令里的 GitHub 已用账号 octo-fixture 登录：gh 可以直接用，git 走 https 也会带上这个账号。gh 操作仓库时用 -R 所有者/仓库 写明是哪个仓库；GH_TOKEN 和 GH_CONFIG_DIR 已经设好，不要改。',
     )
     const hinted = commandCredentialPrompt(
       agent,
@@ -124,7 +124,7 @@ describe('command credential environment', () => {
     expect(hinted).toContain('先和管理员确认')
     const both = commandCredentialPrompt(agent, [grant], sources([weather], [githubAccount()]))
     expect(both?.split('\n')).toEqual([
-      '命令里的 GitHub 已用账号 octo-fixture 登录：gh 可以直接用，git 走 https 也会带上这个账号。',
+      '命令里的 GitHub 已用账号 octo-fixture 登录：gh 可以直接用，git 走 https 也会带上这个账号。gh 操作仓库时用 -R 所有者/仓库 写明是哪个仓库；GH_TOKEN 和 GH_CONFIG_DIR 已经设好，不要改。',
       '命令的环境变量 WEATHER_KEY 是凭据「天气服务」（示例天气接口），用 $WEATHER_KEY 引用，不要把它的值打印出来。',
     ])
     expect(both).not.toContain('weather-fixture-key')

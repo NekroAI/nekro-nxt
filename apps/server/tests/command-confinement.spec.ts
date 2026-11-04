@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   bwrapArgs,
   commandConfinementSupport,
+  confinedGitEnvironment,
   extendConfinedArgv,
   hostCommandConfinement,
   installRootOf,
@@ -178,6 +179,42 @@ describe('command confinement', () => {
         `${process.execPath} -e "require('net').connect(9,'127.0.0.1').on('error',e=>console.log(e.code)).on('connect',()=>console.log('open'))"`,
       ),
     ).toBe('EPERM')
+  })
+
+  it.runIf(process.platform === 'darwin')('keeps git working in a repository while home stays hidden', () => {
+    const { root, home, workspace, confinement } = fixture()
+    mkdirSync(path.join(home, '.config', 'git'), { recursive: true })
+    writeFileSync(path.join(home, '.gitconfig'), '[user]\n\tname = Fixture Owner\n')
+    writeFileSync(path.join(home, '.config', 'git', 'ignore'), '*.log\n')
+    spawnSync('git', ['init', '-q', workspace])
+    spawnSync('git', ['-C', workspace, 'remote', 'add', 'origin', 'https://github.com/fixture/repo.git'])
+    const policy = { mode: 'workspace-write' as const, workspaceRoot: workspace }
+    const profile =
+      '(version 1) (allow default) (deny file-write*) (allow file-write* (literal "/dev/null") (subpath "' +
+      workspace +
+      '"))'
+    const argv = extendConfinedArgv(
+      ['/usr/bin/sandbox-exec', '-p', profile, '--', '/bin/bash', '-c', 'true'],
+      policy,
+      confinement,
+      { commands: true, readScope: true, networkControl: true },
+    )
+    const run = (script: string, env: Readonly<Record<string, string>>) =>
+      spawnSync(argv[0]!, [...argv.slice(1, -1), script], {
+        cwd: workspace,
+        encoding: 'utf8',
+        env: { ...process.env, HOME: home, ...env },
+      })
+    const git = confinedGitEnvironment(path.join(root, 'git'))
+
+    expect(run('git remote', {}).stderr).toContain('.gitconfig')
+    const remote = run('git remote', git)
+    expect(remote.status).toBe(0)
+    expect(remote.stdout.trim()).toBe('origin')
+    const status = run('touch build.log && git status --porcelain', git)
+    expect(status.stdout.trim()).toBe('?? build.log')
+    expect(status.stderr).toBe('')
+    expect(run('git config user.name', git).stdout).toBe('')
   })
 })
 
