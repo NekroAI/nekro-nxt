@@ -51,6 +51,7 @@ const TOOL_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   grep: '搜索文件',
   glob: '查找文件',
   asset_save_to_workspace: '存入工作区',
+  audio_transcribe: '语音转文字',
 }
 
 export type RuntimeSessionStatus = 'idle' | 'running' | 'missing'

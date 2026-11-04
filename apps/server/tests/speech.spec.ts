@@ -630,6 +630,20 @@ describe('speech service', () => {
     )
   })
 
+  it('resamples a WAV of another rate for the local engine without a decoder', async () => {
+    const directory = await temporary()
+    // A 24 kHz mono WAV, as QQ hands out voice messages.
+    const bytes = encodeSpeechWav(toneWithGap(1.5, 0.5))
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    view.setUint32(24, 24000, true)
+    view.setUint32(28, 48000, true)
+    const input = await wavFile(directory, bytes)
+    const { speech, local } = service({ active: 'sense-voice-small', cacheDirectory: path.join(directory, 'cache') })
+    expect(await speech.transcribe({ path: input })).toMatchObject({ text: '本地结果', durationSeconds: 1 })
+    expect(path.basename(local.calls[0]!.wav)).toBe('speech.wav')
+    expect(existsSync(path.dirname(local.calls[0]!.wav))).toBe(false)
+  })
+
   it('decodes other audio with the decoder, and needs one for anything but WAV', async () => {
     const directory = await temporary()
     const input = path.join(directory, 'voice.silk')

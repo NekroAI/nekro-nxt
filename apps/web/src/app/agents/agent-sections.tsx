@@ -764,7 +764,7 @@ export function CapabilitiesSection({
         </PropertyRow>
         <PropertyRow
           label="语音消息转文字"
-          description="智能体收到语音时，同时看到转写的文字。"
+          description="智能体收到语音时同时看到转写的文字，也能自己转写频道里以前的语音。"
           badge={caps.voiceTranscription && !speechReady ? <Chip tone="warn">待配置</Chip> : undefined}
         >
           <Switch

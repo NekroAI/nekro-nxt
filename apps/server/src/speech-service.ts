@@ -114,6 +114,7 @@ export class SpeechService {
       if (isLocalModel(current.provider.id)) {
         let wav = audio.path
         if (wav === undefined) {
+          await mkdir(work, { recursive: true })
           wav = path.join(work, 'speech.wav')
           await writeFile(wav, encodeSpeechWav(audio.samples))
         }

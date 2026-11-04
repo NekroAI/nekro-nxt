@@ -2693,7 +2693,9 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         const toggle = page.getByRole('switch', { name: '语音消息转文字' })
         await playwrightExpect(toggle).toBeDisabled()
-        await playwrightExpect(page.getByText('智能体收到语音时，同时看到转写的文字。')).toBeVisible()
+        await playwrightExpect(
+          page.getByText('智能体收到语音时同时看到转写的文字，也能自己转写频道里以前的语音。'),
+        ).toBeVisible()
         await playwrightExpect(page.getByText('安装或配置后即可开启')).toBeVisible()
         await page.getByRole('button', { name: '去安装' }).first().click()
         await playwrightExpect(page).toHaveURL(/\/settings\/addons\/speech$/u)

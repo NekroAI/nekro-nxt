@@ -1278,6 +1278,7 @@ export class NekroRuntime {
             return channel?.kind === 'internal' && channel.connectionId === internalConnectionId
           },
         },
+        speech: speechService,
         codeRunNode: () => {
           const active = addons.active('node')
           if (active === undefined) return undefined

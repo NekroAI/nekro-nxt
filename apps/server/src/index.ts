@@ -23,6 +23,8 @@ import {
 } from './dsh-host-profile.js'
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { assetSaveToWorkspaceTool } from './asset-save-tool.js'
+import { audioTranscribeTool } from './audio-transcribe-tool.js'
+import type { SpeechService } from './speech-service.js'
 import { channelImageSubmission, trackToolCallSessions } from './dsh-plugin-images.js'
 import { mountCredentialRedaction } from './credential-redaction.js'
 import { mountSandboxHints } from './command-sandbox-hints.js'
@@ -536,6 +538,8 @@ export interface DshHostRuntimeOptions {
    * separate executable, `undefined` means none is available and those agents keep ordinary tool calls.
    */
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
+  /** Transcription for the agent's `audio_transcribe` tool; absent where speech recognition is not wired. */
+  readonly speech?: Pick<SpeechService, 'transcribeOnce'>
   /** Where commands get the credentials open to an agent and the linked accounts it is granted. */
   readonly commandAccounts?: CommandCredentialSources
   /** Programs of the add-ons' current providers, added to every agent's command `PATH` (附加功能 F4). */
@@ -3188,6 +3192,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #resolveAdapterDisplayName: NonNullable<DshHostRuntimeOptions['resolveAdapterDisplayName']>
   readonly #developmentWorkspaceRoot: string | undefined
   readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
+  readonly #speech: DshHostRuntimeOptions['speech']
   readonly #commandAccounts: CommandCredentialSources | undefined
   readonly #codeRunFallbackDirectory: string
   readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
@@ -3267,6 +3272,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#resolveAdapterDisplayName = options.resolveAdapterDisplayName ?? (() => undefined)
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#codeRunNode = options.codeRunNode
+    this.#speech = options.speech
     this.#commandAccounts = options.commandAccounts
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
     this.#hostCommandConfinement = dataRootCommandConfinement(
@@ -4339,6 +4345,11 @@ export class DshHostRuntime implements AgentSessionDriver {
       }
       if (this.#assets.revokeUnusedAgentAsset !== undefined) {
         agentContext.tools.register(assetDeleteTool(input.channelId, this.#assets))
+      }
+      if (this.#speech !== undefined && revision.capabilities.voiceTranscription) {
+        agentContext.tools.register(
+          audioTranscribeTool(input.channelId, this.#assets, this.#assetService, this.#speech),
+        )
       }
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
