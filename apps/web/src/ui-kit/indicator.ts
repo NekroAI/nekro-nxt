@@ -31,12 +31,14 @@ export function useIndicator(container: RefObject<HTMLElement | null>, selector:
     if (!root) return
     const measure = () => {
       const target = root.querySelector<HTMLElement>(selector)
-      if (!target) {
+      const rect = target?.getBoundingClientRect()
+      // A list that is not displayed (a collapsed pane or a closed drawer) measures as zero; wait until it shows, so
+      // the indicator appears in place instead of flying in from the corner.
+      if (!rect || (rect.width === 0 && rect.height === 0)) {
         setGeometry((current) => (current.visible ? { ...current, visible: false } : current))
-        return
+        return false
       }
       const box = root.getBoundingClientRect()
-      const rect = target.getBoundingClientRect()
       const next = {
         visible: true,
         x: rect.left - box.left + root.scrollLeft - root.clientLeft,
@@ -53,17 +55,23 @@ export function useIndicator(container: RefObject<HTMLElement | null>, selector:
           ? current
           : next,
       )
+      return true
     }
-    measure()
-    if (!ready)
+    const settle = () => {
+      if (ready || frame.current) return
       frame.current = requestAnimationFrame(() => (frame.current = requestAnimationFrame(() => setReady(true))))
-    const observer = new ResizeObserver(measure)
+    }
+    if (measure()) settle()
+    const observer = new ResizeObserver(() => {
+      if (measure()) settle()
+    })
     observer.observe(root)
     const target = root.querySelector<HTMLElement>(selector)
     if (target) observer.observe(target)
     return () => {
       observer.disconnect()
       cancelAnimationFrame(frame.current)
+      frame.current = 0
     }
   }, [container, selector, key, ready])
 

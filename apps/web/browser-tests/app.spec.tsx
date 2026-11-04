@@ -1387,6 +1387,78 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('opens the community, agent and channel lists as a drawer when the window is too narrow for them', async () => {
+    await withProductPage(
+      '/community',
+      async (page) => {
+        const menu = page.getByRole('button', { name: '社区菜单' })
+        await playwrightExpect(menu).toBeHidden()
+        await playwrightExpect(page.locator('[data-layout="workbench"]')).toHaveAttribute('data-list-drawer', 'closed')
+        await page.setViewportSize({ width: 900, height: 900 })
+        const list = page.getByRole('complementary', { name: '社区' })
+        await playwrightExpect(list).toBeHidden()
+        await menu.click()
+        await playwrightExpect(menu).toHaveAttribute('aria-expanded', 'true')
+        await playwrightExpect(list.getByRole('link', { name: /发现/u })).toBeFocused()
+        await page.screenshot({
+          path: '.local/browser-test-results/community-list-drawer-900.png',
+          animations: 'disabled',
+        })
+        await list.getByRole('link', { name: /社区账号/u }).click()
+        await playwrightExpect(page).toHaveURL(/\/community\/account$/u)
+        await playwrightExpect(list).toBeHidden()
+
+        await page.setViewportSize({ width: 375, height: 812 })
+        await menu.click()
+        await playwrightExpect(list.getByRole('link', { name: /我的发布/u })).toBeVisible()
+        await page.screenshot({
+          path: '.local/browser-test-results/community-list-drawer-375.png',
+          animations: 'disabled',
+        })
+        await page.keyboard.press('Escape')
+        await playwrightExpect(list).toBeHidden()
+        await playwrightExpect(menu).toBeFocused()
+
+        await menu.click()
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await playwrightExpect(list).toBeVisible()
+        await playwrightExpect(menu).toBeHidden()
+        await playwrightExpect(page.locator('[data-layout="workbench"]')).toHaveAttribute('data-list-drawer', 'closed')
+        await page.setViewportSize({ width: 900, height: 900 })
+        await playwrightExpect(list).toBeHidden()
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/community/extensions**', (request) =>
+          request.fulfill({ json: { items: [], nextCursor: null, ...freshRead } }),
+        )
+      },
+    )
+
+    await withProductPage('/agents', async (page) => {
+      await page.setViewportSize({ width: 900, height: 900 })
+      const list = page.getByRole('complementary', { name: '智能体' })
+      await playwrightExpect(list).toBeHidden()
+      await page.getByRole('button', { name: '全部智能体' }).click()
+      await playwrightExpect(list.getByRole('button', { name: '新建智能体' })).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/agent-list-drawer-900.png', animations: 'disabled' })
+      await list.getByRole('button', { name: '新建智能体' }).click()
+      await playwrightExpect(page).toHaveURL(/\/agents\/new$/u)
+      await playwrightExpect(list).toBeHidden()
+    })
+
+    await withProductPage('/channels', async (page) => {
+      await page.setViewportSize({ width: 900, height: 900 })
+      const list = page.getByRole('complementary', { name: '频道' })
+      await playwrightExpect(list).toBeHidden()
+      await page.getByRole('button', { name: '全部频道' }).click()
+      await playwrightExpect(list).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/channel-list-drawer-900.png', animations: 'disabled' })
+      await page.mouse.click(880, 500)
+      await playwrightExpect(list).toBeHidden()
+    })
+  })
+
   test('browses community extensions, warns about unreviewed releases and installs through the import dialog', async () => {
     const summary = {
       id: 'ext_communityweather',

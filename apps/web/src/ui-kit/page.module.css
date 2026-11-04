@@ -92,7 +92,8 @@
   flex-direction: column;
 }
 
-.narrowBack {
+.narrowBack,
+.listScrim {
   display: none;
 }
 
@@ -333,15 +334,29 @@
 }
 
 /* Reduced motion: the panes jump straight to their place, without a single in-between frame. */
-html[data-nxt-motion='off'] :is(.splitGrid, .masterInner, .master, .detailColumn, .detailBody, .splitBack) {
+html[data-nxt-motion='off']
+  :is(.splitGrid, .masterInner, .master, .detailColumn, .detailBody, .splitBack, .list, .listScrim) {
   transition: none !important;
   animation: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :is(.splitGrid, .masterInner, .master, .detailColumn, .detailBody, .splitBack) {
+  :is(.splitGrid, .masterInner, .master, .detailColumn, .detailBody, .splitBack, .list, .listScrim) {
     transition: none !important;
     animation: none !important;
+  }
+}
+
+@keyframes listScrimIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes listDrawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--s-5) * -1));
   }
 }
 
@@ -481,10 +496,37 @@ html[data-nxt-motion='off'] :is(.splitGrid, .masterInner, .master, .detailColumn
   }
 
   .narrowBack {
-    display: block;
+    display: flex;
     flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
     padding: var(--s-2) var(--s-4);
     border-bottom: 1px solid var(--line);
+  }
+
+  /* Spaces without a narrow replacement open their list as a drawer over the main area (the shell positions it). */
+  .workbench[data-list-drawer='open'] > .list {
+    position: absolute;
+    z-index: 41;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    width: min(320px, 86vw);
+    border-right: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: var(--sh-3);
+    animation: listDrawerIn 280ms var(--ease) both;
+  }
+
+  .listScrim {
+    display: block;
+    position: absolute;
+    z-index: 40;
+    inset: 0;
+    background: var(--scrim);
+    animation: listScrimIn 200ms ease both;
   }
 
   .reader,

@@ -30,6 +30,7 @@ export default function AgentsSpace() {
 
   return (
     <WorkbenchPage
+      listLabel="全部智能体"
       list={
         <ListPane
           title="智能体"

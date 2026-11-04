@@ -137,6 +137,7 @@ export default function CommunitySpace() {
   return (
     <WorkbenchPage
       list={list}
+      listLabel="社区菜单"
       detail={
         section.kind === 'personas' && section.personaId && wide ? (
           <PersonaDetail

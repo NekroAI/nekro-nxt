@@ -1,4 +1,4 @@
-import { ChevronLeft, X } from 'lucide-react'
+import { ChevronLeft, PanelLeftOpen, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { Button, IconButton } from './primitives.js'
 import styles from './page.module.css'
@@ -75,37 +75,95 @@ export function BoardPage({ children }: { readonly children: ReactNode }) {
 
 /**
  * Object workbenches: an optional collection list, the main area filling the remaining width, and an optional detail
- * pane. Below 1100px the list collapses so the main area keeps its room.
+ * pane. Below 1100px the list collapses so the main area keeps its room; a space whose list has no narrow replacement
+ * of its own passes `listLabel`, and the main area then shows a button that opens the list as a drawer. The drawer
+ * closes on Escape, on the scrim and whenever the page moves to another address.
  */
 export function WorkbenchPage({
   list,
+  listLabel,
   detail,
   narrowPane,
   back,
   children,
 }: {
   readonly list?: ReactNode
+  /** Names the list on narrow screens, where it opens as a drawer from a button above the main area. */
+  readonly listLabel?: string
   readonly detail?: ReactNode
   /** Explicit navigation for spaces that replace their list with an object on narrow screens. */
   readonly narrowPane?: 'list' | 'main' | 'detail'
   readonly back?: { readonly label: string; readonly onBack: () => void }
   readonly children: ReactNode
 }) {
+  const drawer = list && listLabel && !narrowPane ? listLabel : undefined
+  const [openAt, setOpenAt] = useState<string>()
+  const root = useRef<HTMLDivElement>(null)
+  const toggle = useRef<HTMLButtonElement>(null)
+  const open = openAt !== undefined
+  // Spaces re-render when the route changes; compare the address instead of reading the router, which ui-kit avoids.
+  const here = typeof window === 'undefined' ? '' : window.location.pathname + window.location.search
+  if (open && openAt !== here) setOpenAt(undefined)
+
+  const close = (refocus: boolean) => {
+    setOpenAt(undefined)
+    if (refocus) toggle.current?.focus()
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const pane = root.current?.querySelector<HTMLElement>(':scope > aside')
+    const target =
+      pane?.querySelector<HTMLElement>('[aria-current="page"], [aria-selected="true"]') ??
+      pane?.querySelector<HTMLElement>('a[href], button:not([disabled]), input, [tabindex="0"]')
+    target?.focus({ preventScroll: false })
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      close(true)
+    }
+    const wide = window.matchMedia?.('(min-width: 1100px)')
+    const onWide = () => wide?.matches && close(false)
+    document.addEventListener('keydown', onKey)
+    wide?.addEventListener('change', onWide)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      wide?.removeEventListener('change', onWide)
+    }
+  }, [open])
+
   return (
     <div
+      ref={root}
       className={styles.workbench}
       data-layout="workbench"
       data-list={list ? '' : undefined}
       data-detail={detail ? '' : undefined}
       data-narrow-pane={narrowPane}
+      data-list-drawer={drawer ? (open ? 'open' : 'closed') : undefined}
     >
       {list}
+      {drawer && open ? <div className={styles.listScrim} aria-hidden="true" onClick={() => close(true)} /> : null}
       <div className={styles.main}>
-        {back ? (
+        {back || drawer ? (
           <div className={styles.narrowBack}>
-            <Button variant="ghost" size="small" icon={<ChevronLeft size={15} />} onClick={back.onBack}>
-              {back.label}
-            </Button>
+            {back ? (
+              <Button variant="ghost" size="small" icon={<ChevronLeft size={15} />} onClick={back.onBack}>
+                {back.label}
+              </Button>
+            ) : null}
+            {drawer ? (
+              <Button
+                ref={toggle}
+                variant="ghost"
+                size="small"
+                icon={<PanelLeftOpen size={15} />}
+                aria-expanded={open}
+                onClick={() => (open ? close(false) : setOpenAt(here))}
+              >
+                {drawer}
+              </Button>
+            ) : null}
           </div>
         ) : null}
         {children}

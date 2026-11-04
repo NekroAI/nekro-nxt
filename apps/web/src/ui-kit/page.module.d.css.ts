@@ -11,6 +11,7 @@ declare const styles: {
   readonly listActions: string
   readonly listBody: string
   readonly listHead: string
+  readonly listScrim: string
   readonly listTitle: string
   readonly listToolbar: string
   readonly main: string

@@ -80,6 +80,7 @@ export default function ChannelsSpace() {
 
   return (
     <WorkbenchPage
+      listLabel="全部频道"
       list={<ChannelList selectedId={channel?.id} selectedConversationId={conversationId} />}
       detail={
         channel && inspectorOpen && conversationId === undefined ? (
