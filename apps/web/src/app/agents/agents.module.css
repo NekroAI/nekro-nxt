@@ -267,36 +267,14 @@
 }
 
 /* —— 新建 —— */
-.create {
-  display: grid;
-  gap: var(--s-6);
-}
-
-.createTitle {
-  margin: 0;
-  font: var(--t-page);
-  letter-spacing: -0.01em;
-}
-
-.nameInput {
-  width: min(360px, 40vw);
-}
-
 .createProvider {
   display: grid;
   gap: var(--s-3);
 }
 
-.createActions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--s-2);
-}
-
 @media (max-width: 1099px) {
   .modelSelect,
-  .credential,
-  .nameInput {
+  .credential {
     width: min(280px, 50vw);
   }
 }

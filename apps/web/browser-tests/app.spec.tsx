@@ -935,7 +935,7 @@ test.describe('NekroNxt browser projections', () => {
       '/agents/new',
       async (page) => {
         await playwrightExpect(page.getByRole('dialog')).toHaveCount(0)
-        await playwrightExpect(page.getByRole('heading', { name: '新建智能体' })).toBeVisible()
+        await playwrightExpect(page.getByRole('region', { name: '新建智能体' })).toBeVisible()
         await page.getByLabel('名称', { exact: true }).fill('临时智能体')
         await playwrightExpect(page.getByText('当前没有可用模型。请先保存一个供应商。', { exact: true })).toBeVisible()
         await playwrightExpect(page.getByRole('button', { name: '保存供应商' })).toBeVisible()
@@ -968,6 +968,55 @@ test.describe('NekroNxt browser projections', () => {
             },
           }),
         )
+      },
+    )
+  })
+
+  test('creates an agent from the same sections as its profile, sending them in one request', async () => {
+    let createRequestBody: unknown
+    await withProductPage(
+      '/agents/new',
+      async (page) => {
+        // The same section bar as the profile, without the parts that need the agent to exist.
+        const sections = page.getByRole('navigation', { name: '分节' })
+        for (const label of ['模型', '能力', '设定']) {
+          await playwrightExpect(sections.getByRole('button', { name: label })).toBeVisible()
+        }
+        for (const label of ['频道', '扩展', '定时任务']) {
+          await playwrightExpect(sections.getByRole('button', { name: label })).toHaveCount(0)
+        }
+        const create = page.getByRole('button', { name: '创建并开始对话' })
+        await playwrightExpect(create).toBeDisabled()
+        await page.getByRole('textbox', { name: '名称' }).fill('小奈')
+        await page.getByRole('textbox', { name: '名称' }).press('Enter')
+        await playwrightExpect(page.getByRole('heading', { name: '小奈' })).toBeVisible()
+        await page.getByRole('textbox', { name: '设定' }).fill('负责整理群里的问题')
+        await page.getByRole('textbox', { name: '别名' }).fill('奈奈、小奈同学')
+        await page.screenshot({ path: '.local/browser-test-results/agent-create.png', fullPage: true })
+        await create.click()
+        await playwrightExpect
+          .poll(() => createRequestBody)
+          .toMatchObject({
+            displayName: '小奈',
+            persona: '负责整理群里的问题',
+            model: { provider: 'openai', model: 'gpt-5' },
+            aliases: ['奈奈', '小奈同学'],
+            compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' } },
+            subConversationModels: { candidates: [] },
+            fallbackModels: [],
+            capabilities: { subagents: true, scheduledTasks: true },
+          })
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/agents', async (request) => {
+          if (request.request().method() !== 'POST') return request.fallback()
+          createRequestBody = request.request().postDataJSON()
+          await request.fulfill({
+            status: 201,
+            json: { agentId: browserAgentId, channelId: browserChannelId, connectionId: 'con_created' },
+          })
+        })
       },
     )
   })

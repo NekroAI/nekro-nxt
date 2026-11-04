@@ -60,7 +60,9 @@ const SECTIONS = [
   { id: 'profile-persona', label: '设定' },
 ] as const
 
-const modelLabel = (model: ModelSummary) => `${model.providerName} · ${model.name}`
+export const modelLabel = (model: ModelSummary) => `${model.providerName} · ${model.name}`
+
+export type ProfileSection = { readonly id: string; readonly label: string }
 
 /**
  * Unsaved edits of one agent. The draft follows the saved configuration while it is clean, and keeps the user's edits
@@ -92,12 +94,12 @@ const scrollParent = (element: HTMLElement): HTMLElement | null => {
  * near the top of the scroll area. At the top that is always the first section, at the bottom the last one, so a
  * tall window never skips ahead to a section that merely fits on screen.
  */
-function useActiveSection(): readonly [string, (id: string) => void] {
-  const [active, setActive] = useState<string>(SECTIONS[0].id)
+export function useActiveSection(sections: readonly ProfileSection[]): readonly [string, (id: string) => void] {
+  const [active, setActive] = useState<string>(sections[0]?.id ?? '')
   // While a jump scrolls, the bar stays on the target instead of hopping through every section on the way.
   const pinned = useRef<{ id: string; until: number } | undefined>(undefined)
   useEffect(() => {
-    const first = document.getElementById(SECTIONS[0].id)
+    const first = sections[0] ? document.getElementById(sections[0].id) : null
     const scroller = first ? scrollParent(first) : null
     if (!scroller) return
     let frame = 0
@@ -111,7 +113,7 @@ function useActiveSection(): readonly [string, (id: string) => void] {
         }
         pinned.current = undefined
       }
-      const elements = SECTIONS.flatMap((section) => {
+      const elements = sections.flatMap((section) => {
         const element = document.getElementById(section.id)
         return element ? [element] : []
       })
@@ -160,7 +162,7 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
   const [deleteBuiltIn, setDeleteBuiltIn] = useState(true)
   const [deleteWorkspace, setDeleteWorkspace] = useState(false)
   const [bindIntent, setBindIntent] = useState<BindIntent | null>(null)
-  const [active, pinSection] = useActiveSection()
+  const [active, pinSection] = useActiveSection(SECTIONS)
   const { hash } = useLocation()
   // A link to one section of the profile (e.g. `#profile-capabilities` from 设置 → 关联账号) opens there.
   useEffect(() => {

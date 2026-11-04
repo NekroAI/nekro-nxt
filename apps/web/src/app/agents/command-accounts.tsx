@@ -1,7 +1,7 @@
 import type { CommandAccountUsage } from '@nekro-nxt/contracts'
 import { Fragment } from 'react'
 import { ACCOUNT_USAGES, accountScopesText, useLinkedAccounts } from '../../linked-accounts/linked-accounts-data.js'
-import { useProductStore, type AgentSummary } from '../../product-runtime.js'
+import { useProductStore } from '../../product-runtime.js'
 import { Button, Chip, PropertyRow, Select, ToggleChip } from '../../ui-kit/index.js'
 import { useGo } from '../model/nav.js'
 import type { AgentDraft, DraftUpdate } from './agent-draft.js'
@@ -16,11 +16,11 @@ type Grant = AgentDraft['capabilities']['commandAccounts'][number]
  * are the limit (命令账号授权 A1、A2、A7).
  */
 export function CommandAccountRows({
-  agent,
+  agentName,
   caps,
   update,
 }: {
-  readonly agent: AgentSummary
+  readonly agentName: string
   readonly caps: AgentDraft['capabilities']
   readonly update: DraftUpdate
 }) {
@@ -93,7 +93,7 @@ export function CommandAccountRows({
               <PropertyRow
                 depth={2}
                 label="使用提示"
-                description={`告诉${agent.name}这个账号用来做什么，只写进提示词，不限制它能做的事`}
+                description={`告诉${agentName}这个账号用来做什么，只写进提示词，不限制它能做的事`}
                 layout="stacked"
               >
                 <div className={styles.usageBar} role="group" aria-label={`${platform.name} 使用提示`}>

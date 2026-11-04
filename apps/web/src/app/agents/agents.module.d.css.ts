@@ -2,15 +2,11 @@ declare const styles: {
   readonly cellStack: string
   readonly cellSub: string
   readonly cellTitle: string
-  readonly create: string
-  readonly createActions: string
   readonly createProvider: string
-  readonly createTitle: string
   readonly credential: string
   readonly extensionLabel: string
   readonly listEmpty: string
   readonly modelSelect: string
-  readonly nameInput: string
   readonly note: string
   readonly noteWarn: string
   readonly oneLine: string

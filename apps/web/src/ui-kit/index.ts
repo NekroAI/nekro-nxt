@@ -82,6 +82,6 @@ export {
   DangerZone,
   type StatItem,
 } from './detail.js'
-export { DataTable, SearchField, Toolbar, SaveBar, type Column } from './data.js'
+export { CreateBar, DataTable, SearchField, Toolbar, SaveBar, type Column } from './data.js'
 export { RiskLadder, type RiskStep } from './risk-ladder.js'
 export { StepScale, type StepScaleMaterial, type StepScaleStop, type StepScaleTone } from './step-scale.js'

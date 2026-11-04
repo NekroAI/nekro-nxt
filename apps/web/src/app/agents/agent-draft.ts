@@ -1,4 +1,4 @@
-import { promptDocumentPlainText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
+import { promptDocumentFromText, promptDocumentPlainText, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import type { AgentAccessLevel } from '../../agent-access-level.js'
 import type {
   AgentCompactionPolicy,
@@ -8,7 +8,8 @@ import type {
   ImageUnderstandingPolicy,
   ModelSummary,
 } from '../../product-runtime.js'
-import { agentModelKey } from './agent-create-draft.js'
+import { FOLLOW_COMPACTION, NO_SUB_CONVERSATION_MODELS, defaultImageUnderstandingPolicy } from '../../product-model.js'
+import { agentModelKey, createAgentDraft } from './agent-create-draft.js'
 
 export type Capabilities = AgentSummary['capabilities']
 export type AccessCapability = 'fileTools' | 'developmentShell' | 'unrestrictedFileAccess'
@@ -78,6 +79,25 @@ export const draftOf = (agent: AgentSummary): AgentDraft => ({
   aliases: agent.aliases.join('、'),
   capabilities: agent.capabilities,
 })
+
+/** The draft of an agent being created: the first model, follow-defaults everywhere and the starting capabilities. */
+export const newAgentDraft = (models: readonly ModelSummary[], webSearchAvailable: boolean): AgentDraft => {
+  const start = createAgentDraft(models, webSearchAvailable)
+  return {
+    name: '',
+    persona: promptDocumentFromText(''),
+    personaText: '',
+    modelKey: start.selectedModelKey,
+    effort: '',
+    visionKey: '',
+    imageRestore: { ...defaultImageUnderstandingPolicy().history.restoreAfterCompaction },
+    compaction: FOLLOW_COMPACTION,
+    subConversationModels: NO_SUB_CONVERSATION_MODELS,
+    fallbackModels: [],
+    aliases: '',
+    capabilities: start.capabilities,
+  }
+}
 
 /** The candidates as they are saved: names and guidance trimmed, the default following its candidate. */
 export const savedSubConversationModels = (policy: AgentSubConversationModels): AgentSubConversationModels => {

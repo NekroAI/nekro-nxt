@@ -177,6 +177,46 @@ export function Toolbar({ children, end }: { readonly children?: ReactNode; read
 /**
  * Collects unsaved edits of one object into a single save (Decision 2026-10-06 §5). Renders nothing while clean.
  */
+/**
+ * The sticky bar of a page that creates something: what it creates (or why it cannot yet), and the create button.
+ * Shares the save bar's place and look, so creating and editing end the same way.
+ */
+export function CreateBar({
+  title,
+  detail,
+  error,
+  busy = false,
+  disabled = false,
+  createLabel,
+  onCancel,
+  onCreate,
+}: {
+  readonly title: string
+  readonly detail?: string | undefined
+  readonly error?: string | undefined
+  readonly busy?: boolean
+  readonly disabled?: boolean
+  readonly createLabel: string
+  readonly onCancel: () => void
+  readonly onCreate: () => void
+}) {
+  const note = error ?? detail
+  return (
+    <div className={styles.saveBar} role="region" aria-label={title}>
+      <div className={styles.saveText}>
+        <b>{title}</b>
+        {note ? <span className={error ? styles.saveError : styles.saveDetail}>{note}</span> : null}
+      </div>
+      <Button variant="ghost" disabled={busy} onClick={onCancel}>
+        取消
+      </Button>
+      <Button variant="primary" busy={busy} disabled={disabled} onClick={onCreate}>
+        {createLabel}
+      </Button>
+    </div>
+  )
+}
+
 export function SaveBar({
   changes,
   busy = false,

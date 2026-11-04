@@ -666,6 +666,11 @@ export interface ProductState {
     readonly model: ModelSummary
     readonly capabilities: AgentSummary['capabilities']
     readonly imagePolicy?: ImageUnderstandingPolicy
+    readonly reasoningEffort?: string
+    readonly compaction?: AgentCompactionPolicy
+    readonly subConversationModels?: AgentSubConversationModels
+    readonly fallbackModels?: readonly AgentFallbackModel[]
+    readonly aliases?: readonly string[]
   }): Promise<{ readonly agentId: string; readonly channelId: string }>
   reviseAgent(input: {
     readonly agentId: string

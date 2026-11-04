@@ -4,6 +4,7 @@ import { HostApiContracts, type PromptDocumentV1 } from '@nekro-nxt/contracts'
 import { AGENT_ACCESS_LEVELS, agentAccessPreset, type AgentAccessLevel } from '../../agent-access-level.js'
 import { PromptReferenceEditor } from '../../components/prompt-reference-editor.js'
 import { PanelSlot, useExtensionActivation } from '../../extension-ui/index.js'
+import { AddModelProviderForm } from '../../llm-settings.js'
 import { callHostApi, workspaceApi } from '../../host-api-client.js'
 import { useFeedbackSummary } from '../community/feedback-model.js'
 import {
@@ -91,26 +92,41 @@ const sameAsMain = (chosen: CompactionModel, main: ModelSummary | undefined, eff
 
 export type { DraftUpdate } from './agent-draft.js'
 
-/** Main model and, when it cannot read images, a helper model that describes them. */
+/**
+ * Main model and, when it cannot read images, a helper model that describes them. `agent` is undefined while it is
+ * being created; a provider can then be added right here without leaving the page.
+ */
 export function ModelSection({
   agent,
   draft,
   update,
 }: {
-  readonly agent: AgentSummary
+  readonly agent: AgentSummary | undefined
   readonly draft: AgentDraft
   readonly update: DraftUpdate
 }) {
+  const api = useProductApi()
   const models = useProductStore((state) => state.models)
   const go = useGo()
   const model = models.find((item) => agentModelKey(item) === draft.modelKey)
   const vision = models.find((item) => agentModelKey(item) === draft.visionKey)
-  const missing = draft.modelKey && !model ? missingAgentModel(agent, models) : undefined
+  const missing = agent && draft.modelKey && !model ? missingAgentModel(agent, models) : undefined
   const replacement = missing ? replacementModel(missing, models) : undefined
   const options = models.map((item) => ({ value: agentModelKey(item), label: modelLabel(item) }))
   return (
     <PropertyGroup id="profile-model" title="模型">
-      {models.length === 0 ? (
+      {models.length === 0 && !agent ? (
+        <div className={styles.createProvider}>
+          <Banner tone="warn">当前没有可用模型。请先保存一个供应商。</Banner>
+          {/* Saving here keeps everything already filled in on the page. */}
+          <AddModelProviderForm
+            onSaved={() => {
+              const first = api.getState().models[0]
+              if (first) update((current) => ({ ...current, modelKey: agentModelKey(first) }))
+            }}
+          />
+        </div>
+      ) : models.length === 0 ? (
         <Banner
           tone="bad"
           action={
@@ -119,7 +135,7 @@ export function ModelSection({
             </Button>
           }
         >
-          还没有可用模型，{agent.name}现在无法回复
+          还没有可用模型，{agent?.name}现在无法回复
         </Banner>
       ) : missing ? (
         <Banner
@@ -475,17 +491,19 @@ function WebSearchCredential() {
 
 /**
  * System access on a risk ladder plus the other capabilities. Everything here joins the save bar; granting command
- * execution or full access asks first.
+ * execution or full access asks first. `agent` is undefined while it is being created; the credentials its commands
+ * receive are listed once it exists.
  */
 export function CapabilitiesSection({
   agent,
   draft,
   update,
 }: {
-  readonly agent: AgentSummary
+  readonly agent: AgentSummary | undefined
   readonly draft: AgentDraft
   readonly update: DraftUpdate
 }) {
+  const name = agent?.name ?? (draft.name.trim() || '它')
   const availability = useProductStore((state) => state.capabilityAvailability)
   const node = useAddon('node')
   // Listed only on Windows, where commands with full access need it to run at all (#96).
@@ -538,7 +556,7 @@ export function CapabilitiesSection({
     const current = preset === 'custom' ? -1 : preset
     confirmIfRisky(
       level.level >= 2 && level.level > current,
-      `允许${agent.name}${level.label}？`,
+      `允许${name}${level.label}？`,
       level.description,
       apply,
       accessOfLevel(level.level),
@@ -550,7 +568,7 @@ export function CapabilitiesSection({
     const item = ACCESS_SWITCHES.find((entry) => entry.key === key)
     confirmIfRisky(
       enabled && key !== 'fileTools',
-      `允许${agent.name}${item?.label ?? ''}？`,
+      `允许${name}${item?.label ?? ''}？`,
       item?.description ?? '',
       apply,
       toggleAccess(caps, key, enabled),
@@ -608,9 +626,9 @@ export function CapabilitiesSection({
         ) : null}
         {commandsRun ? <CommandNetworkRow caps={caps} update={update} /> : null}
         {commandsRun && !caps.unrestrictedFileAccess ? (
-          <CommandAccountRows agent={agent} caps={caps} update={update} />
+          <CommandAccountRows agentName={name} caps={caps} update={update} />
         ) : null}
-        {commandsRun ? <CommandCredentialRows agentId={agent.id} /> : null}
+        {commandsRun && agent ? <CommandCredentialRows agentId={agent.id} /> : null}
         {caps.developmentShell ? (
           <PropertyRow
             depth={1}
@@ -799,7 +817,7 @@ export function CapabilitiesSection({
               onCheckedChange={(enabled) =>
                 confirmIfRisky(
                   enabled,
-                  `允许${agent.name}免确认提交反馈？`,
+                  `允许${name}免确认提交反馈？`,
                   '反馈会直接发送到社区。只对你从客户端发出的消息触发的轮次生效，不附带对话摘录，每天最多 5 条。',
                   () =>
                     update((current) => ({
@@ -1001,7 +1019,7 @@ export function PersonaSection({
   editing,
   onEditingChange,
 }: {
-  readonly agent: AgentSummary
+  readonly agent: AgentSummary | undefined
   readonly draft: AgentDraft
   readonly update: DraftUpdate
   readonly editing: boolean
@@ -1017,10 +1035,11 @@ export function PersonaSection({
     const editor = (
       <PromptReferenceEditor
         value={draft.persona}
-        currentAgentId={agent.id}
+        {...(agent ? { currentAgentId: agent.id } : {})}
         label="设定"
         labelHidden
         description="它是谁、怎么说话、在群里负责什么"
+        placeholder="它是谁、怎么说话、在群里负责什么"
         onChange={setPersona}
       />
     )
@@ -1056,7 +1075,7 @@ export function PersonaSection({
           </div>
           <PromptReferenceEditor
             value={draft.persona}
-            currentAgentId={agent.id}
+            {...(agent ? { currentAgentId: agent.id } : {})}
             label="设定"
             description="它是谁、怎么说话、在群里负责什么"
             fill

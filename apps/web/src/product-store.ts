@@ -88,14 +88,30 @@ export function createProductStore(
     refreshHost: async () => {
       await requireHost().actions['host.refresh']()
     },
-    createAgent: async ({ name, persona, personaDocument, model, capabilities, imagePolicy }) => {
+    createAgent: async ({
+      name,
+      persona,
+      personaDocument,
+      model,
+      capabilities,
+      imagePolicy,
+      reasoningEffort,
+      compaction,
+      subConversationModels,
+      fallbackModels,
+      aliases,
+    }) => {
       const result = await requireHost().actions['agents.create']({
         displayName: requireValue(name, '请输入智能体名称。'),
         persona,
         personaDocument,
-        model: { provider: model.provider, model: model.id },
+        model: { provider: model.provider, model: model.id, ...(reasoningEffort ? { reasoningEffort } : {}) },
         capabilities,
         imagePolicy: imagePolicy ?? defaultImageUnderstandingPolicy(),
+        ...(compaction === undefined ? {} : { compaction }),
+        ...(subConversationModels === undefined ? {} : { subConversationModels }),
+        ...(fallbackModels === undefined ? {} : { fallbackModels: [...fallbackModels] }),
+        ...(aliases === undefined ? {} : { aliases: [...aliases] }),
       })
       return { agentId: result['agentId'], channelId: result['channelId'] }
     },
