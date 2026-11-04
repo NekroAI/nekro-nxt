@@ -27,10 +27,12 @@
     ${GetFileName} $INSTDIR $0
     ; StrCmp 不区分大小写；Windows 路径也不区分，改成标准大小写仍指向同一个目录，
     ; 也能让模板里区分大小写的检查通过，不会再套一层。
+    ; 上一级目录先放在 $1：写进 $INSTDIR 时 NSIS 会去掉末尾的反斜杠，
+    ; D:\ 会变成 D:，拼出的 D:NekroNxt 是驱动器相对路径，写文件会失败。
     ${If} $0 == "${APP_FILENAME}"
       StrLen $1 $0
-      StrCpy $INSTDIR $INSTDIR -$1
-      StrCpy $INSTDIR "$INSTDIR${APP_FILENAME}"
+      StrCpy $1 $INSTDIR -$1
+      StrCpy $INSTDIR "$1${APP_FILENAME}"
     ${Else}
       StrCpy $INSTDIR "$INSTDIR\${APP_FILENAME}"
     ${EndIf}
