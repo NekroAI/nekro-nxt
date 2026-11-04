@@ -49,7 +49,7 @@ export function mountDynamicCordisTools(
           required: true,
           description: '{kind:"new",idPrefix:string} 或 {kind:"existing",pluginId:string}。',
         },
-        name: { type: 'string', required: true, description: '扩展名称：简短的中文名词短语，写用户得到的功能。' },
+        name: { type: 'string', required: true, description: '扩展名称：写用户得到的功能，像菜单里的功能名一样短。' },
         purpose: { type: 'string', required: true, description: '扩展说明：一句话说启用后智能体能为用户做什么。' },
         code: { type: 'json', required: true, description: '至少包含 host 或 client 源码字符串。' },
       },

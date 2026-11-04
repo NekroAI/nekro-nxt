@@ -1100,7 +1100,7 @@ const nekroNxtExtensionDefineTool = (
       name: {
         type: 'string',
         required: true,
-        description: '扩展名称，保存后显示给用户：简短的中文名词短语，写用户得到的功能，不写实现手段。',
+        description: '扩展名称，保存后显示给用户：写用户得到的功能，像菜单里的功能名一样短，不写成句子，不写实现手段。',
       },
       purpose: {
         type: 'string',
