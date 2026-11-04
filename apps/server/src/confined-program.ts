@@ -41,9 +41,13 @@ export interface ConfinedProgramResult {
 
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
 
-/** The variables a program needs to start; nothing of the server's own environment otherwise reaches it. */
+/**
+ * The variables a program needs to start; nothing of the server's own environment otherwise reaches it.
+ * `ELECTRON_RUN_AS_NODE` stays: the Windows runner is a script started with `process.execPath`, which in the desktop
+ * app is the Electron binary and otherwise starts a second app instance that exits 0 with no output.
+ */
 const programEnvironment = (): NodeJS.ProcessEnv => {
-  const keep = ['PATH', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'LANG']
+  const keep = ['PATH', 'SystemRoot', 'SYSTEMROOT', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'ELECTRON_RUN_AS_NODE']
   return Object.fromEntries(
     keep.flatMap((name) => (process.env[name] === undefined ? [] : [[name, process.env[name]]])),
   )

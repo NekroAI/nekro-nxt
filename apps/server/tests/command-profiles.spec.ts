@@ -238,6 +238,33 @@ describe.skipIf(process.platform === 'win32')('running a profile', () => {
   })
 })
 
+describe('the program environment', () => {
+  it('keeps ELECTRON_RUN_AS_NODE for a runner started with the Electron binary', async () => {
+    // The Windows runner is `[process.execPath, runner.js, …]`; without the variable Electron starts the app instead.
+    const runner: ProgramSandbox = {
+      confine: (argv) =>
+        Promise.resolve({
+          argv: [process.execPath, '-e', 'process.stdout.write(String(process.env.ELECTRON_RUN_AS_NODE))', ...argv],
+          enforcement: 'full',
+          denialSignatures: [],
+          runnerFailureRules: [],
+        }),
+    }
+    const before = process.env['ELECTRON_RUN_AS_NODE']
+    process.env['ELECTRON_RUN_AS_NODE'] = '1'
+    try {
+      const result = await new ConfinedProgramRunner({
+        sandbox: runner,
+        confinement: { hidden: [], readable: [] },
+      }).run({ executable: '/fixture/ffprobe', args: [], cwd: await temporary(), timeoutMs: 10_000 })
+      expect(result.stdout.toString('utf8')).toBe('1')
+    } finally {
+      if (before === undefined) delete process.env['ELECTRON_RUN_AS_NODE']
+      else process.env['ELECTRON_RUN_AS_NODE'] = before
+    }
+  })
+})
+
 describe.runIf(process.platform === 'darwin' || process.platform === 'linux')('the confined runner', () => {
   it('reads a hidden file only when the run lists it', async () => {
     const sandbox = await createProgramSandbox()
