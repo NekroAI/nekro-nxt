@@ -103,6 +103,7 @@ describe('imported Extension Runtime verification', () => {
     clientCode: string,
     permissions: readonly HostUiPermission[],
     execute = "return 'sunny'",
+    hostApply = '',
   ) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-import-agent-'))
     directories.push(directory)
@@ -123,6 +124,7 @@ describe('imported Extension Runtime verification', () => {
       parameters: {},
       execute() { ${execute} }
     }))
+    ${hostApply}
   }
 }`,
         clientCode,
@@ -208,6 +210,32 @@ return {
     await expect(verifyAgent('bigint', panelClient, ['agents.read'], 'return { count: 1n }')).rejects.toThrow(
       '工具 weather_lookup 的返回值不能转成 JSON',
     )
+  })
+
+  it('runs ctx.effect at apply like a real mount, so mount-once code is checked before saving (#104)', async () => {
+    const effectClient = panelClient.replace(
+      'apply(ctx) {',
+      `apply(ctx) {
+    ctx.effect(() => () => undefined, 'client effect')`,
+    )
+    await expect(
+      verifyAgent(
+        'effect',
+        effectClient,
+        ['agents.read'],
+        "return 'sunny'",
+        `ctx.effect(() => { const timer = setInterval(() => undefined, 60000); return () => clearInterval(timer) }, 'hourly')`,
+      ),
+    ).resolves.toMatchObject({ toolInvocations: [{ name: 'weather_lookup', succeeded: true }] })
+    await expect(
+      verifyAgent(
+        'effectfails',
+        panelClient,
+        ['agents.read'],
+        "return 'sunny'",
+        `ctx.effect(() => { throw new Error('定时任务没建成') })`,
+      ),
+    ).rejects.toThrow('定时任务没建成')
   })
 
   it('rejects a data hook whose permission the Manifest did not declare', async () => {

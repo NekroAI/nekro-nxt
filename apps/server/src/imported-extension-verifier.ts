@@ -197,18 +197,38 @@ const syntheticData = (granted: ReadonlySet<string>) => {
   }
 }
 
+/**
+ * Applies the plugin the way a real mount does, including `ctx.effect` (documented in the SDK): the callback runs at
+ * once and what it returns is cleaned up with the plugin, last effect first.
+ */
 const runPluginApply = async (
   definition: unknown,
-  context: unknown,
+  context: Readonly<Record<string, unknown>>,
 ): Promise<(() => void | Promise<void>) | undefined> => {
   const plugin = recordOf(definition, 'Extension factory 结果')
   const apply = callableOf(plugin['apply'], 'Extension factory apply')
-  const dispose = await apply(definition, [context])
+  const effectCleanups: Array<() => unknown> = []
+  const effect = (callback: unknown, label?: unknown) => {
+    const run = callableOf(callback, typeof label === 'string' ? `ctx.effect「${label}」` : 'ctx.effect 回调')
+    const cleanup: unknown = run(undefined, [])
+    if (typeof cleanup !== 'function') return () => undefined
+    const invoke = callableOf(cleanup, 'ctx.effect 返回的 disposer')
+    const entry = () => invoke(undefined, [])
+    effectCleanups.push(entry)
+    return () => {
+      const index = effectCleanups.indexOf(entry)
+      if (index < 0) return undefined
+      effectCleanups.splice(index, 1)
+      return entry()
+    }
+  }
+  const dispose = await apply(definition, [{ ...context, effect }])
   if (dispose !== undefined && typeof dispose !== 'function') throw new Error('Extension apply 返回了无效 disposer。')
-  if (dispose === undefined) return undefined
-  const invokeDispose = callableOf(dispose, 'Extension disposer')
+  const invokeDispose = dispose === undefined ? undefined : callableOf(dispose, 'Extension disposer')
+  if (invokeDispose === undefined && effectCleanups.length === 0) return undefined
   return async () => {
-    await Promise.resolve(invokeDispose(definition, []))
+    if (invokeDispose !== undefined) await Promise.resolve(invokeDispose(definition, []))
+    for (const cleanup of effectCleanups.reverse()) await Promise.resolve(cleanup())
   }
 }
 
