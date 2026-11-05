@@ -54,6 +54,15 @@ const DEVELOPMENT_INSTRUCTIONS = [
  * The extension packs one agent's session offers. 「扩展管理」 follows the extension autonomy setting and needs no
  * dynamic creation; 「扩展开发」 needs dynamic creation. Tools that are not registered simply drop out.
  */
+/**
+ * The catalog line is all an agent sees of these tools before loading them, so it carries what the agent may do on its
+ * own; without it a cautious persona tends to refuse work it is allowed to do.
+ */
+const AUTONOMY_NOTE: Readonly<Record<'confirm' | 'autonomous', string>> = {
+  confirm: '你的扩展自主权是「确认」，改动会发请求给管理员确认。',
+  autonomous: '你的扩展自主权是「自主」，只影响自己的普通操作可以直接完成。',
+}
+
 export const extensionCapabilityPacks = (
   capabilities: Pick<AgentCapabilityGrants, 'dynamicCreation' | 'extensionAutonomy'>,
 ): CapabilityPack[] => {
@@ -68,7 +77,7 @@ export const extensionCapabilityPacks = (
         }
       : {
           name: EXTENSION_MANAGEMENT_PACK,
-          purpose: '查看和管理已有扩展：启用、配置、绑定凭据、安装、更新和发布。',
+          purpose: `查看和管理已有扩展：启用、配置、绑定凭据、安装、更新和发布。${AUTONOMY_NOTE[capabilities.extensionAutonomy === 'confirm' ? 'confirm' : 'autonomous']}`,
           tools: [...EXTENSION_VIEW_TOOLS, ...EXTENSION_ACTION_TOOLS, ...EXTENSION_CREDENTIAL_TOOLS],
           instructions: MANAGEMENT_INSTRUCTIONS,
         },
@@ -76,7 +85,7 @@ export const extensionCapabilityPacks = (
       ? [
           {
             name: EXTENSION_DEVELOPMENT_PACK,
-            purpose: '制作新扩展或修改扩展代码，试运行并保存。',
+            purpose: '制作新扩展或修改扩展代码，试运行并保存。你开着动态创造，有人请你做扩展时可以自己动手。',
             tools: [...EXTENSION_DEVELOPMENT_TOOLS, ...(manual ? EXTENSION_CREDENTIAL_TOOLS : [])],
             instructions: DEVELOPMENT_INSTRUCTIONS,
           },

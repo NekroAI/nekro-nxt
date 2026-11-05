@@ -166,6 +166,14 @@ describe('extension capability packs', () => {
     )
   })
 
+  it('tells in the catalog line what the agent may do on its own', () => {
+    const purpose = (autonomy: 'confirm' | 'autonomous') =>
+      extensionCapabilityPacks({ dynamicCreation: true, extensionAutonomy: autonomy }).map((pack) => pack.purpose)
+    expect(purpose('autonomous')[0]).toContain('扩展自主权是「自主」')
+    expect(purpose('confirm')[0]).toContain('扩展自主权是「确认」')
+    expect(purpose('autonomous')[1]).toContain('有人请你做扩展时可以自己动手')
+  })
+
   it('keeps management read-only under manual autonomy', () => {
     const viewOnly = extensionCapabilityPacks({ dynamicCreation: false, extensionAutonomy: 'manual' })
     expect(byName(viewOnly)).toEqual({
