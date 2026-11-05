@@ -1,6 +1,7 @@
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { AgentRevisionRecord } from '@nekro-nxt/core'
 import type { ChannelId, EpisodeId } from '@nekro-nxt/contracts'
+import type { CapabilityPackView } from './capability-packs.js'
 
 export interface OwnedSession<Dynamic> {
   readonly sessionId: string
@@ -9,6 +10,8 @@ export interface OwnedSession<Dynamic> {
   readonly episodeId: EpisodeId
   handle?: AgentHandle
   dynamic?: Dynamic
+  /** Prompt measurement and the capability packs of this session (#133). */
+  capabilityPacks?: CapabilityPackView
   imageInput: boolean
 }
 

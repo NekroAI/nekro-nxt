@@ -560,7 +560,15 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           : undefined
         : (tasks.find((task) => task.id === query || task.title === query) ??
           tasks.find((task) => task.title.includes(query)))
-    if (!found) throw new Error(query ? `找不到任务「${query}」。` : '有好几个进行中的任务，请写上任务名称或编号。')
+    if (!found) {
+      throw new Error(
+        query
+          ? `找不到任务「${query}」。`
+          : tasks.length === 0
+            ? '没有进行中的创造任务。'
+            : '有好几个进行中的任务，请写上任务名称或编号。',
+      )
+    }
     return found
   }
 

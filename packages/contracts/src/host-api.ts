@@ -1177,6 +1177,19 @@ export const ChannelRuntimeContextSchema = z
         })
         .strict(),
     ),
+    /** The latest system prompt by part, in prompt order; tokens are a characters-per-token estimate. */
+    promptSections: z
+      .array(
+        z
+          .object({ label: z.string(), chars: z.number().int().nonnegative(), tokens: z.number().int().nonnegative() })
+          .strict(),
+      )
+      .optional(),
+    /** Capability packs the conversation can load and has loaded; absent when it keeps every tool resident. */
+    capabilityPacks: z
+      .object({ available: z.array(z.string()), loaded: z.array(z.string()) })
+      .strict()
+      .optional(),
   })
   .strict()
 

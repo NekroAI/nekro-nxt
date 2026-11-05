@@ -1,6 +1,10 @@
 import { checkDynamicHostSource } from './dynamic-source-check.js'
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
-import { extensionAgentTools, type ReviseIntent } from './extension-governance/agent-tools.js'
+import {
+  extensionDevelopmentTools,
+  extensionManagementTools,
+  type ReviseIntent,
+} from './extension-governance/agent-tools.js'
 import type { ExtensionGovernanceToolPort } from './extension-governance/tool-port.js'
 import { parseAgentTestConfig, type AuthoringTestConfigValues } from './authoring-test-config.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
@@ -249,7 +253,14 @@ import { backlogImageCount, foldedBacklogNotice, selectBacklog } from './backlog
 import './memory-events.js'
 import { memberNoteAttachments, visibleMemberNotes } from './member-notes.js'
 import { CHANNEL_PROMPT_MAX_CHARS, MEMBER_NOTE_MAX_CHARS, type ChannelPrompts } from './channel-prompts.js'
+import { mountCapabilityPacks, type PromptSectionSize } from './capability-packs.js'
 import { projectSessionContext } from './channel-runtime-context.js'
+import {
+  EXTENSION_ACTION_TOOLS,
+  EXTENSION_CREDENTIAL_TOOLS,
+  EXTENSION_VIEW_TOOLS,
+  extensionCapabilityPacks,
+} from './extension-capability-packs.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
@@ -3315,6 +3326,8 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #spillRoot: string
   readonly #incompatibleAgents = new Set<AgentId>()
   readonly #modelSettings: HostModelSettings
+  /** Capability packs each conversation loaded, mentioned once in the handoff to its next session; kept in memory. */
+  readonly #packsUsedByEpisode = new Map<EpisodeId, Set<string>>()
   readonly #sessions = new SessionRegistry<{
     readonly context: Context
     readonly runner: NekroNxtDynamicCordisRunner
@@ -4825,7 +4838,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           ),
         )
         if (governance !== undefined) {
-          for (const tool of extensionAgentTools({
+          for (const tool of extensionDevelopmentTools({
             port: governance,
             authoring: this.#authoring?.service,
             agentId: revision.agentId,
@@ -4857,6 +4870,25 @@ export class DshHostRuntime implements AgentSessionDriver {
           }
         }, 'nekro-nxt: dynamic session ownership')
       }
+      const governancePort = this.#authoring?.governance
+      if (governancePort !== undefined) {
+        // Manual autonomy sends every change to the console, so the agent only gets to look; credential lookups stay
+        // for writing test values when it develops extensions.
+        const allowed = new Set<string>(
+          revision.capabilities.extensionAutonomy === 'manual'
+            ? [...EXTENSION_VIEW_TOOLS, ...(revision.capabilities.dynamicCreation ? EXTENSION_CREDENTIAL_TOOLS : [])]
+            : [...EXTENSION_VIEW_TOOLS, ...EXTENSION_ACTION_TOOLS, ...EXTENSION_CREDENTIAL_TOOLS],
+        )
+        for (const tool of extensionManagementTools({
+          port: governancePort,
+          authoring: this.#authoring?.service,
+          agentId: revision.agentId,
+          channelId: input.channelId,
+          episodeId: input.episodeId,
+          sessionId,
+        }))
+          if (allowed.has(tool.name)) agentContext.tools.register(tool)
+      }
       mountDelegationCapabilities(agentContext, revision, this.#subConversations, this.#subConversationStore, () =>
         this.listAvailableLlmModels(),
       )
@@ -4882,7 +4914,9 @@ export class DshHostRuntime implements AgentSessionDriver {
           text: () => this.#commandAccountPromptOf(revision) ?? '',
         })
       }
-      if (revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())) {
+      const programmatic =
+        revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())
+      if (programmatic) {
         agentContext.tools.presentAs('ptc')
         // The tools service builds the run_code transport once, bound to the context that first lists a ptc scope.
         // List it from the agent's own context now, before extension contexts (which hide sandboxPolicy) can.
@@ -4896,6 +4930,26 @@ export class DshHostRuntime implements AgentSessionDriver {
               : CHILD_CODE_RUN_POLICY,
         })
       }
+      // Direct tool calls declare tools in the request; adding a loaded pack's tools there mid-conversation is only
+      // cheap on routes that accept additions, so elsewhere every tool stays resident.
+      const packsFit = programmatic || modelInfo.toolUpdate === 'addition-only' || modelInfo.toolUpdate === 'in-history'
+      const capabilityPacks = mountCapabilityPacks(agentContext, {
+        packs: packsFit ? extensionCapabilityPacks(revision.capabilities) : [],
+        presentation: programmatic ? 'ptc' : 'native',
+        rootSessionId: sessionId,
+        onLoad: (packs) => {
+          const used = this.#packsUsedByEpisode.get(input.episodeId) ?? new Set<string>()
+          for (const pack of packs) used.add(pack)
+          this.#packsUsedByEpisode.set(input.episodeId, used)
+        },
+      })
+      agentContext.effect(() => {
+        const record = this.#sessions.require(sessionId)
+        record.capabilityPacks = capabilityPacks
+        return () => {
+          if (record.capabilityPacks === capabilityPacks) delete record.capabilityPacks
+        }
+      }, 'nekro-nxt: capability packs')
       await this.#dshPluginLifecycle?.mountAgentSession(revision.agentId, sessionId, agentContext)
       await this.#extensionMounts.mountIntoSession(revision.agentId, sessionId, agentContext)
     }
@@ -4949,6 +5003,8 @@ export class DshHostRuntime implements AgentSessionDriver {
         ))
     if (input.handoff !== undefined && !hasHandoffMessage) {
       const handoffImageDigests = collectVisibleImageDigests(handle.agent, this.#assets)
+      const usedPacks = [...(this.#packsUsedByEpisode.get(input.handoff.fromEpisodeId) ?? [])]
+      this.#packsUsedByEpisode.delete(input.handoff.fromEpisodeId)
       handle.agent.inject(
         freezeMessage({
           id: MessageId(`nxt-${input.handoff.id}`),
@@ -4968,6 +5024,12 @@ export class DshHostRuntime implements AgentSessionDriver {
                 })}`,
                 '',
                 input.handoff.summary,
+                ...(usedPacks.length === 0
+                  ? []
+                  : [
+                      '',
+                      `〔能力包〕上一段会话加载过${usedPacks.map((pack) => `「${pack}」`).join('')}，这段会话还没有加载，需要时再用 capability_load 加载。`,
+                    ]),
               ].join('\n'),
             },
             {
@@ -5895,7 +5957,13 @@ export class DshHostRuntime implements AgentSessionDriver {
   sessionContext(dshSessionId: string) {
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) return undefined
-    return projectSessionContext(agent.session, sessionEvents(agent.session))
+    const packs = this.#sessions.get(dshSessionId)?.capabilityPacks
+    return projectSessionContext(agent.session, sessionEvents(agent.session), packs)
+  }
+
+  /** The latest system prompt's sections by name, for measuring (#133); empty before the first request. */
+  promptSections(dshSessionId: string): readonly PromptSectionSize[] {
+    return this.#sessions.get(dshSessionId)?.capabilityPacks?.promptSections() ?? []
   }
 
   normalizedSessionEvents(dshSessionId: string) {

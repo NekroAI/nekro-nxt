@@ -26,13 +26,16 @@ export interface ReviseIntent {
   readonly referenceRevisionId?: ExtensionRevisionId
 }
 
-export interface ExtensionAgentToolContext {
+export interface ExtensionManagementToolContext {
   readonly port: () => ExtensionGovernanceToolPort | undefined
   readonly authoring: DynamicAuthoringService | undefined
   readonly agentId: AgentId
   readonly channelId: ChannelId
   readonly episodeId: EpisodeId
   readonly sessionId: string
+}
+
+export interface ExtensionAgentToolContext extends ExtensionManagementToolContext {
   /** Defines a candidate in this conversation, as `nekro_nxt_extension_define` does. */
   readonly define: (input: DynamicAuthoringPackageDefinitionInput) => {
     readonly pluginId: string
@@ -47,13 +50,13 @@ const json = (value: unknown): JsonValue => parseJsonValue(JSON.parse(JSON.strin
 
 const renderJson = (_args: unknown, value: JsonValue) => [{ type: 'text' as const, text: JSON.stringify(value) }]
 
-const requirePort = (context: ExtensionAgentToolContext): ExtensionGovernanceToolPort => {
+const requirePort = (context: ExtensionManagementToolContext): ExtensionGovernanceToolPort => {
   const port = context.port()
   if (!port) throw new Error('这台 NekroNXT 没有开启扩展管理。')
   return port
 }
 
-const requireRequester = (context: ExtensionAgentToolContext): ExtensionGovernanceToolPort => {
+const requireRequester = (context: ExtensionManagementToolContext): ExtensionGovernanceToolPort => {
   const port = requirePort(context)
   const verdict = port.requesterAllowed(context.agentId, context.episodeId)
   if (!verdict.allowed) throw new Error(verdict.reason)
@@ -114,11 +117,11 @@ const continueTask = (
 }
 
 /**
- * The agent's extension tools beyond defining candidates: see what it has, inspect one extension or task, start a
- * revise task from a saved version, continue a task left in another conversation, and take lifecycle actions within
- * its autonomy.
+ * The agent's tools for extensions it already has: see what it can reach, inspect one extension or task, look up and
+ * request credentials, withdraw a request, and take lifecycle actions within its autonomy. None of them needs dynamic
+ * creation; saving a task works from the task's stored candidate.
  */
-export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
+export const extensionManagementTools = (context: ExtensionManagementToolContext) => [
   defineTool({
     name: 'nekro_nxt_extension_list',
     description:
@@ -218,137 +221,6 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           }),
         ),
       )
-    },
-  }),
-  defineTool({
-    name: 'nekro_nxt_extension_revise',
-    description:
-      '修改一个已经保存的扩展：以它的某个版本（默认当前版本）为基线开始一个修改任务，返回基线的完整定义。只改需要改的部分，其余照原样带上，用 nekro_nxt_extension_define 的 { kind: "existing", pluginId } 提交，再用 cordis_run 试运行。保存时会成为这个扩展的下一个版本。合并本机修改和社区新版时，把一个作为 version、另一个作为 reference。',
-    parameters: {
-      extension: { type: 'string', required: true, description: '扩展名称或编号。' },
-      version: { type: 'string', description: '作为基线的版本，例如 v2；不填用当前版本。' },
-      reference: { type: 'string', description: '另一个版本，作为参考一起返回（比如要合并进来的本机修改）。' },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args) {
-      const input = z
-        .object({
-          extension: z.string().trim().min(1),
-          version: z.string().optional(),
-          reference: z.string().optional(),
-        })
-        .parse(args)
-      const port = requireRequester(context)
-      const prepared = await port.prepareRevise(context.agentId, {
-        extension: input.extension,
-        ...(input.version === undefined ? {} : { version: input.version }),
-        ...(input.reference === undefined ? {} : { reference: input.reference }),
-      })
-      if (prepared.openTask !== undefined) {
-        const open = prepared.openTask
-        if (open.episodeId === context.episodeId && !['paused', 'interrupted'].includes(open.status)) {
-          return json({
-            alreadyOpen: true,
-            taskId: open.id,
-            pluginId: open.pluginKey,
-            message: `「${prepared.extensionName}」已经有一个修改任务在这个对话里进行，接着用 nekro_nxt_extension_define 的 existing 提交即可。`,
-          })
-        }
-        const { task, attempt } = continueTask(context, port, open.id)
-        const snapshot = await context.authoring!.snapshotForAttempt(attempt)
-        const receipt = context.restore(snapshot)
-        context.authoring!.resumeTask({
-          taskId: task.id,
-          channelId: context.channelId,
-          episodeId: context.episodeId,
-          pluginKey: receipt.pluginId,
-          runnerPackageId: receipt.packageId,
-        })
-        return json({
-          continued: true,
-          taskId: task.id,
-          pluginId: receipt.pluginId,
-          packageId: receipt.packageId,
-          message: `「${prepared.extensionName}」已有一个修改任务，已把它接到这次对话；最新候选还没运行，先 cordis_run 看看结果再接着改。`,
-          latest: editableDefinition({ snapshot, codeFormat: snapshot.codeFormat ?? 'body' }),
-        })
-      }
-      const base = prepared.base.snapshot
-      context.setReviseIntent({
-        targetExtensionId: prepared.extensionId,
-        baseRevisionId: prepared.baseRevisionId,
-        ...(prepared.referenceRevisionId === undefined ? {} : { referenceRevisionId: prepared.referenceRevisionId }),
-      })
-      let receipt
-      try {
-        receipt = context.define({
-          plugin: { kind: 'new', idPrefix: prepared.idPrefix },
-          name: base.name,
-          purpose: base.purpose,
-          code: base.code,
-          resources: base.resources,
-          ...(base.clientCss === undefined ? {} : { clientCss: base.clientCss }),
-          ...(base.icon === undefined ? {} : { icon: base.icon }),
-          permissions: base.permissions,
-          contributions: base.contributions,
-          ...(base.config === undefined ? {} : { config: base.config }),
-          ...(base.verificationInputs === undefined ? {} : { verificationInputs: base.verificationInputs }),
-          ...(base.dataVersion === undefined ? {} : { dataVersion: base.dataVersion }),
-          ...(base.codeFormat === undefined ? {} : { codeFormat: base.codeFormat }),
-        })
-      } finally {
-        context.setReviseIntent(undefined)
-      }
-      return json({
-        pluginId: receipt.pluginId,
-        packageId: receipt.packageId,
-        extension: prepared.extensionName,
-        base: prepared.baseLabel,
-        message: `已从「${prepared.extensionName}」${prepared.baseLabel} 开始修改任务。基线已定义为第一个候选（未运行）。改完用 nekro_nxt_extension_define 的 { kind: "existing", pluginId: "${receipt.pluginId}" } 提交；codeFormat 保持 ${prepared.base.codeFormat}。`,
-        definition: editableDefinition(prepared.base),
-        ...(prepared.reference === undefined
-          ? {}
-          : { reference: { version: prepared.referenceLabel, definition: editableDefinition(prepared.reference) } }),
-      })
-    },
-  }),
-  defineTool({
-    name: 'nekro_nxt_extension_continue',
-    description:
-      '把一个暂停、中断或留在别的对话里的创造任务接到这次对话继续做。接上后最新候选还没有运行，用 cordis_run 运行它，再接着修改。',
-    parameters: {
-      task: { type: 'string', description: '任务名称或编号；只有一个进行中的任务时可以不填。' },
-      testConfig: {
-        type: 'json',
-        description:
-          '可选，试运行用的配置值：{ 字段名: 值 }，和 nekro_nxt_extension_define 的 testConfig 相同；凭据字段写 { "credential": "凭据名称" }。',
-      },
-    },
-    output: { schema: { type: 'json' }, render: renderJson },
-    async execute(args) {
-      const input = z
-        .object({ task: z.string().optional(), testConfig: z.record(z.string(), JsonValueSchema).optional() })
-        .parse(args)
-      const port = requireRequester(context)
-      const { task, attempt } = continueTask(context, port, input.task)
-      const notes = input.testConfig === undefined ? [] : (await port.setTestConfig(task.id, input.testConfig)).notes
-      const snapshot = await context.authoring!.snapshotForAttempt(attempt)
-      const receipt = context.restore(snapshot)
-      context.authoring!.resumeTask({
-        taskId: task.id,
-        channelId: context.channelId,
-        episodeId: context.episodeId,
-        pluginKey: receipt.pluginId,
-        runnerPackageId: receipt.packageId,
-      })
-      return json({
-        taskId: task.id,
-        title: task.title,
-        pluginId: receipt.pluginId,
-        packageId: receipt.packageId,
-        message: `「${task.title}」已经接到这次对话。先用 cordis_run 运行 ${receipt.packageId}，有问题再用 nekro_nxt_extension_define 的 existing 修改。`,
-        ...(notes.length === 0 ? {} : { notes: [...notes] }),
-      })
     },
   }),
   defineTool({
@@ -593,4 +465,145 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       return json(await port.act(context.agentId, context.channelId, action, requester))
     },
   }),
+]
+
+/** Starting a revise task from a saved version and continuing a task left in another conversation. */
+export const extensionDevelopmentTools = (context: ExtensionAgentToolContext) => [
+  defineTool({
+    name: 'nekro_nxt_extension_revise',
+    description:
+      '修改一个已经保存的扩展：以它的某个版本（默认当前版本）为基线开始一个修改任务，返回基线的完整定义。只改需要改的部分，其余照原样带上，用 nekro_nxt_extension_define 的 { kind: "existing", pluginId } 提交，再用 cordis_run 试运行。保存时会成为这个扩展的下一个版本。合并本机修改和社区新版时，把一个作为 version、另一个作为 reference。',
+    parameters: {
+      extension: { type: 'string', required: true, description: '扩展名称或编号。' },
+      version: { type: 'string', description: '作为基线的版本，例如 v2；不填用当前版本。' },
+      reference: { type: 'string', description: '另一个版本，作为参考一起返回（比如要合并进来的本机修改）。' },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args) {
+      const input = z
+        .object({
+          extension: z.string().trim().min(1),
+          version: z.string().optional(),
+          reference: z.string().optional(),
+        })
+        .parse(args)
+      const port = requireRequester(context)
+      const prepared = await port.prepareRevise(context.agentId, {
+        extension: input.extension,
+        ...(input.version === undefined ? {} : { version: input.version }),
+        ...(input.reference === undefined ? {} : { reference: input.reference }),
+      })
+      if (prepared.openTask !== undefined) {
+        const open = prepared.openTask
+        if (open.episodeId === context.episodeId && !['paused', 'interrupted'].includes(open.status)) {
+          return json({
+            alreadyOpen: true,
+            taskId: open.id,
+            pluginId: open.pluginKey,
+            message: `「${prepared.extensionName}」已经有一个修改任务在这个对话里进行，接着用 nekro_nxt_extension_define 的 existing 提交即可。`,
+          })
+        }
+        const { task, attempt } = continueTask(context, port, open.id)
+        const snapshot = await context.authoring!.snapshotForAttempt(attempt)
+        const receipt = context.restore(snapshot)
+        context.authoring!.resumeTask({
+          taskId: task.id,
+          channelId: context.channelId,
+          episodeId: context.episodeId,
+          pluginKey: receipt.pluginId,
+          runnerPackageId: receipt.packageId,
+        })
+        return json({
+          continued: true,
+          taskId: task.id,
+          pluginId: receipt.pluginId,
+          packageId: receipt.packageId,
+          message: `「${prepared.extensionName}」已有一个修改任务，已把它接到这次对话；最新候选还没运行，先 cordis_run 看看结果再接着改。`,
+          latest: editableDefinition({ snapshot, codeFormat: snapshot.codeFormat ?? 'body' }),
+        })
+      }
+      const base = prepared.base.snapshot
+      context.setReviseIntent({
+        targetExtensionId: prepared.extensionId,
+        baseRevisionId: prepared.baseRevisionId,
+        ...(prepared.referenceRevisionId === undefined ? {} : { referenceRevisionId: prepared.referenceRevisionId }),
+      })
+      let receipt
+      try {
+        receipt = context.define({
+          plugin: { kind: 'new', idPrefix: prepared.idPrefix },
+          name: base.name,
+          purpose: base.purpose,
+          code: base.code,
+          resources: base.resources,
+          ...(base.clientCss === undefined ? {} : { clientCss: base.clientCss }),
+          ...(base.icon === undefined ? {} : { icon: base.icon }),
+          permissions: base.permissions,
+          contributions: base.contributions,
+          ...(base.config === undefined ? {} : { config: base.config }),
+          ...(base.verificationInputs === undefined ? {} : { verificationInputs: base.verificationInputs }),
+          ...(base.dataVersion === undefined ? {} : { dataVersion: base.dataVersion }),
+          ...(base.codeFormat === undefined ? {} : { codeFormat: base.codeFormat }),
+        })
+      } finally {
+        context.setReviseIntent(undefined)
+      }
+      return json({
+        pluginId: receipt.pluginId,
+        packageId: receipt.packageId,
+        extension: prepared.extensionName,
+        base: prepared.baseLabel,
+        message: `已从「${prepared.extensionName}」${prepared.baseLabel} 开始修改任务。基线已定义为第一个候选（未运行）。改完用 nekro_nxt_extension_define 的 { kind: "existing", pluginId: "${receipt.pluginId}" } 提交；codeFormat 保持 ${prepared.base.codeFormat}。`,
+        definition: editableDefinition(prepared.base),
+        ...(prepared.reference === undefined
+          ? {}
+          : { reference: { version: prepared.referenceLabel, definition: editableDefinition(prepared.reference) } }),
+      })
+    },
+  }),
+  defineTool({
+    name: 'nekro_nxt_extension_continue',
+    description:
+      '把一个暂停、中断或留在别的对话里的创造任务接到这次对话继续做。接上后最新候选还没有运行，用 cordis_run 运行它，再接着修改。',
+    parameters: {
+      task: { type: 'string', description: '任务名称或编号；只有一个进行中的任务时可以不填。' },
+      testConfig: {
+        type: 'json',
+        description:
+          '可选，试运行用的配置值：{ 字段名: 值 }，和 nekro_nxt_extension_define 的 testConfig 相同；凭据字段写 { "credential": "凭据名称" }。',
+      },
+    },
+    output: { schema: { type: 'json' }, render: renderJson },
+    async execute(args) {
+      const input = z
+        .object({ task: z.string().optional(), testConfig: z.record(z.string(), JsonValueSchema).optional() })
+        .parse(args)
+      const port = requireRequester(context)
+      const { task, attempt } = continueTask(context, port, input.task)
+      const notes = input.testConfig === undefined ? [] : (await port.setTestConfig(task.id, input.testConfig)).notes
+      const snapshot = await context.authoring!.snapshotForAttempt(attempt)
+      const receipt = context.restore(snapshot)
+      context.authoring!.resumeTask({
+        taskId: task.id,
+        channelId: context.channelId,
+        episodeId: context.episodeId,
+        pluginKey: receipt.pluginId,
+        runnerPackageId: receipt.packageId,
+      })
+      return json({
+        taskId: task.id,
+        title: task.title,
+        pluginId: receipt.pluginId,
+        packageId: receipt.packageId,
+        message: `「${task.title}」已经接到这次对话。先用 cordis_run 运行 ${receipt.packageId}，有问题再用 nekro_nxt_extension_define 的 existing 修改。`,
+        ...(notes.length === 0 ? {} : { notes: [...notes] }),
+      })
+    },
+  }),
+]
+
+/** Every extension tool beyond defining candidates. */
+export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
+  ...extensionManagementTools(context),
+  ...extensionDevelopmentTools(context),
 ]
