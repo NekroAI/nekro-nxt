@@ -360,7 +360,7 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
       'enable / disable：给你自己启用或停用。switch：切到指定版本。revert：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
       'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）；includeConfig 连同配置一起迁移（凭据不迁移）。总要管理员确认。',
-      'publish：把当前版本发布到社区（notes 写更新说明）。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId）。withdraw：撤回一次发布（releaseId）。发布和撤回总要管理员确认。',
+      'publish：把当前版本发布到社区（notes 写更新说明）。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId，reason 写为什么要装）。withdraw：撤回一次发布（releaseId）。发布、撤回和安装总要管理员确认。',
       'configure：修改配置。layer 为 agent（你自己的，默认）或 host（本机，所有智能体共用）；values 写 { 字段名: 值 }，null 恢复默认；凭据字段用 credentials 按名称绑定 { 字段名: "凭据名称" }，null 解除。reason 写为什么改。在回复结束后生效，一次回复里的多次修改合并。enable 也可以带 values 和 credentials 作为初始配置。',
       'revert_config：把某一层配置恢复到 inspect 的 configHistory 里的某个版本（layer、version），恢复本身也是一个新版本。',
     ].join('\n'),
@@ -409,7 +409,10 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
         description: 'configure 或 enable 的凭据绑定：{ 字段名: "凭据名称" }，null 解除绑定。',
       },
       configVersion: { type: 'number', description: 'revert_config 要恢复到的配置版本号。' },
-      reason: { type: 'string', description: 'configure / revert_config 的原因，会记在配置历史里。' },
+      reason: {
+        type: 'string',
+        description: 'configure / revert_config 的原因，会记在配置历史里；install 必填，写为什么要装，管理员会看到。',
+      },
     },
     output: { schema: { type: 'json' }, render: renderJson },
     async execute(args) {
@@ -572,10 +575,14 @@ export const extensionAgentTools = (context: ExtensionAgentToolContext) => [
           break
         case 'install':
           if (input.communityExtensionId === undefined) throw new Error('请写上社区扩展编号。')
+          if (input.reason === undefined || input.reason === '') {
+            throw new Error('请在 reason 里写为什么要安装它，管理员会据此决定。')
+          }
           action = {
             kind: 'community-install',
             communityExtensionId: ExtensionIdSchema.parse(input.communityExtensionId),
             agentId: context.agentId,
+            reason: input.reason,
           }
           break
         case 'withdraw':

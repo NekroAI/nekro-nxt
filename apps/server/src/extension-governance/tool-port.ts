@@ -426,6 +426,23 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           : undefined
       if (missing !== undefined) throw new Error(missing)
     }
+    if (action.kind === 'community-install' && action.release === undefined) {
+      // The request names the exact release and what it asks for; the approval installs that one and nothing newer.
+      const detail = await runtime.community.getExtension(action.communityExtensionId)
+      if (!detail.latest) throw new Error('这个扩展在社区上还没有可安装的发布。')
+      action = {
+        ...action,
+        release: {
+          id: detail.latest.id,
+          ...(detail.latest.number === undefined ? {} : { number: detail.latest.number }),
+          displayName: detail.displayName,
+          publisherHandle: detail.publisher.handle,
+          permissions: detail.latest.permissions,
+          reviewStatus: detail.latest.reviewStatus,
+          ratingScore: detail.latest.rating?.score ?? null,
+        },
+      }
+    }
     if (action.kind === 'configure' || action.kind === 'revert-config') {
       // Wrong fields, values or credential names fail here, before anything is asked or scheduled.
       const plan = runtime.extensionActions.configPlan(action)

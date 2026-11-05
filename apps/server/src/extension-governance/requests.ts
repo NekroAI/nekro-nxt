@@ -217,11 +217,12 @@ export class ExtensionRequestService {
         : `（新增权限：${input.assessment.added.map((item) => item.label + (item.detail ? ` ${item.detail}` : '')).join('；')}）`
     const superseded = this.#supersede(input.action, record.number, now)
     const replaces = superseded.length === 0 ? '' : `（取代 ${superseded.map((number) => `#${number}`).join('、')}）`
+    const why = input.action.kind === 'community-install' && input.action.reason ? `。理由：${input.action.reason}` : ''
     const prefix = this.#commandPrefix(input.actor.channelId)
     this.#notice(
       input.actor.channelId,
       `ext-request:${record.number}:asked`,
-      `${this.#agentName(input.actor.agentId)}请求${input.assessment.summary}${added}${replaces}。管理员发送 ${prefix}/ext approve ${record.number} 同意，或 ${prefix}/ext reject ${record.number} 拒绝；24 小时内有效。`,
+      `${this.#agentName(input.actor.agentId)}请求${input.assessment.summary}${added}${replaces}${why}。管理员发送 ${prefix}/ext approve ${record.number} 同意，或 ${prefix}/ext reject ${record.number} 拒绝；24 小时内有效。`,
     )
     this.#runtime.publishExtensionRequestChange?.()
     return record

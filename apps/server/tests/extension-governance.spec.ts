@@ -1777,6 +1777,60 @@ describe('extension autonomy', () => {
     }
   })
 
+  it('asks an administrator before installing from the community and installs only the release asked for', async () => {
+    const runtime = await createRuntime()
+    try {
+      const entity = await agentWithChannel(runtime, 'autonomous')
+      const tools = new ExtensionGovernanceTools(runtime)
+      const detail = (releaseId: string, permissions: { key: string; level: string; label: string }[]) =>
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- Install reads only these fields.
+        ({
+          id: 'ext_COMMUNITYFIXTURE',
+          displayName: '天气卡片',
+          publisher: { handle: 'fixture-author' },
+          latest: { id: releaseId, number: 3, permissions, reviewStatus: 'passed', rating: { score: 4.3 } },
+        }) as unknown as Awaited<ReturnType<typeof runtime.community.getExtension>>
+      const network = [{ key: 'network', level: 'elevated', label: '访问网络', layer: 'agent' }]
+      const getExtension = vi.spyOn(runtime.community, 'getExtension').mockResolvedValue(detail('rel_first', network))
+      const install = {
+        kind: 'community-install',
+        communityExtensionId: 'ext_COMMUNITYFIXTURE',
+        agentId: entity.agentId,
+        reason: '群里想看天气',
+      } as const
+
+      await expect(tools.act(entity.agentId, entity.channelId, install)).resolves.toMatchObject({
+        outcome: 'requested',
+      })
+      const [request] = runtime.extensionRequests.list('pending')
+      expect(request?.summary).toBe('从社区安装「天气卡片」 #3（@fixture-author，审查通过，评分 4.3）')
+      await expect
+        .poll(
+          () => runtime.repository.findOutboundByNoticeKey(`ext-request:${request!.number}:asked`)?.intent.parts,
+          NOTICE_POLL,
+        )
+        .toEqual([
+          expect.objectContaining({
+            text: expect.stringMatching(/访问网络.*理由：群里想看天气/) as unknown,
+          }),
+        ])
+
+      // A newer release appeared before the approval: nothing is installed.
+      getExtension.mockResolvedValue(detail('rel_second', network))
+      await expect(runtime.extensionRequests.approve(request!.number, { kind: 'console' })).rejects.toThrow(
+        '已经有了新的发布',
+      )
+
+      // High-risk permissions are not the agent's to ask for at all.
+      getExtension.mockResolvedValue(detail('rel_third', [{ key: 'commands', level: 'high', label: '运行命令' }]))
+      await expect(tools.act(entity.agentId, entity.channelId, install)).resolves.toMatchObject({
+        outcome: 'console',
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('supersedes an older pending request for the same thing and lets the agent withdraw its own', async () => {
     const runtime = await createRuntime()
     try {

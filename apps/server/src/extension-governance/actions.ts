@@ -1,6 +1,9 @@
 import {
   AgentIdSchema,
   AuthoringTaskIdSchema,
+  CommunityPermissionItemSchema,
+  CommunityReviewStatusSchema,
+  communityPublisherLabel,
   CredentialIdSchema,
   CredentialNameSchema,
   configFields,
@@ -10,6 +13,7 @@ import {
   type AgentId,
   type ChannelId,
   type CommunityPermissionItem,
+  type CommunityReviewStatus,
   type ExtensionId,
   type ExtensionRevisionId,
   type JsonValue,
@@ -131,6 +135,23 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     kind: z.literal('community-install'),
     communityExtensionId: z.string(),
     agentId: AgentIdSchema.optional(),
+    /**
+     * The release an agent asked for, as the community described it then. The host fills it in, never the agent, and
+     * the approval installs exactly this release, so what the administrator read is what runs.
+     */
+    release: z
+      .object({
+        id: z.string(),
+        number: z.number().int().positive().optional(),
+        displayName: z.string(),
+        publisherHandle: z.string(),
+        permissions: z.array(CommunityPermissionItemSchema),
+        reviewStatus: CommunityReviewStatusSchema,
+        ratingScore: z.number().nullable(),
+      })
+      .optional(),
+    /** Why the agent wants it, shown to the administrator. */
+    reason: z.string().max(500).optional(),
   }),
   z.object({ kind: z.literal('community-withdraw'), releaseId: z.string() }),
   /**
@@ -199,6 +220,18 @@ export interface ConfigPlan {
   readonly owner: ExtensionConfigOwner
   readonly change: ExtensionConfigChange
   readonly credentials: readonly { readonly key: string; readonly record: CredentialRecord }[]
+}
+
+const REVIEW_STATUS_LABEL: Readonly<Record<CommunityReviewStatus, string>> = {
+  pending: '尚未开始',
+  reviewing: '进行中',
+  passed: '通过',
+  passed_with_notes: '通过，有建议',
+  flagged: '发现风险，等待复审',
+  held: '暂停公开',
+  risk_confirmed: '确认有风险',
+  rejected: '未通过',
+  incomplete: '未完成',
 }
 
 const slugFrom = (name: string, fallback: string): string => {
@@ -270,6 +303,9 @@ export class ExtensionActionService {
     }
     if (OUTWARD.includes(action.kind)) {
       return { ...base, decision: 'request', reason: '会在社区公开，需要管理员确认。' }
+    }
+    if (action.kind === 'community-install') {
+      return { ...base, decision: 'request', reason: '社区扩展的代码会在这台机器上运行，需要管理员确认。' }
     }
     if (action.kind === 'branch' && action.copyData) {
       return { ...base, decision: 'request', reason: '会复制扩展数据，需要管理员确认。' }
@@ -710,7 +746,7 @@ export class ExtensionActionService {
       case 'community-update':
         return this.#communityUpdate(action.extensionId)
       case 'community-install':
-        return this.#communityInstall(action.communityExtensionId, action.agentId)
+        return this.#communityInstall(action.communityExtensionId, action.agentId, action.release?.id)
       case 'community-withdraw': {
         await runtime.community.withdraw(action.releaseId)
         return { message: '已撤回这次发布。' }
@@ -897,19 +933,28 @@ export class ExtensionActionService {
     return { ...result, message: `已更新到社区最新发布${number}。${result.message}` }
   }
 
-  async #communityInstall(communityExtensionId: string, agentId: AgentId | undefined): Promise<ExtensionActionResult> {
+  async #communityInstall(
+    communityExtensionId: string,
+    agentId: AgentId | undefined,
+    approvedReleaseId: string | undefined,
+  ): Promise<ExtensionActionResult> {
     const runtime = this.#runtime
     const detail = await runtime.community.getExtension(communityExtensionId)
     if (!detail.latest) throw new Error('这个扩展在社区上还没有可安装的发布。')
+    if (approvedReleaseId !== undefined && detail.latest.id !== approvedReleaseId) {
+      const number = detail.latest.number === undefined ? '' : `（#${detail.latest.number}）`
+      throw new Error(`社区上这个扩展已经有了新的发布${number}，和申请时的不一样，没有安装。请重新发起安装申请。`)
+    }
     const revision = await this.#importRelease(detail.latest.id, detail.publisher.handle, detail.latest.number)
-    if (agentId !== undefined) {
-      await this.perform({ kind: 'enable', extensionId: revision.extensionId, agentId }, { kind: 'console' })
-    }
-    return {
-      message: `已从社区安装「${detail.displayName}」${agentId === undefined ? '' : `，并给${this.#agentName(agentId)}启用`}。`,
-      extensionId: revision.extensionId,
-      revisionId: revision.id,
-    }
+    const installed = `已从社区安装「${detail.displayName}」`
+    const result = { extensionId: revision.extensionId, revisionId: revision.id }
+    if (agentId === undefined) return { ...result, message: `${installed}。` }
+    // Enabling follows its own rules: an install approval does not cover missing configuration.
+    const blocked =
+      this.enablementProblem(agentId, revision.extensionId) ?? this.enablementMissing(agentId, revision.extensionId)
+    if (blocked !== undefined) return { ...result, message: `${installed}，还没有启用：${blocked}` }
+    await this.perform({ kind: 'enable', extensionId: revision.extensionId, agentId }, { kind: 'console' })
+    return { ...result, message: `${installed}，并给${this.#agentName(agentId)}启用。` }
   }
 
   /** Summary, permission risk and reach of an action, computed from local facts only. */
@@ -1021,8 +1066,21 @@ export class ExtensionActionService {
           affectsOthers: otherAgents(action.extensionId, actor.kind === 'agent' ? actor.agentId : undefined),
         }
       }
-      case 'community-install':
-        return { ...normal, summary: '从社区安装扩展' }
+      case 'community-install': {
+        const release = action.release
+        if (release === undefined) return { ...normal, summary: '从社区安装扩展' }
+        const facts = [
+          communityPublisherLabel(release.publisherHandle),
+          `审查${REVIEW_STATUS_LABEL[release.reviewStatus]}`,
+          ...(release.ratingScore === null ? [] : [`评分 ${release.ratingScore.toFixed(1)}`]),
+        ]
+        return {
+          summary: `从社区安装「${release.displayName}」${release.number === undefined ? '' : ` #${release.number}`}（${facts.join('，')}）`,
+          level: highestPermissionLevel(release.permissions),
+          added: release.permissions,
+          affectsOthers: false,
+        }
+      }
       case 'community-withdraw':
         return { ...normal, summary: '撤回一次社区发布' }
       case 'configure':
