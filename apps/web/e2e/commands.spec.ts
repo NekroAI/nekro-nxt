@@ -193,9 +193,9 @@ test('production command journey: authorization, completion, denial, delivery fa
     await page.screenshot({ path: testInfo.outputPath('inspector-layout.png'), fullPage: true })
     await input.fill('/')
     const options = page.getByRole('option')
-    // Seven chat commands, /ext and /admin from extension governance, and the imported echo command.
-    await expect(options).toHaveCount(10)
-    for (let i = 0; i < 9; i++) await input.press('ArrowDown')
+    // Eight chat commands, /ext and /admin from extension governance, and the imported echo command.
+    await expect(options).toHaveCount(11)
+    for (let i = 0; i < 10; i++) await input.press('ArrowDown')
     const selectedVisible = () =>
       page.getByRole('listbox', { name: '可用命令' }).evaluate((list) => {
         const option = list.querySelector('[aria-selected="true"]')!.getBoundingClientRect()
