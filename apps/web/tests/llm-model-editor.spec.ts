@@ -92,7 +92,7 @@ describe('model list editor', () => {
       reasoningEffortValues: { low: 'think-lite', off: 'disabled' },
     })
     expect(thinkingLevelsSummary(row.reasoningEfforts)).toBe('关闭 · 低 · 高')
-    expect(thinkingLevelsSummary(undefined)).toBe('不思考')
+    expect(thinkingLevelsSummary(undefined)).toBe('未设置')
     // A cleared field goes back to the default: the level's own id, and nothing for 关闭.
     const cleared = { ...row, reasoningEffortValues: { low: ' ', off: '' } }
     expect(modelPayload([cleared])[0]).toMatchObject({

@@ -540,9 +540,9 @@ test.describe('settings space', () => {
       ),
     }
     let saved: unknown
-    // At this width the provider list folds away and the model table has room for every column.
+    // With the provider list beside it the model table is narrow: the output column folds, the thinking levels stay.
     const { page, errors } = await open('/settings/models', {
-      width: 1280,
+      width: 1440,
       before: async (target) => {
         await target.route('**/api/llm/providers', (request) => request.fulfill({ json: withLevels }))
         await target.route('**/api/llm/providers/example-a', (request) => {
@@ -555,11 +555,12 @@ test.describe('settings space', () => {
       await page.getByRole('table', { name: '模型供应商' }).getByText('示例供应商甲', { exact: true }).click()
       const table = page.getByRole('table', { name: '模型列表' })
       await expect(table.getByText('思考档位', { exact: true })).toBeVisible()
+      await expect(table.getByText('最大输出', { exact: true })).toBeHidden()
       await expect(table.getByRole('button', { name: /example-flash-vision-preview-long的思考档位/u })).toHaveText(
         '低 · 中 · 高',
       )
       const pro = table.getByRole('button', { name: /example-pro的思考档位/u })
-      await expect(pro).toHaveText('不思考')
+      await expect(pro).toHaveText('未设置')
 
       await pro.click()
       const editor = page.getByRole('dialog', { name: 'example-pro的思考档位' })
@@ -568,6 +569,8 @@ test.describe('settings space', () => {
         'placeholder',
         'high',
       )
+      await expect(editor.getByRole('textbox', { name: '关闭的上游参数值' })).toHaveAttribute('placeholder', '不发送')
+      await expect(editor).toContainText('留空时发送档位名。')
       // 关闭 alone is no choice at all.
       await editor.getByRole('checkbox', { name: '关闭', exact: true }).check()
       await expect(editor.getByRole('alert')).toHaveText('至少选一个关闭以外的档位')

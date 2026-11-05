@@ -217,9 +217,9 @@ export const visibleModelRowsError = (
   return relevant.length > 0 ? modelRowsError(relevant) : undefined
 }
 
-/** The chosen levels by name, least to most, or 不思考 when the model declares none. */
+/** The chosen levels by name, least to most, or 未设置 when the model declares none (it then follows its catalog). */
 export const thinkingLevelsSummary = (levels: readonly string[] | undefined): string =>
-  levels?.length ? sortThinkingLevels(levels).map(thinkingLevelName).join(' · ') : '不思考'
+  levels?.length ? sortThinkingLevels(levels).map(thinkingLevelName).join(' · ') : '未设置'
 
 /**
  * The thinking levels one model offers, edited in a popover: a checkbox per level and the value sent upstream for it.
@@ -276,7 +276,7 @@ function ThinkingLevelsCell({
               <Input
                 aria-label={`${name}的上游参数值`}
                 value={values[level] ?? ''}
-                placeholder={level}
+                placeholder={level === 'off' ? '不发送' : level}
                 spellCheck={false}
                 disabled={disabled || !on}
                 onChange={(event) =>
@@ -289,7 +289,7 @@ function ThinkingLevelsCell({
             </div>
           )
         })}
-        <p className={styles.muted}>留空时发送档位名；关闭留空时不发送。</p>
+        <p className={styles.muted}>留空时发送档位名。</p>
         {offOnly(row) ? (
           <p className={styles.fieldError} role="alert">
             {OFF_ONLY_ERROR}
@@ -401,9 +401,8 @@ function ModelCandidates({
 }
 
 /**
- * Editable model catalog of one provider. Narrow containers drop the output and thinking-level columns first, then the
- * display name; the id,
- * context size and image switch always stay. Long lists gain a search box and bulk selection. Every edit, bulk
+ * Editable model catalog of one provider. Narrow containers drop the output column first, then the display name and
+ * thinking levels; the id, context size and image switch always stay. Long lists gain a search box and bulk selection. Every edit, bulk
  * deletes included, takes effect only when the provider is saved.
  */
 export function ModelListEditor({
@@ -499,7 +498,7 @@ export function ModelListEditor({
     {
       key: 'id',
       header: '模型 ID',
-      width: 'minmax(180px, 1.8fr)',
+      width: 'minmax(150px, 2.2fr)',
       render: (row) => (
         <Input
           aria-label="模型 ID"
@@ -515,7 +514,7 @@ export function ModelListEditor({
     {
       key: 'name',
       header: '显示名',
-      width: 'minmax(120px, 1fr)',
+      width: 'minmax(88px, 1fr)',
       priority: 2,
       render: (row) => (
         <Input
@@ -567,8 +566,8 @@ export function ModelListEditor({
     {
       key: 'thinking',
       header: '思考档位',
-      width: 'minmax(80px, 0.6fr)',
-      priority: 3,
+      width: 'minmax(72px, 0.5fr)',
+      priority: 2,
       render: (row) => (
         <ThinkingLevelsCell row={row} disabled={disabled} onChange={(patch) => update(row.key, patch)} />
       ),
