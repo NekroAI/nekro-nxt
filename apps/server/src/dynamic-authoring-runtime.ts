@@ -980,7 +980,11 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   private assertWritable(operation: string): void {
     if (this.userOperationDepth > 0) return
     const blockedReason = this.requireState().blockedReason
-    if (blockedReason) throw new Error(`扩展开发已暂停，不能继续 ${operation}：${blockedReason}`)
+    if (blockedReason) {
+      throw new Error(
+        `扩展开发已暂停，不能继续 ${operation}：${blockedReason}这一轮里再试也一样会被拦下。暂停只在这一轮有效：这一轮结束后，频道里有新消息开始下一轮时会自动恢复，不需要重启 NekroNXT，也别让用户去重启。`,
+      )
+    }
   }
 
   private requireState(): DynamicAuthoringPolicyState {

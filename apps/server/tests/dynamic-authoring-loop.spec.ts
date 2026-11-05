@@ -449,7 +449,7 @@ describe('dynamic authoring closed loop', () => {
           purpose: '不应被允许。',
           code: { host: toolHost('escape_probe', "return 'ok'") },
         }),
-      ).toThrow('扩展开发已暂停')
+      ).toThrow(/扩展开发已暂停.*频道里有新消息开始下一轮时会自动恢复，不需要重启/)
     } finally {
       await runtime.dispose()
     }
