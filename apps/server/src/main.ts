@@ -44,6 +44,7 @@ import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { PRODUCT_VERSION } from './product-version.js'
 import { HostLogService } from './logs/service.js'
 import { attachConsoleLogs } from './logs/bridge.js'
+import { releaseIdentity } from './product-updates.js'
 
 const resolveRoot = (input: string): string => (path.isAbsolute(input) ? input : path.resolve(process.cwd(), input))
 
@@ -1143,7 +1144,10 @@ if (isEntryPoint()) {
           ? {}
           : { developmentWorkspaceRoot }),
         configureLlm: configureDshLlmProviders(llmProviderRoutes),
-        requestRestart,
+        // A source checkout under `pnpm dev` is restarted by its file watcher, not by an exit code: it would stay down.
+        ...(process.env['NEKRO_HOST_KIND'] === 'desktop' || releaseIdentity(releaseId).channel !== 'development'
+          ? { requestRestart }
+          : {}),
       })
       resolveStarted(handle)
       process.removeListener('SIGTERM', cancelStartup)
