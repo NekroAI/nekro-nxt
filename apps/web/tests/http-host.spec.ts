@@ -398,6 +398,34 @@ describe('HttpProductHost', () => {
     expect(host.getSnapshot().agents[0]?.name).toBe('新名称')
   })
 
+  it('settles a refresh after its own read while later refreshes keep the loop going', async () => {
+    const responses: ((value: ReturnType<typeof stubResponse>) => void)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise((resolve) => responses.push(resolve))),
+    )
+    const host = new HttpProductHost()
+    let settled = false
+    void host.actions['host.refresh']().then(() => {
+      settled = true
+    })
+    void host.actions['host.refresh']()
+    responses[0]!(stubResponse(200, snapshotBody()))
+    await flush()
+    expect(settled).toBe(true)
+    expect(responses).toHaveLength(2)
+    void host.actions['host.refresh']()
+    let next = false
+    const waiting = host.actions['host.refresh']().then(() => {
+      next = true
+    })
+    responses[1]!(stubResponse(200, snapshotBody()))
+    await flush()
+    expect(next).toBe(false)
+    responses[2]!(stubResponse(200, snapshotBody()))
+    await waiting
+  })
+
   it('replays runtime changes newer than a snapshot capture cursor', async () => {
     let resolve!: (value: ReturnType<typeof stubResponse>) => void
     vi.stubGlobal(

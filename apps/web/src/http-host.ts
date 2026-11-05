@@ -874,6 +874,8 @@ export class HttpProductHost implements ProductHostPort {
   #refreshRevision = 0
   #snapshotRequest: Promise<Error | null> | undefined
   #refreshAgain = false
+  /** Callers waiting for the next read that starts after their call; a busy event stream must not hold them forever. */
+  #nextReadWaiters: Array<(failure: Error | null) => void> = []
   #snapshotInvalidation: SyncCursor | undefined
   #snapshotCursor: SyncCursor | undefined
   #mutationInvalidation = 0
@@ -1046,6 +1048,7 @@ export class HttpProductHost implements ProductHostPort {
       this.#readController.abort()
       this.#readController = new AbortController()
       this.#snapshotRequest = undefined
+      for (const resolve of this.#nextReadWaiters.splice(0)) resolve(null)
       this.#snapshotEvents = undefined
       this.#snapshotInvalidation = undefined
       this.#snapshotCursor = undefined
@@ -1633,23 +1636,27 @@ export class HttpProductHost implements ProductHostPort {
   #refreshAndNotify(): Promise<Error | null> {
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer)
     this.#retryTimer = undefined
+    const settled = new Promise<Error | null>((resolve) => this.#nextReadWaiters.push(resolve))
     if (this.#snapshotRequest !== undefined) {
       this.#refreshAgain = true
-      return this.#snapshotRequest
+      return settled
     }
     const lifecycle = this.#lifecycle
     const task = (async (): Promise<Error | null> => {
       let failure: Error | null
       do {
         this.#refreshAgain = false
+        const waiters = this.#nextReadWaiters.splice(0)
         failure = await this.#readSnapshot()
+        for (const resolve of waiters) resolve(failure)
       } while (this.#refreshAgain && lifecycle === this.#lifecycle)
+      if (lifecycle === this.#lifecycle) for (const resolve of this.#nextReadWaiters.splice(0)) resolve(failure)
       return failure
     })().finally(() => {
       if (this.#snapshotRequest === task) this.#snapshotRequest = undefined
     })
     this.#snapshotRequest = task
-    return task
+    return settled
   }
 
   async #readSnapshot(): Promise<Error | null> {
