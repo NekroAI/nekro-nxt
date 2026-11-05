@@ -36,7 +36,7 @@ Host UI 页面由独立 Runtime 承载。页面实例、显隐、跨扩展顺序
 
 正常关闭与升级重置不同。上游 `AgentHandle.dispose()` 会清空 pending inbox，因此 NXT 先 `cancel(..., { keepInbox: true })` 并等待静止，将待处理消息写入 `dsh/shutdown-inbox/<Session摘要>.json`，再释放句柄。下次 `agent/created` 通过公开 `inbox.append()` 恢复未消费的消息 ID，flush 成功后删除 journal。这是关闭事务暂存，必须备份，不是长期第二会话库；已经因升级退休的旧 Session 不通过它续跑或补答。
 
-每个根 Session 通过常驻系统提示和 `nekro_nxt_channel_context` 获得 Host 权威的 Channel/Episode 身份；发送、历史、Asset 与该只读工具都绑定当前频道。Episode handoff 只总结该 Episode 已准入的 Channel Event 与自身 Outbound，上一份派生 handoff、频道原文和智能体旧出站分区标注；最近 12 条频道原文仍作为独立恢复窗口注入。摘要请求不设置 `maxTokens`、使用 180 秒边界，任何摘要失败都降级且不阻断 rollover。
+每个根 Session 通过常驻系统提示和 `nekro_nxt_channel_context` 获得 Host 权威的 Channel/Episode 身份；发送、历史、Asset 与该只读工具都绑定当前频道。正在运行的版本、构建号和发布渠道由只读工具 `nekro_nxt_version` 按需查询，不写进系统提示，升级后不会过期。Episode handoff 只总结该 Episode 已准入的 Channel Event 与自身 Outbound，上一份派生 handoff、频道原文和智能体旧出站分区标注；最近 12 条频道原文仍作为独立恢复窗口注入。摘要请求不设置 `maxTokens`、使用 180 秒边界，任何摘要失败都降级且不阻断 rollover。
 
 图片策略随人设和模型进入不可变 Revision。视觉主模型按 MessagePart 顺序收到原图，同一 Surface 以 Asset `contentDigest` 去重；`asset_inspect_images` 接受 1–20 张图片、整批 `question` 和逐图 `focus`，视觉主模型直接收到 Tool Result ImageBlock，文本主模型只接收辅助视觉模型经 Schema 校验的结构化证据。辅助调用不拆批，只允许一次不重发图片的 JSON 修复，并在同一 Session 以频道、模型、有序 digest、问题和协议版本精确缓存。所有调用写 log-only terminal audit，Snapshot 检查器投影视觉驻留、重复跳过、最近检查、Token usage、恢复和阻塞项。
 

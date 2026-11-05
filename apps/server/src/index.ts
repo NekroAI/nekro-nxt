@@ -25,6 +25,7 @@ import {
 import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { assetSaveToWorkspaceTool } from './asset-save-tool.js'
 import { audioTranscribeTool } from './audio-transcribe-tool.js'
+import { productVersionTool } from './product-version-tool.js'
 import type { SpeechService } from './speech-service.js'
 import { channelImageSubmission, trackToolCallSessions } from './dsh-plugin-images.js'
 import { mountCredentialRedaction } from './credential-redaction.js'
@@ -545,6 +546,8 @@ export interface DshHostRuntimeOptions {
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
   /** Transcription for the agent's `audio_transcribe` tool; absent where speech recognition is not wired. */
   readonly speech?: Pick<SpeechService, 'transcribeOnce'>
+  /** The running release (`NEKRO_RELEASE_ID`) for the `nekro_nxt_version` tool; absent where the host has none. */
+  readonly releaseId?: string
   /** Where commands get the credentials open to an agent and the linked accounts it is granted. */
   readonly commandAccounts?: CommandCredentialSources
   /** Programs of the add-ons' current providers, added to every agent's command `PATH` (附加功能 F4). */
@@ -3266,6 +3269,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #developmentWorkspaceRoot: string | undefined
   readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
   readonly #speech: DshHostRuntimeOptions['speech']
+  readonly #releaseId: string | undefined
   readonly #commandAccounts: CommandCredentialSources | undefined
   readonly #codeRunFallbackDirectory: string
   readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
@@ -3347,6 +3351,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#codeRunNode = options.codeRunNode
     this.#speech = options.speech
+    this.#releaseId = options.releaseId
     this.#commandAccounts = options.commandAccounts
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
     this.#hostCommandConfinement = dataRootCommandConfinement(
@@ -4412,6 +4417,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         text: imageContextPolicy(supportsImage, auxiliary !== undefined),
       })
       agentContext.tools.register(channelContextTool(input.episodeId, input.channelId, this.#history, this.#members))
+      agentContext.tools.register(productVersionTool(this.#releaseId))
       agentContext.tools.register(
         assetCreateTool(input.channelId, this.#assets, this.#assetService, { workspace: developmentWorkspace }),
       )

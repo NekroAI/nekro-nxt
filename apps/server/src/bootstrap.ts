@@ -1279,6 +1279,7 @@ export class NekroRuntime {
           },
         },
         speech: speechService,
+        ...(options.feedbackEnvironment === undefined ? {} : { releaseId: options.feedbackEnvironment.releaseId }),
         codeRunNode: () => {
           const active = addons.active('node')
           if (active === undefined) return undefined
