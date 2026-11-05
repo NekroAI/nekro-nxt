@@ -468,6 +468,8 @@ export interface AgentCommunicationPort {
   sendMessage(input: SendMessageInput): Promise<SendMessageResult | AgentSendResult>
   supportsRetraction?(channelId: ChannelId): boolean
   supportsNudge?(channelId: ChannelId): boolean
+  /** False when the channel's settings leave no room to wait; sessions opened then do not offer `waiting-for-more`. */
+  supportsWaitForMore?(channelId: ChannelId): boolean
   retractMessage?(input: {
     readonly episodeId: EpisodeId
     readonly logicalMessageId: LogicalMessageId
@@ -1257,17 +1259,25 @@ const nekroNxtExtensionDefineTool = (
     },
   })
 
-const ROOT_CHANNEL_MESSAGE_POLICY = `你在一个真实的聊天频道里。大家只能看到你用 send_channel_message 发出去的消息；你的思考、工具调用，还有直接写出来的文字，他们都看不到。没用 send_channel_message 发出去的话，就等于没说。
+const ROOT_CHANNEL_MESSAGE_POLICY_HEAD = `你在一个真实的聊天频道里。大家只能看到你用 send_channel_message 发出去的消息；你的思考、工具调用，还有直接写出来的文字，他们都看不到。没用 send_channel_message 发出去的话，就等于没说。
 
-照你的人设和这里的气氛说话。聊天时一两句就够，像朋友随口回答：问什么答什么，不铺垫，不补充对方没问的建议和提醒，不列一二三，不总结。对方追问，或者明确要你详细讲、写一段东西（文案、代码、设定）时再展开，但也别写成文章。话多时像平常聊天一样分成几条发，在同一次回复里连着调用几次 send_channel_message。聊天软件不显示 Markdown，别用加粗、标题和表格，列几项就直接换行。
+照你的人设和这里的气氛说话。聊天时一两句就够，像朋友随口回答：问什么答什么，不铺垫，不补充对方没问的建议和提醒，不列一二三，不总结。对方追问，或者明确要你详细讲、写一段东西（文案、代码、设定）时再展开，但也别写成文章。话多时像平常聊天一样分成几条发，在同一次回复里连着调用几次 send_channel_message。聊天软件不显示 Markdown，别用加粗、标题和表格，列几项就直接换行。`
 
-群友常把一句话拆成几条发。对方看起来话还没说完，比如只叫了你一声、一句话只说了一半，就用 finish_channel_turn 的 waiting-for-more 先等他说完，他停下来以后会再叫你。
+const ROOT_CHANNEL_WAIT_POLICY = `群友常把一句话拆成几条发。对方看起来话还没说完，比如只叫了你一声、一句话只说了一半，就用 finish_channel_turn 的 waiting-for-more 先等他说完，他停下来以后会再叫你。`
 
-要花一阵子的事（查资料、写东西、跑命令），先随口应一声再去做，做完把结果发出来。结果以实际做成的为准，没做成就直说。查到的东西用自己的话讲，别人要出处时再给链接。
+const ROOT_CHANNEL_MESSAGE_POLICY_TAIL = `要花一阵子的事（查资料、写东西、跑命令），先随口应一声再去做，做完把结果发出来。结果以实际做成的为准，没做成就直说。查到的东西用自己的话讲，别人要出处时再给链接。
 
 有人在等你回话时，这一轮结束前要么回他，要么调用 finish_channel_turn 写下为什么不回。发完消息还可以继续用工具、继续发。几件互不相关的事（发几条消息、查几样东西）可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。
 
 有人问起你是怎么运作的，用平常话回答就行，不用讲工具名、系统提示和内部流程。密钥、别人的私事，还有你所在这台机器的情况（文件路径、配置、软件版本、运行状态），不要说到群里，除非管理员自己问起。`
+
+/** The waiting paragraph only appears where the channel lets the agent wait; otherwise it invites a refused call. */
+const rootChannelMessagePolicy = (waitAvailable: boolean): string =>
+  [
+    ROOT_CHANNEL_MESSAGE_POLICY_HEAD,
+    ...(waitAvailable ? [ROOT_CHANNEL_WAIT_POLICY] : []),
+    ROOT_CHANNEL_MESSAGE_POLICY_TAIL,
+  ].join('\n\n')
 
 const ROOT_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里。要说的话想好以后，把 send_channel_message 和 finish_channel_turn（outcome 用 response-complete）一起写在同一段程序的最后，发送结果不用另外确认；结束本轮后不会再有下一步。只有要看了查询结果才能决定说什么时，才分成几段。`
 
@@ -1704,16 +1714,28 @@ export const finishChannelTurnTool = (
 ) =>
   defineTool({
     name: 'finish_channel_turn',
-    description:
-      '结束这一轮，放在最后调用。已经回复完用 response-complete，不需要回复用 no-response-needed，做不到或不能做用 cannot-respond。对方明显话还没说完时用 waiting-for-more，并在 seconds 里写他停下来多少秒后再叫你（一般 10–30）；到时你必须回复他。reason 写真实原因，只有后台看得到，不会发到频道里。',
+    description: [
+      '结束这一轮，放在最后调用。已经回复完用 response-complete，不需要回复用 no-response-needed，做不到或不能做用 cannot-respond。',
+      ...(wait === undefined
+        ? []
+        : [
+            '对方明显话还没说完时用 waiting-for-more，并在 seconds 里写他停下来多少秒后再叫你（一般 10–30）；到时你必须回复他。',
+          ]),
+      'reason 写真实原因，只有后台看得到，不会发到频道里。',
+    ].join(''),
     parameters: {
       outcome: {
         type: 'string',
-        enum: [...FINISH_OUTCOMES],
+        enum:
+          wait === undefined
+            ? FINISH_OUTCOMES.filter((outcome) => outcome !== 'waiting-for-more')
+            : [...FINISH_OUTCOMES],
         required: true,
       },
       reason: { type: 'string', required: true, description: '原因，1–500 字。' },
-      seconds: { type: 'number', description: '只用于 waiting-for-more：对方安静多少秒后再叫你。' },
+      ...(wait === undefined
+        ? {}
+        : { seconds: { type: 'number', description: '只用于 waiting-for-more：对方安静多少秒后再叫你。' } }),
     },
     output: {
       schema: {
@@ -4353,12 +4375,16 @@ export class DshHostRuntime implements AgentSessionDriver {
         order: 15,
         text: channelContextPrompt(channelContext, this.#members),
       })
+      // Decided when the session opens, like the rest of the prompt; a later change still gets a refusal at runtime.
+      const requestWait = this.#communication.waitForMore
+      const waitAvailable =
+        requestWait !== undefined && this.#communication.supportsWaitForMore?.(input.channelId) !== false
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:channel-communication',
         order: 20,
         text: (context) =>
           scopeHasTool(agentContext.tools, 'send_channel_message', context.scope)
-            ? ROOT_CHANNEL_MESSAGE_POLICY
+            ? rootChannelMessagePolicy(waitAvailable)
             : CHILD_CHANNEL_MESSAGE_POLICY,
       })
       agentContext.systemPrompt.section({
@@ -4396,11 +4422,12 @@ export class DshHostRuntime implements AgentSessionDriver {
       agentContext.tools.register(
         channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
       )
-      const requestWait = this.#communication.waitForMore
       agentContext.tools.register(
         finishChannelTurnTool(
           (agent) => this.#channelReplyGuard.awaitingReply(agent),
-          requestWait === undefined ? undefined : { episodeId: input.episodeId, request: requestWait },
+          requestWait === undefined || !waitAvailable
+            ? undefined
+            : { episodeId: input.episodeId, request: requestWait },
         ),
       )
       const scheduledTasks = this.#extensionHost?.scheduledTasks

@@ -1339,6 +1339,7 @@ export class NekroRuntime {
             if (!settled.current) return Promise.reject(new Error('Channel Runtime is not ready.'))
             return settled.current.nudgeChannelMember(input)
           },
+          supportsWaitForMore: (channelId) => settled.current?.waitForMoreAvailable(channelId) ?? true,
           waitForMore: (input) => {
             if (!settled.current) return { accepted: false, reason: '服务还没准备好，直接回复或者结束这一轮。' }
             return settled.current.requestWaitForMore(input)

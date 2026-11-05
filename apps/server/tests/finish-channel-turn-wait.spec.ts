@@ -38,7 +38,24 @@ describe('finish_channel_turn waiting-for-more (Decision 2026-10-31 R2)', () => 
     await expect(
       run({ outcome: 'waiting-for-more', reason: '等等看。', seconds: 10 }, { episodeId, request }),
     ).rejects.toThrow('这个频道关闭了等待。')
-    await expect(run({ outcome: 'waiting-for-more', reason: '等等看。' })).rejects.toThrow('waiting-for-more')
+    // Without a wait the outcome is not offered at all, so the arguments themselves are refused.
+    await expect(run({ outcome: 'waiting-for-more', reason: '等等看。' })).rejects.toThrow('outcome')
+  })
+
+  it('does not offer waiting-for-more where the channel cannot wait (#132)', () => {
+    const without = finishChannelTurnTool(() => false)
+    expect(without.parameters).toHaveProperty('properties.outcome.enum', [
+      'response-complete',
+      'no-response-needed',
+      'cannot-respond',
+    ])
+    expect(without.parameters).not.toHaveProperty('properties.seconds')
+    expect(without.description).not.toContain('waiting-for-more')
+    const request: ChannelWaitRequester = () => ({ accepted: true, seconds: 20 })
+    expect(finishChannelTurnTool(() => false, { episodeId, request }).parameters).toHaveProperty(
+      'properties.outcome.enum',
+      ['response-complete', 'no-response-needed', 'cannot-respond', 'waiting-for-more'],
+    )
   })
 
   it('leaves the other outcomes as they were', async () => {

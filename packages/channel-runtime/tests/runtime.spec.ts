@@ -3694,6 +3694,8 @@ describe('ChannelRuntime response timing (Decision 2026-10-31)', () => {
     expect(off.runtime.requestWaitForMore({ episodeId: off.episodeId(), seconds: 10 })).toMatchObject({
       accepted: false,
     })
+    expect(off.runtime.waitForMoreAvailable(off.channel.id)).toBe(false)
+    expect(h.runtime.waitForMoreAvailable(h.channel.id)).toBe(true)
   })
 
   it("merges the awaited speaker's messages in an always channel instead of opening a turn for each", async () => {

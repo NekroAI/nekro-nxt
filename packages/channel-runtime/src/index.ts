@@ -589,6 +589,10 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
 
 const laneKey = (channelId: ChannelId, agentId: AgentId): string => `${channelId}\u0000${agentId}`
 
+/** Channels that only answer commands or only observe never wake the agent on their own, so it cannot wait there. */
+const waitSupported = (binding: BindingRecord): boolean =>
+  binding.triggerPolicy !== 'command' && binding.triggerPolicy !== 'observe-only'
+
 type MidSignal = { readonly kind: 'attention' } | { readonly kind: 'name'; readonly name: string }
 
 const midWakeNote = (signal: MidSignal): string =>
@@ -918,6 +922,15 @@ export class ChannelRuntime {
   }
 
   /**
+   * Whether a session opened now should offer `waiting-for-more` at all. Pausing is left out on purpose: it is
+   * temporary, and `requestWaitForMore` still refuses while it lasts.
+   */
+  waitForMoreAvailable(channelId: ChannelId): boolean {
+    const binding = this.#coreRepository.getBinding(channelId)
+    return binding !== undefined && waitSupported(binding) && resolveResponseTiming(binding.responseTiming).waitEnabled
+  }
+
+  /**
    * The agent ended its turn with `waiting-for-more`: wake it once the latest speaker has been quiet for `seconds`,
    * within the channel's limits. Refused when the channel turned waiting off or the turn itself came from a wait.
    */
@@ -927,7 +940,7 @@ export class ChannelRuntime {
     if (episode === undefined || binding === undefined || binding.agentId !== episode.agentId) {
       return { accepted: false, reason: '这个频道已经不由你负责了。' }
     }
-    if (binding.triggerPolicy === 'command' || binding.triggerPolicy === 'observe-only' || binding.paused) {
+    if (binding.paused || !waitSupported(binding)) {
       return { accepted: false, reason: '这个频道现在不会自动叫你，用不了等待。' }
     }
     const timing = resolveResponseTiming(binding.responseTiming)
