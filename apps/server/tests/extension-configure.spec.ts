@@ -559,6 +559,8 @@ describe('agents cannot widen their own reach', () => {
       'configure',
       'revert-config',
       'use-credential',
+      // Restarting is always the administrator's call; it widens nothing.
+      'restart-host',
     ])
     const unused = () => {
       throw new Error('unused')
