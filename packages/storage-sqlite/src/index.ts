@@ -803,6 +803,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   ) => this.#subConversations.listSubConversationsClosedBefore(...args)
   readonly closeSubConversation = (...args: Parameters<SubConversationsRepository['closeSubConversation']>) =>
     this.#subConversations.closeSubConversation(...args)
+  readonly touchSubConversation = (...args: Parameters<SubConversationsRepository['touchSubConversation']>) =>
+    this.#subConversations.touchSubConversation(...args)
   readonly deleteSubConversation = (...args: Parameters<SubConversationsRepository['deleteSubConversation']>) =>
     this.#subConversations.deleteSubConversation(...args)
 }

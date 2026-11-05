@@ -1,7 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { CONTEXT_WINDOW_EXCEEDED_CODE, ReasoningEffortId, type LlmFailure } from '@deepseek-ai/dsh-llm'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import {
   SubConversationIdSchema,
@@ -39,6 +40,7 @@ export interface SubConversationStore {
     readonly summary?: string
     readonly closedAt: number
   }): SubConversationRecord | undefined
+  touchSubConversation(input: { readonly id: SubConversationId; readonly at: number }): void
   deleteSubConversation(id: SubConversationId): void
 }
 
@@ -71,6 +73,40 @@ const RETENTION_MS: Readonly<Record<SubConversationRetention, number | undefined
 }
 
 const SUMMARY_MAX = 4000
+/** Activity is written at most this often per sub-conversation; the list only tells minutes apart. */
+const ACTIVITY_WRITE_MS = 60_000
+/** DSH session ids of sub-conversations, see `#record`. */
+const SESSION_PREFIX = 'nxt-cnv_'
+
+const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text)
+
+/**
+ * The conclusion of a model-driven sub-conversation that stopped on its own: why, and its last reply as how far it
+ * got.
+ */
+const failureConclusion = (
+  stopReason: 'error' | 'aborted',
+  failure: LlmFailure | undefined,
+  lastReply: string | undefined,
+): string => {
+  const reason =
+    stopReason === 'aborted'
+      ? '子对话被中断，没有做完。'
+      : failure?.code === CONTEXT_WINDOW_EXCEEDED_CODE
+        ? '子对话的上下文超出了模型上限，没能继续。'
+        : `子对话出错停止了${failure === undefined ? '。' : `：${clip(failure.message.trim(), 300)}`}`
+  return lastReply === undefined
+    ? `${reason}\n它还没有回复过。`
+    : `${reason}\n停止前最后的回复：${clip(lastReply, 1000)}`
+}
+
+const replyText = (blocks: SubagentRunEndInfo['lastAssistantMessage']): string | undefined => {
+  const text = (blocks ?? [])
+    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+    .join('\n')
+    .trim()
+  return text === '' ? undefined : text
+}
 
 export class SubConversationError extends Error {
   constructor(message: string) {
@@ -95,9 +131,73 @@ export class SubConversationManager {
   readonly #nextId = monotonicFactory()
   /** Model-driven ones whose agent ended them; released once their own turn is over. */
   readonly #releasing = new Set<string>()
+  /** When activity was last written, by DSH session id. */
+  readonly #activityWritten = new Map<string, number>()
+  /** The failure that ended a sub-conversation's latest turn, by DSH session id, until a later turn ends otherwise. */
+  readonly #turnFailures = new Map<string, LlmFailure>()
+  readonly #stopObserving: () => void
+  #disposed = false
 
   constructor(options: SubConversationManagerOptions) {
     this.#options = options
+    const stopEvents = options.context.on('session/event', (session, event) => {
+      this.#observeEvent(String(session.id), event)
+    })
+    const stopEnds = options.context.on('subagent/end', (info) => {
+      this.#observeEnd(info)
+    })
+    this.#stopObserving = () => {
+      stopEvents()
+      stopEnds()
+    }
+  }
+
+  /**
+   * Stops following sub-conversations before the host shuts down. Shutdown stops running ones too, and those stay
+   * open so DSH resumes them after the restart.
+   */
+  dispose(): void {
+    this.#disposed = true
+    this.#stopObserving()
+  }
+
+  #observeEvent(dshSessionId: string, event: SessionEvent): void {
+    if (this.#disposed || !dshSessionId.startsWith(SESSION_PREFIX)) return
+    try {
+      if (event.type === 'turn/end') {
+        if (event.data.reason.kind === 'error') this.#turnFailures.set(dshSessionId, event.data.reason.error)
+        else this.#turnFailures.delete(dshSessionId)
+      }
+      const now = this.#now()
+      const written = this.#activityWritten.get(dshSessionId)
+      if (written !== undefined && now - written < ACTIVITY_WRITE_MS) return
+      const record = this.#options.store.getSubConversationBySession(dshSessionId)
+      if (record?.status !== 'open') return
+      this.#activityWritten.set(dshSessionId, now)
+      this.#options.store.touchSubConversation({ id: record.id, at: now })
+      this.#options.changed()
+    } catch (error) {
+      console.error(`[nekro-nxt] 记录子对话 ${dshSessionId} 的活动失败：`, error)
+    }
+  }
+
+  /**
+   * A model-driven sub-conversation that failed or was interrupted ends there with what it got to, instead of
+   * staying open with nobody driving it. One that finished its turn stays open for the channel conversation to follow
+   * up. Ones the agent, an administrator or the channel conversation ended are already closed when DSH stops them.
+   */
+  #observeEnd(info: SubagentRunEndInfo): void {
+    const dshSessionId = String(info.id)
+    const failure = this.#turnFailures.get(dshSessionId)
+    this.#turnFailures.delete(dshSessionId)
+    if (this.#disposed || (info.stopReason !== 'error' && info.stopReason !== 'aborted')) return
+    try {
+      const record = this.#options.store.getSubConversationBySession(dshSessionId)
+      if (record?.driver !== 'model' || record.status !== 'open') return
+      this.#close(record, 'failed', failureConclusion(info.stopReason, failure, replyText(info.lastAssistantMessage)))
+    } catch (error) {
+      console.error(`[nekro-nxt] 结束失败的子对话 ${dshSessionId} 失败：`, error)
+    }
   }
 
   #now(): number {
@@ -149,6 +249,7 @@ export class SubConversationManager {
       ...(summary === undefined || summary.trim() === '' ? {} : { summary: summary.trim().slice(0, SUMMARY_MAX) }),
       closedAt: this.#now(),
     })
+    this.#activityWritten.delete(record.dshSessionId)
     if (closed !== undefined) this.#options.changed()
     return closed ?? this.#options.store.getSubConversation(record.id) ?? record
   }
@@ -425,6 +526,10 @@ export const memorySubConversationStore = (): SubConversationStore => {
       }
       records.set(input.id, closed)
       return closed
+    },
+    touchSubConversation: (input) => {
+      const record = records.get(input.id)
+      if (record?.status === 'open') records.set(input.id, { ...record, lastActivityAt: input.at })
     },
     deleteSubConversation: (id) => {
       records.delete(id)

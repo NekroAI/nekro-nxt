@@ -26,12 +26,32 @@ const DeleteSchema = z.object({ conversation: SubConversationIdSchema })
 
 const STATUS: Readonly<Record<SubConversation['status'], string>> = { open: '进行中', closed: '已结束' }
 
-const brief = (record: SubConversationRecord) => ({
+/** Minutes since an open sub-conversation's log last changed, counting from its opening until then. */
+const idleMinutes = (record: SubConversationRecord, now: number): number =>
+  Math.max(0, Math.floor((now - (record.lastActivityAt ?? record.createdAt)) / 60_000))
+
+const brief = (record: SubConversationRecord, now: number) => ({
   id: record.id,
   title: record.title,
   status: record.status,
+  ...(record.status === 'open' ? { idleMinutes: idleMinutes(record, now) } : {}),
+  ...(record.closeReason === 'failed' ? { failed: true } : {}),
   ...(record.summary === undefined ? {} : { summary: record.summary }),
 })
+
+const ListItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.enum(['open', 'closed']),
+  idleMinutes: z.number().optional(),
+  failed: z.boolean().optional(),
+})
+
+const listLine = (item: z.infer<typeof ListItemSchema>): string => {
+  if (item.status === 'closed') return `${item.id} ${item.title}（${item.failed === true ? '未完成' : STATUS.closed}）`
+  const idle = item.idleMinutes ?? 0
+  return `${item.id} ${item.title}（${STATUS.open}${idle > 0 ? `，${idle} 分钟没有动静` : ''}）`
+}
 
 const requireAgent = (exec: { readonly agent?: Agent | undefined }): Agent => {
   if (exec.agent === undefined) throw new Error('子对话工具只能在对话里使用。')
@@ -207,24 +227,19 @@ export const subConversationTools = (
         properties: { items: { type: 'array', required: true, items: { type: 'object', additionalProperties: true } } },
       },
       render: (_arguments, value) => {
-        const items = z
-          .object({
-            items: z.array(z.object({ id: z.string(), title: z.string(), status: z.enum(['open', 'closed']) })),
-          })
-          .parse(value).items
+        const items = z.object({ items: z.array(ListItemSchema) }).parse(value).items
         if (items.length === 0) return [{ type: 'text', text: '还没有子对话。' }]
-        return [
-          { type: 'text', text: items.map((item) => `${item.id} ${item.title}（${STATUS[item.status]}）`).join('\n') },
-        ]
+        return [{ type: 'text', text: items.map(listLine).join('\n') }]
       },
     },
     execute: (_args, exec) => {
       const agent = requireAgent(exec)
+      const now = Date.now()
       const items = store
         .listSubConversations({})
         .filter((record) => record.parentDshSessionId === agent.id)
         .slice(0, 50)
-        .map(brief)
+        .map((record) => brief(record, now))
       return Promise.resolve({ items })
     },
   }),

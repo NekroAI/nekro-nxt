@@ -5612,6 +5612,8 @@ export class DshHostRuntime implements AgentSessionDriver {
       if (!this.#context.agents.get(sessionId)) return
       throw new Error(`DSH Agent Session is not owned by this Host: ${dshSessionId}`)
     }
+    // Its sub-conversations end with it before DSH stops them, so stopping them is not read as their own failure.
+    if (episodeId !== undefined) this.#subConversations.closeForEpisode(episodeId)
     let drainError: unknown
     try {
       await this.#context.subagents.drainDescendants([handle.agent])
@@ -5630,7 +5632,6 @@ export class DshHostRuntime implements AgentSessionDriver {
       this.#sessions.remove(sessionId)
       // Creation tasks of the closed conversation wait to be continued in a later one instead of staying half-run.
       if (episodeId !== undefined) this.#authoring?.service.pauseTasksOfEpisode(episodeId, '所在的对话已经结束。')
-      if (episodeId !== undefined) this.#subConversations.closeForEpisode(episodeId)
     }
     if (drainError !== undefined && disposeError !== undefined) {
       throw new AggregateError([drainError, disposeError], `DSH Session teardown failed: ${dshSessionId}`)
@@ -6199,6 +6200,7 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   async #dispose(): Promise<void> {
     this.#disposed = true
+    this.#subConversations.dispose()
     this.#subscriptions?.dispose()
     this.#subscriptionListeners.clear()
     for (const timer of this.#idleReviews.values()) clearTimeout(timer)

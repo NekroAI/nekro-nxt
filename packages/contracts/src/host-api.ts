@@ -1317,6 +1317,8 @@ export const SubConversationSchema = z
     /** The model a model-driven sub-conversation talks in; absent for scripts and ones opened before it was kept. */
     model: AgentModelSchema.optional(),
     createdAt: z.number().int().nonnegative(),
+    /** When its log last changed while open; absent until then. */
+    lastActivityAt: z.number().int().nonnegative().optional(),
     closedAt: z.number().int().nonnegative().optional(),
   })
   .strict()

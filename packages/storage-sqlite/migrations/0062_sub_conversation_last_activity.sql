@@ -1,0 +1,1 @@
+ALTER TABLE `sub_conversations` ADD `last_activity_at` integer;

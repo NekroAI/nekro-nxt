@@ -22,6 +22,7 @@ export const projectSubConversation = (record: SubConversationRecord): SubConver
   ...(record.authoringTaskId === undefined ? {} : { authoringTaskId: record.authoringTaskId }),
   ...(record.model === undefined ? {} : { model: record.model }),
   createdAt: record.createdAt,
+  ...(record.lastActivityAt === undefined ? {} : { lastActivityAt: record.lastActivityAt }),
   ...(record.closedAt === undefined ? {} : { closedAt: record.closedAt }),
 })
 

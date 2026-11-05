@@ -23,6 +23,8 @@ const conversations: SubConversation[] = [
     status: 'open',
     model: { provider: 'test-provider', model: 'text-model' },
     createdAt: at,
+    // Quiet for a while, so the list says so instead of 进行中.
+    lastActivityAt: Date.now() - 12 * 60_000,
   },
   {
     id: SubConversationIdSchema.parse('cnv_CLOSEDFIXTURE'),
@@ -143,6 +145,7 @@ for (const theme of ['light', 'dark'] as const) {
       const listed = width >= 1100
       if (listed) {
         await expect(group.getByRole('link', { name: /整理本周活动要点/u })).toBeVisible()
+        await expect(group.getByRole('link', { name: /整理本周活动要点/u })).toContainText('12 分钟无动静')
         // Ended ones are folded behind a count until opened.
         await expect(group.getByRole('link', { name: /验证 weather_card/u })).toHaveCount(0)
         await group.getByRole('button', { name: /已结束 1/u }).click()

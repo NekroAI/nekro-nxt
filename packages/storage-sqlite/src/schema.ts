@@ -1869,6 +1869,8 @@ export const subConversations = sqliteTable(
     /** The model a model-driven sub-conversation was opened with; null for scripts and rows written before it. */
     model: jsonText<AgentModelSelection>('model'),
     createdAt: integer('created_at').notNull(),
+    /** When its log last changed while open; null until then, and for rows written before it was kept. */
+    lastActivityAt: integer('last_activity_at'),
     closedAt: integer('closed_at'),
   },
   (table) => [

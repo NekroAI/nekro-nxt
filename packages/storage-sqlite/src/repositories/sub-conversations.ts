@@ -26,6 +26,8 @@ export interface SubConversationRecord {
   readonly authoringTaskId?: AuthoringTaskId
   readonly model?: NonNullable<SubConversation['model']>
   readonly createdAt: number
+  /** When its log last changed while open; absent until then. */
+  readonly lastActivityAt?: number
   readonly closedAt?: number
 }
 
@@ -47,6 +49,7 @@ const record = (row: Row): SubConversationRecord => ({
   ...(row.authoringTaskId === null ? {} : { authoringTaskId: row.authoringTaskId }),
   ...(row.model === null ? {} : { model: row.model }),
   createdAt: row.createdAt,
+  ...(row.lastActivityAt === null ? {} : { lastActivityAt: row.lastActivityAt }),
   ...(row.closedAt === null ? {} : { closedAt: row.closedAt }),
 })
 
@@ -61,6 +64,7 @@ export function createSubConversationsRepository(database: DrizzleCoreDatabase) 
           summary: input.summary ?? null,
           authoringTaskId: input.authoringTaskId ?? null,
           model: input.model ?? null,
+          lastActivityAt: input.lastActivityAt ?? null,
           closedAt: input.closedAt ?? null,
         })
         .run()
@@ -127,6 +131,15 @@ export function createSubConversationsRepository(database: DrizzleCoreDatabase) 
         .returning()
         .get()
       return row === undefined ? undefined : record(row)
+    },
+
+    /** Records activity of an open sub-conversation; an ended one keeps what it had. */
+    touchSubConversation(input: { readonly id: SubConversationId; readonly at: number }): void {
+      database
+        .update(subConversations)
+        .set({ lastActivityAt: input.at })
+        .where(and(eq(subConversations.id, input.id), eq(subConversations.status, 'open')))
+        .run()
     },
 
     deleteSubConversation(id: SubConversationId): void {
