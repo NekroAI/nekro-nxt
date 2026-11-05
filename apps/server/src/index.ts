@@ -38,6 +38,7 @@ import { mountSandboxHints } from './command-sandbox-hints.js'
 import { preloadCredentialDocument } from './logs/credentials.js'
 import { SecretRegistry } from './secret-registry.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
+import { mountRequestTiming } from './request-timing.js'
 import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { mountCodeRunRuntime } from './code-run.js'
 import {
@@ -120,6 +121,7 @@ import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-po
 import { NekroJsonlSessionPersistence } from './dsh-session-persistence.js'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStats from '@deepseek-ai/dsh-session-stats'
+import DeepSeekLlmApiExtensionRegistry from '@deepseek-ai/dsh-deepseek-llm-api-extensions'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import type { SubagentCatalogEntry } from '@deepseek-ai/dsh-subagent'
@@ -3724,6 +3726,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           [WebRuntime, 'web'],
           [SubagentSpawnInProcess, 'subagent-spawn-in-process'],
           [SessionStats, 'session-stats'],
+          [DeepSeekLlmApiExtensionRegistry, 'deepseek-llm-api-extensions'],
           [SessionCheckpointPolicy, 'session-checkpoint-policy'],
           [ToolResultPruner, 'compaction-tool-result-pruner'],
           [ImageOffload, 'compaction-image-offload'],
@@ -3757,6 +3760,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       // DSH sign-in flows; subscription sign-in uses one when it offers a browser login for the provider.
       if (options.llmCredentialPath !== undefined) await context.plugin(AuthorizationService)
       await context.plugin(llmRuntime)
+      await context.plugin(DeepSeekLlmApiExtensionRegistry)
       await options.configureLlm?.(context)
       const conversationScripts = new ConversationScriptModel()
       context.llm.registerAdapter([CONVERSATION_SCRIPT_PROVIDER], conversationScripts)
@@ -3765,6 +3769,12 @@ export class DshHostRuntime implements AgentSessionDriver {
         root: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'sessions'),
       })
       mountSessionEventHistory(context)
+      mountRequestTiming(
+        context,
+        options.logs === undefined
+          ? undefined
+          : { logs: options.logs, scopeOf: (sessionId) => scopeOfSession?.(sessionId) },
+      )
       context.on('agent/created', async ({ agent }) => {
         await restoreShutdownInbox(
           path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox'),

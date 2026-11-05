@@ -618,6 +618,9 @@ export function TurnRow({
     { input: 0, output: 0 },
   )
   const firstToken = turn.steps.find((step) => step.firstTokenMs !== undefined)?.firstTokenMs
+  // Image preparation and upload happen before the request leaves, inside the time to first token.
+  const beforeRequest = turn.steps.reduce((sum, step) => sum + (step.beforeRequestMs ?? 0), 0)
+  const reuploaded = turn.steps.reduce((sum, step) => sum + (step.reuploadedImages ?? 0), 0)
   let cardIndex = 0
   return (
     <div
@@ -674,6 +677,10 @@ export function TurnRow({
               <span>输入 {formatTokens(usage.input)}</span>
               <span>输出 {formatTokens(usage.output)}</span>
               {firstToken !== undefined ? <span>首 Token {formatDuration(firstToken)}</span> : null}
+              {beforeRequest >= 1000 ? (
+                <span title="模型请求发出前的耗时，主要是准备和上传图片">请求准备 {formatDuration(beforeRequest)}</span>
+              ) : null}
+              {reuploaded > 0 ? <span className={styles.usageWarning}>重复上传 {reuploaded} 张图片</span> : null}
             </div>
           ) : null}
         </div>

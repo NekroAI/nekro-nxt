@@ -128,6 +128,13 @@ export type RuntimeProjectionEvent =
       readonly at?: number
     }
   | {
+      readonly type: 'request/sent'
+      readonly turn: number
+      readonly step: number
+      readonly beforeRequestMs: number
+      readonly reuploadedImages: number
+    }
+  | {
       readonly type: 'assistant/message'
       readonly turn: number
       readonly step: number
@@ -206,6 +213,8 @@ type ProjectedStep = {
   startedAt?: number
   endedAt?: number
   firstTokenAt?: number
+  beforeRequestMs?: number
+  reuploadedImages?: number
   usage?: ChannelRuntimeUsage
 }
 
@@ -719,6 +728,15 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
       if (event.at !== undefined && step.firstTokenAt === undefined) step.firstTokenAt = event.at
       continue
     }
+    if (event.type === 'request/sent') {
+      const step = ensureStep(event.turn, event.step)
+      // A retried request is sent again; the attempt that produced the first token is the last one before it.
+      if (step.firstTokenAt === undefined) {
+        step.beforeRequestMs = event.beforeRequestMs
+        step.reuploadedImages = event.reuploadedImages
+      }
+      continue
+    }
     if (event.type === 'llm/retry' || event.type === 'llm/retry-started') continue
     if (event.type === 'compaction/start' || event.type === 'compaction/end') continue
     const step = ensureStep(event.turn, event.step)
@@ -768,6 +786,8 @@ export const projectChannelRuntime = (input: ChannelRuntimeProjectionInput): Cha
               : {}),
             ...(durationMs === undefined ? {} : { durationMs }),
             ...(firstTokenMs === undefined ? {} : { firstTokenMs }),
+            ...(step.beforeRequestMs === undefined ? {} : { beforeRequestMs: step.beforeRequestMs }),
+            ...(step.reuploadedImages ? { reuploadedImages: step.reuploadedImages } : {}),
             ...(step.usage === undefined ? {} : { usage: step.usage }),
           }
         }),

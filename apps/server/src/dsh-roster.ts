@@ -19,6 +19,7 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-cordis-host-runner',
   '@deepseek-ai/dsh-credentials',
   '@deepseek-ai/dsh-credentials-local',
+  '@deepseek-ai/dsh-deepseek-llm-api-extensions',
   '@deepseek-ai/dsh-fs',
   '@deepseek-ai/dsh-fs-observation-policy',
   '@deepseek-ai/dsh-fs-sandbox',

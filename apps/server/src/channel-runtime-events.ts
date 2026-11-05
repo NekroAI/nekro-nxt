@@ -31,6 +31,7 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'llm/retry',
   'llm/retry-started',
   'nekro-nxt/memory',
+  'nekro-nxt/request-sent',
   'compaction/start',
   'compaction/end',
 ])
@@ -175,6 +176,16 @@ export const normalizeSessionEvents = (
           ? { type: 'compaction/start', ...(at === undefined ? {} : { at }) }
           : { type: 'compaction/end', ...(at === undefined ? {} : { at }) },
       )
+      continue
+    }
+    if (event.type === 'nekro-nxt/request-sent') {
+      result.push({
+        type: 'request/sent',
+        turn: event.data.turn,
+        step: event.data.step,
+        beforeRequestMs: event.data.beforeRequestMs,
+        reuploadedImages: event.data.reuploadedImages,
+      })
       continue
     }
     if (event.type === 'nekro-nxt/memory') {

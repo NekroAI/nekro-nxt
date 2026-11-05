@@ -936,6 +936,10 @@ export const ChannelRuntimeStepSchema = z
       .optional(),
     durationMs: z.number().int().nonnegative().optional(),
     firstTokenMs: z.number().int().nonnegative().optional(),
+    /** Part of `firstTokenMs` spent before the request left NekroNXT: image preparation and upload. */
+    beforeRequestMs: z.number().int().nonnegative().optional(),
+    /** Images uploaded again although the previous request already carried them. */
+    reuploadedImages: z.number().int().positive().optional(),
     usage: ChannelRuntimeUsageSchema.optional(),
   })
   .strict()

@@ -7,6 +7,7 @@ const IGNORABLE_NXT_EVENTS = new Set([
   'nekro-nxt/image-admission',
   'nekro-nxt/image-restoration',
   'nekro-nxt/memory',
+  'nekro-nxt/request-sent',
 ])
 
 /**

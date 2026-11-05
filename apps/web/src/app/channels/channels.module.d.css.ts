@@ -160,6 +160,7 @@ declare const styles: {
   readonly unsent: string
   readonly unsentBar: string
   readonly usage: string
+  readonly usageWarning: string
   readonly wireLine: string
   readonly wirePreview: string
   readonly xray: string

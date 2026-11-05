@@ -1020,6 +1020,10 @@ button.step:hover {
   font: var(--fs-xs) var(--font-mono);
 }
 
+.usageWarning {
+  color: var(--warn);
+}
+
 /* —— 输入区 —— */
 .dock {
   position: relative;
