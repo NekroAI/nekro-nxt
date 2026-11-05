@@ -300,16 +300,35 @@ test.describe('settings space', () => {
 
   test('moves the Desktop data directory from Settings → 存储 and shows what is left behind', async () => {
     const backup = { mode: 'data', directory: null, locked: false, keep: 2, usage: { count: 1, bytes: 2 * 1024 ** 3 } }
-    const install = async (page: Page, status: Record<string, unknown>, choice: Record<string, unknown>) => {
+    const install = async (
+      page: Page,
+      status: Record<string, unknown>,
+      choice: Record<string, unknown>,
+      removals: readonly Record<string, unknown>[] = [],
+    ) => {
       await page.route('**/api/settings/upgrade-backup', (request) => request.fulfill({ json: backup }))
       await page.addInitScript(
-        ({ status, choice }) => {
+        ({ status, choice, removals }) => {
           const calls: unknown[] = []
+          let deleted = false
           Object.assign(window, {
             __storageCalls: calls,
             nekroDesktopStorage: {
-              status: () => Promise.resolve({ supported: true, status }),
-              sizes: () => Promise.resolve({ current: 3.4 * 1024 ** 3, oldDirectory: 3.1 * 1024 ** 3 }),
+              // After a same-volume move the old-directory row goes away once its recovery points are deleted.
+              status: () =>
+                Promise.resolve({
+                  supported: true,
+                  status:
+                    deleted && Reflect.get(Object(status['oldDirectory']), 'method') === 'move'
+                      ? { ...status, oldDirectory: undefined }
+                      : status,
+                }),
+              sizes: () =>
+                Promise.resolve({
+                  current: 3.4 * 1024 ** 3,
+                  oldDirectory: deleted ? 0.4 * 1024 ** 3 : 3.1 * 1024 ** 3,
+                  oldBackups: deleted ? 0 : 2.7 * 1024 ** 3,
+                }),
               chooseDirectory: () => Promise.resolve(choice),
               startMove: (target: string) => {
                 calls.push(['start', target])
@@ -319,6 +338,13 @@ test.describe('settings space', () => {
                 calls.push(['reveal'])
                 return Promise.resolve()
               },
+              deleteOldBackups: () => {
+                calls.push(['delete-backups'])
+                const result =
+                  removals[calls.filter((call) => Array.isArray(call) && call[0] === 'delete-backups').length - 1]
+                if (result?.['kind'] === 'deleted') deleted = true
+                return Promise.resolve(result ?? { kind: 'deleted' })
+              },
               dismissNotice: () => {
                 calls.push(['dismiss'])
                 return Promise.resolve()
@@ -326,7 +352,7 @@ test.describe('settings space', () => {
             },
           })
         },
-        { status, choice },
+        { status, choice, removals },
       )
     }
     const current = `${USERS}/example/Library/Application Support/NekroNxt`
@@ -343,6 +369,7 @@ test.describe('settings space', () => {
               target: `${VOLUMES}/Example Disk/NekroNXT`,
               method: 'copy',
               bytes: 3.4 * 1024 ** 3,
+              keptBytes: 2.7 * 1024 ** 3,
               estimatedSeconds: 95,
             },
           ),
@@ -358,7 +385,10 @@ test.describe('settings space', () => {
         await expect(dialog).toContainText(target)
         await expect(dialog).toContainText('复制到新位置并校验，原目录保留')
         await expect(dialog).toContainText('约 2 分钟')
-        await expect(dialog).toContainText('迁移期间应用会重启，本机实例暂停。')
+        await expect(dialog).toContainText('将复制 3.4 GB')
+        await expect(dialog).toContainText(
+          '迁移期间应用会重启，本机实例暂停。升级恢复点 2.7 GB 会留在原目录，不能用于新目录，搬完后可以删除。',
+        )
         // Let the dialog finish opening so the screenshot shows it, not its fade-in.
         await dialog.evaluate((element) =>
           Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
@@ -395,6 +425,7 @@ test.describe('settings space', () => {
         path: '.local/browser-test-results/settings-storage-old-directory.png',
         fullPage: true,
       })
+      await expect(after.page.getByRole('button', { name: '删除旧恢复点' })).toBeVisible()
       await after.page.getByRole('button', { name: '在文件夹中显示' }).click()
       await after.page.getByRole('button', { name: '我已删除，不再提示' }).click()
       await after.page.getByRole('button', { name: '更改', exact: true }).click()
@@ -405,6 +436,57 @@ test.describe('settings space', () => {
       expect(after.errors).toEqual([])
     } finally {
       await after.page.close()
+    }
+
+    // A same-volume move: the dialog names both sizes, and the old recovery points can be deleted from the row.
+    const moved = await open('/settings/storage', {
+      before: (page) =>
+        install(
+          page,
+          { available: true, path: target, oldDirectory: { path: current, method: 'move' } },
+          {
+            kind: 'ready',
+            target: `${VOLUMES}/Example Disk/NekroNXT-2`,
+            method: 'move',
+            bytes: 1.2 * 1024 ** 3,
+            keptBytes: 0,
+            estimatedSeconds: 2,
+          },
+          [{ kind: 'refused', reason: 'failed' }, { kind: 'deleted' }],
+        ),
+    })
+    try {
+      const page = moved.page
+      await page.getByRole('button', { name: '更改', exact: true }).click()
+      const plan = page.getByRole('dialog', { name: '更改数据目录' })
+      await expect(plan).toContainText('同一磁盘内移动')
+      await expect(plan).toContainText('将搬走 1.2 GB')
+      await expect(plan).not.toContainText('升级恢复点')
+      await plan.getByRole('button', { name: '取消' }).click()
+      await expect(plan).toHaveCount(0)
+
+      await expect(page.getByText('这里只剩之前的升级恢复点，它们不能用于新目录。', { exact: false })).toBeVisible()
+      await page.getByRole('button', { name: '删除旧恢复点' }).click()
+      const confirm = page.getByRole('dialog', { name: '删除旧恢复点' })
+      await expect(confirm).toContainText('将删除旧目录里的升级恢复点，共 2.7 GB，删除后无法恢复。')
+      await expect(confirm).toContainText(current)
+      await confirm.evaluate((element) =>
+        Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)),
+      )
+      await page.screenshot({ path: '.local/browser-test-results/settings-storage-delete-backups.png' })
+      await confirm.getByRole('button', { name: '删除', exact: true }).click()
+      // A refusal stays in the dialog, in plain words.
+      await expect(confirm).toContainText('有些文件没能删除，可能正被其他程序使用。剩下的可以在文件夹中手动删除。')
+      await confirm.getByRole('button', { name: '删除', exact: true }).click()
+      await expect(confirm).toHaveCount(0)
+      await expect(page.getByText('已删除旧恢复点')).toBeVisible()
+      await expect(page.getByText('旧目录', { exact: true })).toHaveCount(0)
+      await expect
+        .poll(() => page.evaluate((): unknown => Reflect.get(window, '__storageCalls')))
+        .toEqual([['delete-backups'], ['delete-backups']])
+      expect(moved.errors).toEqual([])
+    } finally {
+      await moved.page.close()
     }
 
     const locked = await open('/settings/storage', {

@@ -1,6 +1,19 @@
-import { chmod, lstat, mkdir, readFile, readdir, readlink, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { DataDirectoryService } from '../src/data-directory-service.ts'
 import { dataLocationFiles, parseDataLocationPointer } from '../src/data-location.ts'
 import {
   DATA_ROOT_MOVED_MARKER,
@@ -16,7 +29,7 @@ import {
 } from '../src/data-move.ts'
 import { runDataMoveMode } from '../src/data-move-mode.ts'
 import { allowedDataMoveActions } from '../src/data-move-window.ts'
-import { isRebuildable, listMoveUnits, preflightMove, type MovePlan } from '../src/data-move-plan.ts'
+import { isRebuildable, listMoveUnits, preflightMove, removeKeptBackups, type MovePlan } from '../src/data-move-plan.ts'
 import { getDesktopDistribution } from '../src/distribution.ts'
 import { checkSqliteIntegrity, createUserDataFixture, localStorageFacts } from './data-move-fixture.ts'
 
@@ -93,6 +106,20 @@ describe('data move preflight', () => {
     await expect(preflightMove(userData, target, { storage: localStorageFacts() })).resolves.toMatchObject({ ok: true })
     // The write probe leaves nothing behind.
     expect(await readdir(target)).toEqual(['.DS_Store'])
+  })
+
+  it('reports the size of the recovery points that stay in the old directory', async () => {
+    const { root, userData } = await fixture()
+    const manifest = path.join(userData, 'data', 'backups', 'runtime-a', 'manifest.json')
+    await writeFile(path.join(path.dirname(manifest), 'core.sqlite'), Buffer.alloc(50_000, 5))
+    const expected = (await stat(manifest)).size + 50_000
+    for (const method of ['move', 'copy'] as const) {
+      const plan = await planFor(userData, path.join(root, `new-${method}`), method)
+      expect(plan.keptBytes).toBe(expected)
+      expect(plan.bytes).toBeGreaterThan(0)
+    }
+    await rm(path.join(userData, 'data', 'backups'), { recursive: true })
+    expect((await planFor(userData, path.join(root, 'new-none'), 'move')).keptBytes).toBe(0)
   })
 
   it('rejects non-empty, nested, file and same targets', async () => {
@@ -652,5 +679,107 @@ describe('path rewrites', () => {
       'instance-profiles.json',
       'local-host-port.json',
     ])
+  })
+})
+
+describe('deleting the recovery points a move left behind', () => {
+  /** The state after a completed move: `userData` is the old root, still holding its recovery points. */
+  const moved = async (method: 'move' | 'copy' = 'move', phase: DataMoveRecord['phase'] = 'completed') => {
+    const { root, userData } = await fixture()
+    const current = path.join(root, 'new', 'NekroNXT')
+    const record = path.join(root, 'NekroNxt.data-move.json')
+    const plan = await planFor(userData, current, method)
+    await mkdir(current, { recursive: true })
+    await writeDataMoveRecord(record, { ...createDataMoveRecord(plan, 1_000, 4242), phase })
+    const service = (userDataRoot = current) =>
+      new DataDirectoryService({
+        userData: userDataRoot,
+        source: 'pointer',
+        files: { pointer: path.join(root, 'pointer.json'), record, migrationSession: path.join(root, 'session') },
+        storage: localStorageFacts(),
+        pickDirectory: () => Promise.resolve(undefined),
+        stopHost: () => Promise.resolve(),
+        relaunchForMove: () => undefined,
+        showItemInFolder: () => undefined,
+      })
+    return { root, userData, current, record, backups: path.join(userData, 'data', 'backups'), service }
+  }
+  const exists = (target: string) =>
+    lstat(target).then(
+      () => true,
+      () => false,
+    )
+
+  it('deletes only the recorded old root backups, then the row of a same-volume move goes away', async () => {
+    const { userData, backups, service } = await moved('move')
+    expect((await service().status()).oldDirectory).toEqual({ path: userData, method: 'move' })
+    expect((await service().sizes()).oldBackups).toBeGreaterThan(0)
+    await expect(service().deleteOldBackups()).resolves.toEqual({ kind: 'deleted' })
+    expect(await exists(backups)).toBe(false)
+    // Only the recovery points go; the rest of the old root is untouched.
+    expect(await exists(path.join(userData, 'data', 'core.sqlite'))).toBe(true)
+    expect((await service().status()).oldDirectory).toBeUndefined()
+    // Running it again finds nothing to delete and changes nothing.
+    await expect(service().deleteOldBackups()).resolves.toEqual({ kind: 'deleted' })
+  })
+
+  it('after a copy keeps the old-directory row, with its recovery points gone from the sizes', async () => {
+    const { userData, backups, service } = await moved('copy')
+    await expect(service().deleteOldBackups()).resolves.toEqual({ kind: 'deleted' })
+    expect(await exists(backups)).toBe(false)
+    expect((await service().status()).oldDirectory).toEqual({ path: userData, method: 'copy' })
+    expect((await service().sizes()).oldBackups).toBe(0)
+  })
+
+  it('refuses without a completed move record', async () => {
+    const missing = await moved()
+    await rm(missing.record)
+    await expect(missing.service().deleteOldBackups()).resolves.toEqual({ kind: 'refused', reason: 'not-recorded' })
+    expect(await exists(missing.backups)).toBe(true)
+    const unfinished = await moved('move', 'moving')
+    await expect(unfinished.service().deleteOldBackups()).resolves.toEqual({
+      kind: 'refused',
+      reason: 'not-recorded',
+    })
+    expect(await exists(unfinished.backups)).toBe(true)
+  })
+
+  it('refuses when the backups are the current root, inside it, or contain it', async () => {
+    const { userData, backups, service } = await moved()
+    // The recorded root is the current one, so its backups are inside the current root.
+    await expect(service(userData).deleteOldBackups()).resolves.toEqual({ kind: 'refused', reason: 'inside-current' })
+    await expect(service(backups).deleteOldBackups()).resolves.toEqual({ kind: 'refused', reason: 'inside-current' })
+    await expect(service(path.join(backups, 'runtime-a')).deleteOldBackups()).resolves.toEqual({
+      kind: 'refused',
+      reason: 'inside-current',
+    })
+    await expect(removeKeptBackups(userData, path.join(userData, 'data'), process.platform)).resolves.toEqual({
+      ok: false,
+      reason: 'inside-current',
+    })
+    expect(await exists(path.join(backups, 'runtime-a', 'manifest.json'))).toBe(true)
+  })
+
+  it.skipIf(process.platform === 'win32')('refuses symbolic links on the way to the backups', async () => {
+    const { root, userData, current, backups, service } = await moved()
+    // The current root reached through a link still counts as the current root.
+    const alias = path.join(root, 'alias')
+    await symlink(userData, alias)
+    await expect(service(alias).deleteOldBackups()).resolves.toEqual({ kind: 'refused', reason: 'inside-current' })
+    // A backups link pointing elsewhere is refused, and what it points to stays.
+    const elsewhere = path.join(root, 'elsewhere')
+    await mkdir(elsewhere)
+    await writeFile(path.join(elsewhere, 'keep.txt'), 'keep')
+    await rename(backups, path.join(root, 'backups-real'))
+    await symlink(elsewhere, backups)
+    await expect(service().deleteOldBackups()).resolves.toEqual({ kind: 'refused', reason: 'symlink' })
+    expect(await exists(path.join(elsewhere, 'keep.txt'))).toBe(true)
+    // So is a `data` link, even one that points into the current root.
+    await rm(backups)
+    await rename(path.join(userData, 'data'), path.join(root, 'data-real'))
+    await mkdir(path.join(current, 'data', 'backups'), { recursive: true })
+    await symlink(path.join(current, 'data'), path.join(userData, 'data'))
+    await expect(service().deleteOldBackups()).resolves.toEqual({ kind: 'refused', reason: 'symlink' })
+    expect(await exists(path.join(current, 'data', 'backups'))).toBe(true)
   })
 })

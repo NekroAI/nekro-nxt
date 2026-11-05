@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('nekroDesktopStorage', {
   chooseDirectory: () => ipcRenderer.invoke('nxt:storage:choose'),
   startMove: (target: string) => ipcRenderer.invoke('nxt:storage:start', target),
   revealOldDirectory: () => ipcRenderer.invoke('nxt:storage:reveal-old'),
+  deleteOldBackups: () => ipcRenderer.invoke('nxt:storage:delete-old-backups'),
   dismissNotice: () => ipcRenderer.invoke('nxt:storage:dismiss'),
 })
 

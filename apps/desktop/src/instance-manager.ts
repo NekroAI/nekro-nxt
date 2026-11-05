@@ -744,6 +744,9 @@ export class DesktopInstanceManager {
       return required(event).start(target)
     })
     this.#ipcRegistrations.registerHandle('nxt:storage:reveal-old', (event) => required(event).revealOldDirectory())
+    this.#ipcRegistrations.registerHandle('nxt:storage:delete-old-backups', (event) =>
+      required(event).deleteOldBackups(),
+    )
     this.#ipcRegistrations.registerHandle('nxt:storage:dismiss', (event) => required(event).dismissNotice())
   }
 

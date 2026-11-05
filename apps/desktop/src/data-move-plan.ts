@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, readdir, rm, rmdir, stat, statfs, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readdir, realpath, rm, rmdir, stat, statfs, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { classifyStorageLocation, isSameOrInside, type StorageFacts, type SyncProvider } from './storage-location.js'
 
@@ -130,6 +130,54 @@ export const directorySize = async (root: string, signal?: AbortSignal): Promise
   return bytes
 }
 
+/** Path of what a move leaves in the old directory: its upgrade recovery points. */
+export const keptBackupsPath = (root: string): string => path.join(root, 'data', 'backups')
+
+const keptSize = async (root: string, signal?: AbortSignal): Promise<number> => {
+  let total = 0
+  for (const relative of KEPT_IN_PLACE) total += await directorySize(path.join(root, relative), signal)
+  return total
+}
+
+export type KeptBackupsRemoval =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: 'inside-current' | 'symlink' | 'not-directory' | 'failed' }
+
+/**
+ * Deletes the upgrade recovery points a move left in `previousRoot`. The caller passes the root its move record names,
+ * never a path the user typed. Refuses when the recovery points are, contain or sit inside `currentRoot`, also after
+ * resolving links, and when the root, its `data` or `backups` is a symbolic link. Nothing left to delete counts as done.
+ */
+export const removeKeptBackups = async (
+  previousRoot: string,
+  currentRoot: string,
+  platform: NodeJS.Platform,
+): Promise<KeptBackupsRemoval> => {
+  const backups = keptBackupsPath(path.resolve(previousRoot))
+  const overlaps = (a: string, b: string) => isSameOrInside(platform, a, b) || isSameOrInside(platform, b, a)
+  if (overlaps(backups, currentRoot)) return { ok: false, reason: 'inside-current' }
+  for (const entry of [path.resolve(previousRoot), path.dirname(backups), backups]) {
+    let info
+    try {
+      info = await lstat(entry)
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return { ok: true }
+      throw error
+    }
+    if (info.isSymbolicLink()) return { ok: false, reason: 'symlink' }
+    if (!info.isDirectory()) return { ok: false, reason: 'not-directory' }
+  }
+  const resolvedCurrent = await realpath(currentRoot).catch(() => path.resolve(currentRoot))
+  if (overlaps(await realpath(backups), resolvedCurrent)) return { ok: false, reason: 'inside-current' }
+  try {
+    // `rm` removes links inside the tree as links; it never follows them out of it.
+    await rm(backups, { recursive: true })
+    return { ok: true }
+  } catch {
+    return { ok: false, reason: 'failed' }
+  }
+}
+
 export type PreflightProblem =
   | { readonly code: 'not-absolute' }
   | { readonly code: 'same-directory' }
@@ -150,6 +198,8 @@ export interface MovePlan {
   readonly units: readonly string[]
   readonly bytes: number
   readonly files: number
+  /** Size of what stays in the old directory whatever the method: the upgrade recovery points. */
+  readonly keptBytes: number
   readonly estimatedSeconds: number
 }
 
@@ -236,6 +286,7 @@ export const preflightMove = async (
   const method: MoveMethod = (await deviceOf(source)) === (await deviceOf(existing)) ? 'move' : 'copy'
   const units = await listMoveUnits(source)
   const scan = await scanMove(source, units, method, environment.signal)
+  const keptBytes = await keptSize(source, environment.signal)
   if (method === 'copy') {
     const requiredBytes = Math.ceil(scan.bytes * 1.1)
     const availableBytes = await (
@@ -258,6 +309,6 @@ export const preflightMove = async (
       : Math.max(1, Math.ceil(scan.bytes / COPY_BYTES_PER_SECOND + scan.files * COPY_SECONDS_PER_FILE))
   return {
     ok: true,
-    plan: { source, target, method, units, bytes: scan.bytes, files: scan.files, estimatedSeconds },
+    plan: { source, target, method, units, bytes: scan.bytes, files: scan.files, keptBytes, estimatedSeconds },
   }
 }

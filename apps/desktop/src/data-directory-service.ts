@@ -8,7 +8,16 @@ import {
   type DataMoveFailure,
   type DataMoveRecord,
 } from './data-move.js'
-import { directorySize, preflightMove, type MoveMethod, type PreflightProblem } from './data-move-plan.js'
+import {
+  directorySize,
+  keptBackupsPath,
+  preflightMove,
+  removeKeptBackups,
+  type KeptBackupsRemoval,
+  type MoveMethod,
+  type MovePlan,
+  type PreflightProblem,
+} from './data-move-plan.js'
 import type { StorageFacts } from './storage-location.js'
 
 /** What Settings → 存储 shows for the local instance. Sent over the product preload bridge as plain JSON. */
@@ -17,7 +26,10 @@ export interface DataDirectoryStatus {
   /** Why the directory cannot be changed here. */
   readonly lockedBy?: 'environment'
   readonly path: string
-  /** Left behind by the last move: everything (copy) or only the upgrade recovery points (move). */
+  /**
+   * Left behind by the last move: everything (copy) or only the upgrade recovery points (move). After a move the row
+   * goes away once those recovery points are gone.
+   */
   readonly oldDirectory?: { readonly path: string; readonly method: MoveMethod }
   readonly lastFailure?: DataMoveFailure & { readonly target: string }
 }
@@ -25,7 +37,13 @@ export interface DataDirectoryStatus {
 export interface DataDirectorySizes {
   readonly current: number
   readonly oldDirectory?: number
+  /** The upgrade recovery points inside the old directory. */
+  readonly oldBackups?: number
 }
+
+export type OldBackupsRemoval =
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'refused'; readonly reason: 'not-recorded' | Extract<KeptBackupsRemoval, { ok: false }>['reason'] }
 
 export type DataDirectoryChoice =
   | { readonly kind: 'cancelled' }
@@ -35,8 +53,18 @@ export type DataDirectoryChoice =
       readonly target: string
       readonly method: MoveMethod
       readonly bytes: number
+      readonly keptBytes: number
       readonly estimatedSeconds: number
     }
+
+const readyChoice = (plan: MovePlan): DataDirectoryChoice => ({
+  kind: 'ready',
+  target: plan.target,
+  method: plan.method,
+  bytes: plan.bytes,
+  keptBytes: plan.keptBytes,
+  estimatedSeconds: plan.estimatedSeconds,
+})
 
 export interface DataDirectoryServiceOptions {
   readonly userData: string
@@ -60,7 +88,7 @@ const exists = async (target: string): Promise<boolean> =>
 
 export type DesktopDataDirectory = Pick<
   DataDirectoryService,
-  'status' | 'sizes' | 'choose' | 'start' | 'revealOldDirectory' | 'dismissNotice'
+  'status' | 'sizes' | 'choose' | 'start' | 'revealOldDirectory' | 'deleteOldBackups' | 'dismissNotice'
 >
 
 /** Owns the data-directory entry in Settings: status, choosing a target, and handing over to migration mode. */
@@ -84,6 +112,7 @@ export class DataDirectoryService {
     if (record?.phase !== 'completed' || record.noticeDismissed === true) return undefined
     if (path.resolve(record.source) === path.resolve(this.#options.userData)) return undefined
     if (!(await exists(record.source))) return undefined
+    if (record.method === 'move' && !(await exists(keptBackupsPath(record.source)))) return undefined
     return { path: record.source, method: record.method }
   }
 
@@ -103,24 +132,22 @@ export class DataDirectoryService {
 
   async sizes(): Promise<DataDirectorySizes> {
     const oldDirectory = await this.#oldDirectory(await this.#record())
-    const [current, old] = await Promise.all([
+    const [current, old, oldBackups] = await Promise.all([
       directorySize(this.#options.userData),
       oldDirectory === undefined ? Promise.resolve(undefined) : directorySize(oldDirectory.path),
+      oldDirectory === undefined ? Promise.resolve(undefined) : directorySize(keptBackupsPath(oldDirectory.path)),
     ])
-    return { current, ...(old === undefined ? {} : { oldDirectory: old }) }
+    return {
+      current,
+      ...(old === undefined ? {} : { oldDirectory: old }),
+      ...(oldBackups === undefined ? {} : { oldBackups }),
+    }
   }
 
   async #preflight(target: string): Promise<DataDirectoryChoice> {
     const result = await preflightMove(this.#options.userData, target, { storage: this.#options.storage })
     if (!result.ok) return { kind: 'rejected', target, problem: result.problem }
-    const { plan } = result
-    return {
-      kind: 'ready',
-      target: plan.target,
-      method: plan.method,
-      bytes: plan.bytes,
-      estimatedSeconds: plan.estimatedSeconds,
-    }
+    return readyChoice(result.plan)
   }
 
   async choose(): Promise<DataDirectoryChoice> {
@@ -156,13 +183,7 @@ export class DataDirectoryService {
         throw error
       }
       this.#options.relaunchForMove()
-      return {
-        kind: 'ready',
-        target: result.plan.target,
-        method: result.plan.method,
-        bytes: result.plan.bytes,
-        estimatedSeconds: result.plan.estimatedSeconds,
-      }
+      return readyChoice(result.plan)
     } finally {
       this.#starting = false
     }
@@ -171,6 +192,17 @@ export class DataDirectoryService {
   async revealOldDirectory(): Promise<void> {
     const oldDirectory = await this.#oldDirectory(await this.#record())
     if (oldDirectory !== undefined) this.#options.showItemInFolder(oldDirectory.path)
+  }
+
+  /**
+   * Deletes the upgrade recovery points the last completed move left behind. The only path it acts on is the source
+   * that move recorded; the renderer cannot name one.
+   */
+  async deleteOldBackups(): Promise<OldBackupsRemoval> {
+    const record = await this.#record()
+    if (record?.phase !== 'completed') return { kind: 'refused', reason: 'not-recorded' }
+    const result = await removeKeptBackups(record.source, this.#options.userData, this.#options.storage.platform)
+    return result.ok ? { kind: 'deleted' } : { kind: 'refused', reason: result.reason }
   }
 
   /** Hides the old-directory row or the last failure; the files themselves are the user's to delete. */

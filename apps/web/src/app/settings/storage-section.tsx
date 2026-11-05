@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import type { UpgradeBackupSettings } from '@nekro-nxt/contracts'
 import {
   describeDataMoveProblem,
+  describeOldBackupsRefusal,
   desktopStorageBridge,
   formatBytes,
   formatDuration,
   type DesktopDataDirectoryChoice,
   type DesktopDataDirectoryStatus,
   type DesktopStorageBridge,
+  type OldBackupsRemoval,
 } from '../../desktop-storage.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { Button, ConfirmDialog, Input, PropertyList, PropertyRow, Select, toast } from '../../ui-kit/index.js'
@@ -36,9 +38,10 @@ type ReadyChoice = Extract<DesktopDataDirectoryChoice, { kind: 'ready' }>
 function DataDirectoryRows() {
   const [bridge] = useState<DesktopStorageBridge | undefined>(desktopStorageBridge)
   const [status, setStatus] = useState<DesktopDataDirectoryStatus>()
-  const [sizes, setSizes] = useState<{ readonly current: number; readonly oldDirectory?: number }>()
+  const [sizes, setSizes] = useState<Awaited<ReturnType<DesktopStorageBridge['sizes']>>>()
   const [choosing, setChoosing] = useState(false)
   const [plan, setPlan] = useState<ReadyChoice>()
+  const [removing, setRemoving] = useState<{ readonly path: string; readonly bytes: number }>()
   const load = async (target: DesktopStorageBridge) => {
     const result = await target.status()
     if (!result.supported) return
@@ -74,6 +77,18 @@ function DataDirectoryRows() {
     } catch (error) {
       failure(error)
     }
+  }
+  const deleteBackups = async () => {
+    let result: OldBackupsRemoval
+    try {
+      result = await bridge.deleteOldBackups()
+    } catch {
+      await load(bridge).catch(() => undefined)
+      throw new Error('没有删除旧恢复点，请稍后再试，或在文件夹中手动删除。')
+    }
+    await load(bridge).catch(() => undefined)
+    if (result.kind === 'refused') throw new Error(describeOldBackupsRefusal(result.reason))
+    toast('已删除旧恢复点')
   }
   const locked = status.lockedBy === 'environment'
   const old = status.oldDirectory
@@ -120,6 +135,15 @@ function DataDirectoryRows() {
             <Button size="small" onClick={() => void bridge.revealOldDirectory().catch(failure)}>
               在文件夹中显示
             </Button>
+            {sizes?.oldBackups === undefined || sizes.oldBackups === 0 ? null : (
+              <Button
+                size="small"
+                variant="danger"
+                onClick={() => setRemoving({ path: old.path, bytes: sizes.oldBackups ?? 0 })}
+              >
+                删除旧恢复点
+              </Button>
+            )}
             <Button size="small" variant="ghost" onClick={() => void dismiss()}>
               我已删除，不再提示
             </Button>
@@ -161,12 +185,34 @@ function DataDirectoryRows() {
             <dt>方式</dt>
             <dd>{plan.method === 'move' ? '同一磁盘内移动' : '复制到新位置并校验，原目录保留'}</dd>
             <dt>大小</dt>
-            <dd>{formatBytes(plan.bytes)}</dd>
+            <dd>{`${plan.method === 'move' ? '将搬走' : '将复制'} ${formatBytes(plan.bytes)}`}</dd>
             <dt>预计时间</dt>
             <dd>{formatDuration(plan.estimatedSeconds)}</dd>
           </dl>
         )}
-        <p className={styles.notice}>迁移期间应用会重启，本机实例暂停。升级恢复点留在原目录，不能用于新目录。</p>
+        <p className={styles.notice}>
+          迁移期间应用会重启，本机实例暂停。
+          {plan === undefined || plan.keptBytes === 0
+            ? ''
+            : `升级恢复点 ${formatBytes(plan.keptBytes)} 会留在原目录，不能用于新目录，搬完后可以删除。`}
+        </p>
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={removing !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setRemoving(undefined)
+        }}
+        title="删除旧恢复点"
+        confirmLabel="删除"
+        danger
+        onConfirm={deleteBackups}
+      >
+        {removing === undefined ? null : (
+          <>
+            <p>将删除旧目录里的升级恢复点，共 {formatBytes(removing.bytes)}，删除后无法恢复。</p>
+            <p className={styles.path}>{removing.path}</p>
+          </>
+        )}
       </ConfirmDialog>
     </>
   )

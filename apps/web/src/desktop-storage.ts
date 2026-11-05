@@ -37,17 +37,28 @@ export type DesktopDataDirectoryChoice =
       readonly target: string
       readonly method: DataMoveMethod
       readonly bytes: number
+      /** The upgrade recovery points, which stay in the old directory. */
+      readonly keptBytes: number
       readonly estimatedSeconds: number
+    }
+
+export type OldBackupsRemoval =
+  | { readonly kind: 'deleted' }
+  | {
+      readonly kind: 'refused'
+      readonly reason: 'not-recorded' | 'inside-current' | 'symlink' | 'not-directory' | 'failed'
     }
 
 export interface DesktopStorageBridge {
   status(): Promise<
     { readonly supported: false } | { readonly supported: true; readonly status: DesktopDataDirectoryStatus }
   >
-  sizes(): Promise<{ readonly current: number; readonly oldDirectory?: number }>
+  sizes(): Promise<{ readonly current: number; readonly oldDirectory?: number; readonly oldBackups?: number }>
   chooseDirectory(): Promise<DesktopDataDirectoryChoice>
   startMove(target: string): Promise<DesktopDataDirectoryChoice>
   revealOldDirectory(): Promise<void>
+  /** Deletes the upgrade recovery points the last move left in the old directory, and nothing else. */
+  deleteOldBackups(): Promise<OldBackupsRemoval>
   dismissNotice(): Promise<void>
 }
 
@@ -106,5 +117,22 @@ export const describeDataMoveProblem = (problem: DataMoveProblem): string => {
       return `磁盘空间不足：需要 ${formatBytes(problem.requiredBytes)}，可用 ${formatBytes(problem.availableBytes)}。`
     case 'path-too-long':
       return '这个位置的路径太长，请选择层级更浅的文件夹。'
+  }
+}
+
+export const describeOldBackupsRefusal = (
+  reason: Extract<OldBackupsRemoval, { kind: 'refused' }>['reason'],
+): string => {
+  switch (reason) {
+    case 'not-recorded':
+      return '找不到上次更改数据目录的记录，没有删除。可以在文件夹中手动删除。'
+    case 'inside-current':
+      return '这些恢复点在当前数据目录里，没有删除。'
+    case 'symlink':
+      return '恢复点所在的文件夹是一个链接，没有删除。可以在文件夹中手动删除。'
+    case 'not-directory':
+      return '恢复点所在的位置不是文件夹，没有删除。可以在文件夹中手动处理。'
+    case 'failed':
+      return '有些文件没能删除，可能正被其他程序使用。剩下的可以在文件夹中手动删除。'
   }
 }
