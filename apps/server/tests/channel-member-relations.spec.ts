@@ -87,6 +87,20 @@ describe('channel member relations', () => {
       )
       expect(prompt).toContain(`你在这个群里的账号是「小助手号」，成员 ID ${self.memberId}`)
       expect(prompt).toContain(`群里还有别的智能体：记录员（${recorder!.memberId}）`)
+      // Formatting follows the platform: plain text unless the adapter renders Markdown (#125).
+      expect(prompt).toContain('这个频道不显示 Markdown')
+      const markdownPrompt = channelContextPrompt(
+        {
+          channelId: alphaGroup.id,
+          connectionId: alpha.id,
+          kind: 'group',
+          episodeId: EpisodeIdSchema.parse('eps_REL'),
+        },
+        relations,
+        true,
+      )
+      expect(markdownPrompt).toContain('这个频道能显示 Markdown')
+      expect(markdownPrompt).not.toContain('不显示 Markdown')
       // The built-in channel has no platform account to describe.
       expect(
         channelContextPrompt(

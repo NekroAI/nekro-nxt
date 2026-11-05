@@ -82,5 +82,7 @@ export const WECOM_AI_BOT_CAPABILITIES: AdapterOutboundCapabilities = {
   replies: false,
   mixedContent: false,
   proactiveSend: true,
+  // Every text reply goes out as a markdown message.
+  markdown: true,
   maxAssetBytes: 20 * 1024 * 1024,
 }

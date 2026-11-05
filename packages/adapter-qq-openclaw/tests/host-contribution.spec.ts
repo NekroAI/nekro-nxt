@@ -84,6 +84,8 @@ describe('QQ OpenClaw Host contribution', () => {
     expect(runtime).toBeInstanceOf(QQOpenClawRuntime)
     if (!(runtime instanceof QQOpenClawRuntime)) throw new TypeError('Expected the QQ OpenClaw Runtime.')
     expect(runtime.capabilities.outbound.proactiveSend).toBe(true)
+    // The agent is told to format with Markdown only where the connection sends it as Markdown.
+    expect(runtime.capabilities.outbound.markdown).toBe(true)
 
     await runtime.start()
     await waitFor(() => fixture.transport.sockets.length === 1)

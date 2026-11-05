@@ -1327,6 +1327,13 @@ export class NekroRuntime {
             if (!channel) return false
             return adapterRuntimes.get(channel.connectionId)?.interactions?.retractOwnMessage !== undefined
           },
+          supportsMarkdown: (channelId) => {
+            const channel = core.getChannel(channelId)
+            return (
+              channel !== undefined &&
+              adapterRuntimes.get(channel.connectionId)?.capabilities.outbound.markdown === true
+            )
+          },
           supportsNudge: (channelId) => {
             const channel = core.getChannel(channelId)
             if (!channel) return false

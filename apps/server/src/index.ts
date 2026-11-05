@@ -469,6 +469,8 @@ export interface AgentCommunicationPort {
   sendMessage(input: SendMessageInput): Promise<SendMessageResult | AgentSendResult>
   supportsRetraction?(channelId: ChannelId): boolean
   supportsNudge?(channelId: ChannelId): boolean
+  /** Whether the channel's platform renders Markdown, from the adapter's outbound capabilities. */
+  supportsMarkdown?(channelId: ChannelId): boolean
   /** False when the channel's settings leave no room to wait; sessions opened then do not offer `waiting-for-more`. */
   supportsWaitForMore?(channelId: ChannelId): boolean
   retractMessage?(input: {
@@ -679,10 +681,21 @@ const channelAccountPrompt = (
   return lines
 }
 
-export const channelContextPrompt = (context: SessionChannelContext, members?: ChannelMemberRelations): string =>
+/** How messages render here; platforms differ, so the agent learns it per channel rather than from one global rule. */
+const channelFormattingPrompt = (markdown: boolean): string =>
+  markdown
+    ? '这个频道能显示 Markdown：正经内容长一点时可以用列表、加粗和代码块排版，闲聊照常打字。行首的 # 会变成标题，提到 #122 这类编号时放在句中，不要放在行首。'
+    : '这个频道不显示 Markdown：别用加粗、标题、表格和代码块的记号，它们会原样显示出来；列几项就直接换行。'
+
+export const channelContextPrompt = (
+  context: SessionChannelContext,
+  members?: ChannelMemberRelations,
+  markdown = false,
+): string =>
   [
     `当前频道：${JSON.stringify(context)}`,
     '用命令行、文件或扩展查共享数据时，按上面的 channelId 过滤，不要靠频道名或时间去猜是哪个群。',
+    channelFormattingPrompt(markdown),
     ...channelAccountPrompt(context, members),
     channelContentProtocol(),
   ].join('\n')
@@ -1264,7 +1277,7 @@ const nekroNxtExtensionDefineTool = (
 
 const ROOT_CHANNEL_MESSAGE_POLICY_HEAD = `你在一个真实的聊天频道里。大家只能看到你用 send_channel_message 发出去的消息；你的思考、工具调用，还有直接写出来的文字，他们都看不到。没用 send_channel_message 发出去的话，就等于没说。
 
-照你的人设和这里的气氛说话。聊天时一两句就够，像朋友随口回答：问什么答什么，不铺垫，不补充对方没问的建议和提醒，不列一二三，不总结。对方追问，或者明确要你详细讲、写一段东西（文案、代码、设定）时再展开，但也别写成文章。话多时像平常聊天一样分成几条发，在同一次回复里连着调用几次 send_channel_message。聊天软件不显示 Markdown，别用加粗、标题和表格，列几项就直接换行。`
+照你的人设和这里的气氛说话。聊天时一两句就够，像朋友随口回答：问什么答什么，不铺垫，不补充对方没问的建议和提醒，不列一二三，不总结。对方追问，或者明确要你详细讲、写一段东西（文案、代码、设定）时再展开，但也别写成文章。闲聊时话多，可以像平常聊天一样分成两三条短消息，在同一次回复里连着调用几次 send_channel_message；讲资料、解答问题、列步骤这类正经内容，整理好用一条发完，别拆成好几条刷屏。`
 
 const ROOT_CHANNEL_WAIT_POLICY = `群友常把一句话拆成几条发。对方看起来话还没说完，比如只叫了你一声、一句话只说了一半，就用 finish_channel_turn 的 waiting-for-more 先等他说完，他停下来以后会再叫你。`
 
@@ -4387,7 +4400,11 @@ export class DshHostRuntime implements AgentSessionDriver {
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:channel-context',
         order: 15,
-        text: channelContextPrompt(channelContext, this.#members),
+        text: channelContextPrompt(
+          channelContext,
+          this.#members,
+          this.#communication.supportsMarkdown?.(input.channelId) === true,
+        ),
       })
       // Decided when the session opens, like the rest of the prompt; a later change still gets a refusal at runtime.
       const requestWait = this.#communication.waitForMore

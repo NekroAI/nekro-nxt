@@ -48,6 +48,7 @@ export const WEB_ADAPTER_CAPABILITIES: AdapterOutboundCapabilities = {
   replies: true,
   mixedContent: true,
   proactiveSend: true,
+  markdown: true,
 }
 
 export interface WebInboundMessage {

@@ -40,6 +40,8 @@ export const AdapterOutboundCapabilitiesSchema = z
     replies: z.boolean(),
     mixedContent: z.boolean(),
     proactiveSend: z.boolean(),
+    /** The platform renders Markdown in text messages; left out means plain text, which the agent is told to write. */
+    markdown: z.boolean().optional(),
     maxTextLength: z.number().int().positive().optional(),
     maxAssetBytes: z.number().int().positive().optional(),
     acceptedMimeTypes: z.array(z.string().min(1)).optional(),

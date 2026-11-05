@@ -459,6 +459,7 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       outbound: {
         ...QQ_OPENCLAW_CAPABILITIES,
         proactiveSend: this.#config.proactiveSend,
+        markdown: this.#config.markdown,
         maxTextLength: this.#config.maxTextLength,
         maxAssetBytes: this.#config.maxAssetBytes,
       },
