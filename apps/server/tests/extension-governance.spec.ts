@@ -1731,6 +1731,52 @@ describe('extension autonomy', () => {
     }
   })
 
+  it('links a passed review to the public page and says the report needs the publisher signed in (#131)', async () => {
+    const runtime = await createRuntime()
+    try {
+      const { extensionId } = await importBoth(runtime)
+      const entity = await agentWithChannel(runtime, 'autonomous')
+      const actor = { kind: 'agent', agentId: entity.agentId, channelId: entity.channelId } as const
+      const action = { kind: 'community-publish', extensionId, notes: '首发。' } as const
+      const requests = runtime.extensionRequests
+      const publish = (releaseId: string) =>
+        requests.recordAutonomous({
+          action,
+          actor,
+          assessment: runtime.extensionActions.assess(action, actor),
+          result: {
+            message: '已发布。',
+            extensionId,
+            releaseId,
+            pageUrl: 'https://community.example/extensions/ext_fixture',
+          },
+        })
+      const passed = publish('rel_passed')
+      const flagged = publish('rel_flagged')
+      const reportUrl = (releaseId: string) => `https://community.example/me/releases/${releaseId}`
+      vi.spyOn(runtime.community, 'review').mockImplementation((releaseId) =>
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The watcher reads only these two fields.
+        Promise.resolve({
+          status: releaseId === 'rel_passed' ? 'passed' : 'flagged',
+          reportUrl: reportUrl(releaseId),
+        } as Awaited<ReturnType<typeof runtime.community.review>>),
+      )
+      await requests.watchReviews()
+      const noticeText = (number: number) => {
+        const part = runtime.repository.findOutboundByNoticeKey(`ext-request:${number}:review`)?.intent.parts[0]
+        return part?.type === 'text' ? part.text : undefined
+      }
+      await expect
+        .poll(() => noticeText(passed.number), NOTICE_POLL)
+        .toContain('https://community.example/extensions/ext_fixture')
+      await expect
+        .poll(() => noticeText(flagged.number), NOTICE_POLL)
+        .toContain(`审查报告（登录社区账号后查看）：${reportUrl('rel_flagged')}`)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('supersedes an older pending request for the same thing and lets the agent withdraw its own', async () => {
     const runtime = await createRuntime()
     try {

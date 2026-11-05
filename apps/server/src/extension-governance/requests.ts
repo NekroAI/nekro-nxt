@@ -40,11 +40,13 @@ interface RequestResult {
   readonly releaseId?: string
   /** `waiting` until the review settles, then the review status that was reported. */
   readonly review?: 'waiting' | CommunityReviewStatus
+  readonly pageUrl?: string
 }
 
 const resultOf = (result: ExtensionActionResult): RequestResult => ({
   message: result.message,
   ...(result.releaseId === undefined ? {} : { releaseId: result.releaseId, review: 'waiting' as const }),
+  ...(result.pageUrl === undefined ? {} : { pageUrl: result.pageUrl }),
 })
 
 /** Who decided a request: the console, or an administrator's platform account in chat. */
@@ -143,6 +145,7 @@ const RequestResultSchema = z.object({
   message: z.string(),
   releaseId: z.string().optional(),
   review: z.union([z.literal('waiting'), CommunityReviewStatusSchema]).optional(),
+  pageUrl: z.string().optional(),
 })
 const toJson = (value: unknown): JsonValue => parseJsonValue(JSON.parse(JSON.stringify(value)))
 
@@ -461,12 +464,14 @@ export class ExtensionRequestService {
       this.#notice(
         record.channelId ?? undefined,
         `ext-request:${record.number}:review`,
-        `${name}的社区发布${outcome}。审查报告：${reportUrl}`,
+        status === 'passed' && result.pageUrl !== undefined
+          ? `${name}的社区发布${outcome}，社区页面：${result.pageUrl}`
+          : `${name}的社区发布${outcome}。审查报告（登录社区账号后查看）：${reportUrl}`,
       )
       this.#tellAgent(
         record,
         'review',
-        `〔系统通知〕你发布到社区的${name}${outcome}。${status === 'passed' ? '' : `审查报告在 ${reportUrl}，按里面的意见决定要不要修改后重新发布。`}`,
+        `〔系统通知〕你发布到社区的${name}${outcome}。${status === 'passed' ? '' : `审查报告在 ${reportUrl}（要登录发布者的社区账号才能打开，你自己打开只会看到登录页），请用户转告里面的意见，再决定要不要修改后重新发布。`}`,
       )
       this.#runtime.publishExtensionRequestChange?.()
     }
