@@ -198,6 +198,60 @@ describe('LLM model catalog management', () => {
     }
   })
 
+  it('saves per-level wire values, keeps the ones a save leaves out and clears levels back to the catalog', async () => {
+    const { runtime } = await createRuntime()
+    try {
+      const save = async (model: Record<string, unknown>) =>
+        runtime.host.saveLlmProvider({
+          provider: 'openai',
+          expectedRevision: (await providerView(runtime, 'openai')).settingsRevision,
+          api: 'openai-responses',
+          models: [{ id: 'sample-gateway', name: '示例网关模型', ...model }],
+        })
+      const model = async () => (await providerView(runtime, 'openai')).models[0]
+      const offered = async () =>
+        (await runtime.host.listAvailableLlmModels())
+          .find((entry) => entry.id === 'sample-gateway')
+          ?.reasoning?.efforts.map((effort) => effort.id)
+
+      await save({
+        reasoningEfforts: ['off', 'low', 'high'],
+        reasoningEffortValues: { off: null, low: 'think-lite', high: 'high' },
+      })
+      // Only values that differ from the default come back: `off` sends nothing, `high` sends its own id.
+      expect(await model()).toMatchObject({
+        reasoningEfforts: ['off', 'low', 'high'],
+        reasoningEffortValues: { low: 'think-lite' },
+      })
+      expect(await offered()).toEqual(['off', 'low', 'high'])
+
+      await save({ reasoningEfforts: ['low', 'high', 'xhigh'], reasoningEffortValues: { off: 'disabled' } })
+      expect(await model()).toMatchObject({
+        reasoningEfforts: ['low', 'high', 'xhigh'],
+        reasoningEffortValues: { low: 'think-lite' },
+      })
+
+      await save({ reasoningEfforts: ['off', 'low'], reasoningEffortValues: { off: 'disabled', low: 'low' } })
+      expect(await model()).toMatchObject({
+        reasoningEfforts: ['off', 'low'],
+        reasoningEffortValues: { off: 'disabled' },
+      })
+
+      await save({})
+      const cleared = await model()
+      expect(cleared?.reasoningEfforts).toBeUndefined()
+      expect(cleared?.reasoningEffortValues).toBeUndefined()
+      expect(await offered()).toBeUndefined()
+
+      await expect(save({ reasoningEfforts: ['off'] })).rejects.toThrow('至少要有一个关闭以外的思考档位')
+      await expect(save({ reasoningEfforts: ['low'], reasoningEffortValues: { low: null } })).rejects.toThrow(
+        '需要填写上游参数值',
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('keeps a signed-in route marked as a ChatGPT plan in the list a save returns', async () => {
     const { runtime } = await createRuntime()
     try {

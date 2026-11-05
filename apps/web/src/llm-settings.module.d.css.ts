@@ -13,6 +13,12 @@ declare const styles: {
   readonly disclosureToggle: string
   readonly discovered: string
   readonly discoveredHead: string
+  readonly effortEditor: string
+  readonly effortHead: string
+  readonly effortLevel: string
+  readonly effortRow: string
+  readonly effortSummary: string
+  readonly effortTrigger: string
   readonly fieldError: string
   readonly fields: string
   readonly listActions: string

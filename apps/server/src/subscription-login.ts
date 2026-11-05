@@ -50,7 +50,7 @@ export interface AccountModel {
   readonly reasoningEfforts?: readonly string[]
 }
 
-/** The llm-pi-ai model entry for an account model; each thinking level is sent under its own name. */
+/** The llm-pi-ai model entry for an account model; each thinking level is sent under its own name, `off` as nothing. */
 const profileModel = (model: AccountModel): Record<string, unknown> => ({
   id: model.id,
   name: model.name,
@@ -58,7 +58,11 @@ const profileModel = (model: AccountModel): Record<string, unknown> => ({
   ...(model.inputModalities === undefined ? {} : { input: [...model.inputModalities] }),
   ...(model.reasoningEfforts === undefined
     ? {}
-    : { reasoningEfforts: Object.fromEntries(model.reasoningEfforts.map((level) => [level, level])) }),
+    : {
+        reasoningEfforts: Object.fromEntries(
+          model.reasoningEfforts.map((level) => [level, level === 'off' ? null : level]),
+        ),
+      }),
 })
 /** Sign-in reads nothing from the process environment; the account is the only credential. */
 const NO_AMBIENT_AUTH = { env: () => Promise.resolve(undefined), fileExists: () => Promise.resolve(false) }

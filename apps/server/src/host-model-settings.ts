@@ -145,6 +145,8 @@ export interface LlmModelView {
   readonly inputModalities?: readonly LlmModelModality[]
   /** Thinking levels this host's model list declares for the model. */
   readonly reasoningEfforts?: readonly string[]
+  /** Wire values of the declared levels that differ from the default (the level's own id; nothing for `off`). */
+  readonly reasoningEffortValues?: Readonly<Record<string, string | null>>
 }
 
 export interface LlmProviderSettingsView {
@@ -177,8 +179,16 @@ export interface SaveLlmProviderInput {
     readonly contextWindow?: number
     readonly maxTokens?: number
     readonly inputModalities?: readonly LlmModelModality[]
-    /** Thinking levels to declare, least to most; each level's wire value is its own name. */
+    /**
+     * Thinking levels to declare, least to most. Without levels a `llm-pi-ai` model drops its declared levels and
+     * serves what the installed catalog says about it.
+     */
     readonly reasoningEfforts?: readonly string[]
+    /**
+     * Wire value per declared level; `null` sends nothing and only suits `off`. A level left out keeps the value the
+     * model already has, or else its default (the level's own id; nothing for `off`).
+     */
+    readonly reasoningEffortValues?: Readonly<Record<string, string | null>>
   }[]
 }
 
@@ -257,6 +267,9 @@ class DraftLlmCredentialProvider extends CredentialProvider {
   }
 }
 
+/** A `llm-pi-ai` model's reasoningEfforts dict: level id → wire value, `null` sending nothing. */
+const ReasoningEffortsDictSchema = z.record(z.string(), z.string().nullable())
+
 const ConfiguredLlmModelSchema = z
   .object({
     id: z.string(),
@@ -265,7 +278,7 @@ const ConfiguredLlmModelSchema = z
     maxTokens: z.number().optional(),
     input: z.array(z.string()).optional(),
     inputModalities: z.array(z.string()).optional(),
-    reasoningEfforts: z.union([z.literal(false), z.record(z.string(), z.string().nullable())]).optional(),
+    reasoningEfforts: z.union([z.literal(false), ReasoningEffortsDictSchema]).optional(),
   })
   .passthrough()
 
@@ -284,6 +297,31 @@ const normalizeModalities = (value: readonly string[] | undefined): readonly Llm
   return known.length === 0 ? undefined : [...new Set(known)]
 }
 
+/** What DSH sends for a level nobody named a wire value for: the level's own id, and nothing for `off`. */
+const defaultReasoningWire = (level: string): string | null => (level === 'off' ? null : level)
+
+/** The `llm-pi-ai` reasoningEfforts dict for the declared levels, over the values the model already has. */
+const reasoningEffortsEntry = (
+  id: string,
+  levels: readonly string[],
+  values: Readonly<Record<string, string | null>> | undefined,
+  stored: unknown,
+): Record<string, string | null> => {
+  const unique = [...new Set(levels)]
+  if (!unique.some((level) => level !== 'off')) throw new Error(`模型 ${id} 至少要有一个关闭以外的思考档位。`)
+  const parsed = ReasoningEffortsDictSchema.safeParse(stored)
+  const previous: Readonly<Record<string, string | null>> = parsed.success ? parsed.data : {}
+  return Object.fromEntries(
+    unique.map((level) => {
+      const given = values !== undefined && Object.hasOwn(values, level) ? values[level] : undefined
+      const kept = Object.hasOwn(previous, level) ? previous[level] : undefined
+      const wire = given !== undefined ? given : kept !== undefined ? kept : defaultReasoningWire(level)
+      if (wire === null && level !== 'off') throw new Error(`模型 ${id} 的思考档位 ${level} 需要填写上游参数值。`)
+      return [level, typeof wire === 'string' ? wire.trim() || defaultReasoningWire(level) : wire]
+    }),
+  )
+}
+
 const modelView = (model: {
   readonly id: string
   readonly name?: string | undefined
@@ -293,7 +331,9 @@ const modelView = (model: {
   readonly reasoningEfforts?: false | Readonly<Record<string, string | null>> | undefined
 }): LlmModelView => {
   const inputModalities = normalizeModalities(model.inputModalities)
-  const reasoningEfforts = model.reasoningEfforts ? Object.keys(model.reasoningEfforts) : []
+  const declared = model.reasoningEfforts ? Object.entries(model.reasoningEfforts) : []
+  const reasoningEfforts = declared.map(([level]) => level)
+  const custom = declared.filter(([level, wire]) => wire !== defaultReasoningWire(level))
   return {
     id: model.id,
     name: model.name || model.id,
@@ -301,6 +341,7 @@ const modelView = (model: {
     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
     ...(inputModalities === undefined ? {} : { inputModalities }),
     ...(reasoningEfforts.length === 0 ? {} : { reasoningEfforts }),
+    ...(custom.length === 0 ? {} : { reasoningEffortValues: Object.fromEntries(custom) }),
   }
 }
 
@@ -781,8 +822,18 @@ export class HostModelSettings {
       if (model.maxTokens !== undefined) entry['maxTokens'] = model.maxTokens
       const modalities = normalizeModalities(model.inputModalities)
       if (modalities !== undefined) entry[modalityField] = [...modalities]
-      if (settingsNs === 'llm-pi-ai' && model.reasoningEfforts?.length) {
-        entry['reasoningEfforts'] = Object.fromEntries(model.reasoningEfforts.map((level) => [level, level]))
+      if (settingsNs === 'llm-pi-ai') {
+        if (model.reasoningEfforts?.length) {
+          entry['reasoningEfforts'] = reasoningEffortsEntry(
+            id,
+            model.reasoningEfforts,
+            model.reasoningEffortValues,
+            entry['reasoningEfforts'],
+          )
+        } else {
+          // No declared levels: the installed catalog decides what the model offers.
+          delete entry['reasoningEfforts']
+        }
       }
       return entry
     })

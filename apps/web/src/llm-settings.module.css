@@ -119,6 +119,43 @@
   text-align: right;
 }
 
+/* Thinking-level summary in the table: one line, truncated in narrow columns. */
+.effortTrigger {
+  justify-content: flex-start;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.effortSummary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.effortEditor {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+}
+
+.effortRow {
+  display: grid;
+  grid-template-columns: minmax(88px, 1fr) minmax(0, 1.6fr);
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.effortHead {
+  color: var(--muted);
+  font: var(--t-caption);
+}
+
+.effortLevel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  cursor: pointer;
+}
+
 .discovered {
   display: grid;
   gap: var(--s-2);

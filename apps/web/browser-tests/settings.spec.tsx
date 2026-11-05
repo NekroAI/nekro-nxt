@@ -7,6 +7,7 @@ import { createServer, type ViteDevServer } from 'vite'
 import {
   AddLinkedAccountRequestSchema,
   CredentialsViewSchema,
+  HostApiContracts,
   LinkedAccountsViewSchema,
   RemoveLinkedAccountRequestSchema,
   type LinkedAccountsView,
@@ -513,6 +514,89 @@ test.describe('settings space', () => {
       await blankId.focus()
       await blankId.blur()
       await expect(page.getByRole('alert').filter({ hasText: '模型 ID 不能为空。' })).toBeVisible()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('declares the thinking levels of a model and the value each one sends', async () => {
+    const withLevels = {
+      ...providers,
+      providers: providers.providers.map((entry, index) =>
+        index === 0
+          ? {
+              ...entry,
+              models: [
+                {
+                  ...entry.models[0]!,
+                  reasoningEfforts: ['low', 'medium', 'high'],
+                  reasoningEffortValues: { high: 'deep-think' },
+                },
+                entry.models[1]!,
+              ],
+            }
+          : entry,
+      ),
+    }
+    let saved: unknown
+    // At this width the provider list folds away and the model table has room for every column.
+    const { page, errors } = await open('/settings/models', {
+      width: 1280,
+      before: async (target) => {
+        await target.route('**/api/llm/providers', (request) => request.fulfill({ json: withLevels }))
+        await target.route('**/api/llm/providers/example-a', (request) => {
+          saved = request.request().postDataJSON()
+          return request.fulfill({ json: withLevels })
+        })
+      },
+    })
+    try {
+      await page.getByRole('table', { name: '模型供应商' }).getByText('示例供应商甲', { exact: true }).click()
+      const table = page.getByRole('table', { name: '模型列表' })
+      await expect(table.getByText('思考档位', { exact: true })).toBeVisible()
+      await expect(table.getByRole('button', { name: /example-flash-vision-preview-long的思考档位/u })).toHaveText(
+        '低 · 中 · 高',
+      )
+      const pro = table.getByRole('button', { name: /example-pro的思考档位/u })
+      await expect(pro).toHaveText('不思考')
+
+      await pro.click()
+      const editor = page.getByRole('dialog', { name: 'example-pro的思考档位' })
+      await expect(editor.getByRole('textbox', { name: '高的上游参数值', exact: true })).toBeDisabled()
+      await expect(editor.getByRole('textbox', { name: '高的上游参数值', exact: true })).toHaveAttribute(
+        'placeholder',
+        'high',
+      )
+      // 关闭 alone is no choice at all.
+      await editor.getByRole('checkbox', { name: '关闭', exact: true }).check()
+      await expect(editor.getByRole('alert')).toHaveText('至少选一个关闭以外的档位')
+      await editor.getByRole('checkbox', { name: '高', exact: true }).check()
+      await expect(editor.getByRole('alert')).toHaveCount(0)
+      await editor.getByRole('textbox', { name: '高的上游参数值', exact: true }).fill('reason-max')
+      await page.keyboard.press('Escape')
+      await expect(pro).toHaveText('关闭 · 高')
+
+      await page.getByRole('button', { name: '保存供应商' }).click()
+      await expect.poll(() => saved).toBeTruthy()
+      expect(HostApiContracts.llmSaveProvider.request.parse(saved).models).toEqual([
+        {
+          id: 'example-flash-vision-preview-long',
+          name: 'Example Flash Vision Preview',
+          contextWindow: 1_000_000,
+          inputModalities: ['text'],
+          reasoningEfforts: ['low', 'medium', 'high'],
+          reasoningEffortValues: { low: 'low', medium: 'medium', high: 'deep-think' },
+        },
+        {
+          id: 'example-pro',
+          name: 'Example Pro',
+          contextWindow: 262_144,
+          inputModalities: ['text'],
+          reasoningEfforts: ['off', 'high'],
+          reasoningEffortValues: { off: null, high: 'reason-max' },
+        },
+      ])
       expect(errors).toEqual([])
     } finally {
       await page.close()

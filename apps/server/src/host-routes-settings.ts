@@ -852,6 +852,9 @@ export function registerSettingsRoutes({
                     ...(model.maxTokens === undefined ? {} : { maxTokens: model.maxTokens }),
                     ...(model.inputModalities === undefined ? {} : { inputModalities: model.inputModalities }),
                     ...(model.reasoningEfforts === undefined ? {} : { reasoningEfforts: model.reasoningEfforts }),
+                    ...(model.reasoningEffortValues === undefined
+                      ? {}
+                      : { reasoningEffortValues: model.reasoningEffortValues }),
                   })),
                 }),
           }),

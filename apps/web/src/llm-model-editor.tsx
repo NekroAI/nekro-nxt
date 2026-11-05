@@ -6,6 +6,7 @@ import {
   DataTable,
   IconButton,
   Input,
+  Popover,
   SearchField,
   Switch,
   ToggleChip,
@@ -13,6 +14,7 @@ import {
   type Column,
 } from './ui-kit/index.js'
 import styles from './llm-settings.module.css'
+import { sortThinkingLevels, THINKING_LEVEL_IDS, thinkingLevelName } from './thinking-levels.js'
 
 export interface EditableModel {
   readonly id: string
@@ -20,8 +22,10 @@ export interface EditableModel {
   readonly contextWindow?: number | undefined
   readonly maxTokens?: number | undefined
   readonly inputModalities?: ('text' | 'image')[] | undefined
-  /** Thinking levels the model offers; carried along, not edited in the table. */
+  /** Thinking levels the model offers, least to most. */
   readonly reasoningEfforts?: string[] | undefined
+  /** Wire value per level; a level left out sends its own id, and `off` sends nothing. */
+  readonly reasoningEffortValues?: Record<string, string | null> | undefined
 }
 
 /** One editable model row; numeric fields stay as typed text until the row is submitted. */
@@ -32,8 +36,27 @@ export interface ModelRow {
   readonly contextWindow: string
   readonly maxTokens: string
   readonly image: boolean
-  readonly reasoningEfforts?: readonly string[]
+  readonly reasoningEfforts?: readonly string[] | undefined
+  /** Wire values as typed, by level; empty means the default. Kept while a level is unchecked. */
+  readonly reasoningEffortValues?: Readonly<Record<string, string>> | undefined
 }
+
+/** What a level sends when its value is left empty: its own id, and nothing for `off`. */
+const defaultEffortValue = (level: string): string | null => (level === 'off' ? null : level)
+
+/** Stored wire values as the editor shows them; a value equal to the default shows as empty. */
+const typedEffortValues = (values: Readonly<Record<string, string | null>>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(values).flatMap(([level, value]) =>
+      value === null || value === defaultEffortValue(level) ? [] : [[level, value]],
+    ),
+  )
+
+/** Whether the row offers only 关闭, which is no thinking choice at all. */
+const offOnly = (row: ModelRow): boolean =>
+  (row.reasoningEfforts?.length ?? 0) > 0 && row.reasoningEfforts?.every((level) => level === 'off') === true
+
+const OFF_ONLY_ERROR = '至少选一个关闭以外的档位'
 
 let nextRowKey = 0
 const rowKey = (): string => `model-row-${(nextRowKey += 1)}`
@@ -45,7 +68,8 @@ export const modelRowFromModel = (model: EditableModel): ModelRow => ({
   contextWindow: model.contextWindow === undefined ? '' : String(model.contextWindow),
   maxTokens: model.maxTokens === undefined ? '' : String(model.maxTokens),
   image: model.inputModalities?.includes('image') === true,
-  ...(model.reasoningEfforts?.length ? { reasoningEfforts: [...model.reasoningEfforts] } : {}),
+  ...(model.reasoningEfforts?.length ? { reasoningEfforts: sortThinkingLevels(model.reasoningEfforts) } : {}),
+  ...(model.reasoningEffortValues ? { reasoningEffortValues: typedEffortValues(model.reasoningEffortValues) } : {}),
 })
 
 export const emptyModelRow = (): ModelRow => ({
@@ -75,21 +99,34 @@ export const modelRowsError = (rows: readonly ModelRow[]): string | undefined =>
     (row) => positiveInteger(row.contextWindow) === null || positiveInteger(row.maxTokens) === null,
   )
   if (invalid) return `模型 ${invalid.id.trim()} 的上下文长度和最大输出需要填写正整数。`
+  const thinking = rows.find(offOnly)
+  if (thinking) return `模型 ${thinking.id.trim()} 的思考档位${OFF_ONLY_ERROR}。`
   return undefined
 }
 
-/** Submitted model entries; the image switch always states the modalities explicitly. */
+/**
+ * Submitted model entries; the image switch always states the modalities explicitly, and every chosen thinking level
+ * states its wire value, so clearing a field really returns it to the default.
+ */
 export const modelPayload = (rows: readonly ModelRow[]): EditableModel[] =>
   rows.map((row) => {
     const contextWindow = positiveInteger(row.contextWindow)
     const maxTokens = positiveInteger(row.maxTokens)
+    const levels = sortThinkingLevels(row.reasoningEfforts ?? [])
     return {
       id: row.id.trim(),
       ...(row.name.trim() ? { name: row.name.trim() } : {}),
       ...(typeof contextWindow === 'number' ? { contextWindow } : {}),
       ...(typeof maxTokens === 'number' ? { maxTokens } : {}),
       inputModalities: row.image ? ['text', 'image'] : ['text'],
-      ...(row.reasoningEfforts?.length ? { reasoningEfforts: [...row.reasoningEfforts] } : {}),
+      ...(levels.length > 0
+        ? {
+            reasoningEfforts: levels,
+            reasoningEffortValues: Object.fromEntries(
+              levels.map((level) => [level, row.reasoningEffortValues?.[level]?.trim() || defaultEffortValue(level)]),
+            ),
+          }
+        : {}),
     }
   })
 
@@ -104,7 +141,10 @@ export const enrichRows = (rows: readonly ModelRow[], discovered: readonly Edita
     return {
       ...row,
       ...(!row.reasoningEfforts?.length && found.reasoningEfforts?.length
-        ? { reasoningEfforts: [...found.reasoningEfforts] }
+        ? {
+            reasoningEfforts: sortThinkingLevels(found.reasoningEfforts),
+            reasoningEffortValues: typedEffortValues(found.reasoningEffortValues ?? {}),
+          }
         : {}),
       ...(!row.contextWindow && found.contextWindow !== undefined
         ? { contextWindow: String(found.contextWindow) }
@@ -175,6 +215,89 @@ export const visibleModelRowsError = (
   if (rows.length === 0) return options.listTouched ? modelRowsError(rows) : undefined
   const relevant = rows.filter((row) => touched.has(row.key) || row.id.trim() !== '')
   return relevant.length > 0 ? modelRowsError(relevant) : undefined
+}
+
+/** The chosen levels by name, least to most, or 不思考 when the model declares none. */
+export const thinkingLevelsSummary = (levels: readonly string[] | undefined): string =>
+  levels?.length ? sortThinkingLevels(levels).map(thinkingLevelName).join(' · ') : '不思考'
+
+/**
+ * The thinking levels one model offers, edited in a popover: a checkbox per level and the value sent upstream for it.
+ * Edits apply to the row as they are made; the levels DSH knows are always listed, plus any other level the row has.
+ */
+function ThinkingLevelsCell({
+  row,
+  disabled,
+  onChange,
+}: {
+  readonly row: ModelRow
+  readonly disabled: boolean
+  readonly onChange: (patch: Pick<ModelRow, 'reasoningEfforts' | 'reasoningEffortValues'>) => void
+}): ReactNode {
+  const chosen = row.reasoningEfforts ?? []
+  const values = row.reasoningEffortValues ?? {}
+  const levels = sortThinkingLevels([...THINKING_LEVEL_IDS, ...chosen])
+  const summary = thinkingLevelsSummary(chosen)
+  const toggle = (level: string, on: boolean): void => {
+    const next = sortThinkingLevels(on ? [...chosen, level] : chosen.filter((candidate) => candidate !== level))
+    onChange({ reasoningEfforts: next.length > 0 ? next : undefined, reasoningEffortValues: values })
+  }
+  return (
+    <Popover
+      label={`${label(row)}的思考档位`}
+      align="start"
+      trigger={
+        <Button
+          size="small"
+          variant="ghost"
+          className={styles.effortTrigger}
+          disabled={disabled}
+          aria-label={`${label(row)}的思考档位：${summary}`}
+          title={summary}
+        >
+          <span className={styles.effortSummary}>{summary}</span>
+        </Button>
+      }
+    >
+      <div className={styles.effortEditor}>
+        <div className={styles.effortRow}>
+          <span className={styles.effortHead}>档位</span>
+          <span className={styles.effortHead}>上游参数值</span>
+        </div>
+        {levels.map((level) => {
+          const on = chosen.includes(level)
+          const name = thinkingLevelName(level)
+          return (
+            <div key={level} className={styles.effortRow}>
+              <label className={styles.effortLevel}>
+                <Checkbox label={name} checked={on} disabled={disabled} onChange={(next) => toggle(level, next)} />
+                <span>{name}</span>
+              </label>
+              <Input
+                aria-label={`${name}的上游参数值`}
+                value={values[level] ?? ''}
+                placeholder={level}
+                spellCheck={false}
+                disabled={disabled || !on}
+                onChange={(event) =>
+                  onChange({
+                    reasoningEfforts: chosen,
+                    reasoningEffortValues: { ...values, [level]: event.target.value },
+                  })
+                }
+              />
+            </div>
+          )
+        })}
+        <p className={styles.muted}>留空时发送档位名；关闭留空时不发送。</p>
+        {offOnly(row) ? (
+          <p className={styles.fieldError} role="alert">
+            {OFF_ONLY_ERROR}
+          </p>
+        ) : null}
+      </div>
+    </Popover>
+  )
 }
 
 const notifyAdded = (added: number, skipped: number): void => {
@@ -278,7 +401,8 @@ function ModelCandidates({
 }
 
 /**
- * Editable model catalog of one provider. Narrow containers drop the display name and output columns first; the id,
+ * Editable model catalog of one provider. Narrow containers drop the output and thinking-level columns first, then the
+ * display name; the id,
  * context size and image switch always stay. Long lists gain a search box and bulk selection. Every edit, bulk
  * deletes included, takes effect only when the provider is saved.
  */
@@ -438,6 +562,15 @@ export function ModelListEditor({
           placeholder="默认"
           onChange={(event) => update(row.key, { maxTokens: event.target.value })}
         />
+      ),
+    },
+    {
+      key: 'thinking',
+      header: '思考档位',
+      width: 'minmax(80px, 0.6fr)',
+      priority: 3,
+      render: (row) => (
+        <ThinkingLevelsCell row={row} disabled={disabled} onChange={(patch) => update(row.key, patch)} />
       ),
     },
     {

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   appendModels,
   emptyModelRow,
+  enrichRows,
   matchesModelQuery,
   formatTokenCount,
   modelPayload,
   modelRowFromModel,
   modelRowsError,
   modelsToAdd,
+  thinkingLevelsSummary,
   visibleModelRowsError,
 } from '../src/llm-model-editor.js'
 
@@ -77,6 +79,48 @@ describe('model list editor', () => {
     expect(result.skipped).toBe(1)
     expect(result.rows.map((row) => row.id)).toEqual(['listed', 'fresh'])
     expect(result.rows[1]).toMatchObject({ contextWindow: '8192' })
+  })
+
+  it('round-trips thinking levels and states every chosen level wire value', () => {
+    const row = modelRowFromModel({
+      id: 'sample-gateway',
+      reasoningEfforts: ['high', 'off', 'low'],
+      reasoningEffortValues: { low: 'think-lite', off: 'disabled' },
+    })
+    expect(row).toMatchObject({
+      reasoningEfforts: ['off', 'low', 'high'],
+      reasoningEffortValues: { low: 'think-lite', off: 'disabled' },
+    })
+    expect(thinkingLevelsSummary(row.reasoningEfforts)).toBe('关闭 · 低 · 高')
+    expect(thinkingLevelsSummary(undefined)).toBe('不思考')
+    // A cleared field goes back to the default: the level's own id, and nothing for 关闭.
+    const cleared = { ...row, reasoningEffortValues: { low: ' ', off: '' } }
+    expect(modelPayload([cleared])[0]).toMatchObject({
+      reasoningEfforts: ['off', 'low', 'high'],
+      reasoningEffortValues: { off: null, low: 'low', high: 'high' },
+    })
+    expect(modelPayload([{ ...row, reasoningEfforts: undefined }])[0]).not.toHaveProperty('reasoningEfforts')
+  })
+
+  it('refuses a model whose only thinking level is 关闭', () => {
+    const row = modelRowFromModel({ id: 'sample-gateway', reasoningEfforts: ['off'] })
+    expect(modelRowsError([row])).toBe('模型 sample-gateway 的思考档位至少选一个关闭以外的档位。')
+  })
+
+  it('fills thinking levels from discovery only when the row has none', () => {
+    const manual = modelRowFromModel({
+      id: 'manual',
+      reasoningEfforts: ['low'],
+      reasoningEffortValues: { low: 'lite' },
+    })
+    const empty = modelRowFromModel({ id: 'empty' })
+    const discovered = [
+      { id: 'manual', reasoningEfforts: ['low', 'medium', 'high'] },
+      { id: 'empty', reasoningEfforts: ['medium', 'low'] },
+    ]
+    const [kept, filled] = enrichRows([manual, empty], discovered)
+    expect(kept).toMatchObject({ reasoningEfforts: ['low'], reasoningEffortValues: { low: 'lite' } })
+    expect(filled?.reasoningEfforts).toEqual(['low', 'medium'])
   })
 
   it('reads token counts the way people say them', () => {

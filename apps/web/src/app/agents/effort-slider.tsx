@@ -1,16 +1,6 @@
 import { StepScale } from '../../ui-kit/index.js'
+import { THINKING_LEVELS as LEVELS } from '../../thinking-levels.js'
 import styles from './effort-slider.module.css'
-
-/** Names and one-line meanings for the thinking levels DSH offers; an unknown level keeps its own name. */
-const LEVELS: Readonly<Record<string, { readonly name: string; readonly hint: string }>> = {
-  off: { name: '关闭', hint: '不思考，直接回答' },
-  minimal: { name: '最少', hint: '只做最必要的思考' },
-  low: { name: '低', hint: '回答快，思考较少' },
-  medium: { name: '中', hint: '兼顾速度和深度' },
-  high: { name: '高', hint: '复杂问题想得更深' },
-  xhigh: { name: '很高', hint: '适合很复杂的问题，回答更慢' },
-  max: { name: '最高', hint: '想得最深，回答最慢，用量最多' },
-}
 
 export const effortName = (effort: { readonly id: string; readonly name: string }): string =>
   LEVELS[effort.id]?.name ?? effort.name

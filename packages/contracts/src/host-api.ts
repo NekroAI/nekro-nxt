@@ -2641,6 +2641,13 @@ export const LlmModelInputModalitiesSchema = z.array(z.enum(['text', 'image'])).
 /** Thinking levels a model offers, least to most; the ids are the adapter's own. */
 export const LlmModelReasoningEffortsSchema = z.array(NonEmptyStringSchema).min(1)
 
+/**
+ * The value sent upstream for each declared thinking level, keyed by level id; `null` sends nothing and only suits
+ * `off`. Reads list only values that differ from the default (the level's own id; nothing for `off`); a save that
+ * leaves a level out keeps the value the model already has.
+ */
+export const LlmModelReasoningEffortValuesSchema = z.record(NonEmptyStringSchema, NonEmptyStringSchema.nullable())
+
 export const LlmProviderModelSchema = z
   .object({
     id: NonEmptyStringSchema,
@@ -2649,6 +2656,7 @@ export const LlmProviderModelSchema = z
     maxTokens: z.number().int().positive().optional(),
     inputModalities: LlmModelInputModalitiesSchema.optional(),
     reasoningEfforts: LlmModelReasoningEffortsSchema.optional(),
+    reasoningEffortValues: LlmModelReasoningEffortValuesSchema.optional(),
   })
   .strict()
 
@@ -2660,6 +2668,7 @@ export const LlmDiscoveredModelSchema = z
     maxTokens: z.number().int().positive().optional(),
     inputModalities: LlmModelInputModalitiesSchema.optional(),
     reasoningEfforts: LlmModelReasoningEffortsSchema.optional(),
+    reasoningEffortValues: LlmModelReasoningEffortValuesSchema.optional(),
   })
   .strict()
 
