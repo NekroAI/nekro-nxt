@@ -92,6 +92,7 @@ import { AdministratorsSection } from './administrators-section.js'
 import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
 import { StorageSection } from './storage-section.js'
+import { HostRestartRow } from './restart-row.js'
 import { formatBytes } from '../../desktop-storage.js'
 import { useDesktopUpdate, type DesktopPlatform } from '../../desktop-update.js'
 import styles from './settings.module.css'
@@ -1253,6 +1254,7 @@ function About() {
       </Ambient>
       <PropertyList>
         <ProductUpdateRows updates={updates} />
+        <HostRestartRow />
         <PropertyRow label="DSH">{metadata?.dshVersion?.trim() || '—'}</PropertyRow>
         <PropertyRow label="Release">{metadata?.releaseId?.trim() || '—'}</PropertyRow>
         <PropertyRow label="许可证">

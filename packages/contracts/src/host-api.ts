@@ -1290,6 +1290,25 @@ export const ProductUpdateStatusSchema = z
 
 export type ProductUpdateStatus = z.output<typeof ProductUpdateStatusSchema>
 
+/**
+ * The exit code of a requested restart (#123). Desktop starts the service again when its process ends with it; a
+ * container comes back through its restart policy, which treats any non-zero code as a reason to restart.
+ */
+export const HOST_RESTART_EXIT_CODE = 75
+
+/** Whether this service can restart itself, what brings it back, and roughly how long that takes. */
+export const HostRestartStatusSchema = z
+  .object({
+    /** False where nothing would start the process again, e.g. an embedded or test host. */
+    supported: z.boolean(),
+    /** `desktop`: the desktop app starts it again; `server`: the container restart policy does. */
+    hostKind: z.enum(['desktop', 'server']),
+    estimatedSeconds: z.number().int().positive(),
+  })
+  .strict()
+
+export type HostRestartStatus = z.output<typeof HostRestartStatusSchema>
+
 /** Pause between consecutive messages an agent sends to one channel; longer messages wait a little longer. */
 export const MessagePacingSchema = z.enum(['off', 'fast', 'normal', 'slow'])
 
@@ -3930,6 +3949,23 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: z.object({ autoCheck: z.boolean() }).strict(),
     response: ProductUpdateStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  getHostRestart: defineContract({
+    method: 'GET',
+    path: '/api/host/restart',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: HostRestartStatusSchema,
+    error: HostApiErrorSchema,
+  }),
+  /** Stops the service the way a shutdown does and lets the desktop app or the container start it again. */
+  restartHost: defineContract({
+    method: 'POST',
+    path: '/api/host/restart',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ estimatedSeconds: z.number().int().positive() }).strict(),
     error: HostApiErrorSchema,
   }),
   getMessagePacingSettings: defineContract({

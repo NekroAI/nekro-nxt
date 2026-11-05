@@ -1,3 +1,4 @@
+import { HOST_RESTART_EXIT_CODE } from '@nekro-nxt/contracts'
 import { waitForHostShutdown, type HostStopWaitReason } from './host-shutdown.js'
 
 export interface SupervisedHostProcess {
@@ -10,6 +11,8 @@ export interface HostRestartNotice {
   readonly attempt: number
   readonly delayMs: number
   readonly cause: Error
+  /** The Host asked for this restart (Settings → 关于 → 重启服务, #123); it does not count as a crash. */
+  readonly planned?: true
 }
 
 export interface HostSupervisorOptions {
@@ -22,7 +25,7 @@ export interface HostSupervisorOptions {
   readonly crashWindowMs?: number
   readonly maxRestartAttempts?: number
   readonly onRestarting?: (notice: HostRestartNotice) => void
-  readonly onRecovered?: (attempt: number) => void
+  readonly onRecovered?: (notice: HostRestartNotice) => void
   readonly onFatal?: (error: Error) => void
   readonly onStopWaiting?: (reason: HostStopWaitReason, signal: AbortSignal) => void
 }
@@ -179,9 +182,16 @@ export class HostSupervisor {
       const { code } = await active.exited
       if (this.#current === active) this.#current = undefined
       if (signal.aborted) return
-      let failure = new Error(`Desktop Host exited unexpectedly (code ${code}).`)
+      // A Host that stopped on request has already shut down cleanly; start the next one at once.
+      let planned = code === HOST_RESTART_EXIT_CODE
+      let failure = planned
+        ? new Error('Desktop Host restarted on request.')
+        : new Error(`Desktop Host exited unexpectedly (code ${code}).`)
       while (!signal.aborted) {
-        const restart = this.#registerFailure(failure)
+        const restart: HostRestartNotice | undefined = planned
+          ? { attempt: 1, delayMs: 0, cause: failure, planned: true }
+          : this.#registerFailure(failure)
+        planned = false
         if (restart === undefined) return
         this.#options.onRestarting?.(restart)
         try {
@@ -200,7 +210,7 @@ export class HostSupervisor {
           signal.throwIfAborted()
           candidate.ready = true
           active = candidate
-          this.#options.onRecovered?.(restart.attempt)
+          this.#options.onRecovered?.(restart)
           break
         } catch (cause) {
           const failed = this.#current

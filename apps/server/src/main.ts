@@ -21,7 +21,8 @@ import { serveStatic } from '@deepseek-ai/dsh-host-frontend-static'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { HostUpgradeCoordinator, type UpgradeJournal } from '@nekro-nxt/client-migrations'
-import { InstanceDescriptorSchema } from '@nekro-nxt/contracts'
+import { HOST_RESTART_EXIT_CODE, InstanceDescriptorSchema } from '@nekro-nxt/contracts'
+import { HostRestart } from './host-restart.js'
 import {
   createSqliteBackupSet,
   readBackupAgentIds,
@@ -633,6 +634,11 @@ export interface StartServerOptions {
   readonly trustProxy?: boolean
   /** Optional real LLM adapter wiring for a non-test server. */
   readonly configureLlm?: (context: LlmContext) => Promise<void> | void
+  /**
+   * Stops this server and ends the process with `HOST_RESTART_EXIT_CODE` (#123). Only the executable entry passes it;
+   * without it the service reports that it cannot restart itself.
+   */
+  readonly requestRestart?: () => void
 }
 
 export interface NekroServerHandle {
@@ -664,6 +670,7 @@ const startLeasedServer = async (
   await mkdir(dataRoot, { recursive: true, mode: 0o700 })
   await mkdir(developmentWorkspaceRoot, { recursive: true, mode: 0o700 })
   let ready = false
+  const startup: { ms?: number } = {}
   let checkWorkspaceReadiness: (() => Promise<boolean>) | undefined
   let network: NekroServerHandle | undefined
   await createRuntimeThroughUpgradeCoordinator(
@@ -698,6 +705,7 @@ const startLeasedServer = async (
   if (!network) throw new Error('Host network was not prepared.')
   if (!(await checkWorkspaceReadiness?.())) throw new Error('核心工作区数据暂时无法读取，启动未完成。')
   ready = true
+  startup.ms = performance.now()
   return network
 
   async function prepareNetwork(runtime: NekroRuntime): Promise<NekroServerHandle> {
@@ -714,6 +722,12 @@ const startLeasedServer = async (
     } catch (error) {
       throw explainListenPermissionFailure(error, managementKey === undefined ? port : 0)
     }
+    runtime.hostRestart = new HostRestart({
+      hostKind: process.env['NEKRO_HOST_KIND'] === 'desktop' ? 'desktop' : 'server',
+      ...(options.requestRestart === undefined ? {} : { exit: options.requestRestart }),
+      isReady: () => ready,
+      startupMs: () => startup.ms,
+    })
     // The headless browser that checks creation candidates opens this Host's own page on its loopback listener.
     runtime.setVerificationOrigin(`http://127.0.0.1:${webContext.webServer.port}`)
     // Public static helper; NXT's management edge owns authentication. The upstream
@@ -1097,6 +1111,23 @@ if (isEntryPoint()) {
       }
       process.on('SIGTERM', cancelStartup)
       process.on('SIGINT', cancelStartup)
+      // A restart takes the same shutdown as a stop signal, then exits with the code Desktop and containers restart on.
+      let resolveStarted!: (handle: NekroServerHandle) => void
+      const started = new Promise<NekroServerHandle>((resolve) => {
+        resolveStarted = resolve
+      })
+      const requestRestart = (): void => {
+        console.log('[nekro-nxt] 收到重启请求，正在关闭。')
+        void started
+          .then((running) => running.stop())
+          .then(
+            () => exitAfterOutput(HOST_RESTART_EXIT_CODE),
+            (error: unknown) => {
+              console.error('[nekro-nxt] 关闭失败：', error instanceof Error ? error.message : error)
+              process.exit(1)
+            },
+          )
+      }
       const handle = await startNekroServer({
         serveRecovery: true,
         retryUpgrade: process.argv.includes('--retry-upgrade'),
@@ -1112,7 +1143,9 @@ if (isEntryPoint()) {
           ? {}
           : { developmentWorkspaceRoot }),
         configureLlm: configureDshLlmProviders(llmProviderRoutes),
+        requestRestart,
       })
+      resolveStarted(handle)
       process.removeListener('SIGTERM', cancelStartup)
       process.removeListener('SIGINT', cancelStartup)
       // Desktop uses cooperative cancellation on Windows, including while a recovery page is being served.

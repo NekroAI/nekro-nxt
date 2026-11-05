@@ -26,6 +26,7 @@ import { mountDynamicCordisTools } from './dynamic-cordis-tools.js'
 import { assetSaveToWorkspaceTool } from './asset-save-tool.js'
 import { audioTranscribeTool } from './audio-transcribe-tool.js'
 import { productVersionTool } from './product-version-tool.js'
+import { hostRestartTool, type HostRestartRequester } from './host-restart.js'
 import type { SpeechService } from './speech-service.js'
 import { channelImageSubmission, trackToolCallSessions } from './dsh-plugin-images.js'
 import { mountCredentialRedaction } from './credential-redaction.js'
@@ -557,6 +558,8 @@ export interface DshHostRuntimeOptions {
   readonly speech?: Pick<SpeechService, 'transcribeOnce'>
   /** The running release (`NEKRO_RELEASE_ID`) for the `nekro_nxt_version` tool; absent where the host has none. */
   readonly releaseId?: string
+  /** Files agents' restart requests; absent, or answering undefined, where this host cannot restart itself. */
+  readonly hostRestart?: () => HostRestartRequester | undefined
   /** Where commands get the credentials open to an agent and the linked accounts it is granted. */
   readonly commandAccounts?: CommandCredentialSources
   /** Programs of the add-ons' current providers, added to every agent's command `PATH` (附加功能 F4). */
@@ -3299,6 +3302,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
   readonly #speech: DshHostRuntimeOptions['speech']
   readonly #releaseId: string | undefined
+  readonly #hostRestart: (() => HostRestartRequester | undefined) | undefined
   readonly #commandAccounts: CommandCredentialSources | undefined
   readonly #codeRunFallbackDirectory: string
   readonly #dataRoot: string
@@ -3385,6 +3389,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#codeRunNode = options.codeRunNode
     this.#speech = options.speech
     this.#releaseId = options.releaseId
+    this.#hostRestart = options.hostRestart
     this.#commandAccounts = options.commandAccounts
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
     this.#dataRoot = path.dirname(options.sessionDatabasePath)
@@ -4466,6 +4471,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
       agentContext.tools.register(channelContextTool(input.episodeId, input.channelId, this.#history, this.#members))
       agentContext.tools.register(productVersionTool(this.#releaseId))
+      if (this.#hostRestart?.() !== undefined) {
+        agentContext.tools.register(hostRestartTool(revision.agentId, input.channelId, this.#hostRestart))
+      }
       agentContext.tools.register(
         assetCreateTool(input.channelId, this.#assets, this.#assetService, { workspace: developmentWorkspace }),
       )

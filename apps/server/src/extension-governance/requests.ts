@@ -60,6 +60,7 @@ const extensionOf = (action: ExtensionAction): ExtensionId | undefined => {
     case 'community-install':
     case 'community-withdraw':
     case 'use-credential':
+    case 'restart-host':
       return undefined
     case 'migrate-data':
       return action.targetExtensionId
@@ -99,6 +100,8 @@ const objectKey = (action: ExtensionAction | undefined): string | undefined => {
     case 'community-publish':
     case 'community-update':
       return `${action.kind}|${action.extensionId}`
+    case 'restart-host':
+      return 'restart-host'
     case undefined:
     case 'save':
     case 'branch':
@@ -217,7 +220,10 @@ export class ExtensionRequestService {
         : `（新增权限：${input.assessment.added.map((item) => item.label + (item.detail ? ` ${item.detail}` : '')).join('；')}）`
     const superseded = this.#supersede(input.action, record.number, now)
     const replaces = superseded.length === 0 ? '' : `（取代 ${superseded.map((number) => `#${number}`).join('、')}）`
-    const why = input.action.kind === 'community-install' && input.action.reason ? `。理由：${input.action.reason}` : ''
+    const why =
+      (input.action.kind === 'community-install' || input.action.kind === 'restart-host') && input.action.reason
+        ? `。理由：${input.action.reason}`
+        : ''
     const prefix = this.#commandPrefix(input.actor.channelId)
     this.#notice(
       input.actor.channelId,

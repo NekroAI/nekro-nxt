@@ -161,6 +161,7 @@ import { readExtensionDownloadLimit } from './extension-download-settings.js'
 import { readCompactionSettings } from './compaction-settings.js'
 import { readModelFallbackSettings } from './model-fallback-settings.js'
 import { readSubConversationRetention } from './sub-conversation-settings.js'
+import type { HostRestart, HostRestartRequester } from './host-restart.js'
 
 /** How often ended sub-conversations past their retention are removed. */
 const SUB_CONVERSATION_SWEEP_MS = 60 * 60 * 1000
@@ -279,6 +280,8 @@ export class NekroRuntime {
   readonly administrators: AdministratorService
   /** Set by the Host routes so request changes reach the Web. */
   publishExtensionRequestChange: (() => void) | undefined
+  /** Restarting the service (#123); set by the executable host once it listens, absent in embedded and test hosts. */
+  hostRestart: HostRestart | undefined
   /** Configuration writes of every source and their history. */
   readonly extensionConfig: ExtensionConfigService
   /** Set by the Host routes so configuration written outside a request reaches the Web. */
@@ -567,6 +570,7 @@ export class NekroRuntime {
       },
     })
     this.publishExtensionRequestChange = undefined
+    this.hostRestart = undefined
     this.publishExtensionsChange = undefined
     this.extensions = new ExtensionLifecycleCoordinator(
       this.repository,
@@ -1255,6 +1259,7 @@ export class NekroRuntime {
       const notificationsPort: { current?: NotificationService } = {}
       const feedbackPort: { current?: CommunityFeedbackService } = {}
       const governancePort: { current?: ExtensionGovernanceTools } = {}
+      const restartPort: { current?: NekroRuntime } = {}
       const subConversationChanges = new Set<() => void>()
       const host = await DshHostRuntime.create({
         compaction: {
@@ -1281,6 +1286,12 @@ export class NekroRuntime {
         },
         speech: speechService,
         ...(options.feedbackEnvironment === undefined ? {} : { releaseId: options.feedbackEnvironment.releaseId }),
+        hostRestart: (): HostRestartRequester | undefined => {
+          const current = restartPort.current
+          return current?.hostRestart?.status().supported === true
+            ? { request: (input) => current.requestHostRestart(input) }
+            : undefined
+        },
         codeRunNode: () => {
           const active = addons.active('node')
           if (active === undefined) return undefined
@@ -1769,6 +1780,7 @@ export class NekroRuntime {
       commandReference.current = runtime.commands
       feedbackPort.current = runtime.feedback
       governancePort.current = new ExtensionGovernanceTools(runtime)
+      restartPort.current = runtime
       await runtime.feedback.initialize()
       return runtime
     } catch (error) {
@@ -1822,6 +1834,21 @@ export class NekroRuntime {
       })
     }, EXTENSION_REVIEW_POLL_MS)
     this.#reviewWatch.unref()
+  }
+
+  /**
+   * Files an agent's restart request (#123). It always waits for an administrator (`/ext approve` or the console);
+   * approving it announces the restart in the channel and restarts.
+   */
+  requestHostRestart(input: { readonly agentId: AgentId; readonly channelId: ChannelId; readonly reason: string }): {
+    readonly number: number
+  } {
+    if (this.hostRestart?.status().supported !== true)
+      throw new Error('这台 NekroNXT 不能从内部重启，请告诉管理员手动重启。')
+    const action = { kind: 'restart-host', reason: input.reason, channelId: input.channelId } as const
+    const actor = { kind: 'agent', agentId: input.agentId, channelId: input.channelId } as const
+    const assessment = this.extensionActions.assess(action, actor)
+    return this.extensionRequests.create({ action, actor, assessment })
   }
 
   /** Where the headless browser reaches this Host's own web page; set once the web host listens. */

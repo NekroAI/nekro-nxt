@@ -349,6 +349,34 @@ export const createNekroHostApi = (
       )
     },
   })
+  // Settings → 关于 → 重启服务 (#123); the management edge already limits /api to signed-in administrators.
+  registerRoute({
+    kind: 'exact',
+    path: '/api/host/restart',
+    handler: (req, res) => {
+      const restart = runtime.hostRestart
+      if (req.method === 'GET') {
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.getHostRestart,
+          restart?.status() ?? { supported: false, hostKind: 'server', estimatedSeconds: 10 },
+        )
+        return
+      }
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      const blocked =
+        restart === undefined ? '这台 NekroNXT 不能从页面重启，请在它的运行环境里重启。' : restart.blockedReason()
+      if (restart === undefined || blocked !== undefined) {
+        writeError(res, 409, 'host-restart-unavailable', blocked ?? '')
+        return
+      }
+      writeContractJson(res, 200, HostApiContracts.restartHost, restart.request())
+    },
+  })
   const pacingSettings: MessagePacingSettingsStore = {
     get: (key) => runtime.repository.getSystemSetting(key),
     put: (key, value, expectedRevision) => {

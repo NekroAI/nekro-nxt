@@ -238,13 +238,15 @@ const startProductHost = async (release: ProductRelease): Promise<string> => {
         }
         throw error
       }),
-    onRestarting: ({ attempt, delayMs, cause }) => {
+    onRestarting: ({ attempt, delayMs, cause, planned }) => {
       localHostLifecycle.commit('restarting')
-      console.warn(`[desktop] 本地 Host 已停止，将在 ${delayMs}ms 后进行第 ${attempt} 次恢复：${cause.message}`)
+      if (planned) console.info('[desktop] 本地 Host 按请求重启。')
+      else console.warn(`[desktop] 本地 Host 已停止，将在 ${delayMs}ms 后进行第 ${attempt} 次恢复：${cause.message}`)
     },
-    onRecovered: (attempt) => {
+    onRecovered: ({ attempt, planned }) => {
       localHostLifecycle.commit('recovered')
-      console.info(`[desktop] 本地 Host 已在同一地址恢复（第 ${attempt} 次尝试）。`)
+      if (planned) console.info('[desktop] 本地 Host 已重启。')
+      else console.info(`[desktop] 本地 Host 已在同一地址恢复（第 ${attempt} 次尝试）。`)
     },
     onFatal: (error) => {
       localHostLifecycle.commit('fatal')

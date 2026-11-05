@@ -1,6 +1,7 @@
 import {
   AgentIdSchema,
   AuthoringTaskIdSchema,
+  ChannelIdSchema,
   CommunityPermissionItemSchema,
   CommunityReviewStatusSchema,
   communityPublisherLabel,
@@ -185,6 +186,15 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     taskId: AuthoringTaskIdSchema.optional(),
     key: z.string().optional(),
   }),
+  /**
+   * Restarts NekroNXT (#123). Not extension work, but it shares the request flow: an agent can only ask, and the
+   * approval announces the restart in the channel the request came from, which the host fills in.
+   */
+  z.object({
+    kind: z.literal('restart-host'),
+    reason: z.string().min(1).max(500),
+    channelId: ChannelIdSchema.optional(),
+  }),
 ])
 export type ExtensionAction = z.output<typeof ExtensionActionSchema>
 
@@ -279,6 +289,12 @@ export class ExtensionActionService {
       const scope = this.#agentScope(action, actor.agentId)
       if (scope !== undefined) return { ...base, decision: 'console', reason: scope }
       return { ...base, decision: 'request', reason: '这个凭据需要管理员同意后才能使用。' }
+    }
+    // Whatever its autonomy, an agent only asks; an administrator's approval runs it.
+    if (action.kind === 'restart-host') {
+      return actor.kind === 'agent'
+        ? { ...base, decision: 'request', reason: '重启需要管理员同意。' }
+        : { ...base, decision: 'run' }
     }
     const initial = action.kind === 'enable' ? this.#initialConfigVerdict(action, actor) : undefined
     if (initial?.decision === 'console') return { ...base, ...initial }
@@ -766,6 +782,24 @@ export class ExtensionActionService {
         )
         return { message: `${allowed}「${task.title}」的试运行已经用上它。` }
       }
+      case 'restart-host': {
+        const restart = runtime.hostRestart
+        const blocked =
+          restart === undefined ? '这台 NekroNXT 不能从内部重启，请在它的运行环境里重启。' : restart.blockedReason()
+        if (restart === undefined || blocked !== undefined) throw new Error(blocked ?? '')
+        const { estimatedSeconds } = restart.status()
+        if (action.channelId !== undefined) {
+          await runtime.channels
+            .sendHostNotice({
+              channelId: action.channelId,
+              noticeKey: `host-restart:${Date.now()}`,
+              parts: [{ type: 'text', text: `正在重启，大约 ${estimatedSeconds} 秒后回来。` }],
+            })
+            .catch((error: unknown) => console.error('[nekro-nxt] 重启通知发送失败：', error))
+        }
+        restart.request()
+        return { message: '已安排重启。' }
+      }
     }
   }
 
@@ -1114,6 +1148,8 @@ export class ExtensionActionService {
           summary: `让${this.#agentName(action.agentId)}使用凭据「${credential?.name ?? '已删除的凭据'}」`,
         }
       }
+      case 'restart-host':
+        return { ...normal, summary: '重启 NekroNXT' }
     }
   }
 
@@ -1155,6 +1191,8 @@ export class ExtensionActionService {
           ? undefined
           : '只能在自己的创造任务里使用凭据。'
       }
+      case 'restart-host':
+        return undefined
     }
   }
 

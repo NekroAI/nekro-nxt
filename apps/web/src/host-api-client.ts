@@ -235,6 +235,9 @@ export const workspaceApi = {
     callHostApi(HostApiContracts.getProductUpdates, {}, undefined, options),
   checkProductUpdates: (options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.checkProductUpdates, {}, undefined, options),
+  getHostRestart: (options?: HostRequestOptions) =>
+    callHostApi(HostApiContracts.getHostRestart, {}, undefined, options),
+  restartHost: (options?: HostRequestOptions) => callHostApi(HostApiContracts.restartHost, {}, undefined, options),
   updateProductUpdateSettings: (request: HostApiRequest<'updateProductUpdateSettings'>, options?: HostRequestOptions) =>
     callHostApi(HostApiContracts.updateProductUpdateSettings, {}, request, options),
   getUpgradeBackupSettings: (options?: HostRequestOptions) =>

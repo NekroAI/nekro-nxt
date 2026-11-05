@@ -114,6 +114,8 @@ describe('automatic TLS management edge', () => {
         ['/api/commands/grants', 'PUT'],
         ['/api/commands/members/ch_FIXTURE', 'GET'],
         ['/api/commands/executions/cmd_fixture', 'GET'],
+        ['/api/host/restart', 'GET'],
+        ['/api/host/restart', 'POST'],
       ]) {
         expect(
           (await request(edge.port, pathname!, { method: method!, viewer: 'device:nxt_device_SPOOFED' })).status,

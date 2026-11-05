@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { HostSupervisor, type SupervisedHostProcess } from '../src/host-supervisor.ts'
+import { HOST_RESTART_EXIT_CODE } from '@nekro-nxt/contracts'
+import { HostSupervisor, type HostRestartNotice, type SupervisedHostProcess } from '../src/host-supervisor.ts'
 import { HOST_STOP_GRACE_MS } from '../src/host-shutdown.ts'
 
 class FakeHostProcess implements SupervisedHostProcess {
@@ -51,7 +52,7 @@ describe('Desktop Host supervisor', () => {
       },
       waitUntilReady: () => Promise.resolve(),
       delay: immediateDelay,
-      onRecovered: (attempt) => recovered.push(attempt),
+      onRecovered: ({ attempt }) => recovered.push(attempt),
     })
 
     await supervisor.start()
@@ -62,6 +63,70 @@ describe('Desktop Host supervisor', () => {
     expect(recovered).toEqual([1])
 
     await supervisor.stop()
+  })
+
+  it('starts the next Host at once after a requested restart, outside the crash budget', async () => {
+    const events: string[] = []
+    const processes: FakeHostProcess[] = []
+    const delays: number[] = []
+    const notices: HostRestartNotice[] = []
+    let resolveReady: (() => void) | undefined
+    const supervisor = new HostSupervisor({
+      origin: 'http://127.0.0.1:41239',
+      spawnHost: () => {
+        const process = new FakeHostProcess()
+        events.push(`spawn ${processes.length}`)
+        processes.push(process)
+        return process
+      },
+      waitUntilReady: () => {
+        if (processes.length === 1) return Promise.resolve()
+        events.push(`wait ${processes.length - 1}`)
+        return new Promise<void>((resolve) => {
+          resolveReady = resolve
+        })
+      },
+      delay: (delayMs, signal) => {
+        delays.push(delayMs)
+        return immediateDelay(delayMs, signal)
+      },
+      maxRestartAttempts: 1,
+      onRestarting: (notice) => {
+        events.push('restarting')
+        notices.push(notice)
+      },
+      onRecovered: (notice) => events.push(notice.planned ? 'restarted' : 'recovered'),
+      onFatal: () => events.push('fatal'),
+    })
+
+    await supervisor.start()
+    // The Host shuts itself down cleanly and exits with the restart code; the supervisor never kills it.
+    for (let round = 0; round < 3; round += 1) {
+      processes[round]!.exit(HOST_RESTART_EXIT_CODE)
+      await vi.waitFor(() => expect(resolveReady).toBeDefined())
+      expect(supervisor.origin).toBe('http://127.0.0.1:41239')
+      resolveReady?.()
+      resolveReady = undefined
+      await vi.waitFor(() => expect(events.at(-1)).toBe('restarted'))
+    }
+
+    expect(events).toEqual([
+      'spawn 0',
+      ...[1, 2, 3].flatMap((round) => ['restarting', `spawn ${round}`, `wait ${round}`, 'restarted']),
+    ])
+    expect(processes.map((process) => process.killCalls)).toEqual([0, 0, 0, 0])
+    expect(delays).toEqual([0, 0, 0])
+    expect(notices.every((notice) => notice.planned === true && notice.delayMs === 0)).toBe(true)
+
+    // A crash afterwards still has its whole budget.
+    processes[3]!.exit(1)
+    await vi.waitFor(() => expect(resolveReady).toBeDefined())
+    resolveReady?.()
+    await vi.waitFor(() => expect(events.at(-1)).toBe('recovered'))
+    expect(events).not.toContain('fatal')
+
+    await supervisor.stop()
+    expect(processes[4]!.killCalls).toBe(1)
   })
 
   it('kills a replacement that fails readiness and keeps retrying within budget', async () => {
@@ -83,7 +148,7 @@ describe('Desktop Host supervisor', () => {
       waitUntilReady: () => readiness.shift()?.() ?? Promise.reject(new Error('unexpected readiness call')),
       delay: immediateDelay,
       onRestarting: ({ attempt, delayMs }) => notices.push({ attempt, delayMs }),
-      onRecovered: (attempt) => recovered.push(attempt),
+      onRecovered: ({ attempt }) => recovered.push(attempt),
     })
 
     await supervisor.start()

@@ -210,6 +210,56 @@ test.describe('settings space', () => {
     }
   })
 
+  test('restarts the service after confirming and reconnects once it answers again', async () => {
+    for (const hostKind of ['server', 'desktop'] as const) {
+      const restarts: string[] = []
+      let serviceDown = false
+      const { page, errors } = await open('/settings/about', {
+        before: async (target) => {
+          await target.route('**/api/host/restart', async (request) => {
+            if (request.request().method() === 'POST') {
+              restarts.push('restart')
+              serviceDown = true
+              await request.fulfill({ json: { estimatedSeconds: 20 } })
+              return
+            }
+            await request.fulfill({ json: { supported: true, hostKind, estimatedSeconds: 20 } })
+          })
+          // Registered after the snapshot health stub, so it answers first while the service is away.
+          await target.route('**/health/ready', (request) =>
+            serviceDown
+              ? request.fulfill({ status: 503, json: { status: 'starting', releaseId: 'nxt-synthetic-release' } })
+              : request.fallback(),
+          )
+        },
+      })
+      try {
+        await page.getByRole('button', { name: '重启服务' }).click()
+        const dialog = page.getByRole('dialog', { name: '重启服务' })
+        await expect(dialog.getByText('大约需要 20 秒，期间智能体不会回复。')).toBeVisible()
+        const prerequisite = dialog.getByText(
+          '需要容器配置了重启策略（例如 restart: unless-stopped），否则服务停止后不会自动启动。',
+        )
+        if (hostKind === 'server') await expect(prerequisite).toBeVisible()
+        else await expect(prerequisite).toHaveCount(0)
+        await page.screenshot({ path: `.local/browser-test-results/settings-restart-confirm-${hostKind}.png` })
+        await dialog.getByRole('button', { name: '重启', exact: true }).click()
+        await expect(page.getByText('正在重启，大约需要 20 秒')).toBeVisible()
+        await expect(dialog).toHaveCount(0)
+        expect(restarts).toEqual(['restart'])
+        await page.screenshot({ path: `.local/browser-test-results/settings-restarting-${hostKind}.png` })
+        // Let the page see the service away at least once, then bring it back.
+        await page.waitForTimeout(1_500)
+        serviceDown = false
+        await expect(page.getByText('服务已重启')).toBeVisible({ timeout: 5_000 })
+        await expect(page.getByText('正在重启，大约需要 20 秒')).toHaveCount(0)
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
   test('downloads an update inside the desktop app and installs it after quitting', async () => {
     const status = {
       channel: 'stable',
