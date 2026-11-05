@@ -5,6 +5,13 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { AttachmentId, ImageVariantId, type RequestImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
+import {
+  DEFAULT_FILE_EXPIRY_SECONDS,
+  DEFAULT_FILE_QUOTA_CLEANUP_BATCH,
+  DEFAULT_FILE_REFRESH_MARGIN_SECONDS,
+  DeepSeekFileStore,
+  DeepSeekUploadIndex,
+} from '@deepseek-ai/dsh-llm-deepseek'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { AssetService } from '@nekro-nxt/core'
 import { ChannelIdSchema } from '@nekro-nxt/contracts'
@@ -182,6 +189,76 @@ describe('NekroAssetAttachmentStore', () => {
       expect(first.attachment.attachmentId).toBe(asset.contentDigest)
       expect(first.attachment).toMatchObject({ name: 'cat.png', width: 64, height: 48 })
       expect(second.variantId).toBe(first.variantId)
+    } finally {
+      database.close()
+    }
+  })
+
+  // DSH reads its whole upload index as empty when one record fails its id checks, so a single nonconforming image
+  // makes every later request upload every image again. Run every format and detail through DSH's own store.
+  it('lets the DeepSeek upload index reuse every image kind on the next request', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nxt-image-upload-'))
+    roots.push(root)
+    const database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    try {
+      const repository = new SqliteCoreRepository(database)
+      const assetService = new AssetService(repository, path.join(root, 'assets'))
+      const store = new NekroAssetAttachmentStore(new Context(), {
+        assets: repository,
+        assetService,
+        requestImageRoot: path.join(root, 'request-images'),
+      })
+      const image = sharp({ create: { width: 640, height: 480, channels: 3, background: '#4a7' } })
+      const sources = [
+        { bytes: await image.clone().png().toBuffer(), declaredMediaType: 'image/png' },
+        { bytes: await image.clone().jpeg().toBuffer(), declaredMediaType: 'image/jpeg' },
+        { bytes: await image.clone().webp().toBuffer(), declaredMediaType: 'image/webp' },
+        { bytes: await image.clone().gif().toBuffer(), declaredMediaType: 'image/gif' },
+      ] as const
+      const target = { width: 2048, height: 2048, maxBytes: 8 * 1024 * 1024 }
+      const versions: RequestImageAttachment[] = []
+      for (const source of sources) {
+        const { asset } = await assetService.prepare(source)
+        for (const detail of ['low', 'auto'] as const) {
+          versions.push(await store.readImageRequest(await store.refForAsset(asset, undefined, detail), target))
+        }
+        versions.push(await store.readImageRequest(await store.refForHighDetail(asset), target))
+      }
+
+      let uploads = 0
+      const fetch = (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const file = init?.body instanceof FormData ? init.body.get('file') : null
+        if (!(file instanceof File)) throw new Error('The fixture only serves image uploads.')
+        uploads += 1
+        return Promise.resolve(
+          Response.json({
+            id: `file-fixture-${uploads}`,
+            type: 'file',
+            mime_type: file.type,
+            size_bytes: file.size,
+            created_at: new Date().toISOString(),
+            filename: file.name,
+          }),
+        )
+      }
+      const connection = { baseURL: 'https://deepseek.invalid', headers: { authorization: 'Bearer fixture' } }
+      const policy = {
+        expiresAfterSeconds: DEFAULT_FILE_EXPIRY_SECONDS,
+        refreshMarginSeconds: DEFAULT_FILE_REFRESH_MARGIN_SECONDS,
+        quotaCleanupBatch: DEFAULT_FILE_QUOTA_CLEANUP_BATCH,
+      }
+      const indexPath = path.join(root, 'files-v3.json')
+      const request = async () => {
+        const files = new DeepSeekFileStore({ index: new DeepSeekUploadIndex(indexPath), fetch })
+        for (const version of versions) await files.ensureUploaded(version, connection, policy)
+      }
+
+      await request()
+      const firstUploads = uploads
+      await request()
+
+      expect(firstUploads).toBe(new Set(versions.map((version) => version.variantId)).size)
+      expect(uploads - firstUploads).toBe(0)
     } finally {
       database.close()
     }
