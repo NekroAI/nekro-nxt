@@ -5,12 +5,22 @@ import path from 'node:path'
 
 type Target = Parameters<SandboxedFileSystem['readText']>[0]
 
+const isWithin = (root: string, target: string): boolean => {
+  const relative = path.relative(root, target)
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
 /**
  * DSH's sandboxed file system with reads scoped like writes: outside `danger-full-access`, file tools only read,
- * list and stat inside the session workspace. Targets arrive resolved to real paths, so a symlink out of the
- * workspace is judged by where it points.
+ * list and stat inside the session workspace and the {@link readOnlyRoots}. Targets arrive resolved to real paths,
+ * so a symlink out of these places is judged by where it points. Writes keep DSH's own fence.
  */
 export class WorkspaceFileSystem extends SandboxedFileSystem {
+  /** Directories outside the workspace that may be read but never written, such as the session's spill files. */
+  protected readOnlyRoots(): readonly string[] {
+    return []
+  }
+
   private assertReadable(target: Target): void {
     this.assertReadablePath(canonicalPath(String(target.targetKey)), target.displayPath)
   }
@@ -19,9 +29,8 @@ export class WorkspaceFileSystem extends SandboxedFileSystem {
   private assertReadablePath(realPath: string, displayPath: string): void {
     const policy = this.ctx.sandboxPolicy.resolve()
     if (policy.mode === 'danger-full-access') return
-    const root = canonicalPath(policy.workspaceRoot)
-    const relative = path.relative(root, realPath)
-    if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) return
+    if (isWithin(canonicalPath(policy.workspaceRoot), realPath)) return
+    if (this.readOnlyRoots().some((root) => isWithin(canonicalPath(root), realPath))) return
     throw new FsError(`cannot read "${displayPath}": outside the workspace`, 'FS_SANDBOX_DENIED')
   }
 
@@ -68,3 +77,11 @@ export class WorkspaceFileSystem extends SandboxedFileSystem {
     return super.watch(...args)
   }
 }
+
+/** {@link WorkspaceFileSystem} that also reads inside `readOnlyRoots`, looked up on every call. */
+export const createWorkspaceFileSystem = (readOnlyRoots: () => readonly string[]): typeof WorkspaceFileSystem =>
+  class ReadOnlyRootsFileSystem extends WorkspaceFileSystem {
+    protected override readOnlyRoots(): readonly string[] {
+      return readOnlyRoots()
+    }
+  }

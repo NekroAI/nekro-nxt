@@ -8,6 +8,13 @@ export const SPILL_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024
 export const SPILL_SESSION_MAX_BYTES = 64 * 1024 * 1024
 export const SPILL_HOST_MAX_BYTES = 2 * 1024 * 1024 * 1024
 
+/** Where a host keeps the full text of long tool outputs, next to its DSH Session database. */
+export const spillRootOf = (sessionDatabasePath: string): string =>
+  path.join(path.dirname(sessionDatabasePath), 'dsh', 'spill')
+
+/** The directory holding one Session's spill files; DSH names it after a hash of the Session id. */
+export const sessionSpillDirectory = (root: string, sessionId: string): string => sessionDir(root, sessionId)
+
 export type SpillQuotaKind = 'artifact' | 'session' | 'host'
 
 export class SpillQuotaError extends Error {

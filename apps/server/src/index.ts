@@ -41,7 +41,7 @@ import {
   mountFeedbackTools,
 } from './feedback-tools.js'
 import type { CommunityFeedbackService } from './community-feedback.js'
-import { WorkspaceFileSystem } from './workspace-file-system.js'
+import { createWorkspaceFileSystem } from './workspace-file-system.js'
 import { mountWorkspaceFileTools } from './workspace-file-tools.js'
 import type { ActiveAddonProgram } from './addons.js'
 import {
@@ -247,7 +247,7 @@ import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
 import { DshPluginLifecycleCoordinator, disposeDshPluginFiber } from './dsh-plugin-lifecycle.js'
 import { HOST_DSH_PACKAGE_VERSIONS } from './dsh-roster.js'
-import { QuotaLocalSpillStore } from './dsh-spill.js'
+import { QuotaLocalSpillStore, sessionSpillDirectory, spillRootOf } from './dsh-spill.js'
 import {
   DynamicAuthoringRuntime,
   NekroNxtDynamicCordisRunner,
@@ -3101,6 +3101,7 @@ export async function mountDevelopmentCapabilities(
   commandEnvironment: () => Readonly<Record<string, string>>,
   gitBashReady: () => boolean,
   platform: NodeJS.Platform = process.platform,
+  readOnlyRoots: () => readonly string[] = () => [],
 ): Promise<void> {
   const { developmentShell, fileTools, unrestrictedFileAccess } = capabilities
   if (!developmentShell && !fileTools) return
@@ -3120,7 +3121,8 @@ export async function mountDevelopmentCapabilities(
     mode: unrestrictedFileAccess ? 'danger-full-access' : 'workspace-write',
     workspaceRoot,
   })
-  await capabilityContext.plugin(WorkspaceFileSystem, { cwd: workspaceRoot })
+  // Long tool outputs are kept outside the workspace with a hint to read them back; reading them stays allowed.
+  await capabilityContext.plugin(createWorkspaceFileSystem(readOnlyRoots), { cwd: workspaceRoot })
   await capabilityContext.plugin(WorkingDirectoryService, { defaultDirectory: workspaceRoot })
   if (fileTools) {
     await capabilityContext.plugin(FsObservationPolicy)
@@ -3129,13 +3131,20 @@ export async function mountDevelopmentCapabilities(
   if (fileTools && !developmentShell) {
     // Without commands the agent still moves, deletes, searches and unzips; with them its shell does all of this.
     await capabilityContext.plugin(LocalSubprocessRuntime)
-    mountWorkspaceFileTools(capabilityContext, { workspace: workspaceRoot, unrestricted: unrestrictedFileAccess })
+    mountWorkspaceFileTools(capabilityContext, {
+      workspace: workspaceRoot,
+      unrestricted: unrestrictedFileAccess,
+      readOnlyRoots,
+    })
   }
 
   if (developmentShell) {
     await capabilityContext.plugin(LocalSubprocessRuntime)
     await capabilityContext.plugin(
-      createConfinedSandboxProvider(() => confinement),
+      createConfinedSandboxProvider(() => ({
+        ...confinement,
+        readable: [...confinement.readable, ...readOnlyRoots()],
+      })),
       {},
     )
     if (platform === 'win32') {
@@ -3263,6 +3272,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #programs: () => readonly ActiveAddonProgram[]
   #codeRunMount: Promise<boolean> | undefined
   readonly #shutdownInboxRoot: string
+  readonly #spillRoot: string
   readonly #incompatibleAgents = new Set<AgentId>()
   readonly #modelSettings: HostModelSettings
   readonly #sessions = new SessionRegistry<{
@@ -3345,6 +3355,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     )
     this.#programs = options.programs ?? (() => [])
     this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
+    this.#spillRoot = spillRootOf(options.sessionDatabasePath)
     this.#modelSettings = new HostModelSettings(
       context,
       options.llmSettingsPath !== undefined,
@@ -3742,9 +3753,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         return Promise.resolve({ kind: 'retry' as const })
       })
       await context.plugin(ToolCallTimeoutPolicy)
-      await context.plugin(QuotaLocalSpillStore, {
-        root: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'spill'),
-      })
+      await context.plugin(QuotaLocalSpillStore, { root: spillRootOf(options.sessionDatabasePath) })
       registerDshHostProfileEntry(context, {
         id: 'spill-policy',
         name: '@deepseek-ai/dsh-spill-policy',
@@ -4797,6 +4806,8 @@ export class DshHostRuntime implements AgentSessionDriver {
         this.#commandConfinementOf(revision),
         () => this.#commandEnvironmentOf(revision),
         () => this.#gitBashReady(),
+        process.platform,
+        () => this.#sessionSpillDirectories(sessionId),
       )
       const accountPrompt = this.#commandAccountPromptOf(revision)
       if (accountPrompt !== undefined) {
@@ -5514,6 +5525,17 @@ export class DshHostRuntime implements AgentSessionDriver {
   #commandAccountPromptOf(revision: AgentRevisionRecord): string | undefined {
     if (this.#commandAccounts === undefined || !revision.capabilities.developmentShell) return undefined
     return commandCredentialPrompt(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)
+  }
+
+  /**
+   * The spill directories one Session may read back: its own and those of the subagents it is running, which share
+   * its workspace and file tools. Other Sessions' spill files stay out of reach.
+   */
+  #sessionSpillDirectories(sessionId: SessionId): string[] {
+    const agents = this.#context.agents
+    const owner = agents.get(sessionId)
+    const children = owner === undefined ? [] : agents.list().filter((agent) => agents.isOwnedBy(agent.id, owner))
+    return [sessionId, ...children.map((agent) => agent.id)].map((id) => sessionSpillDirectory(this.#spillRoot, id))
   }
 
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */

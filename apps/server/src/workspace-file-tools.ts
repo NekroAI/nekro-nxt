@@ -32,6 +32,8 @@ import { pipeline } from 'node:stream/promises'
 export interface FileToolScope {
   readonly workspace: string
   readonly unrestricted: boolean
+  /** Directories outside the workspace that `glob` and `grep` may also search, such as the session's spill files. */
+  readonly readOnlyRoots?: () => readonly string[]
 }
 
 /** Deleted entries wait here, one folder per deletion, until {@link TRASH_DAYS} have passed. */
@@ -438,7 +440,7 @@ export const unzipEntry = async (scope: FileToolScope, from: string, to: string 
   return { from: shown(root, real), to: shown(root, target), files: entries, bytes }
 }
 
-/** `glob` and `grep` take a `path`; outside full access it must really be inside the workspace. */
+/** `glob` and `grep` take a `path`; outside full access it must really be inside the workspace or a read-only root. */
 const searchPathDenial = (scope: FileToolScope, exec: { readonly name: string; readonly arguments: unknown }) => {
   if (scope.unrestricted || (exec.name !== 'glob' && exec.name !== 'grep')) return undefined
   const args = exec.arguments
@@ -447,7 +449,11 @@ const searchPathDenial = (scope: FileToolScope, exec: { readonly name: string; r
   const root = realpathSync(scope.workspace)
   const absolute = path.resolve(root, requested)
   const real = existsSync(absolute) ? realpathSync(absolute) : absolute
-  return isWithin(root, real) ? undefined : `${requested}：${OUTSIDE}`
+  if (isWithin(root, real)) return undefined
+  const readOnly = scope.readOnlyRoots?.() ?? []
+  return readOnly.some((entry) => existsSync(entry) && isWithin(realpathSync(entry), real))
+    ? undefined
+    : `${requested}：${OUTSIDE}`
 }
 
 /** Every tool here answers in one sentence or block of text. */
