@@ -15,7 +15,7 @@ import AttachmentStore, {
   type StoredImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
 import { readRequestImageFile } from '@deepseek-ai/dsh-attachment-local'
-import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
+import { BasicCompactionEngine, type ResolvedConfig } from '@deepseek-ai/dsh-compaction-basic'
 import {
   BlockAssembler,
   contentHasImage,
@@ -561,6 +561,8 @@ export interface InSessionCompactionModel {
 export class NekroNxtCompactionEngine extends BasicCompactionEngine {
   private visualRestoreDepth = 0
   private modelChoice: ((agent: Agent) => InSessionCompactionModel | undefined) | undefined
+  private thresholdChoice: ((agent: Agent, contextWindow: number) => number | undefined) | undefined
+  private compactedListener: ((agent: Agent) => void) | undefined
   private readonly stall = new CompactionStall()
   /** Per conversation, the price of one image and how many were in view just before the latest compaction. */
   private readonly imagesBeforeCompaction = new WeakMap<
@@ -573,8 +575,11 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
     return this.imagesBeforeCompaction.get(session)
   }
 
-  /** The threshold and retained tail of a model window under this engine's policy for that model. */
-  budgetFor(provider: string, model: string, contextWindow: number): CompactionBudget {
+  /**
+   * The threshold and retained tail of a model window under this engine's policy for that model; `thresholdRatio`
+   * replaces the policy's threshold when the conversation has its own.
+   */
+  budgetFor(provider: string, model: string, contextWindow: number, thresholdRatio?: number): CompactionBudget {
     const policy = this.config.modelPolicies.find(
       (candidate) => candidate.provider === provider && candidate.model === model,
     )
@@ -587,7 +592,7 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
             ? { retainTokens: this.config.retainTokens }
             : { retainRatio: this.config.retainRatio }
     return compactionBudget(
-      { thresholdRatio: policy?.thresholdRatio ?? this.config.thresholdRatio, ...retention },
+      { thresholdRatio: thresholdRatio ?? policy?.thresholdRatio ?? this.config.thresholdRatio, ...retention },
       contextWindow,
     )
   }
@@ -610,14 +615,60 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
       ?.contextWindow
     if (contextWindow === undefined) return super.compactIfNeeded(agent, trigger, signal)
     const session = agent.session
+    // Read at every step, so a changed setting or override applies without restarting the conversation.
+    const thresholdRatio = this.thresholdFor(agent, contextWindow)
     return relievePressure({
       session,
-      budget: this.budgetFor(target.provider, target.model, contextWindow),
+      budget: this.budgetFor(target.provider, target.model, contextWindow, thresholdRatio),
       stall: this.stall,
       measure: () => this.ctx.tokenMeter.measure(session),
-      compact: () => super.compactIfNeeded(agent, trigger, signal),
+      compact: () =>
+        thresholdRatio === undefined
+          ? super.compactIfNeeded(agent, trigger, signal)
+          : this.withThreshold(thresholdRatio, target, () => super.compactIfNeeded(agent, trigger, signal)),
       log: (message) => this.ctx.logger.info(message),
     })
+  }
+
+  /**
+   * Runs `start` with the threshold replaced for this target. DSH resolves the routed policy from `config`
+   * synchronously, before the first await of a pressure compaction, and has no per-conversation threshold of its own;
+   * the original is back before `start` returns its promise, so nothing else ever reads the replaced one.
+   */
+  private withThreshold<T>(
+    thresholdRatio: number,
+    target: { readonly provider: string; readonly model: string },
+    start: () => T,
+  ): T {
+    const base = this.config
+    const replaced: ResolvedConfig = {
+      ...base,
+      thresholdRatio,
+      modelPolicies: base.modelPolicies.map((policy) =>
+        policy.provider === target.provider && policy.model === target.model ? { ...policy, thresholdRatio } : policy,
+      ),
+    }
+    Object.assign(this, { config: replaced })
+    try {
+      return start()
+    } finally {
+      Object.assign(this, { config: base })
+    }
+  }
+
+  /** The threshold this conversation compacts at, or undefined for this engine's own policy. */
+  thresholdFor(agent: Agent, contextWindow: number): number | undefined {
+    return this.thresholdChoice?.(agent, contextWindow)
+  }
+
+  /** Which threshold a conversation compacts at; undefined keeps this engine's own policy. */
+  setThresholdChoice(choose: (agent: Agent, contextWindow: number) => number | undefined): void {
+    this.thresholdChoice = choose
+  }
+
+  /** Called once a compaction of a conversation has committed. */
+  setCompactedListener(listener: (agent: Agent) => void): void {
+    this.compactedListener = listener
   }
 
   /** Which model an agent's in-session compaction uses; without one the conversation's own model is used. */
@@ -758,6 +809,7 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
           // appear to have rolled back.
         }
       }
+      if (this.visualRestoreDepth === 1 && result) this.compactedListener?.(agent)
       return result
     } finally {
       this.visualRestoreDepth -= 1
@@ -1025,7 +1077,12 @@ export class SessionImageContext {
           // Restored images stop a retained tail below the threshold; filling up to it would make the very next
           // turn compact again, with only images left to compact.
           const limitTokens = roomyTarget(
-            compaction.budgetFor(revision.model.provider, revision.model.model, contextWindow),
+            compaction.budgetFor(
+              revision.model.provider,
+              revision.model.model,
+              contextWindow,
+              compaction.thresholdFor(agent, contextWindow),
+            ),
           )
           // The meter prices an image as its small reference and keeps counting compacted images at their real size
           // until the provider answers again, so both are corrected with the price learned before compaction.

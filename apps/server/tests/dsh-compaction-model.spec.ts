@@ -1,3 +1,4 @@
+import { BasicCompactionEngine } from '@deepseek-ai/dsh-compaction-basic'
 import { LlmAdapter, ReasoningEffortId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { AssetService, CoreService, type AgentCompactionPolicy, type AgentRevisionRecord } from '@nekro-nxt/core'
 import {
@@ -18,11 +19,14 @@ import { DshHostRuntime } from '../src/index.js'
 class RecordingModel extends LlmAdapter {
   readonly calls: GenerateOptions[] = []
   hang = false
+  /** Input tokens each conversation reply reports, which is what the token meter measures pressure from. */
+  inputTokens: number | undefined
   override resolveModel(provider: string, model: string) {
     return Promise.resolve({
       provider,
       id: model,
       name: model,
+      context: { contextWindow: 1_000_000 },
       inputModalities: ['text'] as const,
       reasoning: {
         efforts: [
@@ -42,6 +46,8 @@ class RecordingModel extends LlmAdapter {
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text: '整理好的记录。' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: '整理好的记录。' } }
+    if (this.inputTokens !== undefined && options.purpose !== 'compaction')
+      yield { type: 'usage', usage: { inputTokens: this.inputTokens, outputTokens: 10 } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
@@ -132,7 +138,7 @@ async function fixture(input: {
       generatedAt: Date.now(),
     })
   const summaryCalls = () => model.calls.filter((call) => call.system?.startsWith('你在给一个群聊智能体写压缩记录'))
-  return { core, agent, host, model, channel, connection, episode, summarize, summaryCalls }
+  return { core, repository, agent, host, model, channel, connection, episode, summarize, summaryCalls }
 }
 
 const asked = (call: GenerateOptions | undefined) => ({
@@ -278,5 +284,96 @@ describe('compaction inside a session', () => {
       }),
     )
     expect(asked(calls[0])).toEqual({ provider: 'test-provider', model: 'chat-model', effort: 'low' })
+  })
+})
+
+describe('compaction threshold', () => {
+  const openSession = async (f: Awaited<ReturnType<typeof fixture>>) =>
+    f.host.createSession({
+      episodeId: f.episode.id,
+      channelId: f.channel.id,
+      agentId: f.agent.definition.id,
+      agentRevisionId: f.agent.revision.id,
+    })
+  let message = 0
+  const say = async (f: Awaited<ReturnType<typeof fixture>>, sessionId: string) => {
+    message += 1
+    const event = f.core.appendInbound({
+      connectionId: f.connection.id,
+      channelId: f.channel.id,
+      adapterKey: 'fixture-alpha',
+      platformEventId: `threshold-${message}`,
+      kind: 'message-created',
+      parts: [{ type: 'text', text: '请记住这件事。'.repeat(200) }],
+      platformTimestamp: Date.now(),
+      receivedAt: Date.now(),
+      dedupeKey: `threshold-${message}`,
+    }).event
+    await f.host.admit({
+      dshSessionId: sessionId,
+      admissionId: AdmissionIdSchema.parse(`adm_THRESHOLD${message}`),
+      events: [event],
+      mode: 'followup',
+      replyRequired: false,
+    })
+    await f.host.whenIdle(sessionId)
+  }
+  const revise = (f: Awaited<ReturnType<typeof fixture>>, thresholdRatio: number | undefined) =>
+    f.core.reviseAgent(f.agent.definition.id, f.repository.getAgent(f.agent.definition.id)!.revision.id, {
+      displayName: '压缩测试智能体',
+      persona: '回复频道消息。',
+      model: { provider: 'test-provider', model: 'chat-model' },
+      compaction: {
+        inSession: { mode: 'follow' },
+        newSession: { mode: 'follow' },
+        ...(thresholdRatio === undefined ? {} : { thresholdRatio }),
+      },
+    })
+
+  it('reads the override, then the agent’s current setting, and leaves the default alone', async () => {
+    const f = await fixture({})
+    const sessionId = await openSession(f)
+    expect(f.host.compactionThresholdRatio(sessionId, 1_000_000)).toBeUndefined()
+    revise(f, 0.5)
+    // The running conversation keeps its revision; the setting is read live.
+    expect(f.host.compactionThresholdRatio(sessionId, 1_000_000)).toBe(0.5)
+    expect(f.host.compactionThresholdRatio(sessionId, 200_000)).toBe(0.5)
+    revise(f, 0.2)
+    expect(f.host.compactionThresholdRatio(sessionId, 128_000)).toBe(0.5)
+    f.host.setCompactionThresholdOverride(sessionId, 0.3)
+    expect(f.host.compactionThresholdRatio(sessionId, 1_000_000)).toBe(0.3)
+    expect(f.host.compactionThresholdRatio('another-session', 1_000_000)).toBeUndefined()
+  })
+
+  it('hands DSH the agent’s threshold under pressure and drops the override once the conversation compacts', async () => {
+    // What DSH resolves its pressure policy from, at the moment it does.
+    const seen: number[] = []
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- The captured original is always invoked with apply(this) below.
+    const original = BasicCompactionEngine.prototype.compactIfNeeded
+    vi.spyOn(BasicCompactionEngine.prototype, 'compactIfNeeded').mockImplementation(function (
+      this: BasicCompactionEngine,
+      ...args: Parameters<BasicCompactionEngine['compactIfNeeded']>
+    ) {
+      if (args[1] === 'pressure') seen.push(this.config.thresholdRatio)
+      return original.apply(this, args)
+    })
+    const f = await fixture({})
+    f.model.inputTokens = 300_000
+    const sessionId = await openSession(f)
+    await say(f, sessionId)
+    await say(f, sessionId)
+    revise(f, 0.25)
+    await say(f, sessionId)
+    f.host.setCompactionThresholdOverride(sessionId, 0.6)
+    await say(f, sessionId)
+    revise(f, undefined)
+    f.host.setCompactionThresholdOverride(sessionId, undefined)
+    await say(f, sessionId)
+    expect(seen.at(0)).toBe(0.8)
+    expect(seen.slice(-3)).toEqual([0.25, 0.6, 0.8])
+
+    f.host.setCompactionThresholdOverride(sessionId, 0.6)
+    await f.host.compactSessionNow(sessionId)
+    expect(f.host.compactionThresholdOverride(sessionId)).toBeUndefined()
   })
 })

@@ -7,8 +7,9 @@ import type {
   CreateAgentWithChannelCommit,
 } from '@nekro-nxt/core'
 import {
-  AgentCompactionPolicySchema,
   DEFAULT_AGENT_COMPACTION_POLICY,
+  isDefaultCompactionPolicy,
+  parseAgentCompactionPolicy,
   DEFAULT_SUB_CONVERSATION_MODEL_POLICY,
   parseFallbackModels,
   parseSubConversationModelPolicy,
@@ -64,8 +65,7 @@ const toRevision = (input: typeof agentRevisions.$inferSelect): AgentRevisionRec
     capabilities: parseAgentCapabilityGrants(row.capabilities),
     imagePolicy: parseImageUnderstandingPolicy(row.imagePolicy),
     dynamicClientApprovalPolicy: row.dynamicClientApprovalPolicy,
-    compaction:
-      row.compaction === null ? DEFAULT_AGENT_COMPACTION_POLICY : AgentCompactionPolicySchema.parse(row.compaction),
+    compaction: row.compaction === null ? DEFAULT_AGENT_COMPACTION_POLICY : parseAgentCompactionPolicy(row.compaction),
     subConversationModels:
       row.subConversationModels === null
         ? DEFAULT_SUB_CONVERSATION_MODEL_POLICY
@@ -116,9 +116,7 @@ const revisionInsert = (record: AgentRevisionRecord): typeof agentRevisions.$inf
   imagePolicy: record.imagePolicy,
   dynamicClientApprovalPolicy: record.dynamicClientApprovalPolicy,
   // Left out while both follow their defaults, which a missing value already means.
-  ...(record.compaction.inSession.mode === 'follow' && record.compaction.newSession.mode === 'follow'
-    ? {}
-    : { compaction: record.compaction }),
+  ...(isDefaultCompactionPolicy(record.compaction) ? {} : { compaction: record.compaction }),
   ...(record.subConversationModels.candidates.length === 0
     ? {}
     : { subConversationModels: record.subConversationModels }),

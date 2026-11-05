@@ -550,6 +550,37 @@ describe('CoreService', () => {
     expect(renamed.revision.compaction).toEqual(compaction)
   })
 
+  it('stores a compaction threshold rounded, the default as no change, and keeps it when a revision leaves it out', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const base = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const follow = { inSession: { mode: 'follow' as const }, newSession: { mode: 'follow' as const } }
+    const first = core.createAgent(base)
+    // Picking the default again is what every earlier revision meant.
+    expect(
+      core.reviseAgent(first.definition.id, first.revision.id, {
+        ...base,
+        compaction: { ...follow, thresholdRatio: 0.8 },
+      }).revision.id,
+    ).toBe(first.revision.id)
+    const lowered = core.reviseAgent(first.definition.id, first.revision.id, {
+      ...base,
+      compaction: { ...follow, thresholdRatio: 0.40000000001 },
+    })
+    expect(lowered.revision.compaction).toEqual({ ...follow, thresholdRatio: 0.4 })
+    expect(diffAgentRevisions(first.revision, lowered.revision)).toEqual(['compaction'])
+    const renamed = core.reviseAgent(first.definition.id, lowered.revision.id, { ...base, displayName: '小奈二号' })
+    expect(renamed.revision.compaction.thresholdRatio).toBe(0.4)
+    for (const thresholdRatio of [0.1, 0.95])
+      expect(() =>
+        core.reviseAgent(first.definition.id, renamed.revision.id, {
+          ...base,
+          compaction: { ...follow, thresholdRatio },
+        }),
+      ).toThrow()
+  })
+
   it('keeps the sub-conversation models when a revision leaves them out, and rejects ones the agent could not pick', () => {
     const repository = new MemoryRepository()
     let id = 0

@@ -19,7 +19,7 @@ import { CommandDirectory } from './catalog.js'
 import { CommandExecutor } from './executor.js'
 import { CommandRateLimiter, type CommandAdmission } from './rate-limit.js'
 import { CommandReplies } from './replies.js'
-import type { CommandGovernancePort, CommandObserver, RegisteredCommand } from './types.js'
+import type { CommandGovernancePort, CommandObserver, CompactionThresholdPort, RegisteredCommand } from './types.js'
 
 export type { CommandObserver, RegisteredCommand } from './types.js'
 
@@ -36,6 +36,8 @@ export interface CommandServiceOptions {
   readonly observer?: CommandObserver
   /** Extension governance behind `/ext` and `/admin`. */
   readonly governance?: () => CommandGovernancePort | undefined
+  /** The conversation overrides behind `/threshold`. */
+  readonly compactionThreshold?: () => CompactionThresholdPort | undefined
 }
 
 const LIMIT_REPORT_INTERVAL_MS = 60_000
@@ -85,6 +87,7 @@ export class CommandService implements CommandGate {
       ...(options.observer === undefined ? {} : { observer: options.observer }),
       ...(options.deferExecution === undefined ? {} : { deferExecution: options.deferExecution }),
       ...(options.governance === undefined ? {} : { governance: options.governance }),
+      ...(options.compactionThreshold === undefined ? {} : { compactionThreshold: options.compactionThreshold }),
     })
     options.repository.commands.recover(options.now())
   }

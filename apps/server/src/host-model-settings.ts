@@ -46,6 +46,8 @@ export interface AvailableLlmModel {
   readonly name: string
   readonly description?: string
   readonly inputModalities?: readonly string[]
+  /** Tokens the model reads at most, from the resolved route; absent when the adapter does not say. */
+  readonly contextWindow?: number
   /** Selectable thinking levels, least to most; absent when the model offers no choice. */
   readonly reasoning?: {
     readonly efforts: readonly { readonly id: string; readonly name: string }[]
@@ -396,11 +398,10 @@ export class HostModelSettings {
       this.#context.llm.listProviders().map(async (provider) =>
         Promise.all(
           (await this.#context.llm.listModels(provider.id)).map(async (model) => {
-            // The selectable thinking levels live on the resolved route; resolving reads the loaded catalog only.
-            const reasoning = await this.#context.llm
-              .resolveModelInfo(provider.id, model.id)
-              .then((info) => info.reasoning)
-              .catch(() => undefined)
+            // Thinking levels and the window live on the resolved route; resolving reads the loaded catalog only.
+            const info = await this.#context.llm.resolveModelInfo(provider.id, model.id).catch(() => undefined)
+            const reasoning = info?.reasoning
+            const contextWindow = info?.context?.contextWindow
             return {
               provider: provider.id,
               providerName: provider.name,
@@ -408,6 +409,7 @@ export class HostModelSettings {
               name: model.name,
               ...(model.description === undefined ? {} : { description: model.description }),
               ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
+              ...(contextWindow === undefined ? {} : { contextWindow }),
               ...(reasoning === undefined || reasoning.efforts.length === 0
                 ? {}
                 : {

@@ -197,7 +197,10 @@ export const draftChanges = (base: AgentDraft, draft: AgentDraft): readonly stri
   if (JSON.stringify(draft.fallbackModels) !== JSON.stringify(base.fallbackModels)) changes.push('备用模型')
   if (draft.visionKey !== base.visionKey) changes.push('视觉模型')
   if (JSON.stringify(draft.imageRestore) !== JSON.stringify(base.imageRestore)) changes.push('压缩后附回图片')
-  if (JSON.stringify(draft.compaction) !== JSON.stringify(base.compaction)) changes.push('压缩模型')
+  const { thresholdRatio: draftThreshold, ...draftModels } = draft.compaction
+  const { thresholdRatio: baseThreshold, ...baseModels } = base.compaction
+  if (JSON.stringify(draftModels) !== JSON.stringify(baseModels)) changes.push('压缩模型')
+  if (draftThreshold !== baseThreshold) changes.push('压缩阈值')
   if (!sameSubConversationModels(draft.subConversationModels, base.subConversationModels)) changes.push('子对话模型')
   const patch = capabilityPatch(base, draft)
   if ('fileTools' in patch || 'developmentShell' in patch || 'unrestrictedFileAccess' in patch) changes.push('系统访问')

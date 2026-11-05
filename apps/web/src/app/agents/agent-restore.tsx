@@ -15,7 +15,7 @@ const FIELD_LABEL: Record<SavedConfig['changedFields'][number], string> = {
   capabilities: '能力',
   imagePolicy: '图片理解',
   approvalPolicy: '运行确认',
-  compaction: '压缩模型',
+  compaction: '压缩设置',
   subConversationModels: '子对话模型',
   fallbackModels: '备用模型',
   aliases: '别名',

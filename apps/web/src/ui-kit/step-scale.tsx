@@ -5,6 +5,8 @@ import styles from './step-scale.module.css'
 
 export interface StepScaleStop {
   readonly label: string
+  /** Keeps the tick but hides the label, for scales with more stops than fit side by side; never the ends. */
+  readonly minor?: boolean
 }
 
 /** The fill's two ends for a level, as CSS colours (tokens or `color-mix`). */
@@ -159,19 +161,21 @@ export function StepScale({
         </span>
       </div>
       <div className={styles.labels}>
-        {stops.map((stop, index) => (
-          <Pressable
-            key={stop.label}
-            className={styles.label}
-            tabIndex={-1}
-            disabled={disabled}
-            data-near={index === shown}
-            style={cssVars({ '--at': last > 0 ? index / last : 0 })}
-            onClick={() => choose(index)}
-          >
-            {stop.label}
-          </Pressable>
-        ))}
+        {stops.map((stop, index) =>
+          stop.minor === true && index !== 0 && index !== last ? null : (
+            <Pressable
+              key={stop.label}
+              className={styles.label}
+              tabIndex={-1}
+              disabled={disabled}
+              data-near={index === shown}
+              style={cssVars({ '--at': last > 0 ? index / last : 0 })}
+              onClick={() => choose(index)}
+            >
+              {stop.label}
+            </Pressable>
+          ),
+        )}
       </div>
       {summary ? <div className={styles.summary}>{summary(shown)}</div> : null}
     </div>

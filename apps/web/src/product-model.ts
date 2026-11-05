@@ -144,6 +144,8 @@ export interface ModelSummary {
   readonly name: string
   readonly description?: string
   readonly inputModalities?: readonly string[]
+  /** Tokens the model reads at most; absent when the adapter does not say. */
+  readonly contextWindow?: number
   /** Selectable thinking levels, least to most; absent when the model offers no choice. */
   readonly reasoning?: {
     readonly efforts: readonly { readonly id: string; readonly name: string }[]

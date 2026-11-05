@@ -18,6 +18,33 @@ export interface CommandRunCapabilities {
   resume(): Promise<{ readonly changed: boolean }>
   /** `/ext` and `/admin`; absent on hosts without extension governance. */
   readonly governance?: CommandGovernanceCall
+  /** `/threshold`; absent on hosts that run no conversations. */
+  readonly compactionThreshold?: CompactionThresholdCall
+}
+
+/** The compaction threshold of the channel's agent and its current conversation, as `/threshold` reads it. */
+export interface CompactionThresholdState {
+  /** The window of the agent's main model; undefined when the adapter does not say. */
+  readonly contextWindow?: number
+  /** The agent's own setting; undefined uses the default. */
+  readonly setting?: number
+  /** The current conversation's override, if it has one. */
+  readonly override?: number
+  /** Whether the channel has a conversation to override. */
+  readonly hasConversation: boolean
+}
+
+export interface CompactionThresholdCall {
+  read(): Promise<CompactionThresholdState>
+  /** Overrides the current conversation's threshold until it next compacts; undefined returns to the setting. */
+  set(ratio: number | undefined): void
+}
+
+/** Host side of `/threshold`. */
+export interface CompactionThresholdPort {
+  contextWindowOf(model: { readonly provider: string; readonly model: string }): Promise<number | undefined>
+  compactionThresholdOverride(dshSessionId: string): number | undefined
+  setCompactionThresholdOverride(dshSessionId: string, ratio: number | undefined): void
 }
 
 /** What `/ext` and `/admin` need from the host, bound to one execution's channel and caller. */

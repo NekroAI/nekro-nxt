@@ -86,6 +86,12 @@ describe('agent draft', () => {
     expect(identityChanged(base, edited)).toBe(true)
   })
 
+  it('names a changed compaction threshold apart from the compaction models', () => {
+    const edited: AgentDraft = { ...base, compaction: { ...base.compaction, thresholdRatio: 0.5 } }
+    expect(draftChanges(base, edited)).toEqual(['压缩阈值'])
+    expect(identityChanged(base, edited)).toBe(true)
+  })
+
   it('saves how many images come back after compaction with the identity, zero meaning none', () => {
     const edited: AgentDraft = { ...base, imageRestore: { recentMessages: 64, maxImages: 0 } }
     expect(draftChanges(base, edited)).toEqual(['压缩后附回图片'])

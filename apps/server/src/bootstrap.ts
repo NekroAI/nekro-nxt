@@ -423,6 +423,7 @@ export class NekroRuntime {
       running: (id) => this.host.sessionStatus(id) === 'running',
       extensions: (agentId) => this.#extensionCommands(agentId),
       governance: () => this.#commandGovernance,
+      compactionThreshold: () => this.host,
       botMemberId: (event) =>
         commandBotMember(event, {
           core: this.core,

@@ -1,0 +1,15 @@
+.chip {
+  flex: none;
+  padding: 0 var(--s-2);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--scale-to) 18%, transparent);
+  color: var(--fg);
+  font: var(--t-label);
+  font-variant-numeric: tabular-nums;
+}
+
+.summaryText {
+  min-width: 0;
+  color: var(--fg-2);
+  font: var(--t-note);
+}

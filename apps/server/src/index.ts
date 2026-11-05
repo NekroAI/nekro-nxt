@@ -321,6 +321,7 @@ import {
   type ImageProjectionStats,
   type ProductChannelHistoryRepository,
 } from './session-image-context.js'
+import { CompactionThresholdOverrides, effectiveCompactionThreshold } from './compaction-threshold.js'
 import { SessionRegistry } from './session-registry.js'
 import { SessionRuntimeProjection } from './session-runtime-projection.js'
 import { mergeTokenUsage } from './token-usage.js'
@@ -3323,6 +3324,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #subscriptionListeners = new Set<() => void>()
   /** One pending quiet-time review per live session, re-armed by each admission. */
   readonly #idleReviews = new Map<string, ReturnType<typeof setTimeout>>()
+  readonly #thresholdOverrides = new CompactionThresholdOverrides()
 
   private constructor(
     context: Context,
@@ -3632,6 +3634,11 @@ export class DshHostRuntime implements AgentSessionDriver {
         ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
       }
     })
+    compaction.setThresholdChoice((agent, contextWindow) =>
+      this.compactionThresholdRatio(String(agent.id), contextWindow),
+    )
+    // A `/threshold` override lasts until the conversation next compacts.
+    compaction.setCompactedListener((agent) => this.#thresholdOverrides.set(String(agent.id), undefined))
   }
 
   static async create(options: DshHostRuntimeOptions): Promise<DshHostRuntime> {
@@ -5153,6 +5160,39 @@ export class DshHostRuntime implements AgentSessionDriver {
       })
     }
     await this.#context.sessions.flush(agent.session)
+  }
+
+  /** Tokens a model reads at most, from its resolved route; undefined when the adapter does not say. */
+  async contextWindowOf(model: { readonly provider: string; readonly model: string }): Promise<number | undefined> {
+    this.#assertActive()
+    const info = await this.#context.llm.resolveModelInfo(model.provider, model.model).catch(() => undefined)
+    return info?.context?.contextWindow
+  }
+
+  /**
+   * The threshold one conversation compacts at for a model window: its `/threshold` override, else its agent's current
+   * setting, held to what the window allows. Undefined leaves DSH's own default, as before thresholds existed.
+   */
+  compactionThresholdRatio(dshSessionId: string, contextWindow: number): number | undefined {
+    const revision = this.#sessions.get(dshSessionId)?.revision
+    if (!revision) return undefined
+    const threshold = effectiveCompactionThreshold({
+      override: this.#thresholdOverrides.get(dshSessionId),
+      setting: (this.#compaction?.currentRevision(revision.agentId) ?? revision).compaction.thresholdRatio,
+      contextWindow,
+    })
+    return threshold.source === 'default' ? undefined : threshold.ratio
+  }
+
+  /** The `/threshold` override of one conversation, if it has one. */
+  compactionThresholdOverride(dshSessionId: string): number | undefined {
+    return this.#thresholdOverrides.get(dshSessionId)
+  }
+
+  /** Sets or (with undefined) removes one conversation's threshold until it next compacts. */
+  setCompactionThresholdOverride(dshSessionId: string, ratio: number | undefined): void {
+    this.#assertActive()
+    this.#thresholdOverrides.set(dshSessionId, ratio)
   }
 
   sessionStatus(dshSessionId: string): 'idle' | 'running' {

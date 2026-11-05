@@ -38,6 +38,7 @@ import {
 } from './linked-accounts.js'
 import { HostUpgradeSummarySchema, RuntimeCompatibilityDiagnosticSchema } from './runtime-compatibility.js'
 import { AgentAliasesSchema, ResponseTimingSettingsSchema } from './response-timing.js'
+import { CompactionThresholdRatioSchema } from './compaction-threshold.js'
 import {
   AgentIdSchema,
   AgentRevisionIdSchema,
@@ -477,10 +478,15 @@ export const AgentCompactionModelChoiceSchema = z.discriminatedUnion('mode', [
 
 /**
  * In-session compaction follows the main model by default, so the replayed conversation hits the provider's cache;
- * compaction into a new session follows the host's compaction model.
+ * compaction into a new session follows the host's compaction model. `thresholdRatio` is the share of the context
+ * window at which the conversation compacts; omitted uses the default.
  */
 export const AgentCompactionPolicySchema = z
-  .object({ inSession: AgentCompactionModelChoiceSchema, newSession: AgentCompactionModelChoiceSchema })
+  .object({
+    inSession: AgentCompactionModelChoiceSchema,
+    newSession: AgentCompactionModelChoiceSchema,
+    thresholdRatio: CompactionThresholdRatioSchema.optional(),
+  })
   .strict()
 
 /** The host's idle compaction threshold, summary model and wait limit. */
@@ -1900,6 +1906,8 @@ export const HostSnapshotSchema = z
           name: z.string(),
           description: z.string().optional(),
           inputModalities: z.array(z.string()).optional(),
+          /** Tokens the model reads at most; absent when the adapter does not say. */
+          contextWindow: z.number().int().positive().optional(),
           /** Selectable thinking levels, least to most; absent when the model offers no choice. */
           reasoning: z
             .object({

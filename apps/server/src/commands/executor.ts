@@ -18,6 +18,7 @@ import {
   UnauthorizedCommandError,
   textResult,
   type CommandGovernancePort,
+  type CompactionThresholdPort,
   type CommandObserver,
   type CommandRunCapabilities,
   type RegisteredCommand,
@@ -37,6 +38,7 @@ export interface CommandExecutorOptions {
   readonly observer?: CommandObserver
   readonly deferExecution?: boolean
   readonly governance?: () => CommandGovernancePort | undefined
+  readonly compactionThreshold?: () => CompactionThresholdPort | undefined
 }
 
 interface QueuedCommand {
@@ -387,6 +389,43 @@ export class CommandExecutor {
         return { changed: outcome.changed }
       },
       ...this.#governance(record),
+      ...this.#compactionThreshold(record, guard),
+    }
+  }
+
+  #compactionThreshold(
+    record: CommandExecutionRecord,
+    guard: (management?: boolean) => void,
+  ): Pick<CommandRunCapabilities, 'compactionThreshold'> {
+    const port = this.#o.compactionThreshold?.()
+    const repository = this.#o.repository
+    const binding = repository.getBinding(record.channelId)
+    if (!port || binding === undefined) return {}
+    // The conversation the channel is in now, read at each call so a reset in between is respected.
+    const sessionId = () => repository.getActiveEpisode(record.channelId, binding.agentId)?.dshSessionId
+    return {
+      compactionThreshold: {
+        read: async () => {
+          const revision = repository.getAgent(binding.agentId)?.revision
+          const contextWindow = revision === undefined ? undefined : await port.contextWindowOf(revision.model)
+          const current = sessionId()
+          const override = current === undefined ? undefined : port.compactionThresholdOverride(current)
+          return {
+            ...(contextWindow === undefined ? {} : { contextWindow }),
+            ...(revision?.compaction.thresholdRatio === undefined
+              ? {}
+              : { setting: revision.compaction.thresholdRatio }),
+            ...(override === undefined ? {} : { override }),
+            hasConversation: current !== undefined,
+          }
+        },
+        set: (ratio) => {
+          guard(true)
+          const current = sessionId()
+          if (current === undefined) throw new Error('当前还没有进行中的对话，开始对话后再调整。')
+          port.setCompactionThresholdOverride(current, ratio)
+        },
+      },
     }
   }
 

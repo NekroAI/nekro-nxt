@@ -6,6 +6,7 @@ import { FakeAdapterConnection } from '@nekro-nxt/test-harness'
 import { CommandDefinitionSchema, ExtensionRevisionIdSchema, type MessagePart } from '@nekro-nxt/contracts'
 import { CommandService, type CommandObserver, type RegisteredCommand } from '../src/commands/service.js'
 import { CommandRegistrations } from '../src/commands/registrations.js'
+import type { CompactionThresholdPort } from '../src/commands/types.js'
 
 const cleanups: Array<() => Promise<void>> = []
 const deferred = () => {
@@ -18,7 +19,12 @@ const deferred = () => {
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup()
 })
-async function setup(deferExecution = false, bareCommands = true, observer?: CommandObserver) {
+async function setup(
+  deferExecution = false,
+  bareCommands = true,
+  observer?: CommandObserver,
+  compactionThreshold?: CompactionThresholdPort,
+) {
   const database = await openMigratedCoreDatabase(':memory:')
   const repository = new SqliteCoreRepository(database)
   let sequence = 0,
@@ -103,6 +109,7 @@ async function setup(deferExecution = false, bareCommands = true, observer?: Com
     botMemberId: () => bot.member.id,
     now,
     ...(observer === undefined ? {} : { observer }),
+    ...(compactionThreshold === undefined ? {} : { compactionThreshold: () => compactionThreshold }),
   })
   commandReference.current = commands
   const createSession = vi.spyOn(driver, 'createSession')
@@ -564,6 +571,43 @@ describe('unified commands', () => {
     expect(record.replies.filter((reply) => reply.kind === 'progress')).toHaveLength(5)
     expect(record.replies.at(-1)?.kind).toBe('final')
     expect(f.adapter.deliveries).toHaveLength(6)
+  })
+  it('overrides the compaction threshold of the current conversation only, within the bounds', async () => {
+    const overrides = new Map<string, number>()
+    const port: CompactionThresholdPort = {
+      contextWindowOf: () => Promise.resolve(1_000_000),
+      compactionThresholdOverride: (sessionId) => overrides.get(sessionId),
+      setCompactionThresholdOverride: (sessionId, ratio) => {
+        if (ratio === undefined) overrides.delete(sessionId)
+        else overrides.set(sessionId, ratio)
+      },
+    }
+    const f = await setup(false, true, undefined, port)
+    const reply = async (text: string) => {
+      const commit = await f.inbound(text)
+      return f.repository.commands.forEvent(commit.channelEventId)!
+    }
+    const text = (record: Awaited<ReturnType<typeof reply>>) => JSON.stringify(record.result)
+    // Same permission as /compact.
+    expect((await reply('/threshold 40%')).status).toBe('failed')
+    f.commands.grant(f.channel.id, f.member.identity.id, true)
+    expect(text(await reply('/threshold 40%'))).toContain('当前还没有进行中的对话')
+    await f.inbound('开始')
+    const sessionId = f.repository.getActiveEpisode(f.channel.id, f.agent.definition.id)?.dshSessionId
+    expect(sessionId).toBeDefined()
+    expect(text(await reply('/threshold 40%'))).toContain(
+      '这次对话改为上下文的 40%（约 40 万 token）时压缩，下次压缩后恢复为 80%。',
+    )
+    expect(overrides.get(sessionId!)).toBe(0.4)
+    expect(text(await reply('/threshold'))).toContain('这次对话在上下文的 40%（约 40 万 token）时压缩')
+    expect(text(await reply('/threshold 10'))).toContain('当前模型最低只能设到 20%。')
+    expect(overrides.get(sessionId!)).toBe(0.2)
+    expect(text(await reply('/threshold max'))).toContain('上下文的 90%')
+    expect(text(await reply('/threshold reset'))).toContain('这次对话恢复为智能体设置')
+    expect(overrides.has(sessionId!)).toBe(false)
+    const bad = await reply('/threshold 很多')
+    expect(bad.status).toBe('failed')
+    expect(text(bad)).toContain('看不懂这个值')
   })
   it('announces slow built-ins before they finish', async () => {
     const f = await setup()

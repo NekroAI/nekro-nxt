@@ -66,6 +66,7 @@ import { hasAgentLayer } from '../workshop/workshop-model.js'
 import styles from './agents.module.css'
 import { EffortSlider } from './effort-slider.js'
 import { CompactionModelField, type CompactionModel } from './compaction-model.js'
+import { CompactionThresholdSlider } from './compaction-threshold.js'
 import { ImageRestoreRow } from './image-restore.js'
 import { SubConversationModelRows } from './sub-conversation-models.js'
 import { FallbackModelRows } from './fallback-models.js'
@@ -211,6 +212,26 @@ export function ModelSection({
             />
           </PropertyRow>
         ) : null}
+        <PropertyRow
+          label="压缩阈值"
+          layout="stacked"
+          tip="对话累计到这个比例时自动压缩。调低回复更快、花费更少，但更早丢掉旧细节。"
+        >
+          <CompactionThresholdSlider
+            value={draft.compaction.thresholdRatio}
+            contextWindow={model?.contextWindow}
+            onChange={(thresholdRatio) =>
+              update((current) => ({
+                ...current,
+                compaction: {
+                  inSession: current.compaction.inSession,
+                  newSession: current.compaction.newSession,
+                  ...(thresholdRatio === undefined ? {} : { thresholdRatio }),
+                },
+              }))
+            }
+          />
+        </PropertyRow>
         <PropertyRow
           label="会话内压缩"
           layout="stacked"

@@ -1,5 +1,6 @@
 import { CommandDefinitionSchema, type CommandDefinition } from '@nekro-nxt/contracts'
 import type { BindingRecord } from '@nekro-nxt/core'
+import { parseThresholdRequest, runThresholdRequest } from './threshold.js'
 import { textResult, type RegisteredCommand } from './types.js'
 
 export const RESPONSE_MODE_LABELS: Record<BindingRecord['triggerPolicy'], string> = {
@@ -66,6 +67,27 @@ const BUILTIN_HANDLERS: readonly Omit<RegisteredCommand, 'fullName' | 'source'>[
       context.reply(textResult('正在整理当前上下文，当前工作会被中断…'))
       await context.host.reset('compact')
       return textResult('当前上下文已整理。')
+    },
+  },
+  {
+    definition: define({
+      name: 'threshold',
+      description: '临时调整本次对话的压缩阈值，下次压缩后恢复',
+      minimumPermission: 'channel-admin',
+      parameters: [
+        {
+          name: '值',
+          kind: 'positional',
+          type: 'string',
+          description: '上下文的百分比（如 40%）、max、min 或 reset；不填查看当前阈值',
+        },
+      ],
+      examples: ['/threshold', '/threshold 40%', '/threshold max', '/threshold reset'],
+    }),
+    invoke: async (context, host) => {
+      if (!host.compactionThreshold) throw new Error('当前频道还没有绑定智能体。')
+      const value = typeof context.arguments['值'] === 'string' ? context.arguments['值'] : undefined
+      return textResult(await runThresholdRequest(parseThresholdRequest(value), host.compactionThreshold))
     },
   },
   {

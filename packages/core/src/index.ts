@@ -17,6 +17,9 @@ import type {
   ResponseTimingSettings,
 } from '@nekro-nxt/contracts'
 import {
+  COMPACTION_THRESHOLD,
+  CompactionThresholdRatioSchema,
+  roundRatio,
   AgentIdSchema,
   AgentRevisionIdSchema,
   AgentFallbackModelsSchema,
@@ -85,6 +88,11 @@ export type AgentCompactionModelChoice =
 export interface AgentCompactionPolicy {
   readonly inSession: AgentCompactionModelChoice
   readonly newSession: AgentCompactionModelChoice
+  /**
+   * Share of the context window at which the conversation compacts; omitted is the default. The current model's
+   * window narrows it when it is used, since the model can change after it is saved.
+   */
+  readonly thresholdRatio?: number | undefined
 }
 
 /** One model this agent may open a sub-conversation with, named so the agent can pick it. */
@@ -604,9 +612,24 @@ export const DEFAULT_AGENT_COMPACTION_POLICY: AgentCompactionPolicy = {
 }
 
 export const AgentCompactionPolicySchema = z
-  .object({ inSession: AgentCompactionModelChoiceSchema, newSession: AgentCompactionModelChoiceSchema })
+  .object({
+    inSession: AgentCompactionModelChoiceSchema,
+    newSession: AgentCompactionModelChoiceSchema,
+    thresholdRatio: CompactionThresholdRatioSchema.optional(),
+  })
   .strict()
   .default(DEFAULT_AGENT_COMPACTION_POLICY)
+
+/** Whether a policy follows every default, which is how every Revision written before these choices reads. */
+export const isDefaultCompactionPolicy = (policy: AgentCompactionPolicy): boolean =>
+  policy.inSession.mode === 'follow' && policy.newSession.mode === 'follow' && policy.thresholdRatio === undefined
+
+/** Two decimals, and the default itself stored as no choice, so picking 80 % again leaves the Revision unchanged. */
+const thresholdChoice = (ratio: number | undefined): { readonly thresholdRatio?: number } => {
+  if (ratio === undefined) return {}
+  const rounded = roundRatio(ratio)
+  return rounded === COMPACTION_THRESHOLD.default ? {} : { thresholdRatio: rounded }
+}
 
 export const DEFAULT_SUB_CONVERSATION_MODEL_POLICY: SubConversationModelPolicy = { candidates: [] }
 
@@ -631,6 +654,15 @@ export const FallbackModelsSchema = AgentFallbackModelsSchema.default(() => [])
 
 export function parseFallbackModels(input: unknown): readonly AgentModelSelection[] {
   return FallbackModelsSchema.parse(input).map(modelSelection)
+}
+
+export function parseAgentCompactionPolicy(input: unknown): AgentCompactionPolicy {
+  const parsed = AgentCompactionPolicySchema.parse(input)
+  return {
+    inSession: compactionChoice(parsed.inSession),
+    newSession: compactionChoice(parsed.newSession),
+    ...thresholdChoice(parsed.thresholdRatio),
+  }
 }
 
 export function parseImageUnderstandingPolicy(input: unknown): ImageUnderstandingPolicy {
@@ -808,10 +840,7 @@ const parseAgentRevisionContent = (input: AgentRevisionContent): NormalizedAgent
     capabilities: parsed.capabilities,
     imagePolicy: parsed.imagePolicy,
     dynamicClientApprovalPolicy: parsed.dynamicClientApprovalPolicy,
-    compaction: {
-      inSession: compactionChoice(parsed.compaction.inSession),
-      newSession: compactionChoice(parsed.compaction.newSession),
-    },
+    compaction: parseAgentCompactionPolicy(parsed.compaction),
     subConversationModels: subConversationModelPolicy(parsed.subConversationModels),
     fallbackModels: parsed.fallbackModels.map(modelSelection),
     aliases: parsed.aliases,
@@ -915,13 +944,16 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
           },
   },
   dynamicClientApprovalPolicy: content.dynamicClientApprovalPolicy,
-  // Following both defaults leaves the digest of every earlier Revision unchanged.
-  ...(content.compaction.inSession.mode === 'follow' && content.compaction.newSession.mode === 'follow'
+  // Following every default leaves the digest of every earlier Revision unchanged.
+  ...(isDefaultCompactionPolicy(content.compaction)
     ? {}
     : {
         compaction: {
           inSession: compactionChoicePayload(content.compaction.inSession),
           newSession: compactionChoicePayload(content.compaction.newSession),
+          ...(content.compaction.thresholdRatio === undefined
+            ? {}
+            : { thresholdRatio: content.compaction.thresholdRatio }),
         },
       }),
   // Offering no candidates leaves the digest of every earlier Revision unchanged.

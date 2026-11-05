@@ -2596,6 +2596,47 @@ test.describe('NekroNxt browser projections', () => {
     })
   })
 
+  test('sets the compaction threshold on a stepped scale bounded by the main model’s window', async () => {
+    const revisionRequests: unknown[] = []
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const scale = page.getByRole('slider', { name: '压缩阈值' })
+        await scale.scrollIntoViewIfNeeded()
+        // 64k tokens is 32 % of this window, so the lowest step is 35 %.
+        await playwrightExpect(scale).toHaveAttribute('aria-valuetext', '80%')
+        await playwrightExpect(page.getByText('约 16 万 token 时压缩（当前模型窗口 20 万）')).toBeVisible()
+        await scale.press('Home')
+        await playwrightExpect(scale).toHaveAttribute('aria-valuetext', '35%')
+        await playwrightExpect(page.getByText('约 7 万 token 时压缩（当前模型窗口 20 万）')).toBeVisible()
+        await scale.press('End')
+        await playwrightExpect(scale).toHaveAttribute('aria-valuetext', '90%')
+        await scale.press('ArrowLeft')
+        await scale.press('ArrowLeft')
+        await scale.press('ArrowLeft')
+        await playwrightExpect(scale).toHaveAttribute('aria-valuetext', '75%')
+        const unsaved = page.getByRole('region', { name: '未保存的修改' })
+        await playwrightExpect(unsaved).toContainText('压缩阈值')
+        await page.screenshot({ path: '.local/browser-test-results/agent-compaction-threshold.png', fullPage: true })
+        await unsaved.getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => revisionRequests.length).toBe(1)
+        expect(revisionRequests[0]).toMatchObject({
+          compaction: { inSession: { mode: 'follow' }, newSession: { mode: 'follow' }, thresholdRatio: 0.75 },
+        })
+      },
+      {
+        ...browserSnapshot,
+        models: [{ provider: 'openai', providerName: 'OpenAI', id: 'gpt-5', name: 'GPT-5', contextWindow: 200_000 }],
+      },
+      async (page) => {
+        await page.route('**/api/agents/*/revision', async (request) => {
+          revisionRequests.push(request.request().postDataJSON())
+          await request.fulfill({ json: { currentRevisionId: browserRevisionId } })
+        })
+      },
+    )
+  })
+
   test('turns command network off where the host can enforce it and explains where it cannot', async () => {
     const capabilityRequests: unknown[] = []
     const withCommands = (networkControl: boolean) =>

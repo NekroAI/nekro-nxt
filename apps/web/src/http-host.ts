@@ -403,6 +403,7 @@ const projectSnapshot = (json: SnapshotJson, successfulAt: number): ProductSnaps
     name: nonEmptyLabel(model.name, '未命名模型'),
     ...(model.description === undefined ? {} : { description: model.description }),
     ...(model.inputModalities === undefined ? {} : { inputModalities: [...model.inputModalities] }),
+    ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
     ...(model.reasoning === undefined
       ? {}
       : {
