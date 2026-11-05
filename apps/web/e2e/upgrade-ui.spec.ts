@@ -119,6 +119,8 @@ async function installUpgradeHost(page: Page, diagnostics: RuntimeCompatibilityD
     }
     if (url.pathname === '/api/platform-users')
       return json({ total: 0, items: [], facets: { adapters: [], connections: [] } })
+    if (url.pathname === '/api/host/restart' && request.method() === 'GET')
+      return json({ supported: true, hostKind: 'server', estimatedSeconds: 20 })
     if (url.pathname === '/api/settings/upgrade-backup')
       return json({ mode: 'data', directory: null, locked: false, keep: 2, usage: { count: 1, bytes: 1024 } })
     unexpected.push(`${request.method()} ${url.pathname}`)
