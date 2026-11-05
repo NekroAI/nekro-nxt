@@ -182,7 +182,7 @@ export const commandHostPrompt = (host: CommandHost, unrestricted: boolean): str
             `自己的文件放在工作区。缺少的工具装到 ${tools}，容器重建后还在：npm install -g 会装到这里；Python 包用 pip install --user 安装，或用 python3 -m venv ${tools}/venv/<名字> 建虚拟环境；单个程序可以放进 ${tools}/bin。这几处的 bin 目录已经在 PATH 里。`,
           ]
         : [
-            `你只能写自己的工作区，${tools} 里已经装好的工具可以直接用。要装新的全局工具，告诉对方：请管理员把你的访问权限调到「完整访问」。`,
+            `你只能写自己的工作区，${tools} 里已经装好的工具可以直接用。要装新的工具，需要管理员把你的访问权限调到「完整访问」，可以这样告诉用户。`,
           ]),
     ].join('\n')
   }
