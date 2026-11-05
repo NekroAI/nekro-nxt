@@ -50,7 +50,6 @@ import {
   commandCredentialPrompt,
   createEnvForwardingExecutor,
   createPwshEnvForwardingExecutor,
-  programSearchPath,
   type CommandCredentialSources,
 } from './command-account-env.js'
 import {
@@ -59,6 +58,13 @@ import {
   dataRootCommandConfinement,
   type CommandConfinement,
 } from './command-confinement.js'
+import {
+  commandHostPrompt,
+  commandToolEnvironment,
+  detectCommandHost,
+  toolsRootOf,
+  type CommandHost,
+} from './command-host.js'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import type { LlmProviderRemovalCoordinator, RemovalImpact } from './llm-provider-removal.js'
@@ -555,6 +561,8 @@ export interface DshHostRuntimeOptions {
   readonly commandAccounts?: CommandCredentialSources
   /** Programs of the add-ons' current providers, added to every agent's command `PATH` (附加功能 F4). */
   readonly programs?: () => readonly ActiveAddonProgram[]
+  /** What agents' commands find on this host; looked up once per process when absent. */
+  readonly commandHost?: CommandHost
   readonly configureLlm?: (context: Context) => Promise<void> | void
   /** DSH-owned settings and write-only credential documents. Both paths must be absolute when enabled. */
   readonly llmSettingsPath?: string
@@ -3119,6 +3127,7 @@ export async function mountDevelopmentCapabilities(
   gitBashReady: () => boolean,
   platform: NodeJS.Platform = process.platform,
   readOnlyRoots: () => readonly string[] = () => [],
+  hostPrompt = '',
 ): Promise<void> {
   const { developmentShell, fileTools, unrestrictedFileAccess } = capabilities
   if (!developmentShell && !fileTools) return
@@ -3176,9 +3185,15 @@ export async function mountDevelopmentCapabilities(
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:windows-commands',
         order: 20.65,
-        text: () => windowsCommandsPrompt(unrestrictedFileAccess, gitBashReady()),
+        text: () =>
+          [windowsCommandsPrompt(unrestrictedFileAccess, gitBashReady()), hostPrompt]
+            .filter((line) => line !== '')
+            .join('\n'),
       })
       return
+    }
+    if (hostPrompt !== '') {
+      agentContext.systemPrompt.section({ name: 'nekro-nxt:command-host', order: 20.64, text: () => hostPrompt })
     }
     await capabilityContext.plugin(createEnvForwardingExecutor(commandEnvironment), {
       cwd: workspaceRoot,
@@ -3286,6 +3301,9 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #releaseId: string | undefined
   readonly #commandAccounts: CommandCredentialSources | undefined
   readonly #codeRunFallbackDirectory: string
+  readonly #dataRoot: string
+  readonly #commandHostOverride: CommandHost | undefined
+  readonly #toolsRoot: string | undefined
   readonly #hostCommandConfinement: Omit<CommandConfinement, 'network'>
   readonly #programs: () => readonly ActiveAddonProgram[]
   #codeRunMount: Promise<boolean> | undefined
@@ -3369,10 +3387,16 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#releaseId = options.releaseId
     this.#commandAccounts = options.commandAccounts
     this.#codeRunFallbackDirectory = path.join(path.dirname(options.sessionDatabasePath), 'dsh')
-    this.#hostCommandConfinement = dataRootCommandConfinement(
-      path.dirname(options.sessionDatabasePath),
-      options.developmentWorkspaceRoot,
-    )
+    this.#dataRoot = path.dirname(options.sessionDatabasePath)
+    this.#commandHostOverride = options.commandHost
+    const hostConfinement = dataRootCommandConfinement(this.#dataRoot, options.developmentWorkspaceRoot)
+    const toolsRoot = options.commandHost?.toolsRoot ?? toolsRootOf(this.#dataRoot)
+    this.#toolsRoot = toolsRoot
+    // The data root is hidden from confined commands; programs installed under the tools root stay usable.
+    this.#hostCommandConfinement =
+      toolsRoot === undefined
+        ? hostConfinement
+        : { ...hostConfinement, readable: [...hostConfinement.readable, toolsRoot] }
     this.#programs = options.programs ?? (() => [])
     this.#shutdownInboxRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'shutdown-inbox')
     this.#spillRoot = spillRootOf(options.sessionDatabasePath)
@@ -4838,6 +4862,9 @@ export class DshHostRuntime implements AgentSessionDriver {
         () => this.#gitBashReady(),
         process.platform,
         () => this.#sessionSpillDirectories(sessionId),
+        revision.capabilities.developmentShell
+          ? commandHostPrompt(this.#commandHost(), revision.capabilities.unrestrictedFileAccess)
+          : '',
       )
       const accountPrompt = this.#commandAccountPromptOf(revision)
       if (accountPrompt !== undefined) {
@@ -5568,8 +5595,20 @@ export class DshHostRuntime implements AgentSessionDriver {
         : commandCredentialEnvironment(revision.agentId, revision.capabilities.commandAccounts, this.#commandAccounts)),
       ...(revision.capabilities.unrestrictedFileAccess ? {} : confinedGitEnvironment()),
     }
-    const searchPath = programSearchPath(this.#programs(), process.env['PATH'])
-    return searchPath === undefined ? environment : { ...environment, PATH: searchPath }
+    return {
+      ...environment,
+      ...commandToolEnvironment({
+        toolsRoot: this.#toolsRoot,
+        unrestricted: revision.capabilities.unrestrictedFileAccess,
+        programs: this.#programs(),
+        basePath: process.env['PATH'],
+      }),
+    }
+  }
+
+  /** The system and programs agents' commands find, looked at once per server process when a Session first needs it. */
+  #commandHost(): CommandHost {
+    return this.#commandHostOverride ?? detectCommandHost(this.#dataRoot)
   }
 
   /** Whether the 「Git 与 Bash」 add-on puts git and bash on Windows commands' `PATH`. */

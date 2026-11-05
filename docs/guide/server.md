@@ -88,7 +88,12 @@ docker run -d \
 
 在桌面版的实例菜单中添加服务端地址，核对证书指纹后用管理密钥完成配对。桌面版设备同样出现在「登录设备」中。
 
-## 数据、升级与备份
+## 智能体的命令
+
+镜像里的命令可以使用 `git`、`curl`、`python3`、`pip3`、`node`、`npm`、`jq`、`rg`、`unzip`、`zip`、`xz`、`ssh`、`ps` 和 `ffmpeg`。命令以运行用户（默认 UID 10001）执行，没有 sudo，不能用 apt 安装软件。
+
+开了「完整访问」的智能体把自己需要的工具装到 `/data/tools`，容器重建后仍在：`npm install -g` 装到 `/data/tools/npm`，`pip install --user` 装到 `/data/tools/python`，虚拟环境建在 `/data/tools/venv/<名字>`，单个程序放进 `/data/tools/bin`；这几处的 `bin` 目录都在命令的 `PATH` 里。只能写工作区的智能体也能使用这里已装好的工具。`/data/tools` 不进升级恢复点；恢复后需要的工具重新安装即可。
+
 
 智能体、会话、扩展、资源、证书和工作区都位于 `/data`。容器启动时会把 `/data` 交给运行用户（默认 UID/GID 10001），宿主机目录无需提前设置属主；需要与宿主机其他程序共用文件时，可用 `NEKRO_UID`、`NEKRO_GID` 指定运行用户。
 

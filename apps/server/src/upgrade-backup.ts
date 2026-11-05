@@ -72,6 +72,8 @@ const EXCLUDED = [
   'extension-cache',
   'extension-files',
   'runtimes',
+  // Programs agents install in the official image (#113); they can be installed again.
+  'tools',
   'dsh/plugin-staging',
   'dsh/request-images',
   'dsh/pnpm-store',

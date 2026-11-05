@@ -279,7 +279,11 @@ describe.skipIf(process.platform === 'win32')('commands receive the granted acco
 
 describe('commands on Windows run in PowerShell at every access level (#96)', () => {
   /** Mounts an agent's development capabilities the way the host does, as if this were a Windows device. */
-  const mountForWindows = async (unrestrictedFileAccess: boolean, environment: Record<string, string> = {}) => {
+  const mountForWindows = async (
+    unrestrictedFileAccess: boolean,
+    environment: Record<string, string> = {},
+    hostPrompt = '',
+  ) => {
     const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-pwsh-')))
     directories.push(workspace)
     const ctx = new Context()
@@ -294,6 +298,8 @@ describe('commands on Windows run in PowerShell at every access level (#96)', ()
       () => environment,
       () => true,
       'win32',
+      () => [],
+      hostPrompt,
     )
     return { ctx, workspace }
   }
@@ -303,6 +309,14 @@ describe('commands on Windows run in PowerShell at every access level (#96)', ()
     expect(ctx.tools.get('pwsh')).toBeDefined()
     expect(ctx.tools.get('bash')).toBeUndefined()
     expect(JSON.stringify(await ctx.systemPrompt.assemble())).toContain('命令用 PowerShell 运行')
+  })
+
+  it('adds the programs line to the Windows commands section (#113)', async () => {
+    const { ctx } = await mountForWindows(true, {}, '命令里还有：python、node。')
+    const section = (await ctx.systemPrompt.assemble()).sections.find(
+      ({ name }) => name === 'nekro-nxt:windows-commands',
+    )
+    expect(section?.text).toMatch(/^这台设备是 Windows[\s\S]*\n命令里还有：python、node。$/u)
   })
 
   it('forwards the agent credentials to PowerShell commands', async () => {
@@ -335,5 +349,33 @@ describe('commands on Windows run in PowerShell at every access level (#96)', ()
     expect(full).toContain('bash -c')
     expect(full).not.toContain('沙箱')
     expect(windowsCommandsPrompt(true, false)).toContain('安装「Git 与 Bash」')
+  })
+})
+
+describe('the command host section (#113)', () => {
+  it.each([
+    ['这台设备是 Ubuntu 24.04 LTS，命令用 bash 运行，用户不是 root。', true],
+    ['', false],
+  ])('shows %j to an agent with bash commands', async (hostPrompt, shown) => {
+    const workspace = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-host-')))
+    directories.push(workspace)
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SessionProjections)
+    await mountDevelopmentCapabilities(
+      ctx,
+      { fileTools: true, developmentShell: true, unrestrictedFileAccess: true },
+      workspace,
+      { hidden: [], readable: [], network: true },
+      () => ({}),
+      () => false,
+      'linux',
+      () => [],
+      hostPrompt,
+    )
+    expect(ctx.tools.get('bash')).toBeDefined()
+    const assembled = JSON.stringify(await ctx.systemPrompt.assemble())
+    expect(assembled.includes('命令用 bash 运行')).toBe(shown)
   })
 })

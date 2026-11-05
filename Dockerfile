@@ -19,9 +19,11 @@ FROM node:22-bookworm-slim AS runtime
 ARG NEKRO_RELEASE_ID=0.0.0+local
 
 # fontconfig and a CJK font let extension SVG rendering (ctx.nxt.render.svg) draw Chinese text. ffmpeg is the
-# "this device" provider of the media add-on, so media processing works without a download.
+# "this device" provider of the media add-on, so media processing works without a download. The rest are common
+# programs for agents' commands (#113); agents install more under /data/tools without root.
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates tini fontconfig fonts-wqy-microhei ffmpeg \
+    git curl python3 python3-venv python3-pip jq unzip zip xz-utils openssh-client procps ripgrep \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 10001 nekro \
   && useradd --system --uid 10001 --gid nekro --home-dir /data --shell /usr/sbin/nologin nekro \
@@ -41,7 +43,9 @@ RUN PLAYWRIGHT_BROWSERS_PATH=/opt/nekro/chromium PLAYWRIGHT_SKIP_BROWSER_GC=1 \
   && rm -rf /var/lib/apt/lists/* \
   && chmod -R a=rX /opt/nekro/chromium
 
+# NEKRO_CONTAINER marks the official image: agents' commands then install their programs under /data/tools.
 ENV NODE_ENV=production \
+  NEKRO_CONTAINER=docker \
   NEKRO_DATA=/data \
   NEKRO_DIST_INDEX=/opt/nekro/web/dist/index.html \
   NEKRO_HOST=0.0.0.0 \
