@@ -2767,6 +2767,43 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('sets extension autonomy without dynamic creation', async () => {
+    const capabilityRequests: unknown[] = []
+    const withoutCreation = HostApiContracts.snapshot.response.parse({
+      ...browserSnapshot,
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId
+          ? { ...agent, capabilities: { ...agent.capabilities, dynamicCreation: false } }
+          : agent,
+      ),
+    })
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        await playwrightExpect(page.getByRole('switch', { name: '动态创造' })).not.toBeChecked()
+        await playwrightExpect(page.getByText('只查看扩展；启用、配置等操作都由你在工坊里完成。')).toBeVisible()
+        await playwrightExpect(page.getByRole('combobox', { name: '谁可以让它改配置' })).toBeVisible()
+        await page.getByRole('radio', { name: '自主' }).click()
+        await playwrightExpect(page.getByText(/只影响它自己的普通操作直接完成/u)).toBeVisible()
+        await page.getByRole('region', { name: '未保存的修改' }).getByRole('button', { name: '保存' }).click()
+        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+        expect(capabilityRequests[0]).toEqual({ extensionAutonomy: 'autonomous' })
+      },
+      withoutCreation,
+      async (page) => {
+        await page.route('**/api/agents/*/capabilities', async (request) => {
+          capabilityRequests.push(request.request().postDataJSON())
+          await request.fulfill({
+            json: {
+              currentRevisionId: browserRevisionId,
+              capabilities: { ...withoutCreation.agents[0]!.capabilities, extensionAutonomy: 'autonomous' },
+            },
+          })
+        })
+      },
+    )
+  })
+
   test('on Windows, runs commands at every level, names what the sandbox cannot do and offers Git and Bash', async () => {
     const windowsHost = HostApiContracts.snapshot.response.parse({
       ...browserSnapshot,
@@ -3208,6 +3245,57 @@ test.describe('NekroNxt browser projections', () => {
       await page.goBack()
       await playwrightExpect(page.getByRole('textbox', { name: '消息' })).toHaveValue('频道甲的草稿')
     })
+  })
+
+  test('shows what the system prompt is made of and which capability packs are loaded', async () => {
+    await withProductPage(
+      `/channels/${browserChannelId}`,
+      async (page) => {
+        const inspector = page.getByRole('complementary', { name: '频道信息' })
+        await inspector.getByRole('button', { name: '查看' }).click()
+        const sheet = page.getByRole('dialog', { name: '资料员看到的上下文' })
+        const parts = sheet.getByRole('region', { name: '系统提示词构成' })
+        await playwrightExpect(parts).toContainText('工具声明')
+        await playwrightExpect(parts).toContainText('约 3.4k tokens')
+        await playwrightExpect(parts).toContainText('13,522 字符')
+        await playwrightExpect(parts).toContainText('已加载的能力包')
+        await playwrightExpect(parts).toContainText('扩展管理')
+      },
+      browserSnapshot,
+      async (page) => {
+        await page.route('**/api/channels/*/runtime', (request) =>
+          request.fulfill({
+            json: {
+              cursor: { epoch: 'fixture', sequence: 0 },
+              channelId: browserChannelId,
+              agentId: browserAgentId,
+              episodeId: 'eps_FIXTURECONTEXT',
+              phase: 'idle',
+              summary: '智能体当前空闲。',
+              pendingInjectCount: 0,
+              occupancy: { projectedTokens: 3200, contextWindow: 128_000 },
+              turns: [],
+            },
+          }),
+        )
+        await page.route('**/api/channels/*/runtime/context', (request) =>
+          request.fulfill({
+            json: {
+              available: true,
+              route: { provider: 'test-provider', model: 'chat-model', contextWindow: 128_000 },
+              instructions: [{ role: 'system', text: '你是资料员。', truncated: false }],
+              tools: [{ name: 'run_code' }],
+              changes: [],
+              promptSections: [
+                { label: '人设', chars: 6, tokens: 2 },
+                { label: '工具声明', chars: 13_522, tokens: 3381 },
+              ],
+              capabilityPacks: { available: ['扩展管理', '扩展开发'], loaded: ['扩展管理'] },
+            },
+          }),
+        )
+      },
+    )
   })
 
   test('isolates Channel messages, names the send target and reveals tool work with x-ray', async () => {

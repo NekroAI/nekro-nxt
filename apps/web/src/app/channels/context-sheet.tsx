@@ -143,6 +143,26 @@ export function ContextSheet({
             </PropertyGroup>
           ) : null}
 
+          {context.promptSections?.length ? (
+            <PropertyGroup title="系统提示词构成">
+              <PropertyList>
+                {context.promptSections.map((section) => (
+                  <PropertyRow key={section.label} label={section.label}>
+                    <span className={styles.value}>
+                      约 {formatTokens(section.tokens)} tokens
+                      <span className={styles.muted}> · {section.chars.toLocaleString('zh-CN')} 字符</span>
+                    </span>
+                  </PropertyRow>
+                ))}
+                {context.capabilityPacks ? (
+                  <PropertyRow label="已加载的能力包">
+                    {context.capabilityPacks.loaded.length ? context.capabilityPacks.loaded.join('、') : '无'}
+                  </PropertyRow>
+                ) : null}
+              </PropertyList>
+            </PropertyGroup>
+          ) : null}
+
           <PropertyGroup
             title="系统提示词"
             description={system ? undefined : '还没有发出模型请求'}
