@@ -1843,7 +1843,7 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     rules: [
       '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载：Host 源码顶层（factory）只在本机执行一次，在这里注册 harness.handle（RPC）、harness.registerAdapter、harness.onInbound、harness.onOutbound、harness.onJob；return 的插件挂载到每个智能体，在它的 apply 里注册工具。一个扩展可以同时提供工具、页面、面板、适配器，不需要拆成多个扩展。',
       '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。config.agent 的必填项可以不给默认值，启用时在 enable 的 values 里提供。',
-      "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }。不要写 properties、required 数组或 additionalProperties。",
+      "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }，提示词、模板这类长文本加 role: 'textarea' 显示成多行输入框，如 { type: 'string', meta: { description: '回复模板', role: 'textarea' } }。不要写 properties、required 数组或 additionalProperties。",
       'meta.agentWritable: false 表示这一项只能由管理员在后台修改，只用于计费、内容审核这类开关。动态创造的扩展不能使用这个标记；修改导入或社区安装的扩展时，带这个标记的项原样保留。',
       '工具 parameters 中类型为 object 的参数必须显式写 additionalProperties: true 或 false；尽量用扁平的 string/number/boolean 参数。',
       'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网在智能体挂载里声明 permissions.agent.network，在 factory 顶层声明 permissions.host.network，不要混用。',
@@ -1918,7 +1918,7 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 - 面板声明 \`densities\`（${reference.ui.panelDensities.join('、')}），宿主决定放在哪个页面、绘制标题栏与外框。
 - 工具视图按 Tool 名注册，渲染 \`chip\` 与 \`card\` 两种密度；适配器用 \`message-renderer\` 按 rich kind 渲染富消息。
 - 数据 Hook：${reference.ui.dataHooks.map((hook) => `\`${hook}\`（${reference.ui.hookPermissions[hook]}）`).join('、')}。
-- 配置分 \`config.host\`（本机一份，\`harness.config()\`）与 \`config.agent\`（每个智能体一份，\`ctx.config()\`），都是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字。两层都可以声明 \`meta.role: 'secret'\` 凭据字段，用 \`secrets.get(key)\` 读取。
+- 配置分 \`config.host\`（本机一份，\`harness.config()\`）与 \`config.agent\`（每个智能体一份，\`ctx.config()\`），都是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字，长文本字段用 \`meta.role: 'textarea'\` 显示成多行输入框。两层都可以声明 \`meta.role: 'secret'\` 凭据字段，用 \`secrets.get(key)\` 读取。
 - 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。
 - 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
 - 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
