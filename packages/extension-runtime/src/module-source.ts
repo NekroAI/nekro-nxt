@@ -1,5 +1,14 @@
 import { transformSync } from 'esbuild'
 
+/** A whole extension module as plain JavaScript, imports kept as written; `undefined` when it does not parse. */
+export const moduleSourceAsJavaScript = (source: string): string | undefined => {
+  try {
+    return transformSync(source, { loader: 'ts', format: 'esm', target: 'es2022' }).code
+  } catch {
+    return undefined
+  }
+}
+
 const SDK_SHIM = `{ defineHostExtension: (factory) => factory, defineClientExtension: (factory) => factory }`
 
 /**

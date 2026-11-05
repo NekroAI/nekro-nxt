@@ -1,3 +1,4 @@
+import { handleStrayExtensionError } from '../src/extension-stray-errors.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { Context } from '@deepseek-ai/cordis'
@@ -83,6 +84,8 @@ class ScriptedModel extends LlmAdapter {
  */
 class TriggeredModel extends ScriptedModel {
   readonly results: string[] = []
+  /** System notices the agent was given, in the order first seen. */
+  readonly notices = new Set<string>()
   #calls = 0
   readonly #answered = new Set<string>()
   constructor(readonly triggers: Record<string, { readonly name: string; readonly args: unknown }>) {
@@ -93,6 +96,10 @@ class TriggeredModel extends ScriptedModel {
     const messages = options?.messages ?? []
     const last = messages.at(-1)
     if (last?.role === 'tool') this.results.push(JSON.stringify(last))
+    for (const message of messages) {
+      const text = JSON.stringify(message.content)
+      if (message.role === 'user' && text.includes('〔系统通知〕')) this.notices.add(text)
+    }
     // Each request is `#trigger … [mN]`; a handoff may repeat earlier ones, so each N is answered once.
     const pending = messages
       .filter((message) => message.role === 'user')
@@ -690,6 +697,61 @@ return { inject: ['tools'], apply(ctx) { harness.registerTool(ctx, harness.defin
       await runCandidate(runtime, entity.agentId)
       await say(runtime, entity.channelId, '#ask-region 现在是哪个地区？')
       await expect.poll(() => model.results.at(-1), NOTICE_POLL).toContain('city=试运行区/摄氏')
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+})
+
+describe('dynamic sandbox', () => {
+  it('gives a candidate’s tools the web globals a saved extension has and tells its agent about a stray failure', async () => {
+    const host = `return { inject: ['tools'], apply(ctx) { harness.registerTool(ctx, harness.defineTool({
+  name: 'globals_probe',
+  description: '全局探针',
+  parameters: {},
+  output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+  execute() {
+    const bytes = new Uint8Array(4)
+    crypto.getRandomValues(bytes)
+    const url = new URL('https://example.test/path?q=1')
+    const controller = new AbortController()
+    controller.abort()
+    return 'globals=' + [crypto.randomUUID().length, bytes.length, url.searchParams.get('q'), new URLSearchParams({ a: '1' }).toString(), controller.signal.aborted, structuredClone({ n: [7] }).n[0]].join(',')
+  },
+})) } }`
+    const model = new TriggeredModel({
+      '#define-globals': {
+        name: 'nekro_nxt_extension_define',
+        args: {
+          plugin: { kind: 'new', idPrefix: 'globe' },
+          name: '全局探针',
+          purpose: '试用沙箱里的全局。',
+          code: { host },
+        },
+      },
+      '#ask-globals': { name: 'globals_probe', args: {} },
+    })
+    const runtime = await createRuntime(model)
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '全局智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await say(runtime, entity.channelId, '#define-globals 做一个全局探针。')
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, NOTICE_POLL).toBe(1)
+      const { task } = await runCandidate(runtime, entity.agentId)
+      await say(runtime, entity.channelId, '#ask-globals 试一下。')
+      await expect.poll(() => model.results.at(-1), NOTICE_POLL).toContain('globals=36,4,1,a=1,true,7')
+
+      const stray = new Error('虚构的失败')
+      stray.stack = `Error: 虚构的失败\n    at cordis-dyn-${task.pluginKey}.js:3:5`
+      expect(handleStrayExtensionError(runtime, undefined, stray)).toBe(true)
+      await expect
+        .poll(() => [...model.notices].join('\n'), NOTICE_POLL)
+        .toContain('出错的地方没有被 await 或 catch：虚构的失败')
+      expect(handleStrayExtensionError(runtime, undefined, new Error('宿主自己的错误'))).toBe(false)
     } finally {
       await runtime.dispose()
     }

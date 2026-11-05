@@ -1,3 +1,4 @@
+import { checkDynamicHostSource } from './dynamic-source-check.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 import DynamicCordisRunnerService, {
@@ -251,6 +252,8 @@ export const preflightNekroNxtAuthoringDefinition = (
     throw new Error('动态页面预检失败：一个扩展最多有一个页面注册导航轨入口。')
   }
   ExtensionPermissionsSchema.parse(input.permissions)
+  // Body sources are checked as the runner receives them; a module is checked before it becomes a factory body.
+  if (input.codeFormat === 'module' && input.code.host !== undefined) checkDynamicHostSource(input.code.host, 'module')
   if (input.config !== undefined && !ExtensionLayeredConfigSchema.safeParse(input.config).success) {
     throw new Error('动态扩展预检失败：config.host 与 config.agent 的 schema 必须是序列化 Schemastery 对象。')
   }
@@ -311,6 +314,7 @@ export const dynamicPreviewClientCode = (input: DynamicAuthoringPackageDefinitio
 }
 
 export const preflightNekroNxtDynamicSource = (request: DynamicCordisDefineRequest): void => {
+  if (request.code.host !== undefined) checkDynamicHostSource(request.code.host)
   const client = request.code.client
   if (client === undefined) return
   const registersPages = /\b(?:ctx\.)?pages\s*\.\s*register\b/u.test(client)
@@ -1936,6 +1940,39 @@ export class DynamicAuthoringRuntime {
         else this.#reportClientRpcFailure(dshSessionId, pluginId, pluginRunId, method, result.message)
         return result
       })
+  }
+
+  /**
+   * A candidate's Host code failed where nothing was waiting for it (a promise nobody awaited). The host keeps
+   * running; the agent that owns the candidate is told so it can fix it. Returns whether exactly one live candidate
+   * matched: plugin ids are per conversation, so an ambiguous id is only logged.
+   */
+  reportCandidateCrash(pluginId: string, message: string): boolean {
+    const matches = [...this.#sessions.records()].flatMap((record) => {
+      let latest
+      try {
+        latest = this.dynamicInventory(record.sessionId).find((row) => row.pluginId === pluginId)?.latestRun
+      } catch {
+        return []
+      }
+      return latest === undefined ? [] : [{ episodeId: record.episodeId, run: latest }]
+    })
+    const match = matches.length === 1 ? matches[0] : undefined
+    if (match === undefined) return false
+    const { episodeId, run } = match
+    this.#steerAuthoringEvent(
+      episodeId,
+      pluginId,
+      run.packageId,
+      'unhandled-error',
+      `${run.pluginRunId}:unhandled:${message}`,
+      (task) =>
+        [
+          `〔系统通知〕「${task.title}」（${task.id}）的候选 ${run.packageId} 运行时出错，出错的地方没有被 await 或 catch：${message}。`,
+          '把这类异步调用改成 await，或者加上 catch 处理错误，修好后用 update 重新运行。',
+        ].join('\n'),
+    )
+    return true
   }
 
   /**

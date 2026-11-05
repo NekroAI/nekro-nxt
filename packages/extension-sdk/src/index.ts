@@ -1924,6 +1924,15 @@ export const renderNekroNxtExtensionDevelopmentSkill = (
 - 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
 - 可选扩展图标：在 \`resources\` 放 \`assets/icon.svg\`（推荐，规则同页面 SVG 图标）或 64–512 像素正方形、不超过 128 KiB 的 \`assets/icon.png\` / \`assets/icon.webp\`（内容填标准 base64），再用 \`iconPath\` 指向它；图标显示在工坊、社区和智能体能力列表。
 
+## 试运行环境
+
+候选在沙箱里试运行，和保存后的扩展有几处不同：
+
+- 不能加载模块，\`import()\` 和 \`require()\` 在定义时就会被拒绝。要用的能力都在 harness、ctx 和 ctx.nxt 上。
+- 沙箱提供 \`crypto\`（randomUUID、getRandomValues）、\`URL\`、\`URLSearchParams\`、\`AbortController\` 和 \`structuredClone\`，行为和保存后一样。它们和 nxt 一样要等扩展挂载后才能用：在工具和界面数据接口里调用，不要放在 factory 顶层。
+- 没有 \`process\`、\`Buffer\`、定时器和 \`fetch\`：配置用 harness.config() 或 ctx.config()，二进制数据用 Uint8Array，定时用 timer 服务（inject: ['timer']），网络用 ctx.nxt.http.fetch。
+- 异步调用要 await 或者加上 catch。没人处理的错误会记进日志并通知你，候选这时可能只运行了一半，修好后重新运行。
+
 ## 名称和说明
 
 \`name\` 和 \`purpose\` 保存后就是扩展的名称和说明，显示在工坊、社区和智能体的能力列表里。用户看到它们时只关心能拿这个扩展做什么，不知道也不在意它怎么实现。

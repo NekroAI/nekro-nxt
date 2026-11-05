@@ -361,6 +361,9 @@ importers:
       '@nekro-nxt/test-harness':
         specifier: workspace:*
         version: link:../../packages/test-harness
+      acorn:
+        specifier: 8.18.0
+        version: 8.18.0
       croner:
         specifier: 9.1.0
         version: 9.1.0

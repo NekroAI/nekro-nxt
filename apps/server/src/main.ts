@@ -1,3 +1,4 @@
+import { handleStrayExtensionError } from './extension-stray-errors.js'
 import { configureDshLlmProviders } from './dsh-host-profile.js'
 import { DSH_RUNTIME_FINGERPRINT, DSH_RUNTIME_RELEASE } from '@nekro-nxt/dsh-compat/release'
 import { acquireDataRootLease } from './data-root-lease.js'
@@ -639,6 +640,11 @@ export interface NekroServerHandle {
   readonly port: number
   readonly secure: boolean
   stop(): Promise<void>
+  /**
+   * Takes an error nothing waited for. True when it came from an extension and was logged and reported; the
+   * process should keep running. False for anything else.
+   */
+  handleStrayError?(error: unknown): boolean
 }
 
 const startLeasedServer = async (
@@ -911,7 +917,12 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
     options.signal?.throwIfAborted()
     let stopping: Promise<void> | undefined
     writeLifecycle('info', '服务已就绪。')
-    return { ...server, stop: () => (stopping ??= server.stop().then(releaseStoppedHost)) }
+    return {
+      ...server,
+      stop: () => (stopping ??= server.stop().then(releaseStoppedHost)),
+      handleStrayError: (error) =>
+        owner.runtime !== undefined && handleStrayExtensionError(owner.runtime, owner.logs, error),
+    }
   } catch (error) {
     writeLifecycle('error', '服务启动失败。', { error })
     let progressFailure: unknown
@@ -950,7 +961,12 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
         )
         if (progressFailure !== undefined) console.error('[nekro-nxt] 启动诊断文件未能保存，请检查数据目录。')
         let stopping: Promise<void> | undefined
-        return { ...server, stop: () => (stopping ??= server.stop().then(releaseStoppedHost)) }
+        return {
+          ...server,
+          stop: () => (stopping ??= server.stop().then(releaseStoppedHost)),
+          handleStrayError: (error) =>
+            owner.runtime !== undefined && handleStrayExtensionError(owner.runtime, owner.logs, error),
+        }
       } catch (recoveryError) {
         await closeLogs()
         await release()
@@ -1134,6 +1150,15 @@ if (isEntryPoint()) {
       }
       process.on('SIGINT', onSignal)
       process.on('SIGTERM', onSignal)
+      // An extension's own unhandled failure is logged and reported to its agent instead of ending the host;
+      // anything else still ends the process, as Node would without these listeners.
+      const onStray = (error: unknown): void => {
+        if (handle.handleStrayError?.(error) === true) return
+        console.error(error)
+        process.exit(1)
+      }
+      process.on('unhandledRejection', onStray)
+      process.on('uncaughtException', onStray)
     } catch (error) {
       console.error('[nekro-nxt] 启动失败：', error instanceof Error ? error.message : error)
       process.exit(1)

@@ -1,3 +1,4 @@
+import { checkDynamicHostSource } from './dynamic-source-check.js'
 import SqliteSessionQueryEngine from '@deepseek-ai/dsh-session-query-sqlite'
 import { extensionAgentTools, type ReviseIntent } from './extension-governance/agent-tools.js'
 import type { ExtensionGovernanceToolPort } from './extension-governance/tool-port.js'
@@ -1243,8 +1244,14 @@ const nekroNxtExtensionDefineTool = (
       )
       const values = testConfig === undefined ? undefined : parseAgentTestConfig(definition.config, testConfig)
       if (values !== undefined && keepTestConfig === undefined) throw new Error('这台 NekroNXT 不能保存测试配置。')
-      const notes = values === undefined ? [] : checkTestCredentials(values)
+      const credentialNotes = values === undefined ? [] : checkTestCredentials(values)
       const receipt = runner.defineAuthoringPackage(sessionId, definition, values)
+      const notes = [
+        ...(definition.code.host === undefined
+          ? []
+          : checkDynamicHostSource(definition.code.host, definition.codeFormat ?? 'body').notes),
+        ...credentialNotes,
+      ]
       if (values !== undefined) keepTestConfig?.(receipt.packageId, values)
       return Promise.resolve(notes.length === 0 ? receipt : { ...receipt, notes: [...notes] })
     },
@@ -6005,6 +6012,11 @@ export class DshHostRuntime implements AgentSessionDriver {
 
   dynamicInventory(dshSessionId: string): readonly DynamicCordisInventoryRow[] {
     return this.#dynamic.dynamicInventory(dshSessionId)
+  }
+
+  /** Tells the agent whose candidate failed outside any awaited call; see `extension-stray-errors.ts`. */
+  reportCandidateCrash(pluginId: string, message: string): boolean {
+    return this.#dynamic.reportCandidateCrash(pluginId, message)
   }
 
   subscribeDynamicApprovalRequests(listener: (event: DynamicApprovalRequestEvent) => void): () => void {

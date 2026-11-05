@@ -1569,6 +1569,16 @@ export const dshPromptRegistry = (
     }),
 })
 
+/** The host's own implementations, so a candidate sees the same behavior it gets once saved. */
+const DYNAMIC_SANDBOX_GLOBALS = Object.freeze({
+  crypto: globalThis.crypto,
+  URL,
+  URLSearchParams,
+  AbortController,
+  structuredClone,
+})
+export type DynamicSandboxGlobals = typeof DYNAMIC_SANDBOX_GLOBALS
+
 /**
  * `nxt` facade for dynamic runs, published with `context.set('nxt', …)`. The DSH dynamic sandbox lets a host half
  * reach Services it lists in `inject` and proxies their members; resolving per access follows the current candidate.
@@ -1581,7 +1591,10 @@ export const createNxtDynamicFacade = (
   readonly hostLayer: NxtHostLayerService | undefined
   /** Called by the dynamic wrapper's `harness.defineTool` with the progress a candidate's Tool reports. */
   readonly reportToolProgress: (callId: string, update: unknown) => void
+  /** Web globals the DSH sandbox lacks; the dynamic wrapper hands them to the candidate, as a saved Revision has them. */
+  readonly sandboxGlobals: DynamicSandboxGlobals
 } => ({
+  sandboxGlobals: DYNAMIC_SANDBOX_GLOBALS,
   get logger() {
     return resolve().logger
   },

@@ -112,6 +112,7 @@
     "@nekro-nxt/extension-sdk": "workspace:*",
     "@nekro-nxt/storage-sqlite": "workspace:*",
     "@nekro-nxt/test-harness": "workspace:*",
+    "acorn": "8.18.0",
     "croner": "9.1.0",
     "diff": "9.0.0",
     "fast-xml-parser": "5.11.2",

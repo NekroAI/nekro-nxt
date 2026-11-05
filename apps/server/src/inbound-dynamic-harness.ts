@@ -18,6 +18,8 @@ export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
  *   private RPC lets the verifier call the handler with a synthetic message; another one calls the outbound handler
  *   with a synthetic draft or delivered message. Jobs never fire in dynamic runs, so their handler is recorded.
  * - the factory's host-layer `nxt`, which resolves once the candidate is mounted (call it from RPC handlers or tools).
+ * - `crypto`, `URL`, `URLSearchParams`, `AbortController` and `structuredClone`, which the sandbox lacks; they resolve
+ *   to the host's own implementations once the candidate is mounted, like `nxt`.
  * - `ctx.config()` inside the agent attachment, returning the agent configuration the candidate runs with.
  * - `harness.defineTool` that turns `timeoutSeconds` into DSH's time limit and hands the body `{ signal, progress }`,
  *   as saved Revisions get.
@@ -139,6 +141,28 @@ harness.defineTool = (options) => {
     }),
   })
 }
+// Web globals the sandbox lacks, backed by the host's own once the candidate is mounted (see sandboxGlobals).
+let __nxtGlobals
+const __nxtGlobal = (name) => {
+  if (__nxtGlobals === undefined) {
+    throw new Error(name + ' 在动态试运行中要等扩展挂载后才能使用；请在工具或界面数据接口里调用，不要在 factory 顶层调用。')
+  }
+  return __nxtGlobals[name]
+}
+const __nxtConstructor = (name) => new Proxy(function () {}, {
+  construct: (_target, args) => new (__nxtGlobal(name))(...args),
+  apply: (_target, _self, args) => __nxtGlobal(name)(...args),
+  get: (_target, key) => __nxtGlobal(name)[key],
+})
+const crypto = {
+  randomUUID: () => __nxtGlobal('crypto').randomUUID(),
+  getRandomValues: (array) => __nxtGlobal('crypto').getRandomValues(array),
+  get subtle() { return __nxtGlobal('crypto').subtle },
+}
+const URL = __nxtConstructor('URL')
+const URLSearchParams = __nxtConstructor('URLSearchParams')
+const AbortController = __nxtConstructor('AbortController')
+const structuredClone = (value, options) => __nxtGlobal('structuredClone')(value, options)
 const nxt = new Proxy({}, {
   get(_target, key) {
     const host = __nxtFactory.host
@@ -192,6 +216,7 @@ return {
     if (__nxtLogger) for (const [level, message, details] of __nxtLogs.splice(0)) __nxtLogger[level](message, details)
     __nxtFactory.nxt = ctx.nxt
     __nxtFactory.host = ctx.nxt.hostLayer
+    __nxtGlobals = ctx.nxt.sandboxGlobals
     const readConfig = () => ctx.nxt.config()
     const attachment = new Proxy(ctx, {
       get(target, key) {
