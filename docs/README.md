@@ -6,7 +6,7 @@
 
 1. [快速开始](guide/getting-started.md)：从安装到第一次内置频道对话；
 2. [桌面版安装](guide/desktop.md)：macOS、Windows、Linux 安装包与稳定版/预览版；
-3. [服务端部署](guide/server.md)：一行启动容器，详细配置 Docker、Compose、远程访问与数据目录；
+3. [服务端部署](guide/server.md)：一行启动容器，详细配置 Docker、Compose、远程访问与数据目录；不用 Docker 的做法见[社区整理的非官方部署说明](guide/server-node.md)；
 4. [配置模型](guide/models.md)：模型供应商、API Key、连接测试和模型选择；
 5. [创建智能体](guide/agents.md)：人设、模型、授权能力和内置频道；
 6. [连接频道](guide/connections.md)：添加平台账号、发现频道、绑定和触发方式；可接入 [QQ 官方机器人](guide/connections/qq-official-bot.md)、[OneBot V11](guide/connections/onebot-11.md)、[企业微信智能机器人](guide/connections/wecom-ai-bot.md)或[微信 iLink](guide/connections/wechat-ilink.md)；

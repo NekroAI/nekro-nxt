@@ -54,6 +54,8 @@ NEKRO_IMAGE='nekro-nxt:local' pnpm dist:server
 
 然后把上方 `docker run` 命令末尾的镜像名替换为 `nekro-nxt:local`。
 
+不能使用 Docker 时，可以参考社区整理的[不用 Docker 部署服务端](server-node.md)。这种方式不在官方支持范围内。
+
 ## 网页访问与登录
 
 首页命令默认只允许本机访问。需要从其他设备访问时，把端口映射改为 `-p 4960:4960`，并在防火墙或反向代理中限制访问范围。
