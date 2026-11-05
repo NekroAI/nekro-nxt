@@ -237,7 +237,11 @@ export const mountCapabilityPacks = (
           const parts = [
             ...(loading.length === 0
               ? []
-              : [`已加载${loading.map((pack) => `「${pack.name}」`).join('')}，说明和工具声明附在这次结果后面。`]),
+              : [
+                  `已加载${loading.map((pack) => `「${pack.name}」`).join('')}，${
+                    options.presentation === 'ptc' ? '说明和工具声明附在这次结果后面。' : '说明附在这次结果后面。'
+                  }`,
+                ]),
             ...(already.length === 0 ? [] : [`${already.map((name) => `「${name}」`).join('')}已经加载过了。`]),
           ]
           return Promise.resolve(parts.join(''))
