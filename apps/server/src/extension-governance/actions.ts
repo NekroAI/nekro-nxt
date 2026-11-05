@@ -2,6 +2,7 @@ import {
   AgentIdSchema,
   AuthoringTaskIdSchema,
   ChannelIdSchema,
+  CommunityListingInputSchema,
   CommunityPermissionItemSchema,
   CommunityReviewStatusSchema,
   communityPublisherLabel,
@@ -14,7 +15,6 @@ import {
   type AgentId,
   type ChannelId,
   type CommunityPermissionItem,
-  type CommunityReviewStatus,
   type ExtensionId,
   type ExtensionRevisionId,
   type JsonValue,
@@ -35,17 +35,20 @@ import {
   type Revision,
 } from '@nekro-nxt/extension-runtime'
 import type { NekroRuntime } from '../bootstrap.js'
+import { CommunityError } from '../community.js'
+import { REVIEW_STATUS_LABEL } from '../community-agent-tools.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../dsh-version.js'
 import { createExtensionRevisionExport } from '../host-route-support.js'
 import { ExtensionConfigMigration } from './config-migration.js'
 import { namedCredentialReference } from '../credentials-library.js'
 import { extensionVersions } from './versions.js'
 import type { CredentialRecord } from '@nekro-nxt/storage-sqlite'
-import type {
-  ExtensionConfigChange,
-  ExtensionConfigOwner,
-  ExtensionConfigWriteMeta,
-  LeveledConfigField,
+import {
+  leveledConfigFields,
+  type ExtensionConfigChange,
+  type ExtensionConfigOwner,
+  type ExtensionConfigWriteMeta,
+  type LeveledConfigField,
 } from './config-service.js'
 
 /** Who asks for an extension action. Console and administrators act for themselves; agents are bound by autonomy. */
@@ -130,6 +133,8 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     extensionId: ExtensionIdSchema,
     revisionId: ExtensionRevisionIdSchema.optional(),
     notes: z.string(),
+    /** The community page's information to set with this release; fields left out stay as they are. */
+    listing: CommunityListingInputSchema.optional(),
   }),
   z.object({ kind: z.literal('community-update'), extensionId: ExtensionIdSchema }),
   z.object({
@@ -230,18 +235,6 @@ export interface ConfigPlan {
   readonly owner: ExtensionConfigOwner
   readonly change: ExtensionConfigChange
   readonly credentials: readonly { readonly key: string; readonly record: CredentialRecord }[]
-}
-
-const REVIEW_STATUS_LABEL: Readonly<Record<CommunityReviewStatus, string>> = {
-  pending: '尚未开始',
-  reviewing: '进行中',
-  passed: '通过',
-  passed_with_notes: '通过，有建议',
-  flagged: '发现风险，等待复审',
-  held: '暂停公开',
-  risk_confirmed: '确认有风险',
-  rejected: '未通过',
-  incomplete: '未完成',
 }
 
 const slugFrom = (name: string, fallback: string): string => {
@@ -758,7 +751,7 @@ export class ExtensionActionService {
         }
       }
       case 'community-publish':
-        return this.#publish(action.extensionId, action.revisionId, action.notes)
+        return this.#publish(action.extensionId, action.revisionId, action.notes, action.listing)
       case 'community-update':
         return this.#communityUpdate(action.extensionId)
       case 'community-install':
@@ -896,7 +889,9 @@ export class ExtensionActionService {
         : runtime.repository.getExtensionRevision(input.revisionId)
     if (!revision || revision.extensionId !== input.extensionId) throw new Error('要发布的版本不存在。')
     const status = await runtime.community.status()
-    if (!status.account) throw new Error('这台 NekroNXT 还没有登录社区，请先在「社区 → 账号」登录。')
+    if (!status.account) {
+      throw new CommunityError(401, '这台 NekroNXT 还没有登录社区，请先在「社区 → 账号」登录。', 'community-signed-out')
+    }
     const exported = await createExtensionRevisionExport(runtime, input.extensionId, revision.id)
     const published = await runtime.community.publish({
       filename: exported.filename,
@@ -916,8 +911,14 @@ export class ExtensionActionService {
     extensionId: ExtensionId,
     revisionId: ExtensionRevisionId | undefined,
     notes: string,
+    listing: Extract<ExtensionAction, { readonly kind: 'community-publish' }>['listing'],
   ): Promise<ExtensionActionResult> {
-    const { revision, releaseId, pageUrl } = await this.publishRevision({ extensionId, revisionId, notes })
+    const { revision, releaseId, pageUrl } = await this.publishRevision({
+      extensionId,
+      revisionId,
+      notes,
+      ...(listing === undefined ? {} : { listing }),
+    })
     return {
       message: `已把「${this.#extensionName(extensionId)}」${this.#label(revision)} 发布到社区，审查结果出来后会再通知。`,
       extensionId,
@@ -986,9 +987,57 @@ export class ExtensionActionService {
     // Enabling follows its own rules: an install approval does not cover missing configuration.
     const blocked =
       this.enablementProblem(agentId, revision.extensionId) ?? this.enablementMissing(agentId, revision.extensionId)
-    if (blocked !== undefined) return { ...result, message: `${installed}，还没有启用：${blocked}` }
+    if (blocked !== undefined) {
+      return {
+        ...result,
+        message: `${installed}，还没有启用：${blocked}${this.configGuidance(agentId, revision.extensionId) ?? ''}`,
+      }
+    }
     await this.perform({ kind: 'enable', extensionId: revision.extensionId, agentId }, { kind: 'console' })
-    return { ...result, message: `${installed}，并给${this.#agentName(agentId)}启用。` }
+    return {
+      ...result,
+      message: `${installed}，并给${this.#agentName(agentId)}启用。${this.configGuidance(agentId, revision.extensionId) ?? ''}`,
+    }
+  }
+
+  /**
+   * Configuration fields of an extension that still have no value, sorted by who can fill them: the agent itself, the
+   * agent with an administrator's confirmation, a credential binding, or an administrator in the console. Judged as
+   * configure judges a change an administrator asked the agent for. Undefined when every field has a value.
+   */
+  configGuidance(agentId: AgentId, extensionId: ExtensionId): string | undefined {
+    const runtime = this.#runtime
+    const revision = this.#maybeCurrent(extensionId)
+    const manifest = revision === undefined ? undefined : runtime.extensionService.revisionManifest(revision)
+    if (!manifest) return undefined
+    const actor = { kind: 'agent', agentId, requester: 'admin' } as const
+    const groups = { run: [] as string[], request: [] as string[], credential: [] as string[], console: [] as string[] }
+    for (const layer of ['agent', 'host'] as const) {
+      const stored =
+        layer === 'host'
+          ? runtime.repository.getHostInstallation(extensionId)?.config
+          : runtime.repository.getActivation(agentId, extensionId)?.config
+      const values = stored !== null && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
+      for (const entry of leveledConfigFields(manifest, layer)) {
+        const { field, level } = entry
+        const value = values[field.key]
+        if (field.default !== undefined || (value !== undefined && value !== null && value !== '')) continue
+        const name = `「${field.title}」（${field.key}${field.required ? '，必填' : ''}）`
+        const decision = this.configureDecision(layer, entry, actor)
+        groups[decision === 'console' ? 'console' : level === 'secret' ? 'credential' : decision].push(name)
+      }
+    }
+    const list = (names: readonly string[]) =>
+      names.length > 8 ? `${names.slice(0, 8).join('、')}等 ${names.length} 项` : names.join('、')
+    const lines = [
+      groups.run.length === 0 ? '' : `你可以自己填：${list(groups.run)}，启用时放进 values，已经启用的用 configure。`,
+      groups.request.length === 0 ? '' : `你可以填，但要管理员确认：${list(groups.request)}。`,
+      groups.credential.length === 0
+        ? ''
+        : `要绑定凭据：${list(groups.credential)}。先用 nekro_nxt_credential_list 查，有合适的就用 credentials 按名称绑定，没有时用 nekro_nxt_credential_request 请管理员添加。`,
+      groups.console.length === 0 ? '' : `要管理员在后台填写：${list(groups.console)}。`,
+    ].filter((line) => line !== '')
+    return lines.length === 0 ? undefined : `配置还有空着的项。${lines.join('')}`
   }
 
   /** Summary, permission risk and reach of an action, computed from local facts only. */
@@ -1086,8 +1135,24 @@ export class ExtensionActionService {
           action.revisionId === undefined
             ? this.#maybeCurrent(action.extensionId)
             : runtime.repository.getExtensionRevision(action.revisionId)
+        // Shown against the newest public release this machine knows of; a first release shows all it asks for. The
+        // risk level stays normal: publishing runs nothing here.
+        const previous = runtime.communitySync.cachedItem(action.extensionId)?.latest?.permissions
+        const items = itemsOf(revision)
         return {
           ...normal,
+          added:
+            previous === undefined
+              ? items
+              : addedPermissionItems(
+                  previous.map((item) => ({
+                    key: item.key,
+                    level: item.level,
+                    label: item.label,
+                    layer: item.layer ?? 'agent',
+                  })),
+                  items,
+                ),
           summary: `把「${this.#extensionName(action.extensionId)}」${revision ? this.#label(revision) : ''} 发布到社区`,
         }
       }

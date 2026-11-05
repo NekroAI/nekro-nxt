@@ -29,6 +29,7 @@ import { CommunitySyncService, type SyncCommunity } from '../src/extension-gover
 import { ExtensionRequestService, EXTENSION_REQUEST_TTL_MS } from '../src/extension-governance/requests.js'
 import { extensionVersions, lineageGraph, revisionProtections } from '../src/extension-governance/versions.js'
 import { HostLogService } from '../src/logs/service.js'
+import { createExtensionRevisionExport } from '../src/host-route-support.js'
 import { extensionVerification } from './fixtures/extension-verification.js'
 
 const directories: string[] = []
@@ -1828,6 +1829,204 @@ describe('extension autonomy', () => {
       })
     } finally {
       await runtime.dispose()
+    }
+  })
+
+  it('checks a publish before asking and shows the administrator what goes out (#121)', async () => {
+    const runtime = await createRuntime()
+    try {
+      const entity = await agentWithChannel(runtime, 'autonomous')
+      const { extension } = await saveSharedExtension(
+        runtime,
+        entity.agentId,
+        {
+          host: {
+            schema: { type: 'object', dict: { endpoint: { type: 'string', meta: { description: '服务地址' } } } },
+          },
+        },
+        { host: { network: { mode: 'config', fields: ['endpoint'] } } },
+      )
+      const unused = () => {
+        throw new Error('No definition expected in a publish.')
+      }
+      const action = extensionAgentTools({
+        port: () => new ExtensionGovernanceTools(runtime),
+        authoring: undefined,
+        agentId: entity.agentId,
+        channelId: entity.channelId,
+        episodeId: EpisodeIdSchema.parse('eps_PUBLISHCHECK'),
+        sessionId: 'synthetic-publish-session',
+        define: unused,
+        restore: unused,
+        setReviseIntent: vi.fn(),
+      }).find((tool) => tool.name === 'nekro_nxt_extension_action')!
+      const publish = (args: Record<string, unknown>) =>
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The action tool reads no execution context.
+        action.execute({ action: 'publish', extension: extension.id, ...args }, {} as never)
+
+      await expect(publish({})).rejects.toThrow('publish 要在 notes 里写这次更新了什么')
+      await expect(publish({ notes: '  ' })).rejects.toThrow('publish 要在 notes 里写这次更新了什么')
+      await expect(publish({ notes: '首发。', summary: '长'.repeat(161) })).rejects.toThrow(
+        'summary 是一句话简介，最多 160 字。',
+      )
+      await expect(publish({ notes: '首发。', tags: Array.from({ length: 9 }, () => '标签') })).rejects.toThrow(
+        'tags 最多 8 个',
+      )
+      await expect(publish({ notes: '首发。', sourceUrl: 'ftp://example.com/source' })).rejects.toThrow(
+        'sourceUrl 要写完整的 https 链接。',
+      )
+      // Not signed in: nothing is asked of an administrator who cannot make it work.
+      await expect(publish({ notes: '首发。' })).rejects.toThrow(
+        '这台 NekroNXT 还没有登录社区，请管理员先在「社区 → 账号」登录。',
+      )
+      expect(runtime.extensionRequests.list('pending')).toEqual([])
+
+      vi.spyOn(runtime.community, 'signedIn').mockReturnValue(true)
+      await expect(
+        publish({
+          notes: '首次发布，支持查询虚构城市的天气。',
+          summary: '查询虚构城市的天气。',
+          description: '## 用法\n\n问「示例市天气」。',
+          tags: ['天气'],
+        }),
+      ).resolves.toMatchObject({ outcome: 'requested' })
+      const [request] = runtime.extensionRequests.list('pending')
+      expect(request?.summary).toMatch(/^把「共享探针」v\d+ 发布到社区$/u)
+      const noticeText = () => {
+        const part = runtime.repository.findOutboundByNoticeKey(`ext-request:${request!.number}:asked`)?.intent.parts[0]
+        return part?.type === 'text' ? part.text : undefined
+      }
+      await expect.poll(noticeText, NOTICE_POLL).toContain('更新说明：首次发布，支持查询虚构城市的天气。')
+      expect(noticeText()).toContain('简介：查询虚构城市的天气。')
+      expect(noticeText()).toContain('同时更新介绍、标签（天气）')
+      // A first release shows every permission it asks for.
+      expect(noticeText()).toContain('新增权限：')
+      const payload = z.object({ action: z.object({ listing: z.unknown() }).passthrough() }).parse(request?.payload)
+      expect(payload.action.listing).toEqual({
+        summary: '查询虚构城市的天气。',
+        description: '## 用法\n\n问「示例市天气」。',
+        tags: ['天气'],
+      })
+
+      // Against a release that already asked for the same, nothing is new.
+      const actor = { kind: 'agent', agentId: entity.agentId, channelId: entity.channelId } as const
+      const publishAction = { kind: 'community-publish', extensionId: extension.id, notes: '第二次。' } as const
+      const first = runtime.extensionActions.assess(publishAction, actor)
+      expect(first.added.length).toBeGreaterThan(0)
+      expect(first.level).toBe('normal')
+      vi.spyOn(runtime.communitySync, 'cachedItem').mockReturnValue(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The assessment reads only the newest release's permissions.
+        { latest: { permissions: first.added } } as unknown as ReturnType<typeof runtime.communitySync.cachedItem>,
+      )
+      expect(runtime.extensionActions.assess(publishAction, actor).added).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('tells the agent why an approved publish failed in words it can act on (#121)', async () => {
+    const runtime = await createRuntime()
+    try {
+      const entity = await agentWithChannel(runtime, 'autonomous')
+      const { extension } = await saveSharedExtension(runtime, entity.agentId)
+      vi.spyOn(runtime.community, 'signedIn').mockReturnValue(true)
+      const outcome = await new ExtensionGovernanceTools(runtime).act(entity.agentId, entity.channelId, {
+        kind: 'community-publish',
+        extensionId: extension.id,
+        notes: '首发。',
+      })
+      expect(outcome.outcome).toBe('requested')
+      // Signed out again before the approval.
+      vi.spyOn(runtime.community, 'status').mockResolvedValue({
+        communityUrl: 'https://community.example',
+        environment: null,
+        account: null,
+        signedInAt: null,
+        updatesAvailable: 0,
+      })
+      const told = vi.spyOn(runtime.host, 'notifyAgent').mockReturnValue(true)
+      await expect(runtime.extensionRequests.approve(outcome.requestNumber!, { kind: 'console' })).rejects.toThrow(
+        '还没有登录社区',
+      )
+      expect(told).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining(
+            '已同意，但执行失败：这台 NekroNXT 还没有登录社区，请管理员先在「社区 → 账号」登录。看一下原因再决定怎么处理。',
+          ) as unknown,
+        }),
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('says after an install which configuration the agent fills and which waits for a person (#121)', async () => {
+    const source = await createRuntime()
+    const runtime = await createRuntime()
+    try {
+      const creator = await agentWithChannel(source, 'autonomous')
+      const { extension, revision } = await saveSharedExtension(
+        source,
+        creator.agentId,
+        {
+          host: {
+            schema: {
+              type: 'object',
+              dict: {
+                endpoint: { type: 'string', meta: { description: '服务地址', required: true } },
+                hostKey: { type: 'string', meta: { description: '服务密钥', required: true, role: 'secret' } },
+              },
+            },
+          },
+          agent: {
+            schema: {
+              type: 'object',
+              dict: {
+                nickname: { type: 'string', meta: { description: '称呼', required: true } },
+                greeting: { type: 'string', meta: { description: '问候语', default: '你好' } },
+                agentKey: { type: 'string', meta: { description: '个人密钥', required: true, role: 'secret' } },
+              },
+            },
+          },
+        },
+        { host: { network: { mode: 'config', fields: ['endpoint'] } } },
+      )
+      const exported = await createExtensionRevisionExport(source, extension.id, revision.id)
+      const entity = await agentWithChannel(runtime, 'autonomous')
+      vi.spyOn(runtime.community, 'getExtension').mockResolvedValue(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- Install reads only these fields.
+        {
+          id: extension.id,
+          displayName: '共享探针',
+          publisher: { handle: 'fixture-author' },
+          latest: { id: 'rel_01shared', number: 1, permissions: [], reviewStatus: 'passed', rating: null },
+        } as unknown as Awaited<ReturnType<typeof runtime.community.getExtension>>,
+      )
+      vi.spyOn(runtime.community, 'downloadRelease').mockResolvedValue(exported.body)
+      const outcome = await new ExtensionGovernanceTools(runtime).act(entity.agentId, entity.channelId, {
+        kind: 'community-install',
+        communityExtensionId: extension.id,
+        agentId: entity.agentId,
+        reason: '群里想试试',
+      })
+      expect(outcome.outcome).toBe('requested')
+      const result = await runtime.extensionRequests.approve(outcome.requestNumber!, { kind: 'console' })
+      expect(result.message).toContain('已从社区安装「共享探针」')
+      expect(result.message).toContain('你可以自己填：「称呼」（nickname，必填）')
+      expect(result.message).toContain('要绑定凭据：「个人密钥」（agentKey，必填）')
+      expect(result.message).toContain('服务密钥')
+      expect(result.message).toContain('nekro_nxt_credential_request')
+      expect(result.message).toContain('你可以填，但要管理员确认：「服务地址」（endpoint，必填）')
+      // Fields with a default are not listed.
+      expect(result.message).not.toContain('greeting')
+      // An agent that may change nothing itself leaves every field to an administrator.
+      const manual = await agentWithChannel(runtime, 'manual')
+      const guidance = runtime.extensionActions.configGuidance(manual.agentId, extension.id)
+      expect(guidance).toContain('要管理员在后台填写：「称呼」（nickname，必填）')
+      expect(guidance).not.toContain('你可以自己填')
+    } finally {
+      await runtime.dispose()
+      await source.dispose()
     }
   })
 

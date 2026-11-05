@@ -262,6 +262,7 @@ import {
 } from './extension-capability-packs.js'
 import { extensionReferenceTool } from './extension-reference-tool.js'
 import { sessionCapabilityPacks } from './session-capability-packs.js'
+import { communityBrowseTools } from './community-agent-tools.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
@@ -4890,6 +4891,8 @@ export class DshHostRuntime implements AgentSessionDriver {
           sessionId,
         }))
           if (allowed.has(tool.name)) agentContext.tools.register(tool)
+        // Browsing the community is read-only and open at every autonomy level (#121).
+        for (const tool of communityBrowseTools(() => governancePort()?.community())) agentContext.tools.register(tool)
       }
       mountDelegationCapabilities(agentContext, revision, this.#subConversations, this.#subConversationStore, () =>
         this.listAvailableLlmModels(),

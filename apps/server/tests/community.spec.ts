@@ -196,7 +196,10 @@ const createCommunity = () => {
         ...summary('ext_01DEMO'),
         description: '详细介绍',
         sourceUrl: null,
-        releases: [],
+        releases: [
+          { ...summary('ext_01DEMO').latest, withdrawn: true, futureField: 1 },
+          { id: 'not-a-release', withdrawn: false },
+        ],
         review: {
           status: 'passed',
           rating: {
@@ -550,6 +553,10 @@ describe('CommunityService catalog', () => {
       reviewedAt: 1,
     })
     expect(detail.latest?.permissions[0]?.layer).toBe('agent')
+    // Releases this version cannot read are left out; the rest keep whether they were withdrawn.
+    expect(detail.releases).toHaveLength(1)
+    expect(detail.releases?.[0]).toMatchObject({ id: 'rel_01demo', withdrawn: true })
+    expect(detail.releases?.[0]).not.toHaveProperty('futureField')
     await expect(service.getExtension('ext_MISSING')).rejects.toMatchObject({
       status: 404,
       message: '扩展不存在或尚未公开。',
@@ -596,7 +603,10 @@ describe('CommunityService catalog', () => {
     packageHeaders.length = 0
     await service.downloadRelease('rel_01demo')
     expect(packageHeaders[0]?.get('x-nxt-sdk')).toBe(String(EXTENSION_SDK_LEVEL))
-    await expect(service.downloadRelease('rel_01future')).rejects.toThrow('这个扩展需要更新版本的 NekroNXT，请先升级。')
+    await expect(service.downloadRelease('rel_01future')).rejects.toMatchObject({
+      message: '这个扩展需要更新版本的 NekroNXT，请先升级。',
+      code: 'community-upgrade-required',
+    })
   })
 
   it('reports unreachable communities as readable errors', async () => {

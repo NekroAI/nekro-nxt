@@ -379,6 +379,11 @@ export class CommunityService {
     )
   }
 
+  /** Whether this machine has a community account for the current address; no network. */
+  signedIn(): boolean {
+    return this.#stored() !== undefined
+  }
+
   async status(): Promise<CommunityStatus> {
     const url = this.communityUrl
     const stored = this.#stored(url)
@@ -699,6 +704,15 @@ export class CommunityService {
               })),
               reviewedAt: typeof review['reviewedAt'] === 'number' ? review['reviewedAt'] : null,
             },
+      ...(Array.isArray(record['releases'])
+        ? {
+            // A release this version cannot read is left out rather than failing the whole page.
+            releases: records(record['releases'], 50).flatMap((item) => {
+              const release = CommunityReleaseSchema.safeParse(normalizeRelease(item))
+              return release.success ? [{ ...release.data, withdrawn: item['withdrawn'] === true }] : []
+            }),
+          }
+        : {}),
     })
   }
 
@@ -718,9 +732,15 @@ export class CommunityService {
       PACKAGE_TIMEOUT_MS,
     )
     if (!response.ok) {
+      // 409: the release needs a newer NekroNXT than this one.
       throw new CommunityError(
-        response.status === 404 ? 404 : 502,
+        response.status === 404 ? 404 : response.status === 409 ? 409 : 502,
         communityErrorMessage(await this.#json(response), response.status),
+        response.status === 404
+          ? 'community-not-found'
+          : response.status === 409
+            ? 'community-upgrade-required'
+            : 'community-request-failed',
       )
     }
     const bytes = new Uint8Array(await response.arrayBuffer())

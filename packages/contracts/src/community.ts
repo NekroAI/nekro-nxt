@@ -200,6 +200,11 @@ export const CommunityExtensionDetailSchema = CommunityExtensionSummarySchema.ex
       reviewedAt: z.number().int().nullable(),
     })
     .nullable(),
+  /** Public releases, newest first, up to 50; absent from older communities. */
+  releases: z
+    .array(CommunityReleaseSchema.extend({ withdrawn: z.boolean() }))
+    .max(50)
+    .optional(),
 })
 export type CommunityExtensionDetail = z.output<typeof CommunityExtensionDetailSchema>
 

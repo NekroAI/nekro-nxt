@@ -10,6 +10,7 @@ import {
 import type { ExtensionRequestRecord } from '@nekro-nxt/storage-sqlite'
 import { z } from 'zod'
 import type { NekroRuntime } from '../bootstrap.js'
+import { communityErrorForAgent } from '../community-agent-tools.js'
 import {
   ExtensionActionSchema,
   type ExtensionAction,
@@ -128,6 +129,30 @@ const covers = (newer: ExtensionAction, older: ExtensionAction): boolean => {
 
 type ConfigureAction = Extract<ExtensionAction, { readonly kind: 'configure' }>
 
+const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text)
+
+/** What an administrator reads before a publish: the release notes and what the community page will say. */
+const publishDetails = (action: Extract<ExtensionAction, { readonly kind: 'community-publish' }>): string => {
+  const listing = action.listing
+  const also = [
+    listing?.description === undefined ? '' : '介绍',
+    listing?.tags === undefined ? '' : `标签（${listing.tags.join('、')}）`,
+    listing?.sourceUrl === undefined ? '' : `源码地址 ${listing.sourceUrl}`,
+  ].filter((part) => part !== '')
+  return [
+    action.notes.trim() === '' ? '' : `。更新说明：${clip(action.notes.trim(), 300)}`,
+    listing?.summary === undefined ? '' : `。简介：${listing.summary}`,
+    also.length === 0 ? '' : `。同时更新${also.join('、')}`,
+  ].join('')
+}
+
+/** A failure as the agent should read it; community failures say who does what next. */
+const agentMessage = (error: unknown): string => {
+  const explained = communityErrorForAgent(error)
+  const text = (explained instanceof Error ? explained.message : String(explained)).trim()
+  return /[。！？.!?]$/u.test(text) ? text : `${text}。`
+}
+
 /** Two changes to the same layer as one: later values and bindings win, reasons are kept together. */
 const mergeConfigure = (first: ConfigureAction, second: ConfigureAction): ConfigureAction => {
   const reasons = [first.reason, second.reason].filter((reason) => reason !== undefined && reason !== '')
@@ -223,7 +248,9 @@ export class ExtensionRequestService {
     const why =
       (input.action.kind === 'community-install' || input.action.kind === 'restart-host') && input.action.reason
         ? `。理由：${input.action.reason}`
-        : ''
+        : input.action.kind === 'community-publish'
+          ? publishDetails(input.action)
+          : ''
     const prefix = this.#commandPrefix(input.actor.channelId)
     this.#notice(
       input.actor.channelId,
@@ -297,7 +324,7 @@ export class ExtensionRequestService {
           agentId: input.actor.agentId,
           ...(input.actor.channelId === undefined ? {} : { channelId: input.actor.channelId }),
           identity: `ext-run-failed:${input.actor.agentId}:${this.#now()}`,
-          text: `〔系统通知〕${input.assessment.summary}没有完成：${message}。看一下原因再决定怎么处理。`,
+          text: `〔系统通知〕${input.assessment.summary}没有完成：${agentMessage(error)}看一下原因再决定怎么处理。`,
         })
       })
   }
@@ -397,7 +424,7 @@ export class ExtensionRequestService {
       this.#tellAgent(
         record,
         'failed',
-        `〔系统通知〕扩展请求 #${number}（${record.summary}）已同意，但执行失败：${message}。看一下原因再决定怎么处理。`,
+        `〔系统通知〕扩展请求 #${number}（${record.summary}）已同意，但执行失败：${agentMessage(error)}看一下原因再决定怎么处理。`,
       )
       this.#runtime.publishExtensionRequestChange?.()
       throw error

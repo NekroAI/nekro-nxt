@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-type-assertion -- Governance and the authoring ledger are stubbed with only the calls these conversations make. */
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { AssetService, CoreService } from '@nekro-nxt/core'
-import { AdmissionIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema } from '@nekro-nxt/contracts'
+import { AdmissionIdSchema, EpisodeHandoffIdSchema, EpisodeIdSchema, ExtensionIdSchema } from '@nekro-nxt/contracts'
 import type { DynamicAuthoringService } from '@nekro-nxt/extension-runtime'
 import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -10,6 +10,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ExtensionGovernanceToolPort } from '../src/extension-governance/tool-port.ts'
 import { DshHostRuntime, type ScheduledTaskPort } from '../src/index.ts'
+import { communityBrowser } from '../src/community-agent-tools.ts'
 
 type Step = { readonly name: string; readonly args: Record<string, unknown> } | undefined
 
@@ -76,11 +77,42 @@ class ScriptModel extends LlmAdapter {
   }
 }
 
+/** A community catalog of one fictional extension, already installed here. */
+const fixtureCommunity = {
+  cachedRead: async (_kind: string, _query: unknown, _refresh: boolean, load: () => Promise<object>) => ({
+    ...(await load()),
+    fetchedAt: 1,
+    stale: false,
+  }),
+  listExtensions: () =>
+    Promise.resolve({
+      items: [
+        {
+          id: ExtensionIdSchema.parse('ext_01SESSIONWEATHER'),
+          provides: ['agent'],
+          displayName: '虚构社区天气',
+          summary: '查询虚构城市的天气。',
+          tags: [],
+          iconUrl: null,
+          official: false,
+          publisher: { handle: 'fixture-author', displayName: '示例作者', avatarUrl: null },
+          latest: null,
+          downloads: 0,
+          updatedAt: 1,
+          pageUrl: 'https://community.example/extensions/ext_01SESSIONWEATHER',
+        },
+      ],
+      nextCursor: null,
+    }),
+  getExtension: () => Promise.reject(new Error('not used')),
+}
+
 /** Governance as far as listing goes; a fictional extension stands in for the local catalog. */
 const governance = {
   requesterAllowed: () => ({ allowed: true }),
   requester: () => ({ kind: 'admin' }),
   list: () => ({ autonomy: 'autonomous', extensions: [{ name: '虚构天气查询' }] }),
+  community: () => communityBrowser(fixtureCommunity, { installed: () => true, updatable: () => false }),
 } as unknown as ExtensionGovernanceToolPort
 
 const runScenario = async (input: {
@@ -251,7 +283,7 @@ return { refused, loaded }
       ).toHaveLength(1)
 
       const context = scenario.host.sessionContext(scenario.sessionId)
-      expect(context?.capabilityPacks).toEqual({ available: ['扩展管理'], loaded: ['扩展管理'] })
+      expect(context?.capabilityPacks).toEqual({ available: ['扩展管理', '社区'], loaded: ['扩展管理'] })
       expect(context?.promptSections?.map((section) => section.label)).toContain('工具声明')
 
       // The next session starts with nothing loaded; its handoff names what this one used.
@@ -341,6 +373,35 @@ return { refused, loaded }
       await scenario.dispose()
     }
   }, 60_000)
+  it('lets any agent browse the community once it loads the pack', async () => {
+    const scenario = await runScenario({
+      capabilities: { codeRun: true, developmentShell: true },
+      steps: [
+        program(`await tools.capability_load({ names: ['社区'] })
+return 'loaded'`),
+        program(`return await tools.nekro_nxt_community_search({ query: '天气' })`),
+      ],
+    })
+    try {
+      await scenario.run()
+      const [first, second, third] = scenario.model.calls
+      const system = textOf(first, 'system')
+      expect(system).not.toContain('nekro_nxt_community_search')
+      expect(system).not.toContain('nekro_nxt_community_extension')
+      expect(textOf(first, 'user')).toContain('- 社区：浏览和搜索社区扩展，查看版本、权限和审查结论。')
+      const delivery = textOf(second, 'user')
+      expect(delivery).toContain('〔能力包「社区」〕')
+      // A manual agent is pointed to the administrator for installs.
+      expect(delivery).toContain('请管理员在「社区」页面安装')
+      expect(delivery).toContain('nekro_nxt_community_extension:')
+      expect(textOf(third, 'tool')).toContain('虚构社区天气')
+      expect(textOf(third, 'tool')).toContain('"installed": true')
+      expect(textOf(third, 'system')).toBe(system)
+    } finally {
+      await scenario.dispose()
+    }
+  }, 60_000)
+
   it('loads the scheduled task tools as a pack', async () => {
     const scenario = await runScenario({
       capabilities: { codeRun: true, developmentShell: true },

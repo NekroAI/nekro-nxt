@@ -1,5 +1,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
+  COMMUNITY_LISTING_LIMITS,
+  CommunityListingInputSchema,
   CredentialDomainsSchema,
   CredentialNameSchema,
   CredentialUsageSchema,
@@ -15,6 +17,7 @@ import {
 } from '@nekro-nxt/contracts'
 import type { DynamicAuthoringService, DynamicAuthoringSnapshot } from '@nekro-nxt/extension-runtime'
 import { z } from 'zod'
+import { forAgent } from '../community-agent-tools.js'
 import type { DynamicAuthoringPackageDefinitionInput } from '../dynamic-authoring-runtime.js'
 import type { ExtensionAction } from './actions.js'
 import type { ExtensionGovernanceToolPort, RevisionDefinition } from './tool-port.js'
@@ -232,7 +235,7 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
       'enable / disable：给你自己启用或停用。switch：切到指定版本。revert：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
       'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）；includeConfig 连同配置一起迁移（凭据不迁移）。总要管理员确认。',
-      'publish：把当前版本发布到社区（notes 写更新说明）。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId，reason 写为什么要装）。withdraw：撤回一次发布（releaseId）。发布、撤回和安装总要管理员确认。',
+      'publish：把当前版本发布到社区。notes 必填，写这次更新了什么；可以同时给社区页面写 summary（一句话简介）、description（详细介绍，Markdown）、tags、sourceUrl（源码地址），不写的保持原样。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId，reason 写为什么要装）。withdraw：撤回一次发布（releaseId）。发布、撤回和安装总要管理员确认。',
       'configure：修改配置。layer 为 agent（你自己的，默认）或 host（本机，所有智能体共用）；values 写 { 字段名: 值 }，null 恢复默认；凭据字段用 credentials 按名称绑定 { 字段名: "凭据名称" }，null 解除。reason 写为什么改。在回复结束后生效，一次回复里的多次修改合并。enable 也可以带 values 和 credentials 作为初始配置。',
       'revert_config：把某一层配置恢复到 inspect 的 configHistory 里的某个版本（layer、version），恢复本身也是一个新版本。',
     ].join('\n'),
@@ -261,13 +264,26 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
       task: { type: 'string', description: 'save 时的任务名称或编号。' },
       version: { type: 'string', description: 'switch 的目标版本，或 branch 的来源版本，例如 v2。' },
       name: { type: 'string', description: 'save、edit_info 或 branch 的扩展名称。' },
-      description: { type: 'string', description: 'save 或 edit_info 的扩展说明。' },
+      description: {
+        type: 'string',
+        description: `save 或 edit_info 的扩展说明（500 字以内）；publish 时是社区页面的详细介绍（Markdown，${COMMUNITY_LISTING_LIMITS.description} 字以内）。`,
+      },
       slug: { type: 'string', description: '英文短名：小写字母、数字和连字符。' },
       copyData: { type: 'boolean', description: 'branch 时是否复制原扩展的数据。' },
       source: { type: 'string', description: 'migrate_data 的来源扩展名称或编号。' },
       mode: { type: 'string', enum: ['overwrite', 'replace'], description: 'migrate_data 的方式。' },
       includeConfig: { type: 'boolean', description: 'migrate_data 时是否连同配置一起迁移（凭据不迁移）。' },
-      notes: { type: 'string', description: 'publish 的更新说明。' },
+      notes: { type: 'string', description: 'publish 的更新说明，必填。' },
+      summary: {
+        type: 'string',
+        description: `publish 时社区页面的一句话简介，${COMMUNITY_LISTING_LIMITS.summary} 字以内。`,
+      },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: `publish 时社区页面的标签，最多 ${COMMUNITY_LISTING_LIMITS.tags} 个。`,
+      },
+      sourceUrl: { type: 'string', description: 'publish 时社区页面的源码地址，https 链接。' },
       communityExtensionId: { type: 'string', description: 'install 的社区扩展编号。' },
       releaseId: { type: 'string', description: 'withdraw 的发布编号。' },
       layer: {
@@ -310,13 +326,16 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
           task: z.string().optional(),
           version: z.string().optional(),
           name: z.string().trim().min(1).max(80).optional(),
-          description: z.string().trim().max(500).optional(),
+          description: z.string().trim().max(COMMUNITY_LISTING_LIMITS.description).optional(),
           slug: z.string().optional(),
           copyData: z.boolean().optional(),
           source: z.string().optional(),
           mode: z.enum(['overwrite', 'replace']).optional(),
           includeConfig: z.boolean().optional(),
-          notes: z.string().max(2000).optional(),
+          notes: z.string().trim().max(2000).optional(),
+          summary: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+          sourceUrl: z.string().optional(),
           communityExtensionId: z.string().optional(),
           releaseId: z.string().optional(),
           layer: z.enum(['agent', 'host']).optional(),
@@ -343,6 +362,12 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
         if (label === undefined) throw new Error('请写上版本，例如 v2。')
         return port.revisionByLabel(extensionId, label)
       }
+      const extensionDescription = () => {
+        if (input.description !== undefined && input.description.length > 500) {
+          throw new Error('扩展说明最多 500 字；社区页面的详细介绍在 publish 时写。')
+        }
+        return input.description === undefined ? {} : { description: input.description }
+      }
       let action: ExtensionAction
       switch (input.action) {
         case 'save': {
@@ -351,7 +376,7 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
             kind: 'save',
             taskId: task.id,
             ...(input.name === undefined ? {} : { name: input.name }),
-            ...(input.description === undefined ? {} : { description: input.description }),
+            ...extensionDescription(),
             ...(input.slug === undefined ? {} : { slug: input.slug }),
           }
           break
@@ -364,7 +389,7 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
             kind: 'edit-info',
             extensionId: extension().id,
             ...(input.name === undefined ? {} : { name: input.name }),
-            ...(input.description === undefined ? {} : { description: input.description }),
+            ...extensionDescription(),
           }
           break
         case 'enable':
@@ -439,9 +464,25 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
           }
           break
         }
-        case 'publish':
-          action = { kind: 'community-publish', extensionId: extension().id, notes: input.notes ?? '' }
+        case 'publish': {
+          if (input.notes === undefined || input.notes === '') {
+            throw new Error('publish 要在 notes 里写这次更新了什么，社区页面和管理员都会看到。')
+          }
+          const listing = CommunityListingInputSchema.safeParse({
+            ...(input.summary === undefined ? {} : { summary: input.summary }),
+            ...(input.description === undefined ? {} : { description: input.description }),
+            ...(input.tags === undefined ? {} : { tags: input.tags }),
+            ...(input.sourceUrl === undefined ? {} : { sourceUrl: input.sourceUrl }),
+          })
+          if (!listing.success) throw new Error(listingProblem(listing.error.issues[0]?.path[0]))
+          action = {
+            kind: 'community-publish',
+            extensionId: extension().id,
+            notes: input.notes,
+            ...(Object.keys(listing.data).length === 0 ? {} : { listing: listing.data }),
+          }
           break
+        }
         case 'update':
           action = { kind: 'community-update', extensionId: extension().id }
           break
@@ -462,10 +503,26 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
           action = { kind: 'community-withdraw', releaseId: input.releaseId }
           break
       }
-      return json(await port.act(context.agentId, context.channelId, action, requester))
+      const acting = action
+      return json(
+        acting.kind.startsWith('community-')
+          ? await forAgent(() => port.act(context.agentId, context.channelId, acting, requester))
+          : await port.act(context.agentId, context.channelId, acting, requester),
+      )
     },
   }),
 ]
+
+/** Which listing field is out of bounds, in the agent's words. */
+const LISTING_PROBLEMS: Readonly<Record<string, string>> = {
+  summary: `summary 是一句话简介，最多 ${COMMUNITY_LISTING_LIMITS.summary} 字。`,
+  description: `description 最多 ${COMMUNITY_LISTING_LIMITS.description} 字。`,
+  tags: `tags 最多 ${COMMUNITY_LISTING_LIMITS.tags} 个，每个 1 到 ${COMMUNITY_LISTING_LIMITS.tag} 字。`,
+  sourceUrl: 'sourceUrl 要写完整的 https 链接。',
+}
+
+const listingProblem = (field: PropertyKey | undefined): string =>
+  (typeof field === 'string' ? LISTING_PROBLEMS[field] : undefined) ?? '社区页面信息的格式不对。'
 
 /** Starting a revise task from a saved version and continuing a task left in another conversation. */
 export const extensionDevelopmentTools = (context: ExtensionAgentToolContext) => [

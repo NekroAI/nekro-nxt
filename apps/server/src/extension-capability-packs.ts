@@ -1,10 +1,13 @@
 import type { AgentCapabilityGrants } from '@nekro-nxt/core'
 import type { CapabilityPack } from './capability-packs.js'
+import { COMMUNITY_BROWSE_TOOLS } from './community-agent-tools.js'
 
 /** Seeing and changing saved extensions; with manual autonomy the agent can only look. */
 export const EXTENSION_MANAGEMENT_PACK = '扩展管理'
 /** Writing and trying extension code. */
 export const EXTENSION_DEVELOPMENT_PACK = '扩展开发'
+/** Browsing extensions on the NekroNXT community. */
+export const COMMUNITY_PACK = '社区'
 
 /** Read-only management tools, the only ones an agent with manual autonomy gets. */
 export const EXTENSION_VIEW_TOOLS = ['nekro_nxt_extension_list', 'nekro_nxt_extension_inspect'] as const
@@ -94,3 +97,21 @@ export const extensionCapabilityPacks = (
       : []),
   ]
 }
+
+/**
+ * Browsing the community is open to every agent; installing, updating and publishing stay with 「扩展管理」, so the
+ * notes point there, or to an administrator when the agent may not act.
+ */
+export const communityCapabilityPack = (
+  capabilities: Pick<AgentCapabilityGrants, 'extensionAutonomy'>,
+): CapabilityPack => ({
+  name: COMMUNITY_PACK,
+  purpose: '浏览和搜索社区扩展，查看版本、权限和审查结论。',
+  tools: [...COMMUNITY_BROWSE_TOOLS],
+  instructions: [
+    capabilities.extensionAutonomy === 'manual'
+      ? '你的扩展自主权是「手动」，找到合适的扩展后，请管理员在「社区」页面安装。'
+      : `要安装、更新或发布时，加载「${EXTENSION_MANAGEMENT_PACK}」用 nekro_nxt_extension_action：install 要写 communityExtensionId 和 reason，安装总要管理员确认。`,
+    '向别人推荐前看一眼权限和审查结论，有「高风险」权限或审查没通过的要说出来。社区连不上时如实说，过一会儿再试。',
+  ].join('\n'),
+})

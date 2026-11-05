@@ -14,6 +14,8 @@ import {
   type LoadStateAgent,
 } from '../src/capability-packs.ts'
 import {
+  COMMUNITY_PACK,
+  communityCapabilityPack,
   EXTENSION_DEVELOPMENT_PACK,
   EXTENSION_MANAGEMENT_PACK,
   extensionCapabilityPacks,
@@ -221,6 +223,7 @@ describe('session capability packs', () => {
     const packs = sessionCapabilityPacks(grants)
     expect(packs.map((pack) => pack.name)).toEqual([
       EXTENSION_MANAGEMENT_PACK,
+      COMMUNITY_PACK,
       SCHEDULED_TASKS_PACK,
       FILE_MANAGEMENT_PACK,
     ])
@@ -249,5 +252,22 @@ describe('session capability packs', () => {
     expect(names({ fileTools: false })).not.toContain(FILE_MANAGEMENT_PACK)
     // With commands the shell does all of this, and tools of the same names belong to it.
     expect(names({ developmentShell: true })).not.toContain(FILE_MANAGEMENT_PACK)
+  })
+})
+
+describe('community capability pack', () => {
+  it('holds the two browsing tools and points installs to the right place', () => {
+    const pack = communityCapabilityPack({ extensionAutonomy: 'confirm' })
+    expect(pack).toMatchObject({
+      name: COMMUNITY_PACK,
+      purpose: '浏览和搜索社区扩展，查看版本、权限和审查结论。',
+      tools: ['nekro_nxt_community_search', 'nekro_nxt_community_extension'],
+    })
+    expect(pack.instructions).toContain('「扩展管理」')
+    expect(pack.instructions?.length).toBeLessThanOrEqual(800)
+    // A manual agent cannot install; the administrator does it on the community page.
+    const manual = communityCapabilityPack({ extensionAutonomy: 'manual' }).instructions
+    expect(manual).toContain('请管理员在「社区」页面安装')
+    expect(manual).not.toContain('nekro_nxt_extension_action')
   })
 })

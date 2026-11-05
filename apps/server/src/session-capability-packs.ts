@@ -1,6 +1,6 @@
 import type { AgentCapabilityGrants } from '@nekro-nxt/core'
 import type { CapabilityPack } from './capability-packs.js'
-import { extensionCapabilityPacks } from './extension-capability-packs.js'
+import { communityCapabilityPack, extensionCapabilityPacks } from './extension-capability-packs.js'
 
 /** Reminders and recurring jobs of the current channel. */
 export const SCHEDULED_TASKS_PACK = '定时任务'
@@ -45,6 +45,7 @@ export const sessionCapabilityPacks = (
   >,
 ): CapabilityPack[] => [
   ...extensionCapabilityPacks(capabilities),
+  communityCapabilityPack(capabilities),
   ...(capabilities.scheduledTasks
     ? [
         {

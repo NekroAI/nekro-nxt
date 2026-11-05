@@ -25,6 +25,7 @@ import { candidateConfigFields, testCredentialBinding, type CandidateConfigField
 import { commandEnvName, namedCredentialId, namedCredentialReference } from '../credentials-library.js'
 import { modelProviderAccessList } from '../host-routes-credentials.js'
 import type { NekroRuntime } from '../bootstrap.js'
+import { COMMUNITY_SIGNED_OUT_FOR_AGENT, communityBrowser, type CommunityBrowsePort } from '../community-agent-tools.js'
 import { redactLogText } from '../logs/redact.js'
 import type { ExtensionAction } from './actions.js'
 import { extensionVersions } from './versions.js'
@@ -141,6 +142,8 @@ export interface ExtensionGovernanceToolPort {
       readonly usage: CredentialUsage
     },
   ): JsonValue
+  /** The community catalog as the agent browses it, with what this machine has installed. */
+  community(): CommunityBrowsePort
 }
 
 type ConfigLayer = CandidateConfigField['layer']
@@ -249,6 +252,17 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
 
   constructor(runtime: NekroRuntime) {
     this.#runtime = runtime
+  }
+
+  community(): CommunityBrowsePort {
+    const runtime = this.#runtime
+    return communityBrowser(runtime.community, {
+      installed: (extensionId) => runtime.repository.getExtension(extensionId) !== undefined,
+      updatable: (extensionId) => {
+        const item = runtime.communitySync.cachedItem(extensionId)
+        return item !== undefined && !item.dismissed && item.status === 'remote-ahead'
+      },
+    })
   }
 
   runsWithoutAsking(agentId: AgentId): boolean {
@@ -425,6 +439,10 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           ? runtime.extensionActions.enablementMissing(action.agentId, action.extensionId, action.values)
           : undefined
       if (missing !== undefined) throw new Error(missing)
+    }
+    // Publishing needs this machine signed in; say so before an administrator is asked to approve.
+    if (action.kind === 'community-publish' && !runtime.community.signedIn()) {
+      throw new Error(COMMUNITY_SIGNED_OUT_FOR_AGENT)
     }
     if (action.kind === 'community-install' && action.release === undefined) {
       // The request names the exact release and what it asks for; the approval installs that one and nothing newer.
