@@ -1544,6 +1544,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
           'cordis_inspect_self',
           'cordis_define',
           'nekro_nxt_extension_define',
+          'nekro_nxt_extension_reference',
           'cordis_run',
           'cordis_stop',
           'cordis_undefine',
@@ -1592,10 +1593,10 @@ describe('DSH Host and internal Channel vertical slice', () => {
       expect(extensionSkill.provider).toBe('nekro-nxt-runtime')
       expect(extensionSkill.content).toContain('宿主是 NekroNXT')
       expect(extensionSkill.content).toContain('nekro_nxt_extension_define')
-      expect(extensionSkill.content).toContain('nxt-host-ui-design-v2')
-      expect(extensionSkill.content).toContain('页面背景、安全边距与根滚动')
-      expect(extensionSkill.content).toContain('ctx.toolViews.register(')
-      expect(extensionSkill.content).not.toContain('actions: React.createElement(\n            Button')
+      // The skill is the overview; interfaces and examples are read by topic.
+      expect(extensionSkill.content).toContain('nekro_nxt_extension_reference')
+      expect(extensionSkill.content).toContain('`ui` 面板、工具视图与界面组件')
+      expect(extensionSkill.content).not.toContain('ctx.toolViews.register(')
       await expect(host.loadNekroNxtExtensionSkill(deniedSession)).rejects.toThrow('not granted')
 
       expect(() =>

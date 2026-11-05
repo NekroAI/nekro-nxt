@@ -4,6 +4,10 @@
 
 npm 发布说明见 [PUBLISH-README](PUBLISH-README.md)。运行时能力由宿主在本机实例与智能体挂载中注入；新增 SDK 面必须有已实现 Extension 消费者、兼容版本和卸载测试。
 
+## 开发参考
+
+`NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE` 是给智能体和作者看的开发参考，按主题分节（`NEKRO_NXT_EXTENSION_REFERENCE_TOPICS`：工具与 RPC、界面、页面、适配器、配置与凭据、宿主能力的几组接口、钩子与定时任务、聊天命令、数据迁移、名称与发布）。`renderNekroNxtExtensionDevelopmentOverview()` 是开发技能的正文：边界、试运行环境、修复规则和主题列表；`renderNekroNxtExtensionReferenceTopic(id)` 返回一个主题，宿主的 `nekro_nxt_extension_reference` 工具按需读取；`renderNekroNxtExtensionDevelopmentSkill()` 仍返回全文。概要不超过 4000 字、每个主题不超过 8000 字，参考里的每条规则、接口和示例都要落在某个主题里，由 `tests/authoring-reference.spec.ts` 守住；新增内容时放进对应主题的分组。
+
 ## Manifest V7
 
 扩展只有 Manifest V7（`schemaVersion: 7`），V6 及更早的格式不再读取，导入时提示“这是旧格式的扩展”。一个扩展 = 一个**本机实例** + 每个启用它的智能体一份**智能体挂载**，不再声明 `scope`；设计取舍见[扩展形态统一](../../docs/decisions/accepted/2026-10-09-扩展形态统一.md)。

@@ -1698,6 +1698,150 @@ return {
   }
 }`
 
+/** Host service lines, grouped by the reference topic that carries them. */
+const HOST_SERVICES_BY_TOPIC = {
+  tools: [
+    "工具的 output.render 可以返回图片块 { type: 'image', assetId, label, detail }（资源库或当前频道的 Asset）：宿主把图片交给有视觉能力的模型查看，当前上下文已经看得到的图不重复附上，单次最多 6 张；模型没有视觉能力时只给文字。图片默认按低细节交给模型，够看清画面内容；要模型看清文字、细节或拼好的宫格图时写 detail: 'high'（长边最多 2048 像素，更耗用量），需要 toolImages: { highDetail: true } 和 requires.sdk 至少为 14，没有声明时按低细节展示。execute 的返回值不受影响，编排模式的程序照常拿到它。",
+    '长任务：defineTool 可以写 timeoutSeconds（1–900），不写时没有单独的时限。execute(args, { signal, progress }) 的第二个参数里，signal 在调用被取消或超时时中止，把它传给 files、assets 的调用（{ signal }），自己的耗时循环也要检查它；progress({ text, fraction }) 汇报进度（一句话，fraction 是 0–1 的完成比例），频道时间线的工具状态上显示最新一条，每秒最多更新两次。timeoutSeconds 需要 requires.sdk 至少为 14。',
+  ],
+  ui: [
+    'Client 端 host.upload(files, { onProgress }) 把用户选择的图片或 zip 上传进扩展资源库，返回 { added, skipped }；host.assetUrl(assetId, { thumbnail }) 返回资源库图片的地址，用于 <img>。需要 permissions.host.assets.library。',
+  ],
+  config: [
+    'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
+    "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
+  ],
+  host: [
+    "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）与 read/stat、nxt.image.info、nxt.files、nxt.media、nxt.commands、nxt.speech、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library?, read? }, files?, media?, commands?, speech?, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
+    "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。整个响应读进内存，最多 32 MiB，适合接口、网页和图片；视频、音频、压缩包这类大文件用 files.fromUrl 下载，超出时报错也会这样提示。",
+    'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享，也是页面 RPC 用的本机分区）。单值不超过 256 KiB，默认配额 8 MiB。',
+    'logger 与 ctx.logger 提供 debug/info/warn/error(message, details?)，来源由宿主绑定；需要 requires.sdk 至少为 9，动态创造会自动声明。记录状态、数量和错误即可，不记录凭据、聊天正文或模型请求。Debug 在用户开启临时调试时保存。',
+  ],
+  media: [
+    'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。create 最多 8 MiB；fromUrl 直接下载成 Asset，最多 128 MiB，也受扩展下载上限限制；下载后还要处理的视频、音频用 files.fromUrl。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
+    'ctx.nxt.assets.keep(assetId) / release(assetId) / attach(assetId)：扩展资源库。keep 把当前频道看得到的 Asset 收进本扩展的资源库，之后可以在别的频道使用（同一张图重复 keep 不变，超出配额报错）；release 移出资源库；attach 让资源库里的 Asset 在当前频道可以发送并返回 assetId。create(input, { library: true }) 生成后直接存进资源库。需要 assets: { library: { quotaBytes? } }（默认 2 GiB），本机层与挂载两层共用同一个资源库。本机层用 nxt.assets.list({ limit, after }) / get(assetId) / release(assetId) 管理。',
+    'ctx.nxt.assets.read(assetId, { offset, length }) → { base64, eof, byteSize, mediaType } / stat(assetId) → { byteSize, mediaType }：读取当前频道看得到的或资源库中的文件内容，用来解析 PDF、表格、压缩包或处理音视频。每次最多读 4 MiB，从 offset 0 开始，每次加上读到的字节数，直到 eof。需要 assets: { read: true } 和 requires.sdk 至少为 14；本机层只能读资源库中的文件。',
+    'ctx.nxt.files / nxt.files：工作文件，用文件编号 fileId 在服务之间传递数据，不接触本机路径。write({ base64 | text, name, mediaType }) → { fileId, byteSize, … }（单个最多 128 MiB）；read(fileId, { offset, length }) → { base64, eof }（每次最多 4 MiB）；stat、delete；fromAsset(assetId) 把频道或资源库里的文件变成 fileId，不复制内容，可读范围与 assets.read 相同；toAsset(fileId) 存为当前频道的 Asset（需要 assets.write），toAsset(fileId, { library: true }) 存进资源库（需要 assets.library，本机层总是存进资源库）。fromUrl(url, { method, headers, body, name, signal }) 通过受控网络把视频、音频、压缩包等大文件直接下载成临时工作文件，不读进内存，返回 { fileId, byteSize, mediaType, … }，可以直接交给 media、speech 或 toAsset；还需要 network 和 requires.sdk 至少为 15（动态创造会自动声明），状态码不是 2xx 时报错。单次下载最多为「设置 → 存储 → 扩展下载上限」（默认 1 GB，管理员可以在 8 MB 到 5 GB 之间调整），也不能超过临时文件配额的剩余空间；要下载 1 GB 以上的文件时，同时调大 files.tempQuotaBytes（默认 1 GiB）。超出时报错写明上限和原因，工具要把这句话原样返回，由智能体转告用户：上限不够时请管理员到该设置调高，配额不够时调大 files.tempQuotaBytes 或删除旧文件；不要改成只下载开头一段，很多视频缺了结尾解不出画面。临时文件 24 小时后删除；cache.put(key, fileId) 把文件留作缓存，不再过期，cache.get(key) 取回，cache.delete(key) 删除，同一个键再 put 会替换旧文件，缓存满了先删最久没用的。fileId 只在本扩展内有效，本机层和智能体挂载共用。需要 files: { tempQuotaBytes?, cacheQuotaBytes? }（默认各 1 GiB，最多 16 GiB）和 requires.sdk 至少为 14；动态试运行的文件单独存放，各最多 64 MiB。',
+    "ctx.nxt.media / nxt.media：处理音频、视频和图片，用「设置 → 附加功能」里的媒体处理（ffmpeg）。输入写 { assetId }（当前频道看得到的或资源库中的文件，本机层只能用资源库）或 { fileId }。probe(input) → { durationSeconds, format, streams: [{ type, codec, width, height, fps, sampleRate, channels }] }；frames(input, { at: [秒, …] 或 { intervalSeconds | count, from, to }, width, height, format: 'jpeg' | 'png' | 'rgb24' | 'gray8', quality }) → [{ fileId, time, width, height }]，rgb24、gray8 是原始像素，适合检测镜头切换，单次最多 1000 帧；audio(input, { from, to, sampleRate, channels, format: 'wav' | 'pcm_s16le' | 'mp3' | 'ogg' | 'amr' | 'silk' }) → { fileId, byteSize, format, sampleRate, channels }；convert(input, { format, maxWidth, maxHeight }) 在 png、jpeg、webp、gif、mp3、ogg、wav、amr、silk、mp4、webm 之间转换 → { fileId, byteSize, format }。输出是临时工作文件，计入临时文件配额，用 files.read 读取、files.toAsset 发送，或交给下一个服务。都接受 { signal }。当前 ffmpeg 不能生成某种格式时报错写明是哪一种。需要 media: true、files 和 requires.sdk 至少为 14。媒体处理没有安装时报错写明请管理员到「设置 → 附加功能」安装；保存验证时返回固定的占位结果（1×1 的画面、短暂的静音），不运行 ffmpeg。",
+    "ctx.nxt.commands / nxt.commands：按命令档案运行附加功能提供的程序，目前有 ffmpeg 和 ffprobe，nxt.media 做不到的处理才用它。run(profile, args, { inputs: { 键: { assetId } | { fileId } }, timeoutSeconds, signal }) → { exitCode, stdout, stderr, truncated, outputs: [{ name, fileId, byteSize }] }。args 里的文字原样传入，输入文件写 { input: 键 }，输出文件写 { output: 'cover.png' }（序列写 'frame-%03d.jpg'）。每次在单独的临时目录里运行，不能联网，只能读写交给它的文件；档案没有列出的选项、网址、绝对路径和会自己打开文件的滤镜会被拒绝，报错写明是哪一个。profiles() 列出声明的档案和现在能否使用。需要 commands: { profiles: ['ffmpeg', 'ffprobe'] }（启用时用户逐项确认）、files 和 requires.sdk 至少为 14。提供程序的附加功能没有安装时报错写明要安装哪一项；保存验证时只检查参数，不运行程序，返回退出码 0 和空的输出文件。",
+    "ctx.nxt.speech / nxt.speech：语音转文字，用「设置 → 附加功能」里选择的语音识别（本地模型或云端供应商）。transcribe({ assetId } | { fileId }, { language: 'auto' | 'zh' | 'en' | 'ja' | 'ko' | 'yue', signal }) → { text, language, segments: [{ start, end, text }], durationSeconds, provider: { id, title }, model }；结果写明实际使用的识别方式和模型，不要假设是哪一种。SILK、AMR、mp3 等格式先由媒体处理转换；视频先用 media.audio 取出音轨。同一个频道文件按内容只转写一次。需要 speech: { maxCallsPerMinute }（1–60，默认 10，超出时报错）和 requires.sdk 至少为 14。语音识别不可用时报错写明请管理员到「设置 → 附加功能」安装或配置；保存验证时返回固定文字。",
+    'ctx.nxt.image.info(assetId) → { mediaType, width, height, frames, byteSize, dhash }：读取当前频道看得到的或资源库中的图片尺寸、帧数和差异哈希（dhash 是 16 位十六进制，几乎相同的图只差几位）；本机层 nxt.image.info 只能读资源库中的图。需要 assets.library。',
+    "ctx.nxt.render.svg(svg, { scale, format: 'png' | 'jpeg' | 'webp', background }) → { base64, mediaType, width, height }：用宿主系统字体把 SVG 渲染成图片，无需声明能力；把结果交给 assets.create({ base64, mediaType, name }) 再由智能体发送。文字用 font-family=\"sans-serif\"；SVG 只能引用 #片段或 data: 内联资源，网络图片先用 http.fetch 取回再以 data: 内联。适合卡片、榜单、签到图、运势图等。",
+    "ctx.nxt.parse.html(html, { url, mode: 'article' | 'full', maxChars }) → { title, excerpt, markdown, truncated, links }：把网页转成 Markdown，默认只保留正文，传 url 时链接变为绝对地址；parse.feed(xml, { url }) → { kind, title, link, items: [{ id, title, link, published, author, summary }] }：统一解析 RSS 2.0、RSS 1.0 与 Atom，id 可用于去重。两者都无需声明能力，取回网页或订阅源仍需要 network。",
+  ],
+  context: [
+    'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。',
+    'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
+    'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
+    "ctx.nxt.index / nxt.index：宿主维护的检索索引。在 index: { collections: [{ name, fields: [{ name, weight }], filters }] } 中声明集合（最多 4 个文本字段、4 个过滤字段；两层都声明时定义必须一致）。upsert(collection, id, { fields, filters }) / delete(collection, id) / count(collection) / query(collection, text, { limit, filter: [[{ field, value }]] }) → { hits: [{ id, score }], mode, degraded? }；filter 的每组都要满足，组内满足一个即可。宿主按关键词检索，管理员在「设置 → 附加功能」安装语义检索后自动加入语义检索（mode: 'hybrid'），扩展不需要处理向量。",
+    "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
+    "nxt.models.list() → [{ ref, providerName, name, vision, … }] / nxt.models.complete({ model: ref, system, messages: [{ role: 'user', content: [{ type: 'text', text } | { type: 'image', assetId }] }], maxOutputTokens }) → { text }：本机层调用用户在「设置 → 模型」里配置好的模型，适合页面发起的批量任务（例如给导入的图片写描述），由页面让用户选择模型，不要写死；图片必须在扩展资源库中。只能在 permissions.host 声明 models: { maxCallsPerMinute, maxOutputTokens }。",
+    'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。对拿不到真实身份的机器人账号执行动作会明确失败。platform.selfPlatformUserId() 返回机器人账号的平台 ID（拿不到时为 undefined），只给声明了该适配器 raw 的扩展。',
+    "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
+  ],
+  hooks: [
+    "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；message 含 text、images（[{ assetId, sticker }]，sticker 是平台的表情包标记，只作参考，拖进来的表情包和不支持标记的平台都是 false）、mentionsAgent、wouldTrigger；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
+    "harness.onOutbound((message, nxt) => result)：在 factory 阶段注册唯一的出站处理函数，处理智能体用 send_channel_message 发出的消息（管理员消息、命令回复不经过这里）。需要 requires.sdk 至少为 13，并声明 outbound: { read?: true, transform?: true, cancel?: true, timeoutMs, onTimeout?: 'send' | 'cancel' }。声明了 transform 或 cancel 时，发出前收到 message.stage === 'draft' 的草稿（channel、parts、text、replyTo、triggeredBy），多个扩展按用户在智能体扩展列表里排的顺序依次处理，后一个看到前一个的结果；返回 { parts } 替换整条内容（需要 transform，素材必须是当前频道能用的，例如自己用 nxt.assets.create 生成的语音），{ followUps: [{ parts }] } 在后面追加消息（需要 transform，追加的不再经过出站处理），{ cancel: { reason } } 取消这条（需要 cancel，reason 会原样告诉智能体，它可以改了再发），不返回则原样发出。声明了 read 时，投递有结果后收到一次 message.stage === 'delivered'（最终 parts、logicalMessageId、deliveryState、platformMessageIds、追加消息带 followUp: true），返回值被忽略，也不会拖慢发送。超时或抛错按 onTimeout 处理，默认照常发出。nxt 绑定到消息所在频道。",
+    'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
+    'harness.onJob((job, nxt) => ({ wake, note }))：声明了 jobs 的扩展可在 factory 阶段注册唯一的到期处理函数，本扩展的任务到期时先运行它（job 含 jobId、label、payload、scheduledAt、declaredId、channel），nxt 绑定到任务所在频道；返回 { wake: false } 则这次不唤醒智能体（例如订阅检查没有新内容），返回 note 会随到期事件交给智能体（例如新文章列表，最多 2000 字）。15 秒内未返回或抛错时按默认唤醒。轮询类需求一定要用它，避免每次检查都消耗一次模型调用。',
+  ],
+} satisfies Partial<Record<NekroNxtExtensionReferenceTopicId, readonly string[]>>
+
+/** Host capability rules, grouped by the reference topic that carries them. */
+const HOST_RULES_BY_TOPIC = {
+  tools: [
+    '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载：Host 源码顶层（factory）只在本机执行一次，在这里注册 harness.handle（RPC）、harness.registerAdapter、harness.onInbound、harness.onOutbound、harness.onJob；return 的插件挂载到每个智能体，在它的 apply 里注册工具。一个扩展可以同时提供工具、页面、面板、适配器，不需要拆成多个扩展。',
+    '工具 parameters 中类型为 object 的参数必须显式写 additionalProperties: true 或 false；尽量用扁平的 string/number/boolean 参数。',
+    "工具的 output.schema 必须与 execute 的真实返回一致：返回对象就声明 { type: 'json' } 或完整的 object Schema，返回字符串才声明 { type: 'string' }；不确定时用 { type: 'json' }。",
+    '缺少凭据、网络失败或外部服务报错时，工具应返回 { ok: false, message } 这样可读的结果，而不是抛出异常；保存验证会真实调用工具，凭据此时为空。',
+    'verification 样例必须没有副作用：验证会真实发出网络请求，样例应是查询而不是提交、发送或付款。',
+    '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
+  ],
+  ui: [
+    '面板调用 host.call 时传入 { anchor }（组件参数里的 anchor），RPC 的第二个参数 caller 会带上锚定的智能体、频道或连接；页面调用不需要 anchor。',
+  ],
+  config: [
+    '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。config.agent 的必填项可以不给默认值，启用时在 enable 的 values 里提供。',
+    "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }，提示词、模板这类长文本加 role: 'textarea' 显示成多行输入框，如 { type: 'string', meta: { description: '回复模板', role: 'textarea' } }。不要写 properties、required 数组或 additionalProperties。",
+    'meta.agentWritable: false 表示这一项只能由管理员在后台修改，只用于计费、内容审核这类开关。动态创造的扩展不能使用这个标记；修改导入或社区安装的扩展时，带这个标记的项原样保留。',
+    '试运行时配置取默认值。非凭据字段可以在 nekro_nxt_extension_define 或 nekro_nxt_extension_continue 的 testConfig 里填测试值；凭据字段写 { "credential": "凭据名称" }，绑定一个对你开放的凭据（nekro_nxt_credential_list 查看，需要管理员同意的会自动发出请求）。只绑定说明和域名与用途相符的凭据，不要拿别的服务的凭据临时顶替。没有合适的凭据时用 nekro_nxt_credential_request 请管理员添加，添加后你会被唤醒；不要让人把凭据发在聊天里。内网服务地址要请用户在创造任务页的「测试配置」中填写。用户填的值优先；测试配置只在本任务的试运行中可见，保存时的验证没有凭据。正式配置在 enable 时用 values、credentials 提供，之后用 configure 修改。',
+  ],
+  host: [
+    'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网在智能体挂载里声明 permissions.agent.network，在 factory 顶层声明 permissions.host.network，不要混用。',
+    '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
+  ],
+  context: [
+    'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().latestInbound.sender、history 消息的 sender 或入站钩子的 message.sender；不要用平台账号或昵称作为存储键。',
+    'channel.kind 取值为 internal（内置频道）、direct（私聊）或 group（群聊）；平台动作通常只在 direct 或 group 中可用，先用 platform.actions() 确认。',
+    'history.list 每次返回 { messages, next }，messages 按时间从新到旧；要继续向前翻页，把 next 原样作为 before 传入。',
+    '静态说明只能是固定字符串，只在版本或配置切换时变化；会变化的状态放进 dynamic，宿主每轮开始渲染一次，内容不变就不会追加新的上下文。',
+    '动态上下文禁止写入时间戳、随机数和精确计数，写“好感度：友好”这类粗粒度描述；保存时宿主会用相同输入渲染两次，结果不同则拒绝保存。',
+    'render 只能读存储和调用上下文，不能联网或调用模型；大块内容改为提供查询工具，让智能体按需调用。',
+    '动态上下文会以「[扩展：显示名]」小节出现在模型看到的运行时上下文中；静态说明以同样的标题出现在系统提示词里。',
+  ],
+  hooks: [
+    '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
+    '出站处理适合这些需求：记录实际发了什么（统计话题、记下发过的表情包）用 read；翻译、Markdown 转纯文本、敏感词打码、统一署名这类改写用 transform 返回 parts；文字转语音、按语气补一张表情包、把公式渲染成图片，可以替换内容，也可以用 followUps 追加；同步到 Webhook 或别的系统在 delivered 阶段做；防泄密、静默时段这类把关用 cancel，并在 reason 里写清为什么、怎么改。草稿处理会让每条消息等它返回，所以要快：本地判断优先，需要模型或网络时控制 timeoutMs。只在发出后记录、不改内容的需求只声明 read，不参与发送前的处理。',
+    '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息；定时检查类需求在 onJob 里先检查，没有新内容就返回 { wake: false }。',
+  ],
+  commands: [
+    '显式斜杠命令使用 SDK 9 的 command Contribution 和 factory 级 harness.registerCommand(definition, handler)：动态创造把命令定义放进 nekro_nxt_extension_define.commands，保存验证会用宿主按参数定义生成的样例真实执行一次，处理器不能有副作用；源码包导入时同样执行隔离验证。命令名不能用 ext、admin 等内置命令名。不能把命令放进 Session apply 或用 onInbound 模拟。参数来自 context.arguments，媒体仅引用当前频道授权的 assetId，监听 context.signal 清理；耗时命令可用 context.reply 先发过程回复（最多 5 条），返回值是终态结果；默认控制台执行的结果不发往外部频道，需要时在定义里把 consoleReply 设为 channel；处理器默认 60 秒超时（timeoutSeconds 可声明，最长 600），超时会通过 signal 取消。模型不直接调用聊天命令。',
+  ],
+} satisfies Partial<Record<NekroNxtExtensionReferenceTopicId, readonly string[]>>
+
+/** Governance rules, grouped by the reference topic that carries them. */
+const GOVERNANCE_RULES_BY_TOPIC = {
+  migration: [
+    '存储的数据有格式版本：Manifest 的 dataVersion（整数，默认 1，需要 requires.sdk 至少 10）。只要新版本读不懂旧数据（改了键名、拆分合并字段、换了结构），就把 dataVersion 加一，并在 factory 里用 harness.migrateData(async ({ from, to, storage }) => { ... }) 注册迁移：storage.list 分页读出全部数据，set/delete 改写，owner 与 partition 原样保留。只增加新键、旧数据照样能读时不要提升 dataVersion。',
+    '迁移要能重复执行：处理前先判断这条数据是否已经是新格式。宿主切换版本前会给数据留一份快照，迁移抛错就恢复快照并退回原版本；切回 dataVersion 更低的版本会被拒绝，除非用户在后台恢复切换前的快照。保存验证会用空数据跑一次迁移。',
+    '数据也可以在扩展之间迁移（例如把旧扩展的表情包库迁到它的分支）：migrate_data 的 overwrite 保留目标已有数据、同名以来源为准，replace 先清空目标再写入。它总要管理员确认，执行前宿主会算出差异并留快照。',
+  ],
+  publishing: [
+    '保存后的扩展有一条版本谱系：每次保存都是不可变的新版本，记住它从哪个版本改来。版本号就是谱系里的代数（v1、v2、v3），同一代保存了两次写作 v3·2。社区发布、本机修改都在同一条谱系上，所以能判断本机和社区谁更新、有没有各自改过。',
+    '修改已保存的扩展一定先调用 nekro_nxt_extension_revise 开一个修改任务，它返回基线版本的完整定义；在这个定义上只改需要改的部分，其余照原样提交。不要凭记忆重写整个扩展，也不要另建一个同名的新扩展。一个扩展同时只有一个进行中的修改任务。',
+    '修改一个已经给你启用的扩展时，不用先停用它：修改任务的候选试运行时，会在这次对话里暂时接替已启用版本的同名工具；候选停止或对话结束后已启用的版本自动回来。保存后用 switch 切到新版本（或在自主档下由你切换），其他对话从下一次起用新版本。保存过的候选在它保存成的扩展启用或切换生效时自动停下，之后调用的就是启用的版本和它的正式配置，不用再 cordis_stop。',
+    "revise 返回的定义带 codeFormat 时原样带上：codeFormat: 'module' 表示源码是带 import/export 的模块（从社区或源码包导入的扩展），宿主会转换后运行；没有这个字段就是普通的 factory 函数体。",
+    '合并两个版本（例如本机改过、社区又出了新版）时，把一个作为 revise 的 version、另一个作为 reference，在基线上把对方的改动合进来，保存后谱系会接在基线之后。',
+    '想保留原扩展、另做一个不同走向的版本时，用 nekro_nxt_extension_action 的 branch：它会成为一个新扩展，记录分支自哪个扩展的哪个版本，可以选择是否复制数据，分支还可以继续分支。只是修 bug 或加功能就修改原扩展，不要开分支。',
+    '你的扩展自主权由管理员在智能体设置里决定：manual 只能开发和试运行，保存、启用等都由用户在后台操作；confirm 时每个操作都在频道里发出请求，管理员发送 /ext approve 编号 同意；autonomous 时只影响你自己的普通风险操作直接完成并在频道留下记录，需要提升级权限或会影响其他智能体的操作仍要管理员确认。用 nekro_nxt_extension_list 查看你现在是哪一档。',
+    'confirm 和 autonomous 可以发现和管理本机已保存的扩展，包括其他智能体创建的扩展。用 nekro_nxt_extension_list 获取编号、版本和启用前提，enable / disable 只给你自己启用或停用。共享代码不共享其他智能体的配置、凭据和私有数据；缺少本机配置时请管理员先到工坊的扩展详情填写，不要让人把凭据发在聊天里。复制扩展数据也要管理员确认。',
+    '改配置用 nekro_nxt_extension_action 的 configure：layer 为 agent（你自己的）或 host（本机共用），values 写字段值，凭据字段用 credentials 按名称绑定，reason 写原因。启用时可以直接带 values 和 credentials。改动在这次回复结束后生效，同一次回复里的多次修改合并成一次；扩展用新配置启动失败时会退回原来的配置并通知你。每次修改都留下配置版本，用 revert_config 恢复到 inspect 里 configHistory 的某个版本。',
+    '能不能直接改取决于字段级别和谁提的：普通字段按扩展自主权处理；访问地址字段、本机配置和需要同意的凭据要管理员确认；admin 级字段只能由管理员在后台修改。默认只接受管理员提出的配置修改，设成所有人时，其他人只能让你改自己的普通字段。inspect 的 authority.configure 列出了现在每种修改的结果。',
+    '扩展用不了、报错，或者用户问到它的配置时，先用 nekro_nxt_extension_inspect 查看配置项和当前值、配置问题、启用前提、最近的错误日志，以及各项操作你能不能直接做，查清原因再回复。确实要别人处理时，说清楚是哪一项、去哪里填。',
+    '无论哪一档，新增高风险权限（无限制联网、平台原始接口、可隐藏消息的入站钩子等）只能在后台处理；发布到社区、撤回发布和数据迁移总要管理员确认。没有次数限制，但不要重复发同一个请求：被拒绝后先问清原因。',
+    'nekro_nxt_extension_action 的结果有四种：已完成、在这次回复结束后生效（启用、停用、切换版本、迁移数据这类改变挂载的操作）、已发出请求（附编号）、需要到后台处理。照结果如实告诉用户，不要把发出请求或待生效说成已经完成；新启用的工具要等下一次回复才能用。请求和待生效操作的结果会以系统通知告诉你，收到后再继续。',
+    '发布到社区需要本机已经登录社区账号，并且这次发布接在你上一次发布之后（谱系是一条直线）。社区上有更新的发布而本机没有合并时，发布会被拒绝：先 update 或用 revise 合并，再发布。从社区安装的别人的扩展不能直接发布新版本：先用 branch 做成你自己的扩展再发布，社区上会标明它分支自哪里。',
+    '社区审核会看这次发布和上一次发布的差异、新增的权限和风险组合；在 notes 里写清楚改了什么、为什么需要新增的权限，方便审核通过。',
+  ],
+} satisfies Partial<Record<NekroNxtExtensionReferenceTopicId, readonly string[]>>
+
+/** Recovery rules; the overview keeps the ones that decide the workflow. */
+const RECOVERY_RULES_BY_TOPIC = {
+  overview: [
+    '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
+    'define、run、保存和启用是四个独立提交点；不得把动态运行声称为已保存或已启用。',
+    '保存后扩展还没有安装：有页面或适配器的扩展需要用户安装到本机；只给智能体用的扩展在给智能体启用时自动安装。每台机器一个扩展只有一个当前版本，切换版本会带上所有在用的智能体。',
+    'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
+    '每次 define 都会成为任务的最新候选，只有最新候选通过验证后才能保存。查看状态使用 cordis_inspect_self。',
+    'Plugin 已有运行版本时，新 Package 用 mode:update 运行；Runner 返回的 invalid-mode 提示会说明应使用的模式。',
+    '只使用本参考公布的贡献类型；禁止注册 root、DSH 官方 WebUI Slot、Composer 或频道顶栏。',
+  ],
+  tools: [
+    'Host RPC 必须在 factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份，改用 caller。',
+  ],
+  ui: [
+    'ctx.effect 的回调会立即执行；面板、工具视图和页面按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。',
+    '面板读取对象数据使用 ctx.data 的 Hook，并在 nekro_nxt_extension_define.permissions 中声明对应读取权限。',
+    '验证会在每种声明的密度和明暗两种主题下真实渲染面板，并渲染工具视图的 chip 与 card；任一渲染失败都不能保存。',
+  ],
+  adapter: [
+    '适配器使用 registerAdapter 在隔离 Host Harness 中验证；一个扩展最多一个适配器，adapterKey 在版本之间不能改变。',
+  ],
+  config: [
+    '本机配置用 harness.config()，智能体配置用挂载内的 ctx.config()；试运行没有保存的配置，使用 Schema 默认值和测试配置。',
+  ],
+} satisfies Partial<Record<NekroNxtExtensionReferenceTopicId | 'overview', readonly string[]>>
+
 export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoringReference = {
   contractVersion: 'nekro-nxt-extension-v5',
   dshVersion: DSH_RUNTIME_RELEASE.dshVersion,
@@ -1807,213 +1951,242 @@ export const NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE: NekroNxtExtensionAuthoring
     sdkLevel: EXTENSION_SDK_LEVEL,
     declaration:
       '能力分两层声明：智能体挂载内的 ctx.nxt 用 nekro_nxt_extension_define.permissions.agent（并在返回的插件 inject 中加入 nxt）；factory 顶层的本机层 nxt（http、secrets、storage、render、parse、assets、image、files、media、commands、speech、index、models）用 permissions.host。未声明的能力调用会抛出指明缺失字段的错误。',
-    services: [
-      "ctx.nxt.http.fetch(url, { method, headers, body | bodyBase64 }) → { status, headers, contentType, text | base64 }；需要 network：{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }、{ mode: 'config', fields: ['baseUrl'] }（地址取自用户配置）或 { mode: 'unrestricted', purpose }（启用时用户需确认风险）。整个响应读进内存，最多 32 MiB，适合接口、网页和图片；视频、音频、压缩包这类大文件用 files.fromUrl 下载，超出时报错也会这样提示。",
-      'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
-      "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
-      "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）与 read/stat、nxt.image.info、nxt.files、nxt.media、nxt.commands、nxt.speech、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library?, read? }, files?, media?, commands?, speech?, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
-      'logger 与 ctx.logger 提供 debug/info/warn/error(message, details?)，来源由宿主绑定；需要 requires.sdk 至少为 9，动态创造会自动声明。记录状态、数量和错误即可，不记录凭据、聊天正文或模型请求。Debug 在用户开启临时调试时保存。',
-      'ctx.nxt.assets.create({ text | base64, mediaType, name }) / fromUrl(url)：生成当前频道 Asset 并返回 assetId；需要 assets: { write: true }，fromUrl 还需要 network。create 最多 8 MiB；fromUrl 直接下载成 Asset，最多 128 MiB，也受扩展下载上限限制；下载后还要处理的视频、音频用 files.fromUrl。把 assetId 交给智能体，由它用 send_channel_message 的 image/file/audio 块发送。',
-      'ctx.nxt.assets.keep(assetId) / release(assetId) / attach(assetId)：扩展资源库。keep 把当前频道看得到的 Asset 收进本扩展的资源库，之后可以在别的频道使用（同一张图重复 keep 不变，超出配额报错）；release 移出资源库；attach 让资源库里的 Asset 在当前频道可以发送并返回 assetId。create(input, { library: true }) 生成后直接存进资源库。需要 assets: { library: { quotaBytes? } }（默认 2 GiB），本机层与挂载两层共用同一个资源库。本机层用 nxt.assets.list({ limit, after }) / get(assetId) / release(assetId) 管理。',
-      'ctx.nxt.assets.read(assetId, { offset, length }) → { base64, eof, byteSize, mediaType } / stat(assetId) → { byteSize, mediaType }：读取当前频道看得到的或资源库中的文件内容，用来解析 PDF、表格、压缩包或处理音视频。每次最多读 4 MiB，从 offset 0 开始，每次加上读到的字节数，直到 eof。需要 assets: { read: true } 和 requires.sdk 至少为 14；本机层只能读资源库中的文件。',
-      'ctx.nxt.files / nxt.files：工作文件，用文件编号 fileId 在服务之间传递数据，不接触本机路径。write({ base64 | text, name, mediaType }) → { fileId, byteSize, … }（单个最多 128 MiB）；read(fileId, { offset, length }) → { base64, eof }（每次最多 4 MiB）；stat、delete；fromAsset(assetId) 把频道或资源库里的文件变成 fileId，不复制内容，可读范围与 assets.read 相同；toAsset(fileId) 存为当前频道的 Asset（需要 assets.write），toAsset(fileId, { library: true }) 存进资源库（需要 assets.library，本机层总是存进资源库）。fromUrl(url, { method, headers, body, name, signal }) 通过受控网络把视频、音频、压缩包等大文件直接下载成临时工作文件，不读进内存，返回 { fileId, byteSize, mediaType, … }，可以直接交给 media、speech 或 toAsset；还需要 network 和 requires.sdk 至少为 15（动态创造会自动声明），状态码不是 2xx 时报错。单次下载最多为「设置 → 存储 → 扩展下载上限」（默认 1 GB，管理员可以在 8 MB 到 5 GB 之间调整），也不能超过临时文件配额的剩余空间；要下载 1 GB 以上的文件时，同时调大 files.tempQuotaBytes（默认 1 GiB）。超出时报错写明上限和原因，工具要把这句话原样返回，由智能体转告用户：上限不够时请管理员到该设置调高，配额不够时调大 files.tempQuotaBytes 或删除旧文件；不要改成只下载开头一段，很多视频缺了结尾解不出画面。临时文件 24 小时后删除；cache.put(key, fileId) 把文件留作缓存，不再过期，cache.get(key) 取回，cache.delete(key) 删除，同一个键再 put 会替换旧文件，缓存满了先删最久没用的。fileId 只在本扩展内有效，本机层和智能体挂载共用。需要 files: { tempQuotaBytes?, cacheQuotaBytes? }（默认各 1 GiB，最多 16 GiB）和 requires.sdk 至少为 14；动态试运行的文件单独存放，各最多 64 MiB。',
-      "ctx.nxt.media / nxt.media：处理音频、视频和图片，用「设置 → 附加功能」里的媒体处理（ffmpeg）。输入写 { assetId }（当前频道看得到的或资源库中的文件，本机层只能用资源库）或 { fileId }。probe(input) → { durationSeconds, format, streams: [{ type, codec, width, height, fps, sampleRate, channels }] }；frames(input, { at: [秒, …] 或 { intervalSeconds | count, from, to }, width, height, format: 'jpeg' | 'png' | 'rgb24' | 'gray8', quality }) → [{ fileId, time, width, height }]，rgb24、gray8 是原始像素，适合检测镜头切换，单次最多 1000 帧；audio(input, { from, to, sampleRate, channels, format: 'wav' | 'pcm_s16le' | 'mp3' | 'ogg' | 'amr' | 'silk' }) → { fileId, byteSize, format, sampleRate, channels }；convert(input, { format, maxWidth, maxHeight }) 在 png、jpeg、webp、gif、mp3、ogg、wav、amr、silk、mp4、webm 之间转换 → { fileId, byteSize, format }。输出是临时工作文件，计入临时文件配额，用 files.read 读取、files.toAsset 发送，或交给下一个服务。都接受 { signal }。当前 ffmpeg 不能生成某种格式时报错写明是哪一种。需要 media: true、files 和 requires.sdk 至少为 14。媒体处理没有安装时报错写明请管理员到「设置 → 附加功能」安装；保存验证时返回固定的占位结果（1×1 的画面、短暂的静音），不运行 ffmpeg。",
-      "ctx.nxt.commands / nxt.commands：按命令档案运行附加功能提供的程序，目前有 ffmpeg 和 ffprobe，nxt.media 做不到的处理才用它。run(profile, args, { inputs: { 键: { assetId } | { fileId } }, timeoutSeconds, signal }) → { exitCode, stdout, stderr, truncated, outputs: [{ name, fileId, byteSize }] }。args 里的文字原样传入，输入文件写 { input: 键 }，输出文件写 { output: 'cover.png' }（序列写 'frame-%03d.jpg'）。每次在单独的临时目录里运行，不能联网，只能读写交给它的文件；档案没有列出的选项、网址、绝对路径和会自己打开文件的滤镜会被拒绝，报错写明是哪一个。profiles() 列出声明的档案和现在能否使用。需要 commands: { profiles: ['ffmpeg', 'ffprobe'] }（启用时用户逐项确认）、files 和 requires.sdk 至少为 14。提供程序的附加功能没有安装时报错写明要安装哪一项；保存验证时只检查参数，不运行程序，返回退出码 0 和空的输出文件。",
-      "ctx.nxt.speech / nxt.speech：语音转文字，用「设置 → 附加功能」里选择的语音识别（本地模型或云端供应商）。transcribe({ assetId } | { fileId }, { language: 'auto' | 'zh' | 'en' | 'ja' | 'ko' | 'yue', signal }) → { text, language, segments: [{ start, end, text }], durationSeconds, provider: { id, title }, model }；结果写明实际使用的识别方式和模型，不要假设是哪一种。SILK、AMR、mp3 等格式先由媒体处理转换；视频先用 media.audio 取出音轨。同一个频道文件按内容只转写一次。需要 speech: { maxCallsPerMinute }（1–60，默认 10，超出时报错）和 requires.sdk 至少为 14。语音识别不可用时报错写明请管理员到「设置 → 附加功能」安装或配置；保存验证时返回固定文字。",
-      'ctx.nxt.image.info(assetId) → { mediaType, width, height, frames, byteSize, dhash }：读取当前频道看得到的或资源库中的图片尺寸、帧数和差异哈希（dhash 是 16 位十六进制，几乎相同的图只差几位）；本机层 nxt.image.info 只能读资源库中的图。需要 assets.library。',
-      "ctx.nxt.index / nxt.index：宿主维护的检索索引。在 index: { collections: [{ name, fields: [{ name, weight }], filters }] } 中声明集合（最多 4 个文本字段、4 个过滤字段；两层都声明时定义必须一致）。upsert(collection, id, { fields, filters }) / delete(collection, id) / count(collection) / query(collection, text, { limit, filter: [[{ field, value }]] }) → { hits: [{ id, score }], mode, degraded? }；filter 的每组都要满足，组内满足一个即可。宿主按关键词检索，管理员在「设置 → 附加功能」安装语义检索后自动加入语义检索（mode: 'hybrid'），扩展不需要处理向量。",
-      "工具的 output.render 可以返回图片块 { type: 'image', assetId, label, detail }（资源库或当前频道的 Asset）：宿主把图片交给有视觉能力的模型查看，当前上下文已经看得到的图不重复附上，单次最多 6 张；模型没有视觉能力时只给文字。图片默认按低细节交给模型，够看清画面内容；要模型看清文字、细节或拼好的宫格图时写 detail: 'high'（长边最多 2048 像素，更耗用量），需要 toolImages: { highDetail: true } 和 requires.sdk 至少为 14，没有声明时按低细节展示。execute 的返回值不受影响，编排模式的程序照常拿到它。",
-      '长任务：defineTool 可以写 timeoutSeconds（1–900），不写时没有单独的时限。execute(args, { signal, progress }) 的第二个参数里，signal 在调用被取消或超时时中止，把它传给 files、assets 的调用（{ signal }），自己的耗时循环也要检查它；progress({ text, fraction }) 汇报进度（一句话，fraction 是 0–1 的完成比例），频道时间线的工具状态上显示最新一条，每秒最多更新两次。timeoutSeconds 需要 requires.sdk 至少为 14。',
-      "nxt.models.list() → [{ ref, providerName, name, vision, … }] / nxt.models.complete({ model: ref, system, messages: [{ role: 'user', content: [{ type: 'text', text } | { type: 'image', assetId }] }], maxOutputTokens }) → { text }：本机层调用用户在「设置 → 模型」里配置好的模型，适合页面发起的批量任务（例如给导入的图片写描述），由页面让用户选择模型，不要写死；图片必须在扩展资源库中。只能在 permissions.host 声明 models: { maxCallsPerMinute, maxOutputTokens }。",
-      'Client 端 host.upload(files, { onProgress }) 把用户选择的图片或 zip 上传进扩展资源库，返回 { added, skipped }；host.assetUrl(assetId, { thumbnail }) 返回资源库图片的地址，用于 <img>。需要 permissions.host.assets.library。',
-      'ctx.nxt.storage.get/set/delete/list：JSON 键值存储；需要 storage: { scopes }，scope 为 agent（默认）、channel、member（必须传 memberId）或 shared（跨智能体共享，也是页面 RPC 用的本机分区）。单值不超过 256 KiB，默认配额 8 MiB。',
-      'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。',
-      'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
-      'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
-      "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
-      "harness.onInbound((message, nxt) => decision)：在 factory 阶段（与 harness.handle 相同）注册唯一的入站处理函数，消息入库后、唤醒智能体前运行；message 含 text、images（[{ assetId, sticker }]，sticker 是平台的表情包标记，只作参考，拖进来的表情包和不支持标记的平台都是 false）、mentionsAgent、wouldTrigger；返回 { trigger: 'default' | 'suppress' | 'force', hideFromAgent, annotation } 或不返回。需要 inboundHook: { reads: 'triggered' | 'all', mayHide, mayForceTrigger, timeoutMs }；reads: 'triggered' 只看原本会唤醒智能体的消息。nxt 参数绑定到该消息所在频道，可读写存储、调用模型，但不能注册上下文。超时或抛错按默认处理；消息始终入库，hideFromAgent 只是不让智能体看到。",
-      "harness.onOutbound((message, nxt) => result)：在 factory 阶段注册唯一的出站处理函数，处理智能体用 send_channel_message 发出的消息（管理员消息、命令回复不经过这里）。需要 requires.sdk 至少为 13，并声明 outbound: { read?: true, transform?: true, cancel?: true, timeoutMs, onTimeout?: 'send' | 'cancel' }。声明了 transform 或 cancel 时，发出前收到 message.stage === 'draft' 的草稿（channel、parts、text、replyTo、triggeredBy），多个扩展按用户在智能体扩展列表里排的顺序依次处理，后一个看到前一个的结果；返回 { parts } 替换整条内容（需要 transform，素材必须是当前频道能用的，例如自己用 nxt.assets.create 生成的语音），{ followUps: [{ parts }] } 在后面追加消息（需要 transform，追加的不再经过出站处理），{ cancel: { reason } } 取消这条（需要 cancel，reason 会原样告诉智能体，它可以改了再发），不返回则原样发出。声明了 read 时，投递有结果后收到一次 message.stage === 'delivered'（最终 parts、logicalMessageId、deliveryState、platformMessageIds、追加消息带 followUp: true），返回值被忽略，也不会拖慢发送。超时或抛错按 onTimeout 处理，默认照常发出。nxt 绑定到消息所在频道。",
-      'ctx.nxt.jobs.schedule({ label, at | cron, timezone, payload }) / list() / cancel(jobId)：在当前频道创建定时任务，到期时以“定时任务到期”事件唤醒智能体，由智能体决定是否发言；需要 jobs: { runtime: { maxActive } }。固定计划写在 jobs.declared: [{ id, label, cron, timezone }]，会在启用它的智能体绑定的每个频道触发。动态运行中创建的任务不会真的触发。',
-      'harness.onJob((job, nxt) => ({ wake, note }))：声明了 jobs 的扩展可在 factory 阶段注册唯一的到期处理函数，本扩展的任务到期时先运行它（job 含 jobId、label、payload、scheduledAt、declaredId、channel），nxt 绑定到任务所在频道；返回 { wake: false } 则这次不唤醒智能体（例如订阅检查没有新内容），返回 note 会随到期事件交给智能体（例如新文章列表，最多 2000 字）。15 秒内未返回或抛错时按默认唤醒。轮询类需求一定要用它，避免每次检查都消耗一次模型调用。',
-      'ctx.nxt.platform.actions() / invoke(action, args) / raw(api, params)：在当前频道执行平台动作（例如 OneBot 的 like_member、mute_member、kick_member、set_member_card、set_essence_message，成员用 memberId 引用）；需要 platform: { actions: [{ adapter, action }], raw: [adapterKey] }。先用 actions() 查询当前平台实际支持的动作。动态运行和保存验证只模拟执行，返回“预览模式”结果，启用后才真正调用平台。对拿不到真实身份的机器人账号执行动作会明确失败。platform.selfPlatformUserId() 返回机器人账号的平台 ID（拿不到时为 undefined），只给声明了该适配器 raw 的扩展。',
-      "ctx.nxt.render.svg(svg, { scale, format: 'png' | 'jpeg' | 'webp', background }) → { base64, mediaType, width, height }：用宿主系统字体把 SVG 渲染成图片，无需声明能力；把结果交给 assets.create({ base64, mediaType, name }) 再由智能体发送。文字用 font-family=\"sans-serif\"；SVG 只能引用 #片段或 data: 内联资源，网络图片先用 http.fetch 取回再以 data: 内联。适合卡片、榜单、签到图、运势图等。",
-      "ctx.nxt.parse.html(html, { url, mode: 'article' | 'full', maxChars }) → { title, excerpt, markdown, truncated, links }：把网页转成 Markdown，默认只保留正文，传 url 时链接变为绝对地址；parse.feed(xml, { url }) → { kind, title, link, items: [{ id, title, link, published, author, summary }] }：统一解析 RSS 2.0、RSS 1.0 与 Atom，id 可用于去重。两者都无需声明能力，取回网页或订阅源仍需要 network。",
-      "ctx.nxt.prompt.static(name, text) / dynamic(name, render)：向智能体提供补充说明；需要在 context 中按名称声明 { name, kind: 'static' | 'dynamic', maxChars }。",
-    ],
-    rules: [
-      '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载：Host 源码顶层（factory）只在本机执行一次，在这里注册 harness.handle（RPC）、harness.registerAdapter、harness.onInbound、harness.onOutbound、harness.onJob；return 的插件挂载到每个智能体，在它的 apply 里注册工具。一个扩展可以同时提供工具、页面、面板、适配器，不需要拆成多个扩展。',
-      '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。config.agent 的必填项可以不给默认值，启用时在 enable 的 values 里提供。',
-      "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }，提示词、模板这类长文本加 role: 'textarea' 显示成多行输入框，如 { type: 'string', meta: { description: '回复模板', role: 'textarea' } }。不要写 properties、required 数组或 additionalProperties。",
-      'meta.agentWritable: false 表示这一项只能由管理员在后台修改，只用于计费、内容审核这类开关。动态创造的扩展不能使用这个标记；修改导入或社区安装的扩展时，带这个标记的项原样保留。',
-      '工具 parameters 中类型为 object 的参数必须显式写 additionalProperties: true 或 false；尽量用扁平的 string/number/boolean 参数。',
-      'permissions.permissions 与 networkOrigins 只用于浏览器端界面（ctx.data Hook 与 Client 的 network.request）；Host 端联网在智能体挂载里声明 permissions.agent.network，在 factory 顶层声明 permissions.host.network，不要混用。',
-      '面板调用 host.call 时传入 { anchor }（组件参数里的 anchor），RPC 的第二个参数 caller 会带上锚定的智能体、频道或连接；页面调用不需要 anchor。',
-      "工具的 output.schema 必须与 execute 的真实返回一致：返回对象就声明 { type: 'json' } 或完整的 object Schema，返回字符串才声明 { type: 'string' }；不确定时用 { type: 'json' }。",
-      '静态说明只能是固定字符串，只在版本或配置切换时变化；会变化的状态放进 dynamic，宿主每轮开始渲染一次，内容不变就不会追加新的上下文。',
-      '动态上下文禁止写入时间戳、随机数和精确计数，写“好感度：友好”这类粗粒度描述；保存时宿主会用相同输入渲染两次，结果不同则拒绝保存。',
-      'render 只能读存储和调用上下文，不能联网或调用模型；大块内容改为提供查询工具，让智能体按需调用。',
-      '缺少凭据、网络失败或外部服务报错时，工具应返回 { ok: false, message } 这样可读的结果，而不是抛出异常；保存验证会真实调用工具，凭据此时为空。',
-      '试运行时配置取默认值。非凭据字段可以在 nekro_nxt_extension_define 或 nekro_nxt_extension_continue 的 testConfig 里填测试值；凭据字段写 { "credential": "凭据名称" }，绑定一个对你开放的凭据（nekro_nxt_credential_list 查看，需要管理员同意的会自动发出请求）。只绑定说明和域名与用途相符的凭据，不要拿别的服务的凭据临时顶替。没有合适的凭据时用 nekro_nxt_credential_request 请管理员添加，添加后你会被唤醒；不要让人把凭据发在聊天里。内网服务地址要请用户在创造任务页的「测试配置」中填写。用户填的值优先；测试配置只在本任务的试运行中可见，保存时的验证没有凭据。正式配置在 enable 时用 values、credentials 提供，之后用 configure 修改。',
-      'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().latestInbound.sender、history 消息的 sender 或入站钩子的 message.sender；不要用平台账号或昵称作为存储键。',
-      'channel.kind 取值为 internal（内置频道）、direct（私聊）或 group（群聊）；平台动作通常只在 direct 或 group 中可用，先用 platform.actions() 确认。',
-      'history.list 每次返回 { messages, next }，messages 按时间从新到旧；要继续向前翻页，把 next 原样作为 before 传入。',
-      '动态上下文会以「[扩展：显示名]」小节出现在模型看到的运行时上下文中；静态说明以同样的标题出现在系统提示词里。',
-      'verification 样例必须没有副作用：验证会真实发出网络请求，样例应是查询而不是提交、发送或付款。',
-      '扩展本身不能在频道发言；要发送图片、文件或语音时，返回 assetId 让智能体调用 send_channel_message。',
-      '入站处理函数要快且确定：先做本地判断，确实需要时再调用模型；它看到的是用户消息原文，不要把内容写进日志或外发。',
-      '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
-      '显式斜杠命令使用 SDK 9 的 command Contribution 和 factory 级 harness.registerCommand(definition, handler)：动态创造把命令定义放进 nekro_nxt_extension_define.commands，保存验证会用宿主按参数定义生成的样例真实执行一次，处理器不能有副作用；源码包导入时同样执行隔离验证。命令名不能用 ext、admin 等内置命令名。不能把命令放进 Session apply 或用 onInbound 模拟。参数来自 context.arguments，媒体仅引用当前频道授权的 assetId，监听 context.signal 清理；耗时命令可用 context.reply 先发过程回复（最多 5 条），返回值是终态结果；默认控制台执行的结果不发往外部频道，需要时在定义里把 consoleReply 设为 channel；处理器默认 60 秒超时（timeoutSeconds 可声明，最长 600），超时会通过 signal 取消。模型不直接调用聊天命令。',
-      '出站处理适合这些需求：记录实际发了什么（统计话题、记下发过的表情包）用 read；翻译、Markdown 转纯文本、敏感词打码、统一署名这类改写用 transform 返回 parts；文字转语音、按语气补一张表情包、把公式渲染成图片，可以替换内容，也可以用 followUps 追加；同步到 Webhook 或别的系统在 delivered 阶段做；防泄密、静默时段这类把关用 cancel，并在 reason 里写清为什么、怎么改。草稿处理会让每条消息等它返回，所以要快：本地判断优先，需要模型或网络时控制 timeoutMs。只在发出后记录、不改内容的需求只声明 read，不参与发送前的处理。',
-      '过滤、防抖、关键词监听这类需求用 onInbound；定时推送、提醒这类需求用 jobs，到期后由智能体自己发言，扩展不直接发送消息；定时检查类需求在 onJob 里先检查，没有新内容就返回 { wake: false }。',
-    ],
+    services: Object.values(HOST_SERVICES_BY_TOPIC).flat(),
+    rules: Object.values(HOST_RULES_BY_TOPIC).flat(),
   },
-  governanceRules: [
-    '保存后的扩展有一条版本谱系：每次保存都是不可变的新版本，记住它从哪个版本改来。版本号就是谱系里的代数（v1、v2、v3），同一代保存了两次写作 v3·2。社区发布、本机修改都在同一条谱系上，所以能判断本机和社区谁更新、有没有各自改过。',
-    '修改已保存的扩展一定先调用 nekro_nxt_extension_revise 开一个修改任务，它返回基线版本的完整定义；在这个定义上只改需要改的部分，其余照原样提交。不要凭记忆重写整个扩展，也不要另建一个同名的新扩展。一个扩展同时只有一个进行中的修改任务。',
-    '修改一个已经给你启用的扩展时，不用先停用它：修改任务的候选试运行时，会在这次对话里暂时接替已启用版本的同名工具；候选停止或对话结束后已启用的版本自动回来。保存后用 switch 切到新版本（或在自主档下由你切换），其他对话从下一次起用新版本。保存过的候选在它保存成的扩展启用或切换生效时自动停下，之后调用的就是启用的版本和它的正式配置，不用再 cordis_stop。',
-    "revise 返回的定义带 codeFormat 时原样带上：codeFormat: 'module' 表示源码是带 import/export 的模块（从社区或源码包导入的扩展），宿主会转换后运行；没有这个字段就是普通的 factory 函数体。",
-    '合并两个版本（例如本机改过、社区又出了新版）时，把一个作为 revise 的 version、另一个作为 reference，在基线上把对方的改动合进来，保存后谱系会接在基线之后。',
-    '想保留原扩展、另做一个不同走向的版本时，用 nekro_nxt_extension_action 的 branch：它会成为一个新扩展，记录分支自哪个扩展的哪个版本，可以选择是否复制数据，分支还可以继续分支。只是修 bug 或加功能就修改原扩展，不要开分支。',
-    '存储的数据有格式版本：Manifest 的 dataVersion（整数，默认 1，需要 requires.sdk 至少 10）。只要新版本读不懂旧数据（改了键名、拆分合并字段、换了结构），就把 dataVersion 加一，并在 factory 里用 harness.migrateData(async ({ from, to, storage }) => { ... }) 注册迁移：storage.list 分页读出全部数据，set/delete 改写，owner 与 partition 原样保留。只增加新键、旧数据照样能读时不要提升 dataVersion。',
-    '迁移要能重复执行：处理前先判断这条数据是否已经是新格式。宿主切换版本前会给数据留一份快照，迁移抛错就恢复快照并退回原版本；切回 dataVersion 更低的版本会被拒绝，除非用户在后台恢复切换前的快照。保存验证会用空数据跑一次迁移。',
-    '数据也可以在扩展之间迁移（例如把旧扩展的表情包库迁到它的分支）：migrate_data 的 overwrite 保留目标已有数据、同名以来源为准，replace 先清空目标再写入。它总要管理员确认，执行前宿主会算出差异并留快照。',
-    '你的扩展自主权由管理员在智能体设置里决定：manual 只能开发和试运行，保存、启用等都由用户在后台操作；confirm 时每个操作都在频道里发出请求，管理员发送 /ext approve 编号 同意；autonomous 时只影响你自己的普通风险操作直接完成并在频道留下记录，需要提升级权限或会影响其他智能体的操作仍要管理员确认。用 nekro_nxt_extension_list 查看你现在是哪一档。',
-    'confirm 和 autonomous 可以发现和管理本机已保存的扩展，包括其他智能体创建的扩展。用 nekro_nxt_extension_list 获取编号、版本和启用前提，enable / disable 只给你自己启用或停用。共享代码不共享其他智能体的配置、凭据和私有数据；缺少本机配置时请管理员先到工坊的扩展详情填写，不要让人把凭据发在聊天里。复制扩展数据也要管理员确认。',
-    '改配置用 nekro_nxt_extension_action 的 configure：layer 为 agent（你自己的）或 host（本机共用），values 写字段值，凭据字段用 credentials 按名称绑定，reason 写原因。启用时可以直接带 values 和 credentials。改动在这次回复结束后生效，同一次回复里的多次修改合并成一次；扩展用新配置启动失败时会退回原来的配置并通知你。每次修改都留下配置版本，用 revert_config 恢复到 inspect 里 configHistory 的某个版本。',
-    '能不能直接改取决于字段级别和谁提的：普通字段按扩展自主权处理；访问地址字段、本机配置和需要同意的凭据要管理员确认；admin 级字段只能由管理员在后台修改。默认只接受管理员提出的配置修改，设成所有人时，其他人只能让你改自己的普通字段。inspect 的 authority.configure 列出了现在每种修改的结果。',
-    '扩展用不了、报错，或者用户问到它的配置时，先用 nekro_nxt_extension_inspect 查看配置项和当前值、配置问题、启用前提、最近的错误日志，以及各项操作你能不能直接做，查清原因再回复。确实要别人处理时，说清楚是哪一项、去哪里填。',
-    '无论哪一档，新增高风险权限（无限制联网、平台原始接口、可隐藏消息的入站钩子等）只能在后台处理；发布到社区、撤回发布和数据迁移总要管理员确认。没有次数限制，但不要重复发同一个请求：被拒绝后先问清原因。',
-    'nekro_nxt_extension_action 的结果有四种：已完成、在这次回复结束后生效（启用、停用、切换版本、迁移数据这类改变挂载的操作）、已发出请求（附编号）、需要到后台处理。照结果如实告诉用户，不要把发出请求或待生效说成已经完成；新启用的工具要等下一次回复才能用。请求和待生效操作的结果会以系统通知告诉你，收到后再继续。',
-    '发布到社区需要本机已经登录社区账号，并且这次发布接在你上一次发布之后（谱系是一条直线）。社区上有更新的发布而本机没有合并时，发布会被拒绝：先 update 或用 revise 合并，再发布。从社区安装的别人的扩展不能直接发布新版本：先用 branch 做成你自己的扩展再发布，社区上会标明它分支自哪里。',
-    '社区审核会看这次发布和上一次发布的差异、新增的权限和风险组合；在 notes 里写清楚改了什么、为什么需要新增的权限，方便审核通过。',
-  ],
-  recoveryRules: [
-    '一个 Episode 同时只维护一个动态 Plugin；修复必须向同一 Plugin 追加 kind:existing Package。',
-    'define、run、保存和启用是四个独立提交点；不得把动态运行声称为已保存或已启用。',
-    '适配器使用 registerAdapter 在隔离 Host Harness 中验证；一个扩展最多一个适配器，adapterKey 在版本之间不能改变。',
-    '保存后扩展还没有安装：有页面或适配器的扩展需要用户安装到本机；只给智能体用的扩展在给智能体启用时自动安装。每台机器一个扩展只有一个当前版本，切换版本会带上所有在用的智能体。',
-    'ctx.effect 的回调会立即执行；面板、工具视图和页面按示例直接注册，禁止在 effect 回调中立即调用注册返回的 disposer。',
-    'Host RPC 必须在 factory 注册；浏览器 RPC 没有 Agent Loop initiator，禁止依赖 currentInitiator 读取产品智能体身份，改用 caller。',
-    '本机配置用 harness.config()，智能体配置用挂载内的 ctx.config()；试运行没有保存的配置，使用 Schema 默认值和测试配置。',
-    '面板读取对象数据使用 ctx.data 的 Hook，并在 nekro_nxt_extension_define.permissions 中声明对应读取权限。',
-    '验证会在每种声明的密度和明暗两种主题下真实渲染面板，并渲染工具视图的 chip 与 card；任一渲染失败都不能保存。',
-    'Host 或 Client 失败后先读取 Inspect 诊断，再修复同一 Plugin；不要静默新建替代 Plugin。',
-    '每次 define 都会成为任务的最新候选，只有最新候选通过验证后才能保存。查看状态使用 cordis_inspect_self。',
-    'Plugin 已有运行版本时，新 Package 用 mode:update 运行；Runner 返回的 invalid-mode 提示会说明应使用的模式。',
-    '只使用本参考公布的贡献类型；禁止注册 root、DSH 官方 WebUI Slot、Composer 或频道顶栏。',
-  ],
+  governanceRules: Object.values(GOVERNANCE_RULES_BY_TOPIC).flat(),
+  recoveryRules: Object.values(RECOVERY_RULES_BY_TOPIC).flat(),
 }
 
+/** Topics of the authoring reference: the development skill lists them and agents read the ones they need. */
+export type NekroNxtExtensionReferenceTopicId =
+  | 'tools'
+  | 'ui'
+  | 'pages'
+  | 'adapter'
+  | 'config'
+  | 'host'
+  | 'media'
+  | 'context'
+  | 'hooks'
+  | 'commands'
+  | 'migration'
+  | 'publishing'
+
+export interface NekroNxtExtensionReferenceTopic {
+  readonly id: NekroNxtExtensionReferenceTopicId
+  readonly title: string
+  /** The topic's line in the overview. */
+  readonly summary: string
+}
+
+export const NEKRO_NXT_EXTENSION_REFERENCE_TOPICS: readonly NekroNxtExtensionReferenceTopic[] = [
+  {
+    id: 'tools',
+    title: '工具与 RPC',
+    summary: '注册工具，参数和返回值的写法，长任务与进度，RPC 注册在哪里，Host Tool 示例。',
+  },
+  {
+    id: 'ui',
+    title: '面板、工具视图与界面组件',
+    summary: '面板锚点与密度、数据 Hook、ui-kit 组件和属性、宿主与扩展的界面分工，面板和工具视图示例。',
+  },
+  { id: 'pages', title: '页面', summary: '页面路径规则，页面示例，工具和页面放在同一个扩展里的示例。' },
+  { id: 'adapter', title: '适配器', summary: '用 registerAdapter 接入聊天平台，适配器示例。' },
+  {
+    id: 'config',
+    title: '配置与凭据',
+    summary: '本机与智能体两层配置、Schemastery 写法、凭据字段、试运行的测试配置。',
+  },
+  {
+    id: 'host',
+    title: '能力声明、网络、存储与日志',
+    summary: 'permissions.host 与 permissions.agent 怎么声明，http.fetch、键值存储、日志，带配置和联网的工具示例。',
+  },
+  {
+    id: 'media',
+    title: '资源、文件、媒体与语音',
+    summary:
+      '生成和读取频道文件、扩展资源库、工作文件与大文件下载、音视频处理、命令程序、语音转文字、SVG 渲染、网页与订阅源解析。',
+  },
+  {
+    id: 'context',
+    title: '上下文、历史、平台与模型调用',
+    summary: '当前频道与成员、聊天记录、给智能体的补充说明、检索索引、调用模型、平台动作。',
+  },
+  {
+    id: 'hooks',
+    title: '入站与出站钩子、定时任务',
+    summary: 'onInbound、onOutbound、jobs 与 onJob 的写法，以及各自适合什么需求。',
+  },
+  { id: 'commands', title: '聊天命令', summary: '斜杠命令的注册、参数、过程回复和保存验证。' },
+  { id: 'migration', title: '数据迁移', summary: 'dataVersion、harness.migrateData，以及在扩展之间迁移数据。' },
+  {
+    id: 'publishing',
+    title: '名称说明、修改与发布',
+    summary: '名称和说明怎么写、图标，修改已保存的扩展、版本与分支、扩展自主权、改配置、发布到社区。',
+  },
+]
+
+const bullets = (lines: readonly string[]): string => lines.map((line) => `- ${line}`).join('\n')
+const codeBlock = (code: string): string => `\`\`\`js\n${code}\n\`\`\``
+const sections = (...parts: readonly string[]): string => parts.join('\n\n')
+
+const TOPIC_BODIES: Readonly<
+  Record<NekroNxtExtensionReferenceTopicId, (reference: NekroNxtExtensionAuthoringReference) => string>
+> = {
+  tools: (reference) =>
+    sections(
+      bullets([...HOST_RULES_BY_TOPIC.tools, ...HOST_SERVICES_BY_TOPIC.tools, ...RECOVERY_RULES_BY_TOPIC.tools]),
+      '### Host Tool 示例',
+      codeBlock(reference.examples.hostTool),
+    ),
+  ui: (reference) =>
+    sections(
+      bullets([
+        `智能体挂载的面板锚点：${reference.model.agentAttachment.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}（跟随启用它的智能体）；本机实例的面板锚点：${reference.model.hostInstance.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}，连接面板需要扩展同时注册适配器并声明角色 ${reference.model.adapter.connectionPanelRoles.map((role) => `\`${role}\``).join('、')}；最多 ${reference.model.hostInstance.maxPages} 个页面。`,
+        `面板声明 \`densities\`（${reference.ui.panelDensities.join('、')}），宿主决定放在哪个页面、绘制标题栏与外框。`,
+        '工具视图按 Tool 名注册，渲染 `chip` 与 `card` 两种密度；适配器用 `message-renderer` 按 rich kind 渲染富消息。',
+        `数据 Hook：${reference.ui.dataHooks.map((hook) => `\`${hook}\`（${reference.ui.hookPermissions[hook]}）`).join('、')}。`,
+        ...HOST_RULES_BY_TOPIC.ui,
+        ...RECOVERY_RULES_BY_TOPIC.ui,
+        ...HOST_SERVICES_BY_TOPIC.ui,
+      ]),
+      `### 界面组件（${reference.ui.kitVersion}）`,
+      '通过 `ctx.ui` 取用，只使用下列组件和属性；颜色、间距与主题由宿主决定，不要自行绘制按钮、输入框或表格外框。',
+      bullets(reference.ui.components.map((name) => `\`${name}\`：${reference.ui.componentProps[name]}`)),
+      `### 界面责任契约（${reference.ui.designContract.version}）`,
+      bullets([
+        ...reference.ui.designContract.responsibilities.map(
+          ({ owner, provided, forbidden }) => `${owner} 提供：${provided.join('、')}；禁止：${forbidden.join('、')}。`,
+        ),
+        ...reference.ui.designContract.compositionRules,
+      ]),
+      '### Host RPC + 面板示例',
+      codeBlock(reference.examples.hostRpcAndPanel),
+      '### 工具视图示例',
+      codeBlock(reference.examples.toolView),
+    ),
+  pages: (reference) =>
+    sections(
+      '`startPath`、导航项 `path` 和 `navigate()` 都使用当前入口内的相对路径，不得以 `/` 开头。把页面的完整 Contribution 放进 `nekro_nxt_extension_define.pages`，权限放进 `permissions`；CSS Module 和 SVG 通过 `resources` 提交。',
+      '### Host Page 示例',
+      codeBlock(reference.examples.hostPage),
+      '### 工具 + 页面（同一个扩展）示例',
+      codeBlock(reference.examples.toolAndPage),
+    ),
+  adapter: (reference) =>
+    sections(
+      bullets(RECOVERY_RULES_BY_TOPIC.adapter),
+      '### Host Adapter 示例',
+      codeBlock(reference.examples.hostAdapter),
+    ),
+  config: () =>
+    bullets([
+      "配置分 `config.host`（本机一份，`harness.config()`）与 `config.agent`（每个智能体一份，`ctx.config()`），都是序列化 Schemastery；`meta.advanced` 默认折叠，`meta.hint` 是帮助文字，长文本字段用 `meta.role: 'textarea'` 显示成多行输入框。两层都可以声明 `meta.role: 'secret'` 凭据字段，用 `secrets.get(key)` 读取。",
+      ...HOST_RULES_BY_TOPIC.config,
+      ...RECOVERY_RULES_BY_TOPIC.config,
+      ...HOST_SERVICES_BY_TOPIC.config,
+    ]),
+  host: (reference) =>
+    sections(
+      `能力等级：${reference.hostCapabilities.sdkLevel}。${reference.hostCapabilities.declaration}`,
+      bullets([...HOST_SERVICES_BY_TOPIC.host, ...HOST_RULES_BY_TOPIC.host]),
+      '### 配置、联网与存储示例',
+      codeBlock(reference.examples.hostCapabilities),
+    ),
+  media: () => bullets(HOST_SERVICES_BY_TOPIC.media),
+  context: () => bullets([...HOST_SERVICES_BY_TOPIC.context, ...HOST_RULES_BY_TOPIC.context]),
+  hooks: () => bullets([...HOST_SERVICES_BY_TOPIC.hooks, ...HOST_RULES_BY_TOPIC.hooks]),
+  commands: () => bullets(HOST_RULES_BY_TOPIC.commands),
+  migration: () => bullets(GOVERNANCE_RULES_BY_TOPIC.migration),
+  publishing: () =>
+    sections(
+      '### 名称和说明',
+      '`name` 和 `purpose` 保存后就是扩展的名称和说明，显示在工坊、社区和智能体的能力列表里。用户看到它们时只关心能拿这个扩展做什么，不知道也不在意它怎么实现。',
+      bullets([
+        '名称写用户得到的功能，像软件菜单里的功能名一样短，例如「视频内容解读」「直播开播提醒」「天气与穿衣建议」「随机抽签」。不写成一句话或问句（「查天气穿什么」）；实现手段、运行频率和技术路线也不进名称（「视频分镜」「每小时汇总」「中转图片生成」），用户读不懂，改几版后也会过时。服务商或模型名只在扩展就是为了接入它时才写，例如「MiMo 语音合成」。',
+        '不夹英文单词（RSS 这类通用叫法除外），不加「·」这类装饰和版本号；和已有的扩展（nekro_nxt_extension_list）要能区分开。用户给过名字就用用户的。',
+        '`purpose` 用一句话说启用后智能体能为用户做什么，例如「发来视频或 B 站链接，智能体能说出视频里发生了什么」。配置项、权限和代码结构不写进去。',
+        '修复和重新定义时沿用同一个名称，需求变了或用户要求时再改。已保存的扩展要改名称或说明，用 nekro_nxt_extension_action 的 edit_info。',
+        '可选扩展图标：在 `resources` 放 `assets/icon.svg`（推荐，规则同页面 SVG 图标）或 64–512 像素正方形、不超过 128 KiB 的 `assets/icon.png` / `assets/icon.webp`（内容填标准 base64），再用 `iconPath` 指向它；图标显示在工坊、社区和智能体能力列表。',
+      ]),
+      '### 修改、版本与发布',
+      bullets(GOVERNANCE_RULES_BY_TOPIC.publishing),
+    ),
+}
+
+/**
+ * Finds a topic by its id or its title; undefined when neither matches. Agents may echo the title they saw in the
+ * overview instead of the id.
+ */
+export const findNekroNxtExtensionReferenceTopic = (name: string): NekroNxtExtensionReferenceTopic | undefined => {
+  const wanted = name.trim()
+  return NEKRO_NXT_EXTENSION_REFERENCE_TOPICS.find((topic) => topic.id === wanted || topic.title === wanted)
+}
+
+/** One topic of the authoring reference, headed by its title. */
+export const renderNekroNxtExtensionReferenceTopic = (
+  id: NekroNxtExtensionReferenceTopicId,
+  reference: NekroNxtExtensionAuthoringReference = NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
+): string => {
+  const topic = NEKRO_NXT_EXTENSION_REFERENCE_TOPICS.find((candidate) => candidate.id === id)
+  if (topic === undefined) throw new Error(`Unknown extension reference topic: ${id}`)
+  return sections(`## ${topic.title}`, TOPIC_BODIES[id](reference))
+}
+
+/** What every extension author needs before writing code: the boundaries, the sandbox and how to recover. */
+const renderDevelopmentEssentials = (): string =>
+  sections(
+    '# NekroNXT Extension Development',
+    '宿主是 NekroNXT，DSH Cordis 只提供动态执行 ABI。你的目标是开发 NekroNXT 系统扩展，不是 DSH 官方 WebUI 插件。',
+    '## 强制边界',
+    bullets([
+      '定义候选使用 `nekro_nxt_extension_define`：页面、权限、配置 Schema 和资源都写入持久任务账本并在运行前预检。',
+      '一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载，可以同时提供工具、页面、面板、工具视图、适配器与富消息渲染器，不要为了「形态」拆成多个扩展。Host 源码顶层只在本机执行一次（RPC、适配器、入站钩子、定时任务处理在这里注册），return 的插件挂载到每个启用它的智能体（工具在这里注册）。',
+      '禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。',
+      '动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。',
+      '运行验证会用 `nekro_nxt_extension_define.verification` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 `{}`、RPC 用 `null` 调用。',
+    ]),
+    '## 试运行环境',
+    '候选在沙箱里试运行，和保存后的扩展有几处不同：',
+    bullets([
+      '不能加载模块，`import()` 和 `require()` 在定义时就会被拒绝。要用的能力都在 harness、ctx 和 ctx.nxt 上。',
+      '沙箱提供 `crypto`（randomUUID、getRandomValues）、`URL`、`URLSearchParams`、`AbortController` 和 `structuredClone`，行为和保存后一样。它们和 nxt 一样要等扩展挂载后才能用：在工具和界面数据接口里调用，不要放在 factory 顶层。',
+      "没有 `process`、`Buffer`、定时器和 `fetch`：配置用 harness.config() 或 ctx.config()，二进制数据用 Uint8Array，定时用 timer 服务（inject: ['timer']），网络用 ctx.nxt.http.fetch。",
+      '异步调用要 await 或者加上 catch。没人处理的错误会记进日志并通知你，候选这时可能只运行了一半，修好后重新运行。',
+    ]),
+    '## 修复与停止',
+    bullets(RECOVERY_RULES_BY_TOPIC.overview),
+  )
+
+const contractLine = (reference: NekroNxtExtensionAuthoringReference): string =>
+  `契约版本：${reference.contractVersion}；DSH：${reference.dshVersion}。`
+
+/**
+ * The body of the development skill: the essentials plus one line per topic. Agents read the topics they need with
+ * the host's reference tool instead of carrying the whole reference.
+ */
+export const renderNekroNxtExtensionDevelopmentOverview = (
+  reference: NekroNxtExtensionAuthoringReference = NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
+): string =>
+  sections(
+    renderDevelopmentEssentials(),
+    '## 按主题查阅',
+    '接口格式、规则和示例按主题分开，用 `nekro_nxt_extension_reference` 读取，topics 写一个或几个主题，例如 `["tools", "config"]`：',
+    bullets(NEKRO_NXT_EXTENSION_REFERENCE_TOPICS.map(({ id, title, summary }) => `\`${id}\` ${title}：${summary}`)),
+    contractLine(reference),
+  )
+
+/** The whole reference in one document: the essentials followed by every topic. */
 export const renderNekroNxtExtensionDevelopmentSkill = (
   reference: NekroNxtExtensionAuthoringReference = NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
-): string => `# NekroNXT Extension Development
-
-宿主是 NekroNXT，DSH Cordis 只提供动态执行 ABI。你的目标是开发 NekroNXT 系统扩展，不是 DSH 官方 WebUI 插件。
-
-## 强制边界
-
-- 定义候选使用 \`nekro_nxt_extension_define\`：页面、权限、配置 Schema 和资源都写入持久任务账本并在运行前预检。
-- 一个扩展 = 一个本机实例 + 每个启用它的智能体一份挂载，可以同时提供工具、页面、面板、工具视图、适配器与富消息渲染器，不要为了「形态」拆成多个扩展。Host 源码顶层只在本机执行一次（RPC、适配器、入站钩子、定时任务处理在这里注册），return 的插件挂载到每个启用它的智能体（工具在这里注册）。
-- 智能体挂载的面板锚点：${reference.model.agentAttachment.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}（跟随启用它的智能体）；本机实例的面板锚点：${reference.model.hostInstance.panelAnchors.map((anchor) => `\`${anchor}\``).join('、')}，连接面板需要扩展同时注册适配器并声明角色 ${reference.model.adapter.connectionPanelRoles.map((role) => `\`${role}\``).join('、')}；最多 ${reference.model.hostInstance.maxPages} 个页面。
-- 面板声明 \`densities\`（${reference.ui.panelDensities.join('、')}），宿主决定放在哪个页面、绘制标题栏与外框。
-- 工具视图按 Tool 名注册，渲染 \`chip\` 与 \`card\` 两种密度；适配器用 \`message-renderer\` 按 rich kind 渲染富消息。
-- 数据 Hook：${reference.ui.dataHooks.map((hook) => `\`${hook}\`（${reference.ui.hookPermissions[hook]}）`).join('、')}。
-- 配置分 \`config.host\`（本机一份，\`harness.config()\`）与 \`config.agent\`（每个智能体一份，\`ctx.config()\`），都是序列化 Schemastery；\`meta.advanced\` 默认折叠，\`meta.hint\` 是帮助文字，长文本字段用 \`meta.role: 'textarea'\` 显示成多行输入框。两层都可以声明 \`meta.role: 'secret'\` 凭据字段，用 \`secrets.get(key)\` 读取。
-- 禁止注册 root、DSH 官方页面 Slot、Composer 或频道顶栏。
-- 动态运行、保存不可变扩展 Revision、给智能体启用扩展彼此独立；每一步都必须等待真实结果。
-- 运行验证会用 \`nekro_nxt_extension_define.verification\` 中的样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 \`{}\`、RPC 用 \`null\` 调用。
-- 可选扩展图标：在 \`resources\` 放 \`assets/icon.svg\`（推荐，规则同页面 SVG 图标）或 64–512 像素正方形、不超过 128 KiB 的 \`assets/icon.png\` / \`assets/icon.webp\`（内容填标准 base64），再用 \`iconPath\` 指向它；图标显示在工坊、社区和智能体能力列表。
-
-## 试运行环境
-
-候选在沙箱里试运行，和保存后的扩展有几处不同：
-
-- 不能加载模块，\`import()\` 和 \`require()\` 在定义时就会被拒绝。要用的能力都在 harness、ctx 和 ctx.nxt 上。
-- 沙箱提供 \`crypto\`（randomUUID、getRandomValues）、\`URL\`、\`URLSearchParams\`、\`AbortController\` 和 \`structuredClone\`，行为和保存后一样。它们和 nxt 一样要等扩展挂载后才能用：在工具和界面数据接口里调用，不要放在 factory 顶层。
-- 没有 \`process\`、\`Buffer\`、定时器和 \`fetch\`：配置用 harness.config() 或 ctx.config()，二进制数据用 Uint8Array，定时用 timer 服务（inject: ['timer']），网络用 ctx.nxt.http.fetch。
-- 异步调用要 await 或者加上 catch。没人处理的错误会记进日志并通知你，候选这时可能只运行了一半，修好后重新运行。
-
-## 名称和说明
-
-\`name\` 和 \`purpose\` 保存后就是扩展的名称和说明，显示在工坊、社区和智能体的能力列表里。用户看到它们时只关心能拿这个扩展做什么，不知道也不在意它怎么实现。
-
-- 名称写用户得到的功能，像软件菜单里的功能名一样短，例如「视频内容解读」「直播开播提醒」「天气与穿衣建议」「随机抽签」。不写成一句话或问句（「查天气穿什么」）；实现手段、运行频率和技术路线也不进名称（「视频分镜」「每小时汇总」「中转图片生成」），用户读不懂，改几版后也会过时。服务商或模型名只在扩展就是为了接入它时才写，例如「MiMo 语音合成」。
-- 不夹英文单词（RSS 这类通用叫法除外），不加「·」这类装饰和版本号；和已有的扩展（nekro_nxt_extension_list）要能区分开。用户给过名字就用用户的。
-- \`purpose\` 用一句话说启用后智能体能为用户做什么，例如「发来视频或 B 站链接，智能体能说出视频里发生了什么」。配置项、权限和代码结构不写进去。
-- 修复和重新定义时沿用同一个名称，需求变了或用户要求时再改。已保存的扩展要改名称或说明，用 nekro_nxt_extension_action 的 edit_info。
-
-## 界面组件（${reference.ui.kitVersion}）
-
-通过 \`ctx.ui\` 取用，只使用下列组件和属性；颜色、间距与主题由宿主决定，不要自行绘制按钮、输入框或表格外框。
-
-${reference.ui.components.map((name) => `- \`${name}\`：${reference.ui.componentProps[name]}`).join('\n')}
-
-## 界面责任契约（${reference.ui.designContract.version}）
-
-${reference.ui.designContract.responsibilities
-  .map(({ owner, provided, forbidden }) => `- ${owner} 提供：${provided.join('、')}；禁止：${forbidden.join('、')}。`)
-  .join('\n')}
-${reference.ui.designContract.compositionRules.map((rule) => `- ${rule}`).join('\n')}
-
-## Host Tool 示例
-
-\`\`\`js
-${reference.examples.hostTool}
-\`\`\`
-
-## 宿主能力（ctx.nxt，能力等级 ${reference.hostCapabilities.sdkLevel}）
-
-${reference.hostCapabilities.declaration}
-
-${reference.hostCapabilities.services.map((line) => `- ${line}`).join('\n')}
-
-${reference.hostCapabilities.rules.map((rule) => `- ${rule}`).join('\n')}
-
-\`\`\`js
-${reference.examples.hostCapabilities}
-\`\`\`
-
-## Host RPC + 面板示例
-
-\`\`\`js
-${reference.examples.hostRpcAndPanel}
-\`\`\`
-
-## 工具视图示例
-
-\`\`\`js
-${reference.examples.toolView}
-\`\`\`
-
-## Host Adapter 示例
-
-\`\`\`js
-${reference.examples.hostAdapter}
-\`\`\`
-
-## 工具 + 页面（同一个扩展）示例
-
-\`\`\`js
-${reference.examples.toolAndPage}
-\`\`\`
-
-## Host Page 示例
-
-\`startPath\`、导航项 \`path\` 和 \`navigate()\` 都使用当前入口内的相对路径，不得以 \`/\` 开头。把页面的完整 Contribution 放进 \`nekro_nxt_extension_define.pages\`，权限放进 \`permissions\`；CSS Module 和 SVG 通过 \`resources\` 提交。
-
-\`\`\`js
-${reference.examples.hostPage}
-\`\`\`
-
-## 扩展治理
-
-${reference.governanceRules.map((rule) => `- ${rule}`).join('\n')}
-
-## 修复与停止
-
-${reference.recoveryRules.map((rule) => `- ${rule}`).join('\n')}
-
-契约版本：${reference.contractVersion}；DSH：${reference.dshVersion}。`
+): string =>
+  sections(
+    renderDevelopmentEssentials(),
+    ...NEKRO_NXT_EXTENSION_REFERENCE_TOPICS.map(({ id }) => renderNekroNxtExtensionReferenceTopic(id, reference)),
+    contractLine(reference),
+  )
 
 /** Browser/Host-neutral implementation bundled by the controlled Extension builder. */
 export const EXTENSION_SDK_BUNDLE_SOURCE = `

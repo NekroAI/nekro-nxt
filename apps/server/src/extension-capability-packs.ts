@@ -16,6 +16,7 @@ export const EXTENSION_CREDENTIAL_TOOLS = [
 ] as const
 export const EXTENSION_ACTION_TOOLS = ['nekro_nxt_extension_action'] as const
 export const EXTENSION_DEVELOPMENT_TOOLS = [
+  'nekro_nxt_extension_reference',
   'nekro_nxt_extension_define',
   'nekro_nxt_extension_revise',
   'nekro_nxt_extension_continue',
@@ -40,7 +41,7 @@ const VIEW_INSTRUCTIONS = [
 ].join('\n')
 
 const DEVELOPMENT_INSTRUCTIONS = [
-  '动手前先用 skill 加载 cordis-plugin-development，界面组件、宿主能力、配置、适配器和示例都在里面。',
+  '动手前先用 skill 加载 cordis-plugin-development，读开发的边界、试运行环境和主题列表；再用 nekro_nxt_extension_reference 读这次要用到的主题，例如工具、界面、配置或宿主能力，接口格式和示例都在里面。',
   '',
   '一般的顺序：',
   '1. 新扩展用 nekro_nxt_extension_define 定义候选。修改已保存的扩展先用 nekro_nxt_extension_revise 开修改任务，在它返回的定义上只改需要改的部分，再用 define 的 { kind: "existing", pluginId } 提交。别的对话里没做完的任务用 nekro_nxt_extension_continue 接过来。',

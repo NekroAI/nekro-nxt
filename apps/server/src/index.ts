@@ -227,7 +227,7 @@ import {
 } from '@nekro-nxt/extension-runtime'
 import {
   NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE,
-  renderNekroNxtExtensionDevelopmentSkill,
+  renderNekroNxtExtensionDevelopmentOverview,
 } from '@nekro-nxt/extension-sdk'
 import type { DshPluginRepository } from '@nekro-nxt/storage-sqlite'
 import { Buffer } from 'node:buffer'
@@ -261,6 +261,7 @@ import {
   EXTENSION_VIEW_TOOLS,
   extensionCapabilityPacks,
 } from './extension-capability-packs.js'
+import { extensionReferenceTool } from './extension-reference-tool.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
@@ -1220,7 +1221,7 @@ const nekroNxtExtensionDefineTool = (
           host: {
             type: 'json',
             description:
-              '本机层能力：factory 参数 nxt 使用的 network、storage（本机分区）。格式见 cordis-plugin-development 技能的“宿主能力”一节。',
+              '本机层能力：factory 参数 nxt 使用的 network、storage（本机分区）。格式见 nekro_nxt_extension_reference 的 host 主题。',
           },
           agent: {
             type: 'json',
@@ -4556,7 +4557,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           description: '开发、修复并验证 NekroNxt Host Tool、Host RPC、面板、工具视图、Adapter 与页面扩展。',
           metadata: { title: 'NekroNxt Extension Development' },
           invocation: { modelInvocable: true, userInvocable: true },
-          content: renderNekroNxtExtensionDevelopmentSkill(),
+          content: renderNekroNxtExtensionDevelopmentOverview(),
         })
         const dynamicContext = isolatePrivateExtensionServices(agentContext)
           .isolate('dynamicCordisRunner')
@@ -4820,6 +4821,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           const verdict = governance?.()?.requesterAllowed(revision.agentId, input.episodeId)
           if (verdict !== undefined && !verdict.allowed) throw new Error(verdict.reason)
         }
+        agentContext.tools.register(extensionReferenceTool())
         agentContext.tools.register(
           nekroNxtExtensionDefineTool(
             runner,

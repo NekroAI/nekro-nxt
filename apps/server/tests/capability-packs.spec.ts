@@ -188,12 +188,14 @@ describe('extension capability packs', () => {
     )
   })
 
-  it('keeps the development instructions short and points to the skill', () => {
+  it('keeps the development instructions short and points to the skill and the reference topics', () => {
     const development = extensionCapabilityPacks({ dynamicCreation: true, extensionAutonomy: 'autonomous' }).find(
       (pack) => pack.name === EXTENSION_DEVELOPMENT_PACK,
     )
     expect(development?.instructions?.length).toBeLessThanOrEqual(1500)
     expect(development?.instructions).toContain('cordis-plugin-development')
+    expect(development?.instructions).toContain('nekro_nxt_extension_reference')
+    expect(development?.tools).toContain('nekro_nxt_extension_reference')
     expect(development?.tools).not.toContain('nekro_nxt_extension_action')
   })
 
