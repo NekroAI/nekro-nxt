@@ -116,9 +116,12 @@ export const stillRequestImage = async (
     encoded = await frame.clone().webp({ quality: 80 }).toBuffer({ resolveWithObject: true })
     mediaType = 'image/webp'
   }
+  // DSH's DeepSeek upload index rejects any variant id that is not `sha256:<hex>`, and one bad record voids the whole
+  // index, so every request would upload every image again. Hash the derivation instead of suffixing it.
+  const still = `${version.variantId}:still-${mediaType === 'image/png' ? 'png' : 'webp'}`
   return {
     ...version,
-    variantId: ImageVariantId(`${version.variantId}:still-${mediaType === 'image/png' ? 'png' : 'webp'}`),
+    variantId: ImageVariantId(`sha256:${createHash('sha256').update(still).digest('hex')}`),
     data: new Uint8Array(encoded.data),
     mediaType,
     bytes: encoded.data.byteLength,

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -217,7 +218,12 @@ describe('request images', () => {
       height: 1024,
       maxBytes: 1024 * 1024,
     })
-    expect(still).toMatchObject({ mediaType: 'image/png', width: 8, height: 8, variantId: 'variant-fixture:still-png' })
+    expect(still).toMatchObject({
+      mediaType: 'image/png',
+      width: 8,
+      height: 8,
+      variantId: `sha256:${createHash('sha256').update('variant-fixture:still-png').digest('hex')}`,
+    })
     expect((await sharp(still.data).metadata()).format).toBe('png')
     expect(still.bytes).toBe(still.data.byteLength)
   })
