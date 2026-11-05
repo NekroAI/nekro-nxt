@@ -1,5 +1,5 @@
 import Schema from '@deepseek-ai/schemastery'
-import { parseJsonValue, type JsonValue } from '@nekro-nxt/contracts'
+import { DshCredentialRefSchema, parseJsonValue, type JsonValue } from '@nekro-nxt/contracts'
 
 /** NXT's data-only form model. Validation uses Schemastery's public API. */
 export interface SchemaNode {
@@ -152,13 +152,131 @@ export const rehydrateSchema = (input: unknown): SchemaNode => {
   return decode(refs === undefined ? wire : wire['uid'], 0).node
 }
 
+type PathSegment = string | number
+
+/** `providers.example.models[2].contextWindow`; the whole value is “配置”. */
+const displayPath = (path: readonly PathSegment[]): string =>
+  path.reduce<string>(
+    (text, segment) =>
+      typeof segment === 'number' ? `${text}[${segment}]` : text === '' ? segment : `${text}.${segment}`,
+    '',
+  ) || '配置'
+
+const VALIDATION_WORDING: readonly (readonly [RegExp, (match: RegExpExecArray) => string])[] = [
+  [/^missing required value$/u, () => '需要填写'],
+  [/^expected number multiple of 1 but got /u, () => '需要是整数'],
+  [/^expected number multiple of (\S+) but got /u, (match) => `需要是 ${match[1]} 的整数倍`],
+  [/^expected number >= (\S+) but got /u, (match) => `不能小于 ${match[1]}`],
+  [/^expected number <= (\S+) but got /u, (match) => `不能大于 ${match[1]}`],
+  [/^expected string length >= (\S+) but got /u, (match) => `至少 ${match[1]} 个字符`],
+  [/^expected string length <= (\S+) but got /u, (match) => `最多 ${match[1]} 个字符`],
+  [/^expect string to match regexp /u, () => '格式不正确'],
+  [/^expected number but got /u, () => '需要是数字'],
+  [/^expected string but got /u, () => '需要是文本'],
+  [/^expected boolean but got /u, () => '需要是 true 或 false'],
+  [/^expected array but got /u, () => '需要是列表'],
+  [/^expected object but got /u, () => '需要是对象'],
+  [/^expected .+ but got /u, () => '取值无效'],
+]
+
+/** Schemastery's `$.a.b[0] expected …` as `a.b[0]：…`; wording it does not know stays as it is. */
+const describeValidationError = (error: unknown): string => {
+  if (!(error instanceof Error)) return '配置值无效。'
+  const options: unknown = Reflect.get(error, 'options')
+  const rawPath: unknown = options !== null && typeof options === 'object' ? Reflect.get(options, 'path') : undefined
+  const path = Array.isArray(rawPath)
+    ? rawPath.filter((segment): segment is PathSegment => typeof segment === 'string' || typeof segment === 'number')
+    : undefined
+  if (!path) return error.message
+  const prefix = path.reduce<string>(
+    (text, segment) => (typeof segment === 'number' ? `${text}[${segment}]` : `${text}.${segment}`),
+    '$',
+  )
+  const message =
+    prefix !== '$' && error.message.startsWith(`${prefix} `) ? error.message.slice(prefix.length + 1) : error.message
+  for (const [pattern, wording] of VALIDATION_WORDING) {
+    const match = pattern.exec(message)
+    if (match) return `${displayPath(path)}：${wording(match)}`
+  }
+  return `${displayPath(path)}：${message}`
+}
+
+/** A credential-ref field holds the name of a credential, never the secret itself. */
+const credentialRefIssue = (root: SchemaNode, value: unknown): string | undefined => {
+  const visit = (node: SchemaNode, current: unknown, path: readonly PathSegment[]): string | undefined => {
+    if (node.meta?.role === 'credential-ref') {
+      if (current === undefined || current === null || current === '') return undefined
+      return DshCredentialRefSchema.safeParse(current).success
+        ? undefined
+        : `${displayPath(path)}：需要是凭据名称，只能包含字母、数字和下划线`
+    }
+    const children: (readonly [SchemaNode, unknown, readonly PathSegment[]])[] = []
+    if (node.type === 'object' && isRecord(current)) {
+      for (const [key, child] of Object.entries(node.dict ?? {}))
+        children.push([child, own(current, key), [...path, key]])
+    } else if (node.type === 'dict' && node.inner && isRecord(current)) {
+      for (const [key, entry] of Object.entries(current)) children.push([node.inner, entry, [...path, key]])
+    } else if (node.type === 'array' && node.inner && Array.isArray(current)) {
+      const entries: readonly unknown[] = current
+      entries.forEach((entry, index) => children.push([node.inner!, entry, [...path, index]]))
+    } else if (node.type === 'tuple' && Array.isArray(current)) {
+      const entries: readonly unknown[] = current
+      node.list?.forEach((child, index) => children.push([child, entries[index], [...path, index]]))
+    } else if (node.type === 'union' || node.type === 'intersect') {
+      for (const child of node.list ?? []) children.push([child, current, path])
+    } else if (node.type === 'transform' && node.inner) {
+      children.push([node.inner, current, path])
+    }
+    for (const [child, entry, childPath] of children) {
+      const issue = visit(child, entry, childPath)
+      if (issue) return issue
+    }
+    return undefined
+  }
+  return visit(root, value, [])
+}
+
 export const validateDraft = (node: SchemaNode, value: unknown): string | undefined => {
   try {
     node.parse(value)
-    return undefined
   } catch (error) {
-    return error instanceof Error ? error.message : '配置值无效。'
+    return describeValidationError(error)
   }
+  return credentialRefIssue(node, value)
+}
+
+export type DraftChange =
+  | { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }
+  | { readonly op: 'unset'; readonly path: readonly string[] }
+
+const sameValue = (left: unknown, right: unknown): boolean => {
+  if (Array.isArray(left) && Array.isArray(right)) {
+    const before: readonly unknown[] = left
+    const after: readonly unknown[] = right
+    return before.length === after.length && before.every((entry, index) => sameValue(entry, after[index]))
+  }
+  if (isRecord(left) && isRecord(right)) {
+    const keys = Object.keys(left)
+    return (
+      keys.length === Object.keys(right).length &&
+      keys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && sameValue(left[key], right[key]))
+    )
+  }
+  return Object.is(left, right)
+}
+
+/** Field edits that turn `before` into `after`: objects compare key by key, anything else is replaced whole. */
+export const diffDraft = (before: unknown, after: unknown, path: readonly string[] = []): readonly DraftChange[] => {
+  if (!isRecord(before) || !isRecord(after)) return sameValue(before, after) ? [] : [{ op: 'set', path, value: after }]
+  const changes: DraftChange[] = []
+  for (const key of Object.keys(before)) {
+    if (!Object.prototype.hasOwnProperty.call(after, key)) changes.push({ op: 'unset', path: [...path, key] })
+  }
+  for (const [key, next] of Object.entries(after)) {
+    if (Object.prototype.hasOwnProperty.call(before, key)) changes.push(...diffDraft(before[key], next, [...path, key]))
+    else changes.push({ op: 'set', path: [...path, key], value: next })
+  }
+  return changes
 }
 
 export const getPath = (value: unknown, path: readonly string[]): unknown => {

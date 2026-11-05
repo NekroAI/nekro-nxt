@@ -1,6 +1,6 @@
 import Schema from '@deepseek-ai/schemastery'
 import { describe, expect, it } from 'vitest'
-import { deletePath, getPath, rehydrateSchema, setPath, validateDraft } from '../src/settings-schema.js'
+import { deletePath, diffDraft, getPath, rehydrateSchema, setPath, validateDraft } from '../src/settings-schema.js'
 
 const wire = (schema: unknown): unknown => JSON.parse(JSON.stringify(schema))
 
@@ -38,6 +38,50 @@ describe('NXT Settings Schema', () => {
     expect(validateDraft(schema, { credential: 'SYNTHETIC_KEY' })).toBeUndefined()
     expect(schema.parse({ credential: 'SYNTHETIC_KEY' })).not.toHaveProperty('token')
     expect(schema.dict?.['credential']?.meta.role).toBe('credential-ref')
+  })
+
+  it('names the field and the problem in a validation message', () => {
+    const schema = rehydrateSchema(
+      wire(
+        Schema.object({
+          providers: Schema.dict(
+            Schema.object({
+              apiKeyEnv: Schema.string().role('credential-ref'),
+              models: Schema.array(
+                Schema.object({ id: Schema.string().required(), contextWindow: Schema.number().step(1).min(1) }),
+              ),
+            }),
+          ),
+        }),
+      ),
+    )
+    const models = (entry: Record<string, unknown>) => ({ providers: { example: { models: [{ id: 'm1' }, entry] } } })
+    expect(validateDraft(schema, models({ id: 'm2', contextWindow: 1.5 }))).toBe(
+      'providers.example.models[1].contextWindow：需要是整数',
+    )
+    expect(validateDraft(schema, models({ id: 'm2', contextWindow: 0 }))).toBe(
+      'providers.example.models[1].contextWindow：不能小于 1',
+    )
+    expect(validateDraft(schema, models({ contextWindow: 8 }))).toBe('providers.example.models[1].id：需要填写')
+    expect(validateDraft(schema, models({ id: 'm2', contextWindow: '大' }))).toBe(
+      'providers.example.models[1].contextWindow：需要是数字',
+    )
+    expect(validateDraft(schema, { providers: { example: { apiKeyEnv: 'SYNTHETIC_KEY' } } })).toBeUndefined()
+    expect(validateDraft(schema, { providers: { example: { apiKeyEnv: 'sk-synthetic value' } } })).toBe(
+      'providers.example.apiKeyEnv：需要是凭据名称，只能包含字母、数字和下划线',
+    )
+  })
+
+  it('turns a whole edited value into field edits', () => {
+    const before = { title: '旧标题', nested: { keep: 1, drop: 2 }, rows: [{ id: 'a' }] }
+    const after = { title: '旧标题', nested: { keep: 1, added: true }, rows: [{ id: 'a' }, { id: 'b' }] }
+    expect(diffDraft(before, after)).toEqual([
+      { op: 'unset', path: ['nested', 'drop'] },
+      { op: 'set', path: ['nested', 'added'], value: true },
+      { op: 'set', path: ['rows'], value: [{ id: 'a' }, { id: 'b' }] },
+    ])
+    expect(diffDraft(before, structuredClone(before))).toEqual([])
+    expect(diffDraft({ title: 'x' }, ['x'])).toEqual([{ op: 'set', path: [], value: ['x'] }])
   })
 
   it('never evaluates callbacks from a serialized custom Schema', () => {

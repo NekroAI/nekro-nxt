@@ -2,6 +2,7 @@ declare const styles: {
   readonly addRow: string
   readonly bannerList: string
   readonly collectionRow: string
+  readonly configModes: string
   readonly control: string
   readonly controlHint: string
   readonly controlLabel: string
@@ -24,8 +25,10 @@ declare const styles: {
   readonly install: string
   readonly installOr: string
   readonly installRow: string
+  readonly jsonEditor: string
   readonly jsonField: string
   readonly loading: string
+  readonly modeSwitch: string
   readonly muted: string
   readonly namespace: string
   readonly notice: string

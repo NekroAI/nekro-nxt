@@ -1,5 +1,14 @@
 import { callHostApi } from './host-api-client.js'
-import { deletePath, getPath, rehydrateSchema, setPath, validateDraft, type SchemaNode } from './settings-schema.js'
+import {
+  deletePath,
+  diffDraft,
+  getPath,
+  rehydrateSchema,
+  setPath,
+  validateDraft,
+  type DraftChange,
+  type SchemaNode,
+} from './settings-schema.js'
 import type { HostApiRequest, HostApiResponse } from '@nekro-nxt/contracts'
 import {
   DshCredentialsChangedSseDataSchema,
@@ -8,6 +17,7 @@ import {
   HostApiContracts,
   JsonValueSchema,
   parseJsonValue,
+  type JsonValue,
 } from '@nekro-nxt/contracts'
 import { ChevronDown, ChevronUp, Download, KeyRound, Plus, RotateCcw, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -29,6 +39,7 @@ import {
   ObjectHeader,
   PropertyGroup,
   SecretInput,
+  Segmented,
   Select,
   Skeleton,
   SwitchRow,
@@ -255,6 +266,176 @@ const applySettingsOps = (user: unknown, ops: ReadonlyMap<string, DshSettingsPat
       operation.op === 'set' ? setPath(result, operation.path, operation.value) : deletePath(result, operation.path)
   }
   return result
+}
+
+/** Adds an edit after the pending ones; edits inside its path are already part of its value. */
+const withSettingsOp = (
+  ops: ReadonlyMap<string, DshSettingsPathOperation>,
+  operation: DshSettingsPathOperation,
+): ReadonlyMap<string, DshSettingsPathOperation> => {
+  const key = pathKey(operation.path)
+  const next = new Map([...ops].filter(([current]) => current !== key && !current.startsWith(`${key}\u0000`)))
+  return next.set(key, operation)
+}
+
+const childSchemaNode = (node: SchemaNode, key: string): SchemaNode | undefined => {
+  if (node.type === 'object') return node.dict?.[key]
+  if (node.type === 'dict' || node.type === 'array') return node.inner
+  if (node.type === 'tuple') return node.list?.[Number(key)]
+  if (node.type === 'intersect') {
+    for (const candidate of node.list ?? []) {
+      const found = childSchemaNode(candidate, key)
+      if (found) return found
+    }
+  }
+  if (node.type === 'transform' && node.inner) return childSchemaNode(node.inner, key)
+  return undefined
+}
+
+/** The Schema node an edit at `path` replaces; a union or an undeclared key answers with the enclosing node. */
+const schemaNodeAt = (root: SchemaNode, path: readonly string[]): SchemaNode => {
+  let node = root
+  for (const key of path) {
+    if (node.type === 'union') return node
+    const child = childSchemaNode(node, key)
+    if (!child) return node
+    node = child
+  }
+  return node
+}
+
+// —— 整份配置的原始 JSON ——
+
+type ConfigEditMode = 'form' | 'json'
+
+const CONFIG_EDIT_MODES = [
+  { value: 'form', label: '表单' },
+  { value: 'json', label: '原始 JSON' },
+] as const
+
+const formatConfigJson = (value: unknown): string => JSON.stringify(value ?? {}, null, 2)
+
+const parseConfigJson = (text: string): { readonly value: JsonValue } | undefined => {
+  try {
+    return { value: parseJsonValue(JSON.parse(text)) }
+  } catch {
+    return undefined
+  }
+}
+
+type JsonEditPlan =
+  | { readonly kind: 'ok'; readonly ops: ReadonlyMap<string, DshSettingsPathOperation> }
+  | { readonly kind: 'invalid' }
+  | { readonly kind: 'error'; readonly error: string }
+
+/** Turns what changed in 原始 JSON into the same field edits the form makes, under the same secret rules. */
+const planJsonEdits = (
+  schema: SchemaNode,
+  ops: ReadonlyMap<string, DshSettingsPathOperation>,
+  changes: readonly DraftChange[],
+): JsonEditPlan => {
+  let next = ops
+  for (const change of changes) {
+    if (change.path.length === 0) return { kind: 'error', error: '只能逐项修改，这组配置无法整体替换。' }
+    try {
+      setPath({}, change.path, null)
+    } catch (cause) {
+      return { kind: 'error', error: failure(cause) }
+    }
+    const node = schemaNodeAt(schema, change.path)
+    if (containsSecretNode(node)) {
+      return {
+        kind: 'error',
+        error: `“${fieldTitle(change.path.at(-1) ?? '', node)}”含有密钥，不能在原始 JSON 里修改。`,
+      }
+    }
+    if (change.op === 'unset') {
+      next = withSettingsOp(next, { op: 'unset', path: [...change.path] })
+      continue
+    }
+    const value = JsonValueSchema.safeParse(change.value)
+    if (!value.success) return { kind: 'error', error: '修改值必须是合法 JSON。' }
+    next = withSettingsOp(next, { op: 'set', path: [...change.path], value: value.data })
+  }
+  return { kind: 'ok', ops: next }
+}
+
+/**
+ * The text shown in 原始 JSON: `edited` once the person has typed, otherwise the current draft, which keeps following
+ * outside changes until then.
+ */
+function useConfigJsonMode(value: unknown) {
+  const [mode, setMode] = useState<ConfigEditMode>('form')
+  const [edited, setEdited] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const formatted = formatConfigJson(value)
+  const text = edited ?? formatted
+  return {
+    mode,
+    text,
+    dirty: mode === 'json' && edited !== null && edited !== formatted,
+    error,
+    setError,
+    edit: (next: string) => {
+      setEdited(next)
+      setError('')
+    },
+    /** Shows the draft again, as after a save or when another configuration opens. */
+    reset: () => {
+      setEdited(null)
+      setError('')
+    },
+    setMode: (next: ConfigEditMode) => {
+      setEdited(null)
+      setError('')
+      setMode(next)
+    },
+  }
+}
+
+function ConfigModeSwitch({
+  mode,
+  onChange,
+}: {
+  readonly mode: ConfigEditMode
+  readonly onChange: (mode: ConfigEditMode) => void
+}) {
+  return (
+    <Segmented
+      className={styles.modeSwitch}
+      label="编辑方式"
+      value={mode}
+      options={CONFIG_EDIT_MODES}
+      onChange={onChange}
+    />
+  )
+}
+
+function ConfigJsonEditor({
+  text,
+  error,
+  disabled,
+  onChange,
+}: {
+  readonly text: string
+  readonly error: string
+  readonly disabled: boolean
+  readonly onChange: (text: string) => void
+}) {
+  return (
+    <Field label="整份配置" error={error || undefined}>
+      <Textarea
+        className={styles.jsonEditor}
+        value={text}
+        disabled={disabled}
+        rows={20}
+        wrap="off"
+        spellCheck={false}
+        autoComplete="off"
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    </Field>
+  )
 }
 
 // —— 通用 Schema 字段 ——
@@ -721,7 +902,8 @@ function DshPluginConfigEditor({
 }: {
   readonly entry: DshPluginEntry
   readonly inspection: DshPluginConfigInspection | undefined
-  readonly onChange: (value: unknown) => void
+  /** The configuration as JSON text; in 原始 JSON it is exactly what was typed, checked when the entry is applied. */
+  readonly onChange: (text: string) => void
 }) {
   const schema = useMemo(() => {
     if (inspection?.mode !== 'schema') return undefined
@@ -732,28 +914,57 @@ function DshPluginConfigEditor({
     }
   }, [inspection])
   const [draft, setDraft] = useState<unknown>(entry.config)
-  useEffect(() => setDraft(entry.config), [entry.config])
+  const json = useConfigJsonMode(draft)
+  useEffect(() => {
+    setDraft(entry.config)
+    json.reset()
+  }, [entry.config])
   if (!inspection) return null
   if (inspection.mode === 'incompatible') return <Banner tone="bad">{inspection.reason}</Banner>
   if (inspection.mode !== 'schema' || !schema) return null
+  const update = (next: unknown): void => {
+    setDraft(next)
+    onChange(formatConfigJson(next))
+  }
+  const switchMode = (mode: ConfigEditMode): void => {
+    if (mode === json.mode) return
+    if (mode === 'form' && json.dirty) {
+      const parsed = parseConfigJson(json.text)
+      if (!parsed) {
+        json.setError('JSON 格式有误，改正后才能切回表单')
+        return
+      }
+      update(parsed.value)
+    }
+    json.setMode(mode)
+  }
   return (
-    <GenericField
-      name="启动配置"
-      node={schema}
-      path={[]}
-      value={draft}
-      disabled={false}
-      onSet={(path, value) => {
-        const next = path.length === 0 ? value : setPath(isRecord(draft) ? draft : {}, path, value)
-        setDraft(next)
-        onChange(next)
-      }}
-      onUnset={(path) => {
-        const next = path.length === 0 ? {} : deletePath(isRecord(draft) ? draft : {}, path)
-        setDraft(next)
-        onChange(next)
-      }}
-    />
+    <div className={styles.configModes}>
+      <ConfigModeSwitch mode={json.mode} onChange={switchMode} />
+      {json.mode === 'json' ? (
+        <ConfigJsonEditor
+          text={json.text}
+          error={json.error}
+          disabled={false}
+          onChange={(text) => {
+            json.edit(text)
+            onChange(text)
+          }}
+        />
+      ) : (
+        <GenericField
+          name="启动配置"
+          node={schema}
+          path={[]}
+          value={draft}
+          disabled={false}
+          onSet={(path, value) =>
+            update(path.length === 0 ? value : setPath(isRecord(draft) ? draft : {}, path, value))
+          }
+          onUnset={(path) => update(path.length === 0 ? {} : deletePath(isRecord(draft) ? draft : {}, path))}
+        />
+      )}
+    </div>
   )
 }
 
@@ -878,7 +1089,6 @@ function NamespaceEditor({
 }) {
   const [authority, setAuthority] = useState(namespace)
   const [ops, setOps] = useState<ReadonlyMap<string, DshSettingsPathOperation>>(() => new Map())
-  useUnsavedDraft(`dsh-settings:${namespace.ns}`, ops.size > 0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -894,6 +1104,7 @@ function NamespaceEditor({
     if (namespace.ns !== authority.ns) {
       setAuthority(namespace)
       setOps(new Map())
+      json.reset()
       setError('')
       setNotice('')
       setConflict(false)
@@ -901,8 +1112,8 @@ function NamespaceEditor({
     }
     if (namespace.revision !== authority.revision) {
       setAuthority(namespace)
-      setConflict(ops.size > 0)
-      if (ops.size === 0) setError('')
+      setConflict(ops.size > 0 || json.dirty)
+      if (ops.size === 0 && !json.dirty) setError('')
     }
   }, [namespace])
   const onSet = (path: readonly string[], value: unknown): void => {
@@ -916,7 +1127,7 @@ function NamespaceEditor({
       return
     }
     setNotice('')
-    setOps((current) => new Map(current).set(pathKey(path), { op: 'set', path: [...path], value: parsedValue.data }))
+    setOps((current) => withSettingsOp(current, { op: 'set', path: [...path], value: parsedValue.data }))
   }
   const onUnset = (path: readonly string[]): void => {
     if (path.length === 0) {
@@ -924,34 +1135,63 @@ function NamespaceEditor({
       return
     }
     setNotice('')
-    setOps((current) => new Map(current).set(pathKey(path), { op: 'unset', path: [...path] }))
+    setOps((current) => withSettingsOp(current, { op: 'unset', path: [...path] }))
   }
-  const rootValue = useMemo(() => {
+  const resolveRoot = (pending: ReadonlyMap<string, DshSettingsPathOperation>): unknown => {
     if (!schema) return authority.resolved
-    const user = applySettingsOps(authority.user, ops)
+    const user = applySettingsOps(authority.user, pending)
     try {
       return parseJsonValue(schema.parse(mergeSettingsLayers(authority.base ?? {}, user)))
     } catch {
       return mergeSettingsLayers(authority.resolved, user)
     }
-  }, [authority, ops, schema])
+  }
+  const rootValue = useMemo(() => resolveRoot(ops), [authority, ops, schema])
+  const json = useConfigJsonMode(rootValue)
+  useUnsavedDraft(`dsh-settings:${namespace.ns}`, ops.size > 0 || json.dirty)
+  /** The edits typed in 原始 JSON, added after the pending form edits. */
+  const jsonPlan = useMemo(() => {
+    if (!json.dirty || !schema) return undefined
+    const parsed = parseConfigJson(json.text)
+    return parsed ? planJsonEdits(schema, ops, diffDraft(rootValue, parsed.value)) : { kind: 'invalid' as const }
+  }, [json.dirty, json.text, ops, rootValue, schema])
+  const pendingOps = jsonPlan?.kind === 'ok' ? jsonPlan.ops : ops
+  const switchMode = (mode: ConfigEditMode): void => {
+    if (mode === json.mode) return
+    if (mode === 'form' && jsonPlan) {
+      if (jsonPlan.kind !== 'ok') {
+        json.setError(jsonPlan.kind === 'invalid' ? 'JSON 格式有误，改正后才能切回表单' : jsonPlan.error)
+        return
+      }
+      setNotice('')
+      setOps(jsonPlan.ops)
+    }
+    json.setMode(mode)
+  }
   const save = async (): Promise<void> => {
-    if (saving || ops.size === 0) return
+    if (saving) return
+    if (jsonPlan && jsonPlan.kind !== 'ok') {
+      json.setError(jsonPlan.kind === 'invalid' ? 'JSON 格式有误，改正后才能保存' : jsonPlan.error)
+      return
+    }
+    const outgoing = pendingOps
+    if (outgoing.size === 0) return
     setSaving(true)
     setError('')
     setConflict(false)
     try {
       if (schema) {
-        const validation = validateDraft(schema, rootValue)
+        const validation = validateDraft(schema, resolveRoot(outgoing))
         if (validation) throw new Error(validation)
       }
       const saved = await callHostApi(
         HostApiContracts.dshSettingsMutate,
         { namespace: authority.ns },
-        { expectedRevision: authority.revision, ops: [...ops.values()] },
+        { expectedRevision: authority.revision, ops: [...outgoing.values()] },
       )
       setAuthority(saved)
       setOps(new Map())
+      json.reset()
       setNotice(saved.applies === 'restart' ? '已保存，重启后生效。' : '已保存并实时生效。')
       onSaved()
     } catch (cause) {
@@ -1012,7 +1252,12 @@ function NamespaceEditor({
           </span>
         </Banner>
       ) : null}
-      {schema ? (
+      {schema ? <ConfigModeSwitch mode={json.mode} onChange={switchMode} /> : null}
+      {schema && json.mode === 'json' ? (
+        <div className={styles.schemaRoot}>
+          <ConfigJsonEditor text={json.text} error={json.error} disabled={!authority.writable} onChange={json.edit} />
+        </div>
+      ) : schema ? (
         <div className={styles.schemaRoot}>
           {schema.type === 'object' ? (
             Object.entries(schema.dict ?? {}).map(([key, child]) => (
@@ -1049,12 +1294,16 @@ function NamespaceEditor({
       {error && !conflict ? <Banner tone="bad">{error}</Banner> : null}
       <div className={styles.saveRow}>
         <span className={notice ? styles.notice : styles.muted} role={notice ? 'status' : undefined}>
-          {notice || (ops.size > 0 ? `${ops.size} 项未保存的修改` : '')}
+          {notice || (pendingOps.size > 0 ? `${pendingOps.size} 项未保存的修改` : '')}
         </span>
         <Button
           variant="primary"
           busy={saving}
-          disabled={ops.size === 0 || !schema || !authority.writable}
+          disabled={
+            (pendingOps.size === 0 && (jsonPlan === undefined || jsonPlan.kind === 'ok')) ||
+            !schema ||
+            !authority.writable
+          }
           onClick={() => void save()}
         >
           保存扩展配置
@@ -1414,9 +1663,26 @@ export function DshPluginDetail({
       setOperationError('还没有智能体，先创建一个再启用。')
       return
     }
+    const parsed = parseConfigJson(entryConfig[item.id] ?? JSON.stringify(item.config))
+    if (!parsed) {
+      setOperationError('JSON 格式有误，改正后才能启用')
+      return
+    }
+    const config = parsed.value
+    if (inspection.mode === 'schema') {
+      let issue: string | undefined
+      try {
+        issue = validateDraft(rehydrateSchema(inspection.schema), config)
+      } catch {
+        // An unreadable Schema leaves the check to the Host, as the form does.
+      }
+      if (issue) {
+        setOperationError(issue)
+        return
+      }
+    }
     setOperationError('')
     try {
-      const config = parseJsonValue(JSON.parse(entryConfig[item.id] ?? JSON.stringify(item.config)))
       await callHostApi(
         HostApiContracts.activateDshPluginEntry,
         { entryId: item.id },
@@ -1616,9 +1882,7 @@ export function DshPluginDetail({
                   <DshPluginConfigEditor
                     entry={item}
                     inspection={inspection}
-                    onChange={(value) =>
-                      setEntryConfig((current) => ({ ...current, [item.id]: JSON.stringify(value, null, 2) }))
-                    }
+                    onChange={(text) => setEntryConfig((current) => ({ ...current, [item.id]: text }))}
                   />
                 ) : null}
                 {inspection?.mode === 'json' ? (

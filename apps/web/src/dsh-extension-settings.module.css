@@ -185,6 +185,25 @@ summary.groupTitle {
   flex: 1 1 200px;
 }
 
+.configModes {
+  display: grid;
+  gap: var(--s-3);
+  max-width: var(--reader-width);
+}
+
+.modeSwitch {
+  justify-self: start;
+}
+
+.jsonEditor {
+  min-height: 320px;
+  max-height: 70vh;
+  overflow: auto;
+  font: var(--t-mono);
+  white-space: pre;
+  tab-size: 2;
+}
+
 .jsonField,
 .union {
   display: grid;

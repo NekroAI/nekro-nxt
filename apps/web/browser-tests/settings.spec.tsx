@@ -1,4 +1,5 @@
 import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
+import Schema from '@deepseek-ai/schemastery'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +8,7 @@ import { createServer, type ViteDevServer } from 'vite'
 import {
   AddLinkedAccountRequestSchema,
   CredentialsViewSchema,
+  DshSettingsMutationRequestSchema,
   HostApiContracts,
   LinkedAccountsViewSchema,
   RemoveLinkedAccountRequestSchema,
@@ -1945,6 +1947,210 @@ test.describe('settings space', () => {
       expect(requests).toEqual([{ method: 'PUT', body: { allowed: true } }])
       await expect(page.getByText('本机已启用', { exact: true })).toBeVisible()
       await page.screenshot({ path: '.local/screenshots-addons/dsh-image-submission-on.png', fullPage: true })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  // A fictional runtime with the same nesting as the model provider runtime: providers → models → fields.
+  const providerRuntimeNs = 'example-provider-runtime'
+  const providerRuntimeSchema = JSON.parse(
+    JSON.stringify(
+      Schema.object({
+        providers: Schema.dict(
+          Schema.object({
+            apiKeyEnv: Schema.string().role('credential-ref'),
+            apiKey: Schema.string().role('secret'),
+            displayName: Schema.string(),
+            models: Schema.array(
+              Schema.object({
+                id: Schema.string().required(),
+                name: Schema.string(),
+                contextWindow: Schema.number().step(1).min(1),
+              }),
+            ),
+          }),
+        ),
+      }),
+    ),
+  ) as unknown
+  const exampleModels = [{ id: 'example-mini', name: 'Example Mini', contextWindow: 32_000 }]
+  const providerRuntimeValue = (models: readonly unknown[]) => ({
+    providers: {
+      example: { apiKeyEnv: 'EXAMPLE_API_KEY', displayName: '示例供应商', models },
+    },
+  })
+  const providerRuntime = (revision: number, models: readonly unknown[]) => ({
+    ns: providerRuntimeNs,
+    schema: providerRuntimeSchema,
+    resolved: providerRuntimeValue(models),
+    base: {},
+    user: providerRuntimeValue(models),
+    applies: 'live',
+    // The stored key is redacted before it reaches the page; only its slot is listed.
+    secrets: [{ path: ['providers', 'example', 'apiKey'], set: true }],
+    revision,
+    writable: true,
+  })
+  const openProviderRuntime = async () => {
+    const mutations: unknown[] = []
+    let stored = providerRuntime(3, exampleModels)
+    const opened = await open(`/settings/dsh?entry=${encodeURIComponent(`namespace:${providerRuntimeNs}`)}`, {
+      before: async (target) => {
+        await target.route('**/api/dsh/settings', (request) => request.fulfill({ json: { namespaces: [stored] } }))
+        await target.route('**/api/dsh/credentials/describe', (request) =>
+          request.fulfill({ json: { credentials: { EXAMPLE_API_KEY: { configured: true, writable: true } } } }),
+        )
+        await target.route(`**/api/dsh/settings/${providerRuntimeNs}/mutate`, (request) => {
+          const body = DshSettingsMutationRequestSchema.parse(request.request().postDataJSON())
+          mutations.push(body)
+          const first = body.ops[0]
+          const models = first?.op === 'set' && Array.isArray(first.value) ? first.value : exampleModels
+          stored = providerRuntime(stored.revision + 1, models)
+          return request.fulfill({ json: stored })
+        })
+      },
+    })
+    const json = opened.page.getByRole('textbox', { name: '整份配置' })
+    const toJson = async () => {
+      await opened.page.getByRole('radio', { name: '原始 JSON' }).click()
+      await expect(json).toBeVisible()
+    }
+    const replaceModels = async (models: readonly unknown[]) => {
+      await json.fill(JSON.stringify(providerRuntimeValue(models), null, 2))
+    }
+    return { ...opened, mutations, json, toJson, replaceModels }
+  }
+  const addedModel = { id: 'example-max', name: 'Example Max', contextWindow: 128_000 }
+
+  test('edits a nested list in 原始 JSON, keeps the draft across modes and saves it as a field edit', async () => {
+    const { page, errors, mutations, json, toJson, replaceModels } = await openProviderRuntime()
+    try {
+      await expect(page.getByRole('radio', { name: '表单' })).toHaveAttribute('aria-checked', 'true')
+      await toJson()
+      await expect(json).toHaveValue(/"apiKeyEnv": "EXAMPLE_API_KEY"/u)
+      await expect(json).toHaveValue(/"contextWindow": 32000/u)
+      await replaceModels([...exampleModels, addedModel])
+      await expect(page.getByText('1 项未保存的修改', { exact: true })).toBeVisible()
+      await page.screenshot({ path: '.local/screenshots-128/raw-json-edit.png', fullPage: true })
+
+      await page.getByRole('radio', { name: '表单' }).click()
+      await expect(json).toHaveCount(0)
+      await expect(page.getByText('1 项未保存的修改', { exact: true })).toBeVisible()
+      await toJson()
+      await expect(json).toHaveValue(/"id": "example-max"/u)
+
+      await page.getByRole('button', { name: '保存扩展配置' }).click()
+      await expect(page.getByText('已保存并实时生效。', { exact: true })).toBeVisible()
+      expect(mutations).toEqual([
+        {
+          expectedRevision: 3,
+          ops: [{ op: 'set', path: ['providers', 'example', 'models'], value: [...exampleModels, addedModel] }],
+        },
+      ])
+      await expect(json).toHaveValue(/"id": "example-max"/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('keeps 原始 JSON open while its text is not valid JSON', async () => {
+    const { page, errors, json, toJson } = await openProviderRuntime()
+    try {
+      await toJson()
+      await json.fill('{ "providers": { "example": ')
+      await page.getByRole('radio', { name: '表单' }).click()
+      await expect(page.getByText('JSON 格式有误，改正后才能切回表单', { exact: true })).toBeVisible()
+      await expect(page.getByRole('radio', { name: '原始 JSON' })).toHaveAttribute('aria-checked', 'true')
+      await expect(json).toHaveValue('{ "providers": { "example": ')
+      await page.screenshot({ path: '.local/screenshots-128/raw-json-invalid.png', fullPage: true })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('names the field a value in 原始 JSON breaks and saves nothing', async () => {
+    const { page, errors, mutations, json, toJson, replaceModels } = await openProviderRuntime()
+    try {
+      await toJson()
+      await replaceModels([...exampleModels, { id: 'example-half', contextWindow: 1.5 }])
+      await page.getByRole('button', { name: '保存扩展配置' }).click()
+      await expect(
+        page.getByText('providers.example.models[1].contextWindow：需要是整数', { exact: true }),
+      ).toBeVisible()
+      await expect(json).toHaveValue(/"id": "example-half"/u)
+      expect(mutations).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('never shows a stored secret in 原始 JSON and takes only credential names there', async () => {
+    const { page, errors, mutations, json, toJson } = await openProviderRuntime()
+    try {
+      await toJson()
+      await expect(json).not.toHaveValue(/"apiKey"/u)
+      const withProvider = async (fields: Record<string, unknown>) => {
+        const value = providerRuntimeValue(exampleModels)
+        await json.fill(JSON.stringify({ providers: { example: { ...value.providers.example, ...fields } } }, null, 2))
+        await page.getByRole('button', { name: '保存扩展配置' }).click()
+      }
+
+      await withProvider({ apiKey: 'sk-synthetic-value' })
+      await expect(page.getByText('“API 密钥”含有密钥，不能在原始 JSON 里修改。', { exact: true })).toBeVisible()
+      await withProvider({ apiKeyEnv: 'sk-synthetic-value' })
+      await expect(
+        page.getByText('providers.example.apiKeyEnv：需要是凭据名称，只能包含字母、数字和下划线', { exact: true }),
+      ).toBeVisible()
+      expect(mutations).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('offers 原始 JSON for an installed entry and applies what was typed', async () => {
+    const packageId = 'dsp_fixturejson'
+    const entryId = 'dse_fixturejson'
+    const catalog = dshPluginCatalog(packageId, '@example/dsh-fixture-json', false, [
+      { id: entryId, entryKey: 'main', scope: 'host', diagnostic: { status: 'active', phase: 'apply' } },
+    ])
+    const activations: unknown[] = []
+    const { page, errors } = await open(`/settings/dsh?entry=${encodeURIComponent(`plugin:${packageId}`)}`, {
+      before: async (target) => {
+        await target.route('**/api/dsh/plugins', (request) => request.fulfill({ json: catalog }))
+        await target.route(`**/api/dsh/plugin-entries/${entryId}/config/inspect`, (request) =>
+          request.fulfill({
+            json: {
+              mode: 'schema',
+              schema: JSON.parse(
+                JSON.stringify(Schema.object({ rows: Schema.array(Schema.object({ label: Schema.string() })) })),
+              ) as unknown,
+            },
+          }),
+        )
+        await target.route(`**/api/dsh/plugin-entries/${entryId}/activation`, (request) => {
+          activations.push(request.request().postDataJSON())
+          return request.fulfill({ json: { targetKey: 'host' } })
+        })
+      },
+    })
+    try {
+      await page.getByRole('button', { name: '检查配置界面' }).click()
+      await page.getByRole('radio', { name: '原始 JSON' }).click()
+      const json = page.getByRole('textbox', { name: '整份配置' })
+      await json.fill('{ "rows": [')
+      await page.getByRole('button', { name: '应用配置 / 添加授权' }).click()
+      await expect(page.getByText('JSON 格式有误，改正后才能启用', { exact: true })).toBeVisible()
+      await json.fill('{ "rows": [{ "label": "示例一" }, { "label": "示例二" }] }')
+      await page.getByRole('button', { name: '应用配置 / 添加授权' }).click()
+      await expect
+        .poll(() => activations)
+        .toEqual([{ target: 'host', config: { rows: [{ label: '示例一' }, { label: '示例二' }] } }])
       expect(errors).toEqual([])
     } finally {
       await page.close()
