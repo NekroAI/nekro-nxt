@@ -440,8 +440,11 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           : undefined
       if (missing !== undefined) throw new Error(missing)
     }
-    // Publishing needs this machine signed in; say so before an administrator is asked to approve.
-    if (action.kind === 'community-publish' && !runtime.community.signedIn()) {
+    // Publishing and withdrawing need this machine signed in; say so before an administrator is asked to approve.
+    if (
+      (action.kind === 'community-publish' || action.kind === 'community-withdraw') &&
+      !runtime.community.signedIn()
+    ) {
       throw new Error(COMMUNITY_SIGNED_OUT_FOR_AGENT)
     }
     if (action.kind === 'community-install' && action.release === undefined) {

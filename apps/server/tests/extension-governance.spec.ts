@@ -1875,10 +1875,19 @@ describe('extension autonomy', () => {
       await expect(publish({ notes: '首发。', sourceUrl: 'ftp://example.com/source' })).rejects.toThrow(
         'sourceUrl 要写完整的 https 链接。',
       )
+      await expect(publish({ notes: '首发。', sourceUrl: 'http://example.com/source' })).rejects.toThrow(
+        'sourceUrl 要写完整的 https 链接。',
+      )
+      await expect(publish({ notes: '首发。', tags: ['超'.repeat(21)] })).rejects.toThrow('每个 1 到 20 字')
       // Not signed in: nothing is asked of an administrator who cannot make it work.
       await expect(publish({ notes: '首发。' })).rejects.toThrow(
         '这台 NekroNXT 还没有登录社区，请管理员先在「社区 → 账号」登录。',
       )
+      // Withdrawing needs the same sign-in.
+      await expect(
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The action tool reads no execution context.
+        action.execute({ action: 'withdraw', releaseId: 'rel_fixture' }, {} as never),
+      ).rejects.toThrow('还没有登录社区')
       expect(runtime.extensionRequests.list('pending')).toEqual([])
 
       vi.spyOn(runtime.community, 'signedIn').mockReturnValue(true)

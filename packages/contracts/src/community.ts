@@ -218,7 +218,8 @@ export type CommunityFreshness = z.output<typeof CommunityFreshnessSchema>
 /**
  * 发布时随包提交的条目信息（作者自己写的介绍）。首次发布用于建条目；之后提供了哪项就覆盖哪项，未提供的保持不变。
  */
-export const COMMUNITY_LISTING_LIMITS = { summary: 160, description: 20_000, tags: 8, tag: 40 } as const
+/** Same limits as the community's own extension info, so a listing it would refuse is caught here first. */
+export const COMMUNITY_LISTING_LIMITS = { summary: 160, description: 20_000, tags: 8, tag: 20, sourceUrl: 500 } as const
 
 export const CommunityListingInputSchema = z.object({
   summary: z.string().trim().max(COMMUNITY_LISTING_LIMITS.summary).optional(),
@@ -231,7 +232,8 @@ export const CommunityListingInputSchema = z.object({
     .string()
     .trim()
     .url()
-    .refine((value) => /^https?:\/\//iu.test(value), '源码地址必须是 http(s) 链接。')
+    .max(COMMUNITY_LISTING_LIMITS.sourceUrl)
+    .refine((value) => /^https:\/\//iu.test(value), '源码地址必须是 https 链接。')
     .optional(),
 })
 export type CommunityListingInput = z.output<typeof CommunityListingInputSchema>

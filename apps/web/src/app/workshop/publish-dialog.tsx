@@ -34,10 +34,10 @@ export const parseListingTags = (value: string): string[] => [
   ),
 ]
 
-const isHttpUrl = (value: string): boolean => {
+const isHttpsUrl = (value: string): boolean => {
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
+    return url.protocol === 'https:'
   } catch {
     return false
   }
@@ -76,7 +76,7 @@ const listingErrors = (draft: ListingDraft): { readonly tags?: string; readonly 
         ? `每个标签不超过 ${COMMUNITY_LISTING_LIMITS.tag} 字。`
         : undefined
   const urlError =
-    draft.sourceUrl.trim() && !isHttpUrl(draft.sourceUrl.trim()) ? '源码地址需要是 http(s) 链接。' : undefined
+    draft.sourceUrl.trim() && !isHttpsUrl(draft.sourceUrl.trim()) ? '源码地址需要是 https 链接。' : undefined
   return { ...(tagError ? { tags: tagError } : {}), ...(urlError ? { sourceUrl: urlError } : {}) }
 }
 
