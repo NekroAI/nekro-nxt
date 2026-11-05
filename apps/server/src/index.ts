@@ -259,9 +259,9 @@ import {
   EXTENSION_ACTION_TOOLS,
   EXTENSION_CREDENTIAL_TOOLS,
   EXTENSION_VIEW_TOOLS,
-  extensionCapabilityPacks,
 } from './extension-capability-packs.js'
 import { extensionReferenceTool } from './extension-reference-tool.js'
+import { sessionCapabilityPacks } from './session-capability-packs.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
@@ -4936,7 +4936,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       // cheap on routes that accept additions, so elsewhere every tool stays resident.
       const packsFit = programmatic || modelInfo.toolUpdate === 'addition-only' || modelInfo.toolUpdate === 'in-history'
       const capabilityPacks = mountCapabilityPacks(agentContext, {
-        packs: packsFit ? extensionCapabilityPacks(revision.capabilities) : [],
+        packs: packsFit ? sessionCapabilityPacks(revision.capabilities) : [],
         presentation: programmatic ? 'ptc' : 'native',
         rootSessionId: sessionId,
         onLoad: (packs) => {

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ExtensionGovernanceToolPort } from '../src/extension-governance/tool-port.ts'
-import { DshHostRuntime } from '../src/index.ts'
+import { DshHostRuntime, type ScheduledTaskPort } from '../src/index.ts'
 
 type Step = { readonly name: string; readonly args: Record<string, unknown> } | undefined
 
@@ -89,6 +89,8 @@ const runScenario = async (input: {
   readonly toolUpdate?: 'addition-only'
   /** Without the authoring ledger and governance, as a host without extension management runs. */
   readonly withoutGovernance?: boolean
+  /** Scheduled tasks the agent's schedule tools manage; absent hosts offer no schedule tools. */
+  readonly scheduledTasks?: ScheduledTaskPort
 }) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-capability-packs-'))
   temporaryDirectories.push(directory)
@@ -134,6 +136,21 @@ const runScenario = async (input: {
             resolveInitiatingEvent: () => undefined,
             governance: () => governance,
           },
+        }),
+    ...(input.scheduledTasks === undefined
+      ? {}
+      : {
+          extensionHost: {
+            activationBackends: {},
+            dynamicBackends: {},
+            describeRevision: () => ({
+              displayName: '虚构扩展',
+              capabilities: undefined,
+              hostCapabilities: undefined,
+              secretKeys: { agent: [], host: [] },
+            }),
+            scheduledTasks: input.scheduledTasks,
+          } as unknown as NonNullable<Parameters<typeof DshHostRuntime.create>[0]['extensionHost']>,
         }),
     configureLlm: (context) => {
       context.llm.registerAdapter(['test-provider'], model)
@@ -320,6 +337,62 @@ return { refused, loaded }
       expect(names).toContain('nekro_nxt_extension_list')
       expect(names).not.toContain('capability_load')
       expect(scenario.host.sessionContext(scenario.sessionId)?.capabilityPacks).toBeUndefined()
+    } finally {
+      await scenario.dispose()
+    }
+  }, 60_000)
+  it('loads the scheduled task tools as a pack', async () => {
+    const scenario = await runScenario({
+      capabilities: { codeRun: true, developmentShell: true },
+      withoutGovernance: true,
+      scheduledTasks: { list: () => [] } as unknown as ScheduledTaskPort,
+      steps: [
+        program(`
+let refused = ''
+try { await tools.schedule_list({}) } catch (error) { refused = error.message }
+return { refused, loaded: await tools.capability_load({ names: ['定时任务'] }) }
+`),
+        program(`return await tools.schedule_list({})`),
+      ],
+    })
+    try {
+      expect(scenario.host.toolNames(scenario.sessionId)).toEqual(expect.arrayContaining(['schedule_create']))
+      await scenario.run()
+      const [first, second, third] = scenario.model.calls
+      const system = textOf(first, 'system')
+      for (const name of ['schedule_create', 'schedule_list', 'schedule_run_now']) expect(system).not.toContain(name)
+      expect(textOf(first, 'user')).toContain('- 定时任务：建提醒和定时任务，查看、暂停、修改已有任务。')
+      expect(textOf(second, 'tool')).toContain('这个工具在「定时任务」能力包里')
+      const delivery = textOf(second, 'user')
+      expect(delivery).toContain('〔能力包「定时任务」〕')
+      expect(delivery).toContain('〔定时任务到时间了〕')
+      expect(delivery).toContain('schedule_create:')
+      expect(textOf(third, 'tool')).toContain('"tasks": []')
+      expect(textOf(third, 'system')).toBe(system)
+    } finally {
+      await scenario.dispose()
+    }
+  }, 60_000)
+
+  it('keeps reading and writing resident and loads the other file tools as a pack', async () => {
+    const scenario = await runScenario({
+      capabilities: { fileTools: true },
+      withoutGovernance: true,
+      toolUpdate: 'addition-only',
+      steps: [
+        { name: 'capability_load', args: { names: ['文件管理'] } },
+        { name: 'make_dir', args: { path: 'notes' } },
+      ],
+    })
+    try {
+      await scenario.run()
+      const [first, , third] = scenario.model.calls
+      const names = (call: GenerateOptions | undefined) => call?.tools?.map(({ name }) => name) ?? []
+      expect(names(first)).toEqual(expect.arrayContaining(['capability_load', 'read', 'write']))
+      for (const name of ['move', 'delete', 'glob', 'grep', 'unzip']) expect(names(first)).not.toContain(name)
+      expect(textOf(first, 'user')).toContain('- 文件管理：')
+      expect(names(third)).toEqual(expect.arrayContaining(['move', 'make_dir', 'glob', 'grep']))
+      expect(textOf(third, 'tool')).toContain('已新建目录 notes')
     } finally {
       await scenario.dispose()
     }

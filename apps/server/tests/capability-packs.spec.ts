@@ -18,6 +18,7 @@ import {
   EXTENSION_MANAGEMENT_PACK,
   extensionCapabilityPacks,
 } from '../src/extension-capability-packs.ts'
+import { FILE_MANAGEMENT_PACK, SCHEDULED_TASKS_PACK, sessionCapabilityPacks } from '../src/session-capability-packs.ts'
 
 const contexts: Context[] = []
 
@@ -204,5 +205,49 @@ describe('extension capability packs', () => {
     const catalog = capabilityCatalogText([{ name: '扩展管理', purpose: '查看和管理已有扩展。' }])
     expect(catalog).toContain('- 扩展管理：查看和管理已有扩展。')
     expect(catalog).not.toContain('扩展开发')
+  })
+})
+
+describe('session capability packs', () => {
+  const grants: Parameters<typeof sessionCapabilityPacks>[0] = {
+    dynamicCreation: false,
+    extensionAutonomy: 'confirm',
+    scheduledTasks: true,
+    fileTools: true,
+    developmentShell: false,
+  }
+
+  it('offers scheduled tasks and file management beside the extension packs', () => {
+    const packs = sessionCapabilityPacks(grants)
+    expect(packs.map((pack) => pack.name)).toEqual([
+      EXTENSION_MANAGEMENT_PACK,
+      SCHEDULED_TASKS_PACK,
+      FILE_MANAGEMENT_PACK,
+    ])
+    const byName = Object.fromEntries(packs.map((pack) => [pack.name, pack]))
+    expect(byName[SCHEDULED_TASKS_PACK]?.tools).toEqual([
+      'schedule_create',
+      'schedule_list',
+      'schedule_update',
+      'schedule_pause',
+      'schedule_resume',
+      'schedule_delete',
+      'schedule_run_now',
+    ])
+    expect(byName[SCHEDULED_TASKS_PACK]?.purpose).toBe('建提醒和定时任务，查看、暂停、修改已有任务。')
+    const files = byName[FILE_MANAGEMENT_PACK]?.tools ?? []
+    expect(files).toEqual(['move', 'copy', 'delete', 'make_dir', 'file_info', 'diff', 'zip', 'unzip', 'glob', 'grep'])
+    // Reading and writing stay resident.
+    for (const name of ['read', 'write', 'edit']) expect(files).not.toContain(name)
+    for (const pack of packs) expect(pack.instructions?.length ?? 0).toBeLessThanOrEqual(800)
+  })
+
+  it('leaves out a pack the agent has no capability for', () => {
+    const names = (overrides: Partial<typeof grants>) =>
+      sessionCapabilityPacks({ ...grants, ...overrides }).map((pack) => pack.name)
+    expect(names({ scheduledTasks: false })).not.toContain(SCHEDULED_TASKS_PACK)
+    expect(names({ fileTools: false })).not.toContain(FILE_MANAGEMENT_PACK)
+    // With commands the shell does all of this, and tools of the same names belong to it.
+    expect(names({ developmentShell: true })).not.toContain(FILE_MANAGEMENT_PACK)
   })
 })
