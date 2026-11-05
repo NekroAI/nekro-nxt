@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import { latestProblem, localPublicPackages, npmDistTags } from './lib/npm-packages.mjs'
 import { hasPreviewProductChanges } from './lib/preview-changes.mjs'
 
 const repositoryRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -169,6 +170,12 @@ async function main() {
     : undefined
   assertReleaseSource({ branch, status, head, remoteMain, previewCommit, changedSincePreview })
   assertTagAvailable(tag)
+  const packages = (await localPublicPackages(repositoryRoot)).map((item) => ({
+    ...item,
+    tags: npmDistTags(item.name),
+  }))
+  const packageProblem = latestProblem(packages)
+  if (packageProblem !== undefined) throw new Error(packageProblem)
 
   console.log(`\n准备发布 NekroNXT ${version}`)
   console.log(`Tag：${tag}`)

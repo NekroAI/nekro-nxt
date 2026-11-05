@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // A Preview may only ship an extension capability level that the shared packages on npm already know: the community
 // validates packages with those, so a newer level in Preview lets users build extensions the community rejects.
-// The release order is in docs/09-正式发布与更新日志规范.md §5.
+// The release order is in docs/09-正式发布与更新日志规范.md §5. Shared packages reach `next` before a stable release,
+// so the newer of `next` and `latest` counts.
 import { execFileSync } from 'node:child_process'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { npmDistTags } from './lib/npm-packages.mjs'
 
 const LEVEL = /EXTENSION_SDK_LEVEL\s*=\s*(\d+)/u
 
@@ -32,13 +34,36 @@ export function levelProblem({ local, published, publishedVersion }) {
   ].join('\n')
 }
 
+/**
+ * @param {Record<string, string>} tags
+ * @returns {string} the newer of the `next` and `latest` versions
+ */
+export function newestPublished(tags) {
+  const parse = (/** @type {string} */ version) => version.split(/[.+-]/u).slice(0, 3).map(Number)
+  const candidates = [tags['latest'], tags['next']].filter((version) => version !== undefined)
+  if (candidates.length === 0) throw new Error('npm 上没有 @nekro-nxt/contracts 的 latest 或 next 版本。')
+  return candidates.reduce((newest, version) => {
+    const [a, b] = [parse(version), parse(newest)]
+    const order = a.findIndex((part, index) => part !== b[index])
+    return order !== -1 && (a[order] ?? 0) > (b[order] ?? 0) ? version : newest
+  })
+}
+
 async function publishedLevel() {
   const directory = await mkdtemp(path.join(tmpdir(), 'nekro-published-contracts-'))
   try {
     const packed = JSON.parse(
-      execFileSync('npm', ['pack', '@nekro-nxt/contracts@latest', '--json', '--pack-destination', directory], {
-        encoding: 'utf8',
-      }),
+      execFileSync(
+        'npm',
+        [
+          'pack',
+          `@nekro-nxt/contracts@${newestPublished(npmDistTags('@nekro-nxt/contracts'))}`,
+          '--json',
+          '--pack-destination',
+          directory,
+        ],
+        { encoding: 'utf8' },
+      ),
     )
     const { filename, version } = packed[0]
     execFileSync('tar', ['-xzf', path.join(directory, filename), '-C', directory])

@@ -2,10 +2,17 @@ name: Publish packages
 
 # 把公开的共享包暂存到 npm。暂存版本不会立即可安装：维护者需要在 npmjs.com 或用
 # `npm stage approve <id>` 以 2FA 确认后才会正式发布。只有版本号在 npm 上尚不存在的包会被暂存。
+# 正式版发布前一律发到 next；正式发版时由 `pnpm packages:promote` 把 latest 指过去（docs/09 §6）。
 on:
   push:
     tags: ['packages-v*']
   workflow_dispatch:
+    inputs:
+      dist-tag:
+        description: npm dist-tag
+        type: choice
+        options: [next, latest]
+        default: next
 
 permissions:
   contents: read
@@ -43,6 +50,7 @@ jobs:
       - name: Stage unpublished versions
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ inputs.dist-tag || 'next' }}
         run: |
           set -euo pipefail
           # 依赖顺序：extension-format 与 extension-sdk 依赖 contracts。
@@ -55,13 +63,13 @@ jobs:
             fi
             if [ "$dir" = packages/extension-sdk/publish ]; then
               # 发布目录由准备脚本生成，依赖已是真实版本号。
-              (cd "$dir" && npm stage publish)
+              (cd "$dir" && npm stage publish --tag "$DIST_TAG")
             else
               # pnpm pack 把 workspace: 依赖改写为真实版本号，再从解包目录暂存。
               out=$(mktemp -d)
               (cd "$dir" && pnpm pack --pack-destination "$out" >/dev/null)
               tar -xzf "$out"/*.tgz -C "$out"
-              (cd "$out/package" && npm stage publish)
+              (cd "$out/package" && npm stage publish --tag "$DIST_TAG")
             fi
-            echo "$name@$version 已暂存，等待维护者确认。"
+            echo "$name@$version 已暂存到 $DIST_TAG，等待维护者确认。"
           done
