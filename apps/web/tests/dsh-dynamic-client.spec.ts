@@ -391,6 +391,84 @@ describe('DSH Dynamic Client Runtime', () => {
       await runtime.dispose()
     }
   })
+
+  it('takes down a Client that registers nothing and reports it as a failed interface', async () => {
+    const guardReports: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string, init?: RequestInit) => {
+        if (input.endsWith('/run-host-half')) {
+          return Promise.resolve(
+            stubResponse(200, {
+              ok: true,
+              pluginId: 'plugin-root',
+              packageId: 'package-root',
+              pluginRunId: 'run-root',
+              waitingFor: [],
+              startedHere: true,
+            }),
+          )
+        }
+        if (input.endsWith('/get-client-code')) {
+          return Promise.resolve(
+            stubResponse(200, {
+              pluginId: 'plugin-root',
+              packageId: 'package-root',
+              pluginRunId: 'run-root',
+              name: '空壳界面',
+              code: 'return { apply() {} }',
+            }),
+          )
+        }
+        if (input.endsWith('/approve')) return Promise.resolve(stubResponse(200, { accepted: true }))
+        if (input.endsWith('/report-guard-failure')) {
+          if (typeof init?.body === 'string') guardReports.push(JSON.parse(init.body))
+          return Promise.resolve(stubResponse(200, { ok: true }))
+        }
+        return Promise.resolve(stubResponse(404, { error: { code: 'not-found', message: 'x' } }))
+      }),
+    )
+    const runtime = await DshDynamicClientRuntime.create(new HttpDynamicClientHost(agentId, episodeId), testStore(), {
+      querySelectorAll: () => [],
+    })
+    const pending: DynamicInventoryRow = {
+      pluginId: 'plugin-root',
+      agentId,
+      packages: [
+        {
+          packageId: 'package-root',
+          name: '空壳界面',
+          purpose: '验证什么都没注册的界面被拦下。',
+          hasHostHalf: false,
+          hasClientHalf: true,
+        },
+      ],
+      latestRun: {
+        pluginRunId: 'run-root',
+        packageId: 'package-root',
+        mode: 'run',
+        status: 'awaiting-approval',
+        approvalRequestId: 'approval-root',
+        requiresApproval: true,
+      },
+    }
+    try {
+      await runtime.reconcile([pending])
+      await expect(runtime.approve('approval-root')).rejects.toThrow('没有注册任何')
+      expect(runtime.loaded()).toEqual([])
+      expect(guardReports).toEqual([
+        expect.objectContaining({
+          episodeId,
+          pluginId: 'plugin-root',
+          pluginRunId: 'run-root',
+          phase: 'client-slot',
+        }),
+      ])
+      expect(JSON.stringify(guardReports[0])).toContain('去掉 code.client')
+    } finally {
+      await runtime.dispose()
+    }
+  })
 })
 
 const syntheticAgent = AgentIdSchema.parse('agt_lifecycle')

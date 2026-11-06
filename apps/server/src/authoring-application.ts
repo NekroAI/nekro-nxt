@@ -43,6 +43,40 @@ const proposeSlug = (name: string): string => {
   return ascii.length >= 3 ? ascii.slice(0, 48) : `ext-${Date.now().toString(36)}`
 }
 
+/** Why a task's latest candidate cannot be saved yet, in words the agent can act on; undefined when it can. */
+export const authoringSaveProblem = (
+  task: DynamicAuthoringTask,
+  attempt: DynamicAuthoringAttempt | undefined,
+): string | undefined => {
+  if (attempt?.state === 'active' && attempt.verification) {
+    return task.status === 'ready' || task.status === 'paused'
+      ? undefined
+      : '这个候选还没有试运行成功，或者还在等待批准，暂时不能保存。'
+  }
+  switch (attempt?.state) {
+    case undefined:
+    case 'drafting':
+      return '这个候选还没有运行过，运行通过后才能保存。'
+    case 'awaiting-approval':
+      return '这个候选还在等待确认运行，确认并试运行通过后才能保存。'
+    case 'starting-host':
+      return '这个候选正在启动，等试运行有结果再保存。'
+    case 'loading-client':
+    case 'verifying':
+    case 'active':
+      return attempt.client.status === 'absent'
+        ? '这个候选还在验证，等试运行有结果再保存。'
+        : '这个候选的界面还没有通过验证，要等有人打开 NekroNXT 网页把它加载出来才能保存。不需要界面就去掉 code.client，重新提交。'
+    case 'preflight-failed':
+    case 'failed':
+      return `这个候选上次试运行失败了${attempt.error ? `：${attempt.error.message.replace(/[。.\s]+$/u, '')}` : ''}。修好后重新运行，通过了才能保存。`
+    case 'rejected':
+      return '这个候选被拒绝运行了，改好后重新提交。'
+    case 'stopped':
+      return '这个候选已经停止，重新运行通过后才能保存。'
+  }
+}
+
 /** Coordinates authoring operations for HTTP and other host entrypoints. */
 export class AuthoringApplicationService {
   readonly #runtime: NekroRuntime
@@ -121,12 +155,8 @@ export class AuthoringApplicationService {
     if (live !== undefined) await runtime.host.whenAuthoringSettled(live)
     const task = runtime.repository.getAuthoringTask(input.taskId)!
     const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)
-    if (!attempt || attempt.state !== 'active' || !attempt.verification) {
-      throw new Error('这个候选还没有试运行成功，暂时不能保存。')
-    }
-    if (task.status !== 'ready' && task.status !== 'paused') {
-      throw new Error('这个候选还没有试运行成功，或者还在等待批准，暂时不能保存。')
-    }
+    const problem = authoringSaveProblem(task, attempt)
+    if (problem !== undefined || !attempt) throw new Error(problem)
     const targetId = task.kind === 'revise' ? task.targetExtensionId : input.targetExtensionId
     const target = targetId === undefined ? undefined : runtime.repository.getExtension(targetId)
     if (targetId !== undefined && !target) throw new Error('要保存到的扩展已经不在本机。')

@@ -222,8 +222,16 @@ export const normalizeDynamicFailure = (phase: string, message: string): string 
     .trim()
 
 export const preflightNekroNxtAuthoringDefinition = (
-  input: DynamicAuthoringPackageDefinitionInput,
+  definition: DynamicAuthoringPackageDefinitionInput,
 ): DynamicAuthoringPackageDefinitionInput => {
+  // Blank client code is no interface at all, not one that has to pass browser verification.
+  const input: DynamicAuthoringPackageDefinitionInput =
+    definition.code.client?.trim() === ''
+      ? {
+          ...definition,
+          code: definition.code.host === undefined ? {} : { host: definition.code.host },
+        }
+      : definition
   const resourceEntries = Object.entries(input.resources)
   const resourcePaths = new Set(resourceEntries.map(([resourcePath]) => resourcePath))
   if (resourcePaths.size !== resourceEntries.length) throw new Error('动态页面预检失败：资源路径不能重复。')
@@ -2003,6 +2011,34 @@ export class DynamicAuthoringRuntime {
   }
 
   /**
+   * The page took down a Client that registered nothing NekroNXT can show. DSH keeps such a run going and its own
+   * notice never reaches the agent, so the candidate would wait for a verification that cannot come.
+   */
+  async #failClientContributions(
+    dshSessionId: string,
+    pluginId: string,
+    pluginRunId: string,
+    message: string,
+  ): Promise<void> {
+    const episodeId = this.#sessions.get(dshSessionId)?.episodeId
+    const latest = this.dynamicInventory(dshSessionId).find((row) => row.pluginId === pluginId)?.latestRun
+    if (!episodeId || latest?.pluginRunId !== pluginRunId) return
+    await this.failAuthoringVerification(dshSessionId, pluginId, latest.packageId, new Error(message))
+    this.#steerAuthoringEvent(
+      episodeId,
+      pluginId,
+      latest.packageId,
+      'client-slot',
+      `${pluginRunId}:client-slot`,
+      (task) =>
+        [
+          `〔系统通知〕「${task.title}」（${task.id}）的界面试运行失败，候选 ${latest.packageId} 已经停下。`,
+          message,
+        ].join('\n'),
+    )
+  }
+
+  /**
    * Client verification requires every Host RPC to succeed, so a failing handler would otherwise leave the task
    * waiting on a browser while the Agent never learns why.
    */
@@ -2124,9 +2160,13 @@ export class DynamicAuthoringRuntime {
     dshSessionId: string,
     pluginId: string,
     pluginRunId: string,
-    failure: CordisErrorDetails,
+    failure: CordisErrorDetails & { readonly phase?: 'client-slot' },
   ): Promise<null> {
     const { agent, runner } = this.dynamicRuntime(dshSessionId)
+    if (failure.phase === 'client-slot') {
+      await this.#failClientContributions(dshSessionId, pluginId, pluginRunId, failure.message)
+      return null
+    }
     const result = await runner.reportClientGuardFailure(
       agent,
       CordisDynamicPluginId(pluginId),

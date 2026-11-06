@@ -5397,6 +5397,8 @@ export const HostApiContracts = {
           .string()
           .max(16 * 1024)
           .optional(),
+        /** `client-slot`: the Client registered nothing NekroNXT can show, and the page already took it down. */
+        phase: z.enum(['client-slot']).optional(),
       })
       .strict(),
     response: z.object({ ok: z.literal(true) }).strict(),

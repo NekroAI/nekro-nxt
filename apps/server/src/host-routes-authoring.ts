@@ -358,6 +358,7 @@ export function registerAuthoringRoutes({ runtime, registerRoute, broadcast }: H
           await runtime.host.reportDynamicGuardFailure(dshSessionId, parsed.pluginId, parsed.pluginRunId, {
             message: parsed.message,
             ...(parsed.stack === undefined ? {} : { stack: parsed.stack }),
+            ...(parsed.phase === undefined ? {} : { phase: parsed.phase }),
           })
           writeJson(res, 200, HostApiContracts.dynamicReportGuardFailure.parseResponse({ ok: true }))
         } catch (error) {

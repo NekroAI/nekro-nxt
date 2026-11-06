@@ -207,6 +207,7 @@ export class HttpDynamicClientHost implements DynamicClientHostPort {
         pluginRunId,
         message,
         ...(stack === undefined ? {} : { stack }),
+        ...(record['phase'] === 'client-slot' ? { phase: 'client-slot' as const } : {}),
       },
     )
   }

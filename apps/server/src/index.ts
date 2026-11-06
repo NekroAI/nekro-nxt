@@ -6369,7 +6369,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     dshSessionId: string,
     pluginId: string,
     pluginRunId: string,
-    failure: CordisErrorDetails,
+    failure: CordisErrorDetails & { readonly phase?: 'client-slot' },
   ): Promise<null> {
     return this.#dynamic.reportDynamicGuardFailure(dshSessionId, pluginId, pluginRunId, failure)
   }

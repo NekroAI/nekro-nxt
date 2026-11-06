@@ -21,6 +21,7 @@ import {
   type LocalExtension,
   type Revision,
 } from '@nekro-nxt/extension-runtime'
+import { authoringSaveProblem } from '../authoring-application.js'
 import { candidateConfigFields, testCredentialBinding, type CandidateConfigField } from '../authoring-test-config.js'
 import { commandEnvName, namedCredentialId, namedCredentialReference } from '../credentials-library.js'
 import { modelProviderAccessList } from '../host-routes-credentials.js'
@@ -457,6 +458,12 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           ? undefined
           : this.duplicateOf(agentId, action.name ?? task.title, action.slug)
       if (duplicate !== undefined) throw new Error(duplicate)
+      // An administrator would approve a save that cannot happen yet; say what the candidate still waits for.
+      const unsaved =
+        task === undefined
+          ? undefined
+          : authoringSaveProblem(task, runtime.repository.listAuthoringAttempts(task.id).at(-1))
+      if (unsaved !== undefined) throw new Error(unsaved)
       if (action.enable !== undefined) {
         // The request names the candidate and the credentials it binds, so the approval does what it showed.
         action = await runtime.extensionActions.prepare({

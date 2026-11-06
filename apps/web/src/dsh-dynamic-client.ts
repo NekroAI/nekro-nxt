@@ -1095,7 +1095,7 @@ export class DshClientRuntime {
       const message =
         loaded.slots.length > 0
           ? `Client 注册了 NekroNXT 不支持的 DSH Slot：${loaded.slots.join('、')}。请改用 ctx.panels、ctx.toolViews、ctx.messageRenderers 或 ctx.pages。`
-          : 'Client 没有注册任何面板、工具视图、富消息渲染器或页面。'
+          : '候选的界面没有注册任何面板、页面、工具视图或富消息渲染器。不需要界面就去掉 code.client，重新提交；要界面就在 apply 里注册它。'
       const agentId = this.#packages.get(loaded.pluginId)?.agentId
       if (agentId) {
         await this.#host

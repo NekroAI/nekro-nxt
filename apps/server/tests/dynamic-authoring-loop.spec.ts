@@ -1404,4 +1404,101 @@ return { inject: ['nxt'], apply() {} }`
       await runtime.dispose()
     }
   })
+
+  it('fails a candidate whose interface registers nothing and says what to do, before any save is asked (#142)', async () => {
+    const model = new QuietModel()
+    const { runtime, entity, dshSessionId } = await startAuthoringSession(model)
+    try {
+      // Blank client code is no interface at all.
+      const hostOnly = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'blank' },
+        name: '只有工具',
+        purpose: '没有界面的工具。',
+        code: { host: toolHost('blank_probe', "return 'ok'"), client: '  \n' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      expect(
+        runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === hostOnly.pluginId)?.packages,
+      ).toEqual([expect.objectContaining({ hasClientHalf: false })])
+      await runtime.host.undefineDynamicPlugin(dshSessionId, hostOnly.pluginId)
+
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'stub' },
+        name: '空壳界面',
+        purpose: '界面什么都没注册。',
+        code: { host: toolHost('stub_probe', "return 'ok'"), client: 'return { apply() {} }' },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      void runtime.host
+        .runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+        .catch(() => undefined)
+      await expect
+        .poll(
+          () =>
+            runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)?.latestRun
+              ?.approvalRequestId,
+        )
+        .toBeDefined()
+      const approval = runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)!
+        .latestRun!.approvalRequestId!
+      const hostHalf = await runtime.host.runDynamicHostHalf(
+        dshSessionId,
+        defined.pluginId,
+        defined.packageId,
+        'run',
+        approval,
+        false,
+      )
+      if (!hostHalf.ok) throw new Error(hostHalf.message)
+      await runtime.host.resolveDynamicRunRequest(dshSessionId, approval, {
+        ok: true,
+        pluginRunId: hostHalf.pluginRunId,
+      })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId).find((item) => item.title === '空壳界面')!
+      await runtime.host.waitUntilSafe(entity.agentId)
+
+      // Saving now would ask an administrator to approve something that cannot happen yet.
+      const tools = new ExtensionGovernanceTools(runtime)
+      await expect(tools.act(entity.agentId, entity.channelId, { kind: 'save', taskId: task.id })).rejects.toThrow(
+        '界面还没有通过验证',
+      )
+
+      const requestsBefore = model.requests.length
+      await runtime.host.reportDynamicGuardFailure(dshSessionId, defined.pluginId, hostHalf.pluginRunId, {
+        phase: 'client-slot',
+        message: '候选的界面没有注册任何面板、页面、工具视图或富消息渲染器。不需要界面就去掉 code.client，重新提交。',
+      })
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('failed')
+      const failed = runtime.repository.listAuthoringAttempts(task.id).at(-1)
+      expect(failed).toMatchObject({ state: 'failed', error: { phase: 'verification' } })
+      expect(failed?.error?.message).toContain('去掉 code.client')
+      await expect
+        .poll(() =>
+          model.requests
+            .slice(requestsBefore)
+            .some((request) =>
+              request.messages.some(
+                (message) =>
+                  message.role === 'user' &&
+                  message.content.some(
+                    (block) =>
+                      block.type === 'text' &&
+                      block.text.includes('界面试运行失败') &&
+                      block.text.includes('去掉 code.client'),
+                  ),
+              ),
+            ),
+        )
+        .toBe(true)
+      await expect(tools.act(entity.agentId, entity.channelId, { kind: 'save', taskId: task.id })).rejects.toThrow(
+        '上次试运行失败了：候选的界面没有注册任何',
+      )
+    } finally {
+      await runtime.dispose()
+    }
+  })
 })
