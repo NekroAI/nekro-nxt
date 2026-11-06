@@ -41,6 +41,7 @@ import type { HostLogSink, HostLogWriter } from './logs/service.js'
 import { bindLogOwner, withLogOwner } from './logs/bridge.js'
 import { extensionLogger } from './extension-logger.js'
 import {
+  agentConfigWithHostFields,
   configWithPlaceholders,
   NXT_HOST_SERVICE_NAME,
   supportsCredentialPlaceholders,
@@ -153,7 +154,7 @@ interface Instance {
   readonly logger?: HostLogWriter
   readonly revision: Revision
   readonly config: JsonValue
-  /** The agent configuration as the extension's code reads it, from what is stored. */
+  /** What mount code reads from `ctx.config()`: the stored agent configuration over the host's, as code sees them. */
   readonly configView: (config: JsonValue) => JsonValue
   readonly plugin?: ExtensionPluginDefinition
   readonly handlers: Map<string, ExtensionRpcHandler>
@@ -563,7 +564,7 @@ export class PersistentExtensionMounts {
       ...((manifest.requires?.sdk ?? 7) >= 9 && logger !== undefined ? { logger } : {}),
       revision,
       config,
-      configView: (value) => configView('agent', value),
+      configView: (value) => agentConfigWithHostFields(hostConfigView, configView('agent', value)),
       ...(plugin === undefined ? {} : { plugin }),
       handlers,
       ...(inbound === undefined ? {} : { inbound }),

@@ -133,8 +133,9 @@ export interface ExtensionHostContext {
   /** Present when the plugin declares `inject: ['tools', 'nxt']`; see {@link NxtHostService}. */
   readonly nxt?: NxtHostService
   /**
-   * This agent's configuration, validated against `config.agent`. Dynamic runs have no saved configuration and get
-   * the schema defaults. A secret field holds its `secrets.placeholder`, which `http.fetch` fills in.
+   * This agent's configuration, validated against `config.agent`, with the fields of `config.host` beside it. Dynamic
+   * runs have no saved configuration and get the schema defaults. A secret field holds its `secrets.placeholder`,
+   * which `http.fetch` fills in.
    */
   config(): ExtensionJsonValue
 }
@@ -791,7 +792,7 @@ export interface NxtPromptRenderApi {
 export interface NxtHostService {
   /** SDK 9 write-only logger; also transports ctx.logger into dynamic previews. */
   readonly logger?: NxtLogger | undefined
-  /** This agent's configuration (`config.agent`); same value as `ctx.config()`. */
+  /** This agent's configuration (`config.agent`) with the host's fields beside it; same value as `ctx.config()`. */
   config(): ExtensionJsonValue
   readonly http: {
     /**
@@ -1095,7 +1096,7 @@ export interface ExtensionHostEnvironment {
     migrateData?(handler: NxtDataMigrationHandler): () => void
     /**
      * The host instance's configuration (`config.host`). Each agent's configuration is `ctx.config()` inside the
-     * attachment. Dynamic runs have no saved configuration and get the schema defaults with the task's test values.
+     * attachment, which holds these fields too. Dynamic runs have no saved configuration and get the schema defaults with the task's test values.
      * A secret field holds its `secrets.placeholder`, which `http.fetch` fills in.
      */
     config(): ExtensionJsonValue
@@ -1420,7 +1421,7 @@ const HOST_TOOL_EXAMPLE = `return {
         render(_args, value) { return [{ type: 'text', text: value }] }
       },
       execute({ project }) {
-        // ctx.config() is this agent's configuration (config.agent); harness.config() is the host's (config.host).
+        // ctx.config() is this agent's configuration (config.agent) plus the host's fields; harness.config() is the host's.
         const settings = ctx.config()
         return project + (settings.verbose ? ': ready (verbose)' : ': ready')
       }
@@ -1762,7 +1763,7 @@ const HOST_RULES_BY_TOPIC = {
     '面板调用 host.call 时传入 { anchor }（组件参数里的 anchor），RPC 的第二个参数 caller 会带上锚定的智能体、频道或连接；页面调用不需要 anchor。',
   ],
   config: [
-    '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取）。只有需要按智能体区分的设置才放 config.agent。config.agent 的必填项可以不给默认值，启用时在 enable 的 values 里提供。',
+    '配置分两层：config.host 是整台机器一份（factory 里 harness.config() 读取），config.agent 是每个智能体一份（挂载内 ctx.config() 读取，本机层的字段在这里也能读到）。只有需要按智能体区分的设置才放 config.agent。config.agent 的必填项可以不给默认值，启用时在 enable 的 values 里提供。',
     "config.host.schema 与 config.agent.schema 都是序列化 Schemastery，不是 JSON Schema：顶层固定为 { type: 'object', dict: { 字段名: 节点 } }，节点如 { type: 'string', meta: { description: '默认城市', default: '示例市' } }、{ type: 'number', meta: { description: '次数', default: 3, min: 1, max: 10 } }、{ type: 'boolean', meta: { description: '启用', default: true } }，凭据为 { type: 'string', meta: { description: 'API Key', role: 'secret' } }，提示词、模板这类长文本加 role: 'textarea' 显示成多行输入框，如 { type: 'string', meta: { description: '回复模板', role: 'textarea' } }。不要写 properties、required 数组或 additionalProperties。",
     'meta.agentWritable: false 表示这一项只能由管理员在后台修改，只用于计费、内容审核这类开关。动态创造的扩展不能使用这个标记；修改导入或社区安装的扩展时，带这个标记的项原样保留。',
     '试运行时配置取默认值。非凭据字段可以在 nekro_nxt_extension_define 或 nekro_nxt_extension_continue 的 testConfig 里填测试值；凭据字段写 { "credential": "凭据名称" }，绑定一个对你开放的凭据（nekro_nxt_credential_list 查看，需要管理员同意的会自动发出请求）。只绑定说明和域名与用途相符的凭据，不要拿别的服务的凭据临时顶替。没有合适的凭据时用 nekro_nxt_credential_request 请管理员添加，添加后你会被唤醒；不要让人把凭据发在聊天里。内网服务地址要请用户在创造任务页的「测试配置」中填写。用户填的值优先；测试配置只在本任务的试运行中可见，保存时的验证没有凭据。正式配置在 enable 时用 values、credentials 提供，之后用 configure 修改。',
@@ -1839,7 +1840,7 @@ const RECOVERY_RULES_BY_TOPIC = {
     '适配器使用 registerAdapter 在隔离 Host Harness 中验证；一个扩展最多一个适配器，adapterKey 在版本之间不能改变。',
   ],
   config: [
-    '本机配置用 harness.config()，智能体配置用挂载内的 ctx.config()；试运行没有保存的配置，使用 Schema 默认值和测试配置。',
+    '本机配置用 harness.config()，智能体配置用挂载内的 ctx.config()，两层的字段它都有；试运行没有保存的配置，使用 Schema 默认值和测试配置。',
   ],
 } satisfies Partial<Record<NekroNxtExtensionReferenceTopicId | 'overview', readonly string[]>>
 
@@ -2084,7 +2085,7 @@ const TOPIC_BODIES: Readonly<
     ),
   config: () =>
     bullets([
-      "配置分 `config.host`（本机一份，`harness.config()`）与 `config.agent`（每个智能体一份，`ctx.config()`），都是序列化 Schemastery；`meta.advanced` 默认折叠，`meta.hint` 是帮助文字，长文本字段用 `meta.role: 'textarea'` 显示成多行输入框。两层都可以声明 `meta.role: 'secret'` 凭据字段，`config()` 里它的值是占位符，放进 `http.fetch` 时宿主才填入真实的值；要拿原文用 `secrets.get(key)`。",
+      "配置分 `config.host`（本机一份，`harness.config()`）与 `config.agent`（每个智能体一份，`ctx.config()`，本机层的字段也在里面），都是序列化 Schemastery；`meta.advanced` 默认折叠，`meta.hint` 是帮助文字，长文本字段用 `meta.role: 'textarea'` 显示成多行输入框。两层都可以声明 `meta.role: 'secret'` 凭据字段，`config()` 里它的值是占位符，放进 `http.fetch` 时宿主才填入真实的值；要拿原文用 `secrets.get(key)`。",
       ...HOST_RULES_BY_TOPIC.config,
       ...RECOVERY_RULES_BY_TOPIC.config,
       ...HOST_SERVICES_BY_TOPIC.config,

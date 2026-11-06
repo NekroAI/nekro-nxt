@@ -1080,6 +1080,13 @@ export const configWithPlaceholders = (
   }
 }
 
+/**
+ * What an agent-layer `config()` returns: the agent's fields over the host's. Field names never repeat across the two
+ * layers, so this only saves mount code from reading a host field where it is not, which leaves it `undefined`.
+ */
+export const agentConfigWithHostFields = (host: JsonValue | undefined, agent: JsonValue): JsonValue =>
+  host === undefined ? agent : { ...configRecord(host), ...configRecord(agent) }
+
 /** Stored credential references (`credential:local:`, `credential:named:`), which are never the secret itself. */
 const CREDENTIAL_REFERENCE_TEXT = /credential:(?:local|named):/u
 
@@ -1110,6 +1117,15 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
     },
     /** Placeholders in the URL, headers and string body, each with the credential it stands for. */
     async secretsFor(url: string, init: NxtFetchInit | undefined): Promise<readonly NxtFetchSecret[]> {
+      // Every request passes here first; the egress itself only fails on a non-string header with a bare TypeError.
+      const headers: Readonly<Record<string, unknown>> = init?.headers ?? {}
+      for (const [name, value] of Object.entries(headers)) {
+        if (typeof value === 'string') continue
+        const shown = value === null ? 'null' : typeof value === 'undefined' ? 'undefined' : `${typeof value} 类型`
+        throw new NxtCapabilityError(
+          `请求头「${name}」的值是 ${shown}，不是文字，所以请求没有发出去。值来自 config() 时，检查字段名有没有写错、配置里有没有声明这个字段。`,
+        )
+      }
       const found = new Set<string>()
       for (const text of [url, ...Object.values(init?.headers ?? {}), init?.body ?? '']) {
         if (typeof text !== 'string') continue
@@ -1323,12 +1339,20 @@ export const createNxtHostService = (
 
   return {
     logger: { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') },
-    config: () =>
-      configWithPlaceholders(binding.config(), {
-        ownerKey: binding.ownerKey,
-        secretKeys: binding.declaredSecrets().config,
-        placeholders: supportsCredentialPlaceholders(binding),
-      }),
+    config: () => {
+      const view = (config: JsonValue, secretKeys: readonly string[]) =>
+        configWithPlaceholders(config, {
+          ownerKey: binding.ownerKey,
+          secretKeys,
+          placeholders: supportsCredentialPlaceholders(binding),
+        })
+      const declared = binding.declaredSecrets()
+      const hostConfig = binding.hostConfig?.()
+      return agentConfigWithHostFields(
+        hostConfig === undefined ? undefined : view(hostConfig, declared.hostConfig),
+        view(binding.config(), declared.config),
+      )
+    },
     http: { fetch: fetchWithPolicy },
     secrets: {
       get: async (key) => readSecret(binding, backends, key),

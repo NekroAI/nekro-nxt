@@ -993,11 +993,13 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     const fingerprint = normalizeDynamicFailure(phase, message)
     const repeated = state.lastErrorFingerprint === fingerprint ? state.repeatedFingerprintCount + 1 : 1
     const consecutive = state.consecutiveFailures + 1
+    // The agent reads this on its next call, after other output; naming the error keeps its next turn on the cause.
+    const latest = failureSummary(message)
     const blockedReason =
       repeated >= 2
-        ? '同样的错误已经出现两次，先停下来，把问题告诉用户。'
+        ? `同样的错误已经出现两次（${latest}），先停下来，把问题告诉用户。`
         : consecutive >= 3
-          ? '已经连续失败三次，先停下来，把问题告诉用户。'
+          ? `已经连续失败三次（最近一次：${latest}），先停下来，把问题告诉用户。`
           : undefined
     this.state = {
       ...state,
@@ -1048,6 +1050,15 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     return { ...request, sessionId: rootSessionId }
   }
 }
+/** A failure message on one line, short enough to quote back inside another message. */
+const failureSummary = (message: string): string => {
+  const line = message
+    .replace(/^Error:\s*/u, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+  return line.length > 160 ? `${line.slice(0, 160)}…` : line
+}
+
 /** Runs tool calls in a scripted sub-conversation under `parent` and returns each call's outcome by call id. */
 export type RunScriptedConversation = (input: {
   readonly parent: Agent

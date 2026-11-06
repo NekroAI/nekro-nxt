@@ -485,7 +485,10 @@ describe('dynamic authoring closed loop', () => {
       await expect(
         runtime.host.runDynamicPackage(dshSessionId, first.pluginId, second.packageId, 'update'),
       ).rejects.toThrow()
-      expect(runtime.host.dynamicAuthoringPolicy(dshSessionId).blockedReason).toContain('同样的错误已经出现两次')
+      // It quotes the error, so the next turn starts from the cause rather than from "stop" alone (#145).
+      expect(runtime.host.dynamicAuthoringPolicy(dshSessionId).blockedReason).toMatch(
+        /同样的错误已经出现两次（.*same synthetic failure.*）/u,
+      )
 
       await expect(runtime.host.undefineDynamicPlugin(dshSessionId, first.pluginId)).resolves.toMatchObject({
         ok: true,
@@ -1045,7 +1048,8 @@ return { inject: ['nxt'], apply() {} }`
   it('gives a dynamic run a placeholder for a bound request-only credential, never its value', async () => {
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
     // The probe reports what it saw by failing with it, so the trial run returns the observation. Both configuration
-    // layers hold the same placeholders `secrets.placeholder` gives, not the stored references (#143).
+    // layers hold the same placeholders `secrets.placeholder` gives, not the stored references (#143). The mount's
+    // ctx.config() has the host layer's fields too, so reading one there is not left undefined (#145).
     const host = `const factoryShared = harness.config().sharedKey
 return {
   inject: ['tools', 'nxt'],
@@ -1060,7 +1064,8 @@ return {
         const read = await ctx.nxt.secrets.get('apiKey')
         const config = ctx.config().apiKey === token
         const shared = factoryShared === ctx.nxt.secrets.placeholder('sharedKey')
-        throw new Error('observed ' + JSON.stringify({ token, read: read ?? null, config, shared }))
+        const mounted = ctx.config().sharedKey === factoryShared
+        throw new Error('observed ' + JSON.stringify({ token, read: read ?? null, config, shared, mounted }))
       }
     }))
   }
@@ -1116,7 +1121,7 @@ return {
           (error: unknown) => (error instanceof Error ? error.message : String(error)),
         )
       expect(failure).toMatch(
-        /observed \{"token":"\{\{nxt-credential:[a-f0-9]{24}\}\}","read":null,"config":true,"shared":true\}/u,
+        /observed \{"token":"\{\{nxt-credential:[a-f0-9]{24}\}\}","read":null,"config":true,"shared":true,"mounted":true\}/u,
       )
       expect(failure).not.toContain('fictional-weather-key')
     } finally {

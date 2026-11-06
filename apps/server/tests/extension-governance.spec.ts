@@ -421,6 +421,58 @@ describe('revise tasks', () => {
     }
   })
 
+  it('names the dropped closing brace when later define parameters land inside another one (#145)', async () => {
+    const top = {
+      plugin: { kind: 'new', idPrefix: 'city' },
+      name: '城市探针',
+      purpose: '回答当前配置的城市。',
+      code: { host: `return { inject: ['tools'], apply(ctx) { ${CITY_TOOL} } }` },
+    }
+    const model = new TriggeredModel({
+      // `config` closed one brace too late: what followed it moved inside.
+      '#late': {
+        name: 'nekro_nxt_extension_define',
+        args: { ...top, config: { ...CITY_CONFIG, testConfig: { city: '试运行市' }, verification: { tools: {} } } },
+      },
+      // Closed later still: even the required parameters moved, which the declared schema reports as missing.
+      '#swallowed': {
+        name: 'nekro_nxt_extension_define',
+        args: { code: top.code, config: { ...CITY_CONFIG, plugin: top.plugin, name: top.name, purpose: top.purpose } },
+      },
+      '#prefix': {
+        name: 'nekro_nxt_extension_define',
+        args: { ...top, plugin: { kind: 'new', idPrefix: 'City1' } },
+      },
+    })
+    const runtime = await createRuntime(model)
+    try {
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '括号智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await say(runtime, entity.channelId, '#late 做一个城市探针')
+      await expect.poll(() => model.results.length, NOTICE_POLL).toBe(1)
+      expect(model.results[0]).toContain('config 里出现了 testConfig、verification')
+      expect(model.results[0]).toContain('少写了一个 }')
+
+      await say(runtime, entity.channelId, '#swallowed 再试一次')
+      await expect.poll(() => model.results.length, NOTICE_POLL).toBe(2)
+      expect(model.results[1]).toContain('config 里出现了 plugin、name、purpose')
+      expect(model.results[1]).not.toContain('missing required property')
+
+      // Other argument problems read one line each, with the path, instead of the raw validator dump.
+      await say(runtime, entity.channelId, '#prefix 换个前缀')
+      await expect.poll(() => model.results.length, NOTICE_POLL).toBe(3)
+      expect(model.results[2]).toContain('plugin.idPrefix：')
+      expect(model.results[2]).not.toContain('"code":')
+      expect(runtime.repository.listAuthoringTasks(entity.agentId)).toEqual([])
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('sends an upgrade built as a new extension back to revise at define, run and save (#135)', async () => {
     const host = `return { inject: ['tools'], apply(ctx) { ${PROBE_TOOL} } }`
     const define = (name: string) => ({

@@ -136,7 +136,7 @@ import * as FsTool from '@deepseek-ai/dsh-tool-fs'
 import * as PwshTool from '@deepseek-ai/dsh-tool-pwsh'
 import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
-import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
+import { defineTool, ToolArgsError, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import {
   type AgentSessionDriver,
@@ -1051,7 +1051,15 @@ const DynamicAuthoringFacadeInputSchema = z
   .strict()
 
 const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDefinitionInput => {
-  const parsed = DynamicAuthoringFacadeInputSchema.parse(raw)
+  const result = DynamicAuthoringFacadeInputSchema.safeParse(raw)
+  // A coded argument error, so the failure is logged with a code and the agent reads one line per problem.
+  if (!result.success)
+    throw new ToolArgsError(
+      result.error.issues.map(
+        (issue) => `${issue.path.length === 0 ? '参数' : issue.path.join('.')}：${issue.message}`,
+      ),
+    )
+  const parsed = result.data
   const resources: Record<string, string> = {}
   for (const resource of parsed.resources) {
     if (resources[resource.path] !== undefined) throw new Error(`动态页面预检失败：资源路径重复 ${resource.path}。`)
@@ -1102,6 +1110,33 @@ const authoringDefinitionFromFacade = (raw: unknown): DynamicAuthoringPackageDef
   })
 }
 
+/** Define parameters whose contents have fixed names, with those names. */
+const DEFINE_FIXED_OBJECT_PARAMETERS: Readonly<Record<string, readonly string[]>> = {
+  code: ['host', 'client'],
+  permissions: ['permissions', 'networkOrigins', 'host', 'agent'],
+  config: ['host', 'agent'],
+  verification: ['tools', 'rpc'],
+}
+
+/**
+ * Top-level define parameters found inside another one. A model writing a long, deeply nested call tends to drop one
+ * closing brace, which moves every later parameter into the one before it; this names that cause.
+ */
+const misplacedDefineParameters = (args: unknown, topLevel: readonly string[]): string[] => {
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return []
+  const violations: string[] = []
+  for (const [parameter, children] of Object.entries(DEFINE_FIXED_OBJECT_PARAMETERS)) {
+    const value: unknown = Reflect.get(args, parameter)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+    const misplaced = Object.keys(value).filter((key) => topLevel.includes(key) && !children.includes(key))
+    if (misplaced.length === 0) continue
+    violations.push(
+      `${parameter} 里出现了 ${misplaced.join('、')}，它们是和 ${parameter} 并列的顶层参数。多半是 ${parameter} 少写了一个 }，后面的参数都被包了进去：把它们移到 ${parameter} 外面`,
+    )
+  }
+  return violations
+}
+
 const nekroNxtExtensionDefineTool = (
   runner: NekroNxtDynamicCordisRunner,
   sessionId: string,
@@ -1114,8 +1149,8 @@ const nekroNxtExtensionDefineTool = (
   reviseBaseConfig: (pluginId: string) => ExtensionLayeredConfig | undefined = () => undefined,
   /** Why a new candidate under this name would duplicate an extension the agent already has. */
   duplicateOf: (name: string) => string | undefined = () => undefined,
-) =>
-  defineTool({
+) => {
+  const tool = defineTool({
     name: 'nekro_nxt_extension_define',
     description:
       '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、配置、CSS 和 SVG 的宿主预检。一个扩展可以同时提供工具、界面数据接口、面板、工具视图、适配器、富消息渲染器和页面，都使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。升级已保存的扩展先用 nekro_nxt_extension_revise，不要用 kind:new 另建同名扩展。',
@@ -1238,19 +1273,39 @@ const nekroNxtExtensionDefineTool = (
           'permissions/networkOrigins 是页面与面板经 host.call 的产品读写和 HTTP(S) origin；使用 ctx.data 的 Hook 也要声明对应读取权限。Host 端能力按层写在 host 与 agent。',
       },
       config: {
-        type: 'json',
-        description:
-          '可选配置界面：{ host?: { schema }, agent?: { schema } }，schema 为序列化 Schemastery 对象，两层字段名不能重复。本机配置用 harness.config() 读取，智能体配置在挂载内用 ctx.config() 读取；试运行时依次取默认值、testConfig 和用户在创造任务页填写的值。',
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          host: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { schema: { type: 'json', required: true, description: '序列化的 Schemastery 对象。' } },
+            description: '本机一份的配置：factory 里用 harness.config() 读取，挂载内的 ctx.config() 也能读到。',
+          },
+          agent: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { schema: { type: 'json', required: true, description: '序列化的 Schemastery 对象。' } },
+            description: '每个智能体一份的配置：挂载内用 ctx.config() 读取。',
+          },
+        },
+        description: '可选配置界面，两层字段名不能重复。试运行时依次取默认值、testConfig 和用户在创造任务页填写的值。',
       },
       testConfig: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: true,
         description:
           '可选，试运行用的配置值：{ 字段名: 值 }，按候选的配置检查，填 null 清除一项。凭据字段不能直接写值，写 { "credential": "凭据名称" } 绑定一个对你开放的凭据（nekro_nxt_credential_list 查看）；用户在任务页填写的值优先。智能体填写的地址不能访问内网，内网地址要用户在任务页填写。',
       },
       verification: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          tools: { type: 'object', additionalProperties: true, description: '{ 工具名: 参数对象 }' },
+          rpc: { type: 'object', additionalProperties: true, description: '{ 方法名: 输入 }' },
+        },
         description:
-          '验证样例：{ tools?: { 工具名: 参数对象 }, rpc?: { 方法名: 输入 } }。运行验证时 Host 会用这些样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 {}、RPC 用 null 调用。带必填参数的 Tool 必须提供能代表真实用途、且没有外部副作用的样例；样例会随保存的扩展一起用于导入验证。',
+          '验证样例。运行验证时 Host 会用这些样例真实调用每个 Tool 和 RPC；未提供时 Tool 用 {}、RPC 用 null 调用。带必填参数的 Tool 必须提供能代表真实用途、且没有外部副作用的样例；样例会随保存的扩展一起用于导入验证。',
       },
     },
     output: {
@@ -1305,6 +1360,17 @@ const nekroNxtExtensionDefineTool = (
       return Promise.resolve(notes.length === 0 ? receipt : { ...receipt, notes: [...notes] })
     },
   })
+  const topLevel = [...Object.keys(DynamicAuthoringFacadeInputSchema.shape), 'testConfig']
+  return {
+    ...tool,
+    // Runs before the declared schema, whose report would list the symptoms (missing and unknown keys) instead.
+    execute: (args, exec) => {
+      const misplaced = misplacedDefineParameters(args, topLevel)
+      if (misplaced.length > 0) throw new ToolArgsError(misplaced)
+      return tool.execute(args, exec)
+    },
+  } satisfies typeof tool
+}
 
 const ROOT_CHANNEL_MESSAGE_POLICY_HEAD = `你在一个真实的聊天频道里。大家只能看到你用 send_channel_message 发出去的消息；你的思考、工具调用，还有直接写出来的文字，他们都看不到。没用 send_channel_message 发出去的话，就等于没说。
 

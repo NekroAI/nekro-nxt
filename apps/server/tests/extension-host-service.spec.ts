@@ -425,6 +425,17 @@ describe('nxt Host service', () => {
     // Without placeholder support the field is simply absent.
     expect(fixture(network, stored, { sdk: 11 }).nxt.config()).toEqual({ city: '示例市' })
   })
+
+  it('says which request header is not text instead of failing inside the egress (#145)', async () => {
+    const { nxt, fetch } = fixture({ network: { mode: 'domains', domains: ['api.example.com'] } }, {}, { sdk: 12 })
+    // What `{ 'api-key': ctx.config().apiKey }` sends when the field is not there.
+    const headers: Record<string, string> = {}
+    Reflect.set(headers, 'api-key', undefined)
+    await expect(nxt.http.fetch('https://api.example.com/v1', { headers })).rejects.toThrow(
+      '请求头「api-key」的值是 undefined',
+    )
+    expect(fetch).not.toHaveBeenCalled()
+  })
 })
 
 describe.each(['host', 'agent'] as const)('extension %s secret configuration', (layer) => {
