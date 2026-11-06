@@ -11,6 +11,7 @@ import type { ExtensionRequestRecord } from '@nekro-nxt/storage-sqlite'
 import { z } from 'zod'
 import type { NekroRuntime } from '../bootstrap.js'
 import { communityErrorForAgent } from '../community-agent-tools.js'
+import { commandArgument, commandPrefix } from './commands.js'
 import {
   ExtensionActionSchema,
   type ExtensionAction,
@@ -288,7 +289,7 @@ export class ExtensionRequestService {
       decidedAt: now,
     })
     this.#settleAnswered(input.actor.agentId, input.action, record.number, now)
-    const undo = this.#undoHint(input.action)
+    const undo = this.#undoHint(input.action, input.actor.channelId)
     this.#notice(
       input.actor.channelId,
       `ext-request:${record.number}:done`,
@@ -597,18 +598,16 @@ export class ExtensionRequestService {
 
   /** External groups only take commands addressed to the bot, so the hint says so. */
   #commandPrefix(channelId: ChannelId | undefined): string {
-    if (channelId === undefined) return ''
-    const channel = this.#runtime.repository.getChannel(channelId)
-    return channel?.kind === 'group' ? '@机器人 ' : ''
+    return channelId === undefined ? '' : commandPrefix(this.#runtime.repository.getChannel(channelId)?.kind)
   }
 
-  #undoHint(action: ExtensionAction): string {
+  #undoHint(action: ExtensionAction, channelId: ChannelId | undefined): string {
     if (action.kind === 'configure' || action.kind === 'revert-config') {
       return '如需撤销，可以在扩展详情的配置历史里恢复之前的版本。'
     }
-    return action.kind === 'switch' || action.kind === 'community-update'
-      ? '如需撤销，管理员发送 /ext revert 扩展名。'
-      : ''
+    if (action.kind !== 'switch' && action.kind !== 'community-update') return ''
+    const name = this.#runtime.repository.getExtension(action.extensionId)?.displayName ?? '扩展名'
+    return `如需撤销，管理员发送 ${this.#commandPrefix(channelId)}/ext revert ${commandArgument(name)}。`
   }
 
   #notice(channelId: ChannelId | undefined, key: string, text: string): void {

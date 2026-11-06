@@ -143,7 +143,7 @@ import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type D
 import { NotificationService } from './notifications.js'
 import { CommunityService } from './community.js'
 import { ExtensionActionService } from './extension-governance/actions.js'
-import { ExtensionCommandPort } from './extension-governance/commands.js'
+import { commandPrefix, ExtensionCommandPort, waitingRunCommands } from './extension-governance/commands.js'
 import { ExtensionGovernanceTools } from './extension-governance/tool-port.js'
 import { ExtensionConfigService } from './extension-governance/config-service.js'
 import { AdministratorService } from './extension-governance/administrators.js'
@@ -1657,6 +1657,26 @@ export class NekroRuntime {
       })
       const unsubscribeDynamicApproval = host.subscribeDynamicApprovalRequests((event) => {
         const displayName = repository.getAgent(event.agentId)?.revision.displayName ?? '未命名智能体'
+        // A chat platform has no button to press: the channel gets the commands, as for an extension request (#141).
+        const channel = repository.getChannel(event.channelId)
+        const task = repository.getAuthoringTaskByPlugin(event.episodeId, event.pluginId)
+        if (channel !== undefined && channel.kind !== 'internal' && task !== undefined) {
+          const commands = waitingRunCommands(task.title, commandPrefix(channel.kind))
+          void channels
+            .sendHostNotice({
+              channelId: event.channelId,
+              noticeKey: `authoring-run:${task.id}:${event.requestId}`,
+              parts: [
+                {
+                  type: 'text',
+                  text: `${displayName}的扩展候选「${task.title}」带界面，要管理员确认后才能试运行。管理员发送 ${commands.run} 允许，或 ${commands.reject} 拒绝。`,
+                },
+              ],
+            })
+            .catch((error: unknown) => {
+              console.error('[nekro-nxt] 候选确认通知发送失败：', error)
+            })
+        }
         void notifications
           .notifyDynamicApproval({
             requestId: event.requestId,

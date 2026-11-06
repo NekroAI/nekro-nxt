@@ -4830,6 +4830,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         await dynamicContext.plugin(CordisTool)
         mountDynamicCordisTools(dynamicContext, runner, {
           runsWithoutAsking: () => this.#authoring?.governance?.()?.runsWithoutAsking(revision.agentId) === true,
+          chatChannel: channelContext.kind !== 'internal',
         })
         const governance = this.#authoring?.governance
         const requesterGuard = () => {

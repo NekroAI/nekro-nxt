@@ -7,6 +7,19 @@ import { extensionVersions } from './versions.js'
 
 const ADMIN_ONLY = '只有 NekroNXT 管理员可以这样做。管理员在设置的「管理员」里配置。'
 
+/** A command argument as people copy it: quoted when it holds spaces or quotes, so it stays one argument (#137). */
+export const commandArgument = (value: string): string =>
+  /[\s"'\\]/u.test(value) ? `"${value.replace(/["\\]/gu, (char) => `\\${char}`)}"` : value
+
+/** What goes before a command in this kind of channel: in a group the bot only hears commands it is mentioned in. */
+export const commandPrefix = (channelKind: string | undefined): string => (channelKind === 'group' ? '@机器人 ' : '')
+
+/** The commands an administrator sends in chat to let a waiting candidate run, or to refuse it. */
+export const waitingRunCommands = (title: string, prefix = ''): { readonly run: string; readonly reject: string } => ({
+  run: `${prefix}/ext run ${commandArgument(title)}`,
+  reject: `${prefix}/ext reject ${commandArgument(title)}`,
+})
+
 const SUBCOMMANDS = new Set([
   'list',
   'info',
@@ -187,9 +200,15 @@ export class ExtensionCommandPort implements CommandGovernancePort {
       .filter((task) => !['completed', 'stopped', 'interrupted'].includes(task.status))
     if (tasks.length > 0) {
       lines.push('进行中的创造任务：')
-      for (const task of tasks) lines.push(`· ${task.title}（${TASK_STATUS[task.status] ?? task.status}）`)
-      if (tasks.some((task) => task.status === 'awaiting-approval'))
-        lines.push('管理员发送 /ext run 任务名称 允许候选运行，/ext reject 任务名称 拒绝。')
+      for (const task of tasks) {
+        lines.push(`· ${task.title}（${TASK_STATUS[task.status] ?? task.status}）`)
+        if (task.status !== 'awaiting-approval') continue
+        const commands = waitingRunCommands(
+          task.title,
+          commandPrefix(runtime.repository.getChannel(context.channelId)?.kind),
+        )
+        lines.push(`  允许：${commands.run}`, `  拒绝：${commands.reject}`)
+      }
     }
     const pending = runtime.extensionRequests.list('pending').filter((request) => request.agentId === agentId)
     if (pending.length > 0) {

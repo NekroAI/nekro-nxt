@@ -1,13 +1,14 @@
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import { HostApiContracts, tokenizeCommand } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
+import { commandArgument, ExtensionCommandPort } from '../src/extension-governance/commands.js'
 import { projectAuthoringAttempt } from '../src/host-queries.js'
 
 const temporaryDirectories: string[] = []
@@ -45,6 +46,17 @@ class SettledModel extends LlmAdapter {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
+
+describe('chat commands for waiting candidates (#137, #141)', () => {
+  it('quotes a name only when it would not stay one argument, and the parser reads it back', () => {
+    for (const name of ['天气卡片', '天气 卡片', '他说"好"', 'a\\b', "it's"]) {
+      const quoted = commandArgument(name)
+      expect(tokenizeCommand(`/ext run ${quoted}`)).toEqual(['/ext', 'run', name])
+    }
+    expect(commandArgument('天气卡片')).toBe('天气卡片')
+    expect(commandArgument('天气 卡片')).toBe('"天气 卡片"')
+  })
+})
 
 describe('NekroNxt domain API — browser dynamic client circuit', () => {
   it('resolves a dynamic approval request through the API for the Agent live Session', async () => {
@@ -309,6 +321,96 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
       await runtime.dispose()
     }
   })
+
+  it('posts the commands that let a waiting candidate run in a chat channel, quoting its name (#141)', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dyn-api-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], new SettledModel())
+      },
+    })
+    await runtime.start()
+    try {
+      const agent = runtime.core.createAgent({
+        displayName: '群里的智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true },
+      })
+      const group = runtime.core.createChannel({
+        connectionId: runtime.internalConnectionId,
+        platformChannelId: 'fixture-group',
+        kind: 'group',
+      })
+      runtime.core.createBinding({ channelId: group.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+      await runtime.internalChannel.postMessage({
+        channelId: group.id,
+        clientEventId: 'seed-group',
+        parts: [{ type: 'text', text: '做个带界面的扩展。' }],
+      })
+      await expect
+        .poll(() => runtime.repository.getActiveEpisode(group.id, agent.definition.id)?.dshSessionId)
+        .toBeDefined()
+      const dshSessionId = runtime.repository.getActiveEpisode(group.id, agent.definition.id)!.dshSessionId!
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'grup' },
+        name: '天气 卡片',
+        purpose: '在群里确认运行。',
+        code: {
+          host: `return { inject: ['tools'], apply(ctx) { harness.registerTool(ctx, harness.defineTool({
+            name: 'group_card_probe', description: '探针', parameters: {},
+            output: { schema: { type: 'string' }, render(_a, v) { return [{ type: 'text', text: v }] } },
+            execute() { return 'ok' },
+          })) } }`,
+          client: `return { inject: ['panels'], apply(ctx) {
+            ctx.panels.register({ id: 'main', anchor: 'agent', title: '概览', densities: ['full'] }, () => React.createElement('div'))
+          } }`,
+        },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      void runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+      await expect
+        .poll(() => runtime.repository.listAuthoringTasks(agent.definition.id)[0]?.status)
+        .toBe('awaiting-approval')
+      const task = runtime.repository.listAuthoringTasks(agent.definition.id)[0]!
+      const approval = runtime.host.dynamicInventory(dshSessionId).find((row) => row.pluginId === defined.pluginId)
+        ?.latestRun?.approvalRequestId
+      const notice = () =>
+        runtime.repository.findOutboundByNoticeKey(`authoring-run:${task.id}:${approval}`)?.intent.parts[0]
+      await expect.poll(notice, { timeout: 10_000 }).toMatchObject({
+        type: 'text',
+        text: expect.stringContaining(
+          '管理员发送 @机器人 /ext run "天气 卡片" 允许，或 @机器人 /ext reject "天气 卡片" 拒绝',
+        ) as unknown,
+      })
+      const overview = await new ExtensionCommandPort(runtime).ext(
+        {},
+        {
+          channelId: group.id,
+          agentId: agent.definition.id,
+          identity: {
+            source: 'platform',
+            connectionId: runtime.internalConnectionId,
+            platformUserId: 'member-1',
+            displayName: '群友',
+          },
+          administrator: false,
+        },
+      )
+      expect(overview).toContain('允许：@机器人 /ext run "天气 卡片"')
+      expect(overview).toContain('拒绝：@机器人 /ext reject "天气 卡片"')
+    } finally {
+      await runtime.dispose()
+    }
+  }, 30_000)
 
   it('settles a page that could not load the Client half as a failed attempt, not a decline', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dyn-failed-'))

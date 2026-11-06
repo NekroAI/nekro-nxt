@@ -12,6 +12,8 @@ export function mountDynamicCordisTools(
   options: {
     /** Whether this agent's candidates go ahead without anyone approving them (its extension autonomy). */
     readonly runsWithoutAsking?: () => boolean
+    /** A chat platform channel, where the Host posts the commands that let a waiting candidate run. */
+    readonly chatChannel?: boolean
   } = {},
 ): void {
   const agentFor = (execution: ToolExecution) => {
@@ -107,7 +109,9 @@ export function mountDynamicCordisTools(
                 nextStep:
                   options.runsWithoutAsking?.() === true
                     ? '候选包含界面，会自动运行并在后台加载界面、完成验证，结果会自动发给你；不需要让用户去点确认。在此之前不要重复运行或声称已完成。'
-                    : '候选包含界面，需要管理员确认运行：在任务页面点「允许运行」，或由管理员在聊天里发送 /ext run 加任务名称。确认后界面会自动加载并验证，结果会自动发给你。在此之前不要重复运行或声称已完成。',
+                    : options.chatChannel === true
+                      ? '候选包含界面，需要管理员确认运行。宿主已经在频道里发了通知，写明管理员要发的命令；你只要说在等管理员确认，不要让人点按钮，也不要转述请求编号。确认后界面会自动加载并验证，结果会自动发给你。在此之前不要重复运行或声称已完成。'
+                      : '候选包含界面，需要管理员确认运行：在任务页面点「允许运行」。确认后界面会自动加载并验证，结果会自动发给你。在此之前不要重复运行或声称已完成。',
               }
             : {}
         return parseJsonValue(JSON.parse(JSON.stringify({ ...result, ...nextStep })))
