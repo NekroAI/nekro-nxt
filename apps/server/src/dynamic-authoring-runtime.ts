@@ -715,7 +715,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.runningPackageId = packageId
     const tools = this.runtimeContext.get('tools')
     const before = this.toolBaseline(owner, pluginId, tools)
-    const result = await super.run(owner, pluginId, packageId, mode, signal)
+    const result = this.adviseRunFailure(pluginId, await super.run(owner, pluginId, packageId, mode, signal))
     let startedCleanly = false
     if (result.ok && result.status === 'running') {
       if (tools instanceof ToolRuntime) {
@@ -748,6 +748,29 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     // Only a run that also passed product verification resets the repair budget.
     if (startedCleanly) this.clearFailures()
     return result
+  }
+
+  /**
+   * DSH's advice for a tool name clash (stop the earlier package) only fits a clash with another candidate. A clash
+   * with a saved extension means the agent is rebuilding it from scratch, and a missing plugin means the candidate was
+   * undefined or went away with a restart; both are put back on the revise path.
+   */
+  private adviseRunFailure(pluginId: string, result: DynamicCordisRunResponse): DynamicCordisRunResponse {
+    if (result.ok) return result
+    if (result.reason === 'plugin-missing') {
+      return {
+        ...result,
+        message: `候选 ${pluginId} 已经不在了，可能被卸载了，或者服务重启过。接着改原来的任务用 nekro_nxt_extension_continue，改已保存的扩展用 nekro_nxt_extension_revise，它们会重新载入候选并给出新的编号；不要为此另建扩展。`,
+      }
+    }
+    const clash = /tool "([^"]+)" is already registered in this scope/.exec(result.message)?.[1]
+    if (clash === undefined || [...this.toolNamesByPackage.values()].some((names) => names.includes(clash))) {
+      return result
+    }
+    return {
+      ...result,
+      message: `工具 ${clash} 已经由一个启用中的扩展提供，新候选不能再注册同名工具。要升级那个扩展，用 nekro_nxt_extension_revise 修改它，已有修改任务时它会接回那个任务；不要另建扩展，也不用请人停用旧版。做的是另一个扩展，就给工具换个名字。`,
+    }
   }
 
   verificationSnapshot(

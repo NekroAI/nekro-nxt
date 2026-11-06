@@ -61,16 +61,16 @@ const same = (left: JsonValue | undefined, right: JsonValue | undefined): boolea
 
 /** Fields the Manifest's `network: { mode: 'config' }` reads addresses from, for one layer. */
 export const networkConfigFields = (
-  manifest: Manifest | undefined,
+  manifest: Pick<Manifest, 'permissions'> | undefined,
   layer: ExtensionConfigLayer,
 ): ReadonlySet<string> => {
   const network = manifest?.permissions[layer]?.network
   return new Set(network?.mode === 'config' ? network.fields : [])
 }
 
-/** Every field of one layer with its level (智能体扩展配置与凭据 C9). */
+/** Every field of one layer with its level (智能体扩展配置与凭据 C9); a candidate's declaration works as well. */
 export const leveledConfigFields = (
-  manifest: Manifest | undefined,
+  manifest: Pick<Manifest, 'permissions' | 'config'> | undefined,
   layer: ExtensionConfigLayer,
 ): readonly LeveledConfigField[] => {
   const network = networkConfigFields(manifest, layer)
@@ -199,8 +199,22 @@ export class ExtensionConfigService {
     const manifest = this.manifest(owner)
     const fields = new Map(leveledConfigFields(manifest, owner.layer).map((entry) => [entry.field.key, entry]))
     const layerName = owner.layer === 'host' ? '本机配置' : '智能体配置'
-    const unknown = [...Object.keys(values), ...Object.keys(credentials)].filter((key) => !fields.has(key))
-    if (unknown.length > 0) throw new Error(`${layerName}里没有这些字段：${[...new Set(unknown)].join('、')}。`)
+    const unknown = [...new Set([...Object.keys(values), ...Object.keys(credentials)])].filter(
+      (key) => !fields.has(key),
+    )
+    if (unknown.length > 0) {
+      // A field of the other layer is a common slip; say where it is.
+      const other = owner.layer === 'host' ? 'agent' : 'host'
+      const otherKeys = new Set(leveledConfigFields(manifest, other).map((entry) => entry.field.key))
+      const elsewhere = unknown.filter((key) => otherKeys.has(key))
+      throw new Error(
+        `${layerName}里没有这些字段：${unknown.join('、')}。${
+          elsewhere.length === 0
+            ? ''
+            : `${elsewhere.join('、')} 在${other === 'host' ? '本机配置' : '智能体配置'}里，修改时 layer 写 ${other}。`
+        }`,
+      )
+    }
     const typedSecrets = Object.keys(values).filter((key) => fields.get(key)?.field.kind === 'secret')
     if (typedSecrets.length > 0) {
       throw new Error(

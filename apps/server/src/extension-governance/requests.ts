@@ -383,6 +383,8 @@ export class ExtensionRequestService {
     const record = this.#pending(number)
     const action = this.#action(record)
     const actor = decider.kind === 'console' ? ({ kind: 'console' } as const) : decider
+    // A save that also enables is judged on its candidate, which is read first; a replaced one is refused below.
+    await this.#runtime.extensionActions.prepare(action).catch(() => undefined)
     const assessment = this.#runtime.extensionActions.assess(action, actor)
     if (assessment.decision === 'console') throw new Error(assessment.reason ?? '这个请求需要在 NekroNXT 后台处理。')
     const now = this.#now()
@@ -619,12 +621,14 @@ export class ExtensionRequestService {
   }
 
   #tellAgent(record: ExtensionRequestRecord, outcome: 'done' | 'failed' | 'rejected' | 'review', text: string): void {
-    this.#runtime.host.notifyAgent({
+    const delivered = this.#runtime.host.notifyAgent({
       agentId: record.agentId,
       ...(record.channelId === null ? {} : { channelId: record.channelId }),
       identity: `ext-request:${record.number}:${outcome}`,
       text,
     })
+    if (!delivered)
+      console.warn(`[nekro-nxt] 扩展请求 #${record.number} 的结果没有送到智能体：它现在没有进行中的对话。`)
   }
 
   #agentName(agentId: AgentId): string {

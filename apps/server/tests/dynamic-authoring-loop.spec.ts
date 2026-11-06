@@ -217,6 +217,55 @@ describe('dynamic authoring closed loop', () => {
     }
   }, 60_000)
 
+  it('tells the agent the new id of a candidate restored after a restart and points a stale id back (#135)', async () => {
+    const model = new QuietModel()
+    const { runtime, entity, dshSessionId } = await startAuthoringSession(model, true)
+    const directory = temporaryDirectories.at(-1)!
+    let before: string
+    try {
+      await runtime.host.whenIdle(dshSessionId)
+      const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'rnew' },
+        name: '换号探针',
+        purpose: '重启后候选换了编号。',
+        code: { host: toolHost('renumber_probe', "return 'ok'") },
+      })
+      before = defined.pluginId
+      await runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+    } finally {
+      await runtime.dispose()
+    }
+    const restarted = await createRuntime(model, directory)
+    try {
+      await restarted.start()
+      await restarted.recover()
+      await restarted.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'after-restart',
+        parts: [{ type: 'text', text: '接着改。' }],
+      })
+      const [task] = restarted.repository.listAuthoringTasks(entity.agentId)
+      expect(task?.pluginKey).not.toBe(before)
+      const notice = `「换号探针」：${before} → ${task!.pluginKey}`
+      await expect
+        .poll(() => model.requests.some((request) => JSON.stringify(request.messages).includes(notice)), {
+          timeout: 10_000,
+        })
+        .toBe(true)
+      const sessionId = restarted.repository.getEpisode(task!.episodeId)!.dshSessionId!
+      const attempt = restarted.repository.listAuthoringAttempts(task!.id).at(-1)!
+      await expect(
+        restarted.host.runDynamicPackage(sessionId, before, attempt.runnerPackageId!, 'run'),
+      ).resolves.toMatchObject({
+        ok: false,
+        reason: 'plugin-missing',
+        message: expect.stringContaining('nekro_nxt_extension_continue') as unknown,
+      })
+    } finally {
+      await restarted.dispose()
+    }
+  }, 60_000)
+
   it('accepts Client CSS beside an Client and rejects it without one', () => {
     const css = '.panel { color: var(--nxt-text); }'
     const candidate = (code: { readonly client?: string }) =>

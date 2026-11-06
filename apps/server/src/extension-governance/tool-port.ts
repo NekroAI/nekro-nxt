@@ -27,7 +27,7 @@ import { modelProviderAccessList } from '../host-routes-credentials.js'
 import type { NekroRuntime } from '../bootstrap.js'
 import { COMMUNITY_SIGNED_OUT_FOR_AGENT, communityBrowser, type CommunityBrowsePort } from '../community-agent-tools.js'
 import { redactLogText } from '../logs/redact.js'
-import type { ExtensionAction } from './actions.js'
+import { HOST_CONFIG_AT_ENABLE, type ExtensionAction } from './actions.js'
 import { extensionVersions } from './versions.js'
 
 /** The definition of a stored Revision in the shape `nekro_nxt_extension_define` takes, plus how it was written. */
@@ -88,8 +88,18 @@ export interface ExtensionGovernanceToolPort {
     action: ExtensionAction,
     requester?: TurnRequester,
   ): Promise<ToolActionOutcome>
-  /** A task of this agent that can move into the current conversation: paused, interrupted or left in another one. */
-  continuableTask(agentId: AgentId, episodeId: EpisodeId, reference: string | undefined): DynamicAuthoringTask
+  /**
+   * A task of this agent that can move into the current conversation: paused, interrupted, left in another one, or
+   * one of this conversation whose candidate `candidateLost` says is no longer loaded.
+   */
+  continuableTask(
+    agentId: AgentId,
+    episodeId: EpisodeId,
+    reference: string | undefined,
+    candidateLost?: (task: DynamicAuthoringTask) => boolean,
+  ): DynamicAuthoringTask
+  /** Why a new extension under this name or slug would duplicate one the agent can reach; undefined when it would not. */
+  duplicateOf(agentId: AgentId, name: string, slug?: string): string | undefined
   resolveExtension(agentId: AgentId, reference: string): LocalExtension
   resolveTask(agentId: AgentId, reference: string | undefined): DynamicAuthoringTask
   /** A Revision of the extension by its version label (`v2`, `v3·2`). */
@@ -440,6 +450,23 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
           : undefined
       if (missing !== undefined) throw new Error(missing)
     }
+    if (action.kind === 'save') {
+      const task = runtime.repository.getAuthoringTask(action.taskId)
+      const duplicate =
+        task === undefined || task.targetExtensionId !== undefined
+          ? undefined
+          : this.duplicateOf(agentId, action.name ?? task.title, action.slug)
+      if (duplicate !== undefined) throw new Error(duplicate)
+      if (action.enable !== undefined) {
+        // The request names the candidate and the credentials it binds, so the approval does what it showed.
+        action = await runtime.extensionActions.prepare({
+          ...action,
+          enable: { ...action.enable, actorAgentId: action.enable.actorAgentId ?? agentId },
+        })
+        const problem = runtime.extensionActions.saveEnableProblem(action)
+        if (problem !== undefined) throw new Error(problem)
+      }
+    }
     // Publishing and withdrawing need this machine signed in; say so before an administrator is asked to approve.
     if (
       (action.kind === 'community-publish' || action.kind === 'community-withdraw') &&
@@ -470,7 +497,7 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
       if (runtime.extensionConfig.stored(plan.owner) === undefined) {
         throw new Error(
           plan.owner.layer === 'host'
-            ? '这个扩展还没有安装到本机，本机配置要在安装后才能修改。'
+            ? `这个扩展还没有安装到本机。${HOST_CONFIG_AT_ENABLE}`
             : '还没有给你启用这个扩展；用 enable 启用，可以在 values 里一起带上配置。',
         )
       }
@@ -498,7 +525,8 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
             : '会在这次回复结束后生效；同一次回复里对这一层配置的多次修改会合并成一次。完成后会以系统通知告诉你。',
       }
     }
-    if (LANDS_AFTER_TURN.has(action.kind)) {
+    // A save that also enables lands after the turn like enabling does.
+    if (LANDS_AFTER_TURN.has(action.kind) || (action.kind === 'save' && action.enable !== undefined)) {
       // These wait for the agent's safe gap, which comes only after this very turn: they land in the background.
       runtime.extensionRequests.runAfterTurn({ action, actor, assessment })
       return {
@@ -529,10 +557,33 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     return revision === undefined ? undefined : this.#runtime.extensionService.revisionManifest(revision)?.config
   }
 
-  continuableTask(agentId: AgentId, episodeId: EpisodeId, reference: string | undefined): DynamicAuthoringTask {
+  duplicateOf(agentId: AgentId, name: string, slug?: string): string | undefined {
+    const trimmed = name.trim()
+    const existing = this.#visibleExtensions(agentId).find(
+      (extension) => extension.displayName === trimmed || (slug !== undefined && extension.slug === slug),
+    )
+    if (!existing) return undefined
+    const open = this.#runtime.repository
+      .listAuthoringTasks()
+      .find(
+        (task) =>
+          task.kind === 'revise' &&
+          task.targetExtensionId === existing.id &&
+          !['completed', 'stopped'].includes(task.status),
+      )
+    return `已经有扩展「${existing.displayName}」，在这里新建会多出一个扩展，不会成为它的新版本。要升级它，用 nekro_nxt_extension_revise 修改${open === undefined ? '' : `，它还没做完的修改任务「${open.title}」会被接回来`}；做的确实是另一个扩展，就换个名字。`
+  }
+
+  continuableTask(
+    agentId: AgentId,
+    episodeId: EpisodeId,
+    reference: string | undefined,
+    /** A task of this conversation whose candidate is no longer loaded is taken up again like one from elsewhere. */
+    candidateLost: (task: DynamicAuthoringTask) => boolean = () => false,
+  ): DynamicAuthoringTask {
     const task = this.resolveTask(agentId, reference)
     if (task.status === 'completed' || task.status === 'stopped') throw new Error(`任务「${task.title}」已经结束。`)
-    if (task.episodeId === episodeId && !['paused', 'interrupted'].includes(task.status)) {
+    if (task.episodeId === episodeId && !['paused', 'interrupted'].includes(task.status) && !candidateLost(task)) {
       throw new Error(`任务「${task.title}」已经在这个对话里，直接接着做就行。`)
     }
     return task

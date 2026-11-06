@@ -1112,11 +1112,13 @@ const nekroNxtExtensionDefineTool = (
   checkTestCredentials: (values: Readonly<Record<string, JsonValue>>) => readonly string[] = () => [],
   /** Configuration a candidate of this plugin revises: its administrator-only fields stay as they are. */
   reviseBaseConfig: (pluginId: string) => ExtensionLayeredConfig | undefined = () => undefined,
+  /** Why a new candidate under this name would duplicate an extension the agent already has. */
+  duplicateOf: (name: string) => string | undefined = () => undefined,
 ) =>
   defineTool({
     name: 'nekro_nxt_extension_define',
     description:
-      '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、配置、CSS 和 SVG 的宿主预检。一个扩展可以同时提供工具、界面数据接口、面板、工具视图、适配器、富消息渲染器和页面，都使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。',
+      '定义一个 NekroNXT 动态扩展候选，并在执行前完成页面、权限、配置、CSS 和 SVG 的宿主预检。一个扩展可以同时提供工具、界面数据接口、面板、工具视图、适配器、富消息渲染器和页面，都使用本工具。定义不会运行代码，成功后使用 cordis_run 启动返回的精确 Package。升级已保存的扩展先用 nekro_nxt_extension_revise，不要用 kind:new 另建同名扩展。',
     parameters: {
       plugin: {
         required: true,
@@ -1283,6 +1285,8 @@ const nekroNxtExtensionDefineTool = (
         .loose()
         .parse(args)
       const definition = authoringDefinitionFromFacade(definitionArgs)
+      const duplicate = definition.plugin.kind === 'new' ? duplicateOf(definition.name) : undefined
+      if (duplicate !== undefined) throw new Error(duplicate)
       assertAgentAuthoredConfig(
         definition.config,
         definition.plugin.kind === 'existing' ? reviseBaseConfig(definition.plugin.pluginId) : undefined,
@@ -1308,7 +1312,7 @@ const ROOT_CHANNEL_MESSAGE_POLICY_HEAD = `你在一个真实的聊天频道里�
 
 const ROOT_CHANNEL_WAIT_POLICY = `群友常把一句话拆成几条发。对方看起来话还没说完，比如只叫了你一声、一句话只说了一半，就用 finish_channel_turn 的 waiting-for-more 先等他说完，他停下来以后会再叫你。`
 
-const ROOT_CHANNEL_MESSAGE_POLICY_TAIL = `要花一阵子的事（查资料、写东西、跑命令），先随口应一声再去做，做完把结果发出来。结果以实际做成的为准，没做成就直说。查到的东西用自己的话讲，别人要出处时再给链接。
+const ROOT_CHANNEL_MESSAGE_POLICY_TAIL = `要花一阵子的事（查资料、写东西、跑命令），先随口应一声，然后在同一轮里接着做完，把结果发出来。结果以实际做成的为准，没做成就直说。查到的东西用自己的话讲，别人要出处时再给链接。
 
 有人在等你回话时，这一轮结束前要么回他，要么调用 finish_channel_turn 写下为什么不回。发完消息还可以继续用工具、继续发。几件互不相关的事（发几条消息、查几样东西）可以在同一次回复里一起调用工具，要用到前一个结果的再分开调用。
 
@@ -1322,7 +1326,7 @@ const rootChannelMessagePolicy = (waitAvailable: boolean): string =>
     ROOT_CHANNEL_MESSAGE_POLICY_TAIL,
   ].join('\n\n')
 
-const ROOT_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里。要说的话想好以后，把 send_channel_message 和 finish_channel_turn（outcome 用 response-complete）一起写在同一段程序的最后，发送结果不用另外确认；结束本轮后不会再有下一步。只有要看了查询结果才能决定说什么时，才分成几段。`
+const ROOT_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里。事情做完、要说的话也想好以后，把 send_channel_message 和 finish_channel_turn（outcome 用 response-complete）一起写在同一段程序的最后，发送结果不用另外确认。要看了查询或操作的结果才能决定下一步时，就分成几段，别提前结束本轮。`
 
 const CHILD_CODE_RUN_POLICY = `用 run_code 时，一段程序尽量把事做完：互不相关的查询放在同一段里，只有要看了结果才能决定下一步时，才分成几段。`
 
@@ -1758,7 +1762,7 @@ export const finishChannelTurnTool = (
   defineTool({
     name: 'finish_channel_turn',
     description: [
-      '结束这一轮，放在最后调用。已经回复完用 response-complete，不需要回复用 no-response-needed，做不到或不能做用 cannot-respond。',
+      '结束这一轮，放在最后调用。事情做完、话也回完了用 response-complete；你说了要接着去做的事，或者刚失败的操作你自己还能补救，就先去做，不要结束。不需要回复用 no-response-needed，做不到或不能做用 cannot-respond。在等别人批准或回话时，reason 里写清楚在等什么。',
       ...(wait === undefined
         ? []
         : [
@@ -4848,6 +4852,7 @@ export class DshHostRuntime implements AgentSessionDriver {
                 ? governance?.()?.revisionConfig(task.baseRevisionId)
                 : undefined
             },
+            (name) => governance?.()?.duplicateOf(revision.agentId, name),
           ),
         )
         if (governance !== undefined) {
@@ -4865,6 +4870,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               return receipt
             },
             restore: (snapshot) => runner.restoreAuthoringPackage(sessionId, snapshot),
+            hasCandidate: (pluginId) => runner.inventory().some((row) => row.pluginId === pluginId),
             setReviseIntent: (intent) => {
               reviseIntent = intent
             },
@@ -5002,6 +5008,28 @@ export class DshHostRuntime implements AgentSessionDriver {
           this.#authoring?.service.interruptTask(recovered.task, error instanceof Error ? error.message : String(error))
         })
       }
+    }
+    // A restored candidate gets a new id, while the agent still holds the one from before the restart.
+    const renamed = recoveredAuthoringPackages.filter((recovered) => recovered.task.pluginKey !== recovered.pluginId)
+    if (renamed.length > 0) {
+      const identity = renamed.map(({ task, pluginId }) => `${task.id}:${task.revision}:${pluginId}`).join(',')
+      const messageId = createHash('sha256').update(`${sessionId}:${identity}`).digest('hex').slice(0, 24)
+      handle.agent.inject(
+        freezeMessage({
+          id: MessageId(`nxt-host-${messageId}`),
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: [
+                '〔系统通知〕服务重启过，下面这些创造任务的候选已经重新载入，编号变了。接着改时用新编号，不要另建扩展：',
+                ...renamed.map(({ task, pluginId }) => `- 「${task.title}」：${task.pluginKey} → ${pluginId}`),
+              ].join('\n'),
+            },
+          ],
+          source: { kind: 'nekro-nxt-host-event', identity: `authoring-restored:${messageId}` },
+        }),
+      )
     }
     if (supportsImage) this.#sessions.require(sessionId).imageInput = true
     await this.#imageContext.restoreLatestPendingVisualContext(handle.agent)

@@ -1027,6 +1027,18 @@ const indexService = (binding: NxtServiceBinding, backends: NxtServiceBackends):
 export const NXT_PLACEHOLDER_SDK_LEVEL = 12
 const PLACEHOLDER_PATTERN = /\{\{nxt-credential:[a-f0-9]{24}\}\}/gu
 
+/** What to do about a secret field that resolved to nothing, by the layer that declares it. */
+const unsetSecretStep = (binding: NxtServiceBinding, key: string): string => {
+  const missing = '还没有合适的凭据时，用 nekro_nxt_credential_request 请管理员添加。'
+  if (binding.mode === 'dynamic' || binding.mode === 'verification') {
+    return `试运行时在 testConfig 里按名称绑定一个凭据；${missing}`
+  }
+  const host = binding.mode === 'host' || binding.declaredSecrets().hostConfig.includes(key)
+  return host
+    ? `用 nekro_nxt_extension_action 的 configure（layer: host）按名称绑定，要管理员确认；${missing}`
+    : `用 nekro_nxt_extension_action 的 configure 按名称绑定；${missing}`
+}
+
 /**
  * `secrets.placeholder` and the lookup `http.fetch` uses to fill placeholders in. A token stands for one secret field
  * of this `nxt` instance only, so a token copied into another extension resolves to nothing.
@@ -1072,7 +1084,9 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
         if (backends.requestSecret === undefined) throw new NxtCapabilityError('这里不能使用凭据占位符。')
         const secret = await backends.requestSecret(binding, key, targetHost)
         if (secret === undefined) {
-          throw new NxtCapabilityError(`凭据字段 ${key} 还没有设置，或者绑定的凭据不对当前智能体开放。`)
+          throw new NxtCapabilityError(
+            `凭据字段 ${key} 还没有设置，或者绑定的凭据不对当前智能体开放。${unsetSecretStep(binding, key)}`,
+          )
         }
         secrets.push({ token, ...secret })
       }

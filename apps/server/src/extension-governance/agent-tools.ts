@@ -47,6 +47,8 @@ export interface ExtensionAgentToolContext extends ExtensionManagementToolContex
   /** Defines a stored candidate again in this conversation without recording a new attempt. */
   readonly restore: (snapshot: DynamicAuthoringSnapshot) => { readonly pluginId: string; readonly packageId: string }
   readonly setReviseIntent: (intent: ReviseIntent | undefined) => void
+  /** Whether a candidate is still loaded in this conversation; a restart can lose one its task still points at. */
+  readonly hasCandidate?: (pluginId: string) => boolean
 }
 
 const json = (value: unknown): JsonValue => parseJsonValue(JSON.parse(JSON.stringify(value)))
@@ -113,7 +115,12 @@ const continueTask = (
 ) => {
   const authoring = context.authoring
   if (!authoring) throw new Error('这台 NekroNXT 没有开启创造任务账本。')
-  const task = port.continuableTask(context.agentId, context.episodeId, reference)
+  const task = port.continuableTask(
+    context.agentId,
+    context.episodeId,
+    reference,
+    (open) => context.hasCandidate !== undefined && !context.hasCandidate(open.pluginKey),
+  )
   const attempt = authoring.listAttempts(task.id).at(-1)
   if (!attempt) throw new Error(`任务「${task.title}」还没有候选。`)
   return { task, attempt }
@@ -230,13 +237,13 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
     name: 'nekro_nxt_extension_action',
     description: [
       '对扩展做生命周期操作。按你的扩展自主权和权限风险，结果可能是直接完成、在这次回复结束后生效（启用、切换等会改变你身上挂载的操作）、在频道里发出请求等管理员用 /ext approve 确认，或者需要管理员在后台处理；照返回的结果如实告诉用户。',
-      'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展）。可给 name、description，不给时新扩展用候选的名称和用途，新版本沿用扩展现在的名称和说明；新建时还可给 slug。',
+      'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展）。可给 name、description，不给时新扩展用候选的名称和用途，新版本沿用扩展现在的名称和说明；新建时还可给 slug。加 enable: true 时保存后接着给你启用，只需管理员确认一次；values、credentials 是启用时的配置，两层的字段都可以写，不写 credentials 时沿用试运行绑定的凭据。',
       'edit_info：修改已保存扩展的信息，name 是名称，description 是说明，只改写上的那项。',
-      'enable / disable：给你自己启用或停用。switch：切到指定版本。revert：回到上一次切换前的版本。',
+      'enable / disable：给你自己启用或停用。enable 可以带 values 和 credentials，本机配置和智能体配置的字段都可以写，按字段所在的层设置。switch：切到指定版本。revert：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
       'migrate_data：把另一个扩展（source）的数据迁到这个扩展，mode 为 overwrite（同名以来源为准，保留其余）或 replace（先清空）；includeConfig 连同配置一起迁移（凭据不迁移）。总要管理员确认。',
       'publish：把当前版本发布到社区。notes 必填，写这次更新了什么；可以同时给社区页面写 summary（一句话简介）、description（详细介绍，Markdown）、tags、sourceUrl（源码地址），不写的保持原样。update：导入社区的新发布并切换。install：从社区安装（communityExtensionId，reason 写为什么要装）。withdraw：撤回一次发布（releaseId）。发布、撤回和安装总要管理员确认。',
-      'configure：修改配置。layer 为 agent（你自己的，默认）或 host（本机，所有智能体共用）；values 写 { 字段名: 值 }，null 恢复默认；凭据字段用 credentials 按名称绑定 { 字段名: "凭据名称" }，null 解除。reason 写为什么改。在回复结束后生效，一次回复里的多次修改合并。enable 也可以带 values 和 credentials 作为初始配置。',
+      'configure：修改配置。layer 为 agent（你自己的，默认）或 host（本机，所有智能体共用）；values 写 { 字段名: 值 }，null 恢复默认；凭据字段用 credentials 按名称绑定 { 字段名: "凭据名称" }，null 解除。reason 写为什么改。在回复结束后生效，一次回复里的多次修改合并。本机配置要在扩展安装后才能改，没安装时在 enable 里一起设置。',
       'revert_config：把某一层配置恢复到 inspect 的 configHistory 里的某个版本（layer、version），恢复本身也是一个新版本。',
     ].join('\n'),
     parameters: {
@@ -262,6 +269,7 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
       },
       extension: { type: 'string', description: '扩展名称或编号。' },
       task: { type: 'string', description: 'save 时的任务名称或编号。' },
+      enable: { type: 'boolean', description: 'save 时为 true：保存后接着给你启用。' },
       version: { type: 'string', description: 'switch 的目标版本，或 branch 的来源版本，例如 v2。' },
       name: { type: 'string', description: 'save、edit_info 或 branch 的扩展名称。' },
       description: {
@@ -291,10 +299,13 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
         enum: ['agent', 'host'],
         description: 'configure / revert_config 的配置层，默认 agent。',
       },
-      values: { type: 'json', description: 'configure 或 enable 的配置值：{ 字段名: 值 }，null 恢复默认。' },
+      values: {
+        type: 'json',
+        description: 'configure、enable 或带 enable 的 save 的配置值：{ 字段名: 值 }，null 恢复默认。',
+      },
       credentials: {
         type: 'json',
-        description: 'configure 或 enable 的凭据绑定：{ 字段名: "凭据名称" }，null 解除绑定。',
+        description: 'configure、enable 或带 enable 的 save 的凭据绑定：{ 字段名: "凭据名称" }，null 解除绑定。',
       },
       configVersion: { type: 'number', description: 'revert_config 要恢复到的配置版本号。' },
       reason: {
@@ -324,6 +335,7 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
           ]),
           extension: z.string().trim().min(1).optional(),
           task: z.string().optional(),
+          enable: z.boolean().optional(),
           version: z.string().optional(),
           name: z.string().trim().min(1).max(80).optional(),
           description: z.string().trim().max(COMMUNITY_LISTING_LIMITS.description).optional(),
@@ -372,12 +384,25 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
       switch (input.action) {
         case 'save': {
           const task = port.resolveTask(context.agentId, input.task)
+          if (input.enable !== true && (input.values !== undefined || input.credentials !== undefined)) {
+            throw new Error('save 只有加 enable: true 时才用 values 和 credentials，它们是启用时的配置。')
+          }
           action = {
             kind: 'save',
             taskId: task.id,
             ...(input.name === undefined ? {} : { name: input.name }),
             ...extensionDescription(),
             ...(input.slug === undefined ? {} : { slug: input.slug }),
+            ...(input.enable === true
+              ? {
+                  enable: {
+                    agentId: context.agentId,
+                    ...(input.values === undefined ? {} : { values: input.values }),
+                    ...(input.credentials === undefined ? {} : { credentials: input.credentials }),
+                    ...origin,
+                  },
+                }
+              : {}),
           }
           break
         }
@@ -552,7 +577,8 @@ export const extensionDevelopmentTools = (context: ExtensionAgentToolContext) =>
       })
       if (prepared.openTask !== undefined) {
         const open = prepared.openTask
-        if (open.episodeId === context.episodeId && !['paused', 'interrupted'].includes(open.status)) {
+        const live = context.hasCandidate === undefined || context.hasCandidate(open.pluginKey)
+        if (open.episodeId === context.episodeId && !['paused', 'interrupted'].includes(open.status) && live) {
           return json({
             alreadyOpen: true,
             taskId: open.id,
@@ -575,7 +601,10 @@ export const extensionDevelopmentTools = (context: ExtensionAgentToolContext) =>
           taskId: task.id,
           pluginId: receipt.pluginId,
           packageId: receipt.packageId,
-          message: `「${prepared.extensionName}」已有一个修改任务，已把它接到这次对话；最新候选还没运行，先 cordis_run 看看结果再接着改。`,
+          message:
+            open.episodeId === context.episodeId && !live
+              ? `「${prepared.extensionName}」的修改任务还在，它的候选不在了，已经重新载入，编号是 ${receipt.pluginId}；还没运行，先 cordis_run 看看结果再接着改。`
+              : `「${prepared.extensionName}」已有一个修改任务，已把它接到这次对话；最新候选还没运行，先 cordis_run 看看结果再接着改。`,
           latest: editableDefinition({ snapshot, codeFormat: snapshot.codeFormat ?? 'body' }),
         })
       }

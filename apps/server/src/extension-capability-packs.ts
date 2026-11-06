@@ -47,9 +47,9 @@ const DEVELOPMENT_INSTRUCTIONS = [
   '动手前先用 skill 加载 cordis-plugin-development，读开发的边界、试运行环境和主题列表；再用 nekro_nxt_extension_reference 读这次要用到的主题，例如工具、界面、配置或宿主能力，接口格式和示例都在里面。',
   '',
   '一般的顺序：',
-  '1. 新扩展用 nekro_nxt_extension_define 定义候选。修改已保存的扩展先用 nekro_nxt_extension_revise 开修改任务，在它返回的定义上只改需要改的部分，再用 define 的 { kind: "existing", pluginId } 提交。别的对话里没做完的任务用 nekro_nxt_extension_continue 接过来。',
-  '2. 用 cordis_run 运行 define 返回的 Package，宿主会真实调用每个工具和数据接口、渲染界面来验证。失败时先用 cordis_inspect_self 看诊断，在同一个 Plugin 上提交新候选修好，不要另建一个。',
-  '3. 验证通过后用 nekro_nxt_extension_action 的 save 保存，再 enable 启用（在「扩展管理」里）。扩展自主权是「手动」时由管理员在工坊里保存和启用。',
+  '1. 新扩展用 nekro_nxt_extension_define 定义候选。修改或升级已保存的扩展先用 nekro_nxt_extension_revise 开修改任务，在它返回的定义上只改需要改的部分，再用 define 的 { kind: "existing", pluginId } 提交；不要为了升级另建一个同名扩展。别的对话里没做完的任务用 nekro_nxt_extension_continue 接过来。',
+  '2. 用 cordis_run 运行 define 返回的 Package，宿主会真实调用每个工具和数据接口、渲染界面来验证。失败时先用 cordis_inspect_self 看诊断，在同一个 Plugin 上提交新候选修好，不要另建一个。候选不见了（被卸载或者服务重启过），用 nekro_nxt_extension_continue 或 revise 重新载入。',
+  '3. 验证通过后用 nekro_nxt_extension_action 的 save 保存，再 enable 启用（在「扩展管理」里）。要马上用的，保存时加 enable: true 一起启用，试运行绑定的凭据会沿用，管理员只需确认一次。扩展自主权是「手动」时由管理员在工坊里保存和启用。',
   '',
   '定义、运行、保存、启用是四个独立的步骤，每一步都等真实结果；没保存的候选不要说成已经保存。扩展要用 API 密钥或账号时，先用 nekro_nxt_credential_list 查已有凭据，在 testConfig 里按名称绑定。',
 ].join('\n')

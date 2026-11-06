@@ -1,5 +1,6 @@
 import {
   AgentIdSchema,
+  AuthoringAttemptIdSchema,
   AuthoringTaskIdSchema,
   ChannelIdSchema,
   CommunityListingInputSchema,
@@ -13,8 +14,11 @@ import {
   ExtensionRevisionIdSchema,
   JsonValueSchema,
   type AgentId,
+  type AuthoringAttemptId,
   type ChannelId,
   type CommunityPermissionItem,
+  type ConfigField,
+  type ExtensionConfigLayer,
   type ExtensionId,
   type ExtensionRevisionId,
   type JsonValue,
@@ -90,6 +94,19 @@ export const ExtensionActionSchema = z.discriminatedUnion('kind', [
     name: z.string().optional(),
     slug: z.string().optional(),
     description: z.string().optional(),
+    /**
+     * Also enables the saved extension for this agent, with starting configuration for both layers; one approval
+     * covers both steps. The host pins the candidate (`attemptId`), so the approval saves what was asked about.
+     */
+    enable: z
+      .object({
+        agentId: AgentIdSchema,
+        values: ConfigValuesSchema.optional(),
+        credentials: ConfigCredentialsSchema.optional(),
+        attemptId: AuthoringAttemptIdSchema.optional(),
+        ...ConfigOrigin,
+      })
+      .optional(),
   }),
   z.object({
     kind: z.literal('enable'),
@@ -237,6 +254,83 @@ export interface ConfigPlan {
   readonly credentials: readonly { readonly key: string; readonly record: CredentialRecord }[]
 }
 
+type EnableAction = Extract<ExtensionAction, { readonly kind: 'enable' }>
+type SaveAction = Extract<ExtensionAction, { readonly kind: 'save' }>
+type Verdict = Pick<ExtensionActionAssessment, 'decision' | 'reason'>
+
+/** The configuration `enable` writes, split by layer; `agentGiven` tells whether any of it was for the agent's layer. */
+interface EnablePlans {
+  readonly agent: ConfigPlan
+  readonly agentGiven: boolean
+  readonly host?: ConfigPlan
+}
+
+/** The candidate a save that also enables is judged on, read before the extension exists. */
+interface SaveCandidate {
+  readonly items: readonly PermissionItem[]
+  readonly fields: Readonly<Record<ExtensionConfigLayer, readonly LeveledConfigField[]>>
+}
+
+/** One field a configuration change at enabling touches, as the approval names it; values are never shown. */
+interface ConfigMention {
+  readonly layer: ExtensionConfigLayer
+  readonly field: ConfigField
+  /** The credential a secret field is bound to, `null` when cleared, `undefined` for a plain value. */
+  readonly credential?: string | null
+}
+
+const STRICTNESS = { run: 0, request: 1, console: 2 } as const
+
+/** The strictest of several decisions with every reason behind it; `run` when there are none. */
+const strictest = (verdicts: readonly Verdict[]): Verdict => {
+  const decision = verdicts.reduce<Verdict['decision']>(
+    (strict, verdict) => (STRICTNESS[verdict.decision] > STRICTNESS[strict] ? verdict.decision : strict),
+    'run',
+  )
+  const reasons = [
+    ...new Set(
+      verdicts.flatMap((verdict) => (verdict.decision === decision && verdict.reason ? [verdict.reason] : [])),
+    ),
+  ]
+  return reasons.length === 0 ? { decision } : { decision, reason: reasons.join('') }
+}
+
+const CANDIDATE_CHANGED = '候选在发出请求之后换过了，这次没有保存。请用新的候选重新保存。'
+
+const LAYER_NAME: Readonly<Record<ExtensionConfigLayer, string>> = { host: '本机配置', agent: '智能体配置' }
+
+/** The next step when host configuration is asked for before the extension is installed. */
+export const HOST_CONFIG_AT_ENABLE =
+  '本机配置可以在启用时一起设置：enable 的 values 或 credentials 里直接写本机配置的字段；还没保存的候选用 save 加 enable: true，保存后一起启用。'
+
+/** What enabling writes into configuration, for the approval: fields by layer and credential names, never values. */
+const configMentions = (mentions: readonly ConfigMention[]): string =>
+  (['host', 'agent'] as const)
+    .flatMap((layer) => {
+      const own = mentions.filter((mention) => mention.layer === layer)
+      if (own.length === 0) return []
+      const parts = [
+        ...own.flatMap((mention) =>
+          typeof mention.credential === 'string'
+            ? [`「${mention.field.title}」绑定凭据「${mention.credential}」`]
+            : mention.credential === null
+              ? [`「${mention.field.title}」解除绑定`]
+              : [],
+        ),
+        ...(own.some((mention) => mention.credential === undefined)
+          ? [
+              `填写${own
+                .filter((mention) => mention.credential === undefined)
+                .map((mention) => `「${mention.field.title}」`)
+                .join('')}`,
+            ]
+          : []),
+      ]
+      return [`${LAYER_NAME[layer]}${parts.join('、')}`]
+    })
+    .map((part) => `，${part}`)
+    .join('')
+
 const slugFrom = (name: string, fallback: string): string => {
   const ascii = name
     .toLowerCase()
@@ -252,6 +346,8 @@ const slugFrom = (name: string, fallback: string): string => {
  */
 export class ExtensionActionService {
   readonly #runtime: NekroRuntime
+  /** Candidates of pending saves that also enable, by attempt; read by `prepare` because reading them is async. */
+  readonly #candidates = new Map<AuthoringAttemptId, SaveCandidate>()
 
   constructor(runtime: NekroRuntime) {
     this.#runtime = runtime
@@ -289,7 +385,12 @@ export class ExtensionActionService {
         ? { ...base, decision: 'request', reason: '重启需要管理员同意。' }
         : { ...base, decision: 'run' }
     }
-    const initial = action.kind === 'enable' ? this.#initialConfigVerdict(action, actor) : undefined
+    const initial =
+      action.kind === 'enable'
+        ? this.#initialConfigVerdict(action, actor)
+        : action.kind === 'save' && action.enable !== undefined
+          ? this.#saveEnableVerdict(action, actor)
+          : undefined
     if (initial?.decision === 'console') return { ...base, ...initial }
     if (actor.kind === 'administrator') {
       return level === 'high'
@@ -304,7 +405,7 @@ export class ExtensionActionService {
     const scope = this.#agentScope(action, actor.agentId)
     if (scope !== undefined) return { ...base, decision: 'console', reason: scope }
     if (action.kind === 'enable') {
-      const problem = this.enablementProblem(action.agentId, action.extensionId)
+      const problem = this.enablementProblem(action.agentId, action.extensionId, this.#hostBound(action))
       if (problem !== undefined) return { ...base, decision: 'console', reason: problem }
     }
     if (level === 'high') {
@@ -444,35 +545,262 @@ export class ExtensionActionService {
     return { decision: 'run' }
   }
 
-  /** Initial values given with `enable` are judged like a change to the agent's own configuration. */
+  /**
+   * Initial values given with `enable` are judged like changes to the layers that declare them, taking the stricter
+   * decision; a credential bound into the host configuration must also be open to the agent.
+   */
   #initialConfigVerdict(
-    action: Extract<ExtensionAction, { readonly kind: 'enable' }>,
+    action: EnableAction,
     actor: Exclude<ExtensionActor, { readonly kind: 'console' }>,
-  ): Pick<ExtensionActionAssessment, 'decision' | 'reason'> | undefined {
+  ): Verdict | undefined {
     if (action.values === undefined && action.credentials === undefined) return undefined
-    let plan: ConfigPlan
+    let plans: EnablePlans
     try {
-      plan = this.#initialPlan(action)
+      plans = this.#enablePlans(action)
     } catch (error) {
       return { decision: 'console', reason: error instanceof Error ? error.message : String(error) }
     }
-    const verdict = this.#configVerdict(plan, actor)
+    const verdicts = [
+      ...(plans.host === undefined || plans.agentGiven ? [this.#configVerdict(plans.agent, actor)] : []),
+      ...(plans.host === undefined
+        ? []
+        : [this.#configVerdict(plans.host, actor), this.#credentialVerdict(plans.host.credentials, actor)]),
+    ]
+    const verdict = strictest(verdicts)
     return verdict.decision === 'run' ? undefined : verdict
   }
 
-  #initialPlan(action: Extract<ExtensionAction, { readonly kind: 'enable' }>): ConfigPlan {
-    const owner: ExtensionConfigOwner = { extensionId: action.extensionId, layer: 'agent', agentId: action.agentId }
+  /**
+   * Splits the values and credentials given with `enable` by the layer that declares each field: host fields become a
+   * change to the shared host configuration, the rest the agent's starting configuration. `agentGiven` tells whether
+   * any were for the agent's own layer. Throws a message for the agent on unknown fields or credentials.
+   */
+  #enablePlans(action: EnableAction): EnablePlans {
+    const config = this.#runtime.extensionConfig
+    const agentOwner: ExtensionConfigOwner = {
+      extensionId: action.extensionId,
+      layer: 'agent',
+      agentId: action.agentId,
+    }
+    const manifest = config.manifest(agentOwner)
+    const split = this.#splitByLayer(
+      {
+        host: leveledConfigFields(manifest, 'host'),
+        agent: leveledConfigFields(manifest, 'agent'),
+      },
+      action.values ?? {},
+      action.credentials ?? {},
+    )
     const { ids, records } = this.#credentialIds(action.credentials ?? {})
-    return {
-      owner,
-      change: this.#runtime.extensionConfig.planChange(
-        owner,
-        action.values ?? {},
-        ids,
+    const pick = (keys: Readonly<Record<string, unknown>>) =>
+      Object.fromEntries(Object.entries(ids).filter(([key]) => Object.hasOwn(keys, key)))
+    const agent: ConfigPlan = {
+      owner: agentOwner,
+      change: config.planChange(
+        agentOwner,
+        split.agent.values,
+        pick(split.agent.credentials),
         this.#runtime.repository.getActivation(action.agentId, action.extensionId)?.config,
       ),
-      credentials: records,
+      credentials: records.filter(({ key }) => Object.hasOwn(split.agent.credentials, key)),
     }
+    const agentGiven = Object.keys(split.agent.values).length + Object.keys(split.agent.credentials).length > 0
+    const hostGiven = Object.keys(split.host.values).length + Object.keys(split.host.credentials).length > 0
+    if (!hostGiven) return { agent, agentGiven }
+    const hostOwner: ExtensionConfigOwner = { extensionId: action.extensionId, layer: 'host' }
+    return {
+      agent,
+      agentGiven,
+      host: {
+        owner: hostOwner,
+        change: config.planChange(hostOwner, split.host.values, pick(split.host.credentials)),
+        credentials: records.filter(({ key }) => Object.hasOwn(split.host.credentials, key)),
+      },
+    }
+  }
+
+  /** Values and credentials sorted by the layer that declares each field; unknown fields are refused. */
+  #splitByLayer<T, C>(
+    fields: Readonly<Record<ExtensionConfigLayer, readonly LeveledConfigField[]>>,
+    values: Readonly<Record<string, T>>,
+    credentials: Readonly<Record<string, C>>,
+  ): Record<ExtensionConfigLayer, { values: Record<string, T>; credentials: Record<string, C> }> {
+    const layerOf = (key: string): ExtensionConfigLayer | undefined =>
+      fields.agent.some((entry) => entry.field.key === key)
+        ? 'agent'
+        : fields.host.some((entry) => entry.field.key === key)
+          ? 'host'
+          : undefined
+    const unknown = [...new Set([...Object.keys(values), ...Object.keys(credentials)])].filter(
+      (key) => layerOf(key) === undefined,
+    )
+    if (unknown.length > 0) {
+      throw new Error(
+        `扩展的配置里没有这些字段：${unknown.join('、')}。用 nekro_nxt_extension_inspect 查看它有哪些配置项。`,
+      )
+    }
+    const split = {
+      host: { values: {} as Record<string, T>, credentials: {} as Record<string, C> },
+      agent: { values: {} as Record<string, T>, credentials: {} as Record<string, C> },
+    }
+    for (const [key, value] of Object.entries(values)) split[layerOf(key)!].values[key] = value
+    for (const [key, value] of Object.entries(credentials)) split[layerOf(key)!].credentials[key] = value
+    return split
+  }
+
+  /** Host-layer secrets this `enable` binds, which no longer count as missing. */
+  #hostBound(action: EnableAction): ReadonlySet<string> {
+    if (action.values === undefined && action.credentials === undefined) return new Set()
+    try {
+      const host = this.#enablePlans(action).host
+      return new Set(host?.credentials.map(({ key }) => key) ?? [])
+    } catch {
+      return new Set()
+    }
+  }
+
+  /** Whether the agent may use the credentials bound: out of its scope is refused, automatic use off asks. */
+  #credentialVerdict(
+    bound: ConfigPlan['credentials'],
+    actor: Exclude<ExtensionActor, { readonly kind: 'console' }>,
+  ): Verdict {
+    if (actor.kind === 'administrator') return { decision: 'run' }
+    const library = this.#runtime.credentialLibrary
+    const closed = bound.filter(({ record }) => !library.inScope(record, actor.agentId))
+    if (closed.length > 0) {
+      return {
+        decision: 'console',
+        reason: `凭据「${closed.map(({ record }) => record.name).join('」「')}」不对你开放。`,
+      }
+    }
+    const waiting = bound.filter(({ record }) => library.needsApproval(record, actor.agentId))
+    return waiting.length === 0
+      ? { decision: 'run' }
+      : {
+          decision: 'request',
+          reason: `凭据「${waiting.map(({ record }) => record.name).join('」「')}」需要管理员同意后才能使用。`,
+        }
+  }
+
+  /**
+   * Reads what the host decides for a save that also enables: the candidate is pinned, and when no credentials are
+   * given the trial run's named credential bindings carry over. Other actions come back unchanged. Call it before
+   * `assess` for such a save; the candidate it reads is what the assessment counts permissions and fields from.
+   */
+  async prepare(action: ExtensionAction): Promise<ExtensionAction> {
+    if (action.kind !== 'save' || action.enable === undefined) return action
+    const runtime = this.#runtime
+    const attempt = runtime.repository.listAuthoringAttempts(action.taskId).at(-1)
+    if (attempt === undefined) throw new Error('这个任务还没有候选。')
+    const pinned = action.enable.attemptId
+    // A candidate replaced since the request was made is not judged; performing it is refused.
+    if (pinned !== undefined && pinned !== attempt.id) return action
+    const snapshot = await runtime.authoringTestConfig.candidate(action.taskId)
+    if (snapshot === undefined) throw new Error('这个任务还没有候选。')
+    const declaration = { permissions: snapshot.permissions, config: snapshot.config }
+    this.#candidates.set(attempt.id, {
+      items: summarizePermissions(declaration),
+      fields: { host: leveledConfigFields(declaration, 'host'), agent: leveledConfigFields(declaration, 'agent') },
+    })
+    if (pinned !== undefined) return action
+    let credentials = action.enable.credentials
+    if (credentials === undefined) {
+      const bound = (await runtime.authoringTestConfig.describe(action.taskId)).boundCredentials
+      const names = Object.entries(bound).flatMap(([key, id]) => {
+        const record = runtime.credentialLibrary.get(id)
+        return record === undefined ? [] : [[key, record.name] as const]
+      })
+      if (names.length > 0) credentials = Object.fromEntries(names)
+    }
+    // Read back through the schema, so the same request asked twice compares equal.
+    return ExtensionActionSchema.parse({
+      ...action,
+      enable: { ...action.enable, ...(credentials === undefined ? {} : { credentials }), attemptId: attempt.id },
+    })
+  }
+
+  /**
+   * Why a save that also enables cannot do the enabling, judged on the candidate before anything is asked; undefined
+   * when it can. Needs `prepare` first.
+   */
+  saveEnableProblem(action: ExtensionAction): string | undefined {
+    if (action.kind !== 'save' || action.enable === undefined) return undefined
+    const runtime = this.#runtime
+    const task = runtime.repository.getAuthoringTask(action.taskId)
+    const target = task?.kind === 'revise' ? task.targetExtensionId : undefined
+    if (target !== undefined && runtime.repository.getHostInstallation(target) !== undefined) {
+      return `「${this.#extensionName(target)}」已经安装在本机，新版本保存后用 switch 切换过去；save 时不用带 enable。`
+    }
+    const candidate = this.#saveCandidate(action)
+    if (candidate === undefined) return CANDIDATE_CHANGED
+    const values = action.enable.values ?? {}
+    try {
+      this.#splitByLayer(candidate.fields, values, action.enable.credentials ?? {})
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
+    }
+    const missing = candidate.fields.agent.filter(({ field }) => {
+      if (field.kind === 'secret' || !field.required || field.default !== undefined) return false
+      const value = values[field.key]
+      return value === undefined || value === null || (typeof value === 'string' && value.trim() === '')
+    })
+    return missing.length === 0
+      ? undefined
+      : `启用前还要填写智能体配置：${missing.map(({ field }) => `「${field.title}」（${field.key}）`).join('、')}。在 values 里一起提供。`
+  }
+
+  #saveCandidate(action: SaveAction): SaveCandidate | undefined {
+    const attempt = this.#runtime.repository.listAuthoringAttempts(action.taskId).at(-1)
+    const pinned = action.enable?.attemptId ?? attempt?.id
+    return attempt === undefined || pinned !== attempt.id ? undefined : this.#candidates.get(attempt.id)
+  }
+
+  /**
+   * A save that also enables, judged before the extension exists: the candidate's configuration fields as a change to
+   * the layers that declare them, the credentials bound, and the candidate still being the one asked about.
+   */
+  #saveEnableVerdict(
+    action: SaveAction,
+    actor: Exclude<ExtensionActor, { readonly kind: 'console' }>,
+  ): Verdict | undefined {
+    const enable = action.enable
+    if (enable === undefined) return undefined
+    const candidate = this.#saveCandidate(action)
+    if (candidate === undefined) return { decision: 'console', reason: CANDIDATE_CHANGED }
+    if (enable.values === undefined && enable.credentials === undefined) return undefined
+    let split: Record<ExtensionConfigLayer, readonly LeveledConfigField[]>
+    let records: ConfigPlan['credentials']
+    try {
+      split = this.#saveConfigFields(candidate, enable)
+      records = this.#credentialIds(enable.credentials ?? {}).records
+    } catch (error) {
+      return { decision: 'console', reason: error instanceof Error ? error.message : String(error) }
+    }
+    const verdicts = (['agent', 'host'] as const).flatMap((layer) => {
+      const changed = split[layer]
+      if (changed.length === 0 && (layer === 'host' || split.host.length > 0)) return []
+      const bound = records.filter(({ key }) => changed.some((entry) => entry.field.key === key))
+      return [
+        this.#levelVerdict({ layer, changed, bound }, actor),
+        ...(layer === 'host' ? [this.#credentialVerdict(bound, actor)] : []),
+      ]
+    })
+    const verdict = strictest(verdicts)
+    return verdict.decision === 'run' ? undefined : verdict
+  }
+
+  /** The candidate's fields a save that also enables sets, by layer. */
+  #saveConfigFields(
+    candidate: SaveCandidate,
+    enable: NonNullable<SaveAction['enable']>,
+  ): Record<ExtensionConfigLayer, readonly LeveledConfigField[]> {
+    const split = this.#splitByLayer(candidate.fields, enable.values ?? {}, enable.credentials ?? {})
+    const touched = (layer: ExtensionConfigLayer) =>
+      candidate.fields[layer].filter(
+        ({ field }) =>
+          Object.hasOwn(split[layer].values, field.key) || Object.hasOwn(split[layer].credentials, field.key),
+      )
+    return { host: touched('host'), agent: touched('agent') }
   }
 
   #credentialIds(credentials: Readonly<Record<string, string | null>>): {
@@ -503,9 +831,13 @@ export class ExtensionActionService {
    * Why this agent cannot have the extension enabled yet, when only an administrator can fix it. Checks only shared
    * host configuration and this agent's own configuration, and never returns stored values. Required fields the agent
    * may fill itself are reported by `enablementMissing`; its own credentials never block enabling, see
-   * `enablementNote`.
+   * `enablementNote`. Host secrets in `hostBound` are bound by the same enabling and do not count as missing.
    */
-  enablementProblem(agentId: AgentId, extensionId: ExtensionId): string | undefined {
+  enablementProblem(
+    agentId: AgentId,
+    extensionId: ExtensionId,
+    hostBound: ReadonlySet<string> = new Set(),
+  ): string | undefined {
     const runtime = this.#runtime
     const revision = this.#maybeCurrent(extensionId)
     if (!revision) return '这个扩展没有可用的版本，请管理员在工坊里检查。'
@@ -517,7 +849,12 @@ export class ExtensionActionService {
     ) {
       return '这个扩展尚未完成本机验证，请管理员在工坊里检查验证结果。'
     }
-    const host = this.#layerConfig(manifest, 'host', runtime.repository.getHostInstallation(extensionId)?.config)
+    const host = this.#layerConfig(
+      manifest,
+      'host',
+      runtime.repository.getHostInstallation(extensionId)?.config,
+      hostBound,
+    )
     if (host === undefined) return '本机配置不完整，请管理员在工坊的扩展详情里填写后重试。'
     if (host.missingSecrets) return '本机配置缺少必填凭据，请管理员在工坊的扩展详情里填写后重试。'
     const missing = this.#missingAgentFields(manifest, runtime.repository.getActivation(agentId, extensionId)?.config)
@@ -562,19 +899,34 @@ export class ExtensionActionService {
     })
   }
 
-  /** What still needs doing after enabling: the agent's own credentials can only be filled once it is enabled. */
+  /**
+   * What still needs doing after enabling: the agent's own credentials can only be filled once it is enabled, and
+   * host credentials still unbound make the features that use them fail.
+   */
   enablementNote(agentId: AgentId, extensionId: ExtensionId): string | undefined {
+    const runtime = this.#runtime
     const revision = this.#maybeCurrent(extensionId)
-    const manifest = revision === undefined ? undefined : this.#runtime.extensionService.revisionManifest(revision)
+    const manifest = revision === undefined ? undefined : runtime.extensionService.revisionManifest(revision)
     if (!manifest || !hasAgentLayer(manifest)) return undefined
-    const stored = this.#runtime.repository.getActivation(agentId, extensionId)?.config
-    const record =
+    const asValues = (stored: JsonValue | undefined) =>
       stored !== null && stored !== undefined && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}
-    return configFields(layerConfigSchema(manifest, 'agent')).some(
+    const record = asValues(runtime.repository.getActivation(agentId, extensionId)?.config)
+    const host = asValues(runtime.repository.getHostInstallation(extensionId)?.config)
+    const own = configFields(layerConfigSchema(manifest, 'agent')).some(
       (field) => field.kind === 'secret' && field.required && record[field.key] === undefined,
     )
-      ? '启用后还缺你自己的凭据：有可用的凭据时用 configure 的 credentials 绑定，没有时请管理员添加；填好之前用到凭据的功能不能用。'
-      : undefined
+    const shared = configFields(layerConfigSchema(manifest, 'host')).filter(
+      (field) => field.kind === 'secret' && host[field.key] === undefined,
+    )
+    const notes = [
+      own
+        ? '启用后还缺你自己的凭据：有可用的凭据时用 configure 的 credentials 绑定，没有时请管理员添加；填好之前用到凭据的功能不能用。'
+        : '',
+      shared.length === 0
+        ? ''
+        : `本机配置的凭据${shared.map((field) => `「${field.title}」（${field.key}）`).join('、')}还没有绑定，用到它的功能会失败：还没启用时在 enable 的 credentials 里一起绑定，已经启用的用 configure（layer: host）绑定，都要管理员确认；没有合适的凭据时用 nekro_nxt_credential_request 请管理员添加。`,
+    ].filter((note) => note !== '')
+    return notes.length === 0 ? undefined : notes.join('')
   }
 
   /** A layer's configuration as enabling would carry it; undefined when it is incomplete. */
@@ -582,6 +934,7 @@ export class ExtensionActionService {
     manifest: ExtensionManifest,
     layer: 'host' | 'agent',
     previous: JsonValue | undefined,
+    bound: ReadonlySet<string> = new Set(),
   ): { readonly missingSecrets: boolean } | undefined {
     let config
     try {
@@ -591,7 +944,8 @@ export class ExtensionActionService {
     }
     return {
       missingSecrets: configFields(layerConfigSchema(manifest, layer)).some(
-        (field) => field.kind === 'secret' && field.required && config[field.key] === undefined,
+        (field) =>
+          field.kind === 'secret' && field.required && config[field.key] === undefined && !bound.has(field.key),
       ),
     }
   }
@@ -602,23 +956,12 @@ export class ExtensionActionService {
   async perform(action: ExtensionAction, actor: ExtensionActor): Promise<ExtensionActionResult> {
     const runtime = this.#runtime
     switch (action.kind) {
-      case 'save': {
-        const saved = await runtime.authoring.saveTask({
-          taskId: action.taskId,
-          ...(action.name === undefined ? {} : { name: action.name }),
-          ...(action.slug === undefined ? {} : { slug: action.slug }),
-          ...(action.description === undefined ? {} : { description: action.description }),
-          ...(actor.kind === 'agent' ? { fromAgentTurn: true } : {}),
-        })
-        const label = this.#label(saved.revision)
-        return {
-          message: `已保存「${saved.extension.displayName}」${label}。`,
-          extensionId: saved.extension.id,
-          revisionId: saved.revision.id,
-        }
-      }
+      case 'save':
+        return this.#save(action, actor)
       case 'enable': {
-        const problem = this.enablementProblem(action.agentId, action.extensionId)
+        const plans =
+          action.values === undefined && action.credentials === undefined ? undefined : this.#enablePlans(action)
+        const problem = this.enablementProblem(action.agentId, action.extensionId, this.#hostBound(action))
         if (problem !== undefined) throw new Error(problem)
         const missing = this.enablementMissing(action.agentId, action.extensionId, action.values)
         if (missing !== undefined) throw new Error(missing)
@@ -626,13 +969,13 @@ export class ExtensionActionService {
         const coordinator = runtime.extensions
         const host = coordinator.hostRequirement(action.extensionId, revision.id)
         const agent = coordinator.agentRequirement(action.agentId, action.extensionId, revision.id)
-        const initial =
-          action.values === undefined && action.credentials === undefined ? undefined : this.#initialPlan(action)
         await coordinator.activate({
           agentId: action.agentId,
           extensionId: action.extensionId,
           revisionId: revision.id,
-          ...(initial === undefined ? {} : { config: this.#initialConfig(initial, action) }),
+          ...(plans === undefined || (plans.host !== undefined && !plans.agentGiven)
+            ? {}
+            : { config: this.#initialConfig(plans.agent, action) }),
           ...(agent.approvalRequired ? { permissionApproval: { permissionDigest: agent.permissionDigest } } : {}),
           ...(host.approvalRequired ? { hostPermissionApproval: { permissionDigest: host.permissionDigest } } : {}),
         })
@@ -640,9 +983,10 @@ export class ExtensionActionService {
           { extensionId: action.extensionId, layer: 'agent', agentId: action.agentId },
           this.#configMeta(action, actor),
         )
+        const hostNote = plans?.host === undefined ? '' : await this.#writeHostAtEnable(action, actor)
         const note = this.enablementNote(action.agentId, action.extensionId)
         return {
-          message: `已给${this.#agentName(action.agentId)}启用「${this.#extensionName(action.extensionId)}」。${note ?? ''}`,
+          message: `已给${this.#agentName(action.agentId)}启用「${this.#extensionName(action.extensionId)}」。${hostNote}${note ?? ''}`,
           extensionId: action.extensionId,
           revisionId: revision.id,
         }
@@ -654,7 +998,7 @@ export class ExtensionActionService {
         if (runtime.extensionConfig.stored(plan.owner) === undefined) {
           throw new Error(
             plan.owner.layer === 'host'
-              ? `「${this.#extensionName(plan.owner.extensionId)}」还没有安装到本机。`
+              ? `「${this.#extensionName(plan.owner.extensionId)}」还没有安装到本机。${HOST_CONFIG_AT_ENABLE}`
               : `还没有给${this.#agentName(plan.owner.agentId!)}启用「${this.#extensionName(plan.owner.extensionId)}」，先用 enable 启用，可以在 values 里带上配置。`,
           )
         }
@@ -797,6 +1141,77 @@ export class ExtensionActionService {
   }
 
   // —— Internals ——
+
+  /**
+   * Saves the task's candidate; with `enable`, then enables the saved extension for the agent with the configuration
+   * given. A failed enabling keeps the save and says both.
+   */
+  async #save(action: SaveAction, actor: ExtensionActor): Promise<ExtensionActionResult> {
+    const runtime = this.#runtime
+    const prepared = await this.prepare(action)
+    const enable = prepared.kind === 'save' ? prepared.enable : undefined
+    if (enable?.attemptId !== undefined) {
+      if (runtime.repository.listAuthoringAttempts(action.taskId).at(-1)?.id !== enable.attemptId) {
+        throw new Error(CANDIDATE_CHANGED)
+      }
+      this.#candidates.delete(enable.attemptId)
+    }
+    const saved = await runtime.authoring.saveTask({
+      taskId: action.taskId,
+      ...(action.name === undefined ? {} : { name: action.name }),
+      ...(action.slug === undefined ? {} : { slug: action.slug }),
+      ...(action.description === undefined ? {} : { description: action.description }),
+      ...(actor.kind === 'agent' ? { fromAgentTurn: true } : {}),
+    })
+    const label = this.#label(saved.revision)
+    const result = { extensionId: saved.extension.id, revisionId: saved.revision.id }
+    const done = `已保存「${saved.extension.displayName}」${label}。`
+    if (enable === undefined) return { ...result, message: done }
+    try {
+      const installed = runtime.repository.getHostInstallation(saved.extension.id)?.extensionRevisionId
+      if (installed !== undefined && installed !== saved.revision.id) {
+        throw new Error('本机装的是另一个版本，新版本要用 switch 切换过去。')
+      }
+      const enabled = await this.perform(
+        {
+          kind: 'enable',
+          extensionId: saved.extension.id,
+          agentId: enable.agentId,
+          ...(enable.values === undefined ? {} : { values: enable.values }),
+          ...(enable.credentials === undefined ? {} : { credentials: enable.credentials }),
+          ...(enable.actorAgentId === undefined ? {} : { actorAgentId: enable.actorAgentId }),
+          ...(enable.requesterMemberId === undefined ? {} : { requesterMemberId: enable.requesterMemberId }),
+          ...(enable.reason === undefined ? {} : { reason: enable.reason }),
+        },
+        actor,
+      )
+      return { ...result, message: `${done}${enabled.message}` }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      return { ...result, message: `已保存「${saved.extension.displayName}」${label}，启用没有完成：${reason}` }
+    }
+  }
+
+  /**
+   * Writes the host-layer part of `enable` once the host installation exists. Enabling has happened by then, so a
+   * failed write is reported in the message instead of undoing it.
+   */
+  async #writeHostAtEnable(action: EnableAction, actor: ExtensionActor): Promise<string> {
+    try {
+      // Planned again against the installation enabling just created, so its carried defaults stay.
+      const host = this.#enablePlans(action).host
+      if (host === undefined || host.change.changed.length === 0) return ''
+      await this.#runtime.extensionConfig.writeOrRestore({
+        owner: host.owner,
+        config: host.change.config,
+        bindings: host.change.bindings,
+        meta: this.#configMeta(action, actor),
+      })
+      return `本机配置已设置：${host.change.changed.map((entry) => entry.field.title).join('、')}。`
+    } catch (error) {
+      return `本机配置没有设置成功：${error instanceof Error ? error.message : String(error)}`
+    }
+  }
 
   /** The agent-layer configuration `enable` starts with: the given values over the stored ones, credentials bound. */
   #initialConfig(plan: ConfigPlan, action: Extract<ExtensionAction, { readonly kind: 'enable' }>): JsonValue {
@@ -1022,7 +1437,8 @@ export class ExtensionActionService {
         const { field, level } = entry
         const value = values[field.key]
         if (field.default !== undefined || (value !== undefined && value !== null && value !== '')) continue
-        const name = `「${field.title}」（${field.key}${field.required ? '，必填' : ''}）`
+        const where = level === 'secret' && layer === 'host' ? '，本机配置' : ''
+        const name = `「${field.title}」（${field.key}${where}${field.required ? '，必填' : ''}）`
         const decision = this.configureDecision(layer, entry, actor)
         groups[decision === 'console' ? 'console' : level === 'secret' ? 'credential' : decision].push(name)
       }
@@ -1034,7 +1450,7 @@ export class ExtensionActionService {
       groups.request.length === 0 ? '' : `你可以填，但要管理员确认：${list(groups.request)}。`,
       groups.credential.length === 0
         ? ''
-        : `要绑定凭据：${list(groups.credential)}。先用 nekro_nxt_credential_list 查，有合适的就用 credentials 按名称绑定，没有时用 nekro_nxt_credential_request 请管理员添加。`,
+        : `要绑定凭据：${list(groups.credential)}。先用 nekro_nxt_credential_list 查，有合适的就用 credentials 按名称绑定（本机配置的用 configure 的 layer: host，要管理员确认），没有时用 nekro_nxt_credential_request 请管理员添加。`,
       groups.console.length === 0 ? '' : `要管理员在后台填写：${list(groups.console)}。`,
     ].filter((line) => line !== '')
     return lines.length === 0 ? undefined : `配置还有空着的项。${lines.join('')}`
@@ -1065,19 +1481,47 @@ export class ExtensionActionService {
         const task = runtime.repository.getAuthoringTask(action.taskId)
         const target =
           task?.targetExtensionId === undefined ? undefined : runtime.repository.getExtension(task.targetExtensionId)
+        const summary = target
+          ? `保存「${target.displayName}」的新版本`
+          : `保存新扩展「${action.name ?? task?.title ?? ''}」`
+        if (action.enable === undefined) return { ...normal, summary }
+        // Enabling grants what the candidate asks for; nothing of a new extension is installed yet.
+        const candidate = this.#saveCandidate(action)
+        const items = candidate?.items ?? []
+        let mentions: readonly ConfigMention[] = []
+        if (candidate !== undefined) {
+          try {
+            const fields = this.#saveConfigFields(candidate, action.enable)
+            mentions = this.#mentions(fields, action.enable.credentials)
+          } catch {
+            mentions = []
+          }
+        }
         return {
-          ...normal,
-          summary: target
-            ? `保存「${target.displayName}」的新版本`
-            : `保存新扩展「${action.name ?? task?.title ?? ''}」`,
+          summary: `${summary}并给${this.#agentName(action.enable.agentId)}启用${configMentions(mentions)}`,
+          level: highestPermissionLevel(items),
+          added: items,
+          affectsOthers: false,
         }
       }
       case 'enable': {
         const revision = this.#maybeCurrent(action.extensionId)
         const installed = runtime.repository.getHostInstallation(action.extensionId) !== undefined
         const items = itemsOf(revision).filter((item) => item.layer === 'agent' || !installed)
+        let mentions: readonly ConfigMention[] = []
+        if (action.values !== undefined || action.credentials !== undefined) {
+          try {
+            const plans = this.#enablePlans(action)
+            mentions = this.#mentions(
+              { agent: plans.agent.change.changed, host: plans.host?.change.changed ?? [] },
+              action.credentials,
+            )
+          } catch {
+            mentions = []
+          }
+        }
         return {
-          summary: `给${this.#agentName(action.agentId)}启用「${this.#extensionName(action.extensionId)}」`,
+          summary: `给${this.#agentName(action.agentId)}启用「${this.#extensionName(action.extensionId)}」${configMentions(mentions)}`,
           level: highestPermissionLevel(items),
           added: items,
           affectsOthers: false,
@@ -1218,13 +1662,27 @@ export class ExtensionActionService {
     }
   }
 
+  #mentions(
+    fields: Readonly<Record<ExtensionConfigLayer, readonly LeveledConfigField[]>>,
+    credentials: Readonly<Record<string, string | null>> | undefined,
+  ): readonly ConfigMention[] {
+    return (['host', 'agent'] as const).flatMap((layer) =>
+      fields[layer].map(({ field }) =>
+        field.kind === 'secret' ? { layer, field, credential: credentials?.[field.key] ?? null } : { layer, field },
+      ),
+    )
+  }
+
   /** Why an agent may not touch this target at all, or undefined when it may. */
   #agentScope(action: ExtensionAction, agentId: AgentId): string | undefined {
     const runtime = this.#runtime
     switch (action.kind) {
       case 'save': {
         const task = runtime.repository.getAuthoringTask(action.taskId)
-        return task?.agentId === agentId ? undefined : '只能保存自己的创造任务。'
+        if (task?.agentId !== agentId) return '只能保存自己的创造任务。'
+        return action.enable === undefined || action.enable.agentId === agentId
+          ? undefined
+          : '只能给自己启用或停用扩展。'
       }
       case 'enable':
       case 'disable':

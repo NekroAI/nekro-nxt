@@ -420,6 +420,94 @@ describe('revise tasks', () => {
       await runtime.dispose()
     }
   })
+
+  it('sends an upgrade built as a new extension back to revise at define, run and save (#135)', async () => {
+    const host = `return { inject: ['tools'], apply(ctx) { ${PROBE_TOOL} } }`
+    const define = (name: string) => ({
+      name: 'nekro_nxt_extension_define',
+      args: { plugin: { kind: 'new', idPrefix: 'dupe' }, name, purpose: '重做一遍。', code: { host } },
+    })
+    const model = new TriggeredModel({ '#same': define('治理探针'), '#other': define('另一个探针') })
+    const runtime = await createRuntime(model)
+    try {
+      const { extensionId, v1 } = await importBoth(runtime)
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '重做智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await runtime.extensions.install({ extensionId, revisionId: v1.id })
+      await runtime.extensionActions.perform(
+        { kind: 'enable', extensionId, agentId: entity.agentId },
+        { kind: 'console' },
+      )
+      await say(runtime, entity.channelId, '#same 重新做一个治理探针')
+      await expect.poll(() => model.results.length, NOTICE_POLL).toBe(1)
+      expect(model.results[0]).toContain('已经有扩展「治理探针」')
+      expect(model.results[0]).toContain('nekro_nxt_extension_revise')
+      expect(runtime.repository.listAuthoringTasks(entity.agentId)).toEqual([])
+
+      // Under another name it is defined, but its tool still clashes with the enabled version's.
+      await say(runtime, entity.channelId, '#other 换个名字')
+      await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, NOTICE_POLL).toBe(1)
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      const sessionId = runtime.repository.getEpisode(task.episodeId)!.dshSessionId!
+      await expect.poll(() => runtime.host.sessionStatus(sessionId), NOTICE_POLL).toBe('idle')
+      const run = await runtime.host.runDynamicPackage(sessionId, task.pluginKey, attempt.runnerPackageId!, 'run')
+      expect(run).toMatchObject({ ok: false })
+      const message = run.ok ? '' : run.message
+      expect(message).toContain('工具 gov_probe 已经由一个启用中的扩展提供')
+      expect(message).not.toContain('to REPLACE')
+
+      // Saving it under the enabled extension's name would add a second extension, not a new version.
+      const tools = new ExtensionGovernanceTools(runtime)
+      await expect(
+        tools.act(entity.agentId, entity.channelId, { kind: 'save', taskId: task.id, name: '治理探针' }),
+      ).rejects.toThrow('已经有扩展「治理探针」')
+      expect(
+        runtime.repository.listExtensions().filter((extension) => extension.displayName === '治理探针'),
+      ).toHaveLength(1)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('loads a revise task’s candidate again when it is gone from this conversation (#135)', async () => {
+    const model = new TriggeredModel({
+      '#revise': { name: 'nekro_nxt_extension_revise', args: { extension: '治理探针' } },
+    })
+    const runtime = await createRuntime(model)
+    try {
+      const { extensionId, v1 } = await importBoth(runtime)
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '修改智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+      })
+      await runtime.extensions.install({ extensionId, revisionId: v1.id })
+      await say(runtime, entity.channelId, '#revise 改一下治理探针')
+      await expect
+        .poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.kind, NOTICE_POLL)
+        .toBe('revise')
+      const opened = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      const sessionId = runtime.repository.getEpisode(opened.episodeId)!.dshSessionId!
+      await expect.poll(() => runtime.host.sessionStatus(sessionId), NOTICE_POLL).toBe('idle')
+      await runtime.host.undefineDynamicPlugin(sessionId, opened.pluginKey)
+
+      await say(runtime, entity.channelId, '#revise 接着改')
+      await expect.poll(() => model.results.length, NOTICE_POLL).toBe(2)
+      expect(model.results[1]).toContain('它的候选不在了，已经重新载入')
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      expect(task.id).toBe(opened.id)
+      expect(task.pluginKey).not.toBe(opened.pluginKey)
+      expect(runtime.host.dynamicInventory(sessionId).map((row) => row.pluginId)).toContain(task.pluginKey)
+    } finally {
+      await runtime.dispose()
+    }
+  })
 })
 
 /** Answers with the agent configuration it runs with, so a candidate and the enabled version can be told apart. */
@@ -1727,6 +1815,55 @@ describe('extension autonomy', () => {
       await new Promise((resolve) => setTimeout(resolve, 200))
       expect(runtime.repository.findOutboundByNoticeKey(`ext-request:${second.number}:done`)).toBeUndefined()
       await expect(requests.approve(asked.number, { kind: 'console' })).rejects.toThrow('已经被处理')
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('wakes the agent with the outcome when its request is approved after its turn ended (#138)', async () => {
+    const model = new TriggeredModel({})
+    const runtime = await createRuntime(model)
+    try {
+      const { extensionId } = await importBoth(runtime)
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '等待智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { extensionAutonomy: 'confirm' },
+      })
+      await say(runtime, entity.channelId, '先打个招呼')
+      await expect
+        .poll(() => runtime.repository.getActiveEpisode(entity.channelId, entity.agentId)?.dshSessionId, NOTICE_POLL)
+        .toBeDefined()
+      const sessionId = runtime.repository.getActiveEpisode(entity.channelId, entity.agentId)!.dshSessionId!
+      await expect.poll(() => runtime.host.sessionStatus(sessionId), NOTICE_POLL).toBe('idle')
+
+      const actor = { kind: 'agent', agentId: entity.agentId, channelId: entity.channelId } as const
+      const action = { kind: 'enable', extensionId, agentId: entity.agentId } as const
+      const asked = runtime.extensionRequests.create({
+        action,
+        actor,
+        assessment: runtime.extensionActions.assess(action, actor),
+      })
+      await runtime.extensionRequests.approve(asked.number, { kind: 'console' })
+      // Nobody speaks again: the outcome itself starts the agent's next turn.
+      await expect
+        .poll(() => [...model.notices].some((notice) => notice.includes(`扩展请求 #${asked.number}`)), NOTICE_POLL)
+        .toBe(true)
+
+      // An agent with no live conversation cannot be woken; the host says so instead of dropping it silently.
+      const idle = await agentWithChannel(runtime, 'confirm')
+      const idleActor = { kind: 'agent', agentId: idle.agentId, channelId: idle.channelId } as const
+      const idleAction = { kind: 'enable', extensionId, agentId: idle.agentId } as const
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const unheard = runtime.extensionRequests.create({
+        action: idleAction,
+        actor: idleActor,
+        assessment: runtime.extensionActions.assess(idleAction, idleActor),
+      })
+      await runtime.extensionRequests.approve(unheard.number, { kind: 'console' })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(`扩展请求 #${unheard.number} 的结果没有送到智能体`))
+      warn.mockRestore()
     } finally {
       await runtime.dispose()
     }
