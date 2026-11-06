@@ -134,7 +134,7 @@ export interface ExtensionHostContext {
   readonly nxt?: NxtHostService
   /**
    * This agent's configuration, validated against `config.agent`. Dynamic runs have no saved configuration and get
-   * the schema defaults.
+   * the schema defaults. A secret field holds its `secrets.placeholder`, which `http.fetch` fills in.
    */
   config(): ExtensionJsonValue
 }
@@ -1096,6 +1096,7 @@ export interface ExtensionHostEnvironment {
     /**
      * The host instance's configuration (`config.host`). Each agent's configuration is `ctx.config()` inside the
      * attachment. Dynamic runs have no saved configuration and get the schema defaults with the task's test values.
+     * A secret field holds its `secrets.placeholder`, which `http.fetch` fills in.
      */
     config(): ExtensionJsonValue
   }
@@ -1708,8 +1709,8 @@ const HOST_SERVICES_BY_TOPIC = {
     'Client 端 host.upload(files, { onProgress }) 把用户选择的图片或 zip 上传进扩展资源库，返回 { added, skipped }；host.assetUrl(assetId, { thumbnail }) 返回资源库图片的地址，用于 <img>。需要 permissions.host.assets.library。',
   ],
   config: [
-    'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
-    "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值，也不会出现在 harness.config() 或 ctx.config() 中。所有智能体共用的 API Key 放 config.host，只需填一次。",
+    'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。key 是配置里凭据字段的字段名（例如 apiKey），不是凭据的名称。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
+    "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值。harness.config() 和 ctx.config() 里凭据字段的值就是它的占位符，可以直接放进 http.fetch，例如 'Bearer ' + ctx.config().apiKey；字段没填时也是占位符，发请求时才报错。所有智能体共用的 API Key 放 config.host，只需填一次。",
   ],
   host: [
     "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）与 read/stat、nxt.image.info、nxt.files、nxt.media、nxt.commands、nxt.speech、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library?, read? }, files?, media?, commands?, speech?, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",
@@ -1799,7 +1800,7 @@ const GOVERNANCE_RULES_BY_TOPIC = {
   publishing: [
     '保存后的扩展有一条版本谱系：每次保存都是不可变的新版本，记住它从哪个版本改来。版本号就是谱系里的代数（v1、v2、v3），同一代保存了两次写作 v3·2。社区发布、本机修改都在同一条谱系上，所以能判断本机和社区谁更新、有没有各自改过。',
     '修改已保存的扩展一定先调用 nekro_nxt_extension_revise 开一个修改任务，它返回基线版本的完整定义；在这个定义上只改需要改的部分，其余照原样提交。不要凭记忆重写整个扩展，也不要另建一个同名的新扩展。一个扩展同时只有一个进行中的修改任务。',
-    '修改一个已经给你启用的扩展时，不用先停用它：修改任务的候选试运行时，会在这次对话里暂时接替已启用版本的同名工具；候选停止或对话结束后已启用的版本自动回来。保存后用 switch 切到新版本（或在自主档下由你切换），其他对话从下一次起用新版本。保存过的候选在它保存成的扩展启用或切换生效时自动停下，之后调用的就是启用的版本和它的正式配置，不用再 cordis_stop。',
+    '修改一个已经给你启用的扩展时，不用先停用它：修改任务的候选试运行时，会在这次对话里暂时接替已启用版本的同名工具；候选停止或对话结束后已启用的版本自动回来。保存时加 enable: true 就是保存并切换到新版本，管理员只需确认一次；不带 enable 时保存后再用 switch 切换。其他对话从下一次起用新版本。保存过的候选在它保存成的扩展启用或切换生效时自动停下，之后调用的就是启用的版本和它的正式配置，不用再 cordis_stop。',
     "revise 返回的定义带 codeFormat 时原样带上：codeFormat: 'module' 表示源码是带 import/export 的模块（从社区或源码包导入的扩展），宿主会转换后运行；没有这个字段就是普通的 factory 函数体。",
     '合并两个版本（例如本机改过、社区又出了新版）时，把一个作为 revise 的 version、另一个作为 reference，在基线上把对方的改动合进来，保存后谱系会接在基线之后。',
     '想保留原扩展、另做一个不同走向的版本时，用 nekro_nxt_extension_action 的 branch：它会成为一个新扩展，记录分支自哪个扩展的哪个版本，可以选择是否复制数据，分支还可以继续分支。只是修 bug 或加功能就修改原扩展，不要开分支。',
@@ -2083,7 +2084,7 @@ const TOPIC_BODIES: Readonly<
     ),
   config: () =>
     bullets([
-      "配置分 `config.host`（本机一份，`harness.config()`）与 `config.agent`（每个智能体一份，`ctx.config()`），都是序列化 Schemastery；`meta.advanced` 默认折叠，`meta.hint` 是帮助文字，长文本字段用 `meta.role: 'textarea'` 显示成多行输入框。两层都可以声明 `meta.role: 'secret'` 凭据字段，用 `secrets.get(key)` 读取。",
+      "配置分 `config.host`（本机一份，`harness.config()`）与 `config.agent`（每个智能体一份，`ctx.config()`），都是序列化 Schemastery；`meta.advanced` 默认折叠，`meta.hint` 是帮助文字，长文本字段用 `meta.role: 'textarea'` 显示成多行输入框。两层都可以声明 `meta.role: 'secret'` 凭据字段，`config()` 里它的值是占位符，放进 `http.fetch` 时宿主才填入真实的值；要拿原文用 `secrets.get(key)`。",
       ...HOST_RULES_BY_TOPIC.config,
       ...RECOVERY_RULES_BY_TOPIC.config,
       ...HOST_SERVICES_BY_TOPIC.config,

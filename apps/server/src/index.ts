@@ -4598,6 +4598,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           const userEnteredConfig = (layer: 'host' | 'agent'): JsonValue =>
             runner.activeCandidateLayerValues(layer, testConfig()?.userEntered ?? {})
           const ownerKey = `authoring-${input.episodeId}`
+          runner.configureCandidatePlaceholderOwner(ownerKey)
           const dynamicNxt = createNxtHostService(
             {
               mode: 'dynamic',

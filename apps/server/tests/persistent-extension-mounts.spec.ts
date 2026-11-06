@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { expect, it } from 'vitest'
+import { credentialPlaceholder } from '../src/extension-host-service.js'
 import { PersistentExtensionMounts } from '../src/persistent-extension-mounts.js'
 import { SessionRegistry } from '../src/session-registry.js'
 
@@ -74,6 +75,71 @@ it('rejects duplicate live instances and retains RPC after disabling an attachme
     await rm(directory, { recursive: true, force: true })
   }
 })
+
+it.each([12, 9])(
+  'hands a saved extension on SDK %i no stored credential reference in harness.config() (#143)',
+  async (sdk) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-extension-config-'))
+    const mounts = new PersistentExtensionMounts(new SessionRegistry())
+    const revision: Revision = {
+      id: ExtensionRevisionIdSchema.parse('xrv_CONFIG'),
+      extensionId: ExtensionIdSchema.parse('ext_CONFIG'),
+      revisionNumber: 1,
+      contentDigest: 'a'.repeat(64),
+      payloadDigest: 'b'.repeat(64),
+      createdAt: 1,
+      ancestry: [],
+      origin: 'file' as const,
+      dataVersion: 1,
+    }
+    const hostEntry = path.join(directory, 'host.mjs')
+    try {
+      await writeFile(
+        hostEntry,
+        `export default ({ harness, config }) => {
+      harness.handle('config', () => ({ read: harness.config(), given: config }))
+      return { apply() {} }
+    }`,
+      )
+      const manifest = extensionManifestSchema.parse({
+        schemaVersion: 7,
+        extensionId: revision.extensionId,
+        revisionId: revision.id,
+        requires: { sdk },
+        entrypoints: { host: 'source/host.ts' },
+        contributions: [{ kind: 'rpc', method: 'config' }],
+        config: {
+          host: {
+            schema: {
+              type: 'object',
+              dict: {
+                city: { type: 'string' },
+                token: { type: 'string', meta: { description: '令牌', role: 'secret' } },
+              },
+            },
+          },
+        },
+      })
+      const loaded = await mounts.load({
+        revision,
+        manifest,
+        artifact: { revisionId: revision.id, buildKey: 'c'.repeat(64), directory, hostEntry },
+        config: { city: '示例市', token: 'credential:local:0123456789abcdef0123456789abcdef' },
+      })
+      const expected = {
+        city: '示例市',
+        ...(sdk >= 12 ? { token: credentialPlaceholder(revision.extensionId, 'token') } : {}),
+      }
+      await expect(loaded.call('config', null, { surface: 'verification' })).resolves.toEqual({
+        read: expected,
+        given: expected,
+      })
+    } finally {
+      await mounts.dispose()
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+)
 
 it('waits for an initializing host factory before disposing', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nxt-extension-init-'))

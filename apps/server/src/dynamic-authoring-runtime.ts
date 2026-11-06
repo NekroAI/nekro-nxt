@@ -108,6 +108,7 @@ const InboundProbeDecisionSchema = z
   .strict()
   .nullable()
 import { EXTENSION_PRIVATE_SERVICE_KEY_SET } from './extension-context.js'
+import { configWithPlaceholders } from './extension-host-service.js'
 import type { DshHostRuntimeOptions } from './index.js'
 import type { SessionRegistry } from './session-registry.js'
 export type CordisDynamicPackageIdType = ReturnType<typeof CordisDynamicPackageId>
@@ -374,6 +375,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   /** Test values passed with the definition being made; they are stored for the task only after it is defined. */
   private definingTestValues: Readonly<Record<string, JsonValue>> | undefined
   private candidateTestValues: (() => CandidateTestValues) | undefined
+  private candidatePlaceholderOwner: string | undefined
   private suppressAuthoringPersistence = false
   private userOperationDepth = 0
   private onAuthoringDefinition:
@@ -492,20 +494,29 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.candidateTestValues = values
   }
 
+  /** Whose credential placeholders the factory's `harness.config()` hands out: the candidate's `nxt` owner. */
+  configureCandidatePlaceholderOwner(ownerKey: string): void {
+    this.candidatePlaceholderOwner = ownerKey
+  }
+
   /**
    * What `harness.config()` returns to a candidate's host factory, fixed when the candidate is defined: the defaults of
-   * `config.host`, then the task's test values for it. Credentials stay out, as in a saved extension.
+   * `config.host`, then the task's test values for it. Secret fields hold placeholders, as in a saved extension.
    */
   private factoryHostConfig(config: DynamicAuthoringSnapshot['config']): JsonValue {
     const schema = layerConfigSchema({ config }, 'host')
     const secrets = configSecretKeys(schema)
     const stored = this.candidateTestValues?.()
     const values = { ...stored?.agentProvided, ...this.definingTestValues, ...stored?.userEntered }
-    return Object.fromEntries(
+    const plain = Object.fromEntries(
       Object.entries({ ...validateConfigValue(schema, {}).value, ...values }).filter(
         ([key]) => Object.hasOwn(schema.dict, key) && !secrets.includes(key),
       ),
     )
+    const ownerKey = this.candidatePlaceholderOwner
+    return ownerKey === undefined
+      ? plain
+      : configWithPlaceholders(plain, { ownerKey, secretKeys: secrets, placeholders: true })
   }
 
   defineAuthoringPackage(

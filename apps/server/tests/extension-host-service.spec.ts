@@ -389,6 +389,42 @@ describe('nxt Host service', () => {
     ).rejects.toThrow('不属于这个扩展')
     expect(() => fixture(network, {}, { sdk: 11 }).nxt.secrets.placeholder('requestOnly')).toThrow('requires.sdk')
   })
+
+  it('hands code placeholders for secret fields in config() and never sends a stored reference (#143, #144)', async () => {
+    const namedCredential: NamedCredentialResolver = (use) =>
+      use.id === 'crd_REQUEST'
+        ? { value: 'request-only-fixture-key', usage: 'request', domains: ['api.example.com'] }
+        : undefined
+    const network = { network: { mode: 'domains' as const, domains: ['api.example.com'] } }
+    const stored = { city: '示例市', requestOnly: 'credential:named:crd_REQUEST' }
+    const { nxt, fetch } = fixture(network, stored, { sdk: 12, namedCredential })
+
+    const token = nxt.secrets.placeholder('requestOnly')
+    const config = nxt.config()
+    expect(config).toMatchObject({ city: '示例市', requestOnly: token })
+    expect(JSON.stringify(config)).not.toContain('credential:named:')
+    await nxt.http.fetch('https://api.example.com/v1', { headers: { authorization: `Bearer ${token}` } })
+    expect(fetch.mock.calls[0]?.[3]).toEqual([
+      { token, value: 'request-only-fixture-key', domains: ['api.example.com'] },
+    ])
+    // The same token comes from another `nxt` of the extension, such as the host layer's in the factory.
+    expect(fixture(network, stored, { sdk: 12 }).nxt.secrets.placeholder('requestOnly')).toBe(token)
+
+    await expect(
+      nxt.http.fetch('https://api.example.com/v1', {
+        headers: { authorization: 'Bearer credential:named:crd_REQUEST' },
+      }),
+    ).rejects.toThrow('凭据的内部引用')
+    // The credential's name instead of the field's: saving or enabling would not help, so say so.
+    const byName = nxt.secrets.placeholder('示例 API Key')
+    await expect(nxt.http.fetch(`https://api.example.com/?k=${byName}`)).rejects.toThrow(
+      /「示例 API Key」不是这个扩展的凭据字段.*requestOnly/u,
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    // Without placeholder support the field is simply absent.
+    expect(fixture(network, stored, { sdk: 11 }).nxt.config()).toEqual({ city: '示例市' })
+  })
 })
 
 describe.each(['host', 'agent'] as const)('extension %s secret configuration', (layer) => {

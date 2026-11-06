@@ -1,7 +1,7 @@
 import type { NxtLogger } from '@nekro-nxt/contracts'
 import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
-import { randomBytes } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import path from 'node:path'
 import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
@@ -1027,6 +1027,14 @@ const indexService = (binding: NxtServiceBinding, backends: NxtServiceBackends):
 export const NXT_PLACEHOLDER_SDK_LEVEL = 12
 const PLACEHOLDER_PATTERN = /\{\{nxt-credential:[a-f0-9]{24}\}\}/gu
 
+/** Why a key that is not a declared secret field resolves to nothing; agents often pass the credential's name. */
+const undeclaredSecretMessage = (key: string, declared: readonly string[]): string =>
+  `「${key}」不是这个扩展的凭据字段。` +
+  (declared.length === 0
+    ? "先在 config 里声明 meta.role: 'secret' 的字段，"
+    : `要传配置里声明的字段名（${declared.join('、')}），`) +
+  '不是凭据的名称；保存或启用解决不了这个问题。'
+
 /** What to do about a secret field that resolved to nothing, by the layer that declares it. */
 const unsetSecretStep = (binding: NxtServiceBinding, key: string): string => {
   const missing = '还没有合适的凭据时，用 nekro_nxt_credential_request 请管理员添加。'
@@ -1039,26 +1047,65 @@ const unsetSecretStep = (binding: NxtServiceBinding, key: string): string => {
     : `用 nekro_nxt_extension_action 的 configure 按名称绑定；${missing}`
 }
 
+// Placeholders only mean something inside this process, so a key that changes with every start is enough.
+const PLACEHOLDER_KEY = randomBytes(32)
+
+/**
+ * The placeholder that stands for one secret field of one extension. Both layers of the extension get the same token,
+ * so a token from `harness.config()` works in `ctx.nxt.http.fetch`; another extension's token resolves to nothing.
+ */
+export const credentialPlaceholder = (ownerKey: string, key: string): string =>
+  `{{nxt-credential:${createHmac('sha256', PLACEHOLDER_KEY).update(`${ownerKey}\0${key}`).digest('hex').slice(0, 24)}}}`
+
+/** Whether code bound this way may use placeholders; dynamic runs always declare a recent enough SDK. */
+export const supportsCredentialPlaceholders = (binding: Pick<NxtServiceBinding, 'mode' | 'sdk'>): boolean =>
+  binding.mode === 'dynamic' || (binding.sdk ?? 7) >= NXT_PLACEHOLDER_SDK_LEVEL
+
+/**
+ * A configuration layer as extension code reads it: a secret field holds its placeholder, never the stored credential
+ * reference, so `'Bearer ' + config.apiKey` works in `http.fetch`. Without placeholder support secret fields are left
+ * out.
+ */
+export const configWithPlaceholders = (
+  config: JsonValue,
+  input: { readonly ownerKey: string; readonly secretKeys: readonly string[]; readonly placeholders: boolean },
+): JsonValue => {
+  if (input.secretKeys.length === 0) return config
+  const record = configRecord(config)
+  return {
+    ...Object.fromEntries(Object.entries(record).filter(([key]) => !input.secretKeys.includes(key))),
+    ...(input.placeholders
+      ? Object.fromEntries(input.secretKeys.map((key) => [key, credentialPlaceholder(input.ownerKey, key)]))
+      : {}),
+  }
+}
+
+/** Stored credential references (`credential:local:`, `credential:named:`), which are never the secret itself. */
+const CREDENTIAL_REFERENCE_TEXT = /credential:(?:local|named):/u
+
 /**
  * `secrets.placeholder` and the lookup `http.fetch` uses to fill placeholders in. A token stands for one secret field
- * of this `nxt` instance only, so a token copied into another extension resolves to nothing.
+ * of one extension, so a token copied into another extension resolves to nothing.
  */
 const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtServiceBackends) => {
-  const tokens = new Map<string, string>()
-  const keys = new Map<string, string>()
+  // Keys code asked placeholders for, including ones that are not secret fields, so fetch can say what went wrong.
+  const requested = new Map<string, string>()
+  const declaredKeys = (): readonly string[] => {
+    const declared = binding.declaredSecrets()
+    return [...declared.config, ...declared.hostConfig]
+  }
+  const keyOf = (token: string): string | undefined =>
+    requested.get(token) ?? declaredKeys().find((key) => credentialPlaceholder(binding.ownerKey, key) === token)
   return {
     placeholder(key: string): string {
-      if (binding.mode !== 'dynamic' && (binding.sdk ?? 7) < NXT_PLACEHOLDER_SDK_LEVEL) {
+      if (!supportsCredentialPlaceholders(binding)) {
         throw new NxtCapabilityError(
           `使用凭据占位符的扩展需要声明 requires.sdk 为 ${NXT_PLACEHOLDER_SDK_LEVEL} 或更高。`,
         )
       }
       if (typeof key !== 'string' || key.trim() === '') throw new NxtCapabilityError('占位符需要凭据字段名。')
-      const existing = tokens.get(key)
-      if (existing !== undefined) return existing
-      const token = `{{nxt-credential:${randomBytes(12).toString('hex')}}}`
-      tokens.set(key, token)
-      keys.set(token, key)
+      const token = credentialPlaceholder(binding.ownerKey, key)
+      requested.set(token, key)
       return token
     },
     /** Placeholders in the URL, headers and string body, each with the credential it stands for. */
@@ -1066,6 +1113,12 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
       const found = new Set<string>()
       for (const text of [url, ...Object.values(init?.headers ?? {}), init?.body ?? '']) {
         if (typeof text !== 'string') continue
+        if (CREDENTIAL_REFERENCE_TEXT.test(text)) {
+          throw new NxtCapabilityError(
+            '请求里有凭据的内部引用（credential:…），它不是密钥本身，所以没有发出去。这是代码写法的问题，凭据的值没有问题：' +
+              '把 config() 里凭据字段的值或 secrets.placeholder(字段名) 放进请求，宿主发出时会填入真实的值。',
+          )
+        }
         for (const match of text.matchAll(PLACEHOLDER_PATTERN)) found.add(match[0])
       }
       if (found.size === 0) return []
@@ -1077,10 +1130,12 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
       }
       const secrets: NxtFetchSecret[] = []
       for (const token of found) {
-        const key = keys.get(token)
+        const key = keyOf(token)
         if (key === undefined) {
           throw new NxtCapabilityError('请求里有不属于这个扩展的凭据占位符，请用 secrets.placeholder 重新获取。')
         }
+        const declared = declaredKeys()
+        if (!declared.includes(key)) throw new NxtCapabilityError(undeclaredSecretMessage(key, declared))
         if (backends.requestSecret === undefined) throw new NxtCapabilityError('这里不能使用凭据占位符。')
         const secret = await backends.requestSecret(binding, key, targetHost)
         if (secret === undefined) {
@@ -1093,6 +1148,19 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
       return secrets
     },
   }
+}
+
+/** `secrets.get`; a key that is not a declared secret field is logged, since it can never resolve. */
+const readSecret = async (
+  binding: NxtServiceBinding,
+  backends: NxtServiceBackends,
+  key: string,
+): Promise<string | undefined> => {
+  const declared = binding.declaredSecrets()
+  const keys = [...declared.config, ...declared.hostConfig]
+  if (typeof key === 'string' && !keys.includes(key))
+    backends.logger?.(binding).warn(undeclaredSecretMessage(key, keys))
+  return backends.secret(binding, key)
 }
 
 /** Downloads into a file through the binding's egress policy, filling credential placeholders like `http.fetch`. */
@@ -1255,12 +1323,15 @@ export const createNxtHostService = (
 
   return {
     logger: { debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') },
-    config: () => binding.config(),
+    config: () =>
+      configWithPlaceholders(binding.config(), {
+        ownerKey: binding.ownerKey,
+        secretKeys: binding.declaredSecrets().config,
+        placeholders: supportsCredentialPlaceholders(binding),
+      }),
     http: { fetch: fetchWithPolicy },
     secrets: {
-      async get(key) {
-        return backends.secret(binding, key)
-      },
+      get: async (key) => readSecret(binding, backends, key),
       placeholder: (key) => placeholders.placeholder(key),
     },
     assets: {
@@ -1508,7 +1579,7 @@ export const createHostLayerNxt = (binding: NxtServiceBinding, backends: NxtServ
       },
     },
     secrets: {
-      get: async (key) => backends.secret(binding, key),
+      get: async (key) => readSecret(binding, backends, key),
       placeholder: (key) => placeholders.placeholder(key),
     },
     storage: {

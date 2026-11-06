@@ -237,7 +237,7 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
     name: 'nekro_nxt_extension_action',
     description: [
       '对扩展做生命周期操作。按你的扩展自主权和权限风险，结果可能是直接完成、在这次回复结束后生效（启用、切换等会改变你身上挂载的操作）、在频道里发出请求等管理员用 /ext approve 确认，或者需要管理员在后台处理；照返回的结果如实告诉用户。',
-      'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展）。可给 name、description，不给时新扩展用候选的名称和用途，新版本沿用扩展现在的名称和说明；新建时还可给 slug。加 enable: true 时保存后接着给你启用，只需管理员确认一次；values、credentials 是启用时的配置，两层的字段都可以写，不写 credentials 时沿用试运行绑定的凭据。',
+      'save：保存任务最新的、试运行通过的候选（修改任务存为原扩展的新版本，新建任务存为新扩展）。可给 name、description，不给时新扩展用候选的名称和用途，新版本沿用扩展现在的名称和说明；新建时还可给 slug。加 enable: true 时保存后接着给你启用，只需管理员确认一次；values、credentials 是启用时的配置，两层的字段都可以写，不写 credentials 时沿用试运行绑定的凭据。修改的扩展已经安装在本机时，enable: true 是保存并切换到新版本，沿用现在的配置，不带 values 和 credentials。',
       'edit_info：修改已保存扩展的信息，name 是名称，description 是说明，只改写上的那项。',
       'enable / disable：给你自己启用或停用。enable 可以带 values 和 credentials，本机配置和智能体配置的字段都可以写，按字段所在的层设置。switch：切到指定版本。revert：回到上一次切换前的版本。',
       'branch：从某个版本另起一个扩展（name 必填，copyData 决定是否复制现有数据）。',
@@ -269,7 +269,10 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
       },
       extension: { type: 'string', description: '扩展名称或编号。' },
       task: { type: 'string', description: 'save 时的任务名称或编号。' },
-      enable: { type: 'boolean', description: 'save 时为 true：保存后接着给你启用。' },
+      enable: {
+        type: 'boolean',
+        description: 'save 时为 true：新扩展保存后接着给你启用，已安装的扩展保存后切换到新版本。',
+      },
       version: { type: 'string', description: 'switch 的目标版本，或 branch 的来源版本，例如 v2。' },
       name: { type: 'string', description: 'save、edit_info 或 branch 的扩展名称。' },
       description: {

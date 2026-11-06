@@ -1,5 +1,5 @@
 import { CommandRegistrations } from './commands/registrations.js'
-import { CommandDefinitionSchema, EXTENSION_OUTBOUND_SDK_LEVEL } from '@nekro-nxt/contracts'
+import { CommandDefinitionSchema, configSecretKeys, EXTENSION_OUTBOUND_SDK_LEVEL } from '@nekro-nxt/contracts'
 import type { Context } from '@deepseek-ai/cordis'
 import { type Fiber } from '@deepseek-ai/cordis'
 import type { ToolRuntime } from '@deepseek-ai/dsh-tools'
@@ -7,6 +7,7 @@ import { AdapterRegistry, type AdapterHostContributionV2 } from '@nekro-nxt/adap
 import { JsonValueSchema, parseJsonValue, type JsonValue } from '@nekro-nxt/contracts'
 import { canonicalJson, type AgentRevisionRecord } from '@nekro-nxt/core'
 import {
+  layerConfigSchema,
   manifestAdapter,
   type ExtensionBuildArtifact,
   type ExtensionCaller,
@@ -39,7 +40,11 @@ import { isolatePrivateExtensionServices } from './extension-context.js'
 import type { HostLogSink, HostLogWriter } from './logs/service.js'
 import { bindLogOwner, withLogOwner } from './logs/bridge.js'
 import { extensionLogger } from './extension-logger.js'
-import { NXT_HOST_SERVICE_NAME } from './extension-host-service.js'
+import {
+  configWithPlaceholders,
+  NXT_HOST_SERVICE_NAME,
+  supportsCredentialPlaceholders,
+} from './extension-host-service.js'
 import { withToolImages, type ToolImageResolver } from './extension-tool-images.js'
 import { bindExtensionTool, type ToolProgressSink } from './extension-tool-context.js'
 import type { SessionRegistry } from './session-registry.js'
@@ -148,6 +153,8 @@ interface Instance {
   readonly logger?: HostLogWriter
   readonly revision: Revision
   readonly config: JsonValue
+  /** The agent configuration as the extension's code reads it, from what is stored. */
+  readonly configView: (config: JsonValue) => JsonValue
   readonly plugin?: ExtensionPluginDefinition
   readonly handlers: Map<string, ExtensionRpcHandler>
   readonly inbound?: NxtInboundHandler
@@ -408,6 +415,14 @@ export class PersistentExtensionMounts {
     logger?.info('正在加载扩展。')
     const handlers = new Map<string, ExtensionRpcHandler>()
     const expectedAdapter = manifestAdapter(manifest)
+    const placeholders = supportsCredentialPlaceholders({ mode: 'activation', sdk: manifest.requires?.sdk ?? 7 })
+    const configView = (layer: 'host' | 'agent', value: JsonValue) =>
+      configWithPlaceholders(value, {
+        ownerKey: revision.extensionId,
+        secretKeys: configSecretKeys(layerConfigSchema(manifest, layer)),
+        placeholders,
+      })
+    const hostConfigView = configView('host', config)
     let inbound: NxtInboundHandler | undefined
     let outbound: NxtOutboundHandler | undefined
     let job: NxtJobHandler | undefined
@@ -497,9 +512,9 @@ export class PersistentExtensionMounts {
                 migration = undefined
               }
             },
-            config: () => config,
+            config: () => hostConfigView,
           },
-          config,
+          config: hostConfigView,
           nxt: this.#hostNxt?.({ revision, config, sdk: manifest.requires?.sdk ?? 7 }) ?? unavailableHostNxt(),
         })
       } finally {
@@ -548,6 +563,7 @@ export class PersistentExtensionMounts {
       ...((manifest.requires?.sdk ?? 7) >= 9 && logger !== undefined ? { logger } : {}),
       revision,
       config,
+      configView: (value) => configView('agent', value),
       ...(plugin === undefined ? {} : { plugin }),
       handlers,
       ...(inbound === undefined ? {} : { inbound }),
@@ -798,7 +814,7 @@ export class PersistentExtensionMounts {
               : undefined
           const images = this.#toolImages?.({ revision: instance.revision, sessionId })
           const progress = this.#toolProgress
-          const view = persistentExtensionContext(context, nxt, attachment.config, {
+          const view = persistentExtensionContext(context, nxt, instance.configView(attachment.config), {
             sdk: instance.sdk,
             images,
             progress: progress === undefined ? undefined : (callId, update) => progress(sessionId, callId, update),

@@ -1044,8 +1044,10 @@ return { inject: ['nxt'], apply() {} }`
 
   it('gives a dynamic run a placeholder for a bound request-only credential, never its value', async () => {
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
-    // The probe reports what it saw by failing with it, so the trial run returns the observation.
-    const host = `return {
+    // The probe reports what it saw by failing with it, so the trial run returns the observation. Both configuration
+    // layers hold the same placeholders `secrets.placeholder` gives, not the stored references (#143).
+    const host = `const factoryShared = harness.config().sharedKey
+return {
   inject: ['tools', 'nxt'],
   apply(ctx) {
     harness.registerTool(ctx, harness.defineTool({
@@ -1056,7 +1058,9 @@ return { inject: ['nxt'], apply() {} }`
       async execute() {
         const token = ctx.nxt.secrets.placeholder('apiKey')
         const read = await ctx.nxt.secrets.get('apiKey')
-        throw new Error('observed ' + JSON.stringify({ token, read: read ?? null }))
+        const config = ctx.config().apiKey === token
+        const shared = factoryShared === ctx.nxt.secrets.placeholder('sharedKey')
+        throw new Error('observed ' + JSON.stringify({ token, read: read ?? null, config, shared }))
       }
     }))
   }
@@ -1081,6 +1085,12 @@ return { inject: ['nxt'], apply() {} }`
               dict: { apiKey: { type: 'string', meta: { description: 'API Key', role: 'secret' } } },
             },
           },
+          host: {
+            schema: {
+              type: 'object',
+              dict: { sharedKey: { type: 'string', meta: { description: '共用 Key', role: 'secret' } } },
+            },
+          },
         },
         contributions: [],
       })
@@ -1091,9 +1101,13 @@ return { inject: ['nxt'], apply() {} }`
         }
         return recorded
       })
-      await new ExtensionGovernanceTools(runtime).setTestConfig(task.id, { apiKey: { credential: '示例天气' } })
+      await new ExtensionGovernanceTools(runtime).setTestConfig(task.id, {
+        apiKey: { credential: '示例天气' },
+        sharedKey: { credential: '示例天气' },
+      })
       expect(runtime.authoringTestConfig.values(task.id).agentProvided).toEqual({
         apiKey: `credential:named:${credential.id}`,
+        sharedKey: `credential:named:${credential.id}`,
       })
       const failure = await runtime.host
         .runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
@@ -1101,7 +1115,9 @@ return { inject: ['nxt'], apply() {} }`
           () => '',
           (error: unknown) => (error instanceof Error ? error.message : String(error)),
         )
-      expect(failure).toMatch(/observed \{"token":"\{\{nxt-credential:[a-f0-9]{24}\}\}","read":null\}/u)
+      expect(failure).toMatch(
+        /observed \{"token":"\{\{nxt-credential:[a-f0-9]{24}\}\}","read":null,"config":true,"shared":true\}/u,
+      )
       expect(failure).not.toContain('fictional-weather-key')
     } finally {
       await runtime.dispose()

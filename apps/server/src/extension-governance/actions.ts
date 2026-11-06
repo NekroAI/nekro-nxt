@@ -704,7 +704,8 @@ export class ExtensionActionService {
     })
     if (pinned !== undefined) return action
     let credentials = action.enable.credentials
-    if (credentials === undefined) {
+    // An installed extension switches to the new version and keeps its configuration.
+    if (credentials === undefined && this.#installedTarget(action) === undefined) {
       const bound = (await runtime.authoringTestConfig.describe(action.taskId)).boundCredentials
       const names = Object.entries(bound).flatMap(([key, id]) => {
         const record = runtime.credentialLibrary.get(id)
@@ -725,14 +726,13 @@ export class ExtensionActionService {
    */
   saveEnableProblem(action: ExtensionAction): string | undefined {
     if (action.kind !== 'save' || action.enable === undefined) return undefined
-    const runtime = this.#runtime
-    const task = runtime.repository.getAuthoringTask(action.taskId)
-    const target = task?.kind === 'revise' ? task.targetExtensionId : undefined
-    if (target !== undefined && runtime.repository.getHostInstallation(target) !== undefined) {
-      return `「${this.#extensionName(target)}」已经安装在本机，新版本保存后用 switch 切换过去；save 时不用带 enable。`
+    const target = this.#installedTarget(action)
+    if (target !== undefined && (action.enable.values !== undefined || action.enable.credentials !== undefined)) {
+      return `「${this.#extensionName(target)}」已经安装在本机，保存并切换到新版本时沿用现在的配置；要改配置，切换后用 configure。`
     }
     const candidate = this.#saveCandidate(action)
     if (candidate === undefined) return CANDIDATE_CHANGED
+    if (target !== undefined) return undefined
     const values = action.enable.values ?? {}
     try {
       this.#splitByLayer(candidate.fields, values, action.enable.credentials ?? {})
@@ -747,6 +747,15 @@ export class ExtensionActionService {
     return missing.length === 0
       ? undefined
       : `启用前还要填写智能体配置：${missing.map(({ field }) => `「${field.title}」（${field.key}）`).join('、')}。在 values 里一起提供。`
+  }
+
+  /** The installed extension a save of a revise task makes a new version of; with `enable` it switches to it. */
+  #installedTarget(action: SaveAction): ExtensionId | undefined {
+    const task = this.#runtime.repository.getAuthoringTask(action.taskId)
+    const target = task?.kind === 'revise' ? task.targetExtensionId : undefined
+    return target !== undefined && this.#runtime.repository.getHostInstallation(target) !== undefined
+      ? target
+      : undefined
   }
 
   #saveCandidate(action: SaveAction): SaveCandidate | undefined {
@@ -768,6 +777,7 @@ export class ExtensionActionService {
     const candidate = this.#saveCandidate(action)
     if (candidate === undefined) return { decision: 'console', reason: CANDIDATE_CHANGED }
     if (enable.values === undefined && enable.credentials === undefined) return undefined
+    if (this.#installedTarget(action) !== undefined) return undefined
     let split: Record<ExtensionConfigLayer, readonly LeveledConfigField[]>
     let records: ConfigPlan['credentials']
     try {
@@ -1167,11 +1177,17 @@ export class ExtensionActionService {
     const result = { extensionId: saved.extension.id, revisionId: saved.revision.id }
     const done = `已保存「${saved.extension.displayName}」${label}。`
     if (enable === undefined) return { ...result, message: done }
-    try {
-      const installed = runtime.repository.getHostInstallation(saved.extension.id)?.extensionRevisionId
-      if (installed !== undefined && installed !== saved.revision.id) {
-        throw new Error('本机装的是另一个版本，新版本要用 switch 切换过去。')
+    const installed = runtime.repository.getHostInstallation(saved.extension.id)?.extensionRevisionId
+    if (installed !== undefined && installed !== saved.revision.id) {
+      try {
+        const switched = await this.#switch(saved.extension.id, saved.revision.id)
+        return { ...result, message: `${done}${switched.message}` }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        return { ...result, message: `已保存「${saved.extension.displayName}」${label}，切换没有完成：${reason}` }
       }
+    }
+    try {
       const enabled = await this.perform(
         {
           kind: 'enable',
@@ -1485,8 +1501,19 @@ export class ExtensionActionService {
           ? `保存「${target.displayName}」的新版本`
           : `保存新扩展「${action.name ?? task?.title ?? ''}」`
         if (action.enable === undefined) return { ...normal, summary }
-        // Enabling grants what the candidate asks for; nothing of a new extension is installed yet.
         const candidate = this.#saveCandidate(action)
+        const installed = this.#installedTarget(action)
+        if (installed !== undefined) {
+          // Switching grants what the new version asks for beyond the installed one, as `switch` does.
+          const added = addedPermissionItems(itemsOf(this.#maybeCurrent(installed)), [...(candidate?.items ?? [])])
+          return {
+            summary: `${summary}并切换过去`,
+            level: highestPermissionLevel(added),
+            added,
+            affectsOthers: otherAgents(installed, actor.kind === 'agent' ? actor.agentId : undefined),
+          }
+        }
+        // Enabling grants what the candidate asks for; nothing of a new extension is installed yet.
         const items = candidate?.items ?? []
         let mentions: readonly ConfigMention[] = []
         if (candidate !== undefined) {

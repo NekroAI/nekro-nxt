@@ -319,8 +319,9 @@ const say = async (runtime: NekroRuntime, channelId: ChannelId, text: string) =>
 }
 
 /** Defines the weather candidate with its trial run bound to a named credential, runs it, and waits until it can be saved. */
-const readyCandidate = async (credentialName: string) => {
+const readyCandidate = async (credentialName: string, autonomy: 'confirm' | 'autonomous' = 'autonomous') => {
   const model = new TriggeredModel({
+    '#revise-weather': { name: 'nekro_nxt_extension_revise', args: { extension: '天气探针' } },
     '#define-weather': {
       name: 'nekro_nxt_extension_define',
       args: {
@@ -339,7 +340,7 @@ const readyCandidate = async (credentialName: string) => {
     displayName: '天气智能体',
     persona: '',
     model: { provider: 'test-provider', model: 'chat-model' },
-    capabilities: { dynamicCreation: true, extensionAutonomy: 'autonomous' },
+    capabilities: { dynamicCreation: true, extensionAutonomy: autonomy },
   })
   await say(runtime, entity.channelId, '#define-weather 做一个天气探针。')
   await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, POLL).toBe(1)
@@ -351,7 +352,7 @@ const readyCandidate = async (credentialName: string) => {
     runtime.host.runDynamicPackage(sessionId, task.pluginKey, attempt.runnerPackageId!, 'run'),
   ).resolves.toMatchObject({ ok: true, status: 'running' })
   await expect.poll(() => runtime.repository.getAuthoringTask(task.id)?.status, POLL).toBe('ready')
-  return { runtime, credential, entity, task }
+  return { runtime, credential, entity, task, sessionId }
 }
 
 describe('save with enable', () => {
@@ -387,6 +388,73 @@ describe('save with enable', () => {
       await runtime.dispose()
     }
   }, 60_000)
+
+  it('saves a new version of an installed extension and switches to it on one approval (#144)', async () => {
+    const { runtime, credential, entity, task, sessionId } = await readyCandidate('沿用的天气', 'confirm')
+    try {
+      const tools = new ExtensionGovernanceTools(runtime)
+      const first = await tools.act(
+        entity.agentId,
+        entity.channelId,
+        { kind: 'save', taskId: task.id, name: '天气探针', enable: { agentId: entity.agentId } },
+        { kind: 'admin' },
+      )
+      const saved = await runtime.extensionRequests.approve(first.requestNumber!, { kind: 'console' })
+      const extensionId = saved.extensionId!
+      const agentConfig = runtime.repository.getActivation(entity.agentId, extensionId)?.config
+
+      await say(runtime, entity.channelId, '#revise-weather 改一下天气探针。')
+      await expect
+        .poll(() => runtime.repository.listAuthoringTasks(entity.agentId).find((t) => t.kind === 'revise'), POLL)
+        .toBeDefined()
+      const revise = runtime.repository.listAuthoringTasks(entity.agentId).find((t) => t.kind === 'revise')!
+      await expect.poll(() => runtime.host.sessionStatus(sessionId), POLL).toBe('idle')
+      const changed = runtime.host.defineDynamicAuthoringPackage(sessionId, {
+        plugin: { kind: 'existing', pluginId: revise.pluginKey },
+        name: '天气探针',
+        purpose: '回答当前配置的城市。',
+        code: { host: `return { inject: ['tools'], apply(ctx) { ${WEATHER_TOOL.replace("'city='", "'城市：'")} } }` },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        config: WEATHER_CONFIG,
+        contributions: [],
+      })
+      await expect
+        .poll(() => runtime.repository.listAuthoringAttempts(revise.id).at(-1)?.runnerPackageId, POLL)
+        .toBe(changed.packageId)
+      await expect(
+        runtime.host.runDynamicPackage(sessionId, revise.pluginKey, changed.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      await expect.poll(() => runtime.repository.getAuthoringTask(revise.id)?.status, POLL).toBe('ready')
+
+      // Switching keeps the configuration the installed version has.
+      await expect(
+        tools.act(
+          entity.agentId,
+          entity.channelId,
+          { kind: 'save', taskId: revise.id, enable: { agentId: entity.agentId, values: { city: '新市' } } },
+          { kind: 'admin' },
+        ),
+      ).rejects.toThrow('沿用现在的配置')
+      const outcome = await tools.act(
+        entity.agentId,
+        entity.channelId,
+        { kind: 'save', taskId: revise.id, enable: { agentId: entity.agentId } },
+        { kind: 'admin' },
+      )
+      expect(outcome.outcome).toBe('requested')
+      expect(runtime.extensionRequests.get(outcome.requestNumber!)!.summary).toBe('保存「天气探针」的新版本并切换过去')
+      const result = await runtime.extensionRequests.approve(outcome.requestNumber!, { kind: 'console' })
+      expect(result.message).toBe('已保存「天气探针」v2。「天气探针」已切换到 v2。')
+      expect(runtime.repository.getHostInstallation(extensionId)).toMatchObject({
+        extensionRevisionId: result.revisionId,
+        config: { apiKey: namedCredentialReference(credential.id) },
+      })
+      expect(runtime.repository.getActivation(entity.agentId, extensionId)?.config).toEqual(agentConfig)
+    } finally {
+      await runtime.dispose()
+    }
+  }, 90_000)
 
   it('keeps the save and says why when enabling then fails', async () => {
     const { runtime, credential, entity, task } = await readyCandidate('会删掉的天气')
