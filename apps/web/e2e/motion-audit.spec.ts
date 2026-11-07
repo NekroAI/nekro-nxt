@@ -113,5 +113,8 @@ test.describe('motion audit', () => {
     // first provider once that page resolves, but it never passes through intermediate positions.
     expect(new Set(frames.map((frame) => frame.indicator)).size).toBeLessThanOrEqual(3)
     expect(frames.flatMap((frame) => frame.labelOpacity).every((opacity) => opacity === 1)).toBe(true)
+    // The early highlight belongs to that click only: going back follows the address again.
+    await page.goBack()
+    await expect(page.locator(settingsNav('models').selected)).toHaveText('外观')
   })
 })

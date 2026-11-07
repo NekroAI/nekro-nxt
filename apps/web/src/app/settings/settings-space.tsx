@@ -140,6 +140,10 @@ export default function SettingsSpace() {
   const [params, setParams] = useSearchParams()
   const navigate = useNavigate()
   const current = SECTIONS.find((item) => item.key === section)
+  // The highlight answers the click at once; the address and the section's page follow in a routing transition.
+  const [picked, setPicked] = useState<{ readonly key: string; readonly from: string | undefined }>()
+  if (picked !== undefined && picked.from !== section) setPicked(undefined)
+  const highlighted = picked?.key ?? section
   // Sign-in exists only when this page reaches the Server through its management edge.
   const accessAvailable = useManagementAccessAvailable()
   const sections = SECTIONS.filter((item) => item.key !== 'access' || accessAvailable || section === 'access')
@@ -173,7 +177,7 @@ export default function SettingsSpace() {
     <WorkbenchPage
       list={
         <ListPane title="设置" label="设置">
-          <SelectionList selectedKey={section}>
+          <SelectionList selectedKey={highlighted}>
             {GROUPS.map((group) => (
               <div key={group.key} className={styles.navGroup} role="group" aria-label={group.label}>
                 <div className={styles.navGroupLabel}>{group.label}</div>
@@ -184,7 +188,11 @@ export default function SettingsSpace() {
                       key={item.key}
                       to={`/settings/${item.key}`}
                       className={styles.row}
-                      data-selected={section === item.key}
+                      data-selected={highlighted === item.key}
+                      onClick={(event) => {
+                        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey)
+                          setPicked({ key: item.key, from: section })
+                      }}
                       aria-current={item.key === section ? 'page' : undefined}
                     >
                       {item.icon}
