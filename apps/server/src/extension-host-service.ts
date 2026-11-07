@@ -600,6 +600,7 @@ const fetchInit = (options: NxtFileFromUrlOptions | undefined): NxtFetchInit => 
   ...(options?.headers === undefined ? {} : { headers: options.headers }),
   ...(options?.body === undefined ? {} : { body: options.body }),
   ...(options?.bodyBase64 === undefined ? {} : { bodyBase64: options.bodyBase64 }),
+  ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
 })
 
 const filesQuota = (binding: NxtServiceBinding): ExtensionFileQuota => {
@@ -1678,13 +1679,74 @@ export const dshPromptRegistry = (
     }),
 })
 
+/**
+ * Node timers for one dynamic run. The handles are the host's own, so a candidate sees what a saved extension gets;
+ * `dispose` clears every timer the run still holds, so no callback fires after the candidate is stopped or replaced.
+ * `clearTimeout` and `clearInterval` only reach timers this run created.
+ */
+export const createDynamicTimers = () => {
+  const live = new Set<NodeJS.Timeout>()
+  let stopped = false
+  const find = (handle: unknown): NodeJS.Timeout | undefined => {
+    for (const timer of live) {
+      if (timer === handle || (typeof handle === 'number' && Number(timer) === handle)) return timer
+    }
+    return undefined
+  }
+  const schedule = (repeat: boolean, name: string, callback: unknown, delay: unknown, args: unknown[]) => {
+    if (stopped) throw new Error(`候选已经停止运行，${name} 不再生效。`)
+    if (typeof callback !== 'function') throw new TypeError(`${name} 的第一个参数要是函数。`)
+    const run = (): void => {
+      if (!repeat) live.delete(timer)
+      Reflect.apply(callback, undefined, args)
+    }
+    const ms = Number(delay) || 0
+    const timer = repeat ? setInterval(run, ms) : setTimeout(run, ms)
+    live.add(timer)
+    return timer
+  }
+  const clear = (handle: unknown): void => {
+    const timer = find(handle)
+    if (timer === undefined) return
+    live.delete(timer)
+    clearTimeout(timer)
+  }
+  return {
+    setTimeout: (callback: unknown, delay?: unknown, ...args: unknown[]) =>
+      schedule(false, 'setTimeout', callback, delay, args),
+    setInterval: (callback: unknown, delay?: unknown, ...args: unknown[]) =>
+      schedule(true, 'setInterval', callback, delay, args),
+    clearTimeout: clear,
+    clearInterval: clear,
+    /** `AbortSignal.timeout` on this run's timers, aborting with the same `TimeoutError` Node uses. */
+    signalTimeout: (delay: unknown): AbortSignal => {
+      const controller = new AbortController()
+      const abort = () => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'))
+      schedule(false, 'AbortSignal.timeout', abort, delay, []).unref()
+      return controller.signal
+    },
+    /** How many timers are still pending. */
+    get pending() {
+      return live.size
+    },
+    dispose: (): void => {
+      stopped = true
+      for (const timer of live) clearTimeout(timer)
+      live.clear()
+    },
+  }
+}
+export type DynamicTimers = ReturnType<typeof createDynamicTimers>
+
 /** The host's own implementations, so a candidate sees the same behavior it gets once saved. */
 const DYNAMIC_SANDBOX_GLOBALS = Object.freeze({
   crypto: globalThis.crypto,
   URL,
   URLSearchParams,
   AbortController,
+  AbortSignal,
   structuredClone,
+  createTimers: createDynamicTimers,
 })
 export type DynamicSandboxGlobals = typeof DYNAMIC_SANDBOX_GLOBALS
 

@@ -856,13 +856,15 @@ describe('dynamic sandbox', () => {
   description: '全局探针',
   parameters: {},
   output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
-  execute() {
+  async execute() {
+    const deadline = AbortSignal.any([AbortSignal.timeout(1), new AbortController().signal])
+    await new Promise((resolve) => setTimeout(resolve, 20))
     const bytes = new Uint8Array(4)
     crypto.getRandomValues(bytes)
     const url = new URL('https://example.test/path?q=1')
     const controller = new AbortController()
     controller.abort()
-    return 'globals=' + [crypto.randomUUID().length, bytes.length, url.searchParams.get('q'), new URLSearchParams({ a: '1' }).toString(), controller.signal.aborted, structuredClone({ n: [7] }).n[0]].join(',')
+    return 'globals=' + [crypto.randomUUID().length, bytes.length, url.searchParams.get('q'), new URLSearchParams({ a: '1' }).toString(), controller.signal.aborted, structuredClone({ n: [7] }).n[0], deadline.reason.name].join(',')
   },
 })) } }`
     const model = new TriggeredModel({
@@ -889,7 +891,7 @@ describe('dynamic sandbox', () => {
       await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, NOTICE_POLL).toBe(1)
       const { task } = await runCandidate(runtime, entity.agentId)
       await say(runtime, entity.channelId, '#ask-globals 试一下。')
-      await expect.poll(() => model.results.at(-1), NOTICE_POLL).toContain('globals=36,4,1,a=1,true,7')
+      await expect.poll(() => model.results.at(-1), NOTICE_POLL).toContain('globals=36,4,1,a=1,true,7,TimeoutError')
 
       const stray = new Error('虚构的失败')
       stray.stack = `Error: 虚构的失败\n    at cordis-dyn-${task.pluginKey}.js:3:5`

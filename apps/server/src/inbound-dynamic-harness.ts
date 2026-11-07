@@ -18,8 +18,10 @@ export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
  *   private RPC lets the verifier call the handler with a synthetic message; another one calls the outbound handler
  *   with a synthetic draft or delivered message. Jobs never fire in dynamic runs, so their handler is recorded.
  * - the factory's host-layer `nxt`, which resolves once the candidate is mounted (call it from RPC handlers or tools).
- * - `crypto`, `URL`, `URLSearchParams`, `AbortController` and `structuredClone`, which the sandbox lacks; they resolve
- *   to the host's own implementations once the candidate is mounted, like `nxt`.
+ * - `crypto`, `URL`, `URLSearchParams`, `AbortController`, `AbortSignal` and `structuredClone`, which the sandbox
+ *   lacks; they resolve to the host's own implementations once the candidate is mounted, like `nxt`.
+ * - `setTimeout`, `setInterval` and their `clear*`, over the host's Node timers. Each run gets its own set, cleared by
+ *   a fiber effect when the candidate stops, so no callback outlives the run; `AbortSignal.timeout` uses the same set.
  * - `ctx.config()` inside the agent attachment, returning the agent configuration the candidate runs with.
  * - `harness.defineTool` that turns `timeoutSeconds` into DSH's time limit and hands the body `{ signal, progress }`,
  *   as saved Revisions get.
@@ -162,6 +164,24 @@ const crypto = {
 const URL = __nxtConstructor('URL')
 const URLSearchParams = __nxtConstructor('URLSearchParams')
 const AbortController = __nxtConstructor('AbortController')
+// Timers follow the run: the host clears whatever is still pending when the candidate stops (see createTimers).
+let __nxtTimers
+const __nxtTimer = (name) => {
+  if (__nxtTimers === undefined) __nxtGlobal(name)
+  return __nxtTimers
+}
+const setTimeout = (callback, delay, ...args) => __nxtTimer('setTimeout').setTimeout(callback, delay, ...args)
+const setInterval = (callback, delay, ...args) => __nxtTimer('setInterval').setInterval(callback, delay, ...args)
+const clearTimeout = (handle) => __nxtTimers?.clearTimeout(handle)
+const clearInterval = (handle) => __nxtTimers?.clearInterval(handle)
+const AbortSignal = new Proxy(function () {}, {
+  construct: () => new (__nxtGlobal('AbortSignal'))(),
+  get: (_target, key) => {
+    if (key === 'timeout') return (delay) => __nxtTimer('AbortSignal').signalTimeout(delay)
+    const value = __nxtGlobal('AbortSignal')[key]
+    return typeof value === 'function' ? value.bind(__nxtGlobal('AbortSignal')) : value
+  },
+})
 const structuredClone = (value, options) => __nxtGlobal('structuredClone')(value, options)
 const nxt = new Proxy({}, {
   get(_target, key) {
@@ -217,6 +237,9 @@ return {
     __nxtFactory.nxt = ctx.nxt
     __nxtFactory.host = ctx.nxt.hostLayer
     __nxtGlobals = ctx.nxt.sandboxGlobals
+    const timers = __nxtGlobals.createTimers()
+    __nxtTimers = timers
+    ctx.effect(() => () => timers.dispose())
     const readConfig = () => ctx.nxt.config()
     const attachment = new Proxy(ctx, {
       get(target, key) {
