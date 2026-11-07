@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { checkDynamicHostSource } from '../src/dynamic-source-check.js'
+import { checkDynamicHostSource, sandboxGapOf } from '../src/dynamic-source-check.js'
 import { strayErrorMessage, strayErrorSource } from '../src/extension-stray-errors.js'
 
 describe('dynamic Host source check', () => {
@@ -46,6 +46,21 @@ return { text, template }`
         'Host 源码用了 Buffer（第 1 行），试运行环境里没有它：二进制数据用 Uint8Array，base64 用 btoa / atob。',
       ],
     })
+  })
+
+  it('recognizes failures that come only from a global the trial-run sandbox lacks', () => {
+    const gap = sandboxGapOf('Dynamic Tool synthetic verification failed: probe: process is not defined.')
+    expect(gap?.name).toBe('process')
+    expect(gap?.message).toMatch(/^试运行环境里没有 process，.*harness\.config\(\)/u)
+    expect(sandboxGapOf('ReferenceError: Buffer is not defined')?.message).toContain('Uint8Array')
+    expect(
+      sandboxGapOf('fetch is not available in the dynamic package sandbox — Network access goes through …')?.message,
+    ).toContain('ctx.nxt.http.fetch')
+    expect(sandboxGapOf('require is not available in the dynamic package sandbox — …')?.name).toBe('require')
+    // Typos and the candidate's own names are ordinary mistakes.
+    expect(sandboxGapOf('ReferenceError: procss is not defined')).toBeUndefined()
+    expect(sandboxGapOf('ReferenceError: renderCard is not defined')).toBeUndefined()
+    expect(sandboxGapOf('synthetic tool failure')).toBeUndefined()
   })
 
   it('leaves code that does not parse to the runner, which reports the line', () => {
