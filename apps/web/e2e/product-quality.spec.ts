@@ -932,10 +932,21 @@ test('group conversations keep sender and mention semantics without exposing int
 })
 
 test('an initial Host failure is explicit and recovers without reloading the page', async ({ page }) => {
-  let available = false
   await installProductRoutes(page)
-  await page.route('**/api/snapshot', (route) =>
-    available
+  // Only reads sent after the reconnect click succeed, so the page's own backoff retry cannot recover first and
+  // remove the button before it is clicked.
+  await page.addInitScript(() => {
+    document.addEventListener(
+      'click',
+      (event) => {
+        if (event.target instanceof Element && event.target.closest('[data-host-connection] button'))
+          document.documentElement.dataset['reconnectClicked'] = 'true'
+      },
+      true,
+    )
+  })
+  await page.route('**/api/snapshot', async (route) =>
+    (await page.evaluate(() => document.documentElement.dataset['reconnectClicked'] === 'true'))
       ? route.fulfill({ json: productSnapshot })
       : route.fulfill({ status: 503, json: { error: { code: 'unavailable', message: '宿主正在启动。' } } }),
   )
@@ -945,7 +956,6 @@ test('an initial Host failure is explicit and recovers without reloading the pag
   await page.evaluate(() => {
     document.documentElement.dataset['hostRecovery'] = 'same-document'
   })
-  available = true
   await banner.getByRole('button', { name: '重新连接' }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.getByRole('heading', { name: '概览', level: 1 })).toBeVisible()

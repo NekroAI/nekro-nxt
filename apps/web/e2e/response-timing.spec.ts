@@ -28,8 +28,11 @@ test('smart response settings save per channel and agent aliases save with the p
       )
       .toBe('connected')
     protocol.emit(`synthetic-group-${Date.now()}`, '虚构闲聊群')
+    // The journey server is shared with parallel workers; under CI load the first message can take over 5 s to land.
     await expect
-      .poll(async () => (await snapshot()).channels.some((channel) => channel.connectionId === connectionId))
+      .poll(async () => (await snapshot()).channels.some((channel) => channel.connectionId === connectionId), {
+        timeout: 15_000,
+      })
       .toBe(true)
     const channel = (await snapshot()).channels.find((candidate) => candidate.connectionId === connectionId)!
     const saved = await saveProvider(request, 'synthetic-fixture', {
