@@ -60,15 +60,23 @@ import {
   type Revision,
 } from '@nekro-nxt/extension-runtime'
 import {
+  ChannelHistoryPurgeBlockedError,
   completeDshSessionStoragePreparation,
   openMigratedCoreDatabase,
   prepareDshSessionStorage,
   SqliteCoreRepository,
   SqliteHostSecurityRepository,
+  type ChannelHistoryPurgePreview,
   type CoreDatabase,
   type DshSessionStoragePreparation,
 } from '@nekro-nxt/storage-sqlite'
 import { randomUUID } from 'node:crypto'
+import {
+  ChannelHistoryPurgeRefusedError,
+  HISTORY_PURGE_PREPARED_GRACE_MS,
+  type ChannelHistoryPurgeOutcome,
+  type ChannelHistoryPurgeView,
+} from './channel-history-purge.js'
 import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
@@ -2048,6 +2056,68 @@ export class NekroRuntime {
         error instanceof Error ? error.message : String(error),
       )
     })
+  }
+
+  /** What 「彻底清除」 would remove from the channel, and why it cannot run right now if so. */
+  previewChannelHistoryPurge(channelId: ChannelId): ChannelHistoryPurgeView {
+    const preview = this.repository.channelHistory.previewChannelHistoryPurge(channelId)
+    const blockedReason = this.#historyPurgeBlockedReason(channelId, preview)
+    return {
+      messages: preview.messages,
+      conversations: preview.conversations,
+      attachments: preview.attachments,
+      ...(blockedReason === undefined ? {} : { blockedReason }),
+    }
+  }
+
+  /**
+   * 「彻底清除」: stops the channel's conversation, deletes its message history and conversations, the stored
+   * conversation logs and the attachments nothing else uses. The channel and its binding stay.
+   */
+  async purgeChannelHistory(channelId: ChannelId): Promise<ChannelHistoryPurgeOutcome> {
+    const refuse = (preview: ChannelHistoryPurgePreview): void => {
+      const reason = this.#historyPurgeBlockedReason(channelId, preview)
+      if (reason !== undefined) throw new ChannelHistoryPurgeRefusedError(reason)
+    }
+    return this.channels.purgeChannelHistory(
+      channelId,
+      async () => {
+        let purged
+        try {
+          purged = this.repository.channelHistory.purgeChannelHistory(channelId, {
+            isAssetHeld: (asset) =>
+              this.extensionFiles.referencesAsset(asset.contentDigest) ||
+              this.#previewFiles.referencesAsset(asset.contentDigest) ||
+              this.assetService.preparedRecently(asset.contentDigest, HISTORY_PURGE_PREPARED_GRACE_MS),
+          })
+        } catch (error) {
+          if (error instanceof ChannelHistoryPurgeBlockedError) refuse(error.preview)
+          throw error
+        }
+        // Right after the commit, before any upload of the same content can run.
+        this.assetService.discardBlobs(purged.removedAssets)
+        const logs = await this.host.removeSessionLogs(purged.dshSessionIds)
+        if (logs.loaded.length > 0) {
+          console.warn(
+            `[nekro-nxt] 频道 ${channelId} 清除时还有 ${logs.loaded.length} 段对话在运行，它们的记录没有删除：${logs.loaded.join(', ')}`,
+          )
+        }
+        return {
+          messages: purged.messages,
+          conversations: purged.conversations,
+          attachments: purged.removedAssets.length,
+        }
+      },
+      () => refuse(this.repository.channelHistory.previewChannelHistoryPurge(channelId)),
+    )
+  }
+
+  #historyPurgeBlockedReason(channelId: ChannelId, preview: ChannelHistoryPurgePreview): string | undefined {
+    if (this.host.manualCompactionRunning(channelId)) return '上下文正在压缩，完成后再清除。'
+    if (preview.blockers.liveAuthoringTasks > 0) return '频道里还有进行中的创作任务，完成或停止后再清除。'
+    if (preview.blockers.sendingMessages > 0) return '还有消息正在发送，发完后再清除。'
+    if (preview.blockers.runningCommands > 0) return '还有命令正在运行，结束后再清除。'
+    return undefined
   }
 
   /** Every deliberate Agent entity this Server owns, in creation order. */

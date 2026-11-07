@@ -36,6 +36,20 @@ const createRoot = async (): Promise<string> => {
 }
 
 describe('AssetService', () => {
+  it('remembers recently prepared content and removes blobs of deleted Assets', async () => {
+    const root = await createRoot()
+    let now = 1_000
+    const service = new AssetService(new MemoryAssetRepository(), root, { now: () => now })
+    const { asset } = await service.prepare({ bytes: new TextEncoder().encode('recent upload') })
+    expect(service.preparedRecently(asset.contentDigest, 60_000)).toBe(true)
+    now += 60_000
+    expect(service.preparedRecently(asset.contentDigest, 60_000)).toBe(false)
+    expect(service.preparedRecently(`sha256:${'0'.repeat(64)}`, 60_000)).toBe(false)
+    await expect(stat(service.blobPath(asset))).resolves.toBeDefined()
+    service.discardBlobs([asset, asset])
+    await expect(stat(service.blobPath(asset))).rejects.toThrow()
+  })
+
   it('atomically publishes identical concurrent content once and ensures one canonical Asset', async () => {
     const root = await createRoot()
     const repository = new MemoryAssetRepository()

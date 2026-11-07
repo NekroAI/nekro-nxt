@@ -4301,6 +4301,39 @@ export const HostApiContracts = {
       .strict(),
     error: HostApiErrorSchema,
   }),
+  previewChannelHistoryPurge: defineContract({
+    method: 'GET',
+    path: '/api/channels/:channelId/history-purge',
+    params: channelParam,
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        messages: z.number().int().nonnegative(),
+        conversations: z.number().int().nonnegative(),
+        /** Attachments that appear in the channel; ones still used elsewhere are kept. */
+        attachments: z.number().int().nonnegative(),
+        /** Why the history cannot be cleared right now. */
+        blockedReason: z.string().min(1).optional(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  /** 「彻底清除」: deletes the channel's messages, conversations and unused attachments; keeps the channel and binding. */
+  purgeChannelHistory: defineContract({
+    invalidatesSnapshot: true,
+    method: 'POST',
+    path: '/api/channels/:channelId/history-purge',
+    params: channelParam,
+    request: z.object({ expectedBoundAgentId: AgentIdSchema.nullable() }).strict(),
+    response: z
+      .object({
+        messages: z.number().int().nonnegative(),
+        conversations: z.number().int().nonnegative(),
+        attachments: z.number().int().nonnegative(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
   createConnection: defineContract({
     invalidatesSnapshot: true,
     method: 'POST',

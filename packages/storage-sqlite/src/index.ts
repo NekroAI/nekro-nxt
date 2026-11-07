@@ -49,6 +49,10 @@ export type {
 export type { ChannelMemberNoteRecord } from './repositories/channel-member-notes.js'
 export type { SubConversationRecord } from './repositories/sub-conversations.js'
 import { createProjectionRepository, type ProjectionRepository } from './repositories/projections.js'
+import {
+  createChannelHistoryPurgeRepository,
+  type ChannelHistoryPurgeRepository,
+} from './repositories/channel-history-purge.js'
 import { createCredentialsRepository, type CredentialsRepository } from './repositories/credentials.js'
 import { createLinkedAccountsRepository, type LinkedAccountsRepository } from './repositories/linked-accounts.js'
 export type {
@@ -117,6 +121,13 @@ export {
   type ChannelPromptsRepository,
 } from './repositories/channel-prompts.js'
 export { OutboundResolutionError } from './repositories/projections.js'
+export {
+  ChannelHistoryPurgeBlockedError,
+  type ChannelHistoryPurgeOptions,
+  type ChannelHistoryPurgePreview,
+  type ChannelHistoryPurgeRepository,
+  type ChannelHistoryPurgeResult,
+} from './repositories/channel-history-purge.js'
 export type {
   ChannelReadPosition,
   OutboundResolutionRecord,
@@ -177,6 +188,8 @@ export class SqliteCoreRepository implements CurrentRepository {
   readonly #governance
   /** Client workspace read models: read positions, activity, attention dismissals and delivery resolutions. */
   readonly projections: ProjectionRepository
+  /** Physical removal of one channel's message history (「彻底清除」). */
+  readonly channelHistory: ChannelHistoryPurgeRepository
   /** Assets each extension keeps for use in any channel. */
   readonly extensionLibrary: ExtensionLibraryRepository
   /** Extension search collections: documents, keywords, filter values and vectors. */
@@ -218,6 +231,7 @@ export class SqliteCoreRepository implements CurrentRepository {
     this.#extensionSources = createExtensionSourcesRepository(database.db)
     this.#governance = createExtensionGovernanceRepository(database.db)
     this.projections = createProjectionRepository(database.db)
+    this.channelHistory = createChannelHistoryPurgeRepository(database.db)
     this.outboundProcessing = createOutboundProcessingRepository(database.db)
     this.credentials = createCredentialsRepository(database.db)
     this.linkedAccounts = createLinkedAccountsRepository(database.db)

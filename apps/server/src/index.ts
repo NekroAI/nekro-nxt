@@ -249,6 +249,7 @@ import { mkdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { removeDshSessionLogs, type RemovedSessionLogs } from './dsh-session-logs.js'
 import { z } from 'zod'
 import { mountChannelReplyGuard, type ChannelReplyGuardController } from './channel-reply-guard.js'
 import { backlogImageCount, foldedBacklogNotice, selectBacklog } from './backlog-budget.js'
@@ -3407,6 +3408,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     readonly runner: NekroNxtDynamicCordisRunner
   }>()
   readonly #runtimeProjection: SessionRuntimeProjection
+  readonly #sessionsRoot: string
   readonly #extensionMounts: PersistentExtensionMounts
   readonly #extensionHost: DshHostRuntimeOptions['extensionHost']
   readonly #dshPluginLifecycle: DshPluginLifecycleCoordinator | undefined
@@ -3444,11 +3446,12 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#context = context
     this.#secrets = options.secrets ?? new SecretRegistry()
     this.#subConversationStore = options.subConversations?.store ?? memorySubConversationStore()
+    this.#sessionsRoot = path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'sessions')
     this.#subConversations = new SubConversationManager({
       context,
       scripts: conversationScripts,
       store: this.#subConversationStore,
-      sessionsRoot: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'sessions'),
+      sessionsRoot: this.#sessionsRoot,
       ownerOf: (parentSessionId) => {
         const owned = this.#sessions.get(parentSessionId)
         return owned === undefined
@@ -5512,6 +5515,11 @@ export class DshHostRuntime implements AgentSessionDriver {
         this.#manualCompactions.delete(channelId)
         this.#runtimeProjection.touchChannel(channelId)
       })
+  }
+
+  /** Removes the stored logs of ended conversations and the sessions forked from them (「彻底清除」). */
+  removeSessionLogs(sessionIds: readonly string[]): Promise<RemovedSessionLogs> {
+    return removeDshSessionLogs({ context: this.#context, sessionsRoot: this.#sessionsRoot, sessionIds })
   }
 
   manualCompactionRunning(channelId: string): boolean {

@@ -1,6 +1,6 @@
 import { AssetIdSchema, type AssetId, type ChannelId } from '@nekro-nxt/contracts'
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, rmSync } from 'node:fs'
 import { link, mkdir, open, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { fileTypeFromFile } from 'file-type'
@@ -69,12 +69,17 @@ const hashFile = async (filename: string): Promise<{ readonly digest: string; re
  * Owns content-addressed blobs. A blob is durable and atomically published before
  * its Asset row is ensured; Channel Event occurrences remain the caller's transaction.
  */
+/** How long a prepared digest counts as possibly referenced by a commit still to come. */
+const PREPARED_MARK_MS = 24 * 60 * 60 * 1000
+
 export class AssetService {
   readonly #repository: AssetRepository
   readonly #root: string
   readonly #maxAssetBytes: number
   readonly #now: () => number
   readonly #nextUlid: () => string
+  /** When each digest was last written or re-verified here; a reference to it may not be committed yet. */
+  readonly #prepared = new Map<string, number>()
 
   constructor(repository: AssetRepository, root: string, options: AssetServiceOptions = {}) {
     if (!path.isAbsolute(root)) throw new TypeError('Asset root must be absolute.')
@@ -119,6 +124,7 @@ export class AssetService {
 
       const digestHex = hash.digest('hex')
       const contentDigest = `sha256:${digestHex}`
+      this.#markPrepared(contentDigest)
       const blobDirectory = this.#resolve(`blobs/sha256/${digestHex.slice(0, 2)}`)
       const blobPath = this.#resolve(`blobs/sha256/${digestHex.slice(0, 2)}/${digestHex}`)
       await mkdir(blobDirectory, { recursive: true, mode: 0o700 })
@@ -169,11 +175,39 @@ export class AssetService {
     return this.prepare(input)
   }
 
+  /**
+   * Whether `prepare` handled this digest within `withinMs`. The caller's reference to a prepared Asset is
+   * committed after `prepare` returns, so an Asset that looks unused may still be about to be used.
+   */
+  preparedRecently(contentDigest: string, withinMs: number): boolean {
+    const at = this.#prepared.get(contentDigest)
+    return at !== undefined && this.#timestamp() - at < Math.min(withinMs, PREPARED_MARK_MS)
+  }
+
+  /**
+   * Removes the blobs of Asset rows that were already deleted. Synchronous, so no `prepare` of the same content can
+   * interleave between the caller's commit and the removal.
+   */
+  discardBlobs(assets: readonly Pick<AssetRecord, 'contentDigest'>[]): void {
+    for (const asset of assets) rmSync(this.blobPath(asset), { force: true })
+  }
+
   blobPath(asset: Pick<AssetRecord, 'contentDigest'>): string {
     const match = /^sha256:([a-f0-9]{64})$/.exec(asset.contentDigest)
     if (!match) throw new Error(`Invalid Asset digest: ${asset.contentDigest}`)
     const digestHex = match[1]!
     return this.#resolve(`blobs/sha256/${digestHex.slice(0, 2)}/${digestHex}`)
+  }
+
+  #markPrepared(contentDigest: string): void {
+    const now = this.#timestamp()
+    this.#prepared.delete(contentDigest)
+    this.#prepared.set(contentDigest, now)
+    // Oldest first: drop marks no caller can still be waiting on.
+    for (const [digest, at] of this.#prepared) {
+      if (now - at < PREPARED_MARK_MS) break
+      this.#prepared.delete(digest)
+    }
   }
 
   #assertCanonicalAsset(asset: AssetRecord, candidate: AssetRecord): void {

@@ -874,6 +874,7 @@ export class ChannelRuntime {
   ): Promise<void> {
     const current = this.#coreRepository.getBinding(binding.channelId)
     if (!current || current.agentId !== binding.agentId || current.paused) return
+    if (this.#coreRepository.getChannelEvent(event.id) === undefined) return
     const lane = laneKey(binding.channelId, binding.agentId)
     if (mid !== undefined) this.#timing.recordMidWake(lane)
     if (
@@ -1453,6 +1454,42 @@ export class ChannelRuntime {
       })
     })
   }
+  /**
+   * Stops the channel's live conversation, then runs `purge` while no message can be admitted, so 「彻底清除」 never
+   * races a turn that is still writing to the conversation it removes. The Binding stays; the next message opens a
+   * fresh Episode. `guard` runs inside the lane before anything is stopped and may refuse by throwing.
+   */
+  async purgeChannelHistory<T>(channelId: ChannelId, purge: () => Promise<T>, guard?: () => void): Promise<T> {
+    return this.#withBindingTransition(channelId, async () => {
+      if (!this.#coreRepository.getChannel(channelId)) throw new Error(`Unknown channel: ${channelId}`)
+      const current = this.#coreRepository.getBinding(channelId)
+      const run = async (): Promise<T> => {
+        guard?.()
+        this.#activityWakes.delete(channelId)
+        if (current !== undefined) {
+          this.#timing.clearLane(laneKey(channelId, current.agentId))
+          const episode = this.#runtimeRepository.getActiveEpisode(channelId, current.agentId)
+          if (episode?.dshSessionId !== undefined) {
+            this.#feedback.markEndReason(episode.id, 'cancelled')
+            await this.#sessionDriver.cancelSession(episode.dshSessionId, 'context-cleared')
+            await this.#feedback.cleanupEpisodeFeedback(episode.id)
+          }
+          if (episode !== undefined) {
+            this.#runtimeRepository.closeEpisode(
+              episode.id,
+              'context-cleared',
+              episode.lastAdmittedEventId ?? episode.openedAtEventId,
+              this.#timestamp(),
+            )
+            this.#deferredRecoveryEpisodes.delete(episode.id)
+          }
+        }
+        return purge()
+      }
+      return current === undefined ? run() : this.#withLane(channelId, current.agentId, run)
+    })
+  }
+
   async sendMessage(input: SendMessageInput): Promise<SendMessageResult> {
     const result = await this.#delivery.sendMessage(input)
     if (result.status === 'sent' || result.status === 'partially-sent') {
@@ -1993,6 +2030,10 @@ export class ChannelRuntime {
     const currentBinding = this.#coreRepository.getBinding(binding.channelId)
     if (!currentBinding || currentBinding.agentId !== binding.agentId || currentBinding.boundAt !== binding.boundAt)
       return
+    // The channel's history may have been cleared while this message waited for the lane.
+    if (this.#coreRepository.getChannelEvent(event.id) === undefined) return
+    if (backlog !== undefined)
+      backlog = backlog.filter(({ id }) => this.#coreRepository.getChannelEvent(id) !== undefined)
     binding = currentBinding
     let episode = await this.#ensureActiveEpisode(binding, event)
     if (!this.#admissionAllowed(binding.agentId)) return

@@ -2853,6 +2853,50 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.runtimeRepository.handoffs).toHaveLength(0)
   })
 
+  it('stops the live conversation before clearing history and opens a fresh one on the next message', async () => {
+    const context = await setup()
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'before-purge'))
+    const episode = [...context.runtimeRepository.episodes.values()][0]!
+    const cancellations: string[] = []
+    context.sessionDriver.cancelSession = (sessionId, reason) => {
+      cancellations.push(`${sessionId}:${reason}`)
+      return Promise.resolve()
+    }
+
+    await expect(
+      context.runtime.purgeChannelHistory(
+        context.channel.id,
+        () => Promise.resolve('unused'),
+        () => {
+          throw new Error('refused')
+        },
+      ),
+    ).rejects.toThrow('refused')
+    expect(cancellations).toEqual([])
+    expect(context.runtimeRepository.getEpisode(episode.id)?.status).toBe('active')
+
+    let statusDuringPurge: string | undefined
+    await expect(
+      context.runtime.purgeChannelHistory(context.channel.id, () => {
+        statusDuringPurge = context.runtimeRepository.getEpisode(episode.id)?.status
+        for (const [id, event] of context.coreRepository.events) {
+          if (event.channelId === context.channel.id) context.coreRepository.events.delete(id)
+        }
+        context.runtimeRepository.episodes.clear()
+        return Promise.resolve('purged')
+      }),
+    ).resolves.toBe('purged')
+    expect(cancellations).toEqual([`dsh-${episode.id}:context-cleared`])
+    expect(statusDuringPurge).toBe('closed')
+    expect(context.coreRepository.getBinding(context.channel.id)).toBeDefined()
+
+    await context.runtime.acceptChannelInbound(inbound(context.connection.id, context.channel.id, 'after-purge'))
+    const fresh = [...context.runtimeRepository.episodes.values()]
+    expect(fresh).toHaveLength(1)
+    expect(fresh[0]).toMatchObject({ status: 'active' })
+    expect(context.coreRepository.getChannelEvent(fresh[0]!.openedAtEventId)?.dedupeKey).toBe('event:after-purge')
+  })
+
   it('clears an active context immediately without a handoff and starts clean on the next message', async () => {
     const context = await setup()
     await context.runtime.acceptChannelInbound(

@@ -328,6 +328,12 @@ export class ExtensionFileStore {
   }
 
   /** Bytes of temporary and cached files `owner` holds; Asset files own none. */
+  /** Whether any extension file reads its bytes from this Asset's blob. */
+  referencesAsset(contentDigest: string): boolean {
+    for (const file of this.#files.values()) if (file.asset?.contentDigest === contentDigest) return true
+    return false
+  }
+
   usage(owner: string): { readonly tempBytes: number; readonly cacheBytes: number } {
     let tempBytes = 0
     let cacheBytes = 0

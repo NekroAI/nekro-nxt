@@ -1209,6 +1209,130 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
+  it('clears the history of a channel physically and keeps its binding for a fresh conversation', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-history-purge-api-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context: Context) => {
+        context.llm.registerAdapter(['test-provider'], new ScriptedCommunicationModel())
+      },
+    })
+    const seeded = runtime.core.createAgentWithChannel(
+      { displayName: '清除测试智能体', persona: '', model: { provider: 'test-provider', model: 'chat-model' } },
+      { connectionId: runtime.internalConnectionId, kind: 'internal', triggerPolicy: 'always' },
+    )
+    await runtime.start()
+    await runtime.recover()
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    const channelId = seeded.channel.id
+    const adapterKey = runtime.core.getConnection(runtime.internalConnectionId)!.adapterKey
+    const purgeUrl = `${origin}/api/channels/${channelId}/history-purge`
+    const purge = (expectedBoundAgentId: string | null) =>
+      fetch(purgeUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedBoundAgentId }),
+      })
+    const sessionDirectories = async (): Promise<string[]> => {
+      const root = path.join(directory, 'dsh', 'sessions')
+      if (!existsSync(root)) return []
+      const { readdir } = await import('node:fs/promises')
+      const found: string[] = []
+      for (const project of await readdir(root)) found.push(...(await readdir(path.join(root, project))))
+      return found
+    }
+
+    try {
+      const { asset } = await runtime.assetService.prepare({ bytes: new TextEncoder().encode('清除前的附件') })
+      await runtime.channels.acceptChannelInbound({
+        connectionId: runtime.internalConnectionId,
+        channelId,
+        adapterKey,
+        kind: 'message-created',
+        parts: [
+          { type: 'text', text: '清除前的消息' },
+          { type: 'file', assetId: asset.id, name: 'notes.txt' },
+        ],
+        platformTimestamp: Date.now(),
+        receivedAt: Date.now(),
+        dedupeKey: 'before-history-purge',
+        assetOccurrences: [{ partIndex: 1, assetId: asset.id }],
+      })
+      const first = runtime.repository.getActiveEpisode(channelId, seeded.definition.id)!
+      await vi.waitFor(() =>
+        expect(
+          runtime.repository
+            .listChannelHistory(channelId, { limit: 10 })
+            .some((entry) => entry.source === 'outbound-intent' && entry.state === 'sent'),
+        ).toBe(true),
+      )
+      await vi.waitFor(async () => expect(await sessionDirectories()).toContain(first.dshSessionId))
+
+      const preview = HostApiContracts.previewChannelHistoryPurge.parseResponse(await (await fetch(purgeUrl)).json())
+      expect(preview).toEqual({ messages: 2, conversations: 1, attachments: 1 })
+
+      const compacting = vi.spyOn(runtime.host, 'manualCompactionRunning').mockReturnValue(true)
+      expect(
+        HostApiContracts.previewChannelHistoryPurge.parseResponse(await (await fetch(purgeUrl)).json()).blockedReason,
+      ).toBe('上下文正在压缩，完成后再清除。')
+      const blocked = await purge(seeded.definition.id)
+      expect(blocked.status).toBe(409)
+      expect(await blocked.text()).toContain('上下文正在压缩')
+      compacting.mockRestore()
+      expect(runtime.repository.getActiveEpisode(channelId, seeded.definition.id)?.id).toBe(first.id)
+
+      expect((await purge(null)).status).toBe(409)
+      const prepared = vi.spyOn(runtime.assetService, 'preparedRecently').mockReturnValue(false)
+      const response = await purge(seeded.definition.id)
+      prepared.mockRestore()
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(HostApiContracts.purgeChannelHistory.parseResponse(await response.json())).toEqual({
+        messages: 2,
+        conversations: 1,
+        attachments: 1,
+      })
+      expect(runtime.repository.listChannelHistory(channelId, { limit: 10 })).toEqual([])
+      expect(runtime.repository.getEpisode(first.id)).toBeUndefined()
+      expect(runtime.repository.getAssetById(asset.id)).toBeUndefined()
+      expect(existsSync(runtime.assetService.blobPath(asset))).toBe(false)
+      expect(await sessionDirectories()).not.toContain(first.dshSessionId)
+      expect(runtime.repository.getBinding(channelId)?.agentId).toBe(seeded.definition.id)
+
+      await runtime.channels.acceptChannelInbound({
+        connectionId: runtime.internalConnectionId,
+        channelId,
+        adapterKey,
+        kind: 'message-created',
+        parts: [{ type: 'text', text: '清除后的第一条' }],
+        platformTimestamp: Date.now(),
+        receivedAt: Date.now(),
+        dedupeKey: 'after-history-purge',
+      })
+      const fresh = runtime.repository.getActiveEpisode(channelId, seeded.definition.id)
+      expect(fresh?.id).toBeDefined()
+      expect(fresh?.id).not.toBe(first.id)
+      await vi.waitFor(() =>
+        expect(
+          runtime.repository
+            .listChannelHistory(channelId, { limit: 10 })
+            .some((entry) => entry.source === 'outbound-intent' && entry.state === 'sent'),
+        ).toBe(true),
+      )
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+    }
+  })
+
   it('defaults Web Search on only when the DSH Provider credential is ready', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-cap-default-api-'))
     temporaryDirectories.push(directory)

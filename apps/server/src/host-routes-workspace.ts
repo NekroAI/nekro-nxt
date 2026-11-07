@@ -43,6 +43,7 @@ import {
 } from './host-route-support.js'
 import { clientCapabilities, knownAccountGrants } from './host-routes-linked-accounts.js'
 import { ChannelPromptConflictError } from '@nekro-nxt/storage-sqlite'
+import { ChannelHistoryPurgeRefusedError } from './channel-history-purge.js'
 import { ChannelPromptError, MEMBER_NOTE_MAX_CHARS } from './channel-prompts.js'
 /**
  * How long an enable, disable or version-switch request waits for its result. Switching waits for the agent's safe
@@ -753,6 +754,7 @@ export function registerWorkspaceRoutes({
       const memberNotesMatch = /^\/api\/channels\/([^/]+)\/member-notes(?:\/([^/]+))?$/.exec(url.pathname)
       const runtimeInputMatch = /^\/api\/channels\/([^/]+)\/runtime\/inputs\/([^/]+)$/.exec(url.pathname)
       const contextResetMatch = /^\/api\/channels\/([^/]+)\/context-reset$/.exec(url.pathname)
+      const historyPurgeMatch = /^\/api\/channels\/([^/]+)\/history-purge$/.exec(url.pathname)
       const assetMatch = /^\/api\/channels\/([^/]+)\/assets\/([^/]+)$/.exec(url.pathname)
       const assetUploadMatch = /^\/api\/channels\/([^/]+)\/assets$/.exec(url.pathname)
       const channelMatch = /^\/api\/channels\/([^/]+)$/.exec(url.pathname)
@@ -767,6 +769,7 @@ export function registerWorkspaceRoutes({
         memberNotesMatch?.[1] ??
         runtimeInputMatch?.[1] ??
         contextResetMatch?.[1] ??
+        historyPurgeMatch?.[1] ??
         assetMatch?.[1] ??
         assetUploadMatch?.[1] ??
         channelMatch?.[1]
@@ -992,6 +995,43 @@ export function registerWorkspaceRoutes({
             resultTruncated: false,
           },
         )
+        return
+      }
+
+      if (historyPurgeMatch) {
+        if (req.method !== 'GET' && req.method !== 'POST') {
+          writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+          return
+        }
+        if (!runtime.repository.getChannel(typedChannelId)) {
+          writeError(res, 404, 'not-found', '频道不存在或已被删除。')
+          return
+        }
+        if (req.method === 'GET') {
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.previewChannelHistoryPurge,
+            runtime.previewChannelHistoryPurge(typedChannelId),
+          )
+          return
+        }
+        try {
+          const parsed = HostApiContracts.purgeChannelHistory.parseRequest(await readJsonBody(req))
+          const actualBoundAgentId = runtime.repository.getBinding(typedChannelId)?.agentId ?? null
+          if (parsed.expectedBoundAgentId !== actualBoundAgentId) {
+            writeError(res, 409, 'binding-conflict', '频道绑定已发生变化，请刷新后重试。')
+            return
+          }
+          const result = await runtime.purgeChannelHistory(typedChannelId)
+          writeContractJson(res, 200, HostApiContracts.purgeChannelHistory, result)
+        } catch (error) {
+          if (error instanceof ChannelHistoryPurgeRefusedError) {
+            writeError(res, 409, 'history-purge-blocked', error.message)
+            return
+          }
+          writeError(res, 400, 'history-purge-failed', error instanceof Error ? error.message : String(error))
+        }
         return
       }
 
