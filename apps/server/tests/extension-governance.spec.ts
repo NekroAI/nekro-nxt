@@ -2483,3 +2483,32 @@ describe('community sync', () => {
     }
   })
 })
+
+describe('turn requester', () => {
+  /** A runtime with one group channel whose turn opened on `event`; `mbr_admin` is an administrator. */
+  const portFor = (event: { senderMemberId?: string; facts?: Record<string, unknown> }) =>
+    new ExtensionGovernanceTools({
+      repository: {
+        getEpisode: () => ({ channelId: 'chn_group', lastAdmittedEventId: 'evt_last' }),
+        getChannelEvent: () => event,
+        getChannel: () => ({ id: 'chn_group', kind: 'group', connectionId: 'con_fixture' }),
+      },
+      core: {
+        resolveChannelMemberIdentity: (_connection: string, _channel: string, memberId: string) => ({
+          platformUserId: memberId === 'mbr_admin' ? 'user-admin' : 'user-member',
+        }),
+      },
+      administrators: { isAdministrator: (_connection: string, user?: string) => user === 'user-admin' },
+    } as unknown as NekroRuntime)
+  const requester = (event: Parameters<typeof portFor>[0]) =>
+    portFor(event).requester('agt_fixture' as AgentId, 'eps_fixture' as never)
+
+  it('answers for the member the agent waited for when a finished wait opened the turn (#147)', () => {
+    const wait = (memberId: string) => ({ facts: { responseWait: { memberId, cause: 'quiet', waitedSeconds: 20 } } })
+    expect(requester(wait('mbr_admin'))).toEqual({ kind: 'admin' })
+    expect(requester(wait('mbr_other'))).toEqual({ kind: 'member', memberId: 'mbr_other' })
+    expect(requester({ senderMemberId: 'mbr_admin' })).toEqual({ kind: 'admin' })
+    // A scheduled job has nobody behind it.
+    expect(requester({ facts: { extensionJob: { jobId: 'job_fixture' } } })).toEqual({ kind: 'self' })
+  })
+})

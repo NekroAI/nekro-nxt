@@ -1,10 +1,12 @@
 import {
+  ChannelMemberIdSchema,
   configFieldLevel,
   configSecretKeys,
   parseJsonValue,
   validateConfigValue,
   type AgentId,
   type ChannelId,
+  type ChannelMemberId,
   type ConfigFieldLevel,
   type CredentialId,
   type CredentialUsage,
@@ -54,6 +56,13 @@ export interface RevisePreparation {
 
 export type TurnRequester =
   { readonly kind: 'admin' } | { readonly kind: 'member'; readonly memberId: string } | { readonly kind: 'self' }
+
+const responseWaitMember = (facts: Readonly<Record<string, JsonValue>> | undefined): ChannelMemberId | undefined => {
+  const wait = facts?.['responseWait']
+  if (wait === null || wait === undefined || typeof wait !== 'object' || Array.isArray(wait)) return undefined
+  const memberId = ChannelMemberIdSchema.safeParse(wait['memberId'])
+  return memberId.success ? memberId.data : undefined
+}
 
 export interface ToolActionOutcome {
   readonly outcome: 'done' | 'scheduled' | 'requested' | 'console'
@@ -303,14 +312,16 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const channel = episode === undefined ? undefined : runtime.repository.getChannel(episode.channelId)
     // The built-in channel and the console speak for an administrator.
     if (channel?.kind === 'internal' || event?.facts?.['consoleAnchor'] === true) return { kind: 'admin' }
-    if (event?.senderMemberId === undefined) return { kind: 'self' }
+    // A finished wait has no sender of its own; the turn answers the member the agent was waiting for.
+    const sender = event?.senderMemberId ?? responseWaitMember(event?.facts)
+    if (sender === undefined) return { kind: 'self' }
     const identity =
       channel === undefined
         ? undefined
-        : runtime.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, event.senderMemberId)
+        : runtime.core.resolveChannelMemberIdentity(channel.connectionId, channel.id, sender)
     return runtime.administrators.isAdministrator(channel?.connectionId, identity?.platformUserId)
       ? { kind: 'admin' }
-      : { kind: 'member', memberId: event.senderMemberId }
+      : { kind: 'member', memberId: sender }
   }
 
   list(agentId: AgentId): JsonValue {
