@@ -600,6 +600,7 @@ const fetchInit = (options: NxtFileFromUrlOptions | undefined): NxtFetchInit => 
   ...(options?.headers === undefined ? {} : { headers: options.headers }),
   ...(options?.body === undefined ? {} : { body: options.body }),
   ...(options?.bodyBase64 === undefined ? {} : { bodyBase64: options.bodyBase64 }),
+  ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
 })
 
 const filesQuota = (binding: NxtServiceBinding): ExtensionFileQuota => {

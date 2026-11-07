@@ -31,6 +31,8 @@ export interface ExtensionFetchInit {
   readonly headers?: Readonly<Record<string, string>>
   readonly body?: string
   readonly bodyBase64?: string
+  /** Idle limit for this call, from EXTENSION_FETCH_MIN_TIMEOUT_MS to EXTENSION_FETCH_MAX_TIMEOUT_MS. */
+  readonly timeoutMs?: number
 }
 
 /**
@@ -97,7 +99,28 @@ interface ResolvedAddress {
   readonly family: 4 | 6
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000
+/** How long a request may go without receiving data unless the call passes `timeoutMs`. */
+export const EXTENSION_FETCH_DEFAULT_TIMEOUT_MS = 100_000
+export const EXTENSION_FETCH_MIN_TIMEOUT_MS = 1_000
+export const EXTENSION_FETCH_MAX_TIMEOUT_MS = 600_000
+
+const seconds = (ms: number): string => String(Math.round(ms / 100) / 10)
+
+const callTimeoutMs = (value: unknown, fallback: number): number => {
+  if (value === undefined) return fallback
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < EXTENSION_FETCH_MIN_TIMEOUT_MS ||
+    value > EXTENSION_FETCH_MAX_TIMEOUT_MS
+  ) {
+    throw new ExtensionEgressError(
+      'invalid-request',
+      `timeoutMs 要是 ${EXTENSION_FETCH_MIN_TIMEOUT_MS} 到 ${EXTENSION_FETCH_MAX_TIMEOUT_MS} 之间的整数毫秒，现在是 ${typeof value === 'number' ? String(value) : typeof value}。`,
+    )
+  }
+  return value
+}
 const DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024 // 32 MiB
 const DEFAULT_MAX_REDIRECTS = 5
 
@@ -321,7 +344,12 @@ const createNetworkRequest = async (
     // An idle limit: a large download keeps going while data flows.
     request.setTimeout(timeoutMs, () => {
       request.destroy()
-      fail(new ExtensionEgressError('timeout', `请求在 ${timeoutMs}ms 内无响应。`))
+      fail(
+        new ExtensionEgressError(
+          'timeout',
+          `请求在 ${seconds(timeoutMs)} 秒内没有收到响应。接口本来就慢时，可以在调用时传 timeoutMs 放宽等待，最多 ${EXTENSION_FETCH_MAX_TIMEOUT_MS}（${EXTENSION_FETCH_MAX_TIMEOUT_MS / 60_000} 分钟）。`,
+        ),
+      )
     })
     request.on('error', (error) => {
       if (error instanceof ExtensionEgressError) {
@@ -345,7 +373,7 @@ const createNetworkRequest = async (
   })
 
 export const createExtensionEgress = (options: ExtensionEgressOptions) => {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const defaultTimeoutMs = options.timeoutMs ?? EXTENSION_FETCH_DEFAULT_TIMEOUT_MS
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS
   const resolve = options.resolve ?? ((hostname: string) => dnsLookup(hostname, { all: true, verbatim: true }))
@@ -401,6 +429,7 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
       throw new ExtensionEgressError('invalid-request', `URL 不允许包含用户名或密码。`)
     }
 
+    const timeoutMs = callTimeoutMs(init?.timeoutMs, defaultTimeoutMs)
     const method = (init?.method ?? 'GET').toUpperCase()
     // Header values as the extension wrote them; each hop fills them in for its own host.
     const headerTemplates = new Map<string, string>()
