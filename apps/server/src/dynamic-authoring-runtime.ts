@@ -1241,7 +1241,8 @@ export class DynamicAuthoringRuntime {
     const row = this.dynamicInventory(sessionId).find((candidate) => candidate.pluginId === task.pluginKey)
     const requestId = row?.latestRun?.approvalRequestId
     const packageId = row?.latestRun?.packageId
-    if (!row || requestId === undefined || packageId === undefined) return
+    const mode = row?.latestRun?.mode
+    if (!row || requestId === undefined || packageId === undefined || mode === undefined) return
     this.#authoring.service.decideAttempt({
       taskId: task.id,
       attemptId: attempt.id,
@@ -1249,7 +1250,7 @@ export class DynamicAuthoringRuntime {
       approved: true,
       approveRiskStable: true,
     })
-    const host = await this.runDynamicHostHalf(sessionId, task.pluginKey, packageId, 'run', requestId, false)
+    const host = await this.runDynamicHostHalf(sessionId, task.pluginKey, packageId, mode, requestId, false)
     if (!host.ok) {
       await this.resolveDynamicRunRequest(sessionId, requestId, {
         ok: false,

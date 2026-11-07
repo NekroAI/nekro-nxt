@@ -629,6 +629,96 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
     }
   })
 
+  it('runs an approved update candidate on top of the running version (#146)', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-dyn-unchecked-update-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], new SettledModel())
+      },
+    })
+    await runtime.start()
+    const entity = await runtime.createAgentWithInternalChannel({
+      displayName: '创造智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+      capabilities: { dynamicCreation: true },
+    })
+    await runtime.internalChannel.postMessage({
+      channelId: entity.channelId,
+      clientEventId: 'seed-session',
+      parts: [{ type: 'text', text: '建立活动会话。' }],
+    })
+    const episode = runtime.repository
+      .listActiveEpisodesForAgent(entity.agentId)
+      .find((candidate) => candidate.dshSessionId !== undefined)
+    const dshSessionId = episode!.dshSessionId!
+    const host = (text: string) => `return {
+      inject: ['tools'],
+      apply(ctx) {
+        harness.registerTool(ctx, harness.defineTool({
+          name: 'dynamic_update_probe',
+          description: '验证批准后的更新。',
+          parameters: {},
+          output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
+          execute() { return '${text}' }
+        }))
+      }
+    }`
+    try {
+      const first = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'upd' },
+        name: '更新探针',
+        purpose: '第一个版本只有宿主半边。',
+        code: { host: host('v1') },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, first.pluginId, first.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true })
+      const second = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'existing', pluginId: first.pluginId },
+        name: '更新探针',
+        purpose: '第二个版本加上界面。',
+        code: {
+          host: host('v2'),
+          client: `return {
+            inject: ['panels'],
+            apply(ctx) {
+              ctx.panels.register(
+                { id: 'main', anchor: 'agent', title: '概览', densities: ['full'] },
+                () => React.createElement('div'),
+              )
+            }
+          }`,
+        },
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      })
+      void runtime.host.runDynamicPackage(dshSessionId, first.pluginId, second.packageId, 'update')
+      await expect
+        .poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.status)
+        .toBe('awaiting-approval')
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      await runtime.host.runWaitingCandidateWithoutClient(task.id)
+      expect(runtime.repository.getAuthoringTask(task.id)?.status).toBe('ready')
+      expect(runtime.repository.listAuthoringAttempts(task.id).at(-1)).toMatchObject({
+        state: 'active',
+        verification: { hostStarted: true, clientSkipped: true },
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('restores a verified Host-only authoring task from its persisted source ledger', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-authoring-recovery-'))
     temporaryDirectories.push(directory)
