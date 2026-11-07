@@ -273,7 +273,10 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
         type: 'boolean',
         description: 'save 时为 true：新扩展保存后接着给你启用，已安装的扩展保存后切换到新版本。',
       },
-      version: { type: 'string', description: 'switch 的目标版本，或 branch 的来源版本，例如 v2。' },
+      version: {
+        type: 'string',
+        description: 'switch 的目标版本、branch 的来源版本，或 publish 要发布的版本，例如 v2。',
+      },
       name: { type: 'string', description: 'save、edit_info 或 branch 的扩展名称。' },
       description: {
         type: 'string',
@@ -503,9 +506,17 @@ export const extensionManagementTools = (context: ExtensionManagementToolContext
             ...(input.sourceUrl === undefined ? {} : { sourceUrl: input.sourceUrl }),
           })
           if (!listing.success) throw new Error(listingProblem(listing.error.issues[0]?.path[0]))
+          const target = extension()
+          const unswitched = input.version === undefined ? port.unswitchedNewest(target.id) : undefined
+          if (unswitched !== undefined) {
+            throw new Error(
+              `「${target.displayName}」现在运行的是 ${unswitched.running}，最新保存的是 ${unswitched.newest}。请在 version 里写明要发布哪个版本；发布 ${unswitched.newest} 前最好先切换过去用一用。`,
+            )
+          }
           action = {
             kind: 'community-publish',
-            extensionId: extension().id,
+            extensionId: target.id,
+            ...(input.version === undefined ? {} : { revisionId: revisionOf(target.id, input.version) }),
             notes: input.notes,
             ...(Object.keys(listing.data).length === 0 ? {} : { listing: listing.data }),
           }

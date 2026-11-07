@@ -753,10 +753,15 @@ describe('candidates after saving', () => {
         displayName: extension.displayName,
         description: '回答当前配置的城市。',
       })
+      // Saving without enable keeps the old version running, and the receipt says so (#151).
+      expect(saved.message).toContain('现在运行的还是 v1，切换后才会用上 v2。')
+      const tools = new ExtensionGovernanceTools(runtime)
+      expect(tools.unswitchedNewest(extension.id)).toEqual({ running: 'v1', newest: 'v2' })
       await runtime.extensionActions.perform(
         { kind: 'switch', extensionId: extension.id, revisionId: saved.revisionId! },
         { kind: 'console' },
       )
+      expect(tools.unswitchedNewest(extension.id)).toBeUndefined()
       expect(runningCandidates(runtime, sessionId)).toEqual([])
       await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('正式市')
     } finally {
@@ -851,13 +856,15 @@ describe('dynamic sandbox', () => {
   description: '全局探针',
   parameters: {},
   output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
-  execute() {
+  async execute() {
+    const deadline = AbortSignal.any([AbortSignal.timeout(1), new AbortController().signal])
+    await new Promise((resolve) => setTimeout(resolve, 20))
     const bytes = new Uint8Array(4)
     crypto.getRandomValues(bytes)
     const url = new URL('https://example.test/path?q=1')
     const controller = new AbortController()
     controller.abort()
-    return 'globals=' + [crypto.randomUUID().length, bytes.length, url.searchParams.get('q'), new URLSearchParams({ a: '1' }).toString(), controller.signal.aborted, structuredClone({ n: [7] }).n[0]].join(',')
+    return 'globals=' + [crypto.randomUUID().length, bytes.length, url.searchParams.get('q'), new URLSearchParams({ a: '1' }).toString(), controller.signal.aborted, structuredClone({ n: [7] }).n[0], deadline.reason.name].join(',')
   },
 })) } }`
     const model = new TriggeredModel({
@@ -884,7 +891,7 @@ describe('dynamic sandbox', () => {
       await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId).length, NOTICE_POLL).toBe(1)
       const { task } = await runCandidate(runtime, entity.agentId)
       await say(runtime, entity.channelId, '#ask-globals 试一下。')
-      await expect.poll(() => model.results.at(-1), NOTICE_POLL).toContain('globals=36,4,1,a=1,true,7')
+      await expect.poll(() => model.results.at(-1), NOTICE_POLL).toContain('globals=36,4,1,a=1,true,7,TimeoutError')
 
       const stray = new Error('虚构的失败')
       stray.stack = `Error: 虚构的失败\n    at cordis-dyn-${task.pluginKey}.js:3:5`
@@ -1945,11 +1952,14 @@ describe('extension autonomy', () => {
       const flagged = publish('rel_flagged')
       const reportUrl = (releaseId: string) => `https://community.example/me/releases/${releaseId}`
       vi.spyOn(runtime.community, 'review').mockImplementation((releaseId) =>
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The watcher reads only these two fields.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The watcher reads only these fields.
         Promise.resolve({
           status: releaseId === 'rel_passed' ? 'passed' : 'flagged',
           reportUrl: reportUrl(releaseId),
-        } as Awaited<ReturnType<typeof runtime.community.review>>),
+          rating: null,
+          deterministic: [],
+          ai: null,
+        } as unknown as Awaited<ReturnType<typeof runtime.community.review>>),
       )
       await requests.watchReviews()
       const noticeText = (number: number) => {
@@ -2481,5 +2491,38 @@ describe('community sync', () => {
     } finally {
       await runtime.dispose()
     }
+  })
+})
+
+describe('turn requester', () => {
+  /** A runtime with one group channel whose turn opened on `event`; `mbr_admin` is an administrator. */
+  const portFor = (event: { senderMemberId?: string; facts?: Record<string, unknown> }) => {
+    const fake = {
+      repository: {
+        getEpisode: () => ({ channelId: 'chn_group', lastAdmittedEventId: 'evt_last' }),
+        getChannelEvent: () => event,
+        getChannel: () => ({ id: 'chn_group', kind: 'group', connectionId: 'con_fixture' }),
+      },
+      core: {
+        resolveChannelMemberIdentity: (_connection: string, _channel: string, memberId: string) => ({
+          platformUserId: memberId === 'mbr_admin' ? 'user-admin' : 'user-member',
+        }),
+      },
+      administrators: { isAdministrator: (_connection: string, user?: string) => user === 'user-admin' },
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- requester() reads only these members.
+    return new ExtensionGovernanceTools(fake as unknown as NekroRuntime)
+  }
+  const requester = (event: Parameters<typeof portFor>[0]) =>
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The fake runtime ignores both ids.
+    portFor(event).requester('agt_fixture' as AgentId, 'eps_fixture' as never)
+
+  it('answers for the member the agent waited for when a finished wait opened the turn (#147)', () => {
+    const wait = (memberId: string) => ({ facts: { responseWait: { memberId, cause: 'quiet', waitedSeconds: 20 } } })
+    expect(requester(wait('mbr_admin'))).toEqual({ kind: 'admin' })
+    expect(requester(wait('mbr_other'))).toEqual({ kind: 'member', memberId: 'mbr_other' })
+    expect(requester({ senderMemberId: 'mbr_admin' })).toEqual({ kind: 'admin' })
+    // A scheduled job has nobody behind it.
+    expect(requester({ facts: { extensionJob: { jobId: 'job_fixture' } } })).toEqual({ kind: 'self' })
   })
 })

@@ -108,12 +108,27 @@ const HOST_UI_LABELS: Readonly<Record<string, readonly [PermissionLevel, string]
   'network.request': ['elevated', '从界面访问网络'],
 }
 
-const KNOWN_HOST_CAPABILITIES = new Set(['network', 'storage', 'assets', 'index', 'models'])
+const KNOWN_HOST_CAPABILITIES = new Set([
+  'network',
+  'storage',
+  'assets',
+  'files',
+  'media',
+  'commands',
+  'speech',
+  'index',
+  'models',
+])
 
 const KNOWN_CAPABILITIES = new Set([
   'network',
   'storage',
   'assets',
+  'files',
+  'toolImages',
+  'media',
+  'commands',
+  'speech',
   'index',
   'history',
   'inboundHook',
@@ -177,6 +192,34 @@ const capabilityItems = (declaredCapabilities: Json, layer: PermissionLayer): Pe
         label: '把频道里的图片收进扩展资源库，之后可以在其他频道使用',
       })
     }
+  }
+  if (asObject(capabilities['files']) !== undefined) {
+    items.push({ key: 'files', level: 'normal', label: '读写扩展自己的文件' })
+  }
+  if (asObject(capabilities['toolImages']) !== undefined) {
+    items.push({ key: 'toolImages', level: 'normal', label: '在工具结果里附上高清图片' })
+  }
+  if (capabilities['media'] === true) {
+    items.push({ key: 'media', level: 'normal', label: '读取和转换音视频' })
+  }
+  const commands = asObject(capabilities['commands'])
+  if (commands !== undefined) {
+    items.push({
+      key: 'commands',
+      level: 'elevated',
+      label: '运行音视频处理程序',
+      detail: asStrings(commands['profiles']).join('、'),
+    })
+  }
+  const speech = asObject(capabilities['speech'])
+  if (speech !== undefined) {
+    const perMinute = speech['maxCallsPerMinute']
+    items.push({
+      key: 'speech',
+      level: 'elevated',
+      label: '把语音转成文字（可能消耗用量）',
+      ...(typeof perMinute === 'number' ? { detail: `每分钟最多 ${perMinute} 次` } : {}),
+    })
   }
   const index = asObject(capabilities['index'])
   if (index !== undefined) {

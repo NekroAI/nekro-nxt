@@ -304,9 +304,9 @@ describe('nxt.files', () => {
 
 /** Bytes a fictional server answers with per path; the fake download enforces `maxBytes` like the egress does. */
 const downloads = (served: Readonly<Record<string, { readonly status?: number; readonly body: Uint8Array }>>) => {
-  const calls: { url: string; maxBytes: number }[] = []
-  const download: NonNullable<NxtServiceBackends['download']> = async (_policy, url, _init, _secrets, target) => {
-    calls.push({ url, maxBytes: target.maxBytes })
+  const calls: { url: string; maxBytes: number; timeoutMs?: number | undefined }[] = []
+  const download: NonNullable<NxtServiceBackends['download']> = async (_policy, url, init, _secrets, target) => {
+    calls.push({ url, maxBytes: target.maxBytes, timeoutMs: init?.timeoutMs })
     const answer = served[new URL(url).pathname] ?? { status: 404, body: new Uint8Array() }
     const status = answer.status ?? 200
     if (status === 200) {
@@ -328,9 +328,12 @@ describe('downloads into work files', () => {
 
   it('downloads into a temporary file named after the URL', async () => {
     const { backends, binding, files, roomA } = await productSetup()
-    const { download } = downloads({ '/clips/%E7%A4%BA%E4%BE%8B.mp4': { body: bytes(3 * MiB) } })
+    const { calls, download } = downloads({ '/clips/%E7%A4%BA%E4%BE%8B.mp4': { body: bytes(3 * MiB) } })
     const nxt = createNxtHostService({ ...binding(roomA.id, capabilities), sdk: 15 }, { ...backends, download })
-    const file = await nxt.files.fromUrl('https://media.example.com/clips/%E7%A4%BA%E4%BE%8B.mp4')
+    const file = await nxt.files.fromUrl('https://media.example.com/clips/%E7%A4%BA%E4%BE%8B.mp4', {
+      timeoutMs: 300_000,
+    })
+    expect(calls.at(-1)?.timeoutMs).toBe(300_000)
     expect(file).toMatchObject({ byteSize: 3 * MiB, mediaType: 'video/mp4', name: '示例.mp4', kind: 'temp' })
     expect(files.usage(extensionId).tempBytes).toBe(3 * MiB)
     expect((await nxt.files.read(file.fileId, { offset: 0, length: 4 })).base64).toBe(

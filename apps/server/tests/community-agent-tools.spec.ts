@@ -4,6 +4,7 @@ import {
   type CommunityExtensionDetail,
   type CommunityExtensionSummary,
   type CommunityRelease,
+  type CommunityReviewReport,
 } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import {
@@ -13,6 +14,7 @@ import {
   communityExtensionView,
   communitySearchRow,
   type CommunityLocalState,
+  reviewDigest,
 } from '../src/community-agent-tools.ts'
 import { CommunityError } from '../src/community.ts'
 
@@ -261,5 +263,60 @@ describe('community browsing tools', () => {
     await expect(toolsOf(undefined)['nekro_nxt_community_search']!.execute({}, {} as never)).rejects.toThrow(
       '没有接入社区',
     )
+  })
+})
+
+describe('review digest for the publishing agent (#92)', () => {
+  const report = (ai: CommunityReviewReport['ai']): CommunityReviewReport => ({
+    releaseId: 'rel_fixture',
+    status: 'flagged',
+    rating: null,
+    deterministic: [
+      { severity: 'info', title: '体积', detail: '包很小。' },
+      { severity: 'risk', title: '访问任意网站', detail: '声明了 unrestricted。', file: 'index.js', line: 3 },
+    ],
+    ai,
+    model: null,
+    error: null,
+    decisions: [],
+    finishedAt: null,
+    reportUrl: 'https://community.example/me/releases/rel_fixture',
+  })
+
+  it('gives the verdict, the findings worst first, and what earns each missing star', () => {
+    const digest = reviewDigest(
+      report({
+        summary: '能用，但网络异常没有兜底。',
+        verdict: '修改后再发',
+        compliance: null,
+        dimensions: [
+          { key: 'reliability', stars: 3, headline: '', notes: '', nextStar: '请求失败时重试并告诉用户。' },
+          { key: 'craft', stars: 5, headline: '', notes: '' },
+        ],
+        findings: [
+          {
+            dimension: 'usability',
+            severity: 'suggestion',
+            title: '提示太短',
+            detail: '……',
+            suggestion: '写明怎么用。',
+          },
+          { dimension: 'reliability', severity: 'warning', title: '没有超时', detail: '请求会一直等。' },
+          { dimension: 'craft', severity: 'info', title: '命名清楚', detail: '……' },
+        ],
+      }),
+    )
+    expect(digest).toContain('审查结论：修改后再发')
+    expect(digest).toContain('- 访问任意网站：声明了 unrestricted。（index.js:3）')
+    expect(digest).not.toContain('体积')
+    expect(digest).not.toContain('命名清楚')
+    expect(digest.indexOf('没有超时')).toBeLessThan(digest.indexOf('提示太短'))
+    expect(digest).toContain('：写明怎么用。')
+    expect(digest).toContain('（3 星）：请求失败时重试并告诉用户。')
+    expect(digest).not.toContain('5 星')
+  })
+
+  it('stays empty when the review has nothing to say', () => {
+    expect(reviewDigest({ ...report(null), deterministic: [] })).toBe('')
   })
 })

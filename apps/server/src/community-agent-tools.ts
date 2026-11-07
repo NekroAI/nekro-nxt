@@ -4,6 +4,7 @@ import {
   CommunityExtensionSortSchema,
   CommunityExtensionSummarySchema,
   CommunityFreshnessSchema,
+  COMMUNITY_REVIEW_DIMENSION_LABELS,
   communityPublisherLabel,
   EXTENSION_SDK_LEVEL,
   ExtensionIdSchema,
@@ -13,6 +14,7 @@ import {
   type CommunityExtensionSummary,
   type CommunityPermissionItem,
   type CommunityRelease,
+  type CommunityReviewReport,
   type CommunityReviewStatus,
   type ExtensionId,
   type JsonValue,
@@ -120,6 +122,43 @@ export interface CommunityLocalState {
 const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text)
 
 const day = (time: number): string => new Date(time).toISOString().slice(0, 10)
+
+const REVIEW_DIGEST_LIMIT = 3000
+const FINDING_ORDER = ['critical', 'risk', 'warning', 'suggestion', 'info'] as const
+
+/**
+ * The review of one release written for the agent that published it: verdict, what to change, and what earns each
+ * missing star. The report itself needs the publisher's community login, which the agent does not have.
+ */
+export const reviewDigest = (report: CommunityReviewReport): string => {
+  const ai = report.ai
+  const where = (item: { readonly file?: string | undefined; readonly line?: number | undefined }) =>
+    item.file === undefined ? '' : `（${item.file}${item.line === undefined ? '' : `:${item.line}`}）`
+  const blocking = report.deterministic
+    .filter((item) => item.severity === 'risk' || item.severity === 'block')
+    .map((item) => `- ${item.title}：${clip(item.detail, 300)}${where(item)}`)
+  const findings = [...(ai?.findings ?? [])]
+    .filter((item) => item.severity !== 'info')
+    .sort((a, b) => FINDING_ORDER.indexOf(a.severity) - FINDING_ORDER.indexOf(b.severity))
+    .map(
+      (item) =>
+        `- 〔${COMMUNITY_REVIEW_DIMENSION_LABELS[item.dimension] ?? item.dimension}〕${item.title}：${clip(item.suggestion ?? item.detail, 300)}${where(item)}`,
+    )
+  const stars = (ai?.dimensions ?? [])
+    .filter((dimension) => dimension.stars < 5 && dimension.nextStar !== undefined)
+    .map(
+      (dimension) =>
+        `- ${COMMUNITY_REVIEW_DIMENSION_LABELS[dimension.key] ?? dimension.key}（${dimension.stars} 星）：${clip(dimension.nextStar ?? '', 300)}`,
+    )
+  const sections = [
+    ai === null ? '' : `审查结论：${clip(ai.verdict, 300)}\n${clip(ai.summary, 600)}`,
+    report.rating === null ? '' : `综合评分 ${report.rating.score}。`,
+    blocking.length === 0 ? '' : `自动检查发现的问题：\n${blocking.join('\n')}`,
+    findings.length === 0 ? '' : `审查意见：\n${findings.join('\n')}`,
+    stars.length === 0 ? '' : `再拿一颗星：\n${stars.join('\n')}`,
+  ].filter(Boolean)
+  return clip(sections.join('\n\n'), REVIEW_DIGEST_LIMIT)
+}
 
 const needsNewer = (release: CommunityRelease | null) =>
   release?.requiresSdk != null && release.requiresSdk > EXTENSION_SDK_LEVEL ? { needsNewerNekroNxt: true } : {}

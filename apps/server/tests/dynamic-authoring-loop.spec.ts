@@ -463,6 +463,38 @@ describe('dynamic authoring closed loop', () => {
     }
   })
 
+  it('does not count a global the trial-run sandbox lacks toward the breaker and says what to use', async () => {
+    const { runtime, dshSessionId } = await startAuthoringSession()
+    try {
+      const bodies = ['return process.env.HOME', 'return Buffer.from("a").length', 'return process.env.HOME']
+      let pluginId: string | undefined
+      for (const [index, body] of bodies.entries()) {
+        const defined = runtime.host.defineDynamicPackage(dshSessionId, {
+          plugin: pluginId === undefined ? { kind: 'new', idPrefix: 'gap' } : { kind: 'existing', pluginId },
+          name: `环境探针 ${index}`,
+          purpose: '用了试运行环境没有的全局。',
+          code: { host: toolHost('gap_probe', body) },
+        })
+        pluginId = defined.pluginId
+        await expect(
+          runtime.host.runDynamicPackage(
+            dshSessionId,
+            defined.pluginId,
+            defined.packageId,
+            index === 0 ? 'run' : 'update',
+          ),
+        ).rejects.toThrow(
+          index === 1 ? /试运行环境里没有 Buffer.*Uint8Array/u : /试运行环境里没有 process.*harness\.config\(\)/u,
+        )
+      }
+      const policy = runtime.host.dynamicAuthoringPolicy(dshSessionId)
+      expect(policy.consecutiveFailures).toBe(0)
+      expect(policy.blockedReason).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('keeps the breaker closed across undefine until a new ordinary user turn', async () => {
     const { runtime, dshSessionId } = await startAuthoringSession()
     try {

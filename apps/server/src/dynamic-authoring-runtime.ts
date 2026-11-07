@@ -1,4 +1,4 @@
-import { checkDynamicHostSource } from './dynamic-source-check.js'
+import { checkDynamicHostSource, sandboxGapOf } from './dynamic-source-check.js'
 import type { Context } from '@deepseek-ai/cordis'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 import DynamicCordisRunnerService, {
@@ -214,6 +214,13 @@ const verificationFailure = (
         kind === 'Tool' ? 'tools' : 'rpc'
       }["${name}"].`
     : `Dynamic ${kind} synthetic verification failed: ${name}: ${message}. Declared verification input: ${JSON.stringify(input)}.`
+
+/** A failed run caused by a global the trial-run sandbox lacks, retold with what to use instead. */
+const explainSandboxGap = <T extends { readonly ok: boolean; readonly message?: string }>(result: T): T => {
+  if (result.ok || result.message === undefined) return result
+  const gap = sandboxGapOf(result.message)
+  return gap === undefined ? result : { ...result, message: gap.message }
+}
 
 export const normalizeDynamicFailure = (phase: string, message: string): string =>
   `${phase}:${message}`
@@ -734,7 +741,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.runningPackageId = packageId
     const tools = this.runtimeContext.get('tools')
     const before = this.toolBaseline(owner, pluginId, tools)
-    const result = this.adviseRunFailure(pluginId, await super.run(owner, pluginId, packageId, mode, signal))
+    const result = explainSandboxGap(
+      this.adviseRunFailure(pluginId, await super.run(owner, pluginId, packageId, mode, signal)),
+    )
     let startedCleanly = false
     if (result.ok && result.status === 'running') {
       if (tools instanceof ToolRuntime) {
@@ -761,8 +770,10 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     try {
       await this.onAuthoringRun?.(pluginId, packageId, result)
     } catch (error) {
-      this.recordFailure('verification', error instanceof Error ? error.message : String(error))
-      throw error
+      const message = error instanceof Error ? error.message : String(error)
+      this.recordFailure('verification', message)
+      const gap = sandboxGapOf(message)
+      throw gap === undefined ? error : new Error(gap.message, { cause: error })
     }
     // Only a run that also passed product verification resets the repair budget.
     if (startedCleanly) this.clearFailures()
@@ -906,7 +917,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
     this.runningPackageId = packageId
     const tools = this.runtimeContext.get('tools')
     const before = this.toolBaseline(owner, pluginId, tools)
-    const result = await super.runHostHalf(owner, pluginId, packageId, mode, requestId, approveFutureVersions)
+    const result = explainSandboxGap(
+      await super.runHostHalf(owner, pluginId, packageId, mode, requestId, approveFutureVersions),
+    )
     if (!result.ok) {
       this.recordFailure('host-half', result.message)
       return result
@@ -989,6 +1002,8 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
   }
 
   private recordFailure(phase: string, message: string): void {
+    // A global only the trial-run sandbox lacks is the environment's gap, not a mistake to stop the agent for.
+    if (sandboxGapOf(message) !== undefined) return
     const state = this.requireState()
     const fingerprint = normalizeDynamicFailure(phase, message)
     const repeated = state.lastErrorFingerprint === fingerprint ? state.repeatedFingerprintCount + 1 : 1
@@ -1241,7 +1256,8 @@ export class DynamicAuthoringRuntime {
     const row = this.dynamicInventory(sessionId).find((candidate) => candidate.pluginId === task.pluginKey)
     const requestId = row?.latestRun?.approvalRequestId
     const packageId = row?.latestRun?.packageId
-    if (!row || requestId === undefined || packageId === undefined) return
+    const mode = row?.latestRun?.mode
+    if (!row || requestId === undefined || packageId === undefined || mode === undefined) return
     this.#authoring.service.decideAttempt({
       taskId: task.id,
       attemptId: attempt.id,
@@ -1249,7 +1265,7 @@ export class DynamicAuthoringRuntime {
       approved: true,
       approveRiskStable: true,
     })
-    const host = await this.runDynamicHostHalf(sessionId, task.pluginKey, packageId, 'run', requestId, false)
+    const host = await this.runDynamicHostHalf(sessionId, task.pluginKey, packageId, mode, requestId, false)
     if (!host.ok) {
       await this.resolveDynamicRunRequest(sessionId, requestId, {
         ok: false,

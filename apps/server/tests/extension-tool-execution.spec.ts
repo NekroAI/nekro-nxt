@@ -15,6 +15,7 @@ import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/stora
 import { channelImageSubmission, trackToolCallSessions } from '../src/dsh-plugin-images.js'
 import { bindExtensionTool, extensionToolContext, extensionToolTimeoutMs } from '../src/extension-tool-context.js'
 import { withToolImages, type ToolResultImage } from '../src/extension-tool-images.js'
+import { createDynamicTimers } from '../src/extension-host-service.js'
 import { wrapDynamicHostSource } from '../src/inbound-dynamic-harness.js'
 import { NekroAssetAttachmentStore, parseNekroImageAttachmentId } from '../src/session-image-context.js'
 
@@ -103,7 +104,10 @@ describe('long-running extension tools', () => {
     expect(defined[0]).toMatchObject({ name: 'clip', timeoutMs: 300_000 })
     expect(defined[0]).not.toHaveProperty('timeoutSeconds')
     const reportToolProgress = vi.fn()
-    plugin.apply({ nxt: { reportToolProgress, config: () => ({}) } })
+    plugin.apply({
+      effect: () => undefined,
+      nxt: { reportToolProgress, config: () => ({}), sandboxGlobals: { createTimers: createDynamicTimers } },
+    })
     expect(plugin.clip.execute({}, { callId: 'call_3', signal: new AbortController().signal })).toBe(false)
     expect(reportToolProgress).toHaveBeenCalledWith('call_3', { text: '一半', fraction: 0.5 })
     const invalid = wrapDynamicHostSource(
@@ -118,6 +122,58 @@ describe('long-running extension tools', () => {
       value: typeof harness,
     ) => Promise<unknown>
     await expect(failing(harness)).rejects.toThrow('1 到 900')
+  })
+
+  it('gives dynamic runs Node timers that stop with the run', async () => {
+    const source = wrapDynamicHostSource(
+      `return {
+        later: (fn, ms) => setTimeout(fn, ms),
+        cancel: (handle) => clearTimeout(handle),
+        every: (fn, ms) => setInterval(fn, ms),
+        deadline: (ms) => AbortSignal.timeout(ms),
+        either: (signals) => AbortSignal.any(signals),
+        apply() {},
+      }`,
+      { inbound: false, hostConfig: {} },
+    )
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-type-assertion -- as above.
+    const factory = new Function('harness', `return (async () => {${source}})()`) as (value: unknown) => Promise<{
+      later: (fn: () => void, ms: number) => unknown
+      cancel: (handle: unknown) => void
+      every: (fn: () => void, ms: number) => unknown
+      deadline: (ms: number) => AbortSignal
+      either: (signals: AbortSignal[]) => AbortSignal
+      apply: (ctx: unknown) => void
+    }>
+    const plugin = await factory({ handle: () => undefined, defineTool: (options: unknown) => options })
+    // Before the candidate is mounted there is nothing to hang a timer on.
+    expect(() => plugin.later(() => undefined, 1)).toThrow('要等扩展挂载后')
+    const stops: (() => void)[] = []
+    plugin.apply({
+      effect: (execute: () => () => void) => stops.push(execute()),
+      nxt: { config: () => ({}), sandboxGlobals: { createTimers: createDynamicTimers, AbortSignal } },
+    })
+    const fired = vi.fn()
+    plugin.later(fired, 5)
+    plugin.cancel(plugin.later(fired, 5))
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(fired).toHaveBeenCalledTimes(1)
+    const deadline = plugin.deadline(5)
+    const either = plugin.either([deadline, new AbortController().signal])
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(either.aborted).toBe(true)
+    expect(deadline.reason).toMatchObject({ name: 'TimeoutError' })
+
+    // Stopping the candidate clears what it still holds; nothing fires afterwards.
+    const late = vi.fn()
+    plugin.later(late, 20)
+    plugin.every(late, 5)
+    const stopped = plugin.deadline(20)
+    for (const stop of stops) stop()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(late).not.toHaveBeenCalled()
+    expect(stopped.aborted).toBe(false)
+    expect(() => plugin.later(late, 1)).toThrow('候选已经停止运行')
   })
 })
 

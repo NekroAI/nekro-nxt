@@ -7,13 +7,48 @@ const REPLACEMENTS =
 
 /**
  * Globals a saved extension has but the DSH sandbox does not, and that the dynamic wrapper does not supply either.
- * `require`, timers and `fetch` are left out: the sandbox traps them with a message that names the replacement.
+ * `require`, `fetch` and `setImmediate` are left out of the define-time notes: the sandbox traps them when called.
  */
 const MISSING_GLOBALS: Readonly<Record<string, string>> = {
   process: '进程信息和环境变量拿不到，配置项用 harness.config() 或 ctx.config() 读取',
   Buffer: '二进制数据用 Uint8Array，base64 用 btoa / atob',
   performance: '计时用 Date.now()',
   queueMicrotask: '改用 await Promise.resolve()',
+}
+
+/** Sandbox traps for these throw `<name> is not available in the dynamic package sandbox — …` when called. */
+const TRAPPED_GLOBALS: Readonly<Record<string, string>> = {
+  require: '要用的能力都在 harness、ctx 和 ctx.nxt 上，网络请求用 ctx.nxt.http.fetch，文件用 ctx.nxt.files',
+  fetch: '网络请求用 ctx.nxt.http.fetch',
+  setImmediate: '改用 setTimeout(fn, 0)',
+}
+
+export interface SandboxGap {
+  readonly name: string
+  /** What the agent is told: the trial-run environment has no `name`, and what to use instead. */
+  readonly message: string
+}
+
+/**
+ * Recognizes a failure caused only by a global the trial-run sandbox lacks but a saved extension has. The code is not
+ * wrong for a saved extension, so the authoring breaker does not count it; the agent is told what to use instead.
+ * Only the known names above match, so a typo such as `procss is not defined` stays an ordinary failure.
+ */
+export const sandboxGapOf = (message: string): SandboxGap | undefined => {
+  const missing = /\b([A-Za-z]+) is not defined\b/u.exec(message)?.[1]
+  const trapped = /\b([A-Za-z]+) is not available in the dynamic package sandbox\b/u.exec(message)?.[1]
+  const name =
+    missing !== undefined && Object.hasOwn(MISSING_GLOBALS, missing)
+      ? missing
+      : trapped !== undefined && Object.hasOwn(TRAPPED_GLOBALS, trapped)
+        ? trapped
+        : undefined
+  if (name === undefined) return undefined
+  const instead = MISSING_GLOBALS[name] ?? TRAPPED_GLOBALS[name]
+  return {
+    name,
+    message: `试运行环境里没有 ${name}，保存后的扩展才有：${instead}。改好后重新运行。原始错误：${message}`,
+  }
 }
 
 export interface DynamicSourceFindings {

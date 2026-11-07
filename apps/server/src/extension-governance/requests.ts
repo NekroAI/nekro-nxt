@@ -10,7 +10,7 @@ import {
 import type { ExtensionRequestRecord } from '@nekro-nxt/storage-sqlite'
 import { z } from 'zod'
 import type { NekroRuntime } from '../bootstrap.js'
-import { communityErrorForAgent } from '../community-agent-tools.js'
+import { communityErrorForAgent, reviewDigest } from '../community-agent-tools.js'
 import { commandArgument, commandPrefix } from './commands.js'
 import {
   ExtensionActionSchema,
@@ -476,10 +476,12 @@ export class ExtensionRequestService {
     for (const { record, result, releaseId } of watched) {
       let status: CommunityReviewStatus
       let reportUrl: string
+      let digest: string
       try {
         const report = await this.#runtime.community.review(releaseId)
         status = report.status
         reportUrl = report.reportUrl
+        digest = reviewDigest(report)
       } catch {
         continue
       }
@@ -508,7 +510,17 @@ export class ExtensionRequestService {
       this.#tellAgent(
         record,
         'review',
-        `〔系统通知〕你发布到社区的${name}${outcome}。${status === 'passed' ? '' : `审查报告在 ${reportUrl}（要登录发布者的社区账号才能打开，你自己打开只会看到登录页），请用户转告里面的意见，再决定要不要修改后重新发布。`}`,
+        [
+          `〔系统通知〕你发布到社区的${name}${outcome}。`,
+          digest,
+          status === 'passed'
+            ? ''
+            : digest === ''
+              ? `审查报告在 ${reportUrl}（要登录发布者的社区账号才能打开，你自己打开只会看到登录页），请用户转告里面的意见，再决定要不要修改后重新发布。`
+              : '按这些意见决定要不要修改后重新发布。频道里只通知了审查结果，没有发这些意见。',
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
       )
       this.#runtime.publishExtensionRequestChange?.()
     }

@@ -4,7 +4,12 @@ import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createExtensionEgress, ExtensionEgressError, type ExtensionEgressPolicy } from '../src/extension-egress.js'
+import {
+  createExtensionEgress,
+  EXTENSION_FETCH_DEFAULT_TIMEOUT_MS,
+  ExtensionEgressError,
+  type ExtensionEgressPolicy,
+} from '../src/extension-egress.js'
 
 interface Received {
   readonly url: string
@@ -187,7 +192,24 @@ describe('extension egress', () => {
   it('enforces response size and timeout limits', async () => {
     const egress = egressFor({ mode: 'unrestricted' })
     expect((await failure(egress.fetch(`http://api.example.com:${port}/large`))).code).toBe('response-too-large')
-    expect((await failure(egress.fetch(`http://api.example.com:${port}/slow`))).code).toBe('timeout')
+    const timeout = await failure(egress.fetch(`http://api.example.com:${port}/slow`))
+    expect(timeout.code).toBe('timeout')
+    expect(timeout.message).toBe(
+      '请求在 0.2 秒内没有收到响应。接口本来就慢时，可以在调用时传 timeoutMs 放宽等待，最多 600000（10 分钟）。',
+    )
+  })
+
+  it('lets one call wait longer with timeoutMs, within 1 second to 10 minutes', async () => {
+    expect(EXTENSION_FETCH_DEFAULT_TIMEOUT_MS).toBe(100_000)
+    const egress = egressFor({ mode: 'unrestricted' })
+    const slow = await egress.fetch(`http://api.example.com:${port}/slow`, { timeoutMs: 1_000 })
+    expect(Buffer.from(slow.base64 ?? '', 'base64').toString()).toBe('late')
+    for (const timeoutMs of [999, 600_001, 1500.5, Number.NaN]) {
+      const refused = await failure(egress.fetch(`http://api.example.com:${port}/json`, { timeoutMs }))
+      expect(refused.code).toBe('invalid-request')
+      expect(refused.message).toContain('timeoutMs 要是 1000 到 600000 之间的整数毫秒')
+    }
+    expect(received).toHaveLength(1)
   })
 
   it('rejects malformed requests before any connection', async () => {

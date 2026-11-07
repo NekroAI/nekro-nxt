@@ -247,6 +247,18 @@ export interface ExtensionActionResult {
 
 const OUTWARD: readonly ExtensionAction['kind'][] = ['community-publish', 'community-withdraw']
 
+/**
+ * A candidate's trial run keeps its stored data, files, indexes and jobs apart from the saved extension, so a save
+ * receipt for an extension that keeps any of them says the saved one starts empty.
+ */
+const trialDataNote = (manifest: ExtensionManifest | undefined): string => {
+  const { host, agent } = manifest?.permissions ?? {}
+  const keeps = [host?.storage, host?.files, host?.index, agent?.storage, agent?.files, agent?.index, agent?.jobs]
+  return keeps.some((capability) => capability !== undefined)
+    ? '试运行时写入的数据、文件和定时任务没有带过来，需要的话用保存后的扩展重新写入。'
+    : ''
+}
+
 /** A configuration change checked against the schema, with the named credentials it binds. */
 export interface ConfigPlan {
   readonly owner: ExtensionConfigOwner
@@ -1175,9 +1187,16 @@ export class ExtensionActionService {
     })
     const label = this.#label(saved.revision)
     const result = { extensionId: saved.extension.id, revisionId: saved.revision.id }
-    const done = `已保存「${saved.extension.displayName}」${label}。`
-    if (enable === undefined) return { ...result, message: done }
     const installed = runtime.repository.getHostInstallation(saved.extension.id)?.extensionRevisionId
+    const running = installed === undefined ? undefined : runtime.repository.getExtensionRevision(installed)
+    const done = `已保存「${saved.extension.displayName}」${label}。${trialDataNote(runtime.extensionService.revisionManifest(saved.revision))}`
+    if (enable === undefined) {
+      const notSwitched =
+        running === undefined || running.id === saved.revision.id
+          ? ''
+          : `现在运行的还是 ${this.#label(running)}，切换后才会用上 ${label}。`
+      return { ...result, message: `${done}${notSwitched}` }
+    }
     if (installed !== undefined && installed !== saved.revision.id) {
       try {
         const switched = await this.#switch(saved.extension.id, saved.revision.id)
