@@ -20,6 +20,7 @@
 | 删除智能体 | `DELETE /api/agents/:agentId` | 校验当前配置版本和名称确认；先停止全部频道运行、停用扩展并写 tombstone；默认同时 tombstone 仍归属于它的自动创建内置频道，其他频道解绑；保留历史事实；`deleteWorkspace: true` 时同时删除 `workspaces/<agentId>/`，默认保留 |
 | 新建内置频道 | `POST /api/channels` | 在系统托管内置连接上创建未绑定内置频道 |
 | 删除 / 移除频道 | `DELETE /api/channels/:channelId` | 携带预期 Binding；立即停止运行、解除绑定并写 Channel tombstone，保留全部历史；外部频道不影响平台真实对象 |
+| 彻底清除频道记录 | `GET` / `POST /api/channels/:channelId/history-purge` | `GET` 返回将删除的消息、对话、附件数与不能执行的原因；`POST` 携带预期 Binding，停止运行后物理删除消息历史、对话记录和无人引用的附件，频道与 Binding 保留；范围见[删除语义 §7](decisions/implemented/2026-08-22-内置频道与实体删除语义.md#7-彻底清除频道记录) |
 | 通知设置 | `PUT /api/settings/notifications` | Core SQLite 保存系统/Bark 渠道和功能开关；Bark Device Key 只保存本机凭据引用 |
 | 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取；同一来源使用同一 id，客户端用新通知替换旧通知 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅内置频道入站 |
