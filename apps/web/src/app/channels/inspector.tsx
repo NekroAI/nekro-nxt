@@ -38,6 +38,7 @@ import { BindingRows } from './binding-fields.js'
 import { ChannelMemory } from './channel-memory.js'
 import { ContextSheet } from './context-sheet.js'
 import { ContextResetDialog, type ContextReset } from './context-reset-dialog.js'
+import { HistoryPurgeDialog } from './history-purge-dialog.js'
 import { ChannelPromptSheet, type ChannelPromptView } from './channel-prompt-sheet.js'
 import { workspaceApi } from '../../host-api-client.js'
 import { useProductApi } from '../model/store.js'
@@ -79,12 +80,17 @@ export function ChannelInspector({
   const [intent, setIntent] = useState<BindIntent | null>(null)
   const [reset, setReset] = useState<ContextReset | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [purging, setPurging] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [promptOpen, setPromptOpen] = useState<false | 'instructions' | 'notes'>(false)
   const [prompt, setPrompt] = useState<ChannelPromptView | undefined>()
   const boundAgentId = channel.bindings[0]?.agentId
+  const removalNote =
+    channel.kind === 'internal'
+      ? '聊天记录保留；要连记录一起删，先彻底清除。'
+      : '聊天记录保留，有新消息时频道会重新出现；要连记录一起删，先彻底清除。'
   useEffect(() => {
     setPrompt(undefined)
     // The row only shows for a bound channel.
@@ -504,18 +510,18 @@ export function ChannelInspector({
 
       <DangerZone>
         {agent && runtime?.episodeId ? (
-          <PropertyRow label="清空上下文" description="当前任务停止，从空白开始；笔记和聊天记录保留。">
+          <PropertyRow label="清空上下文" description="当前任务停止，智能体从空白开始；聊天记录和笔记保留。">
             <Button size="small" variant="danger" onClick={() => setReset('clear')}>
               清空
             </Button>
           </PropertyRow>
         ) : null}
-        <PropertyRow
-          label={channel.kind === 'internal' ? '删除频道' : '移除频道'}
-          description={
-            channel.kind === 'internal' ? '聊天记录保留在审计中。' : '聊天记录保留，群里有新消息时会重新出现。'
-          }
-        >
+        <PropertyRow label="彻底清除" description="删除全部聊天记录，智能体也查不到；频道和绑定保留。">
+          <Button size="small" variant="danger" onClick={() => setPurging(true)}>
+            清除
+          </Button>
+        </PropertyRow>
+        <PropertyRow label={channel.kind === 'internal' ? '删除频道' : '移除频道'} description={removalNote}>
           <Button
             size="small"
             variant="danger"
@@ -567,8 +573,15 @@ export function ChannelInspector({
           navigate('/channels')
         }}
       >
-        <p>{channel.kind === 'internal' ? '聊天记录保留在审计中。' : '聊天记录保留，群里有新消息时会重新出现。'}</p>
+        <p>{removalNote}</p>
       </ConfirmDialog>
+      <HistoryPurgeDialog
+        open={purging}
+        onOpenChange={setPurging}
+        channelId={channel.id}
+        channelName={channel.name}
+        boundAgentId={channel.agentId || null}
+      />
     </DetailPane>
   )
 }

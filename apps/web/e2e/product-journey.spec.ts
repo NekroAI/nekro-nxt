@@ -1536,6 +1536,7 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   const resetRequests: unknown[] = []
   const deleteRequests: unknown[] = []
   const channelDeleteRequests: unknown[] = []
+  const purgeRequests: unknown[] = []
 
   await page.route('**/api/snapshot', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) }),
@@ -1666,6 +1667,27 @@ test('channel context controls and intelligent-agent deletion are guarded and re
       body: JSON.stringify({ mode: input.mode, closedEpisodeId }),
     })
   })
+  await page.route(`**/api/channels/${channelId}/history-purge`, async (route) => {
+    if (route.request().method() === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          HostApiContracts.previewChannelHistoryPurge.response.parse({
+            messages: 12,
+            conversations: 2,
+            attachments: 3,
+          }),
+        ),
+      })
+    }
+    purgeRequests.push(HostApiContracts.purgeChannelHistory.request.parse(route.request().postDataJSON()))
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ messages: 12, conversations: 2, attachments: 1 }),
+    })
+  })
   await page.route(`**/api/agents/${agentId}`, async (route) => {
     const input = HostApiContracts.deleteAgent.request.parse(route.request().postDataJSON())
     deleteRequests.push(input)
@@ -1761,6 +1783,19 @@ test('channel context controls and intelligent-agent deletion are guarded and re
   // The request returns before the summary is written; the dialog does not wait for it.
   await expect(compactDialog).toHaveCount(0)
   expect(resetRequests).toEqual([{ expectedEpisodeId: 'eps_contextjourney', mode: 'compact' }])
+
+  await expect(inspector.getByText('删除全部聊天记录，智能体也查不到；频道和绑定保留。')).toBeVisible()
+  await inspector.getByRole('button', { name: '清除', exact: true }).click()
+  const purgeDialog = page.getByRole('dialog', { name: '彻底清除「上下文旅程频道」的聊天记录？' })
+  await expect(purgeDialog).toContainText('消息12 条')
+  await expect(purgeDialog).toContainText('保留：频道和绑定、频道说明、成员笔记、扩展数据。')
+  const purgeConfirm = purgeDialog.getByRole('button', { name: '彻底清除', exact: true })
+  await expect(purgeConfirm).toBeDisabled()
+  await purgeDialog.getByLabel('输入“上下文旅程频道”确认').fill('上下文旅程频道')
+  await purgeConfirm.click()
+  await expect(purgeDialog).toHaveCount(0)
+  await expect(page.getByText('已删除 12 条消息', { exact: true })).toBeVisible()
+  expect(purgeRequests).toEqual([{ expectedBoundAgentId: agentId }])
 
   await page.goto(`/agents/${agentId}`)
   await expect(page.getByRole('heading', { name: agentName, exact: true, level: 1 })).toBeVisible()

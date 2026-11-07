@@ -288,6 +288,30 @@ export function createProductStore(
         mode,
       })
     },
+    previewChannelHistoryPurge: async (channelId) =>
+      requireHost().actions['channels.previewHistoryPurge']({
+        channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),
+      }),
+    purgeChannelHistory: async (channelId, expectedBoundAgentId) => {
+      const normalizedChannelId = requireValue(channelId, '缺少目标频道，请刷新页面后重试。')
+      const result = await requireHost().actions['channels.purgeHistory']({
+        channelId: normalizedChannelId,
+        expectedBoundAgentId,
+      })
+      // The loaded window still holds the removed messages; replace it with what is left.
+      await requireHost().actions['channels.listMessages']({
+        channelId: normalizedChannelId,
+        mode: 'initial',
+        limit: CHANNEL_MESSAGE_INITIAL_PAGE_SIZE,
+      })
+      useProductStore.setState((state) => ({
+        channelHistory: {
+          ...state.channelHistory,
+          [normalizedChannelId]: { loaded: true, loading: false, loadingMore: false, hasMore: false, error: '' },
+        },
+      }))
+      return result
+    },
     setChannelPaused: async (channelId, paused) => {
       await requireHost().actions['channels.setPaused']({
         channelId: requireValue(channelId, '缺少目标频道，请刷新页面后重试。'),

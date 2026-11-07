@@ -1118,6 +1118,10 @@ export class HttpProductHost implements ProductHostPort {
     'agents.delete': async ({ agentId, ...body }) => this.#mutate(HostApiContracts.deleteAgent, { agentId }, body),
     'channels.resetContext': async ({ channelId, ...body }) =>
       this.#mutate(HostApiContracts.resetChannelContext, { channelId }, body),
+    'channels.previewHistoryPurge': async ({ channelId }) =>
+      this.#call(HostApiContracts.previewChannelHistoryPurge, { channelId }, undefined),
+    'channels.purgeHistory': async ({ channelId, ...body }) =>
+      this.#mutate(HostApiContracts.purgeChannelHistory, { channelId }, body),
     'channels.setPaused': async ({ channelId, ...body }) =>
       this.#mutate(HostApiContracts.setChannelPaused, { channelId }, body),
     'channels.delete': async ({ channelId, ...body }) =>

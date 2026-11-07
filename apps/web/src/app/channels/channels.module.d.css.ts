@@ -100,6 +100,7 @@ declare const styles: {
   readonly paneHeader: string
   readonly paneMeta: string
   readonly pinnedIcon: string
+  readonly purgeFacts: string
   readonly queue: string
   readonly queueBar: string
   readonly queueList: string

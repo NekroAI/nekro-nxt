@@ -433,6 +433,10 @@ const installWorkspaceStubs = async (page: Page): Promise<void> => {
     const channelId = new URL(route.request().url()).pathname.split('/')[3]
     return route.fulfill({ json: { channelId, items: [] } })
   })
+  // Preview and result of 「彻底清除」 share one shape.
+  await page.route('**/api/channels/*/history-purge', (route) =>
+    route.fulfill({ json: { messages: 0, conversations: 0, attachments: 0 } }),
+  )
   await page.route('**/api/agents/*/revisions', (route) =>
     route.fulfill({
       json: {

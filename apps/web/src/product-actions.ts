@@ -32,6 +32,8 @@ export interface ProductActions {
   'agents.revise': Action<'reviseAgent'>
   'agents.delete': Action<'deleteAgent'>
   'channels.resetContext': Action<'resetChannelContext'>
+  'channels.previewHistoryPurge': Action<'previewChannelHistoryPurge'>
+  'channels.purgeHistory': Action<'purgeChannelHistory'>
   'channels.setPaused': Action<'setChannelPaused'>
   'channels.delete': Action<'deleteChannel'>
   'channels.rename': Action<'renameChannel'>

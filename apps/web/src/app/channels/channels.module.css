@@ -1964,3 +1964,26 @@ button.step:hover {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* —— 彻底清除确认 —— */
+.purgeFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-5);
+  margin: 0;
+  font: var(--t-note);
+}
+
+.purgeFacts > div {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.purgeFacts dt {
+  color: var(--muted);
+}
+
+.purgeFacts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}

@@ -745,6 +745,13 @@ export interface ProductState {
   clearBinding(channelId: string): Promise<void>
   deleteChannel(channelId: string, expectedBoundAgentId: string | null): Promise<void>
   resetChannelContext(channelId: string, episodeId: string, mode: 'clear' | 'compact'): Promise<void>
+  /** What 「彻底清除」 would remove from the channel, and why it cannot run now if so. */
+  previewChannelHistoryPurge(channelId: string): Promise<HostApiResponse<'previewChannelHistoryPurge'>>
+  /** Deletes the channel's messages, conversations and unused attachments; the channel and its binding stay. */
+  purgeChannelHistory(
+    channelId: string,
+    expectedBoundAgentId: string | null,
+  ): Promise<HostApiResponse<'purgeChannelHistory'>>
   /** Pauses or resumes every automatic response in the channel; the response rule is kept. */
   setChannelPaused(channelId: string, paused: boolean): Promise<void>
   putWorkTreeOrder(order: ProductState['workTreeOrder']): Promise<void>
