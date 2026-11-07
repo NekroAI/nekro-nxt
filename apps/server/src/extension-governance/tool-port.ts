@@ -116,6 +116,8 @@ export interface ExtensionGovernanceToolPort {
   revisionByLabel(extensionId: ExtensionId, label: string): ExtensionRevisionId
   /** The installed Revision, or the newest one when not installed. */
   currentRevision(extensionId: ExtensionId): ExtensionRevisionId
+  /** Version labels when a newer Revision was saved than the one installed; undefined otherwise. */
+  unswitchedNewest(extensionId: ExtensionId): { readonly running: string; readonly newest: string } | undefined
   /**
    * Configuration, problems, runtime state and the agent's authority for one extension it can see, or for one of its
    * authoring tasks. Never returns credentials or another agent's own configuration.
@@ -683,6 +685,16 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const revision = revisions.find((candidate) => candidate.id === installed) ?? revisions.at(-1)
     if (!revision) throw new Error('这个扩展没有可用的版本。')
     return revision.id
+  }
+
+  unswitchedNewest(extensionId: ExtensionId): { readonly running: string; readonly newest: string } | undefined {
+    const installed = this.#runtime.repository.getHostInstallation(extensionId)?.extensionRevisionId
+    const newest = this.#runtime.repository.listExtensionRevisions(extensionId).at(-1)
+    if (installed === undefined || newest === undefined || newest.id === installed) return undefined
+    const versions = extensionVersions(this.#runtime.repository, this.#runtime.extensionService, extensionId)
+    const running = versions.get(installed)?.label
+    const latest = versions.get(newest.id)?.label
+    return running === undefined || latest === undefined ? undefined : { running, newest: latest }
   }
 
   async inspect(

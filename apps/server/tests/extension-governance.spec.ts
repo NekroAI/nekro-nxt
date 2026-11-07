@@ -753,10 +753,15 @@ describe('candidates after saving', () => {
         displayName: extension.displayName,
         description: '回答当前配置的城市。',
       })
+      // Saving without enable keeps the old version running, and the receipt says so (#151).
+      expect(saved.message).toContain('现在运行的还是 v1，切换后才会用上 v2。')
+      const tools = new ExtensionGovernanceTools(runtime)
+      expect(tools.unswitchedNewest(extension.id)).toEqual({ running: 'v1', newest: 'v2' })
       await runtime.extensionActions.perform(
         { kind: 'switch', extensionId: extension.id, revisionId: saved.revisionId! },
         { kind: 'console' },
       )
+      expect(tools.unswitchedNewest(extension.id)).toBeUndefined()
       expect(runningCandidates(runtime, sessionId)).toEqual([])
       await expect(nextCity(model, runtime, entity.channelId)).resolves.toBe('正式市')
     } finally {
