@@ -1950,11 +1950,14 @@ describe('extension autonomy', () => {
       const flagged = publish('rel_flagged')
       const reportUrl = (releaseId: string) => `https://community.example/me/releases/${releaseId}`
       vi.spyOn(runtime.community, 'review').mockImplementation((releaseId) =>
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The watcher reads only these two fields.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The watcher reads only these fields.
         Promise.resolve({
           status: releaseId === 'rel_passed' ? 'passed' : 'flagged',
           reportUrl: reportUrl(releaseId),
-        } as Awaited<ReturnType<typeof runtime.community.review>>),
+          rating: null,
+          deterministic: [],
+          ai: null,
+        } as unknown as Awaited<ReturnType<typeof runtime.community.review>>),
       )
       await requests.watchReviews()
       const noticeText = (number: number) => {
@@ -2491,8 +2494,8 @@ describe('community sync', () => {
 
 describe('turn requester', () => {
   /** A runtime with one group channel whose turn opened on `event`; `mbr_admin` is an administrator. */
-  const portFor = (event: { senderMemberId?: string; facts?: Record<string, unknown> }) =>
-    new ExtensionGovernanceTools({
+  const portFor = (event: { senderMemberId?: string; facts?: Record<string, unknown> }) => {
+    const fake = {
       repository: {
         getEpisode: () => ({ channelId: 'chn_group', lastAdmittedEventId: 'evt_last' }),
         getChannelEvent: () => event,
@@ -2504,8 +2507,12 @@ describe('turn requester', () => {
         }),
       },
       administrators: { isAdministrator: (_connection: string, user?: string) => user === 'user-admin' },
-    } as unknown as NekroRuntime)
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- requester() reads only these members.
+    return new ExtensionGovernanceTools(fake as unknown as NekroRuntime)
+  }
   const requester = (event: Parameters<typeof portFor>[0]) =>
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- The fake runtime ignores both ids.
     portFor(event).requester('agt_fixture' as AgentId, 'eps_fixture' as never)
 
   it('answers for the member the agent waited for when a finished wait opened the turn (#147)', () => {
