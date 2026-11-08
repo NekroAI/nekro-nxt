@@ -11,7 +11,7 @@ import {
   type LlmProviderTestResults,
 } from './llm-provider-test-results.js'
 import { HOST_DSH_PACKAGE_VERSIONS, DSH_BUILTIN_EXTENSION_ROSTER, DSH_SETTINGS_OWNER } from './dsh-roster.js'
-import { Context } from '@deepseek-ai/cordis'
+import { Context, type Plugin } from '@deepseek-ai/cordis'
 import CredentialProvider, {
   credentialRef,
   type CredentialInfo,
@@ -23,6 +23,7 @@ import CredentialProvider, {
   type ResolvedCredential,
 } from '@deepseek-ai/dsh-credentials'
 import { createUserMessage, LlmRuntime, type LlmAdapter } from '@deepseek-ai/dsh-llm'
+import * as DeepSeekApiKey from '@deepseek-ai/dsh-llm-deepseek-api-key'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
 import { type SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import {
@@ -915,6 +916,32 @@ export class HostModelSettings {
     const settingsPath = directoryEntry?.settingsPath ?? ['providers', input.provider]
     const rawCurrent = readObjectPath(descriptor.value, settingsPath)
     const current = rawCurrent === undefined ? {} : LlmProviderProfileSchema.parse(rawCurrent)
+    if (settingsNs === 'llm-deepseek' && directoryEntry !== undefined) {
+      // The adapter owns the whole namespace, so the draft replaces fields of that one profile.
+      const draft: Record<string, unknown> = { ...rawCurrent }
+      if (input.baseURL !== undefined) draft['baseURL'] = input.baseURL
+      if (input.models !== undefined) {
+        draft['models'] = this.#modelEntries(
+          settingsNs,
+          input.models,
+          current,
+          readObjectPath(descriptor.base, settingsPath),
+        )
+      }
+      const storedRef = stringField(current.apiKeyEnv) ?? 'DEEPSEEK_API_KEY'
+      const draftApiKey = input.apiKey ?? (await this.#context.credentials.resolve(credentialRef(storedRef)))?.value
+      draft['apiKeyEnv'] = DRAFT_LLM_CREDENTIAL_REF
+      const connection: LlmProviderConnection = {
+        provider: input.provider,
+        baseURL: stringField(draft['baseURL']),
+        api: stringField(draft['api']),
+        apiKey: draftApiKey,
+      }
+      await this.#recordedProbe(connection, input.model, draftApiKey, () =>
+        this.#runDraftProbe(DeepSeekApiKey, draft, draftApiKey, input.provider, input.model),
+      )
+      return { provider: input.provider, model: input.model }
+    }
     if (settingsNs !== 'llm-pi-ai') {
       // Other adapters cannot be rebuilt in isolation; a draft that keeps their saved connection tests the live route.
       const changesConnection =
@@ -953,27 +980,40 @@ export class HostModelSettings {
       apiKey: draftApiKey,
     }
 
-    await this.#recordedProbe(connection, input.model, draftApiKey, async () => {
-      const draftContext = new Context()
-      try {
-        await draftContext.plugin(DraftLlmCredentialProvider, {
-          ...(draftApiKey === undefined ? {} : { apiKey: draftApiKey }),
-        })
-        await draftContext.plugin(LlmRuntime)
-        await draftContext.plugin(LlmPiAi, {
-          // The saved section was already validated by DSH; this isolated plugin validates the merged draft again.
-          providers: { [input.provider]: profile },
-        })
-        await this.#runLlmConnectionProbe(draftContext.llm, input.provider, input.model)
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause)
-        if (draftApiKey && message.includes(draftApiKey)) throw new Error('模型供应商连接测试失败。')
-        throw cause
-      } finally {
-        await draftContext.fiber.dispose()
-      }
-    })
+    await this.#recordedProbe(connection, input.model, draftApiKey, () =>
+      // The saved section was already validated by DSH; this isolated plugin validates the merged draft again.
+      this.#runDraftProbe(
+        LlmPiAi,
+        { providers: { [input.provider]: profile } },
+        draftApiKey,
+        input.provider,
+        input.model,
+      ),
+    )
     return { provider: input.provider, model: input.model }
+  }
+
+  /** Probe a draft through its adapter in a throwaway runtime whose only credential is `apiKey`. */
+  async #runDraftProbe(
+    adapter: Plugin,
+    config: Record<string, unknown>,
+    apiKey: string | undefined,
+    provider: string,
+    model: string,
+  ): Promise<void> {
+    const draftContext = new Context()
+    try {
+      await draftContext.plugin(DraftLlmCredentialProvider, apiKey === undefined ? {} : { apiKey })
+      await draftContext.plugin(LlmRuntime)
+      await draftContext.plugin(adapter, config)
+      await this.#runLlmConnectionProbe(draftContext.llm, provider, model)
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      if (apiKey && message.includes(apiKey)) throw new Error('模型供应商连接测试失败。')
+      throw cause
+    } finally {
+      await draftContext.fiber.dispose()
+    }
   }
 
   /** The address, protocol and key the saved configuration of a provider uses. */

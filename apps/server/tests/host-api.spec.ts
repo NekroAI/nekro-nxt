@@ -1481,6 +1481,102 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
+  it('tests an unsaved DeepSeek key, and the saved key when the key field is left empty', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-llm-deepseek-draft-'))
+    temporaryDirectories.push(directory)
+    const upstreamRequests: Array<{ readonly apiKey?: string; readonly url?: string }> = []
+    const upstream = createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        const apiKey = request.headers['x-api-key']
+        upstreamRequests.push({
+          ...(typeof apiKey === 'string' ? { apiKey } : {}),
+          ...(request.url === undefined ? {} : { url: request.url }),
+        })
+        response.writeHead(401, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: { message: 'synthetic rejected credential' } }))
+      })
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const address = upstream.address()
+    if (address === null || typeof address === 'string')
+      throw new TypeError('DeepSeek upstream did not expose a TCP port.')
+    const dshRoot = path.join(directory, 'dsh')
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+      llmSettingsPath: path.join(dshRoot, 'settings.yaml'),
+      llmCredentialPath: path.join(dshRoot, 'credentials.yaml'),
+      configureLlm: configureDshLlmProviders([]),
+    })
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime)
+    const origin = `http://127.0.0.1:${api.port}`
+    const testProvider = (body: Record<string, unknown>): Promise<Response> =>
+      fetch(`${origin}/api/llm/test-provider`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'deepseek-official',
+          model: 'deepseek-flash',
+          settingsNs: 'llm-deepseek',
+          baseURL: `http://127.0.0.1:${address.port}/anthropic`,
+          ...body,
+        }),
+      })
+    try {
+      const before = await runtime.host.getLlmProviderSettings()
+      const deepseek = before.providers.find((provider) => provider.provider === 'deepseek-official')
+      if (!deepseek) throw new TypeError('DeepSeek provider is missing.')
+      await runtime.host.saveLlmProvider({
+        provider: 'deepseek-official',
+        expectedRevision: deepseek.settingsRevision,
+        apiKey: 'saved-deepseek-key',
+      })
+      const saved = (await runtime.host.getLlmProviderSettings()).providers.find(
+        (provider) => provider.provider === 'deepseek-official',
+      )
+
+      const draftKey = 'synthetic-deepseek-draft-key'
+      const withDraftKey = await testProvider({ apiKey: draftKey })
+      expect(withDraftKey.status).toBe(400)
+      const draftText = await withDraftKey.text()
+      expect(draftText).toContain('认证失败')
+      expect(draftText).not.toContain(draftKey)
+
+      const withSavedKey = await testProvider({})
+      expect(withSavedKey.status).toBe(400)
+      expect(await withSavedKey.text()).toContain('认证失败')
+
+      expect(upstreamRequests).toEqual([
+        { apiKey: draftKey, url: '/anthropic/v1/messages' },
+        { apiKey: 'saved-deepseek-key', url: '/anthropic/v1/messages' },
+      ])
+      const after = (await runtime.host.getLlmProviderSettings()).providers.find(
+        (provider) => provider.provider === 'deepseek-official',
+      )
+      expect(after).toMatchObject({
+        settingsRevision: saved?.settingsRevision,
+        credential: { configured: true },
+      })
+      expect(after?.baseURL).toBe(saved?.baseURL)
+    } finally {
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
+      await new Promise<void>((resolve, reject) =>
+        upstream.close((error) => {
+          if (error) reject(error)
+          else resolve()
+        }),
+      )
+    }
+  })
+
   it('records the latest connection test per saved configuration without keeping any key', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-llm-test-record-'))
     temporaryDirectories.push(directory)
