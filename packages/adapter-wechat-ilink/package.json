@@ -26,7 +26,7 @@
   "devDependencies": {
     "@nekro-nxt/test-harness": "workspace:*"
   },
-  "description": "NekroNXT experimental WeChat iLink Adapter",
+  "description": "NekroNXT WeChat iLink Adapter",
   "author": "NekroAI contributors",
   "homepage": "https://github.com/NekroAI/nekro-nxt#readme",
   "repository": {
