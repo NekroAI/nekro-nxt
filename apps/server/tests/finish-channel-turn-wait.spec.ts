@@ -33,11 +33,24 @@ describe('finish_channel_turn waiting-for-more (Decision 2026-10-31 R2)', () => 
     expect(concludeTurn).toHaveBeenCalledOnce()
   })
 
-  it('keeps the turn open with the refusal as the tool error', async () => {
-    const request: ChannelWaitRequester = () => ({ accepted: false, reason: '这个频道关闭了等待。' })
-    await expect(
-      run({ outcome: 'waiting-for-more', reason: '等等看。', seconds: 10 }, { episodeId, request }),
-    ).rejects.toThrow('这个频道关闭了等待。')
+  it.each([
+    '这个频道关闭了等待。',
+    '这一轮已经等过了。',
+    '没有可等待的成员。',
+    '这个频道已改由其他智能体负责。',
+    '频道还没有准备好。',
+  ])('ends the turn without scheduling a wait when refused: %s', async (reason) => {
+    const request = vi.fn<ChannelWaitRequester>(() => ({ accepted: false, reason }))
+    const { result, concludeTurn } = await run(
+      { outcome: 'waiting-for-more', reason: '等等看。', seconds: 10 },
+      { episodeId, request },
+    )
+    expect(result).toEqual({ status: 'finished', outcome: 'no-response-needed', reason })
+    expect(request).toHaveBeenCalledOnce()
+    expect(concludeTurn).toHaveBeenCalledOnce()
+  })
+
+  it('rejects outcomes that the channel does not offer', async () => {
     // Without a wait the outcome is not offered at all, so the arguments themselves are refused.
     await expect(run({ outcome: 'waiting-for-more', reason: '等等看。' })).rejects.toThrow('outcome')
   })
