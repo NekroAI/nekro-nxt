@@ -21,7 +21,7 @@
     "@nekro-nxt/adapter-sdk": "workspace:*",
     "@nekro-nxt/contracts": "workspace:*",
     "wechat-ilink-client": "0.1.0",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@nekro-nxt/test-harness": "workspace:*"
