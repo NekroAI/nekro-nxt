@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -13,6 +14,7 @@ import { localExtensions, openMigratedCoreDatabase, SqliteCoreRepository } from 
 import { withToolImages, type ToolImagePlan } from '../src/extension-tool-images.js'
 import { registerExtensionLibraryRoutes } from '../src/host-routes-extension-library.js'
 import { RetrievalRuntime } from '../src/retrieval-runtime.js'
+import { ONNXRUNTIME_COMMON_FILES } from '../src/retrieval-model-files.js'
 
 const directories: string[] = []
 const databases: Awaited<ReturnType<typeof openMigratedCoreDatabase>>[] = []
@@ -132,6 +134,25 @@ describe('built-in retrieval model', () => {
     expect(() => runtime.startDownload()).toThrow('还不能运行内置语义模型')
     expect(() => runtime.setMode('builtin')).toThrow('先安装语义检索')
     expect(await runtime.queryVector('开心')).toBeUndefined()
+  })
+
+  it('keeps the CommonJS package boundary when materializing the pinned runtime files', async () => {
+    const root = await temporary('nekro-nxt-onnx-package-')
+    const packageRoot = path.join(root, 'node_modules', 'onnxruntime-common')
+    const fixture: Record<string, string> = {
+      'package.json': JSON.stringify({ type: 'module', main: './dist/cjs/index.js' }),
+      'dist/cjs/package.json': '{"type": "commonjs"}',
+      'dist/cjs/index.js': 'exports.fixture = "loaded"',
+    }
+    for (const [name] of ONNXRUNTIME_COMMON_FILES) {
+      const contents = fixture[name]
+      if (contents === undefined) continue
+      const target = path.join(packageRoot, name)
+      await mkdir(path.dirname(target), { recursive: true })
+      await writeFile(target, contents)
+    }
+    const loaded: unknown = createRequire(path.join(root, 'package.json'))('onnxruntime-common')
+    expect(loaded).toEqual({ fixture: 'loaded' })
   })
 
   it('discards files that do not match their pinned size and hash', async () => {
