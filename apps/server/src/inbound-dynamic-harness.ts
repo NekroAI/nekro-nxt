@@ -23,6 +23,7 @@ export const MIGRATION_DYNAMIC_PROBE_METHOD = '__nekro_nxt_migration_probe_v1'
  * - `setTimeout`, `setInterval` and their `clear*`, over the host's Node timers. Each run gets its own set, cleared by
  *   a fiber effect when the candidate stops, so no callback outlives the run; `AbortSignal.timeout` uses the same set.
  * - `ctx.config()` inside the agent attachment, returning the agent configuration the candidate runs with.
+ * - `ctx.nxt.prompt.dynamic`, whose registration is released when the candidate stops.
  * - `harness.defineTool` that turns `timeoutSeconds` into DSH's time limit and hands the body `{ signal, progress }`,
  *   as saved Revisions get.
  *
@@ -192,6 +193,32 @@ const nxt = new Proxy({}, {
     return host[key]
   },
 })
+// The authoring session's \`nxt\` outlives each run, so a dynamic context the candidate registers is released by a
+// fiber effect when the candidate stops; otherwise the next candidate cannot register the same name.
+const __nxtScopedNxt = (ctx) =>
+  new Proxy(ctx.nxt, {
+    get(target, key) {
+      const value = Reflect.get(target, key)
+      if (key !== 'prompt' || value === undefined || value === null) return value
+      return new Proxy(value, {
+        get(prompt, member) {
+          const original = Reflect.get(prompt, member)
+          if (member !== 'dynamic' || typeof original !== 'function') return original
+          return (name, render) => {
+            const off = original.call(prompt, name, render)
+            let released = false
+            const release = () => {
+              if (released) return
+              released = true
+              off()
+            }
+            ctx.effect(() => release)
+            return release
+          }
+        },
+      })
+    },
+  })
 ${
   !options.inbound
     ? ''
@@ -234,7 +261,8 @@ return {
   apply(ctx, config) {
     __nxtLogger = ctx.nxt.logger
     if (__nxtLogger) for (const [level, message, details] of __nxtLogs.splice(0)) __nxtLogger[level](message, details)
-    __nxtFactory.nxt = ctx.nxt
+    const scopedNxt = __nxtScopedNxt(ctx)
+    __nxtFactory.nxt = scopedNxt
     __nxtFactory.host = ctx.nxt.hostLayer
     __nxtGlobals = ctx.nxt.sandboxGlobals
     const timers = __nxtGlobals.createTimers()
@@ -245,6 +273,7 @@ return {
       get(target, key) {
         if (key === 'config') return readConfig
         if (key === 'logger') return logger
+        if (key === 'nxt') return scopedNxt
         return Reflect.get(target, key)
       },
     })

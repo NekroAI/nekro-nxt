@@ -717,6 +717,55 @@ describe('dynamic authoring closed loop', () => {
     }
   })
 
+  it('releases a candidate dynamic context when the candidate is replaced or stopped', async () => {
+    const { runtime, dshSessionId } = await startAuthoringSession()
+    const host = (text: string) => `return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    ctx.nxt.prompt.dynamic('status', () => ${JSON.stringify(text)})
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'status_probe',
+      description: 'Report the status text.',
+      parameters: {},
+      output: { schema: { type: 'json' }, render(_args, value) { return [{ type: 'text', text: JSON.stringify(value) }] } },
+      async execute() { return ${JSON.stringify(text)} }
+    }))
+  }
+}`
+    const define = (plugin: { kind: 'new'; idPrefix: string } | { kind: 'existing'; pluginId: string }, text: string) =>
+      runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin,
+        name: '状态提示',
+        purpose: '验证替换候选时释放动态上下文。',
+        code: { host: host(text) },
+        resources: {},
+        permissions: {
+          permissions: [],
+          networkOrigins: [],
+          agent: { context: [{ name: 'status', kind: 'dynamic', maxChars: 100 }] },
+        },
+        contributions: [],
+        verificationInputs: { tools: { status_probe: {} }, rpc: {} },
+      })
+    try {
+      const first = define({ kind: 'new', idPrefix: 'status' }, '第一版')
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, first.pluginId, first.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      const second = define({ kind: 'existing', pluginId: first.pluginId }, '第二版')
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, second.pluginId, second.packageId, 'update'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+      await expect(runtime.host.stopDynamicPlugin(dshSessionId, second.pluginId)).resolves.toEqual({ ok: true })
+      const third = define({ kind: 'existing', pluginId: first.pluginId }, '第三版')
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, third.pluginId, third.packageId, 'update'),
+      ).resolves.toMatchObject({ ok: true, status: 'running' })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   it('verifies an inbound hook in the dynamic run and hides matching messages once enabled', async () => {
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
     const host = `harness.onInbound(async (message, nxt) => {
