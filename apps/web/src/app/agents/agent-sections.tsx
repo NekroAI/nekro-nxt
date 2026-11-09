@@ -608,9 +608,7 @@ export function CapabilitiesSection({
           </PropertyRow>
         ) : null}
         {caps.developmentShell ? <CommandNetworkRow caps={caps} update={update} /> : null}
-        {caps.developmentShell && !caps.unrestrictedFileAccess ? (
-          <CommandAccountRows agentName={name} caps={caps} update={update} />
-        ) : null}
+        {caps.developmentShell ? <CommandAccountRows agentName={name} caps={caps} update={update} /> : null}
         {caps.developmentShell && agent ? <CommandCredentialRows agentId={agent.id} /> : null}
         {caps.developmentShell ? (
           <PropertyRow

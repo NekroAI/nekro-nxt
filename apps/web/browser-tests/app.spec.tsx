@@ -3035,7 +3035,7 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('points to 设置 → 关联账号 when none are linked, and hides the grant under full access', async () => {
+  test('points to 设置 → 关联账号 when none are linked, under full access as well', async () => {
     const withAccess = (unrestrictedFileAccess: boolean) =>
       HostApiContracts.snapshot.response.parse({
         ...browserSnapshot,
@@ -3057,7 +3057,7 @@ test.describe('NekroNxt browser projections', () => {
       `/agents/${browserAgentId}`,
       async (page) => {
         await playwrightExpect(page.getByText('命令可用的凭据', { exact: true })).toBeVisible()
-        await playwrightExpect(page.getByText('关联账号', { exact: true })).toHaveCount(0)
+        await playwrightExpect(page.getByText('还没有关联账号', { exact: true })).toBeVisible()
       },
       withAccess(true),
     )
