@@ -422,7 +422,9 @@ return { refused, loaded: await tools.capability_load({ names: ['定时任务'] 
       const [first, second, third] = scenario.model.calls
       const system = textOf(first, 'system')
       for (const name of ['schedule_create', 'schedule_list', 'schedule_run_now']) expect(system).not.toContain(name)
-      expect(textOf(first, 'user')).toContain('- 定时任务：建提醒和定时任务，查看、暂停、修改已有任务。')
+      expect(textOf(first, 'user')).toContain(
+        '- 定时任务：建提醒和定时任务，也能让自己过一会儿回来接着做；查看、暂停、修改已有任务。',
+      )
       expect(textOf(second, 'tool')).toContain('这个工具在「定时任务」能力包里')
       const delivery = textOf(second, 'user')
       expect(delivery).toContain('〔能力包「定时任务」〕')

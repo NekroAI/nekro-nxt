@@ -50,7 +50,7 @@ export const sessionCapabilityPacks = (
     ? [
         {
           name: SCHEDULED_TASKS_PACK,
-          purpose: '建提醒和定时任务，查看、暂停、修改已有任务。',
+          purpose: '建提醒和定时任务，也能让自己过一会儿回来接着做；查看、暂停、修改已有任务。',
           tools: [...SCHEDULED_TASK_TOOLS],
           instructions: SCHEDULED_TASKS_INSTRUCTIONS,
         },

@@ -237,7 +237,9 @@ describe('session capability packs', () => {
       'schedule_delete',
       'schedule_run_now',
     ])
-    expect(byName[SCHEDULED_TASKS_PACK]?.purpose).toBe('建提醒和定时任务，查看、暂停、修改已有任务。')
+    expect(byName[SCHEDULED_TASKS_PACK]?.purpose).toBe(
+      '建提醒和定时任务，也能让自己过一会儿回来接着做；查看、暂停、修改已有任务。',
+    )
     const files = byName[FILE_MANAGEMENT_PACK]?.tools ?? []
     expect(files).toEqual(['move', 'copy', 'delete', 'make_dir', 'file_info', 'diff', 'zip', 'unzip', 'glob', 'grep'])
     // Reading and writing stay resident.
