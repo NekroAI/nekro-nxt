@@ -1,6 +1,6 @@
 # @nekro-nxt/adapter-wechat-ilink
 
-微信 iLink 实验通道 Adapter。它覆盖 Phase 1 的私聊文本闭环与入站媒体接收：文本入站、图片/文件导入 Asset Service、基于最近 context_token 的文本回复、Connection scoped state、连接诊断和确定性单测。出站仍只开放文本。
+微信 iLink 私聊通道 Adapter。它覆盖 Phase 1 的私聊文本闭环与入站媒体接收：文本入站、图片/文件导入 Asset Service、基于最近 context_token 的文本回复、Connection scoped state、连接诊断和确定性单测。出站仍只开放文本。
 
 ## 创建连接
 

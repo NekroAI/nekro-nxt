@@ -41,7 +41,7 @@ export type WechatIlinkStoredConfig = z.output<typeof WechatIlinkConnectionConfi
 export const WECHAT_ILINK_CONNECTION_DEFINITION = defineAdapterConnection({
   key: WECHAT_ILINK_ADAPTER_KEY,
   displayName: '微信 iLink',
-  description: '连接实验性微信 iLink 通道，支持私聊文本与入站媒体，出站仅支持已收到消息后的文本回复',
+  description: '连接微信 iLink 私聊通道，支持私聊文本与入站媒体；iLink 只能在收到对方消息后回复，出站只有文本',
   provisioning: 'user-created',
   aliasEditable: true,
   channelDiscovery: 'adapter-observed',
