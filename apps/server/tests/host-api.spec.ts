@@ -1028,7 +1028,8 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect((await channelRuntime()).compaction).toMatchObject({ kind: 'new-session' })
       expect((await contextReset('clear', first.id)).status).toBe(409)
       release()
-      await vi.waitFor(async () => expect((await channelRuntime()).compaction).toBeUndefined())
+      await spy.mock.results[0]!.value
+      expect((await channelRuntime()).compaction).toBeUndefined()
       expect(runtime.repository.getEpisode(first.id)).toMatchObject({ closeReason: 'context-compacted' })
       const second = runtime.repository.getActiveEpisode(seeded.channel.id, seeded.definition.id)!
       expect(second.id).not.toBe(first.id)
@@ -1036,9 +1037,8 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       // A failure stays on the channel until the next compaction starts.
       spy.mockRejectedValueOnce(new Error('摘要模型不可用'))
       expect((await contextReset('compact', second.id)).status).toBe(200)
-      await vi.waitFor(async () =>
-        expect((await channelRuntime()).compactionFailure).toMatchObject({ message: '摘要模型不可用' }),
-      )
+      await expect(spy.mock.results[1]!.value).rejects.toThrow('摘要模型不可用')
+      expect((await channelRuntime()).compactionFailure).toMatchObject({ message: '摘要模型不可用' })
       expect((await channelRuntime()).compaction).toBeUndefined()
       spy.mockRestore()
 
@@ -2102,7 +2102,10 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       await first.dispose()
     }
 
-    expect((await stat(credentialPath)).mode & 0o777).toBe(0o600)
+    const credentialInfo = await stat(credentialPath)
+    expect(credentialInfo.isFile()).toBe(true)
+    if (process.platform === 'win32') expect(credentialInfo.mode & 0o200).toBe(0o200)
+    else expect(credentialInfo.mode & 0o777).toBe(0o600)
     const second = await createRuntime()
     try {
       const restored = await second.host.getLlmProviderSettings()

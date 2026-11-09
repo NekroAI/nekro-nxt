@@ -15,7 +15,9 @@ import { registerExtensionLibraryRoutes } from '../src/host-routes-extension-lib
 import { RetrievalRuntime } from '../src/retrieval-runtime.js'
 
 const directories: string[] = []
+const databases: Awaited<ReturnType<typeof openMigratedCoreDatabase>>[] = []
 afterEach(async () => {
+  for (const database of databases.splice(0)) database.close()
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -100,10 +102,13 @@ describe('tool result images', () => {
 })
 
 describe('built-in retrieval model', () => {
-  const index = async () =>
-    new SqliteCoreRepository(
-      await openMigratedCoreDatabase(path.join(await temporary('nekro-nxt-retrieval-db-'), 'core.sqlite')),
-    ).extensionIndex
+  const index = async () => {
+    const database = await openMigratedCoreDatabase(
+      path.join(await temporary('nekro-nxt-retrieval-db-'), 'core.sqlite'),
+    )
+    databases.push(database)
+    return new SqliteCoreRepository(database).extensionIndex
+  }
   const settings = () => {
     let stored: { value: JsonValue; revision: number } | undefined
     return {
@@ -165,6 +170,7 @@ describe('library uploads', () => {
   const setup = async () => {
     const directory = await temporary('nekro-nxt-upload-')
     const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    databases.push(database)
     const repository = new SqliteCoreRepository(database)
     database.db
       .insert(localExtensions)

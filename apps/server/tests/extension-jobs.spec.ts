@@ -135,6 +135,13 @@ describe('extension job scheduler', () => {
         context.llm.registerAdapter(['test-provider'], new QuietModel())
       },
     })
+    let resolveCompleted!: () => void
+    const completed = new Promise<void>((resolve) => {
+      resolveCompleted = resolve
+    })
+    const unsubscribe = runtime.scheduledTasks.subscribe(() => {
+      if (runtime.repository.getExtensionJob('job_REMINDER')?.nextRunAt === null) resolveCompleted()
+    })
     try {
       await runtime.start()
       const entity = await runtime.createAgentWithInternalChannel({
@@ -162,15 +169,15 @@ describe('extension job scheduler', () => {
         createdAt: scheduledAt - 1000,
       })
       await runtime.recover()
-      await vi.waitFor(() => {
-        const fired = runtime.repository
-          .listChannelEvents(entity.channelId, { limit: 20 })
-          .find((event) => event.facts?.['extensionJob'] !== undefined)
-        expect(fired?.kind).toBe('control')
-        expect(fired?.facts?.['extensionJob']).toMatchObject({ jobId: 'job_REMINDER', scheduledAt })
-      })
-      await vi.waitFor(() => expect(runtime.repository.getExtensionJob('job_REMINDER')?.nextRunAt).toBeNull())
+      await completed
+      const fired = runtime.repository
+        .listChannelEvents(entity.channelId, { limit: 20 })
+        .find((event) => event.facts?.['extensionJob'] !== undefined)
+      expect(fired?.kind).toBe('control')
+      expect(fired?.facts?.['extensionJob']).toMatchObject({ jobId: 'job_REMINDER', scheduledAt })
+      expect(runtime.repository.getExtensionJob('job_REMINDER')?.nextRunAt).toBeNull()
     } finally {
+      unsubscribe()
       await runtime.dispose()
     }
   })

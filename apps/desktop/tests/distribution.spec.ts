@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { describe, expect, it, vi } from 'vitest'
 import {
   desktopDataRoot,
   desktopUserDataRoot,
@@ -20,6 +20,13 @@ import {
   desktopWindowChrome,
   titleBarOverlayFor,
 } from '../src/window-chrome.ts'
+
+// Load Node's real builder exports before tests so Vitest does not transform its large dependency graph.
+const electronBuilder: unknown = createRequire(import.meta.url)('electron-builder')
+if (typeof electronBuilder !== 'object' || electronBuilder === null) {
+  throw new TypeError('electron-builder exports must be an object')
+}
+vi.mock('electron-builder', () => electronBuilder)
 
 const readPngMetrics = (file: string): { width: number; height: number; pixelsPerMeter?: [number, number] } => {
   const png = readFileSync(file)
@@ -255,13 +262,16 @@ describe('Desktop product distribution', () => {
       productName: 'NekroNXT Preview',
     })
     expect(preview.nsisGuid).not.toBe(stable.nsisGuid)
-    expect(desktopDataRoot('/application-data/NekroNxt')).toBe('/application-data/NekroNxt/data')
-    expect(desktopUserDataRoot('/application-data', stable, undefined)).toBe('/application-data/NekroNxt')
-    expect(desktopUserDataRoot('/application-data', preview, undefined)).toBe('/application-data/NekroNxt Preview')
+    expect(desktopDataRoot('/application-data/NekroNxt')).toBe(path.join('/application-data', 'NekroNxt', 'data'))
+    expect(desktopUserDataRoot('/application-data', stable, undefined)).toBe(path.join('/application-data', 'NekroNxt'))
+    expect(desktopUserDataRoot('/application-data', preview, undefined)).toBe(
+      path.join('/application-data', 'NekroNxt Preview'),
+    )
     expect(desktopUserDataRoot('/application-data', stable, '/isolated/NekroNxt')).toBe('/isolated/NekroNxt')
     expect(() => desktopUserDataRoot('/application-data', stable, 'relative-data')).toThrow('绝对路径')
-    expect(resolveProductReleasePath('file:///Applications/NekroNxt.app/Contents/Resources/app.asar/main.mjs')).toBe(
-      '/Applications/NekroNxt.app/Contents/Resources/app.asar/product-release.json',
+    const archive = path.resolve(path.sep, 'Applications', 'NekroNxt.app', 'Contents', 'Resources', 'app.asar')
+    expect(resolveProductReleasePath(pathToFileURL(path.join(archive, 'main.mjs')).href)).toBe(
+      path.join(archive, 'product-release.json'),
     )
   })
 
