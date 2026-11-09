@@ -237,15 +237,19 @@ import { createHash } from 'node:crypto'
 import { CONVERSATION_SCRIPT_PROVIDER, ConversationScriptModel } from './sub-conversation-script.js'
 import { PARENT_ONLY_CONVERSATION_TOOLS, subConversationTools } from './sub-conversation-tools.js'
 import {
+  badRequestRetries,
+  badRequestRetryDelayMs,
   cooldownMs,
   fallbackReasonOf,
   firstHealthyRoute,
+  isRelayUnavailable,
   ModelRouteHealth,
   routeForRequest,
   sameRoute,
 } from './model-fallback.js'
 import { SubConversationManager, memorySubConversationStore, type SubConversationStore } from './sub-conversations.js'
 import { mkdir } from 'node:fs/promises'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { homedir } from 'node:os'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -5615,10 +5619,47 @@ export class DshHostRuntime implements AgentSessionDriver {
         ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) }),
       }
     })
+    // Retries of a 400 count per route, so a fallback model gets its own after a switch. Whichever side of the
+    // fallback listener this runs on, the retries come first and the switch after them.
+    const badRequestAttempts = new Map<string, number>()
+    context.on('agent/request-error', async (payload, next) => {
+      const allowed = badRequestRetries(payload.failure)
+      if (allowed === 0 || payload.signal.aborted) return next()
+      const sessionId = String(payload.agent.id)
+      const route = this.#fallbackRoutes.get(sessionId)?.route
+      const key = `${sessionId}\0${payload.turn}\0${payload.step}\0${route?.provider ?? ''}\0${route?.model ?? ''}`
+      const attempt = badRequestAttempts.get(key) ?? 0
+      if (attempt >= allowed) return next()
+      if (badRequestAttempts.size > 1024) badRequestAttempts.clear()
+      badRequestAttempts.set(key, attempt + 1)
+      const delayMs = badRequestRetryDelayMs(attempt)
+      const owned = this.#sessions.get(sessionId)
+      const child = owned === undefined ? this.#subConversationStore.getSubConversationBySession(sessionId) : undefined
+      const channelId = owned?.channelId ?? child?.channelId
+      const agentId = owned?.revision.agentId ?? child?.agentId
+      this.#logs?.write({
+        level: 'warn',
+        message: `${isRelayUnavailable(payload.failure) ? '中转的上游暂时不可用（HTTP 400）' : '模型请求返回 HTTP 400'}，${(delayMs / 1000).toFixed(1)} 秒后重试（第 ${attempt + 1}/${allowed} 次）`,
+        source: { kind: 'system', id: 'model-runtime', name: '模型调用' },
+        scope: {
+          sessionId,
+          ...(agentId === undefined ? {} : { agentId }),
+          ...(channelId === undefined ? {} : { channelId }),
+        },
+        code: payload.failure.code,
+        details: { provider: payload.provider, turn: payload.turn, step: payload.step },
+      })
+      try {
+        await sleep(delayMs, undefined, { signal: payload.signal })
+      } catch {
+        return next()
+      }
+      return { kind: 'retry' as const }
+    })
     context.on('agent/request-error', async (payload, next) => {
       const sessionId = String(payload.agent.id)
       const chain = this.#fallbackChain(sessionId)
-      const reason = fallbackReasonOf(payload.failure.code)
+      const reason = fallbackReasonOf(payload.failure)
       if (chain === undefined || reason === undefined || payload.signal.aborted) return next()
       // A used-up quota will not come back within the retries; anything else gets the usual retries first.
       if (reason !== 'quota') {

@@ -5,7 +5,13 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_MODEL_FALLBACK_SETTINGS } from '@nekro-nxt/contracts'
 import { NekroRuntime } from '../src/bootstrap.js'
-import { ModelRouteHealth, fallbackReasonOf, routeForRequest } from '../src/model-fallback.js'
+import {
+  ModelRouteHealth,
+  badRequestRetries,
+  fallbackReasonOf,
+  isRelayUnavailable,
+  routeForRequest,
+} from '../src/model-fallback.js'
 
 const temporaryDirectories: string[] = []
 
@@ -165,18 +171,72 @@ describe('fallback models', () => {
   }, 60_000)
 })
 
+describe('400 responses', () => {
+  const relay400 = {
+    code: 'INVALID_REQUEST',
+    message:
+      '400: {"code":"bad_response_status_code","message":"Provider API error: bad response status code 400","param":"400","type":"upstream_error"}',
+  }
+
+  it('retries a 400 the relay passed on from its upstream, then moves to the fallback', async () => {
+    const model = new FlakyModel()
+    model.failure = relay400
+    const { runtime, entity, say } = await start(model, [{ provider: 'test-provider', model: 'backup-model' }])
+    try {
+      await say()
+      expect(model.requests).toEqual([...Array<string>(6).fill('main-model'), 'backup-model'])
+      expect(runtime.host.modelFallbackOf(entity.channelId)).toMatchObject({ reason: 'unavailable' })
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+
+  it('tries any other 400 once more and does not switch on it', async () => {
+    const model = new FlakyModel()
+    model.failure = { code: 'INVALID_REQUEST', message: '400: {"error":{"message":"Invalid value for temperature"}}' }
+    const { runtime, entity, say } = await start(model, [{ provider: 'test-provider', model: 'backup-model' }])
+    try {
+      await say()
+      expect(model.requests).toEqual(['main-model', 'main-model'])
+      expect(runtime.host.modelFallbackOf(entity.channelId)).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+
+  it('recovers when the relay answers again within the retries', async () => {
+    const model = new FlakyModel()
+    model.failure = relay400
+    const stream = model.stream.bind(model)
+    vi.spyOn(model, 'stream').mockImplementation((options) => {
+      if (model.requests.length >= 2) model.failure = undefined
+      return stream(options)
+    })
+    const { runtime, entity, say } = await start(model, [{ provider: 'test-provider', model: 'backup-model' }])
+    try {
+      await say()
+      expect(model.requests).toEqual(['main-model', 'main-model', 'main-model'])
+      expect(runtime.host.modelFallbackOf(entity.channelId)).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+})
+
 describe('model route choice', () => {
   const main = { provider: 'p', model: 'main' }
   const backup = { provider: 'p', model: 'backup' }
   const spare = { provider: 'p', model: 'spare' }
   const chain = [main, backup, spare]
 
+  const failure = (code: string, message = '') => ({ code, message })
+
   it('switches only for a used-up quota or a model that stayed unavailable', () => {
-    expect(fallbackReasonOf('QUOTA')).toBe('quota')
-    expect(fallbackReasonOf('ACCOUNT_QUOTA')).toBe('quota')
-    expect(fallbackReasonOf('RATE_LIMIT')).toBe('rate-limit')
+    expect(fallbackReasonOf(failure('QUOTA'))).toBe('quota')
+    expect(fallbackReasonOf(failure('ACCOUNT_QUOTA'))).toBe('quota')
+    expect(fallbackReasonOf(failure('RATE_LIMIT'))).toBe('rate-limit')
     for (const code of ['SERVER', 'TIMEOUT', 'TRANSPORT', 'EMPTY_RESPONSE']) {
-      expect(fallbackReasonOf(code)).toBe('unavailable')
+      expect(fallbackReasonOf(failure(code))).toBe('unavailable')
     }
     for (const code of [
       'AUTH',
@@ -184,9 +244,33 @@ describe('model route choice', () => {
       'CONTEXT_WINDOW_EXCEEDED',
       'INVALID_ARGS',
       'MALFORMED_RESPONSE',
+      'INVALID_REQUEST',
     ]) {
-      expect(fallbackReasonOf(code)).toBeUndefined()
+      expect(fallbackReasonOf(failure(code))).toBeUndefined()
     }
+  })
+
+  // Bodies as one-hub and new-api sent them while their upstream account pool had nothing free (2026-11).
+  const oneHub =
+    '400: {"code":"bad_response_status_code","message":"Provider API error: bad response status code 400","param":"400","type":"upstream_error"}'
+  const newApi =
+    '400: {"error":{"message":"当前号池渠道暂时无可用资源，请稍后重试 (request id: 2026110614394653)","type":"new_api_error","param":"","code":"pool_channel_unavailable"}}'
+  const badArgument = '400: {"error":{"message":"Invalid value for \'temperature\'","type":"invalid_request_error"}}'
+
+  it('counts a 400 a relay passed on from an unavailable upstream as an unavailable model', () => {
+    expect(isRelayUnavailable(failure('INVALID_REQUEST', oneHub))).toBe(true)
+    expect(isRelayUnavailable(failure('INVALID_REQUEST', newApi))).toBe(true)
+    expect(isRelayUnavailable(failure('INVALID_REQUEST', badArgument))).toBe(false)
+    // Only a 400: the same words under another code keep that code's meaning.
+    expect(isRelayUnavailable(failure('AUTH', oneHub))).toBe(false)
+    expect(fallbackReasonOf(failure('INVALID_REQUEST', oneHub))).toBe('unavailable')
+    expect(fallbackReasonOf(failure('INVALID_REQUEST', badArgument))).toBeUndefined()
+  })
+
+  it('retries a relay 400 like a server error and any other 400 once', () => {
+    expect(badRequestRetries(failure('INVALID_REQUEST', newApi))).toBe(5)
+    expect(badRequestRetries(failure('INVALID_REQUEST', badArgument))).toBe(1)
+    expect(badRequestRetries(failure('SERVER', oneHub))).toBe(0)
   })
 
   it('stays on the current route mid-turn and goes back to the main model only when a turn starts', () => {
