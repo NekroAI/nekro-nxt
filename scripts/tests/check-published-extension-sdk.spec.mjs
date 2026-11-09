@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { levelProblem, newestPublished, readLevel } from '../check-published-extension-sdk.mjs'
-import { latestProblem } from '../lib/npm-packages.mjs'
+import { unpublishedProblem } from '../lib/npm-packages.mjs'
 
 test('reads the level from source and from a bundled package', () => {
   assert.equal(readLevel('export const EXTENSION_SDK_LEVEL = 13\n'), 13)
@@ -24,14 +24,14 @@ test('the level check reads the newer of next and latest', () => {
   assert.throws(() => newestPublished({}))
 })
 
-test('a stable release waits until every shared package has latest on its local version', () => {
-  const promoted = { name: '@nekro-nxt/contracts', version: '0.8.0', tags: { latest: '0.8.0', next: '0.8.0' } }
-  assert.equal(latestProblem([promoted]), undefined)
-  const problem = latestProblem([
-    promoted,
-    { name: '@nekro-nxt/extension-sdk', version: '0.7.0', tags: { latest: '0.6.1', next: '0.7.0' } },
+test('a stable release waits until every shared package version is on npm', () => {
+  const published = { name: '@nekro-nxt/contracts', version: '0.8.1', published: true }
+  assert.equal(unpublishedProblem([published]), undefined)
+  const problem = unpublishedProblem([
+    published,
+    { name: '@nekro-nxt/extension-sdk', version: '0.7.2', published: false },
   ])
-  assert.match(problem ?? '', /@nekro-nxt\/extension-sdk 本地是 0\.7\.0，npm 上的 latest 是 0\.6\.1/u)
-  assert.match(problem ?? '', /pnpm packages:promote/u)
+  assert.match(problem ?? '', /@nekro-nxt\/extension-sdk@0\.7\.2 还没有发布到 npm/u)
+  assert.match(problem ?? '', /packages-v\* Tag/u)
   assert.doesNotMatch(problem ?? '', /contracts/u)
 })

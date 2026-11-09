@@ -2,7 +2,7 @@ name: Publish packages
 
 # 把公开的共享包暂存到 npm。暂存版本不会立即可安装：维护者需要在 npmjs.com 或用
 # `npm stage approve <id>` 以 2FA 确认后才会正式发布。只有版本号在 npm 上尚不存在的包会被暂存。
-# 正式版发布前一律发到 next；正式发版时由 `pnpm packages:promote` 把 latest 指过去（docs/09 §6）。
+# 正式版发布前一律发到 next；正式发布工作流在 Release 发出后把 latest 指过去（docs/09 §6）。
 on:
   push:
     tags: ['packages-v*']
