@@ -9,6 +9,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -162,6 +163,9 @@ describe('zip and unzip', () => {
     expect(readFileSync(path.join(workspace, 'out/pack/sub/b.txt'), 'utf8')).toBe('beta')
     expect(existsSync(path.join(workspace, 'out/pack/link'))).toBe(false)
     await expect(unzipEntry(scope, 'pack.zip', 'out')).rejects.toThrow('已经存在')
+    // Completion owns no archive or output handles, including on Windows.
+    rmSync(path.join(workspace, 'pack.zip'))
+    rmSync(path.join(workspace, 'out'), { recursive: true })
   })
 
   it('refuses an archive whose entry would land outside, and leaves nothing behind', async () => {
@@ -174,6 +178,7 @@ describe('zip and unzip', () => {
     expect(existsSync(path.join(outside, 'evil.txt'))).toBe(false)
     expect(existsSync(path.join(workspace, 'evil'))).toBe(false)
     expect(existsSync(path.join(workspace, 'outside'))).toBe(false)
+    expect(readdirSync(workspace).filter((name) => name.startsWith('.unzip-'))).toEqual([])
   })
 
   it('reads GBK names from archives made on Chinese Windows', async () => {

@@ -17,7 +17,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { canonicalJson } from '@nekro-nxt/core'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
@@ -182,7 +182,19 @@ export class AuthoringArtifactStore {
         await rename(staging, final)
       } catch (error) {
         const code = error instanceof Error && 'code' in error ? Reflect.get(error, 'code') : undefined
-        if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error
+        if (
+          code !== 'EEXIST' &&
+          code !== 'ENOTEMPTY' &&
+          !(
+            process.platform === 'win32' &&
+            code === 'EPERM' &&
+            (await lstat(final).then(
+              (info) => info.isDirectory(),
+              () => false,
+            ))
+          )
+        )
+          throw error
         const existing = (await readFile(path.join(final, 'content.sha256'), 'utf8')).trim()
         if (existing !== contentDigest) throw new Error('Authoring Attempt 目录已包含其他内容。')
       }

@@ -302,13 +302,20 @@ export const zipEntry = async (scope: FileToolScope, from: string, to: string) =
   await mkdir(path.dirname(target), { recursive: true })
   const output = createWriteStream(target, { flags: 'wx' })
   const zip = new Zip()
-  const finished = new Promise<void>((resolve, reject) => {
-    zip.ondata = (error, chunk, final) => {
-      if (error) return reject(error)
-      output.write(chunk)
-      if (final) output.end(resolve)
-    }
+  let outputError: Error | undefined
+  output.once('error', (error) => {
+    outputError = error
   })
+  const closed = new Promise<void>((resolve) => output.once('close', resolve))
+  zip.ondata = (error, chunk, final) => {
+    if (error) {
+      output.destroy(error)
+      return
+    }
+    if (output.destroyed) return
+    output.write(chunk)
+    if (final) output.end()
+  }
   try {
     for (const file of files) {
       const stream = new ZipDeflate(file.name, { level: 6 })
@@ -317,9 +324,11 @@ export const zipEntry = async (scope: FileToolScope, from: string, to: string) =
       stream.push(new Uint8Array(0), true)
     }
     zip.end()
-    await finished
+    await closed
+    if (outputError !== undefined) throw outputError
   } catch (error) {
     output.destroy()
+    await closed
     await rm(target, { force: true })
     throw error
   }
@@ -376,9 +385,14 @@ export const unzipEntry = async (scope: FileToolScope, from: string, to: string 
   let entries = 0
   let bytes = 0
   const writes: Promise<void>[] = []
+  const active = new Map<ReturnType<typeof createWriteStream>, UnzipFile>()
   let failure: Error | undefined
   const fail = (error: Error) => {
     failure ??= error
+    for (const [stream, file] of active) {
+      file.terminate()
+      stream.destroy()
+    }
   }
   const unzip = new Unzip((file: UnzipFile) => {
     if (failure) return
@@ -398,26 +412,26 @@ export const unzipEntry = async (scope: FileToolScope, from: string, to: string 
       return fail(error instanceof Error ? error : new Error(String(error)))
     }
     const stream = createWriteStream(output, { flags: 'wx' })
+    active.set(stream, file)
     writes.push(
       new Promise<void>((resolve) => {
-        stream.on('error', (error) => {
-          fail(error)
+        stream.once('close', () => {
+          active.delete(stream)
           resolve()
         })
+        stream.once('error', fail)
         file.ondata = (error, chunk, final) => {
           if (error) {
             fail(error)
-            return resolve()
+            return
           }
           bytes += chunk.length
           if (bytes > FILE_TOOL_MAX_BYTES) {
             fail(new Error(`解压后超过 ${FILE_TOOL_MAX_BYTES / 1024 / 1024} MB。`))
-            file.terminate()
-            stream.destroy()
-            return resolve()
+            return
           }
           stream.write(chunk)
-          if (final) stream.end(resolve)
+          if (final) stream.end()
         }
         file.start()
       }),
@@ -434,6 +448,8 @@ export const unzipEntry = async (scope: FileToolScope, from: string, to: string 
     if (failure) throw failure
     await rename(staging, target)
   } catch (error) {
+    fail(error instanceof Error ? error : new Error(String(error)))
+    await Promise.all(writes)
     await rm(staging, { recursive: true, force: true })
     throw error
   }
