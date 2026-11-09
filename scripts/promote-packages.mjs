@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Points the `latest` dist-tag of every shared package at its local version, which must already be on npm (usually
 // under `next`). The release workflow runs it after publishing the Release, authenticated by npm trusted publishing;
-// `--check` only verifies the versions are on npm. A maintainer can still run it by hand (npm asks for 2FA).
+// `--check` only verifies the versions are on npm; `--reapply` sets `latest` even where it already matches, which is
+// how a new trusted publisher gets its first use. A maintainer can still run it by hand (npm asks for 2FA).
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,7 +21,7 @@ async function main() {
     return
   }
   for (const { name, version } of packages) {
-    if (npmDistTags(name)['latest'] === version) {
+    if (!process.argv.includes('--reapply') && npmDistTags(name)['latest'] === version) {
       console.log(`${name}@${version} 已是 latest。`)
       continue
     }

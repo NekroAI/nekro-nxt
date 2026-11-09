@@ -155,7 +155,21 @@ test('stable publishing is triggered only by an explicit immutable version tag',
   const workflow = await readFile(path.join(repositoryRoot, '.github/workflows/release.yml'), 'utf8')
   const rootPackage = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8'))
   assert.match(workflow, /tags:\s*\n\s*- 'v\*\.\*\.\*'/u)
-  assert.doesNotMatch(workflow, /workflow_dispatch/u)
+  // A manual run only re-points the shared packages' `latest` at an existing tag: every other job hangs off `verify`,
+  // which runs for a tag push alone, and the manual job neither builds nor publishes.
+  const jobs = Object.fromEntries(
+    workflow
+      .split(/^jobs:\n/mu)[1]
+      .split(/^(?= {2}[a-z-]+:\n)/mu)
+      .map((block) => [block.match(/^ {2}([a-z-]+):/u)?.[1], block]),
+  )
+  assert.match(jobs['verify'] ?? '', /^ {4}if: github\.event_name == 'push'$/mu)
+  for (const [name, block] of Object.entries(jobs)) {
+    if (name === 'verify' || name === 'promote') continue
+    assert.match(block, /^ {4}needs: (?:verify|\[verify\b.*\])$/mu, `${name} must wait for verify`)
+  }
+  assert.match(jobs['promote'] ?? '', /^ {4}if: github\.event_name == 'workflow_dispatch'$/mu)
+  assert.doesNotMatch(jobs['promote'] ?? '', /desktop:stable|stable-release-ci|docker|needs:/u)
   assert.match(workflow, /pnpm desktop:stable --platform/u)
   assert.match(workflow, /stable-release-ci\.mjs publish/u)
   assert.equal(rootPackage.scripts.release, 'node scripts/stable-release.mjs')
