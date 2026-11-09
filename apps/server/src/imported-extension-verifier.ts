@@ -540,6 +540,12 @@ const VERIFICATION_CALL_CONTEXT: NxtCallContext = {
     text: '验证消息',
     receivedAt: 1,
   },
+  trigger: {
+    kind: 'message',
+    sender: { memberId: 'mbr_VERIFY', displayName: '验证成员' },
+    message: { logicalMessageId: 'msg_VERIFY', text: '验证消息', receivedAt: 1 },
+    administrator: false,
+  },
 }
 
 /**

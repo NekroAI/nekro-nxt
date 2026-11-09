@@ -23,6 +23,7 @@ import type {
   NxtJobRecord,
   NxtMemberSummary,
   NxtPlatformResult,
+  NxtTurnTrigger,
 } from '@nekro-nxt/extension-sdk'
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
 import {
@@ -34,6 +35,7 @@ import {
   type NxtStoragePartition,
 } from './extension-host-service.js'
 import { namedCredentialId } from './credentials-library.js'
+import type { TurnTrigger } from './turn-trigger.js'
 
 /** Matches the opaque references `LocalCredentialStore` issues; anything else in a secret field is not resolved. */
 const CREDENTIAL_REFERENCE_PATTERN = /^credential:local:[a-f0-9]{32}$/u
@@ -71,6 +73,8 @@ export interface NxtProductFacts {
   readonly members?: ChannelMemberRelations
   /** The platform user id a connection reported as its own account. */
   readonly accountPlatformUserId?: (connectionId: string) => string | undefined
+  /** What started one episode's current turn; absent hosts give extensions no trigger. */
+  readonly turnTrigger?: (episodeId: string) => TurnTrigger | undefined
 }
 
 const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMemberSummary | undefined => {
@@ -85,6 +89,31 @@ const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMember
     ...(relation?.kind === 'local-agent'
       ? { localAgent: relation.agentName === undefined ? {} : { name: relation.agentName } }
       : {}),
+  }
+}
+
+/**
+ * `context.current().trigger`: an inbound message, or a finished wait. Other control events (scheduled tasks, jobs,
+ * the console opening a turn) give none.
+ */
+const callTrigger = (facts: NxtProductFacts, found: TurnTrigger | undefined): NxtTurnTrigger | undefined => {
+  const event = found?.event
+  if (found === undefined || event === undefined) return undefined
+  if (event.kind === 'control' && event.facts?.['responseWait'] === undefined) return undefined
+  const sender = member(facts, found.senderMemberId)
+  return {
+    kind: event.kind === 'control' ? 'wait-ended' : 'message',
+    ...(sender === undefined ? {} : { sender }),
+    ...(event.kind === 'control'
+      ? {}
+      : {
+          message: {
+            logicalMessageId: event.logicalMessageId,
+            text: messagePartsText(facts, event.parts),
+            receivedAt: event.receivedAt,
+          },
+        }),
+    administrator: found.requester.kind === 'admin',
   }
 }
 
@@ -258,6 +287,8 @@ export const createNxtProductBackends = (
       .find((entry) => entry.source === 'channel-event' && isConversationEntry(entry))
     const connectionName = facts.getConnectionName(channel.connectionId)
     const sender = latest?.source === 'channel-event' ? member(facts, latest.senderMemberId) : undefined
+    const episodeId = binding.episodeId?.()
+    const trigger = episodeId === undefined ? undefined : callTrigger(facts, facts.turnTrigger?.(episodeId))
     return Promise.resolve({
       agent: { id: binding.agentId, name: facts.getAgentName(binding.agentId) },
       channel: {
@@ -279,6 +310,7 @@ export const createNxtProductBackends = (
               receivedAt: latest.occurredAt,
             },
           }),
+      ...(trigger === undefined ? {} : { trigger }),
     })
   },
   history: {

@@ -25,6 +25,7 @@ import {
   ChannelIdSchema,
   CommandDefinitionSchema,
   ConnectionIdSchema,
+  EpisodeIdSchema,
   configSecretKeys,
   hostLayerAsCapabilities,
   parseJsonValue,
@@ -117,6 +118,7 @@ import {
   sqliteNxtStorage,
   type NxtProductFacts,
 } from './extension-host-backends.js'
+import { turnTriggerOf } from './turn-trigger.js'
 import { memoryIndexEngine, sqliteIndexEngine } from './extension-index.js'
 import { RetrievalRuntime } from './retrieval-runtime.js'
 import {
@@ -808,6 +810,21 @@ export class NekroRuntime {
         members: memberRelations,
         accountPlatformUserId: (connectionId) =>
           core.connectionAccountPlatformUserId(ConnectionIdSchema.parse(connectionId)),
+        turnTrigger: (episodeId) => {
+          const parsed = EpisodeIdSchema.safeParse(episodeId)
+          return parsed.success
+            ? turnTriggerOf(
+                {
+                  repository,
+                  isAdministrator: (connectionId, platformUserId) =>
+                    repository.isInstanceAdministrator(connectionId, platformUserId),
+                  platformUserId: (connectionId, channelId, memberId) =>
+                    core.resolveChannelMemberIdentity(connectionId, channelId, memberId)?.platformUserId,
+                },
+                parsed.data,
+              )
+            : undefined
+        },
       }
       const nxtFetch: NxtServiceBackends['fetch'] = (policy, url, init, secrets, limits) =>
         createExtensionEgress({ policy, ...(limits === undefined ? {} : { maxResponseBytes: limits.maxBytes }) }).fetch(

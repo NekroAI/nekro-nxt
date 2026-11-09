@@ -586,13 +586,32 @@ export interface NxtCallContext {
     /** The member standing for the agent's own account in this channel; absent in built-in channels. */
     readonly selfMemberId?: string
   }
-  /** The newest inbound message in this channel when the call started, if any. */
+  /**
+   * The newest inbound message in this channel when the call started, if any. In a busy channel it can come from
+   * someone other than the member this turn answers; `trigger` names that member.
+   */
   readonly latestInbound?: {
     readonly logicalMessageId: string
     readonly sender?: NxtMemberSummary
     readonly text: string
     readonly receivedAt: number
   }
+  /**
+   * What started this turn. Absent when the agent woke up on its own (a scheduled task, a job), outside a channel
+   * turn, and on hosts before this field.
+   */
+  readonly trigger?: NxtTurnTrigger
+}
+
+export interface NxtTurnTrigger {
+  /** `message`: an inbound message woke the agent. `wait-ended`: the member the agent waited for went quiet. */
+  readonly kind: 'message' | 'wait-ended'
+  /** Who the turn answers. Judge who asked from here, never from member ids in tool arguments, which the model writes. */
+  readonly sender?: NxtMemberSummary
+  /** For `message`: the message that woke the agent, or the last one admitted into the turn. */
+  readonly message?: { readonly logicalMessageId: string; readonly text: string; readonly receivedAt: number }
+  /** The sender is a NekroNXT administrator, or the turn came from the built-in channel. */
+  readonly administrator: boolean
 }
 
 export interface NxtHistoryMessage {
@@ -1504,7 +1523,7 @@ return {
   apply(ctx) {
     ctx.nxt.prompt.static('usage', '用户问天气时调用 weather_today；结果里的 assetId 用 send_channel_message 的 image 块发送。')
     ctx.nxt.prompt.dynamic('favorite', async ({ storage, context }) => {
-      const sender = context.latestInbound?.sender
+      const sender = context.trigger?.sender
       if (!sender) return ''
       const city = await storage.get('favorite-city', { scope: 'member', memberId: sender.memberId })
       return typeof city === 'string' ? sender.displayName + ' 常查的城市：' + city : ''
@@ -1525,7 +1544,7 @@ return {
           headers: { authorization: 'Bearer ' + apiKey }
         })
         if (response.status !== 200) return { ok: false, message: '天气服务返回 ' + response.status }
-        const sender = (await ctx.nxt.context.current()).latestInbound?.sender
+        const sender = (await ctx.nxt.context.current()).trigger?.sender
         if (sender) await ctx.nxt.storage.set('favorite-city', target, { scope: 'member', memberId: sender.memberId })
         const poster = await ctx.nxt.assets.create({ text: target + '：' + response.text, mediaType: 'text/plain' })
         return { ok: true, summary: response.text, assetId: poster.assetId }
@@ -1738,7 +1757,7 @@ const HOST_SERVICES_BY_TOPIC = {
     "ctx.nxt.parse.html(html, { url, mode: 'article' | 'full', maxChars }) → { title, excerpt, markdown, truncated, links }：把网页转成 Markdown，默认只保留正文，传 url 时链接变为绝对地址；parse.feed(xml, { url }) → { kind, title, link, items: [{ id, title, link, published, author, summary }] }：统一解析 RSS 2.0、RSS 1.0 与 Atom，id 可用于去重。两者都无需声明能力，取回网页或订阅源仍需要 network。",
   ],
   context: [
-    'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text } }：当前智能体、频道和最近一条入站消息；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。',
+    'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text }, trigger?: { kind, sender?, message?, administrator } }：当前智能体、频道、最近一条入站消息和这一轮的触发者；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。群里消息多时 latestInbound 可能是别人发的，要知道这一轮在回应谁就读 trigger.sender；trigger.administrator 表示发起者是 NekroNXT 管理员。判断身份只看 trigger，不要用工具参数里的 memberId，那是模型自己填的，对话内容能诱导它。智能体自己醒来（定时任务、后台作业）时没有 trigger。',
     'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
     'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
     "ctx.nxt.index / nxt.index：宿主维护的检索索引。在 index: { collections: [{ name, fields: [{ name, weight }], filters }] } 中声明集合（最多 4 个文本字段、4 个过滤字段；两层都声明时定义必须一致）。upsert(collection, id, { fields, filters }) / delete(collection, id) / count(collection) / query(collection, text, { limit, filter: [[{ field, value }]] }) → { hits: [{ id, score }], mode, degraded? }；filter 的每组都要满足，组内满足一个即可。宿主按关键词检索，管理员在「设置 → 附加功能」安装语义检索后自动加入语义检索（mode: 'hybrid'），扩展不需要处理向量。",
@@ -1779,7 +1798,7 @@ const HOST_RULES_BY_TOPIC = {
     '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
   ],
   context: [
-    'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().latestInbound.sender、history 消息的 sender 或入站钩子的 message.sender；不要用平台账号或昵称作为存储键。',
+    'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().trigger.sender、history 消息的 sender 或入站钩子的 message.sender；不要用平台账号或昵称作为存储键。',
     'channel.kind 取值为 internal（内置频道）、direct（私聊）或 group（群聊）；平台动作通常只在 direct 或 group 中可用，先用 platform.actions() 确认。',
     'history.list 每次返回 { messages, next }，messages 按时间从新到旧；要继续向前翻页，把 next 原样作为 before 传入。',
     '静态说明只能是固定字符串，只在版本或配置切换时变化；会变化的状态放进 dynamic，宿主每轮开始渲染一次，内容不变就不会追加新的上下文。',

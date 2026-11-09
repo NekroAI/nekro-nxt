@@ -81,6 +81,8 @@ export interface NxtServiceBinding {
   readonly ownerKey: string
   readonly displayName: string
   readonly channelId: string
+  /** The episode a call runs in, for `context.current().trigger`; channel sessions set it. */
+  readonly episodeId?: () => string | undefined
   /**
    * Approved capabilities of this layer; `undefined` means none. Host bindings carry host-layer capabilities in the
    * same shape. Dynamic runs read the current candidate's declaration.

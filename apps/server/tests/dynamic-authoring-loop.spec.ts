@@ -637,6 +637,12 @@ describe('dynamic authoring closed loop', () => {
         const previous = (await ctx.nxt.storage.get('visits')) ?? 0
         await ctx.nxt.storage.set('visits', previous + 1)
         const context = await ctx.nxt.context.current()
+        const trigger = context.trigger
+        // The dynamic run answers the administrator's message in the built-in channel; save verification has its own.
+        const expected = context.channel.kind === 'internal' ? ['建立活动会话。', true] : ['验证消息', false]
+        if (trigger?.message?.text !== expected[0] || trigger.administrator !== expected[1]) {
+          throw new Error('unexpected trigger: ' + JSON.stringify(trigger))
+        }
         let denied = ''
         try { await ctx.nxt.http.fetch('https://api.example.com/') } catch (error) { denied = String(error.message) }
         const card = await ctx.nxt.render.svg('<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8"/>', { scale: 1 })
