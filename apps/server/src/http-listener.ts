@@ -10,13 +10,23 @@ export async function startHttpListener(options: {
   readonly handler: RequestListener
   readonly tls?: { readonly key: string; readonly cert: string }
 }) {
-  const plain = createHttpServer(options.handler)
-  const tls = options.tls === undefined ? undefined : createHttpsServer(options.tls, options.handler)
+  const httpOptions = { headersTimeout: 10_000, requestTimeout: 300_000, connectionsCheckingInterval: 1000 }
+  const plain = createHttpServer(httpOptions, options.handler)
+  const tls =
+    options.tls === undefined ? undefined : createHttpsServer({ ...options.tls, ...httpOptions }, options.handler)
   const sockets = new Set<Duplex>()
   const listener = createNetServer((socket) => {
     sockets.add(socket)
-    socket.once('close', () => sockets.delete(socket))
+    // Until a first byte arrives, neither HTTP's header deadline nor TLS's handshake deadline owns this socket.
+    const firstByteDeadline = setTimeout(() => socket.destroy(), 10_000)
+    firstByteDeadline.unref()
+    socket.once('error', () => socket.destroy())
+    socket.once('close', () => {
+      clearTimeout(firstByteDeadline)
+      sockets.delete(socket)
+    })
     socket.once('data', (chunk: Buffer) => {
+      clearTimeout(firstByteDeadline)
       socket.pause()
       socket.unshift(chunk)
       ;(chunk[0] === 0x16 && tls !== undefined ? tls : plain).emit('connection', socket)
@@ -27,6 +37,10 @@ export async function startHttpListener(options: {
     listener.once('error', reject)
     listener.listen(options.port, options.host, () => {
       listener.off('error', reject)
+      // Forward the listener lifecycle too: Node starts HTTP request/header deadline
+      // tracking on `listening`, not when a socket is handed to `connection`.
+      plain.emit('listening')
+      tls?.emit('listening')
       resolve()
     })
   })
@@ -54,6 +68,10 @@ export async function startHttpListener(options: {
           clearTimeout(timeout)
           for (const socket of sockets) socket.destroy()
           sockets.clear()
+          // close() releases the HTTP deadline trackers even though the TCP handle
+          // belongs to the outer listener.
+          plain.close()
+          tls?.close()
         }
       })()),
   }

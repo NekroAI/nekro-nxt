@@ -194,8 +194,22 @@ export const browserDeviceLabel = (userAgent: string | undefined): string => {
 }
 
 /** Relative path inside this site to return to after login; anything else falls back to the root. */
-const safeNext = (value: string | null): string =>
-  value !== null && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/login') ? value : '/'
+const safeNext = (value: string | null): string => {
+  if (
+    value === null ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    value.includes('\\') ||
+    [...value].some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+  )
+    return '/'
+  // Browsers normalize backslashes, controls and dot segments before navigating.
+  const base = 'https://nxt.test'
+  const target = new URL(value, base)
+  return target.origin === base && !target.pathname.startsWith('/login')
+    ? `${target.pathname}${target.search}${target.hash}`
+    : '/'
+}
 
 const wantsPage = (request: IncomingMessage, pathname: string): boolean =>
   (request.method === 'GET' || request.method === 'HEAD') &&
