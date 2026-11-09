@@ -22,7 +22,7 @@ Manifest V7 中工具、工具视图与智能体/频道锚点面板属于智能�
 
 新增权限未批准时旧版本不停止。冷启动重建页面目录失败时会停止已加载的候选实例，再记录 `restore-failed`，不会留下未受安装状态拥有的运行时。页面实例按稳定 `entryId` 保留 Host 级顺序和显隐，Client 失败只写诊断。内置 Registry 或其他 Extension 已占用 adapter key 时，在停止任何运行时之前拒绝变更。
 
-智能体 Manifest 的 `permissions.capabilities` 与原有权限一起参与权限摘要：缺省时摘要与引入该字段前完全一致，已有批准不失效；规范化时对域名、配置字段、存储作用域与上下文名称排序。启用时 `permissionRequirement` 在声明任何能力时要求批准，并用 `extensionCapabilitiesExpand` 判断新 Revision 是否扩大已批准范围。配置中的凭据字段跳过 Schema 校验并原样保留宿主写入的凭据引用，`carryExtensionConfig` 在切换 Revision 时同样保留。Manifest 的 `requires.sdk` 超过当前 `EXTENSION_SDK_LEVEL` 时拒绝物化与导入；只有智能体扩展可以声明凭据字段和能力。
+Manifest 的浏览器权限、`permissions.host` 与 `permissions.agent` 分别进入对应层的权限摘要；规范化时对域名、配置字段、存储作用域与上下文名称排序，并保留全部能力，包括出站消息的读取、修改、取消与超时策略。启用和恢复时 `permissionRequirement` 检查批准是否覆盖声明，并用 `extensionCapabilitiesExpand` 判断新 Revision 是否扩大范围。旧批准若遗漏出站能力，恢复时暂停对应智能体挂载，等待重新批准。配置中的凭据字段跳过 Schema 校验并保留宿主写入的引用，`carryExtensionConfig` 在切换 Revision 时同样保留。Manifest 的 `requires.sdk` 超过当前 `EXTENSION_SDK_LEVEL` 时拒绝物化与导入。
 
 Revision 目录保存 `manifest.json`、`source/`、可选 `assets/`，以及用于并发发布校验的 `content.sha256` 和 `payload.sha256`。所有 Revision 使用 Manifest V7，`permissions` 为 `{ permissions, networkOrigins, host?, agent? }`，可选 `config` 为 `{ host?: { schema }, agent?: { schema } }`。`manifest.ts` 是唯一运行格式 Schema，Builder、Materializer 与导入共用，类型从 Schema 推导。Builder 校验 Manifest、CSS/SVG 声明和摘要后按 entrypoint 构建当前 Host/Client；除内联 SDK 外，导入和资源的真实路径都限于当前 Revision，拒绝绝对导入、相对越界与指向目录外的符号链接。Client CSS 必须是受作用域约束的 CSS Module；PostCSS 检查拒绝产品根选择器、裸全局选择器、`:global`、外部 URL、`@import` 和 `@font-face`，Server 交付时再把所有选择器固定到精确 Artifact 的 `data-host-ui-owner` 页面根。SVG 作为单色 mask 使用，拒绝脚本、样式、事件属性、外部引用及可嵌入内容。
 
