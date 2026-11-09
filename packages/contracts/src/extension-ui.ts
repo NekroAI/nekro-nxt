@@ -5,6 +5,7 @@ import {
   hostLayerAsCapabilities,
   EXTENSION_SDK_BASE_LEVEL,
   EXTENSION_FILES_SDK_LEVEL,
+  EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL,
   EXTENSION_OUTBOUND_SDK_LEVEL,
 } from './extension-capabilities.js'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageInstanceIdSchema } from './domain.js'
@@ -550,6 +551,9 @@ export type ExtensionDataHookName = keyof typeof EXTENSION_DATA_HOOK_PERMISSIONS
 export const requiredExtensionSdkLevel = (
   permissions: ExtensionPermissions | undefined,
 ): { readonly level: number; readonly capabilities: readonly string[] } => {
+  if (permissions?.agent?.members?.identities === true) {
+    return { level: EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL, capabilities: ['成员身份'] }
+  }
   const level14 = [
     permissions?.host?.files === undefined && permissions?.agent?.files === undefined ? undefined : '工作文件',
     permissions?.host?.assets?.read === undefined && permissions?.agent?.assets?.read === undefined

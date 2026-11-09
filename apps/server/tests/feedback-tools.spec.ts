@@ -2,6 +2,7 @@ import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '
 import { AssetService, CoreService } from '@nekro-nxt/core'
 import {
   AdmissionIdSchema,
+  ChannelEventIdSchema,
   EpisodeIdSchema,
   CommunityFeedbackCreateSchema,
   CommunityFeedbackSchema,
@@ -16,12 +17,14 @@ import { CommunityService } from '../src/community.ts'
 import { CommunityFeedbackService } from '../src/community-feedback.ts'
 import { LocalCredentialStore } from '../src/credentials.ts'
 import { FeedbackTurnOrigin, feedbackAdmissionOrigin } from '../src/feedback-tools.ts'
+import { ChannelTurnOrigin } from '../src/channel-turn-origin.ts'
 
 const finish = { name: 'finish_channel_turn', args: { outcome: 'no-response-needed', reason: '虚构反馈测试已完成。' } }
 const draft = { kind: 'bug', target: 'nxt', title: '样例列表刷新异常', body: '更改筛选后仍显示旧值。' }
 class FeedbackModel extends LlmAdapter {
   calls: GenerateOptions[] = []
   plan: Array<{ name: string; args: unknown }> = []
+  onCall: (() => Promise<void>) | undefined
   override providerInfo(provider: string) {
     return { id: provider, name: '反馈测试模型' }
   }
@@ -40,6 +43,7 @@ class FeedbackModel extends LlmAdapter {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     await Promise.resolve()
     this.calls.push(options)
+    await this.onCall?.()
     const ptc = options.tools?.some((tool) => tool.name === 'run_code')
     const planned = this.plan.splice(0, ptc ? this.plan.length : 1)
     if (planned.length === 0) planned.push(finish)
@@ -164,26 +168,29 @@ const setup = async (admin: boolean, codeRun = false) => {
     canAutoSubmit: () => true,
   })
   const model = new FeedbackModel()
-  const host = await DshHostRuntime.create({
-    sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
-    developmentWorkspaceRoot: path.join(directory, 'workspaces'),
-    codeRunNode: () => ({}),
-    communication: { sendMessage: () => Promise.reject(new Error('Unexpected message send.')) },
-    history: repository,
-    assets: repository,
-    assetService: new AssetService(repository, path.join(directory, 'assets')),
-    resolveAgentRevision: (id) => repository.getAgentRevision(id),
-    configureLlm: (context) => {
-      context.llm.registerAdapter(['fixture'], model)
-    },
-    feedback: { service: () => feedback, isAdminClientChannel: () => admin },
-  })
-  const sessionId = await host.createSession({
+  const createHost = () =>
+    DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      developmentWorkspaceRoot: path.join(directory, 'workspaces'),
+      codeRunNode: () => ({}),
+      communication: { sendMessage: () => Promise.reject(new Error('Unexpected message send.')) },
+      history: repository,
+      assets: repository,
+      assetService: new AssetService(repository, path.join(directory, 'assets')),
+      resolveAgentRevision: (id) => repository.getAgentRevision(id),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['fixture'], model)
+      },
+      feedback: { service: () => feedback, isAdminClientChannel: () => admin },
+    })
+  let host = await createHost()
+  const sessionInput = {
     episodeId: EpisodeIdSchema.parse('eps_feedback'),
     channelId: channel.id,
     agentId: agent.definition.id,
     agentRevisionId: agent.revision.id,
-  })
+  }
+  const sessionId = await host.createSession(sessionInput)
   const run = async (plan: typeof model.plan, inject = false) => {
     model.plan = plan
     const count = model.calls.length
@@ -193,6 +200,7 @@ const setup = async (admin: boolean, codeRun = false) => {
       admissionId: AdmissionIdSchema.parse(`adm_feedback${sequence}`),
       events: [event],
       mode: inject ? 'inject' : 'followup',
+      triggerEventId: event.id,
       replyRequired: false,
     })
     if (!inject) {
@@ -202,7 +210,9 @@ const setup = async (admin: boolean, codeRun = false) => {
     return event
   }
   return {
-    host,
+    get host() {
+      return host
+    },
     feedback,
     model,
     sent,
@@ -210,6 +220,11 @@ const setup = async (admin: boolean, codeRun = false) => {
     channel,
     inbound,
     sessionId,
+    restart: async () => {
+      await host.dispose()
+      host = await createHost()
+      expect(await host.createSession(sessionInput)).toBe(sessionId)
+    },
     dispose: async () => {
       await host.dispose()
       await feedback.dispose()
@@ -238,6 +253,85 @@ describe('feedback turn origin', () => {
     origin.begin(4, [{ id: 'discarded' }])
     expect(origin.requestedBy()).toBe('member')
   })
+})
+
+describe('channel turn origin', () => {
+  const first = ChannelEventIdSchema.parse('evt_FIRST')
+  const second = ChannelEventIdSchema.parse('evt_SECOND')
+  const source = (eventId: string, admissionMode = 'followup') => ({
+    source: { kind: 'nekro-nxt-channel', triggerEventId: eventId, admissionMode },
+  })
+
+  it('fixes the waking event across injections and rejects ambiguous or legacy sources', () => {
+    const origin = new ChannelTurnOrigin()
+    origin.begin(1, [source(second, 'inject'), source(first)])
+    expect(origin.current()).toEqual({ kind: 'channel-event', eventId: first })
+    expect(origin.current(2)).toEqual({ kind: 'unknown' })
+    origin.begin(1, [source(second)])
+    expect(origin.current()).toEqual({ kind: 'channel-event', eventId: first })
+    origin.begin(2, [source(second)])
+    expect(origin.current()).toEqual({ kind: 'channel-event', eventId: second })
+    origin.begin(3, [source(first), source(second)])
+    expect(origin.current()).toEqual({ kind: 'unknown' })
+    origin.begin(4, [{ source: { kind: 'nekro-nxt-channel', channelEventIds: [first] } }])
+    expect(origin.current()).toEqual({ kind: 'unknown' })
+    origin.begin(5, [{ source: { kind: 'nekro-nxt-host-event' } }])
+    expect(origin.current()).toEqual({ kind: 'self' })
+    origin.begin(6, [{ source: { kind: 'user' } }])
+    expect(origin.current()).toEqual({ kind: 'unknown' })
+    origin.begin(7, [{ source: { kind: 'runtime-context' } }])
+    expect(origin.current()).toEqual({ kind: 'unknown' })
+    origin.begin(8, [{ source: { kind: 'nekro-nxt-host-event' } }, source(first)])
+    expect(origin.current()).toEqual({ kind: 'channel-event', eventId: first })
+    origin.begin(9, [{ source: { kind: 'user' } }, source(first)])
+    expect(origin.current()).toEqual({ kind: 'unknown' })
+  })
+
+  it('restores the first-step origin from durable public events while later inputs arrive', async () => {
+    const f = await setup(false)
+    try {
+      let injected = false
+      let wake: ReturnType<ChannelTurnOrigin['current']> | undefined
+      f.model.onCall = async () => {
+        wake ??= f.host.turnTrigger(f.sessionId)
+        expect(f.host.turnTrigger(f.sessionId)).toEqual(wake)
+        if (!injected) {
+          injected = true
+          await f.run([], true)
+          expect(f.host.turnTrigger(f.sessionId)).toEqual(wake)
+        }
+      }
+      const event = await f.run([finish])
+      expect(wake).toEqual({ kind: 'channel-event', eventId: event.id })
+      expect(f.model.calls.length).toBeGreaterThan(1)
+      const events = f.host.sessionEvents(f.sessionId)
+      const turn = events.find((candidate) => candidate.type === 'turn/start')
+      expect(turn?.type).toBe('turn/start')
+      if (turn?.type !== 'turn/start') throw new Error('Missing fictional turn.')
+      const recovered = new ChannelTurnOrigin()
+      recovered.begin(turn.data.turn, [{ source: { kind: 'nekro-nxt-authoring-event' } }], events)
+      expect(recovered.current()).toEqual(wake)
+      const loading = new ChannelTurnOrigin()
+      loading.restore(turn.data.turn, [turn])
+      loading.begin(turn.data.turn, [source(event.id)])
+      expect(loading.current()).toEqual(wake)
+      f.model.onCall = undefined
+      const next = await f.run([finish])
+      expect(f.host.turnTrigger(f.sessionId)).toEqual({ kind: 'channel-event', eventId: next.id })
+      const interruptedHistory = f.host.sessionEvents(f.sessionId).filter((candidate) => candidate.type !== 'turn/end')
+      const nextTurn = interruptedHistory.findLast((candidate) => candidate.type === 'turn/start')
+      if (nextTurn?.type !== 'turn/start') throw new Error('Missing next fictional turn.')
+      const afterRestart = new ChannelTurnOrigin()
+      afterRestart.begin(nextTurn.data.turn, [], interruptedHistory)
+      expect(afterRestart.current()).toEqual({ kind: 'channel-event', eventId: next.id })
+      await f.restart()
+      expect(f.host.turnTrigger(f.sessionId)).toEqual({ kind: 'channel-event', eventId: next.id })
+      const afterColdStart = await f.run([finish])
+      expect(f.host.turnTrigger(f.sessionId)).toEqual({ kind: 'channel-event', eventId: afterColdStart.id })
+    } finally {
+      await f.dispose()
+    }
+  }, 60_000)
 })
 
 describe('feedback tools in the actual agent runtime', () => {

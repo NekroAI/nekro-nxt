@@ -1,0 +1,1 @@
+ALTER TABLE `admissions` ADD `trigger_event_id` text;

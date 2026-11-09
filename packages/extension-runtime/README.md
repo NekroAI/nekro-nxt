@@ -24,6 +24,8 @@ Manifest V7 中工具、工具视图与智能体/频道锚点面板属于智能�
 
 Manifest 的浏览器权限、`permissions.host` 与 `permissions.agent` 分别进入对应层的权限摘要；规范化时对域名、配置字段、存储作用域与上下文名称排序，并保留全部能力，包括出站消息的读取、修改、取消与超时策略。启用和恢复时 `permissionRequirement` 检查批准是否覆盖声明，并用 `extensionCapabilitiesExpand` 判断新 Revision 是否扩大范围。旧批准若遗漏出站能力，恢复时暂停对应智能体挂载，等待重新批准。配置中的凭据字段跳过 Schema 校验并保留宿主写入的引用，`carryExtensionConfig` 在切换 Revision 时同样保留。Manifest 的 `requires.sdk` 超过当前 `EXTENSION_SDK_LEVEL` 时拒绝物化与导入。
 
+SDK 16 的 `permissions.agent.members.identities: true` 是敏感权限，审批展示可读取平台账号并关联同一连接下的跨频道成员；新增此权限需要重新批准。未声明或未批准时，`context.current()`、`members.describe()`、历史查询和入站钩子的成员摘要均省略 `identityId` 与 `platformUserId`，各入站处理器使用自己的权限投影。动态试运行只读取基础成员摘要，真实身份在保存并批准启用后提供；自动运行设置不授予身份权限。`identityId` 只保证同一 Connection 下的稳定性；不同连接、不同平台不自动合并身份。`context.current().trigger` 使用宿主固定的本轮来源，沿用现有 SDK 的可选字段；`latestInbound` 继续表示调用时频道最近消息。
+
 Revision 目录保存 `manifest.json`、`source/`、可选 `assets/`，以及用于并发发布校验的 `content.sha256` 和 `payload.sha256`。所有 Revision 使用 Manifest V7，`permissions` 为 `{ permissions, networkOrigins, host?, agent? }`，可选 `config` 为 `{ host?: { schema }, agent?: { schema } }`。`manifest.ts` 是唯一运行格式 Schema，Builder、Materializer 与导入共用，类型从 Schema 推导。Builder 校验 Manifest、CSS/SVG 声明和摘要后按 entrypoint 构建当前 Host/Client；除内联 SDK 外，导入和资源的真实路径都限于当前 Revision，拒绝绝对导入、相对越界与指向目录外的符号链接。Client CSS 必须是受作用域约束的 CSS Module；PostCSS 检查拒绝产品根选择器、裸全局选择器、`:global`、外部 URL、`@import` 和 `@font-face`，Server 交付时再把所有选择器固定到精确 Artifact 的 `data-host-ui-owner` 页面根。SVG 作为单色 mask 使用，拒绝脚本、样式、事件属性、外部引用及可嵌入内容。
 
 `build.json` 是可丢弃缓存清单，只保存 `revisionId`、由固定 Builder/Node ABI/Revision digest 计算的 `buildKey` 和相对产物名；缓存目录和绝对产物路径由 Builder 推导，并在命中前检查产物文件仍存在。Verification 保留验证发生时的构建证据，产品快照和 Client Artifact 地址使用当前 Builder 对同一 Revision 计算出的 key；Builder 升级后会重建并切换地址，不把历史缓存 key 当成当前实现。损坏的 Manifest 会拒绝构建，损坏或不完整的缓存会重新构建。

@@ -16,6 +16,7 @@ import {
   EXTENSION_FETCH_MAX_BYTES,
   EXTENSION_FILES_DEFAULT_CACHE_QUOTA_BYTES,
   EXTENSION_FILES_DEFAULT_TEMP_QUOTA_BYTES,
+  EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL,
   EXTENSION_STORAGE_DEFAULT_QUOTA_BYTES,
   JsonValueSchema,
   type ExtensionCapabilities,
@@ -83,6 +84,8 @@ export interface NxtServiceBinding {
   readonly channelId: string
   /** The episode a call runs in, for `context.current().trigger`; channel sessions set it. */
   readonly episodeId?: () => string | undefined
+  /** Host-owned root Session identity; absent for hooks outside a model turn. */
+  readonly sessionId?: string
   /**
    * Approved capabilities of this layer; `undefined` means none. Host bindings carry host-layer capabilities in the
    * same shape. Dynamic runs read the current candidate's declaration.
@@ -103,6 +106,11 @@ export interface NxtServiceBinding {
    */
   readonly declaredSecrets: () => { readonly config: readonly string[]; readonly hostConfig: readonly string[] }
 }
+
+export const memberIdentitiesAllowed = (binding: NxtServiceBinding): boolean =>
+  binding.mode === 'activation' &&
+  (binding.sdk ?? 7) >= EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL &&
+  binding.capabilities()?.members?.identities === true
 
 const configRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonValue>> =>
   value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -208,7 +216,7 @@ export interface NxtServiceBackends {
   readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
   readonly members: {
-    describe(channelId: string, memberId: string): Promise<NxtMemberSummary | undefined>
+    describe(channelId: string, memberId: string, identities?: boolean): Promise<NxtMemberSummary | undefined>
   }
   readonly platform: {
     /** The Adapter of the channel, its raw-API support and the typed actions valid for this channel kind. */
@@ -240,9 +248,9 @@ export interface NxtServiceBackends {
   readonly history: {
     list(
       channelId: string,
-      options: { readonly limit: number; readonly before?: string },
+      options: { readonly limit: number; readonly before?: string; readonly identities?: boolean },
     ): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
-    search(channelId: string, query: string, limit: number): Promise<readonly NxtHistoryMessage[]>
+    search(channelId: string, query: string, limit: number, identities?: boolean): Promise<readonly NxtHistoryMessage[]>
   }
   readonly library: ExtensionLibrary
   /** Work files; dynamic runs and verification use a throwaway directory. */
@@ -1427,7 +1435,7 @@ export const createNxtHostService = (
       current: () => backends.callContext(binding),
     },
     members: {
-      describe: (memberId) => backends.members.describe(binding.channelId, memberId),
+      describe: (memberId) => backends.members.describe(binding.channelId, memberId, memberIdentitiesAllowed(binding)),
     },
     history: {
       async list(options) {
@@ -1436,13 +1444,14 @@ export const createNxtHostService = (
         return backends.history.list(binding.channelId, {
           limit,
           ...(options?.before === undefined ? {} : { before: options.before }),
+          identities: memberIdentitiesAllowed(binding),
         })
       },
       async search(query, options) {
         requireCapability(binding, 'history', 'history（读取频道聊天记录）')
         if (!query.trim()) throw new NxtCapabilityError('搜索内容不能为空。')
         const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100)
-        return backends.history.search(binding.channelId, query, limit)
+        return backends.history.search(binding.channelId, query, limit, memberIdentitiesAllowed(binding))
       },
     },
     platform: {

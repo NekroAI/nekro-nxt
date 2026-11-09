@@ -12,8 +12,12 @@ import { z } from 'zod'
  * long-running tools (`timeoutSeconds`, `execute(args, { signal, progress })`), media processing (`media`), command
  * profiles (`commands`) and speech to text (`speech`).
  * Level 15 adds downloads into work files (`files.fromUrl`).
+ * Level 16 adds declared member platform identities.
  */
-export const EXTENSION_SDK_LEVEL = 15
+export const EXTENSION_SDK_LEVEL = 16
+
+/** Declared and approved member platform identities. */
+export const EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL = 16
 
 /** `files.fromUrl` needs this level; it adds no declaration, so the host checks the level when it is called. */
 export const EXTENSION_DOWNLOAD_SDK_LEVEL = 15
@@ -54,6 +58,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 13, version: '0.7.0' },
   { level: 14, version: '0.8.0' },
   { level: 15, version: '0.8.1' },
+  { level: 16, version: '0.8.2' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
@@ -516,6 +521,10 @@ export const ExtensionCapabilitiesSchema = z
       .object({ read: z.literal(true) })
       .strict()
       .optional(),
+    members: z
+      .object({ identities: z.literal(true) })
+      .strict()
+      .optional(),
     inboundHook: ExtensionInboundHookCapabilitySchema.optional(),
     outbound: ExtensionOutboundCapabilitySchema.optional(),
     jobs: ExtensionJobsCapabilitySchema.optional(),
@@ -648,6 +657,7 @@ export const extensionCapabilitiesExpand = (
     return true
   }
   if (next.history !== undefined && previous?.history === undefined) return true
+  if (next.members?.identities === true && previous?.members?.identities !== true) return true
   const platformKey = ({ adapter, action }: { readonly adapter: string; readonly action: string }) =>
     `${adapter}:${action}`
   const previousActions = new Set((previous?.platform?.actions ?? []).map(platformKey))
@@ -837,6 +847,14 @@ export const summarizeExtensionCapabilities = (
   }
   if (capabilities.history !== undefined)
     items.push({ key: 'history', risk: 'normal', label: '读取当前频道的聊天记录' })
+  if (capabilities.members?.identities === true) {
+    items.push({
+      key: 'members.identities',
+      risk: 'sensitive',
+      label: '读取成员的平台账号和身份',
+      detail: '可关联同一连接的不同频道中的成员',
+    })
+  }
   const hook = capabilities.inboundHook
   if (hook !== undefined) {
     const effects = [

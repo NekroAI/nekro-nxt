@@ -13,6 +13,7 @@ import {
   type MessagePart,
 } from '@nekro-nxt/contracts'
 import type { CoreRepository } from '@nekro-nxt/core'
+import { SELF_PLACEHOLDER_PLATFORM_USER_ID } from '@nekro-nxt/core'
 import type { ChannelMemberRelations } from './session-image-context.js'
 import { z } from 'zod'
 import type {
@@ -28,6 +29,7 @@ import type {
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
 import {
   bindingSecretReference,
+  memberIdentitiesAllowed,
   type NxtRequestSecret,
   type NxtServiceBackends,
   type NxtServiceBinding,
@@ -60,7 +62,8 @@ export type NamedCredentialResolver = (
 ) => { readonly value: string; readonly usage: CredentialUsage; readonly domains: readonly string[] } | undefined
 
 export interface NxtProductFacts {
-  readonly history: ChannelHistoryRepository & Pick<CoreRepository, 'getChannel' | 'getChannelMember'>
+  readonly history: ChannelHistoryRepository &
+    Pick<CoreRepository, 'getChannel' | 'getChannelMember' | 'getPlatformIdentity' | 'getChannelEvent'>
   readonly getConnectionName: (connectionId: string) => string | undefined
   readonly getAgentName: (agentId: string) => string
   readonly createAsset: (channelId: ChannelId, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
@@ -73,8 +76,39 @@ export interface NxtProductFacts {
   readonly members?: ChannelMemberRelations
   /** The platform user id a connection reported as its own account. */
   readonly accountPlatformUserId?: (connectionId: string) => string | undefined
-  /** What started one episode's current turn; absent hosts give extensions no trigger. */
-  readonly turnTrigger?: (episodeId: string) => TurnTrigger | undefined
+  /** The fixed root-turn origin and requester, never the channel's latest input. */
+  readonly turnTrigger?: (binding: NxtServiceBinding) => TurnTrigger | undefined
+}
+
+/** One channel-bound member projection; account ids are included only after declaration and approval. */
+export const projectNxtMember = (
+  facts: NxtProductFacts,
+  channelId: string,
+  memberId: string | undefined,
+  identities = false,
+): NxtMemberSummary | undefined => {
+  const parsed = ChannelMemberIdSchema.safeParse(memberId)
+  if (!parsed.success) return undefined
+  const record = facts.history.getChannelMember(parsed.data)
+  if (record?.channelId !== channelId) return undefined
+  const relation = facts.members?.describe(parsed.data)
+  const channel = facts.history.getChannel(record.channelId)
+  const identity = identities ? facts.history.getPlatformIdentity(record.platformIdentityId) : undefined
+  const knownIdentity =
+    identity?.connectionId === channel?.connectionId && identity?.platformUserId !== SELF_PLACEHOLDER_PLATFORM_USER_ID
+      ? identity
+      : undefined
+  return {
+    memberId: record.id,
+    ...(record.displayName === undefined ? {} : { displayName: record.displayName }),
+    ...(knownIdentity === undefined
+      ? {}
+      : { identityId: knownIdentity.id, platformUserId: knownIdentity.platformUserId }),
+    ...(relation?.kind === 'self' ? { self: true as const } : {}),
+    ...(relation?.kind === 'local-agent'
+      ? { localAgent: relation.agentName === undefined ? {} : { name: relation.agentName } }
+      : {}),
+  }
 }
 
 const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMemberSummary | undefined => {
@@ -96,11 +130,16 @@ const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMember
  * `context.current().trigger`: an inbound message, or a finished wait. Other control events (scheduled tasks, jobs,
  * the console opening a turn) give none.
  */
-const callTrigger = (facts: NxtProductFacts, found: TurnTrigger | undefined): NxtTurnTrigger | undefined => {
+const callTrigger = (
+  facts: NxtProductFacts,
+  found: TurnTrigger | undefined,
+  channelId: string,
+  identities: boolean,
+): NxtTurnTrigger | undefined => {
   const event = found?.event
-  if (found === undefined || event === undefined) return undefined
+  if (found === undefined || event?.channelId !== channelId) return undefined
   if (event.kind === 'control' && event.facts?.['responseWait'] === undefined) return undefined
-  const sender = member(facts, found.senderMemberId)
+  const sender = projectNxtMember(facts, channelId, found.senderMemberId, identities)
   return {
     kind: event.kind === 'control' ? 'wait-ended' : 'message',
     ...(sender === undefined ? {} : { sender }),
@@ -155,8 +194,14 @@ const decodeCursor = (cursor: string): { readonly occurredAt: number; readonly s
   throw new TypeError('history.list 的 before 必须是上一页返回的 cursor。')
 }
 
-const historyMessage = (facts: NxtProductFacts, entry: ChannelHistoryEntry): NxtHistoryMessage => {
-  const sender = entry.source === 'channel-event' ? member(facts, entry.senderMemberId) : undefined
+const historyMessage = (
+  facts: NxtProductFacts,
+  channelId: string,
+  entry: ChannelHistoryEntry,
+  identities = false,
+): NxtHistoryMessage => {
+  const sender =
+    entry.source === 'channel-event' ? projectNxtMember(facts, channelId, entry.senderMemberId, identities) : undefined
   return {
     logicalMessageId: entry.logicalMessageId,
     direction: entry.source === 'channel-event' ? 'inbound' : 'outbound',
@@ -245,11 +290,11 @@ export const createNxtProductBackends = (
     },
   },
   members: {
-    describe: (channelId, memberId) => {
+    describe: (channelId, memberId, identities) => {
       const parsed = ChannelMemberIdSchema.safeParse(memberId)
       if (!parsed.success || facts.history.getChannelMember(parsed.data)?.channelId !== channelId)
         return Promise.resolve(undefined)
-      return Promise.resolve(member(facts, parsed.data))
+      return Promise.resolve(projectNxtMember(facts, channelId, parsed.data, identities))
     },
   },
   secret: async (binding: NxtServiceBinding, key: string) =>
@@ -286,9 +331,12 @@ export const createNxtProductBackends = (
       .listChannelHistory(channelId, { limit: 20 })
       .find((entry) => entry.source === 'channel-event' && isConversationEntry(entry))
     const connectionName = facts.getConnectionName(channel.connectionId)
-    const sender = latest?.source === 'channel-event' ? member(facts, latest.senderMemberId) : undefined
-    const episodeId = binding.episodeId?.()
-    const trigger = episodeId === undefined ? undefined : callTrigger(facts, facts.turnTrigger?.(episodeId))
+    const identities = memberIdentitiesAllowed(binding)
+    const sender =
+      latest?.source === 'channel-event'
+        ? projectNxtMember(facts, channelId, latest.senderMemberId, identities)
+        : undefined
+    const trigger = callTrigger(facts, facts.turnTrigger?.(binding), channelId, identities)
     return Promise.resolve({
       agent: { id: binding.agentId, name: facts.getAgentName(binding.agentId) },
       channel: {
@@ -319,19 +367,21 @@ export const createNxtProductBackends = (
         limit: options.limit,
         ...(options.before === undefined ? {} : { before: decodeCursor(options.before) }),
       })
-      const messages = entries.filter(isConversationEntry).map((entry) => historyMessage(facts, entry))
+      const messages = entries
+        .filter(isConversationEntry)
+        .map((entry) => historyMessage(facts, channelId, entry, options.identities))
       const last = entries.at(-1)
       return Promise.resolve({
         messages,
         ...(last === undefined || entries.length < options.limit ? {} : { next: encodeCursor(last) }),
       })
     },
-    search(channelId, query, limit) {
+    search(channelId, query, limit, identities) {
       const hits = facts.history
         .searchChannelHistory(ChannelIdSchema.parse(channelId), query, { limit })
         .map((hit) => hit.entry)
         .filter(isConversationEntry)
-        .map((entry) => historyMessage(facts, entry))
+        .map((entry) => historyMessage(facts, channelId, entry, identities))
       return Promise.resolve(hits)
     },
   },

@@ -48,6 +48,7 @@ import {
   mountFeedbackTools,
 } from './feedback-tools.js'
 import type { CommunityFeedbackService } from './community-feedback.js'
+import { ChannelTurnOrigin, type ChannelTurnTrigger } from './channel-turn-origin.js'
 import { createWorkspaceFileSystem } from './workspace-file-system.js'
 import { mountWorkspaceFileTools } from './workspace-file-tools.js'
 import type { ActiveAddonProgram } from './addons.js'
@@ -378,6 +379,8 @@ declare module '@deepseek-ai/dsh-llm' {
       readonly kind: 'nekro-nxt-channel'
       readonly admissionId: string
       readonly channelEventIds: readonly string[]
+      readonly admissionMode?: 'followup' | 'inject'
+      readonly triggerEventId?: string
     }
     'nekro-nxt-visual-restore': {
       readonly kind: 'nekro-nxt-visual-restore'
@@ -3377,6 +3380,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #channelPrompts: DshHostRuntimeOptions['channelPrompts']
   readonly #feedback: DshHostRuntimeOptions['feedback']
   readonly #feedbackTurns = new Map<string, FeedbackTurnOrigin>()
+  readonly #turnOrigins = new Map<string, ChannelTurnOrigin>()
   readonly #contextPolicy: (channelId: ChannelId) => ChannelContextPolicy
   readonly #imageContext: SessionImageContext
   readonly #dynamic: DynamicAuthoringRuntime
@@ -3563,6 +3567,7 @@ export class DshHostRuntime implements AgentSessionDriver {
                   displayName: described.displayName,
                   channelId,
                   episodeId: () => this.#sessions.get(sessionId)?.episodeId,
+                  sessionId,
                   capabilities: () => described.capabilities,
                   config: () => config,
                   hostConfig: () => hostConfig,
@@ -4421,6 +4426,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         )
       }
       const feedbackOrigin = new FeedbackTurnOrigin()
+      const turnOrigin = new ChannelTurnOrigin()
       agentContext.effect(() => {
         const record = this.#sessions.register({
           sessionId,
@@ -4429,9 +4435,11 @@ export class DshHostRuntime implements AgentSessionDriver {
           episodeId: input.episodeId,
         })
         this.#feedbackTurns.set(sessionId, feedbackOrigin)
+        this.#turnOrigins.set(sessionId, turnOrigin)
         return () => {
           this.#sessions.remove(sessionId, record)
           this.#feedbackTurns.delete(sessionId)
+          this.#turnOrigins.delete(sessionId)
         }
       }, 'nekro-nxt: product Agent ownership')
       const feedbackTools = mountFeedbackTools(agentContext.tools, {
@@ -4451,6 +4459,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       agentContext.on('agent/pre-step', async ({ agent, turn, messages }, next) => {
         if (agent.id === sessionId) {
           feedbackOrigin.begin(turn, messages)
+          turnOrigin.begin(turn, messages, sessionEvents(agent.session))
         }
         return next()
       })
@@ -4677,6 +4686,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               displayName: '创造中的扩展',
               channelId: input.channelId,
               episodeId: () => input.episodeId,
+              sessionId,
               capabilities: () => runner.activeCandidateCapabilities(),
               config: () => candidateConfig('agent'),
               hostConfig: () => candidateConfig('host'),
@@ -4737,40 +4747,52 @@ export class DshHostRuntime implements AgentSessionDriver {
         const testConfigByPackage = new Map<string, Readonly<Record<string, JsonValue>>>()
         if (this.#authoring) {
           runner.configureAuthoringLedger({
-            definition: async (_request, receipt, snapshot) => {
-              const initiatingEventId = this.#authoring?.resolveInitiatingEvent(input.episodeId)
-              if (!initiatingEventId) throw new Error('动态创造任务缺少发起消息。')
-              const revise = reviseByPackage.get(receipt.packageId)
-              reviseByPackage.delete(receipt.packageId)
-              await this.#authoring?.service.recordDefinition({
-                ...(revise === undefined ? {} : { revise }),
-                agentId: revision.agentId,
-                channelId: input.channelId,
-                episodeId: input.episodeId,
-                initiatingEventId,
-                approvalPolicy:
-                  this.#authoring?.governance?.()?.runsWithoutAsking(revision.agentId) === true ||
-                  revision.dynamicClientApprovalPolicy === 'automatic'
-                    ? 'fully-automatic'
-                    : 'risk-stable',
-                pluginKey: receipt.pluginId,
-                runnerPackageId: receipt.packageId,
-                snapshot,
-              })
-              const testValues = testConfigByPackage.get(receipt.packageId)
-              testConfigByPackage.delete(receipt.packageId)
-              const task =
-                testValues === undefined
-                  ? undefined
-                  : this.#authoring?.service.taskForRunner(input.episodeId, receipt.pluginId)
-              if (testValues !== undefined && task !== undefined) {
-                // Checked when the tool ran; a credential removed since then leaves the values as they were.
-                await this.#authoring
-                  ?.governance?.()
-                  ?.setTestConfig(task.id, testValues)
-                  .catch((error: unknown) => {
-                    console.warn('[nekro-nxt] 测试配置没有保存：', error instanceof Error ? error.message : error)
-                  })
+            definition: (request, receipt, snapshot) => {
+              const origin = this.turnTrigger(sessionId)
+              const existing =
+                origin.kind === 'self' && request.plugin.kind === 'existing'
+                  ? this.#authoring?.service.taskForRunner(input.episodeId, receipt.pluginId)
+                  : undefined
+              const initiatingEventId =
+                origin.kind === 'channel-event'
+                  ? this.#authoring?.resolveInitiatingEvent(input.episodeId)
+                  : existing?.agentId === revision.agentId && existing.channelId === input.channelId
+                    ? existing.initiatingEventId
+                    : undefined
+              return async () => {
+                if (!initiatingEventId) throw new Error('动态创造任务缺少发起消息。')
+                const revise = reviseByPackage.get(receipt.packageId)
+                reviseByPackage.delete(receipt.packageId)
+                await this.#authoring?.service.recordDefinition({
+                  ...(revise === undefined ? {} : { revise }),
+                  agentId: revision.agentId,
+                  channelId: input.channelId,
+                  episodeId: input.episodeId,
+                  initiatingEventId,
+                  approvalPolicy:
+                    this.#authoring?.governance?.()?.runsWithoutAsking(revision.agentId) === true ||
+                    revision.dynamicClientApprovalPolicy === 'automatic'
+                      ? 'fully-automatic'
+                      : 'risk-stable',
+                  pluginKey: receipt.pluginId,
+                  runnerPackageId: receipt.packageId,
+                  snapshot,
+                })
+                const testValues = testConfigByPackage.get(receipt.packageId)
+                testConfigByPackage.delete(receipt.packageId)
+                const task =
+                  testValues === undefined
+                    ? undefined
+                    : this.#authoring?.service.taskForRunner(input.episodeId, receipt.pluginId)
+                if (testValues !== undefined && task !== undefined) {
+                  // Checked when the tool ran; a credential removed since then leaves the values as they were.
+                  await this.#authoring
+                    ?.governance?.()
+                    ?.setTestConfig(task.id, testValues)
+                    .catch((error: unknown) => {
+                      console.warn('[nekro-nxt] 测试配置没有保存：', error instanceof Error ? error.message : error)
+                    })
+                }
               }
             },
             beforeRun: (pluginId) => {
@@ -5068,6 +5090,12 @@ export class DshHostRuntime implements AgentSessionDriver {
           setup,
         })
     this.#sessions.require(sessionId).handle = handle
+    const restoredAgent = this.#context.agents.get(sessionId)
+    const restoredEvents = restoredAgent === undefined ? [] : sessionEvents(restoredAgent.session)
+    const restoredTurn = restoredEvents.findLast((event) => event.type === 'turn/start')
+    if (restoredTurn?.type === 'turn/start') {
+      this.#turnOrigins.get(sessionId)?.restore(restoredTurn.data.turn, restoredEvents)
+    }
     for (const recovered of recoveredAuthoringPackages) {
       if (!recovered.shouldRun) continue
       const run = this.runDynamicPackage(sessionId, recovered.pluginId, recovered.packageId, 'run')
@@ -5248,6 +5276,8 @@ export class DshHostRuntime implements AgentSessionDriver {
         kind: 'nekro-nxt-channel',
         admissionId: input.admissionId,
         channelEventIds: input.events.map(({ id }) => id),
+        admissionMode: input.mode,
+        ...(input.triggerEventId === undefined ? {} : { triggerEventId: input.triggerEventId }),
       },
     }) satisfies UserMessage
     this.#channelReplyGuard.rememberAdmission(agent, input.admissionId, input.replyRequired)
@@ -6059,6 +6089,25 @@ export class DshHostRuntime implements AgentSessionDriver {
   subscribeChannelRuntime(listener: (channelId: ChannelId) => void): () => void {
     this.#assertActive()
     return this.#runtimeProjection.subscribeChannelRuntime(listener)
+  }
+
+  /** The immutable wake provenance of the live turn, reconstructed from public Session facts after restart. */
+  turnTrigger(dshSessionId: string | undefined): ChannelTurnTrigger {
+    if (dshSessionId === undefined) return { kind: 'unknown' }
+    const agent = this.#context.agents.get(SessionId(dshSessionId))
+    const turn =
+      agent === undefined ? undefined : sessionEvents(agent.session).findLast((event) => event.type === 'turn/start')
+    return (
+      this.#turnOrigins.get(dshSessionId)?.current(turn?.type === 'turn/start' ? turn.data.turn : undefined) ?? {
+        kind: 'unknown',
+      }
+    )
+  }
+
+  admissionMode(dshSessionId: string): 'followup' | 'inject' {
+    return this.sessionStatus(dshSessionId) === 'running' && this.turnTrigger(dshSessionId).kind === 'channel-event'
+      ? 'inject'
+      : 'followup'
   }
 
   sessionEvents(dshSessionId: string) {

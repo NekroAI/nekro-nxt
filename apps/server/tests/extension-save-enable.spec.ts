@@ -408,6 +408,23 @@ describe('save with enable', () => {
         .poll(() => runtime.repository.listAuthoringTasks(entity.agentId).find((t) => t.kind === 'revise'), POLL)
         .toBeDefined()
       const revise = runtime.repository.listAuthoringTasks(entity.agentId).find((t) => t.kind === 'revise')!
+      expect(revise.initiatingEventId).not.toBe(task.initiatingEventId)
+      expect(
+        runtime.repository
+          .getChannelEvent(revise.initiatingEventId)
+          ?.parts.some((part) => part.type === 'text' && part.text.includes('#revise-weather')),
+      ).toBe(true)
+      expect(
+        runtime.host
+          .sessionEvents(sessionId)
+          .some(
+            (event) =>
+              event.type === 'user/message' &&
+              event.data.source.kind === 'nekro-nxt-channel' &&
+              event.data.source.admissionMode === 'followup' &&
+              event.data.source.triggerEventId === revise.initiatingEventId,
+          ),
+      ).toBe(true)
       await expect.poll(() => runtime.host.sessionStatus(sessionId), POLL).toBe('idle')
       const changed = runtime.host.defineDynamicAuthoringPackage(sessionId, {
         plugin: { kind: 'existing', pluginId: revise.pluginKey },
@@ -422,6 +439,7 @@ describe('save with enable', () => {
       await expect
         .poll(() => runtime.repository.listAuthoringAttempts(revise.id).at(-1)?.runnerPackageId, POLL)
         .toBe(changed.packageId)
+      expect(runtime.repository.getAuthoringTask(revise.id)?.initiatingEventId).toBe(revise.initiatingEventId)
       await expect(
         runtime.host.runDynamicPackage(sessionId, revise.pluginKey, changed.packageId, 'run'),
       ).resolves.toMatchObject({ ok: true, status: 'running' })

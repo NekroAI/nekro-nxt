@@ -289,7 +289,8 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
     const agent = this.#runtime.repository.getAgent(agentId)
     if (agent?.revision.capabilities.extensionRequesters !== 'admins') return { allowed: true as const }
     // A turn nobody asked for (the agent woke up on its own) continues work an administrator allowed earlier.
-    return this.requester(agentId, episodeId).kind === 'member'
+    const requester = this.requester(agentId, episodeId)
+    return requester.kind === 'member' || requester.kind === 'unknown'
       ? {
           allowed: false as const,
           reason: '这个智能体只接受 NekroNXT 管理员提出的扩展制作和修改；请礼貌地告诉对方需要管理员来提。',
@@ -297,17 +298,21 @@ export class ExtensionGovernanceTools implements ExtensionGovernanceToolPort {
       : { allowed: true as const }
   }
 
-  requester(_agentId: AgentId, episodeId: EpisodeId): TurnRequester {
+  requester(agentId: AgentId, episodeId: EpisodeId): TurnRequester {
     const runtime = this.#runtime
+    const episode = runtime.repository.getEpisode(episodeId)
+    if (episode?.agentId !== agentId) return { kind: 'unknown' }
     return turnTriggerOf(
       {
         repository: runtime.repository,
+        internalConnectionId: runtime.internalConnectionId,
         isAdministrator: (connectionId, platformUserId) =>
           runtime.administrators.isAdministrator(connectionId, platformUserId),
         platformUserId: (connectionId, channelId, memberId) =>
           runtime.core.resolveChannelMemberIdentity(connectionId, channelId, memberId)?.platformUserId,
       },
       episodeId,
+      runtime.host.turnTrigger(episode.dshSessionId),
     ).requester
   }
 

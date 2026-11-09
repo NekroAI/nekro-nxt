@@ -1933,7 +1933,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
       platformChannelId: 'authoring-delete',
       kind: 'internal',
     })
-    const initiatingEventId = core.appendInbound({
+    const initiatingEvent = core.appendInbound({
       connectionId: connection.id,
       channelId: channel.id,
       adapterKey: 'fixture-alpha',
@@ -1943,7 +1943,8 @@ describe('DSH Host and internal Channel vertical slice', () => {
       platformTimestamp: 901,
       receivedAt: 901,
       dedupeKey: 'authoring-delete-open',
-    }).event.id
+    }).event
+    const initiatingEventId = initiatingEvent.id
     const episodeId = EpisodeIdSchema.parse('eps_AUTHORINGDELETE')
     repository.createEpisode({
       id: episodeId,
@@ -1985,6 +1986,16 @@ describe('DSH Host and internal Channel vertical slice', () => {
         agentId: created.definition.id,
         agentRevisionId: created.revision.id,
       })
+      await host.admit({
+        dshSessionId: sessionId,
+        admissionId: AdmissionIdSchema.parse('adm_AUTHORINGDELETE'),
+        events: [initiatingEvent],
+        mode: 'followup',
+        triggerEventId: initiatingEventId,
+        replyRequired: false,
+      })
+      await host.whenIdle(sessionId)
+      expect(host.turnTrigger(sessionId)).toEqual({ kind: 'channel-event', eventId: initiatingEventId })
       const receipt = host.defineDynamicAuthoringPackage(sessionId, {
         plugin: { kind: 'new', idPrefix: 'delete' },
         name: '删除生命周期探针',

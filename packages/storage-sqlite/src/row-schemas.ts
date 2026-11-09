@@ -208,6 +208,7 @@ export const EpisodeHandoffEventRowSchema = createSelectSchema(episodeHandoffEve
 export const AdmissionRowSchema = createSelectSchema(admissions, {
   id: AdmissionIdSchema,
   episodeId: EpisodeIdSchema,
+  triggerEventId: ChannelEventIdSchema.nullable(),
 })
 export const AdmissionEventRowSchema = createSelectSchema(admissionEvents, {
   admissionId: AdmissionIdSchema,

@@ -57,6 +57,7 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
         }),
     ...(capabilities.models === undefined ? {} : { models: capabilities.models }),
     ...(capabilities.history === undefined ? {} : { history: capabilities.history }),
+    ...(capabilities.members === undefined ? {} : { members: capabilities.members }),
     ...(capabilities.llm === undefined ? {} : { llm: capabilities.llm }),
     ...(capabilities.platform === undefined
       ? {}

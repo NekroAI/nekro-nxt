@@ -161,6 +161,7 @@ export function createRuntimeRepository(
       episodeId: row.episodeId,
       eventIds,
       mode: row.mode,
+      ...(row.triggerEventId === null ? {} : { triggerEventId: row.triggerEventId }),
       state: row.state,
       ...(row.dshMessageId === null ? {} : { dshMessageId: row.dshMessageId }),
       createdAt: row.createdAt,
@@ -469,6 +470,9 @@ export function createRuntimeRepository(
     },
     createAdmission(record): void {
       if (record.eventIds.length === 0) throw new Error('Admission requires at least one Event.')
+      if (record.triggerEventId !== undefined && !record.eventIds.includes(record.triggerEventId)) {
+        throw new Error('Admission trigger must belong to its Events.')
+      }
       database.transaction(
         (tx) => {
           tx.insert(admissions)
@@ -476,6 +480,7 @@ export function createRuntimeRepository(
               id: record.id,
               episodeId: record.episodeId,
               mode: record.mode,
+              ...(record.triggerEventId === undefined ? {} : { triggerEventId: record.triggerEventId }),
               state: record.state,
               ...(record.dshMessageId === undefined ? {} : { dshMessageId: record.dshMessageId }),
               createdAt: record.createdAt,

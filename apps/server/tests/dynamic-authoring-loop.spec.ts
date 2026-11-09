@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { HostApiContracts, type ExtensionCapabilities } from '@nekro-nxt/contracts'
 import { NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE } from '@nekro-nxt/extension-sdk'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -776,6 +776,195 @@ describe('dynamic authoring closed loop', () => {
     }
   })
 
+  it('shares the current turn trigger between approved dynamic prompt and tools across consecutive turns (#156)', async () => {
+    class TriggerModel extends QuietModel {
+      plan: Array<{ name: string; args: unknown }> = []
+      readonly probes: string[] = []
+      override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+        const planned = this.plan.shift()
+        if (planned === undefined) {
+          yield* super.stream(options)
+          return
+        }
+        this.requests.push(options)
+        const id = ToolCallId(`trigger-call-${this.requests.length}`)
+        if (planned.name === 'turn_trigger_probe') this.probes.push(id)
+        const argumentsText = JSON.stringify(planned.args)
+        yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+        yield { type: 'tool-call-delta', index: 0, id, name: planned.name, argumentsDelta: argumentsText }
+        yield {
+          type: 'block-end',
+          index: 0,
+          block: { type: 'tool-call', id, name: planned.name, arguments: argumentsText },
+        }
+        yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      }
+    }
+    const model = new TriggerModel()
+    const { runtime, entity, dshSessionId } = await startAuthoringSession(model)
+    const host = `let cached = null
+let cachedSender = null
+let hookSender = null
+let hookMember = null
+harness.onInbound(async (message, nxt) => {
+  hookSender = message.sender ?? null
+  hookMember = message.sender ? (await nxt.members.describe(message.sender.memberId)) ?? null : null
+  return undefined
+})
+return {
+  inject: ['tools', 'nxt'],
+  apply(ctx) {
+    ctx.nxt.prompt.dynamic('turn-trigger', async ({ context }) => {
+      cached = context.trigger?.message?.logicalMessageId ?? null
+      cachedSender = context.trigger?.sender?.memberId ?? null
+      return '当前触发消息：' + (cached ?? '来源缺省')
+    })
+    harness.registerTool(ctx, harness.defineTool({
+      name: 'turn_trigger_probe',
+      description: 'Read the trusted turn trigger from the prompt and tool context.',
+      parameters: {},
+      output: { schema: { type: 'json' }, render(_args, value) { return [{ type: 'text', text: JSON.stringify(value) }] } },
+      async execute() {
+        const current = (await ctx.nxt.context.current()).trigger
+        return { cached, current: current?.message?.logicalMessageId ?? null, cachedSender, currentSender: current?.sender?.memberId ?? null, hookSender, hookMember }
+      }
+    }))
+  }
+}`
+    try {
+      await runtime.host.whenIdle(dshSessionId)
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'trig' },
+        name: '轮次来源探针',
+        purpose: '验证提示词与工具在每轮共享同一条触发消息。',
+        code: { host },
+        resources: {},
+        permissions: {
+          permissions: [],
+          networkOrigins: [],
+          agent: {
+            members: { identities: true },
+            inboundHook: { reads: 'all', mayHide: false, mayForceTrigger: false, timeoutMs: 1000 },
+            context: [{ name: 'turn-trigger', kind: 'dynamic', maxChars: 200 }],
+          },
+        },
+        contributions: [],
+      })
+      await runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      const saved = await runtime.authoring.save({
+        taskId: task.id,
+        attemptId: attempt.id,
+        displayName: '轮次来源探针',
+        slug: 'turn-trigger-probe',
+        description: '读取当前轮的触发消息。',
+      })
+      expect(runtime.extensionService.revisionManifest(saved.revision)?.requires?.sdk).toBe(16)
+      const requirement = runtime.extensions.agentRequirement(entity.agentId, saved.extension.id, saved.revision.id)
+      expect(requirement.approvalRequired).toBe(true)
+      await expect(
+        runtime.extensions.activate({
+          agentId: entity.agentId,
+          extensionId: saved.extension.id,
+          revisionId: saved.revision.id,
+        }),
+      ).rejects.toThrow('permission-approval-required')
+      await runtime.extensions.activate({
+        agentId: entity.agentId,
+        extensionId: saved.extension.id,
+        revisionId: saved.revision.id,
+        permissionApproval: { permissionDigest: requirement.permissionDigest },
+      })
+      await runtime.host.whenIdle(dshSessionId)
+      const senders = ['example-first-member', 'example-second-member'].map(
+        (platformUserId, index) =>
+          runtime.core.observeChannelMember({
+            connectionId: runtime.internalConnectionId,
+            channelId: entity.channelId,
+            platformUserId,
+            displayName: `示例成员${index + 1}`,
+            observedAt: 100 + index,
+          }).member,
+      )
+      const observations: {
+        expected: {
+          messageId: string
+          senderId: string
+          member: { memberId: string; displayName?: string; identityId: string; platformUserId: string }
+        }
+        value: unknown
+        request: GenerateOptions
+      }[] = []
+      for (const [index, sender] of senders.entries()) {
+        const requestsBefore = model.requests.length
+        const eventsBefore = runtime.host.sessionEvents(dshSessionId).length
+        model.plan = [
+          { name: 'turn_trigger_probe', args: {} },
+          { name: 'finish_channel_turn', args: { outcome: 'no-response-needed', reason: '虚构来源测试完成。' } },
+        ]
+        const posted = await runtime.internalChannel.postMessage({
+          channelId: entity.channelId,
+          clientEventId: `trigger-round-${index + 1}`,
+          senderMemberId: sender.id,
+          parts: [{ type: 'text', text: `验证第${index + 1}轮来源。` }],
+        })
+        await runtime.host.whenIdle(dshSessionId)
+        const event = runtime.repository.getChannelEvent(posted.channelEventId)!
+        const probeId = model.probes.at(-1)
+        const result = runtime.host
+          .sessionEvents(dshSessionId)
+          .slice(eventsBefore)
+          .find(
+            (candidate) => candidate.type === 'tool/result' && String(candidate.data.message.toolCallId) === probeId,
+          )
+        if (result?.type !== 'tool/result') throw new Error('Expected the turn trigger probe result.')
+        expect(result.data.message.isError).not.toBe(true)
+        const text = result.data.message.content
+          .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+          .join('')
+        const request = model.requests[requestsBefore]
+        if (request === undefined) throw new Error('Expected the model request for the new turn.')
+        observations.push({
+          expected: {
+            messageId: event.logicalMessageId,
+            senderId: sender.id,
+            member: {
+              memberId: sender.id,
+              ...(sender.displayName === undefined ? {} : { displayName: sender.displayName }),
+              identityId: sender.platformIdentityId,
+              platformUserId: runtime.repository.getPlatformIdentity(sender.platformIdentityId)!.platformUserId,
+            },
+          },
+          value: JSON.parse(text) as unknown,
+          request,
+        })
+      }
+      expect(observations[0]?.expected.messageId).not.toBe(observations[1]?.expected.messageId)
+      expect(observations[0]?.expected.senderId).not.toBe(observations[1]?.expected.senderId)
+      for (const observation of observations) {
+        const { messageId, senderId, member } = observation.expected
+        expect(observation.value).toEqual({
+          cached: messageId,
+          current: messageId,
+          cachedSender: senderId,
+          currentSender: senderId,
+          hookSender: member,
+          hookMember: member,
+        })
+        const prompt = [
+          observation.request.system ?? '',
+          ...observation.request.messages.flatMap((message) =>
+            message.content.flatMap((block) => (block.type === 'text' ? [block.text] : [])),
+          ),
+        ].join('\n')
+        expect(prompt).toContain(`当前触发消息：${messageId}`)
+      }
+    } finally {
+      await runtime.dispose()
+    }
+  }, 60_000)
+
   it('verifies an inbound hook in the dynamic run and hides matching messages once enabled', async () => {
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
     const host = `harness.onInbound(async (message, nxt) => {
@@ -1437,8 +1626,29 @@ return {
     }
   })
 
-  it('wakes the Agent with the reason when the interface preview calls a failing Host RPC', async () => {
-    const model = new QuietModel()
+  it('wakes the Agent after a failing Host RPC and keeps the original requester when it revises the same task', async () => {
+    class RepairModel extends QuietModel {
+      nextDefinition: Readonly<Record<string, unknown>> | undefined
+      defineCallId: string | undefined
+      override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+        const definition = this.nextDefinition
+        if (definition === undefined) {
+          yield* super.stream(options)
+          return
+        }
+        this.nextDefinition = undefined
+        this.requests.push(options)
+        const id = ToolCallId(`repair-call-${this.requests.length}`)
+        this.defineCallId = id
+        const name = 'nekro_nxt_extension_define'
+        const argumentsText = JSON.stringify(definition)
+        yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+        yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: argumentsText }
+        yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: argumentsText } }
+        yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      }
+    }
+    const model = new RepairModel()
     const { runtime, dshSessionId } = await startAuthoringSession(model)
     try {
       const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
@@ -1487,7 +1697,19 @@ return {
         pluginRunId: hostHalf.pluginRunId,
       })
       await runtime.host.waitUntilSafe(runtime.repository.listAuthoringTasks()[0]!.agentId)
+      await runtime.host.whenIdle(dshSessionId)
+      const task = runtime.repository.listAuthoringTasks()[0]!
+      const initiatingEventId = task.initiatingEventId
       const requestsBefore = model.requests.length
+      const eventsBefore = runtime.host.sessionEvents(dshSessionId).length
+      const repairedHost = "harness.handle('broken_summary', () => ({ status: 'repaired' })); return { apply() {} }"
+      const repairDefinition = {
+        plugin: { kind: 'existing' as const, pluginId: defined.pluginId },
+        name: '失败接口面板',
+        purpose: '修复失败的数据查询。',
+        code: { host: repairedHost },
+      }
+      model.nextDefinition = repairDefinition
 
       const invoked = await runtime.host.invokeDynamicHost(
         dshSessionId,
@@ -1514,6 +1736,58 @@ return {
             ),
         )
         .toBe(true)
+      await expect.poll(() => runtime.repository.listAuthoringAttempts(task.id).length).toBe(2)
+      await runtime.host.whenIdle(dshSessionId)
+      expect(runtime.repository.listAuthoringTasks()).toHaveLength(1)
+      expect(runtime.repository.getAuthoringTask(task.id)?.initiatingEventId).toBe(initiatingEventId)
+      const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
+      expect(attempt.runnerPackageId).not.toBe(defined.packageId)
+      expect(await runtime.host.authoringSnapshotForAttempt(attempt)).toMatchObject({ code: { host: repairedHost } })
+      const events = runtime.host.sessionEvents(dshSessionId).slice(eventsBefore)
+      const turnStart = events.findIndex((event) => event.type === 'turn/start')
+      expect(turnStart).toBeGreaterThanOrEqual(0)
+      const firstInput = events.slice(turnStart).find((event) => event.type === 'user/message')
+      expect(firstInput?.type === 'user/message' ? firstInput.data.source : undefined).toMatchObject({
+        kind: 'nekro-nxt-authoring-event',
+        taskId: task.id,
+        pluginId: defined.pluginId,
+        status: 'rpc-failed',
+      })
+      const result = events.find(
+        (event) => event.type === 'tool/result' && String(event.data.message.toolCallId) === model.defineCallId,
+      )
+      if (result?.type !== 'tool/result') throw new Error('Expected the automatic repair definition result.')
+      expect(result.data.message.isError).not.toBe(true)
+      expect(runtime.host.turnTrigger(dshSessionId)).toEqual({ kind: 'self' })
+
+      const guardedDefinition = {
+        ...repairDefinition,
+        resources: {},
+        permissions: { permissions: [], networkOrigins: [] },
+        contributions: [],
+      }
+      const unknownOrigin = vi.spyOn(runtime.host, 'turnTrigger').mockReturnValue({ kind: 'unknown' })
+      try {
+        const blocked = runtime.host.defineDynamicAuthoringPackage(dshSessionId, guardedDefinition)
+        await expect(
+          runtime.host.runDynamicPackage(dshSessionId, blocked.pluginId, blocked.packageId, 'update'),
+        ).rejects.toThrow('缺少发起消息')
+      } finally {
+        unknownOrigin.mockRestore()
+      }
+      // Releasing the plugin slot still does not turn a host continuation into a new task's request.
+      await runtime.host.undefineDynamicPlugin(dshSessionId, defined.pluginId)
+      expect(runtime.host.turnTrigger(dshSessionId)).toEqual({ kind: 'self' })
+      const unrelated = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        ...guardedDefinition,
+        plugin: { kind: 'new', idPrefix: 'fresh' },
+        name: '新的查询工具',
+      })
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, unrelated.pluginId, unrelated.packageId, 'run'),
+      ).rejects.toThrow('缺少发起消息')
+      expect(runtime.repository.listAuthoringTasks()).toHaveLength(1)
+      expect(runtime.repository.listAuthoringAttempts(task.id)).toHaveLength(2)
     } finally {
       await runtime.dispose()
     }

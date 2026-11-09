@@ -813,6 +813,21 @@ const inbound = (
 })
 
 describe('ChannelRuntime M1 lane', () => {
+  it('persists the driver-selected followup while a host continuation is running', async () => {
+    const context = await setup()
+    context.setSessionStatus('running')
+    context.sessionDriver.admissionMode = () => 'followup'
+    const accepted = await context.runtime.acceptChannelInbound(
+      inbound(context.connection.id, context.channel.id, 'host-continuation'),
+    )
+    expect(context.admissionCalls[0]).toMatchObject({ mode: 'followup', triggerEventId: accepted.channelEventId })
+    expect([...context.runtimeRepository.admissions.values()][0]).toMatchObject({
+      mode: 'followup',
+      triggerEventId: accepted.channelEventId,
+    })
+    expect(context.sessionCalls.some((call) => call.startsWith('interrupt:'))).toBe(false)
+  })
+
   it('stores and admits the sanitized inbound event', async () => {
     const harness = await setup(true, undefined, undefined, undefined, {
       sanitizeInbound: (event) => ({
@@ -993,6 +1008,8 @@ describe('ChannelRuntime M1 lane', () => {
     await runtime.openAdmission()
     expect(context.runtimeRepository.admissions.get(admission.id)?.state).toBe('logged-to-session')
     expect(context.admissionCalls).toHaveLength(2)
+    expect(admission.triggerEventId).toBe(admission.eventIds[0])
+    expect(context.admissionCalls[1]?.triggerEventId).toBe(admission.triggerEventId)
     await runtime.openAdmission()
     expect(context.admissionCalls).toHaveLength(2)
     await runtime.dispose()
@@ -1083,33 +1100,66 @@ describe('ChannelRuntime M1 lane', () => {
     expect(context.adapterStateRows.size).toBe(0)
   })
 
-  it('hands a message that joined an earlier turn over only once when its own wake comes after', async () => {
-    const context = await setup()
-    let openSession!: () => void
-    const opening = new Promise<void>((resolve) => {
-      openSession = resolve
-    })
-    const createSession = context.sessionDriver.createSession.bind(context.sessionDriver)
-    context.sessionDriver.createSession = async (input) => {
-      await opening
-      return createSession(input)
-    }
-    const accept = (id: string) =>
-      context.runtime.acceptChannelInbound({
-        ...inbound(context.connection.id, context.channel.id, id),
-        platformMessageId: id,
+  it.each([false, true])(
+    'keeps a queued wake already handed over from claiming a newer message (ordinary injection: %s)',
+    async (ordinaryInjection) => {
+      const context = await setup()
+      context.core.replaceBinding({
+        channelId: context.channel.id,
+        agentId: context.agent.definition.id,
+        triggerPolicy: 'smart',
       })
-    // The first wake is still opening the session when the second message arrives and queues behind it.
-    const first = accept('opening-first')
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    const second = accept('queued-second')
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    openSession()
-    await Promise.all([first, second])
-    const handedOver = context.admissionCalls.flatMap(({ events }) => events.map(({ dedupeKey }) => dedupeKey))
-    expect(handedOver.filter((key) => key === 'event:queued-second')).toHaveLength(1)
-    expect(new Set(handedOver).size).toBe(handedOver.length)
-  })
+      let openSession!: () => void
+      const opening = new Promise<void>((resolve) => {
+        openSession = resolve
+      })
+      const createSession = context.sessionDriver.createSession.bind(context.sessionDriver)
+      context.sessionDriver.createSession = async (input) => {
+        await opening
+        return createSession(input)
+      }
+      const accept = (id: string) =>
+        context.runtime.acceptChannelInbound({
+          ...inbound(context.connection.id, context.channel.id, id),
+          platformMessageId: id,
+          ...(id === 'later-third' && ordinaryInjection ? {} : { facts: { mentionedBot: true } }),
+        })
+      let third: ReturnType<typeof accept> | undefined
+      const admit = context.sessionDriver.admit.bind(context.sessionDriver)
+      context.sessionDriver.admit = async (input) => {
+        expect(input.events.map(({ id }) => id)).toContain(input.triggerEventId)
+        if (third === undefined) {
+          expect(input.events.map(({ dedupeKey }) => dedupeKey)).toEqual(['event:opening-first', 'event:queued-second'])
+          if (ordinaryInjection) context.setSessionStatus('running')
+          // It commits after the first batch was selected, while the second wake still waits for this lane.
+          third = accept('later-third')
+        }
+        return admit(input)
+      }
+      // The first wake is still opening the session when the second message arrives and queues behind it.
+      const first = accept('opening-first')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      const second = accept('queued-second')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      openSession()
+      await Promise.all([first, second])
+      expect(third).toBeDefined()
+      await third
+      const handedOver = context.admissionCalls.flatMap(({ events }) => events.map(({ dedupeKey }) => dedupeKey))
+      expect(handedOver).toEqual(['event:opening-first', 'event:queued-second', 'event:later-third'])
+      expect(handedOver.filter((key) => key === 'event:queued-second')).toHaveLength(1)
+      expect(new Set(handedOver).size).toBe(handedOver.length)
+      expect(context.admissionCalls.map(({ mode }) => mode)).toEqual([
+        'followup',
+        ordinaryInjection ? 'inject' : 'followup',
+      ])
+      expect(context.admissionCalls[1]).toMatchObject({
+        triggerEventId: context.admissionCalls[1]?.events[0]?.id,
+        replyRequired: !ordinaryInjection,
+      })
+      await context.runtime.dispose()
+    },
+  )
 
   it('reacts once per processing cycle, including injected messages after a reply consumes feedback', async () => {
     const calls: string[] = []
