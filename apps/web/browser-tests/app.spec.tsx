@@ -2977,65 +2977,77 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
-  test('grants a linked account to the agent with usage hints and saves it with the other capabilities', async () => {
-    const capabilityRequests: unknown[] = []
-    const withCommands = HostApiContracts.snapshot.response.parse({
-      ...browserSnapshot,
-      agents: browserSnapshot.agents.map((agent) =>
-        agent.id === browserAgentId
-          ? { ...agent, capabilities: { ...agent.capabilities, fileTools: true, developmentShell: true } }
-          : agent,
-      ),
-    })
-    await withProductPage(
-      `/agents/${browserAgentId}`,
-      async (page) => {
-        const select = page.getByRole('combobox', { name: 'GitHub 账号' })
-        await playwrightExpect(select).toContainText('不使用')
-        await playwrightExpect(page.getByRole('group', { name: 'GitHub 使用提示' })).toHaveCount(0)
-        await select.click()
-        await page.getByRole('option', { name: 'example-bot' }).click()
-        await playwrightExpect(page.getByText('权限范围：由 GitHub 上这个 token 的设置决定')).toBeVisible()
-        const hints = page.getByRole('group', { name: 'GitHub 使用提示' })
-        await playwrightExpect(
-          page.getByText('告诉资料员这个账号用来做什么，只写进提示词，不限制它能做的事'),
-        ).toBeVisible()
-        await hints.getByRole('button', { name: '推送代码' }).click()
-        await hints.getByRole('button', { name: '处理 issue' }).click()
-        await playwrightExpect(hints.getByRole('button', { name: '处理 issue' })).toHaveAttribute(
-          'aria-pressed',
-          'true',
-        )
-        await hints.scrollIntoViewIfNeeded()
-        await page.screenshot({ path: '.local/browser-test-results/agent-command-accounts.png' })
-        const bar = page.getByRole('region', { name: '未保存的修改' })
-        await playwrightExpect(bar).toContainText('关联账号')
-        await bar.getByRole('button', { name: '保存' }).click()
-        await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
-        // Hints keep the order they are offered in, whatever order they were picked.
-        expect(capabilityRequests[0]).toEqual({
-          commandAccounts: [{ service: 'github', accountId: botAccountId, usage: ['issues', 'push'] }],
-        })
-      },
-      withCommands,
-      async (page) => {
-        await page.route('**/api/settings/linked-accounts', (route) =>
-          route.fulfill({ json: linkedAccountsView({ grantedTo: [] }) }),
-        )
-        await page.route('**/api/agents/*/capabilities', async (request) => {
-          capabilityRequests.push(request.request().postDataJSON())
-          await request.fulfill({
-            json: {
-              currentRevisionId: browserRevisionId,
-              capabilities: withCommands.agents[0]!.capabilities,
-            },
+  for (const unrestrictedFileAccess of [false, true]) {
+    test(`grants a linked account with usage hints under ${unrestrictedFileAccess ? 'full' : 'workspace'} access and saves it with the other capabilities`, async () => {
+      const capabilityRequests: unknown[] = []
+      const withCommands = HostApiContracts.snapshot.response.parse({
+        ...browserSnapshot,
+        agents: browserSnapshot.agents.map((agent) =>
+          agent.id === browserAgentId
+            ? {
+                ...agent,
+                capabilities: {
+                  ...agent.capabilities,
+                  fileTools: true,
+                  developmentShell: true,
+                  unrestrictedFileAccess,
+                },
+              }
+            : agent,
+        ),
+      })
+      await withProductPage(
+        `/agents/${browserAgentId}`,
+        async (page) => {
+          const select = page.getByRole('combobox', { name: 'GitHub 账号' })
+          await playwrightExpect(select).toContainText('不使用')
+          await playwrightExpect(page.getByRole('group', { name: 'GitHub 使用提示' })).toHaveCount(0)
+          await select.click()
+          await page.getByRole('option', { name: 'example-bot' }).click()
+          await playwrightExpect(page.getByText('权限范围：由 GitHub 上这个 token 的设置决定')).toBeVisible()
+          const hints = page.getByRole('group', { name: 'GitHub 使用提示' })
+          await playwrightExpect(
+            page.getByText('告诉资料员这个账号用来做什么，只写进提示词，不限制它能做的事'),
+          ).toBeVisible()
+          await hints.getByRole('button', { name: '推送代码' }).click()
+          await hints.getByRole('button', { name: '处理 issue' }).click()
+          await playwrightExpect(hints.getByRole('button', { name: '处理 issue' })).toHaveAttribute(
+            'aria-pressed',
+            'true',
+          )
+          await hints.scrollIntoViewIfNeeded()
+          await page.screenshot({
+            path: `.local/issues/agent-command-accounts-${unrestrictedFileAccess ? 'full' : 'workspace'}.png`,
           })
-        })
-      },
-    )
-  })
+          const bar = page.getByRole('region', { name: '未保存的修改' })
+          await playwrightExpect(bar).toContainText('关联账号')
+          await bar.getByRole('button', { name: '保存' }).click()
+          await playwrightExpect.poll(() => capabilityRequests.length).toBe(1)
+          // Hints keep the order they are offered in, whatever order they were picked.
+          expect(capabilityRequests[0]).toEqual({
+            commandAccounts: [{ service: 'github', accountId: botAccountId, usage: ['issues', 'push'] }],
+          })
+        },
+        withCommands,
+        async (page) => {
+          await page.route('**/api/settings/linked-accounts', (route) =>
+            route.fulfill({ json: linkedAccountsView({ grantedTo: [] }) }),
+          )
+          await page.route('**/api/agents/*/capabilities', async (request) => {
+            capabilityRequests.push(request.request().postDataJSON())
+            await request.fulfill({
+              json: {
+                currentRevisionId: browserRevisionId,
+                capabilities: withCommands.agents[0]!.capabilities,
+              },
+            })
+          })
+        },
+      )
+    })
+  }
 
-  test('points to 设置 → 关联账号 when none are linked, under full access as well', async () => {
+  test('points to 设置 → 关联账号 when none are linked under workspace and full access', async () => {
     const withAccess = (unrestrictedFileAccess: boolean) =>
       HostApiContracts.snapshot.response.parse({
         ...browserSnapshot,
@@ -3053,24 +3065,20 @@ test.describe('NekroNxt browser projections', () => {
             : agent,
         ),
       })
-    await withProductPage(
-      `/agents/${browserAgentId}`,
-      async (page) => {
-        await playwrightExpect(page.getByText('命令可用的凭据', { exact: true })).toBeVisible()
-        await playwrightExpect(page.getByText('还没有关联账号', { exact: true })).toBeVisible()
-      },
-      withAccess(true),
-    )
-    await withProductPage(
-      `/agents/${browserAgentId}`,
-      async (page) => {
-        await playwrightExpect(page.getByText('还没有关联账号', { exact: true })).toBeVisible()
-        await playwrightExpect(page.getByRole('combobox', { name: 'GitHub 账号' })).toHaveCount(0)
-        await page.getByRole('button', { name: '管理关联账号' }).click()
-        await playwrightExpect(page).toHaveURL(/\/settings\/accounts$/u)
-      },
-      withAccess(false),
-    )
+    for (const unrestrictedFileAccess of [false, true]) {
+      await withProductPage(
+        `/agents/${browserAgentId}`,
+        async (page) => {
+          await playwrightExpect(page.getByText('命令可用的凭据', { exact: true })).toBeVisible()
+          await playwrightExpect(page.getByText('关联账号', { exact: true })).toBeVisible()
+          await playwrightExpect(page.getByText('还没有关联账号', { exact: true })).toBeVisible()
+          await playwrightExpect(page.getByRole('combobox', { name: 'GitHub 账号' })).toHaveCount(0)
+          await page.getByRole('button', { name: '管理关联账号' }).click()
+          await playwrightExpect(page).toHaveURL(/\/settings\/accounts$/u)
+        },
+        withAccess(unrestrictedFileAccess),
+      )
+    }
   })
 
   test('shows no command credentials to an agent that cannot run commands', async () => {
