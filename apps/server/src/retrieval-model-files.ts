@@ -28,6 +28,8 @@ export const ONNXRUNTIME_COMMON_FILES: readonly PinnedFile[] = [
   ['dist/cjs/tensor.js', 393, '9097114de356750f36f28776fa6ccd08d13694f0f9aac9e7669c30b6c43153f7'],
   ['dist/cjs/trace.js', 2496, 'faecd0df94998d786e2085d56aa6003449f1ac3b35c350e0d2762498604e5d72'],
   ['dist/cjs/type-helper.js', 212, '7f786da8d2a611ad751c70a74edf4d9acfccd26be8e5c6b1cb730f982892bf32'],
+  // Marks `dist/cjs` as CommonJS; without it the package's `"type": "module"` makes Node load these files as ESM.
+  ['dist/cjs/package.json', 20, '091a04fa67c7907b98e106fcff8b964e13129754fce72d24f3025b97c4887fa3'],
   ['dist/cjs/version.js', 361, '0a1a7f532f4455ead0678966815c3114730150aa4368ebb5ebd9727425e9003b'],
   ['package.json', 977, '4266741a80346e25820ccc494fbffb95e2f652b6dfb5585025be44df3b0d6722'],
 ]
