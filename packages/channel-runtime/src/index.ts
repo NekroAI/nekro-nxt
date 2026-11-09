@@ -939,10 +939,10 @@ export class ChannelRuntime {
     const episode = this.#runtimeRepository.getEpisode(input.episodeId)
     const binding = episode === undefined ? undefined : this.#coreRepository.getBinding(episode.channelId)
     if (episode === undefined || binding === undefined || binding.agentId !== episode.agentId) {
-      return { accepted: false, reason: '这个频道已经不由你负责了。' }
+      return { accepted: false, reason: '这个频道已经不由你负责了，直接结束这一轮。' }
     }
     if (binding.paused || !waitSupported(binding)) {
-      return { accepted: false, reason: '这个频道现在不会自动叫你，用不了等待。' }
+      return { accepted: false, reason: '这个频道现在不会自动叫你，用不了等待，直接回复或者结束这一轮。' }
     }
     const timing = resolveResponseTiming(binding.responseTiming)
     if (!timing.waitEnabled) return { accepted: false, reason: '这个频道关闭了等待，直接回复或者结束这一轮。' }
@@ -951,7 +951,7 @@ export class ChannelRuntime {
       return { accepted: false, reason: '这一轮是等待结束后开始的，不能再等，现在就回复。' }
     }
     const memberId = this.#timing.lastSpeaker(lane)
-    if (memberId === undefined) return { accepted: false, reason: '找不到要等的人。' }
+    if (memberId === undefined) return { accepted: false, reason: '找不到要等的人，直接回复或者结束这一轮。' }
     const seconds = Math.min(
       timing.waitMaxQuietSeconds,
       Math.max(RESPONSE_WAIT_MIN_QUIET_SECONDS, Math.round(Number.isFinite(input.seconds) ? input.seconds : 0)),
