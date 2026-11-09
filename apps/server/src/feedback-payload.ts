@@ -54,7 +54,10 @@ export const redactFeedbackText = (text: string, context: FeedbackRedactionConte
   for (const [directory, label] of [...directories].sort((a, b) => b[0].length - a[0].length)) {
     if (directory)
       result = result.replace(
-        new RegExp(`${escapePattern(directory.replace(/[\\/]$/u, ''))}(?=[\\\\/]|$|[\\s"'])`, 'gu'),
+        new RegExp(
+          String.raw`(?<![\w:/\\.-])${escapePattern(directory.replace(/[\\/]$/u, ''))}(?=[\\/]|$|[\s"'])`,
+          'gu',
+        ),
         label,
       )
   }

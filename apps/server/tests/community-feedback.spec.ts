@@ -290,6 +290,13 @@ const setup = async () => {
 }
 
 describe('feedback redaction', () => {
+  it('does not partially replace a home directory inside another absolute path', () => {
+    const context = { ...redaction, homeDirectory: '/opt/fixture', dataDirectory: '/opt/fixture/data' }
+    expect(redactFeedbackText('日志 /var/archive/opt/fixture/private.log', context)).toBe('日志 <本机路径>')
+    expect(
+      redactFeedbackText('日志 C:\\Users\\fixture\\private.log', { ...context, homeDirectory: '\\Users\\fixture' }),
+    ).toBe('日志 <本机路径>')
+  })
   it('uses one identity mapping across members, channel/account labels and paths', () => {
     const value = redactFeedbackText(
       `林舟（100001001）和叶晴在样例频道 200002001 使用样例账号，日志 ${fixtureData}/log.txt 与 ${fixtureHome}/other.txt。`,
