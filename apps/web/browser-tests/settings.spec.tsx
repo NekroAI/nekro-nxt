@@ -1,5 +1,6 @@
 import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
 import Schema from '@deepseek-ai/schemastery'
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,6 +63,69 @@ const providers = {
 }
 
 const fakeDigest = 'a'.repeat(64)
+
+interface FakePushOptions {
+  readonly secure?: boolean
+  readonly pushManager?: boolean
+  readonly iphone?: boolean
+  readonly permission?: 'default' | 'granted' | 'denied'
+  readonly endpoint?: string
+}
+
+/**
+ * Replaces the browser's push pieces before the page loads: the worker registration, the push subscription and the
+ * notification permission. Nothing reaches a real push service.
+ */
+const fakePush = (page: Page, options: FakePushOptions) =>
+  page.addInitScript((setup: FakePushOptions) => {
+    if (setup.secure === false) Object.defineProperty(window, 'isSecureContext', { value: false })
+    if (setup.iphone === true) {
+      Object.defineProperty(navigator, 'userAgent', {
+        value:
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
+      })
+    }
+    if (setup.pushManager === false) Reflect.deleteProperty(window, 'PushManager')
+    const subscriptionFor = (endpoint: string) => ({
+      endpoint,
+      getKey: () => new Uint8Array([1, 2, 3]).buffer,
+      unsubscribe: () => {
+        current = null
+        return Promise.resolve(true)
+      },
+    })
+    let current: ReturnType<typeof subscriptionFor> | null =
+      setup.endpoint === undefined ? null : subscriptionFor(setup.endpoint)
+    const registration = {
+      pushManager: {
+        getSubscription: () => Promise.resolve(current),
+        subscribe: () => Promise.resolve((current = subscriptionFor('https://push.example.test/this-browser'))),
+      },
+    }
+    Object.defineProperty(navigator, 'serviceWorker', {
+      value: {
+        register: () => Promise.resolve(registration),
+        ready: Promise.resolve(registration),
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      },
+    })
+    let permission = setup.permission ?? 'default'
+    Object.defineProperty(window, 'Notification', {
+      configurable: true,
+      value: {
+        get permission() {
+          return permission
+        },
+        requestPermission: () => {
+          permission = 'granted'
+          return Promise.resolve(permission)
+        },
+      },
+    })
+  }, options)
+
+const pushId = (endpoint: string) => createHash('sha256').update(endpoint).digest('hex').slice(0, 32)
 
 /** Settings space journeys against a stubbed Host; nothing reaches a real service. */
 test.describe('settings space', () => {
@@ -613,6 +677,106 @@ test.describe('settings space', () => {
       await expect(extension).not.toBeChecked()
       expect(errors).toEqual([])
     } finally {
+      await page.close()
+    }
+  })
+
+  test('tells why this device cannot turn on browser push', async () => {
+    const cases: ReadonlyArray<readonly [FakePushOptions, string]> = [
+      [{ secure: false }, '推送需要通过受信任证书的 HTTPS 访问'],
+      [{ iphone: true, pushManager: false }, '先在 Safari 的分享菜单里选「添加到主屏幕」'],
+      [{ pushManager: false }, '这个浏览器不支持推送。'],
+      [{ permission: 'denied' }, '通知权限被拒绝了'],
+    ]
+    for (const [setup, text] of cases) {
+      const { page, errors } = await open('/settings/notifications', {
+        before: async (target) => {
+          await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture', url: baseUrl }])
+          await fakePush(target, setup)
+          await target.route('**/api/push/subscriptions', (request) =>
+            request.fulfill({ json: { subscriptions: [], currentDeviceId: 'nxt_device_01J00000000000000000000AAA' } }),
+          )
+        },
+      })
+      try {
+        await expect(page.getByText(text)).toBeVisible()
+        await expect(page.getByRole('button', { name: '开启', exact: true })).toHaveCount(0)
+        if (setup.secure === false) await expect(page.getByRole('link', { name: '配置 HTTPS 访问' })).toBeVisible()
+        expect(errors).toEqual([])
+      } finally {
+        await page.context().clearCookies()
+        await page.close()
+      }
+    }
+  })
+
+  test('turns browser push on and off for this device and removes another browser', async () => {
+    const thisDevice = 'nxt_device_01J00000000000000000000AAA'
+    const other = {
+      id: pushId('https://push.example.test/other-browser'),
+      deviceId: 'nxt_device_01J00000000000000000000BBB',
+      deviceLabel: '浏览器 · Safari · iOS',
+      label: 'iPhone · 主屏幕',
+      createdAt: 1_725_000_000_000,
+    }
+    let subscriptions: unknown[] = [other]
+    const calls: string[] = []
+    const { page, errors } = await open('/settings/notifications', {
+      before: async (target) => {
+        await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture', url: baseUrl }])
+        await fakePush(target, {})
+        await target.route('**/api/push/key', (request) => request.fulfill({ json: { publicKey: 'AQID' } }))
+        await target.route('**/api/push/subscriptions', async (request) => {
+          if (request.request().method() === 'POST') {
+            const body = HostApiContracts.registerPushSubscription.parseRequest(request.request().postDataJSON())
+            calls.push(`register ${body.endpoint}`)
+            const mine = {
+              id: pushId(body.endpoint),
+              deviceId: thisDevice,
+              deviceLabel: '浏览器 · Chrome · macOS',
+              label: body.label,
+              createdAt: 1_725_000_000_000,
+            }
+            subscriptions = [...subscriptions, mine]
+            await request.fulfill({ json: mine })
+            return
+          }
+          await request.fulfill({ json: { subscriptions, currentDeviceId: thisDevice } })
+        })
+        await target.route('**/api/push/subscriptions/*', async (request) => {
+          const id = new URL(request.request().url()).pathname.split('/').at(-1)!
+          calls.push(`remove ${id}`)
+          subscriptions = subscriptions.filter((entry) => (entry as { id: string }).id !== id)
+          await request.fulfill({ json: { deleted: true } })
+        })
+        await target.route('**/api/push/subscriptions/*/test', async (request) => {
+          calls.push(`test ${new URL(request.request().url()).pathname.split('/').at(-2)}`)
+          await request.fulfill({ json: { sent: true } })
+        })
+      },
+    })
+    try {
+      await expect(page.getByText('开启后，这台设备会收到通知。')).toBeVisible()
+      await expect(page.getByText('浏览器 · Safari · iOS，还没有送达过')).toBeVisible()
+      await page.getByRole('button', { name: '开启', exact: true }).click()
+      await expect(page.getByText('已开启。')).toBeVisible()
+      const mine = pushId('https://push.example.test/this-browser')
+      // This browser is the 「这台设备」 row; it is not listed a second time.
+      await expect(page.getByRole('button', { name: '移除' })).toHaveCount(1)
+      await page.getByRole('button', { name: '测试' }).last().click()
+      await page.getByRole('button', { name: '移除' }).click()
+      await expect(page.getByText('浏览器 · Safari · iOS')).toHaveCount(0)
+      await page.getByRole('button', { name: '关闭', exact: true }).click()
+      await expect(page.getByText('开启后，这台设备会收到通知。')).toBeVisible()
+      expect(calls).toEqual([
+        'register https://push.example.test/this-browser',
+        `test ${other.id}`,
+        `remove ${other.id}`,
+        `remove ${mine}`,
+      ])
+      expect(errors).toEqual([])
+    } finally {
+      await page.context().clearCookies()
       await page.close()
     }
   })

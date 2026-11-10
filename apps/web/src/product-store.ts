@@ -75,6 +75,9 @@ export function createProductStore(
     notificationSettings: {
       system: { enabled: true },
       bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+      browserPush: { enabled: true },
+      wecom: { enabled: false, webhookConfigured: false },
+      ntfy: { enabled: false, serverUrl: 'https://ntfy.sh', topicConfigured: false, tokenConfigured: false },
       events: {
         'dynamic-client-approval-requested': true,
         'community-feedback-update': true,
@@ -161,6 +164,12 @@ export function createProductStore(
     },
     testSystemNotification: async () => {
       await requireHost().actions['notifications.testSystem']()
+    },
+    testWecomNotification: async (input) => {
+      await requireHost().actions['notifications.testWecom'](input)
+    },
+    testNtfyNotification: async (input) => {
+      await requireHost().actions['notifications.testNtfy'](input)
     },
     deleteAgent: async (
       agentId,

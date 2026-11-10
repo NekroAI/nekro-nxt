@@ -694,6 +694,8 @@ export interface ProductState {
   ): Promise<HostApiResponse<'updateNotificationSettings'>>
   testBarkNotification(input: HostApiRequest<'testBarkNotification'>): Promise<void>
   testSystemNotification(): Promise<void>
+  testWecomNotification(input: HostApiRequest<'testWecomNotification'>): Promise<void>
+  testNtfyNotification(input: HostApiRequest<'testNtfyNotification'>): Promise<void>
   deleteAgent(
     agentId: string,
     expectedCurrentRevisionId: string,

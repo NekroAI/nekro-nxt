@@ -59,7 +59,6 @@ import {
   Chip,
   DataTable,
   EmptyState,
-  Field,
   Input,
   ListPane,
   MainContent,
@@ -67,8 +66,6 @@ import {
   PropertyGroup,
   PropertyList,
   PropertyRow,
-  SaveBar,
-  SecretInput,
   Segmented,
   Select,
   SelectionList,
@@ -81,7 +78,6 @@ import {
   RevealText,
 } from '../../ui-kit/index.js'
 import { useDensity } from '../model/density.js'
-import { useProductApi } from '../model/store.js'
 import { useGo } from '../model/nav.js'
 import { useCrumb } from '../shell/crumb.js'
 import { useProductUpdates, versionDescription } from '../shell/product-updates.js'
@@ -93,6 +89,7 @@ import { LogSettings } from '../logs/log-settings.js'
 import { FeedbackSettingsSection } from './feedback-section.js'
 import { StorageSection } from './storage-section.js'
 import { HostRestartRow } from './restart-row.js'
+import { NotificationsSection } from './notifications-section.js'
 import { formatBytes } from '../../desktop-storage.js'
 import { useDesktopUpdate, type DesktopPlatform } from '../../desktop-update.js'
 import styles from './settings.module.css'
@@ -247,7 +244,7 @@ export default function SettingsSpace() {
           {section === 'adapters' ? <Adapters /> : null}
           {section === 'chat' ? <Chat /> : null}
           {section === 'conversations' ? <SubConversations /> : null}
-          {section === 'notifications' ? <Notifications /> : null}
+          {section === 'notifications' ? <NotificationsSection /> : null}
           {section === 'feedback' ? <FeedbackSettingsSection /> : null}
           {section === 'access' ? (
             <>
@@ -867,206 +864,6 @@ function SubConversations() {
           )}
         </PropertyRow>
       </PropertyList>
-    </>
-  )
-}
-
-function Notifications() {
-  const api = useProductApi()
-  const settings = useProductStore((state) => state.notificationSettings)
-  const hostStatus = useProductStore((state) => state.host.status)
-  const [system, setSystem] = useState(settings.system.enabled)
-  const [bark, setBark] = useState(settings.bark.enabled)
-  const [serverUrl, setServerUrl] = useState(settings.bark.serverUrl)
-  const [deviceKey, setDeviceKey] = useState('')
-  const [clearKey, setClearKey] = useState(false)
-  const [approval, setApproval] = useState(settings.events['dynamic-client-approval-requested'] ?? true)
-  const [feedback, setFeedback] = useState(settings.events['community-feedback-update'])
-  const [credentialRequested, setCredentialRequested] = useState(settings.events['credential-requested'])
-  const [extensionNotices, setExtensionNotices] = useState(settings.events['extension-notification'])
-  const [busy, setBusy] = useState<'' | 'save' | 'bark' | 'system'>('')
-  const [saveError, setSaveError] = useState('')
-
-  const reset = () => {
-    setSystem(settings.system.enabled)
-    setBark(settings.bark.enabled)
-    setServerUrl(settings.bark.serverUrl)
-    setDeviceKey('')
-    setClearKey(false)
-    setApproval(settings.events['dynamic-client-approval-requested'] ?? true)
-    setFeedback(settings.events['community-feedback-update'])
-    setCredentialRequested(settings.events['credential-requested'])
-    setExtensionNotices(settings.events['extension-notification'])
-    setSaveError('')
-  }
-  // Saved settings changed (here or elsewhere): show them. Keyed by content, so a refresh that returns the same
-  // saved values never discards what the user is editing.
-  const savedKey = JSON.stringify(settings)
-  useEffect(reset, [savedKey])
-
-  const configured = settings.bark.deviceKeyConfigured && !clearKey
-  const barkTestable = !clearKey && (configured || deviceKey.trim() !== '')
-  const changes = [
-    ...(system !== settings.system.enabled ? ['系统通知'] : []),
-    ...(bark !== settings.bark.enabled || serverUrl !== settings.bark.serverUrl || deviceKey.trim() !== '' || clearKey
-      ? ['Bark']
-      : []),
-    ...(approval !== (settings.events['dynamic-client-approval-requested'] ?? true) ? ['通知事件'] : []),
-    ...(feedback !== settings.events['community-feedback-update'] ? ['社区反馈更新'] : []),
-    ...(credentialRequested !== settings.events['credential-requested'] ? ['凭据申请'] : []),
-    ...(extensionNotices !== settings.events['extension-notification'] ? ['扩展通知'] : []),
-  ]
-
-  const run = async (kind: Exclude<typeof busy, ''>, action: () => Promise<unknown>, done: string) => {
-    setBusy(kind)
-    try {
-      await action()
-      toast(done)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (kind === 'save') setSaveError(message)
-      else toast(message, { tone: 'bad' })
-    } finally {
-      setBusy('')
-    }
-  }
-
-  const save = () =>
-    void run(
-      'save',
-      () =>
-        api.getState().updateNotificationSettings({
-          ...(settings.revision === undefined ? {} : { expectedRevision: settings.revision }),
-          system: { enabled: system },
-          bark: {
-            enabled: bark,
-            serverUrl,
-            ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
-            ...(clearKey ? { clearDeviceKey: true } : {}),
-          },
-          events: {
-            'dynamic-client-approval-requested': approval,
-            'community-feedback-update': feedback,
-            'credential-requested': credentialRequested,
-            'extension-notification': extensionNotices,
-          },
-        }),
-      '通知设置已保存',
-    )
-
-  // Until the first snapshot the store holds placeholder defaults; never present them as the saved settings.
-  if (hostStatus === 'initializing') {
-    return (
-      <>
-        <SectionHead title="通知" />
-        <div className={styles.loading} role="status" aria-label="正在读取通知设置">
-          <Skeleton height={44} />
-          <Skeleton height={44} />
-        </div>
-      </>
-    )
-  }
-
-  return (
-    <>
-      <SectionHead title="通知" />
-      <PropertyGroup title="渠道">
-        <PropertyList>
-          <PropertyRow label="系统通知" tip="在桌面版上弹出">
-            <span className={styles.rowControls}>
-              <Button
-                size="small"
-                variant="ghost"
-                busy={busy === 'system'}
-                disabled={busy !== ''}
-                onClick={() => void run('system', () => api.getState().testSystemNotification(), '测试通知已发出')}
-              >
-                测试
-              </Button>
-              <Switch label="系统通知" checked={system} onCheckedChange={setSystem} />
-            </span>
-          </PropertyRow>
-          <PropertyRow label="Bark" tip="推送到安装了 Bark 的设备">
-            <span className={styles.rowControls}>
-              <Button
-                size="small"
-                variant="ghost"
-                busy={busy === 'bark'}
-                disabled={busy !== '' || !barkTestable}
-                onClick={() =>
-                  void run(
-                    'bark',
-                    () =>
-                      api.getState().testBarkNotification({
-                        serverUrl,
-                        ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
-                      }),
-                    '测试通知已发出',
-                  )
-                }
-              >
-                测试
-              </Button>
-              <Switch label="Bark" checked={bark} onCheckedChange={setBark} />
-            </span>
-          </PropertyRow>
-          <PropertyRow label="Bark 连接" layout="stacked">
-            <div className={styles.barkFields}>
-              <Field label="服务地址">
-                <Input value={serverUrl} spellCheck={false} onChange={(event) => setServerUrl(event.target.value)} />
-              </Field>
-              <Field label="Device Key">
-                <SecretInput
-                  configured={configured}
-                  value={deviceKey}
-                  onChange={(event) => {
-                    setDeviceKey(event.target.value)
-                    if (event.target.value) setClearKey(false)
-                  }}
-                />
-              </Field>
-              {configured ? (
-                <div>
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    onClick={() => {
-                      setClearKey(true)
-                      setBark(false)
-                      setDeviceKey('')
-                    }}
-                  >
-                    清除已保存的 Key
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </PropertyRow>
-        </PropertyList>
-      </PropertyGroup>
-      <PropertyGroup title="通知我">
-        <PropertyList>
-          <PropertyRow label="创造任务等待确认运行" tip="智能体写好带界面的候选，需要你允许运行时">
-            <Switch label="创造任务等待确认运行" checked={approval} onCheckedChange={setApproval} />
-          </PropertyRow>
-          <PropertyRow label="社区反馈更新" tip="反馈等待确认、收到回复或处理状态有变化时">
-            <Switch label="社区反馈更新" checked={feedback} onCheckedChange={setFeedback} />
-          </PropertyRow>
-          <PropertyRow label="凭据申请" tip="智能体需要的凭据还没有添加时">
-            <Switch label="凭据申请" checked={credentialRequested} onCheckedChange={setCredentialRequested} />
-          </PropertyRow>
-          <PropertyRow label="扩展通知" tip="扩展发出的提醒">
-            <Switch label="扩展通知" checked={extensionNotices} onCheckedChange={setExtensionNotices} />
-          </PropertyRow>
-        </PropertyList>
-      </PropertyGroup>
-      <SaveBar
-        changes={changes}
-        busy={busy === 'save'}
-        error={saveError || undefined}
-        onSave={save}
-        onDiscard={reset}
-      />
     </>
   )
 }

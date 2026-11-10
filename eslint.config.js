@@ -66,4 +66,8 @@ export default tseslint.config(
       },
     },
   },
+  {
+    files: ['apps/web/public/sw.js'],
+    languageOptions: { globals: { self: 'readonly' } },
+  },
 )

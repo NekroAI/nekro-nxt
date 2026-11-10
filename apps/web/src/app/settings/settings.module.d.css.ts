@@ -2,9 +2,10 @@ declare const styles: {
   readonly actions: string
   readonly adapterName: string
   readonly addonDetail: string
-  readonly barkFields: string
   readonly brand: string
   readonly brandAmbient: string
+  readonly channelFieldAction: string
+  readonly channelFields: string
   readonly claimCode: string
   readonly deviceName: string
   readonly faint: string

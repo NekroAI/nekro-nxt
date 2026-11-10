@@ -10,6 +10,7 @@ import { ExtensionPage } from './system/extension-page.js'
 import { SpaceBoundary } from './system/space-boundary.js'
 import { useAppearanceEffects } from './model/theme.js'
 import { readDensity } from './model/density.js'
+import { usePushNotificationRoutes } from '../web-push.js'
 
 /**
  * A space loaded on demand that renders synchronously once its module is in memory. `React.lazy` alone would still
@@ -99,6 +100,7 @@ if (typeof window !== 'undefined') readDensity()
 export function NextApp() {
   useAppearanceEffects()
   usePrefetchSpaces()
+  usePushNotificationRoutes()
   return (
     <DynamicClientProvider>
       <ExtensionUiProvider>

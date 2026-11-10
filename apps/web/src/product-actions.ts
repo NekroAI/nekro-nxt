@@ -21,6 +21,8 @@ export interface ProductActions {
   'notifications.update': Action<'updateNotificationSettings'>
   'notifications.testBark': Action<'testBarkNotification'>
   'notifications.testSystem': () => Promise<HostApiResponse<'testSystemNotification'>>
+  'notifications.testWecom': Action<'testWecomNotification'>
+  'notifications.testNtfy': Action<'testNtfyNotification'>
   'platformUsers.list': (
     input?: Partial<HostApiParams<'listPlatformUsers'>>,
     signal?: AbortSignal,

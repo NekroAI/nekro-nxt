@@ -162,6 +162,9 @@ const emptySnapshot = (): ProductSnapshot => ({
   notificationSettings: {
     system: { enabled: true },
     bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+    browserPush: { enabled: true },
+    wecom: { enabled: false, webhookConfigured: false },
+    ntfy: { enabled: false, serverUrl: 'https://ntfy.sh', topicConfigured: false, tokenConfigured: false },
     events: {
       'dynamic-client-approval-requested': true,
       'community-feedback-update': true,
@@ -1109,6 +1112,8 @@ export class HttpProductHost implements ProductHostPort {
     'notifications.update': async (body) => this.#mutate(HostApiContracts.updateNotificationSettings, {}, body),
     'notifications.testBark': async (body) => this.#call(HostApiContracts.testBarkNotification, {}, body),
     'notifications.testSystem': async () => this.#call(HostApiContracts.testSystemNotification, {}, undefined),
+    'notifications.testWecom': async (body) => this.#call(HostApiContracts.testWecomNotification, {}, body),
+    'notifications.testNtfy': async (body) => this.#call(HostApiContracts.testNtfyNotification, {}, body),
     'platformUsers.list': async (input = {}, signal) =>
       this.#call(HostApiContracts.listPlatformUsers, { ...input, limit: input.limit ?? 50 }, undefined, signal),
     'connections.listEvents': async (input) =>

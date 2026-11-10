@@ -140,14 +140,14 @@
   gap: var(--s-2);
 }
 
-.barkFields {
+.channelFields {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   align-items: start;
   gap: var(--s-3);
 }
 
-.barkFields > div:last-child:nth-child(3) {
+.channelFieldAction {
   grid-column: 1 / -1;
 }
 
