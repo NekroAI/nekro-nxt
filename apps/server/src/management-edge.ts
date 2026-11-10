@@ -18,8 +18,10 @@ import { X509Certificate, createHash, createHmac, randomBytes, timingSafeEqual }
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import type { ClientRequest, IncomingMessage, ServerResponse } from 'node:http'
+import { createRequire } from 'node:module'
 import { connect } from 'node:net'
 import type { Duplex } from 'node:stream'
+import { gzipSync } from 'node:zlib'
 import { z } from 'zod'
 import { managementLoginPage } from './management-login-page.js'
 import { LoginRequests } from './login-requests.js'
@@ -315,6 +317,17 @@ export const browserDeviceLabel = (userAgent: string | undefined): string => {
             : undefined
   return ['浏览器', browser, system].filter((part) => part !== undefined).join(' · ')
 }
+
+/** Where the login page loads the QR decoder from when it scans with the camera. */
+export const LOGIN_QR_DECODER_PATH = '/login/qr-decode.js'
+
+/** jsqr's browser build (it defines `window.jsQR`), read once and kept with its gzip form. */
+let qrDecoderScript: Promise<{ readonly plain: Buffer; readonly gzip: Buffer }> | undefined
+const loadQrDecoderScript = () =>
+  (qrDecoderScript ??= readFile(createRequire(import.meta.url).resolve('jsqr')).then((plain) => ({
+    plain,
+    gzip: gzipSync(plain),
+  })))
 
 /** Relative path inside this site to return to after login; anything else falls back to the root. */
 const safeNext = (value: string | null): string =>
@@ -1078,6 +1091,21 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         return
       }
       if (await handlePublicSignIn(request, response, url.pathname)) return
+      if (request.method === 'GET' && url.pathname === LOGIN_QR_DECODER_PATH) {
+        const script = await loadQrDecoderScript()
+        const gzip = /\bgzip\b/u.test(String(request.headers['accept-encoding'] ?? ''))
+        const body = gzip ? script.gzip : script.plain
+        response.writeHead(200, {
+          'content-type': 'text/javascript; charset=utf-8',
+          'cache-control': 'public, max-age=86400',
+          'content-length': body.length,
+          'x-content-type-options': 'nosniff',
+          vary: 'accept-encoding',
+          ...(gzip ? { 'content-encoding': 'gzip' } : {}),
+        })
+        response.end(body)
+        return
+      }
       if (request.method === 'GET' && url.pathname === '/login') {
         const next = safeNext(url.searchParams.get('next'))
         if (authenticatedSession(request, response) !== undefined) {
@@ -1089,6 +1117,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         const page = managementLoginPage({
           secure: secureRequest(request),
           next,
+          qrDecoder: LOGIN_QR_DECODER_PATH,
           keySignIn: options.repository.keySignIn(),
           passkeys: passkeysAvailable(request) && options.repository.listPasskeys(rpId).length > 0,
           ...(url.searchParams.get('code') === null ? {} : { code: url.searchParams.get('code')! }),
@@ -1099,7 +1128,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
           'content-length': Buffer.byteLength(page),
           'x-frame-options': 'DENY',
           'content-security-policy':
-            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
+            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",
         })
         response.end(page)
         return

@@ -244,6 +244,24 @@ describe('signing in with codes, passkeys and the key switch', () => {
     expect(page.text).toContain('"keySignIn":false')
   })
 
+  it('serves the QR decoder the login page loads, from its own origin and before sign-in', async () => {
+    const { edge } = await start()
+    const page = await send(edge.port, '/login')
+    // The page may load scripts from this origin and nowhere else.
+    expect(page.headers['content-security-policy']).toContain("script-src 'self' 'unsafe-inline';")
+    expect(page.headers['content-security-policy']).toContain("default-src 'none';")
+    expect(page.text).toContain('"qrDecoder":"/login/qr-decode.js"')
+
+    const plain = await send(edge.port, '/login/qr-decode.js')
+    expect(plain.status).toBe(200)
+    expect(plain.headers['content-type']).toBe('text/javascript; charset=utf-8')
+    expect(plain.headers['x-content-type-options']).toBe('nosniff')
+    expect(plain.text).toContain('root["jsQR"] = factory()')
+    const compressed = await send(edge.port, '/login/qr-decode.js', { headers: { 'accept-encoding': 'gzip, br' } })
+    expect(compressed.headers['content-encoding']).toBe('gzip')
+    expect(Number(compressed.headers['content-length'])).toBeLessThan(Number(plain.headers['content-length']) / 3)
+  })
+
   it('reads typed codes in any case and with or without the dash', () => {
     expect(normalizeLoginCode('abcd efgh')).toBe('ABCD-EFGH')
     expect(normalizeLoginCode('ABCD-EFG1')).toBeUndefined()

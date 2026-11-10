@@ -128,11 +128,15 @@ describe('signing in through the login page', () => {
     })
     expect(registered).toMatchObject({ status: 200, body: { label: '测试用通行密钥', rpId: 'localhost' } })
 
-    // A browser without cookies, same authenticator: the login page offers the passkey and it signs in.
+    // A computer without cookies, same authenticator: the passkey sits under this browser's own code and signs in.
     await context.clearCookies()
+    await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto(`${origin}/login`)
     await page.getByRole('button', { name: '我了解风险，继续' }).click()
-    await page.getByRole('button', { name: '使用通行密钥登录' }).click()
+    await expect
+      .poll(async () => (await page.locator('#shown-code').innerText()).trim(), { timeout: 10_000 })
+      .toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/u)
+    await page.getByRole('button', { name: '使用通行密钥' }).click()
     await page.waitForURL(`${origin}/`)
     await expect(page.getByRole('heading', { name: 'signed in' }).isVisible()).resolves.toBe(true)
     expect(repository.listPasskeys('localhost')[0]?.lastUsedAt).toEqual(expect.any(Number))
@@ -149,13 +153,12 @@ describe('signing in through the login page', () => {
     })
     const csrf = (await admin.cookies()).find((entry) => entry.name === 'nxt_csrf')?.value ?? ''
 
-    const phone = await browser.newContext()
-    const page = await phone.newPage()
+    const computer = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+    const page = await computer.newPage()
     await page.goto(`${origin}/login`)
     await page.getByRole('button', { name: '我了解风险，继续' }).click()
-    // This address already has a passkey, so the page leads with it; the QR code is one of the alternatives.
-    await page.getByRole('button', { name: '使用通行密钥登录' }).waitFor()
-    await page.getByRole('button', { name: '扫码登录' }).click()
+    // This address already has a passkey: it is offered beside the code, which still works on its own.
+    await page.getByRole('button', { name: '使用通行密钥' }).waitFor()
     const shown = page.locator('#shown-code')
     await expect
       .poll(async () => (await shown.innerText()).trim(), { timeout: 10_000 })
@@ -169,6 +172,6 @@ describe('signing in through the login page', () => {
     await page.waitForURL(`${origin}/`, { timeout: 10_000 })
     await expect(page.getByRole('heading', { name: 'signed in' }).isVisible()).resolves.toBe(true)
     await admin.close()
-    await phone.close()
+    await computer.close()
   }, 60_000)
 })

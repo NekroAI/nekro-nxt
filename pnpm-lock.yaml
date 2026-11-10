@@ -395,6 +395,9 @@ importers:
       fflate:
         specifier: 0.8.3
         version: 0.8.3
+      jsqr:
+        specifier: 1.4.0
+        version: 1.4.0
       linkedom:
         specifier: 0.18.13
         version: 0.18.13
