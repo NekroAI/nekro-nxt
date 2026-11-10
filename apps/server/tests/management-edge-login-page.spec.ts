@@ -206,4 +206,35 @@ describe('the login page on phones and computers', () => {
     await context.close()
     await admin.close()
   }, 60_000)
+
+  it('reaches under a phone notch and colours the status bar like the page in either scheme', async () => {
+    for (const colorScheme of ['light', 'dark'] as const) {
+      const context = await browser.newContext({ ...PHONE, colorScheme })
+      const page = await context.newPage()
+      const violations = securityViolations(page)
+      await page.goto(`http://localhost:${edge.port}/login`)
+      await expect(page.locator('meta[name="viewport"]').getAttribute('content')).resolves.toContain(
+        'viewport-fit=cover',
+      )
+      const look = await page.evaluate(() => {
+        const active = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')].filter(
+          (meta) => matchMedia(meta.media).matches,
+        )
+        const body = getComputedStyle(document.body)
+        // Normalises the meta's hex the way computed styles report colours.
+        const probe = document.createElement('i')
+        probe.style.color = active[0]?.content ?? ''
+        document.body.append(probe)
+        const themeColor = getComputedStyle(probe).color
+        probe.remove()
+        return { count: active.length, themeColor, background: body.backgroundColor, padding: body.padding }
+      })
+      expect(look.count).toBe(1)
+      expect(look.themeColor).toBe(look.background)
+      // Without a notch the page keeps its usual margin.
+      expect(look.padding).toBe('16px')
+      expect(violations).toEqual([])
+      await context.close()
+    }
+  }, 60_000)
 })

@@ -2,15 +2,20 @@
 <html lang="zh-CN" data-ui="next">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#172A45" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The top bar's color (--side in tokens.css) per system scheme; the app replaces both with its chosen theme. -->
+    <meta name="theme-color" content="#eceef2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1a2c" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="NXT" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="description" content="NekroNXT：以 DSH 为核心引擎的高扩展智能体聊天系统" />
-    <meta name="theme-color" content="#172a45" />
     <meta property="og:title" content="NekroNXT" />
     <meta property="og:description" content="以 DSH 为核心引擎，原生面向群聊与动态扩展的智能体聊天系统" />
     <meta property="og:image" content="/brand/social-card.png" />

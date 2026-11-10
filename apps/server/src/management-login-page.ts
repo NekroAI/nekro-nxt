@@ -32,7 +32,9 @@ export const managementLoginPage = (input: {
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0d1626" media="(prefers-color-scheme: dark)" />
 <meta name="robots" content="noindex" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 <title>登录 · NekroNXT</title>
@@ -51,7 +53,9 @@ export const managementLoginPage = (input: {
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
     background: var(--bg); color: var(--fg);
     font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   }

@@ -1,4 +1,4 @@
-import { HostApiContracts } from '@nekro-nxt/contracts'
+import { ChannelIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { chromium, expect, test, type Browser, type Locator, type Page } from '@playwright/test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -20,6 +20,53 @@ type Snapshot = typeof productSnapshot
 type ListView = Snapshot['channelListView']
 
 const emptyView: ListView = { pinnedChannelIds: [], collapsedGroupIds: [] }
+
+/** Enough group channels that the overview and the channel list scroll on a phone. */
+const crowdedSnapshot: Snapshot = {
+  ...productSnapshot,
+  channels: [
+    ...productSnapshot.channels,
+    ...productSnapshot.channels
+      .filter((channel) => channel.id === externalChannelId)
+      .flatMap((channel) =>
+        Array.from({ length: 24 }, (_, index) => ({
+          ...channel,
+          id: ChannelIdSchema.parse(`chn_crowd${String(index).padStart(2, '0')}`),
+          platformChannelId: `opaque-crowd-${index}`,
+          displayName: `示例群 ${index + 1}`,
+        })),
+      ),
+  ],
+}
+
+/** A notched phone in portrait: the status bar and home indicator, as the shell's safe-area tokens. */
+const notched = async (page: Page): Promise<void> => {
+  await page.addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      document.documentElement.style.setProperty('--safe-top', '59px')
+      document.documentElement.style.setProperty('--safe-bottom', '34px')
+    })
+  })
+}
+
+/** Scrolls every scroll container inside `scope` to its end. */
+const scrollToEnd = (scope: Locator) =>
+  scope.evaluate((root) => {
+    for (const node of [root, ...root.querySelectorAll<HTMLElement>('*')]) {
+      if (/auto|scroll/u.test(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight)
+        node.scrollTop = node.scrollHeight
+    }
+  })
+
+/** Asserts `item` lies wholly between the top bar and the bottom navigation. */
+const expectClearOfChrome = async (page: Page, item: Locator) => {
+  const box = await item.boundingBox()
+  const top = await page.locator('header').first().boundingBox()
+  const nav = await page.getByRole('navigation', { name: '主导航' }).boundingBox()
+  if (!box || !top || !nav) throw new Error('外壳或列表项没有几何尺寸。')
+  expect(box.y).toBeGreaterThanOrEqual(top.y + top.height)
+  expect(box.y + box.height).toBeLessThanOrEqual(nav.y)
+}
 
 /** The product snapshot with unread messages in 记录员's channel (3) and the unbound one (4), arranged as `view`. */
 const arrangedSnapshot = (view: ListView): Snapshot => ({
@@ -492,6 +539,68 @@ test.describe('shell, channels and live', () => {
         })
     } finally {
       await second.page.close()
+    }
+  })
+
+  test('on a phone the last overview and channel-list rows scroll clear of the bottom navigation', async () => {
+    for (const withNotch of [false, true]) {
+      const { page, errors } = await open('/live', {
+        snapshot: crowdedSnapshot,
+        width: 393,
+        ...(withNotch ? { before: notched } : {}),
+      })
+      try {
+        const nav = page.getByRole('navigation', { name: '主导航' })
+        await expect(nav).toBeVisible()
+        const overviewRows = page.locator('main').getByRole('link', { name: /示例群/u })
+        await expect(overviewRows.first()).toBeVisible()
+        await scrollToEnd(page.locator('main'))
+        await expectClearOfChrome(page, overviewRows.last())
+        if (withNotch) {
+          // The bar's controls sit below the status bar and the capsule above the home indicator.
+          const search = await page.getByRole('button', { name: '搜索' }).boundingBox()
+          const capsule = await nav.boundingBox()
+          expect(search?.y).toBeGreaterThanOrEqual(59)
+          expect((capsule?.y ?? 0) + (capsule?.height ?? 0)).toBeLessThanOrEqual(
+            (page.viewportSize()?.height ?? 0) - 34,
+          )
+        }
+
+        await page.goto(page.url().replace(/\/live$/u, '/channels'))
+        await page.getByRole('button', { name: '全部频道' }).click()
+        const drawer = page.locator('[data-list-drawer="open"] > aside')
+        await expect(drawer.getByText('示例群 24')).toBeVisible()
+        await scrollToEnd(drawer)
+        await expectClearOfChrome(page, drawer.getByText('示例群 24'))
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
+  test('the status bar colour follows the theme the app shows', async () => {
+    const { page } = await open('/settings/appearance', {
+      before: async (target) => {
+        await target.addInitScript(() => window.localStorage.setItem('nekro-nxt.theme', 'light'))
+      },
+    })
+    try {
+      const themeColors = () =>
+        page
+          .locator('meta[name="theme-color"]')
+          .evaluateAll((metas) => [...new Set(metas.map((meta) => meta.getAttribute('content')))])
+      const side = () =>
+        page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--side').trim())
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+      await expect.poll(themeColors).toEqual([await side()])
+      await page.getByRole('radio', { name: '深色' }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+      const dark = await side()
+      expect(dark).not.toBe('')
+      await expect.poll(themeColors).toEqual([dark])
+    } finally {
+      await page.close()
     }
   })
 

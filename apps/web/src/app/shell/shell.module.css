@@ -1,7 +1,7 @@
 .app {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  grid-template-rows: var(--topbar-height) minmax(0, 1fr) var(--statusbar-height);
+  grid-template-columns: calc(72px + var(--safe-left)) minmax(0, 1fr);
+  grid-template-rows: var(--chrome-top) minmax(0, 1fr) var(--chrome-bottom);
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
@@ -19,7 +19,8 @@
   align-items: center;
   gap: var(--s-4);
   min-width: 0;
-  padding: 0 calc(var(--s-3) + var(--wc-right)) 0 calc(var(--s-4) + var(--wc-left));
+  padding: var(--safe-top) calc(var(--s-3) + var(--wc-right) + var(--safe-right)) 0
+    calc(var(--s-4) + var(--wc-left) + var(--safe-left));
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--side) 88%, transparent);
   backdrop-filter: saturate(1.4) blur(14px);
@@ -257,7 +258,7 @@ a.instance {
   min-height: 0;
   overflow: auto;
   gap: calc(var(--s-1) / 2);
-  padding: var(--s-3) 0;
+  padding: var(--s-3) 0 var(--s-3) var(--safe-left);
   border-right: 1px solid var(--line);
   background: var(--side);
 }
@@ -467,6 +468,8 @@ a.instance {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* Landscape phones: the notch side stays clear of page content. */
+  padding-right: var(--safe-right);
 }
 
 .canvas {
@@ -491,7 +494,7 @@ a.instance {
   align-items: center;
   gap: calc(var(--s-1) / 2);
   overflow: hidden;
-  padding: 0 var(--s-2);
+  padding: 0 calc(var(--s-2) + var(--safe-right)) var(--safe-bottom) calc(var(--s-2) + var(--safe-left));
   border-top: 1px solid var(--line);
   background: var(--side);
   color: var(--muted);
@@ -616,16 +619,17 @@ a.instance {
 @media (max-width: 760px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--topbar-height) minmax(0, 1fr) calc(var(--statusbar-height) * 2 + var(--s-2));
   }
 
   /* The bottom bar floats as a glass capsule above the page edge (05 §6.2). */
   .rail {
+    --rail-lift: max(var(--s-2), var(--safe-bottom));
+
     flex-direction: row;
     grid-row: 3;
     grid-column: 1;
     justify-content: space-around;
-    margin: 0 var(--s-3) var(--s-2);
+    margin: 0 calc(var(--s-3) + var(--safe-right)) var(--rail-lift) calc(var(--s-3) + var(--safe-left));
     padding: var(--s-1);
     overflow: visible;
     border: 1px solid var(--glass-line);

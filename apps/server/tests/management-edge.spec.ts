@@ -7,12 +7,13 @@ import {
 } from '@nekro-nxt/contracts'
 import { openMigratedCoreDatabase, SqliteHostSecurityRepository } from '@nekro-nxt/storage-sqlite'
 import { createHmac, randomBytes } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { startManagementEdge } from '../src/management-edge.ts'
 import { LegacyDesktopProtocol1DescriptorSchema } from './legacy-descriptor.js'
 
@@ -70,6 +71,13 @@ const request = (
     req.end(encoded)
   })
 
+const webManifestIcons = async (): Promise<string[]> => {
+  const manifest = z
+    .object({ icons: z.array(z.object({ src: z.string() })) })
+    .parse(JSON.parse(await readFile(new URL('../../web/public/site.webmanifest', import.meta.url), 'utf8')))
+  return manifest.icons.map((icon) => icon.src)
+}
+
 describe('automatic TLS management edge', () => {
   const roots: string[] = []
   afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))))
@@ -105,7 +113,8 @@ describe('automatic TLS management edge', () => {
         transport: 'auto-tls-pinned-v1',
       })
       expect((await request(edge.port, '/api/private')).status).toBe(401)
-      for (const pathname of ['/site.webmanifest', '/pwa-192.png', '/pwa-maskable-512.png'])
+      // A phone adds the app to its home screen before signing in: the manifest and every icon it names stay public.
+      for (const pathname of ['/site.webmanifest', ...(await webManifestIcons())])
         expect((await request(edge.port, pathname)).status, pathname).toBe(200)
       for (const [pathname, method] of [
         ['/api/commands', 'GET'],

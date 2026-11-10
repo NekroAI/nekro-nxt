@@ -1,5 +1,5 @@
 .welcome {
-  min-height: min(560px, calc(100vh - var(--topbar-height) - var(--statusbar-height) - var(--s-8)));
+  min-height: min(560px, calc(100vh - var(--chrome-top) - var(--chrome-bottom) - var(--s-8)));
   border: 1px solid var(--line);
   box-shadow: var(--sh-2), var(--hl);
 }

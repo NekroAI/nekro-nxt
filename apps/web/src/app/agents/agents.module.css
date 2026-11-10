@@ -224,7 +224,8 @@
 .personaOverlay {
   position: fixed;
   z-index: 51;
-  inset: var(--s-6);
+  inset: calc(var(--s-6) + var(--safe-top)) calc(var(--s-6) + var(--safe-right)) calc(var(--s-6) + var(--safe-bottom))
+    calc(var(--s-6) + var(--safe-left));
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: var(--s-3);

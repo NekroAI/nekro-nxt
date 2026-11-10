@@ -12,10 +12,11 @@
 
 .panel {
   position: fixed;
-  top: max(12vh, 64px);
+  /* Just below the top bar at least. */
+  top: max(12vh, calc(var(--chrome-top) + var(--s-4)));
   left: 50%;
   z-index: 51;
-  width: min(620px, calc(100vw - 32px));
+  width: min(620px, calc(100vw - 32px - var(--safe-left) - var(--safe-right)));
   overflow: hidden;
   border: 1px solid var(--line-2);
   border-radius: 18px;

@@ -16,15 +16,15 @@
 
 .dialog {
   position: fixed;
-  top: 13vh;
+  top: max(13vh, calc(var(--safe-top) + var(--s-4)));
   left: 50%;
   z-index: 51;
   display: grid;
   /* Title and actions stay in view; only the body scrolls when the content is taller than the window. */
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: var(--s-4);
-  width: min(440px, calc(100vw - 32px));
-  max-height: 80vh;
+  width: min(440px, calc(100vw - 32px - var(--safe-left) - var(--safe-right)));
+  max-height: calc(80vh - var(--safe-bottom));
   overflow: hidden;
   padding: var(--s-6);
   border: 1px solid var(--line);
@@ -44,13 +44,13 @@
 }
 
 .wide {
-  width: min(620px, calc(100vw - 32px));
+  width: min(620px, calc(100vw - 32px - var(--safe-left) - var(--safe-right)));
 }
 
 .media {
-  top: 5vh;
-  width: min(920px, calc(100vw - 48px));
-  max-height: 90vh;
+  top: max(5vh, var(--safe-top));
+  width: min(920px, calc(100vw - 48px - var(--safe-left) - var(--safe-right)));
+  max-height: calc(90vh - var(--safe-top) - var(--safe-bottom));
 }
 
 .titleRow {
@@ -111,6 +111,8 @@
   display: flex;
   flex-direction: column;
   width: min(460px, 100vw);
+  /* Phones: the head stays below the status bar and the last row above the home indicator. */
+  padding: var(--safe-top) var(--safe-right) var(--safe-bottom) 0;
   border-left: 1px solid var(--line);
   outline: none;
   background: var(--surface);
@@ -340,7 +342,7 @@
 
 .toasts {
   position: fixed;
-  bottom: 46px;
+  bottom: calc(var(--chrome-bottom) + 14px);
   left: 50%;
   z-index: 80;
   display: grid;

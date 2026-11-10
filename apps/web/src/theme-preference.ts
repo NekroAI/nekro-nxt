@@ -21,7 +21,20 @@ export const readInitialThemeChoice = (): ThemeChoice => {
   return initializeThemeChoice(window.localStorage, window.matchMedia('(prefers-color-scheme: dark)').matches)
 }
 
+/**
+ * Colors the phone's status bar like the top bar. index.html starts with one value per system scheme; once the app
+ * has chosen a theme, both carry that theme's color, so a choice against the system scheme wins.
+ */
+const syncThemeColor = (root: HTMLElement): void => {
+  const color = root.ownerDocument.defaultView?.getComputedStyle(root).getPropertyValue('--side').trim()
+  if (!color) return
+  for (const meta of root.ownerDocument.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    meta.content = color
+  }
+}
+
 export const applyThemeChoice = (root: HTMLElement, theme: ThemeChoice): void => {
   root.dataset['theme'] = theme
   root.classList.toggle('dark', theme === 'dark')
+  syncThemeColor(root)
 }

@@ -470,10 +470,11 @@ html[data-nxt-motion='off']
   .workbench > [data-detail-pane] {
     position: fixed;
     z-index: 30;
-    top: var(--topbar-height);
+    top: var(--chrome-top);
     right: 0;
-    bottom: var(--statusbar-height);
-    width: min(var(--pane-detail), 92vw);
+    bottom: var(--chrome-bottom);
+    width: min(calc(var(--pane-detail) + var(--safe-right)), 92vw);
+    padding-right: var(--safe-right);
     box-shadow: var(--sh-3);
   }
 
@@ -491,6 +492,7 @@ html[data-nxt-motion='off']
   .workbench[data-narrow-pane='detail'] > [data-detail-pane] {
     position: static;
     width: 100%;
+    padding-right: 0;
     box-shadow: none;
     border-left: 0;
   }

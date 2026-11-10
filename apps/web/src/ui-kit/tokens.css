@@ -245,6 +245,17 @@ html[data-ui='next'] {
   /* Matches the Desktop caption overlay height (apps/desktop window-chrome TITLE_BAR_HEIGHT). */
   --topbar-height: 48px;
   --statusbar-height: 32px;
+  /*
+   * Edges the device keeps clear: notch, rounded corners, home indicator. Zero on computers and wherever the browser
+   * reports none, so the shell then looks exactly as without them.
+   */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Where the shell's top bar ends and its bottom bar begins, safe areas included; floating panels stop at these. */
+  --chrome-top: calc(var(--topbar-height) + var(--safe-top));
+  --chrome-bottom: calc(var(--statusbar-height) + var(--safe-bottom));
   --pane-list: 272px;
   --pane-detail: 360px;
   /* Page widths (05 §6.1): forms and settings, object pages with tables, the master column of a split view. */
@@ -273,6 +284,13 @@ html[data-ui='next'] {
   --identity-sheen: inset 0 1px 0 rgb(255 255 255 / 0.3), inset 0 -2px 4px rgb(0 0 0 / 0.08);
   --identity-sheen-lg: inset 0 2px 0 rgb(255 255 255 / 0.35);
   --identity-text-shadow: 0 1px 1px rgb(0 0 0 / 0.18);
+}
+
+/* Phones: the bottom bar floats above the home indicator, or a small gap above the edge without one (05 §6.2). */
+@media (max-width: 760px) {
+  html[data-ui='next'] {
+    --chrome-bottom: calc(var(--statusbar-height) * 2 + max(var(--s-2), var(--safe-bottom)));
+  }
 }
 
 html[data-ui='next'][data-density='compact'] {
