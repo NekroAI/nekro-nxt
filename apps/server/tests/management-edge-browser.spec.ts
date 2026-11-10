@@ -84,16 +84,20 @@ describe('browser sign-in through the management edge', () => {
   const roots: string[] = []
   const internals: Server[] = []
   const edges: ManagementEdgeHandle[] = []
+  const databases: Awaited<ReturnType<typeof openMigratedCoreDatabase>>[] = []
   afterEach(async () => {
     await Promise.all(edges.splice(0).map((edge) => edge.stop()))
     await Promise.all(internals.splice(0).map((server) => new Promise((resolve) => server.close(resolve))))
+    for (const database of databases.splice(0)) database.close()
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
   const start = async (options: { readonly trustProxy?: boolean } = {}) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-browser-'))
     roots.push(root)
-    const repository = new SqliteHostSecurityRepository(await openMigratedCoreDatabase(path.join(root, 'core.sqlite')))
+    const database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    databases.push(database)
+    const repository = new SqliteHostSecurityRepository(database)
     const internal = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(
@@ -128,6 +132,35 @@ describe('browser sign-in through the management edge', () => {
       method: 'POST',
       body: { managementKey: MANAGEMENT_KEY, acknowledgeInsecure },
     })
+
+  it('keeps login return paths on this origin after browser URL normalization', async () => {
+    const { edge } = await start()
+    const signedIn = cookieHeader(setCookies(await login('https', edge.port)))
+    for (const next of [
+      '/\\outside.test',
+      '/\t/outside.test',
+      '/\n/outside.test',
+      '//outside.test',
+      '/channels/..//outside.test',
+      '/a/%2e%2e//outside.test',
+      '/channels/../login',
+    ]) {
+      const route = `/login?next=${encodeURIComponent(next)}`
+      const anonymous = await send('https', edge.port, route)
+      expect(anonymous.status).toBe(200)
+      expect(anonymous.text).toContain('"next":"/"')
+      const authenticated = await send('https', edge.port, route, { headers: { cookie: signedIn } })
+      expect(authenticated.status).toBe(302)
+      expect(authenticated.headers['location']).toBe('/')
+    }
+    const valid = '/channels?view=recent#top'
+    const route = `/login?next=${encodeURIComponent(valid)}`
+    const page = await send('https', edge.port, route)
+    expect(page.text).toContain(`"next":${JSON.stringify(valid)}`)
+    const authenticated = await send('https', edge.port, route, { headers: { cookie: signedIn } })
+    expect(authenticated.status).toBe(302)
+    expect(authenticated.headers['location']).toBe(valid)
+  })
 
   it('serves plain HTTP on the same port, asks to accept the risk and keeps the browser signed in', async () => {
     const { edge, repository } = await start()
