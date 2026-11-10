@@ -51,6 +51,11 @@ function assertionTypeText(node, sourceFile) {
   return node.type.getText(sourceFile).replace(/\s+/gu, ' ').trim()
 }
 
+const notificationChannelFiles = new Set([
+  'apps/server/src/notifications.ts',
+  'apps/web/src/app/settings/notifications-section.tsx',
+])
+
 function scanFile(file) {
   const relative = path.relative(root, file).split(path.sep).join('/')
   if (exemptFiles.has(relative)) return []
@@ -60,6 +65,8 @@ function scanFile(file) {
   const sourceFile = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true, kind)
   const findings = []
   const isMainApplication = relative.startsWith('apps/server/src/') || relative.startsWith('apps/web/src/')
+  // Notification channels are push services, not chat platforms; their names are product copy there.
+  const namesNotificationChannels = notificationChannelFiles.has(relative)
 
   const isAdapterKeyExpression = (node) =>
     (ts.isIdentifier(node) && node.text === 'adapterKey') ||
@@ -99,6 +106,7 @@ function scanFile(file) {
     }
     if (
       isMainApplication &&
+      !namesNotificationChannels &&
       (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
       /(?:qq-group|qq-direct|\bQQ\b|OneBot|企业微信)/u.test(node.text)
     ) {

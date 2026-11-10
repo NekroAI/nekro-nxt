@@ -719,7 +719,7 @@ test.describe('settings space', () => {
       label: 'iPhone · 主屏幕',
       createdAt: 1_725_000_000_000,
     }
-    let subscriptions: unknown[] = [other]
+    let subscriptions: ReadonlyArray<{ readonly id: string }> = [other]
     const calls: string[] = []
     const { page, errors } = await open('/settings/notifications', {
       before: async (target) => {
@@ -746,7 +746,7 @@ test.describe('settings space', () => {
         await target.route('**/api/push/subscriptions/*', async (request) => {
           const id = new URL(request.request().url()).pathname.split('/').at(-1)!
           calls.push(`remove ${id}`)
-          subscriptions = subscriptions.filter((entry) => (entry as { id: string }).id !== id)
+          subscriptions = subscriptions.filter((entry) => entry.id !== id)
           await request.fulfill({ json: { deleted: true } })
         })
         await target.route('**/api/push/subscriptions/*/test', async (request) => {

@@ -99,15 +99,17 @@ const createFixture = async (
 ) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-notifications-'))
   temporaryRoots.push(root)
-  let record: SystemSettingRecord | undefined
+  const records = new Map<string, SystemSettingRecord>()
   const repository = {
-    getSystemSetting: () => record,
+    getSystemSetting: (key: string) => records.get(key),
     putSystemSetting: (key: string, value: JsonValue, expectedRevision: number | undefined, updatedAt: number) => {
+      const record = records.get(key)
       if (record?.revision !== expectedRevision || (record === undefined && expectedRevision !== undefined)) {
         throw new Error('System setting revision conflict.')
       }
-      record = { key, value, revision: (record?.revision ?? 0) + 1, updatedAt }
-      return record
+      const next = { key, value, revision: (record?.revision ?? 0) + 1, updatedAt }
+      records.set(key, next)
+      return next
     },
   }
   const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(new Response(null, { status: 200 })))
@@ -126,7 +128,8 @@ const createFixture = async (
     credentialFiles: async () => (await readdir(path.join(root, 'credentials')).catch(() => [])).length,
     record: {
       set: (value: JsonValue) => {
-        record = { key: 'notifications', value, revision: (record?.revision ?? 0) + 1, updatedAt: 1 }
+        const revision = (records.get('notifications')?.revision ?? 0) + 1
+        records.set('notifications', { key: 'notifications', value, revision, updatedAt: 1 })
       },
     },
   }
