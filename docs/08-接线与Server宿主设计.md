@@ -21,8 +21,9 @@
 | 新建内置频道 | `POST /api/channels` | 在系统托管内置连接上创建未绑定内置频道 |
 | 删除 / 移除频道 | `DELETE /api/channels/:channelId` | 携带预期 Binding；立即停止运行、解除绑定并写 Channel tombstone，保留全部历史；外部频道不影响平台真实对象 |
 | 彻底清除频道记录 | `GET` / `POST /api/channels/:channelId/history-purge` | `GET` 返回将删除的消息、对话、附件数与不能执行的原因；`POST` 携带预期 Binding，停止运行后物理删除消息历史、对话记录和无人引用的附件，频道与 Binding 保留；范围见[删除语义 §7](decisions/implemented/2026-08-22-内置频道与实体删除语义.md#7-彻底清除频道记录) |
-| 通知设置 | `PUT /api/settings/notifications` | Core SQLite 保存系统/Bark 渠道和功能开关；Bark Device Key 只保存本机凭据引用 |
-| 客户端通知 | `GET /api/client-notifications?cursor=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取；同一来源使用同一 id，客户端用新通知替换旧通知 |
+| 通知设置 | `PUT /api/settings/notifications` | Core SQLite 保存系统、浏览器推送、Bark、企业微信、ntfy 渠道和功能开关；Bark Device Key、企业微信 Webhook 地址、ntfy 主题与令牌只保存本机凭据引用。各渠道分别发送，一个失败不影响其他渠道 |
+| 浏览器推送 | `GET /api/push/key`、`/api/push/subscriptions` | VAPID 密钥首次用到时生成，私钥存本机凭据。订阅属于登记它的登录设备，撤销设备或退出登录时一并删除；本机控制台没有登录设备，不能订阅。推送内容只有标题、正文、站内路由和合并标签，发出前脱敏；推送服务返回 404 或 410 时删除订阅 |
+| 客户端通知 | `GET /api/client-notifications?cursor=&boot=&wait=` | 返回进程内短暂脱敏事件；无 cursor 只建立当前位置，供在线 Desktop 本地或已认证远程 Session 拉取；同一来源使用同一 id，客户端用新通知替换旧通知。带 `boot` 时响应附本次启动的 `bootId`，游标属于上一次启动或大于当前计数时返回当前基线；`wait`（最长 30 秒）让请求在没有新通知时挂起 |
 | 发送消息 | `POST /api/channels/:channelId/messages` | 仅内置频道入站 |
 | 频道历史 | `GET /api/channels/:channelId/messages` | `(occurredAt, sourceId)` 游标分页；首载、翻页、重连对账 |
 | 单次工具调用 | `GET /api/channels/:channelId/runtime/tools/:callId` | 当前会话中一次工具调用的完整参数与结果：参数格式化为 JSON 并对疑似密钥的键打码，结果为模型收到的文本；两者各上限 64,000 字并标记是否截断。会话已不在内存时返回 404 |

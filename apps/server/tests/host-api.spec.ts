@@ -1736,6 +1736,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(snapshot.notificationSettings).toEqual({
         system: { enabled: true },
         bark: { enabled: false, serverUrl: 'https://api.day.app', deviceKeyConfigured: false },
+        browserPush: { enabled: true },
+        wecom: { enabled: false, webhookConfigured: false },
+        ntfy: { enabled: false, serverUrl: 'https://ntfy.sh', topicConfigured: false, tokenConfigured: false },
         events: {
           'dynamic-client-approval-requested': true,
           'community-feedback-update': true,
@@ -1775,6 +1778,37 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
         await (await fetch(`${origin}/api/client-notifications?cursor=${connected.cursor}`)).json(),
       )
       expect(feed.notifications).toEqual([expect.objectContaining({ title: 'NekroNXT 测试通知', route: '/settings' })])
+
+      // A client that names its run waits for the next notification and gets it as soon as it is published.
+      const run = HostApiContracts.listClientNotifications.parseResponse(
+        await (await fetch(`${origin}/api/client-notifications?boot=`)).json(),
+      )
+      expect(run.bootId).toEqual(expect.any(String))
+      const waiting = fetch(`${origin}/api/client-notifications?cursor=${run.cursor}&boot=${run.bootId}&wait=30`)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      await fetch(`${origin}/api/settings/notifications/test-system`, { method: 'POST' })
+      expect(HostApiContracts.listClientNotifications.parseResponse(await (await waiting).json())).toMatchObject({
+        cursor: run.cursor + 1,
+        notifications: [{ title: 'NekroNXT 测试通知' }],
+      })
+      expect((await fetch(`${origin}/api/client-notifications?wait=31`)).status).toBe(400)
+
+      // The local console has no login device: it can see subscriptions but not add one.
+      expect(
+        HostApiContracts.listPushSubscriptions.parseResponse(
+          await (await fetch(`${origin}/api/push/subscriptions`)).json(),
+        ),
+      ).toEqual({ subscriptions: [] })
+      const subscribe = await fetch(`${origin}/api/push/subscriptions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: 'https://push.example.test/console',
+          keys: { p256dh: 'synthetic-p256dh', auth: 'synthetic-auth' },
+          label: 'Mac · Chrome',
+        }),
+      })
+      expect(subscribe.status).toBe(403)
     } finally {
       api.dispose()
       await webContext.fiber.dispose()

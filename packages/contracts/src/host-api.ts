@@ -421,6 +421,21 @@ export const NotificationSettingsViewSchema = z
         deviceKeyConfigured: z.boolean(),
       })
       .strict(),
+    /** Defaults read an older host's view, which has none of these channels. */
+    browserPush: z.object({ enabled: z.boolean() }).strict().default({ enabled: false }),
+    wecom: z
+      .object({ enabled: z.boolean(), webhookConfigured: z.boolean() })
+      .strict()
+      .default({ enabled: false, webhookConfigured: false }),
+    ntfy: z
+      .object({
+        enabled: z.boolean(),
+        serverUrl: z.url(),
+        topicConfigured: z.boolean(),
+        tokenConfigured: z.boolean(),
+      })
+      .strict()
+      .default({ enabled: false, serverUrl: 'https://ntfy.sh', topicConfigured: false, tokenConfigured: false }),
     events: z
       .object({
         'dynamic-client-approval-requested': z.boolean(),
@@ -444,6 +459,26 @@ export const UpdateNotificationSettingsRequestSchema = z
         clearDeviceKey: z.boolean().optional(),
       })
       .strict(),
+    /** Channels an older client leaves out keep their stored values. */
+    browserPush: z.object({ enabled: z.boolean() }).strict().optional(),
+    wecom: z
+      .object({
+        enabled: z.boolean(),
+        webhookUrl: z.url().max(2048).optional(),
+        clearWebhookUrl: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    ntfy: z
+      .object({
+        enabled: z.boolean(),
+        serverUrl: z.url(),
+        topic: z.string().trim().min(1).max(64).optional(),
+        token: z.string().trim().min(1).max(512).optional(),
+        clearToken: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     events: z
       .object({
         'dynamic-client-approval-requested': z.boolean(),
@@ -461,6 +496,36 @@ export const UpdateNotificationSettingsRequestSchema = z
 
 export const TestBarkNotificationRequestSchema = z
   .object({ serverUrl: z.url(), deviceKey: z.string().trim().min(1).max(2048).optional() })
+  .strict()
+
+export const TestWecomNotificationRequestSchema = z.object({ webhookUrl: z.url().max(2048).optional() }).strict()
+
+export const TestNtfyNotificationRequestSchema = z
+  .object({
+    serverUrl: z.url(),
+    topic: z.string().trim().min(1).max(64).optional(),
+    token: z.string().trim().min(1).max(512).optional(),
+  })
+  .strict()
+
+/** A browser subscribed to push; the settings page names it by `id`, never by its endpoint. */
+export const PushSubscriptionViewSchema = z
+  .object({
+    id: z.string().regex(/^[a-f0-9]{32}$/u),
+    deviceId: ManagementDeviceIdSchema,
+    deviceLabel: z.string().min(1).max(80),
+    label: z.string().min(1).max(80),
+    createdAt: z.number().int().nonnegative(),
+    lastDeliveredAt: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
+export const RegisterPushSubscriptionRequestSchema = z
+  .object({
+    endpoint: z.url().max(2048),
+    keys: z.object({ p256dh: z.string().min(1).max(256), auth: z.string().min(1).max(64) }).strict(),
+    label: z.string().trim().min(1).max(80),
+  })
   .strict()
 
 /**
@@ -3555,6 +3620,68 @@ export const HostApiContracts = {
       .strict(),
     request: NoRequestBodySchema,
     response: ClientNotificationFeedResponseSchema,
+    error: HostApiErrorSchema,
+  }),
+  testWecomNotification: defineContract({
+    method: 'POST',
+    path: '/api/settings/notifications/test-wecom',
+    params: EmptyParamsSchema,
+    request: TestWecomNotificationRequestSchema,
+    response: z.object({ sent: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  testNtfyNotification: defineContract({
+    method: 'POST',
+    path: '/api/settings/notifications/test-ntfy',
+    params: EmptyParamsSchema,
+    request: TestNtfyNotificationRequestSchema,
+    response: z.object({ sent: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getWebPushKey: defineContract({
+    method: 'GET',
+    path: '/api/push/key',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.object({ publicKey: z.string().min(1) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  /** `currentDeviceId` is the login device asking; the local console has none and cannot subscribe. */
+  listPushSubscriptions: defineContract({
+    method: 'GET',
+    path: '/api/push/subscriptions',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z
+      .object({
+        subscriptions: z.array(PushSubscriptionViewSchema),
+        currentDeviceId: ManagementDeviceIdSchema.optional(),
+      })
+      .strict(),
+    error: HostApiErrorSchema,
+  }),
+  registerPushSubscription: defineContract({
+    method: 'POST',
+    path: '/api/push/subscriptions',
+    params: EmptyParamsSchema,
+    request: RegisterPushSubscriptionRequestSchema,
+    response: PushSubscriptionViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  deletePushSubscription: defineContract({
+    method: 'DELETE',
+    path: '/api/push/subscriptions/:subscriptionId',
+    params: z.object({ subscriptionId: z.string().regex(/^[a-f0-9]{32}$/u) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ deleted: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  testPushSubscription: defineContract({
+    method: 'POST',
+    path: '/api/push/subscriptions/:subscriptionId/test',
+    params: z.object({ subscriptionId: z.string().regex(/^[a-f0-9]{32}$/u) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ sent: z.literal(true) }).strict(),
     error: HostApiErrorSchema,
   }),
   updateNotificationSettings: defineContract({

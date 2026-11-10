@@ -1,8 +1,8 @@
 import type { ManagementDeviceId, ServerInstanceId } from '@nekro-nxt/contracts'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import type { CoreDatabase } from './database.js'
-import { HostSecurityMetadataRowSchema, ManagementDeviceRowSchema } from './row-schemas.js'
-import { hostSecurityMetadata, managementDevices } from './schema.js'
+import { HostSecurityMetadataRowSchema, ManagementDeviceRowSchema, PushSubscriptionRowSchema } from './row-schemas.js'
+import { hostSecurityMetadata, managementDevices, pushSubscriptions } from './schema.js'
 
 export interface HostSecurityMetadataRecord {
   readonly instanceId: ServerInstanceId
@@ -18,6 +18,16 @@ export interface ManagementDeviceRecord {
   readonly createdAt: number
   readonly lastUsedAt?: number
   readonly revokedAt?: number
+}
+
+export interface PushSubscriptionRecord {
+  readonly endpoint: string
+  readonly deviceId: ManagementDeviceId
+  readonly p256dh: string
+  readonly auth: string
+  readonly label: string
+  readonly createdAt: number
+  readonly lastDeliveredAt?: number
 }
 
 export class SqliteHostSecurityRepository {
@@ -81,18 +91,82 @@ export class SqliteHostSecurityRepository {
     this.#db.update(managementDevices).set({ lastUsedAt }).where(eq(managementDevices.id, id)).run()
   }
 
+  /** Revoking a device also removes its push subscriptions. */
   revokeDevice(id: ManagementDeviceId, revokedAt: number): boolean {
-    const result = this.#db
-      .update(managementDevices)
-      .set({ revokedAt })
-      .where(and(eq(managementDevices.id, id), isNull(managementDevices.revokedAt)))
-      .run()
-    return result.changes > 0
+    return this.#db.transaction((tx) => {
+      const result = tx
+        .update(managementDevices)
+        .set({ revokedAt })
+        .where(and(eq(managementDevices.id, id), isNull(managementDevices.revokedAt)))
+        .run()
+      tx.delete(pushSubscriptions).where(eq(pushSubscriptions.deviceId, id)).run()
+      return result.changes > 0
+    })
   }
 
   revokeAllDevices(revokedAt: number): number {
-    return this.#db.update(managementDevices).set({ revokedAt }).where(isNull(managementDevices.revokedAt)).run()
-      .changes
+    return this.#db.transaction((tx) => {
+      const changes = tx
+        .update(managementDevices)
+        .set({ revokedAt })
+        .where(isNull(managementDevices.revokedAt))
+        .run().changes
+      tx.delete(pushSubscriptions).run()
+      return changes
+    })
+  }
+
+  /** Registers or moves a subscription; the same browser subscribing again keeps one row. */
+  putPushSubscription(record: Omit<PushSubscriptionRecord, 'lastDeliveredAt'>): PushSubscriptionRecord {
+    this.#db
+      .insert(pushSubscriptions)
+      .values(record)
+      .onConflictDoUpdate({
+        target: pushSubscriptions.endpoint,
+        set: { deviceId: record.deviceId, p256dh: record.p256dh, auth: record.auth, label: record.label },
+      })
+      .run()
+    return this.listPushSubscriptions().find((entry) => entry.endpoint === record.endpoint)!
+  }
+
+  /** Subscriptions of active devices only. */
+  listPushSubscriptions(): readonly PushSubscriptionRecord[] {
+    return this.#db
+      .select({ subscription: pushSubscriptions })
+      .from(pushSubscriptions)
+      .innerJoin(managementDevices, eq(managementDevices.id, pushSubscriptions.deviceId))
+      .where(isNull(managementDevices.revokedAt))
+      .all()
+      .map(({ subscription }) => this.#projectPushSubscription(subscription))
+  }
+
+  deletePushSubscriptions(endpoints: readonly string[]): number {
+    if (endpoints.length === 0) return 0
+    return this.#db
+      .delete(pushSubscriptions)
+      .where(inArray(pushSubscriptions.endpoint, [...endpoints]))
+      .run().changes
+  }
+
+  markPushDelivered(endpoint: string, deliveredAt: number): void {
+    this.#db
+      .update(pushSubscriptions)
+      .set({ lastDeliveredAt: deliveredAt })
+      .where(eq(pushSubscriptions.endpoint, endpoint))
+      .run()
+  }
+
+  #projectPushSubscription(row: typeof pushSubscriptions.$inferSelect): PushSubscriptionRecord {
+    const parsed = PushSubscriptionRowSchema.parse(row)
+    return {
+      endpoint: parsed.endpoint,
+      deviceId: parsed.deviceId,
+      p256dh: parsed.p256dh,
+      auth: parsed.auth,
+      label: parsed.label,
+      createdAt: parsed.createdAt,
+      ...(parsed.lastDeliveredAt === null ? {} : { lastDeliveredAt: parsed.lastDeliveredAt }),
+    }
   }
 
   #projectDevice(row: typeof managementDevices.$inferSelect): ManagementDeviceRecord {

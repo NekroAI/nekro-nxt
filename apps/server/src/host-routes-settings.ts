@@ -180,6 +180,29 @@ export function registerSettingsRoutes({
             ...(parsed.bark.deviceKey === undefined ? {} : { deviceKey: parsed.bark.deviceKey }),
             ...(parsed.bark.clearDeviceKey === undefined ? {} : { clearDeviceKey: parsed.bark.clearDeviceKey }),
           },
+          ...(parsed.browserPush === undefined ? {} : { browserPush: parsed.browserPush }),
+          ...(parsed.wecom === undefined
+            ? {}
+            : {
+                wecom: {
+                  enabled: parsed.wecom.enabled,
+                  ...(parsed.wecom.webhookUrl === undefined ? {} : { webhookUrl: parsed.wecom.webhookUrl }),
+                  ...(parsed.wecom.clearWebhookUrl === undefined
+                    ? {}
+                    : { clearWebhookUrl: parsed.wecom.clearWebhookUrl }),
+                },
+              }),
+          ...(parsed.ntfy === undefined
+            ? {}
+            : {
+                ntfy: {
+                  enabled: parsed.ntfy.enabled,
+                  serverUrl: parsed.ntfy.serverUrl,
+                  ...(parsed.ntfy.topic === undefined ? {} : { topic: parsed.ntfy.topic }),
+                  ...(parsed.ntfy.token === undefined ? {} : { token: parsed.ntfy.token }),
+                  ...(parsed.ntfy.clearToken === undefined ? {} : { clearToken: parsed.ntfy.clearToken }),
+                },
+              }),
           events: parsed.events,
         })
         writeContractJson(res, 200, HostApiContracts.updateNotificationSettings, settings)
@@ -204,6 +227,46 @@ export function registerSettingsRoutes({
           ...(parsed.deviceKey === undefined ? {} : { deviceKey: parsed.deviceKey }),
         })
         writeContractJson(res, 200, HostApiContracts.testBarkNotification, { sent: true })
+      } catch (error) {
+        writeError(res, 400, 'notification-test-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/notifications/test-wecom',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.testWecomNotification.parseRequest(await readJsonBody(req))
+        await runtime.notifications.testWecom(parsed.webhookUrl === undefined ? {} : { webhookUrl: parsed.webhookUrl })
+        writeContractJson(res, 200, HostApiContracts.testWecomNotification, { sent: true })
+      } catch (error) {
+        writeError(res, 400, 'notification-test-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/notifications/test-ntfy',
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+        return
+      }
+      try {
+        const parsed = HostApiContracts.testNtfyNotification.parseRequest(await readJsonBody(req))
+        await runtime.notifications.testNtfy({
+          serverUrl: parsed.serverUrl,
+          ...(parsed.topic === undefined ? {} : { topic: parsed.topic }),
+          ...(parsed.token === undefined ? {} : { token: parsed.token }),
+        })
+        writeContractJson(res, 200, HostApiContracts.testNtfyNotification, { sent: true })
       } catch (error) {
         writeError(res, 400, 'notification-test-failed', error instanceof Error ? error.message : String(error))
       }

@@ -127,6 +127,7 @@
     "tar": "7.5.22",
     "turndown": "7.2.4",
     "ulid": "3.0.2",
+    "web-push": "3.6.7",
     "ws": "8.21.3",
     "yaml": "2.9.0",
     "zod": "4.4.3"
@@ -137,6 +138,7 @@
     "@deepseek-ai/dsh-skill-filesystem": "0.2.1-alpha.2",
     "@modelcontextprotocol/server": "2.0.0",
     "@types/turndown": "5.0.6",
+    "@types/web-push": "3.6.4",
     "@types/ws": "8.18.1",
     "tsx": "4.22.4",
     "vitest": "4.1.8"

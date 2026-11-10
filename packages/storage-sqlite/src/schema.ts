@@ -1349,6 +1349,21 @@ export const managementDevices = sqliteTable(
   (table) => [index('management_devices_active_idx').on(table.revokedAt, table.createdAt)],
 )
 
+/** A browser's Web Push subscription; it belongs to the login device that registered it and goes with it. */
+export const pushSubscriptions = sqliteTable(
+  'push_subscriptions',
+  {
+    endpoint: text().primaryKey(),
+    deviceId: text('device_id').$type<ManagementDeviceId>().notNull(),
+    p256dh: text().notNull(),
+    auth: text().notNull(),
+    label: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+    lastDeliveredAt: integer('last_delivered_at'),
+  },
+  (table) => [index('push_subscriptions_device_idx').on(table.deviceId)],
+)
+
 export const workTreeOrder = sqliteTable(
   'work_tree_order',
   {
