@@ -174,7 +174,7 @@ const publicProxyPath = (pathname: string): boolean =>
   pathname === '/pwa-maskable-512.png' ||
   pathname === '/community/callback'
 
-/** Paths the product server answers in development; Vite answers the rest. Matches the proxy list in vite.config.ts. */
+/** Paths the product server answers in development; Vite answers the rest. vite.config.ts proxies these and `/login`. */
 const serverOwnedPath = (pathname: string): boolean =>
   pathname.startsWith('/api/') || pathname.startsWith('/health/') || pathname === '/community/callback'
 

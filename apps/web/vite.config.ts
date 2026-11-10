@@ -36,6 +36,8 @@ export default defineConfig({
       // 社区登录的回跳页由 Server 直接返回；不转发时会落到前端路由，登录永远完成不了。
       '/community/callback': { target: apiProxyTarget },
       '/api': { target: apiProxyTarget },
+      // 开发实例设置了管理密钥时，登录页由登录层返回；不转发时 Vite 会返回首页，页面在登录和首页之间来回跳。
+      '/login': { target: apiProxyTarget },
     },
   },
 })
