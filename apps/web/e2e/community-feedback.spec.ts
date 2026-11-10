@@ -250,9 +250,7 @@ test('feedback production journey: login, consent, preview, community updates, r
     await page.getByRole('link', { name: '查看反馈', exact: true }).click()
     await page.getByRole('button', { name: '新建反馈', exact: true }).click()
     await page.getByLabel('标题', { exact: true }).fill('列表刷新验收样例')
-    await page
-      .getByLabel('正文', { exact: true })
-      .fill(`保存后列表没有更新。虚构路径 ${path.join('/', 'Users', 'fixture', 'sample.log')}。`)
+    await page.getByLabel('正文', { exact: true }).fill('保存后列表没有更新。虚构路径 /var/fixture/sample.log。')
     await page.getByRole('button', { name: '保存草稿', exact: true }).click()
     await expect(page).toHaveURL(/draft=fbd_/u)
     const attention = HostApiContracts.listAttention.parseResponse(await (await request.get('/api/attention')).json())
