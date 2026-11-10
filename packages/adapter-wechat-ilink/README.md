@@ -1,6 +1,6 @@
 # @nekro-nxt/adapter-wechat-ilink
 
-微信 iLink 私聊通道 Adapter。它覆盖 Phase 1 的私聊文本闭环与入站媒体接收：文本入站、图片/文件导入 Asset Service、基于最近 context_token 的文本回复、Connection scoped state、连接诊断和确定性单测。出站仍只开放文本。
+微信 iLink 私聊通道 Adapter，支持私聊文本与入站媒体接收：文本入站、图片/文件导入 Asset Service、基于最近 context_token 的文本回复、Connection scoped state、连接诊断和确定性单测。出站只开放文本。
 
 ## 创建连接
 
@@ -13,7 +13,7 @@
 ## 当前边界
 
 - 该通道基于非官方微信 iLink / OpenIlink 协议 SDK，协议稳定性、账号风控和合规风险不由 NekroNXT 保证；建议只使用专用微信机器人账号。
-- 首版不开放群聊、Mention、语音、引用、撤回、主动发送或出站媒体能力；图片和文件仅支持入站接收，优先按 SDK 解密下载入站 media，下载失败时记录可解释的 rich fallback。
+- 当前不开放群聊、Mention、语音、引用、撤回、主动发送或出站媒体能力；图片和文件仅支持入站接收，优先按 SDK 解密下载入站 media，下载失败时记录可解释的 rich fallback。
 - 入站文件只作为频道资源保存和展示，不主动复制到智能体开发工作区。
 - syncBuf 在整批消息成功接纳后才保存；会话 context_token 由 Connection scoped state 保存。
 - SDK 入站媒体每个 Connection 串行下载，单次 30 秒超时，并在流式读取超过 20 MiB 时立即中止。
