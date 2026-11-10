@@ -2,7 +2,19 @@ import { useEffect, useState } from 'react'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
 import { isUnencryptedRemoteConnection, managementCsrfToken } from '../../management-access.js'
-import { Banner, Button, Chip, ConfirmDialog, DataTable, toast, type Column } from '../../ui-kit/index.js'
+import {
+  Banner,
+  Button,
+  Chip,
+  ConfirmDialog,
+  DataTable,
+  Input,
+  PropertyGroup,
+  PropertyList,
+  PropertyRow,
+  toast,
+  type Column,
+} from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import styles from './settings.module.css'
 
@@ -111,19 +123,22 @@ export function AccessSection() {
 
   return (
     <>
+      <PublicOriginGroup />
       {isUnencryptedRemoteConnection() ? (
         <Banner tone="warn">
           当前通过未加密的 HTTP 访问，管理密钥和登录状态可能在网络中被截获。公网访问请使用 HTTPS，或通过反向代理启用
           HTTPS。
         </Banner>
       ) : null}
-      <DataTable
-        label="已登录设备"
-        rows={devices ?? []}
-        rowKey={(device) => device.id}
-        empty={devices === undefined ? '正在读取…' : '没有已登录的设备。'}
-        columns={columns}
-      />
+      <PropertyGroup title="已登录设备">
+        <DataTable
+          label="已登录设备"
+          rows={devices ?? []}
+          rowKey={(device) => device.id}
+          empty={devices === undefined ? '正在读取…' : '没有已登录的设备。'}
+          columns={columns}
+        />
+      </PropertyGroup>
       <ConfirmDialog
         open={pending !== undefined}
         onOpenChange={(open) => !open && setPending(undefined)}
@@ -139,5 +154,85 @@ export function AccessSection() {
         {pending?.current === true ? <p>之后需要重新输入管理密钥。</p> : <p>该设备需要重新输入管理密钥才能访问。</p>}
       </ConfirmDialog>
     </>
+  )
+}
+
+/** What the current page tells about the address it was opened at, next to the saved access address. */
+const connectionDescription = (saved: string | undefined): string => {
+  const current = window.location.origin
+  if (saved === undefined) return '手机等设备从外部打开这个实例时用的地址，例如 https://nxt.example.com。'
+  if (current === saved) return '当前就是通过这个地址访问的。'
+  return `当前通过 ${current} 访问。`
+}
+
+/** The single address people open this instance at from outside; links in notifications point there. */
+function PublicOriginGroup() {
+  const [saved, setSaved] = useState<string>()
+  const [draft, setDraft] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    callHostApi(HostApiContracts.getAccessSettings, {}, undefined).then(
+      (view) => {
+        setSaved(view.publicOrigin)
+        setDraft(view.publicOrigin ?? '')
+        setLoaded(true)
+      },
+      (error: unknown) => failure(error),
+    )
+  }, [])
+
+  const save = async (value: string) => {
+    setBusy(true)
+    try {
+      const view = await callHostApi(
+        HostApiContracts.updateAccessSettings,
+        {},
+        { publicOrigin: value.trim() === '' ? null : value.trim() },
+      )
+      setSaved(view.publicOrigin)
+      setDraft(view.publicOrigin ?? '')
+      toast(view.publicOrigin === undefined ? '访问地址已清除' : '访问地址已保存')
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const changed = loaded && draft.trim() !== (saved ?? '')
+  return (
+    <PropertyGroup title="外部访问">
+      <PropertyList>
+        <PropertyRow
+          label="访问地址"
+          description={loaded ? connectionDescription(saved) : '正在读取…'}
+          tip="通知里的链接会打开这个地址。不填写也能访问，只是通知里没有链接。"
+          layout="stacked"
+        >
+          <div className={styles.originField}>
+            <Input
+              aria-label="访问地址"
+              value={draft}
+              placeholder="https://nxt.example.com"
+              spellCheck={false}
+              disabled={!loaded}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            <Button size="small" busy={busy} disabled={!changed || busy} onClick={() => void save(draft)}>
+              保存
+            </Button>
+            {window.location.protocol === 'https:' &&
+            draft.trim() === (saved ?? '') &&
+            window.location.origin !== saved ? (
+              <Button size="small" variant="ghost" disabled={busy} onClick={() => void save(window.location.origin)}>
+                改用当前地址
+              </Button>
+            ) : null}
+          </div>
+        </PropertyRow>
+      </PropertyList>
+    </PropertyGroup>
   )
 }

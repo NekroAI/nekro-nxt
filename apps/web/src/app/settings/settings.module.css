@@ -151,6 +151,18 @@
   grid-column: 1 / -1;
 }
 
+/* —— 登录与访问 —— */
+.originField {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.originField > :first-child {
+  flex: 1 1 260px;
+}
+
 /* —— 关于 —— */
 .brandAmbient {
   border: 1px solid var(--line);

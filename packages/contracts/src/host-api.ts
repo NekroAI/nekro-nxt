@@ -508,6 +508,8 @@ export const TestNtfyNotificationRequestSchema = z
   })
   .strict()
 
+export const AccessSettingsViewSchema = z.object({ publicOrigin: z.url().optional() }).strict()
+
 /** A browser subscribed to push; the settings page names it by `id`, never by its endpoint. */
 export const PushSubscriptionViewSchema = z
   .object({
@@ -3636,6 +3638,23 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: TestNtfyNotificationRequestSchema,
     response: z.object({ sent: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  /** The address people open this instance at from elsewhere; absent until someone sets it. */
+  getAccessSettings: defineContract({
+    method: 'GET',
+    path: '/api/settings/access',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: AccessSettingsViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  updateAccessSettings: defineContract({
+    method: 'PUT',
+    path: '/api/settings/access',
+    params: EmptyParamsSchema,
+    request: z.object({ publicOrigin: z.string().trim().max(2048).nullable() }).strict(),
+    response: AccessSettingsViewSchema,
     error: HostApiErrorSchema,
   }),
   getWebPushKey: defineContract({

@@ -1127,7 +1127,7 @@ test.describe('settings space', () => {
     }
   })
 
-  test('lists signed-in devices with last activity and revokes one or signs this browser out', async () => {
+  test('keeps the access address, lists signed-in devices and revokes one or signs this browser out', async () => {
     const now = Date.now()
     let devices = [
       {
@@ -1162,6 +1162,22 @@ test.describe('settings space', () => {
           await request.fulfill({ json: { authenticated: false } })
         })
         await target.route('**/api/management/devices', (request) => request.fulfill({ json: { devices } }))
+        await target.route('**/api/settings/access', async (request) => {
+          if (request.request().method() === 'PUT') {
+            const body = HostApiContracts.updateAccessSettings.parseRequest(request.request().postDataJSON())
+            calls.push(`address ${body.publicOrigin}`)
+            if (body.publicOrigin === 'http://nxt.example.test') {
+              await request.fulfill({
+                status: 400,
+                json: { error: { code: 'access-settings-failed', message: '访问地址要以 https:// 开头。' } },
+              })
+              return
+            }
+            await request.fulfill({ json: { publicOrigin: body.publicOrigin } })
+            return
+          }
+          await request.fulfill({ json: {} })
+        })
         await target.route('**/api/management/devices/*', async (request) => {
           calls.push(`revoke ${new URL(request.request().url()).pathname.split('/').at(-1)}`)
           devices = devices.filter((device) => !request.request().url().endsWith(device.id))
@@ -1178,12 +1194,30 @@ test.describe('settings space', () => {
       await expect(table).toContainText('1 分钟前')
       await page.screenshot({ path: '.local/browser-test-results/settings-access.png' })
 
+      // The access address: an unsaved value enables 保存, the server's refusal is shown, a valid one is kept.
+      const address = page.getByRole('textbox', { name: '访问地址' })
+      const saveAddress = page.getByRole('button', { name: '保存', exact: true })
+      await expect(saveAddress).toBeDisabled()
+      await address.fill('http://nxt.example.test')
+      await saveAddress.click()
+      await expect(page.getByText('访问地址要以 https:// 开头。')).toBeVisible()
+      await address.fill('https://nxt.example.test')
+      await saveAddress.click()
+      await expect(page.getByText(`当前通过 ${baseUrl} 访问。`)).toBeVisible()
+      await expect(saveAddress).toBeDisabled()
+
       await table.getByRole('button', { name: '撤销' }).click()
       await page
         .getByRole('dialog', { name: '撤销「示例的 Desktop」的登录？' })
         .getByRole('button', { name: '撤销' })
         .click()
-      await expect.poll(() => calls).toEqual(['revoke nxt_device_01J9ZK3QXW0000000000000002'])
+      await expect
+        .poll(() => calls)
+        .toEqual([
+          'address http://nxt.example.test',
+          'address https://nxt.example.test',
+          'revoke nxt_device_01J9ZK3QXW0000000000000002',
+        ])
       await expect(table).not.toContainText('示例的 Desktop')
 
       await table.getByRole('button', { name: '退出登录' }).click()

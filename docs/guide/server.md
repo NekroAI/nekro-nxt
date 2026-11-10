@@ -65,7 +65,7 @@ NEKRO_IMAGE='nekro-nxt:local' pnpm dist:server
 - `https://服务器地址:4960`：使用服务端自动生成的自签名证书（保存在 `/data/host/tls/`），浏览器首次访问需要手动信任；
 - `http://服务器地址:4960`：不加密。登录页会先提示风险，确认后才能输入管理密钥；登录后界面底部显示「未加密连接」。只建议在可信的内网使用。
 
-没有登录的浏览器打开任何页面都会先到登录页。登录后的浏览器出现在「设置 → 登录设备」中，可以看到每台设备的登录时间和最后活跃时间，并撤销任意设备；「退出登录」会让这台浏览器下次重新输入管理密钥。轮换管理密钥会撤销全部已登录设备。
+没有登录的浏览器打开任何页面都会先到登录页。登录后的浏览器出现在「设置 → 登录与访问」中，可以看到每台设备的登录时间和最后活跃时间，并撤销任意设备；「退出登录」会让这台浏览器下次重新输入管理密钥。轮换管理密钥会撤销全部已登录设备。
 
 ### 通过反向代理使用 HTTPS
 
@@ -82,7 +82,32 @@ docker run -d \
   ghcr.io/nekroai/nekro-nxt:latest
 ```
 
-代理需要转发 `Host`（或设置 `X-Forwarded-Host`）与 `X-Forwarded-Proto`。只有容器端口不直接暴露给其他机器时才开启这个选项，否则任何人都能伪造这两个请求头。
+代理需要转发 `Host`（或设置 `X-Forwarded-Host`）与 `X-Forwarded-Proto`，并用客户端地址覆盖 `X-Forwarded-For`：登录限流按它区分访问者。只有容器端口不直接暴露给其他机器时才开启这个选项，否则任何人都能伪造这些请求头。`NEKRO_TRUST_PROXY` 需要和 `NEKRO_MANAGEMENT_KEY` 一起设置；没有管理密钥的实例不需要登录，会拒绝经过代理的请求。
+
+Caddy 默认就会正确设置这些请求头，并自动申请证书：
+
+```text
+nxt.example.com {
+    reverse_proxy 127.0.0.1:4960
+}
+```
+
+nginx 示例：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:4960;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    # 事件流和通知等待需要不缓冲、较长的超时
+    proxy_buffering off;
+    proxy_read_timeout 1h;
+}
+```
+
+配好后在「设置 → 登录与访问」填写访问地址，例如 `https://nxt.example.com`。Bark、ntfy、企业微信的通知会带上打开对应页面的链接。
 
 ### 重启服务
 
@@ -90,7 +115,7 @@ docker run -d \
 
 ### 桌面版连接
 
-在桌面版的实例菜单中添加服务端地址，核对证书指纹后用管理密钥完成配对。桌面版设备同样出现在「登录设备」中。
+在桌面版的实例菜单中添加服务端地址，核对证书指纹后用管理密钥完成配对。桌面版设备同样出现在「设置 → 登录与访问」中。
 
 ## 智能体的命令
 

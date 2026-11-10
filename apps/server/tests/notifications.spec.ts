@@ -95,6 +95,7 @@ const createFixture = async (
     readonly pushStore?: PushSubscriptionStore
     readonly webPush?: WebPushSender
     readonly redact?: (text: string) => string
+    readonly publicOrigin?: string
   } = {},
 ) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-notifications-'))
@@ -120,6 +121,7 @@ const createFixture = async (
     ...(options.pushStore === undefined ? {} : { pushSubscriptions: options.pushStore }),
     ...(options.webPush === undefined ? {} : { webPush: options.webPush }),
     ...(options.redact === undefined ? {} : { redact: options.redact }),
+    ...(options.publicOrigin === undefined ? {} : { publicOrigin: () => options.publicOrigin }),
   })
   return {
     service,
@@ -629,5 +631,31 @@ describe('NotificationService', () => {
     })
     await service.notifyCommunityFeedback({ kind: 'draft' })
     expect(webPush.sent).toEqual([])
+  })
+  it('links Bark, ntfy and WeCom messages to the page at the access address', async () => {
+    const { service, fetch } = await createFixture({ publicOrigin: 'https://nxt.example.test' })
+    fetch.mockImplementation((url) =>
+      Promise.resolve(
+        urlOf(url).startsWith('https://qyapi.example.test')
+          ? Response.json({ errcode: 0 })
+          : new Response(null, { status: 200 }),
+      ),
+    )
+    await service.updateSettings({
+      system: { enabled: false },
+      bark: { enabled: true, serverUrl: 'https://push.example.test', deviceKey: 'synthetic-device-key' },
+      wecom: { enabled: true, webhookUrl: 'https://qyapi.example.test/send?key=synthetic' },
+      ntfy: { enabled: true, serverUrl: 'https://ntfy.example.test', topic: 'nxt-synthetic' },
+      events: { [DYNAMIC_CLIENT_APPROVAL_NOTIFICATION]: true },
+    })
+    await service.notifyCommunityFeedback({ kind: 'draft' })
+    const bodies = new Map(fetch.mock.calls.map(([url, init]) => [urlOf(url), bodyOf(init)]))
+    const page = 'https://nxt.example.test/community/feedback'
+    expect(bodies.get('https://push.example.test/push')).toMatchObject({ url: page })
+    expect(bodies.get('https://ntfy.example.test')).toMatchObject({ click: page })
+    expect(bodies.get('https://qyapi.example.test/send?key=synthetic')).toEqual({
+      msgtype: 'text',
+      text: { content: `有反馈等你确认\n可以在社区反馈页查看并发送。\n${page}` },
+    })
   })
 })

@@ -151,6 +151,7 @@ import type { NxtPlatformResult } from '@nekro-nxt/extension-sdk'
 import { createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
 import { ChannelExtensionRuntimeHost, createChannelAsset, DshHostRuntime, type DshHostRuntimeOptions } from './index.js'
 import { NotificationService, type WebPushSender } from './notifications.js'
+import { AccessSettings } from './access-settings.js'
 import { CommunityService } from './community.js'
 import { ExtensionActionService } from './extension-governance/actions.js'
 import { commandPrefix, ExtensionCommandPort, waitingRunCommands } from './extension-governance/commands.js'
@@ -1638,6 +1639,7 @@ export class NekroRuntime {
         now,
         pushSubscriptions: hostSecurity,
         redact: (text) => secrets.redact(text),
+        publicOrigin: () => new AccessSettings(repository).publicOrigin(),
       })
       notificationsPort.current = notifications
       await providerAccess.prepare(async () => {

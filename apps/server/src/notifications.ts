@@ -324,6 +324,7 @@ export class NotificationService {
   readonly #pushSubscriptions: PushSubscriptionStore | undefined
   readonly #webPush: WebPushSender
   readonly #redact: (text: string) => string
+  readonly #publicOrigin: () => string | undefined
   readonly #clientNotifications: Array<{ readonly cursor: number; readonly notification: ClientNotification }> = []
   /** When each agent's candidate last asked to run; the runner may ask again for a candidate still waiting. */
   readonly #approvalNotifiedAt = new Map<string, number>()
@@ -344,6 +345,8 @@ export class NotificationService {
       readonly webPush?: WebPushSender
       /** Hides known secrets in what leaves the instance. */
       readonly redact?: (text: string) => string
+      /** The instance's access address; Bark, ntfy and WeCom messages link to the notification's page there. */
+      readonly publicOrigin?: () => string | undefined
     } = {},
   ) {
     this.#repository = repository
@@ -353,6 +356,7 @@ export class NotificationService {
     this.#pushSubscriptions = options.pushSubscriptions
     this.#webPush = options.webPush ?? defaultWebPush
     this.#redact = options.redact ?? ((text) => text)
+    this.#publicOrigin = options.publicOrigin ?? (() => undefined)
   }
 
   async getSettings(): Promise<NotificationSettingsView> {
@@ -736,6 +740,9 @@ export class NotificationService {
       title: this.#redact(notification.title),
       body: [...this.#redact(notification.body)].slice(0, 240).join(''),
     }
+    const origin = this.#publicOrigin()
+    const link = origin === undefined || message.route === undefined ? undefined : new URL(message.route, origin).href
+    const linked = { ...message, ...(link === undefined ? {} : { link }) }
     const channels: Array<readonly [string, () => Promise<void>]> = []
     if (stored.system.enabled) {
       this.#publishClientNotification({
@@ -756,6 +763,7 @@ export class NotificationService {
             title: message.title,
             body: message.body,
             group: message.barkGroup,
+            ...(link === undefined ? {} : { link }),
           }),
       ])
     }
@@ -763,7 +771,7 @@ export class NotificationService {
       const reference = stored.wecom.credentialRef
       channels.push([
         '企业微信',
-        async () => await this.#sendWecom(await this.#credentials.resolve(reference), message),
+        async () => await this.#sendWecom(await this.#credentials.resolve(reference), linked),
       ])
     }
     if (stored.ntfy.enabled && stored.ntfy.topicRef !== undefined) {
@@ -775,7 +783,7 @@ export class NotificationService {
             serverUrl,
             await this.#credentials.resolve(topicRef),
             await this.#resolveOptional(tokenRef),
-            message,
+            linked,
           ),
       ])
     }
@@ -896,7 +904,7 @@ export class NotificationService {
   async #sendBark(
     serverUrl: string,
     deviceKey: string,
-    message: { readonly title: string; readonly body: string; readonly group?: string },
+    message: { readonly title: string; readonly body: string; readonly group?: string; readonly link?: string },
   ): Promise<void> {
     const response = await this.#post('Bark', `${normalizeServerUrl(serverUrl)}/push`, {
       headers: { 'content-type': 'application/json' },
@@ -905,15 +913,24 @@ export class NotificationService {
         title: message.title,
         body: message.body,
         group: message.group ?? 'NekroNXT',
+        ...(message.link === undefined ? {} : { url: message.link }),
       }),
     })
     if (!response.ok) throw new Error(`Bark 返回 HTTP ${response.status}。`)
   }
 
-  async #sendWecom(webhookUrl: string, message: { readonly title: string; readonly body: string }): Promise<void> {
+  async #sendWecom(
+    webhookUrl: string,
+    message: { readonly title: string; readonly body: string; readonly link?: string },
+  ): Promise<void> {
     const response = await this.#post('企业微信', webhookUrl, {
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ msgtype: 'text', text: { content: `${message.title}\n${message.body}` } }),
+      body: JSON.stringify({
+        msgtype: 'text',
+        text: {
+          content: [message.title, message.body, ...(message.link === undefined ? [] : [message.link])].join('\n'),
+        },
+      }),
     })
     if (!response.ok) throw new Error(`企业微信返回 HTTP ${response.status}。`)
     // The robot answers 200 with an error code when the key is wrong or the robot was removed.
@@ -931,14 +948,19 @@ export class NotificationService {
     serverUrl: string,
     topic: string,
     token: string | undefined,
-    message: { readonly title: string; readonly body: string },
+    message: { readonly title: string; readonly body: string; readonly link?: string },
   ): Promise<void> {
     const response = await this.#post('ntfy', serverUrl, {
       headers: {
         'content-type': 'application/json',
         ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
       },
-      body: JSON.stringify({ topic, title: message.title, message: message.body }),
+      body: JSON.stringify({
+        topic,
+        title: message.title,
+        message: message.body,
+        ...(message.link === undefined ? {} : { click: message.link }),
+      }),
     })
     if (response.status === 401 || response.status === 403) throw new Error('ntfy 拒绝了访问，请检查访问令牌。')
     if (!response.ok) throw new Error(`ntfy 返回 HTTP ${response.status}。`)

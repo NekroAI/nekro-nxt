@@ -1,3 +1,4 @@
+import { AccessSettings } from './access-settings.js'
 import { LlmProviderRemovalResultUnknown } from './host-model-settings.js'
 import {
   DshNxtHostUiSchema,
@@ -229,6 +230,40 @@ export function registerSettingsRoutes({
         writeContractJson(res, 200, HostApiContracts.testBarkNotification, { sent: true })
       } catch (error) {
         writeError(res, 400, 'notification-test-failed', error instanceof Error ? error.message : String(error))
+      }
+    },
+  })
+
+  registerRoute({
+    kind: 'exact',
+    path: '/api/settings/access',
+    handler: async (req, res) => {
+      const access = new AccessSettings(runtime.repository)
+      try {
+        if (req.method === 'GET') {
+          const publicOrigin = access.publicOrigin()
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.getAccessSettings,
+            publicOrigin === undefined ? {} : { publicOrigin },
+          )
+          return
+        }
+        if (req.method === 'PUT') {
+          const parsed = HostApiContracts.updateAccessSettings.parseRequest(await readJsonBody(req))
+          const publicOrigin = access.setPublicOrigin(parsed.publicOrigin ?? undefined)
+          writeContractJson(
+            res,
+            200,
+            HostApiContracts.updateAccessSettings,
+            publicOrigin === undefined ? {} : { publicOrigin },
+          )
+          return
+        }
+        writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
+      } catch (error) {
+        writeError(res, 400, 'access-settings-failed', error instanceof Error ? error.message : String(error))
       }
     },
   })

@@ -23,6 +23,7 @@ declare const styles: {
   readonly note: string
   readonly noteWarn: string
   readonly notice: string
+  readonly originField: string
   readonly path: string
   readonly pickInfo: string
   readonly pickList: string

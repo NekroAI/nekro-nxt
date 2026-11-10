@@ -113,7 +113,7 @@ const SECTIONS = [
   { key: 'accounts', label: '关联账号', group: 'links', icon: <Link2 size={16} /> },
   { key: 'administrators', label: '管理员', group: 'permission', icon: <ShieldCheck size={16} /> },
   { key: 'commands', label: '聊天命令', group: 'permission', icon: <SquareSlash size={16} /> },
-  { key: 'access', label: '登录设备', group: 'permission', icon: <MonitorSmartphone size={16} /> },
+  { key: 'access', label: '登录与访问', group: 'permission', icon: <MonitorSmartphone size={16} /> },
   { key: 'notifications', label: '通知', group: 'system', icon: <Bell size={16} /> },
   { key: 'appearance', label: '外观', group: 'system', icon: <Palette size={16} /> },
   { key: 'storage', label: '存储', group: 'system', icon: <HardDrive size={16} /> },
@@ -248,7 +248,7 @@ export default function SettingsSpace() {
           {section === 'feedback' ? <FeedbackSettingsSection /> : null}
           {section === 'access' ? (
             <>
-              <SectionHead title="登录设备" />
+              <SectionHead title="登录与访问" />
               <AccessSection />
             </>
           ) : null}

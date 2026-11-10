@@ -1717,7 +1717,7 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     }
   })
 
-  it('refuses proxied requests when no sign-in stands in front, and serves this machine as before', async () => {
+  it('refuses proxied requests without sign-in in front, and keeps the access address', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-proxy-guard-'))
     temporaryDirectories.push(directory)
     const runtime = await NekroRuntime.create({
@@ -1743,6 +1743,23 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     try {
       expect((await fetch(`${origin}/api/snapshot`)).status).toBe(200)
       expect((await fetch(`${origin}/settings`)).status).toBe(200)
+      // The access address keeps only the origin and accepts only HTTPS.
+      const put = (publicOrigin: string | null) =>
+        fetch(`${origin}/api/settings/access`, {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ publicOrigin }),
+        })
+      expect(await (await put('https://nxt.example.test/')).json()).toEqual({
+        publicOrigin: 'https://nxt.example.test',
+      })
+      expect(await (await fetch(`${origin}/api/settings/access`)).json()).toEqual({
+        publicOrigin: 'https://nxt.example.test',
+      })
+      for (const invalid of ['http://nxt.example.test', 'https://nxt.example.test/app', 'nxt.example.test']) {
+        expect((await put(invalid)).status).toBe(400)
+      }
+      expect(await (await put(null)).json()).toEqual({})
       for (const header of [
         { 'x-forwarded-for': '203.0.113.9' },
         { 'x-forwarded-proto': 'https' },
