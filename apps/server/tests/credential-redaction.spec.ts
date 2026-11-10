@@ -344,10 +344,15 @@ describe('credential redaction in a live session', () => {
       dedupeKey: 'redaction-inbound',
     }).event
     // The program assembles the secret itself, as one read from a file or the environment would arrive.
+    const shellTool = process.platform === 'win32' ? 'pwsh' : 'bash'
+    const printCommand =
+      process.platform === 'win32'
+        ? "[Console]::Write(('fictional-secret-' + '0123456789abcdef'))"
+        : "printf '%s%s' fictional-secret- 0123456789abcdef"
     const program = `
 const secret = ['fictional-secret', '0123456789abcdef'].join('-')
-const printed = await tools.bash({ description: '打印配置', command: "printf '%s%s' fictional-secret- 0123456789abcdef" })
-const denied = await tools.bash({ description: '回显', command: 'echo ' + secret }).then(() => 'ran', (error) => 'denied: ' + String(error?.message ?? error))
+const printed = await tools.${shellTool}({ description: '打印配置', command: ${JSON.stringify(printCommand)} })
+const denied = await tools.${shellTool}({ description: '回显', command: 'echo ' + secret }).then(() => 'ran', (error) => 'denied: ' + String(error?.message ?? error))
 const filler = Array.from({ length: 4000 }, (_, index) => 'fictional log line ' + index).join('\\n')
 return { printed, denied, encoded: btoa(secret), log: secret + '\\n' + filler }
 `

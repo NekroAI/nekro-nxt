@@ -65,7 +65,11 @@ describe('checking profile arguments', () => {
       expect.stringContaining('mov,matroska'),
       '-i',
     ])
-    expect(prepared.args.slice(-3)).toEqual(['-fs', String(512 * 1024 * 1024), 'file:/fixture/work/frame-%03d.jpg'])
+    expect(prepared.args.slice(-3)).toEqual([
+      '-fs',
+      String(512 * 1024 * 1024),
+      `file:${path.join(context.workDir, 'frame-%03d.jpg')}`,
+    ])
     expect(prepared.readable).toEqual(['/fixture/inputs/clip.mp4'])
     expect(prepared.outputs).toEqual(['frame-%03d.jpg'])
   })

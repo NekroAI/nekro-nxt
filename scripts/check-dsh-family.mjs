@@ -50,7 +50,7 @@ export async function checkDshFamily({ root = repositoryRoot, release = DSH_RUNT
       if (errorCode(error) === 'ENOENT') continue
       throw error
     }
-    manifests.set(path.relative(root, filename), manifest)
+    manifests.set(path.relative(root, filename).split(path.sep).join('/'), manifest)
     for (const section of sections) {
       for (const [name, version] of Object.entries(manifest[section] ?? {})) {
         if (!isFamily(name)) continue
