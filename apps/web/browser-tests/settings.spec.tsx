@@ -1,6 +1,7 @@
 import { chromium, expect, test, type Browser, type Page } from '@playwright/test'
 import Schema from '@deepseek-ai/schemastery'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1127,6 +1128,173 @@ test.describe('settings space', () => {
     }
   })
 
+  test('lists passkeys, shows a code for a new device, approves another device and turns key sign-in off', async () => {
+    const now = Date.now()
+    let signIn = {
+      keySignIn: true,
+      rpId: '127.0.0.1',
+      passkeysAvailable: false,
+      passkeys: [
+        {
+          id: 'credential-a',
+          label: 'iPhone · 主屏幕',
+          rpId: 'nxt.example.test',
+          createdAt: now - 86_400_000,
+          lastUsedAt: now - 60_000,
+        },
+      ],
+    }
+    // The codes come back as the instance would answer: waiting once a new device has scanned or asked.
+    const states = new Map<string, Record<string, unknown>>([
+      ['ABCD-EFGH', { code: 'ABCD-EFGH', kind: 'invite', state: 'open', expiresAt: now + 300_000 }],
+      [
+        'WXYZ-2345',
+        {
+          code: 'WXYZ-2345',
+          kind: 'request',
+          state: 'waiting',
+          requesterLabel: '浏览器 · Edge · Windows',
+          expiresAt: now + 300_000,
+        },
+      ],
+    ])
+    const calls: string[] = []
+    const { page, errors } = await open('/settings/access?approve=WXYZ-2345', {
+      before: async (target) => {
+        await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture-csrf', url: baseUrl }])
+        await target.route('**/api/management/devices', (request) => request.fulfill({ json: { devices: [] } }))
+        await target.route('**/api/settings/access', (request) => request.fulfill({ json: {} }))
+        await target.route('**/api/management/sign-in', async (request) => {
+          if (request.request().method() === 'PUT') {
+            const body = HostApiContracts.updateManagementSignIn.parseRequest(request.request().postDataJSON())
+            calls.push(`key sign-in ${body.keySignIn}`)
+            signIn = { ...signIn, keySignIn: body.keySignIn }
+          }
+          await request.fulfill({ json: signIn })
+        })
+        await target.route('**/api/management/passkeys/*', async (request) => {
+          calls.push(`delete ${new URL(request.request().url()).pathname.split('/').at(-1)}`)
+          signIn = { ...signIn, passkeys: [] }
+          await request.fulfill({ json: { deleted: true } })
+        })
+        await target.route('**/api/management/login-invites', (request) =>
+          request.fulfill({
+            json: {
+              code: 'ABCD-EFGH',
+              url: 'https://nxt.example.test/login?code=ABCD-EFGH',
+              qrSvg:
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1" aria-label="二维码"><rect width="1" height="1" /></svg>',
+              expiresAt: now + 300_000,
+            },
+          }),
+        )
+        await target.route('**/api/management/login-requests/*', (request) => {
+          const code = new URL(request.request().url()).pathname.split('/').at(-1)!
+          const state = states.get(code)
+          return state === undefined
+            ? request.fulfill({
+                status: 404,
+                json: { error: { code: 'login_code_invalid', message: '登录码无效或已过期。' } },
+              })
+            : request.fulfill({ json: state })
+        })
+        await target.route('**/api/management/login-requests/*/decision', async (request) => {
+          const code = new URL(request.request().url()).pathname.split('/').at(-2)!
+          const body = HostApiContracts.decideLoginRequest.parseRequest(request.request().postDataJSON())
+          calls.push(`${body.approve ? 'approve' : 'reject'} ${code}`)
+          const decided = { ...states.get(code), state: body.approve ? 'approved' : 'rejected' }
+          states.set(code, decided)
+          await request.fulfill({ json: decided })
+        })
+      },
+    })
+    try {
+      // A QR code opened with the system camera lands here and asks for confirmation right away.
+      const approve = page.getByRole('dialog', { name: '确认设备登录' })
+      await expect(approve).toContainText('「浏览器 · Edge · Windows」请求登录，登录码 WXYZ-2345')
+      await approve.getByRole('button', { name: '允许登录' }).click()
+      await expect(approve).toContainText('已允许')
+      await approve.getByRole('button', { name: '完成' }).click()
+      await expect(page).toHaveURL(/\/settings\/access$/u)
+
+      // Passkeys of other addresses stay listed; this address cannot add one over plain HTTP by IP.
+      await expect(
+        page.getByText('通行密钥需要通过 HTTPS 的域名访问，或在本机用 localhost 打开。现在是 127.0.0.1。'),
+      ).toBeVisible()
+      await expect(page.getByRole('button', { name: '添加通行密钥' })).toBeDisabled()
+      await expect(page.getByText('nxt.example.test · 最近使用 1 分钟前')).toBeVisible()
+      await page.getByRole('button', { name: '删除' }).click()
+      await page
+        .getByRole('dialog', { name: '删除通行密钥「iPhone · 主屏幕」？' })
+        .getByRole('button', { name: '删除' })
+        .click()
+      await expect(page.getByText('nxt.example.test · 最近使用 1 分钟前')).toHaveCount(0)
+
+      // Showing a code: once a new device has scanned it, this device decides.
+      await page.getByRole('button', { name: '显示二维码' }).click()
+      const invite = page.getByRole('dialog', { name: '让新设备登录' })
+      await expect(invite.getByText('ABCD-EFGH')).toBeVisible()
+      await expect(invite.getByLabel('二维码')).toBeVisible()
+      await page.screenshot({ path: '.local/browser-test-results/settings-sign-in-invite.png' })
+      states.set('ABCD-EFGH', { ...states.get('ABCD-EFGH'), state: 'waiting', requesterLabel: '浏览器 · Safari · iOS' })
+      await expect(invite).toContainText('「浏览器 · Safari · iOS」请求登录', { timeout: 6_000 })
+      await invite.getByRole('button', { name: '拒绝' }).click()
+      await expect(invite).toContainText('已拒绝')
+      await invite.getByRole('button', { name: '完成' }).click()
+
+      // A typed code with the dash missing still finds the request.
+      await page.getByRole('textbox', { name: '登录码' }).fill('nope')
+      await page.getByRole('button', { name: '确认', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: '确认设备登录' })).toContainText('登录码无效或已过期')
+      await page.getByRole('dialog', { name: '确认设备登录' }).getByRole('button', { name: '关闭' }).click()
+
+      // Turning key sign-in off asks first.
+      await page.getByRole('switch', { name: '用管理密钥登录' }).click()
+      const off = page.getByRole('dialog', { name: '关闭管理密钥登录？' })
+      await expect(off).toContainText('这个地址还没有通行密钥')
+      await off.getByRole('button', { name: '关闭', exact: true }).click()
+      await expect(page.getByRole('switch', { name: '用管理密钥登录' })).not.toBeChecked()
+      expect(calls).toEqual(['approve WXYZ-2345', 'delete credential-a', 'reject ABCD-EFGH', 'key sign-in false'])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('reads a sign-in QR code from a camera frame', async () => {
+    // A real QR code from the instance's own generator, decoded by the bundled reader.
+    const serverRequire = createRequire(new URL('../../server/package.json', import.meta.url))
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the server's QR generator, loaded for the test.
+    const qrcode = serverRequire('qrcode') as { toDataURL(text: string): Promise<string> }
+    const image = await qrcode.toDataURL('https://nxt.example.test/settings/access?approve=WXYZ-2345')
+    const { page, errors } = await open('/settings/access')
+    try {
+      const decoded = await page.evaluate(async (source) => {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the module as Vite serves it to the page.
+        const module = (await import('/src/qr-decode.ts')) as {
+          decodeQr(p: Uint8ClampedArray, w: number, h: number): string | undefined
+        }
+        const picture = new Image()
+        picture.src = source
+        await picture.decode()
+        const canvas = document.createElement('canvas')
+        canvas.width = picture.width
+        canvas.height = picture.height
+        const context = canvas.getContext('2d')!
+        context.drawImage(picture, 0, 0)
+        return module.decodeQr(
+          context.getImageData(0, 0, canvas.width, canvas.height).data,
+          canvas.width,
+          canvas.height,
+        )
+      }, image)
+      expect(decoded).toBe('https://nxt.example.test/settings/access?approve=WXYZ-2345')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('keeps the access address, lists signed-in devices and revokes one or signs this browser out', async () => {
     const now = Date.now()
     let devices = [
@@ -1162,6 +1330,9 @@ test.describe('settings space', () => {
           await request.fulfill({ json: { authenticated: false } })
         })
         await target.route('**/api/management/devices', (request) => request.fulfill({ json: { devices } }))
+        await target.route('**/api/management/sign-in', (request) =>
+          request.fulfill({ json: { keySignIn: true, rpId: '127.0.0.1', passkeysAvailable: false, passkeys: [] } }),
+        )
         await target.route('**/api/settings/access', async (request) => {
           if (request.request().method() === 'PUT') {
             const body = HostApiContracts.updateAccessSettings.parseRequest(request.request().postDataJSON())

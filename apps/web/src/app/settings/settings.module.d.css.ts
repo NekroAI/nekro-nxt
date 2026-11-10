@@ -7,6 +7,7 @@ declare const styles: {
   readonly channelFieldAction: string
   readonly channelFields: string
   readonly claimCode: string
+  readonly codeText: string
   readonly deviceName: string
   readonly faint: string
   readonly head: string
@@ -15,6 +16,7 @@ declare const styles: {
   readonly licenses: string
   readonly link: string
   readonly loading: string
+  readonly loginCode: string
   readonly movePlan: string
   readonly muted: string
   readonly narrowNav: string
@@ -28,9 +30,11 @@ declare const styles: {
   readonly pickInfo: string
   readonly pickList: string
   readonly providerStatus: string
+  readonly qr: string
   readonly row: string
   readonly rowChevron: string
   readonly rowControls: string
+  readonly scanner: string
   readonly source: string
   readonly srOnly: string
   readonly title: string

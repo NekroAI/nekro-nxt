@@ -16,6 +16,7 @@ import {
   type Column,
 } from '../../ui-kit/index.js'
 import { relativeTime } from '../channels/timeline-model.js'
+import { SignInMethods } from './sign-in-methods.js'
 import styles from './settings.module.css'
 
 type Device = HostApiResponse<'listManagementDevices'>['devices'][number]
@@ -124,6 +125,7 @@ export function AccessSection() {
   return (
     <>
       <PublicOriginGroup />
+      <SignInMethods />
       {isUnencryptedRemoteConnection() ? (
         <Banner tone="warn">
           当前通过未加密的 HTTP 访问，管理密钥和登录状态可能在网络中被截获。公网访问请使用 HTTPS，或通过反向代理启用

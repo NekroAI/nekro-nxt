@@ -4794,7 +4794,12 @@ export const HostApiContracts = {
     path: '/api/management/passkeys/options',
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
-    response: z.record(z.string(), z.unknown()),
+    response: z.looseObject({
+      challenge: z.string(),
+      rp: z.looseObject({ name: z.string(), id: z.string().optional() }),
+      user: z.looseObject({ id: z.string(), name: z.string(), displayName: z.string() }),
+      pubKeyCredParams: z.array(z.looseObject({ alg: z.number(), type: z.literal('public-key') })),
+    }),
     error: HostApiErrorSchema,
   }),
   finishPasskeyRegistration: defineContract({
