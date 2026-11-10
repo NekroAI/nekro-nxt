@@ -7,6 +7,28 @@
   overflow: hidden;
 }
 
+/*
+ * Touch screens pin the body to the layout viewport (tokens.css). Viewport units can disagree with it (iOS home-screen
+ * apps have measured them past the visible area), so the shell fills the body instead and never overflows it.
+ */
+@media (pointer: coarse) {
+  .app {
+    height: 100%;
+  }
+}
+
+/*
+ * iOS leaves the page as tall as the screen under the keyboard; the shell then covers only the visible part
+ * (keyboard-viewport.ts), so the composer sits right above the keyboard and the message list gets shorter.
+ */
+:global(html[data-keyboard]) .app {
+  position: fixed;
+  top: var(--viewport-top, 0px);
+  right: 0;
+  left: 0;
+  height: var(--viewport-height, 100dvh);
+}
+
 .top {
   /* Desktop injects the native window-control insets (macOS traffic lights, Windows caption buttons). */
   --wc-left: var(--window-controls-left, 0px);
@@ -50,10 +72,11 @@
 }
 
 .instance {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  min-height: var(--target);
+  min-height: 32px;
   padding: var(--s-1) var(--s-2) var(--s-1) var(--s-2);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -111,6 +134,7 @@ a.instance {
 }
 
 .search {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--s-2);
@@ -128,6 +152,15 @@ a.instance {
     box-shadow var(--dur-1);
 }
 
+/* The top bar's controls keep their size; on touch screens their hit areas reach --target. */
+.instance::after,
+.search::after,
+.bell::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2));
+}
+
 .search:hover {
   border-color: var(--line-3);
 }
@@ -139,6 +172,13 @@ a.instance {
 
 .search kbd {
   margin-left: auto;
+}
+
+/* Shortcut hints mean nothing without a keyboard. */
+@media (pointer: coarse) {
+  .search kbd {
+    display: none;
+  }
 }
 
 .bell {
@@ -509,7 +549,7 @@ a.instance {
   align-self: stretch;
   gap: var(--s-2);
   min-width: 0;
-  min-height: var(--target);
+  min-height: 32px;
   padding: 0 var(--s-2);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -680,5 +720,14 @@ a.instance {
   .search {
     min-width: 0;
     padding: var(--s-2);
+  }
+
+  /* While typing, the keyboard takes the bottom bar's place. */
+  :global(html[data-keyboard]) .app {
+    grid-template-rows: var(--chrome-top) minmax(0, 1fr) 0;
+  }
+
+  :global(html[data-keyboard]) .rail {
+    display: none;
   }
 }

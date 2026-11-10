@@ -16,6 +16,7 @@ declare const styles: {
   readonly logScroll: string
   readonly message: string
   readonly newLogs: string
+  readonly roomy: string
   readonly row: string
   readonly rowMain: string
   readonly rowMessage: string

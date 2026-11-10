@@ -39,7 +39,17 @@
   background: var(--hover);
 }
 
+/* A long agent name gives way before the state does: one line, cut with an ellipsis. */
+.groupName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .groupMeta {
+  flex: none;
+  white-space: nowrap;
   margin-left: auto;
   color: var(--muted);
   font-size: var(--fs-xs);
@@ -353,6 +363,12 @@
   font-weight: 550;
 }
 
+.responder > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .toggle {
   display: inline-flex;
   align-items: center;
@@ -371,6 +387,23 @@
     background var(--dur-2),
     border-color var(--dur-2),
     color var(--dur-2);
+}
+
+/* Header toggles and composer buttons keep their size; on touch screens their hit areas reach --target. */
+.toggle,
+.sender,
+.attach,
+.send {
+  position: relative;
+}
+
+.toggle::after,
+.sender::after,
+.attach::after,
+.send::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2));
 }
 
 .toggle svg {
@@ -1371,6 +1404,23 @@ button.step:hover {
   font-size: var(--fs-sm);
 }
 
+/* Phones only: the refusal as a short label in the tool row, the full sentence behind its help mark. */
+.blockedShort {
+  display: none;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+  color: var(--warn);
+  font-size: var(--fs-sm);
+}
+
+.blockedShort > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .send {
   display: grid;
   width: 36px;
@@ -1474,10 +1524,88 @@ button.step:hover {
     padding: var(--s-2) var(--s-4);
   }
 
+  /*
+   * The name gets the whole first line; its status chips move down beside the responder. The account stays in the
+   * channel details and on the composer's sender mark.
+   */
+  .title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(var(--s-1) / 2) var(--s-2);
+  }
+
+  .titleLine {
+    display: contents;
+  }
+
+  .titleLine > span:first-child {
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .titleLine > :not(:first-child) {
+    flex: none;
+  }
+
+  .subline {
+    flex: 1 1 0;
+  }
+
+  .subline:has(.responder) > :not(.responder) {
+    display: none;
+  }
+
   .toggleLabel,
   .knob,
   .as {
     display: none;
+  }
+
+  /*
+   * The text gets the composer's full width; the sender mark, attach buttons, refusal and send button share a tool
+   * row below it. Long text stops growing at a seventh of the visible height, so the messages keep about half the screen.
+   */
+  .composer {
+    display: grid;
+    grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+    gap: var(--s-1);
+  }
+
+  .composer > * {
+    grid-column: 1 / -1;
+  }
+
+  .composerRow {
+    display: contents;
+  }
+
+  .input {
+    grid-column: 1 / -1;
+    order: 1;
+    max-height: min(180px, calc(var(--viewport-height, 100dvh) / 7));
+    padding: var(--s-1) var(--s-2);
+  }
+
+  .sender,
+  .attach {
+    order: 2;
+  }
+
+  .blocked {
+    display: none;
+  }
+
+  .blockedShort {
+    display: flex;
+    grid-column: 4;
+    order: 3;
+    padding: 0 var(--s-1);
+  }
+
+  .send {
+    grid-column: 5;
+    order: 4;
   }
 }
 

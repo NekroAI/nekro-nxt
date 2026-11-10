@@ -210,7 +210,7 @@ export const MessageRow = memo(function MessageRow({
           ) : null}
         </div>
       )}
-      <div className={styles.bubble}>
+      <div className={styles.bubble} data-content>
         <MessageContent message={message} />
       </div>
       {message.inboundHook?.hostAnnotations?.map((note, index) => (

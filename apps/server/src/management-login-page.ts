@@ -76,6 +76,8 @@ export const managementLoginPage = (input: {
   }
   input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   input.code-input { font: 600 18px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.1em; text-align: center; text-transform: uppercase; }
+  /* iOS zooms into a field under 16px; touch screens get 16px fields. */
+  @media (pointer: coarse) { input { font-size: max(16px, 1em); } }
   button {
     padding: 10px 12px; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-fg);
     font: inherit; font-weight: 600; cursor: pointer;

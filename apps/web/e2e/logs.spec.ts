@@ -227,8 +227,10 @@ test('large log lists scroll independently at desktop and narrow window sizes', 
   ]) {
     await page.setViewportSize(size)
     const search = page.getByRole('textbox', { name: '搜索日志' })
-    const before = await search.boundingBox()
     await expect.poll(() => grid.evaluate((e) => e.clientHeight)).toBeGreaterThan(80)
+    // The toolbar settles once the page has noticed the new width (narrow windows drop 更多筛选).
+    await expect(page.getByRole('button', { name: '更多筛选', exact: true })).toHaveCount(size.width >= 1100 ? 1 : 0)
+    const before = await search.boundingBox()
     expect(await grid.evaluate((e) => e.scrollHeight > e.clientHeight)).toBe(true)
     expect(await grid.getByRole('row').count()).toBeLessThan(50)
     await grid.evaluate((e) => {
@@ -241,7 +243,9 @@ test('large log lists scroll independently at desktop and narrow window sizes', 
       await page.locator('html').evaluate((e) => e.scrollWidth <= innerWidth && e.scrollHeight <= innerHeight),
     ).toBe(true)
     expect(await grid.getByRole('gridcell').first().textContent()).not.toMatch(/。$/u)
-    await page.getByRole('button', { name: '更多筛选', exact: true }).click()
+    // Narrow windows keep one way in to the scope filters: 筛选 in the header opens them as a sheet.
+    const filters = size.width >= 1100 ? '更多筛选' : '筛选'
+    await page.getByRole('button', { name: filters, exact: true }).click()
     await expect(page.getByRole('combobox', { name: '智能体', exact: true })).toBeVisible()
     if (size.width >= 1100) expect(await grid.evaluate((e) => e.clientHeight)).toBeGreaterThan(40)
     if (size.width < 1100)

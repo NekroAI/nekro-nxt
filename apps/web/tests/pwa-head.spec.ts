@@ -32,7 +32,8 @@ describe('home screen app', () => {
     const html = await read('../index.html')
     const tokens = await read('../src/ui-kit/tokens.css')
 
-    expect(html).toMatch(/<meta name="viewport" content="[^"]*viewport-fit=cover"/u)
+    const viewport = /<meta\s+name="viewport"\s+content="([^"]*)"/u.exec(html)?.[1] ?? ''
+    expect(viewport.split(/,\s*/u)).toContain('viewport-fit=cover')
     const themeColors = [...html.matchAll(/<meta name="theme-color" content="([^"]+)"([^>]*)>/gu)].map((match) => ({
       color: match[1]?.toLowerCase(),
       media: /media="([^"]+)"/u.exec(match[2] ?? '')?.[1],
@@ -44,5 +45,24 @@ describe('home screen app', () => {
     for (const name of ['mobile-web-app-capable', 'apple-mobile-web-app-capable'])
       expect(html).toContain(`<meta name="${name}" content="yes" />`)
     expect(html).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="default" />')
+  })
+
+  it('lets Android resize the page for the keyboard and never locks zoom', async () => {
+    const html = await read('../index.html')
+    const viewport = /<meta\s+name="viewport"\s+content="([^"]*)"/u.exec(html)?.[1] ?? ''
+
+    expect(viewport.split(/,\s*/u)).toContain('interactive-widget=resizes-content')
+    expect(viewport).not.toMatch(/maximum-scale|user-scalable/u)
+  })
+
+  it('opens no long-press menu on controls, and keeps it on content, wherever selection is switched', async () => {
+    const tokens = await read('../src/ui-kit/tokens.css')
+    const blocks = [...tokens.matchAll(/\{([^{}]*)\}/gu)].map((match) => match[1] ?? '')
+    const off = blocks.filter((block) => /user-select:\s*none/u.test(block))
+    const on = blocks.filter((block) => /user-select:\s*text/u.test(block))
+    expect(off.length).toBeGreaterThan(0)
+    expect(on.length).toBeGreaterThan(0)
+    for (const block of off) expect(block).toMatch(/-webkit-touch-callout:\s*none/u)
+    for (const block of on) expect(block).toMatch(/-webkit-touch-callout:\s*default/u)
   })
 })

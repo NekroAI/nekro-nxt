@@ -108,6 +108,9 @@
 
 /* —— 详情栏 —— */
 .pane {
+  /* Side padding of the pane's head, body and foot; a pane shown as the whole page takes the page margin. */
+  --pane-inset: var(--s-4);
+
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -120,7 +123,7 @@
   display: flex;
   align-items: flex-start;
   gap: var(--s-2);
-  padding: var(--s-4) var(--s-4) var(--s-3);
+  padding: var(--s-4) var(--pane-inset) var(--s-3);
   border-bottom: 1px solid var(--line);
 }
 
@@ -136,14 +139,14 @@
   gap: var(--s-5);
   min-height: 0;
   overflow: auto;
-  padding: var(--s-4);
+  padding: var(--s-4) var(--pane-inset);
 }
 
 .paneFoot {
   display: flex;
   justify-content: flex-end;
   gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-3) var(--pane-inset);
   border-top: 1px solid var(--line);
 }
 
@@ -199,9 +202,19 @@
 
 /* —— 属性行 —— */
 .list {
+  /*
+   * How far a row's content sits from the card edge. Rows of their own design placed in a list (a link row, a row
+   * with a picker) take their side padding from here too, so every card keeps one inset at every width.
+   */
+  --row-inset: var(--s-4);
+
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
+}
+
+.list:not(.framed) {
+  --row-inset: 0px;
 }
 
 .framed {
@@ -218,7 +231,7 @@
   align-items: center;
   gap: var(--s-2) var(--s-5);
   min-height: var(--row);
-  padding: var(--s-3) var(--s-4);
+  padding: var(--s-3) var(--row-inset);
 }
 
 .row[data-depth] .rowText {
@@ -236,10 +249,6 @@
 
 .list > .row + .row {
   border-top: 1px solid var(--line);
-}
-
-.list:not(.framed) > .row {
-  padding-inline: 0;
 }
 
 .stacked {
@@ -357,7 +366,7 @@
 .diagnosticsToggle::after {
   content: '';
   position: absolute;
-  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
 
 .diagnosticsToggle:hover {

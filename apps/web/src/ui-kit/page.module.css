@@ -429,6 +429,13 @@ html[data-nxt-motion='off']
   gap: var(--s-1);
 }
 
+/* Touch screens: compact icon buttons sit far enough apart that their grown hit areas only meet. */
+@media (pointer: coarse) {
+  .listActions {
+    gap: var(--s-3);
+  }
+}
+
 .listToolbar {
   display: grid;
   gap: var(--s-2);
@@ -531,8 +538,21 @@ html[data-nxt-motion='off']
     animation: listScrimIn 200ms ease both;
   }
 
+  /* The same side margin as .mainInner at this width, so every page lines up on one edge. */
   .reader,
   .board {
-    padding: var(--s-5) var(--s-4) var(--s-7);
+    padding: var(--s-5) var(--s-6) var(--s-7);
+  }
+
+  /*
+   * A list or detail shown as the whole page keeps the page's side margin (that of .mainInner at this width), so a
+   * list, its detail and every other page line up on one edge.
+   */
+  .workbench[data-narrow-pane='list'] > .list :is(.listHead, .listToolbar, .listBody) {
+    padding-inline: var(--s-6);
+  }
+
+  .workbench[data-narrow-pane='detail'] > [data-detail-pane] {
+    --pane-inset: var(--s-6);
   }
 }

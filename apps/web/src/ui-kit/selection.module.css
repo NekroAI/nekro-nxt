@@ -39,7 +39,7 @@
 .segmentedItem::after {
   content: '';
   position: absolute;
-  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
 
 .segmentedItem:hover,

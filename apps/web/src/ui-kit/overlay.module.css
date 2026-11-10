@@ -35,6 +35,12 @@
   translate: -50% 0;
 }
 
+/* With the on-screen keyboard up, a dialog moves to the top of what is still visible and fits above the keyboard. */
+:global(html[data-keyboard]) .dialog {
+  top: calc(var(--viewport-top, 0px) + max(var(--s-3), var(--safe-top)));
+  max-height: calc(var(--viewport-height, 100dvh) - max(var(--s-3), var(--safe-top)) - var(--s-3));
+}
+
 .dialog[data-state='open'] {
   animation: dialogIn 340ms var(--ease) both;
 }
@@ -104,9 +110,10 @@
 
 .sheet {
   position: fixed;
-  top: 0;
+  /* The keyboard insets are zero unless an iOS keyboard covers part of the page (keyboard-viewport.ts). */
+  top: var(--viewport-top, 0px);
   right: 0;
-  bottom: 0;
+  bottom: var(--keyboard-inset, 0px);
   z-index: 51;
   display: flex;
   flex-direction: column;
@@ -178,6 +185,17 @@
   box-shadow: var(--sh-3), var(--hl);
   backdrop-filter: var(--blur);
   transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+
+/* Phones: an opaque menu over a dimmed page, so neither the content behind nor its taps get mixed in. */
+@media (max-width: 760px) {
+  .menu {
+    background: var(--surface);
+    box-shadow:
+      var(--sh-3),
+      var(--hl),
+      0 0 0 100vmax var(--scrim);
+  }
 }
 
 .popover {
@@ -286,10 +304,10 @@
     background-color 120ms ease;
 }
 
-/* The mark stays small; the hit area reaches the 32px minimum target. */
+/* The mark stays small; the hit area reaches --target. */
 .infoTip::after {
   position: absolute;
-  inset: -7px;
+  inset: calc((18px - var(--target)) / 2);
   content: '';
 }
 

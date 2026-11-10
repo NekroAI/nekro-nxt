@@ -1,6 +1,6 @@
 import * as RadixSelect from '@radix-ui/react-select'
 import * as RadixSwitch from '@radix-ui/react-switch'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 import {
   cloneElement,
   forwardRef,
@@ -186,6 +186,9 @@ export const Select = forwardRef<
       </RadixSelect.Trigger>
       <RadixSelect.Portal>
         <RadixSelect.Content className={styles.selectContent} position="popper" sideOffset={4} collisionPadding={12}>
+          <RadixSelect.ScrollUpButton className={styles.selectScroll}>
+            <ChevronUp aria-hidden="true" />
+          </RadixSelect.ScrollUpButton>
           <RadixSelect.Viewport className={styles.selectViewport}>
             {options.map((option) => (
               <RadixSelect.Item
@@ -201,6 +204,9 @@ export const Select = forwardRef<
               </RadixSelect.Item>
             ))}
           </RadixSelect.Viewport>
+          <RadixSelect.ScrollDownButton className={styles.selectScroll}>
+            <ChevronDown aria-hidden="true" />
+          </RadixSelect.ScrollDownButton>
         </RadixSelect.Content>
       </RadixSelect.Portal>
     </RadixSelect.Root>

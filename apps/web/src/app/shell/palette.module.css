@@ -148,6 +148,13 @@
   margin-right: var(--s-1);
 }
 
+/* The footer only lists keys; touch screens have none. */
+@media (pointer: coarse) {
+  .foot {
+    display: none;
+  }
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

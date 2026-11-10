@@ -13,6 +13,7 @@ declare const styles: {
   readonly selectContent: string
   readonly selectIcon: string
   readonly selectItem: string
+  readonly selectScroll: string
   readonly selectValue: string
   readonly selectViewport: string
   readonly switch: string

@@ -22,6 +22,16 @@
     transform var(--dur-2) var(--spring);
 }
 
+/*
+ * Every button keeps its look but receives a hit area of at least --target (Decision 2026-10-06 §3), which grows to
+ * a fingertip on touch screens; buttons already that large are untouched.
+ */
+.button::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2));
+}
+
 .button:hover:not(:disabled) {
   border-color: var(--line-3);
   box-shadow: var(--sh-raised-hover);
@@ -166,13 +176,6 @@
   font-size: var(--fs-xs);
 }
 
-/* Compact controls keep their look but receive a hit area of at least --target (Decision 2026-10-06 §3). */
-.small::after {
-  content: '';
-  position: absolute;
-  inset: calc((var(--control-sm) - var(--target)) / 2);
-}
-
 .small svg {
   width: 14px;
   height: 14px;
@@ -223,7 +226,7 @@
 .toggleChip::after {
   content: '';
   position: absolute;
-  inset: calc((var(--control-sm) - var(--target)) / 2) 0;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
 
 .toggleChip:hover {

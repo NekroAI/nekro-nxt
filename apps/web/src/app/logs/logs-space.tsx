@@ -426,6 +426,10 @@ export default function LogsSpace() {
       label: `${KIND[item.kind]} · ${item.label}${item.removed ? '（已移除）' : ''}`,
     })),
   ]
+  const reset = () => {
+    setKeyword('')
+    update(defaults(), '60')
+  }
   const filterControls = (
     <div className={styles.filters}>
       <Field label="来源">
@@ -704,20 +708,25 @@ export default function LogsSpace() {
                 if (value === 'custom') setAdvanced(true)
               }}
             />
-            <Button size="small" variant="ghost" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
-              更多筛选
-            </Button>
-            <Button size="small" variant="ghost" onClick={() => update({ ...query, levels: ['warn', 'error'] })}>
+            {narrow ? null : (
+              <Button size="small" variant="ghost" onClick={() => setAdvanced(!advanced)} aria-expanded={advanced}>
+                更多筛选
+              </Button>
+            )}
+            <Button
+              size="small"
+              variant="ghost"
+              className={styles.roomy}
+              onClick={() => update({ ...query, levels: ['warn', 'error'] })}
+            >
               仅异常
             </Button>
             <Button
               size="small"
               variant="ghost"
+              className={styles.roomy}
               icon={<RotateCcw size={14} />}
-              onClick={() => {
-                setKeyword('')
-                update(defaults(), '60')
-              }}
+              onClick={reset}
             >
               重置
             </Button>
@@ -875,6 +884,7 @@ export default function LogsSpace() {
                     <Pressable
                       role="gridcell"
                       className={styles.rowMain}
+                      data-content
                       onClick={() => {
                         if (!window.getSelection()?.toString()) select(entry)
                       }}
@@ -996,7 +1006,16 @@ export default function LogsSpace() {
           ))}
         </div>
       </MainContent>
-      <Sheet open={narrow && advanced} onOpenChange={setAdvanced} title="筛选日志">
+      <Sheet
+        open={narrow && advanced}
+        onOpenChange={setAdvanced}
+        title="筛选日志"
+        footer={
+          <Button variant="ghost" icon={<RotateCcw size={14} />} onClick={reset}>
+            重置
+          </Button>
+        }
+      >
         {filterControls}
       </Sheet>
       <Sheet

@@ -259,8 +259,10 @@ export function Conversation({
             {agent ? (
               <span className={styles.responder}>
                 <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
-                {agent.name}
-                {trigger ? ` · ${trigger}` : ''}
+                <span>
+                  {agent.name}
+                  {trigger ? ` · ${trigger}` : ''}
+                </span>
               </span>
             ) : null}
           </div>

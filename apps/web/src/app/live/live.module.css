@@ -189,6 +189,7 @@
 }
 
 .quiet a {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--s-2);
@@ -205,6 +206,13 @@
     border-color var(--dur-1);
 }
 
+/* The pill stays compact; its hit area reaches --target (half the gap between wrapped rows). */
+.quiet a::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
+}
+
 .quiet a:hover {
   border-color: var(--line-2);
   transform: translateY(-1px);
@@ -216,8 +224,9 @@
 }
 
 @media (max-width: 760px) {
+  /* The board already keeps the page's side margin; the overview adds none of its own. */
   .inner {
-    padding: var(--s-5) var(--s-4) var(--s-7);
+    padding: var(--s-5) 0 var(--s-7);
   }
 
   .stats {

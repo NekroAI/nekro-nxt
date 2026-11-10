@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { NextApp } from './app/next-app.js'
 import { installStableCursorIntent } from './cursor-stability.js'
+import { installKeyboardViewport } from './keyboard-viewport.js'
 import { createProductRuntime, ProductRuntimeProvider } from './product-runtime.js'
 import { applyThemeChoice, readInitialThemeChoice } from './theme-preference.js'
 import './ui-kit/tokens.css'
@@ -12,6 +13,7 @@ applyThemeChoice(document.documentElement, readInitialThemeChoice())
 document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
 document.documentElement.dataset['nxtMotion'] = reducedMotion ? 'off' : 'on'
 const disposeStableCursorIntent = installStableCursorIntent()
+const disposeKeyboardViewport = installKeyboardViewport()
 
 const root = document.querySelector('#root')
 if (!root) throw new Error('NekroNxt Web root element is missing.')
@@ -32,5 +34,6 @@ createRoot(root).render(
 
 window.addEventListener('beforeunload', () => {
   disposeStableCursorIntent()
+  disposeKeyboardViewport()
   unsubscribeHost()
 })

@@ -10,7 +10,7 @@ import {
   type ChannelSummary,
   type ConnectionSummary,
 } from '../../product-runtime.js'
-import { FileChooser, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/index.js'
+import { FileChooser, InfoTip, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { useProductApi } from '../model/store.js'
 import { randomId } from '../../random-id.js'
@@ -194,15 +194,20 @@ export function Composer({
     if (command) ui.getState().setChannelDraft(channel.id, '/' + command.fullName + ' ')
     input.current?.focus()
   }
-  const blocked = commandMode
-    ? ''
+  // `short` leaves out the account, which phones show as the sender mark next to it.
+  const refusal: { readonly full: string; readonly short: string } | undefined = commandMode
+    ? undefined
     : !agent
-      ? '还没有智能体响应这个频道'
+      ? { full: '还没有智能体响应这个频道', short: '还没有智能体响应' }
       : connection && connectionStatus(connection).health === 'attention'
-        ? `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`
+        ? {
+            full: `${connectionDisplayName(connection)}：${connectionStatus(connection).reason ?? '需要处理'}`,
+            short: connectionStatus(connection).reason ?? '账号需要处理',
+          }
         : external && connection && !connection.proactiveSend
-          ? `${connectionDisplayName(connection)} 不支持主动发送`
-          : ''
+          ? { full: `${connectionDisplayName(connection)} 不支持主动发送`, short: '不支持主动发送' }
+          : undefined
+  const blocked = refusal?.full ?? ''
   useLayoutEffect(() => {
     const element = input.current
     if (!element) return
@@ -454,6 +459,14 @@ export function Composer({
         >
           <FilePlus2 aria-hidden="true" />
         </Pressable>
+        {refusal ? (
+          <span className={styles.blockedShort}>
+            <span>{refusal.short}</span>
+            <InfoTip label="不能发送的原因" side="top">
+              {refusal.full}；仍可输入 /help 或 /status
+            </InfoTip>
+          </span>
+        ) : null}
         <Pressable
           type="submit"
           className={styles.send}

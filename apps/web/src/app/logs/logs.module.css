@@ -20,9 +20,15 @@
   flex-wrap: wrap;
 }
 .settingsLink {
+  position: relative;
   color: var(--muted);
   padding: var(--s-2);
   display: inline-flex;
+}
+.settingsLink::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2));
 }
 .toolbar {
   display: flex;
@@ -283,8 +289,20 @@
   .rowMain time {
     font-size: var(--fs-xs);
   }
+  /* Phones: search and time range on one line, the level chips on the next; the rest is under 筛选. */
+  .toolbar {
+    flex-wrap: nowrap;
+  }
   .toolbar > input {
-    min-width: 140px;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .toolbar > [role='combobox'] {
+    width: 128px;
+    flex: 0 0 128px;
+  }
+  .roomy {
+    display: none;
   }
 }
 .workspace {
@@ -301,6 +319,12 @@
 @media (max-height: 760px), (max-width: 760px) {
   .workspace {
     gap: var(--s-2);
+  }
+  /* Rows of compact controls stay far enough apart that their touch hit areas do not overlap. */
+  @media (pointer: coarse) {
+    .workspace {
+      gap: var(--s-3);
+    }
   }
   .header p,
   .hint {

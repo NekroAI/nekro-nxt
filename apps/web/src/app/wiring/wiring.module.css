@@ -479,7 +479,7 @@
   align-items: center;
   gap: var(--s-3);
   min-height: var(--row);
-  padding: var(--s-2) 0;
+  padding: var(--s-3) var(--row-inset);
 }
 
 .compactRow + .compactRow {
@@ -489,7 +489,7 @@
 .compactText {
   display: grid;
   min-width: 0;
-  padding: var(--s-2) 0;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--fg);
@@ -552,7 +552,7 @@
   width: 100%;
   min-width: 0;
   min-height: var(--row);
-  padding: var(--s-2) var(--s-1);
+  padding: var(--s-2) var(--row-inset);
   border: 0;
   border-radius: var(--r-1);
   background: transparent;
@@ -614,7 +614,7 @@
   align-items: center;
   gap: var(--s-2);
   min-height: var(--row-compact);
-  padding: var(--s-1);
+  padding: var(--s-1) var(--row-inset);
 }
 
 .member + .member {

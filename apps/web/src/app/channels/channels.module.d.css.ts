@@ -10,6 +10,7 @@ declare const styles: {
   readonly attachmentPreview: string
   readonly attachments: string
   readonly blocked: string
+  readonly blockedShort: string
   readonly bubble: string
   readonly card: string
   readonly cardHead: string
@@ -50,6 +51,7 @@ declare const styles: {
   readonly groupHead: string
   readonly groupHeadRow: string
   readonly groupMeta: string
+  readonly groupName: string
   readonly groupToggle: string
   readonly head: string
   readonly hiddenFromAgent: string

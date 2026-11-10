@@ -184,6 +184,7 @@
 }
 
 .legendItem {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
@@ -198,6 +199,19 @@
   transition:
     background var(--dur-1),
     opacity var(--dur-1);
+}
+
+/* Compact on screen; the hit area reaches --target, and touch screens space the rows so neighbours never share one. */
+.legendItem::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
+}
+
+@media (pointer: coarse) {
+  .legend {
+    row-gap: var(--s-3);
+  }
 }
 
 .legendItem:hover {

@@ -237,4 +237,24 @@ describe('the login page on phones and computers', () => {
       await context.close()
     }
   }, 60_000)
+
+  it('keeps every field at 16px or more on a phone, so iOS does not zoom in, and leaves computers as they were', async () => {
+    const sizes = async (options: BrowserContextOptions) => {
+      const context = await browser.newContext(options)
+      const page = await context.newPage()
+      await page.goto(`http://localhost:${edge.port}/login`)
+      const result = await page
+        .locator('input')
+        .evaluateAll((inputs) =>
+          inputs.map((input) => ({ id: input.id, size: Number.parseFloat(getComputedStyle(input).fontSize) })),
+        )
+      await context.close()
+      return result
+    }
+    const phone = await sizes(PHONE)
+    expect(phone.length).toBeGreaterThan(0)
+    for (const field of phone) expect(field.size, field.id).toBeGreaterThanOrEqual(16)
+    const computer = await sizes({ viewport: { width: 1280, height: 800 } })
+    expect(computer.find((field) => field.id === 'key')?.size).toBe(14)
+  }, 60_000)
 })

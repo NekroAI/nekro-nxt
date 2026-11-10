@@ -256,6 +256,8 @@ html[data-ui='next'] {
   /* Where the shell's top bar ends and its bottom bar begins, safe areas included; floating panels stop at these. */
   --chrome-top: calc(var(--topbar-height) + var(--safe-top));
   --chrome-bottom: calc(var(--statusbar-height) + var(--safe-bottom));
+  /* Side padding of a row inside a card; PropertyList sets it, unframed lists set it to zero. */
+  --row-inset: var(--s-4);
   --pane-list: 272px;
   --pane-detail: 360px;
   /* Page widths (05 §6.1): forms and settings, object pages with tables, the master column of a split view. */
@@ -290,6 +292,16 @@ html[data-ui='next'] {
 @media (max-width: 760px) {
   html[data-ui='next'] {
     --chrome-bottom: calc(var(--statusbar-height) * 2 + max(var(--s-2), var(--safe-bottom)));
+  }
+}
+
+/*
+ * Touch screens (05 §6.2): every control answers a fingertip of at least 40px, whatever its drawn size; hit areas
+ * built on --target grow with it, the controls themselves keep their look.
+ */
+@media (pointer: coarse) {
+  html[data-ui='next'] {
+    --target: 40px;
   }
 }
 
@@ -396,6 +408,83 @@ html[data-ui='next'] ::selection {
 :where(html[data-ui='next']) :where(button, input, select, textarea) {
   font: inherit;
   color: inherit;
+}
+
+/*
+ * iOS zooms the page into a text field whose text is under 16px. On touch screens the small type sizes resolve to 16px
+ * inside fields, and a field that inherits its size gets at least 16px; larger type is left as it is. Zero specificity
+ * on the fallback size, so a field's own type token still decides.
+ */
+@media (pointer: coarse) {
+  :where(html[data-ui='next'])
+    :where(
+      input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color']),
+      textarea,
+      select,
+      [contenteditable]:not([contenteditable='false'])
+    ) {
+    --fs-2xs: 16px;
+    --fs-xs: 16px;
+    --fs-sm: 16px;
+    --fs-md: 16px;
+    --t-title: 600 var(--fs-md) / 1.45 var(--font-sans);
+    --t-body: 400 var(--fs-md) / 1.6 var(--font-sans);
+    --t-note: 400 var(--fs-sm) / 1.5 var(--font-sans);
+    --t-label: 500 var(--fs-sm) / 1.4 var(--font-sans);
+    --t-caption: 400 var(--fs-xs) / 1.4 var(--font-sans);
+    --t-mono: 400 var(--fs-sm) / 1.5 var(--font-mono);
+
+    font-size: max(16px, 1em);
+  }
+
+  /*
+   * The document itself never scrolls on a phone: only the app's own lists do. The body is pinned to the layout
+   * viewport and clips anything taller, so no pan, rubber band or pull-to-refresh can move the bottom bar away.
+   */
+  html[data-ui='next'],
+  html[data-ui='next'] body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  html[data-ui='next'] body {
+    position: fixed;
+    inset: 0;
+  }
+
+  /*
+   * Controls are not text: a long press on a link, button or interface image neither selects it nor opens the
+   * system preview menu. Content marked `data-content` (message bubbles, log rows) keeps both, so its text can be
+   * copied and its links and images still offer the system menu; fields always take selection (iOS will not type
+   * into a field that cannot select). Plain reading text was never a control.
+   */
+  :where(html[data-ui='next'])
+    :where(
+      a[href],
+      button,
+      label,
+      nav,
+      img,
+      svg,
+      [role='button'],
+      [role='tab'],
+      [role='menuitem'],
+      [role='option'],
+      [role='switch'],
+      [role='radio'],
+      [role='checkbox']
+    ) {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  :where(html[data-ui='next'])
+    :where([data-content], [data-content] *, input, textarea, [contenteditable]:not([contenteditable='false'])) {
+    -webkit-touch-callout: default;
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }
 
 /*

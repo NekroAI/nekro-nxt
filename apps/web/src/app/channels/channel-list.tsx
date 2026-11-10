@@ -361,7 +361,7 @@ function AgentGroup({
           aria-roledescription="可拖动的智能体分组"
         >
           <AgentAvatar name={agent.name} hue={agentHue(agent)} size="sm" live={isAgentWorking(agent)} />
-          {agent.name}
+          <span className={styles.groupName}>{agent.name}</span>
           <span className={styles.groupMeta}>{phase.label}</span>
           {collapsed ? <GroupUnread count={unread} /> : null}
         </Pressable>

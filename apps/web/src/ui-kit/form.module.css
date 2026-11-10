@@ -77,6 +77,7 @@
 }
 
 .select {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--s-2);
@@ -84,6 +85,13 @@
   color: var(--fg);
   text-align: left;
   cursor: pointer;
+}
+
+/* The field keeps its height; on touch screens its hit area reaches --target. */
+.select::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
 
 .select[data-placeholder] .selectValue {
@@ -150,6 +158,33 @@
 
 .selectViewport {
   padding: var(--s-1);
+}
+
+/* Touch screens show no scrollbar: a chevron at the cut edge says the list goes on (and scrolls it). */
+.selectScroll {
+  display: none;
+}
+
+@media (pointer: coarse) {
+  .selectScroll {
+    display: grid;
+    flex: none;
+    height: var(--s-6);
+    place-items: center;
+    color: var(--muted);
+  }
+
+  .selectScroll svg {
+    width: var(--icon);
+    height: var(--icon);
+  }
+}
+
+/* Phones: the list may use all the height below (or above) its field rather than stopping at ten rows. */
+@media (max-width: 760px) {
+  .selectContent {
+    max-height: var(--radix-select-content-available-height);
+  }
 }
 
 .selectItem {
