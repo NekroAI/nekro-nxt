@@ -307,4 +307,54 @@ describe('NotificationService', () => {
     now += 2 * 60 * 1000
     await expect(service.notifyDynamicApproval({ ...approval, requestId: 'approval_later' })).resolves.toBe('sent')
   })
+  it('gives a client from an earlier run the current baseline instead of waiting for numbers it already saw', async () => {
+    const { service } = await createFixture()
+    const first = service.readClientNotifications(undefined, '')
+    expect(first.bootId).toEqual(expect.any(String))
+    await service.notifyCommunityFeedback({ kind: 'draft' })
+    expect(service.readClientNotifications(first.cursor, first.bootId).notifications).toHaveLength(1)
+
+    const restarted = (await createFixture()).service
+    expect(restarted.readClientNotifications(first.cursor + 1, first.bootId)).toEqual({
+      cursor: 0,
+      notifications: [],
+      bootId: expect.not.stringMatching(first.bootId!),
+    })
+    // An older client sends no run id: a cursor past the current count still gets the baseline, in the old shape.
+    expect(restarted.readClientNotifications(5)).toEqual({ cursor: 0, notifications: [] })
+  })
+
+  it('holds a waiting read until a notification arrives, the time runs out or the client leaves', async () => {
+    const { service } = await createFixture()
+    const { cursor, bootId } = service.readClientNotifications(undefined, '')
+    const waiting = service.waitClientNotifications({ cursor, boot: bootId!, waitMs: 30_000 })
+    await service.notifyCommunityFeedback({ kind: 'draft' })
+    await expect(waiting).resolves.toMatchObject({
+      cursor: cursor + 1,
+      notifications: [{ route: '/community/feedback' }],
+    })
+
+    vi.useFakeTimers()
+    try {
+      const quiet = service.waitClientNotifications({ cursor: cursor + 1, boot: bootId!, waitMs: 30_000 })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(quiet).resolves.toMatchObject({ cursor: cursor + 1, notifications: [] })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const left = new AbortController()
+    const abandoned = service.waitClientNotifications({ cursor: cursor + 1, waitMs: 30_000, signal: left.signal })
+    left.abort()
+    await expect(abandoned).resolves.toMatchObject({ notifications: [] })
+    // A first read or a stale cursor answers right away.
+    await expect(service.waitClientNotifications({ boot: '', waitMs: 30_000 })).resolves.toMatchObject({
+      cursor: cursor + 1,
+    })
+    await expect(
+      service.waitClientNotifications({ cursor: 0, boot: 'other-run', waitMs: 30_000 }),
+    ).resolves.toMatchObject({
+      notifications: [],
+    })
+  })
 })

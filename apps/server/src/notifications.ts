@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import {
   ClientNotificationSchema,
@@ -161,6 +161,9 @@ export class NotificationService {
   /** When each agent's candidate last asked to run; the runner may ask again for a candidate still waiting. */
   readonly #approvalNotifiedAt = new Map<string, number>()
   #notificationCursor = 0
+  /** Names this run; cursors restart at zero with every run. */
+  readonly #bootId = randomBytes(9).toString('base64url')
+  readonly #notificationWaiters = new Set<() => void>()
 
   constructor(
     repository: NotificationSettingsRepository,
@@ -349,17 +352,62 @@ export class NotificationService {
     })
   }
 
-  readClientNotifications(cursor: number | undefined): {
+  /**
+   * Notifications after `cursor`. A cursor from an earlier run (another `boot`, or past the current count) gets the
+   * current baseline instead, so a client that outlived a restart does not wait for numbers it already saw.
+   */
+  readClientNotifications(
+    cursor: number | undefined,
+    boot?: string,
+  ): {
     readonly cursor: number
     readonly notifications: readonly ClientNotification[]
+    readonly bootId?: string
   } {
-    if (cursor === undefined) return { cursor: this.#notificationCursor, notifications: [] }
+    const current = cursor === undefined || this.#staleCursor(cursor, boot) ? undefined : cursor
     return {
       cursor: this.#notificationCursor,
-      notifications: this.#clientNotifications
-        .filter((entry) => entry.cursor > cursor)
-        .map((entry) => entry.notification),
+      notifications:
+        current === undefined
+          ? []
+          : this.#clientNotifications.filter((entry) => entry.cursor > current).map((entry) => entry.notification),
+      ...(boot === undefined ? {} : { bootId: this.#bootId }),
     }
+  }
+
+  /** Like `readClientNotifications`, but holds on for up to `waitMs` while nothing is new after a valid cursor. */
+  async waitClientNotifications(input: {
+    readonly cursor?: number
+    readonly boot?: string
+    readonly waitMs: number
+    readonly signal?: AbortSignal
+  }): Promise<ReturnType<NotificationService['readClientNotifications']>> {
+    const feed = this.readClientNotifications(input.cursor, input.boot)
+    if (
+      input.waitMs <= 0 ||
+      input.cursor === undefined ||
+      feed.notifications.length > 0 ||
+      this.#staleCursor(input.cursor, input.boot) ||
+      input.signal?.aborted === true
+    ) {
+      return feed
+    }
+    await new Promise<void>((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer)
+        this.#notificationWaiters.delete(done)
+        input.signal?.removeEventListener('abort', done)
+        resolve()
+      }
+      const timer = setTimeout(done, input.waitMs)
+      this.#notificationWaiters.add(done)
+      input.signal?.addEventListener('abort', done, { once: true })
+    })
+    return this.readClientNotifications(input.cursor, input.boot)
+  }
+
+  #staleCursor(cursor: number, boot: string | undefined): boolean {
+    return cursor > this.#notificationCursor || (boot !== undefined && boot !== this.#bootId)
   }
 
   async #deliver(event: NotificationEventKey, notification: OutgoingNotification): Promise<'sent' | 'skipped'> {
@@ -399,6 +447,7 @@ export class NotificationService {
     this.#notificationCursor += 1
     this.#clientNotifications.push({ cursor: this.#notificationCursor, notification })
     if (this.#clientNotifications.length > 128) this.#clientNotifications.shift()
+    for (const wake of [...this.#notificationWaiters]) wake()
   }
 
   async #sendBark(

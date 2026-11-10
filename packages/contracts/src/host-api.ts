@@ -463,12 +463,20 @@ export const TestBarkNotificationRequestSchema = z
   .object({ serverUrl: z.url(), deviceKey: z.string().trim().min(1).max(2048).optional() })
   .strict()
 
+/**
+ * `bootId` names this run of the instance and is returned only to clients that sent `boot`, so older clients keep the
+ * shape they parse strictly. A cursor from another run is replaced by the current baseline.
+ */
 export const ClientNotificationFeedResponseSchema = z
   .object({
     cursor: z.number().int().nonnegative(),
     notifications: z.array(ClientNotificationSchema),
+    bootId: z.string().min(1).max(64).optional(),
   })
   .strict()
+
+/** Longest a client may hold the notification request open waiting for news. */
+export const CLIENT_NOTIFICATION_MAX_WAIT_SECONDS = 30
 
 /** Which model writes one kind of compaction summary: that kind's default, or a model chosen for this agent. */
 export const AgentCompactionModelChoiceSchema = z.discriminatedUnion('mode', [
@@ -3536,7 +3544,15 @@ export const HostApiContracts = {
   listClientNotifications: defineContract({
     method: 'GET',
     path: '/api/client-notifications',
-    params: z.object({ cursor: z.number().int().nonnegative().optional() }).strict(),
+    params: z
+      .object({
+        cursor: z.number().int().nonnegative().optional(),
+        /** The run the client's cursor came from; empty on the first request. */
+        boot: z.string().max(64).optional(),
+        /** Seconds to wait when nothing is new yet. */
+        wait: z.number().int().min(0).max(CLIENT_NOTIFICATION_MAX_WAIT_SECONDS).optional(),
+      })
+      .strict(),
     request: NoRequestBodySchema,
     response: ClientNotificationFeedResponseSchema,
     error: HostApiErrorSchema,

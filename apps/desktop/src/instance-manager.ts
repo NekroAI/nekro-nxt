@@ -169,7 +169,8 @@ export class DesktopInstanceManager {
   readonly #vault: CredentialVault
   readonly #statuses = new Map<string, InstanceStatus>()
   readonly #memoryCredentials = new RuntimeCredentialStore()
-  readonly #notificationCursors = new Map<string, number>()
+  /** Where each instance's notifications were read up to, and which run of the instance that cursor belongs to. */
+  readonly #notificationCursors = new Map<string, { readonly cursor: number; readonly bootId?: string }>()
   readonly #notifier: DesktopNotifier
   readonly #profileGenerations = new ProfileGenerationRegistry()
   readonly #switchingProfiles = new Map<string, number>()
@@ -1374,11 +1375,14 @@ export class DesktopInstanceManager {
     if (profile === undefined) throw new Error('服务实例不存在。')
     const profileSession = session.fromPartition(profile.partition)
     this.#configureSession(profile, profileSession)
-    const cursor = this.#notificationCursors.get(profile.id)
+    const known = this.#notificationCursors.get(profile.id)
+    // `boot` makes an instance that restarted since the last read answer with a fresh baseline.
+    const query = new URLSearchParams({ boot: known?.bootId ?? '' })
+    if (known !== undefined) query.set('cursor', String(known.cursor))
     const response = await fetchSameOriginRemote(
       profileSession.fetch.bind(profileSession),
       profile.origin,
-      `/api/client-notifications${cursor === undefined ? '' : `?cursor=${cursor}`}`,
+      `/api/client-notifications?${query.toString()}`,
       { credentials: 'include', signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]) },
     )
     if (!response.ok) throw new Error(`系统通知请求失败（HTTP ${response.status}）。`)
@@ -1389,7 +1393,10 @@ export class DesktopInstanceManager {
     if (!this.#isCurrentMonitorTarget(target)) return
     const profile = this.#profiles.get(target.id)
     if (profile === undefined) return
-    this.#notificationCursors.set(profile.id, feed.cursor)
+    this.#notificationCursors.set(profile.id, {
+      cursor: feed.cursor,
+      ...(feed.bootId === undefined ? {} : { bootId: feed.bootId }),
+    })
     // The instance gives one id per source; a newer notification of the same source replaces the older one.
     for (const item of latestPerId(feed.notifications)) {
       this.#notifier.show(`${profile.id}:${item.id}`, {

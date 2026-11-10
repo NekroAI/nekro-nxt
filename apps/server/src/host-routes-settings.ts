@@ -130,7 +130,7 @@ export function registerSettingsRoutes({
   registerRoute({
     kind: 'exact',
     path: '/api/client-notifications',
-    handler: (req, res) => {
+    handler: async (req, res) => {
       if (req.method !== 'GET') {
         writeError(res, 405, 'method-not-allowed', 'Method not allowed.')
         return
@@ -138,15 +138,23 @@ export function registerSettingsRoutes({
       try {
         const url = new URL(req.url ?? '/', 'http://localhost')
         const rawCursor = url.searchParams.get('cursor')
+        const boot = url.searchParams.get('boot')
+        const rawWait = url.searchParams.get('wait')
         const params = HostApiContracts.listClientNotifications.parseParams({
           ...(rawCursor === null ? {} : { cursor: Number(rawCursor) }),
+          ...(boot === null ? {} : { boot }),
+          ...(rawWait === null ? {} : { wait: Number(rawWait) }),
         })
-        writeContractJson(
-          res,
-          200,
-          HostApiContracts.listClientNotifications,
-          runtime.notifications.readClientNotifications(params.cursor),
-        )
+        const closed = new AbortController()
+        res.once('close', () => closed.abort())
+        const feed = await runtime.notifications.waitClientNotifications({
+          ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
+          ...(params.boot === undefined ? {} : { boot: params.boot }),
+          waitMs: (params.wait ?? 0) * 1_000,
+          signal: closed.signal,
+        })
+        if (closed.signal.aborted) return
+        writeContractJson(res, 200, HostApiContracts.listClientNotifications, feed)
       } catch (error) {
         writeError(res, 400, 'client-notifications-failed', error instanceof Error ? error.message : String(error))
       }
