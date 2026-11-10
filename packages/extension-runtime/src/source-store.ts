@@ -1,9 +1,12 @@
 import type { ExtensionId, ExtensionRevisionId } from '@nekro-nxt/contracts'
 import { resourceBytes } from '@nekro-nxt/extension-format'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import type { MaterializedExtensionRevision } from './types.js'
+
+const WINDOWS_PUBLISH_RETRY_DELAYS_MS = [50, 100, 200, 400] as const
 
 const getNodeErrorCode = (error: unknown): string | undefined => {
   if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') return undefined
@@ -80,14 +83,33 @@ export class ExtensionSourceStore {
         }),
       ])
       await mkdir(path.dirname(final), { recursive: true, mode: 0o700 })
-      try {
-        await rename(staging, final)
-      } catch (error) {
-        const code = getNodeErrorCode(error)
-        if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error
-        const existing = (await readFile(path.join(final, 'content.sha256'), 'utf8')).trim()
-        if (existing !== materialized.contentDigest) {
-          throw new Error('Extension Revision directory already has other content.')
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await rename(staging, final)
+          break
+        } catch (error) {
+          const code = getNodeErrorCode(error)
+          const retryable = process.platform === 'win32' && (code === 'EPERM' || code === 'EBUSY')
+          let existingDirectory = code === 'EEXIST' || code === 'ENOTEMPTY'
+          if (retryable) {
+            const target = await lstat(final).catch((statError: unknown) => {
+              if (getNodeErrorCode(statError) === 'ENOENT') return undefined
+              throw error
+            })
+            if (target !== undefined && !target.isDirectory()) throw error
+            existingDirectory ||= target?.isDirectory() === true
+          }
+          if (existingDirectory) {
+            const existing = (await readFile(path.join(final, 'content.sha256'), 'utf8')).trim()
+            if (existing !== materialized.contentDigest) {
+              throw new Error('Extension Revision directory already has other content.')
+            }
+            break
+          }
+          const retryDelay = WINDOWS_PUBLISH_RETRY_DELAYS_MS[attempt]
+          if (!retryable || retryDelay === undefined) throw error
+          // Windows can briefly hold a newly written directory. Retry only while the destination is absent.
+          await delay(retryDelay)
         }
       }
     } finally {
