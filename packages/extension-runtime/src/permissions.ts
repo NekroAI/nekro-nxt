@@ -69,6 +69,7 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
           },
         }),
     ...(capabilities.inboundHook === undefined ? {} : { inboundHook: capabilities.inboundHook }),
+    ...(capabilities.outbound === undefined ? {} : { outbound: capabilities.outbound }),
     ...(capabilities.mcp === undefined
       ? {}
       : {
