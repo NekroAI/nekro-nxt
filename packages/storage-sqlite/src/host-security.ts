@@ -1,8 +1,13 @@
 import type { ManagementDeviceId, ServerInstanceId } from '@nekro-nxt/contracts'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import type { CoreDatabase } from './database.js'
-import { HostSecurityMetadataRowSchema, ManagementDeviceRowSchema, PushSubscriptionRowSchema } from './row-schemas.js'
-import { hostSecurityMetadata, managementDevices, pushSubscriptions } from './schema.js'
+import {
+  HostSecurityMetadataRowSchema,
+  ManagementDeviceRowSchema,
+  ManagementPasskeyRowSchema,
+  PushSubscriptionRowSchema,
+} from './row-schemas.js'
+import { hostSecurityMetadata, managementDevices, managementPasskeys, pushSubscriptions } from './schema.js'
 
 export interface HostSecurityMetadataRecord {
   readonly instanceId: ServerInstanceId
@@ -28,6 +33,17 @@ export interface PushSubscriptionRecord {
   readonly label: string
   readonly createdAt: number
   readonly lastDeliveredAt?: number
+}
+
+export interface ManagementPasskeyRecord {
+  readonly id: string
+  readonly rpId: string
+  readonly publicKey: string
+  readonly counter: number
+  readonly transports?: readonly string[]
+  readonly label: string
+  readonly createdAt: number
+  readonly lastUsedAt?: number
 }
 
 export class SqliteHostSecurityRepository {
@@ -63,6 +79,66 @@ export class SqliteHostSecurityRepository {
       })
       .run()
     return record
+  }
+
+  /** True until the administrator turns browser sign-in with the management key off. */
+  keySignIn(): boolean {
+    const row = this.#db.select().from(hostSecurityMetadata).where(eq(hostSecurityMetadata.id, 1)).get()
+    return row === undefined ? true : HostSecurityMetadataRowSchema.parse(row).keySignIn
+  }
+
+  setKeySignIn(enabled: boolean, updatedAt: number): void {
+    this.#db
+      .update(hostSecurityMetadata)
+      .set({ keySignIn: enabled, updatedAt })
+      .where(eq(hostSecurityMetadata.id, 1))
+      .run()
+  }
+
+  putPasskey(record: Omit<ManagementPasskeyRecord, 'lastUsedAt'>): ManagementPasskeyRecord {
+    this.#db
+      .insert(managementPasskeys)
+      .values({ ...record, transports: record.transports === undefined ? null : JSON.stringify(record.transports) })
+      .run()
+    return record
+  }
+
+  listPasskeys(rpId?: string): readonly ManagementPasskeyRecord[] {
+    return this.#db
+      .select()
+      .from(managementPasskeys)
+      .where(rpId === undefined ? undefined : eq(managementPasskeys.rpId, rpId))
+      .all()
+      .map((row) => this.#projectPasskey(row))
+  }
+
+  getPasskey(id: string): ManagementPasskeyRecord | undefined {
+    const row = this.#db.select().from(managementPasskeys).where(eq(managementPasskeys.id, id)).get()
+    return row === undefined ? undefined : this.#projectPasskey(row)
+  }
+
+  /** Records a successful sign-in; the authenticator's counter only moves forward. */
+  usePasskey(id: string, counter: number, usedAt: number): void {
+    this.#db.update(managementPasskeys).set({ counter, lastUsedAt: usedAt }).where(eq(managementPasskeys.id, id)).run()
+  }
+
+  deletePasskey(id: string): boolean {
+    return this.#db.delete(managementPasskeys).where(eq(managementPasskeys.id, id)).run().changes > 0
+  }
+
+  #projectPasskey(row: typeof managementPasskeys.$inferSelect): ManagementPasskeyRecord {
+    const parsed = ManagementPasskeyRowSchema.parse(row)
+    const transports: unknown = parsed.transports === null ? undefined : JSON.parse(parsed.transports)
+    return {
+      id: parsed.id,
+      rpId: parsed.rpId,
+      publicKey: parsed.publicKey,
+      counter: parsed.counter,
+      ...(Array.isArray(transports) ? { transports: transports.filter((item) => typeof item === 'string') } : {}),
+      label: parsed.label,
+      createdAt: parsed.createdAt,
+      ...(parsed.lastUsedAt === null ? {} : { lastUsedAt: parsed.lastUsedAt }),
+    }
   }
 
   putDevice(record: ManagementDeviceRecord): ManagementDeviceRecord {

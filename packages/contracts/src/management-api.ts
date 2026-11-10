@@ -114,6 +114,51 @@ export const ManagementDeviceViewSchema = z
   .strict()
 export type ManagementDeviceView = z.output<typeof ManagementDeviceViewSchema>
 
+/** A passkey of the administrator; it works only at the host name it was created at (`rpId`). */
+export const ManagementPasskeyViewSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().trim().min(1).max(80),
+    rpId: z.string().min(1),
+    createdAt: z.number().int().nonnegative(),
+    lastUsedAt: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+
+/** How browsers sign in here. `rpId` is the host name of the current request, which new passkeys bind to. */
+export const ManagementSignInViewSchema = z
+  .object({
+    keySignIn: z.boolean(),
+    rpId: z.string().min(1),
+    /** Passkeys need HTTPS or this machine. */
+    passkeysAvailable: z.boolean(),
+    passkeys: z.array(ManagementPasskeyViewSchema),
+  })
+  .strict()
+
+/** A one-time sign-in code shown as a QR code; the scanning side opens `url`. */
+export const ManagementLoginCodeSchema = z
+  .object({
+    code: z.string().regex(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/u),
+    url: z.url(),
+    qrSvg: z.string().startsWith('<svg'),
+    expiresAt: z.number().int().nonnegative(),
+  })
+  .strict()
+
+/** Where a sign-in code stands, as the signed-in device that confirms it sees it. */
+export const ManagementLoginRequestViewSchema = z
+  .object({
+    code: z.string(),
+    /** `invite`: shown by a signed-in device for a new one to scan; `request`: shown by the new device. */
+    kind: z.enum(['invite', 'request']),
+    state: z.enum(['open', 'waiting', 'approved', 'rejected']),
+    /** The new device, once one has scanned the invite or made the request. */
+    requesterLabel: z.string().optional(),
+    expiresAt: z.number().int().nonnegative(),
+  })
+  .strict()
+
 export const ClientNotificationSchema = z
   .object({
     id: z.string().trim().min(1).max(160),

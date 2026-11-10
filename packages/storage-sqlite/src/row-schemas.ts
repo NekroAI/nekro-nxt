@@ -86,6 +86,7 @@ import {
   localExtensions,
   managementDevices,
   pushSubscriptions,
+  managementPasskeys,
   outboundIntents,
   outboundResolutions,
   physicalDeliveries,
@@ -313,6 +314,12 @@ export const ManagementDeviceRowSchema = createSelectSchema(managementDevices, {
   label: z.string().min(1).max(80),
   secretDigest: z.string().min(1),
 })
+export const ManagementPasskeyRowSchema = createSelectSchema(managementPasskeys, {
+  id: z.string().min(1),
+  rpId: z.string().min(1),
+  publicKey: z.string().min(1),
+  label: z.string().min(1).max(80),
+})
 export const PushSubscriptionRowSchema = createSelectSchema(pushSubscriptions, {
   endpoint: z.url(),
   deviceId: ManagementDeviceIdSchema,
@@ -396,4 +403,5 @@ export const CoreRowSchemas = {
   hostSecurityMetadata: HostSecurityMetadataRowSchema,
   managementDevices: ManagementDeviceRowSchema,
   pushSubscriptions: PushSubscriptionRowSchema,
+  managementPasskeys: ManagementPasskeyRowSchema,
 } as const

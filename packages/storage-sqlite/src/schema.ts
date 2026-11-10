@@ -1330,6 +1330,8 @@ export const hostSecurityMetadata = sqliteTable(
     id: integer().primaryKey(),
     instanceId: text('instance_id').$type<ServerInstanceId>().notNull().unique(),
     managementKeyDigest: text('management_key_digest').notNull(),
+    /** Browsers may sign in with the management key; when off it only recovers access. */
+    keySignIn: integer('key_sign_in', { mode: 'boolean' }).notNull().default(true),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
@@ -1347,6 +1349,23 @@ export const managementDevices = sqliteTable(
     revokedAt: integer('revoked_at'),
   },
   (table) => [index('management_devices_active_idx').on(table.revokedAt, table.createdAt)],
+)
+
+/** A passkey of the instance administrator, bound to the host name it was created at. */
+export const managementPasskeys = sqliteTable(
+  'management_passkeys',
+  {
+    /** The credential ID, base64url. */
+    id: text().primaryKey(),
+    rpId: text('rp_id').notNull(),
+    publicKey: text('public_key').notNull(),
+    counter: integer().notNull(),
+    transports: text(),
+    label: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+    lastUsedAt: integer('last_used_at'),
+  },
+  (table) => [index('management_passkeys_rp_idx').on(table.rpId)],
 )
 
 /** A browser's Web Push subscription; it belongs to the login device that registered it and goes with it. */

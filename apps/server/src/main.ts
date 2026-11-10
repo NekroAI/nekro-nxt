@@ -46,6 +46,7 @@ import {
   type ManagementEdgeHandle,
 } from './management-edge.js'
 import { arrivedThroughProxy, refuseProxiedRequest } from './proxy-guard.js'
+import { AccessSettings } from './access-settings.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { PRODUCT_VERSION } from './product-version.js'
 import { HostLogService } from './logs/service.js'
@@ -874,6 +875,7 @@ const startLeasedServer = async (
           repository: runtime.hostSecurity,
           ...(options.trustProxy === true ? { trustProxy: true } : {}),
           ...(options.developmentWebOrigin === undefined ? {} : { developmentWebOrigin: options.developmentWebOrigin }),
+          publicOrigin: () => new AccessSettings(runtime.repository).publicOrigin(),
         })
         owner.edge = managementEdge
       } catch (error) {

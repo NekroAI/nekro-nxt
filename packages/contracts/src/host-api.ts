@@ -69,7 +69,15 @@ import {
   PromptDocumentV1Schema,
   promptDocumentPlainText,
 } from './domain.js'
-import { ClientNotificationSchema, ManagementDeviceIdSchema, ManagementDeviceViewSchema } from './management-api.js'
+import {
+  ClientNotificationSchema,
+  ManagementDeviceIdSchema,
+  ManagementDeviceViewSchema,
+  ManagementLoginCodeSchema,
+  ManagementLoginRequestViewSchema,
+  ManagementPasskeyViewSchema,
+  ManagementSignInViewSchema,
+} from './management-api.js'
 import { ConfigSchemaDocumentSchema } from './config-schema.js'
 import {
   CommunityExtensionDetailSchema,
@@ -4761,6 +4769,75 @@ export const HostApiContracts = {
     params: z.object({ deviceId: ManagementDeviceIdSchema }).strict(),
     request: NoRequestBodySchema,
     response: z.object({ revoked: z.boolean() }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  getManagementSignIn: defineContract({
+    method: 'GET',
+    path: '/api/management/sign-in',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ManagementSignInViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  /** Turning key sign-in off keeps the management key for recovery. */
+  updateManagementSignIn: defineContract({
+    method: 'PUT',
+    path: '/api/management/sign-in',
+    params: EmptyParamsSchema,
+    request: z.object({ keySignIn: z.boolean() }).strict(),
+    response: ManagementSignInViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  /** WebAuthn creation options (JSON form) for a new passkey at the current host name. */
+  startPasskeyRegistration: defineContract({
+    method: 'POST',
+    path: '/api/management/passkeys/options',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: z.record(z.string(), z.unknown()),
+    error: HostApiErrorSchema,
+  }),
+  finishPasskeyRegistration: defineContract({
+    method: 'POST',
+    path: '/api/management/passkeys',
+    params: EmptyParamsSchema,
+    request: z
+      .object({ response: z.record(z.string(), z.unknown()), label: z.string().trim().min(1).max(80) })
+      .strict(),
+    response: ManagementPasskeyViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  deletePasskey: defineContract({
+    method: 'DELETE',
+    path: '/api/management/passkeys/:passkeyId',
+    params: z.object({ passkeyId: z.string().min(1).max(512) }).strict(),
+    request: NoRequestBodySchema,
+    response: z.object({ deleted: z.literal(true) }).strict(),
+    error: HostApiErrorSchema,
+  }),
+  /** A code a new device scans to ask for sign-in; this device confirms afterwards. */
+  createLoginInvite: defineContract({
+    method: 'POST',
+    path: '/api/management/login-invites',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ManagementLoginCodeSchema,
+    error: HostApiErrorSchema,
+  }),
+  getLoginRequest: defineContract({
+    method: 'GET',
+    path: '/api/management/login-requests/:code',
+    params: z.object({ code: z.string().min(1).max(16) }).strict(),
+    request: NoRequestBodySchema,
+    response: ManagementLoginRequestViewSchema,
+    error: HostApiErrorSchema,
+  }),
+  decideLoginRequest: defineContract({
+    method: 'POST',
+    path: '/api/management/login-requests/:code/decision',
+    params: z.object({ code: z.string().min(1).max(16) }).strict(),
+    request: z.object({ approve: z.boolean() }).strict(),
+    response: ManagementLoginRequestViewSchema,
     error: HostApiErrorSchema,
   }),
   managementLogout: defineContract({

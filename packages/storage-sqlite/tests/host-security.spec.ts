@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ManagementDeviceIdSchema } from '@nekro-nxt/contracts'
+import { ManagementDeviceIdSchema, ServerInstanceIdSchema } from '@nekro-nxt/contracts'
 import { openMigratedCoreDatabase, SqliteHostSecurityRepository } from '../src/index.js'
 
 const roots: string[] = []
@@ -56,6 +56,60 @@ describe('SqliteHostSecurityRepository push subscriptions', () => {
       repository.putPushSubscription(subscription('https://push.example.test/d', laptop))
       repository.revokeAllDevices(40)
       expect(repository.listPushSubscriptions()).toEqual([])
+    } finally {
+      close()
+    }
+  })
+})
+
+describe('SqliteHostSecurityRepository passkeys and key sign-in', () => {
+  it('keeps passkeys per host name, moves the counter forward and turns key sign-in off and on', async () => {
+    const { repository, close } = await openRepository()
+    try {
+      repository.putMetadata({
+        instanceId: ServerInstanceIdSchema.parse('nxt_instance_01J0000000000000000000000A'),
+        managementKeyDigest: 'digest',
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      expect(repository.keySignIn()).toBe(true)
+      repository.setKeySignIn(false, 2)
+      expect(repository.keySignIn()).toBe(false)
+      // Rotating the key rewrites the metadata row and keeps the choice.
+      repository.putMetadata({
+        instanceId: ServerInstanceIdSchema.parse('nxt_instance_01J0000000000000000000000A'),
+        managementKeyDigest: 'rotated',
+        createdAt: 1,
+        updatedAt: 3,
+      })
+      expect(repository.keySignIn()).toBe(false)
+
+      repository.putPasskey({
+        id: 'credential-a',
+        rpId: 'nxt.example.test',
+        publicKey: 'public-a',
+        counter: 0,
+        transports: ['internal', 'hybrid'],
+        label: 'iPhone',
+        createdAt: 10,
+      })
+      repository.putPasskey({
+        id: 'credential-b',
+        rpId: 'localhost',
+        publicKey: 'public-b',
+        counter: 0,
+        label: 'Mac',
+        createdAt: 11,
+      })
+      expect(repository.listPasskeys('nxt.example.test').map((entry) => entry.id)).toEqual(['credential-a'])
+      repository.usePasskey('credential-a', 4, 20)
+      expect(repository.getPasskey('credential-a')).toMatchObject({
+        counter: 4,
+        lastUsedAt: 20,
+        transports: ['internal', 'hybrid'],
+      })
+      expect(repository.deletePasskey('credential-b')).toBe(true)
+      expect(repository.listPasskeys().map((entry) => entry.id)).toEqual(['credential-a'])
     } finally {
       close()
     }

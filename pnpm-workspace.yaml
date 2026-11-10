@@ -12,6 +12,20 @@ overrides:
   '@aws-sdk/credential-provider-ini': 3.973.13
   react: 18.3.1
   react-dom: 18.3.1
+  # selfsigned and @simplewebauthn/server share one copy: the ASN.1 schema registry is per copy.
+  '@peculiar/asn1-android': 2.11.1
+  '@peculiar/asn1-asym-key': 2.11.1
+  '@peculiar/asn1-cms': 2.11.1
+  '@peculiar/asn1-csr': 2.11.1
+  '@peculiar/asn1-ecc': 2.11.1
+  '@peculiar/asn1-pfx': 2.11.1
+  '@peculiar/asn1-pkcs8': 2.11.1
+  '@peculiar/asn1-pkcs9': 2.11.1
+  '@peculiar/asn1-rsa': 2.11.1
+  '@peculiar/asn1-schema': 2.11.1
+  '@peculiar/asn1-x509': 2.11.1
+  '@peculiar/asn1-x509-attr': 2.11.1
+  '@peculiar/asn1-x509-post-quantum': 2.11.1
 
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
