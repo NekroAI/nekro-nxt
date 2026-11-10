@@ -11,7 +11,7 @@ export const arrivedThroughProxy = (request: IncomingMessage): boolean =>
   PROXY_HEADERS.some((name) => request.headers[name] !== undefined)
 
 export const PROXY_WITHOUT_SIGN_IN_MESSAGE =
-  '这个实例没有设置管理密钥，不需要登录，不能经过反向代理访问。设置 NEKRO_MANAGEMENT_KEY 和 NEKRO_TRUST_PROXY=1 后重新启动。'
+  '这个实例没有设置管理密钥，不需要登录，不能经过反向代理访问。设置 NEKRO_MANAGEMENT_KEY 和 NEKRO_TRUST_PROXY（反向代理的地址）后重新启动。'
 
 export const refuseProxiedRequest = (response: ServerResponse): void => {
   response.writeHead(403, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })

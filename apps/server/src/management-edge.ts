@@ -19,7 +19,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import type { ClientRequest, IncomingMessage, ServerResponse } from 'node:http'
 import { createRequire } from 'node:module'
-import { connect } from 'node:net'
+import { BlockList, connect } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { z } from 'zod'
@@ -54,6 +54,7 @@ const MAX_JSON_BYTES = 64 * 1_024
 const MAX_PENDING_CHALLENGES = 256
 const CHALLENGES_PER_ADDRESS_PER_MINUTE = 10
 const CHALLENGE_RATE_WINDOW_MS = 60_000
+const LOGIN_CODES_PER_ADDRESS_PER_MINUTE = 20
 const nextUlid = monotonicFactory()
 
 interface ChallengeRecord {
@@ -161,8 +162,12 @@ export interface ManagementEdgeOptions {
   readonly releaseId: string
   readonly productVersion: string
   readonly repository: SqliteHostSecurityRepository
-  /** Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy that terminates HTTPS in front of plain HTTP. */
-  readonly trustProxy?: boolean
+  /**
+   * Trust `X-Forwarded-*` from a reverse proxy that terminates HTTPS in front of plain HTTP: `true` from every
+   * connection, a list of addresses or CIDR ranges only from those. Anyone who can reach the port directly can write
+   * these headers, so the list is the safe form whenever more than the proxy can connect.
+   */
+  readonly trustProxy?: boolean | readonly string[]
   /**
    * The Vite dev server of a source checkout, e.g. `http://127.0.0.1:4961`. Pages, modules and hot updates go there
    * after sign-in; the Server's own paths still go to the product server.
@@ -318,6 +323,26 @@ export const browserDeviceLabel = (userAgent: string | undefined): string => {
   return ['浏览器', browser, system].filter((part) => part !== undefined).join(' · ')
 }
 
+/** Whether a connection from this address may speak for its clients through `X-Forwarded-*`. */
+export const proxyTrust = (
+  trustProxy: boolean | readonly string[] | undefined,
+): ((address: string | undefined) => boolean) => {
+  if (trustProxy === undefined || typeof trustProxy === 'boolean') return () => trustProxy === true
+  const trusted = new BlockList()
+  for (const entry of trustProxy) {
+    const [address = '', prefix] = entry.split('/')
+    const family = isIP(address) === 6 ? 'ipv6' : 'ipv4'
+    if (prefix === undefined) trusted.addAddress(address, family)
+    else trusted.addSubnet(address, Number(prefix), family)
+  }
+  return (address) => {
+    if (address === undefined) return false
+    // Node reports IPv4 peers of a dual-stack socket with a `::ffff:` prefix.
+    const plain = address.startsWith('::ffff:') && isIP(address.slice(7)) === 4 ? address.slice(7) : address
+    return isIP(plain) !== 0 && trusted.check(plain, isIP(plain) === 6 ? 'ipv6' : 'ipv4')
+  }
+}
+
 /** Where the login page loads the QR decoder from when it scans with the camera. */
 export const LOGIN_QR_DECODER_PATH = '/login/qr-decode.js'
 
@@ -430,6 +455,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
   const challenges = new Map<string, ChallengeRecord>()
   const sessions = new Map<string, SessionRecord>()
   const challengeRequests = new Map<string, number[]>()
+  const loginCodeRequests = new Map<string, number[]>()
   const lastActivityWrite = new Map<ManagementDeviceId, number>()
   const upstreamRequests = new Set<ClientRequest>()
   let stopping = false
@@ -444,14 +470,28 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     return true
   }
 
+  /**
+   * Showing a sign-in code is not a guess at anything, and the login page asks for one every time it opens, so it
+   * has its own budget and reloading the page cannot lock key or passkey sign-in out.
+   */
+  const allowLoginCode = (address: string): boolean => {
+    cleanExpired()
+    const recent = loginCodeRequests.get(address) ?? []
+    if (recent.length >= LOGIN_CODES_PER_ADDRESS_PER_MINUTE) return false
+    loginCodeRequests.set(address, [...recent, now()])
+    return true
+  }
+
   const cleanExpired = (): void => {
     const timestamp = now()
     for (const [id, challenge] of challenges) if (challenge.expiresAt <= timestamp) challenges.delete(id)
     for (const [id, session] of sessions) if (session.expiresAt <= timestamp) sessions.delete(id)
-    for (const [address, requests] of challengeRequests) {
-      const retained = requests.filter((requestedAt) => requestedAt > timestamp - CHALLENGE_RATE_WINDOW_MS)
-      if (retained.length === 0) challengeRequests.delete(address)
-      else challengeRequests.set(address, retained)
+    for (const budget of [challengeRequests, loginCodeRequests]) {
+      for (const [address, requests] of budget) {
+        const retained = requests.filter((requestedAt) => requestedAt > timestamp - CHALLENGE_RATE_WINDOW_MS)
+        if (retained.length === 0) budget.delete(address)
+        else budget.set(address, retained)
+      }
     }
   }
 
@@ -461,17 +501,20 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     return first?.split(',')[0]?.trim() || undefined
   }
 
+  const trustedProxyAddress = proxyTrust(options.trustProxy)
+  const viaTrustedProxy = (request: IncomingMessage): boolean => trustedProxyAddress(request.socket.remoteAddress)
+
   /** HTTPS on this socket, or a trusted reverse proxy that terminated HTTPS in front of it. */
   const secureRequest = (request: IncomingMessage): boolean =>
     ('encrypted' in request.socket && request.socket.encrypted === true) ||
-    (options.trustProxy === true && header(request, 'x-forwarded-proto') === 'https')
+    (viaTrustedProxy(request) && header(request, 'x-forwarded-proto') === 'https')
 
   /**
    * Who is asking, for rate limits. Behind a trusted proxy every connection comes from the proxy, so the address the
    * proxy appended last to `X-Forwarded-For` names the client; earlier entries are whatever the client sent.
    */
   const clientAddress = (request: IncomingMessage): string => {
-    if (options.trustProxy === true) {
+    if (viaTrustedProxy(request)) {
       const forwarded = request.headers['x-forwarded-for']
       const last = (Array.isArray(forwarded) ? forwarded.join(',') : forwarded)?.split(',').at(-1)?.trim()
       if (last) return last
@@ -480,7 +523,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
   }
 
   const publicHost = (request: IncomingMessage): string | undefined =>
-    (options.trustProxy === true ? header(request, 'x-forwarded-host') : undefined) ?? request.headers.host
+    (viaTrustedProxy(request) ? header(request, 'x-forwarded-host') : undefined) ?? request.headers.host
 
   const touchActivity = (deviceId: ManagementDeviceId): void => {
     const timestamp = now()
@@ -558,7 +601,9 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     if (methodIsSafe(request.method)) return true
     const host = publicHost(request)
     const origin = request.headers.origin
-    if (host === undefined || origin !== `${secureRequest(request) ? 'https' : 'http'}://${host}`) return false
+    // The address the browser shows: the request's own, or the access address when the proxy rewrites `Host`.
+    const sameOrigin = host !== undefined && origin === `${secureRequest(request) ? 'https' : 'http'}://${host}`
+    if (!sameOrigin && (origin === undefined || origin !== options.publicOrigin?.())) return false
     const cookieToken = parseCookies(request).get(CSRF_COOKIE)
     const headerToken = request.headers['x-nxt-csrf']
     return (
@@ -646,7 +691,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         writeProblem(response, 400, 'passkeys_unavailable', '通行密钥需要通过 HTTPS 的域名访问。')
         return true
       }
-      const optionsJson = await generateAuthenticationOptions({ rpID: rpIdOf(request), userVerification: 'preferred' })
+      const optionsJson = await generateAuthenticationOptions({ rpID: rpIdOf(request), userVerification: 'required' })
       const challengeId = randomBytes(24).toString('base64url')
       signInChallenges.set(challengeId, {
         challenge: optionsJson.challenge,
@@ -681,7 +726,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
           counter: passkey.counter,
           ...(passkey.transports === undefined ? {} : { transports: [...passkey.transports] }),
         },
-        requireUserVerification: false,
+        requireUserVerification: true,
       }).catch(() => ({ verified: false, authenticationInfo: undefined }))
       if (!verification.verified || verification.authenticationInfo === undefined) {
         writeProblem(response, 401, 'passkey_invalid', '通行密钥验证没有通过，请重试。')
@@ -692,8 +737,8 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       return true
     }
     if (pathname === '/api/management/login-requests') {
-      if (!allowAttempt(clientAddress(request))) {
-        writeProblem(response, 429, 'login_rate_limited', '登录尝试过于频繁，请一分钟后再试。')
+      if (!allowLoginCode(clientAddress(request))) {
+        writeProblem(response, 429, 'login_rate_limited', '登录码申请过于频繁，请一分钟后再试。')
         return true
       }
       const input = z
@@ -791,7 +836,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
           id: passkey.id,
           ...(passkey.transports === undefined ? {} : { transports: [...passkey.transports] }),
         })),
-        authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
+        authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
       })
       registrationChallenges.set(session.token, {
         challenge: optionsJson.challenge,
@@ -818,7 +863,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         expectedChallenge: pending.challenge,
         expectedOrigin: requestOrigin(request),
         expectedRPID: rpID,
-        requireUserVerification: false,
+        requireUserVerification: true,
       }).catch(() => ({ verified: false as const, registrationInfo: undefined }))
       if (!verification.verified) {
         writeProblem(response, 400, 'passkey_invalid', '通行密钥没有添加成功，请重试。')

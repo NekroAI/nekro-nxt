@@ -5,6 +5,7 @@ import { connect, type Socket } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { parseTrustProxy } from '../src/main.ts'
 import { parseDevelopmentWebOrigin, startManagementEdge, type ManagementEdgeHandle } from '../src/management-edge.ts'
 
 /** Documentation-range addresses (RFC 5737), assembled so no literal address appears in the source. */
@@ -107,7 +108,9 @@ describe('management edge behind a reverse proxy and in development', () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
-  const start = async (options: { readonly trustProxy?: boolean; readonly development?: boolean } = {}) => {
+  const start = async (
+    options: { readonly trustProxy?: boolean | readonly string[]; readonly development?: boolean } = {},
+  ) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-proxy-'))
     roots.push(root)
     const repository = new SqliteHostSecurityRepository(await openMigratedCoreDatabase(path.join(root, 'core.sqlite')))
@@ -138,7 +141,7 @@ describe('management edge behind a reverse proxy and in development', () => {
       releaseId: 'test-release',
       productVersion: '0.0.0',
       repository,
-      ...(options.trustProxy === true ? { trustProxy: true } : {}),
+      ...(options.trustProxy === undefined ? {} : { trustProxy: options.trustProxy }),
       ...(developmentWebOrigin === undefined ? {} : { developmentWebOrigin }),
     })
     edges.push(edge)
@@ -184,6 +187,39 @@ describe('management edge behind a reverse proxy and in development', () => {
     }
     expect((await login(edge.port, { 'x-forwarded-for': `${testAddress(8)}, ${testAddress(9)}` })).status).toBe(429)
     expect((await login(edge.port, { 'x-forwarded-for': `${testAddress(10)}` })).status).toBe(200)
+  })
+
+  it('takes forwarded headers only from the listed proxy addresses', async () => {
+    const wrong = 'wrong management key 0123456789 abcdefgh'
+    // This machine is the proxy: the address it appended names the client.
+    const listed = await start({ trustProxy: ['127.0.0.1/8', '::1'] })
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await login(listed.port, { 'x-forwarded-for': testAddress(7) }, wrong)).status).toBe(401)
+    }
+    expect((await login(listed.port, { 'x-forwarded-for': testAddress(8) })).status).toBe(200)
+
+    // The proxy is elsewhere, so a direct connection cannot pick its own address or claim HTTPS.
+    const elsewhere = await start({ trustProxy: [testAddress(9)] })
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await login(elsewhere.port, { 'x-forwarded-for': testAddress(attempt + 20) }, wrong)).status).toBe(401)
+    }
+    expect((await login(elsewhere.port, { 'x-forwarded-for': testAddress(40) })).status).toBe(429)
+    const page = await send(elsewhere.port, '/login', { headers: { 'x-forwarded-proto': 'https' } })
+    expect(page.text).toContain('"secure":false')
+  })
+
+  it('reads the proxy addresses from NEKRO_TRUST_PROXY', () => {
+    expect(parseTrustProxy(undefined)).toBe(false)
+    expect(parseTrustProxy('0')).toBe(false)
+    expect(parseTrustProxy('1')).toBe(true)
+    expect(parseTrustProxy(`${testAddress(9)}, ${testAddress(0)}/24,::1`)).toEqual([
+      testAddress(9),
+      `${testAddress(0)}/24`,
+      '::1',
+    ])
+    for (const input of ['yes', 'proxy.example.test', `${testAddress(9)}/33`, `${testAddress(0)}/8/8`, '::1/129']) {
+      expect(() => parseTrustProxy(input)).toThrow('NEKRO_TRUST_PROXY')
+    }
   })
 
   it('accepts only a dev server on this machine', () => {

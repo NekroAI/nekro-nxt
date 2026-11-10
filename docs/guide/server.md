@@ -81,7 +81,7 @@ NEKRO_IMAGE='nekro-nxt:local' pnpm dist:server
 
 ### 通过反向代理使用 HTTPS
 
-公网访问建议在前面放一层反向代理（如 Caddy、nginx），由它提供域名证书，再转发到容器的 HTTP 端口。此时设置 `NEKRO_TRUST_PROXY=1`，服务端才会信任代理传来的 `X-Forwarded-Proto` 与 `X-Forwarded-Host`，把登录状态标记为安全连接：
+公网访问建议在前面放一层反向代理（如 Caddy、nginx），由它提供域名证书，再转发到容器的 HTTP 端口。此时设置 `NEKRO_TRUST_PROXY`，服务端才会信任代理传来的 `X-Forwarded-Proto` 与 `X-Forwarded-Host`，把登录状态标记为安全连接：
 
 ```bash
 docker run -d \
@@ -94,7 +94,14 @@ docker run -d \
   ghcr.io/nekroai/nekro-nxt:latest
 ```
 
-代理需要转发 `Host`（或设置 `X-Forwarded-Host`）与 `X-Forwarded-Proto`，并用客户端地址覆盖 `X-Forwarded-For`：登录限流按它区分访问者。只有容器端口不直接暴露给其他机器时才开启这个选项，否则任何人都能伪造这些请求头。`NEKRO_TRUST_PROXY` 需要和 `NEKRO_MANAGEMENT_KEY` 一起设置；没有管理密钥的实例不需要登录，会拒绝经过代理的请求。
+代理需要转发 `Host`（或设置 `X-Forwarded-Host`）与 `X-Forwarded-Proto`，并用客户端地址覆盖 `X-Forwarded-For`：登录限流按它区分访问者。
+
+`NEKRO_TRUST_PROXY` 的写法：
+
+- `1`：信任所有连接的转发头。只在实例端口只有反向代理能访问时使用，例如上面把端口只发布到本机的 `-p 127.0.0.1:4960:4960`。
+- 反向代理连接实例时用的地址，写 IP 地址，可以带 `/24` 这样的前缀表示网段，多个用逗号分隔。只有从这些地址来的连接，转发头才会被采用。实例端口对局域网或其他机器开放时用这种写法，否则能直接连到端口的人都可以伪造这些请求头，绕过登录限流。
+
+`NEKRO_TRUST_PROXY` 需要和 `NEKRO_MANAGEMENT_KEY` 一起设置；没有管理密钥的实例不需要登录，会拒绝经过代理的请求。
 
 Caddy 默认就会正确设置这些请求头，并自动申请证书：
 

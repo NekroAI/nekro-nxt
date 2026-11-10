@@ -88,11 +88,26 @@ export const parseManagementKey = (input: string | undefined, required = false):
   return input
 }
 
-/** `NEKRO_TRUST_PROXY=1` (or `true`) only when a reverse proxy in front terminates HTTPS and sets forwarded headers. */
-export const parseTrustProxy = (input: string | undefined): boolean => {
+/**
+ * `NEKRO_TRUST_PROXY` only when a reverse proxy in front terminates HTTPS and sets forwarded headers: the proxy's
+ * addresses or CIDR ranges separated by commas, or `1` (`true`) to trust every connection.
+ */
+export const parseTrustProxy = (input: string | undefined): boolean | readonly string[] => {
   if (input === undefined || input.trim() === '' || input === '0' || input === 'false') return false
   if (input === '1' || input === 'true') return true
-  throw new TypeError(`NEKRO_TRUST_PROXY 只能是 1 或 0：${input}`)
+  const entries = input.split(',').map((entry) => entry.trim())
+  for (const entry of entries) {
+    const [address = '', prefix, ...rest] = entry.split('/')
+    const family = isIP(address)
+    const prefixValid =
+      prefix === undefined || (/^\d{1,3}$/u.test(prefix) && Number(prefix) <= (family === 6 ? 128 : 32))
+    if (family === 0 || rest.length > 0 || !prefixValid) {
+      throw new TypeError(
+        `NEKRO_TRUST_PROXY 写 1，或反向代理的 IP 地址（可以带 /24 这样的前缀表示网段，多个用逗号分隔）：${entry}`,
+      )
+    }
+  }
+  return entries
 }
 
 /** Parse the Host-owned provider route allowlist; DSH still owns each route's catalog and protocol. */
@@ -647,7 +662,7 @@ export interface StartServerOptions {
   /** Enables the automatic TLS edge and device authentication. Never persisted. */
   readonly managementKey?: string
   /** The edge sits behind a reverse proxy that terminates HTTPS; trust its forwarded protocol and host. */
-  readonly trustProxy?: boolean
+  readonly trustProxy?: boolean | readonly string[]
   /** A source checkout's Vite dev server; the edge sends pages and hot updates there after sign-in. */
   readonly developmentWebOrigin?: string
   /** Optional real LLM adapter wiring for a non-test server. */
@@ -873,7 +888,7 @@ const startLeasedServer = async (
           releaseId,
           productVersion: SERVER_PACKAGE_VERSION,
           repository: runtime.hostSecurity,
-          ...(options.trustProxy === true ? { trustProxy: true } : {}),
+          ...(options.trustProxy === undefined ? {} : { trustProxy: options.trustProxy }),
           ...(options.developmentWebOrigin === undefined ? {} : { developmentWebOrigin: options.developmentWebOrigin }),
           publicOrigin: () => new AccessSettings(runtime.repository).publicOrigin(),
         })
@@ -917,7 +932,7 @@ export const checkSignInOptions = (
   managementKey: string | undefined,
 ): void => {
   if (managementKey !== undefined) return
-  if (options.trustProxy === true) {
+  if (options.trustProxy !== undefined && options.trustProxy !== false) {
     throw new TypeError(
       'NEKRO_TRUST_PROXY 需要和 NEKRO_MANAGEMENT_KEY 一起设置：没有管理密钥时实例不需要登录，经过代理就会对外开放。',
     )
@@ -1120,6 +1135,7 @@ if (isEntryPoint()) {
       const releaseId = parseReleaseId(process.env['NEKRO_RELEASE_ID'])
       const llmProviderRoutes = parseLlmProviderRoutes(process.env['NEKRO_LLM_PROVIDERS'])
       const developmentWebOrigin = parseDevelopmentWebOrigin(process.env['NEKRO_DEV_WEB_ORIGIN'])
+      const trustProxy = parseTrustProxy(process.env['NEKRO_TRUST_PROXY'])
       const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4960
       if (!Number.isInteger(port) || port < 0 || port > 65535) {
         throw new TypeError(`NEKRO_PORT 无效：${portEnv}`)
@@ -1180,7 +1196,7 @@ if (isEntryPoint()) {
         port,
         releaseId,
         ...(managementKey === undefined ? {} : { managementKey }),
-        ...(parseTrustProxy(process.env['NEKRO_TRUST_PROXY']) ? { trustProxy: true } : {}),
+        ...(trustProxy === false ? {} : { trustProxy }),
         ...(developmentWebOrigin === undefined ? {} : { developmentWebOrigin }),
         ...(developmentWorkspaceRoot === undefined || developmentWorkspaceRoot.trim() === ''
           ? {}

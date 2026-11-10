@@ -4,7 +4,8 @@ import type { ManagementDeviceId } from '@nekro-nxt/contracts'
 /** Letters and digits that are hard to confuse when typed from a screen. */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
 export const LOGIN_CODE_TTL_MS = 5 * 60 * 1_000
-const MAX_PENDING = 100
+/** Per kind, so codes asked for by browsers that are not signed in cannot use up the invites of signed-in devices. */
+const MAX_PENDING_PER_KIND = 100
 
 type State = 'open' | 'waiting' | 'approved' | 'rejected'
 
@@ -104,7 +105,9 @@ export class LoginRequests {
 
   #create(kind: LoginRequest['kind']): LoginRequest {
     this.#clean()
-    if (this.#requests.size >= MAX_PENDING) throw new Error('待确认的登录太多，请稍后再试。')
+    let pending = 0
+    for (const request of this.#requests.values()) if (request.kind === kind) pending += 1
+    if (pending >= MAX_PENDING_PER_KIND) throw new Error('待确认的登录太多，请稍后再试。')
     let code: string
     do {
       code = Array.from({ length: 8 }, () => CODE_ALPHABET[randomInt(CODE_ALPHABET.length)]).join('')

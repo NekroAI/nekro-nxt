@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { normalizeLoginCode } from '../src/login-requests.ts'
+import { LoginRequests, normalizeLoginCode } from '../src/login-requests.ts'
 import { startManagementEdge, type ManagementEdgeHandle } from '../src/management-edge.ts'
 
 interface Reply {
@@ -260,6 +260,51 @@ describe('signing in with codes, passkeys and the key switch', () => {
     const compressed = await send(edge.port, '/login/qr-decode.js', { headers: { 'accept-encoding': 'gzip, br' } })
     expect(compressed.headers['content-encoding']).toBe('gzip')
     expect(Number(compressed.headers['content-length'])).toBeLessThan(Number(plain.headers['content-length']) / 3)
+  })
+
+  it('accepts changes from the access address when the proxy passes a different host, and from nowhere else', async () => {
+    const { edge, admin } = await start('https://nxt.example.test')
+    const change = (origin: string) =>
+      send(edge.port, '/api/management/sign-in', {
+        method: 'PUT',
+        body: { keySignIn: true },
+        headers: { ...admin, origin },
+      })
+    expect((await change('https://nxt.example.test')).status).toBe(200)
+    expect((await change('https://other.example.test')).status).toBe(403)
+  })
+
+  it('keeps showing codes on the login page apart from sign-in attempts', async () => {
+    const { edge } = await start()
+    const showCode = () =>
+      send(edge.port, '/api/management/login-requests', { method: 'POST', body: { acknowledgeInsecure: true } })
+    for (let opened = 0; opened < 20; opened += 1) expect((await showCode()).status).toBe(200)
+    expect((await showCode()).status).toBe(429)
+    const keySignIn = await send(edge.port, '/api/management/login', {
+      method: 'POST',
+      body: { managementKey: MANAGEMENT_KEY, acknowledgeInsecure: true },
+    })
+    expect(keySignIn.status).toBe(200)
+  })
+
+  it('leaves invites to signed-in devices when browsers that are not signed in hold every code of their own', () => {
+    const requests = new LoginRequests()
+    for (let shown = 0; shown < 100; shown += 1) requests.createRequest('浏览器')
+    expect(() => requests.createRequest('浏览器')).toThrow('待确认的登录太多')
+    expect(requests.createInvite().state).toBe('open')
+  })
+
+  it('asks the passkey to verify its owner when signing in', async () => {
+    const { edge } = await start()
+    const reply = await send(edge.port, '/api/management/passkey-login/options', {
+      method: 'POST',
+      body: {},
+      headers: { host: `localhost:${edge.port}` },
+    })
+    expect(reply.status).toBe(200)
+    expect(z.object({ options: z.object({ userVerification: z.string() }) }).parse(json(reply)).options).toEqual({
+      userVerification: 'required',
+    })
   })
 
   it('reads typed codes in any case and with or without the dash', () => {
