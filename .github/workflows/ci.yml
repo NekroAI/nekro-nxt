@@ -45,6 +45,8 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The login page tests drive a real browser (passkeys, camera scanning).
+      - run: pnpm exec playwright install --with-deps chromium-headless-shell
       - run: pnpm test:coverage
 
   browser:
@@ -116,6 +118,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm smoke:better-sqlite3
+      # The login page tests drive a real browser (passkeys, camera scanning).
+      - run: pnpm exec playwright install --with-deps chromium-headless-shell
       - run: pnpm test
 
   all-checks-passed:
