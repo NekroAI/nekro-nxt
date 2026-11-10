@@ -391,7 +391,17 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     const deviceId = response === undefined ? undefined : deviceFromCookie(request)
     if (deviceId === undefined || response === undefined) return undefined
     const opened = openSession(request, deviceId)
-    response.setHeader('set-cookie', [...opened.cookies])
+    // A device in use keeps its cookie: the 30 days start again from this session.
+    const renewedDevice = cookie(
+      DEVICE_COOKIE,
+      parseCookies(request).get(DEVICE_COOKIE)!,
+      BROWSER_DEVICE_TTL_MS / 1_000,
+      {
+        httpOnly: true,
+        secure: secureRequest(request),
+      },
+    )
+    response.setHeader('set-cookie', [renewedDevice, ...opened.cookies])
     return opened
   }
 

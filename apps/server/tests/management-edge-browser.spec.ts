@@ -188,6 +188,10 @@ describe('browser sign-in through the management edge', () => {
     const renewed = await send('http', edge.port, '/', { headers: { cookie: deviceOnly, accept: 'text/html' } })
     expect(renewed.status).toBe(200)
     expect(setCookies(renewed).some((entry) => entry.startsWith('nxt_session='))).toBe(true)
+    // The device cookie comes back with the same value and a fresh 30 days.
+    const renewedDevice = setCookies(renewed).find((entry) => entry.startsWith('nxt_device='))
+    expect(renewedDevice?.startsWith(`${deviceOnly}; `)).toBe(true)
+    expect(renewedDevice).toMatch(/Max-Age=2592000; HttpOnly/u)
     expect((await send('http', edge.port, '/login', { headers: { cookie: deviceOnly } })).status).toBe(302)
 
     const listed = HostApiContracts.listManagementDevices.parseResponse(
