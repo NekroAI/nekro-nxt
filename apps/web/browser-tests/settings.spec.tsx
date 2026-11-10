@@ -1270,8 +1270,10 @@ test.describe('settings space', () => {
     const { page, errors } = await open('/settings/access')
     try {
       const decoded = await page.evaluate(async (source) => {
+        // A path served by Vite to the page, not a module of this test file.
+        const served = '/src/qr-decode.ts'
         // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the module as Vite serves it to the page.
-        const module = (await import('/src/qr-decode.ts')) as {
+        const module = (await import(served)) as {
           decodeQr(p: Uint8ClampedArray, w: number, h: number): string | undefined
         }
         const picture = new Image()
