@@ -193,7 +193,12 @@ export class AuthoringArtifactStore {
   }
 
   async read(relativePath: string): Promise<DynamicAuthoringSnapshot> {
-    if (!relativePath || path.isAbsolute(relativePath) || relativePath.split(path.sep).includes('..')) {
+    if (
+      !relativePath ||
+      path.posix.isAbsolute(relativePath) ||
+      path.win32.isAbsolute(relativePath) ||
+      relativePath.split(/[\\/]/u).includes('..')
+    ) {
       throw new TypeError('Authoring snapshot path is unsafe.')
     }
     const source = await readFile(path.join(this.#workspaceRoot, relativePath, 'snapshot.json'), 'utf8')
