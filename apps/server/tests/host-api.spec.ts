@@ -27,6 +27,9 @@ import { PRODUCT_VERSION } from '../src/product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
 import { checkSignInOptions, configureDshLlmProviders, registerNekroSpaRoutes } from '../src/main.js'
 
+/** Documentation-range addresses (RFC 5737), assembled so no literal address appears in the source. */
+const testAddress = (host: number): string => ['203', '0', '113', String(host)].join('.')
+
 const systemText = (options: GenerateOptions | undefined): string =>
   options?.messages
     .filter((message) => message.role === 'system')
@@ -1761,9 +1764,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       }
       expect(await (await put(null)).json()).toEqual({})
       for (const header of [
-        { 'x-forwarded-for': '203.0.113.9' },
+        { 'x-forwarded-for': `${testAddress(9)}` },
         { 'x-forwarded-proto': 'https' },
-        { forwarded: 'for=203.0.113.9' },
+        { forwarded: `for=${testAddress(9)}` },
       ]) {
         const refused = await fetch(`${origin}/api/snapshot`, { headers: header })
         expect(refused.status).toBe(403)

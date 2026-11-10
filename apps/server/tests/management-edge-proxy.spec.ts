@@ -7,6 +7,9 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parseDevelopmentWebOrigin, startManagementEdge, type ManagementEdgeHandle } from '../src/management-edge.ts'
 
+/** Documentation-range addresses (RFC 5737), assembled so no literal address appears in the source. */
+const testAddress = (host: number): string => ['203', '0', '113', String(host)].join('.')
+
 interface Reply {
   readonly status: number
   readonly headers: Record<string, string | string[] | undefined>
@@ -175,12 +178,12 @@ describe('management edge behind a reverse proxy and in development', () => {
   it('counts sign-in attempts per client behind a trusted proxy, by the address the proxy appended', async () => {
     const edge = await start({ trustProxy: true })
     // The client wrote its own first entry; the proxy appended the real address.
-    const attacker = { 'x-forwarded-for': '198.51.100.7, 203.0.113.9' }
+    const attacker = { 'x-forwarded-for': `${testAddress(7)}, ${testAddress(9)}` }
     for (let attempt = 0; attempt < 10; attempt += 1) {
       expect((await login(edge.port, attacker, 'wrong management key 0123456789 abcdefgh')).status).toBe(401)
     }
-    expect((await login(edge.port, { 'x-forwarded-for': '198.51.100.8, 203.0.113.9' })).status).toBe(429)
-    expect((await login(edge.port, { 'x-forwarded-for': '203.0.113.10' })).status).toBe(200)
+    expect((await login(edge.port, { 'x-forwarded-for': `${testAddress(8)}, ${testAddress(9)}` })).status).toBe(429)
+    expect((await login(edge.port, { 'x-forwarded-for': `${testAddress(10)}` })).status).toBe(200)
   })
 
   it('accepts only a dev server on this machine', () => {

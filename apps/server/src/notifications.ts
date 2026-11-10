@@ -769,10 +769,7 @@ export class NotificationService {
     }
     if (stored.wecom.enabled && stored.wecom.credentialRef !== undefined) {
       const reference = stored.wecom.credentialRef
-      channels.push([
-        '企业微信',
-        async () => await this.#sendWecom(await this.#credentials.resolve(reference), linked),
-      ])
+      channels.push(['企业微信', async () => await this.#sendWecom(await this.#credentials.resolve(reference), linked)])
     }
     if (stored.ntfy.enabled && stored.ntfy.topicRef !== undefined) {
       const { serverUrl, topicRef, tokenRef } = stored.ntfy
