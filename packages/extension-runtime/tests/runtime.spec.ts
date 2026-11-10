@@ -19,7 +19,7 @@ import {
 } from '@nekro-nxt/contracts'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -1959,6 +1959,44 @@ describe('Extension materialization and build policy', () => {
     ).rejects.toThrow('Extension import is not allowed: node:fs')
     expect(await readdir(cache).catch(() => [])).toEqual([])
   })
+
+  it.each(['relative', 'absolute', 'symlink'] as const)(
+    'rejects %s imports outside the Revision root',
+    async (kind) => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-boundary-'))
+      temporaryDirectories.push(directory)
+      const sourceStore = new ExtensionSourceStore(path.join(directory, 'data'))
+      const sourceDirectory = sourceStore.revisionSourceDirectory(extensionId('test'), revisionId('test'))
+      const outside = path.join(directory, 'outside')
+      await mkdir(outside)
+      const outsideFile = path.join(outside, 'fixture.json')
+      await writeFile(outsideFile, JSON.stringify({ value: 'synthetic outside-revision data' }))
+      const importPath =
+        kind === 'relative'
+          ? path.relative(path.join(sourceDirectory, 'source'), outsideFile).split(path.sep).join('/')
+          : kind === 'absolute'
+            ? outsideFile.split(path.sep).join('/')
+            : './linked/fixture.json'
+      const materialized = materialize(`return await import(${JSON.stringify(importPath)})`)
+      await sourceStore.publish(materialized.manifest.extensionId, materialized.manifest.revisionId, materialized)
+      if (kind === 'symlink') {
+        await symlink(
+          outside,
+          path.join(sourceDirectory, 'source', 'linked'),
+          process.platform === 'win32' ? 'junction' : 'dir',
+        )
+      }
+      const cache = path.join(directory, 'cache')
+      await expect(
+        new ExtensionBuilder(cache).build({
+          revisionId: materialized.manifest.revisionId,
+          contentDigest: materialized.contentDigest,
+          sourceDirectory,
+        }),
+      ).rejects.toThrow(/outside the Revision root|Extension import is not allowed/u)
+      expect(await readdir(cache).catch(() => [])).toEqual([])
+    },
+  )
 
   it('cleans the temporary build and preserves unrelated cache siblings after an entrypoint failure', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-build-cleanup-'))
