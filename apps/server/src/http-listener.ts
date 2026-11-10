@@ -1,4 +1,4 @@
-import { createServer as createHttpServer, type RequestListener } from 'node:http'
+import { createServer as createHttpServer, type IncomingMessage, type RequestListener } from 'node:http'
 import { createServer as createHttpsServer } from 'node:https'
 import { createServer as createNetServer } from 'node:net'
 import type { Duplex } from 'node:stream'
@@ -8,10 +8,18 @@ export async function startHttpListener(options: {
   readonly host: '127.0.0.1' | '0.0.0.0'
   readonly port: number
   readonly handler: RequestListener
+  /** WebSocket and other upgrade requests; without it they are refused. */
+  readonly upgrade?: (request: IncomingMessage, socket: Duplex, head: Buffer) => void
   readonly tls?: { readonly key: string; readonly cert: string }
 }) {
   const plain = createHttpServer(options.handler)
   const tls = options.tls === undefined ? undefined : createHttpsServer(options.tls, options.handler)
+  for (const server of [plain, tls]) {
+    server?.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+      if (options.upgrade === undefined) socket.destroy()
+      else options.upgrade(request, socket, head)
+    })
+  }
   const sockets = new Set<Duplex>()
   const listener = createNetServer((socket) => {
     sockets.add(socket)

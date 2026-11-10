@@ -17,6 +17,8 @@ import { X509Certificate, createHash, createHmac, randomBytes, timingSafeEqual }
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import type { ClientRequest, IncomingMessage, ServerResponse } from 'node:http'
+import { connect } from 'node:net'
+import type { Duplex } from 'node:stream'
 import { z } from 'zod'
 import { managementLoginPage } from './management-login-page.js'
 import { startHttpListener } from './http-listener.js'
@@ -66,6 +68,11 @@ export interface ManagementEdgeOptions {
   readonly repository: SqliteHostSecurityRepository
   /** Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy that terminates HTTPS in front of plain HTTP. */
   readonly trustProxy?: boolean
+  /**
+   * The Vite dev server of a source checkout, e.g. `http://127.0.0.1:4961`. Pages, modules and hot updates go there
+   * after sign-in; the Server's own paths still go to the product server.
+   */
+  readonly developmentWebOrigin?: string
   readonly now?: () => number
 }
 
@@ -166,6 +173,27 @@ const publicProxyPath = (pathname: string): boolean =>
   pathname === '/pwa-512.png' ||
   pathname === '/pwa-maskable-512.png' ||
   pathname === '/community/callback'
+
+/** Paths the product server answers in development; Vite answers the rest. Matches the proxy list in vite.config.ts. */
+const serverOwnedPath = (pathname: string): boolean =>
+  pathname.startsWith('/api/') || pathname.startsWith('/health/') || pathname === '/community/callback'
+
+/** Only a dev server on this machine; anything else would send signed-in traffic elsewhere. */
+export const parseDevelopmentWebOrigin = (input: string | undefined): string | undefined => {
+  if (input === undefined || input.trim() === '') return undefined
+  const url = new URL(input.trim())
+  if (
+    url.protocol !== 'http:' ||
+    (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') ||
+    url.port === '' ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.username
+  ) {
+    throw new TypeError(`NEKRO_DEV_WEB_ORIGIN 只能是本机的 http 地址，例如 http://127.0.0.1:4961：${input}`)
+  }
+  return `http://127.0.0.1:${url.port}`
+}
 
 /** A short device name from the browser's User-Agent, e.g. 「浏览器 · Chrome · macOS」. */
 export const browserDeviceLabel = (userAgent: string | undefined): string => {
@@ -330,6 +358,19 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     ('encrypted' in request.socket && request.socket.encrypted === true) ||
     (options.trustProxy === true && header(request, 'x-forwarded-proto') === 'https')
 
+  /**
+   * Who is asking, for rate limits. Behind a trusted proxy every connection comes from the proxy, so the address the
+   * proxy appended last to `X-Forwarded-For` names the client; earlier entries are whatever the client sent.
+   */
+  const clientAddress = (request: IncomingMessage): string => {
+    if (options.trustProxy === true) {
+      const forwarded = request.headers['x-forwarded-for']
+      const last = (Array.isArray(forwarded) ? forwarded.join(',') : forwarded)?.split(',').at(-1)?.trim()
+      if (last) return last
+    }
+    return request.socket.remoteAddress ?? 'unknown'
+  }
+
   const publicHost = (request: IncomingMessage): string | undefined =>
     (options.trustProxy === true ? header(request, 'x-forwarded-host') : undefined) ?? request.headers.host
 
@@ -417,20 +458,71 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     )
   }
 
+  const developmentWebPort =
+    options.developmentWebOrigin === undefined ? undefined : Number(new URL(options.developmentWebOrigin).port)
+  const upstreamPort = (request: IncomingMessage): number =>
+    developmentWebPort !== undefined && !serverOwnedPath(new URL(request.url ?? '/', 'http://edge.invalid').pathname)
+      ? developmentWebPort
+      : options.internalPort
+
+  /**
+   * Hot updates of the dev server, for a signed-in browser only. The product server has no upgrade routes, so
+   * outside development every upgrade is refused.
+   */
+  const upgrade = (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
+    cleanExpired()
+    const token = parseCookies(request).get(SESSION_COOKIE)
+    const session = token === undefined ? undefined : sessions.get(token)
+    const signedIn =
+      (session !== undefined && options.repository.getActiveDevice(session.deviceId) !== undefined) ||
+      deviceFromCookie(request) !== undefined
+    const pathname = new URL(request.url ?? '/', 'http://edge.invalid').pathname
+    if (stopping || developmentWebPort === undefined || !signedIn || serverOwnedPath(pathname)) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nconnection: close\r\n\r\n')
+      return
+    }
+    const upstream = connect(developmentWebPort, '127.0.0.1', () => {
+      const headers = Object.entries(request.headers)
+        .filter(([name]) => name !== VIEWER_HEADER && name !== 'host')
+        .flatMap(([name, value]) => (Array.isArray(value) ? value : [value ?? '']).map((item) => `${name}: ${item}`))
+      upstream.write(
+        [
+          `${request.method ?? 'GET'} ${request.url ?? '/'} HTTP/1.1`,
+          `host: 127.0.0.1:${developmentWebPort}`,
+          ...headers,
+        ]
+          .join('\r\n')
+          .concat('\r\n\r\n'),
+      )
+      if (head.length > 0) upstream.write(head)
+      upstream.pipe(socket)
+      socket.pipe(upstream)
+    })
+    const close = (): void => {
+      upstream.destroy()
+      socket.destroy()
+    }
+    upstream.once('error', close)
+    socket.once('error', close)
+    upstream.once('close', close)
+    socket.once('close', close)
+  }
+
   const proxy = (request: IncomingMessage, response: ServerResponse, viewer: string | undefined): void => {
     if (stopping) {
       writeProblem(response, 503, 'server_stopping', '服务实例正在关闭。')
       return
     }
+    const port = upstreamPort(request)
     const upstream = httpRequest(
       {
         host: '127.0.0.1',
-        port: options.internalPort,
+        port,
         method: request.method,
         path: request.url,
         headers: {
           ...Object.fromEntries(Object.entries(request.headers).filter(([name]) => name !== VIEWER_HEADER)),
-          host: `127.0.0.1:${options.internalPort}`,
+          host: `127.0.0.1:${port}`,
           'x-forwarded-proto': secureRequest(request) ? 'https' : 'http',
           // The edge is the only place that knows the paired device; clients cannot claim another viewer.
           ...(viewer === undefined ? {} : { [VIEWER_HEADER]: viewer }),
@@ -477,7 +569,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       }
       if (request.method === 'POST' && url.pathname === '/api/management/pairing/challenge') {
         cleanExpired()
-        const address = request.socket.remoteAddress ?? 'unknown'
+        const address = clientAddress(request)
         const recent = challengeRequests.get(address) ?? []
         if (challenges.size >= MAX_PENDING_CHALLENGES || recent.length >= CHALLENGES_PER_ADDRESS_PER_MINUTE) {
           writeProblem(response, 429, 'pairing_rate_limited', '配对请求过于频繁，请稍后重试。')
@@ -553,7 +645,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         return
       }
       if (request.method === 'POST' && url.pathname === '/api/management/login') {
-        if (!allowAttempt(request.socket.remoteAddress ?? 'unknown')) {
+        if (!allowAttempt(clientAddress(request))) {
           writeProblem(response, 429, 'login_rate_limited', '登录尝试过于频繁，请一分钟后再试。')
           return
         }
@@ -701,6 +793,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     host: options.host,
     port: options.port,
     handler: handle,
+    upgrade,
     tls: certificate,
   })
   return {

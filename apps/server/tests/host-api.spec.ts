@@ -25,7 +25,7 @@ import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi, projectHistoryEntry } from '../src/host-api.js'
 import { PRODUCT_VERSION } from '../src/product-version.js'
 import { DEEPSEEK_HARNESS_VERSION } from '../src/dsh-version.js'
-import { configureDshLlmProviders } from '../src/main.js'
+import { checkSignInOptions, configureDshLlmProviders, registerNekroSpaRoutes } from '../src/main.js'
 
 const systemText = (options: GenerateOptions | undefined): string =>
   options?.messages
@@ -1714,6 +1714,50 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
           else resolve()
         }),
       )
+    }
+  })
+
+  it('refuses proxied requests when no sign-in stands in front, and serves this machine as before', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-proxy-guard-'))
+    temporaryDirectories.push(directory)
+    const runtime = await NekroRuntime.create({
+      coreDatabasePath: path.join(directory, 'core.sqlite'),
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      assetRoot: path.join(directory, 'assets'),
+      extensionDataRoot: path.join(directory, 'extension-data'),
+      extensionCacheRoot: path.join(directory, 'extension-cache'),
+    })
+    // Settings that would put such an instance behind a proxy are refused at startup.
+    expect(() => checkSignInOptions({ trustProxy: true }, undefined)).toThrow('NEKRO_TRUST_PROXY')
+    expect(() => checkSignInOptions({ developmentWebOrigin: 'http://127.0.0.1:4961' }, undefined)).toThrow(
+      'NEKRO_DEV_WEB_ORIGIN',
+    )
+    expect(() => checkSignInOptions({ trustProxy: true }, 'k'.repeat(32))).not.toThrow()
+    const distIndex = path.join(directory, 'index.html')
+    await writeFile(distIndex, '<!doctype html><title>fixture</title>')
+    const webContext = new Context()
+    await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+    const api = createNekroHostApi(webContext.webServer, runtime, undefined, undefined, undefined, true)
+    const disposeSpa = registerNekroSpaRoutes(webContext.webServer, distIndex, true)
+    const origin = `http://127.0.0.1:${api.port}`
+    try {
+      expect((await fetch(`${origin}/api/snapshot`)).status).toBe(200)
+      expect((await fetch(`${origin}/settings`)).status).toBe(200)
+      for (const header of [
+        { 'x-forwarded-for': '203.0.113.9' },
+        { 'x-forwarded-proto': 'https' },
+        { forwarded: 'for=203.0.113.9' },
+      ]) {
+        const refused = await fetch(`${origin}/api/snapshot`, { headers: header })
+        expect(refused.status).toBe(403)
+        expect(await refused.text()).toContain('没有设置管理密钥')
+        expect((await fetch(`${origin}/settings`, { headers: header })).status).toBe(403)
+      }
+    } finally {
+      disposeSpa()
+      api.dispose()
+      await webContext.fiber.dispose()
+      await runtime.dispose()
     }
   })
 

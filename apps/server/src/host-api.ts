@@ -1,5 +1,6 @@
 import { registerManagementCommandRoutes } from './host-routes-commands.js'
 import { registerPushRoutes } from './host-routes-push.js'
+import { arrivedThroughProxy, refuseProxiedRequest } from './proxy-guard.js'
 import type { WebRoute, WebServer } from '@deepseek-ai/dsh-host-webserver'
 import { type ChannelFact } from '@nekro-nxt/channel-runtime'
 import {
@@ -110,6 +111,8 @@ export const createNekroHostApi = (
   },
   isReady: () => boolean = () => true,
   logs?: HostLogService,
+  /** True when no management edge stands in front: proxied requests are refused (see proxy-guard.ts). */
+  refuseProxied = false,
 ): NekroHostApi => {
   const disposers: Array<() => void> = []
 
@@ -124,6 +127,10 @@ export const createNekroHostApi = (
       webServer.register({
         ...route,
         handler: (req, res) => {
+          if (refuseProxied && arrivedThroughProxy(req)) {
+            refuseProxiedRequest(res)
+            return
+          }
           if (isReady() && !route.path.startsWith('/api/logs') && route.path !== '/api/events') {
             const started = performance.now()
             res.once('finish', () => {

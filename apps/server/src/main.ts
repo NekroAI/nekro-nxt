@@ -39,7 +39,13 @@ import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { NekroRuntime } from './bootstrap.js'
 import { createNekroHostApi } from './host-api.js'
-import { initializeServerIdentity, startManagementEdge, type ManagementEdgeHandle } from './management-edge.js'
+import {
+  initializeServerIdentity,
+  parseDevelopmentWebOrigin,
+  startManagementEdge,
+  type ManagementEdgeHandle,
+} from './management-edge.js'
+import { arrivedThroughProxy, refuseProxiedRequest } from './proxy-guard.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
 import { PRODUCT_VERSION } from './product-version.js'
 import { HostLogService } from './logs/service.js'
@@ -134,7 +140,11 @@ export const NEKRO_SPA_ROUTE_PREFIXES = [
 ] as const
 
 /** Register the product SPA surface without turning missing assets or API paths into index responses. */
-export const registerNekroSpaRoutes = (webServer: WebServer, distIndex: string): (() => void) => {
+export const registerNekroSpaRoutes = (
+  webServer: WebServer,
+  distIndex: string,
+  refuseProxied = false,
+): (() => void) => {
   const resolvedDistIndex = resolveRoot(distIndex)
   const disposers: Array<() => void> = []
   const renderIndex = async (): Promise<string> => webServer.renderIndex(await readFile(resolvedDistIndex, 'utf8'))
@@ -145,6 +155,10 @@ export const registerNekroSpaRoutes = (webServer: WebServer, distIndex: string):
           kind: 'prefix',
           path: routePath,
           handler: async (req, res) => {
+            if (refuseProxied && arrivedThroughProxy(req)) {
+              refuseProxiedRequest(res)
+              return
+            }
             if (req.method !== 'GET' && req.method !== 'HEAD') {
               res.writeHead(405, { allow: 'GET, HEAD' })
               res.end()
@@ -633,6 +647,8 @@ export interface StartServerOptions {
   readonly managementKey?: string
   /** The edge sits behind a reverse proxy that terminates HTTPS; trust its forwarded protocol and host. */
   readonly trustProxy?: boolean
+  /** A source checkout's Vite dev server; the edge sends pages and hot updates there after sign-in. */
+  readonly developmentWebOrigin?: string
   /** Optional real LLM adapter wiring for a non-test server. */
   readonly configureLlm?: (context: LlmContext) => Promise<void> | void
   /**
@@ -737,6 +753,10 @@ const startLeasedServer = async (
     webContext.effect(
       () =>
         webContext.webServer.registerFallback(async (request, response) => {
+          if (managementKey === undefined && arrivedThroughProxy(request)) {
+            refuseProxiedRequest(response)
+            return
+          }
           if (request.method !== 'GET' && request.method !== 'HEAD') {
             response.writeHead(405, { allow: 'GET, HEAD' })
             response.end()
@@ -761,7 +781,7 @@ const startLeasedServer = async (
         }),
       'nekro-nxt: static product frontend',
     )
-    const disposeSpaRoutes = registerNekroSpaRoutes(webContext.webServer, distIndex)
+    const disposeSpaRoutes = registerNekroSpaRoutes(webContext.webServer, distIndex, managementKey === undefined)
     webContext.effect(() => disposeSpaRoutes, 'nekro-nxt: product SPA routes')
     const api = createNekroHostApi(
       webContext.webServer,
@@ -777,6 +797,7 @@ const startLeasedServer = async (
       },
       () => ready,
       owner.logs,
+      managementKey === undefined,
     )
     webContext.effect(() => () => api.dispose(), 'nekro-nxt: product HTTP API')
     checkWorkspaceReadiness = () => api.checkReadiness(true)
@@ -852,6 +873,7 @@ const startLeasedServer = async (
           productVersion: SERVER_PACKAGE_VERSION,
           repository: runtime.hostSecurity,
           ...(options.trustProxy === true ? { trustProxy: true } : {}),
+          ...(options.developmentWebOrigin === undefined ? {} : { developmentWebOrigin: options.developmentWebOrigin }),
         })
         owner.edge = managementEdge
       } catch (error) {
@@ -887,9 +909,25 @@ const startLeasedServer = async (
 }
 
 /** One lease covers backup, migration, serving, and quiescent teardown. */
+/** Options that only make sense with sign-in in front; without a management key they would open the instance. */
+export const checkSignInOptions = (
+  options: Pick<StartServerOptions, 'trustProxy' | 'developmentWebOrigin'>,
+  managementKey: string | undefined,
+): void => {
+  if (managementKey !== undefined) return
+  if (options.trustProxy === true) {
+    throw new TypeError(
+      'NEKRO_TRUST_PROXY 需要和 NEKRO_MANAGEMENT_KEY 一起设置：没有管理密钥时实例不需要登录，经过代理就会对外开放。',
+    )
+  }
+  if (options.developmentWebOrigin !== undefined) {
+    throw new TypeError('NEKRO_DEV_WEB_ORIGIN 需要和 NEKRO_MANAGEMENT_KEY 一起设置。')
+  }
+}
+
 export const startNekroServer = async (options: StartServerOptions): Promise<NekroServerHandle> => {
   const requestedHost = options.host ?? '127.0.0.1'
-  parseManagementKey(options.managementKey, !isLoopbackListenHost(requestedHost))
+  checkSignInOptions(options, parseManagementKey(options.managementKey, !isLoopbackListenHost(requestedHost)))
   const recoveryHost = parseListenHost(requestedHost)
   const release = await acquireDataRootLease(resolveRoot(options.dataRoot))
   const owner: { runtime?: NekroRuntime; web?: Context; edge?: ManagementEdgeHandle; logs?: HostLogService } = {}
@@ -1079,6 +1117,7 @@ if (isEntryPoint()) {
       const managementKey = parseManagementKey(process.env['NEKRO_MANAGEMENT_KEY'], host === '0.0.0.0')
       const releaseId = parseReleaseId(process.env['NEKRO_RELEASE_ID'])
       const llmProviderRoutes = parseLlmProviderRoutes(process.env['NEKRO_LLM_PROVIDERS'])
+      const developmentWebOrigin = parseDevelopmentWebOrigin(process.env['NEKRO_DEV_WEB_ORIGIN'])
       const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4960
       if (!Number.isInteger(port) || port < 0 || port > 65535) {
         throw new TypeError(`NEKRO_PORT 无效：${portEnv}`)
@@ -1140,6 +1179,7 @@ if (isEntryPoint()) {
         releaseId,
         ...(managementKey === undefined ? {} : { managementKey }),
         ...(parseTrustProxy(process.env['NEKRO_TRUST_PROXY']) ? { trustProxy: true } : {}),
+        ...(developmentWebOrigin === undefined ? {} : { developmentWebOrigin }),
         ...(developmentWorkspaceRoot === undefined || developmentWorkspaceRoot.trim() === ''
           ? {}
           : { developmentWorkspaceRoot }),
