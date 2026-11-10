@@ -192,150 +192,162 @@ export function NotificationsSection() {
         <PropertyList>
           <PropertyRow label="系统通知" tip="在桌面版上弹出">
             <span className={styles.rowControls}>
-              {testButton('system', true, () => api.getState().testSystemNotification())}
+              {system && testButton('system', true, () => api.getState().testSystemNotification())}
               <Switch label="系统通知" checked={system} onCheckedChange={setSystem} />
             </span>
           </PropertyRow>
-          <PropertyRow label="浏览器推送" tip="推送到开启了推送的手机和电脑浏览器，在下方「浏览器推送」里按设备开启">
+          <PropertyRow
+            label="浏览器推送"
+            tip="推送到开启了推送的手机和电脑浏览器，在下方「接收推送的设备」里按设备开启"
+          >
             <Switch label="浏览器推送" checked={browserPush} onCheckedChange={setBrowserPush} />
           </PropertyRow>
           <PropertyRow label="Bark" tip="推送到安装了 Bark 的设备">
             <span className={styles.rowControls}>
-              {testButton('bark', barkTestable, () =>
-                api.getState().testBarkNotification({
-                  serverUrl,
-                  ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
-                }),
-              )}
+              {bark &&
+                testButton('bark', barkTestable, () =>
+                  api.getState().testBarkNotification({
+                    serverUrl,
+                    ...(deviceKey.trim() ? { deviceKey: deviceKey.trim() } : {}),
+                  }),
+                )}
               <Switch label="Bark" checked={bark} onCheckedChange={setBark} />
             </span>
           </PropertyRow>
-          <PropertyRow label="Bark 连接" layout="stacked" depth={1}>
-            <div className={styles.channelFields}>
-              <Field label="服务地址">
-                <Input value={serverUrl} spellCheck={false} onChange={(event) => setServerUrl(event.target.value)} />
-              </Field>
-              <Field label="Device Key">
-                <SecretInput
-                  configured={configured}
-                  value={deviceKey}
-                  onChange={(event) => {
-                    setDeviceKey(event.target.value)
-                    if (event.target.value) setClearKey(false)
-                  }}
-                />
-              </Field>
-              {configured ? (
-                <div className={styles.channelFieldAction}>
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    onClick={() => {
-                      setClearKey(true)
-                      setBark(false)
-                      setDeviceKey('')
+          {bark ? (
+            <PropertyRow label="Bark 连接" layout="stacked" depth={1}>
+              <div className={styles.channelFields}>
+                <Field label="服务地址">
+                  <Input value={serverUrl} spellCheck={false} onChange={(event) => setServerUrl(event.target.value)} />
+                </Field>
+                <Field label="Device Key">
+                  <SecretInput
+                    configured={configured}
+                    value={deviceKey}
+                    onChange={(event) => {
+                      setDeviceKey(event.target.value)
+                      if (event.target.value) setClearKey(false)
                     }}
-                  >
-                    清除已保存的 Key
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </PropertyRow>
+                  />
+                </Field>
+                {configured ? (
+                  <div className={styles.channelFieldAction}>
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      onClick={() => {
+                        setClearKey(true)
+                        setBark(false)
+                        setDeviceKey('')
+                      }}
+                    >
+                      清除已保存的 Key
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </PropertyRow>
+          ) : null}
           <PropertyRow label="企业微信" tip="通过群机器人发到企业微信群">
             <span className={styles.rowControls}>
-              {testButton('wecom', wecomTestable, () =>
-                api.getState().testWecomNotification(webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
-              )}
+              {wecom &&
+                testButton('wecom', wecomTestable, () =>
+                  api.getState().testWecomNotification(webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
+                )}
               <Switch label="企业微信" checked={wecom} onCheckedChange={setWecom} />
             </span>
           </PropertyRow>
-          <PropertyRow label="企业微信连接" layout="stacked" depth={1}>
-            <div className={styles.channelFields}>
-              <Field label="Webhook 地址" hint="在群里添加机器人后复制">
-                <SecretInput
-                  configured={webhookConfigured}
-                  value={webhookUrl}
-                  onChange={(event) => {
-                    setWebhookUrl(event.target.value)
-                    if (event.target.value) setClearWebhook(false)
-                  }}
-                />
-              </Field>
-              {webhookConfigured ? (
-                <div className={styles.channelFieldAction}>
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    onClick={() => {
-                      setClearWebhook(true)
-                      setWecom(false)
-                      setWebhookUrl('')
+          {wecom ? (
+            <PropertyRow label="企业微信连接" layout="stacked" depth={1}>
+              <div className={styles.channelFields}>
+                <Field label="Webhook 地址" hint="在群里添加机器人后复制">
+                  <SecretInput
+                    configured={webhookConfigured}
+                    value={webhookUrl}
+                    onChange={(event) => {
+                      setWebhookUrl(event.target.value)
+                      if (event.target.value) setClearWebhook(false)
                     }}
-                  >
-                    清除已保存的地址
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </PropertyRow>
+                  />
+                </Field>
+                {webhookConfigured ? (
+                  <div className={styles.channelFieldAction}>
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      onClick={() => {
+                        setClearWebhook(true)
+                        setWecom(false)
+                        setWebhookUrl('')
+                      }}
+                    >
+                      清除已保存的地址
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </PropertyRow>
+          ) : null}
           <PropertyRow label="ntfy" tip="推送到安装了 ntfy 并订阅了这个主题的手机，可以使用自己搭建的 ntfy 服务">
             <span className={styles.rowControls}>
-              {testButton('ntfy', ntfyTestable, () =>
-                api.getState().testNtfyNotification({
-                  serverUrl: ntfyServerUrl,
-                  ...(ntfyTopic.trim() ? { topic: ntfyTopic.trim() } : {}),
-                  ...(ntfyToken.trim() ? { token: ntfyToken.trim() } : {}),
-                }),
-              )}
+              {ntfy &&
+                testButton('ntfy', ntfyTestable, () =>
+                  api.getState().testNtfyNotification({
+                    serverUrl: ntfyServerUrl,
+                    ...(ntfyTopic.trim() ? { topic: ntfyTopic.trim() } : {}),
+                    ...(ntfyToken.trim() ? { token: ntfyToken.trim() } : {}),
+                  }),
+                )}
               <Switch label="ntfy" checked={ntfy} onCheckedChange={setNtfy} />
             </span>
           </PropertyRow>
-          <PropertyRow label="ntfy 连接" layout="stacked" depth={1}>
-            <div className={styles.channelFields}>
-              <Field label="服务地址">
-                <Input
-                  value={ntfyServerUrl}
-                  spellCheck={false}
-                  onChange={(event) => setNtfyServerUrl(event.target.value)}
-                />
-              </Field>
-              <Field label="主题" hint="用别人猜不到的名字">
-                <SecretInput
-                  configured={settings.ntfy.topicConfigured}
-                  value={ntfyTopic}
-                  onChange={(event) => setNtfyTopic(event.target.value)}
-                />
-              </Field>
-              <Field label="访问令牌" hint="服务开启了访问控制时填写">
-                <SecretInput
-                  configured={ntfyTokenConfigured}
-                  value={ntfyToken}
-                  onChange={(event) => {
-                    setNtfyToken(event.target.value)
-                    if (event.target.value) setClearNtfyToken(false)
-                  }}
-                />
-              </Field>
-              {ntfyTokenConfigured ? (
-                <div className={styles.channelFieldAction}>
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    onClick={() => {
-                      setClearNtfyToken(true)
-                      setNtfyToken('')
+          {ntfy ? (
+            <PropertyRow label="ntfy 连接" layout="stacked" depth={1}>
+              <div className={styles.channelFields}>
+                <Field label="服务地址">
+                  <Input
+                    value={ntfyServerUrl}
+                    spellCheck={false}
+                    onChange={(event) => setNtfyServerUrl(event.target.value)}
+                  />
+                </Field>
+                <Field label="主题" hint="用别人猜不到的名字">
+                  <SecretInput
+                    configured={settings.ntfy.topicConfigured}
+                    value={ntfyTopic}
+                    onChange={(event) => setNtfyTopic(event.target.value)}
+                  />
+                </Field>
+                <Field label="访问令牌" hint="服务开启了访问控制时填写">
+                  <SecretInput
+                    configured={ntfyTokenConfigured}
+                    value={ntfyToken}
+                    onChange={(event) => {
+                      setNtfyToken(event.target.value)
+                      if (event.target.value) setClearNtfyToken(false)
                     }}
-                  >
-                    清除已保存的令牌
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </PropertyRow>
+                  />
+                </Field>
+                {ntfyTokenConfigured ? (
+                  <div className={styles.channelFieldAction}>
+                    <Button
+                      size="small"
+                      variant="ghost"
+                      onClick={() => {
+                        setClearNtfyToken(true)
+                        setNtfyToken('')
+                      }}
+                    >
+                      清除已保存的令牌
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            </PropertyRow>
+          ) : null}
         </PropertyList>
       </PropertyGroup>
-      {signedIn && window.nekroDesktopShell === undefined ? <BrowserPushGroup /> : null}
+      {signedIn && window.nekroDesktopShell === undefined && settings.browserPush.enabled ? <BrowserPushGroup /> : null}
       <PropertyGroup title="通知我">
         <PropertyList>
           <PropertyRow label="创造任务等待确认运行" tip="智能体写好带界面的候选，需要你允许运行时">
@@ -414,7 +426,7 @@ function BrowserPushGroup() {
     )
 
   return (
-    <PropertyGroup title="浏览器推送">
+    <PropertyGroup title="接收推送的设备">
       <PropertyList>
         <PropertyRow
           label="这台设备"

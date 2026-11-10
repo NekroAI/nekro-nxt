@@ -717,7 +717,11 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
         writeProblem(response, 404, 'login_code_invalid', '登录码无效或已过期，请在已登录的设备上重新生成。')
         return true
       }
-      writeJson(response, 200, { secret: claimed.secret, expiresAt: claimed.expiresAt })
+      writeJson(response, 200, {
+        secret: claimed.secret,
+        expiresAt: claimed.expiresAt,
+        requesterLabel: claimed.requesterLabel,
+      })
       return true
     }
     if (pathname === '/api/management/login-requests/poll') {

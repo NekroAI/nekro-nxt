@@ -136,7 +136,7 @@ describe('signing in with codes, passkeys and the key switch', () => {
     expect(invite.qrSvg).toMatch(/^<svg/u)
 
     const page = await send(edge.port, `/login?code=${invite.code}`)
-    expect(page.text).toContain(`const initialCode = "${invite.code}"`)
+    expect(page.text).toContain(`"code":"${invite.code}"`)
 
     const claimed = await send(edge.port, '/api/management/login-requests/claim', {
       method: 'POST',
@@ -241,7 +241,7 @@ describe('signing in with codes, passkeys and the key switch', () => {
     expect(JSON.parse(recovered.text)).toMatchObject({ next: '/settings/access?recovered=1' })
     const page = await send(edge.port, '/login')
     expect(page.text).toContain('用管理密钥找回')
-    expect(page.text).toContain('const recovery = true')
+    expect(page.text).toContain('"keySignIn":false')
   })
 
   it('reads typed codes in any case and with or without the dash', () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { startRegistration } from '@simplewebauthn/browser'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
@@ -46,8 +46,7 @@ export function SignInMethods() {
   const [params, setParams] = useSearchParams()
   const [invite, setInvite] = useState<LoginCode>()
   const [confirming, setConfirming] = useState<string>()
-  const [scanning, setScanning] = useState(false)
-  const [typed, setTyped] = useState('')
+  const [entering, setEntering] = useState(false)
   const [removing, setRemoving] = useState<SignIn['passkeys'][number]>()
   const [turningOff, setTurningOff] = useState(false)
   const [busy, setBusy] = useState('')
@@ -113,13 +112,6 @@ export function SignInMethods() {
     }
   }
 
-  const confirmTyped = () => {
-    const code = codeFrom(typed)
-    if (code === undefined) return
-    setTyped('')
-    setConfirming(code)
-  }
-
   const here = view?.passkeys.filter((passkey) => passkey.rpId === view.rpId) ?? []
   const elsewhere = view?.passkeys.filter((passkey) => passkey.rpId !== view.rpId) ?? []
 
@@ -128,77 +120,71 @@ export function SignInMethods() {
       {recovered ? (
         <Banner tone="warn">已用管理密钥找回访问。建议现在添加通行密钥，或用这台设备确认其他设备登录。</Banner>
       ) : null}
-      <PropertyGroup title="登录方式">
-        <PropertyList>
-          <PropertyRow
-            label="通行密钥"
-            tip="用面容、指纹或设备密码登录，不用输入管理密钥。通行密钥只在添加时的地址上有效。"
-            description={
-              view === undefined
-                ? '正在读取…'
-                : !view.passkeysAvailable
-                  ? `通行密钥需要通过 HTTPS 的域名访问，或在本机用 localhost 打开。现在是 ${view.rpId}。`
-                  : here.length === 0
-                    ? `${view.rpId} 还没有通行密钥。`
-                    : `${view.rpId} 有 ${here.length} 个通行密钥。`
-            }
+      <PropertyGroup
+        title="通行密钥"
+        description={
+          view === undefined
+            ? undefined
+            : view.passkeysAvailable
+              ? `用面容、指纹或设备密码登录。通行密钥只在添加时的地址上有效，现在是 ${view.rpId}。`
+              : `通行密钥需要通过 HTTPS 的域名访问，或在本机用 localhost 打开。现在是 ${view.rpId}，不能添加。`
+        }
+        actions={
+          <Button
+            size="small"
+            busy={busy === 'passkey'}
+            disabled={busy !== '' || view?.passkeysAvailable !== true}
+            onClick={() => void addPasskey()}
           >
-            <Button
-              size="small"
-              busy={busy === 'passkey'}
-              disabled={busy !== '' || view?.passkeysAvailable !== true}
-              onClick={() => void addPasskey()}
-            >
-              添加通行密钥
-            </Button>
-          </PropertyRow>
-          {[...here, ...elsewhere].map((passkey) => (
-            <PropertyRow
-              key={passkey.id}
-              depth={1}
-              label={passkey.label}
-              description={`${passkey.rpId} · ${passkey.lastUsedAt === undefined ? '还没用过' : `最近使用 ${relativeTime(passkey.lastUsedAt)}`}`}
-            >
-              <Button size="small" variant="ghost" onClick={() => setRemoving(passkey)}>
-                删除
-              </Button>
-            </PropertyRow>
-          ))}
-          <PropertyRow label="让新设备登录" tip="在新设备上扫描二维码，或在它的登录页输入登录码，再在这里确认。">
+            添加通行密钥
+          </Button>
+        }
+      >
+        <PropertyList>
+          {view === undefined ? (
+            <PropertyRow label="正在读取…" />
+          ) : view.passkeys.length === 0 ? (
+            <PropertyRow label="还没有通行密钥" />
+          ) : (
+            [...here, ...elsewhere].map((passkey) => (
+              <PropertyRow
+                key={passkey.id}
+                label={passkey.label}
+                description={`${passkey.rpId} · ${passkey.lastUsedAt === undefined ? '还没用过' : `最近使用 ${relativeTime(passkey.lastUsedAt)}`}`}
+              >
+                <Button size="small" variant="ghost" onClick={() => setRemoving(passkey)}>
+                  删除
+                </Button>
+              </PropertyRow>
+            ))
+          )}
+        </PropertyList>
+      </PropertyGroup>
+
+      <PropertyGroup title="其他设备登录" description="每次登录都要在已登录的设备上允许，登录码 5 分钟内有效。">
+        <PropertyList>
+          <PropertyRow label="让新设备登录" description="显示二维码，新设备扫码或输入登录码后在这里允许。">
             <Button size="small" busy={busy === 'invite'} disabled={busy !== ''} onClick={() => void showInvite()}>
               显示二维码
             </Button>
           </PropertyRow>
-          <PropertyRow
-            label="确认其他设备登录"
-            tip="新设备的登录页选「扫码登录」后会显示二维码和登录码。"
-            layout="stacked"
-          >
-            <div className={styles.originField}>
-              <Input
-                aria-label="登录码"
-                placeholder="ABCD-EFGH"
-                value={typed}
-                autoCapitalize="characters"
-                spellCheck={false}
-                onChange={(event) => setTyped(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') confirmTyped()
-                }}
-              />
-              <Button size="small" disabled={codeFrom(typed) === undefined} onClick={confirmTyped}>
-                确认
-              </Button>
-              {cameraAvailable() ? (
-                <Button size="small" variant="ghost" onClick={() => setScanning(true)}>
-                  扫码
-                </Button>
-              ) : null}
-            </div>
+          <PropertyRow label="确认设备登录" description="新设备的登录页显示了二维码和登录码时，在这里输入或扫码。">
+            <Button size="small" onClick={() => setEntering(true)}>
+              输入或扫码
+            </Button>
           </PropertyRow>
+        </PropertyList>
+      </PropertyGroup>
+
+      <PropertyGroup title="管理密钥">
+        <PropertyList>
           <PropertyRow
             label="用管理密钥登录"
-            tip="关闭后，登录页只提供通行密钥和扫码登录；管理密钥仍可从登录页的找回入口使用。"
+            description={
+              view?.keySignIn === false
+                ? '已关闭。需要时从登录页的「用管理密钥找回」进入。'
+                : '关闭后，登录页只提供通行密钥和扫码登录。'
+            }
           >
             <Switch
               label="用管理密钥登录"
@@ -214,13 +200,12 @@ export function SignInMethods() {
       </PropertyGroup>
 
       <InviteDialog invite={invite} onClose={() => setInvite(undefined)} />
-      <ApproveDialog code={confirming} onClose={() => setConfirming(undefined)} />
-      <ScanDialog
-        open={scanning}
-        onClose={() => setScanning(false)}
-        onCode={(code) => {
-          setScanning(false)
-          setConfirming(code)
+      <ConfirmLoginDialog
+        open={entering || confirming !== undefined}
+        initialCode={confirming}
+        onClose={() => {
+          setEntering(false)
+          setConfirming(undefined)
         }}
       />
       <ConfirmDialog
@@ -354,58 +339,129 @@ function InviteDialog({ invite, onClose }: { readonly invite: LoginCode | undefi
   )
 }
 
-/** Approving a code another device showed, typed in or scanned. */
-function ApproveDialog({ code, onClose }: { readonly code: string | undefined; readonly onClose: () => void }) {
+/**
+ * Approving another device: type its code or scan its QR code, then allow or refuse. The camera is here because the
+ * iPhone home screen app does not share sign-in with Safari, where the system camera would open the code.
+ */
+function ConfirmLoginDialog({
+  open,
+  initialCode,
+  onClose,
+}: {
+  readonly open: boolean
+  /** A code that arrived with the page, from a QR code the system camera opened. */
+  readonly initialCode: string | undefined
+  readonly onClose: () => void
+}) {
+  const [code, setCode] = useState<string>()
+  const [typed, setTyped] = useState('')
+  const [camera, setCamera] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    setCode(initialCode)
+    setTyped('')
+    setCamera(false)
+  }, [open, initialCode])
   const { request, gone, setRequest } = useLoginRequest(code)
   const waiting = request?.state === 'waiting' && request.kind === 'request'
+  const finished = request !== undefined && (request.state === 'approved' || request.state === 'rejected')
+  const submit = () => {
+    const next = codeFrom(typed)
+    if (next !== undefined) setCode(next)
+  }
+  const restart = () => {
+    setCode(undefined)
+    setTyped('')
+  }
+
+  let body: ReactNode
+  let actions: ReactNode
+  if (code === undefined) {
+    body = camera ? (
+      <CameraScan
+        onCode={(found) => {
+          setCamera(false)
+          setCode(found)
+        }}
+      />
+    ) : (
+      <div className={styles.codeEntry}>
+        <Input
+          aria-label="登录码"
+          placeholder="ABCD-EFGH"
+          value={typed}
+          autoFocus
+          autoCapitalize="characters"
+          spellCheck={false}
+          onChange={(event) => setTyped(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') submit()
+          }}
+        />
+        <p className={styles.faint}>新设备的登录页会显示二维码和登录码。</p>
+      </div>
+    )
+    actions = camera ? (
+      <Button variant="ghost" onClick={() => setCamera(false)}>
+        输入登录码
+      </Button>
+    ) : (
+      <>
+        {cameraAvailable() ? (
+          <Button variant="ghost" onClick={() => setCamera(true)}>
+            用相机扫码
+          </Button>
+        ) : null}
+        <Button disabled={codeFrom(typed) === undefined} onClick={submit}>
+          继续
+        </Button>
+      </>
+    )
+  } else if (gone) {
+    body = <p>登录码无效或已过期。请在新设备上重新开始扫码登录。</p>
+    actions = (
+      <Button variant="ghost" onClick={restart}>
+        重新输入
+      </Button>
+    )
+  } else if (request === undefined) {
+    body = <p>正在读取…</p>
+  } else if (waiting) {
+    body = (
+      <p>
+        「{request.requesterLabel ?? '新设备'}」请求登录，登录码 {request.code}。确认是你的设备再允许。
+      </p>
+    )
+    actions = <DecisionButtons code={code} onDecided={(next) => setRequest(next)} />
+  } else if (finished) {
+    body = <p>{request.state === 'approved' ? '已允许，那台设备马上就会登录。' : '已拒绝这次登录。'}</p>
+    actions = <Button onClick={onClose}>完成</Button>
+  } else {
+    body = <p>这个登录码是用来让新设备扫描的，不需要在这里确认。</p>
+    actions = (
+      <Button variant="ghost" onClick={restart}>
+        重新输入
+      </Button>
+    )
+  }
   return (
     <Dialog
-      open={code !== undefined}
-      onOpenChange={(open) => !open && onClose()}
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
       title="确认设备登录"
       closeLabel="关闭"
-      actions={
-        waiting && code !== undefined ? (
-          <DecisionButtons code={code} onDecided={(next) => setRequest(next)} />
-        ) : request !== undefined && request.state !== 'waiting' && request.state !== 'open' ? (
-          <Button onClick={onClose}>完成</Button>
-        ) : undefined
-      }
+      actions={actions}
     >
-      {gone ? (
-        <p>登录码无效或已过期，请在新设备上重新开始扫码登录。</p>
-      ) : request === undefined ? (
-        <p>正在读取…</p>
-      ) : waiting ? (
-        <p>
-          「{request.requesterLabel ?? '新设备'}」请求登录，登录码 {request.code}。确认是你的设备再允许。
-        </p>
-      ) : request.state === 'approved' ? (
-        <p>已允许，那台设备马上就会登录。</p>
-      ) : request.state === 'rejected' ? (
-        <p>已拒绝这次登录。</p>
-      ) : (
-        <p>这个登录码是用来让新设备扫描的，不需要在这里确认。</p>
-      )}
+      {body}
     </Dialog>
   )
 }
 
-/** Reads a sign-in QR code with the camera; used where the system camera would open another browser. */
-function ScanDialog({
-  open,
-  onClose,
-  onCode,
-}: {
-  readonly open: boolean
-  readonly onClose: () => void
-  readonly onCode: (code: string) => void
-}) {
+/** Reads a sign-in QR code from the camera. */
+function CameraScan({ onCode }: { readonly onCode: (code: string) => void }) {
   const video = useRef<HTMLVideoElement>(null)
   const [problem, setProblem] = useState('')
   useEffect(() => {
-    if (!open) return
-    setProblem('')
     let stream: MediaStream | undefined
     let frame = 0
     let stopped = false
@@ -440,16 +496,12 @@ function ScanDialog({
         await video.current.play()
         frame = requestAnimationFrame(tick)
       })
-      .catch(() => setProblem('没有拿到相机权限。可以在系统设置里允许，或直接输入登录码。'))
+      .catch(() => setProblem('没有拿到相机权限。可以在系统设置里允许，或改为输入登录码。'))
     return () => {
       stopped = true
       cancelAnimationFrame(frame)
       for (const track of stream?.getTracks() ?? []) track.stop()
     }
-  }, [open, onCode])
-  return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()} title="扫描登录二维码" closeLabel="关闭">
-      {problem ? <p>{problem}</p> : <video ref={video} className={styles.scanner} playsInline muted />}
-    </Dialog>
-  )
+  }, [onCode])
+  return problem ? <p>{problem}</p> : <video ref={video} className={styles.scanner} playsInline muted />
 }

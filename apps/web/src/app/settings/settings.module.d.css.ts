@@ -7,6 +7,7 @@ declare const styles: {
   readonly channelFieldAction: string
   readonly channelFields: string
   readonly claimCode: string
+  readonly codeEntry: string
   readonly codeText: string
   readonly deviceName: string
   readonly faint: string

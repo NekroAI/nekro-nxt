@@ -693,6 +693,14 @@ test.describe('settings space', () => {
       const { page, errors } = await open('/settings/notifications', {
         before: async (target) => {
           await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture', url: baseUrl }])
+          await target.route('**/api/snapshot', (request) =>
+            request.fulfill({
+              json: {
+                ...productSnapshot,
+                notificationSettings: { ...productSnapshot.notificationSettings, browserPush: { enabled: true } },
+              },
+            }),
+          )
           await fakePush(target, setup)
           await target.route('**/api/push/subscriptions', (request) =>
             request.fulfill({ json: { subscriptions: [], currentDeviceId: 'nxt_device_01J00000000000000000000AAA' } }),
@@ -725,6 +733,14 @@ test.describe('settings space', () => {
     const { page, errors } = await open('/settings/notifications', {
       before: async (target) => {
         await target.context().addCookies([{ name: 'nxt_csrf', value: 'fixture', url: baseUrl }])
+        await target.route('**/api/snapshot', (request) =>
+          request.fulfill({
+            json: {
+              ...productSnapshot,
+              notificationSettings: { ...productSnapshot.notificationSettings, browserPush: { enabled: true } },
+            },
+          }),
+        )
         await fakePush(target, {})
         await target.route('**/api/push/key', (request) => request.fulfill({ json: { publicKey: 'AQID' } }))
         await target.route('**/api/push/subscriptions', async (request) => {
@@ -1219,7 +1235,7 @@ test.describe('settings space', () => {
 
       // Passkeys of other addresses stay listed; this address cannot add one over plain HTTP by IP.
       await expect(
-        page.getByText('通行密钥需要通过 HTTPS 的域名访问，或在本机用 localhost 打开。现在是 127.0.0.1。'),
+        page.getByText('通行密钥需要通过 HTTPS 的域名访问，或在本机用 localhost 打开。现在是 127.0.0.1，不能添加。'),
       ).toBeVisible()
       await expect(page.getByRole('button', { name: '添加通行密钥' })).toBeDisabled()
       await expect(page.getByText('nxt.example.test · 最近使用 1 分钟前')).toBeVisible()
@@ -1242,11 +1258,13 @@ test.describe('settings space', () => {
       await expect(invite).toContainText('已拒绝')
       await invite.getByRole('button', { name: '完成' }).click()
 
-      // A typed code with the dash missing still finds the request.
-      await page.getByRole('textbox', { name: '登录码' }).fill('nope')
-      await page.getByRole('button', { name: '确认', exact: true }).click()
-      await expect(page.getByRole('dialog', { name: '确认设备登录' })).toContainText('登录码无效或已过期')
-      await page.getByRole('dialog', { name: '确认设备登录' }).getByRole('button', { name: '关闭' }).click()
+      // Codes are typed (or scanned) in one dialog; an unknown code says so.
+      await page.getByRole('button', { name: '输入或扫码' }).click()
+      const confirm = page.getByRole('dialog', { name: '确认设备登录' })
+      await confirm.getByRole('textbox', { name: '登录码' }).fill('nope')
+      await confirm.getByRole('button', { name: '继续' }).click()
+      await expect(confirm).toContainText('登录码无效或已过期')
+      await confirm.getByRole('button', { name: '关闭' }).click()
 
       // Turning key sign-in off asks first.
       await page.getByRole('switch', { name: '用管理密钥登录' }).click()

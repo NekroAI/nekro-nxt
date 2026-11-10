@@ -13,7 +13,7 @@ const MANAGEMENT_KEY = 'fixture management key for passkeys 0123456789'
  * A real WebAuthn round trip: Chrome's virtual authenticator creates a passkey for `localhost` against a running edge,
  * then the login page signs in with it. Nothing is mocked between the browser and the verification.
  */
-describe('passkeys through the management edge', () => {
+describe('signing in through the login page', () => {
   let browser: Browser
   let root: string
   let internal: Server
@@ -69,8 +69,9 @@ describe('passkeys through the management edge', () => {
 
     // Sign in with the key, then register a passkey the way the settings page does.
     await page.goto(`${origin}/login`)
+    await page.getByRole('button', { name: '我了解风险，继续' }).click()
+    await page.getByRole('button', { name: '使用管理密钥' }).click()
     await page.getByLabel('管理密钥').fill(MANAGEMENT_KEY)
-    await page.getByLabel('我了解风险，继续使用').check()
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await page.waitForURL(`${origin}/`)
     const registered = await page.evaluate(async () => {
@@ -130,12 +131,44 @@ describe('passkeys through the management edge', () => {
     // A browser without cookies, same authenticator: the login page offers the passkey and it signs in.
     await context.clearCookies()
     await page.goto(`${origin}/login`)
-    await page.getByLabel('我了解风险，继续使用').check()
+    await page.getByRole('button', { name: '我了解风险，继续' }).click()
     await page.getByRole('button', { name: '使用通行密钥登录' }).click()
     await page.waitForURL(`${origin}/`)
     await expect(page.getByRole('heading', { name: 'signed in' }).isVisible()).resolves.toBe(true)
     expect(repository.listPasskeys('localhost')[0]?.lastUsedAt).toEqual(expect.any(Number))
     expect(repository.listDevices()).toHaveLength(2)
     await context.close()
+  }, 60_000)
+  it('signs a browser in from the code its login page shows, once a signed-in device allows it', async () => {
+    const origin = `http://localhost:${edge.port}`
+    const admin = await browser.newContext()
+    const adminPage = await admin.newPage()
+    await adminPage.goto(`${origin}/login`)
+    await adminPage.request.post(`${origin}/api/management/login`, {
+      data: { managementKey: MANAGEMENT_KEY, acknowledgeInsecure: true },
+    })
+    const csrf = (await admin.cookies()).find((entry) => entry.name === 'nxt_csrf')?.value ?? ''
+
+    const phone = await browser.newContext()
+    const page = await phone.newPage()
+    await page.goto(`${origin}/login`)
+    await page.getByRole('button', { name: '我了解风险，继续' }).click()
+    // This address already has a passkey, so the page leads with it; the QR code is one of the alternatives.
+    await page.getByRole('button', { name: '使用通行密钥登录' }).waitFor()
+    await page.getByRole('button', { name: '扫码登录' }).click()
+    const shown = page.locator('#shown-code')
+    await expect
+      .poll(async () => (await shown.innerText()).trim(), { timeout: 10_000 })
+      .toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/u)
+    const code = (await shown.innerText()).trim()
+    const decided = await adminPage.request.post(`${origin}/api/management/login-requests/${code}/decision`, {
+      data: { approve: true },
+      headers: { 'x-nxt-csrf': csrf, origin },
+    })
+    expect(decided.status()).toBe(200)
+    await page.waitForURL(`${origin}/`, { timeout: 10_000 })
+    await expect(page.getByRole('heading', { name: 'signed in' }).isVisible()).resolves.toBe(true)
+    await admin.close()
+    await phone.close()
   }, 60_000)
 })
