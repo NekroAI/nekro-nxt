@@ -34,11 +34,13 @@ test('names APKs per channel and counts stable versions up', () => {
   assert.throws(() => stableVersionCode('0.1'), /x\.y\.z/u)
 })
 
-test('reads the signing certificate digest keytool prints', () => {
-  const pair = Array.from({ length: 32 }, (_, index) => index.toString(16).padStart(2, '0').toUpperCase())
-  const printed = `Signer #1:\n\nCertificate fingerprints:\n\t SHA1: 00\n\t SHA256: ${pair.join(':')}\n`
-  assert.equal(certificateDigest(printed), pair.join('').toLowerCase())
+test('reads the signing certificate digest apksigner prints', () => {
+  const digest = 'd3d4bcefd6781d1672314a5d7b2a74c4078245214d1525349397a5b5f8bcb107'
+  const printed = `Signer #1 certificate DN: CN=NekroNXT Development\nSigner #1 certificate SHA-256 digest: ${digest}\nSigner #1 certificate SHA-1 digest: 00\n`
+  assert.equal(certificateDigest(printed), digest)
   assert.throws(() => certificateDigest('no certificate'), /签名证书/u)
+  // Two signers would leave the published fingerprint ambiguous.
+  assert.throws(() => certificateDigest(`${printed}${printed.replaceAll('#1', '#2')}`), /签名证书/u)
 })
 
 test('accepts only the receipt of this release and builds a manifest the app resolves', () => {

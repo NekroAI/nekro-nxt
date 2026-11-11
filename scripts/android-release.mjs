@@ -34,11 +34,27 @@ export function stableVersionCode(versionName) {
   return major * 1_000_000 + minor * 1_000 + patch
 }
 
-/** SHA-256 of the certificate the APK is signed with, as lower-case hex, from `keytool -printcert -jarfile`. */
-export function certificateDigest(printcert) {
-  const line = /SHA256:\s*([0-9A-F:]{95})/u.exec(printcert)?.[1]
-  if (!line) throw new Error('无法读取 APK 的签名证书。')
-  return line.replaceAll(':', '').toLowerCase()
+/**
+ * SHA-256 of the certificate the APK is signed with, as lower-case hex, from `apksigner verify --print-certs`. (An APK
+ * for Android 10 and later carries only v2/v3 signatures, which `keytool -printcert -jarfile` does not read.)
+ */
+export function certificateDigest(printed) {
+  const digests = [...printed.matchAll(/^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f]{64})$/gmu)].map(
+    (m) => m[1],
+  )
+  if (digests.length !== 1) throw new Error('无法读取 APK 的签名证书。')
+  return digests[0]
+}
+
+/** `apksigner` from the newest build tools of the Android SDK (ANDROID_HOME on CI runners). */
+async function apksigner() {
+  const sdk = process.env['ANDROID_HOME'] ?? process.env['ANDROID_SDK_ROOT']
+  if (!sdk) throw new Error('缺少 ANDROID_HOME，找不到 apksigner。')
+  const versions = (await readdir(path.join(sdk, 'build-tools'))).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  )
+  if (versions.length === 0) throw new Error('Android SDK 里没有 build-tools。')
+  return path.join(sdk, 'build-tools', versions.at(-1), 'apksigner')
 }
 
 export function assertAndroidReceipt(receipt, { channel, commit, artifact }) {
@@ -120,7 +136,7 @@ async function candidate() {
   const target = path.join(outDir, artifact)
   await copyFile(apk, target)
   const { bytes, sha256 } = await readArtifactIntegrity(target)
-  const printcert = execFileSync('keytool', ['-printcert', '-jarfile', target], { encoding: 'utf8' })
+  const printed = execFileSync(await apksigner(), ['verify', '--print-certs', target], { encoding: 'utf8' })
   const receipt = {
     format: 'nxt.android-artifact-receipt',
     version: 1,
@@ -133,7 +149,7 @@ async function candidate() {
     sha256,
     versionName: process.env['NXT_ANDROID_VERSION_NAME'] ?? release.version,
     versionCode: Number(process.env['NXT_ANDROID_VERSION_CODE']),
-    certificateSha256: certificateDigest(printcert),
+    certificateSha256: certificateDigest(printed),
   }
   assertAndroidReceipt(receipt, { channel, commit: release.commit, artifact })
   await writeFile(`${target}.receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8')
