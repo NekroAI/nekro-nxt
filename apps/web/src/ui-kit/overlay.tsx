@@ -3,7 +3,7 @@ import * as RadixDialog from '@radix-ui/react-dialog'
 import * as RadixMenu from '@radix-ui/react-dropdown-menu'
 import * as RadixPopover from '@radix-ui/react-popover'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
-import { Check, CircleHelp, TriangleAlert, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, CircleHelp, TriangleAlert, X } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
 import { usePhone } from './phone.js'
 import { Button, IconButton, Pressable } from './primitives.js'
@@ -242,25 +242,69 @@ export function Sheet({
 /** How far a downward swipe must carry a bottom sheet before letting go closes it. */
 const SWIPE_CLOSE = 72
 
+/** Room kept between a raised item and the sheet below it. */
+const LIFT_GAP = 12
+
+/** The raised item stands in from the screen edges by this much, so its rounded corners and shadow show. */
+const LIFT_INSET = 6
+
+/** Reduced motion, chosen in the app or in the system. */
+const motionReduced = (): boolean =>
+  document.documentElement.dataset['nxtMotion'] === 'off' ||
+  (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+
+/** A choice in an `ActionSheet`. `opensMore` keeps the sheet open: choosing it shows a further set of choices. */
+export interface ActionSheetEntry extends MenuEntry {
+  readonly opensMore?: boolean
+}
+
+/** The item a long press opened the sheet for, drawn raised above the dimmed page where it sat. */
+export interface ActionSheetLift {
+  readonly rect: { readonly top: number; readonly left: number; readonly width: number; readonly height: number }
+  readonly content: ReactNode
+}
+
 /**
  * A short list of choices that rises from the bottom edge on a phone (05 §6.2), over a dimmed page. A tap on the
  * page, Escape, or swiping the panel down closes it; choosing a row closes it and then runs the choice, still within
  * the same tap (a file picker opened from it keeps the gesture it needs).
+ *
+ * A choice that `opensMore` swaps in another set of choices instead: the caller changes `page`, `title` and `items`,
+ * and `onBack` puts a back button before the title. The panel then eases to its new height while the new choices
+ * slide in. `lift` raises the pressed item over the dim, moved up when the panel would cover it.
  */
 export function ActionSheet({
   open,
   onOpenChange,
   title,
   items,
+  page = '',
+  onBack,
+  lift,
 }: {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
   readonly title: string
-  readonly items: readonly MenuEntry[]
+  readonly items: readonly ActionSheetEntry[]
+  /** Names the set of choices shown; a change animates to the new set. */
+  readonly page?: string
+  readonly onBack?: () => void
+  readonly lift?: ActionSheetLift
 }) {
   const returnFocus = useReturnFocus(open)
-  const panel = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLDivElement | null>(null)
   const swipe = useRef<{ readonly id: number; readonly y: number; moved: boolean } | undefined>(undefined)
+  const shown = useRef({ open: false, page, height: 0 })
+  const back = useRef(false)
+  const [liftShift, setLiftShift] = useState(0)
+  // The set the sheet opened on rises with the panel; only a set swapped in afterwards slides in.
+  const openedOn = useRef(page)
+  const wasOpen = useRef(false)
+  if (open && !wasOpen.current) {
+    openedOn.current = page
+    back.current = false
+  }
+  wasOpen.current = open
   const settle = (close: boolean) => {
     const element = panel.current
     swipe.current = undefined
@@ -269,12 +313,57 @@ export function ActionSheet({
     if (close) onOpenChange(false)
     else element.style.removeProperty('transform')
   }
+  /** Moves the raised item up when the panel would cover it. */
+  const placeLift = (element: HTMLElement) => {
+    if (!lift) return
+    const below = lift.rect.top + lift.rect.height
+    const room = element.offsetTop - LIFT_GAP - below
+    setLiftShift(room < 0 ? Math.max(room, LIFT_GAP - lift.rect.top) : 0)
+  }
+  useLayoutEffect(() => {
+    const element = panel.current
+    const before = shown.current
+    // Layout height: the rising animation's transform does not change it.
+    const height = element?.offsetHeight ?? 0
+    shown.current = { open, page, height }
+    if (!element || !open) return
+    placeLift(element)
+    if (!before.open || before.page === page) return
+    // The new set of choices takes the place of the old: keep focus inside, on its first control.
+    element.querySelector<HTMLElement>('button:not(:disabled)')?.focus()
+    if (before.height && before.height !== height && !motionReduced()) {
+      element.animate([{ height: `${before.height}px` }, { height: `${height}px` }], {
+        duration: 280,
+        easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+      })
+    }
+  })
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className={styles.scrim} />
+        {lift ? (
+          <div
+            className={styles.actionSheetLift}
+            data-state={open ? 'open' : 'closed'}
+            aria-hidden="true"
+            style={{
+              top: lift.rect.top,
+              left: lift.rect.left + LIFT_INSET,
+              width: lift.rect.width - 2 * LIFT_INSET,
+              height: lift.rect.height,
+              ...cssVars({ '--lift-shift': `${liftShift}px` }),
+            }}
+          >
+            <div style={{ width: lift.rect.width, marginLeft: -LIFT_INSET }}>{lift.content}</div>
+          </div>
+        ) : null}
         <RadixDialog.Content
-          ref={panel}
+          // The panel mounts a moment after `open` (Radix portals mount in their own pass): place the item then.
+          ref={(element) => {
+            panel.current = element
+            if (element) placeLift(element)
+          }}
           className={styles.actionSheet}
           aria-describedby={undefined}
           onCloseAutoFocus={returnFocus}
@@ -304,22 +393,49 @@ export function ActionSheet({
           }}
         >
           <span className={styles.actionSheetGrabber} aria-hidden="true" />
-          <RadixDialog.Title className={styles.actionSheetTitle}>{title}</RadixDialog.Title>
-          <div className={styles.actionSheetList}>
-            {items.map((item) => (
-              <Pressable
-                key={item.key}
-                className={[styles.actionSheetItem, item.danger ? styles.menuDanger : ''].join(' ')}
-                disabled={item.disabled ?? false}
-                onClick={() => {
-                  onOpenChange(false)
-                  item.onSelect()
-                }}
-              >
-                {item.icon}
-                {item.label}
-              </Pressable>
-            ))}
+          <div
+            key={page}
+            className={styles.actionSheetPage}
+            data-switched={page !== openedOn.current}
+            data-back={back.current}
+          >
+            <div className={styles.actionSheetHead} data-back-button={onBack !== undefined}>
+              {onBack ? (
+                <IconButton
+                  label="返回"
+                  onClick={() => {
+                    back.current = true
+                    onBack()
+                  }}
+                >
+                  <ChevronLeft size={18} />
+                </IconButton>
+              ) : null}
+              <RadixDialog.Title className={styles.actionSheetTitle}>{title}</RadixDialog.Title>
+            </div>
+            <div className={styles.actionSheetList}>
+              {items.map((item) => (
+                <Pressable
+                  key={item.key}
+                  className={[styles.actionSheetItem, item.danger ? styles.menuDanger : ''].join(' ')}
+                  disabled={item.disabled ?? false}
+                  {...(item.opensMore ? { 'aria-haspopup': 'true' as const } : {})}
+                  onClick={() => {
+                    if (item.opensMore) {
+                      back.current = false
+                      item.onSelect()
+                      return
+                    }
+                    onOpenChange(false)
+                    item.onSelect()
+                  }}
+                >
+                  {item.icon}
+                  <span className={styles.actionSheetLabel}>{item.label}</span>
+                  {item.opensMore ? <ChevronRight className={styles.actionSheetMore} aria-hidden="true" /> : null}
+                </Pressable>
+              ))}
+            </div>
           </div>
         </RadixDialog.Content>
       </RadixDialog.Portal>

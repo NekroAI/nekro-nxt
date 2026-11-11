@@ -4,7 +4,7 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
   pointerWithin,
   useDroppable,
   useSensor,
@@ -19,11 +19,23 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Fragment, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  Fragment,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from 'react'
 import { Link } from 'react-router-dom'
 import {
   agentSortId,
   applyWorkTreeDragResolution,
+  arrayMoveIds,
   buildWorkTree,
   channelSortId,
   parsePrefixedId,
@@ -33,6 +45,7 @@ import {
   CHANNEL_SORT_PREFIX,
   UNBOUND_DROP_ID,
   type WorkTreeDragLists,
+  type WorkTreeDragResolution,
 } from '../model/work-tree-order.js'
 import {
   connectionDisplayName,
@@ -42,8 +55,21 @@ import {
   type ConnectionSummary,
   type ConversationMessage,
 } from '../../product-runtime.js'
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, MoreHorizontal, Pin, PinOff, Plus } from 'lucide-react'
 import {
+  ArrowDown,
+  ArrowRightLeft,
+  ArrowUp,
+  ArrowUpDown,
+  Check,
+  ChevronDown,
+  MoreHorizontal,
+  Pin,
+  PinOff,
+  Plus,
+  Unplug,
+} from 'lucide-react'
+import {
+  ActionSheet,
   AgentAvatar,
   Button,
   Dialog,
@@ -59,12 +85,16 @@ import {
   toast,
   cssVars,
   Pressable,
+  usePhone,
+  type ActionSheetEntry,
+  type ActionSheetLift,
 } from '../../ui-kit/index.js'
 import { useAttention } from '../model/attention.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { BindDialog, type BindIntent } from './bind-dialog.js'
 import { useProductApi } from '../model/store.js'
 import { SubConversationRows } from './sub-conversation-rows.js'
+import { useLongPress } from './long-press.js'
 import {
   UNBOUND_GROUP_ID,
   keepHiddenSlots,
@@ -143,15 +173,94 @@ type PinPlace = { readonly index: number; readonly count: number }
 
 type ViewChange = (change: (view: ChannelListView) => ChannelListView) => void
 
+/**
+ * What a phone's actions sheet is for. `inTree` says the channel row sits in an agent's group (or 未接线), where it can
+ * move up and down; `lift` is the row raised above the dim after a long press.
+ */
+type ActionsTarget =
+  | { readonly kind: 'channel'; readonly channelId: string; readonly inTree: boolean; readonly lift?: ActionSheetLift }
+  | { readonly kind: 'agent'; readonly agentId: string; readonly lift?: ActionSheetLift }
+
+type RowActions = {
+  /** Phone layout: a long press or the more button opens the actions sheet. */
+  readonly phone: boolean
+  /** A mouse or trackpad is present, so rows can be dragged and say so. */
+  readonly draggable: boolean
+  /** Opens the sheet; false when there is nothing to offer. */
+  readonly open: (target: ActionsTarget) => boolean
+}
+
+const RowActionsContext = createContext<RowActions>({ phone: false, draggable: true, open: () => false })
+
+const FINE_POINTER = '(any-pointer: fine)'
+const subscribePointer = (change: () => void) => {
+  const query = window.matchMedia?.(FINE_POINTER)
+  query?.addEventListener('change', change)
+  return () => query?.removeEventListener('change', change)
+}
+
+/**
+ * Whether any pointer can drag rows. Touch never drags (a finger scrolls, and a held finger opens the actions
+ * sheet), so a phone or tablet without a mouse or trackpad shows plain rows; a touch-screen laptop keeps dragging.
+ */
+const useFinePointer = (): boolean =>
+  useSyncExternalStore(
+    subscribePointer,
+    () => window.matchMedia?.(FINE_POINTER).matches ?? true,
+    () => true,
+  )
+
+/** Draws a copy of `node` (a row as it looks right now) inside the raised card. */
+function Snapshot({ node }: { readonly node: HTMLElement }) {
+  return (
+    <div
+      ref={(host) => {
+        if (host && host.firstChild !== node) host.replaceChildren(node)
+      }}
+    />
+  )
+}
+
+/** The row `element` raised in place: its box on screen and an inert copy of how it looks. */
+const liftOf = (element: HTMLElement | null): ActionSheetLift | undefined => {
+  if (!element) return undefined
+  const box = element.getBoundingClientRect()
+  const copy = element.cloneNode(true)
+  if (!(copy instanceof HTMLElement)) return undefined
+  copy.inert = true
+  return {
+    rect: { top: box.top, left: box.left, width: box.width, height: box.height },
+    content: <Snapshot node={copy} />,
+  }
+}
+
 function RowMenu({
   channel,
   pin,
+  inTree,
   onViewChange,
 }: {
   readonly channel: ChannelSummary
   readonly pin: PinPlace | undefined
+  readonly inTree: boolean
   readonly onViewChange: ViewChange
 }) {
+  const actions = useContext(RowActionsContext)
+  if (actions.phone) {
+    // The same sheet a long press opens, for one tap and for screen readers.
+    return (
+      <div className={styles.rowMenu}>
+        <IconButton
+          label={`${channel.name} 的更多操作`}
+          size="small"
+          aria-haspopup="dialog"
+          onClick={() => actions.open({ kind: 'channel', channelId: channel.id, inTree })}
+        >
+          <MoreHorizontal size={15} />
+        </IconButton>
+      </div>
+    )
+  }
   const items = pin
     ? [
         ...(pin.index > 0
@@ -204,7 +313,24 @@ function RowMenu({
   )
 }
 
-/** A draggable channel row with its more-menu; `sortId` keeps pinned rows in their own drag list. */
+/** A long press on a channel row opens its actions sheet with the row raised; `element` is the row link. */
+const useRowLongPress = (channelId: string, inTree: boolean) => {
+  const actions = useContext(RowActionsContext)
+  return useLongPress(
+    (element) => actions.open({ kind: 'channel', channelId, inTree, ...withLift(element.parentElement) }),
+    actions.phone,
+  )
+}
+
+const withLift = (element: HTMLElement | null): { readonly lift?: ActionSheetLift } => {
+  const lift = liftOf(element)
+  return lift ? { lift } : {}
+}
+
+/**
+ * A channel row with its more-menu; `sortId` keeps pinned rows in their own drag list. A mouse drags it and the
+ * keyboard moves it; a finger only scrolls past it, taps it, or holds it for the actions sheet.
+ */
 function SortableRow({
   sortId,
   channel,
@@ -227,6 +353,9 @@ function SortableRow({
   readonly onViewChange: ViewChange
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortId })
+  const { draggable } = useContext(RowActionsContext)
+  const inTree = pin === undefined
+  const longPress = useRowLongPress(channel.id, inTree)
   return (
     <div
       ref={setNodeRef}
@@ -242,13 +371,12 @@ function SortableRow({
         draggable={false}
         style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
         onClick={suppressClick}
-        {...attributes}
-        {...listeners}
-        aria-roledescription="可拖动的频道"
+        {...(draggable ? { ...attributes, ...listeners, 'aria-roledescription': '可拖动的频道' } : {})}
+        {...longPress}
       >
         <RowContent channel={channel} agent={agent} connection={connection} mode={mode} />
       </Link>
-      <RowMenu channel={channel} pin={pin} onViewChange={onViewChange} />
+      <RowMenu channel={channel} pin={pin} inTree={inTree} onViewChange={onViewChange} />
     </div>
   )
 }
@@ -269,6 +397,7 @@ function PlainRow({
 }) {
   const pinned = useProductStore((state) => state.channelListView)
   const index = pinned.pinnedChannelIds.indexOf(channel.id)
+  const longPress = useRowLongPress(channel.id, false)
   return (
     <div className={styles.rowWrap}>
       <Link
@@ -276,12 +405,14 @@ function PlainRow({
         className={styles.row}
         data-selected={selected}
         aria-current={selected ? 'page' : undefined}
+        {...longPress}
       >
         <RowContent channel={channel} agent={agent} connection={connection} mode="recent" />
       </Link>
       <RowMenu
         channel={channel}
         pin={index >= 0 ? { index, count: pinned.pinnedChannelIds.length } : undefined}
+        inTree={false}
         onViewChange={onViewChange}
       />
     </div>
@@ -338,6 +469,12 @@ function AgentGroup({
 }) {
   const navigate = useGo()
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: agentSortId(agent.id) })
+  const actions = useContext(RowActionsContext)
+  // A long press on the name offers moving the group; a tap still opens the agent.
+  const longPress = useLongPress(
+    (element) => actions.open({ kind: 'agent', agentId: agent.id, ...withLift(element.parentElement) }),
+    actions.phone,
+  )
   const phase = agentPhase[agent.state]
   return (
     <div
@@ -356,9 +493,8 @@ function AgentGroup({
           type="button"
           className={styles.groupHead}
           onClick={() => navigate(`/agents/${agent.id}`)}
-          {...attributes}
-          {...listeners}
-          aria-roledescription="可拖动的智能体分组"
+          {...(actions.draggable ? { ...attributes, ...listeners, 'aria-roledescription': '可拖动的智能体分组' } : {})}
+          {...longPress}
         >
           <AgentAvatar name={agent.name} hue={agentHue(agent)} size="sm" live={isAgentWorking(agent)} />
           <span className={styles.groupName}>{agent.name}</span>
@@ -429,7 +565,7 @@ function PinnedSection({
   const [activeId, setActiveId] = useState('')
   const dragged = useRef(false)
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
   if (pinned.length === 0) return null
@@ -620,6 +756,11 @@ export function ChannelList({
   const [filter, setFilter] = useState('all')
   const attention = useAttention()
   const dragged = useRef(false)
+  const phone = usePhone()
+  const draggable = useFinePointer()
+  const [actions, setActions] = useState<ActionsTarget>()
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const [actionsPage, setActionsPage] = useState<'main' | 'agents'>('main')
 
   const setMode = (next: ListMode) => {
     setModeState(next)
@@ -690,8 +831,9 @@ export function ChannelList({
     return `${channel.name} ${source} ${agentName}`.toLowerCase().includes(needle)
   }
 
+  // A mouse, not every pointer: a finger on a row scrolls the list, and a held one opens the actions sheet instead.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
   const collision: CollisionDetection = (args) => {
@@ -724,6 +866,11 @@ export function ChannelList({
       setIntent({ kind: 'unbind', channelId: resolution.channelId })
       return
     }
+    saveOrder(resolution)
+  }
+
+  /** Saves a reorder of the shown rows, from a drag or from the actions sheet. */
+  const saveOrder = (resolution: WorkTreeDragResolution) => {
     // Reorders happen among the shown rows; pinned channels keep their slots in the saved group order.
     const next = applyWorkTreeDragResolution(
       fullLists,
@@ -796,193 +943,336 @@ export function ChannelList({
   const listMode: ListMode = filtering ? 'recent' : mode
   const shown = filtering ? recent.filter(matches) : recent.filter((channel) => !pinnedIds.has(channel.id))
 
+  /** One step up or down within `ids`, or nothing at that end. */
+  const neighbour = (ids: readonly string[], id: string, step: -1 | 1): number | undefined => {
+    const from = ids.indexOf(id)
+    const to = from + step
+    return from >= 0 && to >= 0 && to < ids.length ? to : undefined
+  }
+  const moveItems = (ids: readonly string[], id: string, move: (to: number) => void): ActionSheetEntry[] =>
+    ([-1, 1] as const).flatMap((step) => {
+      const to = neighbour(ids, id, step)
+      return to === undefined
+        ? []
+        : [
+            {
+              key: step < 0 ? 'up' : 'down',
+              label: step < 0 ? '上移' : '下移',
+              icon: step < 0 ? <ArrowUp aria-hidden="true" /> : <ArrowDown aria-hidden="true" />,
+              onSelect: () => move(to),
+            },
+          ]
+    })
+
+  /**
+   * The sheet for `target`: only what applies to the row where it sits. Moves follow the order on screen and save
+   * like a drag; giving the channel to another agent, or unbinding it, goes through the same confirmation as a drop.
+   */
+  const sheetFor = (
+    target: ActionsTarget | undefined,
+    page: 'main' | 'agents',
+  ): { title: string; items: ActionSheetEntry[]; onBack?: () => void } | undefined => {
+    if (target?.kind === 'agent') {
+      const agent = agentById.get(target.agentId)
+      if (!agent || listMode !== 'agent') return undefined
+      const ids = lists.agentIds
+      const items = moveItems(ids, agent.id, (to) =>
+        saveOrder({ kind: 'reorder-agents', agentIds: arrayMoveIds(ids, ids.indexOf(agent.id), to) }),
+      )
+      return items.length ? { title: agent.name, items } : undefined
+    }
+    const channel = target && channels.find((item) => item.id === target.channelId)
+    if (!target || !channel) return undefined
+    const owner = fullLists.channelAgentId[channel.id] ?? ''
+    const others = tree.agents.map((group) => group.agent).filter((agent) => agent.id !== owner)
+    const moveLabel = owner ? '移到其他智能体' : '接到智能体'
+    if (page === 'agents') {
+      return {
+        title: moveLabel,
+        onBack: () => setActionsPage('main'),
+        items: others.map((agent) => ({
+          key: agent.id,
+          label: agent.name,
+          icon: <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />,
+          onSelect: () => setIntent({ kind: owner ? 'replace' : 'bind', channelId: channel.id, agentId: agent.id }),
+        })),
+      }
+    }
+    const pinnedOrder = pinned.map((item) => item.id)
+    const isPinned = pinnedOrder.includes(channel.id)
+    const groupOrder = owner ? (lists.channelIdsByAgent[owner] ?? []) : lists.unboundChannelIds
+    const moves = isPinned
+      ? moveItems(pinnedOrder, channel.id, (to) =>
+          changeView((current) =>
+            movePinnedChannel(current, channel.id, current.pinnedChannelIds.indexOf(pinnedOrder[to] ?? '')),
+          ),
+        )
+      : target.inTree && listMode === 'agent'
+        ? moveItems(groupOrder, channel.id, (to) => {
+            const channelIds = arrayMoveIds(groupOrder, groupOrder.indexOf(channel.id), to)
+            saveOrder(
+              owner
+                ? { kind: 'reorder-agent-channels', agentId: owner, channelIds }
+                : { kind: 'reorder-unbound', channelIds },
+            )
+          })
+        : []
+    return {
+      title: channel.name,
+      items: [
+        ...moves,
+        isPinned
+          ? {
+              key: 'unpin',
+              label: '取消置顶',
+              icon: <PinOff aria-hidden="true" />,
+              onSelect: () => changeView((current) => unpinChannel(current, channel.id)),
+            }
+          : {
+              key: 'pin',
+              label: '置顶',
+              icon: <Pin aria-hidden="true" />,
+              onSelect: () => changeView((current) => pinChannel(current, channel.id)),
+            },
+        ...(others.length
+          ? [
+              {
+                key: 'move',
+                label: `${moveLabel}…`,
+                icon: <ArrowRightLeft aria-hidden="true" />,
+                opensMore: true,
+                onSelect: () => setActionsPage('agents'),
+              },
+            ]
+          : []),
+        ...(owner
+          ? [
+              {
+                key: 'unbind',
+                label: '解除接线',
+                icon: <Unplug aria-hidden="true" />,
+                danger: true,
+                onSelect: () => setIntent({ kind: 'unbind', channelId: channel.id }),
+              },
+            ]
+          : []),
+      ],
+    }
+  }
+  const sheet = sheetFor(actions, actionsPage)
+  const rowActions: RowActions = {
+    phone,
+    draggable,
+    open: (target) => {
+      // A target with nothing to offer opens nothing.
+      if (!sheetFor(target, 'main')) return false
+      setActions(target)
+      setActionsPage('main')
+      setActionsOpen(true)
+      return true
+    },
+  }
+
   return (
-    <ListPane
-      title={
-        <>
-          频道 <span className={styles.listCount}>{channels.length}</span>
-        </>
-      }
-      label="频道"
-      actions={<CreateInternalChannel />}
-      toolbar={
-        <>
-          <div className={styles.filterRow}>
-            <SearchField label="搜索频道" placeholder="搜索频道" value={query} onChange={setQuery} />
-            <Select
-              aria-label="筛选频道"
-              className={styles.filter}
-              value={filter}
-              onValueChange={(value) => setFilter(value)}
-              options={[
-                { value: 'all', label: '全部' },
-                { value: 'unread', label: '未读' },
-                { value: 'attention', label: '需要处理' },
-                ...connections.map((connection) => ({
-                  value: `connection:${connection.id}`,
-                  label: connectionDisplayName(connection),
-                })),
-              ]}
-            />
-            <Menu
-              label="排列方式"
-              trigger={
-                <IconButton label={`排列方式：${mode === 'agent' ? '按智能体' : '最近活动'}`}>
-                  <ArrowUpDown size={15} />
-                </IconButton>
-              }
-              items={[
-                { heading: '排列方式' },
-                ...(['agent', 'recent'] as const).map((value) => ({
-                  key: value,
-                  label: value === 'agent' ? '按智能体' : '最近活动',
-                  icon: value === mode ? <Check size={14} /> : <span className={styles.menuSpacer} />,
-                  onSelect: () => setMode(value),
-                })),
-              ]}
-            />
-          </div>
-        </>
-      }
-    >
-      <SelectionList
-        // Pins and collapsed groups move the selected row, so they are part of the key that re-measures it.
-        selectedKey={`${listMode}:${selectedId ?? ''}:${selectedConversationId ?? ''}:${view.pinnedChannelIds.join(',')}:${view.collapsedGroupIds.join(',')}:${String(filtering)}`}
-        accent={selectedAgent ? agentAccent(selectedAgent) : undefined}
-      >
-        {filtering && shown.length === 0 ? <p className={styles.noMatch}>没有符合条件的频道</p> : null}
-        {filtering ? null : (
-          <PinnedSection
-            pinned={pinned}
-            selectedId={selectedId}
-            selectedConversationId={selectedConversationId}
-            agentById={agentById}
-            connectionById={connectionById}
-            onViewChange={changeView}
-          />
-        )}
-        {listMode === 'recent' ? (
-          shown.map((channel) => (
-            <Fragment key={channel.id}>
-              <PlainRow
-                channel={channel}
-                agent={agentById.get(channel.agentId)}
-                connection={connectionById.get(channel.connectionId)}
-                selected={channel.id === selectedId && selectedConversationId === undefined}
-                onViewChange={changeView}
+    <RowActionsContext.Provider value={rowActions}>
+      <ListPane
+        title={
+          <>
+            频道 <span className={styles.listCount}>{channels.length}</span>
+          </>
+        }
+        label="频道"
+        actions={<CreateInternalChannel />}
+        toolbar={
+          <>
+            <div className={styles.filterRow}>
+              <SearchField label="搜索频道" placeholder="搜索频道" value={query} onChange={setQuery} />
+              <Select
+                aria-label="筛选频道"
+                className={styles.filter}
+                value={filter}
+                onValueChange={(value) => setFilter(value)}
+                options={[
+                  { value: 'all', label: '全部' },
+                  { value: 'unread', label: '未读' },
+                  { value: 'attention', label: '需要处理' },
+                  ...connections.map((connection) => ({
+                    value: `connection:${connection.id}`,
+                    label: connectionDisplayName(connection),
+                  })),
+                ]}
               />
-              <SubConversationRows channelId={channel.id} selectedConversationId={selectedConversationId} />
-            </Fragment>
-          ))
-        ) : (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={collision}
-            onDragStart={(event) => {
-              dragged.current = true
-              setActiveId(String(event.active.id))
-            }}
-            onDragOver={(event) => setOverId(event.over ? String(event.over.id) : '')}
-            onDragCancel={() => {
-              setActiveId('')
-              setOverId('')
-              swallowNextClick()
-            }}
-            onDragEnd={onDragEnd}
-            accessibility={{
-              screenReaderInstructions: {
-                draggable: '按空格开始拖动，用方向键移动，再按空格放下，按 Esc 取消。跨智能体放下会先确认。',
-              },
-              announcements: {
-                onDragStart: ({ active }) => `已拿起${dragLabel(String(active.id))}`,
-                onDragOver: ({ active, over }) =>
-                  over
-                    ? `${dragLabel(String(active.id))}移到${dragLabel(String(over.id))}`
-                    : `${dragLabel(String(active.id))}不在可放下的位置`,
-                onDragEnd: ({ active, over }) =>
-                  over
-                    ? `${dragLabel(String(active.id))}放在${dragLabel(String(over.id))}`
-                    : `${dragLabel(String(active.id))}已放回原处`,
-                onDragCancel: ({ active }) => `已取消拖动${dragLabel(String(active.id))}`,
-              },
-            }}
-          >
-            <SortableContext items={lists.agentIds.map(agentSortId)} strategy={verticalListSortingStrategy}>
-              {tree.agents.map((group) => (
-                <AgentGroup
-                  key={group.agent.id}
-                  agent={group.agent}
-                  highlight={highlightAgent === group.agent.id}
-                  collapsed={collapsedIds.has(group.agent.id)}
-                  unread={unreadOf(group.channels)}
-                  onToggle={() => toggleGroup(group.agent.id)}
-                >
-                  <SortableContext
-                    items={group.channels.map((channel) => channelSortId(channel.id))}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    {group.channels.map((channel) => (
-                      <Fragment key={channel.id}>
-                        <SortableRow
-                          sortId={channelSortId(channel.id)}
-                          channel={channel}
-                          agent={group.agent}
-                          connection={connectionById.get(channel.connectionId)}
-                          mode="agent"
-                          selected={channel.id === selectedId && selectedConversationId === undefined}
-                          pin={undefined}
-                          suppressClick={suppressClick}
-                          onViewChange={changeView}
-                        />
-                        <SubConversationRows channelId={channel.id} selectedConversationId={selectedConversationId} />
-                      </Fragment>
-                    ))}
-                  </SortableContext>
-                </AgentGroup>
-              ))}
-            </SortableContext>
-            <UnboundGroup
-              count={tree.unbound.length}
-              highlight={highlightUnbound}
-              collapsed={collapsedIds.has(UNBOUND_GROUP_ID)}
-              unread={unreadOf(tree.unbound)}
-              onToggle={() => toggleGroup(UNBOUND_GROUP_ID)}
+              <Menu
+                label="排列方式"
+                trigger={
+                  <IconButton label={`排列方式：${mode === 'agent' ? '按智能体' : '最近活动'}`}>
+                    <ArrowUpDown size={15} />
+                  </IconButton>
+                }
+                items={[
+                  { heading: '排列方式' },
+                  ...(['agent', 'recent'] as const).map((value) => ({
+                    key: value,
+                    label: value === 'agent' ? '按智能体' : '最近活动',
+                    icon: value === mode ? <Check size={14} /> : <span className={styles.menuSpacer} />,
+                    onSelect: () => setMode(value),
+                  })),
+                ]}
+              />
+            </div>
+          </>
+        }
+      >
+        <SelectionList
+          // Pins and collapsed groups move the selected row, so they are part of the key that re-measures it.
+          selectedKey={`${listMode}:${selectedId ?? ''}:${selectedConversationId ?? ''}:${view.pinnedChannelIds.join(',')}:${view.collapsedGroupIds.join(',')}:${String(filtering)}`}
+          accent={selectedAgent ? agentAccent(selectedAgent) : undefined}
+        >
+          {filtering && shown.length === 0 ? <p className={styles.noMatch}>没有符合条件的频道</p> : null}
+          {filtering ? null : (
+            <PinnedSection
+              pinned={pinned}
+              selectedId={selectedId}
+              selectedConversationId={selectedConversationId}
+              agentById={agentById}
+              connectionById={connectionById}
+              onViewChange={changeView}
+            />
+          )}
+          {listMode === 'recent' ? (
+            shown.map((channel) => (
+              <Fragment key={channel.id}>
+                <PlainRow
+                  channel={channel}
+                  agent={agentById.get(channel.agentId)}
+                  connection={connectionById.get(channel.connectionId)}
+                  selected={channel.id === selectedId && selectedConversationId === undefined}
+                  onViewChange={changeView}
+                />
+                <SubConversationRows channelId={channel.id} selectedConversationId={selectedConversationId} />
+              </Fragment>
+            ))
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={collision}
+              onDragStart={(event) => {
+                dragged.current = true
+                setActiveId(String(event.active.id))
+              }}
+              onDragOver={(event) => setOverId(event.over ? String(event.over.id) : '')}
+              onDragCancel={() => {
+                setActiveId('')
+                setOverId('')
+                swallowNextClick()
+              }}
+              onDragEnd={onDragEnd}
+              accessibility={{
+                screenReaderInstructions: {
+                  draggable: '按空格开始拖动，用方向键移动，再按空格放下，按 Esc 取消。跨智能体放下会先确认。',
+                },
+                announcements: {
+                  onDragStart: ({ active }) => `已拿起${dragLabel(String(active.id))}`,
+                  onDragOver: ({ active, over }) =>
+                    over
+                      ? `${dragLabel(String(active.id))}移到${dragLabel(String(over.id))}`
+                      : `${dragLabel(String(active.id))}不在可放下的位置`,
+                  onDragEnd: ({ active, over }) =>
+                    over
+                      ? `${dragLabel(String(active.id))}放在${dragLabel(String(over.id))}`
+                      : `${dragLabel(String(active.id))}已放回原处`,
+                  onDragCancel: ({ active }) => `已取消拖动${dragLabel(String(active.id))}`,
+                },
+              }}
             >
-              <SortableContext
-                items={tree.unbound.map((channel) => channelSortId(channel.id))}
-                strategy={verticalListSortingStrategy}
-              >
-                {tree.unbound.map((channel) => (
-                  <SortableRow
-                    key={channel.id}
-                    sortId={channelSortId(channel.id)}
-                    channel={channel}
-                    agent={undefined}
-                    connection={connectionById.get(channel.connectionId)}
-                    mode="agent"
-                    selected={channel.id === selectedId}
-                    pin={undefined}
-                    suppressClick={suppressClick}
-                    onViewChange={changeView}
-                  />
+              <SortableContext items={lists.agentIds.map(agentSortId)} strategy={verticalListSortingStrategy}>
+                {tree.agents.map((group) => (
+                  <AgentGroup
+                    key={group.agent.id}
+                    agent={group.agent}
+                    highlight={highlightAgent === group.agent.id}
+                    collapsed={collapsedIds.has(group.agent.id)}
+                    unread={unreadOf(group.channels)}
+                    onToggle={() => toggleGroup(group.agent.id)}
+                  >
+                    <SortableContext
+                      items={group.channels.map((channel) => channelSortId(channel.id))}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {group.channels.map((channel) => (
+                        <Fragment key={channel.id}>
+                          <SortableRow
+                            sortId={channelSortId(channel.id)}
+                            channel={channel}
+                            agent={group.agent}
+                            connection={connectionById.get(channel.connectionId)}
+                            mode="agent"
+                            selected={channel.id === selectedId && selectedConversationId === undefined}
+                            pin={undefined}
+                            suppressClick={suppressClick}
+                            onViewChange={changeView}
+                          />
+                          <SubConversationRows channelId={channel.id} selectedConversationId={selectedConversationId} />
+                        </Fragment>
+                      ))}
+                    </SortableContext>
+                  </AgentGroup>
                 ))}
               </SortableContext>
-            </UnboundGroup>
-            <DragOverlay
-              // Only a picture of the dragged row: during its drop animation it must not catch the next press.
-              style={{ pointerEvents: 'none' }}
-              dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}
-            >
-              {activeChannel ? (
-                <div className={styles.dragOverlay}>{activeChannel.name}</div>
-              ) : activeAgent ? (
-                <div className={styles.dragOverlay}>{activeAgent.name}</div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-        )}
-      </SelectionList>
-      <BindDialog intent={intent} onClose={() => setIntent(null)} />
-    </ListPane>
+              <UnboundGroup
+                count={tree.unbound.length}
+                highlight={highlightUnbound}
+                collapsed={collapsedIds.has(UNBOUND_GROUP_ID)}
+                unread={unreadOf(tree.unbound)}
+                onToggle={() => toggleGroup(UNBOUND_GROUP_ID)}
+              >
+                <SortableContext
+                  items={tree.unbound.map((channel) => channelSortId(channel.id))}
+                  strategy={verticalListSortingStrategy}
+                >
+                  {tree.unbound.map((channel) => (
+                    <SortableRow
+                      key={channel.id}
+                      sortId={channelSortId(channel.id)}
+                      channel={channel}
+                      agent={undefined}
+                      connection={connectionById.get(channel.connectionId)}
+                      mode="agent"
+                      selected={channel.id === selectedId}
+                      pin={undefined}
+                      suppressClick={suppressClick}
+                      onViewChange={changeView}
+                    />
+                  ))}
+                </SortableContext>
+              </UnboundGroup>
+              <DragOverlay
+                // Only a picture of the dragged row: during its drop animation it must not catch the next press.
+                style={{ pointerEvents: 'none' }}
+                dropAnimation={{ duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }}
+              >
+                {activeChannel ? (
+                  <div className={styles.dragOverlay}>{activeChannel.name}</div>
+                ) : activeAgent ? (
+                  <div className={styles.dragOverlay}>{activeAgent.name}</div>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
+          )}
+        </SelectionList>
+        <BindDialog intent={intent} onClose={() => setIntent(null)} />
+        {phone ? (
+          <ActionSheet
+            open={actionsOpen && sheet !== undefined}
+            onOpenChange={setActionsOpen}
+            title={sheet?.title ?? ''}
+            items={sheet?.items ?? []}
+            page={actionsPage}
+            {...(sheet?.onBack ? { onBack: sheet.onBack } : {})}
+            {...(actions?.lift ? { lift: actions.lift } : {})}
+          />
+        ) : null}
+      </ListPane>
+    </RowActionsContext.Provider>
   )
 }

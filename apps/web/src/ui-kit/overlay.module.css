@@ -533,7 +533,9 @@
   left: 0;
   z-index: 51;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   max-height: calc(var(--viewport-height, 100dvh) - var(--chrome-top));
+  overflow: hidden;
   --sheet-bottom: max(var(--s-2), var(--safe-bottom));
 
   padding: 0 var(--safe-right) var(--sheet-bottom) var(--safe-left);
@@ -571,9 +573,81 @@
 .actionSheetTitle {
   margin: 0;
   padding: var(--s-1) var(--s-4) var(--s-2);
+  overflow: hidden;
   color: var(--muted);
   font: var(--t-caption);
   text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One set of choices; a new set slides in from the side it comes from (onward from the right, back from the left). */
+.actionSheetPage {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.actionSheetPage[data-switched='true'] {
+  animation: actionSheetPageIn var(--dur-2) var(--ease) both;
+}
+
+.actionSheetPage[data-back='true'] {
+  --page-from: -16px;
+}
+
+/* A back button before the title; the title stays centred over the panel. */
+.actionSheetHead[data-back-button='true'] {
+  display: grid;
+  grid-template-columns: var(--control-lg) minmax(0, 1fr) var(--control-lg);
+  align-items: center;
+  padding: 0 var(--s-2);
+}
+
+.actionSheetHead[data-back-button='true'] > button {
+  color: var(--muted);
+}
+
+.actionSheetHead[data-back-button='true'] > .actionSheetTitle {
+  padding: var(--s-1) 0 var(--s-2);
+}
+
+.actionSheetLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actionSheetItem svg.actionSheetMore {
+  width: 18px;
+  height: 18px;
+  color: var(--faint);
+}
+
+/*
+ * The pressed row, raised over the dim while its sheet is open: a card in the row's own place, lifted by its shadow
+ * and moved up when the sheet would cover it. It settles back as the sheet closes.
+ */
+.actionSheetLift {
+  position: fixed;
+  z-index: 50;
+  overflow: hidden;
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  pointer-events: none;
+  transform: translateY(var(--lift-shift, 0px)) scale(1.02);
+  transition: transform var(--dur-2) var(--ease);
+}
+
+.actionSheetLift[data-state='open'] {
+  animation: actionSheetLiftIn var(--dur-2) var(--ease) both;
+}
+
+.actionSheetLift[data-state='closed'] {
+  animation: actionSheetLiftOut var(--dur-1) var(--ease-in) both;
 }
 
 .actionSheetList {
@@ -603,6 +677,12 @@
   color: var(--muted);
 }
 
+/* After the item's own colours, which would otherwise win. */
+.actionSheetItem.menuDanger,
+.actionSheetItem.menuDanger svg {
+  color: var(--bad);
+}
+
 .actionSheetItem:active:not(:disabled) {
   background: var(--hover);
   transition-duration: 0s;
@@ -621,6 +701,31 @@
 @keyframes actionSheetOut {
   to {
     transform: translateY(100%);
+  }
+}
+
+@keyframes actionSheetPageIn {
+  from {
+    opacity: 0;
+    transform: translateX(var(--page-from, 16px));
+  }
+}
+
+/* Opaque from the first frame, in the page's colour, so the row beneath never shows through as it moves. */
+@keyframes actionSheetLiftIn {
+  from {
+    background: var(--bg);
+    box-shadow: none;
+    transform: none;
+  }
+}
+
+/* Back into its place, still opaque: fading while it moves would show the rows beneath through it. */
+@keyframes actionSheetLiftOut {
+  to {
+    background: var(--bg);
+    box-shadow: none;
+    transform: none;
   }
 }
 

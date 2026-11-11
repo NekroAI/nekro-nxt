@@ -171,7 +171,8 @@
   border-radius: 10px;
   color: var(--fg);
   text-decoration: none;
-  touch-action: none;
+  /* A finger scrolls the list and never drags; a held one opens the actions sheet (channel-list.tsx). */
+  touch-action: manipulation;
   transition: background var(--dur-1);
 }
 

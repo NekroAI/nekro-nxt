@@ -68,10 +68,10 @@ const expectClearOfChrome = async (page: Page, item: Locator) => {
   expect(box.y + box.height).toBeLessThanOrEqual(nav.y)
 }
 
-/** The product snapshot with unread messages in 记录员's channel (3) and the unbound one (4), arranged as `view`. */
-const arrangedSnapshot = (view: ListView): Snapshot => ({
-  ...productSnapshot,
-  channels: productSnapshot.channels.map((channel) => ({
+/** `base` with unread messages in 记录员's channel (3) and the unbound one (4), arranged as `view`. */
+const arrangedSnapshot = (view: ListView, base: Snapshot = productSnapshot): Snapshot => ({
+  ...base,
+  channels: base.channels.map((channel) => ({
     ...channel,
     activity: {
       ...channel.activity,
@@ -81,27 +81,39 @@ const arrangedSnapshot = (view: ListView): Snapshot => ({
   channelListView: view,
 })
 
+type WorkTreeOrder = Snapshot['workTreeOrder']
+
 /**
- * Serves the channel list arrangement like the host: a save comes back in the next snapshot. `writes` records every
- * other mutating request, so a test can show the list arrangement never touched bindings.
+ * Serves the channel list arrangement and the group order like the host: a save comes back in the next snapshot.
+ * `writes` records every other mutating request, so a test can show the arrangement never touched bindings.
  */
-const serveArrangement = async (page: Page, initial: ListView = emptyView) => {
+const serveArrangement = async (page: Page, initial: ListView = emptyView, base: Snapshot = productSnapshot) => {
   let view = initial
+  let order = base.workTreeOrder
   const saved: ListView[] = []
+  const orders: WorkTreeOrder[] = []
   const writes: string[] = []
   page.on('request', (request) => {
     const path = new URL(request.url()).pathname
-    if (request.method() !== 'GET' && path !== '/api/channel-list-view' && !path.endsWith('/read')) {
+    const arrangement = path === '/api/channel-list-view' || path === '/api/work-tree-order'
+    if (request.method() !== 'GET' && !arrangement && !path.endsWith('/read')) {
       writes.push(`${request.method()} ${path}`)
     }
   })
-  await page.route('**/api/snapshot', (route) => route.fulfill({ json: arrangedSnapshot(view) }))
+  await page.route('**/api/snapshot', (route) =>
+    route.fulfill({ json: arrangedSnapshot(view, { ...base, workTreeOrder: order }) }),
+  )
   await page.route('**/api/channel-list-view', (route) => {
     view = HostApiContracts.updateChannelListView.request.parse(route.request().postDataJSON())
     saved.push(view)
     return route.fulfill({ json: view })
   })
-  return { saved, writes }
+  await page.route('**/api/work-tree-order', (route) => {
+    order = HostApiContracts.putWorkTreeOrder.request.parse(route.request().postDataJSON())
+    orders.push(order)
+    return route.fulfill({ json: order })
+  })
+  return { saved, orders, writes }
 }
 
 const dragTo = async (page: Page, source: Locator, target: Locator): Promise<void> => {
@@ -787,7 +799,7 @@ test.describe('shell, channels and live', () => {
 
       await bar.getByRole('button', { name: '返回频道列表' }).click()
       const list = page.getByRole('complementary', { name: '频道', exact: true })
-      const group = list.locator('[aria-roledescription="可拖动的智能体分组"]', { hasText: '一个名字特别特别长' })
+      const group = list.locator('button[class*="groupHead"]', { hasText: '一个名字特别特别长' })
       await expect(group).toBeVisible()
       expect(await cutOnOneLine(group.getByText(/一个名字特别特别长/u))).toBe(true)
       const state = group.getByText('空闲', { exact: true })
@@ -1140,8 +1152,8 @@ test.describe('shell, channels and live', () => {
       const { bar, back } = topBar(page)
       const nav = page.getByRole('navigation', { name: '主导航' })
       const list = page.getByRole('complementary', { name: '频道', exact: true })
-      // The list is the first level: no conversation opens by itself. Rows here are draggable, hence buttons.
-      const sortable = list.getByRole('button', { name: /^资料员的内置频道 内置频道/u })
+      // The list is the first level: no conversation opens by itself. A finger does not drag, so rows stay links.
+      const sortable = list.getByRole('link', { name: /^资料员的内置频道 内置频道/u })
       await expect(sortable).toBeVisible()
       await page.waitForTimeout(300)
       await expect(page).toHaveURL(/\/channels$/u)
@@ -1223,6 +1235,241 @@ test.describe('shell, channels and live', () => {
       await expect(page).toHaveURL(new RegExp(`/channels/${targetChannelId}$`, 'u'))
       await page.goBack()
       await expect(page).toHaveURL(/\/channels$/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  /** A finger on the page through CDP touch events: Playwright's tap cannot hold still or slide. */
+  const finger = async (page: Page) => {
+    const session = await page.context().newCDPSession(page)
+    const send = (type: 'touchStart' | 'touchMove' | 'touchEnd', point?: { x: number; y: number }) =>
+      session.send('Input.dispatchTouchEvent', { type, touchPoints: point ? [point] : [] })
+    const centre = async (target: Locator) => {
+      const box = await target.boundingBox()
+      if (!box) throw new Error('The touch target has no box.')
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+    // The open one: a sheet just chosen from is still leaving while the next press begins.
+    const sheet = page.locator('[role="dialog"][data-state="open"]')
+    return {
+      sheet,
+      /** Slides up from `target`'s centre by `distance` in small steps, then lifts. */
+      swipe: async (target: Locator, distance: number) => {
+        const { x, y } = await centre(target)
+        await send('touchStart', { x, y })
+        for (let step = 1; step <= 8; step++) await send('touchMove', { x, y: y - (step * distance) / 8 })
+        await send('touchEnd')
+      },
+      /**
+       * Rests on `target` until its actions sheet is up, then lifts. Waiting for the sheet rather than a fixed time
+       * keeps the hold long enough however busy the machine is.
+       */
+      hold: async (target: Locator) => {
+        // A sheet just chosen from still dims the page as it leaves and would take the press.
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        await send('touchStart', await centre(target))
+        await expect(sheet).toBeVisible()
+        await send('touchEnd')
+      },
+    }
+  }
+
+  /** The channel ids of the rows inside `scope`, in order. */
+  const rowIds = (scope: Locator) =>
+    scope
+      .locator('a[href^="/channels/"]')
+      .evaluateAll((links) => links.map((link) => link.getAttribute('href')?.split('/').at(-1) ?? ''))
+
+  test('on a phone a finger scrolls the channel list, and a held row opens its actions instead of the conversation', async () => {
+    const { page, errors } = await open('/channels', { width: 393, touch: true, snapshot: crowdedSnapshot })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const row = list.locator('a[href^="/channels/"]').filter({ hasText: /^示例群 3(?!\d)/u })
+      await expect(row).toBeVisible()
+      // A finger never drags, so the rows do not offer it.
+      await expect(list.locator('[aria-roledescription]')).toHaveCount(0)
+      const touch = await finger(page)
+      const scrolled = () =>
+        list.evaluate((node) => Math.max(...[node, ...node.querySelectorAll('*')].map((item) => item.scrollTop)))
+
+      // Resting on a row opens its actions; letting go stays on the list.
+      await touch.hold(row)
+      await expect(touch.sheet).toHaveAccessibleName('示例群 3')
+      await page.waitForTimeout(300)
+      await expect(touch.sheet).toBeVisible()
+      await expect(page).toHaveURL(/\/channels$/u)
+      // Android's long-press menu for the link does not open.
+      expect(
+        await row.evaluate(
+          (node) => !node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })),
+        ),
+      ).toBe(true)
+      // An unbound row: it moves within 未接线, pins, and can be given to an agent; there is nothing to unbind.
+      await expect(touch.sheet.getByRole('button')).toHaveText(['上移', '下移', '置顶', '接到智能体…'])
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+
+      // A swipe that starts on a row moves the list and opens nothing, even after a hold's worth of waiting.
+      await touch.swipe(row, 160)
+      await expect.poll(scrolled).toBeGreaterThan(40)
+      await page.waitForTimeout(800)
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(page).toHaveURL(/\/channels$/u)
+      // A tap still opens the conversation.
+      await row.tap()
+      await expect(page).toHaveURL(/\/channels\/chn_crowd02$/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone the actions sheet moves rows and groups one step and saves like a drag', async () => {
+    let arrangement: Awaited<ReturnType<typeof serveArrangement>> | undefined
+    const { page, errors } = await open('/channels', {
+      width: 393,
+      touch: true,
+      snapshot: crowdedSnapshot,
+      before: async (target) => {
+        arrangement = await serveArrangement(target, emptyView, crowdedSnapshot)
+      },
+    })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const touch = await finger(page)
+      const unbound = list.getByRole('button', { name: '收起「未接线」' }).locator('../..')
+      await expect(list.getByText('示例群 1', { exact: true })).toBeVisible()
+      const firstThree = async () => (await rowIds(unbound)).slice(0, 3)
+      const [one, two] = ['chn_crowd00', 'chn_crowd01']
+      expect(await firstThree()).toEqual([externalChannelId, one, two])
+
+      // The first row of a group cannot move up.
+      await touch.hold(list.locator('a[href^="/channels/"]', { hasText: '产品讨论群' }))
+      await expect(touch.sheet.getByRole('button', { name: '上移' })).toHaveCount(0)
+      await touch.sheet.getByRole('button', { name: '下移' }).click()
+      await expect(touch.sheet).toHaveCount(0)
+      await expect.poll(firstThree).toEqual([one, externalChannelId, two])
+      await expect
+        .poll(() => arrangement?.orders.at(-1)?.unboundChannelIds.slice(0, 2))
+        .toEqual([one, externalChannelId])
+
+      await touch.hold(list.locator('a[href^="/channels/"]', { hasText: /^示例群 2(?!\d)/u }))
+      await touch.sheet.getByRole('button', { name: '上移' }).click()
+      await expect.poll(firstThree).toEqual([one, two, externalChannelId])
+
+      // A held agent name offers moving its group; the last group cannot move down.
+      const groupHead = (name: string) => list.locator('button[class*="groupHead"]', { hasText: name })
+      const groupOrder = () =>
+        list
+          .locator('button[class*="groupHead"] [class*="groupName"]')
+          .evaluateAll((nodes) => nodes.map((node) => node.textContent))
+      const before = await groupOrder()
+      expect(before).toHaveLength(2)
+      await touch.hold(groupHead(before[0] ?? ''))
+      await expect(touch.sheet).toHaveAccessibleName(before[0] ?? '')
+      await expect(touch.sheet.getByRole('button')).toHaveText(['下移'])
+      await touch.sheet.getByRole('button', { name: '下移' }).click()
+      await expect.poll(groupOrder).toEqual([before[1], before[0]])
+      await expect
+        .poll(() => arrangement?.orders.at(-1)?.agentIds)
+        .toEqual(
+          [...before].reverse().map((name) => crowdedSnapshot.agents.find((agent) => agent.displayName === name)?.id),
+        )
+      // Letting go of the held name did not open the agent, and a tap still does.
+      await expect(page).toHaveURL(/\/channels$/u)
+      await groupHead('资料员').tap()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}`, 'u'))
+      expect(arrangement?.writes).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone the actions sheet gives a channel to another agent or unbinds it through the confirmation', async () => {
+    const { page, errors } = await open('/channels', { width: 393, touch: true })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const touch = await finger(page)
+      const row = list.locator(`a[href="/channels/${sourceChannelId}"]`)
+      await touch.hold(row)
+      // One channel in its group: nothing to move it past.
+      await expect(touch.sheet.getByRole('button')).toHaveText(['置顶', '移到其他智能体…', '解除接线'])
+      await touch.sheet.getByRole('button', { name: '移到其他智能体…' }).click()
+      // The same panel lists the other agents, with a way back.
+      await expect(touch.sheet).toHaveAccessibleName('移到其他智能体')
+      await expect(touch.sheet.getByRole('button', { name: '资料员' })).toBeVisible()
+      await expect(touch.sheet.getByRole('button', { name: '记录员' })).toHaveCount(0)
+      await touch.sheet.getByRole('button', { name: '返回' }).click()
+      await expect(touch.sheet).toHaveAccessibleName('记录员的内置频道')
+      await touch.sheet.getByRole('button', { name: '移到其他智能体…' }).click()
+      await touch.sheet.getByRole('button', { name: '资料员' }).click()
+      const rebind = page.getByRole('dialog', { name: '让资料员响应「记录员的内置频道」' })
+      await expect(rebind).toBeVisible()
+      await rebind.getByRole('button', { name: '取消' }).click()
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+
+      // The more button opens the same sheet, for one tap and for screen readers.
+      await list.getByRole('button', { name: '记录员的内置频道 的更多操作' }).tap()
+      await expect(touch.sheet).toHaveAccessibleName('记录员的内置频道')
+      await touch.sheet.getByRole('button', { name: '解除接线' }).click()
+      const unbind = page.getByRole('dialog', { name: '断开「记录员的内置频道」与记录员？' })
+      await expect(unbind).toBeVisible()
+      await unbind.getByRole('button', { name: '取消' }).click()
+      await expect(page).toHaveURL(/\/channels$/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone the actions sheet pins, reorders pins and unpins, also from search results', async () => {
+    let arrangement: Awaited<ReturnType<typeof serveArrangement>> | undefined
+    const { page, errors } = await open('/channels', {
+      width: 393,
+      touch: true,
+      before: async (target) => {
+        arrangement = await serveArrangement(target)
+      },
+    })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const pinned = list.getByRole('group', { name: '置顶' })
+      const touch = await finger(page)
+      const row = (scope: Locator, id: string) => scope.locator(`a[href="/channels/${id}"]`)
+
+      await touch.hold(row(list, sourceChannelId))
+      await touch.sheet.getByRole('button', { name: '置顶', exact: true }).click()
+      await expect(row(pinned, sourceChannelId)).toBeVisible()
+
+      // A search result offers the same, for whatever applies to it there.
+      const search = list.getByRole('searchbox', { name: '搜索频道' })
+      await search.fill('产品')
+      await touch.hold(row(list, externalChannelId))
+      await expect(touch.sheet.getByRole('button')).toHaveText(['置顶', '接到智能体…'])
+      await touch.sheet.getByRole('button', { name: '置顶', exact: true }).click()
+      await search.fill('')
+      await expect.poll(() => rowIds(pinned)).toEqual([sourceChannelId, externalChannelId])
+
+      // Pinned rows move among the pins only.
+      await touch.hold(row(pinned, externalChannelId))
+      await expect(touch.sheet.getByRole('button', { name: '下移' })).toHaveCount(0)
+      await touch.sheet.getByRole('button', { name: '上移' }).click()
+      await expect.poll(() => rowIds(pinned)).toEqual([externalChannelId, sourceChannelId])
+      await expect
+        .poll(() => arrangement?.saved.at(-1))
+        .toEqual({ pinnedChannelIds: [externalChannelId, sourceChannelId], collapsedGroupIds: [] })
+
+      await touch.hold(row(pinned, sourceChannelId))
+      await touch.sheet.getByRole('button', { name: '取消置顶' }).click()
+      await touch.hold(row(pinned, externalChannelId))
+      await touch.sheet.getByRole('button', { name: '取消置顶' }).click()
+      await expect(pinned).toHaveCount(0)
+      await expect.poll(() => arrangement?.saved.at(-1)).toEqual(emptyView)
+      await expect(page).toHaveURL(/\/channels$/u)
+      expect(arrangement?.writes).toEqual([])
       expect(errors).toEqual([])
     } finally {
       await page.close()

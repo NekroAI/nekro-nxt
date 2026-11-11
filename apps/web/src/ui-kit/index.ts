@@ -50,6 +50,8 @@ export {
   InfoTip,
   Toaster,
   toast,
+  type ActionSheetEntry,
+  type ActionSheetLift,
   type MenuEntry,
 } from './overlay.js'
 export {
