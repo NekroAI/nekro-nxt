@@ -23,6 +23,7 @@ import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-sh
 import { HOST_ICONS } from '../../extension-ui/icons.js'
 import { useProductStore, type ProductHostStatus } from '../../product-runtime.js'
 import { Kbd, Menu, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
+import { removeBootSplash } from '../../boot-splash.js'
 import { AttentionList } from '../attention/attention-list.js'
 import { bellStore, useBell } from '../attention/bell.js'
 import { useAttention } from '../model/attention.js'
@@ -506,6 +507,9 @@ export function AppShell() {
   const location = useLocation()
   const space = spaceOf(location.pathname)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  useEffect(() => {
+    removeBootSplash()
+  }, [])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {

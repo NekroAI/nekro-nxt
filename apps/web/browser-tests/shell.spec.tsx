@@ -332,6 +332,28 @@ test.describe('shell, channels and live', () => {
     return { page, errors }
   }
 
+  test('the boot splash covers the page until the shell renders, then leaves the DOM', async () => {
+    const { page, errors } = await open('/live', {
+      // Keep the app's entry module from loading so the page shows only what index.html paints.
+      before: async (held) => {
+        await held.route('**/src/main.tsx', (request) => request.abort())
+      },
+    })
+    try {
+      const splash = page.locator('#boot-splash')
+      await expect(splash).toBeVisible()
+      await expect(splash).toHaveAttribute('aria-label', '正在加载 NekroNXT')
+      await page.unroute('**/src/main.tsx')
+      errors.length = 0
+      await page.reload()
+      await expect(page.locator('header').first()).toBeVisible()
+      await expect(splash).toHaveCount(0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('keeps top-bar controls clear of the native window-control insets', async () => {
     const left = 84
     const right = 138

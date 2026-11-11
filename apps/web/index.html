@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
     />
-    <!-- The top bar's color (--side in tokens.css) per system scheme; the app replaces both with its chosen theme. -->
+    <!-- The top bar's color (--side in tokens.css) per system scheme; the script below and the app replace both with the chosen theme. -->
     <meta name="theme-color" content="#eceef2" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0e1a2c" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
@@ -24,9 +24,188 @@
     <meta property="og:image" content="/brand/social-card.png" />
     <link rel="mask-icon" href="/pinned-tab.svg" color="#172a45" />
     <title>NekroNXT</title>
+    <!-- Runs before the first paint: the theme the app will choose (the rule of theme-preference.ts), without saving it. -->
+    <script>
+      ;(function () {
+        var root = document.documentElement
+        var theme = null
+        try {
+          theme = window.localStorage.getItem('nekro-nxt.theme')
+        } catch (error) {
+          theme = null
+        }
+        if (theme !== 'light' && theme !== 'dark') {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        }
+        root.setAttribute('data-theme', theme)
+        if (theme === 'dark') root.classList.add('dark')
+        else root.classList.remove('dark')
+        var side = theme === 'dark' ? '#0e1a2c' : '#eceef2'
+        var metas = document.querySelectorAll('meta[name="theme-color"]')
+        for (var i = 0; i < metas.length; i++) metas[i].setAttribute('content', side)
+      })()
+    </script>
+    <!-- The first screen before any stylesheet or module loads; colors repeat tokens.css (--bg, --focus, --muted). -->
+    <style>
+      html {
+        background: #f3f1ec;
+        --boot-focus: #0b73b4;
+        --boot-focus-track: rgb(11 115 180 / 0.16);
+        --boot-muted: #566275;
+      }
+      html[data-theme='dark'] {
+        background: #0b1524;
+        --boot-focus: #6bc3f4;
+        --boot-focus-track: rgb(107 195 244 / 0.16);
+        --boot-muted: #8e9bb0;
+      }
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f3f1ec;
+        transition: opacity 180ms ease;
+      }
+      html[data-theme='dark'] #boot-splash {
+        background: #0b1524;
+      }
+      #boot-splash.boot-splash-leaving {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #boot-splash .boot-stack {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+      }
+      #boot-splash .boot-logo {
+        width: 72px;
+        height: 72px;
+        border-radius: 18px;
+        animation: boot-logo-in 240ms ease-out both;
+      }
+      #boot-splash .boot-bar {
+        position: relative;
+        width: 96px;
+        height: 2px;
+        border-radius: 2px;
+        overflow: hidden;
+        background: var(--boot-focus-track);
+        opacity: 0;
+        animation: boot-fade-in 200ms ease-out 500ms both;
+      }
+      #boot-splash .boot-bar::after {
+        content: '';
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 40%;
+        border-radius: 2px;
+        background: var(--boot-focus);
+        animation: boot-slide 1.2s ease-in-out 500ms infinite;
+      }
+      #boot-splash .boot-slow {
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-top: 16px;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        white-space: nowrap;
+        font:
+          14px/1.5 system-ui,
+          -apple-system,
+          'PingFang SC',
+          'Microsoft YaHei',
+          sans-serif;
+        color: var(--boot-muted);
+      }
+      #boot-splash .boot-slow button {
+        font: inherit;
+        color: var(--boot-focus);
+        background: none;
+        border: 1px solid var(--boot-focus);
+        border-radius: 8px;
+        padding: 6px 16px;
+      }
+      @keyframes boot-logo-in {
+        from {
+          opacity: 0;
+          transform: scale(0.96);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      @keyframes boot-fade-in {
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes boot-slide {
+        from {
+          transform: translateX(-100%);
+        }
+        to {
+          transform: translateX(250%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-splash .boot-logo {
+          animation: none;
+        }
+        #boot-splash .boot-bar {
+          opacity: 1;
+          animation: none;
+        }
+        #boot-splash .boot-bar::after {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-splash" role="status" aria-label="正在加载 NekroNXT">
+      <div class="boot-stack">
+        <img class="boot-logo" src="/apple-touch-icon.png" width="72" height="72" alt="" />
+        <div class="boot-bar"></div>
+      </div>
+    </div>
+    <script>
+      ;(function () {
+        var splash = document.getElementById('boot-splash')
+        if (!splash) return
+        var timer = setTimeout(function () {
+          var stack = splash.querySelector('.boot-stack')
+          if (!stack || splash.classList.contains('boot-splash-leaving') || stack.querySelector('.boot-slow')) return
+          var slow = document.createElement('div')
+          slow.className = 'boot-slow'
+          var text = document.createElement('span')
+          text.textContent = '仍在加载，网络可能较慢'
+          var button = document.createElement('button')
+          button.type = 'button'
+          button.textContent = '重新加载'
+          button.addEventListener('click', function () {
+            location.reload()
+          })
+          slow.appendChild(text)
+          slow.appendChild(button)
+          stack.appendChild(slow)
+        }, 12000)
+        splash.addEventListener('transitionend', function () {
+          clearTimeout(timer)
+        })
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
