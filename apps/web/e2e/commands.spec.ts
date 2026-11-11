@@ -183,11 +183,20 @@ test('production command journey: authorization, completion, denial, delivery fa
     await commandSettings.getByRole('button', { name: '显示全部命令' }).click()
     const echoUsage = commandSettings.locator('code').filter({ hasText: ':echo' })
     await expect(echoUsage).toBeVisible()
-    const usageBox = await echoUsage.boundingBox()
-    const controlBox = await commandSettings.getByRole('combobox', { name: /echo 权限$/u }).boundingBox()
+    // The list re-renders while catalog updates arrive, so a box read right after it shows can miss the element.
+    let usageBox = await echoUsage.boundingBox()
+    let controlBox = await commandSettings.getByRole('combobox', { name: /echo 权限$/u }).boundingBox()
+    await expect
+      .poll(async () => {
+        usageBox = await echoUsage.boundingBox()
+        controlBox = await commandSettings.getByRole('combobox', { name: /echo 权限$/u }).boundingBox()
+        return usageBox !== null && controlBox !== null
+      })
+      .toBe(true)
+    if (usageBox === null || controlBox === null) throw new Error('命令设置没有显示出来。')
     // Each command stacks its settings under its description, and the narrow inspector never scrolls sideways.
-    expect(usageBox!.width).toBeGreaterThan(80)
-    expect(controlBox!.y).toBeGreaterThanOrEqual(usageBox!.y + usageBox!.height)
+    expect(usageBox.width).toBeGreaterThan(80)
+    expect(controlBox.y).toBeGreaterThanOrEqual(usageBox.y + usageBox.height)
     expect(await commandSettings.evaluate((section) => section.scrollWidth <= section.clientWidth + 1)).toBe(true)
     await echoUsage.scrollIntoViewIfNeeded()
     await page.screenshot({ path: testInfo.outputPath('inspector-layout.png'), fullPage: true })
@@ -314,6 +323,10 @@ test('production command journey: authorization, completion, denial, delivery fa
     await expect(page.getByText(/未知命令：\/echo/).first()).toBeVisible()
     await expect(page.locator('#root')).not.toBeEmpty()
     expect(errors).toEqual([])
+  } catch (error) {
+    // The Host's own output explains dropped connections and restarts that the browser side only sees as resets.
+    await testInfo.attach('host-output.txt', { body: server.diagnostics(), contentType: 'text/plain' })
+    throw error
   } finally {
     await context.close()
     await platform.stop()
