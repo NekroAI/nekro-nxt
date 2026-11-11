@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Plain HTTP stays possible because some instances are only reachable that way; the connect screen makes the user
+  confirm the risk first. Self-signed instances are pinned in code, not trusted here.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

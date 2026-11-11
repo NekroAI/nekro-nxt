@@ -1,0 +1,56 @@
+name: Android
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['apps/android/**', '.github/workflows/android.yml']
+  push:
+    branches: [main]
+    paths: ['apps/android/**', '.github/workflows/android.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Development build (package ai.nekro.nxt.dev). Signed with the repository's development key when the secrets are
+  # available, so successive builds install over each other; pull requests from forks get the runner's debug key.
+  dev-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Development signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_DEV_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/dev.keystore"
+            echo "NXT_ANDROID_DEV_KEYSTORE=$RUNNER_TEMP/dev.keystore" >> "$GITHUB_ENV"
+          fi
+      - run: ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+        env:
+          NXT_ANDROID_DEV_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEV_KEYSTORE_PASSWORD }}
+          NXT_ANDROID_DEV_KEY_ALIAS: ${{ secrets.ANDROID_DEV_KEY_ALIAS }}
+          NXT_ANDROID_DEV_KEY_PASSWORD: ${{ secrets.ANDROID_DEV_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nekro-nxt-android-dev
+          path: apps/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-lint-report
+          path: apps/android/app/build/reports/

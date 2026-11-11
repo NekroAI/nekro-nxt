@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Nxt" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/nxt_canvas</item>
+        <item name="android:colorAccent">@color/nxt_accent</item>
+        <item name="android:textColorPrimary">@color/nxt_text</item>
+        <item name="android:textColorSecondary">@color/nxt_text_secondary</item>
+    </style>
+</resources>

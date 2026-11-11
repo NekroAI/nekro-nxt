@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="56dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="24dp">
+
+        <ImageView
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:contentDescription="@null"
+            android:src="@mipmap/ic_launcher" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="连接实例"
+            android:textColor="@color/nxt_text"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <TextView
+            style="@style/Nxt.Note"
+            android:text="填写你的 NekroNXT 实例地址。在外面使用需要实例能从公网访问。" />
+
+        <TextView style="@style/Nxt.Label" android:text="地址" />
+
+        <EditText
+            android:id="@+id/address"
+            style="@style/Nxt.Field"
+            android:autofillHints="url"
+            android:hint="例如 nxt.example.com"
+            android:imeOptions="actionGo"
+            android:inputType="textUri" />
+
+        <LinearLayout
+            android:id="@+id/keySection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/found"
+                style="@style/Nxt.Note"
+                android:layout_marginTop="12dp" />
+
+            <CheckBox
+                android:id="@+id/acceptInsecure"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="我了解连接未加密的风险"
+                android:textColor="@color/nxt_text"
+                android:visibility="gone" />
+
+            <TextView style="@style/Nxt.Label" android:text="管理密钥" />
+
+            <EditText
+                android:id="@+id/managementKey"
+                style="@style/Nxt.Field"
+                android:autofillHints="password"
+                android:hint="实例的管理密钥"
+                android:imeOptions="actionDone"
+                android:inputType="textPassword" />
+
+            <TextView
+                style="@style/Nxt.Note"
+                android:text="管理密钥只用这一次，不会保存在手机上。连接后这台手机会出现在实例的「登录设备」里。" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/error"
+            style="@style/Nxt.Note"
+            android:layout_marginTop="16dp"
+            android:textColor="@color/nxt_danger"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/primary"
+            style="@style/Nxt.PrimaryButton"
+            android:text="下一步" />
+
+        <ProgressBar
+            android:id="@+id/progress"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="16dp"
+            android:indeterminateTint="@color/nxt_accent"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/savedSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView style="@style/Nxt.Label" android:layout_marginTop="32dp" android:text="已连接的实例" />
+
+            <LinearLayout
+                android:id="@+id/savedList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

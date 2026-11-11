@@ -16,6 +16,9 @@ export default tseslint.config(
       'packages/*/lib/**',
       'node_modules/**',
       'prototype/**',
+      // Gradle output of the Android shell (reports, intermediates).
+      'apps/android/**/build/**',
+      'apps/android/.gradle/**',
     ],
   },
   eslint.configs.recommended,

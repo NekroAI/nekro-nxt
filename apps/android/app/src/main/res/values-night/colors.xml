@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="nxt_canvas">#0B1524</color>
+    <color name="nxt_surface">#12223A</color>
+    <color name="nxt_text">#EEF2F8</color>
+    <color name="nxt_text_secondary">#8E9BB0</color>
+    <color name="nxt_line">#26BED2F0</color>
+    <color name="nxt_accent">#A3BAE2</color>
+    <color name="nxt_on_accent">#0B1524</color>
+    <color name="nxt_danger">#F97066</color>
+</resources>

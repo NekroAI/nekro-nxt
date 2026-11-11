@@ -1,5 +1,6 @@
 # Apps
 
+- [`android`](android/README.md)：Android 薄壳，系统 WebView 加载实例的 Web，负责设备配对、证书指纹、返回手势、文件选择与下载；
 - [`desktop`](desktop/README.md)：启动同包 Server 生产入口并加载同包 Web dist 的 Electron 完整本地宿主；
 - [`server`](server/README.md)：生产 DSH Host roster、真实 Agent Loop、Episode handoff 与 Channel Runtime 适配层；
 - `web`：NekroNXT Shell、Host UI 页面 Runtime、DSH Settings 与 Cordis Config 通用 Schema 表单、动态创造 Client Runtime，以及智能体/Adapter 产品 Slot。DSH 原生 WebUI、侧栏、Composer 和页面 Slot 不加载；DSH 包只有显式 `nekroNxt.hostUi` 才能贡献 NXT 页面。

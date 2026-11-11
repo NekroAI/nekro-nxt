@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The web's maskable icon keeps its art inside the middle 80%; inset to the 72dp an adaptive icon always shows. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/brand_mark"
+    android:inset="16.67%" />

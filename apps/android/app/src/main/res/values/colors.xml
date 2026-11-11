@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same values as the web tokens (apps/web/src/ui-kit/tokens.css), so the shell and the page read as one app. -->
+<resources>
+    <color name="nxt_canvas">#F3F1EC</color>
+    <color name="nxt_surface">#FFFEFB</color>
+    <color name="nxt_text">#14243D</color>
+    <color name="nxt_text_secondary">#566275</color>
+    <color name="nxt_line">#29172A45</color>
+    <color name="nxt_accent">#3F5B8F</color>
+    <color name="nxt_on_accent">#FFFFFF</color>
+    <color name="nxt_danger">#B42318</color>
+    <!-- Edge color of apps/web/public/pwa-maskable-512.png. -->
+    <color name="nxt_icon_background">#172A45</color>
+</resources>
