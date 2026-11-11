@@ -11,12 +11,14 @@ const harnessModule = `
   import React, { useState } from 'react'
   import { createRoot } from 'react-dom/client'
   import { installStableCursorIntent } from '/src/cursor-stability.ts'
+  import { installOverlayBack } from '/src/overlay-back.ts'
   import {
     Button, ConfirmDialog, Dialog, IconButton, Popover, Segmented, Select, Sheet, Toaster, TooltipProvider, toast,
   } from '/src/ui-kit/index.ts'
   import '/src/ui-kit/tokens.css'
 
   installStableCursorIntent()
+  installOverlayBack()
   document.documentElement.dataset.ui = 'next'
 
   function Harness() {
@@ -215,6 +217,22 @@ test.describe('ui-kit browser behaviour', () => {
     await page.keyboard.press('Escape')
     await expect(panel).toHaveCount(0)
     await expect(trigger).toBeFocused()
+  })
+
+  test('system back closes the top overlay first and passes on once none is open', async () => {
+    const back = () => page.evaluate(() => (window as { nekroShellBack?: () => boolean }).nekroShellBack?.() ?? null)
+    expect(await back()).toBe(false)
+    await page.locator('#popover-trigger').click()
+    const panel = page.getByRole('dialog', { name: '需要关注' })
+    await expect(panel).toBeVisible()
+    expect(await back()).toBe(true)
+    await expect(panel).toHaveCount(0)
+    await page.locator('#open-dialog').click()
+    await expect(page.getByRole('dialog', { name: '测试对话框' })).toBeVisible()
+    expect(await back()).toBe(true)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    expect(await back()).toBe(false)
+    expect(browserErrors).toEqual([])
   })
 
   test('notifications of one group replace each other, announce themselves and close by hand', async () => {

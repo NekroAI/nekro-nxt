@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { NextApp } from './app/next-app.js'
 import { installStableCursorIntent } from './cursor-stability.js'
 import { installKeyboardViewport } from './keyboard-viewport.js'
+import { installOverlayBack } from './overlay-back.js'
 import { registerServiceWorker } from './service-worker.js'
 import { createProductRuntime, ProductRuntimeProvider } from './product-runtime.js'
 import { applyThemeChoice, readInitialThemeChoice } from './theme-preference.js'
@@ -15,6 +16,7 @@ document.documentElement.dataset['reducedMotion'] = String(reducedMotion)
 document.documentElement.dataset['nxtMotion'] = reducedMotion ? 'off' : 'on'
 const disposeStableCursorIntent = installStableCursorIntent()
 const disposeKeyboardViewport = installKeyboardViewport()
+const disposeOverlayBack = installOverlayBack()
 void registerServiceWorker()
 
 const root = document.querySelector('#root')
@@ -37,5 +39,6 @@ createRoot(root).render(
 window.addEventListener('beforeunload', () => {
   disposeStableCursorIntent()
   disposeKeyboardViewport()
+  disposeOverlayBack()
   unsubscribeHost()
 })
