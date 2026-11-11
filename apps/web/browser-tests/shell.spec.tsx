@@ -1153,12 +1153,15 @@ test.describe('shell, channels and live', () => {
       const bar = bottomBar(page)
       await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
       await page.evaluate(() => {
-        const original = history.pushState.bind(history)
-        const pushed: string[] = []
-        Object.assign(window, { pushedForTest: pushed })
-        history.pushState = (...args: Parameters<History['pushState']>) => {
-          pushed.push(String(args[2]))
-          original(...args)
+        const navigated: string[] = []
+        Object.assign(window, { navigatedForTest: navigated })
+        // Entries the app writes with an address; the shell's own notes on an entry pass none.
+        for (const method of ['pushState', 'replaceState'] as const) {
+          const original = history[method].bind(history)
+          history[method] = (...args: Parameters<History['pushState']>) => {
+            if (args[2] !== undefined) navigated.push(`${method} ${String(args[2])}`)
+            original(...args)
+          }
         }
       })
       const workshop = await bar.center('工坊')
@@ -1172,8 +1175,9 @@ test.describe('shell, channels and live', () => {
       await expect(page).toHaveURL(/\/workshop/u)
       await expect(bar.item('工坊')).toHaveAttribute('aria-current', 'page')
       await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('工坊'), 0)
-      expect(await page.evaluate(() => (window as Window & { pushedForTest?: string[] }).pushedForTest)).toEqual([
-        '/workshop',
+      // One switch, in place of the overview's entry (05 §6.2: the bottom bar adds no history).
+      expect(await page.evaluate(() => (window as Window & { navigatedForTest?: string[] }).navigatedForTest)).toEqual([
+        'replaceState /workshop',
       ])
       expect(errors).toEqual([])
     } finally {
@@ -1716,6 +1720,266 @@ test.describe('shell, channels and live', () => {
       await expect(heading).toHaveCount(1)
       // Read out, not drawn: clipped to nothing.
       expect(await heading.evaluate((node) => node.getBoundingClientRect().width)).toBeLessThanOrEqual(1)
+    } finally {
+      await page.close()
+    }
+  })
+
+  /** The router's index of the entry on screen and how many entries the tab's history holds. */
+  const place = (page: Page) =>
+    page.evaluate(() => {
+      const state: unknown = history.state
+      return {
+        index: typeof state === 'object' && state !== null && 'idx' in state ? Number(state.idx) : -1,
+        length: history.length,
+      }
+    })
+
+  /**
+   * From now on, notes each frame's selected tab, the workbench level it shows and any level transition, and counts
+   * the history steps that reach the page's own listeners.
+   */
+  const watchFrames = (page: Page) =>
+    page.evaluate(() => {
+      const probe = { frames: [] as string[], pops: 0 }
+      Object.assign(window, { framesForTest: probe })
+      addEventListener('popstate', () => (probe.pops += 1))
+      const sample = () => {
+        const tab = document.querySelector('nav[aria-label="主导航"] [aria-current="page"]')?.textContent ?? '-'
+        const bench = document.querySelector<HTMLElement>('[data-layout="workbench"]')
+        probe.frames.push(
+          `${tab} ${bench?.dataset['phonePane'] ?? '-'} ${bench?.dataset['phoneMotion'] ?? '-'} ${location.pathname}`,
+        )
+        requestAnimationFrame(sample)
+      }
+      requestAnimationFrame(sample)
+    })
+  const watched = (page: Page) =>
+    page.evaluate(() => {
+      const probe = (window as Window & { framesForTest?: { frames: string[]; pops: number } }).framesForTest
+      return { frames: [...new Set(probe?.frames ?? [])], pops: probe?.pops ?? 0 }
+    })
+
+  const tap = async (page: Page, name: string) => {
+    const point = await bottomBar(page).center(name)
+    await page.touchscreen.tap(point.x, point.y)
+  }
+
+  test('on a phone the bottom bar switches between tabs without adding history', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+      const start = await place(page)
+      for (const [name, path] of [
+        ['频道', /\/channels$/u],
+        ['智能体', /\/agents$/u],
+        ['工坊', /\/workshop$/u],
+      ] as const) {
+        await tap(page, name)
+        await expect(page).toHaveURL(path)
+        await expect(bar.item(name)).toHaveAttribute('aria-current', 'page')
+      }
+      expect(await place(page)).toEqual(start)
+      // Nothing of the app's lies behind the first level: back leaves the app instead of returning to a tab.
+      await page.goBack()
+      await expect(page).toHaveURL('about:blank')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone a tab switch from an opened agent steps back past it without showing the list', async () => {
+    const { page, errors } = await open('/agents', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      const list = page.getByRole('complementary', { name: '智能体', exact: true })
+      await list.getByRole('link', { name: /资料员/u }).click()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      // Past the push transition and its fallback timer, so the frames below only see the switch.
+      await page.waitForTimeout(700)
+      await expect(page.locator('[data-layout="workbench"]')).not.toHaveAttribute('data-phone-motion')
+      const opened = await place(page)
+      expect(opened.index).toBe(1)
+      await watchFrames(page)
+      await tap(page, '频道')
+      await expect(page).toHaveURL(/\/channels$/u)
+      await expect(bar.item('频道')).toHaveAttribute('aria-current', 'page')
+      await expect(page.getByRole('complementary', { name: '频道', exact: true })).toBeVisible()
+      await page.waitForTimeout(200)
+      // The channel list took the agent list's entry; the agent stays only as a forward step.
+      expect(await place(page)).toEqual({ index: 0, length: opened.length })
+      const { frames, pops } = await watched(page)
+      // Every frame shows the agent or the channel list, never the agent list in between, and no level slides.
+      expect(frames.filter((frame) => frame.startsWith('智能体 list'))).toEqual([])
+      expect(frames.filter((frame) => frame.split(' ')[2] !== '-')).toEqual([])
+      expect(frames.every((frame) => frame.startsWith('智能体 main - ') || frame.startsWith('频道 list - '))).toBe(true)
+      // The step back never reached the router.
+      expect(pops).toBe(0)
+      await page.goBack()
+      await expect(page).toHaveURL('about:blank')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone a tab switch two pages deep into a tab still lands on one entry', async () => {
+    const { page, errors } = await open('/agents', { width: 393, touch: true })
+    try {
+      const list = page.getByRole('complementary', { name: '智能体', exact: true })
+      await list.getByRole('link', { name: /资料员/u }).click()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      // Another agent from the palette: a second page inside the same tab.
+      await page.keyboard.press('Control+k')
+      const palette = page.getByRole('dialog')
+      await palette.getByRole('combobox', { name: '搜索' }).fill('记录员')
+      await palette
+        .getByRole('option', { name: /记录员/u })
+        .filter({ hasNotText: '内置频道' })
+        .first()
+        .click()
+      await expect(page).toHaveURL(new RegExp(`/agents/${sourceAgentId}$`, 'u'))
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      expect((await place(page)).index).toBe(2)
+      // The palette's scrim fades out after the dialog has gone and would take the tap.
+      await expect(page.locator('[class*="scrim"]')).toHaveCount(0)
+      await watchFrames(page)
+      await tap(page, '工坊')
+      await expect(page).toHaveURL(/\/workshop$/u)
+      await expect(bottomBar(page).item('工坊')).toHaveAttribute('aria-current', 'page')
+      await page.waitForTimeout(200)
+      expect((await place(page)).index).toBe(0)
+      const { frames, pops } = await watched(page)
+      expect(frames.filter((frame) => frame.startsWith('智能体 list'))).toEqual([])
+      expect(pops).toBe(0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone a drag along the bottom bar and the “更多” menu switch tabs in place as well', async () => {
+    const { page, errors } = await open('/agents', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      const list = page.getByRole('complementary', { name: '智能体', exact: true })
+      await list.getByRole('link', { name: /资料员/u }).click()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      await bar.drag('智能体', await bar.center('工坊'))
+      await page.mouse.up()
+      await expect(page).toHaveURL(/\/workshop$/u)
+      expect((await place(page)).index).toBe(0)
+
+      await tap(page, '更多')
+      const menu = page.getByRole('menu', { name: '更多' })
+      await menu.getByRole('menuitem', { name: '接线' }).click()
+      await expect(page).toHaveURL(/\/wiring/u)
+      await expect(bar.item('更多')).toHaveAttribute('aria-current', 'page')
+      expect((await place(page)).index).toBe(0)
+      await tap(page, '更多')
+      await menu.getByRole('menuitem', { name: '设置' }).click()
+      // 设置 redirects to its first section; that is still the tab's first level.
+      await expect(page).toHaveURL(/\/settings\/models$/u)
+      expect((await place(page)).index).toBe(0)
+      await tap(page, '概览')
+      await expect(page).toHaveURL(/\/live$/u)
+      expect((await place(page)).index).toBe(0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone the selected tab takes an opened page back to its list', async () => {
+    const { page, errors } = await open('/agents', { width: 393, touch: true })
+    try {
+      const list = page.getByRole('complementary', { name: '智能体', exact: true })
+      await list.getByRole('link', { name: /资料员/u }).click()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      const opened = await place(page)
+      await tap(page, '智能体')
+      await expect(page).toHaveURL(/\/agents$/u)
+      await expect(list.getByRole('link', { name: /资料员/u })).toBeVisible()
+      // A step back, like the top bar's arrow: the agent is the next entry again, nothing was added.
+      expect(await place(page)).toEqual({ index: opened.index - 1, length: opened.length })
+      await page.goForward()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      await page.goBack()
+      // On the list itself it stays where it is.
+      await tap(page, '智能体')
+      await page.waitForTimeout(200)
+      await expect(page).toHaveURL(/\/agents$/u)
+      expect(await place(page)).toEqual({ index: opened.index - 1, length: opened.length })
+      // A tap that lands before the opened page is drawn still goes back instead of replacing the page.
+      await list.getByRole('link', { name: /资料员/u }).click()
+      await tap(page, '智能体')
+      await expect(page).toHaveURL(/\/agents$/u)
+      await page.waitForTimeout(200)
+      expect(await place(page)).toEqual({ index: opened.index - 1, length: opened.length })
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone an agent opened by its address switches tabs in place', async () => {
+    for (const [name, path] of [
+      ['频道', /\/channels$/u],
+      ['智能体', /\/agents$/u],
+    ] as const) {
+      const { page, errors } = await open(`/agents/${targetAgentId}`, { width: 393, touch: true })
+      try {
+        await expect(topBar(page).back('返回智能体列表')).toBeVisible()
+        const start = await place(page)
+        await tap(page, name)
+        await expect(page).toHaveURL(path)
+        expect(await place(page)).toEqual(start)
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
+  test('on a phone a link into another tab is a step that back returns from', async () => {
+    const { page, errors } = await open('/agents', { width: 393, touch: true })
+    try {
+      const list = page.getByRole('complementary', { name: '智能体', exact: true })
+      await list.getByRole('link', { name: /资料员/u }).click()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      await page.getByRole('button', { name: '在频道中对话' }).click()
+      await expect(page).toHaveURL(new RegExp(`/channels/${targetChannelId}$`, 'u'))
+      expect((await place(page)).index).toBe(2)
+      await page.goBack()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      await page.getByRole('button', { name: '查看日志' }).click()
+      await expect(page).toHaveURL(/\/logs/u)
+      expect((await place(page)).index).toBe(2)
+      await page.goBack()
+      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}$`, 'u'))
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('computers keep each rail switch as a history step', async () => {
+    const { page, errors } = await open('/live')
+    try {
+      const nav = page.getByRole('navigation', { name: '主导航' })
+      await expect(nav.getByRole('link', { name: '概览', exact: true })).toHaveAttribute('aria-current', 'page')
+      await nav.getByRole('link', { name: '工坊', exact: true }).click()
+      await expect(page).toHaveURL(/\/workshop/u)
+      await nav.getByRole('link', { name: '接线', exact: true }).click()
+      await expect(page).toHaveURL(/\/wiring/u)
+      expect((await place(page)).index).toBe(2)
+      await page.goBack()
+      await expect(page).toHaveURL(/\/workshop/u)
+      await page.goBack()
+      await expect(page).toHaveURL(/\/live$/u)
+      expect(errors).toEqual([])
     } finally {
       await page.close()
     }

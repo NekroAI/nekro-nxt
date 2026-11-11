@@ -18,7 +18,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { browserInstanceName, isUnencryptedRemoteConnection } from '../../management-access.js'
-import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
 import { HOST_ICONS } from '../../extension-ui/icons.js'
@@ -34,6 +34,7 @@ import { CommandPalette } from './command-palette.js'
 import { useBackTo, useHistoryTrail } from './back.js'
 import { useCurrentCrumb, useCurrentPageBar, usePageBarActionsSlot } from './crumb.js'
 import { useRailSteering } from './rail-steering.js'
+import { useSwitchTab, useTabHistory } from './tab-history.js'
 import styles from './shell.module.css'
 import { updateLabel, useProductUpdates, versionDescription, versionLabel } from './product-updates.js'
 
@@ -153,6 +154,14 @@ function Rail() {
   const desktopMore = !narrow && overflow.some((page) => page.routeBase === space)
   const indicator = useRef<HTMLSpanElement>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+  // A phone's bottom bar switches between sibling tabs without adding history (05 §6.2); a computer's rail pushes.
+  const switchTab = useSwitchTab()
+  const openPath = (href: string) => (narrow ? switchTab(href) : go(href))
+  const onLinkClick = (href: string) => (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!narrow || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    event.preventDefault()
+    switchTab(href)
+  }
   const steering = useRailSteering({
     nav: ref,
     indicator,
@@ -162,7 +171,7 @@ function Rail() {
     onRelease: (item) => {
       const href = item.getAttribute('href')
       if (item.dataset['railItem'] === 'menu') setMoreOpen(true)
-      else if (href) go(href)
+      else if (href) openPath(href)
     },
   })
   const current = (path: string) => (space === path ? 'page' : undefined)
@@ -175,6 +184,7 @@ function Rail() {
         <NavLink
           key={path}
           to={path}
+          onClick={onLinkClick(path)}
           className={[styles.railItem, MOBILE_SPACES.has(path) ? '' : styles.railDesktopOnly].join(' ')}
           aria-current={narrow && !MOBILE_SPACES.has(path) ? false : current(path)}
           data-rail-space=""
@@ -190,6 +200,7 @@ function Rail() {
         <NavLink
           key={page.pageInstanceId}
           to={pagePath(page)}
+          onClick={onLinkClick(pagePath(page))}
           className={[styles.railItem, styles.railExtension].join(' ')}
           aria-current={narrow ? false : current(page.routeBase)}
           title={page.title}
@@ -225,6 +236,7 @@ function Rail() {
       <span className={styles.railSpacer} data-rail-spacer="" />
       <NavLink
         to="/logs"
+        onClick={onLinkClick('/logs')}
         className={[styles.railItem, styles.railDesktopOnly].join(' ')}
         aria-current={narrow ? false : current('/logs')}
         data-motion="hop"
@@ -235,6 +247,7 @@ function Rail() {
       </NavLink>
       <NavLink
         to="/settings"
+        onClick={onLinkClick('/settings')}
         className={[styles.railItem, styles.railDesktopOnly].join(' ')}
         aria-current={narrow ? false : current('/settings')}
         data-motion="gear"
@@ -264,27 +277,27 @@ function Rail() {
             key: path,
             label,
             icon: <Icon size={16} aria-hidden="true" />,
-            onSelect: () => go(path),
+            onSelect: () => openPath(path),
           })),
           ...(railPages.length > 0 ? [{ heading: '扩展页面' } as const] : []),
           ...railPages.map((page) => ({
             key: page.pageInstanceId,
             label: page.title,
             icon: <RailPageIcon page={page} />,
-            onSelect: () => go(pagePath(page)),
+            onSelect: () => openPath(pagePath(page)),
           })),
           'separator' as const,
           {
             key: '/logs',
             label: '日志',
             icon: <ScrollText size={16} aria-hidden="true" />,
-            onSelect: () => go('/logs'),
+            onSelect: () => openPath('/logs'),
           },
           {
             key: '/settings',
             label: '设置',
             icon: <Settings size={16} aria-hidden="true" />,
-            onSelect: () => go('/settings'),
+            onSelect: () => openPath('/settings'),
           },
         ]}
       />
@@ -602,6 +615,7 @@ export function AppShell() {
     return () => window.clearTimeout(timer)
   }, [lingering])
   useHistoryTrail()
+  useTabHistory()
   const [paletteOpen, setPaletteOpen] = useState(false)
   useEffect(() => {
     removeBootSplash()

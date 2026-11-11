@@ -5,7 +5,8 @@ import { useGo } from '../model/nav.js'
 /** The path shown at each history entry of this tab, by the router's entry index. */
 const trail = new Map<number, string>()
 
-const historyIndex = (): number | undefined => {
+/** The router's index of the history entry being shown. */
+export const historyIndex = (): number | undefined => {
   const state: unknown = window.history.state
   return typeof state === 'object' && state !== null && 'idx' in state && typeof state.idx === 'number'
     ? state.idx
