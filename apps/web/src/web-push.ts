@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { HostApiContracts } from '@nekro-nxt/contracts'
 import { callHostApi } from './host-api-client.js'
+import { registerServiceWorker } from './service-worker.js'
 
 /**
  * Browser push on this device: the push worker, the permission and the subscription. Desktop shows system
@@ -28,20 +29,6 @@ const appleTouchDevice = (): boolean =>
 
 const inDesktopShell = (): boolean => window.nekroDesktopShell !== undefined
 
-let registration: Promise<ServiceWorkerRegistration | undefined> | undefined
-
-/** Registers the push worker once per page; resolves to nothing where it cannot run, e.g. an untrusted certificate. */
-export const registerPushWorker = (): Promise<ServiceWorkerRegistration | undefined> => {
-  registration ??=
-    inDesktopShell() || !window.isSecureContext || !('serviceWorker' in navigator)
-      ? Promise.resolve(undefined)
-      : navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(
-          async () => await navigator.serviceWorker.ready,
-          () => undefined,
-        )
-  return registration
-}
-
 /** The id the server lists a subscription under; the endpoint itself never leaves this browser and the server. */
 export const pushSubscriptionId = async (endpoint: string): Promise<string> => {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint))
@@ -57,7 +44,7 @@ export const readPushState = async (serverIds: ReadonlySet<string>): Promise<Pus
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
     return appleTouchDevice() && !standalone() ? 'needs-install' : 'unsupported'
   }
-  const worker = await registerPushWorker()
+  const worker = await registerServiceWorker()
   // A secure origin whose certificate the browser does not trust still refuses the worker.
   if (worker === undefined) return 'insecure'
   if (Notification.permission === 'denied') return 'denied'
@@ -119,7 +106,7 @@ export const enablePush = async (): Promise<void> => {
       permission === 'denied' ? '通知权限被拒绝了，需要在浏览器或系统设置里重新允许。' : '没有拿到通知权限。',
     )
   }
-  const worker = await registerPushWorker()
+  const worker = await registerServiceWorker()
   if (worker === undefined) throw new Error('这个页面不能使用推送。')
   const { publicKey } = await callHostApi(HostApiContracts.getWebPushKey, {}, undefined)
   const subscription =
@@ -138,7 +125,7 @@ export const enablePush = async (): Promise<void> => {
 
 /** Removes this browser from the server, then drops the browser's own subscription. */
 export const disablePush = async (): Promise<void> => {
-  const worker = await registerPushWorker()
+  const worker = await registerServiceWorker()
   const subscription = await worker?.pushManager.getSubscription()
   if (subscription === null || subscription === undefined) return
   const subscriptionId = await pushSubscriptionId(subscription.endpoint)
@@ -151,7 +138,7 @@ export const usePushNotificationRoutes = (): void => {
   const navigate = useNavigate()
   useEffect(() => {
     if (inDesktopShell() || !('serviceWorker' in navigator)) return
-    void registerPushWorker()
+    void registerServiceWorker()
     const open = (event: MessageEvent<unknown>) => {
       const data: unknown = event.data
       if (

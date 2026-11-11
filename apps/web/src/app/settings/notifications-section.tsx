@@ -16,14 +16,8 @@ import {
   Switch,
   toast,
 } from '../../ui-kit/index.js'
-import {
-  disablePush,
-  enablePush,
-  pushSubscriptionId,
-  readPushState,
-  registerPushWorker,
-  type PushState,
-} from '../../web-push.js'
+import { disablePush, enablePush, pushSubscriptionId, readPushState, type PushState } from '../../web-push.js'
+import { registerServiceWorker } from '../../service-worker.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { useProductApi } from '../model/store.js'
 import { useManagementAccessAvailable } from './access-section.js'
@@ -397,7 +391,7 @@ function BrowserPushGroup() {
     const next = await callHostApi(HostApiContracts.listPushSubscriptions, {}, undefined)
     setListed(next)
     setState(await readPushState(new Set(next.subscriptions.map((entry) => entry.id))))
-    const endpoint = (await (await registerPushWorker())?.pushManager.getSubscription())?.endpoint
+    const endpoint = (await (await registerServiceWorker())?.pushManager.getSubscription())?.endpoint
     setMine(endpoint === undefined ? undefined : await pushSubscriptionId(endpoint))
   }, [])
 

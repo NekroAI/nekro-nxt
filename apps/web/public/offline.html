@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#eceef2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1a2c" media="(prefers-color-scheme: dark)" />
+    <title>连不上实例</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f3f1ec;
+        --fg: #14243d;
+        --fg-2: #44536a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1524;
+          --fg: #eef2f8;
+          --fg-2: #c3cddc;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+          max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.5 system-ui,
+          -apple-system,
+          'PingFang SC',
+          'Microsoft YaHei',
+          sans-serif;
+        text-align: center;
+      }
+      h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+      }
+      p {
+        margin: 0;
+        color: var(--fg-2);
+      }
+      button {
+        min-height: 44px;
+        margin-top: 12px;
+        padding: 0 28px;
+        border: 1px solid currentColor;
+        border-radius: 10px;
+        background: transparent;
+        color: var(--fg);
+        font: inherit;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>连不上实例</h1>
+    <p>请检查网络，或确认实例正在运行。</p>
+    <button type="button" onclick="location.reload()">重试</button>
+  </body>
+</html>
