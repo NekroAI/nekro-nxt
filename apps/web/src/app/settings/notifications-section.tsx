@@ -20,6 +20,7 @@ import { disablePush, enablePush, pushSubscriptionId, readPushState, type PushSt
 import { registerServiceWorker } from '../../service-worker.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { useProductApi } from '../model/store.js'
+import { inClientShell } from '../../android-shell.js'
 import { useManagementAccessAvailable } from './access-section.js'
 import { SectionHead } from './section-head.js'
 import styles from './settings.module.css'
@@ -341,7 +342,7 @@ export function NotificationsSection() {
           ) : null}
         </PropertyList>
       </PropertyGroup>
-      {signedIn && window.nekroDesktopShell === undefined && settings.browserPush.enabled ? <BrowserPushGroup /> : null}
+      {signedIn && !inClientShell() && settings.browserPush.enabled ? <BrowserPushGroup /> : null}
       <PropertyGroup title="通知我">
         <PropertyList>
           <PropertyRow label="创造任务等待确认运行" tip="智能体写好带界面的候选，需要你允许运行时">

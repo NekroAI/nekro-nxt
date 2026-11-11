@@ -1,5 +1,6 @@
 import { HostApiContracts, type HostLogQuery, type HostLogSettings } from '@nekro-nxt/contracts'
 import { callHostApi } from '../../host-api-client.js'
+import { saveBlob } from '../../save-file.js'
 
 export const logUrl = (path: string, query: HostLogQuery) =>
   `${path}?${new URLSearchParams({ query: JSON.stringify(query) })}`
@@ -43,10 +44,5 @@ export async function exportLogs(query: HostLogQuery, format: 'text' | 'jsonl', 
         : '日志导出失败。',
     )
   }
-  const url = URL.createObjectURL(await response.blob())
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `NekroNXT-logs.${format === 'text' ? 'txt' : 'jsonl'}`
-  anchor.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  await saveBlob(await response.blob(), `NekroNXT-logs.${format === 'text' ? 'txt' : 'jsonl'}`)
 }

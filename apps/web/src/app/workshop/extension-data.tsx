@@ -2,6 +2,7 @@ import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { Archive, Download, FolderInput, MoreHorizontal, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { callHostApi } from '../../host-api-client.js'
+import { saveBlob } from '../../save-file.js'
 import { useProductStore, type LocalExtensionSummary } from '../../product-runtime.js'
 import {
   Banner,
@@ -46,14 +47,8 @@ const size = (bytes: number) =>
       ? `${(bytes / 1024).toFixed(1)} KB`
       : `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
-const saveBytes = (bytes: Uint8Array, filename: string) => {
-  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/zip' }))
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
+const saveBytes = (bytes: Uint8Array, filename: string) =>
+  saveBlob(new Blob([new Uint8Array(bytes)], { type: 'application/zip' }), filename)
 
 /**
  * What the extension has stored on this machine: how much, in which data format, the copies kept before switches and
@@ -80,7 +75,7 @@ export function ExtensionData({ extension }: { readonly extension: LocalExtensio
         { extensionId: extension.id },
         undefined,
       )
-      saveBytes(bytes, `${extension.slug}-data.nxt-extension-data`)
+      await saveBytes(bytes, `${extension.slug}-data.nxt-extension-data`)
     } catch (error) {
       failure(error)
     }

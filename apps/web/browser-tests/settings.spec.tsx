@@ -1346,7 +1346,8 @@ test.describe('settings space', () => {
           }),
         )
         await target.route('**/api/management/session', async (request) => {
-          calls.push('logout')
+          // The page also asks whether it is still signed in (GET); only DELETE signs out.
+          if (request.request().method() === 'DELETE') calls.push('logout')
           await request.fulfill({ json: { authenticated: false } })
         })
         await target.route('**/api/management/devices', (request) => request.fulfill({ json: { devices } }))

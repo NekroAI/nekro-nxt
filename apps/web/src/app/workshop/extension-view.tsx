@@ -4,6 +4,7 @@ import { CompatibilityNotices } from '../system/compatibility.js'
 import { ArrowUpCircle, Download, GitBranch, MoreHorizontal, Pencil, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { saveBlob } from '../../save-file.js'
 import {
   communityPublisherLabel,
   hostLayerAsCapabilities,
@@ -111,12 +112,10 @@ const download = async (extension: LocalExtensionSummary, revision: Revision) =>
     { extensionId: extension.id, revisionId: revision.id },
     undefined,
   )
-  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: 'application/zip' }))
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `${extension.slug}-${revision.versionLabel.replace('·', '-')}-${fileStamp(revision.createdAt)}.nxt-extension`
-  anchor.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  await saveBlob(
+    new Blob([new Uint8Array(bytes)], { type: 'application/zip' }),
+    `${extension.slug}-${revision.versionLabel.replace('·', '-')}-${fileStamp(revision.createdAt)}.nxt-extension`,
+  )
 }
 
 export function ExtensionView({ extension }: { readonly extension: LocalExtensionSummary }) {

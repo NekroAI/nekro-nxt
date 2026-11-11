@@ -52,6 +52,33 @@ describe('HostEventStream', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
+  it('asks whether the sign-in ended after a failure, at most once per interval', () => {
+    const sources: StubEventSource[] = []
+    const checkSession = vi.fn()
+    const stream = new HostEventStream({
+      createEventSource: () => {
+        const source = new StubEventSource()
+        sources.push(source)
+        return source
+      },
+      reconnectDelaysMs: [100],
+      onlineTarget: null,
+      visibilityTarget: null,
+      checkSession,
+      sessionCheckIntervalMs: 1_000,
+    })
+    const unsubscribe = stream.subscribe({})
+    sources[0]!.fail(2)
+    expect(checkSession).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(100)
+    sources[1]!.fail(2)
+    expect(checkSession).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1_000)
+    sources.at(-1)!.fail(2)
+    expect(checkSession).toHaveBeenCalledTimes(2)
+    unsubscribe()
+  })
+
   it('recreates permanently closed EventSources with bounded backoff and resets after open', () => {
     const sources: StubEventSource[] = []
     const errors: unknown[] = []

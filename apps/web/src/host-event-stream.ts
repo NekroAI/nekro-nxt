@@ -1,4 +1,5 @@
 import { hostReleaseGuard } from './host-release-guard.js'
+import { checkSignedIn } from './management-access.js'
 export const HOST_EVENT_STREAM_EVENTS = [
   'snapshot-changed',
   'channel-fact',
@@ -46,6 +47,12 @@ export interface HostEventStreamOptions {
   /** A page that returns to the foreground after this long without a frame reconnects at once. */
   readonly resumeAfterMs?: number | undefined
   readonly visibilityTarget?: VisibilityTarget | null | undefined
+  /**
+   * An event stream cannot report why it failed; after a failure this asks whether the sign-in ended, so a page whose
+   * session is gone signs in again instead of reconnecting forever. At most once per `sessionCheckIntervalMs`.
+   */
+  readonly checkSession?: (() => void) | null | undefined
+  readonly sessionCheckIntervalMs?: number | undefined
 }
 
 const defaultOnlineTarget = (): OnlineEventTarget | null => (typeof window === 'undefined' ? null : window)
@@ -84,6 +91,9 @@ export class HostEventStream {
   #reconnectAttempt = 0
   #watchdog: ReturnType<typeof setInterval> | undefined
   #lastFrameAt = 0
+  readonly #checkSession: (() => void) | null
+  readonly #sessionCheckIntervalMs: number
+  #lastSessionCheckAt = Number.NEGATIVE_INFINITY
 
   constructor(options: HostEventStreamOptions = {}) {
     this.#createEventSource = options.createEventSource ?? (() => new EventSource('/api/events'))
@@ -92,6 +102,13 @@ export class HostEventStream {
       throw new TypeError('Host SSE reconnect delays must contain non-negative values.')
     }
     this.#nativeReconnectGraceMs = options.nativeReconnectGraceMs ?? 5_000
+    this.#checkSession =
+      options.checkSession === undefined
+        ? typeof window === 'undefined'
+          ? null
+          : () => void checkSignedIn()
+        : options.checkSession
+    this.#sessionCheckIntervalMs = options.sessionCheckIntervalMs ?? 10_000
     if (this.#nativeReconnectGraceMs < 0) throw new TypeError('Host SSE native reconnect grace must be non-negative.')
     this.#onlineTarget = options.onlineTarget === undefined ? defaultOnlineTarget() : options.onlineTarget
     this.#staleAfterMs = options.staleAfterMs ?? 45_000
@@ -160,6 +177,10 @@ export class HostEventStream {
     source.addEventListener('error', (event) => {
       if (source !== this.#source) return
       this.#publish('error', event)
+      if (this.#checkSession !== null && Date.now() - this.#lastSessionCheckAt >= this.#sessionCheckIntervalMs) {
+        this.#lastSessionCheckAt = Date.now()
+        this.#checkSession()
+      }
       const nativeRetrying = source.readyState === EVENT_SOURCE_CONNECTING
       if (!nativeRetrying) {
         source.close()
