@@ -19,7 +19,10 @@ declare const styles: {
   readonly crumb: string
   readonly crumbPart: string
   readonly crumbSep: string
+  readonly hintActions: string
+  readonly homeSteps: string
   readonly hostBanner: string
+  readonly inlineIcon: string
   readonly instance: string
   readonly instanceState: string
   readonly main: string

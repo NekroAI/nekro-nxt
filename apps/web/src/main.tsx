@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { NextApp } from './app/next-app.js'
 import { installStableCursorIntent } from './cursor-stability.js'
+import { captureInstallPrompt } from './home-screen.js'
 import { installKeyboardViewport } from './keyboard-viewport.js'
 import { installOverlayBack } from './overlay-back.js'
 import { registerServiceWorker } from './service-worker.js'
@@ -17,6 +18,7 @@ document.documentElement.dataset['nxtMotion'] = reducedMotion ? 'off' : 'on'
 const disposeStableCursorIntent = installStableCursorIntent()
 const disposeKeyboardViewport = installKeyboardViewport()
 const disposeOverlayBack = installOverlayBack()
+captureInstallPrompt()
 void registerServiceWorker()
 
 const root = document.querySelector('#root')

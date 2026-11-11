@@ -1073,3 +1073,41 @@ a.instance {
   margin: var(--s-2) var(--s-3);
   background: var(--line);
 }
+
+/* ---------- Adding to the home screen ---------- */
+
+.hintActions {
+  display: flex;
+  flex: none;
+  gap: var(--s-1);
+}
+
+.homeSteps {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+  padding-inline-start: var(--s-5);
+  line-height: 1.6;
+}
+
+div.homeSteps {
+  padding-inline-start: 0;
+}
+
+.homeSteps p {
+  margin: 0;
+}
+
+.inlineIcon {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  margin-inline: var(--s-1);
+  vertical-align: -0.2em;
+}
+
+.homeSteps a {
+  color: var(--accent);
+  text-decoration-color: var(--accent-line);
+  text-underline-offset: 0.2em;
+}

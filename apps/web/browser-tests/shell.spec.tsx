@@ -333,6 +333,8 @@ test.describe('shell, channels and live', () => {
       readonly before?: (page: Page) => Promise<void>
       /** A phone held in the hand: touch input, a mobile viewport and its height. */
       readonly touch?: boolean
+      /** Keeps the one-time 「添加到主屏幕」 hint, which other phone tests have already dismissed. */
+      readonly homeScreenHint?: boolean
     } = {},
   ): Promise<{ page: Page; errors: string[] }> => {
     const snapshot = options.snapshot ?? productSnapshot
@@ -342,6 +344,14 @@ test.describe('shell, channels and live', () => {
     })
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(String(error)))
+    if (options.touch && !options.homeScreenHint)
+      await page.addInitScript(() => {
+        try {
+          window.localStorage.setItem('nekro-nxt.home-screen-hint', 'dismissed')
+        } catch {
+          // about:blank, which some tests go back to, has no storage.
+        }
+      })
     await page.route('**/api/**', (request) =>
       request.fulfill({ status: 501, json: { error: { code: 'unstubbed', message: 'unstubbed' } } }),
     )
@@ -1230,6 +1240,65 @@ test.describe('shell, channels and live', () => {
       await expect(bar.item('设置')).toHaveAttribute('aria-current', 'page')
       await expect(indicator).toHaveCSS('opacity', '1')
       await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('设置'), 0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone browser it offers adding to the home screen once, and the side menu keeps the way there', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true, homeScreenHint: true })
+    try {
+      const hint = page.locator('[data-home-screen-hint]')
+      await expect(hint).toContainText('添加到主屏幕，像应用一样全屏打开')
+      await hint.getByRole('button', { name: '不用了' }).click()
+      await expect(hint).toHaveCount(0)
+      await page.reload()
+      await expect(page.getByRole('banner')).toBeVisible()
+      await expect(hint).toHaveCount(0)
+      // Without an install dialog from the browser, the side menu shows the steps for the browser's own menu.
+      await page.getByRole('banner').getByRole('button', { name: '菜单' }).click()
+      await page.getByRole('dialog', { name: '菜单' }).getByRole('button', { name: '添加到主屏幕' }).click()
+      const guide = page.getByRole('dialog', { name: '添加到主屏幕' })
+      await expect(guide).toContainText('选「安装应用」或「添加到主屏幕」')
+      await guide.getByRole('button', { name: '关闭' }).click()
+      // Chrome's install dialog, once offered, opens instead of the steps.
+      await page.evaluate(() => {
+        const event = Object.assign(new Event('beforeinstallprompt', { cancelable: true }), {
+          prompt: () => {
+            document.documentElement.dataset['installPrompted'] = 'true'
+            return Promise.resolve()
+          },
+          userChoice: Promise.resolve({ outcome: 'accepted' }),
+        })
+        window.dispatchEvent(event)
+      })
+      await page.getByRole('banner').getByRole('button', { name: '菜单' }).click()
+      await page.getByRole('dialog', { name: '菜单' }).getByRole('button', { name: '添加到主屏幕' }).click()
+      await expect(page.locator('html')).toHaveAttribute('data-install-prompted', 'true')
+      await expect(guide).toHaveCount(0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on an address the browser cannot install, the side menu explains HTTPS and offers no hint', async () => {
+    const { page, errors } = await open('/live', {
+      width: 393,
+      touch: true,
+      homeScreenHint: true,
+      before: async (page) => {
+        await page.context().route('**/sw.js', (request) => request.fulfill({ status: 404, body: '' }))
+      },
+    })
+    try {
+      await page.getByRole('banner').getByRole('button', { name: '菜单' }).click()
+      await page.getByRole('dialog', { name: '菜单' }).getByRole('button', { name: '添加到主屏幕' }).click()
+      const guide = page.getByRole('dialog', { name: '添加到主屏幕' })
+      await expect(guide).toContainText('受信任的 HTTPS 地址')
+      await expect(guide.getByRole('link', { name: '怎么设置 HTTPS' })).toBeVisible()
+      await expect(page.locator('[data-home-screen-hint]')).toHaveCount(0)
       expect(errors).toEqual([])
     } finally {
       await page.close()

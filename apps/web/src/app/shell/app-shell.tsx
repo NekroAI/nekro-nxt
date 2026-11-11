@@ -45,6 +45,7 @@ import { useAttention } from '../model/attention.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentAccent, connectionLabel, isAgentWorking } from '../model/identity.js'
 import { CommandPalette } from './command-palette.js'
+import { HomeScreenHint, HomeScreenMenuItem } from './home-screen.js'
 import { useBackTo, useHistoryTrail } from './back.js'
 import { useCurrentCrumb, useCurrentPageBar, usePageBarActionsSlot } from './crumb.js'
 import { useRailSteering } from './rail-steering.js'
@@ -348,6 +349,7 @@ function SideMenu({
             <span>切换实例</span>
           </Pressable>
         ) : null}
+        <HomeScreenMenuItem onChosen={() => onOpenChange(false)} />
       </nav>
     </SidePanel>
   )
@@ -713,6 +715,7 @@ export function AppShell() {
       <Rail />
       <main className={styles.main}>
         <ReleaseBanner />
+        <HomeScreenHint />
         {/*
           Route changes render as transitions, and a boundary that already shows a page keeps it while the next space
           loads; a boundary inside each space would flash its placeholder instead.
