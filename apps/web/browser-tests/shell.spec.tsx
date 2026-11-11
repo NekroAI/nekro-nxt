@@ -1419,6 +1419,21 @@ test.describe('shell, channels and live', () => {
         await send('touchEnd')
       },
       /**
+       * Puts a finger on `target` and moves it down by `distance` (up when negative) a frame at a time, as a hand
+       * would; `held` runs before it lifts, while the row is still raised.
+       */
+      drag: async (target: Locator, distance: number, held?: () => Promise<void>) => {
+        const { x, y } = await centre(target)
+        await send('touchStart', { x, y })
+        const steps = 20
+        for (let step = 1; step <= steps; step++) {
+          await send('touchMove', { x, y: y + (step * distance) / steps })
+          await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done(null))))
+        }
+        await held?.()
+        await send('touchEnd')
+      },
+      /**
        * Rests on `target` until its actions sheet is up, then lifts. Waiting for the sheet rather than a fixed time
        * keeps the hold long enough however busy the machine is.
        */
@@ -1462,8 +1477,8 @@ test.describe('shell, channels and live', () => {
           (node) => !node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })),
         ),
       ).toBe(true)
-      // An unbound row: it moves within 未接线, pins, and can be given to an agent; there is nothing to unbind.
-      await expect(touch.sheet.getByRole('button')).toHaveText(['上移', '下移', '置顶', '接到智能体…'])
+      // An unbound row: it pins, sorts, and can be given to an agent; there is nothing to unbind.
+      await expect(touch.sheet.getByRole('button')).toHaveText(['置顶', '排序', '接到智能体…'])
       await page.keyboard.press('Escape')
       await expect(page.getByRole('dialog')).toHaveCount(0)
 
@@ -1482,7 +1497,115 @@ test.describe('shell, channels and live', () => {
     }
   })
 
-  test('on a phone the actions sheet moves rows and groups one step and saves like a drag', async () => {
+  /** Whether nothing inside `target` (the element and every descendant) can be selected, by either property. */
+  const unselectable = (target: Locator) =>
+    target.evaluate((root) =>
+      [root, ...root.querySelectorAll('*')].every((node) => {
+        const style = getComputedStyle(node)
+        return style.userSelect === 'none' && style.getPropertyValue('-webkit-user-select') === 'none'
+      }),
+    )
+
+  test('on a phone rows draw no more button, and screen readers still reach every row’s and group’s actions', async () => {
+    const { page, errors } = await open('/channels', { width: 393, touch: true, snapshot: arrangedSnapshot(emptyView) })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const row = list.locator(`a[href="/channels/${externalChannelId}"]`)
+      await expect(row).toBeVisible()
+      // Nothing is drawn for them: each sits in a 1px box that clips it away.
+      const more = list.getByRole('button', { name: /的更多操作$/u })
+      expect(await more.count()).toBeGreaterThan(2)
+      const shown = await more.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const box = node.parentElement?.getBoundingClientRect()
+          return {
+            area: (box?.width ?? 0) * (box?.height ?? 0),
+            clip: getComputedStyle(node.parentElement ?? node).clipPath,
+          }
+        }),
+      )
+      for (const item of shown) expect(item).toEqual({ area: 1, clip: 'inset(50%)' })
+      // The row's time and unread count run to the page margin.
+      const edge = async (selector: string) => {
+        const box = await row.locator(selector).boundingBox()
+        return Math.round((box?.x ?? 0) + (box?.width ?? 0))
+      }
+      expect(await edge('[class*="rowTime"]')).toBe(393 - 16)
+      expect(await edge('[class*="rowBadge"]')).toBe(393 - 16)
+
+      // A screen reader (or a keyboard) reaches the same sheet a long press opens.
+      const sheet = page.locator('[role="dialog"][data-state="open"]')
+      await list.getByRole('button', { name: '产品讨论群 的更多操作' }).focus()
+      await page.keyboard.press('Enter')
+      await expect(sheet).toHaveAccessibleName('产品讨论群')
+      await expect(sheet.getByRole('button')).toHaveText(['置顶', '排序', '接到智能体…'])
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      // An agent's group too: until now only a long press reached it.
+      await list.getByRole('button', { name: '记录员 的更多操作' }).focus()
+      await page.keyboard.press('Enter')
+      await expect(sheet).toHaveAccessibleName('记录员')
+      await expect(sheet.getByRole('button')).toHaveText(['排序'])
+      await page.keyboard.press('Escape')
+      await expect(page).toHaveURL(/\/channels$/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone a held row, its group head and its raised copy select no text', async () => {
+    const { page, errors } = await open('/channels', { width: 393, touch: true })
+    try {
+      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const touch = await finger(page)
+      const row = list.locator(`a[href="/channels/${sourceChannelId}"]`)
+      await expect(row).toBeVisible()
+      expect(await unselectable(row.locator('..'))).toBe(true)
+      expect(await unselectable(list.locator('[class*="groupHeadRow"]').first())).toBe(true)
+      // A selection already on the page goes when a hold opens the actions.
+      await page.evaluate(() => {
+        const range = document.createRange()
+        range.selectNodeContents(document.body)
+        window.getSelection()?.addRange(range)
+      })
+      await touch.hold(row)
+      expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('')
+      const lifted = page.locator('[class*="actionSheetLift"]')
+      await expect(lifted).toBeVisible()
+      expect(await unselectable(lifted)).toBe(true)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  /** The sort mode's parts: the top bar, its 完成, a row's handle and the ids in a container. */
+  const sortMode = (page: Page) => {
+    const bar = page.locator('header').first()
+    const list = page.getByRole('complementary', { name: '频道', exact: true })
+    const rowOf = (name: string) =>
+      list.locator('[data-row-key^="channel:"]').filter({ has: page.getByText(name, { exact: true }) })
+    return {
+      bar,
+      list,
+      done: bar.getByRole('button', { name: '完成' }),
+      rowOf,
+      handle: (name: string) => list.getByRole('button', { name: `调整「${name}」的位置` }),
+      groupHandle: (name: string) => list.getByRole('button', { name: `调整「${name}」分组的位置` }),
+      /** Channel ids of the rows inside `scope`, in order. */
+      ids: (scope: Locator) =>
+        scope
+          .locator('[data-row-key^="channel:"]')
+          .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-row-key')?.slice('channel:'.length))),
+      groups: () =>
+        list
+          .locator('[data-row-key^="agent:"] [class*="groupName"]')
+          .evaluateAll((nodes) => nodes.map((node) => node.textContent)),
+    }
+  }
+
+  test('on a phone 排序 opens sort mode, where a handle carries a row past several in one move and saves once', async () => {
     let arrangement: Awaited<ReturnType<typeof serveArrangement>> | undefined
     const { page, errors } = await open('/channels', {
       width: 393,
@@ -1493,51 +1616,147 @@ test.describe('shell, channels and live', () => {
       },
     })
     try {
-      const list = page.getByRole('complementary', { name: '频道', exact: true })
+      const sort = sortMode(page)
       const touch = await finger(page)
-      const unbound = list.getByRole('button', { name: '收起「未接线」' }).locator('../..')
-      await expect(list.getByText('示例群 1', { exact: true })).toBeVisible()
-      const firstThree = async () => (await rowIds(unbound)).slice(0, 3)
-      const [one, two] = ['chn_crowd00', 'chn_crowd01']
-      expect(await firstThree()).toEqual([externalChannelId, one, two])
+      // Scrolled a little, so the list has room to keep the held row in place once the search row goes.
+      const held = sort.list.locator('a[href^="/channels/"]', { hasText: /^示例群 2(?!\d)/u })
+      await expect(held).toBeVisible()
+      await sort.list.locator('[class*="listBody"]').evaluate((node) => (node.scrollTop = 120))
+      await touch.hold(held)
+      await expect(touch.sheet.getByRole('button')).toHaveText(['置顶', '排序', '接到智能体…'])
+      const before = await held.boundingBox()
+      await touch.sheet.getByRole('button', { name: '排序' }).click()
 
-      // The first row of a group cannot move up.
-      await touch.hold(list.locator('a[href^="/channels/"]', { hasText: '产品讨论群' }))
-      await expect(touch.sheet.getByRole('button', { name: '上移' })).toHaveCount(0)
-      await touch.sheet.getByRole('button', { name: '下移' }).click()
-      await expect(touch.sheet).toHaveCount(0)
-      await expect.poll(firstThree).toEqual([one, externalChannelId, two])
+      // The top bar is the mode's own: its title and 完成, no search or bell; the list has no search or filter.
+      await expect(sort.done).toBeVisible()
+      await expect(sort.bar).toContainText('排序')
+      await expect(sort.bar.getByRole('button', { name: '搜索' })).toHaveCount(0)
+      await expect(sort.list.getByRole('searchbox')).toHaveCount(0)
+      await expect(sort.list.getByRole('combobox')).toHaveCount(0)
+      // The row stays where it was on screen.
+      const after = await sort.rowOf('示例群 2').first().boundingBox()
+      expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(4)
+      // Every row has a fingertip-sized handle, and the rows are no longer links.
+      const handle = await sort.handle('示例群 1').boundingBox()
+      expect(handle?.width ?? 0).toBeGreaterThanOrEqual(44)
+      expect(handle?.height ?? 0).toBeGreaterThanOrEqual(44)
+      await expect(sort.list.locator('a[href^="/channels/"]')).toHaveCount(0)
+      await sort.rowOf('示例群 2').first().locator('[class*="rowName"]').tap()
+      await page.waitForTimeout(200)
+      await expect(page).toHaveURL(/\/channels$/u)
+      await expect(sort.done).toBeVisible()
+
+      // One move carries 示例群 1 three rows down; the rows between make room, and the order saves once.
+      const unbound = sort.list.getByRole('group', { name: '未接线' })
+      const [one, two, three, four] = ['chn_crowd00', 'chn_crowd01', 'chn_crowd02', 'chn_crowd03']
+      expect((await sort.ids(unbound)).slice(0, 5)).toEqual([externalChannelId, one, two, three, four])
+      const rowHeight = (await sort.rowOf('示例群 1').boundingBox())?.height ?? 60
+      await touch.drag(sort.handle('示例群 1'), rowHeight * 3, async () => {
+        const lifted = page.locator('[class*="sortLifted"]')
+        await expect(lifted).toBeVisible()
+        await expect(lifted).toContainText('示例群 1')
+        expect(await unselectable(lifted)).toBe(true)
+      })
       await expect
-        .poll(() => arrangement?.orders.at(-1)?.unboundChannelIds.slice(0, 2))
-        .toEqual([one, externalChannelId])
+        .poll(async () => (await sort.ids(unbound)).slice(0, 5))
+        .toEqual([externalChannelId, two, three, four, one])
+      await expect.poll(() => arrangement?.orders.length).toBe(1)
+      expect(arrangement?.orders[0]?.unboundChannelIds.slice(0, 5)).toEqual([externalChannelId, two, three, four, one])
 
-      await touch.hold(list.locator('a[href^="/channels/"]', { hasText: /^示例群 2(?!\d)/u }))
-      await touch.sheet.getByRole('button', { name: '上移' }).click()
-      await expect.poll(firstThree).toEqual([one, two, externalChannelId])
+      const scrolled = () =>
+        sort.list.evaluate((node) => Math.max(...[node, ...node.querySelectorAll('*')].map((item) => item.scrollTop)))
 
-      // A held agent name offers moving its group; the last group cannot move down.
-      const groupHead = (name: string) => list.locator('button[class*="groupHead"]', { hasText: name })
-      const groupOrder = () =>
-        list
-          .locator('button[class*="groupHead"] [class*="groupName"]')
-          .evaluateAll((nodes) => nodes.map((node) => node.textContent))
-      const before = await groupOrder()
+      // Held at the list's lower edge, a row carries the list along under it.
+      const pane = await sort.list.boundingBox()
+      const grip = await sort.handle('示例群 8').boundingBox()
+      if (!pane || !grip) throw new Error('The list or the handle has no box.')
+      const resting = await scrolled()
+      await touch.drag(sort.handle('示例群 8'), pane.y + pane.height - 40 - (grip.y + grip.height / 2), async () => {
+        await expect.poll(scrolled).toBeGreaterThan(resting + 80)
+      })
+      await expect.poll(() => arrangement?.orders.length).toBe(2)
+
+      // A finger on a row's body, not its handle, scrolls the list and moves nothing.
+      await sort.list.locator('[class*="listBody"]').evaluate((node) => (node.scrollTop = 0))
+      await expect.poll(scrolled).toBe(0)
+      await touch.swipe(sort.rowOf('示例群 6').locator('[class*="rowName"]'), 200)
+      await expect.poll(scrolled).toBeGreaterThan(40)
+      await page.waitForTimeout(300)
+      expect(arrangement?.orders).toHaveLength(2)
+
+      // 完成 ends the mode: the list is back as it was, with its search.
+      await sort.done.click()
+      await expect(sort.list.getByRole('searchbox', { name: '搜索频道' })).toBeVisible()
+      await expect(sort.bar.getByRole('button', { name: '完成' })).toHaveCount(0)
+      await expect(sort.list.locator(`a[href="/channels/${one}"]`)).toBeVisible()
+      await expect(page).toHaveURL(/\/channels$/u)
+      expect(arrangement?.writes).toEqual([])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone sort mode orders pins and groups, keeps every row in its own container, and back leaves it', async () => {
+    let arrangement: Awaited<ReturnType<typeof serveArrangement>> | undefined
+    const pins: ListView = { pinnedChannelIds: [sourceChannelId, externalChannelId], collapsedGroupIds: [] }
+    const { page, errors } = await open('/channels', {
+      width: 393,
+      touch: true,
+      snapshot: crowdedSnapshot,
+      before: async (target) => {
+        arrangement = await serveArrangement(target, pins, crowdedSnapshot)
+      },
+    })
+    try {
+      const sort = sortMode(page)
+      const touch = await finger(page)
+      // A held group head offers sort mode too.
+      await expect(sort.list.getByRole('group', { name: '置顶' })).toBeVisible()
+      const before = await sort.groups()
       expect(before).toHaveLength(2)
-      await touch.hold(groupHead(before[0] ?? ''))
+      await touch.hold(sort.list.locator('button[class*="groupHead"]', { hasText: before[0] ?? '' }))
       await expect(touch.sheet).toHaveAccessibleName(before[0] ?? '')
-      await expect(touch.sheet.getByRole('button')).toHaveText(['下移'])
-      await touch.sheet.getByRole('button', { name: '下移' }).click()
-      await expect.poll(groupOrder).toEqual([before[1], before[0]])
+      await expect(touch.sheet.getByRole('button')).toHaveText(['排序'])
+      await touch.sheet.getByRole('button', { name: '排序' }).click()
+      await expect(sort.done).toBeVisible()
+
+      // Pins sort among themselves.
+      const pinned = sort.list.getByRole('group', { name: '置顶' })
+      expect(await sort.ids(pinned)).toEqual([sourceChannelId, externalChannelId])
+      const pinHeight = (await sort.rowOf('产品讨论群').first().boundingBox())?.height ?? 60
+      await touch.drag(sort.handle('产品讨论群').first(), -pinHeight)
+      await expect.poll(() => sort.ids(pinned)).toEqual([externalChannelId, sourceChannelId])
+      await expect
+        .poll(() => arrangement?.saved.at(-1))
+        .toEqual({ pinnedChannelIds: [externalChannelId, sourceChannelId], collapsedGroupIds: [] })
+
+      // Groups move by the handle on their head.
+      await touch.drag(sort.groupHandle(before[1] ?? ''), -200)
+      await expect.poll(sort.groups).toEqual([before[1], before[0]])
       await expect
         .poll(() => arrangement?.orders.at(-1)?.agentIds)
         .toEqual(
           [...before].reverse().map((name) => crowdedSnapshot.agents.find((agent) => agent.displayName === name)?.id),
         )
-      // Letting go of the held name did not open the agent, and a tap still does.
-      await expect(page).toHaveURL(/\/channels$/u)
-      await groupHead('资料员').tap()
-      await expect(page).toHaveURL(new RegExp(`/agents/${targetAgentId}`, 'u'))
+
+      // Dragged far past its own group, a row stays inside it: no binding changes, nothing asks to confirm.
+      const orders = arrangement?.orders.length ?? 0
+      const saves = arrangement?.saved.length ?? 0
+      await touch.drag(sort.handle('资料员的内置频道'), 400)
+      await page.waitForTimeout(400)
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      expect(arrangement?.orders).toHaveLength(orders)
+      expect(arrangement?.saved).toHaveLength(saves)
+      expect(arrangement?.orders.at(-1)?.unboundChannelIds).not.toContain(targetChannelId)
+      await expect(sort.list.getByRole('group', { name: '未接线' }).getByText('资料员的内置频道')).toHaveCount(0)
       expect(arrangement?.writes).toEqual([])
+
+      // The system's back step leaves the mode, onto the list as it was.
+      await page.goBack()
+      await expect(sort.done).toHaveCount(0)
+      await expect(sort.list.getByRole('searchbox', { name: '搜索频道' })).toBeVisible()
+      await expect(page).toHaveURL(/\/channels$/u)
       expect(errors).toEqual([])
     } finally {
       await page.close()
@@ -1551,8 +1770,7 @@ test.describe('shell, channels and live', () => {
       const touch = await finger(page)
       const row = list.locator(`a[href="/channels/${sourceChannelId}"]`)
       await touch.hold(row)
-      // One channel in its group: nothing to move it past.
-      await expect(touch.sheet.getByRole('button')).toHaveText(['置顶', '移到其他智能体…', '解除接线'])
+      await expect(touch.sheet.getByRole('button')).toHaveText(['置顶', '排序', '移到其他智能体…', '解除接线'])
       await touch.sheet.getByRole('button', { name: '移到其他智能体…' }).click()
       // The same panel lists the other agents, with a way back.
       await expect(touch.sheet).toHaveAccessibleName('移到其他智能体')
@@ -1567,8 +1785,9 @@ test.describe('shell, channels and live', () => {
       await rebind.getByRole('button', { name: '取消' }).click()
       await expect(page.getByRole('dialog')).toHaveCount(0)
 
-      // The more button opens the same sheet, for one tap and for screen readers.
-      await list.getByRole('button', { name: '记录员的内置频道 的更多操作' }).tap()
+      // The button only screen readers see opens the same sheet.
+      await list.getByRole('button', { name: '记录员的内置频道 的更多操作' }).focus()
+      await page.keyboard.press('Enter')
       await expect(touch.sheet).toHaveAccessibleName('记录员的内置频道')
       await touch.sheet.getByRole('button', { name: '解除接线' }).click()
       const unbind = page.getByRole('dialog', { name: '断开「记录员的内置频道」与记录员？' })
@@ -1581,7 +1800,7 @@ test.describe('shell, channels and live', () => {
     }
   })
 
-  test('on a phone the actions sheet pins, reorders pins and unpins, also from search results', async () => {
+  test('on a phone the actions sheet pins and unpins, also from search results', async () => {
     let arrangement: Awaited<ReturnType<typeof serveArrangement>> | undefined
     const { page, errors } = await open('/channels', {
       width: 393,
@@ -1609,14 +1828,10 @@ test.describe('shell, channels and live', () => {
       await search.fill('')
       await expect.poll(() => rowIds(pinned)).toEqual([sourceChannelId, externalChannelId])
 
-      // Pinned rows move among the pins only.
+      // A pinned row unpins, and sorts with the other pins.
       await touch.hold(row(pinned, externalChannelId))
-      await expect(touch.sheet.getByRole('button', { name: '下移' })).toHaveCount(0)
-      await touch.sheet.getByRole('button', { name: '上移' }).click()
-      await expect.poll(() => rowIds(pinned)).toEqual([externalChannelId, sourceChannelId])
-      await expect
-        .poll(() => arrangement?.saved.at(-1))
-        .toEqual({ pinnedChannelIds: [externalChannelId, sourceChannelId], collapsedGroupIds: [] })
+      await expect(touch.sheet.getByRole('button')).toHaveText(['取消置顶', '排序', '接到智能体…'])
+      await page.keyboard.press('Escape')
 
       await touch.hold(row(pinned, sourceChannelId))
       await touch.sheet.getByRole('button', { name: '取消置顶' }).click()

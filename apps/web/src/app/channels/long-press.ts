@@ -54,6 +54,8 @@ export function useLongPress(onLongPress: (element: HTMLElement) => boolean, ena
       const timer = window.setTimeout(() => {
         cancel.current()
         fired.current = true
+        // Rows are not selectable (channels.module.css), but a selection the browser began anyway must not stay.
+        window.getSelection()?.removeAllRanges()
         // The finger may lift over the sheet that just opened; wherever it lifts, the guard ends soon after.
         const release = () => window.setTimeout(() => (fired.current = false), RELEASE_WINDOW_MS)
         window.addEventListener('pointerup', release, { capture: true, once: true })

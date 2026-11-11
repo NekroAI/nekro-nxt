@@ -8,6 +8,7 @@ import { Button, EmptyState, WorkbenchPage, usePhone } from '../../ui-kit/index.
 import { agentPhase } from '../model/identity.js'
 import { useCrumb, usePageBar } from '../shell/crumb.js'
 import { ChannelList } from './channel-list.js'
+import { useChannelSorting } from './channel-sort.js'
 import styles from './channels.module.css'
 import { Conversation, SubConversationView } from './conversation.js'
 import { ChannelInspector } from './inspector.js'
@@ -48,9 +49,13 @@ export default function ChannelsSpace() {
   // On a phone a conversation is the second level above the channel list (05 §6.2): its name and state head the
   // top bar, the way back leads to the list, and it takes the whole height.
   const phaseKey = agent ? (runtimePhase ?? channel?.runtimePhase ?? agent.state) : undefined
+  // Sort mode titles the bar 排序; the list puts 完成 in it, and the back arrow leaves the mode the same way.
+  const { sorting } = useChannelSorting()
   usePageBar(
     channelId === undefined
-      ? undefined
+      ? sorting
+        ? { title: '排序', back: { to: '/channels', label: '返回频道列表' } }
+        : undefined
       : {
           title: (conversationId === undefined ? channel?.name : subConversation?.title) ?? '频道',
           back: { to: '/channels', label: '返回频道列表' },

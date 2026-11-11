@@ -639,7 +639,17 @@
   box-shadow: var(--sh-3);
   pointer-events: none;
   transform: translateY(var(--lift-shift, 0px)) scale(1.02);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   transition: transform var(--dur-2) var(--ease);
+}
+
+/* The copy is a picture of the row: nothing in it starts a selection, whatever the copied styles say. */
+.actionSheetLift * {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .actionSheetLift[data-state='open'] {

@@ -215,12 +215,26 @@
     border-radius: 0;
   }
 
+  /* No more button is drawn on a phone (a long press opens the actions): time and unread run to the margin. */
   .rowWrap > .row {
-    padding-right: calc(var(--s-4) + var(--control-sm) + var(--s-2));
+    padding-right: var(--s-4);
   }
 
   .rowMenu {
     right: var(--s-3);
+  }
+
+  .groupHeadRow {
+    position: relative;
+  }
+
+  /* Read out, and shown only while a keyboard is on it (channel-list.tsx `HiddenActions`). */
+  .hiddenActions:not(:focus-within) {
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 
@@ -315,6 +329,123 @@
     transform: scale(2.8);
     opacity: 0;
   }
+}
+
+/*
+ * Nothing in the channel list is text to copy: a held finger opens the row's actions or drags it, so iOS must not
+ * start a selection, the magnifier or its copy menu. Children too, whatever their own styles say.
+ */
+.channelTree,
+.channelTree *,
+.sortLifted,
+.sortLifted *,
+.dragOverlay {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* —— 排序模式（手机） —— */
+.sortMode {
+  padding-top: var(--s-2);
+}
+
+/* A group head's handle lines up with the handles of the rows under it. */
+.sortMode .groupHeadRow,
+.groupHeadRow.sortLifted {
+  padding-right: 0;
+}
+
+.sortList {
+  position: relative;
+}
+
+.sortRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+}
+
+/* The row being moved leaves its gap; the raised copy follows the finger. */
+.sortRow[data-dragging] {
+  opacity: 0;
+}
+
+.group[data-dragging] {
+  opacity: 0;
+}
+
+.sortRowBody {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: calc(var(--s-1) / 4) var(--s-2);
+  align-content: center;
+  min-width: 0;
+  min-height: 60px;
+  padding: var(--s-2) 0 var(--s-2) var(--s-4);
+  color: var(--fg);
+}
+
+/* Only the handle drags: a finger anywhere else on the row still scrolls the list. */
+.sortHandle {
+  display: grid;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin-right: var(--s-2);
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--faint);
+  cursor: grab;
+  touch-action: none;
+}
+
+.sortHandle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.sortHandle:active {
+  color: var(--fg-2);
+}
+
+.sortLifted {
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  cursor: grabbing;
+  animation: sortLift var(--dur-1) var(--ease) both;
+}
+
+@keyframes sortLift {
+  from {
+    box-shadow: none;
+    transform: scale(1);
+  }
+
+  to {
+    transform: scale(1.02);
+  }
+}
+
+.sortDone {
+  height: 44px;
+  padding: 0 var(--s-3);
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.sortDone:active {
+  background: var(--hover);
 }
 
 .dragOverlay {
