@@ -812,7 +812,7 @@ test('composer attachments upload, fail, retry, remove and send as ordered parts
     .setInputFiles([{ name: '截图.png', mimeType: 'image/png', buffer: png }])
   await page
     .locator('input[type="file"]')
-    .nth(1)
+    .first()
     .setInputFiles([{ name: '说明.txt', mimeType: 'text/plain', buffer: Buffer.from('虚构说明内容。') }])
   const list = page.getByRole('list', { name: '待发送附件' })
   await expect(list.getByRole('listitem', { name: '截图.png' })).toContainText('B')
