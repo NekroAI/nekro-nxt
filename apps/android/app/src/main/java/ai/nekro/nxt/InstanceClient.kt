@@ -28,6 +28,34 @@ data class Inspection(
 
 data class Enrollment(val deviceId: String, val deviceSecret: String)
 
+/**
+ * What a pairing QR code holds (decision A5): `nekronxt://pair?origin=…&code=…&spki=…`. The key is the instance's own
+ * TLS key, so a self-signed instance is checked against it instead of trusted on first use.
+ */
+data class PairingLink(val origin: String, val code: String, val spkiSha256: String?) {
+    companion object {
+        fun parse(text: String): PairingLink? {
+            val uri = try {
+                URI(text.trim())
+            } catch (_: Exception) {
+                return null
+            }
+            if (uri.scheme != "nekronxt" || uri.host != "pair") return null
+            val query = (uri.rawQuery ?: return null).split('&').mapNotNull {
+                val parts = it.split('=', limit = 2)
+                if (parts.size == 2) parts[0] to java.net.URLDecoder.decode(parts[1], "UTF-8") else null
+            }.toMap()
+            val origin = try {
+                InstanceClient.normalizeOrigin(query["origin"] ?: return null)
+            } catch (_: InstanceError) {
+                return null
+            }
+            val code = InstanceClient.pairingCode(query["code"] ?: return null) ?: return null
+            return PairingLink(origin, code, query["spki"]?.takeIf { it.matches(Regex("^[A-Za-z0-9_-]{43}$")) })
+        }
+    }
+}
+
 data class Session(val cookies: List<String>, val csrfToken: String)
 
 /**
@@ -60,7 +88,20 @@ object InstanceClient {
         return "$scheme://${uri.host.lowercase()}$port"
     }
 
-    fun inspect(address: String): Inspection {
+    /** `ABCD-EFGH` from what a person typed; null when it is not a pairing code (then it is a management key). */
+    fun pairingCode(input: String): String? {
+        val compact = input.uppercase().filter { it.isLetterOrDigit() }
+        if (compact.length != 8 || compact.any { it !in PAIRING_ALPHABET }) return null
+        return "${compact.take(4)}-${compact.drop(4)}"
+    }
+
+    private const val PAIRING_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+    /**
+     * `expectedSpki` comes from a pairing QR code: a self-signed instance must present exactly that key. Without it the
+     * key the instance presents now is remembered (trust on first use, as Desktop does).
+     */
+    fun inspect(address: String, expectedSpki: String? = null): Inspection {
         val origin = normalizeOrigin(address)
         if (origin.startsWith("http://")) return describe(origin, Transport.HTTP, null)
         return try {
@@ -73,6 +114,12 @@ object InstanceClient {
             val leaf = trust.observed?.firstOrNull()
                 ?: throw InstanceError(InstanceError.Kind.IDENTITY_CHANGED, "服务器没有提供可验证的 TLS 证书。")
             val spki = Pins.spkiSha256(leaf)
+            if (expectedSpki != null && spki != expectedSpki) {
+                throw InstanceError(
+                    InstanceError.Kind.IDENTITY_CHANGED,
+                    "这个地址出示的证书和二维码里的不一致。请确认手机连的是同一个实例，不要在不信任的网络里配对。",
+                )
+            }
             inspection(origin, Transport.PINNED, spki, descriptor)
         }
     }
@@ -148,6 +195,23 @@ object InstanceClient {
         val enrolled = request(origin, "/api/management/devices/enroll", "POST", body, transport, spki).let {
             if (it.status == 401 || it.status == 403) {
                 throw InstanceError(InstanceError.Kind.KEY_REJECTED, it.problemMessage ?: "管理密钥不正确。")
+            }
+            it.expectOk()
+        }
+        return Enrollment(enrolled.getString("deviceId"), enrolled.getString("deviceSecret"))
+    }
+
+    /** Pairs with a code a signed-in device showed; no management key involved. */
+    fun enrollWithCode(inspection: Inspection, code: String, label: String, clientReleaseId: String): Enrollment {
+        val body = JSONObject()
+            .put("pairingCode", code)
+            .put("label", label.take(80))
+            .put("clientReleaseId", clientReleaseId)
+        val enrolled = request(
+            inspection.origin, "/api/management/devices/enroll", "POST", body, inspection.transport, inspection.spkiSha256,
+        ).let {
+            if (it.status == 401) {
+                throw InstanceError(InstanceError.Kind.KEY_REJECTED, it.problemMessage ?: "配对码无效或已过期。")
             }
             it.expectOk()
         }

@@ -30,18 +30,27 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/intro"
             style="@style/Nxt.Note"
-            android:text="填写你的 NekroNXT 实例地址。在外面使用需要实例能从公网访问。" />
+            android:text="在已登录的电脑或浏览器上打开「设置 → 登录与访问」，点「连接安卓应用」，再用手机扫码。" />
 
-        <TextView style="@style/Nxt.Label" android:text="地址" />
+        <LinearLayout
+            android:id="@+id/addressSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
 
-        <EditText
-            android:id="@+id/address"
-            style="@style/Nxt.Field"
-            android:autofillHints="url"
-            android:hint="例如 nxt.example.com"
-            android:imeOptions="actionGo"
-            android:inputType="textUri" />
+            <TextView style="@style/Nxt.Label" android:text="地址" />
+
+            <EditText
+                android:id="@+id/address"
+                style="@style/Nxt.Field"
+                android:autofillHints="url"
+                android:hint="例如 nxt.example.com"
+                android:imeOptions="actionGo"
+                android:inputType="textUri" />
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/keySection"
@@ -64,19 +73,26 @@
                 android:textColor="@color/nxt_text"
                 android:visibility="gone" />
 
-            <TextView style="@style/Nxt.Label" android:text="管理密钥" />
+            <LinearLayout
+                android:id="@+id/secretSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
-            <EditText
-                android:id="@+id/managementKey"
-                style="@style/Nxt.Field"
-                android:autofillHints="password"
-                android:hint="实例的管理密钥"
-                android:imeOptions="actionDone"
-                android:inputType="textPassword" />
+                <TextView style="@style/Nxt.Label" android:text="配对码或管理密钥" />
 
-            <TextView
-                style="@style/Nxt.Note"
-                android:text="管理密钥只用这一次，不会保存在手机上。连接后这台手机会出现在实例的「登录设备」里。" />
+                <EditText
+                    android:id="@+id/secret"
+                    style="@style/Nxt.Field"
+                    android:autofillHints="password"
+                    android:hint="例如 ABCD-EFGH"
+                    android:imeOptions="actionDone"
+                    android:inputType="textPassword" />
+
+                <TextView
+                    style="@style/Nxt.Note"
+                    android:text="配对码在已登录设备的「连接安卓应用」里，5 分钟内有效。管理密钥只用这一次，不会保存在手机上。" />
+            </LinearLayout>
         </LinearLayout>
 
         <TextView
@@ -89,7 +105,17 @@
         <Button
             android:id="@+id/primary"
             style="@style/Nxt.PrimaryButton"
-            android:text="下一步" />
+            android:text="扫码连接" />
+
+        <Button
+            android:id="@+id/secondary"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@android:color/transparent"
+            android:text="输入地址"
+            android:textColor="@color/nxt_accent"
+            android:textSize="15sp" />
 
         <ProgressBar
             android:id="@+id/progress"

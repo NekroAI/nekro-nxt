@@ -1,16 +1,20 @@
 package ai.nekro.nxt
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Base64
 import android.view.View
 import android.view.ViewGroup
@@ -62,6 +66,7 @@ class WebShellActivity : ComponentActivity() {
     private lateinit var root: FrameLayout
     private lateinit var webView: WebView
     private var notice: View? = null
+    private var intro: View? = null
     private var overlayOpen = false
     private var renewing = false
     private var lastRenewal = 0L
@@ -90,6 +95,14 @@ class WebShellActivity : ComponentActivity() {
         callback.onReceiveValue(if (photo != null) arrayOf(photo) else picked)
     }
 
+    private var pendingChooser: WebChromeClient.FileChooserParams? = null
+
+    private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val params = pendingChooser ?: return@registerForActivityResult
+        pendingChooser = null
+        launchChooser(params, withCamera = granted)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -98,10 +111,13 @@ class WebShellActivity : ComponentActivity() {
             openConnect(null)
             return
         }
+        // A notification of another saved instance opens that one.
+        intent?.getStringExtra(EXTRA_INSTANCE)?.let { id -> if (profiles.all().any { it.instanceId == id }) profiles.select(id) }
         profile = profiles.current() ?: run {
             openConnect(null)
             return
         }
+        BackgroundNotifications.start(this)
         root = FrameLayout(this)
         setContentView(root)
         publishSwitchShortcut()
@@ -122,12 +138,38 @@ class WebShellActivity : ComponentActivity() {
         }
         setUpWebView()
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets -> applyInsets(insets) }
-        start(savedInstanceState?.getString(STATE_URL))
+        start(savedInstanceState?.getString(STATE_URL) ?: intent?.getStringExtra(EXTRA_ROUTE)?.let { profile.origin + it })
+        Updater.checkLater(this)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.action == ACTION_SWITCH) openConnect(null)
+        if (intent.action == ACTION_SWITCH) {
+            openConnect(null)
+            return
+        }
+        val instance = intent.getStringExtra(EXTRA_INSTANCE) ?: return
+        if (::profile.isInitialized && instance != profile.instanceId) {
+            // A notification of another instance: show that one from the start.
+            setIntent(intent)
+            recreate()
+            return
+        }
+        val route = intent.getStringExtra(EXTRA_ROUTE) ?: return
+        if (::webView.isInitialized) webView.loadUrl(profile.origin + route)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::profile.isInitialized) visibleInstance = profile.instanceId
+        // Permissions and battery settings may have changed while the system settings were open.
+        if (::webView.isInitialized) installPageScript()
+        Updater.resumePending(this)
+    }
+
+    override fun onPause() {
+        visibleInstance = null
+        super.onPause()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -279,6 +321,9 @@ class WebShellActivity : ComponentActivity() {
             "session-expired" -> renewSession()
             "theme" -> applyTheme(message.optString("theme") == "dark")
             "save-file" -> saveFile(message.optString("name"), message.optString("mime"), message.optString("data"))
+            "background-notifications" -> setBackground(message.optBoolean("enabled"))
+            "battery-settings" -> openBatterySettings()
+            "switch-instance" -> openConnect(null)
         }
     }
 
@@ -313,20 +358,26 @@ class WebShellActivity : ComponentActivity() {
         val keyboard = insets.isVisible(WindowInsetsCompat.Type.ime())
         root.updatePadding(bottom = if (keyboard) ime.bottom else 0)
         notice?.updatePadding(top = bars.top, bottom = bars.bottom)
+        intro?.updatePadding(top = bars.top, bottom = bars.bottom)
         val density = resources.displayMetrics.density
         fun css(px: Int) = "${(px / density).toInt()}px"
         val css = "--safe-top:${css(bars.top)};--safe-right:${css(bars.right)};" +
             "--safe-bottom:${css(if (keyboard) 0 else bars.bottom)};--safe-left:${css(bars.left)}"
         if (css != insetsCss) {
             insetsCss = css
-            installInsets()
+            installPageScript()
         }
         return WindowInsetsCompat.CONSUMED
     }
 
-    /** For pages loaded from now on (before their own scripts run) and for the page already showing. */
-    private fun installInsets() {
-        val apply = "(()=>{const v=${JSONObject.quote(insetsCss)}.split(';');" +
+    /**
+     * The insets and the phone's state (`window.nekroAndroidState`, android-shell.ts), for pages loaded from now on
+     * (before their own scripts run) and for the page already showing.
+     */
+    private fun installPageScript() {
+        val state = BackgroundNotifications.state(this).toString()
+        val apply = "(()=>{window.nekroAndroidState=$state;dispatchEvent(new Event('nekro-android-state'));" +
+            "const v=${JSONObject.quote(insetsCss)}.split(';').filter(Boolean);" +
             "const a=()=>{const r=document.documentElement;if(!r)return false;" +
             "for(const p of v){const i=p.indexOf(':');r.style.setProperty(p.slice(0,i),p.slice(i+1))}return true};" +
             "if(!a())new MutationObserver((_,o)=>{if(a())o.disconnect()}).observe(document,{childList:true})})()"
@@ -369,7 +420,10 @@ class WebShellActivity : ComponentActivity() {
 
         override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) = updateBack()
 
-        override fun onPageFinished(view: WebView, url: String?) = updateBack()
+        override fun onPageFinished(view: WebView, url: String?) {
+            updateBack()
+            if (sameOrigin(url) && notice == null && !BackgroundNotifications.introShown(this@WebShellActivity)) showIntro()
+        }
 
         @SuppressLint("WebViewClientOnReceivedSslError")
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
@@ -399,25 +453,39 @@ class WebShellActivity : ComponentActivity() {
         ): Boolean {
             fileCallback?.onReceiveValue(null)
             fileCallback = callback
-            val content = params.createIntent().apply {
-                if (params.mode == FileChooserParams.MODE_OPEN_MULTIPLE) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-            }
-            val chooser = Intent.createChooser(content, null)
             val acceptsImages = params.acceptTypes.all { it.isBlank() } ||
                 params.acceptTypes.any { it.startsWith("image/") || it == "*/*" }
-            if (acceptsImages) cameraIntent()?.let { chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(it)) }
-            return try {
-                pickFiles.launch(chooser)
-                true
-            } catch (_: ActivityNotFoundException) {
-                fileCallback = null
-                captureUri = null
-                false
+            // The scanner declares the camera permission, and then the camera app may only be started once it is
+            // granted; ask first, and offer files alone if it is refused.
+            if (acceptsImages && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                pendingChooser = params
+                askCamera.launch(Manifest.permission.CAMERA)
+                return true
             }
+            return launchChooser(params, withCamera = acceptsImages)
         }
     }
 
-    /** "Take a photo" next to the file pickers, through the camera app, which needs no camera permission here. */
+    private fun launchChooser(params: WebChromeClient.FileChooserParams, withCamera: Boolean): Boolean {
+        val content = params.createIntent().apply {
+            if (params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
+        }
+        val chooser = Intent.createChooser(content, null)
+        if (withCamera) cameraIntent()?.let { chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(it)) }
+        return try {
+            pickFiles.launch(chooser)
+            true
+        } catch (_: ActivityNotFoundException) {
+            fileCallback?.onReceiveValue(null)
+            fileCallback = null
+            captureUri = null
+            false
+        }
+    }
+
+    /** "Take a photo" next to the file pickers, through the camera app. */
     private fun cameraIntent(): Intent? {
         val directory = File(cacheDir, "captures").apply { mkdirs() }
         directory.listFiles()?.forEach { it.delete() }
@@ -493,6 +561,65 @@ class WebShellActivity : ComponentActivity() {
         Toast.makeText(this, if (saved) "已保存到「下载」：$name" else "下载失败：$name", Toast.LENGTH_LONG).show()
     }
 
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        enableBackground()
+    }
+
+    /** Turned on from the first-run explanation or the web's settings; asks for the notification permission first. */
+    private fun setBackground(enabled: Boolean) {
+        if (!enabled) {
+            BackgroundNotifications.setEnabled(this, false)
+            installPageScript()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            enableBackground()
+        }
+    }
+
+    private fun enableBackground() {
+        BackgroundNotifications.setEnabled(this, true)
+        installPageScript()
+        // The system stops apps under battery optimization; ask right away while the reason is fresh.
+        if (BackgroundNotifications.batteryOptimized(this)) openBatterySettings()
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun openBatterySettings() {
+        val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        try {
+            startActivity(direct)
+        } catch (_: ActivityNotFoundException) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(this, "请在系统设置里允许 NekroNXT 在后台运行。", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    /** Shown once after the first page load: what background notifications cost and do, then the user decides. */
+    private fun showIntro() {
+        BackgroundNotifications.markIntroShown(this)
+        val view = layoutInflater.inflate(R.layout.background_intro, root, false)
+        val close = {
+            root.removeView(view)
+            intro = null
+        }
+        view.findViewById<Button>(R.id.introEnable).setOnClickListener {
+            close()
+            setBackground(true)
+        }
+        view.findViewById<Button>(R.id.introLater).setOnClickListener { close() }
+        root.addView(view)
+        intro = view
+        ViewCompat.requestApplyInsets(root)
+    }
+
     private fun showOffline() {
         showNotice(
             "连不上实例",
@@ -541,6 +668,12 @@ class WebShellActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_SWITCH = "ai.nekro.nxt.SWITCH_INSTANCE"
+        const val EXTRA_INSTANCE = "instance"
+        const val EXTRA_ROUTE = "route"
+
+        /** The instance whose page is in front, so its notifications are not repeated by the system. */
+        @Volatile
+        var visibleInstance: String? = null
         private const val STATE_URL = "url"
         private const val RENEW_INTERVAL_MS = 5_000L
 

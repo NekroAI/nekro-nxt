@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- First-run explanation of background notifications (decision A4), over the page like a bottom sheet. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#66000000"
+    android:clickable="true"
+    android:focusable="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="12dp"
+        android:background="@drawable/sheet"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="接收后台通知？"
+            android:textColor="@color/nxt_text"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            style="@style/Nxt.Note"
+            android:layout_marginTop="12dp"
+            android:text="关掉应用后，NekroNXT 仍可以和实例保持连接，有扩展等你允许运行、智能体申请凭据这类需要处理的事时弹出通知。" />
+
+        <TextView
+            style="@style/Nxt.Note"
+            android:text="为了保持连接，通知栏会常驻一条「保持连接」，可以在系统设置里把它折叠起来。以后可以在「设置 → 通知」里随时关闭。" />
+
+        <Button
+            android:id="@+id/introEnable"
+            style="@style/Nxt.PrimaryButton"
+            android:text="开启后台通知" />
+
+        <Button
+            android:id="@+id/introLater"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:background="@android:color/transparent"
+            android:text="以后再说"
+            android:textColor="@color/nxt_accent"
+            android:textSize="15sp" />
+    </LinearLayout>
+</FrameLayout>
