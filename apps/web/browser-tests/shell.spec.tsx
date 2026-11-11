@@ -897,6 +897,224 @@ test.describe('shell, channels and live', () => {
     }
   })
 
+  /** The bottom bar on a phone, its indicator and where a pointer would press each item. */
+  const bottomBar = (page: Page) => {
+    // By selector: an open modal menu hides the bar from the accessibility tree.
+    const nav = page.locator('nav[aria-label="主导航"]')
+    const item = (name: string) =>
+      name === '更多' ? nav.getByRole('button', { name: '更多' }) : nav.getByRole('link', { name, exact: true })
+    const center = async (name: string) => {
+      const box = await item(name).boundingBox()
+      if (!box) throw new Error(`${name} is not on the bar`)
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+    /** The item's left edge inside the bar's border, where the indicator's transform puts it. */
+    const left = (name: string) =>
+      item(name).evaluate((node) => {
+        const bar = node.parentElement
+        if (!bar) throw new Error('the item is outside the bar')
+        return node.getBoundingClientRect().left - bar.getBoundingClientRect().left - bar.clientLeft
+      })
+    const indicator = nav.locator('> span[aria-hidden="true"]').first()
+    /** Where the indicator is headed (its inline style) and where it is drawn this frame. */
+    const indicatorX = () =>
+      indicator.evaluate((node: HTMLElement) => ({
+        target: new DOMMatrixReadOnly(node.style.transform).m41,
+        shown: new DOMMatrixReadOnly(getComputedStyle(node).transform).m41,
+      }))
+    const drag = async (from: string, to: { readonly x: number; readonly y: number }, steps = 12) => {
+      const start = await center(from)
+      await page.mouse.move(start.x, start.y)
+      await page.mouse.down()
+      await page.mouse.move(to.x, to.y, { steps })
+    }
+    return { nav, item, center, left, indicatorX, drag }
+  }
+
+  test('on a phone a press moves the bottom bar’s selection at once and the tap still switches spaces', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('概览'), 0)
+      const channels = await bar.center('频道')
+      await page.mouse.move(channels.x, channels.y)
+      await page.mouse.down()
+      // Before any click or route change: the pressed item takes the selection and the indicator is on its way.
+      await expect(bar.item('频道')).toHaveAttribute('data-steer', '')
+      expect((await bar.indicatorX()).target).toBeCloseTo(await bar.left('频道'), 0)
+      await expect(page).toHaveURL(/\/live$/u)
+      await page.mouse.up()
+      await expect(page).toHaveURL(/\/channels/u)
+      await expect(bar.item('频道')).toHaveAttribute('aria-current', 'page')
+      await expect(bar.item('频道')).not.toHaveAttribute('data-steer')
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('频道'), 0)
+
+      // A real touch tap goes the same way.
+      const agents = await bar.center('智能体')
+      await page.touchscreen.tap(agents.x, agents.y)
+      await expect(page).toHaveURL(/\/agents/u)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone dragging along the bottom bar carries the selection and switches once on release', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+      await page.evaluate(() => {
+        const original = history.pushState.bind(history)
+        const pushed: string[] = []
+        Object.assign(window, { pushedForTest: pushed })
+        history.pushState = (...args: Parameters<History['pushState']>) => {
+          pushed.push(String(args[2]))
+          original(...args)
+        }
+      })
+      const workshop = await bar.center('工坊')
+      await bar.drag('概览', { x: workshop.x - 6, y: workshop.y })
+      // Under the finger, with the item below it brightened; nothing has switched yet.
+      await expect(bar.nav).toHaveAttribute('data-dragging', '')
+      await expect(bar.item('工坊')).toHaveAttribute('data-steer', '')
+      expect(Math.abs((await bar.indicatorX()).shown - ((await bar.left('工坊')) - 6))).toBeLessThan(2)
+      await expect(page).toHaveURL(/\/live$/u)
+      await page.mouse.up()
+      await expect(page).toHaveURL(/\/workshop/u)
+      await expect(bar.item('工坊')).toHaveAttribute('aria-current', 'page')
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('工坊'), 0)
+      expect(await page.evaluate(() => (window as Window & { pushedForTest?: string[] }).pushedForTest)).toEqual([
+        '/workshop',
+      ])
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone moving away vertically cancels a drag and the selection returns', async () => {
+    const { page } = await open('/live', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+      const agents = await bar.center('智能体')
+      await bar.drag('概览', agents)
+      await expect(bar.item('智能体')).toHaveAttribute('data-steer', '')
+      await page.mouse.move(agents.x, agents.y - 120, { steps: 6 })
+      await expect(bar.nav).not.toHaveAttribute('data-dragging')
+      await expect(bar.item('智能体')).not.toHaveAttribute('data-steer')
+      expect((await bar.indicatorX()).target).toBeCloseTo(await bar.left('概览'), 0)
+      await page.mouse.up()
+      await page.waitForTimeout(300)
+      await expect(page).toHaveURL(/\/live$/u)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone a drag released on “更多” opens its menu, as a tap does', async () => {
+    const { page } = await open('/live', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+      // An open menu hides the page from assistive technology, so measure first.
+      const overview = await bar.left('概览')
+      await bar.drag('频道', await bar.center('更多'))
+      await page.mouse.up()
+      const menu = page.getByRole('menu', { name: '更多' })
+      await expect(menu).toBeVisible()
+      await expect(page).toHaveURL(/\/live$/u)
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(overview, 0)
+      await page.keyboard.press('Escape')
+      await expect(menu).toBeHidden()
+
+      const more = await bar.center('更多')
+      await page.touchscreen.tap(more.x, more.y)
+      await expect(menu).toBeVisible()
+      await menu.getByRole('menuitem', { name: '接线' }).click()
+      await expect(page).toHaveURL(/\/wiring/u)
+      await expect(bar.item('更多')).toHaveAttribute('aria-current', 'page')
+      // “更多” holds the page, so it carries the selection; the hidden 接线 entry does not claim it.
+      await expect(bar.nav.locator('[aria-current="page"]')).toHaveCount(1)
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('更多'), 0)
+      await expect(bar.nav.locator('> span[aria-hidden="true"]').first()).toHaveCSS('opacity', '1')
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('the bottom bar still works from the keyboard', async () => {
+    const { page } = await open('/live', { width: 393 })
+    try {
+      const bar = bottomBar(page)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+      await bar.item('频道').focus()
+      await page.keyboard.press('Enter')
+      await expect(page).toHaveURL(/\/channels/u)
+      await expect(bar.item('频道')).toHaveAttribute('aria-current', 'page')
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('频道'), 0)
+      await bar.item('更多').focus()
+      await page.keyboard.press('Enter')
+      const menu = page.getByRole('menu', { name: '更多' })
+      await expect(menu).toBeVisible()
+      await expect(menu.getByRole('menuitem').first()).toBeFocused()
+      await page.keyboard.press('Enter')
+      await expect(menu).toBeHidden()
+      await expect(page).toHaveURL(/\/(?:community|wiring|apps|logs|settings)/u)
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('with reduced motion the bottom bar’s selection lands at once', async () => {
+    for (const reduce of ['app', 'system'] as const) {
+      const { page } = await open('/live', {
+        width: 393,
+        touch: true,
+        before: async (target) => {
+          if (reduce === 'app')
+            await target.addInitScript(() => localStorage.setItem('nekro-nxt.reduced-motion', 'true'))
+          else await target.emulateMedia({ reducedMotion: 'reduce' })
+        },
+      })
+      try {
+        const bar = bottomBar(page)
+        await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+        await page.waitForTimeout(100)
+        const agents = await bar.center('智能体')
+        await page.mouse.move(agents.x, agents.y)
+        await page.mouse.down()
+        await expect(bar.item('智能体')).toHaveAttribute('data-steer', '')
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+        expect((await bar.indicatorX()).shown).toBeCloseTo(await bar.left('智能体'), 0)
+        await page.mouse.up()
+        await expect(page).toHaveURL(/\/agents/u)
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
+  test('quick taps on the bottom bar end on the last one', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true })
+    try {
+      const bar = bottomBar(page)
+      await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
+      const points = await Promise.all(['频道', '智能体', '工坊'].map((name) => bar.center(name)))
+      for (const point of points) await page.mouse.click(point.x, point.y)
+      await expect(page).toHaveURL(/\/workshop/u)
+      await expect(bar.item('工坊')).toHaveAttribute('aria-current', 'page')
+      await expect(bar.nav.locator('[data-steer]')).toHaveCount(0)
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('工坊'), 0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
   test('the status bar colour follows the theme the app shows', async () => {
     const { page } = await open('/settings/appearance', {
       before: async (target) => {

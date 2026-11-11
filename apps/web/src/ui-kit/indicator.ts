@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { flushSync } from 'react-dom'
 
 export interface IndicatorGeometry {
   readonly visible: boolean
@@ -61,9 +62,10 @@ export function useIndicator(container: RefObject<HTMLElement | null>, selector:
       if (ready || frame.current) return
       frame.current = requestAnimationFrame(() => (frame.current = requestAnimationFrame(() => setReady(true))))
     }
-    if (measure()) settle()
+    // The first observation arrives right after layout and before paint, so measuring there places the indicator in
+    // the same frame without forcing a synchronous layout while a new page commits.
     const observer = new ResizeObserver(() => {
-      if (measure()) settle()
+      if (flushSync(measure)) settle()
     })
     observer.observe(root)
     const target = root.querySelector<HTMLElement>(selector)

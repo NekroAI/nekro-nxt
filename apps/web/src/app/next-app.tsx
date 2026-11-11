@@ -1,9 +1,9 @@
-import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from 'react'
+import { lazy, useEffect, type ComponentType, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { ExtensionUiProvider } from '../extension-ui/index.js'
 import { BackgroundCandidates, DynamicClientProvider } from '../dynamic-client-coordinator.js'
 import { HostUiClientProvider } from '../host-ui-client.js'
-import { Skeleton, Toaster, TooltipProvider } from '../ui-kit/index.js'
+import { Toaster, TooltipProvider } from '../ui-kit/index.js'
 import { AppShell } from './shell/app-shell.js'
 import { CrumbProvider } from './shell/crumb.js'
 import { ExtensionPage } from './system/extension-page.js'
@@ -70,25 +70,12 @@ function usePrefetchSpaces(): void {
   }, [])
 }
 
-function Loading() {
-  return (
-    <div style={{ display: 'grid', gap: 12, padding: 32, maxWidth: 720 }}>
-      <Skeleton width="40%" height={24} />
-      <Skeleton height={14} />
-      <Skeleton width="70%" height={14} />
-    </div>
-  )
-}
-
 const retrySpaces = () => {
   for (const item of [live, channels, agents, workshop, community, wiring, settings, logs]) item.reset()
 }
 
-const space = (node: ReactNode) => (
-  <SpaceBoundary onRetry={retrySpaces}>
-    <Suspense fallback={<Loading />}>{node}</Suspense>
-  </SpaceBoundary>
-)
+// The shell holds the one Suspense boundary for spaces, so a switch to a space still loading keeps the current page.
+const space = (node: ReactNode) => <SpaceBoundary onRetry={retrySpaces}>{node}</SpaceBoundary>
 
 /**
  * The redesigned client (Decision 2026-10-04). Extension runtimes stay mounted for the whole session so dynamic

@@ -21,7 +21,6 @@ declare const styles: {
   readonly railDivider: string
   readonly railExtension: string
   readonly railIndicator: string
-  readonly railIndicatorReady: string
   readonly railItem: string
   readonly railMobileOnly: string
   readonly railSpacer: string

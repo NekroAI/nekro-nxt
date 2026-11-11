@@ -17,12 +17,12 @@ import {
   Wrench,
 } from 'lucide-react'
 import { browserInstanceName, isUnencryptedRemoteConnection } from '../../management-access.js'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
 import { HOST_ICONS } from '../../extension-ui/icons.js'
 import { useProductStore, type ProductHostStatus } from '../../product-runtime.js'
-import { Kbd, Menu, Popover, StatusDot, useIndicator, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
+import { Kbd, Menu, Popover, Skeleton, StatusDot, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
 import { removeBootSplash } from '../../boot-splash.js'
 import { AttentionList } from '../attention/attention-list.js'
 import { bellStore, useBell } from '../attention/bell.js'
@@ -31,6 +31,7 @@ import { connectionStatus } from '../model/connection-status.js'
 import { agentAccent, connectionLabel, isAgentWorking } from '../model/identity.js'
 import { CommandPalette } from './command-palette.js'
 import { useCurrentCrumb } from './crumb.js'
+import { useRailSteering } from './rail-steering.js'
 import styles from './shell.module.css'
 import { updateLabel, useProductUpdates, versionDescription, versionLabel } from './product-updates.js'
 
@@ -154,27 +155,34 @@ function Rail() {
   // The “更多” that holds the current page carries the selection, so the indicator always has one target.
   const mobileMore = narrow && !MOBILE_SPACES.has(space)
   const desktopMore = !narrow && overflow.some((page) => page.routeBase === space)
-  const { geometry, ready } = useIndicator(ref, '[aria-current="page"]', `${space}:${narrow}:${fit}`)
+  const indicator = useRef<HTMLSpanElement>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const steering = useRailSteering({
+    nav: ref,
+    indicator,
+    selectionKey: `${location.key}:${space}:${narrow}:${fit}`,
+    layoutKey: `${narrow}:${fit}:${railPages.length}`,
+    draggable: narrow,
+    onRelease: (item) => {
+      const href = item.getAttribute('href')
+      if (item.dataset['railItem'] === 'menu') setMoreOpen(true)
+      else if (href) go(href)
+    },
+  })
   const current = (path: string) => (space === path ? 'page' : undefined)
+  // Entries hidden from the phone's bar say `false`: left undefined, NavLink would mark the active one itself and the
+  // selection would sit on an invisible item instead of “更多”.
   return (
-    <nav ref={ref} className={styles.rail} aria-label="主导航">
-      <span
-        className={[styles.railIndicator, ready ? styles.railIndicatorReady : ''].join(' ')}
-        style={{
-          opacity: geometry.visible ? 1 : 0,
-          width: geometry.width,
-          height: geometry.height,
-          transform: `translate(${geometry.x}px, ${geometry.y}px)`,
-        }}
-        aria-hidden="true"
-      />
+    <nav ref={ref} className={styles.rail} aria-label="主导航" {...steering}>
+      <span ref={indicator} className={styles.railIndicator} aria-hidden="true" />
       {SPACES.map(({ path, label, icon: Icon, motion }) => (
         <NavLink
           key={path}
           to={path}
           className={[styles.railItem, MOBILE_SPACES.has(path) ? '' : styles.railDesktopOnly].join(' ')}
-          aria-current={narrow && !MOBILE_SPACES.has(path) ? undefined : current(path)}
+          aria-current={narrow && !MOBILE_SPACES.has(path) ? false : current(path)}
           data-rail-space=""
+          data-rail-item="link"
           data-motion={motion}
         >
           <Icon aria-hidden="true" strokeWidth={1.7} />
@@ -187,9 +195,10 @@ function Rail() {
           key={page.pageInstanceId}
           to={pagePath(page)}
           className={[styles.railItem, styles.railExtension].join(' ')}
-          aria-current={narrow ? undefined : current(page.routeBase)}
+          aria-current={narrow ? false : current(page.routeBase)}
           title={page.title}
           data-extension-rail=""
+          data-rail-item="link"
         >
           <RailPageIcon page={page} />
           <span>{page.title}</span>
@@ -221,8 +230,9 @@ function Rail() {
       <NavLink
         to="/logs"
         className={[styles.railItem, styles.railDesktopOnly].join(' ')}
-        aria-current={narrow ? undefined : current('/logs')}
+        aria-current={narrow ? false : current('/logs')}
         data-motion="hop"
+        data-rail-item="link"
       >
         <ScrollText aria-hidden="true" strokeWidth={1.7} />
         <span>日志</span>
@@ -230,18 +240,24 @@ function Rail() {
       <NavLink
         to="/settings"
         className={[styles.railItem, styles.railDesktopOnly].join(' ')}
-        aria-current={narrow ? undefined : current('/settings')}
+        aria-current={narrow ? false : current('/settings')}
         data-motion="gear"
+        data-rail-item="link"
       >
         <Settings aria-hidden="true" strokeWidth={1.7} />
         <span>设置</span>
       </NavLink>
       <Menu
         label="更多"
+        open={moreOpen}
+        onOpenChange={setMoreOpen}
         trigger={
           <Pressable
             className={[styles.railItem, styles.railMobileOnly].join(' ')}
             aria-current={mobileMore ? 'page' : undefined}
+            data-rail-item="menu"
+            // The bar opens “更多” on release (rail-steering.ts), like its other items.
+            onClick={() => setMoreOpen(true)}
           >
             <MoreHorizontal aria-hidden="true" strokeWidth={1.7} />
             <span>更多</span>
@@ -503,6 +519,18 @@ function StatusBar() {
   )
 }
 
+function SpaceLoading() {
+  return (
+    <div data-canvas="" className={styles.canvas}>
+      <div style={{ display: 'grid', gap: 12, padding: 32, maxWidth: 720 }}>
+        <Skeleton width="40%" height={24} />
+        <Skeleton height={14} />
+        <Skeleton width="70%" height={14} />
+      </div>
+    </div>
+  )
+}
+
 export function AppShell() {
   const location = useLocation()
   const space = spaceOf(location.pathname)
@@ -526,9 +554,15 @@ export function AppShell() {
       <Rail />
       <main className={styles.main}>
         <ReleaseBanner />
-        <div key={space} data-canvas="" className={[styles.canvas, styles.canvasEnter].join(' ')}>
-          <Outlet />
-        </div>
+        {/*
+          Route changes render as transitions, and a boundary that already shows a page keeps it while the next space
+          loads; a boundary inside each space would flash its placeholder instead.
+        */}
+        <Suspense fallback={<SpaceLoading />}>
+          <div key={space} data-canvas="" className={[styles.canvas, styles.canvasEnter].join(' ')}>
+            <Outlet />
+          </div>
+        </Suspense>
       </main>
       <StatusBar />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />

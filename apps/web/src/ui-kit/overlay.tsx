@@ -260,16 +260,21 @@ export function Menu({
   items,
   label,
   align = 'end',
+  open,
+  onOpenChange,
 }: {
   readonly trigger: ReactNode
   readonly items: readonly (MenuEntry | 'separator' | { readonly heading: string })[]
   readonly label?: string
   readonly align?: 'start' | 'end'
+  /** Controlled open state, for a trigger that opens the menu from its own gesture. */
+  readonly open?: boolean
+  readonly onOpenChange?: (open: boolean) => void
 }) {
   // On a phone the menu dims the page behind it, so a tap outside only closes it instead of reaching what is there.
   const phone = useSyncExternalStore(subscribePhone, readPhone, () => false)
   return (
-    <RadixMenu.Root modal={phone}>
+    <RadixMenu.Root modal={phone} {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange } : {})}>
       <RadixMenu.Trigger asChild>{trigger}</RadixMenu.Trigger>
       <RadixMenu.Portal>
         <RadixMenu.Content className={styles.menu} align={align} sideOffset={6} aria-label={label}>

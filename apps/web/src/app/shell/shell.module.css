@@ -328,12 +328,28 @@ a.instance {
   background: var(--accent);
 }
 
-.railIndicatorReady {
+.railIndicator[data-ready] {
   transition:
     transform var(--dur-3) var(--spring),
     width var(--dur-3) var(--ease),
     height var(--dur-3) var(--ease),
     opacity var(--dur-1);
+}
+
+/* Under a dragging finger the indicator follows it exactly (rail-steering.ts). */
+.railIndicator[data-follow] {
+  transition: opacity var(--dur-1);
+}
+
+/* With reduced motion the indicator lands at once rather than in a 1ms transition. */
+:global(html[data-nxt-motion='off']) .railIndicator[data-ready] {
+  transition-property: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .railIndicator[data-ready] {
+    transition-property: none;
+  }
 }
 
 .railItem {
@@ -353,6 +369,7 @@ a.instance {
   font-size: var(--fs-xs);
   text-decoration: none;
   transition: color var(--dur-2);
+  -webkit-user-drag: none;
 }
 
 .railItem svg {
@@ -385,33 +402,61 @@ a.instance {
   font-weight: 600;
 }
 
+/*
+ * A press or a drag moves the selection before the page follows (05 §6.2): the chosen item takes the accent, the
+ * current one lets it go, and an item a drag passes over only brightens.
+ */
+.rail[data-steering] .railItem {
+  transition-duration: var(--dur-1);
+}
+
+.rail[data-steering] .railItem[aria-current='page']:not([data-steer]) {
+  color: var(--muted);
+  font-weight: inherit;
+}
+
+.railItem[data-steer] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rail[data-dragging] .railItem[data-steer] {
+  color: var(--fg);
+  font-weight: inherit;
+}
+
 /* Each space's icon answers its selection once (05 §11.5 direct feedback); nothing loops. */
-.railItem[aria-current='page'] svg {
+.railItem:is([aria-current='page'], [data-steer]) svg {
   animation: railPulse 520ms var(--ease) both;
 }
 
-.railItem[aria-current='page'][data-motion='tilt'] svg {
+.railItem:is([aria-current='page'], [data-steer])[data-motion='tilt'] svg {
   animation-name: railTilt;
 }
 
-.railItem[aria-current='page'][data-motion='twinkle'] svg {
+.railItem:is([aria-current='page'], [data-steer])[data-motion='twinkle'] svg {
   animation-name: railTwinkle;
 }
 
-.railItem[aria-current='page'][data-motion='turn'] svg {
+.railItem:is([aria-current='page'], [data-steer])[data-motion='turn'] svg {
   animation-name: railTurn;
 }
 
-.railItem[aria-current='page'][data-motion='hop'] svg {
+.railItem:is([aria-current='page'], [data-steer])[data-motion='hop'] svg {
   animation-name: railHop;
 }
 
-.railItem[aria-current='page'][data-motion='sway'] svg {
+.railItem:is([aria-current='page'], [data-steer])[data-motion='sway'] svg {
   animation-name: railSway;
 }
 
-.railItem[aria-current='page'][data-motion='gear'] svg {
+.railItem:is([aria-current='page'], [data-steer])[data-motion='gear'] svg {
   animation: railGear 620ms var(--spring) both;
+}
+
+/* Items a drag passes over stay still; the one it lands on answers on release. */
+.rail[data-dragging] .railItem[data-steer]:not([aria-current='page']) svg {
+  animation: none;
 }
 
 @keyframes railPulse {
@@ -678,6 +723,8 @@ a.instance {
     background: var(--glass-strong);
     box-shadow: var(--sh-3), var(--hl);
     backdrop-filter: var(--blur);
+    /* Presses and drags on the bar never scroll the page; pinch zoom still works. */
+    touch-action: pinch-zoom;
   }
 
   .railIndicator {
