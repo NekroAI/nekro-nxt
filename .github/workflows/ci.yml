@@ -304,8 +304,16 @@ jobs:
             sleep 1
           done
           docker exec "$container" node /opt/nekro/server/managed-plugin-smoke.mjs verify-remove http://127.0.0.1:4960 /data/managed-plugin-smoke.json
+      # Both architectures push at once and share base layers; the registry now and then answers "unknown blob" to
+      # one of them. A push is idempotent, so try again.
       - name: Push Server Preview candidate
-        run: docker push "$NEKRO_IMAGE"
+        run: |
+          for attempt in 1 2 3; do
+            docker push "$NEKRO_IMAGE" && exit 0
+            echo "push failed (attempt $attempt), retrying"
+            sleep $((attempt * 10))
+          done
+          exit 1
 
   preview-server:
     name: preview-server (linux-amd64, linux-arm64)

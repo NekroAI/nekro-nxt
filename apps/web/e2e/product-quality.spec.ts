@@ -341,12 +341,14 @@ const assertViewportIntegrity = async (page: Page): Promise<void> => {
   expect(geometry.bodyWidth).toBeLessThanOrEqual(geometry.viewportWidth)
   // On a phone a page opened from a list carries its way back in the top bar instead of search (and a conversation
   // also sets the bottom bar aside, 05 §6.2); the list it returns to has both.
+  // One condition polled as a whole: while a detail page is still loading the bottom bar shows before the top bar
+  // swaps search for its way back, so deciding from a single moment picks the wrong branch.
   const back = page.getByRole('banner').getByRole('button', { name: /^返回.+列表$/u })
   const nav = page.getByRole('navigation', { name: '主导航' })
-  await expect(back.or(nav).first()).toBeVisible()
-  if (await back.isVisible()) return
-  await expect(nav).toBeVisible()
-  await expect(page.getByRole('button', { name: '搜索', exact: true })).toBeVisible()
+  const search = page.getByRole('button', { name: '搜索', exact: true })
+  await expect
+    .poll(async () => (await back.isVisible()) || ((await nav.isVisible()) && (await search.isVisible())))
+    .toBe(true)
 }
 
 /** Masks for values that change with the wall clock. */
