@@ -321,6 +321,12 @@ html[data-ui='next'][data-density='compact'] {
   --row-tall: 48px;
 }
 
+/* iOS enlarges text in blocks it finds wide, such as a one-line description; sizes here are already chosen. */
+html[data-ui='next'] {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 html[data-ui='next'],
 html[data-ui='next'] body {
   height: 100%;

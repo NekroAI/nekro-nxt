@@ -267,6 +267,8 @@
 
 .rowText {
   display: grid;
+  /* The column never grows past the row, so a one-line description is cut instead of running under the control. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--s-1);
   min-width: 0;
 }

@@ -1,4 +1,4 @@
-import { ArrowRight, FilePlus2, ImagePlus, Plug, Plus, RotateCcw, Send, X } from 'lucide-react'
+import { ArrowRight, FilePlus2, Paperclip, Plug, Plus, RotateCcw, Send, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { EMPTY_CHANNEL_DRAFT, isReadyAttachment, type ChannelAttachment } from '../../channel-drafts.js'
@@ -10,7 +10,7 @@ import {
   type ChannelSummary,
   type ConnectionSummary,
 } from '../../product-runtime.js'
-import { ActionSheet, FileChooser, InfoTip, Pressable, Textarea, Tooltip, toast, usePhone } from '../../ui-kit/index.js'
+import { FileChooser, InfoTip, Pressable, Textarea, Tooltip, toast, usePhone } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { useProductApi } from '../model/store.js'
 import { randomId } from '../../random-id.js'
@@ -137,11 +137,9 @@ export function Composer({
   const incomplete = attachments.some((item) => !isReadyAttachment(item))
   const composing = useRef(false)
   const input = useRef<HTMLTextAreaElement>(null)
-  const imagePicker = useRef<HTMLInputElement>(null)
   const filePicker = useRef<HTMLInputElement>(null)
   const form = useRef<HTMLFormElement>(null)
   const [dragging, setDragging] = useState(false)
-  const [adding, setAdding] = useState(false)
   const phone = usePhone()
   const dragDepth = useRef(0)
   const external = channel.kind !== 'internal'
@@ -435,75 +433,23 @@ export function Composer({
           aria-activedescendant={completing && suggestions.length ? `command-${channel.id}-${selected}` : undefined}
         />
         <FileChooser
-          ref={imagePicker}
-          accept="image/*"
-          label="选择图片"
-          disabled={Boolean(blocked) || sending}
-          onFiles={(files) => addFiles(files)}
-        />
-        <FileChooser
           ref={filePicker}
           label="选择文件"
           disabled={Boolean(blocked) || sending}
           onFiles={(files) => addFiles(files)}
         />
-        {phone ? (
-          // One “添加” on a phone leaves the field the row's width; the choices rise from the bottom edge.
-          <>
-            <Pressable
-              type="button"
-              className={styles.attach}
-              disabled={Boolean(blocked) || sending}
-              aria-label="添加附件"
-              aria-haspopup="dialog"
-              onClick={() => setAdding(true)}
-            >
-              <Plus aria-hidden="true" />
-            </Pressable>
-            <ActionSheet
-              open={adding}
-              onOpenChange={setAdding}
-              title="添加附件（也可粘贴，合计不超过 64 MiB）"
-              items={[
-                {
-                  key: 'image',
-                  label: '图片',
-                  icon: <ImagePlus aria-hidden="true" />,
-                  onSelect: () => imagePicker.current?.click(),
-                },
-                {
-                  key: 'file',
-                  label: '文件',
-                  icon: <FilePlus2 aria-hidden="true" />,
-                  onSelect: () => filePicker.current?.click(),
-                },
-              ]}
-            />
-          </>
-        ) : (
-          <>
-            <Pressable
-              type="button"
-              className={styles.attach}
-              disabled={Boolean(blocked) || sending}
-              aria-label="添加图片"
-              title="添加图片（也可粘贴或拖入，合计不超过 64 MiB）"
-              onClick={() => imagePicker.current?.click()}
-            >
-              <ImagePlus aria-hidden="true" />
-            </Pressable>
-            <Pressable
-              type="button"
-              className={styles.attach}
-              disabled={Boolean(blocked) || sending}
-              aria-label="添加文件"
-              title="添加文件（也可粘贴或拖入，合计不超过 64 MiB）"
-              onClick={() => filePicker.current?.click()}
-            >
-              <FilePlus2 aria-hidden="true" />
-            </Pressable>
-          </>
-        )}
+        {/* Any kind of file goes through one button: pictures are told apart by their type once chosen, and a phone's
+            own chooser already offers its photo library, camera and files. */}
+        <Pressable
+          type="button"
+          className={styles.attach}
+          disabled={Boolean(blocked) || sending}
+          aria-label="添加附件"
+          title={phone ? undefined : '添加附件（也可粘贴或拖入，合计不超过 64 MiB）'}
+          onClick={() => filePicker.current?.click()}
+        >
+          {phone ? <Plus aria-hidden="true" /> : <Paperclip aria-hidden="true" />}
+        </Pressable>
         {refusal ? (
           <span className={styles.blockedShort}>
             <span>{refusal.short}</span>

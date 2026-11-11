@@ -1372,20 +1372,10 @@ test.describe('shell, channels and live', () => {
       const log = await page.getByRole('log', { name: '消息记录' }).boundingBox()
       expect(log?.height ?? 0).toBeGreaterThanOrEqual(700)
 
-      // “添加” opens its choices from the bottom edge; a tap on the page behind closes them.
-      await add.click()
-      const sheet = page.getByRole('dialog', { name: /添加附件/u })
-      await expect(sheet.getByRole('button', { name: '图片' })).toBeVisible()
-      await expect(sheet.getByRole('button', { name: '文件' })).toBeVisible()
-      // It rises to the bottom edge.
-      await expect
-        .poll(async () => {
-          const box = await sheet.boundingBox()
-          return Math.round((box?.y ?? 0) + (box?.height ?? 0))
-        })
-        .toBe(852)
-      await page.keyboard.press('Escape')
-      await expect(sheet).toBeHidden()
+      // “添加” goes straight to the system's chooser, which offers the photo library, camera and files itself.
+      const [chooser] = await Promise.all([page.waitForEvent('filechooser'), add.click()])
+      expect(chooser.isMultiple()).toBe(true)
+      await expect(page.getByRole('dialog', { name: /添加附件/u })).toHaveCount(0)
 
       // Back is a real history step to the list, which kept its search.
       await back('返回频道列表').click()
@@ -1742,7 +1732,7 @@ test.describe('shell, channels and live', () => {
       expect((await heading.boundingBox())?.width ?? 0).toBeGreaterThan(40)
       await expect(page.getByRole('main').getByRole('button', { name: /透视/u })).toBeVisible()
       await expect(page.getByRole('textbox', { name: '消息' })).toHaveAttribute('placeholder', /，或输入 \/ 执行命令$/u)
-      await expect(page.getByRole('button', { name: '添加图片' })).toBeVisible()
+      await expect(page.getByRole('button', { name: '添加附件' })).toBeVisible()
       await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
       await expect(page.locator('header').first()).toContainText('NekroNXT')
       expect(errors).toEqual([])
