@@ -38,9 +38,15 @@ test('reads the signing certificate digest apksigner prints', () => {
   const digest = 'd3d4bcefd6781d1672314a5d7b2a74c4078245214d1525349397a5b5f8bcb107'
   const printed = `Signer #1 certificate DN: CN=NekroNXT Development\nSigner #1 certificate SHA-256 digest: ${digest}\nSigner #1 certificate SHA-1 digest: 00\n`
   assert.equal(certificateDigest(printed), digest)
+  // Newer build tools label signers by SDK range; the same key listed twice is still one certificate.
+  const ranged = `Signer (minSdkVersion=24, maxSdkVersion=32) certificate SHA-256 digest: ${digest}\nSigner (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ${digest}\n`
+  assert.equal(certificateDigest(ranged), digest)
   assert.throws(() => certificateDigest('no certificate'), /签名证书/u)
   // Two signers would leave the published fingerprint ambiguous.
-  assert.throws(() => certificateDigest(`${printed}${printed.replaceAll('#1', '#2')}`), /签名证书/u)
+  assert.throws(
+    () => certificateDigest(`${printed}Signer #2 certificate SHA-256 digest: ${'e'.repeat(64)}\n`),
+    /签名证书/u,
+  )
 })
 
 test('accepts only the receipt of this release and builds a manifest the app resolves', () => {

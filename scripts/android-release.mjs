@@ -39,11 +39,10 @@ export function stableVersionCode(versionName) {
  * for Android 10 and later carries only v2/v3 signatures, which `keytool -printcert -jarfile` does not read.)
  */
 export function certificateDigest(printed) {
-  const digests = [...printed.matchAll(/^Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f]{64})$/gmu)].map(
-    (m) => m[1],
-  )
-  if (digests.length !== 1) throw new Error('无法读取 APK 的签名证书。')
-  return digests[0]
+  // Newer build tools name signers by their SDK range (`Signer (minSdkVersion=…)`) instead of `Signer #1`.
+  const digests = new Set([...printed.matchAll(/certificate SHA-256 digest:\s*([0-9a-f]{64})/gu)].map((m) => m[1]))
+  if (digests.size !== 1) throw new Error(`无法读取 APK 的签名证书。apksigner 输出：\n${printed.trim().slice(0, 2000)}`)
+  return [...digests][0]
 }
 
 /** `apksigner` from the newest build tools of the Android SDK (ANDROID_HOME on CI runners). */
@@ -53,8 +52,9 @@ async function apksigner() {
   const versions = (await readdir(path.join(sdk, 'build-tools'))).sort((a, b) =>
     a.localeCompare(b, undefined, { numeric: true }),
   )
-  if (versions.length === 0) throw new Error('Android SDK 里没有 build-tools。')
-  return path.join(sdk, 'build-tools', versions.at(-1), 'apksigner')
+  const latest = versions.at(-1)
+  if (latest === undefined) throw new Error('Android SDK 里没有 build-tools。')
+  return path.join(sdk, 'build-tools', latest, 'apksigner')
 }
 
 export function assertAndroidReceipt(receipt, { channel, commit, artifact }) {
