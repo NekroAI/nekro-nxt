@@ -14,6 +14,9 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${productPort}`,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    // The journeys replace network responses per page; a Service Worker would answer /assets/ from its own cache
+    // and never reach those routes. sw.spec.ts covers the worker itself.
+    serviceWorkers: 'block',
   },
   projects: [
     {
