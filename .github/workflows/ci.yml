@@ -248,6 +248,56 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The Android development app (ai.nekro.nxt.dev) for the same Preview; its version counts up with each CI run so
+  # the in-app update sees every new Preview.
+  preview-android:
+    needs: preview-prepare
+    if: needs.preview-prepare.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Development signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_DEV_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "缺少开发签名密钥 ANDROID_DEV_KEYSTORE_BASE64。"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/dev.keystore"
+          echo "NXT_ANDROID_DEV_KEYSTORE=$RUNNER_TEMP/dev.keystore" >> "$GITHUB_ENV"
+          base=$(sed -n 's/.*versionName = ciVersionName ?: "\(.*\)"/\1/p' apps/android/app/build.gradle.kts)
+          echo "NXT_ANDROID_VERSION_NAME=$base-preview.${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "NXT_ANDROID_VERSION_CODE=${{ github.run_number }}" >> "$GITHUB_ENV"
+      - name: Build Android Preview
+        working-directory: apps/android
+        env:
+          NXT_ANDROID_DEV_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DEV_KEYSTORE_PASSWORD }}
+          NXT_ANDROID_DEV_KEY_ALIAS: ${{ secrets.ANDROID_DEV_KEY_ALIAS }}
+          NXT_ANDROID_DEV_KEY_PASSWORD: ${{ secrets.ANDROID_DEV_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleDebug
+      - name: Name the APK and write its receipt
+        run: |
+          mkdir -p .local/preview-android
+          node scripts/android-release.mjs candidate preview --apk apps/android/app/build/outputs/apk/debug/app-debug.apk --out-dir .local/preview-android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-candidates-android-${{ github.sha }}-${{ github.run_attempt }}
+          compression-level: 0
+          path: .local/preview-android/*
+          if-no-files-found: error
+          retention-days: 1
+
   # Each architecture is built and smoke-tested on its own native runner; preview-server merges them.
   preview-server-build:
     name: preview-server-build (linux-${{ matrix.arch }})
@@ -347,8 +397,8 @@ jobs:
           retention-days: 1
 
   preview-finalize:
-    if: always() && needs.all-checks-passed.result == 'success' && needs.preview-prepare.outputs.build == 'true' && needs.preview-desktop.result == 'success' && needs.preview-server.result == 'success'
-    needs: [all-checks-passed, preview-prepare, preview-desktop, preview-server]
+    if: always() && needs.all-checks-passed.result == 'success' && needs.preview-prepare.outputs.build == 'true' && needs.preview-desktop.result == 'success' && needs.preview-android.result == 'success' && needs.preview-server.result == 'success'
+    needs: [all-checks-passed, preview-prepare, preview-desktop, preview-android, preview-server]
     concurrency:
       group: preview-publish
       cancel-in-progress: false
@@ -389,3 +439,13 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: node scripts/mirror-desktop-release.mjs preview --artifacts-dir .local/preview-candidates
+      # The development APK and the manifest the app's in-app update reads (nxt/android/preview/manifest.json).
+      - name: Mirror the Android APK to dl.nekro.ai
+        if: ${{ vars.R2_ACCOUNT_ID != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/android-release.mjs mirror preview --artifacts-dir .local/preview-candidates

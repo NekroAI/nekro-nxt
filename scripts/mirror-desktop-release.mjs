@@ -113,7 +113,7 @@ export function prunableFolders(folders, keep) {
 }
 
 /** Runs an upload up to three times; a large multipart upload to R2 now and then fails as a whole. */
-function retrying(label, upload) {
+export function retrying(label, upload) {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return upload()
@@ -135,6 +135,22 @@ function run(command, args, options = {}) {
     throw new Error(`${command} ${args.slice(0, 3).join(' ')} 失败：${(result.stderr ?? '').trim().slice(-500)}`)
   }
   return typeof result.stdout === 'string' ? result.stdout.trim() : ''
+}
+
+/** The AWS CLI pointed at the download bucket on R2; shared with the Android mirror (android-release.mjs). */
+export function r2Aws(account) {
+  const bucket = process.env['R2_BUCKET'] || DEFAULT_BUCKET
+  const env = {
+    ...process.env,
+    AWS_ACCESS_KEY_ID: process.env['R2_ACCESS_KEY_ID'],
+    AWS_SECRET_ACCESS_KEY: process.env['R2_SECRET_ACCESS_KEY'],
+    AWS_DEFAULT_REGION: 'auto',
+    // R2 rejects the CRC checksums newer AWS CLIs add to multipart uploads (InvalidPart on completion).
+    AWS_REQUEST_CHECKSUM_CALCULATION: 'WHEN_REQUIRED',
+    AWS_RESPONSE_CHECKSUM_VALIDATION: 'WHEN_REQUIRED',
+  }
+  const endpoint = ['--endpoint-url', `https://${account}.r2.cloudflarestorage.com`]
+  return { bucket, aws: (args) => run('aws', [...args, ...endpoint], { env }) }
 }
 
 async function main() {
@@ -190,18 +206,7 @@ async function main() {
   }
   const tag = published.tag_name
 
-  const bucket = process.env['R2_BUCKET'] || DEFAULT_BUCKET
-  const env = {
-    ...process.env,
-    AWS_ACCESS_KEY_ID: process.env['R2_ACCESS_KEY_ID'],
-    AWS_SECRET_ACCESS_KEY: process.env['R2_SECRET_ACCESS_KEY'],
-    AWS_DEFAULT_REGION: 'auto',
-    // R2 rejects the CRC checksums newer AWS CLIs add to multipart uploads (InvalidPart on completion).
-    AWS_REQUEST_CHECKSUM_CALCULATION: 'WHEN_REQUIRED',
-    AWS_RESPONSE_CHECKSUM_VALIDATION: 'WHEN_REQUIRED',
-  }
-  const endpoint = ['--endpoint-url', `https://${account}.r2.cloudflarestorage.com`]
-  const aws = (args) => run('aws', [...args, ...endpoint], { env })
+  const { bucket, aws } = r2Aws(account)
   const channelRoot = `s3://${bucket}/${PREFIX}/${channel}`
   const folder = mirrorFolder(release)
 

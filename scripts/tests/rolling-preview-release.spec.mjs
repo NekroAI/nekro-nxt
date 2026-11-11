@@ -175,6 +175,13 @@ test('rolling Preview copy identifies its moving channel and immutable Product R
   assert.match(body, /\| Linux \| x64 \| \[下载 AppImage\]/u)
   assert.match(
     body,
+    /\| Android \| Android 10 及以上 \| \[下载 APK\]\(https:\/\/github\.com\/NekroAI\/nekro-nxt\/releases\/download\/preview\/nekro-nxt-preview-android-v1\.4\.0-20250615-150640utc\.g0123456789ab\.apk\)/u,
+  )
+  assert.match(body, /## 手机/u)
+  assert.match(body, /添加到主屏幕/u)
+  assert.match(body, /blob\/main\/docs\/guide\/mobile\.md/u)
+  assert.match(
+    body,
     /releases\/download\/preview\/nekro-nxt-preview-mac-arm64-v1\.4\.0-20250615-150640utc\.g0123456789ab\.dmg/u,
   )
 })

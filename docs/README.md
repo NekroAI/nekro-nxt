@@ -7,14 +7,15 @@
 1. [快速开始](guide/getting-started.md)：从安装到第一次内置频道对话；
 2. [桌面版安装](guide/desktop.md)：macOS、Windows、Linux 安装包与稳定版/预览版；
 3. [服务端部署](guide/server.md)：一行启动容器，详细配置 Docker、Compose、远程访问与数据目录；不用 Docker 的做法见[社区整理的非官方部署说明](guide/server-node.md)；
-4. [配置模型](guide/models.md)：模型供应商、API Key、连接测试和模型选择；
-5. [创建智能体](guide/agents.md)：人设、模型、授权能力和内置频道；
-6. [连接频道](guide/connections.md)：添加平台账号、发现频道、绑定和触发方式；可接入 [QQ 官方机器人](guide/connections/qq-official-bot.md)、[OneBot V11](guide/connections/onebot-11.md)、[企业微信智能机器人](guide/connections/wecom-ai-bot.md)或[微信 iLink](guide/connections/wechat-ilink.md)；
-7. [使用扩展](guide/extensions.md)：动态运行、验证、保存和为智能体启用；
-8. [升级、备份与恢复](guide/upgrade-backup.md)：双通道、数据根和恢复原则；
-9. [常见问题与排障](guide/troubleshooting.md)：安装、Host、模型、连接和扩展问题；
-10. [贡献者入口](guide/contributors.md)：源码开发、架构、测试和文档维护。
-11. [社区反馈](guide/community-feedback.md)：草稿确认、智能体起草、处理进展与隐私控制。
+4. [在手机上使用](guide/mobile.md)：Android 应用的扫码连接、后台通知与更新，以及 iPhone 等设备的主屏幕应用；
+5. [配置模型](guide/models.md)：模型供应商、API Key、连接测试和模型选择；
+6. [创建智能体](guide/agents.md)：人设、模型、授权能力和内置频道；
+7. [连接频道](guide/connections.md)：添加平台账号、发现频道、绑定和触发方式；可接入 [QQ 官方机器人](guide/connections/qq-official-bot.md)、[OneBot V11](guide/connections/onebot-11.md)、[企业微信智能机器人](guide/connections/wecom-ai-bot.md)或[微信 iLink](guide/connections/wechat-ilink.md)；
+8. [使用扩展](guide/extensions.md)：动态运行、验证、保存和为智能体启用；
+9. [升级、备份与恢复](guide/upgrade-backup.md)：双通道、数据根和恢复原则；
+10. [常见问题与排障](guide/troubleshooting.md)：安装、Host、模型、连接和扩展问题；
+11. [贡献者入口](guide/contributors.md)：源码开发、架构、测试和文档维护。
+12. [社区反馈](guide/community-feedback.md)：草稿确认、智能体起草、处理进展与隐私控制。
 
 ## 产品与设计
 

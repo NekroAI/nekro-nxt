@@ -1,0 +1,87 @@
+name: Android Release
+
+# A formal Android release (decision A7): push a tag `android-vX.Y.Z` whose version matches
+# apps/android/app/build.gradle.kts. The job runs in the protected `android-release` environment, which holds the
+# release signing key and waits for the owner's approval on every run.
+on:
+  push:
+    tags: ['android-v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: android-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Version and release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          version="${GITHUB_REF_NAME#android-v}"
+          declared=$(sed -n 's/.*versionName = ciVersionName ?: "\(.*\)"/\1/p' apps/android/app/build.gradle.kts)
+          test "$version" = "$declared" || { echo "标签 $version 与 build.gradle.kts 的 versionName $declared 不一致。"; exit 1; }
+          test -n "$KEYSTORE_BASE64" || { echo "android-release 环境缺少 ANDROID_RELEASE_KEYSTORE_BASE64。"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          echo "NXT_ANDROID_RELEASE_KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          echo "NXT_ANDROID_VERSION_NAME=$version" >> "$GITHUB_ENV"
+          echo "NXT_ANDROID_VERSION_CODE=$(node -e "import('./scripts/android-release.mjs').then((m) => console.log(m.stableVersionCode('$version')))")" >> "$GITHUB_ENV"
+      - name: Build and sign
+        working-directory: apps/android
+        env:
+          NXT_ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          NXT_ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          NXT_ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon testReleaseUnitTest assembleRelease
+      - name: Name the APK and write its receipt
+        run: |
+          mkdir -p .local/android-release
+          node scripts/android-release.mjs candidate stable --apk apps/android/app/build/outputs/apk/release/app-release.apk --out-dir .local/android-release
+      # Never marked latest: the latest release is the desktop and server release that the download page and the
+      # desktop updater read.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          receipt=$(ls .local/android-release/*.apk.receipt.json)
+          apk="${receipt%.receipt.json}"
+          certificate=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$receipt','utf8')).certificateSha256)")
+          sha=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$receipt','utf8')).sha256)")
+          {
+            echo "NekroNXT 安卓应用 $NXT_ANDROID_VERSION_NAME，Android 10 及以上。"
+            echo
+            echo "安装后在已登录的电脑或浏览器上打开「设置 → 登录与访问 → 连接安卓应用」，用应用扫码连接。说明见[手机使用说明](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/guide/mobile.md)。"
+            echo
+            echo "- 安装包 SHA-256：\`$sha\`"
+            echo "- 签名证书 SHA-256：\`$certificate\`"
+          } > .local/android-release/notes.md
+          gh release create "$GITHUB_REF_NAME" "$apk" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "NekroNXT Android $NXT_ANDROID_VERSION_NAME" \
+            --notes-file .local/android-release/notes.md \
+            --latest=false
+      - name: Mirror to dl.nekro.ai
+        if: ${{ vars.R2_ACCOUNT_ID != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/android-release.mjs mirror stable --artifacts-dir .local/android-release
