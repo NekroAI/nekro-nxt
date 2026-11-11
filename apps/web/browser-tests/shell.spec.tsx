@@ -1043,7 +1043,7 @@ test.describe('shell, channels and live', () => {
     }
   })
 
-  test('a long press on interface controls opens no system menu, while message text stays selectable', async () => {
+  test('a long press on the interface selects nothing and opens no system menu, while message text stays selectable', async () => {
     const { page } = await open(`/channels/${externalChannelId}`, {
       width: 393,
       touch: true,
@@ -1075,6 +1075,8 @@ test.describe('shell, channels and live', () => {
       const nav = page.locator('nav[aria-label="主导航"]')
       expect(await select(nav.getByRole('link', { name: '频道', includeHidden: true }))).toBe('none')
       expect(await select(page.getByRole('button', { name: '返回频道列表' }))).toBe('none')
+      // Plain interface text and empty space do not select either (Android would offer text recognition on it).
+      expect(await select(page.locator('body'))).toBe('none')
       const text = page.getByText('可以长按复制的示例消息')
       await expect(text).toBeVisible()
       expect(await select(text)).toBe('text')

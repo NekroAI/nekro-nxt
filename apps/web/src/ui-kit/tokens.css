@@ -468,27 +468,12 @@ html[data-ui='next'] ::selection {
   }
 
   /*
-   * Controls are not text: a long press on a link, button or interface image neither selects it nor opens the
-   * system preview menu. Content marked `data-content` (message bubbles, log rows) keeps both, so its text can be
-   * copied and its links and images still offer the system menu; fields always take selection (iOS will not type
-   * into a field that cannot select). Plain reading text was never a control.
+   * Like a native app, a long press selects nothing and opens no system menu (Android adds text recognition on top),
+   * except in content marked `data-content` (message bubbles, log rows), whose text can be copied and whose links and
+   * images keep the system menu, and in fields, which always take selection (iOS will not type into a field that
+   * cannot select).
    */
-  :where(html[data-ui='next'])
-    :where(
-      a[href],
-      button,
-      label,
-      nav,
-      img,
-      svg,
-      [role='button'],
-      [role='tab'],
-      [role='menuitem'],
-      [role='option'],
-      [role='switch'],
-      [role='radio'],
-      [role='checkbox']
-    ) {
+  :where(html[data-ui='next']) body {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
