@@ -18,6 +18,7 @@ import { startRecoveryServer } from './server-recovery.js'
  */
 import { Context } from '@deepseek-ai/cordis'
 import { serveStatic } from '@deepseek-ai/dsh-host-frontend-static'
+import { createWebAssetHandler, sendHtml } from './web-assets.js'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { HostUpgradeCoordinator, type UpgradeJournal } from '@nekro-nxt/client-migrations'
@@ -194,11 +195,7 @@ export const registerNekroSpaRoutes = (
               return
             }
             const html = await renderIndex()
-            res.writeHead(200, {
-              'content-type': 'text/html; charset=utf-8',
-              'cache-control': 'no-cache',
-            })
-            res.end(req.method === 'HEAD' ? undefined : html)
+            await sendHtml(req, res, html)
           },
         }),
       )
@@ -781,6 +778,8 @@ const startLeasedServer = async (
     // Public static helper; NXT's management edge owns authentication. The upstream
     // plugin now injects its native Connection service, which this Host does not use.
     const distIndex = resolveRoot(options.distIndex)
+    const distRoot = path.dirname(distIndex)
+    const serveAsset = createWebAssetHandler(distRoot, distIndex)
     webContext.effect(
       () =>
         webContext.webServer.registerFallback(async (request, response) => {
@@ -801,6 +800,13 @@ const startLeasedServer = async (
             response.end()
             return
           }
+          // The entry page is rendered per request, so it is compressed here rather than inside the helper.
+          const target = path.resolve(path.normalize(path.join(distRoot, pathname)))
+          if (target === distRoot || target === distIndex) {
+            await sendHtml(request, response, webContext.webServer.renderIndex(await readFile(distIndex, 'utf8')))
+            return
+          }
+          if (await serveAsset(request, response, pathname)) return
           await serveStatic(
             pathname,
             response,

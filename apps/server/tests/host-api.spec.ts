@@ -1746,6 +1746,11 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
     try {
       expect((await fetch(`${origin}/api/snapshot`)).status).toBe(200)
       expect((await fetch(`${origin}/settings`)).status).toBe(200)
+      // The entry page is compressed on request and always varies by encoding.
+      const compressedPage = await fetch(`${origin}/settings`, { headers: { 'accept-encoding': 'gzip' } })
+      expect(compressedPage.headers.get('vary')).toBe('accept-encoding')
+      expect(compressedPage.headers.get('content-encoding')).toBe('gzip')
+      expect(await compressedPage.text()).toContain('<title>fixture</title>')
       // The access address keeps only the origin and accepts only HTTPS.
       const put = (publicOrigin: string | null) =>
         fetch(`${origin}/api/settings/access`, {
