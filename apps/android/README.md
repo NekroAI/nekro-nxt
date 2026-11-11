@@ -25,6 +25,6 @@ cd apps/android
 
 开发版包名为 `ai.nekro.nxt.dev`，可以与正式版同时安装。本机构建使用本机的 debug 密钥；CI 用仓库密钥 `ANDROID_DEV_KEYSTORE_BASE64`、`ANDROID_DEV_KEYSTORE_PASSWORD`、`ANDROID_DEV_KEY_ALIAS`、`ANDROID_DEV_KEY_PASSWORD` 签名：`.github/workflows/android.yml` 检查每次改动，`ci.yml` 的 `preview-android` 把它附到滚动预览版。
 
-正式版：把 `app/build.gradle.kts` 的 `versionName` 改成新版本并合入 `main`，再推送标签 `android-vX.Y.Z`。`.github/workflows/android-release.yml` 在受保护环境 `android-release` 中运行，需要所有者批准；环境密钥为 `ANDROID_RELEASE_KEYSTORE_BASE64`、`ANDROID_RELEASE_KEYSTORE_PASSWORD`、`ANDROID_RELEASE_KEY_ALIAS`、`ANDROID_RELEASE_KEY_PASSWORD`。发布脚本是 `scripts/android-release.mjs`。
+正式版跟随 NekroNXT 正式版：推送 `vX.Y.Z` 标签时，`release.yml` 调用 `.github/workflows/android-release.yml`，用同一版本号签名并发布为 `android-vX.Y.Z`（不标为最新版），再镜像到 `dl.nekro.ai`。`apps/android` 自上一个 `android-v*` 发布以来没有改动时跳过；要补发或单独发安卓修复，在 `vX.Y.Z` 标签上手动运行这个工作流并勾选「安卓壳没有改动也发布」。签名密钥在受保护环境 `android-release` 中，只允许 `v*.*.*` 标签使用：`ANDROID_RELEASE_KEYSTORE_BASE64`、`ANDROID_RELEASE_KEYSTORE_PASSWORD`、`ANDROID_RELEASE_KEY_ALIAS`、`ANDROID_RELEASE_KEY_PASSWORD`。发布脚本是 `scripts/android-release.mjs`。`app/build.gradle.kts` 里的 `versionName` 只用于本机构建。
 
 开发版开启了 WebView 调试，连接电脑后可在 `chrome://inspect` 查看页面。

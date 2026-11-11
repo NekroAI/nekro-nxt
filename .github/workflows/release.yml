@@ -159,6 +159,15 @@ jobs:
       - name: Merge architectures into the Server Stable candidate
         run: node scripts/merge-server-image.mjs ghcr.io/nekroai/nekro-nxt:release-${{ needs.verify.outputs.commit }}
 
+  # The signed Android APK, released as `android-vX.Y.Z` beside this release. Independent of the desktop and server
+  # jobs: a failure here only fails this job, and it is skipped when apps/android has not changed.
+  android:
+    needs: verify
+    permissions:
+      contents: write
+    uses: ./.github/workflows/android-release.yml
+    secrets: inherit
+
   publish:
     needs: [verify, desktop, server]
     runs-on: ubuntu-24.04

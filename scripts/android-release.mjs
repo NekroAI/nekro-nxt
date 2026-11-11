@@ -9,7 +9,8 @@
 //     nothing; a failure here never undoes the GitHub release.
 //
 // Preview APKs are the development app (package ai.nekro.nxt.dev, repository development key) and ride on the rolling
-// Preview; stable APKs come from `android-v*` tags signed in the protected `android-release` environment.
+// Preview; stable APKs follow the NekroNXT `vX.Y.Z` release, signed in the `android-release` environment and published
+// as their own `android-vX.Y.Z` release.
 import { execFileSync } from 'node:child_process'
 import { copyFile, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
@@ -114,15 +115,15 @@ function requireChannel() {
   return channel
 }
 
-/** For Preview the product release names the APK; a stable release takes its version from the `android-v*` tag. */
+/** For Preview the product release names the APK; a stable release takes its version from the NekroNXT `v*` tag. */
 async function releaseOf(channel) {
   if (channel === 'preview') {
     const release = await readProductRelease(repositoryRoot, 'preview')
     return { version: release.version, releaseId: release.releaseId, commit: release.commit }
   }
   const tag = process.env['GITHUB_REF_NAME'] ?? ''
-  const version = /^android-v(\d+\.\d+\.\d+)$/u.exec(tag)?.[1]
-  if (!version) throw new Error(`正式版需要从 android-vX.Y.Z 标签运行，当前是「${tag}」。`)
+  const version = /^v(\d+\.\d+\.\d+)$/u.exec(tag)?.[1]
+  if (!version) throw new Error(`正式版需要从 vX.Y.Z 标签运行，当前是「${tag}」。`)
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repositoryRoot, encoding: 'utf8' }).trim()
   return { version, commit }
 }
