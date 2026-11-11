@@ -979,6 +979,10 @@ test.describe('shell, channels and live', () => {
       const log = page.getByRole('log', { name: '消息记录' })
       await input.fill('示例消息'.repeat(40))
       await input.focus()
+      // The row is add, field, send: who sends it is not a mark a finger could never read.
+      await expect(composer.getByRole('img', { name: /发出$/u })).toHaveCount(0)
+      // A phone with a home indicator: the keyboard covers it, so no room is kept for it.
+      await page.evaluate(() => document.documentElement.style.setProperty('--safe-bottom', '34px'))
       const before = await log.boundingBox()
       await raiseKeyboard(page, 336)
       await expect(page.locator('html')).toHaveAttribute('data-keyboard', 'open')
@@ -987,7 +991,7 @@ test.describe('shell, channels and live', () => {
       const after = await log.boundingBox()
       const bottom = (box?.y ?? 0) + (box?.height ?? 0)
       expect(bottom).toBeLessThanOrEqual(visible)
-      expect(bottom).toBeGreaterThan(visible - 40)
+      expect(bottom).toBeGreaterThan(visible - 16)
       expect(after?.height ?? 0).toBeLessThan(before?.height ?? 0)
       // Long text stops growing before it crowds out the messages.
       expect(after?.height ?? 0).toBeGreaterThan((await input.boundingBox())?.height ?? 0)
@@ -1016,8 +1020,9 @@ test.describe('shell, channels and live', () => {
       await expect(page.getByRole('navigation', { name: '主导航' })).toBeHidden()
       const rested = await composer.boundingBox()
       const restedBottom = (rested?.y ?? 0) + (rested?.height ?? 0)
-      expect(restedBottom).toBeLessThanOrEqual(852)
-      expect(restedBottom).toBeGreaterThan(852 - 24)
+      expect(restedBottom).toBeLessThanOrEqual(852 - 34)
+      // Back above the home indicator.
+      expect(restedBottom).toBeGreaterThan(852 - 34 - 24)
       expect(await page.evaluate(() => window.scrollY)).toBe(0)
 
       // The bottom bar comes back with the channel list, where the keyboard left it.
@@ -1029,8 +1034,8 @@ test.describe('shell, channels and live', () => {
         const bar = await nav.boundingBox()
         return (bar?.y ?? 0) + (bar?.height ?? 0)
       }
-      await expect.poll(barBottom).toBeLessThanOrEqual(852)
-      expect(await barBottom()).toBeGreaterThan(852 - 24)
+      await expect.poll(barBottom).toBeLessThanOrEqual(852 - 34 + 0.5)
+      expect(await barBottom()).toBeGreaterThan(852 - 34 - 24)
       await expect(nav.locator('> span[aria-hidden="true"]').first()).toHaveCSS('opacity', '1')
       expect(errors).toEqual([])
     } finally {

@@ -1,4 +1,4 @@
-import { ArrowRight, FilePlus2, ImagePlus, Plug, Plus, RotateCcw, X } from 'lucide-react'
+import { ArrowRight, FilePlus2, ImagePlus, Plug, Plus, RotateCcw, Send, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { EMPTY_CHANNEL_DRAFT, isReadyAttachment, type ChannelAttachment } from '../../channel-drafts.js'
@@ -196,7 +196,7 @@ export function Composer({
     if (command) ui.getState().setChannelDraft(channel.id, '/' + command.fullName + ' ')
     input.current?.focus()
   }
-  // `short` leaves out the account, which phones show as the sender mark next to it.
+  // `short` leaves out the account: a phone has one row for the field and no room for the full sentence.
   const refusal: { readonly full: string; readonly short: string } | undefined = commandMode
     ? undefined
     : !agent
@@ -382,7 +382,8 @@ export function Composer({
       <div className={styles.composerRow}>
         {commandMode ? (
           <span className={styles.as}>执行当前频道命令</span>
-        ) : external && connection ? (
+        ) : external && connection && !phone ? (
+          // A phone leaves the mark out: a touch has no hover to read it by, and the top bar names the channel.
           // Only the mark stays in the row: the account name is often long and the placeholder already names
           // the channel; who sends it is a hover or a tap away.
           <Tooltip content={`以「${connectionDisplayName(connection)}」发出，群成员可见`}>
@@ -518,7 +519,7 @@ export function Composer({
           aria-label="发送"
           title={incomplete ? '请完成上传或移除未完成的附件' : '发送'}
         >
-          <ArrowRight aria-hidden="true" />
+          {phone ? <Send aria-hidden="true" /> : <ArrowRight aria-hidden="true" />}
         </Pressable>
       </div>
     </form>

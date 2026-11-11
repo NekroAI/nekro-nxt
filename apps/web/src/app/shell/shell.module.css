@@ -944,6 +944,11 @@ a.instance {
     --content-inset-bottom: 0px;
   }
 
+  /* The keyboard covers the home indicator, so nothing is kept clear for it. */
+  :global(html[data-keyboard]) .app[data-tall] .main {
+    padding-bottom: 0;
+  }
+
   /* No bar, no fade; it comes back with the bar rather than at once. */
   .app[data-tall] .main::after,
   :global(html[data-keyboard]) .main::after {

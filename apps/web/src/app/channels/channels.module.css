@@ -1674,7 +1674,7 @@ button.step:hover {
 
   .composer {
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: end;
     gap: var(--s-2) 0;
     padding: 0;
@@ -1701,37 +1701,35 @@ button.step:hover {
 
   .blockedShort {
     display: flex;
+    grid-column: 1 / -1;
     order: 1;
     padding: 0 var(--s-2);
   }
 
+  /* A disc like the send button's, so the two ends of the row match; centred on the one-line field. */
   .attach {
     grid-column: 1;
     order: 2;
-    margin-right: var(--s-2);
+    margin: 0 var(--s-2) calc(var(--s-1) / 2) 0;
+    border: 1px solid var(--line-2);
     border-radius: 999px;
+    background: var(--surface);
     color: var(--fg-2);
   }
 
   .attach svg {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
   }
 
-  .sender,
   .input,
   .send {
     order: 3;
   }
 
-  .sender {
-    grid-column: 2;
-    margin-right: var(--s-2);
-  }
-
   /* The field is a capsule of its own; the row around it has no frame. */
   .input {
-    grid-column: 3;
+    grid-column: 2;
     min-height: 40px;
     max-height: min(180px, calc(var(--viewport-height, 100dvh) / 7));
     padding: var(--s-2) var(--s-4);
@@ -1750,22 +1748,29 @@ button.step:hover {
   }
 
   .send {
-    grid-column: 4;
+    grid-column: 3;
     /* Centred on the one-line field, which is 4px taller. */
     margin: 0 0 calc(var(--s-1) / 2) var(--s-2);
     border-radius: 999px;
   }
 
+  /* The paper plane's weight sits up and to the right of its box. */
+  .send svg {
+    width: 18px;
+    height: 18px;
+    transform: translate(-1px, 1px);
+  }
+
   /* Nothing to send: the button steps back to a quiet disc instead of a faded accent. */
   .send:disabled {
-    background: var(--inset);
+    border: 1px solid var(--line-2);
+    background: var(--surface);
     box-shadow: none;
     color: var(--faint);
     opacity: 1;
   }
 
-  .attach:active:not(:disabled),
-  .sender:active {
+  .attach:active:not(:disabled) {
     background: var(--hover);
   }
 
