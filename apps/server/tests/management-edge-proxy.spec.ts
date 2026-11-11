@@ -5,7 +5,7 @@ import { connect, type Socket } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseTrustProxy } from '../src/main.ts'
+import { parseDevelopmentProxyPages, parseTrustProxy } from '../src/main.ts'
 import { parseDevelopmentWebOrigin, startManagementEdge, type ManagementEdgeHandle } from '../src/management-edge.ts'
 
 /** Documentation-range addresses (RFC 5737), assembled so no literal address appears in the source. */
@@ -63,7 +63,7 @@ const sessionCookies = (reply: Reply): string => {
 }
 
 /** Opens a raw WebSocket-style upgrade and returns the first bytes the other side sends back. */
-const upgrade = (port: number, cookie: string | undefined): Promise<string> =>
+const upgrade = (port: number, cookie: string | undefined, headers: Record<string, string> = {}): Promise<string> =>
   new Promise((resolve, reject) => {
     const socket: Socket = connect(port, '127.0.0.1', () => {
       socket.write(
@@ -72,6 +72,7 @@ const upgrade = (port: number, cookie: string | undefined): Promise<string> =>
           `host: 127.0.0.1:${port}`,
           'connection: Upgrade',
           'upgrade: websocket',
+          ...Object.entries(headers).map(([name, value]) => `${name}: ${value}`),
           ...(cookie === undefined ? [] : [`cookie: ${cookie}`]),
           '',
           '',
@@ -109,7 +110,11 @@ describe('management edge behind a reverse proxy and in development', () => {
   })
 
   const start = async (
-    options: { readonly trustProxy?: boolean | readonly string[]; readonly development?: boolean } = {},
+    options: {
+      readonly trustProxy?: boolean | readonly string[]
+      readonly development?: boolean
+      readonly builtPagesForProxy?: boolean
+    } = {},
   ) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-proxy-'))
     roots.push(root)
@@ -143,6 +148,7 @@ describe('management edge behind a reverse proxy and in development', () => {
       repository,
       ...(options.trustProxy === undefined ? {} : { trustProxy: options.trustProxy }),
       ...(developmentWebOrigin === undefined ? {} : { developmentWebOrigin }),
+      ...(options.builtPagesForProxy === true ? { developmentBuiltPagesForProxy: true } : {}),
     })
     edges.push(edge)
     return edge
@@ -220,6 +226,32 @@ describe('management edge behind a reverse proxy and in development', () => {
     for (const input of ['yes', 'proxy.example.test', `${testAddress(9)}/33`, `${testAddress(0)}/8/8`, '::1/129']) {
       expect(() => parseTrustProxy(input)).toThrow('NEKRO_TRUST_PROXY')
     }
+  })
+
+  it('gives requests from the trusted proxy the built pages and keeps the dev server for direct ones', async () => {
+    const edge = await start({ development: true, trustProxy: ['127.0.0.1', '::1'], builtPagesForProxy: true })
+    const cookie = sessionCookies(await login(edge.port))
+    const proxied = { cookie, 'x-forwarded-for': testAddress(7), 'x-forwarded-proto': 'https' }
+    expect((await send(edge.port, '/live', { headers: proxied })).text).toMatch(/^server \/live/u)
+    expect((await send(edge.port, '/assets/index.js', { headers: proxied })).text).toMatch(/^server /u)
+    expect((await send(edge.port, '/live', { headers: { cookie } })).text).toMatch(/^vite \/live/u)
+    // Built pages have no hot updates to connect to.
+    expect(await upgrade(edge.port, cookie, { 'x-forwarded-for': testAddress(7) })).toMatch(/^HTTP\/1\.1 403/u)
+    expect(await upgrade(edge.port, cookie)).toMatch(/^HTTP\/1\.1 101/u)
+
+    // Elsewhere the proxy is not trusted, so its headers change nothing.
+    const untrusted = await start({ development: true, trustProxy: [testAddress(9)], builtPagesForProxy: true })
+    const other = sessionCookies(await login(untrusted.port))
+    expect((await send(untrusted.port, '/live', { headers: { ...proxied, cookie: other } })).text).toMatch(
+      /^vite \/live/u,
+    )
+  })
+
+  it('reads NEKRO_DEV_PROXY_PAGES only next to a dev server', () => {
+    expect(parseDevelopmentProxyPages(undefined, undefined)).toBe(false)
+    expect(parseDevelopmentProxyPages('built', 'http://127.0.0.1:4961')).toBe(true)
+    expect(() => parseDevelopmentProxyPages('built', undefined)).toThrow('NEKRO_DEV_WEB_ORIGIN')
+    expect(() => parseDevelopmentProxyPages('vite', 'http://127.0.0.1:4961')).toThrow('NEKRO_DEV_PROXY_PAGES')
   })
 
   it('accepts only a dev server on this machine', () => {

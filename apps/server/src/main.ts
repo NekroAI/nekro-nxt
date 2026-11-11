@@ -88,6 +88,19 @@ export const parseManagementKey = (input: string | undefined, required = false):
   return input
 }
 
+/** `NEKRO_DEV_PROXY_PAGES=built`: a development instance gives proxied requests the built pages, not the dev server's. */
+export const parseDevelopmentProxyPages = (
+  input: string | undefined,
+  developmentWebOrigin: string | undefined,
+): boolean => {
+  if (input === undefined || input.trim() === '') return false
+  if (input !== 'built') throw new TypeError(`NEKRO_DEV_PROXY_PAGES 只能是 built：${input}`)
+  if (developmentWebOrigin === undefined) {
+    throw new TypeError('NEKRO_DEV_PROXY_PAGES 需要和 NEKRO_DEV_WEB_ORIGIN 一起设置。')
+  }
+  return true
+}
+
 /**
  * `NEKRO_TRUST_PROXY` only when a reverse proxy in front terminates HTTPS and sets forwarded headers: the proxy's
  * addresses or CIDR ranges separated by commas, or `1` (`true`) to trust every connection.
@@ -665,6 +678,8 @@ export interface StartServerOptions {
   readonly trustProxy?: boolean | readonly string[]
   /** A source checkout's Vite dev server; the edge sends pages and hot updates there after sign-in. */
   readonly developmentWebOrigin?: string
+  /** Development only: proxied requests get the built pages; see the management edge option of the same name. */
+  readonly developmentBuiltPagesForProxy?: boolean
   /** Optional real LLM adapter wiring for a non-test server. */
   readonly configureLlm?: (context: LlmContext) => Promise<void> | void
   /**
@@ -890,6 +905,7 @@ const startLeasedServer = async (
           repository: runtime.hostSecurity,
           ...(options.trustProxy === undefined ? {} : { trustProxy: options.trustProxy }),
           ...(options.developmentWebOrigin === undefined ? {} : { developmentWebOrigin: options.developmentWebOrigin }),
+          ...(options.developmentBuiltPagesForProxy === true ? { developmentBuiltPagesForProxy: true } : {}),
           publicOrigin: () => new AccessSettings(runtime.repository).publicOrigin(),
         })
         owner.edge = managementEdge
@@ -1135,6 +1151,10 @@ if (isEntryPoint()) {
       const releaseId = parseReleaseId(process.env['NEKRO_RELEASE_ID'])
       const llmProviderRoutes = parseLlmProviderRoutes(process.env['NEKRO_LLM_PROVIDERS'])
       const developmentWebOrigin = parseDevelopmentWebOrigin(process.env['NEKRO_DEV_WEB_ORIGIN'])
+      const developmentBuiltPagesForProxy = parseDevelopmentProxyPages(
+        process.env['NEKRO_DEV_PROXY_PAGES'],
+        developmentWebOrigin,
+      )
       const trustProxy = parseTrustProxy(process.env['NEKRO_TRUST_PROXY'])
       const port = portEnv !== undefined && portEnv.trim() !== '' ? Number(portEnv) : 4960
       if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -1198,6 +1218,7 @@ if (isEntryPoint()) {
         ...(managementKey === undefined ? {} : { managementKey }),
         ...(trustProxy === false ? {} : { trustProxy }),
         ...(developmentWebOrigin === undefined ? {} : { developmentWebOrigin }),
+        ...(developmentBuiltPagesForProxy ? { developmentBuiltPagesForProxy: true } : {}),
         ...(developmentWorkspaceRoot === undefined || developmentWorkspaceRoot.trim() === ''
           ? {}
           : { developmentWorkspaceRoot }),

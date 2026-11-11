@@ -25,6 +25,7 @@ import { gzipSync } from 'node:zlib'
 import { z } from 'zod'
 import { managementLoginPage } from './management-login-page.js'
 import { LoginRequests } from './login-requests.js'
+import { arrivedThroughProxy } from './proxy-guard.js'
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -175,6 +176,12 @@ export interface ManagementEdgeOptions {
   readonly developmentWebOrigin?: string
   /** The instance's access address; codes for other devices to scan point there when it is set. */
   readonly publicOrigin?: () => string | undefined
+  /**
+   * With `developmentWebOrigin`: requests that came through the trusted reverse proxy get the built pages from the
+   * product server instead of the dev server. A phone far away then loads a few compressed bundles, not hundreds of
+   * unbundled modules; hot updates stay on the direct address.
+   */
+  readonly developmentBuiltPagesForProxy?: boolean
   readonly now?: () => number
 }
 
@@ -923,8 +930,12 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
 
   const developmentWebPort =
     options.developmentWebOrigin === undefined ? undefined : Number(new URL(options.developmentWebOrigin).port)
+  const builtPages = (request: IncomingMessage): boolean =>
+    options.developmentBuiltPagesForProxy === true && arrivedThroughProxy(request) && viaTrustedProxy(request)
   const upstreamPort = (request: IncomingMessage): number =>
-    developmentWebPort !== undefined && !serverOwnedPath(new URL(request.url ?? '/', 'http://edge.invalid').pathname)
+    developmentWebPort !== undefined &&
+    !builtPages(request) &&
+    !serverOwnedPath(new URL(request.url ?? '/', 'http://edge.invalid').pathname)
       ? developmentWebPort
       : options.internalPort
 
@@ -940,7 +951,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       (session !== undefined && options.repository.getActiveDevice(session.deviceId) !== undefined) ||
       deviceFromCookie(request) !== undefined
     const pathname = new URL(request.url ?? '/', 'http://edge.invalid').pathname
-    if (stopping || developmentWebPort === undefined || !signedIn || serverOwnedPath(pathname)) {
+    if (stopping || developmentWebPort === undefined || !signedIn || serverOwnedPath(pathname) || builtPages(request)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nconnection: close\r\n\r\n')
       return
     }
