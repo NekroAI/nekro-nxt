@@ -66,9 +66,10 @@ export function useTabHistory(): void {
     const previous = shown
     let level: Level
     if (type === NavigationType.Pop && stored) level = stored
-    else if ((switching && type !== NavigationType.Pop) || isTabRoot(location.pathname))
-      level = { tab, depth: 0, rooted: true }
+    else if (switching && type !== NavigationType.Pop) level = { tab, depth: 0, rooted: true }
+    // A page opened from its own tab sits one step in, the first level's own modes (sorting a list) included.
     else if (type === NavigationType.Push && previous?.tab === tab) level = { ...previous, depth: previous.depth + 1 }
+    else if (isTabRoot(location.pathname)) level = { tab, depth: 0, rooted: true }
     // A redirect or a page swapping its own address keeps its place.
     else if (type === NavigationType.Replace && previous?.tab === tab) level = previous
     else level = { tab, depth: 0, rooted: false }
@@ -91,10 +92,8 @@ const currentLevel = (): Level | undefined => {
   if (!shown || index === undefined || shownIndex === undefined || index === shownIndex) return shown
   const { pathname } = window.location
   const tab = tabOf(pathname)
-  if (isTabRoot(pathname)) return { tab, depth: 0, rooted: true }
-  return index > shownIndex && shown.tab === tab
-    ? { ...shown, depth: shown.depth + (index - shownIndex) }
-    : { tab, depth: 0, rooted: false }
+  if (index > shownIndex && shown.tab === tab) return { ...shown, depth: shown.depth + (index - shownIndex) }
+  return { tab, depth: 0, rooted: isTabRoot(pathname) }
 }
 
 /** A switch waiting for its step back to land. */

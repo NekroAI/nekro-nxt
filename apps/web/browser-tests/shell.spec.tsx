@@ -1757,6 +1757,18 @@ test.describe('shell, channels and live', () => {
       await expect(sort.done).toHaveCount(0)
       await expect(sort.list.getByRole('searchbox', { name: '搜索频道' })).toBeVisible()
       await expect(page).toHaveURL(/\/channels$/u)
+
+      // Sort mode is a step inside the tab: the bottom bar leaves it behind without keeping it in the history.
+      const listed = await place(page)
+      await touch.hold(sort.list.locator('button[class*="groupHead"]', { hasText: before[0] ?? '' }))
+      await touch.sheet.getByRole('button', { name: '排序' }).click()
+      await expect(sort.done).toBeVisible()
+      await tap(page, '智能体')
+      await expect(page).toHaveURL(/\/agents$/u)
+      expect((await place(page)).index).toBe(listed.index)
+      await tap(page, '频道')
+      await expect(page).toHaveURL(/\/channels$/u)
+      await expect(sort.done).toHaveCount(0)
       expect(errors).toEqual([])
     } finally {
       await page.close()
