@@ -477,6 +477,19 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
     return true
   }
 
+  /** A paired device (Desktop or the Android app): its secret is returned once and only its digest is kept. */
+  const enrollDevice = (label: string): { readonly deviceId: ManagementDeviceId; readonly deviceSecret: string } => {
+    const deviceId = ManagementDeviceIdSchema.parse(`nxt_device_${nextUlid()}`)
+    const deviceSecret = randomBytes(32).toString('base64url')
+    options.repository.putDevice({
+      id: deviceId,
+      label,
+      secretDigest: digest('nxt-device-secret-v1', deviceSecret),
+      createdAt: now(),
+    })
+    return { deviceId, deviceSecret }
+  }
+
   /**
    * Showing a sign-in code is not a guess at anything, and the login page asks for one every time it opens, so it
    * has its own budget and reloading the page cannot lock key or passkey sign-in out.
@@ -904,6 +917,19 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       writeJson(response, 200, { code: invite.code, url, qrSvg: await qrSvg(url), expiresAt: invite.expiresAt })
       return true
     }
+    if (request.method === 'POST' && pathname === '/api/management/pairing-codes') {
+      const pairing = loginRequests.createPairing()
+      const origin = shareOrigin(request)
+      const link = `nekronxt://pair?${new URLSearchParams({ origin, code: pairing.code, spki: certificate.spkiSha256 })}`
+      writeJson(response, 200, {
+        code: pairing.code,
+        origin,
+        link,
+        qrSvg: await qrSvg(link),
+        expiresAt: pairing.expiresAt,
+      })
+      return true
+    }
     const requestMatch = /^\/api\/management\/login-requests\/([^/]+)(\/decision)?$/u.exec(pathname)
     if (requestMatch?.[1] !== undefined) {
       const code = decodeURIComponent(requestMatch[1])
@@ -1065,6 +1091,19 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
       }
       if (request.method === 'POST' && url.pathname === '/api/management/devices/enroll') {
         const input = ManagementDeviceEnrollmentRequestSchema.parse(await readJson(request))
+        if ('pairingCode' in input) {
+          // Typed codes can be guessed at; they share the sign-in budget per address.
+          if (!allowAttempt(clientAddress(request))) {
+            writeProblem(response, 429, 'pairing_rate_limited', '配对请求过于频繁，请稍后重试。')
+            return
+          }
+          if (!loginRequests.usePairing(input.pairingCode, input.label)) {
+            writeProblem(response, 401, 'pairing_code_invalid', '配对码无效或已过期，请在已登录的设备上重新生成。')
+            return
+          }
+          writeJson(response, 201, ManagementDeviceEnrollmentResponseSchema.parse(enrollDevice(input.label)))
+          return
+        }
         const challenge = challenges.get(input.challengeId)
         challenges.delete(input.challengeId)
         if (challenge === undefined || challenge.expiresAt <= now()) {
@@ -1083,15 +1122,7 @@ export const startManagementEdge = async (options: ManagementEdgeOptions): Promi
           writeProblem(response, 401, 'management_key_invalid', '管理密钥不正确。')
           return
         }
-        const deviceId = ManagementDeviceIdSchema.parse(`nxt_device_${nextUlid()}`)
-        const deviceSecret = randomBytes(32).toString('base64url')
-        options.repository.putDevice({
-          id: deviceId,
-          label: input.label,
-          secretDigest: digest('nxt-device-secret-v1', deviceSecret),
-          createdAt: now(),
-        })
-        writeJson(response, 201, ManagementDeviceEnrollmentResponseSchema.parse({ deviceId, deviceSecret }))
+        writeJson(response, 201, ManagementDeviceEnrollmentResponseSchema.parse(enrollDevice(input.label)))
         return
       }
       if (request.method === 'POST' && url.pathname === '/api/management/session') {

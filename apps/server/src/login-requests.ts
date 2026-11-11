@@ -14,8 +14,9 @@ interface LoginRequest {
   /**
    * `invite`: a signed-in device shows the code and a new device scans it.
    * `request`: the new device shows the code and a signed-in device scans it.
+   * `pairing`: a signed-in device shows the code and the Android app pairs with it (no further confirmation).
    */
-  readonly kind: 'invite' | 'request'
+  readonly kind: 'invite' | 'request' | 'pairing'
   readonly expiresAt: number
   state: State
   requesterLabel?: string
@@ -52,6 +53,23 @@ export class LoginRequests {
     return this.#view(this.#create('invite'))
   }
 
+  /** A signed-in device shows this code for the Android app to pair with. */
+  createPairing(): LoginRequestView {
+    return this.#view(this.#create('pairing'))
+  }
+
+  /**
+   * The app presents a pairing code: true once, for an open code. The code stays until it expires, `approved` and
+   * labelled, so the device that showed it can say which phone used it.
+   */
+  usePairing(input: string, requesterLabel: string): boolean {
+    const request = this.#find(input)
+    if (request === undefined || request.kind !== 'pairing' || request.state !== 'open') return false
+    request.state = 'approved'
+    request.requesterLabel = requesterLabel
+    return true
+  }
+
   /** A new device shows this code for a signed-in device to scan; it polls with the returned secret. */
   createRequest(requesterLabel: string): LoginRequestView & { readonly secret: string } {
     const request = this.#create('request')
@@ -81,7 +99,7 @@ export class LoginRequests {
   /** Only a code a new device is waiting on can be decided. */
   decide(input: string, approve: boolean, deviceId: ManagementDeviceId): LoginRequestView | undefined {
     const request = this.#find(input)
-    if (request === undefined || request.state !== 'waiting') return undefined
+    if (request === undefined || request.kind === 'pairing' || request.state !== 'waiting') return undefined
     request.state = approve ? 'approved' : 'rejected'
     if (approve) request.approvedBy = deviceId
     return this.#view(request)

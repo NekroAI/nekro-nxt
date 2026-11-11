@@ -325,7 +325,11 @@ export class NotificationService {
   readonly #webPush: WebPushSender
   readonly #redact: (text: string) => string
   readonly #publicOrigin: () => string | undefined
-  readonly #clientNotifications: Array<{ readonly cursor: number; readonly notification: ClientNotification }> = []
+  readonly #clientNotifications: Array<{
+    readonly cursor: number
+    readonly notification: ClientNotification
+    readonly event?: NotificationEventKey
+  }> = []
   /** When each agent's candidate last asked to run; the runner may ask again for a candidate still waiting. */
   readonly #approvalNotifiedAt = new Map<string, number>()
   #notificationCursor = 0
@@ -681,6 +685,7 @@ export class NotificationService {
   readClientNotifications(
     cursor: number | undefined,
     boot?: string,
+    withEvents = false,
   ): {
     readonly cursor: number
     readonly notifications: readonly ClientNotification[]
@@ -692,7 +697,13 @@ export class NotificationService {
       notifications:
         current === undefined
           ? []
-          : this.#clientNotifications.filter((entry) => entry.cursor > current).map((entry) => entry.notification),
+          : this.#clientNotifications
+              .filter((entry) => entry.cursor > current)
+              .map((entry) =>
+                withEvents && entry.event !== undefined
+                  ? { ...entry.notification, event: entry.event }
+                  : entry.notification,
+              ),
       ...(boot === undefined ? {} : { bootId: this.#bootId }),
     }
   }
@@ -703,8 +714,9 @@ export class NotificationService {
     readonly boot?: string
     readonly waitMs: number
     readonly signal?: AbortSignal
+    readonly withEvents?: boolean
   }): Promise<ReturnType<NotificationService['readClientNotifications']>> {
-    const feed = this.readClientNotifications(input.cursor, input.boot)
+    const feed = this.readClientNotifications(input.cursor, input.boot, input.withEvents)
     if (
       input.waitMs <= 0 ||
       input.cursor === undefined ||
@@ -725,7 +737,7 @@ export class NotificationService {
       this.#notificationWaiters.add(done)
       input.signal?.addEventListener('abort', done, { once: true })
     })
-    return this.readClientNotifications(input.cursor, input.boot)
+    return this.readClientNotifications(input.cursor, input.boot, input.withEvents)
   }
 
   #staleCursor(cursor: number, boot: string | undefined): boolean {
@@ -745,14 +757,17 @@ export class NotificationService {
     const linked = { ...message, ...(link === undefined ? {} : { link }) }
     const channels: Array<readonly [string, () => Promise<void>]> = []
     if (stored.system.enabled) {
-      this.#publishClientNotification({
-        id: message.id,
-        kind: 'action-required',
-        title: message.title,
-        body: message.body,
-        occurredAt: this.#now(),
-        ...(message.route === undefined ? {} : { route: message.route }),
-      })
+      this.#publishClientNotification(
+        {
+          id: message.id,
+          kind: 'action-required',
+          title: message.title,
+          body: message.body,
+          occurredAt: this.#now(),
+          ...(message.route === undefined ? {} : { route: message.route }),
+        },
+        event,
+      )
     }
     if (stored.bark.enabled && stored.bark.credentialRef !== undefined) {
       const reference = stored.bark.credentialRef
@@ -810,10 +825,14 @@ export class NotificationService {
     return reference === undefined ? undefined : await this.#credentials.resolve(reference)
   }
 
-  #publishClientNotification(input: ClientNotification): void {
+  #publishClientNotification(input: ClientNotification, event?: NotificationEventKey): void {
     const notification = ClientNotificationSchema.parse(input)
     this.#notificationCursor += 1
-    this.#clientNotifications.push({ cursor: this.#notificationCursor, notification })
+    this.#clientNotifications.push({
+      cursor: this.#notificationCursor,
+      notification,
+      ...(event === undefined ? {} : { event }),
+    })
     if (this.#clientNotifications.length > 128) this.#clientNotifications.shift()
     for (const wake of [...this.#notificationWaiters]) wake()
   }

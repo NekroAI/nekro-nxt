@@ -22,6 +22,7 @@ import styles from './settings.module.css'
 
 type SignIn = HostApiResponse<'getManagementSignIn'>
 type LoginCode = HostApiResponse<'createLoginInvite'>
+type PairingCode = HostApiResponse<'createPairingCode'>
 type LoginRequest = HostApiResponse<'getLoginRequest'>
 
 const failure = (error: unknown) => toast(error instanceof Error ? error.message : String(error), { tone: 'bad' })
@@ -40,11 +41,12 @@ const codeFrom = (text: string): string | undefined => {
 const cameraAvailable = (): boolean =>
   typeof navigator !== 'undefined' && window.isSecureContext && navigator.mediaDevices?.getUserMedia !== undefined
 
-/** Passkeys, sign-in codes for other devices and the management key switch. */
+/** Passkeys, sign-in and pairing codes for other devices, and the management key switch. */
 export function SignInMethods() {
   const [view, setView] = useState<SignIn>()
   const [params, setParams] = useSearchParams()
   const [invite, setInvite] = useState<LoginCode>()
+  const [pairing, setPairing] = useState<PairingCode>()
   const [confirming, setConfirming] = useState<string>()
   const [entering, setEntering] = useState(false)
   const [removing, setRemoving] = useState<SignIn['passkeys'][number]>()
@@ -99,6 +101,17 @@ export function SignInMethods() {
   const setKeySignIn = async (keySignIn: boolean) => {
     setView(await callHostApi(HostApiContracts.updateManagementSignIn, {}, { keySignIn }))
     toast(keySignIn ? '已允许用管理密钥登录' : '已关闭管理密钥登录')
+  }
+
+  const showPairing = async () => {
+    setBusy('pairing')
+    try {
+      setPairing(await callHostApi(HostApiContracts.createPairingCode, {}, undefined))
+    } catch (error) {
+      failure(error)
+    } finally {
+      setBusy('')
+    }
   }
 
   const showInvite = async () => {
@@ -161,8 +174,13 @@ export function SignInMethods() {
         </PropertyList>
       </PropertyGroup>
 
-      <PropertyGroup title="其他设备登录" description="每次登录都要在已登录的设备上允许，登录码 5 分钟内有效。">
+      <PropertyGroup title="其他设备登录" description="登录码和配对码 5 分钟内有效，只能用一次。">
         <PropertyList>
+          <PropertyRow label="连接安卓应用" description="用 NekroNXT 安卓应用扫码，不用输入地址和管理密钥。">
+            <Button size="small" busy={busy === 'pairing'} disabled={busy !== ''} onClick={() => void showPairing()}>
+              显示配对码
+            </Button>
+          </PropertyRow>
           <PropertyRow label="让新设备登录" description="显示二维码，新设备扫码或输入登录码后在这里允许。">
             <Button size="small" busy={busy === 'invite'} disabled={busy !== ''} onClick={() => void showInvite()}>
               显示二维码
@@ -200,6 +218,7 @@ export function SignInMethods() {
       </PropertyGroup>
 
       <InviteDialog invite={invite} onClose={() => setInvite(undefined)} />
+      <PairingDialog pairing={pairing} onClose={() => setPairing(undefined)} />
       <ConfirmLoginDialog
         open={entering || confirming !== undefined}
         initialCode={confirming}
@@ -299,6 +318,49 @@ function DecisionButtons({
         允许登录
       </Button>
     </>
+  )
+}
+
+/** The QR code the Android app scans; it pairs without a further confirmation, so this only reports who used it. */
+function PairingDialog({
+  pairing,
+  onClose,
+}: {
+  readonly pairing: PairingCode | undefined
+  readonly onClose: () => void
+}) {
+  const { request, gone } = useLoginRequest(pairing?.code)
+  const used = request?.state === 'approved'
+  return (
+    <Dialog
+      open={pairing !== undefined}
+      onOpenChange={(open) => !open && onClose()}
+      title="连接安卓应用"
+      closeLabel="关闭"
+      actions={used ? <Button onClick={onClose}>完成</Button> : undefined}
+    >
+      {pairing === undefined ? null : used ? (
+        <p>「{request.requesterLabel ?? '安卓应用'}」已连接，可以在「已登录设备」里看到它。</p>
+      ) : gone ? (
+        <p>配对码已过期，请重新生成。</p>
+      ) : (
+        <div className={styles.loginCode}>
+          {/* The SVG comes from this instance's own server. */}
+          <div className={styles.qr} dangerouslySetInnerHTML={{ __html: pairing.qrSvg }} />
+          <span className={styles.codeText}>{pairing.code}</span>
+          <p className={styles.faint}>
+            在应用里点「扫码连接」。不能扫码时选「输入地址」，填 {pairing.origin} 和这个配对码。5 分钟内有效。
+          </p>
+          <p className={styles.faint}>
+            还没安装？到
+            <a href="https://nxt.nekro.ai/download" target="_blank" rel="noreferrer">
+              下载页
+            </a>
+            获取安卓应用。
+          </p>
+        </div>
+      )}
+    </Dialog>
   )
 }
 

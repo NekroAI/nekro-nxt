@@ -141,10 +141,12 @@ export function registerSettingsRoutes({
         const rawCursor = url.searchParams.get('cursor')
         const boot = url.searchParams.get('boot')
         const rawWait = url.searchParams.get('wait')
+        const rawEvents = url.searchParams.get('events')
         const params = HostApiContracts.listClientNotifications.parseParams({
           ...(rawCursor === null ? {} : { cursor: Number(rawCursor) }),
           ...(boot === null ? {} : { boot }),
           ...(rawWait === null ? {} : { wait: Number(rawWait) }),
+          ...(rawEvents === null ? {} : { events: Number(rawEvents) }),
         })
         const closed = new AbortController()
         res.once('close', () => closed.abort())
@@ -153,6 +155,7 @@ export function registerSettingsRoutes({
           ...(params.boot === undefined ? {} : { boot: params.boot }),
           waitMs: (params.wait ?? 0) * 1_000,
           signal: closed.signal,
+          withEvents: params.events === 1,
         })
         if (closed.signal.aborted) return
         writeContractJson(res, 200, HostApiContracts.listClientNotifications, feed)

@@ -74,6 +74,7 @@ import {
   ManagementDeviceIdSchema,
   ManagementDeviceViewSchema,
   ManagementLoginCodeSchema,
+  ManagementPairingCodeSchema,
   ManagementLoginRequestViewSchema,
   ManagementPasskeyViewSchema,
   ManagementSignInViewSchema,
@@ -3626,6 +3627,8 @@ export const HostApiContracts = {
         boot: z.string().max(64).optional(),
         /** Seconds to wait when nothing is new yet. */
         wait: z.number().int().min(0).max(CLIENT_NOTIFICATION_MAX_WAIT_SECONDS).optional(),
+        /** `1`: include each notification's settings event. */
+        events: z.literal(1).optional(),
       })
       .strict(),
     request: NoRequestBodySchema,
@@ -4827,6 +4830,15 @@ export const HostApiContracts = {
     params: EmptyParamsSchema,
     request: NoRequestBodySchema,
     response: ManagementLoginCodeSchema,
+    error: HostApiErrorSchema,
+  }),
+  /** A code the Android app scans to pair; used once, within five minutes, without a further confirmation. */
+  createPairingCode: defineContract({
+    method: 'POST',
+    path: '/api/management/pairing-codes',
+    params: EmptyParamsSchema,
+    request: NoRequestBodySchema,
+    response: ManagementPairingCodeSchema,
     error: HostApiErrorSchema,
   }),
   getLoginRequest: defineContract({

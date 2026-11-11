@@ -5,6 +5,7 @@ import {
   AppWindow,
   Bell,
   Cable,
+  ArrowLeftRight,
   ChevronLeft,
   LockOpen,
   Menu as MenuIcon,
@@ -18,6 +19,7 @@ import {
   Store,
   Wrench,
 } from 'lucide-react'
+import { inAndroidShell, postToAndroidShell } from '../../android-shell.js'
 import { browserInstanceName, isUnencryptedRemoteConnection } from '../../management-access.js'
 import { Suspense, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
@@ -333,6 +335,19 @@ function SideMenu({
         <span className={styles.menuDivider} aria-hidden="true" />
         {entry('/logs', '/logs', '日志', <ScrollText aria-hidden="true" strokeWidth={1.7} />)}
         {entry('/settings', '/settings', '设置', <Settings aria-hidden="true" strokeWidth={1.7} />)}
+        {inAndroidShell() ? (
+          // The page knows only its own instance; the Android app keeps the others and switches between them.
+          <Pressable
+            className={styles.menuItem}
+            onClick={() => {
+              onOpenChange(false)
+              postToAndroidShell({ type: 'switch-instance' })
+            }}
+          >
+            <ArrowLeftRight aria-hidden="true" strokeWidth={1.7} />
+            <span>切换实例</span>
+          </Pressable>
+        ) : null}
       </nav>
     </SidePanel>
   )

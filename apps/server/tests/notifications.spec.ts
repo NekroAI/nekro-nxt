@@ -147,6 +147,21 @@ const approval = {
 }
 
 describe('NotificationService', () => {
+  it('names the event of each notification only for clients that ask, so older strict clients keep their shape', async () => {
+    const { service } = await createFixture()
+    const cursor = service.readClientNotifications(undefined).cursor
+    await service.notifyCommunityFeedback({ kind: 'update', ref: 'FB-7' })
+    service.publishSystemTest()
+    expect(service.readClientNotifications(cursor).notifications.map((item) => item.event)).toEqual([
+      undefined,
+      undefined,
+    ])
+    expect(service.readClientNotifications(cursor, undefined, true).notifications.map((item) => item.event)).toEqual([
+      COMMUNITY_FEEDBACK_NOTIFICATION,
+      undefined,
+    ])
+  })
+
   it('routes feedback to its page and preserves a disabled event when an older client saves', async () => {
     const { service, fetch } = await createFixture()
     const cursor = service.readClientNotifications(undefined).cursor

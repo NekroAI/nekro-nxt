@@ -72,15 +72,28 @@ export const InsecureHttpManagementChallengeResponseSchema = z
   .strict()
 export type InsecureHttpManagementChallengeResponse = z.output<typeof InsecureHttpManagementChallengeResponseSchema>
 
-export const ManagementDeviceEnrollmentRequestSchema = z
-  .object({
-    challengeId: Base64UrlSchema,
-    clientNonce: Base64UrlSchema,
-    proof: Base64UrlSchema,
-    label: z.string().trim().min(1).max(80),
-    clientReleaseId: NonEmptyStringSchema.max(256),
-  })
-  .strict()
+/**
+ * A device proves it may join either with the management key (an HMAC over a fresh challenge, bound to the TLS key)
+ * or with a pairing code a signed-in device showed it (decision A5: scanned, five minutes, once).
+ */
+export const ManagementDeviceEnrollmentRequestSchema = z.union([
+  z
+    .object({
+      challengeId: Base64UrlSchema,
+      clientNonce: Base64UrlSchema,
+      proof: Base64UrlSchema,
+      label: z.string().trim().min(1).max(80),
+      clientReleaseId: NonEmptyStringSchema.max(256),
+    })
+    .strict(),
+  z
+    .object({
+      pairingCode: z.string().min(1).max(16),
+      label: z.string().trim().min(1).max(80),
+      clientReleaseId: NonEmptyStringSchema.max(256),
+    })
+    .strict(),
+])
 export type ManagementDeviceEnrollmentRequest = z.input<typeof ManagementDeviceEnrollmentRequestSchema>
 
 export const ManagementDeviceEnrollmentResponseSchema = z
@@ -146,12 +159,29 @@ export const ManagementLoginCodeSchema = z
   })
   .strict()
 
+/**
+ * A code a signed-in device shows for the Android app to scan. `link` is what the QR code holds:
+ * `nekronxt://pair?origin=…&code=…&spki=…`, with the instance's own TLS key so the app need not trust on first use.
+ */
+export const ManagementPairingCodeSchema = z
+  .object({
+    code: z.string().regex(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/u),
+    origin: z.url(),
+    link: z.string().startsWith('nekronxt://pair?'),
+    qrSvg: z.string().startsWith('<svg'),
+    expiresAt: z.number().int().nonnegative(),
+  })
+  .strict()
+
 /** Where a sign-in code stands, as the signed-in device that confirms it sees it. */
 export const ManagementLoginRequestViewSchema = z
   .object({
     code: z.string(),
-    /** `invite`: shown by a signed-in device for a new one to scan; `request`: shown by the new device. */
-    kind: z.enum(['invite', 'request']),
+    /**
+     * `invite`: shown by a signed-in device for a new one to scan; `request`: shown by the new device; `pairing`: shown
+     * for the Android app, `approved` once the app has used it.
+     */
+    kind: z.enum(['invite', 'request', 'pairing']),
     state: z.enum(['open', 'waiting', 'approved', 'rejected']),
     /** The new device, once one has scanned the invite or made the request. */
     requesterLabel: z.string().optional(),
@@ -172,6 +202,11 @@ export const ClientNotificationSchema = z
         /^\/(?:(?:live|channels|agents|workshop|wiring|settings|community|apps|work|connections|users|extensions)(?:\/[^?#]*)?)?(?:\?[^#]*)?$/u,
       )
       .optional(),
+    /**
+     * The settings event it came from (`credential-requested`, …), for clients that file notifications by event
+     * (Android channels). Sent only to clients that ask with `events=1`; older clients parse strictly.
+     */
+    event: z.string().min(1).max(64).optional(),
   })
   .strict()
 export type ClientNotification = z.output<typeof ClientNotificationSchema>

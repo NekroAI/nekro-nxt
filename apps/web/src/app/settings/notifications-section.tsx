@@ -20,7 +20,7 @@ import { disablePush, enablePush, pushSubscriptionId, readPushState, type PushSt
 import { registerServiceWorker } from '../../service-worker.js'
 import { relativeTime } from '../channels/timeline-model.js'
 import { useProductApi } from '../model/store.js'
-import { inClientShell } from '../../android-shell.js'
+import { inAndroidShell, inClientShell, postToAndroidShell, useAndroidShellState } from '../../android-shell.js'
 import { useManagementAccessAvailable } from './access-section.js'
 import { SectionHead } from './section-head.js'
 import styles from './settings.module.css'
@@ -185,7 +185,7 @@ export function NotificationsSection() {
       <SectionHead title="通知" />
       <PropertyGroup title="渠道">
         <PropertyList>
-          <PropertyRow label="系统通知" tip="在桌面版上弹出">
+          <PropertyRow label="系统通知" tip="在桌面版和安卓应用上弹出">
             <span className={styles.rowControls}>
               {system && testButton('system', true, () => api.getState().testSystemNotification())}
               <Switch label="系统通知" checked={system} onCheckedChange={setSystem} />
@@ -343,6 +343,7 @@ export function NotificationsSection() {
         </PropertyList>
       </PropertyGroup>
       {signedIn && !inClientShell() && settings.browserPush.enabled ? <BrowserPushGroup /> : null}
+      {inAndroidShell() ? <AndroidPhoneGroup systemEnabled={settings.system.enabled} /> : null}
       <PropertyGroup title="通知我">
         <PropertyList>
           <PropertyRow label="创造任务等待确认运行" tip="智能体写好带界面的候选，需要你允许运行时">
@@ -512,6 +513,57 @@ function BrowserPushGroup() {
               </span>
             </PropertyRow>
           ))}
+      </PropertyList>
+    </PropertyGroup>
+  )
+}
+
+/**
+ * The Android app's background connection (decision A4): it keeps a connection to this instance so notifications
+ * arrive while the app is closed, at the cost of a permanent entry in the notification shade, which this explains.
+ */
+function AndroidPhoneGroup({ systemEnabled }: { readonly systemEnabled: boolean }) {
+  const phone = useAndroidShellState()
+  const on = phone?.backgroundNotifications === true
+  return (
+    <PropertyGroup
+      title="这台手机"
+      description={
+        systemEnabled ? undefined : '上面的「系统通知」关着，手机收不到通知。打开它并保存后，这里的设置才会生效。'
+      }
+    >
+      <PropertyList>
+        <PropertyRow
+          label="后台通知"
+          description="关掉应用后仍保持与实例的连接，有需要处理的事时弹出通知。开启后通知栏会常驻一条「保持连接」，可以在系统设置里把它折叠起来。"
+        >
+          <Switch
+            label="后台通知"
+            checked={on}
+            disabled={phone === undefined}
+            onCheckedChange={(enabled) => postToAndroidShell({ type: 'background-notifications', enabled })}
+          />
+        </PropertyRow>
+        {on && phone.notificationsAllowed === false ? (
+          <PropertyRow label="通知权限" description="系统没有允许 NekroNXT 发通知，开启后才能看到提醒。">
+            <Button
+              size="small"
+              onClick={() => postToAndroidShell({ type: 'background-notifications', enabled: true })}
+            >
+              允许通知
+            </Button>
+          </PropertyRow>
+        ) : null}
+        {on && phone.batteryOptimized ? (
+          <PropertyRow
+            label="电池优化"
+            description="系统可能在后台停掉 NekroNXT，通知会延迟或收不到。部分手机还要在系统设置里允许它自启动。"
+          >
+            <Button size="small" onClick={() => postToAndroidShell({ type: 'battery-settings' })}>
+              去设置
+            </Button>
+          </PropertyRow>
+        ) : null}
       </PropertyList>
     </PropertyGroup>
   )

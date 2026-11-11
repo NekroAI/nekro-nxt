@@ -1163,6 +1163,7 @@ test.describe('settings space', () => {
     // The codes come back as the instance would answer: waiting once a new device has scanned or asked.
     const states = new Map<string, Record<string, unknown>>([
       ['ABCD-EFGH', { code: 'ABCD-EFGH', kind: 'invite', state: 'open', expiresAt: now + 300_000 }],
+      ['PQRS-6789', { code: 'PQRS-6789', kind: 'pairing', state: 'open', expiresAt: now + 300_000 }],
       [
         'WXYZ-2345',
         {
@@ -1200,6 +1201,18 @@ test.describe('settings space', () => {
               url: 'https://nxt.example.test/login?code=ABCD-EFGH',
               qrSvg:
                 '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1" aria-label="二维码"><rect width="1" height="1" /></svg>',
+              expiresAt: now + 300_000,
+            },
+          }),
+        )
+        await target.route('**/api/management/pairing-codes', (request) =>
+          request.fulfill({
+            json: {
+              code: 'PQRS-6789',
+              origin: 'https://nxt.example.test',
+              link: 'nekronxt://pair?origin=https%3A%2F%2Fnxt.example.test&code=PQRS-6789&spki=fixture',
+              qrSvg:
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1" aria-label="配对二维码"><rect width="1" height="1" /></svg>',
               expiresAt: now + 300_000,
             },
           }),
@@ -1257,6 +1270,15 @@ test.describe('settings space', () => {
       await invite.getByRole('button', { name: '拒绝' }).click()
       await expect(invite).toContainText('已拒绝')
       await invite.getByRole('button', { name: '完成' }).click()
+
+      // The Android app pairs with its own code and needs no approval; the dialog says which phone used it.
+      await page.getByRole('button', { name: '显示配对码' }).click()
+      const pairing = page.getByRole('dialog', { name: '连接安卓应用' })
+      await expect(pairing.getByText('PQRS-6789')).toBeVisible()
+      await expect(pairing).toContainText('填 https://nxt.example.test 和这个配对码')
+      states.set('PQRS-6789', { ...states.get('PQRS-6789'), state: 'approved', requesterLabel: 'Android · 测试手机' })
+      await expect(pairing).toContainText('「Android · 测试手机」已连接', { timeout: 6_000 })
+      await pairing.getByRole('button', { name: '完成' }).click()
 
       // Codes are typed (or scanned) in one dialog; an unknown code says so.
       await page.getByRole('button', { name: '输入或扫码' }).click()

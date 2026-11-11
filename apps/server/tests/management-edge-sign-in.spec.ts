@@ -182,6 +182,60 @@ describe('signing in with codes, passkeys and the key switch', () => {
     expect(devices.devices.map((device) => device.label)).toContain('浏览器 · Safari · iOS')
   })
 
+  it('pairs the Android app with a code a signed-in device showed, once, and tells that device which phone used it', async () => {
+    const { edge, admin } = await start('https://nxt.example.test')
+    const pairing = HostApiContracts.createPairingCode.parseResponse(
+      json(await send(edge.port, '/api/management/pairing-codes', { method: 'POST', headers: admin })),
+    )
+    const link = new URL(pairing.link)
+    // The QR code carries the access address and the instance's own TLS key, so the app need not trust on first use.
+    expect(link.searchParams.get('origin')).toBe('https://nxt.example.test')
+    expect(link.searchParams.get('code')).toBe(pairing.code)
+    expect(link.searchParams.get('spki')).toBe(edge.spkiSha256)
+    expect(pairing.qrSvg).toMatch(/^<svg/u)
+
+    const enroll = (pairingCode: string) =>
+      send(edge.port, '/api/management/devices/enroll', {
+        method: 'POST',
+        body: { pairingCode, label: 'Android · 测试手机', clientReleaseId: 'nxt-android/0.1.0' },
+      })
+    const enrolled = await enroll(pairing.code.toLowerCase().replace('-', ''))
+    expect(enrolled.status).toBe(201)
+    const device = z.object({ deviceId: z.string(), deviceSecret: z.string() }).parse(json(enrolled))
+    const session = await send(edge.port, '/api/management/session', {
+      method: 'POST',
+      body: { deviceId: device.deviceId, deviceSecret: device.deviceSecret },
+    })
+    expect(session.status).toBe(200)
+    // The code works once.
+    expect((await enroll(pairing.code)).status).toBe(401)
+    const seen = HostApiContracts.getLoginRequest.parseResponse(
+      json(await send(edge.port, `/api/management/login-requests/${pairing.code}`, { headers: admin })),
+    )
+    expect(seen).toMatchObject({ kind: 'pairing', state: 'approved', requesterLabel: 'Android · 测试手机' })
+    // A sign-in invite is not a pairing code, and a pairing code cannot be approved as a sign-in.
+    const invite = HostApiContracts.createLoginInvite.parseResponse(
+      json(await send(edge.port, '/api/management/login-invites', { method: 'POST', headers: admin })),
+    )
+    expect((await enroll(invite.code)).status).toBe(401)
+  })
+
+  it('stops guessing pairing codes after the shared per-address budget', async () => {
+    const { edge } = await start('https://nxt.example.test')
+    const statuses: number[] = []
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const reply = await send(edge.port, '/api/management/devices/enroll', {
+        method: 'POST',
+        body: { pairingCode: 'AAAA-AAAA', label: 'Android', clientReleaseId: 'nxt-android/0.1.0' },
+      })
+      statuses.push(reply.status)
+    }
+    // Signing the admin in drew from the same budget; wrong codes are refused until it runs out, then all are held off.
+    expect(statuses[0]).toBe(401)
+    expect(statuses.at(-1)).toBe(429)
+    expect(statuses).toEqual([...statuses].sort())
+  })
+
   it('signs in a device that showed its own code once a signed-in device approves it, and not after a refusal', async () => {
     const { edge, admin } = await start()
     const request = async () =>
