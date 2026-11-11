@@ -49,12 +49,12 @@ export default function ChannelsSpace() {
   // On a phone a conversation is the second level above the channel list (05 §6.2): its name and state head the
   // top bar, the way back leads to the list, and it takes the whole height.
   const phaseKey = agent ? (runtimePhase ?? channel?.runtimePhase ?? agent.state) : undefined
-  // Sort mode titles the bar 排序; the list puts 完成 in it, and the back arrow leaves the mode the same way.
+  // Sort mode titles the bar 排序 and the list puts 完成 in it; the system's back step leaves the mode as well.
   const { sorting } = useChannelSorting()
   usePageBar(
     channelId === undefined
       ? sorting
-        ? { title: '排序', back: { to: '/channels', label: '返回频道列表' } }
+        ? { title: '排序', mode: true }
         : undefined
       : {
           title: (conversationId === undefined ? channel?.name : subConversation?.title) ?? '频道',

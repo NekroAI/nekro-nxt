@@ -739,6 +739,56 @@
   }
 }
 
+/* —— 左侧面板 —— */
+.sidePanel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 51;
+  display: flex;
+  flex-direction: column;
+  width: calc(min(80vw, 320px) + var(--safe-left));
+  /* The head stays below the status bar and the last row above the home indicator. */
+  padding: var(--safe-top) 0 var(--safe-bottom) var(--safe-left);
+  border-right: 1px solid var(--line);
+  outline: none;
+  background: var(--side);
+  box-shadow: var(--sh-3);
+  /* A vertical move scrolls the panel's list; a horizontal one is the panel's own swipe (SidePanel). */
+  touch-action: pan-y;
+  -webkit-app-region: no-drag;
+}
+
+.sidePanel[data-state='open'] {
+  animation: sidePanelIn var(--dur-2) var(--ease) both;
+}
+
+.sidePanel[data-state='closed'] {
+  animation: sidePanelOut var(--dur-1) var(--ease-in) both;
+}
+
+/* Under the finger the panel and the dim follow it exactly; letting go springs back or closes. */
+.sidePanel:not([data-dragging]) {
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.sidePanelScrim:not([data-dragging]) {
+  transition: opacity var(--dur-1) var(--ease);
+}
+
+@keyframes sidePanelIn {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes sidePanelOut {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
 @keyframes popIn {
   from {
     transform: scale(0.96) translateY(-4px);

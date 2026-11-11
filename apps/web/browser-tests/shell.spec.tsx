@@ -1,4 +1,4 @@
-import { ChannelIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
+import { ChannelIdSchema, ExtensionIdSchema, ExtensionRevisionIdSchema, HostApiContracts } from '@nekro-nxt/contracts'
 import { chromium, expect, test, type Browser, type Locator, type Page } from '@playwright/test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -1088,8 +1088,7 @@ test.describe('shell, channels and live', () => {
   const bottomBar = (page: Page) => {
     // By selector: an open modal menu hides the bar from the accessibility tree.
     const nav = page.locator('nav[aria-label="主导航"]')
-    const item = (name: string) =>
-      name === '更多' ? nav.getByRole('button', { name: '更多' }) : nav.getByRole('link', { name, exact: true })
+    const item = (name: string) => nav.getByRole('link', { name, exact: true })
     const center = async (name: string) => {
       const box = await item(name).boundingBox()
       if (!box) throw new Error(`${name} is not on the bar`)
@@ -1206,32 +1205,30 @@ test.describe('shell, channels and live', () => {
     }
   })
 
-  test('on a phone a drag released on “更多” opens its menu, as a tap does', async () => {
-    const { page } = await open('/live', { width: 393, touch: true })
+  test('on a phone pages outside the bottom bar select nothing there, and 设置 sits in it', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true })
     try {
       const bar = bottomBar(page)
       await expect(bar.item('概览')).toHaveAttribute('aria-current', 'page')
-      // An open menu hides the page from assistive technology, so measure first.
-      const overview = await bar.left('概览')
-      await bar.drag('频道', await bar.center('更多'))
-      await page.mouse.up()
-      const menu = page.getByRole('menu', { name: '更多' })
-      await expect(menu).toBeVisible()
-      await expect(page).toHaveURL(/\/live$/u)
-      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(overview, 0)
-      await page.keyboard.press('Escape')
-      await expect(menu).toBeHidden()
-
-      const more = await bar.center('更多')
-      await page.touchscreen.tap(more.x, more.y)
-      await expect(menu).toBeVisible()
-      await menu.getByRole('menuitem', { name: '接线' }).click()
-      await expect(page).toHaveURL(/\/wiring/u)
-      await expect(bar.item('更多')).toHaveAttribute('aria-current', 'page')
-      // “更多” holds the page, so it carries the selection; the hidden 接线 entry does not claim it.
-      await expect(bar.nav.locator('[aria-current="page"]')).toHaveCount(1)
-      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('更多'), 0)
-      await expect(bar.nav.locator('> span[aria-hidden="true"]').first()).toHaveCSS('opacity', '1')
+      await expect(bar.nav.getByRole('link')).toHaveText(['概览', '频道', '智能体', '工坊', '设置'], {
+        useInnerText: true,
+      })
+      await expect(bar.nav.getByRole('button')).toHaveCount(0)
+      const indicator = bar.nav.locator('> span[aria-hidden="true"]').first()
+      for (const name of ['接线', '社区', '日志']) {
+        await page.getByRole('banner').getByRole('button', { name: '菜单' }).click()
+        await page.getByRole('dialog', { name: '菜单' }).getByRole('link', { name, exact: true }).click()
+        await expect(page.getByRole('banner')).toContainText(name)
+        await expect(bar.nav.locator('[aria-current="page"]')).toHaveCount(0)
+        await expect(indicator).toHaveCSS('opacity', '0')
+      }
+      const settings = await bar.center('设置')
+      await page.touchscreen.tap(settings.x, settings.y)
+      await expect(page).toHaveURL(/\/settings/u)
+      await expect(bar.item('设置')).toHaveAttribute('aria-current', 'page')
+      await expect(indicator).toHaveCSS('opacity', '1')
+      await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('设置'), 0)
+      expect(errors).toEqual([])
     } finally {
       await page.close()
     }
@@ -1247,14 +1244,10 @@ test.describe('shell, channels and live', () => {
       await expect(page).toHaveURL(/\/channels/u)
       await expect(bar.item('频道')).toHaveAttribute('aria-current', 'page')
       await expect.poll(async () => (await bar.indicatorX()).shown).toBeCloseTo(await bar.left('频道'), 0)
-      await bar.item('更多').focus()
+      await bar.item('设置').focus()
       await page.keyboard.press('Enter')
-      const menu = page.getByRole('menu', { name: '更多' })
-      await expect(menu).toBeVisible()
-      await expect(menu.getByRole('menuitem').first()).toBeFocused()
-      await page.keyboard.press('Enter')
-      await expect(menu).toBeHidden()
-      await expect(page).toHaveURL(/\/(?:community|wiring|apps|logs|settings)/u)
+      await expect(page).toHaveURL(/\/settings/u)
+      await expect(bar.item('设置')).toHaveAttribute('aria-current', 'page')
     } finally {
       await page.close()
     }
@@ -1627,10 +1620,14 @@ test.describe('shell, channels and live', () => {
       const before = await held.boundingBox()
       await touch.sheet.getByRole('button', { name: '排序' }).click()
 
-      // The top bar is the mode's own: its title and 完成, no search or bell; the list has no search or filter.
+      // The top bar is the mode's own: its title and 完成, no way back, menu, search or bell; the list has no search
+      // or filter.
       await expect(sort.done).toBeVisible()
       await expect(sort.bar).toContainText('排序')
-      await expect(sort.bar.getByRole('button', { name: '搜索' })).toHaveCount(0)
+      await expect(sort.bar.getByRole('button')).toHaveText(['完成'])
+      await expect(sort.bar.getByRole('link')).toHaveCount(0)
+      const title = await sort.bar.getByText('排序', { exact: true }).boundingBox()
+      expect(title?.x ?? 0).toBeCloseTo(16, 0)
       await expect(sort.list.getByRole('searchbox')).toHaveCount(0)
       await expect(sort.list.getByRole('combobox')).toHaveCount(0)
       // The row stays where it was on screen.
@@ -1952,6 +1949,200 @@ test.describe('shell, channels and live', () => {
     }
   })
 
+  /** The phone's side menu: the top bar's button that opens it, the panel, its entries and the dim behind it. */
+  const sideMenu = (page: Page) => {
+    const button = page.getByRole('banner').getByRole('button', { name: '菜单' })
+    const panel = page.getByRole('dialog', { name: '菜单' })
+    return {
+      button,
+      panel,
+      item: (name: string) => panel.getByRole('link', { name, exact: true }),
+      open: async () => {
+        // A panel just closed still dims the page as it leaves and would take the tap.
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        await button.click()
+        await expect(panel).toBeVisible()
+      },
+    }
+  }
+
+  /** A finger on `from` moving left by `distance` over `steps` frames, then lifting. */
+  const swipeLeft = async (page: Page, from: { x: number; y: number }, distance: number, steps = 12) => {
+    const session = await page.context().newCDPSession(page)
+    const send = (type: 'touchStart' | 'touchMove' | 'touchEnd', point?: { x: number; y: number }) =>
+      session.send('Input.dispatchTouchEvent', { type, touchPoints: point ? [point] : [] })
+    await send('touchStart', from)
+    for (let step = 1; step <= steps; step++) {
+      await send('touchMove', { x: from.x - (step * distance) / steps, y: from.y })
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done(null))))
+    }
+    await send('touchEnd')
+  }
+
+  /** `productSnapshot` with an extension page that registered a navigation entry. */
+  const extensionPageSnapshot: Snapshot = HostApiContracts.snapshot.response.parse({
+    ...productSnapshot,
+    hostUi: {
+      preferencesRevision: 1,
+      pages: [
+        {
+          pageInstanceId: 'hup_samplepage',
+          owner: {
+            kind: 'extension',
+            extensionId: ExtensionIdSchema.parse('ext_samplepage'),
+            revisionId: ExtensionRevisionIdSchema.parse('xrv_samplepage'),
+          },
+          entryId: 'sample',
+          title: '示例看板',
+          icon: { kind: 'host-icon', name: 'puzzle' },
+          objectPane: 'hidden',
+          startPath: '',
+          visible: true,
+          sortOrder: 0,
+          rail: { order: 0 },
+          routeBase: '/apps/hup_samplepage',
+          client: { moduleUrl: '/host-ui/sample.mjs', buildKey: 'a'.repeat(64) },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    },
+  })
+
+  test('on a phone first-level pages lead the top bar with the menu, opened pages with the way back', async () => {
+    const { page, errors } = await open('/agents', { width: 393, touch: true })
+    try {
+      const menu = sideMenu(page)
+      const { back } = topBar(page)
+      await expect(menu.button).toBeVisible()
+      const box = await menu.button.boundingBox()
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(44)
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44)
+      // It leads the bar, before the space's name.
+      expect(box?.x ?? 99).toBeLessThan(8)
+      await page
+        .getByRole('complementary', { name: '智能体', exact: true })
+        .getByRole('link', { name: /资料员/u })
+        .click()
+      await expect(back('返回智能体列表')).toBeVisible()
+      await expect(menu.button).toHaveCount(0)
+      await back('返回智能体列表').click()
+      await expect(menu.button).toBeVisible()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone the menu lists every page, marks the current one and switches without adding history', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true, snapshot: extensionPageSnapshot })
+    try {
+      const menu = sideMenu(page)
+      const start = await place(page)
+      await menu.open()
+      await expect(menu.panel.getByRole('link')).toHaveText([
+        '概览',
+        '频道',
+        '智能体',
+        '工坊',
+        '社区',
+        '接线',
+        '示例看板',
+        '日志',
+        '设置',
+      ])
+      await expect(menu.panel.getByText('扩展页面', { exact: true })).toBeVisible()
+      await expect(menu.panel.locator('[aria-current="page"]')).toHaveText(['概览'])
+      // Focus goes into the panel, onto the page it shows.
+      await expect(menu.item('概览')).toBeFocused()
+      // Full height from the left edge, four fifths of the screen wide.
+      await expect
+        .poll(async () => {
+          const box = await page.locator('[role="dialog"][data-state="open"]').boundingBox()
+          return box && [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]
+        })
+        .toEqual([0, 0, 314, 852])
+      // The page behind does not scroll while it is open.
+      await expect(page.locator('body')).toHaveAttribute('data-scroll-locked', /\d/u)
+
+      await menu.item('接线').click()
+      await expect(menu.panel).toBeHidden()
+      await expect(page).toHaveURL(/\/wiring/u)
+      expect(await place(page)).toEqual(start)
+      await expect(menu.button).toBeFocused()
+      await menu.open()
+      await expect(menu.panel.locator('[aria-current="page"]')).toHaveText(['接线'])
+      await menu.item('示例看板').click()
+      await expect(page).toHaveURL(/\/apps\/hup_samplepage/u)
+      expect(await place(page)).toEqual(start)
+      await menu.open()
+      await expect(menu.panel.locator('[aria-current="page"]')).toHaveText(['示例看板'])
+      // The page it already shows only closes the menu.
+      await menu.item('示例看板').click()
+      await expect(menu.panel).toBeHidden()
+      expect(await place(page)).toEqual(start)
+      // Nothing of the app's lies behind: back leaves it, as from any first level.
+      await page.goBack()
+      await expect(page).toHaveURL('about:blank')
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('on a phone the menu closes from the dim, a swipe to the left and Escape, and focus returns to its button', async () => {
+    const { page, errors } = await open('/live', { width: 393, touch: true })
+    try {
+      const menu = sideMenu(page)
+      const panelBox = () => page.locator('[role="dialog"][data-state="open"]').boundingBox()
+
+      await menu.open()
+      await page.touchscreen.tap(370, 400)
+      await expect(menu.panel).toBeHidden()
+      await expect(menu.button).toBeFocused()
+      await expect(page).toHaveURL(/\/live$/u)
+
+      await menu.open()
+      await page.keyboard.press('Escape')
+      await expect(menu.panel).toBeHidden()
+      await expect(menu.button).toBeFocused()
+
+      // A short swipe springs back; one past a third of the panel closes it, and its release chooses nothing.
+      await menu.open()
+      await expect.poll(async () => Math.round((await panelBox())?.x ?? -1)).toBe(0)
+      const row = await menu.item('频道').boundingBox()
+      if (!row) throw new Error('The menu has no 频道 row.')
+      await swipeLeft(page, { x: row.x + 120, y: row.y + row.height / 2 }, 40)
+      await expect(menu.panel).toBeVisible()
+      await expect.poll(async () => Math.round((await panelBox())?.x ?? -1)).toBe(0)
+      await swipeLeft(page, { x: row.x + 120, y: row.y + row.height / 2 }, 160)
+      await expect(menu.panel).toBeHidden()
+      await expect(page).toHaveURL(/\/live$/u)
+      await expect(menu.button).toBeFocused()
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('computers show neither the menu button nor the side menu', async () => {
+    for (const width of [1440, 900]) {
+      const { page, errors } = await open('/live', { width })
+      try {
+        const nav = page.getByRole('navigation', { name: '主导航' })
+        await expect(nav.getByRole('link', { name: '概览', exact: true })).toHaveAttribute('aria-current', 'page')
+        await expect(page.getByRole('button', { name: '菜单' })).toHaveCount(0)
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        // The rail keeps every space, 日志 and 设置.
+        for (const name of ['社区', '接线', '日志', '设置'])
+          await expect(nav.getByRole('link', { name, exact: true })).toBeVisible()
+        expect(errors).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
   /** The router's index of the entry on screen and how many entries the tab's history holds. */
   const place = (page: Page) =>
     page.evaluate(() => {
@@ -2087,7 +2278,7 @@ test.describe('shell, channels and live', () => {
     }
   })
 
-  test('on a phone a drag along the bottom bar and the “更多” menu switch tabs in place as well', async () => {
+  test('on a phone a drag along the bottom bar and the menu switch tabs in place as well', async () => {
     const { page, errors } = await open('/agents', { width: 393, touch: true })
     try {
       const bar = bottomBar(page)
@@ -2099,14 +2290,14 @@ test.describe('shell, channels and live', () => {
       await expect(page).toHaveURL(/\/workshop$/u)
       expect((await place(page)).index).toBe(0)
 
-      await tap(page, '更多')
-      const menu = page.getByRole('menu', { name: '更多' })
-      await menu.getByRole('menuitem', { name: '接线' }).click()
+      const menu = sideMenu(page)
+      await menu.open()
+      await menu.item('接线').click()
       await expect(page).toHaveURL(/\/wiring/u)
-      await expect(bar.item('更多')).toHaveAttribute('aria-current', 'page')
+      await expect(bar.nav.locator('[aria-current="page"]')).toHaveCount(0)
       expect((await place(page)).index).toBe(0)
-      await tap(page, '更多')
-      await menu.getByRole('menuitem', { name: '设置' }).click()
+      await menu.open()
+      await menu.item('设置').click()
       // 设置 redirects to its first section; that is still the tab's first level.
       await expect(page).toHaveURL(/\/settings\/models$/u)
       expect((await place(page)).index).toBe(0)

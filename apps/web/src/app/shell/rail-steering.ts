@@ -54,7 +54,7 @@ export function useRailSteering({
   /** Changes whenever the set of items does. */
   readonly layoutKey: string
   readonly draggable: boolean
-  /** A drag ended on `item`: open its page or its menu. */
+  /** A drag ended on `item`: open its page. */
   readonly onRelease: (item: HTMLElement) => void
 }) {
   const boxes = useRef(new Map<Element, Box>())
@@ -183,8 +183,6 @@ export function useRailSteering({
       if (!event.isPrimary || event.button !== 0) return
       const item = event.target instanceof Element ? event.target.closest<HTMLElement>(ITEM) : null
       if (!item || !nav.current?.contains(item)) return
-      // On a phone “更多” opens on release, so a press there can still become a drag.
-      if (draggable && item.dataset['railItem'] === 'menu') event.preventDefault()
       suppressUntil.current = 0
       press.current = {
         pointerId: event.pointerId,
@@ -269,11 +267,10 @@ export function useRailSteering({
           steer(pending.current)
           rest()
         }
-        if (target.getAttribute('aria-current') !== 'page' || target.dataset['railItem'] === 'menu')
-          release.current(target)
+        if (target.getAttribute('aria-current') !== 'page') release.current(target)
         return
       }
-      // A tap: the click that follows opens the page or the menu. A mouse released over another item gets no click.
+      // A tap: the click that follows opens the page. A mouse released over another item gets no click.
       const over = event.target instanceof Element ? event.target.closest(ITEM) : null
       if (target.dataset['railItem'] === 'link' && over === target && target.getAttribute('aria-current') !== 'page') {
         pending.current = target

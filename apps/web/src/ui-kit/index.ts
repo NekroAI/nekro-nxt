@@ -42,6 +42,7 @@ export {
   ConfirmDialog,
   Sheet,
   ActionSheet,
+  SidePanel,
   Overlay,
   Menu,
   Popover,

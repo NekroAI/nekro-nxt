@@ -27,6 +27,8 @@ declare const styles: {
   readonly sheetBody: string
   readonly sheetFoot: string
   readonly sheetHead: string
+  readonly sidePanel: string
+  readonly sidePanelScrim: string
   readonly srOnly: string
   readonly title: string
   readonly titleRow: string

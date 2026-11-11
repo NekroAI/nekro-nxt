@@ -4,7 +4,15 @@ import * as RadixMenu from '@radix-ui/react-dropdown-menu'
 import * as RadixPopover from '@radix-ui/react-popover'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
 import { Check, ChevronLeft, ChevronRight, CircleHelp, TriangleAlert, X } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react'
 import { usePhone } from './phone.js'
 import { Button, IconButton, Pressable } from './primitives.js'
 import styles from './overlay.module.css'
@@ -437,6 +445,151 @@ export function ActionSheet({
               ))}
             </div>
           </div>
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
+  )
+}
+
+/** How far, as a share of its width, a leftward swipe must carry a side panel before letting go closes it. */
+const SIDE_SWIPE_CLOSE = 0.3
+
+/** A quicker flick than this (px/ms) closes the side panel whatever the distance. */
+const SIDE_FLICK = 0.5
+
+/**
+ * A full-height panel that slides in from the left edge on a phone (05 §6.2), over a dimmed page: the app's menu of
+ * every page. A tap on the dim, Escape, or swiping the panel to the left closes it. Focus lands on the entry marked
+ * `aria-current="page"` (or the first control) and goes back to `opener` when it closes; the page behind does not
+ * scroll while it is open. There is no edge swipe to pull it out: on iOS that is the system's back gesture.
+ */
+export function SidePanel({
+  open,
+  onOpenChange,
+  label,
+  opener,
+  className,
+  children,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly label: string
+  /** The control that opened the panel; touch browsers do not always focus it on a tap, so it is named here. */
+  readonly opener?: RefObject<HTMLElement | null>
+  readonly className?: string
+  readonly children: ReactNode
+}) {
+  const returnFocus = useReturnFocus(open)
+  const panel = useRef<HTMLDivElement | null>(null)
+  const scrim = useRef<HTMLDivElement | null>(null)
+  const swipe = useRef<
+    | {
+        readonly id: number
+        readonly x: number
+        readonly y: number
+        moved: boolean
+        last: number
+        at: number
+        speed: number
+      }
+    | undefined
+  >(undefined)
+  /** The last gesture was a swipe: the click a browser may still send for it is not a choice. */
+  const swiped = useRef(false)
+  const follow = (distance: number) => {
+    const element = panel.current
+    if (!element) return
+    element.style.transform = `translateX(${-distance}px)`
+    if (scrim.current) scrim.current.style.opacity = String(1 - distance / element.offsetWidth)
+  }
+  const settle = (close: boolean) => {
+    const element = panel.current
+    swipe.current = undefined
+    if (!element) return
+    delete element.dataset['dragging']
+    if (scrim.current) delete scrim.current.dataset['dragging']
+    // Closing leaves both where the finger let go, so the exit runs on from there.
+    if (close) return onOpenChange(false)
+    element.style.removeProperty('transform')
+    scrim.current?.style.removeProperty('opacity')
+  }
+  return (
+    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay ref={scrim} className={[styles.scrim, styles.sidePanelScrim].join(' ')} />
+        <RadixDialog.Content
+          ref={panel}
+          className={[styles.sidePanel, className].filter(Boolean).join(' ')}
+          aria-describedby={undefined}
+          onOpenAutoFocus={(event) => {
+            const current = panel.current?.querySelector<HTMLElement>('[aria-current="page"]')
+            if (!current) return
+            event.preventDefault()
+            current.focus()
+          }}
+          onCloseAutoFocus={(event) => {
+            const target = opener?.current
+            // Reopened before the exit finished: `returnFocus` keeps focus inside.
+            if (!open && target?.isConnected) {
+              event.preventDefault()
+              target.focus()
+              return
+            }
+            returnFocus(event)
+          }}
+          onPointerDown={(event) => {
+            swiped.current = false
+            if (event.pointerType === 'mouse' || !event.isPrimary) return
+            swipe.current = {
+              id: event.pointerId,
+              x: event.clientX,
+              y: event.clientY,
+              moved: false,
+              last: event.clientX,
+              at: event.timeStamp,
+              speed: 0,
+            }
+          }}
+          onPointerMove={(event) => {
+            const active = swipe.current
+            const element = panel.current
+            if (!active || active.id !== event.pointerId || !element) return
+            const dx = event.clientX - active.x
+            if (!active.moved) {
+              // A vertical move scrolls the list; the browser takes it over (touch-action: pan-y).
+              if (Math.abs(event.clientY - active.y) > Math.abs(dx) || -dx < 6) return
+              active.moved = true
+              element.dataset['dragging'] = ''
+              if (scrim.current) scrim.current.dataset['dragging'] = ''
+            }
+            const elapsed = event.timeStamp - active.at
+            if (elapsed > 0) active.speed = (active.last - event.clientX) / elapsed
+            active.last = event.clientX
+            active.at = event.timeStamp
+            follow(Math.max(0, -dx))
+          }}
+          onPointerUp={(event) => {
+            const active = swipe.current
+            const element = panel.current
+            if (!active || active.id !== event.pointerId || !element) return
+            const distance = active.x - event.clientX
+            swiped.current = active.moved
+            settle(
+              active.moved &&
+                distance > 0 &&
+                (distance > element.offsetWidth * SIDE_SWIPE_CLOSE || active.speed > SIDE_FLICK),
+            )
+          }}
+          onPointerCancel={() => settle(false)}
+          onClickCapture={(event) => {
+            if (!swiped.current) return
+            swiped.current = false
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+        >
+          <RadixDialog.Title className={styles.srOnly}>{label}</RadixDialog.Title>
+          {children}
         </RadixDialog.Content>
       </RadixDialog.Portal>
     </RadixDialog.Root>

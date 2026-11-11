@@ -30,7 +30,7 @@ import styles from './channels.module.css'
 
 /**
  * Sort mode is a history entry of its own on the phone's channel list (05 §6.2): the system's back step, the bottom
- * bar or any other page leaves it, and the top bar's back arrow and “完成” take that same step.
+ * bar or any other page leaves it, and the top bar's “完成” takes that same step.
  */
 const SORT_STATE_KEY = 'channelSort'
 
