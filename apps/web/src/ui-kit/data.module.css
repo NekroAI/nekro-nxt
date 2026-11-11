@@ -189,7 +189,7 @@
 .saveBar {
   position: sticky;
   z-index: 5;
-  bottom: var(--s-4);
+  bottom: calc(var(--s-4) + var(--content-inset-bottom));
   display: flex;
   align-items: center;
   gap: var(--s-3);

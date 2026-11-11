@@ -220,11 +220,14 @@ const auditScreen = (page: Page) =>
       }
       if (!reachable) continue
       const top = document.elementFromPoint(x, y)
-      // Sticky and fixed bars (save bars, section navigation) cover content only until it is scrolled clear.
+      // Sticky and fixed bars (save bars, section navigation) and the phone's bottom bar floating over the page cover
+      // content only until it is scrolled clear; that every page's end scrolls clear of the bottom bar is checked in
+      // shell.spec.tsx.
       const pinnedBar = (node: Element | null): boolean => {
         for (let current = node; current; current = current.parentElement) {
           const position = getComputedStyle(current).position
           if (position === 'sticky' || position === 'fixed') return true
+          if (current.matches('nav[aria-label="主导航"]') && viewport.width <= 760) return true
         }
         return false
       }

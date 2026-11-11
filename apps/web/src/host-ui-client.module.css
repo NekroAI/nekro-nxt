@@ -13,6 +13,9 @@
   background: var(--bg);
   container-type: inline-size;
   scrollbar-gutter: stable;
+  /* Runs on under the phone's floating bottom bar so the page's end scrolls clear of it (05 §6.2). */
+  padding-bottom: var(--content-inset-bottom);
+  scroll-padding-bottom: var(--content-inset-bottom);
 }
 
 .pageFrame {
@@ -56,7 +59,8 @@
   min-height: 0;
   height: 100%;
   overflow: auto;
-  padding: var(--s-4) var(--s-3);
+  padding: var(--s-4) var(--s-3) calc(var(--s-4) + var(--content-inset-bottom));
+  scroll-padding-bottom: var(--content-inset-bottom);
 }
 
 .navigationHead {

@@ -386,8 +386,10 @@ export function MasterDetail({
     // Only vertically: while the list moves it is wider than its column, and scrolling it sideways would jump.
     const bounds = element.getBoundingClientRect()
     const box = row.getBoundingClientRect()
+    // The list's end is where nothing floats over it (the phone's bottom bar), as its scroll padding says.
+    const end = bounds.bottom - (Number.parseFloat(getComputedStyle(element).scrollPaddingBottom) || 0)
     if (box.top < bounds.top) element.scrollTop += box.top - bounds.top
-    else if (box.bottom > bounds.bottom) element.scrollTop += box.bottom - bounds.bottom
+    else if (box.bottom > end) element.scrollTop += box.bottom - end
     if (!open) row.focus({ preventScroll: true })
   }, [open])
 

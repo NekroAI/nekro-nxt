@@ -256,6 +256,11 @@ html[data-ui='next'] {
   /* Where the shell's top bar ends and its bottom bar begins, safe areas included; floating panels stop at these. */
   --chrome-top: calc(var(--topbar-height) + var(--safe-top));
   --chrome-bottom: calc(var(--statusbar-height) + var(--safe-bottom));
+  /*
+   * How far a page's scrolling content runs on past its end so the last item can scroll clear of chrome floating
+   * over it. Zero where nothing floats over the page (computers, full-height pages); phones set it to clear the bar.
+   */
+  --content-inset-bottom: 0px;
   /* Side padding of a row inside a card; PropertyList sets it, unframed lists set it to zero. */
   --row-inset: var(--s-4);
   --pane-list: 272px;
@@ -288,10 +293,14 @@ html[data-ui='next'] {
   --identity-text-shadow: 0 1px 1px rgb(0 0 0 / 0.18);
 }
 
-/* Phones: the bottom bar floats above the home indicator, or a small gap above the edge without one (05 §6.2). */
+/*
+ * Phones: the bottom bar floats over the page, above the home indicator or a small gap above the edge without one
+ * (05 §6.2). Pages run on under it; their last item scrolls up to a gap above its top edge.
+ */
 @media (max-width: 760px) {
   html[data-ui='next'] {
     --chrome-bottom: calc(var(--statusbar-height) * 2 + max(var(--s-2), var(--safe-bottom)));
+    --content-inset-bottom: calc(var(--chrome-bottom) + var(--s-3));
   }
 }
 

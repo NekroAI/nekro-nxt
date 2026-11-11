@@ -719,13 +719,13 @@ a.instance {
 
 @media (max-width: 760px) {
   .app {
+    --rail-lift: max(var(--s-2), var(--safe-bottom));
+
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* The bottom bar floats as a glass capsule above the page edge (05 §6.2). */
+  /* The bottom bar floats as a glass capsule over the page, above its bottom edge (05 §6.2). */
   .rail {
-    --rail-lift: max(var(--s-2), var(--safe-bottom));
-
     flex-direction: row;
     grid-row: 3;
     grid-column: 1;
@@ -772,8 +772,37 @@ a.instance {
     display: none;
   }
 
+  /*
+   * The page runs down to the screen edge and scrolls on under the bar; its scrolling areas end
+   * --content-inset-bottom further on, so their last item still scrolls clear of it. The page is its own stack below
+   * the bar, so nothing inside it ever paints over the bar.
+   */
   .main {
+    z-index: 1;
+    grid-row: 2 / 4;
     grid-column: 1;
+  }
+
+  /*
+   * Around the bar the page fades towards its background instead of ending at a hard edge: light under the bar's
+   * upper half, nearly full at the screen edge, so text passing below the capsule never meets its labels.
+   */
+  .main::after {
+    content: '';
+    position: absolute;
+    z-index: 6;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: var(--chrome-bottom);
+    background: linear-gradient(
+      to top,
+      color-mix(in srgb, var(--bg) 88%, transparent) var(--rail-lift),
+      color-mix(in srgb, var(--bg) 50%, transparent) calc(var(--rail-lift) + var(--statusbar-height)),
+      transparent
+    );
+    pointer-events: none;
+    transition: opacity var(--dur-2) var(--ease);
   }
 
   /* Pressed, not hovered: a touch leaves no highlight behind once the finger lifts. */
@@ -897,8 +926,8 @@ a.instance {
   .app[data-tall] .main {
     /* Floating panels (the channel details) reach down to the home indicator instead of the hidden bar. */
     --chrome-bottom: var(--safe-bottom);
+    --content-inset-bottom: 0px;
 
-    grid-row: 2 / 4;
     padding-bottom: var(--safe-bottom);
   }
 
@@ -909,5 +938,16 @@ a.instance {
 
   :global(html[data-keyboard]) .rail {
     display: none;
+  }
+
+  :global(html[data-keyboard]) .main {
+    --content-inset-bottom: 0px;
+  }
+
+  /* No bar, no fade; it comes back with the bar rather than at once. */
+  .app[data-tall] .main::after,
+  :global(html[data-keyboard]) .main::after {
+    opacity: 0;
+    transition: none;
   }
 }

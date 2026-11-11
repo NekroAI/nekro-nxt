@@ -73,7 +73,7 @@
 .actionBar {
   position: sticky;
   z-index: 4;
-  bottom: var(--s-4);
+  bottom: calc(var(--s-4) + var(--content-inset-bottom));
   display: flex;
   flex-wrap: wrap;
   align-items: center;

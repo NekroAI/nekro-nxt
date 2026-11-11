@@ -68,6 +68,53 @@ const expectClearOfChrome = async (page: Page, item: Locator) => {
   expect(box.y + box.height).toBeLessThanOrEqual(nav.y)
 }
 
+/** The bottom bar's edges once it has come to rest (it may still be sliding in). */
+const barRest = async (page: Page): Promise<{ top: number; bottom: number }> => {
+  const nav = page.getByRole('navigation', { name: '主导航' })
+  const edges = async () => {
+    const box = await nav.boundingBox()
+    return { top: box?.y ?? 0, bottom: (box?.y ?? 0) + (box?.height ?? 0) }
+  }
+  let last = await edges()
+  await expect
+    .poll(async () => {
+      const next = await edges()
+      const still = next.top === last.top
+      last = next
+      return still
+    })
+    .toBe(true)
+  return last
+}
+
+/**
+ * The lowest control inside the page that can be seen, cut to the scroll areas around it: its bottom edge and name.
+ * Controls under a hidden level or scrolled out of their area do not count.
+ */
+const lowestControl = (page: Page) =>
+  page.locator('main').evaluate((root) => {
+    let lowest = { bottom: 0, name: '' }
+    const controls = root.querySelectorAll<HTMLElement>(
+      'a[href], button, input, textarea, [role="switch"], [role="tab"], [role="combobox"]',
+    )
+    for (const node of controls) {
+      if (!node.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue
+      let { top, bottom } = node.getBoundingClientRect()
+      for (let parent = node.parentElement; parent && parent !== root.parentElement; parent = parent.parentElement) {
+        if (getComputedStyle(parent).overflowY === 'visible') continue
+        const clip = parent.getBoundingClientRect()
+        top = Math.max(top, clip.top)
+        bottom = Math.min(bottom, clip.bottom)
+      }
+      if (bottom - top < 1 || bottom <= lowest.bottom) continue
+      lowest = {
+        bottom,
+        name: node.getAttribute('aria-label') ?? node.textContent?.trim().slice(0, 16) ?? node.tagName,
+      }
+    }
+    return lowest
+  })
+
 /** `base` with unread messages in 记录员's channel (3) and the unbound one (4), arranged as `view`. */
 const arrangedSnapshot = (view: ListView, base: Snapshot = productSnapshot): Snapshot => ({
   ...base,
@@ -719,6 +766,116 @@ test.describe('shell, channels and live', () => {
       } finally {
         await page.close()
       }
+    }
+  })
+
+  test('on a phone pages run on under the floating bottom bar and every page’s end scrolls clear of it', async () => {
+    // Long pages end near the bar once scrolled; short ones (and the contained log page) end wherever they end.
+    for (const [route, long] of [
+      ['/live', true],
+      ['/channels', true],
+      [`/agents/${targetAgentId}`, true],
+      ['/logs', false],
+      ['/settings/notifications', true],
+      ['/wiring', true],
+      ['/workshop', false],
+    ] as const) {
+      const { page, errors } = await open(route, {
+        snapshot: crowdedSnapshot,
+        width: 393,
+        touch: true,
+        before: notched,
+      })
+      try {
+        const nav = page.getByRole('navigation', { name: '主导航' })
+        await expect(nav).toBeVisible()
+        await expect.poll(async () => (await lowestControl(page)).bottom).toBeGreaterThan(0)
+        await page.waitForTimeout(300)
+        // The bar floats over the page: the page reaches the screen edge and the bar lies inside it.
+        const main = await page.locator('main').boundingBox()
+        const bar = await barRest(page)
+        expect(Math.round((main?.y ?? 0) + (main?.height ?? 0)), route).toBe(852)
+        expect(bar.top, route).toBeGreaterThan(main?.y ?? 0)
+        expect(bar.bottom, route).toBeLessThanOrEqual(852 - 34)
+        await scrollToEnd(page.locator('main'))
+        const lowest = await lowestControl(page)
+        if (long) expect(lowest.bottom, `${route} ${lowest.name}`).toBeGreaterThan(bar.top - 160)
+        expect(lowest.bottom, `${route} ${lowest.name}`).toBeLessThanOrEqual(bar.top)
+        expect(errors, route).toEqual([])
+      } finally {
+        await page.close()
+      }
+    }
+  })
+
+  test('on a phone toasts and a page’s save bar stay above the floating bottom bar', async () => {
+    const { page } = await open('/settings/notifications', { width: 393, touch: true })
+    try {
+      const nav = page.getByRole('navigation', { name: '主导航' })
+      await expect(nav).toBeVisible()
+      const bar = await barRest(page)
+      await page.getByRole('switch', { name: '扩展通知' }).click()
+      const save = page.getByRole('region', { name: '未保存的修改' })
+      await expect(save).toBeVisible()
+      // At the top of the page the save bar holds to the bottom of the view, clear of the bar.
+      await page.locator('main').evaluate((root) => {
+        for (const node of root.querySelectorAll<HTMLElement>('*')) node.scrollTop = 0
+      })
+      const saveBox = await save.boundingBox()
+      expect((saveBox?.y ?? 0) + (saveBox?.height ?? 0)).toBeLessThanOrEqual(bar.top)
+      await page.getByRole('button', { name: '保存' }).click()
+      // The unstubbed host refuses the save; its toast rises above the bar.
+      const toast = page.getByText('操作失败', { exact: false }).last()
+      await expect(toast).toBeVisible()
+      const toastBox = await toast.boundingBox()
+      expect((toastBox?.y ?? 0) + (toastBox?.height ?? 0)).toBeLessThanOrEqual(bar.top)
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('back from a conversation the list keeps its place while the bottom bar slides back over it', async () => {
+    const { page, errors } = await open(`/channels/${externalChannelId}`, { width: 393, touch: true })
+    try {
+      await expect(page.getByRole('textbox', { name: '消息' })).toBeVisible()
+      await page.getByRole('button', { name: '返回频道列表' }).click()
+      const row = page.getByRole('complementary', { name: '频道', exact: true }).getByRole('link').first()
+      await expect(row).toBeVisible()
+      const at = async () => {
+        const box = await row.boundingBox()
+        return { y: box?.y ?? 0, height: box?.height ?? 0 }
+      }
+      const first = await at()
+      // The page keeps its height a little after the bar is back; the list must not move when it lets go.
+      await page.waitForTimeout(700)
+      expect(await at()).toEqual(first)
+      const main = await page.locator('main').boundingBox()
+      expect(Math.round((main?.y ?? 0) + (main?.height ?? 0))).toBe(852)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
+    }
+  })
+
+  test('computers keep the page between the top bar and the status bar, with nothing floating over it', async () => {
+    const { page, errors } = await open('/live', { snapshot: crowdedSnapshot })
+    try {
+      const status = page.getByRole('contentinfo')
+      await expect(status).toBeVisible()
+      const main = await page.locator('main').boundingBox()
+      const footer = await status.boundingBox()
+      expect(Math.round((main?.y ?? 0) + (main?.height ?? 0))).toBe(Math.round(footer?.y ?? 0))
+      expect(
+        await page.evaluate(() =>
+          getComputedStyle(document.documentElement).getPropertyValue('--content-inset-bottom').trim(),
+        ),
+      ).toBe('0px')
+      await scrollToEnd(page.locator('main'))
+      const lowest = await lowestControl(page)
+      expect(lowest.bottom).toBeLessThanOrEqual(footer?.y ?? 0)
+      expect(errors).toEqual([])
+    } finally {
+      await page.close()
     }
   })
 

@@ -4,6 +4,19 @@
   overflow: auto;
 }
 
+/*
+ * A page's scrolling areas run on past their end by --content-inset-bottom, so the last item scrolls clear of the
+ * phone's floating bottom bar, and so do anchors, focus and scrollIntoView (05 §6.2). A contained page's own areas
+ * end above the bar instead.
+ */
+.scroll,
+.mainScroll,
+.master,
+.detailScroll {
+  padding-bottom: var(--content-inset-bottom);
+  scroll-padding-bottom: var(--content-inset-bottom);
+}
+
 /* —— 阅读型 —— */
 .reader {
   display: grid;
@@ -446,7 +459,8 @@ html[data-nxt-motion='off']
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 var(--s-2) var(--s-4);
+  padding: 0 var(--s-2) calc(var(--s-4) + var(--content-inset-bottom));
+  scroll-padding-bottom: var(--content-inset-bottom);
 }
 
 @media (max-width: 1279px) {
@@ -497,6 +511,9 @@ html[data-nxt-motion='off']
   }
 
   .workbench[data-narrow-pane='detail'] > [data-detail-pane] {
+    /* Shown as the whole page, the pane reaches under the phone's bottom bar; its end clears it (detail.module.css). */
+    --pane-end: var(--content-inset-bottom);
+
     position: static;
     width: 100%;
     padding-right: 0;
@@ -654,7 +671,7 @@ html[data-nxt-motion='off']
     grid-row: 2;
     grid-column: 1 / -1;
     align-self: stretch;
-    padding: 0 0 var(--s-4);
+    padding: 0 0 calc(var(--s-4) + var(--content-inset-bottom));
     overscroll-behavior: contain;
   }
 

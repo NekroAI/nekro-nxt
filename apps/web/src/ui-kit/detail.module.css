@@ -110,6 +110,8 @@
 .pane {
   /* Side padding of the pane's head, body and foot; a pane shown as the whole page takes the page margin. */
   --pane-inset: var(--s-4);
+  /* How far the pane's end clears chrome floating over it; set when the pane is the whole page (page.module.css). */
+  --pane-end: 0px;
 
   display: flex;
   min-width: 0;
@@ -139,14 +141,21 @@
   gap: var(--s-5);
   min-height: 0;
   overflow: auto;
-  padding: var(--s-4) var(--pane-inset);
+  padding: var(--s-4) var(--pane-inset) calc(var(--s-4) + var(--pane-end));
+  scroll-padding-bottom: var(--pane-end);
+}
+
+/* With a footer, the footer is the pane's end and clears whatever floats over it. */
+.paneBody:has(+ .paneFoot) {
+  padding-bottom: var(--s-4);
+  scroll-padding-bottom: 0;
 }
 
 .paneFoot {
   display: flex;
   justify-content: flex-end;
   gap: var(--s-2);
-  padding: var(--s-3) var(--pane-inset);
+  padding: var(--s-3) var(--pane-inset) calc(var(--s-3) + var(--pane-end));
   border-top: 1px solid var(--line);
 }
 
