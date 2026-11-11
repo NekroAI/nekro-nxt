@@ -525,6 +525,105 @@
   }
 }
 
+/* —— 底部操作面板 —— */
+.actionSheet {
+  position: fixed;
+  right: 0;
+  bottom: var(--keyboard-inset, 0px);
+  left: 0;
+  z-index: 51;
+  display: grid;
+  max-height: calc(var(--viewport-height, 100dvh) - var(--chrome-top));
+  --sheet-bottom: max(var(--s-2), var(--safe-bottom));
+
+  padding: 0 var(--safe-right) var(--sheet-bottom) var(--safe-left);
+  border-top: 1px solid var(--line);
+  border-radius: var(--r-3) var(--r-3) 0 0;
+  outline: none;
+  background: var(--surface);
+  box-shadow: var(--sh-3);
+  /* A vertical swipe moves the panel (ActionSheet); it never scrolls or zooms the page behind. */
+  touch-action: none;
+}
+
+.actionSheet[data-state='open'] {
+  animation: actionSheetIn var(--dur-2) var(--ease) both;
+}
+
+.actionSheet[data-state='closed'] {
+  animation: actionSheetOut var(--dur-1) var(--ease-in) both;
+}
+
+/* Under the finger the panel follows it exactly; letting go springs back or closes. */
+.actionSheet:not([data-dragging]) {
+  transition: transform var(--dur-1) var(--ease);
+}
+
+.actionSheetGrabber {
+  justify-self: center;
+  width: 36px;
+  height: 4px;
+  margin: var(--s-2) 0 var(--s-1);
+  border-radius: 2px;
+  background: var(--line-3);
+}
+
+.actionSheetTitle {
+  margin: 0;
+  padding: var(--s-1) var(--s-4) var(--s-2);
+  color: var(--muted);
+  font: var(--t-caption);
+  text-align: center;
+}
+
+.actionSheetList {
+  display: grid;
+  overflow-y: auto;
+}
+
+.actionSheetItem {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 52px;
+  padding: 0 var(--s-5);
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  font: var(--t-body);
+  text-align: left;
+  transition: background var(--dur-1);
+}
+
+.actionSheetItem svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: var(--muted);
+}
+
+.actionSheetItem:active:not(:disabled) {
+  background: var(--hover);
+  transition-duration: 0s;
+}
+
+.actionSheetItem:disabled {
+  opacity: 0.5;
+}
+
+@keyframes actionSheetIn {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes actionSheetOut {
+  to {
+    transform: translateY(100%);
+  }
+}
+
 @keyframes popIn {
   from {
     transform: scale(0.96) translateY(-4px);

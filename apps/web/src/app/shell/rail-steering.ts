@@ -146,6 +146,8 @@ export function useRailSteering({
     if (!press.current) rest()
     // Observations arrive after layout, so measuring there costs nothing extra.
     const observer = new ResizeObserver(() => {
+      // A bar taken out of the layout (the keyboard is up) keeps its indicator as it was, so coming back is still.
+      if (root.getClientRects().length === 0) return
       measure()
       if (!press.current) rest()
     })

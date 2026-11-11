@@ -25,7 +25,9 @@ import {
   toast,
   Tooltip,
   Pressable,
+  usePhone,
 } from '../../ui-kit/index.js'
+import { PageBarActions } from '../shell/crumb.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentHue, agentPhase, triggerLabel } from '../model/identity.js'
 import { useProductApi } from '../model/store.js'
@@ -132,6 +134,7 @@ export function Conversation({
   const [stopping, setStopping] = useState(false)
   const [reset, setReset] = useState<ContextReset | null>(null)
   const [xrayAnimated, setXrayAnimated] = useState(false)
+  const phone = usePhone()
   const scroll = useStickToBottom(`${channel.id}:next`, true)
   const known = useRef(new Set<string>())
   const knownChannel = useRef('')
@@ -229,64 +232,93 @@ export function Conversation({
 
   return (
     <section ref={pane} className={styles.chan} aria-label={channel.name}>
-      <header className={styles.head}>
-        <div className={styles.title} key={channel.id}>
-          <h1 className={styles.titleLine}>
-            <span>{channel.name}</span>
-            {phase ? (
-              <Chip tone={phase.tone} dot>
-                {phaseKey === 'thinking' || phaseKey === 'using-tool' ? (
-                  <ShimmerText>{phase.label}</ShimmerText>
-                ) : (
-                  phase.label
-                )}
-              </Chip>
-            ) : (
-              <Chip>未接线</Chip>
-            )}
-            {channel.bindings[0]?.paused ? <Chip tone="warn">已暂停</Chip> : null}
-            {runtime?.modelFallback ? <ModelFallbackChip fallback={runtime.modelFallback} /> : null}
-          </h1>
-          <div className={styles.subline}>
-            {connection ? <StatusDot tone={connectionStatus(connection).tone} /> : null}
-            <span>
-              {connection
-                ? connection.alias
-                  ? `${connection.alias} · ${connection.adapter}`
-                  : connection.adapter
-                : channel.connectionName}
-            </span>
-            {agent ? (
-              <span className={styles.responder}>
-                <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
-                <span>
-                  {agent.name}
-                  {trigger ? ` · ${trigger}` : ''}
-                </span>
+      {/* On a phone the header folds into the top bar (05 §6.2); only its heading stays, for screen readers. */}
+      {phone ? (
+        <h1 className={styles.foldHead}>{channel.name}</h1>
+      ) : (
+        <header className={styles.head}>
+          <div className={styles.title} key={channel.id}>
+            <h1 className={styles.titleLine}>
+              <span>{channel.name}</span>
+              {phase ? (
+                <Chip tone={phase.tone} dot>
+                  {phaseKey === 'thinking' || phaseKey === 'using-tool' ? (
+                    <ShimmerText>{phase.label}</ShimmerText>
+                  ) : (
+                    phase.label
+                  )}
+                </Chip>
+              ) : (
+                <Chip>未接线</Chip>
+              )}
+              {channel.bindings[0]?.paused ? <Chip tone="warn">已暂停</Chip> : null}
+              {runtime?.modelFallback ? <ModelFallbackChip fallback={runtime.modelFallback} /> : null}
+            </h1>
+            <div className={styles.subline}>
+              {connection ? <StatusDot tone={connectionStatus(connection).tone} /> : null}
+              <span>
+                {connection
+                  ? connection.alias
+                    ? `${connection.alias} · ${connection.adapter}`
+                    : connection.adapter
+                  : channel.connectionName}
               </span>
-            ) : null}
+              {agent ? (
+                <span className={styles.responder}>
+                  <AgentAvatar name={agent.name} hue={agentHue(agent)} size="xs" />
+                  <span>
+                    {agent.name}
+                    {trigger ? ` · ${trigger}` : ''}
+                  </span>
+                </span>
+              ) : null}
+            </div>
           </div>
-        </div>
-        <Pressable
-          type="button"
-          className={styles.toggle}
-          aria-pressed={xray}
-          onClick={() => setXray(!xray)}
-          title="显示思考过程与工具细节"
-        >
-          <Eye aria-hidden="true" />
-          <span className={styles.toggleLabel}>透视</span>
-        </Pressable>
-        <Pressable
-          type="button"
-          className={[styles.toggle, styles.iconToggle].join(' ')}
-          aria-pressed={inspectorOpen}
-          aria-label="频道信息"
-          onClick={onToggleInspector}
-        >
-          <PanelRight aria-hidden="true" />
-        </Pressable>
-      </header>
+          <Pressable
+            type="button"
+            className={styles.toggle}
+            aria-pressed={xray}
+            onClick={() => setXray(!xray)}
+            title="显示思考过程与工具细节"
+          >
+            <Eye aria-hidden="true" />
+            <span className={styles.toggleLabel}>透视</span>
+          </Pressable>
+          <Pressable
+            type="button"
+            className={[styles.toggle, styles.iconToggle].join(' ')}
+            aria-pressed={inspectorOpen}
+            aria-label="频道信息"
+            onClick={onToggleInspector}
+          >
+            <PanelRight aria-hidden="true" />
+          </Pressable>
+        </header>
+      )}
+      {/* Its two switches go to the top bar with it. */}
+      {phone ? (
+        <PageBarActions>
+          <Pressable
+            type="button"
+            className={styles.barToggle}
+            aria-pressed={xray}
+            aria-label="透视"
+            title="显示思考过程与工具细节"
+            onClick={() => setXray(!xray)}
+          >
+            <Eye aria-hidden="true" />
+          </Pressable>
+          <Pressable
+            type="button"
+            className={styles.barToggle}
+            aria-pressed={inspectorOpen}
+            aria-label="频道信息"
+            onClick={onToggleInspector}
+          >
+            <PanelRight aria-hidden="true" />
+          </Pressable>
+        </PageBarActions>
+      ) : null}
       <div ref={scroll.ref} className={styles.conv} onScroll={scroll.onScroll} role="log" aria-label="消息记录">
         <div className={[styles.convInner, styles.swap].join(' ')} key={channel.id}>
           {history?.hasMore ? (
@@ -450,6 +482,7 @@ export function SubConversationView({
   const [missing, setMissing] = useState(false)
   const [confirm, setConfirm] = useState<'close' | 'delete' | null>(null)
   const go = useGo()
+  const phone = usePhone()
   const status = read?.conversation.status ?? summary?.status
   const changedAt = summary?.closedAt ?? summary?.status
 
@@ -500,12 +533,20 @@ export function SubConversationView({
     <section className={styles.chan} aria-label={conversation.title}>
       <header className={styles.head}>
         <div className={styles.title} key={conversation.id}>
-          <h1 className={styles.titleLine}>
-            <span>{conversation.title}</span>
-            <Chip tone={status === 'open' ? 'accent' : conversation.closeReason === 'failed' ? 'warn' : 'neutral'} dot>
-              {subConversationStatus(conversation)}
-            </Chip>
-          </h1>
+          {/* On a phone the name and state head the top bar (05 §6.2); the heading stays for screen readers. */}
+          {phone ? (
+            <h1 className={styles.foldHead}>{conversation.title}</h1>
+          ) : (
+            <h1 className={styles.titleLine}>
+              <span>{conversation.title}</span>
+              <Chip
+                tone={status === 'open' ? 'accent' : conversation.closeReason === 'failed' ? 'warn' : 'neutral'}
+                dot
+              >
+                {subConversationStatus(conversation)}
+              </Chip>
+            </h1>
+          )}
           <div className={styles.subline}>
             <Link to={`/channels/${channel.id}`} className={subStyles.channelLink}>
               {channel.name}

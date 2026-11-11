@@ -1,5 +1,6 @@
 import { ChevronLeft, PanelLeftOpen, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { browserAnimatedStep, usePhone } from './phone.js'
 import { Button, IconButton } from './primitives.js'
 import styles from './page.module.css'
 
@@ -28,15 +29,23 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  barTitle = false,
 }: {
   readonly title: ReactNode
   readonly subtitle?: ReactNode
   readonly actions?: ReactNode
+  /**
+   * The phone's top bar already shows this title (the space's name); on a phone the heading is then only read out,
+   * not drawn a second time.
+   */
+  readonly barTitle?: boolean
 }) {
   return (
     <header className={styles.pageHead}>
       <div className={styles.pageHeading}>
-        <h1 className={styles.pageTitle}>{title}</h1>
+        <h1 className={styles.pageTitle} data-bar-title={barTitle || undefined}>
+          {title}
+        </h1>
         {subtitle ? <p className={styles.pageSubtitle}>{subtitle}</p> : null}
       </div>
       {actions ? <div className={styles.pageActions}>{actions}</div> : null}
@@ -73,6 +82,37 @@ export function BoardPage({ children }: { readonly children: ReactNode }) {
   )
 }
 
+/** Reduced motion, chosen in the app or in the system: levels then switch without a slide. */
+const motionReduced = (): boolean =>
+  document.documentElement.dataset['nxtMotion'] === 'off' ||
+  (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+
+/**
+ * Which way a phone workbench is moving between its list and an item: `push` opening the item, `pop` going back.
+ * A step the browser animated itself (an iOS edge swipe) or reduced motion lands at once; otherwise the slide's end
+ * (`done`, or a fallback timer) settles it.
+ */
+function usePhoneMotion(pane: 'list' | 'main' | undefined) {
+  const [previous, setPrevious] = useState(pane)
+  const [kind, setKind] = useState<'push' | 'pop' | undefined>(undefined)
+  if (previous !== pane) {
+    setPrevious(pane)
+    setKind(
+      previous === undefined || pane === undefined || browserAnimatedStep() || motionReduced()
+        ? undefined
+        : pane === 'main'
+          ? 'push'
+          : 'pop',
+    )
+  }
+  useEffect(() => {
+    if (kind === undefined) return
+    const fallback = window.setTimeout(() => setKind(undefined), 600)
+    return () => window.clearTimeout(fallback)
+  }, [kind])
+  return { kind, done: () => setKind(undefined) }
+}
+
 /**
  * Object workbenches: an optional collection list, the main area filling the remaining width, and an optional detail
  * pane. Below 1100px the list collapses so the main area keeps its room; a space whose list has no narrow replacement
@@ -84,6 +124,7 @@ export function WorkbenchPage({
   listLabel,
   detail,
   narrowPane,
+  phonePane,
   back,
   children,
 }: {
@@ -93,12 +134,39 @@ export function WorkbenchPage({
   readonly detail?: ReactNode
   /** Explicit navigation for spaces that replace their list with an object on narrow screens. */
   readonly narrowPane?: 'list' | 'main' | 'detail'
+  /**
+   * On a phone the list is its own page and an opened item a second level above it (05 §6.2): the item pushes in from
+   * the right and going back slides it away again, uncovering the list where it was left. The phone's top bar carries
+   * the way back, so no back row or list drawer is drawn there. Wider windows keep `listLabel`'s drawer.
+   */
+  readonly phonePane?: 'list' | 'main'
   readonly back?: { readonly label: string; readonly onBack: () => void }
   readonly children: ReactNode
 }) {
   const drawer = list && listLabel && !narrowPane ? listLabel : undefined
-  const [openAt, setOpenAt] = useState<string>()
+  const phone = usePhone()
+  const motion = usePhoneMotion(phone ? phonePane : undefined)
+  // The item being left stays on screen until it has slid away.
+  const leaving = useRef<ReactNode>(null)
+  if (phonePane === 'main') leaving.current = children
   const root = useRef<HTMLDivElement>(null)
+  // Start the slide on the frame after the first one shows the new level, written straight to the DOM.
+  useEffect(() => {
+    const element = root.current
+    if (!element || motion.kind === undefined) return
+    let second = 0
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        element.dataset['phoneRun'] = ''
+      })
+    })
+    return () => {
+      cancelAnimationFrame(first)
+      cancelAnimationFrame(second)
+      delete element.dataset['phoneRun']
+    }
+  }, [motion.kind])
+  const [openAt, setOpenAt] = useState<string>()
   const toggle = useRef<HTMLButtonElement>(null)
   const open = openAt !== undefined
   // Spaces re-render when the route changes; compare the address instead of reading the router, which ui-kit avoids.
@@ -141,10 +209,17 @@ export function WorkbenchPage({
       data-detail={detail ? '' : undefined}
       data-narrow-pane={narrowPane}
       data-list-drawer={drawer ? (open ? 'open' : 'closed') : undefined}
+      data-phone-pane={phonePane}
+      data-phone-motion={motion.kind}
     >
       {list}
       {drawer && open ? <div className={styles.listScrim} aria-hidden="true" onClick={() => close(true)} /> : null}
-      <div className={styles.main}>
+      <div
+        className={styles.main}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) motion.done()
+        }}
+      >
         {back || drawer ? (
           <div className={styles.narrowBack}>
             {back ? (
@@ -166,7 +241,7 @@ export function WorkbenchPage({
             ) : null}
           </div>
         ) : null}
-        {children}
+        {motion.kind === 'pop' ? leaving.current : children}
       </div>
       {detail}
     </div>
@@ -179,18 +254,23 @@ export function ListPane({
   actions,
   toolbar,
   label,
+  barTitle = false,
   children,
 }: {
   readonly title: ReactNode
   readonly actions?: ReactNode
   readonly toolbar?: ReactNode
   readonly label?: string
+  /** The phone's top bar already shows this title; on a phone it is only read out (see `PageHeader`). */
+  readonly barTitle?: boolean
   readonly children: ReactNode
 }) {
   return (
     <aside className={styles.list} aria-label={label}>
       <div className={styles.listHead}>
-        <h2 className={styles.listTitle}>{title}</h2>
+        <h2 className={styles.listTitle} data-bar-title={barTitle || undefined}>
+          {title}
+        </h2>
         {actions ? <div className={styles.listActions}>{actions}</div> : null}
       </div>
       {toolbar ? <div className={styles.listToolbar}>{toolbar}</div> : null}

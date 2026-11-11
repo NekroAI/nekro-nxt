@@ -145,7 +145,7 @@ export default function LiveSpace() {
       <BoardPage>
         <div className={[styles.inner, styles.enter].join(' ')}>
           <CompatibilityNotices showContextReset />
-          <PageHeader title="概览" />
+          <PageHeader title="概览" barTitle />
           <Welcome />
         </div>
       </BoardPage>
@@ -156,7 +156,7 @@ export default function LiveSpace() {
         <CompatibilityNotices showContextReset />
         <section style={cssVars({ '--i': 0 })}>
           <div className={styles.head}>
-            <PageHeader title="概览" />
+            <PageHeader title="概览" barTitle />
             <Stats
               label="概况"
               items={[

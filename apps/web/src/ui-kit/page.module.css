@@ -556,3 +556,165 @@ html[data-nxt-motion='off']
     --pane-inset: var(--s-6);
   }
 }
+
+/*
+ * Phones (05 §6.2): a list and the item opened from it are two levels. The item lies over the list and pushes in from
+ * the right; going back slides it out and uncovers the list where it was left (hidden, never unmounted, so its
+ * scroll position and search stay). Only transform moves, so the compositor runs it while the page renders.
+ */
+@media (max-width: 760px) {
+  .workbench[data-phone-pane] {
+    position: relative;
+    display: block;
+    overflow: hidden;
+  }
+
+  .workbench[data-phone-pane] > :is(.list, .main) {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    width: auto;
+    border: 0;
+    box-shadow: none;
+    animation: none;
+  }
+
+  .workbench[data-phone-pane] > .main {
+    z-index: 1;
+    background: var(--bg);
+  }
+
+  .workbench[data-phone-pane] :is(.narrowBack, .listScrim) {
+    display: none;
+  }
+
+  .workbench[data-phone-pane='list']:not([data-phone-motion]) > .main,
+  .workbench[data-phone-pane='main']:not([data-phone-motion]) > .list {
+    visibility: hidden;
+  }
+
+  .workbench[data-phone-motion] > .main {
+    box-shadow: var(--sh-3);
+  }
+
+  /*
+   * The new level is first drawn at its starting place and only starts moving once that frame is on screen
+   * (`data-phone-run`), so the cost of rendering it never eats into the slide.
+   */
+  .workbench[data-phone-motion='push'] > .main {
+    transform: translateX(100%);
+  }
+
+  .workbench[data-phone-motion='pop'] > .list {
+    transform: translateX(-24%);
+  }
+
+  .workbench[data-phone-motion='push'][data-phone-run] > .main {
+    animation: phonePushIn var(--dur-2) var(--ease) both;
+  }
+
+  .workbench[data-phone-motion='push'][data-phone-run] > .list {
+    animation: phonePushUnder var(--dur-2) var(--ease) both;
+  }
+
+  .workbench[data-phone-motion='pop'][data-phone-run] > .main {
+    animation: phonePopOut var(--dur-2) var(--ease) both;
+  }
+
+  .workbench[data-phone-motion='pop'][data-phone-run] > .list {
+    animation: phonePopUnder var(--dur-2) var(--ease) both;
+  }
+
+  /* The list as a whole page: search and its actions share one row, rows run edge to edge with the page margin. */
+  .workbench[data-phone-pane] > .list {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    background: var(--bg);
+  }
+
+  .workbench[data-phone-pane] > .list > .listHead {
+    display: contents;
+  }
+
+  .workbench[data-phone-pane] > .list .listActions {
+    grid-row: 1;
+    grid-column: 2;
+    padding: var(--s-3) var(--s-4) var(--s-2) var(--s-2);
+  }
+
+  .workbench[data-phone-pane] > .list > .listToolbar {
+    grid-row: 1;
+    grid-column: 1;
+    padding: var(--s-3) 0 var(--s-2) var(--s-4);
+  }
+
+  .workbench[data-phone-pane] > .list > .listBody {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    align-self: stretch;
+    padding: 0 0 var(--s-4);
+    overscroll-behavior: contain;
+  }
+
+  /* A header that only held that title leaves no empty row behind. */
+  .pageHead:has([data-bar-title]):not(:has(.pageSubtitle, .pageActions)) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    min-height: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  /* With its title in the top bar, a list's own actions keep to the right edge. */
+  .listTitle[data-bar-title] + .listActions {
+    margin-left: auto;
+  }
+
+  /* The top bar shows this title already; screen readers still find the heading. */
+  :is(.pageTitle, .listTitle)[data-bar-title],
+  .workbench[data-phone-pane] .listTitle {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* An explicit end: the starting place is also the element's resting style until the slide runs. */
+@keyframes phonePushIn {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: none;
+  }
+}
+
+@keyframes phonePushUnder {
+  to {
+    transform: translateX(-24%);
+  }
+}
+
+@keyframes phonePopOut {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* An explicit end: the starting place is also the element's resting style until the slide runs. */
+@keyframes phonePopUnder {
+  from {
+    transform: translateX(-24%);
+  }
+
+  to {
+    transform: none;
+  }
+}

@@ -32,9 +32,12 @@
   inset: min(0px, calc((100% - var(--target)) / 2));
 }
 
-.button:hover:not(:disabled) {
-  border-color: var(--line-3);
-  box-shadow: var(--sh-raised-hover);
+/* Hover answers a pointer that can hover; a touch leaves no highlight behind (05 §6.2). */
+@media (hover: hover) {
+  .button:hover:not(:disabled) {
+    border-color: var(--line-3);
+    box-shadow: var(--sh-raised-hover);
+  }
 }
 
 /* Pressed (05 §5.1): the surface sinks into an inset shadow and moves down 1px; release springs back. */
@@ -63,10 +66,12 @@
   box-shadow: var(--sh-fill);
 }
 
-.primary:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--accent-fill-grad-hover);
-  box-shadow: var(--sh-fill-hover);
+@media (hover: hover) {
+  .primary:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--accent-fill-grad-hover);
+    box-shadow: var(--sh-fill-hover);
+  }
 }
 
 .primary:active:not(:disabled) {
@@ -127,9 +132,11 @@
   color: var(--bad);
 }
 
-.danger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--bad) 35%, transparent);
-  background: var(--bad-soft);
+@media (hover: hover) {
+  .danger:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+    background: var(--bad-soft);
+  }
 }
 
 .dangerSolid {
@@ -139,10 +146,12 @@
   box-shadow: var(--sh-fill);
 }
 
-.dangerSolid:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--bad-fill-grad-hover);
-  box-shadow: var(--sh-fill);
+@media (hover: hover) {
+  .dangerSolid:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--bad-fill-grad-hover);
+    box-shadow: var(--sh-fill);
+  }
 }
 
 .dangerSolid:active:not(:disabled) {
@@ -157,11 +166,13 @@
   color: var(--fg-2);
 }
 
-.ghost:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--hover);
-  box-shadow: none;
-  color: var(--fg);
+@media (hover: hover) {
+  .ghost:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--hover);
+    box-shadow: none;
+    color: var(--fg);
+  }
 }
 
 .ghost:active:not(:disabled) {
@@ -229,9 +240,11 @@
   inset: min(0px, calc((100% - var(--target)) / 2)) 0;
 }
 
-.toggleChip:hover {
-  background: var(--hover);
-  color: var(--fg);
+@media (hover: hover) {
+  .toggleChip:hover {
+    background: var(--hover);
+    color: var(--fg);
+  }
 }
 
 .toggleChip[aria-pressed='true'] {

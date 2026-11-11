@@ -93,8 +93,10 @@ a.instance {
   text-decoration: none;
 }
 
-.instance:hover {
-  border-color: var(--line-2);
+@media (hover: hover) {
+  .instance:hover {
+    border-color: var(--line-2);
+  }
 }
 
 .instanceState {
@@ -161,8 +163,10 @@ a.instance {
   inset: min(0px, calc((100% - var(--target)) / 2));
 }
 
-.search:hover {
-  border-color: var(--line-3);
+@media (hover: hover) {
+  .search:hover {
+    border-color: var(--line-3);
+  }
 }
 
 .search svg {
@@ -195,8 +199,10 @@ a.instance {
   transition: background var(--dur-1);
 }
 
-.bell:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .bell:hover {
+    background: var(--hover);
+  }
 }
 
 .bell svg {
@@ -388,13 +394,17 @@ a.instance {
   transition: transform var(--dur-2) var(--ease);
 }
 
-.railItem:hover {
-  color: var(--fg);
+@media (hover: hover) {
+  .railItem:hover {
+    color: var(--fg);
+  }
 }
 
-.railItem:hover svg,
-.railItem:hover .railSvgIcon {
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .railItem:hover svg,
+  .railItem:hover .railSvgIcon {
+    transform: translateY(-1px);
+  }
 }
 
 .railItem[aria-current='page'] {
@@ -567,6 +577,12 @@ a.instance {
 }
 
 /* Starts partly visible: switching spaces must never show an empty canvas frame. */
+@keyframes barIn {
+  from {
+    opacity: 0;
+  }
+}
+
 @keyframes canvasIn {
   from {
     opacity: 0.45;
@@ -760,6 +776,14 @@ a.instance {
     grid-column: 1;
   }
 
+  /* Pressed, not hovered: a touch leaves no highlight behind once the finger lifts. */
+  .barBack:active,
+  .instance:active,
+  .search:active,
+  .bell:active {
+    background: var(--hover);
+  }
+
   .top {
     justify-content: space-between;
   }
@@ -767,6 +791,115 @@ a.instance {
   .search {
     min-width: 0;
     padding: var(--s-2);
+  }
+
+  /*
+   * The top bar is the page's title bar (05 §6.2): the title on the left, the page's or the app's controls on the
+   * right, one hairline below. A page opened from a list leads with a back arrow a fingertip wide.
+   */
+  .top {
+    gap: var(--s-2);
+  }
+
+  .top[data-phone-bar='item'] {
+    padding-right: calc(var(--s-2) + var(--safe-right));
+    padding-left: calc(var(--s-1) + var(--safe-left));
+  }
+
+  .barTitle {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    min-width: 0;
+    height: 100%;
+  }
+
+  .barBack {
+    position: relative;
+    display: grid;
+    width: 44px;
+    height: 44px;
+    flex: none;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg);
+    animation: barIn var(--dur-2) var(--ease) both;
+  }
+
+  .barBack svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  .barText {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+    animation: barIn var(--dur-2) var(--ease) both;
+  }
+
+  .barName {
+    overflow: hidden;
+    color: var(--fg);
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .barStatus {
+    display: flex;
+    align-items: center;
+    gap: var(--s-1);
+    min-width: 0;
+    color: var(--muted);
+    font: var(--t-caption);
+    line-height: 16px;
+    white-space: nowrap;
+  }
+
+  .barStatus > span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .barActions {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s-1);
+  }
+
+  /*
+   * A conversation takes the whole height (05 §6.2): the bottom bar slides away under the screen edge and the page
+   * keeps only the home-indicator margin. The bar keeps its place in the layout, so nothing around it is measured
+   * again, and its selection stays where it was for when it comes back.
+   */
+  .rail {
+    transition:
+      transform var(--dur-2) var(--ease),
+      visibility 0s;
+  }
+
+  .app[data-immersive] .rail {
+    transform: translateY(calc(100% + var(--rail-lift) + var(--s-2)));
+    visibility: hidden;
+    transition:
+      transform var(--dur-2) var(--ease),
+      visibility 0s linear var(--dur-2);
+  }
+
+  .app[data-tall] .main {
+    /* Floating panels (the channel details) reach down to the home indicator instead of the hidden bar. */
+    --chrome-bottom: var(--safe-bottom);
+
+    grid-row: 2 / 4;
+    padding-bottom: var(--safe-bottom);
   }
 
   /* While typing, the keyboard takes the bottom bar's place. */

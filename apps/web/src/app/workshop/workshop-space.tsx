@@ -138,6 +138,7 @@ export default function WorkshopSpace() {
   const list = (
     <ListPane
       title="工坊"
+      barTitle
       label="工坊"
       actions={
         <>

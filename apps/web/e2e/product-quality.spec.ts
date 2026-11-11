@@ -339,7 +339,13 @@ const assertViewportIntegrity = async (page: Page): Promise<void> => {
   }))
   expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewportWidth)
   expect(geometry.bodyWidth).toBeLessThanOrEqual(geometry.viewportWidth)
-  await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  // On a phone a page opened from a list carries its way back in the top bar instead of search (and a conversation
+  // also sets the bottom bar aside, 05 §6.2); the list it returns to has both.
+  const back = page.getByRole('banner').getByRole('button', { name: /^返回.+列表$/u })
+  const nav = page.getByRole('navigation', { name: '主导航' })
+  await expect(back.or(nav).first()).toBeVisible()
+  if (await back.isVisible()) return
+  await expect(nav).toBeVisible()
   await expect(page.getByRole('button', { name: '搜索', exact: true })).toBeVisible()
 }
 

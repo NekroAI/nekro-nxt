@@ -41,6 +41,7 @@ export {
   Dialog,
   ConfirmDialog,
   Sheet,
+  ActionSheet,
   Overlay,
   Menu,
   Popover,
@@ -67,6 +68,7 @@ export {
   type GaugeSegment,
 } from './layout.js'
 export { cssVars } from './css-vars.js'
+export { usePhone, isPhone } from './phone.js'
 export { copyText } from './clipboard.js'
 export { PageHeader, ReaderPage, BoardPage, WorkbenchPage, ListPane, MainContent, MasterDetail } from './page.js'
 export {

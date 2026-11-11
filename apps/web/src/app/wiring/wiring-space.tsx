@@ -150,6 +150,7 @@ export default function WiringSpace() {
         <div className={styles.head}>
           <PageHeader
             title="接线"
+            barTitle
             actions={
               <Button size="small" icon={<Plus size={14} />} onClick={() => go('/wiring/new')}>
                 添加平台账号

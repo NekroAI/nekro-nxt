@@ -5,6 +5,7 @@ import * as RadixPopover from '@radix-ui/react-popover'
 import * as RadixTooltip from '@radix-ui/react-tooltip'
 import { Check, CircleHelp, TriangleAlert, X } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from 'react'
+import { usePhone } from './phone.js'
 import { Button, IconButton, Pressable } from './primitives.js'
 import styles from './overlay.module.css'
 
@@ -238,6 +239,94 @@ export function Sheet({
   )
 }
 
+/** How far a downward swipe must carry a bottom sheet before letting go closes it. */
+const SWIPE_CLOSE = 72
+
+/**
+ * A short list of choices that rises from the bottom edge on a phone (05 §6.2), over a dimmed page. A tap on the
+ * page, Escape, or swiping the panel down closes it; choosing a row closes it and then runs the choice, still within
+ * the same tap (a file picker opened from it keeps the gesture it needs).
+ */
+export function ActionSheet({
+  open,
+  onOpenChange,
+  title,
+  items,
+}: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly title: string
+  readonly items: readonly MenuEntry[]
+}) {
+  const returnFocus = useReturnFocus(open)
+  const panel = useRef<HTMLDivElement>(null)
+  const swipe = useRef<{ readonly id: number; readonly y: number; moved: boolean } | undefined>(undefined)
+  const settle = (close: boolean) => {
+    const element = panel.current
+    swipe.current = undefined
+    if (!element) return
+    delete element.dataset['dragging']
+    if (close) onOpenChange(false)
+    else element.style.removeProperty('transform')
+  }
+  return (
+    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+      <RadixDialog.Portal>
+        <RadixDialog.Overlay className={styles.scrim} />
+        <RadixDialog.Content
+          ref={panel}
+          className={styles.actionSheet}
+          aria-describedby={undefined}
+          onCloseAutoFocus={returnFocus}
+          onPointerDown={(event) => {
+            if (event.pointerType === 'mouse' || !event.isPrimary) return
+            swipe.current = { id: event.pointerId, y: event.clientY, moved: false }
+          }}
+          onPointerMove={(event) => {
+            const active = swipe.current
+            const element = panel.current
+            if (!active || active.id !== event.pointerId || !element) return
+            const distance = Math.max(0, event.clientY - active.y)
+            if (!active.moved && distance < 6) return
+            active.moved = true
+            element.dataset['dragging'] = ''
+            element.style.transform = `translateY(${distance}px)`
+          }}
+          onPointerUp={(event) => {
+            const active = swipe.current
+            if (!active || active.id !== event.pointerId) return
+            settle(active.moved && event.clientY - active.y > SWIPE_CLOSE)
+          }}
+          onPointerCancel={() => settle(false)}
+          onClickCapture={(event) => {
+            // The release that ends a swipe is not a choice.
+            if (panel.current?.dataset['dragging'] !== undefined) event.stopPropagation()
+          }}
+        >
+          <span className={styles.actionSheetGrabber} aria-hidden="true" />
+          <RadixDialog.Title className={styles.actionSheetTitle}>{title}</RadixDialog.Title>
+          <div className={styles.actionSheetList}>
+            {items.map((item) => (
+              <Pressable
+                key={item.key}
+                className={[styles.actionSheetItem, item.danger ? styles.menuDanger : ''].join(' ')}
+                disabled={item.disabled ?? false}
+                onClick={() => {
+                  onOpenChange(false)
+                  item.onSelect()
+                }}
+              >
+                {item.icon}
+                {item.label}
+              </Pressable>
+            ))}
+          </div>
+        </RadixDialog.Content>
+      </RadixDialog.Portal>
+    </RadixDialog.Root>
+  )
+}
+
 export interface MenuEntry {
   readonly key: string
   readonly label: ReactNode
@@ -246,14 +335,6 @@ export interface MenuEntry {
   readonly disabled?: boolean
   readonly onSelect: () => void
 }
-
-const PHONE = '(max-width: 760px)'
-const subscribePhone = (change: () => void) => {
-  const query = window.matchMedia?.(PHONE)
-  query?.addEventListener('change', change)
-  return () => query?.removeEventListener('change', change)
-}
-const readPhone = () => window.matchMedia?.(PHONE).matches ?? false
 
 export function Menu({
   trigger,
@@ -272,7 +353,7 @@ export function Menu({
   readonly onOpenChange?: (open: boolean) => void
 }) {
   // On a phone the menu dims the page behind it, so a tap outside only closes it instead of reaching what is there.
-  const phone = useSyncExternalStore(subscribePhone, readPhone, () => false)
+  const phone = usePhone()
   return (
     <RadixMenu.Root modal={phone} {...(open === undefined ? {} : { open })} {...(onOpenChange ? { onOpenChange } : {})}>
       <RadixMenu.Trigger asChild>{trigger}</RadixMenu.Trigger>

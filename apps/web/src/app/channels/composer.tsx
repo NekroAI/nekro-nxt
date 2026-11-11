@@ -1,4 +1,4 @@
-import { ArrowRight, FilePlus2, ImagePlus, Plug, RotateCcw, X } from 'lucide-react'
+import { ArrowRight, FilePlus2, ImagePlus, Plug, Plus, RotateCcw, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { commandApi, type CommandCatalog } from '../../command-api.js'
 import { EMPTY_CHANNEL_DRAFT, isReadyAttachment, type ChannelAttachment } from '../../channel-drafts.js'
@@ -10,7 +10,7 @@ import {
   type ChannelSummary,
   type ConnectionSummary,
 } from '../../product-runtime.js'
-import { FileChooser, InfoTip, Pressable, Textarea, Tooltip, toast } from '../../ui-kit/index.js'
+import { ActionSheet, FileChooser, InfoTip, Pressable, Textarea, Tooltip, toast, usePhone } from '../../ui-kit/index.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { useProductApi } from '../model/store.js'
 import { randomId } from '../../random-id.js'
@@ -141,6 +141,8 @@ export function Composer({
   const filePicker = useRef<HTMLInputElement>(null)
   const form = useRef<HTMLFormElement>(null)
   const [dragging, setDragging] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const phone = usePhone()
   const dragDepth = useRef(0)
   const external = channel.kind !== 'internal'
   const commandRequest = useRef<{ channelId: string; revision: number; id: string } | undefined>(undefined)
@@ -417,10 +419,15 @@ export function Composer({
           placeholder={
             dragging
               ? '松开以添加附件'
-              : external
-                ? `发到 ${channel.name}，或输入 / 执行命令`
-                : `给 ${agent?.name ?? '智能体'} 发消息，或输入 / 执行命令`
+              : phone
+                ? // The top bar already names the channel and who answers; the field says only what it is for.
+                  '发消息'
+                : external
+                  ? `发到 ${channel.name}，或输入 / 执行命令`
+                  : `给 ${agent?.name ?? '智能体'} 发消息，或输入 / 执行命令`
           }
+          // Enter sends (Shift+Enter starts a new line); the on-screen keyboard labels its key to match.
+          enterKeyHint="send"
           aria-label="消息"
           aria-autocomplete="list"
           aria-controls={completing ? `commands-${channel.id}` : undefined}
@@ -439,26 +446,63 @@ export function Composer({
           disabled={Boolean(blocked) || sending}
           onFiles={(files) => addFiles(files)}
         />
-        <Pressable
-          type="button"
-          className={styles.attach}
-          disabled={Boolean(blocked) || sending}
-          aria-label="添加图片"
-          title="添加图片（也可粘贴或拖入，合计不超过 64 MiB）"
-          onClick={() => imagePicker.current?.click()}
-        >
-          <ImagePlus aria-hidden="true" />
-        </Pressable>
-        <Pressable
-          type="button"
-          className={styles.attach}
-          disabled={Boolean(blocked) || sending}
-          aria-label="添加文件"
-          title="添加文件（也可粘贴或拖入，合计不超过 64 MiB）"
-          onClick={() => filePicker.current?.click()}
-        >
-          <FilePlus2 aria-hidden="true" />
-        </Pressable>
+        {phone ? (
+          // One “添加” on a phone leaves the field the row's width; the choices rise from the bottom edge.
+          <>
+            <Pressable
+              type="button"
+              className={styles.attach}
+              disabled={Boolean(blocked) || sending}
+              aria-label="添加附件"
+              aria-haspopup="dialog"
+              onClick={() => setAdding(true)}
+            >
+              <Plus aria-hidden="true" />
+            </Pressable>
+            <ActionSheet
+              open={adding}
+              onOpenChange={setAdding}
+              title="添加附件（也可粘贴，合计不超过 64 MiB）"
+              items={[
+                {
+                  key: 'image',
+                  label: '图片',
+                  icon: <ImagePlus aria-hidden="true" />,
+                  onSelect: () => imagePicker.current?.click(),
+                },
+                {
+                  key: 'file',
+                  label: '文件',
+                  icon: <FilePlus2 aria-hidden="true" />,
+                  onSelect: () => filePicker.current?.click(),
+                },
+              ]}
+            />
+          </>
+        ) : (
+          <>
+            <Pressable
+              type="button"
+              className={styles.attach}
+              disabled={Boolean(blocked) || sending}
+              aria-label="添加图片"
+              title="添加图片（也可粘贴或拖入，合计不超过 64 MiB）"
+              onClick={() => imagePicker.current?.click()}
+            >
+              <ImagePlus aria-hidden="true" />
+            </Pressable>
+            <Pressable
+              type="button"
+              className={styles.attach}
+              disabled={Boolean(blocked) || sending}
+              aria-label="添加文件"
+              title="添加文件（也可粘贴或拖入，合计不超过 64 MiB）"
+              onClick={() => filePicker.current?.click()}
+            >
+              <FilePlus2 aria-hidden="true" />
+            </Pressable>
+          </>
+        )}
         {refusal ? (
           <span className={styles.blockedShort}>
             <span>{refusal.short}</span>

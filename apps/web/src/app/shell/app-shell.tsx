@@ -5,6 +5,7 @@ import {
   AppWindow,
   Bell,
   Cable,
+  ChevronLeft,
   LockOpen,
   MessagesSquare,
   MoreHorizontal,
@@ -22,7 +23,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useDesktopInstance, type DesktopInstanceStatus } from '../../desktop-shell.js'
 import { HOST_ICONS } from '../../extension-ui/icons.js'
 import { useProductStore, type ProductHostStatus } from '../../product-runtime.js'
-import { Kbd, Menu, Popover, Skeleton, StatusDot, type Tone, cssVars, Pressable } from '../../ui-kit/index.js'
+import { Kbd, Menu, Popover, Skeleton, StatusDot, type Tone, cssVars, Pressable, usePhone } from '../../ui-kit/index.js'
 import { removeBootSplash } from '../../boot-splash.js'
 import { AttentionList } from '../attention/attention-list.js'
 import { bellStore, useBell } from '../attention/bell.js'
@@ -30,7 +31,8 @@ import { useAttention } from '../model/attention.js'
 import { connectionStatus } from '../model/connection-status.js'
 import { agentAccent, connectionLabel, isAgentWorking } from '../model/identity.js'
 import { CommandPalette } from './command-palette.js'
-import { useCurrentCrumb } from './crumb.js'
+import { useBackTo, useHistoryTrail } from './back.js'
+import { useCurrentCrumb, useCurrentPageBar, usePageBarActionsSlot } from './crumb.js'
 import { useRailSteering } from './rail-steering.js'
 import styles from './shell.module.css'
 import { updateLabel, useProductUpdates, versionDescription, versionLabel } from './product-updates.js'
@@ -77,21 +79,15 @@ function useRailPages() {
 
 type RailPage = ReturnType<typeof useRailPages>[number]
 
-const NARROW = '(max-width: 760px)'
 /** Spaces that stay in the bottom bar on a phone (05 §6.2); the rest open from its “更多”. */
 const MOBILE_SPACES = new Set<string>(['/live', '/channels', '/agents', '/workshop'])
 
-function useNarrow(): boolean {
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(NARROW).matches)
-  useEffect(() => {
-    if (!window.matchMedia) return
-    const query = window.matchMedia(NARROW)
-    const sync = () => setNarrow(query.matches)
-    query.addEventListener('change', sync)
-    return () => query.removeEventListener('change', sync)
-  }, [])
-  return narrow
-}
+/** Names of the first-level spaces, as the navigation shows them; the phone's top bar titles their pages with these. */
+const SPACE_TITLES = new Map<string, string>([
+  ...SPACES.map(({ path, label }) => [path, label] as const),
+  ['/logs', '日志'],
+  ['/settings', '设置'],
+])
 
 /**
  * How many extension pages fit between the built-in spaces and the bottom group (05 §6). The rail measures its own
@@ -142,7 +138,7 @@ const pagePath = (page: RailPage) => `${page.routeBase}${page.startPath ? `/${pa
 function Rail() {
   const location = useLocation()
   const go = useGo()
-  const narrow = useNarrow()
+  const narrow = usePhone()
   const railPages = useRailPages()
   const activePage = railPages.find(
     (page) => location.pathname === page.routeBase || location.pathname.startsWith(`${page.routeBase}/`),
@@ -316,7 +312,50 @@ const desktopStatusLabel: Record<DesktopInstanceStatus, string> = {
   offline: '无法连接',
 }
 
+/**
+ * The phone's top bar is the page's title bar (05 §6.2): a first-level page shows its space's name, a page opened from
+ * a list shows a back arrow to it and its own name, with an optional status line under the name.
+ */
+function PhoneTitle() {
+  const location = useLocation()
+  const crumb = useCurrentCrumb()
+  const bar = useCurrentPageBar()
+  const back = useBackTo()
+  const title = bar?.title ?? SPACE_TITLES.get(spaceOf(location.pathname)) ?? crumb.at(-1) ?? 'NekroNXT'
+  const status = bar?.status
+  return (
+    <div className={styles.barTitle}>
+      {bar?.back ? (
+        <Pressable
+          type="button"
+          className={styles.barBack}
+          aria-label={bar.back.label}
+          onClick={() => bar.back && back(bar.back.to)}
+        >
+          <ChevronLeft aria-hidden="true" strokeWidth={2} />
+        </Pressable>
+      ) : null}
+      {/* A new title fades in on its own; the bar around it never moves. */}
+      <div key={`${bar?.back ? 'item' : 'space'}:${title}`} className={styles.barText}>
+        <span className={styles.barName}>{title}</span>
+        {status ? (
+          <span className={styles.barStatus}>
+            <StatusDot tone={status.tone} />
+            <span>
+              {status.label}
+              {status.detail ? ` · ${status.detail}` : ''}
+            </span>
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function TopBar({ onSearch }: { readonly onSearch: () => void }) {
+  const phone = usePhone()
+  const bar = useCurrentPageBar()
+  const setActions = usePageBarActionsSlot()
   const crumb = useCurrentCrumb()
   const attention = useAttention()
   const bell = useBell()
@@ -342,12 +381,24 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
       <StatusDot tone={instanceTone} />
     </>
   )
+  // A page opened from a list puts its own actions where the instance, search and bell sit on a first-level page.
+  if (phone && bar?.back)
+    return (
+      <header className={styles.top} data-phone-bar="item">
+        <PhoneTitle />
+        <div ref={setActions} className={styles.barActions} />
+      </header>
+    )
   return (
-    <header className={styles.top}>
-      <div className={styles.brand}>
-        <img src="/brand/mark.svg" alt="" />
-        NekroNXT
-      </div>
+    <header className={styles.top} data-phone-bar={phone ? 'space' : undefined}>
+      {phone ? (
+        <PhoneTitle />
+      ) : (
+        <div className={styles.brand}>
+          <img src="/brand/mark.svg" alt="" />
+          NekroNXT
+        </div>
+      )}
       {desktop.enabled ? (
         <Pressable
           type="button"
@@ -534,6 +585,23 @@ function SpaceLoading() {
 export function AppShell() {
   const location = useLocation()
   const space = spaceOf(location.pathname)
+  const phone = usePhone()
+  const bar = useCurrentPageBar()
+  const immersive = phone && bar?.immersive === true
+  // Leaving a full-height page, the bottom bar slides back at once but the page keeps its height until the page
+  // sliding away has gone, so its composer never jumps up mid-move.
+  const [wasImmersive, setWasImmersive] = useState(immersive)
+  const [lingering, setLingering] = useState(false)
+  if (wasImmersive !== immersive) {
+    setWasImmersive(immersive)
+    setLingering(!immersive)
+  }
+  useEffect(() => {
+    if (!lingering) return
+    const timer = window.setTimeout(() => setLingering(false), 400)
+    return () => window.clearTimeout(timer)
+  }, [lingering])
+  useHistoryTrail()
   const [paletteOpen, setPaletteOpen] = useState(false)
   useEffect(() => {
     removeBootSplash()
@@ -549,7 +617,7 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
   return (
-    <div className={styles.app}>
+    <div className={styles.app} data-immersive={immersive || undefined} data-tall={immersive || lingering || undefined}>
       <TopBar onSearch={() => setPaletteOpen(true)} />
       <Rail />
       <main className={styles.main}>

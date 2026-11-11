@@ -35,8 +35,10 @@
   cursor: pointer;
 }
 
-.groupHead:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .groupHead:hover {
+    background: var(--hover);
+  }
 }
 
 /* A long agent name gives way before the state does: one line, cut with an ellipsis. */
@@ -173,12 +175,52 @@
   transition: background var(--dur-1);
 }
 
-.row:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .row:hover {
+    background: var(--hover);
+  }
 }
 
 .row[data-selected='true']:hover {
   background: transparent;
+}
+
+.row:active {
+  background: var(--hover);
+  transition-duration: 0s;
+}
+
+/* A phone's channel list is a page of its own: rows run edge to edge with the page margin and a fingertip tall. */
+@media (max-width: 760px) {
+  .group {
+    margin-top: var(--s-1);
+    border-radius: 0;
+  }
+
+  .groupHeadRow {
+    padding: 0 var(--s-2) 0 0;
+  }
+
+  .groupHead {
+    min-height: 44px;
+    padding: var(--s-2) var(--s-4);
+    border-radius: 0;
+  }
+
+  .row {
+    align-content: center;
+    min-height: 60px;
+    padding: var(--s-2) var(--s-4);
+    border-radius: 0;
+  }
+
+  .rowWrap > .row {
+    padding-right: calc(var(--s-4) + var(--control-sm) + var(--s-2));
+  }
+
+  .rowMenu {
+    right: var(--s-3);
+  }
 }
 
 .rowDragging {
@@ -411,9 +453,11 @@
   height: 16px;
 }
 
-.toggle:hover {
-  border-color: var(--line-3);
-  color: var(--fg);
+@media (hover: hover) {
+  .toggle:hover {
+    border-color: var(--line-3);
+    color: var(--fg);
+  }
 }
 
 .toggle[aria-pressed='true'] {
@@ -1238,9 +1282,11 @@ button.step:hover {
   background: transparent;
   cursor: pointer;
 }
-.attach:hover:not(:disabled) {
-  color: var(--fg-2);
-  background: var(--inset);
+@media (hover: hover) {
+  .attach:hover:not(:disabled) {
+    color: var(--fg-2);
+    background: var(--inset);
+  }
 }
 .attach svg {
   width: 17px;
@@ -1443,8 +1489,10 @@ button.step:hover {
   height: 17px;
 }
 
-.send:hover:not(:disabled) {
-  transform: translateX(2px);
+@media (hover: hover) {
+  .send:hover:not(:disabled) {
+    transform: translateX(2px);
+  }
 }
 
 .send:active:not(:disabled) {
@@ -1563,13 +1611,79 @@ button.step:hover {
   }
 
   /*
-   * The text gets the composer's full width; the sender mark, attach buttons, refusal and send button share a tool
-   * row below it. Long text stops growing at a seventh of the visible height, so the messages keep about half the screen.
+   * The conversation's header folds into the top bar (05 §6.2): its heading is only read out, its switches sit in the
+   * bar. A sub-conversation keeps its line of facts and its action; only the name moves up.
    */
+  .foldHead {
+    position: absolute;
+    display: block;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .barToggle {
+    position: relative;
+    display: grid;
+    width: 40px;
+    height: 40px;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--fg-2);
+    transition:
+      background var(--dur-1),
+      color var(--dur-1);
+  }
+
+  .barToggle svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .barToggle[aria-pressed='true'] {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .barToggle:active {
+    background: var(--hover);
+    transition-duration: 0s;
+  }
+
+  /*
+   * One row, as in a messaging app: add, the field, send. Attachments, command suggestions and hints stack above it.
+   * Long text grows the field upwards and stops at a seventh of the visible height.
+   */
+  .dock {
+    gap: var(--s-2);
+    padding: var(--s-2) var(--s-3);
+  }
+
+  /* The timeline bounces at its own ends and never drags the page with it. */
+  .conv {
+    overscroll-behavior: contain;
+  }
+
   .composer {
     display: grid;
-    grid-template-columns: auto auto auto minmax(0, 1fr) auto;
-    gap: var(--s-1);
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    align-items: end;
+    gap: var(--s-2) 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .composer:focus-within {
+    box-shadow: none;
   }
 
   .composer > * {
@@ -1580,32 +1694,84 @@ button.step:hover {
     display: contents;
   }
 
-  .input {
-    grid-column: 1 / -1;
-    order: 1;
-    max-height: min(180px, calc(var(--viewport-height, 100dvh) / 7));
-    padding: var(--s-1) var(--s-2);
-  }
-
-  .sender,
-  .attach {
-    order: 2;
-  }
-
   .blocked {
     display: none;
   }
 
   .blockedShort {
     display: flex;
-    grid-column: 4;
+    order: 1;
+    padding: 0 var(--s-2);
+  }
+
+  .attach {
+    grid-column: 1;
+    order: 2;
+    margin-right: var(--s-2);
+    border-radius: 999px;
+    color: var(--fg-2);
+  }
+
+  .attach svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .sender,
+  .input,
+  .send {
     order: 3;
-    padding: 0 var(--s-1);
+  }
+
+  .sender {
+    grid-column: 2;
+    margin-right: var(--s-2);
+  }
+
+  /* The field is a capsule of its own; the row around it has no frame. */
+  .input {
+    grid-column: 3;
+    min-height: 40px;
+    max-height: min(180px, calc(var(--viewport-height, 100dvh) / 7));
+    padding: var(--s-2) var(--s-4);
+    border: 1px solid var(--line-2);
+    border-radius: 20px;
+    background: var(--surface);
+    line-height: 22px;
+    transition:
+      border-color var(--dur-1),
+      box-shadow var(--dur-1);
+  }
+
+  .input:focus {
+    border-color: var(--accent-line);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
 
   .send {
-    grid-column: 5;
-    order: 4;
+    grid-column: 4;
+    /* Centred on the one-line field, which is 4px taller. */
+    margin: 0 0 calc(var(--s-1) / 2) var(--s-2);
+    border-radius: 999px;
+  }
+
+  /* Nothing to send: the button steps back to a quiet disc instead of a faded accent. */
+  .send:disabled {
+    background: var(--inset);
+    box-shadow: none;
+    color: var(--faint);
+    opacity: 1;
+  }
+
+  .attach:active:not(:disabled),
+  .sender:active {
+    background: var(--hover);
+  }
+
+  .commandSuggestions {
+    border: 1px solid var(--line);
+    border-radius: var(--r-2);
+    background: var(--surface);
   }
 }
 

@@ -1,5 +1,11 @@
 declare const styles: {
   readonly app: string
+  readonly barActions: string
+  readonly barBack: string
+  readonly barName: string
+  readonly barStatus: string
+  readonly barText: string
+  readonly barTitle: string
   readonly bell: string
   readonly bellCount: string
   readonly bellHead: string

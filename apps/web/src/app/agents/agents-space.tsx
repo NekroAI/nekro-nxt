@@ -2,10 +2,18 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { useProductStore } from '../../product-runtime.js'
-import { AgentAvatar, IconButton, ListPane, SearchField, SelectionList, WorkbenchPage } from '../../ui-kit/index.js'
+import {
+  AgentAvatar,
+  IconButton,
+  ListPane,
+  SearchField,
+  SelectionList,
+  WorkbenchPage,
+  usePhone,
+} from '../../ui-kit/index.js'
 import { agentAccent, agentHue, agentPhase, isAgentWorking } from '../model/identity.js'
 import { useGo } from '../model/nav.js'
-import { useCrumb } from '../shell/crumb.js'
+import { useCrumb, usePageBar } from '../shell/crumb.js'
 import { AgentCreate } from './agent-create.js'
 import { AgentProfile } from './agent-profile.js'
 import styles from './agents.module.css'
@@ -18,9 +26,20 @@ export default function AgentsSpace() {
   const [query, setQuery] = useState('')
   const creating = agentId === 'new'
   const agent = creating ? undefined : agents.find((item) => item.id === agentId)
+  const phone = usePhone()
   useCrumb('智能体', creating ? '新建' : agent?.name)
+  // On a phone an agent is the second level above the agent list (05 §6.2).
+  usePageBar(
+    agentId === undefined
+      ? undefined
+      : {
+          title: creating ? '新建智能体' : (agent?.name ?? '智能体'),
+          back: { to: '/agents', label: '返回智能体列表' },
+        },
+  )
 
-  if (!agentId && hostStatus !== 'initializing') {
+  // A computer opens the first agent straight away; a phone stays on the list, its first level.
+  if (!agentId && hostStatus !== 'initializing' && !phone) {
     return <Navigate to={agents[0] ? `/agents/${agents[0].id}` : '/agents/new'} replace />
   }
   if (agentId && !creating && !agent && hostStatus === 'ready') return <Navigate to="/agents" replace />
@@ -31,6 +50,7 @@ export default function AgentsSpace() {
   return (
     <WorkbenchPage
       listLabel="全部智能体"
+      phonePane={agentId ? 'main' : 'list'}
       list={
         <ListPane
           title="智能体"
@@ -64,6 +84,9 @@ export default function AgentsSpace() {
               </Link>
             ))}
           </SelectionList>
+          {phone && agents.length === 0 && hostStatus !== 'initializing' ? (
+            <p className={styles.listEmpty}>还没有智能体</p>
+          ) : null}
           {needle && visible.length === 0 ? (
             <p className={styles.listEmpty}>没有名称包含“{query.trim()}”的智能体</p>
           ) : null}

@@ -13,12 +13,28 @@
   transition: background var(--dur-1);
 }
 
-.row:hover {
-  background: var(--hover);
+@media (hover: hover) {
+  .row:hover {
+    background: var(--hover);
+  }
+
+  .row[data-selected='true']:hover {
+    background: transparent;
+  }
 }
 
-.row[data-selected='true']:hover {
-  background: transparent;
+.row:active {
+  background: var(--hover);
+  transition-duration: 0s;
+}
+
+/* A phone's agent list is a page of its own: rows run edge to edge with the page margin (05 §6.2). */
+@media (max-width: 760px) {
+  .row {
+    min-height: 64px;
+    padding: var(--s-2) var(--s-4);
+    border-radius: 0;
+  }
 }
 
 .row > :first-child {

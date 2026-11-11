@@ -1,4 +1,9 @@
 declare const styles: {
+  readonly actionSheet: string
+  readonly actionSheetGrabber: string
+  readonly actionSheetItem: string
+  readonly actionSheetList: string
+  readonly actionSheetTitle: string
   readonly actions: string
   readonly bad: string
   readonly body: string

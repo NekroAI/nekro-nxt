@@ -9,6 +9,7 @@ declare const styles: {
   readonly attachmentInfo: string
   readonly attachmentPreview: string
   readonly attachments: string
+  readonly barToggle: string
   readonly blocked: string
   readonly blockedShort: string
   readonly bubble: string
@@ -44,6 +45,7 @@ declare const styles: {
   readonly fallbackChip: string
   readonly filter: string
   readonly filterRow: string
+  readonly foldHead: string
   readonly fresh: string
   readonly group: string
   readonly groupBadge: string

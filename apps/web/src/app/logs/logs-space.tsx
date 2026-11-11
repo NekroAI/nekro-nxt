@@ -651,6 +651,7 @@ export default function LogsSpace() {
         <div className={styles.workspace}>
           <PageHeader
             title="日志"
+            barTitle
             subtitle={
               <>
                 {currentName
