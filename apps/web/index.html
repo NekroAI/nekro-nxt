@@ -43,6 +43,9 @@
         var side = theme === 'dark' ? '#0e1a2c' : '#eceef2'
         var metas = document.querySelectorAll('meta[name="theme-color"]')
         for (var i = 0; i < metas.length; i++) metas[i].setAttribute('content', side)
+        // The canvas behind the page (seen while the system slides pages) follows the chosen theme, not the system's.
+        var schemes = document.querySelectorAll('meta[name="color-scheme"]')
+        for (var j = 0; j < schemes.length; j++) schemes[j].setAttribute('content', theme)
       })()
     </script>
     <!-- The first screen before any stylesheet or module loads; colors repeat tokens.css (--bg, --focus, --muted). -->

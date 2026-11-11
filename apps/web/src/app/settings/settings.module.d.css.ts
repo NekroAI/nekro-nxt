@@ -14,6 +14,7 @@ declare const styles: {
   readonly head: string
   readonly headActions: string
   readonly inlineForm: string
+  readonly legal: string
   readonly licenses: string
   readonly link: string
   readonly loading: string

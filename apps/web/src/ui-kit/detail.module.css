@@ -331,10 +331,17 @@
     flex: 1 1 10em;
   }
 
+  /* A bare label keeps its own width, so a short value stays on its line. */
+  .row:not(.stacked) > .rowText:not(:has(.rowDescription)) {
+    flex: 1 1 auto;
+  }
+
   .row:not(.stacked) > .rowControl {
     flex: 0 1 auto;
     flex-wrap: wrap;
     margin-left: auto;
+    overflow-wrap: anywhere;
+    text-align: end;
   }
 }
 

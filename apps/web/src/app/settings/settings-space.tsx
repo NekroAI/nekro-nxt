@@ -1073,10 +1073,10 @@ function About() {
           </a>
         </PropertyRow>
       </PropertyList>
-      <p className={styles.notice}>
-        代码按 GNU AGPL v3.0 授权，在适用法律允许范围内不提供担保。Logo、水月荧、角色插画与宣传素材版权归
-        NekroAI，不属于代码许可证。
-      </p>
+      <div className={styles.legal}>
+        <p>代码按 GNU AGPL v3.0 授权，在适用法律允许范围内不提供担保。</p>
+        <p>Logo、水月荧、角色插画与宣传素材版权归 NekroAI，不属于代码许可证。</p>
+      </div>
     </>
   )
 }

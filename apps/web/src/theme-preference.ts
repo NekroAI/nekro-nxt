@@ -37,4 +37,8 @@ export const applyThemeChoice = (root: HTMLElement, theme: ThemeChoice): void =>
   root.dataset['theme'] = theme
   root.classList.toggle('dark', theme === 'dark')
   syncThemeColor(root)
+  // The canvas the browser paints behind the page follows the chosen theme, not the system scheme.
+  for (const meta of root.ownerDocument.querySelectorAll<HTMLMetaElement>('meta[name="color-scheme"]')) {
+    meta.content = theme
+  }
 }

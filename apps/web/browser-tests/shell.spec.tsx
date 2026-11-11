@@ -1476,6 +1476,30 @@ test.describe('shell, channels and live', () => {
     }
   })
 
+  test('on a phone a second tap on an open select closes it and it stays closed', async () => {
+    const { page } = await open('/settings/appearance', { width: 393, touch: true })
+    try {
+      const select = page.getByRole('combobox', { name: '设置分节' })
+      await expect(select).toBeVisible()
+      const box = await select.boundingBox()
+      if (!box) throw new Error('The section select has no box.')
+      const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+      await page.touchscreen.tap(at.x, at.y)
+      const list = page.getByRole('listbox')
+      await expect(list).toBeVisible()
+      await page.waitForTimeout(500)
+      await page.touchscreen.tap(at.x, at.y)
+      await expect(list).toBeHidden()
+      await page.waitForTimeout(500)
+      await expect(list).toBeHidden()
+      // A later tap opens it again.
+      await page.touchscreen.tap(at.x, at.y)
+      await expect(list).toBeVisible()
+    } finally {
+      await page.close()
+    }
+  })
+
   test('on a phone a conversation opened by its address goes back to the channel list in place', async () => {
     const { page, errors } = await open('/live', { width: 393, touch: true })
     try {

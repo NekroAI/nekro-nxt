@@ -66,6 +66,14 @@ describe('boot splash page', () => {
           if (name === 'content') this.content = value
         },
       }))
+      const schemes = [
+        {
+          content: 'light dark',
+          setAttribute(name: string, value: string) {
+            if (name === 'content') this.content = value
+          },
+        },
+      ]
       const written: string[] = []
       const window = {
         localStorage: {
@@ -82,13 +90,14 @@ describe('boot splash page', () => {
           setAttribute: (name: string, value: string) => attributes.set(name, value),
           classList: { add: (name: string) => classes.add(name), remove: (name: string) => classes.delete(name) },
         },
-        querySelectorAll: () => metas,
+        querySelectorAll: (selector: string) => (selector.includes('color-scheme') ? schemes : metas),
       }
       runInNewContext(script, { window, document })
       return {
         theme: attributes.get('data-theme'),
         dark: classes.has('dark'),
         colors: metas.map((meta) => meta.content),
+        scheme: schemes[0]?.content,
         written,
         side: { light: token(tokens, 'light', '--side'), dark: token(tokens, 'dark', '--side') },
       }
@@ -107,6 +116,7 @@ describe('boot splash page', () => {
       expect(result.theme).toBe(expected)
       expect(result.dark).toBe(expected === 'dark')
       expect(result.colors).toEqual([result.side[expected], result.side[expected]])
+      expect(result.scheme).toBe(expected)
       expect(result.written).toEqual([])
     })
   })

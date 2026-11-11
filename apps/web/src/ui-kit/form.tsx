@@ -140,6 +140,9 @@ const EMPTY = '\u0000empty'
 const toKey = (value: string) => (value === '' ? EMPTY : value)
 const fromKey = (key: string) => (key === EMPTY ? '' : key)
 
+/** Longer than a tap's pointerdown-to-click gap, shorter than a deliberate second press. */
+const REOPEN_GUARD_MS = 350
+
 /** Single choice from a short list, drawn with the product's own popup instead of the browser's. */
 export const Select = forwardRef<
   HTMLButtonElement,
@@ -162,8 +165,18 @@ export const Select = forwardRef<
   const controlled = value === undefined ? {} : { value: known(value) ?? '' }
   const selected = value === undefined ? undefined : options.find((option) => option.value === value)
   const initial = defaultValue === undefined ? {} : { defaultValue: known(defaultValue) ?? '' }
+  const [open, setOpen] = useState(false)
+  const triggerNode = useRef<HTMLButtonElement | null>(null)
+  // A press on the trigger of an open list closes it as a press outside the list; the same press must not then
+  // open it again (on touch the trigger opens on the click that follows).
+  const closedByTrigger = useRef(Number.NEGATIVE_INFINITY)
   return (
     <RadixSelect.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (next && performance.now() - closedByTrigger.current < REOPEN_GUARD_MS) return
+        setOpen(next)
+      }}
       {...controlled}
       {...initial}
       {...(onValueChange ? { onValueChange: (key: string) => onValueChange(fromKey(key)) } : {})}
@@ -172,7 +185,11 @@ export const Select = forwardRef<
       {...(disabled === undefined ? {} : { disabled })}
     >
       <RadixSelect.Trigger
-        ref={ref}
+        ref={(node) => {
+          triggerNode.current = node
+          if (typeof ref === 'function') ref(node)
+          else if (ref) ref.current = node
+        }}
         className={[styles.control, styles.select, className ?? ''].join(' ')}
         {...trigger}
       >
@@ -185,7 +202,26 @@ export const Select = forwardRef<
         </RadixSelect.Icon>
       </RadixSelect.Trigger>
       <RadixSelect.Portal>
-        <RadixSelect.Content className={styles.selectContent} position="popper" sideOffset={4} collisionPadding={12}>
+        <RadixSelect.Content
+          className={styles.selectContent}
+          position="popper"
+          sideOffset={4}
+          collisionPadding={12}
+          onPointerDownOutside={(event) => {
+            // While the list is open the page takes no pointer events, so the press is matched by position.
+            const rect = triggerNode.current?.getBoundingClientRect()
+            const { clientX, clientY } = event.detail.originalEvent
+            if (
+              rect &&
+              clientX >= rect.left &&
+              clientX <= rect.right &&
+              clientY >= rect.top &&
+              clientY <= rect.bottom
+            ) {
+              closedByTrigger.current = performance.now()
+            }
+          }}
+        >
           <RadixSelect.ScrollUpButton className={styles.selectScroll}>
             <ChevronUp aria-hidden="true" />
           </RadixSelect.ScrollUpButton>

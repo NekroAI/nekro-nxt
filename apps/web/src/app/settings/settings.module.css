@@ -244,6 +244,20 @@
   font: var(--t-note);
 }
 
+/* The fine print under 关于: quieter than a notice, one statement per line. */
+.legal {
+  display: grid;
+  gap: var(--s-1);
+  padding: 0 var(--row-inset);
+  color: var(--muted);
+  font: var(--t-caption);
+  text-wrap: balance;
+}
+
+.legal p {
+  margin: 0;
+}
+
 .link {
   color: var(--accent);
   text-decoration: none;
