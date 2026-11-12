@@ -1,3 +1,10 @@
+---
+summary: 用 QQ 开放平台的官方机器人接入 QQ 群和私聊。
+ui: [接线 → 添加连接]
+routes: [/wiring]
+keywords: [QQ, 官方机器人, 开放平台, AppID]
+---
+
 # 接入 QQ 官方机器人
 
 本文介绍如何通过 QQ 开放平台的 OpenClaw 入口创建官方机器人，并将其接入 NekroNXT。QQ 官方机器人使用平台分配的 `AppID`、`AppSecret` 和 OpenID 身份体系，由 NekroNXT 主动连接 QQ Gateway。
@@ -158,4 +165,4 @@ QQ 平台将卡片、小程序和合并转发等内容拍扁后上报。NekroNXT
 | 网络连接 | NekroNXT 连接官方 Gateway 和 HTTP API | NekroNXT 连接协议端 Universal WebSocket Server |
 | 使用范围 | 由 QQ 开放平台为机器人开放 | 由登录账号、协议端和平台规则决定 |
 
-返回[连接频道](../connections.md)，或继续阅读 [OneBot V11 接入教程](onebot-11.md)和[创建智能体](../agents.md)。
+返回[连接频道](wiring.md)，或继续阅读 [OneBot V11 接入教程](onebot-11.md)和[创建智能体](../agents/create.md)。

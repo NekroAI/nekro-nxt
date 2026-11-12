@@ -1,3 +1,10 @@
+---
+summary: 通过微信 iLink 接入微信。
+ui: [接线 → 添加连接]
+routes: [/wiring]
+keywords: [微信, iLink]
+---
+
 # 接入微信 iLink
 
 NekroNXT 通过微信 iLink 通道接收私聊文本，并在收到该会话消息后回复纯文本：iLink 的回复要带上对方最近一条消息给出的凭证，所以不能主动发送。创建连接只需使用平台应用扫码登录，不填写账号 ID、访问令牌、API 地址或 CDN 地址。
@@ -82,4 +89,4 @@ NekroNXT → 发现私聊 → 绑定智能体
 
 先向该机器人账号发送一条私聊文本，等待连接发现频道后再发送。没有 context_token 时，微信 iLink 不能主动发起私聊。
 
-返回[连接频道](../connections.md)，或继续阅读 [QQ 官方机器人接入教程](qq-official-bot.md)。
+返回[连接频道](wiring.md)，或继续阅读 [QQ 官方机器人接入教程](qq-official.md)。

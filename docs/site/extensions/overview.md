@@ -1,3 +1,10 @@
+---
+summary: 安装、创造、启用和管理扩展，以及版本、数据与安全。
+ui: [工坊, 社区]
+routes: [/workshop, /community]
+keywords: [扩展, 插件, 工坊, 动态创造, 社区, DSH 插件]
+---
+
 # 使用扩展
 
 扩展给智能体和 NekroNXT 增加新能力：智能体可以调用的工具、新的聊天平台、频道检查器里的面板、工具结果的展示方式，以及独立页面。一个扩展可以同时提供其中几样。扩展可以让智能体现场做出来，也可以从 NekroNXT 社区安装。
@@ -112,7 +119,7 @@
 
 官方扩展由 NekroNXT 团队维护，包括掷骰抽签、网页搜索与阅读、图片生成、语音合成、今日运势、节日提醒、RSS 订阅、群管和消息守卫，源码在 [nekro-nxt-extensions](https://github.com/NekroAI/nekro-nxt-extensions)，也可以当作编写扩展的参考。
 
-遇到扩展问题，可以在「社区 → 反馈」新建反馈，或从社区网站的扩展详情页选择「反馈问题」。已有相同问题时可标记「我也遇到」并跟踪状态。作者在网站的「收到的反馈」中查看和处理，详情见[社区反馈](community-feedback.md)。
+遇到扩展问题，可以在「社区 → 反馈」新建反馈，或从社区网站的扩展详情页选择「反馈问题」。已有相同问题时可标记「我也遇到」并跟踪状态。作者在网站的「收到的反馈」中查看和处理，详情见[社区反馈](../troubleshooting/report.md)。
 
 ## 安全
 
@@ -130,4 +137,4 @@
 
 ## 给扩展作者
 
-扩展包格式见[扩展包格式](../../packages/extension-format/README.md)，宿主能力见[扩展开发 SDK](../../packages/extension-sdk/README.md)。创造任务、版本与安装的设计见[扩展形态统一](../decisions/accepted/2026-10-09-扩展形态统一.md)和[本地扩展持久化](../decisions/implemented/2026-08-15-本地扩展持久化.md)；版本谱系、数据迁移、管理员与社区同步见[扩展流转治理](../decisions/accepted/2026-10-15-扩展流转治理.md)。
+扩展包格式见[扩展包格式](../../../packages/extension-format/README.md)，宿主能力见[扩展开发 SDK](../../../packages/extension-sdk/README.md)。创造任务、版本与安装的设计见[扩展形态统一](../../decisions/accepted/2026-10-09-扩展形态统一.md)和[本地扩展持久化](../../decisions/implemented/2026-08-15-本地扩展持久化.md)；版本谱系、数据迁移、管理员与社区同步见[扩展流转治理](../../decisions/accepted/2026-10-15-扩展流转治理.md)。

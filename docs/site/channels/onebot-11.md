@@ -1,3 +1,10 @@
+---
+summary: 通过 OneBot V11 协议端接入 QQ。
+ui: [接线 → 添加连接]
+routes: [/wiring]
+keywords: [OneBot, NapCat, QQ, WebSocket]
+---
+
 # 接入 OneBot V11
 
 本文介绍如何将 NekroNXT 接入支持 OneBot V11 的 QQ 协议端。协议端负责登录 QQ 并提供 Universal WebSocket Server；NekroNXT 作为 WebSocket 客户端建立连接，并将发现的群聊或私聊绑定给智能体。
@@ -245,7 +252,7 @@ Access Token 是只写凭据，保存后页面仅显示“已保存”。提交�
 
 SnowLuma、NapCat 和 LLBot 是独立项目，其许可证和发布方式可能变化。NekroNXT 仅通过 OneBot V11 协议互操作，协议端代码、二进制和容器不属于 NekroNXT 分发内容。平台合规性与生产可用性需要按所选协议端单独评估。
 
-返回[连接频道](../connections.md)，或继续阅读[创建智能体](../agents.md)和[消息内容与投递协议](../../03-消息内容与投递协议.md)。
+返回[连接频道](wiring.md)，或继续阅读[创建智能体](../agents/create.md)和[消息内容与投递协议](../../03-消息内容与投递协议.md)。
 
 
 ## 修改地址与查看发送失败原因

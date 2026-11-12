@@ -2,24 +2,13 @@
 
 这里是 NekroNXT 的公开文档入口。第一次使用从快速开始进入；开发时按任务定位相关章节，已知局部问题可直接进入源码、测试或契约，不要求逐级全文预读。
 
-## 开始使用
+## 使用文档
 
-1. [快速开始](guide/getting-started.md)：从安装到第一次内置频道对话；
-2. [桌面版安装](guide/desktop.md)：macOS、Windows、Linux 安装包与稳定版/预览版；
-3. [服务端部署](guide/server.md)：一行启动容器，详细配置 Docker、Compose、远程访问与数据目录；不用 Docker 的做法见[社区整理的非官方部署说明](guide/server-node.md)；
-4. [在手机上使用](guide/mobile.md)：Android 应用的扫码连接、后台通知与更新，以及 iPhone 等设备的主屏幕应用；
-5. [配置模型](guide/models.md)：模型供应商、API Key、连接测试和模型选择；
-6. [创建智能体](guide/agents.md)：人设、模型、授权能力和内置频道；
-7. [连接频道](guide/connections.md)：添加平台账号、发现频道、绑定和触发方式；可接入 [QQ 官方机器人](guide/connections/qq-official-bot.md)、[OneBot V11](guide/connections/onebot-11.md)、[企业微信智能机器人](guide/connections/wecom-ai-bot.md)或[微信 iLink](guide/connections/wechat-ilink.md)；
-8. [使用扩展](guide/extensions.md)：动态运行、验证、保存和为智能体启用；
-9. [升级、备份与恢复](guide/upgrade-backup.md)：双通道、数据根和恢复原则；
-10. [常见问题与排障](guide/troubleshooting.md)：安装、Host、模型、连接和扩展问题；
-11. [贡献者入口](guide/contributors.md)：源码开发、架构、测试和文档维护。
-12. [社区反馈](guide/community-feedback.md)：草稿确认、智能体起草、处理进展与隐私控制。
+使用文档的原文在 [`site/`](site/README.md)，按栏目列出全部页面，发布在 [nxt.nekro.ai/docs](https://nxt.nekro.ai/docs)。第一次使用从[快速开始](site/start/quickstart.md)进入；页面头部、栏目和发布方式见[文档包格式](site/BUNDLE.md)。
+
+旧地址 `guide/` 下保留了几页迁移说明，供已发布版本里的链接跳转；[贡献者入口](guide/contributors.md)仍在原处，介绍源码开发、架构、测试和文档维护。
 
 ## 产品与设计
-
-- [查看运行日志](guide/logs.md)：系统与插件日志、筛选、临时调试、导出和保存策略。
 
 - [用户体验迭代](2026-09-08-用户体验迭代.md)：安装后可用、失败恢复、默认界面和上手路径的分批实施与验收；
 - [项目首页](../README.md)与[英文摘要](../README.en.md)：公众定位、安装入口、真实截图和社区信息；

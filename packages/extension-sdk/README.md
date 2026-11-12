@@ -38,7 +38,7 @@ logger?.info('索引更新完成。', { count: 12, durationMs: 36 })
 ctx.logger?.warn('任务将在稍后重试。', { attempt: 2 })
 ```
 
-Debug 默认不保存，用户在日志页临时开启后采集。完整用户行为见[查看运行日志](../../docs/guide/logs.md)。
+Debug 默认不保存，用户在日志页临时开启后采集。完整用户行为见[查看运行日志](../../docs/site/ops/logs.md)。
 
 ## Client
 

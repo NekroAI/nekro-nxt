@@ -84,7 +84,7 @@ DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config
 
 运行日志由 Server 的 `HostLogService` 拥有，在取得数据根锁后、启动升级与 Runtime 前打开。`logs/logs.sqlite` 独立于 Core，工作线程负责读写、分页、清理和导出；`host/logging.json` 原子保存保留策略。运行子模块借用写入接口，宿主在业务资源停止后关闭日志服务。日志异常不改变核心 readiness，关注事项使用缓存状态，不等待日志工作线程。
 
-`/api/logs` 提供组合查询，`/api/logs/events` 使用独立 SSE 和持久游标补齐；来源、详情、设置、Debug 与导出位于同一路径下，继承管理鉴权。`console` 兼容采集可撤销；无法可靠确认归属时不猜测插件身份。页面与导出只消费入库前完成脱敏的记录。具体操作见[查看运行日志](../../docs/guide/logs.md)。
+`/api/logs` 提供组合查询，`/api/logs/events` 使用独立 SSE 和持久游标补齐；来源、详情、设置、Debug 与导出位于同一路径下，继承管理鉴权。`console` 兼容采集可撤销；无法可靠确认归属时不猜测插件身份。页面与导出只消费入库前完成脱敏的记录。具体操作见[查看运行日志](../../docs/site/ops/logs.md)。
 
 `logs/` 是有界运行记录：不进入升级备份，业务恢复时原地保留；恢复阶段允许其中的日志继续变化，但拒绝符号链接或非目录替代。`host/logging.json` 正常参与配置备份。日志保留不扩大 `extension-cache/` 等其他排除项的恢复权限。
 
@@ -94,7 +94,7 @@ DSH Settings 使用现有路径级 mutate 与 Credentials；普通 Cordis Config
 
 SQLite 的 `-wal`、`-shm` 是运行期伴生文件，不是独立数据分区，不得手工移动或删除。自动恢复点覆盖主要数据根的持久文件，包括 JSONL、Profile、凭据、插件项目、扩展源码、Asset、Spill、工作区、TLS 与 `dsh/shutdown-inbox/`；明确配置的外置智能体工作区另列根目录。排除 `backups/`、`logs/`、`extension-cache/`、`dsh/request-images/`、`dsh/plugin-staging/`、`dsh/pnpm-store/` 和 socket；SQLite 主库通过 backup API 快照，符号链接只复制链接本身。
 
-恢复点按目标 Release 与运行环境指纹复用，先校验内容再原子发布；完成恢复后重新升级会创建下一代恢复点。离线入口 `--restore-upgrade <backupId>` 必须持有数据根锁；它先保留失败现场，再按 manifest 与恢复 journal 重建数据，成功退出后要求使用匹配的旧程序。该清单目前不自动选择旧程序；外置工作区恢复从 manifest 读取范围并以显式工作区父目录验证，不依赖当前 Core。操作说明见[升级、备份与恢复](../../docs/guide/upgrade-backup.md)，可复用流程、验收与剩余限制见 [DSH 升级维护指南](../../docs/dsh-upgrade.md)。
+恢复点按目标 Release 与运行环境指纹复用，先校验内容再原子发布；完成恢复后重新升级会创建下一代恢复点。离线入口 `--restore-upgrade <backupId>` 必须持有数据根锁；它先保留失败现场，再按 manifest 与恢复 journal 重建数据，成功退出后要求使用匹配的旧程序。该清单目前不自动选择旧程序；外置工作区恢复从 manifest 读取范围并以显式工作区父目录验证，不依赖当前 Core。操作说明见[升级、备份与恢复](../../docs/site/ops/upgrade-backup.md)，可复用流程、验收与剩余限制见 [DSH 升级维护指南](../../docs/dsh-upgrade.md)。
 
 新增顶层项必须记录唯一所有者、当前消费者及持久/缓存和恢复语义；现有布局归并需作为有迁移、备份与恢复验证的独立任务，不能随局部功能静默搬移用户数据。测试使用临时根或本地专用分区，不写常驻 `data/`。`data/` 及其中的工作区副本不属于产品源码，ESLint、Prettier 和类型检查 include 必须排除；公开边界检查禁止 Git 跟踪该目录，不把未跟踪运行产物按产品源码扫描。
 

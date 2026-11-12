@@ -1,0 +1,79 @@
+{
+  "sections": [
+    {
+      "id": "start",
+      "title": "开始使用",
+      "pages": [
+        "quickstart"
+      ]
+    },
+    {
+      "id": "install",
+      "title": "安装与部署",
+      "pages": [
+        "desktop",
+        "docker",
+        "https",
+        "node",
+        "mobile"
+      ]
+    },
+    {
+      "id": "models",
+      "title": "模型",
+      "pages": [
+        "providers"
+      ]
+    },
+    {
+      "id": "agents",
+      "title": "智能体",
+      "pages": [
+        "create"
+      ]
+    },
+    {
+      "id": "channels",
+      "title": "频道与平台",
+      "pages": [
+        "wiring",
+        "qq-official",
+        "onebot-11",
+        "wecom",
+        "wechat-ilink"
+      ]
+    },
+    {
+      "id": "extensions",
+      "title": "扩展",
+      "pages": [
+        "overview"
+      ]
+    },
+    {
+      "id": "ops",
+      "title": "运维",
+      "pages": [
+        "upgrade-backup",
+        "access",
+        "logs"
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "排障",
+      "pages": [
+        "install",
+        "models",
+        "platforms",
+        "extensions",
+        "report"
+      ]
+    },
+    {
+      "id": "develop",
+      "title": "扩展开发",
+      "pages": []
+    }
+  ]
+}

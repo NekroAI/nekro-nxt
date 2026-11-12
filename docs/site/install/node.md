@@ -1,6 +1,13 @@
+---
+summary: 不用 Docker、直接用 Node.js 运行服务端的社区做法，不在官方支持范围内。
+ui: []
+routes: []
+keywords: [Node.js, 不用 Docker]
+---
+
 # 不用 Docker 部署服务端（非官方）
 
-> **非官方支持，仅供参考。** 官方支持的服务端部署方式是 [Docker 镜像](server.md)。本文整理自社区成员的实测记录（[#83](https://github.com/NekroAI/nekro-nxt/issues/83)），适合拉不到镜像、装不了 Docker，或者需要把服务纳入现有 systemd 体系的场合。按本文部署时遇到问题，请先确认同一版本在 Docker 里是否正常；沙箱行为、运行用户的权限和系统加固需要你自己负责。
+> **非官方支持，仅供参考。** 官方支持的服务端部署方式是 [Docker 镜像](docker.md)。本文整理自社区成员的实测记录（[#83](https://github.com/NekroAI/nekro-nxt/issues/83)），适合拉不到镜像、装不了 Docker，或者需要把服务纳入现有 systemd 体系的场合。按本文部署时遇到问题，请先确认同一版本在 Docker 里是否正常；沙箱行为、运行用户的权限和系统加固需要你自己负责。
 
 ## 思路
 

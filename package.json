@@ -26,7 +26,7 @@
     "audit:layout": "pnpm --filter @nekro-nxt/web build && pnpm --filter @nekro-nxt/server build && playwright test apps/web/e2e/layout-audit.spec.ts && node -e \"console.log('布局审计报告：.local/layout-audit/summary.md')\"",
     "check:css-tokens": "node scripts/check-css-tokens.mjs --self-test && node scripts/check-css-tokens.mjs --strict",
     "check:format": "prettier --check .",
-    "check:docs": "node scripts/check-doc-links.mjs && node scripts/check-decision-status.mjs && node scripts/check-terminology.mjs && node scripts/check-brand-name.mjs",
+    "check:docs": "node scripts/check-doc-links.mjs && node scripts/check-decision-status.mjs && node scripts/check-terminology.mjs && node scripts/check-brand-name.mjs && node scripts/docs-bundle.mjs check",
     "check:drizzle": "node scripts/check-drizzle-migrations.mjs",
     "check:dsh-family": "node scripts/check-dsh-family.mjs",
     "check:gates": "node --test scripts/tests/*.spec.mjs",

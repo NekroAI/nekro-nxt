@@ -42,7 +42,7 @@ docker run -d \
   ghcr.io/nekroai/nekro-nxt:latest
 ```
 
-The complete user documentation is currently maintained in Chinese: [Quick start](docs/guide/getting-started.md), [Desktop installation](docs/guide/desktop.md), [Server deployment](docs/guide/server.md), [Connect messaging channels](docs/guide/connections.md), and [Troubleshooting](docs/guide/troubleshooting.md).
+The complete user documentation is currently maintained in Chinese: [Quick start](docs/site/start/quickstart.md), [Desktop installation](docs/site/install/desktop.md), [Server deployment](docs/site/install/docker.md), [Connect messaging channels](docs/site/channels/wiring.md), and [Troubleshooting](docs/site/troubleshooting/install.md).
 
 NekroNXT provides a stable release and keeps a rolling Preview built from `main`. The main user flow works today, while adapters and recovery coverage continue to expand.
 

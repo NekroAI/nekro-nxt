@@ -1,3 +1,10 @@
+---
+summary: 接入模型供应商、填写 API Key 并测试连接。
+ui: [设置 → 模型]
+routes: [/settings/models]
+keywords: [模型, API Key, DeepSeek, 供应商, 连接测试]
+---
+
 # 配置模型
 
 NekroNXT 复用 DSH 的模型供应商、Settings 和凭据体系，不维护第二份模型目录。

@@ -4,7 +4,7 @@
 
 M2 已交付按 `(channelId, agentId)` 串行的 lane、工具期间普通消息注入、恢复扫描、显式停止、上下文清空、主动交接、必要 rollover 和 handoff。单纯上下文压力仍使用 DSH 原 Session 压缩；发送提交后结果不确定的物理投递恢复为 `unknown`，不盲目重发。未来积压策略继续扩展同一 Admission 状态机，不另建第二套消息队列。
 
-闲置换会话同时检查时间间隔与 `AgentSessionDriver.shouldCompactIdleSession()`；宿主按当前配置和上下文占用决定是否需要整理，未提供判断或无法测量时继续原会话。手动换会话与不兼容配置交接独立执行。用户设置见[上下文压缩](../../docs/guide/models.md#上下文压缩)。
+闲置换会话同时检查时间间隔与 `AgentSessionDriver.shouldCompactIdleSession()`；宿主按当前配置和上下文占用决定是否需要整理，未提供判断或无法测量时继续原会话。手动换会话与不兼容配置交接独立执行。用户设置见[上下文压缩](../../docs/site/models/providers.md#上下文压缩)。
 
 `stopCurrentTurn(channelId, expectedEpisodeId?)` 在频道 lane 内执行管理员停止：没有 Binding、活动 Episode 或运行中的 Session 时返回 `idle`；预期 Episode 已被替换时抛出 `ChannelStopConflictError`；否则先把 Episode 结束原因记为 `cancelled`，再由 `AgentSessionDriver.interruptTurn()` 中断当前轮次并保留收件箱。Episode、Admission 与 Session 都继续存在，下一条入站正常准入。`listPendingContext()` 通过 `AgentSessionDriver.listPendingAdmissions()` 读取 Session 收件箱里尚未被模型看到的频道收录。投递处理由 `assertOutboundDispatchable()`、`redispatchOutbound()` 和 `publishOutboundFact()` 提供，重置投递状态的事务属于 Core Repository。
 

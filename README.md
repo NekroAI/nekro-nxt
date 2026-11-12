@@ -47,7 +47,7 @@ DSH 负责智能体的思考循环、工具执行、会话持久化、上下文�
 | Windows  | [下载 NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
 | Linux    | [下载 NekroNXT](https://github.com/NekroAI/nekro-nxt/releases/latest) |
 
-[查看桌面版安装说明](docs/guide/desktop.md)
+[查看桌面版安装说明](docs/site/install/desktop.md)
 
 ### 服务端：用 Docker 长期运行
 
@@ -65,7 +65,7 @@ docker run -d \
 
 启动后用浏览器打开 `http://127.0.0.1:4960`，输入管理密钥登录。
 
-[查看网页登录、公网访问、Docker Compose 与备份说明](docs/guide/server.md)
+[查看网页登录、公网访问、Docker Compose 与备份说明](docs/site/install/docker.md)
 
 ## 三步开始使用
 
@@ -73,19 +73,19 @@ docker run -d \
 2. 创建一个智能体，设置名称、人设和可用能力；
 3. 先在内置频道对话，或前往「连接」添加即时通信账号、选择群聊并绑定智能体。
 
-完整步骤见[快速开始](docs/guide/getting-started.md)。
+完整步骤见[快速开始](docs/site/start/quickstart.md)。
 
 ## 📚 文档与社区
 
-| 目标                   | 入口                                                                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 安装、配置并开始对话   | [快速开始](docs/guide/getting-started.md)                                                                                                              |
-| 连接即时通信平台与群聊 | [连接频道](docs/guide/connections.md) · [QQ 官方机器人](docs/guide/connections/qq-official-bot.md) · [OneBot V11](docs/guide/connections/onebot-11.md) |
-| 配置模型、智能体和扩展 | [模型](docs/guide/models.md) · [智能体](docs/guide/agents.md) · [扩展](docs/guide/extensions.md)                                                       |
-| 部署、升级、备份或排障 | [服务端部署](docs/guide/server.md) · [升级与备份](docs/guide/upgrade-backup.md) · [常见问题](docs/guide/troubleshooting.md)                            |
-| 参与开发               | [贡献指南](docs/CONTRIBUTING.md) · [贡献者文档](docs/guide/contributors.md)                                                                            |
-| 反馈问题               | [支持说明](docs/SUPPORT.md) · [GitHub Issues](https://github.com/NekroAI/nekro-nxt/issues)                                                             |
-| 社区交流               | NekroAI 官方 QQ 群 `636925153`                                                                                                                         |
+| 目标                   | 入口                                                                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 安装、配置并开始对话   | [快速开始](docs/site/start/quickstart.md)                                                                                                     |
+| 连接即时通信平台与群聊 | [连接频道](docs/site/channels/wiring.md) · [QQ 官方机器人](docs/site/channels/qq-official.md) · [OneBot V11](docs/site/channels/onebot-11.md) |
+| 配置模型、智能体和扩展 | [模型](docs/site/models/providers.md) · [智能体](docs/site/agents/create.md) · [扩展](docs/site/extensions/overview.md)                       |
+| 部署、升级、备份或排障 | [服务端部署](docs/site/install/docker.md) · [升级与备份](docs/site/ops/upgrade-backup.md) · [常见问题](docs/site/troubleshooting/install.md)  |
+| 参与开发               | [贡献指南](docs/CONTRIBUTING.md) · [贡献者文档](docs/guide/contributors.md)                                                                   |
+| 反馈问题               | [支持说明](docs/SUPPORT.md) · [GitHub Issues](https://github.com/NekroAI/nekro-nxt/issues)                                                    |
+| 社区交流               | NekroAI 官方 QQ 群 `636925153`                                                                                                                |
 
 ## 当前状态
 

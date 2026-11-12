@@ -292,7 +292,7 @@ const desktopDistribution = getDesktopDistribution(productRelease.channel)
 app.setName(desktopDistribution.productName)
 
 // The data directory is decided here, before anything opens it: environment override, then the pointer written by
-// Settings → 存储, then the default. An unfinished move is finished or undone first (docs/guide/desktop.md).
+// Settings → 存储, then the default. An unfinished move is finished or undone first (docs/site/install/desktop.md).
 const MOVE_FLAG = '--nxt-move-data'
 const locationFiles = dataLocationFiles(app.getPath('appData'), desktopDistribution)
 const readTextSync = (file: string): string | undefined => {
