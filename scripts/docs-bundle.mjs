@@ -311,6 +311,43 @@ async function checkCodeLinks(pages) {
   return errors
 }
 
+const SDK_SOURCE = 'packages/extension-sdk/src/index.ts'
+const SDK_PAGE = 'develop/sdk'
+
+/** Members declared directly in one `export interface Name {` block (or a nested `readonly name: {` block). */
+const interfaceMembers = (source, opening, indent) => {
+  const start = source.indexOf(opening)
+  if (start < 0) return null
+  const members = []
+  for (const line of source.slice(start + opening.length).split('\n')) {
+    if (line.startsWith(`${' '.repeat(indent - 2)}}`)) break
+    const member = line.match(new RegExp(`^ {${indent}}(?:readonly )?([a-zA-Z]+)\\??[:(<]`, 'u'))
+    if (member) members.push(member[1])
+  }
+  return members
+}
+
+/**
+ * The SDK reference is written by hand, so this keeps it from falling behind: every host capability and harness method
+ * the SDK declares has to appear in the page as code.
+ */
+async function checkSdkReference(pages) {
+  const page = pages.get(SDK_PAGE)
+  if (page === undefined) return []
+  const source = await readFile(path.join(repositoryRoot, SDK_SOURCE), 'utf8')
+  const surface = [
+    interfaceMembers(source, 'export interface NxtHostService {', 2),
+    interfaceMembers(source, 'export interface NxtHostLayerService {', 2),
+    interfaceMembers(source, '  readonly harness: {', 4),
+  ]
+  if (surface.some((members) => members === null || members.length === 0))
+    return [`${SDK_SOURCE}：找不到 NxtHostService、NxtHostLayerService 或 harness，更新 checkSdkReference`]
+  const missing = [...new Set(surface.flat())].filter((name) => !page.markdown.includes(`\`${name}\``))
+  return missing.length === 0
+    ? []
+    : [`${page.file}：SDK 新增的 ${missing.map((name) => `\`${name}\``).join('、')} 还没有写进参考`]
+}
+
 export function renderReadme(sections, pages) {
   const lines = [
     '# NekroNXT 使用文档',
@@ -520,6 +557,7 @@ async function main() {
     const errors = [...site.errors]
     if (errors.length === 0) {
       errors.push(...(await checkCodeLinks(site.pages)))
+      errors.push(...(await checkSdkReference(site.pages)))
       const current = await readFile(path.join(repositoryRoot, readmePath), 'utf8').catch(() => '')
       if (current !== renderReadme(site.sections, site.pages))
         errors.push(`${readmePath} 已过期，运行 node scripts/docs-bundle.mjs readme`)

@@ -33,7 +33,7 @@ flow: quickstart
 | 模型 | 主模型、思考强度、备用模型、压缩、子对话模型 | [选模型与控制花费](../models/choosing.md) |
 | 频道 | 它在哪些频道里回复、什么时候回复 | [触发与回复节奏](../channels/response.md) |
 | 能力 | 读写文件、运行命令、搜索、子对话、动态创造等 | [能力与授权](abilities.md) |
-| 扩展 | 为它启用的扩展 | [使用扩展](../extensions/overview.md) |
+| 扩展 | 为它启用的扩展 | [扩展是什么](../extensions/overview.md) |
 | 定时任务 | 它在聊天里建的提醒和周期任务 | [定时任务](scheduled-tasks.md) |
 | 设定 | 它是谁、怎么说话、别名 | [设定与频道说明](persona.md) |
 

@@ -45,7 +45,13 @@
 
 ## 扩展
 
-- [使用扩展](extensions/overview.md)：安装、创造、启用和管理扩展，以及版本、数据与安全。
+- [扩展是什么](extensions/overview.md)：扩展能给智能体和 NekroNXT 增加什么，装到本机和为智能体启用的区别，配置、数据和安全。
+- [从社区安装](extensions/install.md)：在「社区」里找扩展、看权限和审查结论、安装并为智能体启用，以及更新。
+- [让她自己做扩展](extensions/dynamic-creation.md)：打开动态创造，在聊天里让智能体做新工具和页面；扩展自主权三档、试运行、保存和启用。
+- [版本、分支与发布](extensions/versions.md)：扩展的版本谱系、切换和回退、创建分支、导入导出，以及发布到社区和审查报告。
+- [接入 MCP 服务](extensions/mcp.md)：把现成的 MCP 服务接进来，给智能体当工具用：远程服务或本机程序、请求头和凭据、测试、启用到智能体。
+- [DSH 插件](extensions/dsh-plugins.md)：安装和启用 DSH 插件，给本机或某个智能体打开入口，以及“缺少服务”“等待服务”是什么意思。
+- [附加功能](extensions/addons.md)：按需安装的程序和模型：语音识别、媒体处理、语义检索、后台浏览器，以及智能体命令用到的 Node、gh 和 Git。
 
 ## 运维
 
@@ -63,3 +69,10 @@
 - [平台接入](troubleshooting/platforms.md)：群没出现在接线里、收不到消息、发不出去、一直正在连接、图片语音收发异常时怎么排查。
 - [扩展](troubleshooting/extensions.md)：扩展保存了没生效、试运行失败、保存按钮不能点、等待确认、版本冲突时怎么处理。
 - [反馈问题](troubleshooting/report.md)：在社区或 GitHub 反馈问题，以及让智能体帮你起草。
+
+## 扩展开发
+
+- [写第一个扩展](develop/getting-started.md)：用 TypeScript 写一个给智能体用的工具扩展：目录结构、清单、源码、打包、导入和调试。
+- [SDK 参考](develop/sdk.md)：扩展能用的宿主能力、每项需要声明的权限、配置和凭据、钩子、定时任务、聊天命令和数据迁移。
+- [发布到社区](develop/publish.md)：把扩展发布到 NekroNXT 社区：发布方式、版本规则、自动审查的六项评分和权限判断、额度，以及发布前自查。
+- [在 AI 工具里查文档](develop/docs-mcp.md)：把社区站的公开 MCP 服务加到 Claude、Cursor 等 AI 工具里，查 NekroNXT 的使用文档和社区扩展；也可以直接调用文档接口。

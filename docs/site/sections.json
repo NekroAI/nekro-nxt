@@ -58,7 +58,13 @@
       "id": "extensions",
       "title": "扩展",
       "pages": [
-        "overview"
+        "overview",
+        "install",
+        "dynamic-creation",
+        "versions",
+        "mcp",
+        "dsh-plugins",
+        "addons"
       ]
     },
     {
@@ -87,7 +93,12 @@
     {
       "id": "develop",
       "title": "扩展开发",
-      "pages": []
+      "pages": [
+        "getting-started",
+        "sdk",
+        "publish",
+        "docs-mcp"
+      ]
     }
   ]
 }

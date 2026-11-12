@@ -32,7 +32,7 @@ keywords: [模型, API Key]
 | --- | --- | --- |
 | `summary` | 是 | 一句话，用于导航、搜索结果和页面描述 |
 | `ui` | 否 | 这页对应的界面位置，智能体回答时用它告诉用户去哪里操作 |
-| `routes` | 否 | 实例前端路由，界面里的帮助入口按它打开对应页面 |
+| `routes` | 否 | 实例前端路由，顶栏的「?」按它打开对应页面；一个路由只能属于一页，最深的匹配优先 |
 | `keywords` | 否 | 用户可能用来描述问题的词，参与搜索 |
 | `since` | 否 | 页面所讲功能的起始版本 |
 | `flow` | 否 | 对应的界面流程文件，用于出图和检查文档是否过期 |
@@ -66,13 +66,17 @@ test('quickstart', async ({ page, docs }) => {
 
 页面在这些情况下标为「待更新」：流程失败、界面上找不到页面引用的「」词。待更新的页面照常发布，截图沿用上一版；正式版发布时有待更新页面会直接失败。
 
+`readme` 命令同时生成 `apps/web/src/app/shell/docs-routes.ts`，即顶栏「?」用的路由表。
+
+「扩展开发 → SDK 参考」是手写的；检查时会核对 `packages/extension-sdk` 里 `NxtHostService`、`NxtHostLayerService` 的每项能力和 `harness` 的每个方法都在这一页以代码形式出现，SDK 新增接口时要同时补上说明。
+
 产品代码里的文档链接写成 `https://nxt.nekro.ai/docs/<栏目>/<页面>#<小节>`，检查时会核对页面和小节是否存在。
 
 ## 命令
 
 ```bash
 node scripts/docs-bundle.mjs check               # 检查页面、链接、生成的 README 和代码里的文档链接；已包含在 pnpm check:docs 中
-node scripts/docs-bundle.mjs readme              # 增删页面或改了标题、summary 后重新生成 README
+node scripts/docs-bundle.mjs readme              # 增删页面或改了标题、summary、routes 后重新生成 README 和路由表
 pnpm build && pnpm docs:shots                    # 运行全部流程，截图和报告写入 .local/docs-shots
 node scripts/docs-bundle.mjs build preview       # 在 .local/docs-bundle 生成文档包；--strict 时有待更新页面就失败
 node scripts/docs-bundle.mjs upload preview      # 上传到分发桶，需要 R2_ACCOUNT_ID、R2_ACCESS_KEY_ID、R2_SECRET_ACCESS_KEY

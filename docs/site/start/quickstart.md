@@ -69,5 +69,5 @@ flow: quickstart
 
 ## 接下来
 
-- 让智能体自己写扩展、学新本事：在它的「能力」里打开「动态创造」，然后在频道里描述需求，进展会出现在「工坊」。详见[使用扩展](../extensions/overview.md)。
+- 让智能体自己写扩展、学新本事：在它的「能力」里打开「动态创造」，然后在频道里描述需求，进展会出现在「工坊」。详见[让她自己做扩展](../extensions/dynamic-creation.md)。
 - 遇到问题：先看[排障](../troubleshooting/install.md)。
